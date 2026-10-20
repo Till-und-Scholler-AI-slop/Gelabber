@@ -11,6 +11,12 @@ import { scopeGeneration, useUserId } from "../auth/scope.ts";
 import type { Message } from "./types.ts";
 import { MessageContent } from "./MessageContent.tsx";
 import { MessageContextView } from "./MessageContext.tsx";
+import { readableMentions } from "./mentions.ts";
+import {
+  mentionRenderer,
+  messagePing,
+} from "../components/mentionRenderer.tsx";
+import { useMentions } from "../components/mentionContext.ts";
 
 export function MessageSearch({
   channelId,
@@ -22,6 +28,7 @@ export function MessageSearch({
   renderMessage: (message: Message) => ReactNode;
 }) {
   const userId = useUserId();
+  const { members, me } = useMentions();
   const generation = scopeGeneration();
   const [input, setInput] = useState("");
   const [q, setQ] = useState("");
@@ -131,7 +138,7 @@ export function MessageSearch({
                 else resultButtons.current.delete(message.id);
               }}
               onClick={() => setSelected(message.id)}
-              aria-label={`Zur Nachricht von ${message.author.name}: ${message.content || "Datei"}`}
+              aria-label={`Zur Nachricht von ${message.author.name}: ${readableMentions(message.content, members) || "Datei"}`}
               className="lr-search-hit"
             >
               <p>
@@ -141,7 +148,16 @@ export function MessageSearch({
                 </time>
               </p>
               <p>
-                <MessageContent content={message.content} interactive={false} />
+                <MessageContent
+                  content={message.content}
+                  renderMention={mentionRenderer(
+                    members,
+                    me,
+                    message.content,
+                    messagePing(message),
+                  )}
+                  interactive={false}
+                />
               </p>
               <span>Nachricht im Kontext öffnen</span>
             </button>

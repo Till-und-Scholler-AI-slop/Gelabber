@@ -2,7 +2,7 @@
 // Voice uses the own-protocol room, not LiveKit.
 
 import { useParams } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 
 import { useUserId } from "../auth/scope.ts";
 import { HashIcon, SpeakerIcon } from "../components/Icons.tsx";
@@ -113,6 +113,10 @@ function TextChat({
 }) {
   const canWrite = can(server, "send_messages");
   const typing = useTypingInput(server.id, channel.id, canWrite);
+  const members = useMemo(
+    () => server.members.map((m) => ({ id: m.user_id, name: m.name })),
+    [server.members],
+  );
   return (
     <MessagePane
       key={channel.id}
@@ -124,6 +128,14 @@ function TextChat({
       canSend={canWrite}
       canSendFiles={can(server, "send_files")}
       canModerate={can(server, "manage_messages")}
+      canMentionEveryone={can(server, "mention_everyone")}
+      members={members}
+      notify={{
+        scope: "channel",
+        id: channel.id,
+        name: `#${channel.name}`,
+        serverId: server.id,
+      }}
       footer={<TypingBar channelId={channel.id} members={server.members} />}
       onDraftChange={typing.onChange}
       onDraftStop={typing.stop}

@@ -15,10 +15,12 @@ pub mod limits;
 pub mod media;
 pub mod messages;
 pub mod metrics;
+pub mod notifications;
 pub mod password;
 pub mod path;
 pub mod previews;
 pub mod profile;
+pub mod push;
 pub mod servers;
 pub mod state;
 pub mod storage;
@@ -58,6 +60,8 @@ pub fn app(state: AppState) -> Router {
         .merge(media::router())
         .merge(attachments::router())
         .merge(gifs::router())
+        .merge(notifications::router())
+        .merge(push::router())
         .merge(previews::router())
         .layer(middleware::from_fn(csrf::require))
         .layer(middleware::from_fn_with_state(state.clone(), limits::gate));

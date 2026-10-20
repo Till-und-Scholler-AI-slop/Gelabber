@@ -3,6 +3,7 @@
 // so a blip is invisible and never doubles a message.
 
 import {
+  type AccountFrame,
   type ChatEvent,
   type ClientFrame,
   type ErrFrame,
@@ -93,6 +94,7 @@ export class Gateway {
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private lastServerAt = 0;
   private stopped = true;
+  private inFront = false;
   /** Bumped by `resetSession` so a frame already in hand cannot fan out. */
   private epoch = 0;
   private eventListeners = new Set<(event: ChatEvent) => void>();
@@ -103,6 +105,7 @@ export class Gateway {
   private presenceListeners = new Set<(frame: PresenceFrame) => void>();
   private resyncListeners = new Set<() => void>();
   private dmListeners = new Set<(channelId: string) => void>();
+  private accountListeners = new Set<(frame: AccountFrame) => void>();
   private typingListeners = new Set<(frame: TypingFrame) => void>();
 
   constructor(opts: GatewayOptions = {}) {
@@ -212,6 +215,13 @@ export class Gateway {
     };
   }
 
+  onAccount(listener: (frame: AccountFrame) => void): () => void {
+    this.accountListeners.add(listener);
+    return () => {
+      this.accountListeners.delete(listener);
+    };
+  }
+
   onDm(listener: (channelId: string) => void): () => void {
     this.dmListeners.add(listener);
     return () => {
@@ -279,6 +289,13 @@ export class Gateway {
 
   sendPresence(st?: "o" | "i"): void {
     this.send(st ? { op: "p", st } : { op: "p" });
+  }
+
+  /** Whether this page is in front; kept across reconnects. */
+  setInFront(on: boolean): void {
+    if (on === this.inFront) return;
+    this.inFront = on;
+    this.send({ op: "f", on });
   }
 
   sendTyping(serverId: string, channelId: string, on: boolean): void {
@@ -380,6 +397,7 @@ export class Gateway {
           ),
         );
       }
+      if (this.inFront) this.send({ op: "f", on: true });
       for (const listener of this.readyListeners) {
         listener();
       }
@@ -530,6 +548,13 @@ export class Gateway {
         for (const listener of this.dmListeners) {
           if (!alive()) return;
           listener(frame.c);
+        }
+        return;
+      case "ns":
+      case "rd":
+        for (const listener of this.accountListeners) {
+          if (!alive()) return;
+          listener(frame);
         }
         return;
       case "p":

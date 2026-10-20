@@ -33,6 +33,7 @@ import { setReplyTarget, useReplyTarget } from "../messages/replyTarget.ts";
 import { useChatDraft } from "../messages/drafts.ts";
 import {
   readBoundary,
+  useMarkManyRead,
   useMarkRead,
   useReadState,
 } from "../messages/readState.ts";
@@ -101,11 +102,28 @@ import {
 } from "./Icons.tsx";
 import { AttachmentList } from "./Attachments.tsx";
 import { OpenImage } from "./openImage.ts";
+import { MessageText } from "./MessageMentions.tsx";
+import { useMentionRenderer } from "./mentionRenderer.tsx";
+import { MentionContext, useMentions } from "./mentionContext.ts";
+import { useMentionSuggestions } from "./useMentionSuggestions.tsx";
+import {
+  fromWire,
+  namesIn,
+  mentionsMe,
+  readableMentions,
+  toWire,
+  type MentionMember,
+} from "../messages/mentions.ts";
+import { NotificationBell } from "./NotificationSettingsDialog.tsx";
+import type { NotificationTarget } from "./notificationTarget.ts";
+import { useMuteClock } from "../messages/notificationSettings.ts";
+import { isMuted } from "../messages/notifyLevel.ts";
 import "./chat.css";
 
 // Shows an answered message: in the list when it is loaded, else in its
 // context from the server.
 const JumpTo = createContext<(id: string) => void>(() => {});
+const NO_MEMBERS: readonly MentionMember[] = [];
 
 export function MessagePane({
   title,
@@ -116,7 +134,10 @@ export function MessagePane({
   canSend,
   canSendFiles = false,
   canModerate = false,
+  canMentionEveryone = false,
   mention = "#",
+  members = NO_MEMBERS,
+  notify,
   footer,
   onDraftChange,
   onDraftStop,
@@ -132,8 +153,14 @@ export function MessagePane({
   canSend: boolean;
   canSendFiles?: boolean;
   canModerate?: boolean;
+  /** Offer `@everyone` / `@here` in a server channel's suggestions. */
+  canMentionEveryone?: boolean;
   /** `#` for a server channel, `@` for a DM. */
   mention?: "#" | "@";
+  /** Who can be mentioned here: the server's members, a DM's two people. */
+  members?: readonly MentionMember[];
+  /** The bell in the header: notification settings of this conversation. */
+  notify?: NotificationTarget;
   footer?: ReactNode;
   onDraftChange?: (value: string) => void;
   onDraftStop?: () => void;
@@ -203,6 +230,34 @@ export function MessagePane({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [searchScope]);
+  // Esc marks this conversation read, Shift+Esc its whole server (#245).
+  // Only an Esc nothing else used: a dialog, a menu, the search, an edit
+  // or the mention list closing takes it first.
+  const markManyRead = useMarkManyRead();
+  const markByKey = useEffectEvent((server: boolean) => {
+    const serverId = notify?.serverId;
+    void markManyRead(
+      server && serverId ? { server: serverId } : { channel: channelId },
+    ).catch(() => {});
+  });
+  useEffect(() => {
+    if (searching) return;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        document.querySelector("dialog[open], details[open]")
+      )
+        return;
+      markByKey(event.shiftKey);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [searching]);
   // Where "Neu" goes: the read position when the channel was opened, kept
   // while reading so the divider does not jump.
   const { data: readRows } = useReadState();
@@ -283,163 +338,186 @@ export function MessagePane({
     fetchNextPage,
     query.isFetchNextPageError,
   ]);
+  const muteNow = useMuteClock();
+  const muted = isMuted(
+    readRows?.find((row) => row.channel_id === channelId),
+    muteNow,
+  );
+  const mentions = useMemo(
+    () => ({
+      members,
+      me: user?.id,
+      keywords: mention === "#" && canMentionEveryone,
+    }),
+    [members, user?.id, mention, canMentionEveryone],
+  );
 
   return (
-    <div className="lr-message-pane flex min-h-0 flex-1 flex-col">
-      <header className="lr-channel-header">
-        {title}
-        <button
-          ref={searchButton}
-          type="button"
-          onClick={() => setSearchingScope(searching ? null : searchScope)}
-          className="lr-header-search"
-          aria-expanded={searching}
-          aria-label="Nachrichten suchen"
-          title="Nachrichten suchen"
-        >
-          <SearchIcon size={16} />
-          <span>Suchen</span>
-          <kbd>Strg K</kbd>
-        </button>
-        {actions}
-      </header>
-      {notice}
-      {read.error ? (
-        <p className="lr-inline-notice" role="status">
-          <span>Lesestatus nicht gespeichert.</span>
-          <button type="button" onClick={read.retry}>
-            Erneut versuchen
+    <MentionContext.Provider value={mentions}>
+      <div className="lr-message-pane flex min-h-0 flex-1 flex-col">
+        <header className="lr-channel-header">
+          {title}
+          <button
+            ref={searchButton}
+            type="button"
+            onClick={() => setSearchingScope(searching ? null : searchScope)}
+            className="lr-header-search"
+            aria-expanded={searching}
+            aria-label="Nachrichten suchen"
+            title="Nachrichten suchen"
+          >
+            <SearchIcon size={16} />
+            <span>Suchen</span>
+            <kbd>Strg K</kbd>
           </button>
-        </p>
-      ) : null}
-      <OpenImage.Provider value={openImage}>
-        <JumpTo.Provider value={jumpTo}>
-          <div ref={panesRef} className="relative flex min-h-0 flex-1 flex-col">
+          {notify ? <NotificationBell target={notify} muted={muted} /> : null}
+          {actions}
+        </header>
+        {notice}
+        {read.error ? (
+          <p className="lr-inline-notice" role="status">
+            <span>Lesestatus nicht gespeichert.</span>
+            <button type="button" onClick={read.retry}>
+              Erneut versuchen
+            </button>
+          </p>
+        ) : null}
+        <OpenImage.Provider value={openImage}>
+          <JumpTo.Provider value={jumpTo}>
             <div
-              className={`flex min-h-0 flex-1 flex-col ${overlay ? "invisible" : ""}`}
-              inert={overlay}
-              aria-hidden={overlay || undefined}
+              ref={panesRef}
+              className="relative flex min-h-0 flex-1 flex-col"
             >
-              <MessageList
-                key={searchScope}
-                active={!overlay}
-                focusRequest={focusRequest}
-                channelId={channelId}
-                items={items}
-                onAtLatest={setAtLatest}
-                latestRequest={latestRequest}
-                meId={user?.id}
-                newAfter={newAfter ?? null}
-                canModerate={canModerate}
-                canSend={canSend}
-                hasOlder={Boolean(hasNextPage)}
-                loadingOlder={isFetchingNextPage}
-                onLoadOlder={onLoadOlder}
-                ready={!query.isPending}
-                loadError={
-                  query.error
-                    ? query.isFetchNextPageError
-                      ? "paging"
-                      : "history"
-                    : null
-                }
-                onRetry={() => {
-                  if (query.isFetchNextPageError) void fetchNextPage();
-                  else void query.refetch();
-                }}
-              />
-            </div>
-            {searching ? (
-              <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
-                <MessageSearch
-                  key={searchScope}
-                  channelId={channelId}
-                  onClose={closeSearch}
-                  renderMessage={(message) => (
-                    <MessageRow
-                      message={message}
-                      continued={false}
-                      canSend={canSend}
-                      mine={message.author.id === user?.id}
-                      canDelete={message.author.id === user?.id || canModerate}
-                      onEdit={(content) =>
-                        contextEdit.mutate({ id: message.id, content })
-                      }
-                      onDelete={async () => {
-                        if (await confirmDelete(message, user?.id))
-                          contextRemove.mutate(message.id);
-                      }}
-                    />
-                  )}
-                />
-              </div>
-            ) : null}
-            {showingContext && !searching ? (
-              <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
-                <MessageContextView
-                  key={contextTarget.id}
-                  channelId={channelId}
-                  messageId={contextTarget.id}
-                  closeLabel="Zurück zum Chat"
-                  onClose={() => setContextTarget(null)}
-                  renderMessage={(message) => (
-                    <MessageRow
-                      message={message}
-                      continued={false}
-                      canSend={canSend}
-                      mine={message.author.id === user?.id}
-                      canDelete={message.author.id === user?.id || canModerate}
-                      onEdit={(content) =>
-                        contextEdit.mutate({ id: message.id, content })
-                      }
-                      onDelete={async () => {
-                        if (await confirmDelete(message, user?.id))
-                          contextRemove.mutate(message.id);
-                      }}
-                    />
-                  )}
-                />
-              </div>
-            ) : null}
-            {!overlay && !atLatest && items.length > 0 ? (
-              <button
-                type="button"
-                onClick={() => setLatestRequest((value) => value + 1)}
-                className="lr-jump-latest"
+              <div
+                className={`flex min-h-0 flex-1 flex-col ${overlay ? "invisible" : ""}`}
+                inert={overlay}
+                aria-hidden={overlay || undefined}
               >
-                <ArrowDownIcon size={15} />
-                Zu den neuesten Nachrichten
-              </button>
-            ) : null}
-          </div>
-        </JumpTo.Provider>
-      </OpenImage.Provider>
-      {lightbox?.scope === searchScope ? (
-        <ImageLightbox
-          key={lightbox.image.id}
-          image={lightbox.image}
-          onClose={() => setLightbox(null)}
-          fallbackFocus={focusList}
+                <MessageList
+                  key={searchScope}
+                  active={!overlay}
+                  focusRequest={focusRequest}
+                  channelId={channelId}
+                  items={items}
+                  onAtLatest={setAtLatest}
+                  latestRequest={latestRequest}
+                  meId={user?.id}
+                  newAfter={newAfter ?? null}
+                  canModerate={canModerate}
+                  canSend={canSend}
+                  hasOlder={Boolean(hasNextPage)}
+                  loadingOlder={isFetchingNextPage}
+                  onLoadOlder={onLoadOlder}
+                  ready={!query.isPending}
+                  loadError={
+                    query.error
+                      ? query.isFetchNextPageError
+                        ? "paging"
+                        : "history"
+                      : null
+                  }
+                  onRetry={() => {
+                    if (query.isFetchNextPageError) void fetchNextPage();
+                    else void query.refetch();
+                  }}
+                />
+              </div>
+              {searching ? (
+                <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
+                  <MessageSearch
+                    key={searchScope}
+                    channelId={channelId}
+                    onClose={closeSearch}
+                    renderMessage={(message) => (
+                      <MessageRow
+                        message={message}
+                        continued={false}
+                        canSend={canSend}
+                        mine={message.author.id === user?.id}
+                        canDelete={
+                          message.author.id === user?.id || canModerate
+                        }
+                        onEdit={(content) =>
+                          contextEdit.mutate({ id: message.id, content })
+                        }
+                        onDelete={async () => {
+                          if (await confirmDelete(message, user?.id))
+                            contextRemove.mutate(message.id);
+                        }}
+                      />
+                    )}
+                  />
+                </div>
+              ) : null}
+              {showingContext && !searching ? (
+                <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
+                  <MessageContextView
+                    key={contextTarget.id}
+                    channelId={channelId}
+                    messageId={contextTarget.id}
+                    closeLabel="Zurück zum Chat"
+                    onClose={() => setContextTarget(null)}
+                    renderMessage={(message) => (
+                      <MessageRow
+                        message={message}
+                        continued={false}
+                        canSend={canSend}
+                        mine={message.author.id === user?.id}
+                        canDelete={
+                          message.author.id === user?.id || canModerate
+                        }
+                        onEdit={(content) =>
+                          contextEdit.mutate({ id: message.id, content })
+                        }
+                        onDelete={async () => {
+                          if (await confirmDelete(message, user?.id))
+                            contextRemove.mutate(message.id);
+                        }}
+                      />
+                    )}
+                  />
+                </div>
+              ) : null}
+              {!overlay && !atLatest && items.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setLatestRequest((value) => value + 1)}
+                  className="lr-jump-latest"
+                >
+                  <ArrowDownIcon size={15} />
+                  Zu den neuesten Nachrichten
+                </button>
+              ) : null}
+            </div>
+          </JumpTo.Provider>
+        </OpenImage.Provider>
+        {lightbox?.scope === searchScope ? (
+          <ImageLightbox
+            key={lightbox.image.id}
+            image={lightbox.image}
+            onClose={() => setLightbox(null)}
+            fallbackFocus={focusList}
+          />
+        ) : null}
+        {footer}
+        <Composer
+          key={user?.id ?? "anonymous"}
+          channelId={channelId}
+          channelName={channelName}
+          canSend={canSend}
+          canSendFiles={canSendFiles}
+          mention={mention}
+          author={
+            user
+              ? { id: user.id, name: user.name, avatar_url: user.avatar_url }
+              : null
+          }
+          attempts={channelAttempts}
+          onDraftChange={onDraftChange}
+          onDraftStop={onDraftStop}
         />
-      ) : null}
-      {footer}
-      <Composer
-        key={user?.id ?? "anonymous"}
-        channelId={channelId}
-        channelName={channelName}
-        canSend={canSend}
-        canSendFiles={canSendFiles}
-        mention={mention}
-        author={
-          user
-            ? { id: user.id, name: user.name, avatar_url: user.avatar_url }
-            : null
-        }
-        attempts={channelAttempts}
-        onDraftChange={onDraftChange}
-        onDraftStop={onDraftStop}
-      />
-    </div>
+      </div>
+    </MentionContext.Provider>
   );
 }
 
@@ -954,8 +1032,27 @@ function MessageRow({
   onDelete: () => void;
 }) {
   const pending = isPendingId(message.id);
+  const { members, me } = useMentions();
+  const mentioned = !mine && mentionsMe(message, me);
+  const renderMention = useMentionRenderer(message);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
+  const editInput = useRef<HTMLTextAreaElement>(null);
+  const editSuggestions = useMentionSuggestions(draft, (text, caret) => {
+    setDraft(text);
+    requestAnimationFrame(() =>
+      editInput.current?.setSelectionRange(caret, caret),
+    );
+  });
+  const sentNames = useMemo(
+    () => namesIn(message.content, members),
+    [message.content, members],
+  );
+  const wireDraft = toWire(
+    draft,
+    members,
+    new Map([...sentNames, ...editSuggestions.picked]),
+  );
   const editButton = useRef<HTMLButtonElement>(null);
   const restoreEditFocus = useRef(false);
   useLayoutEffect(() => {
@@ -971,12 +1068,12 @@ function MessageRow({
 
   const startEdit = () => {
     restoreEditFocus.current = false;
-    setDraft(message.content);
+    setDraft(fromWire(message.content, members));
     setEditing(true);
   };
   const cancelEdit = () => {
     finishEditing();
-    setDraft(message.content);
+    setDraft(fromWire(message.content, members));
   };
 
   const when = formatWhen(message.created_at);
@@ -984,8 +1081,8 @@ function MessageRow({
     ? draft.length === 0
       ? message.attachments.length > 0
         ? null
-        : validateContent(draft)
-      : validateContent(draft)
+        : validateContent(wireDraft)
+      : validateContent(wireDraft)
     : null;
   const showDelete = canDelete && !pending && !editing;
   const gif = asGif(message.gif);
@@ -1033,13 +1130,17 @@ function MessageRow({
         className={[
           "lr-message-row lr-message-continued group flex items-start gap-3",
           pending ? "opacity-60" : "",
+          mentioned ? "is-mentioned" : "",
         ].join(" ")}
       >
         <span className="w-8 shrink-0" aria-hidden />
         <div className="min-w-0 flex-1">
           {message.content ? (
             <div className="lr-message-text">
-              <MessageContent content={message.content} />
+              <MessageContent
+                content={message.content}
+                renderMention={renderMention}
+              />
               {message.edited_at ? (
                 <span className="lr-message-edited">(bearbeitet)</span>
               ) : null}
@@ -1069,6 +1170,7 @@ function MessageRow({
       className={[
         "lr-message-row group flex items-start gap-3",
         pending ? "opacity-60" : "",
+        mentioned ? "is-mentioned" : "",
       ].join(" ")}
     >
       <Avatar name={message.author.name} url={message.author.avatar_url} />
@@ -1086,14 +1188,21 @@ function MessageRow({
             onSubmit={(event) => {
               event.preventDefault();
               if (error) return;
-              onEdit(draft);
+              onEdit(wireDraft);
               finishEditing();
             }}
           >
+            {editSuggestions.list}
             <textarea
+              ref={editInput}
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              {...editSuggestions.fieldProps}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                editSuggestions.track(e.target);
+              }}
               onKeyDown={(event) => {
+                if (editSuggestions.onKeyDown(event)) return;
                 if (event.key === "Escape") {
                   event.preventDefault();
                   cancelEdit();
@@ -1105,7 +1214,7 @@ function MessageRow({
                 ) {
                   event.preventDefault();
                   if (!error) {
-                    onEdit(draft);
+                    onEdit(wireDraft);
                     finishEditing();
                   }
                 }
@@ -1129,7 +1238,10 @@ function MessageRow({
           </form>
         ) : message.content || !gif ? (
           <div className="lr-message-text">
-            <MessageContent content={message.content} />
+            <MessageContent
+              content={message.content}
+              renderMention={renderMention}
+            />
             {message.edited_at ? (
               <span className="lr-message-edited">(bearbeitet)</span>
             ) : null}
@@ -1252,8 +1364,18 @@ function Composer({
     };
   }, [canSend]);
   useLayoutEffect(() => draftHeight.current?.fit(), [draft, canSend]);
-  const error = draft.length === 0 ? null : validateContent(draft);
-  const remaining = CONTENT_MAX - Array.from(normalisedLength(draft)).length;
+  const { members } = useMentions();
+  const suggestions = useMentionSuggestions(draft, (text, caret) => {
+    setDraft(text);
+    onDraftChange?.(text);
+    requestAnimationFrame(() =>
+      composerInput.current?.setSelectionRange(caret, caret),
+    );
+  });
+  // The field shows `@Name`; what is sent and counted is `<@id>`.
+  const wire = toWire(draft, members, suggestions.picked);
+  const error = draft.length === 0 ? null : validateContent(wire);
+  const remaining = CONTENT_MAX - Array.from(normalisedLength(wire)).length;
   const emptyText = draft.trim().length === 0;
   const disabled =
     !canSend ||
@@ -1352,7 +1474,7 @@ function Composer({
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     if (disabled) return;
-    const text = draft;
+    const text = wire;
     send.mutate({ content: text, files, replyTo: replyTarget });
     setReplyTarget(channelId, null);
     updateDraft({ text: "", files: [] });
@@ -1384,6 +1506,7 @@ function Composer({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (suggestions.onKeyDown(event)) return;
     if (event.key === "Escape" && replyTarget) {
       event.preventDefault();
       setReplyTarget(channelId, null);
@@ -1425,7 +1548,11 @@ function Composer({
                 : "Text und Datei bleiben für dich erhalten."}
             </p>
             <p className="lr-send-failure-content">
-              {attempt.gif ? gifLabel(attempt.gif.gif) : attempt.content}
+              {attempt.gif ? (
+                gifLabel(attempt.gif.gif)
+              ) : (
+                <MessageText content={attempt.content} />
+              )}
             </p>
             {attempt.files.length > 0 ? (
               <p>{attempt.files.map((file) => file.name).join(", ")}</p>
@@ -1449,7 +1576,7 @@ function Composer({
                 <button
                   type="button"
                   onClick={() => {
-                    setDraft(attempt.content);
+                    setDraft(fromWire(attempt.content, members));
                     // Replaces what the composer holds: `files` here is
                     // still this render's list.
                     addFiles(attempt.files, []);
@@ -1523,6 +1650,7 @@ function Composer({
             })}
           </ul>
         ) : null}
+        {suggestions.list}
         <div className="lr-composer-row">
           {canSendFiles ? (
             <>
@@ -1554,11 +1682,16 @@ function Composer({
             ref={composerInput}
             id={`compose-${channelId}`}
             value={draft}
+            {...suggestions.fieldProps}
             onChange={(e) => {
               setDraft(e.target.value);
               onDraftChange?.(e.target.value);
+              suggestions.track(e.target);
             }}
-            onBlur={() => onDraftStop?.()}
+            onBlur={() => {
+              suggestions.fieldProps.onBlur();
+              onDraftStop?.();
+            }}
             onKeyDown={onKeyDown}
             onPaste={(event) => {
               if (!canSendFiles) return;
@@ -1657,6 +1790,7 @@ function Composer({
 
 function ReplyHeader({ reply }: { reply: Reply }) {
   const jumpTo = useContext(JumpTo);
+  const { members } = useMentions();
   if (reply.deleted || !reply.author)
     return (
       <p className="lr-reply-header is-deleted">
@@ -1665,7 +1799,7 @@ function ReplyHeader({ reply }: { reply: Reply }) {
       </p>
     );
   const summary =
-    reply.excerpt ||
+    (reply.excerpt && readableMentions(reply.excerpt, members)) ||
     (reply.has_gif ? "GIF" : reply.has_attachment ? "Anhang" : "");
   return (
     <button

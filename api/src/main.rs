@@ -7,6 +7,13 @@ use gelabber_api::{AppState, Config, app, telemetry};
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // `gelabber-api vapid-keys`: a key pair for Web Push (deploy/README.md).
+    if std::env::args().nth(1).as_deref() == Some("vapid-keys") {
+        let (private, public) = gelabber_api::push::webpush::Vapid::generate();
+        println!("VAPID_PRIVATE_KEY={private}");
+        println!("# public key, served at /api/push/key: {public}");
+        return ExitCode::SUCCESS;
+    }
     if let Err(err) = telemetry::init() {
         error!(error = %err, "gelabber-api failed to start");
         return ExitCode::FAILURE;

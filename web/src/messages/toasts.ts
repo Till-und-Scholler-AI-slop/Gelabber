@@ -16,6 +16,8 @@ export type MessageToast = {
   dm: boolean;
   channelLabel: string;
   author: string;
+  /** The message mentions the user. */
+  mentioned?: boolean;
   preview: string;
   count: number;
   at: number;

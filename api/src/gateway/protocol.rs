@@ -410,6 +410,10 @@ pub enum ClientFrame {
         #[serde(default)]
         on: Option<bool>,
     },
+    /// The page is in front (focused and visible) or not (#243): while one
+    /// is, no Web Push goes to the account.
+    #[serde(rename = "f")]
+    Focus { on: bool },
     /// Presence: `o` / `i`. Absent `st` means "I am active".
     #[serde(rename = "p")]
     Presence {
@@ -513,6 +517,28 @@ pub enum ServerFrame {
     /// Typing start / stop in a channel.
     #[serde(rename = "y")]
     Typing { s: Uuid, c: Uuid, u: Uuid, on: bool },
+    /// The account's notification settings changed on some device: fetch
+    /// them again. Only to that account's own sockets.
+    #[serde(rename = "ns")]
+    NotificationSettings,
+    /// Read positions moved on some device (issue #244): the account's
+    /// other sockets clear badges and notifications without asking.
+    #[serde(rename = "rd")]
+    Read { d: Vec<ReadSync> },
+}
+
+/// A conversation's new read position and what is still unread after it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReadSync {
+    pub channel_id: Uuid,
+    pub server_id: Option<Uuid>,
+    pub read_message_id: Option<Uuid>,
+    pub read_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub read_order: Option<i64>,
+    pub membership_at: chrono::DateTime<chrono::Utc>,
+    pub latest_order: Option<i64>,
+    pub unread_count: i64,
+    pub mention_count: i64,
 }
 
 impl ServerFrame {
@@ -641,6 +667,26 @@ pub enum LiveFrame {
     },
     #[serde(rename = "y")]
     Typing { s: Uuid, c: Uuid, u: Uuid, on: bool },
+}
+
+/// What goes to every socket of one account (`Gateway::publish_user`). Owned,
+/// unlike `ServerFrame`, so it comes back out of Redis.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op")]
+pub enum UserFrame {
+    #[serde(rename = "ns")]
+    NotificationSettings,
+    #[serde(rename = "rd")]
+    Read { d: Vec<ReadSync> },
+}
+
+impl From<UserFrame> for ServerFrame {
+    fn from(frame: UserFrame) -> Self {
+        match frame {
+            UserFrame::NotificationSettings => Self::NotificationSettings,
+            UserFrame::Read { d } => Self::Read { d },
+        }
+    }
 }
 
 impl From<LiveFrame> for ServerFrame {

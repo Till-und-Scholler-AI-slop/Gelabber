@@ -9,7 +9,8 @@ export type Permission =
   | "send_messages"
   | "send_files"
   | "join_voice"
-  | "go_live";
+  | "go_live"
+  | "mention_everyone";
 
 export type Role = "owner" | "member";
 

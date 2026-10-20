@@ -44,6 +44,18 @@ pub const API_RATE_LOGIN_FAILURES_PER_ACCOUNT: &str = "API_RATE_LOGIN_FAILURES_P
 pub const API_RATE_GIF_PER_MIN: &str = "API_RATE_GIF_PER_MIN";
 pub const API_RATE_GIF_MEDIA_PER_MIN: &str = "API_RATE_GIF_MEDIA_PER_MIN";
 pub const KLIPY_API_KEY: &str = "KLIPY_API_KEY";
+pub const VAPID_PRIVATE_KEY: &str = "VAPID_PRIVATE_KEY";
+pub const VAPID_SUBJECT: &str = "VAPID_SUBJECT";
+pub const PUSH_ALLOWED_HOSTS: &str = "PUSH_ALLOWED_HOSTS";
+/// The push services of Chrome/Android, Firefox, Edge/Windows and Safari.
+/// Subscriptions name the URL the server POSTs to; any other host is
+/// refused, so a client cannot point the server at an internal address.
+pub const DEFAULT_PUSH_HOSTS: &[&str] = &[
+    "fcm.googleapis.com",
+    "push.services.mozilla.com",
+    "notify.windows.com",
+    "push.apple.com",
+];
 pub const KLIPY_CONTENT_FILTER: &str = "KLIPY_CONTENT_FILTER";
 pub const API_LINK_PREVIEWS: &str = "API_LINK_PREVIEWS";
 pub const API_LINK_PREVIEW_DENY_HOSTS: &str = "API_LINK_PREVIEW_DENY_HOSTS";
@@ -118,8 +130,17 @@ pub struct Config {
     pub limits: Limits,
     /// GIF search through the API (Klipy). `None` turns GIFs off.
     pub gifs: Option<GifConfig>,
+    /// Web Push (#243). `None` without `VAPID_PRIVATE_KEY`: no push.
+    pub push: Option<PushConfig>,
     /// Link previews (#254). `None` turns them off; links still work.
     pub previews: Option<PreviewConfig>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PushConfig {
+    pub vapid: crate::push::webpush::Vapid,
+    /// Hosts (and their subdomains) a subscription may point at.
+    pub hosts: Vec<String>,
 }
 
 /// The API fetches the pages that messages link to (`previews::net`).
@@ -317,6 +338,7 @@ impl Config {
         };
         let limits = parse_limits(&get)?;
         let gifs = parse_gifs(&get)?;
+        let push = parse_push(&get)?;
         let previews = parse_previews(&get, &[&database_url, &redis_url], minio.as_ref())?;
         if cookie_secure {
             refuse_public_defaults(
@@ -350,9 +372,42 @@ impl Config {
             allow_memory_store,
             limits,
             gifs,
+            push,
             previews,
         })
     }
+}
+
+fn parse_push(get: &impl Fn(&str) -> Option<String>) -> Result<Option<PushConfig>, ConfigError> {
+    let Some(private) = get(VAPID_PRIVATE_KEY).filter(|raw| !raw.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let subject = get(VAPID_SUBJECT).unwrap_or_default();
+    let subject = subject.trim();
+    if !(subject.starts_with("mailto:") || subject.starts_with("https://")) {
+        return Err(invalid(
+            VAPID_SUBJECT,
+            subject,
+            "set a mailto: or https:// contact for the push services",
+        ));
+    }
+    let vapid = crate::push::webpush::Vapid::parse(&private, subject).ok_or_else(|| {
+        invalid(
+            VAPID_PRIVATE_KEY,
+            "<redacted>",
+            "expected a base64url P-256 private key (gelabber-api vapid-keys)",
+        )
+    })?;
+    // Empty, as Compose passes an unset variable: the default services.
+    let hosts = match get(PUSH_ALLOWED_HOSTS).filter(|raw| !raw.trim().is_empty()) {
+        Some(raw) => raw
+            .split(',')
+            .map(|host| host.trim().to_ascii_lowercase())
+            .filter(|host| !host.is_empty())
+            .collect(),
+        None => DEFAULT_PUSH_HOSTS.iter().map(|h| (*h).to_owned()).collect(),
+    };
+    Ok(Some(PushConfig { vapid, hosts }))
 }
 
 /// On unless `API_LINK_PREVIEWS=false`.
@@ -1105,5 +1160,27 @@ mod tests {
         .expect("valid config");
         assert!(!config.cookie_secure);
         assert!(config.allow_plain_http);
+    }
+
+    #[test]
+    fn empty_push_hosts_mean_the_default_services() {
+        let (private, _) = crate::push::webpush::Vapid::generate();
+        let hosts = |value: Option<&str>| {
+            let mut pairs = vec![
+                (VAPID_PRIVATE_KEY, private.as_str()),
+                (VAPID_SUBJECT, "mailto:admin@example.org"),
+            ];
+            if let Some(value) = value {
+                pairs.push((PUSH_ALLOWED_HOSTS, value));
+            }
+            parse_push(&source(&pairs)).unwrap().unwrap().hosts
+        };
+        let default: Vec<String> = DEFAULT_PUSH_HOSTS.iter().map(|h| (*h).to_owned()).collect();
+        assert_eq!(hosts(None), default);
+        assert_eq!(hosts(Some("")), default);
+        assert_eq!(
+            hosts(Some(" Push.Example ")),
+            vec!["push.example".to_owned()]
+        );
     }
 }
