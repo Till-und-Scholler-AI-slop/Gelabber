@@ -146,7 +146,7 @@ describe("session store", () => {
     expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
     expect(getCsrfToken()).toBe("c3");
 
-    expect(await verifyEmail("f".repeat(64))).toEqual(ada);
+    expect(await verifyEmail("f".repeat(64), "password123")).toEqual(ada);
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: ada,

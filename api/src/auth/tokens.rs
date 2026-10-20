@@ -98,7 +98,8 @@ pub async fn verify_email(db: &PgPool, raw: &str) -> Result<Option<Uuid>, ApiErr
              WHERE token_hash = $1 AND purpose = 'verify_email' AND expires_at > now() \
              RETURNING user_id) \
          UPDATE users u \
-         SET email_verified_at = COALESCE(u.email_verified_at, now()), updated_at = now() \
+         SET email_verified_at = COALESCE(u.email_verified_at, now()), \
+             registration_pending = false, updated_at = now() \
          FROM used WHERE u.id = used.user_id \
          RETURNING u.id",
     )
@@ -133,7 +134,8 @@ pub async fn reset_password(
     };
     sqlx::query(
         "UPDATE users SET password_hash = $2, \
-             email_verified_at = COALESCE(email_verified_at, now()), updated_at = now() \
+             email_verified_at = COALESCE(email_verified_at, now()), \
+             registration_pending = false, updated_at = now() \
          WHERE id = $1",
     )
     .bind(user_id)

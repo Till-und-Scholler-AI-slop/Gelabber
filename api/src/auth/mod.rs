@@ -132,17 +132,21 @@ impl std::fmt::Debug for PasswordBody {
     }
 }
 
-/// A mailed link's token; secret like a password.
+/// A confirmation link's token (secret like a password) and the account's
+/// password, which proves the person confirming is the one who registered.
 #[derive(Deserialize)]
-pub struct TokenBody {
+pub struct VerifyBody {
     #[serde(default)]
     pub token: String,
+    #[serde(default)]
+    pub password: String,
 }
 
-impl std::fmt::Debug for TokenBody {
+impl std::fmt::Debug for VerifyBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TokenBody")
+        f.debug_struct("VerifyBody")
             .field("token", &Redacted)
+            .field("password", &Redacted)
             .finish()
     }
 }
@@ -220,8 +224,9 @@ async fn register(
         return signed_in(&state, &headers, user, StatusCode::CREATED).await;
     };
 
-    // Every branch answers alike; only the mail differs. A known address
-    // keeps its account untouched, whoever typed it.
+    // Every branch answers alike; only the mail differs. A confirmed
+    // address keeps its account untouched, whoever typed it; a pending one
+    // now carries this registrant's credentials.
     match user::insert_unverified(&state.db, &email, &name, &hash).await? {
         Some(user_id) => {
             info!(%user_id, "user registered, awaiting confirmation");
@@ -429,14 +434,40 @@ async fn mail_status(State(state): State<AppState>) -> Json<MailStatus> {
     })
 }
 
-/// Opens a confirmation link: the address counts as confirmed and this
-/// browser is signed in, whichever device registered.
+/// Opens a confirmation link: with the account's password the address
+/// counts as confirmed and this browser is signed in, whichever device
+/// registered. The link alone is not enough: whoever registered someone
+/// else's address would otherwise share the account its owner confirms by
+/// clicking. A wrong password counts like a failed login and leaves the
+/// link usable.
 async fn verify_email(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Body(body): Body<TokenBody>,
+    Body(body): Body<VerifyBody>,
 ) -> Result<Response, ApiError> {
     transport_allowed(&state, &headers)?;
+    let user_id = tokens::peek(&state.db, &body.token, Purpose::VerifyEmail)
+        .await?
+        .ok_or(ApiError::TokenInvalid)?;
+    if body.password.is_empty() {
+        return Err(ApiError::Validation(FieldErrors::from([(
+            "password", "required",
+        )])));
+    }
+    let user = session::reload(&state.db, user_id).await?;
+    limits::login_blocked(&state, &user.email)?;
+    let stored = user::password_hash_by_id(&state.db, user_id).await?;
+    let ok = body.password.chars().count() <= validate::PASSWORD_MAX
+        && password::verify(body.password, stored).await?;
+    if !ok {
+        limits::login_failed(&state, &user.email);
+        return Err(ApiError::Validation(FieldErrors::from([(
+            "password", "wrong",
+        )])));
+    }
+
+    // Re-registering a pending address in the meantime replaced the token,
+    // so this one may be gone already.
     let user_id = tokens::verify_email(&state.db, &body.token)
         .await?
         .ok_or(ApiError::TokenInvalid)?;

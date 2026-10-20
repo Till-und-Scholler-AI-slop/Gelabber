@@ -205,9 +205,15 @@ export function register(
   return signIn("/auth/register", { email, password, name });
 }
 
-/** Opens a mailed confirmation link; this tab is signed in afterwards. */
-export async function verifyEmail(token: string): Promise<User> {
-  return (await signIn("/auth/verify-email", { token })) as User;
+/**
+ * Opens a mailed confirmation link with the account's password; this tab
+ * is signed in afterwards.
+ */
+export async function verifyEmail(
+  token: string,
+  password: string,
+): Promise<User> {
+  return (await signIn("/auth/verify-email", { token, password })) as User;
 }
 
 /**

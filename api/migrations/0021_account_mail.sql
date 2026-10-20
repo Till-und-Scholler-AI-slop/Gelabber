@@ -9,6 +9,14 @@ ALTER TABLE users ADD COLUMN email_verified_at TIMESTAMPTZ;
 -- on later: they count as confirmed since they signed up.
 UPDATE users SET email_verified_at = created_at;
 
+-- A registration made while account mail is on, not confirmed yet. Nobody
+-- has proven they own the address, so registering it again replaces name
+-- and password: whoever opens the link gets the account they typed, not a
+-- stranger's who registered the address first. Unconfirmed accounts from
+-- a time without mail stay false; they may be in use and are never
+-- overwritten.
+ALTER TABLE users ADD COLUMN registration_pending BOOLEAN NOT NULL DEFAULT false;
+
 -- Like `sessions`: the mail carries the random token, only its SHA-256 is
 -- stored. A row is deleted when its link is used, so each works once.
 CREATE TABLE account_tokens (

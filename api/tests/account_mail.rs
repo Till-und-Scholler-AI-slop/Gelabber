@@ -60,7 +60,7 @@ async fn confirmed_ada(state: &AppState, mailer: &Mailer) -> Client {
     let res = post(
         &mut client,
         "/api/auth/verify-email",
-        json!({ "token": token(sent.last().unwrap()) }),
+        json!({ "token": token(sent.last().unwrap()), "password": PASSWORD }),
     )
     .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
@@ -104,7 +104,7 @@ async fn registration_waits_for_the_confirmation_link(pool: PgPool) {
     let old = post(
         &mut client,
         "/api/auth/verify-email",
-        json!({ "token": token(&sent[0]) }),
+        json!({ "token": token(&sent[0]), "password": PASSWORD }),
     )
     .await;
     assert_eq!(old.status, StatusCode::GONE, "{}", old.body);
@@ -112,7 +112,7 @@ async fn registration_waits_for_the_confirmation_link(pool: PgPool) {
     let res = post(
         &mut client,
         "/api/auth/verify-email",
-        json!({ "token": token(&sent[1]) }),
+        json!({ "token": token(&sent[1]), "password": PASSWORD }),
     )
     .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
@@ -121,7 +121,7 @@ async fn registration_waits_for_the_confirmation_link(pool: PgPool) {
     let again = post(
         &mut client,
         "/api/auth/verify-email",
-        json!({ "token": token(&sent[1]) }),
+        json!({ "token": token(&sent[1]), "password": PASSWORD }),
     )
     .await;
     assert_eq!(again.status, StatusCode::GONE, "{}", again.body);
@@ -156,6 +156,75 @@ async fn a_known_address_gets_the_same_answer_and_keeps_its_account(pool: PgPool
     let res = stranger.login(ADA, PASSWORD).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     assert_eq!(res.body["user"]["name"], "Ada");
+}
+
+#[sqlx::test]
+async fn whoever_confirms_a_pending_address_gets_the_password_they_typed(pool: PgPool) {
+    let (state, mailer) = mail_state(pool);
+    // A stranger registers the address first; its owner ignores that mail.
+    let mut stranger = client(&state).await;
+    let res = stranger.register(ADA, "stranger password", "Mallory").await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 1).await;
+    let stranger_link = token(&sent[0]);
+
+    // Clicking the stranger's link takes the stranger's password.
+    let mut owner = client(&state).await;
+    let res = post(
+        &mut owner,
+        "/api/auth/verify-email",
+        json!({ "token": stranger_link, "password": PASSWORD }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    assert_eq!(res.body["fields"]["password"], "wrong");
+    assert!(res.set_cookie(common::SESSION).is_none());
+    let res = post(
+        &mut owner,
+        "/api/auth/verify-email",
+        json!({ "token": stranger_link }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    assert_eq!(res.body["fields"]["password"], "required");
+
+    let mut ada = client(&state).await;
+    let res = ada.register(ADA, PASSWORD, "Ada").await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 2).await;
+    assert!(
+        sent[1].body.contains("/verify-email#token="),
+        "{}",
+        sent[1].body
+    );
+
+    // The first link died with the takeover.
+    let res = post(
+        &mut ada,
+        "/api/auth/verify-email",
+        json!({ "token": stranger_link }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::GONE, "{}", res.body);
+    let res = post(
+        &mut ada,
+        "/api/auth/verify-email",
+        json!({ "token": token(&sent[1]), "password": PASSWORD }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["user"]["name"], "Ada");
+
+    let res = stranger.login(ADA, "stranger password").await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.body);
+    let res = stranger.login(ADA, PASSWORD).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    // Confirmed now: registering again changes nothing.
+    let mut late = client(&state).await;
+    late.register(ADA, "late password", "Late").await;
+    let res = late.login(ADA, "late password").await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.body);
 }
 
 #[sqlx::test]
@@ -324,16 +393,24 @@ async fn accounts_from_before_mail_must_confirm_once_mail_is_on(pool: PgPool) {
     let mut after = client(&state).await;
     let mail = after.send(Method::GET, "/api/auth/mail", None).await;
     assert_eq!(mail.body["enabled"], true);
+    // That account may be in use: registering its address again does not
+    // replace its password, it only mails its owner a confirmation link.
+    let res = after.register(ADA, "stranger password", "Mallory").await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    outbox(&mailer, 1).await;
+    let res = after.login(ADA, "stranger password").await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.body);
     let res = after.login(ADA, PASSWORD).await;
     assert_eq!(res.body["error"], "email_unverified", "{}", res.body);
-    let sent = outbox(&mailer, 1).await;
+    let sent = outbox(&mailer, 2).await;
     let res = post(
         &mut after,
         "/api/auth/verify-email",
-        json!({ "token": token(&sent[0]) }),
+        json!({ "token": token(&sent[1]), "password": PASSWORD }),
     )
     .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["user"]["name"], "Ada");
 }
 
 #[sqlx::test]

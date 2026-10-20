@@ -138,24 +138,40 @@ pub async fn insert(
 }
 
 /// Registration while account mail is on: inserts an unconfirmed account,
-/// or returns `None` when the address already has one. Nothing about the
-/// existing row changes, so a stranger cannot alter someone's account by
-/// registering their address.
+/// or takes over a pending one (`registration_pending`, migration 0021)
+/// with this registrant's name and password, dropping its earlier links.
+/// Nobody has proven they own a pending address, so the person who finally
+/// confirms it gets the credentials they typed, never a stranger's.
+/// Returns `None` when the address has a confirmed account or one from a
+/// time without mail; that row does not change.
 pub async fn insert_unverified(
     db: &PgPool,
     email: &str,
     name: &str,
     password_hash: &str,
 ) -> Result<Option<Uuid>, ApiError> {
-    Ok(sqlx::query_scalar(
-        "INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3) \
-         ON CONFLICT DO NOTHING RETURNING id",
+    let mut tx = db.begin().await?;
+    let id: Option<Uuid> = sqlx::query_scalar(
+        "INSERT INTO users (email, name, password_hash, registration_pending) \
+         VALUES ($1, $2, $3, true) \
+         ON CONFLICT ((lower(email))) DO UPDATE \
+         SET name = EXCLUDED.name, password_hash = EXCLUDED.password_hash, updated_at = now() \
+         WHERE users.registration_pending AND users.email_verified_at IS NULL \
+         RETURNING id",
     )
     .bind(email)
     .bind(name)
     .bind(password_hash)
-    .fetch_optional(db)
-    .await?)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(id) = id {
+        sqlx::query("DELETE FROM account_tokens WHERE user_id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(id)
 }
 
 /// The account behind `email` and whether its address is confirmed.
