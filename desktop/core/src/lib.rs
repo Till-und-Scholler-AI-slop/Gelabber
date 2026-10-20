@@ -650,6 +650,7 @@ impl Source {
     }
 }
 
+// A new field must also be dropped in `Producer::close_released`.
 pub struct Producer {
     ptr: NonNull<ffi::gm_producer>,
     id: String,
@@ -831,6 +832,7 @@ unsafe extern "C" fn video_sink_trampoline(user: *mut c_void, frame: *const ffi:
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sink(&frame)));
 }
 
+// A new field must also be dropped in `Consumer::close_released`.
 pub struct Consumer {
     ptr: NonNull<ffi::gm_consumer>,
     id: String,
