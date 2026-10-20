@@ -392,6 +392,70 @@ async fn in_a_server_only_mentions_push_and_settings_hold_them_back(pool: PgPool
 }
 
 #[sqlx::test]
+async fn hidden_content_pushes_only_who_wrote(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        server,
+        channel,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool).await;
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    let bob = b.user_id().to_owned();
+
+    let r = b.send(Method::GET, "/api/notification-privacy", None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body, json!({"hide_content": false}));
+    let r = b
+        .send(Method::PUT, "/api/notification-privacy", Some(json!({})))
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.body);
+    let r = b
+        .send(
+            Method::PUT,
+            "/api/notification-privacy",
+            Some(json!({"hide_content": true})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body, json!({"hide_content": true}));
+    let r = b.send(Method::GET, "/api/notification-privacy", None).await;
+    assert_eq!(r.body, json!({"hide_content": true}));
+    // Someone else's switch stays as it was.
+    let r = a.send(Method::GET, "/api/notification-privacy", None).await;
+    assert_eq!(r.body, json!({"hide_content": false}));
+
+    let message = post(&mut a, &dm, "geheim").await;
+    let payload = browser.open(&next(&mut hits).await);
+    assert_eq!(payload["title"], "Neue Nachricht von Ada");
+    assert_eq!(payload["body"], "");
+    // A tap still leads to the conversation, and the page still dedupes.
+    assert_eq!(payload["path"], format!("/d/{dm}"));
+    assert_eq!(payload["message"], message["id"]);
+
+    post(&mut a, &channel, &format!("<@{bob}> auch geheim")).await;
+    let payload = browser.open(&next(&mut hits).await);
+    assert_eq!(payload["title"], "Neue Nachricht von Ada");
+    assert_eq!(payload["body"], "");
+    assert_eq!(payload["path"], format!("/s/{server}/c/{channel}"));
+
+    b.send(
+        Method::PUT,
+        "/api/notification-privacy",
+        Some(json!({"hide_content": false})),
+    )
+    .await;
+    post(&mut a, &dm, "wieder lesbar").await;
+    let payload = browser.open(&next(&mut hits).await);
+    assert_eq!(payload["title"], "Ada");
+    assert_eq!(payload["body"], "wieder lesbar");
+}
+
+#[sqlx::test]
 async fn a_gone_subscription_is_removed_and_a_logout_ends_pushes(pool: PgPool) {
     let World {
         mut a,

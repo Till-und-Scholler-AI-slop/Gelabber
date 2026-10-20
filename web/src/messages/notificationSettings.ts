@@ -17,6 +17,7 @@ import {
   type ScopeStamp,
 } from "../auth/scope.ts";
 import { getGateway } from "../ws/client.ts";
+import { refreshNotificationPrivacy } from "./notificationPrivacy.ts";
 import { isMuted, type NotifyLevel } from "./notifyLevel.ts";
 import { refreshReadState, useReadState } from "./readState.ts";
 
@@ -103,6 +104,7 @@ async function refreshAll(client: QueryClient, stamp: ScopeStamp) {
   if (!stampHolds(stamp)) return;
   await Promise.all([
     client.invalidateQueries({ queryKey: settingsKey(stamp), exact: true }),
+    refreshNotificationPrivacy(client, stamp),
     refreshReadState(client, stamp),
   ]);
 }

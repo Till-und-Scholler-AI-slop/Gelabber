@@ -36,6 +36,12 @@ import {
 } from "./mentions.ts";
 import { wantsNotification } from "./notifyLevel.ts";
 import {
+  notificationText,
+  privacyKey,
+  useNotificationPrivacy,
+  type NotificationPrivacy,
+} from "./notificationPrivacy.ts";
+import {
   serverSetting,
   settingsKey,
   useNotificationSettings,
@@ -121,6 +127,8 @@ export function useMessageToastsBridge(): void {
   const client = useQueryClient();
   // Keeps the settings cached for a channel without an unread row yet.
   useNotificationSettings();
+  // Whether notifications show the message at all (#268).
+  useNotificationPrivacy();
   const navigate = useNavigate();
   const me = useSession((s) => s.user?.id);
   const viewingChannelId = useParams({ strict: false }).channelId;
@@ -241,8 +249,18 @@ export function useMessageToastsBridge(): void {
         const channelId = event.c;
         void showMessageNotification(
           {
-            title: `${message.author.name}${mentioned ? " hat dich erwähnt" : ""} · ${label}`,
-            body: preview,
+            // The in-app toast above stays as it is: it shows on an open
+            // page, never on a locked screen.
+            ...notificationText(
+              client.getQueryData<NotificationPrivacy>(
+                privacyKey({ userId, generation }),
+              ),
+              {
+                title: `${message.author.name}${mentioned ? " hat dich erwähnt" : ""} · ${label}`,
+                body: preview,
+                author: message.author.name,
+              },
+            ),
             channelId,
             messageId: message.id,
             createdAt: message.created_at,
