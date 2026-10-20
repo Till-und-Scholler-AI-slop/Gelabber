@@ -26,7 +26,8 @@ struct Hit {
     body: Vec<u8>,
 }
 
-/// Answers 201, 410 for an endpoint under `/gone/`, 500 under `/fail/`.
+/// Answers 201, 410 for an endpoint under `/gone/`, 500 under `/fail/`,
+/// 400 under `/bad/`, 403 under `/denied/`.
 async fn fake_service() -> (String, mpsc::UnboundedReceiver<Hit>) {
     let (tx, rx) = mpsc::unbounded_channel();
     let router = Router::new()
@@ -39,6 +40,8 @@ async fn fake_service() -> (String, mpsc::UnboundedReceiver<Hit>) {
                  body: axum::body::Bytes| async move {
                     let gone = path.starts_with("gone/");
                     let fail = path.starts_with("fail/");
+                    let bad = path.starts_with("bad/");
+                    let denied = path.starts_with("denied/");
                     let _ = tx.send(Hit {
                         path,
                         headers,
@@ -46,6 +49,10 @@ async fn fake_service() -> (String, mpsc::UnboundedReceiver<Hit>) {
                     });
                     if gone {
                         StatusCode::GONE
+                    } else if bad {
+                        StatusCode::BAD_REQUEST
+                    } else if denied {
+                        StatusCode::FORBIDDEN
                     } else if fail {
                         StatusCode::INTERNAL_SERVER_ERROR
                     } else {
@@ -486,6 +493,41 @@ async fn a_long_failing_subscription_is_removed(pool: PgPool) {
     }
     assert_eq!(left.len(), 1);
     assert!(left[0].ends_with("/fail/new"), "{left:?}");
+}
+
+/// A service that refuses a subscription (400, 403 after a key change)
+/// will not take it later either: it goes on the first refusal, while a
+/// recent one that only failed stays.
+#[sqlx::test]
+async fn a_refused_subscription_is_removed_at_once(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool.clone()).await;
+    subscribe(&mut b, &Browser::new(&service, "bad/1")).await;
+    subscribe(&mut b, &Browser::new(&service, "denied/1")).await;
+    subscribe(&mut b, &Browser::new(&service, "fail/1")).await;
+    post(&mut a, &dm, "eins").await;
+    for _ in 0..3 {
+        next(&mut hits).await;
+    }
+    let mut left = Vec::new();
+    for _ in 0..50 {
+        left = sqlx::query_scalar::<_, String>("SELECT endpoint FROM push_subscriptions")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        if left.len() == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(left.len(), 1, "{left:?}");
+    assert!(left[0].ends_with("/fail/1"), "{left:?}");
 }
 
 type Ws =
