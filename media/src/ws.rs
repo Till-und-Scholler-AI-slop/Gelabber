@@ -1,4 +1,7 @@
 //! Gelabber's authenticated v4 mediasoup control WebSocket.
+//! A socket without a joined room lives at most `MEDIA_JOIN_DEADLINE_MS`.
+//! There is no Origin check on purpose: the socket is authenticated by the
+//! single-use ticket in its first frame, not by a cookie.
 use axum::Router;
 use axum::extract::State;
 use axum::extract::ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
@@ -97,9 +100,18 @@ async fn run(socket: WebSocket, state: AppState) {
     let mut retirement = tokio::time::interval(Duration::from_millis(250));
     retirement.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut writer_finished = false;
+    // A socket without a joined room closes at this deadline; Pings and bad
+    // frames do not extend it. A join in progress is never cut off, because
+    // it runs inside the stream branch below.
+    let join_deadline = tokio::time::sleep(state.join_deadline);
+    tokio::pin!(join_deadline);
     loop {
         tokio::select! {
             _ = &mut writer => { writer_finished = true; break; }
+            _ = &mut join_deadline, if joined.is_none() => {
+                debug!("media socket closed: no join before deadline");
+                break;
+            }
             _ = retirement.tick(), if joined.is_some() => {
                 let (peer, channel) = joined.unwrap();
                 if !state.sfu.peer_present(peer, channel).await { break; }
@@ -107,11 +119,16 @@ async fn run(socket: WebSocket, state: AppState) {
             incoming = stream.next() => {
                 let message = match incoming {
                     Some(Ok(Message::Text(text))) => {
+                        let was_joined = joined.is_some();
                         let response = match parse_frame(&text) {
                             Ok(frame) => handle(&state, frame, &tx, &mut joined, &mut last_id).await,
                             Err(error) => error.into_frame(),
                         };
                         identity.send_replace(joined);
+                        if was_joined && joined.is_none() {
+                            // After a leave the socket gets a fresh deadline to rejoin.
+                            join_deadline.as_mut().reset(tokio::time::Instant::now() + state.join_deadline);
+                        }
                         let close = terminal(&response);
                         if close { leave_joined(&state, &mut joined).await; }
                         let Ok(text) = response.to_json() else { break; };

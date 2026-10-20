@@ -114,6 +114,12 @@ For a digest rollout use the same `--env-file` / `-f` arguments as the rollout. 
 - A second coturn: `COMPOSE_PROFILES=bundled-coturn` plus a free `TURN_PORT` (for example 3479) and relays (`TURN_RELAY_MIN` / `TURN_RELAY_MAX`). `TURN_URLS` goes on the API ticket; the SFU does not read it.
 - Without the overlay: only `TURN_PORT=3479` in `.env` (and free relays).
 
+## Media signaling
+
+The SFU's control WebSocket (`/media/ws`) closes a socket that has not joined a voice channel within `MEDIA_JOIN_DEADLINE_MS` (default 10000 ms), counted from the upgrade and again from a leave. Pings and invalid frames do not extend it. The web client sends its join right after the socket opens, so Compose leaves the key at its default; to change it, add it to the `media` service's `environment` in a Compose override.
+
+Media expects to run behind the reverse proxy. Its HTTP server has no read timeout for the request and header phase, so a client that connects to `media:8081` directly and never finishes its request keeps the connection open. Caddy connects upstream only once it has the full request headers, so this matters only when port 8081 is reachable from outside: keep `GELABBER_MEDIA_BIND` (homelab overlay) on loopback.
+
 ## Behind TLS
 
 - `API_COOKIE_SECURE=true`. The API then accepts the WebSocket (`/ws`) only from `https://` pages; `http://` stays allowed for `localhost` only.
