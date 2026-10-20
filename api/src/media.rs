@@ -255,18 +255,24 @@ async fn maintain_session(state: &AppState, session: &CurrentSession) -> Result<
     let Some(generation) = state.gateway.track_media_session(&key).await else {
         return Ok(());
     };
+    // The gateway's cached connection, not a new one per call. Every call
+    // below is safe to retry: SET PX and the refresh are idempotent, and
+    // the cleanup is a compare-and-delete.
     let registered = tokio::time::timeout(Duration::from_secs(1), async {
-        let mut conn = state
-            .redis
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|err| ApiError::Internal(format!("redis: {err}")))?;
-        redis::cmd("SET")
-            .arg(owner_key(&key))
-            .arg(generation.to_string())
-            .arg("PX")
-            .arg(5000)
-            .query_async::<()>(&mut conn)
+        state
+            .gateway
+            .with_redis(|mut conn| {
+                let (owner, generation) = (owner_key(&key), generation.to_string());
+                async move {
+                    redis::cmd("SET")
+                        .arg(owner)
+                        .arg(generation)
+                        .arg("PX")
+                        .arg(5000)
+                        .query_async::<()>(&mut conn)
+                        .await
+                }
+            })
             .await
             .map_err(|err| ApiError::Internal(format!("redis: {err}")))
     })
@@ -284,19 +290,26 @@ async fn maintain_session(state: &AppState, session: &CurrentSession) -> Result<
                 let Some(_guard) = session.lock_live(&state.db).await? else {
                     return Ok::<String, ApiError>("expired".into());
                 };
-                let mut conn = state
-                    .redis
-                    .get_multiplexed_async_connection()
-                    .await
-                    .map_err(|err| ApiError::Internal(format!("redis: {err}")))?;
-                redis::Script::new(REFRESH_SESSION_LUA)
-                    .key(session_key(&key))
-                    .key(demand_key(&key))
-                    .key(owner_key(&key))
-                    .arg(session.user.id.to_string())
-                    .arg(session.expires_at.timestamp())
-                    .arg(generation.to_string())
-                    .invoke_async::<String>(&mut conn)
+                state
+                    .gateway
+                    .with_redis(|mut conn| {
+                        let (lease, demand, owner) =
+                            (session_key(&key), demand_key(&key), owner_key(&key));
+                        let (user, expires_at) =
+                            (session.user.id.to_string(), session.expires_at.timestamp());
+                        let generation = generation.to_string();
+                        async move {
+                            redis::Script::new(REFRESH_SESSION_LUA)
+                                .key(lease)
+                                .key(demand)
+                                .key(owner)
+                                .arg(user)
+                                .arg(expires_at)
+                                .arg(generation)
+                                .invoke_async::<String>(&mut conn)
+                                .await
+                        }
+                    })
                     .await
                     .map_err(|err| ApiError::Internal(format!("redis: {err}")))
             })
@@ -312,15 +325,21 @@ async fn maintain_session(state: &AppState, session: &CurrentSession) -> Result<
         state.gateway.untrack_media_session(&key, generation).await;
         // A delayed worker/retry may only delete authority it still owns.
         for _ in 0..4 {
-            let result = tokio::time::timeout(Duration::from_millis(500), async {
-                let mut conn = state.redis.get_multiplexed_async_connection().await?;
-                redis::Script::new(CLEANUP_OWNER_LUA)
-                    .key(session_key(&key))
-                    .key(owner_key(&key))
-                    .arg(generation.to_string())
-                    .invoke_async::<i32>(&mut conn)
-                    .await
-            })
+            let result = tokio::time::timeout(
+                Duration::from_millis(500),
+                state.gateway.with_redis(|mut conn| {
+                    let (lease, owner) = (session_key(&key), owner_key(&key));
+                    let generation = generation.to_string();
+                    async move {
+                        redis::Script::new(CLEANUP_OWNER_LUA)
+                            .key(lease)
+                            .key(owner)
+                            .arg(generation)
+                            .invoke_async::<i32>(&mut conn)
+                            .await
+                    }
+                }),
+            )
             .await;
             if matches!(result, Ok(Ok(_))) {
                 break;

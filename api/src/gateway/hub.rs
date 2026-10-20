@@ -1205,6 +1205,17 @@ impl Gateway {
         self.connections.with_conn(op).await
     }
 
+    /// The cached command connection for callers outside the gateway (the
+    /// media session lease worker). It reconnects and retries `op` once on
+    /// an I/O error, so `op` must be safe to repeat.
+    pub async fn with_redis<T, F, Fut>(&self, op: F) -> Result<T, redis::RedisError>
+    where
+        F: FnMut(redis::aio::MultiplexedConnection) -> Fut,
+        Fut: std::future::Future<Output = Result<T, redis::RedisError>>,
+    {
+        self.connections.with_conn(op).await
+    }
+
     /// Assign seq, append the replay buffer, PUBLISH — one Lua turn so a
     /// concurrent writer cannot `PUBLISH` 2 before 1.
     pub async fn publish(&self, draft: EventDraft) -> Result<Event, ApiError> {
