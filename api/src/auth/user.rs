@@ -106,6 +106,8 @@ pub async fn card_visible(db: &PgPool, viewer: Uuid, target: Uuid) -> Result<boo
 pub struct Credentials {
     pub id: Uuid,
     pub password_hash: String,
+    /// The owner opened a confirmation or reset link (migration 0021).
+    pub email_verified: bool,
 }
 
 /// Inserts a new account. `email` must already be normalised (trimmed,
@@ -135,16 +137,48 @@ pub async fn insert(
     })
 }
 
-pub async fn credentials_by_email(
+/// Registration while account mail is on: inserts an unconfirmed account,
+/// or returns `None` when the address already has one. Nothing about the
+/// existing row changes, so a stranger cannot alter someone's account by
+/// registering their address.
+pub async fn insert_unverified(
     db: &PgPool,
     email: &str,
-) -> Result<Option<Credentials>, ApiError> {
+    name: &str,
+    password_hash: &str,
+) -> Result<Option<Uuid>, ApiError> {
+    Ok(sqlx::query_scalar(
+        "INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3) \
+         ON CONFLICT DO NOTHING RETURNING id",
+    )
+    .bind(email)
+    .bind(name)
+    .bind(password_hash)
+    .fetch_optional(db)
+    .await?)
+}
+
+/// The account behind `email` and whether its address is confirmed.
+pub async fn verified_by_email(db: &PgPool, email: &str) -> Result<Option<(Uuid, bool)>, ApiError> {
     Ok(
-        sqlx::query_as::<_, Credentials>("SELECT id, password_hash FROM users WHERE email = $1")
+        sqlx::query_as("SELECT id, email_verified_at IS NOT NULL FROM users WHERE email = $1")
             .bind(email)
             .fetch_optional(db)
             .await?,
     )
+}
+
+pub async fn credentials_by_email(
+    db: &PgPool,
+    email: &str,
+) -> Result<Option<Credentials>, ApiError> {
+    Ok(sqlx::query_as::<_, Credentials>(
+        "SELECT id, password_hash, email_verified_at IS NOT NULL AS email_verified \
+             FROM users WHERE email = $1",
+    )
+    .bind(email)
+    .fetch_optional(db)
+    .await?)
 }
 
 pub async fn password_hash_by_id(db: &PgPool, id: Uuid) -> Result<Option<String>, ApiError> {
@@ -157,8 +191,9 @@ pub async fn password_hash_by_id(db: &PgPool, id: Uuid) -> Result<Option<String>
 }
 
 /// Replaces the hash and drops every session of the account in the same
-/// transaction, so no cookie issued under the old password outlives it.
-/// Returns the removed session hashes for the live-connection cleanup.
+/// transaction, so no cookie issued under the old password outlives it, nor
+/// a mailed reset link. Returns the removed session hashes for the
+/// live-connection cleanup.
 pub async fn set_password_hash(
     db: &PgPool,
     id: Uuid,
@@ -168,6 +203,10 @@ pub async fn set_password_hash(
     sqlx::query("UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1")
         .bind(id)
         .bind(password_hash)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM account_tokens WHERE user_id = $1 AND purpose = 'reset_password'")
+        .bind(id)
         .execute(&mut *tx)
         .await?;
     let revoked =

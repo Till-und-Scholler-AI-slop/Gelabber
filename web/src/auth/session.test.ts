@@ -9,12 +9,15 @@ import {
   logout,
   logoutEverywhere,
   register,
+  requestPasswordReset,
+  resetPassword,
   resetSessionForTests,
   updateProfile,
   uploadAvatar,
   useProfileWrites,
   useSession,
   useSessionProblems,
+  verifyEmail,
 } from "./session.ts";
 import type { User } from "./types.ts";
 
@@ -125,6 +128,48 @@ describe("session store", () => {
     });
     await register("ada@example.com", "password123", "Ada");
     expect(useSession.getState().status).toBe("authenticated");
+  });
+
+  it("register with account mail stays signed out until the link is opened", async () => {
+    fakeApi({
+      "GET /api/auth/session": () =>
+        json(200, { user: null, csrf_token: "c0" }),
+      "POST /api/auth/register": () =>
+        json(202, { user: null, csrf_token: "c3", verification_sent: true }),
+      "POST /api/auth/verify-email": () =>
+        json(200, { user: ada, csrf_token: "c4" }),
+    });
+    await ensureSession();
+
+    const user = await register("ada@example.com", "password123", "Ada");
+    expect(user).toBeNull();
+    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    expect(getCsrfToken()).toBe("c3");
+
+    expect(await verifyEmail("f".repeat(64))).toEqual(ada);
+    expect(useSession.getState()).toEqual({
+      status: "authenticated",
+      user: ada,
+    });
+    expect(getCsrfToken()).toBe("c4");
+  });
+
+  it("a reset link signs in; asking for one changes nothing", async () => {
+    const calls = fakeApi({
+      "GET /api/auth/session": () =>
+        json(200, { user: null, csrf_token: "c0" }),
+      "POST /api/auth/password-reset": () => json(202, {}),
+      "POST /api/auth/password-reset/confirm": () =>
+        json(200, { user: ada, csrf_token: "c5" }),
+    });
+    await ensureSession();
+
+    await requestPasswordReset("ada@example.com");
+    expect(useSession.getState().status).toBe("anonymous");
+
+    expect(await resetPassword("f".repeat(64), "password123")).toEqual(ada);
+    expect(useSession.getState().status).toBe("authenticated");
+    expect(calls).toContain("POST /api/auth/password-reset/confirm");
   });
 
   it("logout is optimistic: the tab is out before the server answers", async () => {
