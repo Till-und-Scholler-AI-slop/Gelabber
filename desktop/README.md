@@ -24,7 +24,7 @@ and watching. What users get to read ships from `app/package/`.
 | `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.29 with the server's router codecs; on Windows also application sound through process loopback |
 | `core/tests/source_preview.rs` | Video sinks for views in the app: a local source without a producer, scaling and rate limits, sinks going away mid-frame |
 | `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode, and the screen as the web client shares it: VP8 in two simulcast layers (`GELABBER_TEST_SCREEN=1`); on Windows the primary monitor through Windows.Graphics.Capture as VP8 in two layers (`GELABBER_TEST_SCREEN_MONITOR=1`) |
-| `app/` | Tauri 2 app `gelabber-desktop`: window on the server origin, bundled setup page, media commands (`src/media.rs`), updates of the Windows app (`src/update.rs`, `updater.pub`) |
+| `app/` | Tauri 2 app `gelabber-desktop`: window on the server origin, bundled setup page, media commands (`src/media.rs`), global push-to-talk (`src/ptt.rs`: low-level hook on Windows, GlobalShortcuts portal on Linux), updates of the Windows app (`src/update.rs`, `updater.pub`) |
 | `app/scripts/smoke.sh` | Starts the app on a stand-in origin under Xvfb and checks which commands the page reaches and that the frames of a test-pattern view arrive; then kills the page's web process and checks that the app loads the page again |
 | `app/scripts/smoke.ps1` | The same on Windows, against a built or installed `gelabber-desktop.exe` |
 | `app/tauri.bundle.windows.json` | What the Windows installer (NSIS) holds: the app, `gelabber_media.dll` from `app/bundle-input/`, README and third-party notices |
