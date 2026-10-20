@@ -281,12 +281,12 @@ async fn deliver(
             .fetch_all(&state.db)
             .await?;
             if members.len() > MAX_RECIPIENTS {
-                message.mentions.clone()
+                named(state, message, server).await?
             } else {
                 members
             }
         }
-        Some(_) => message.mentions.clone(),
+        Some(server) => named(state, message, server).await?,
     };
     if recipients.is_empty() {
         return Ok(());
@@ -357,13 +357,30 @@ async fn deliver(
     let mut sent = Vec::new();
     let mut gone = Vec::new();
     // A subscription that has not taken a push for 30 days goes on its next
-    // failure (a 403 after a key rotation, a 413, a service that is gone).
+    // failure (a 413, a 429, a service that is gone).
     let mut failed = Vec::new();
+    let mut refused = Vec::new();
     for (outcome, endpoint) in results {
         match outcome {
             Outcome::Sent => sent.push(endpoint),
             Outcome::Gone => gone.push(endpoint),
+            Outcome::Refused => refused.push(endpoint),
             Outcome::Failed => failed.push(endpoint),
+        }
+    }
+    // A refusal is the subscription's fault only where the same service took
+    // another push of this message. Refused across the board, it is ours (a
+    // VAPID token the service rejects, a clock off, a bad header), and
+    // deleting would silence every phone until its app is opened again.
+    let accepting: Vec<String> = sent.iter().filter_map(|e| push.audience(e)).collect();
+    for endpoint in refused {
+        if push
+            .audience(&endpoint)
+            .is_some_and(|origin| accepting.contains(&origin))
+        {
+            gone.push(endpoint);
+        } else {
+            failed.push(endpoint);
         }
     }
     if !sent.is_empty() {
@@ -374,7 +391,10 @@ async fn deliver(
                 .await;
     }
     if !gone.is_empty() {
-        info!(count = gone.len(), "push subscriptions expired, removed");
+        info!(
+            count = gone.len(),
+            "push subscriptions expired or refused, removed"
+        );
         let _ = sqlx::query("DELETE FROM push_subscriptions WHERE endpoint=ANY($1)")
             .bind(&gone)
             .execute(&state.db)
@@ -392,6 +412,24 @@ async fn deliver(
     let sent = sent.len();
     debug!(message_id = %message.id, sent, "push delivered");
     Ok(())
+}
+
+/// The users the message names who are still in the server: the names
+/// were resolved before the message was stored, and someone removed since
+/// gets no preview.
+async fn named(state: &AppState, message: &Message, server: Uuid) -> Result<Vec<Uuid>, ApiError> {
+    if message.mentions.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_scalar(
+        "SELECT user_id FROM server_members WHERE server_id=$1 AND user_id=ANY($2)
+         AND user_id<>$3",
+    )
+    .bind(server)
+    .bind(&message.mentions)
+    .bind(message.author.id)
+    .fetch_all(&state.db)
+    .await?)
 }
 
 /// Whether this server's `@everyone` may still page its members by push.
@@ -415,6 +453,11 @@ enum Outcome {
     Sent,
     /// 404/410: the browser dropped the subscription.
     Gone,
+    /// 400/403: the service will not take it, e.g. one subscribed under an
+    /// old VAPID key. With up to 20 per account and 500 recipients a
+    /// message, such rows are not kept for a month of retries; a browser
+    /// still subscribed sends it again on its next start (`syncPush`).
+    Refused,
     Failed,
 }
 
@@ -446,6 +489,13 @@ async fn send(push: &Push, target: &Target, payload: &[u8], urgency: &str) -> Ou
     match response {
         Ok(response) if response.status().is_success() => Outcome::Sent,
         Ok(response) if matches!(response.status().as_u16(), 404 | 410) => Outcome::Gone,
+        Ok(response) if matches!(response.status().as_u16(), 400 | 403) => {
+            debug!(
+                status = response.status().as_u16(),
+                "push service refused the subscription"
+            );
+            Outcome::Refused
+        }
         Ok(response) => {
             warn!(status = response.status().as_u16(), "push service refused");
             Outcome::Failed

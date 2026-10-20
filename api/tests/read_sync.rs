@@ -233,3 +233,62 @@ async fn a_channel_without_a_message_id_is_read_to_its_newest(pool: PgPool) {
     assert_eq!(r.body["read_message_id"], newest["id"]);
     assert_eq!(r.body["unread_count"], 0);
 }
+
+/// Everything read holds no server row, so a channel deleted while its
+/// upsert runs fails the foreign key. The request tries again and succeeds
+/// without the deleted channel instead of answering 500.
+#[sqlx::test]
+async fn read_all_survives_a_channel_deleted_meanwhile(pool: PgPool) {
+    let mut a = user(&pool, "a@test.example", "Ada").await;
+    let mut b = user(&pool, "b@test.example", "Bob").await;
+    let (sid, general) = server(&mut a, &mut b, "Eins").await;
+    let doomed = channel(&mut a, &sid, "weg").await;
+    post(&mut a, &general, "hallo").await;
+    post(&mut a, &doomed, "gleich weg").await;
+
+    // The delete has run but not committed: the read-all still sees the
+    // channel and waits on its row in the foreign key check.
+    let mut delete = pool.begin().await.unwrap();
+    sqlx::query("DELETE FROM channels WHERE id=$1::uuid")
+        .bind(&doomed)
+        .execute(&mut *delete)
+        .await
+        .unwrap();
+    let reading = tokio::spawn(async move {
+        let r = b
+            .send(Method::PUT, "/api/messages/read-all", Some(json!({})))
+            .await;
+        (b, r)
+    });
+    until_a_session_waits_for_a_lock(&pool).await;
+    delete.commit().await.unwrap();
+    let (mut b, r) = reading.await.unwrap();
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let moved: Vec<&str> = r
+        .body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["channel_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(moved, [general.as_str()]);
+    assert_eq!(count(&unread(&mut b).await, &general), 0);
+}
+
+/// Waits until some other session of this test database blocks on a lock.
+async fn until_a_session_waits_for_a_lock(pool: &PgPool) {
+    for _ in 0..200 {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity \
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if waiting > 0 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("the read-all never waited for the channel row");
+}
