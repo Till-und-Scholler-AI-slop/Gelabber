@@ -1,0 +1,33 @@
+# Every action the workflows run is pinned to a commit SHA (#299). On its
+# own: ci.yml does not run for changes to the other workflows.
+name: Workflow pins
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/**
+      - .github/dependabot.yml
+      - deploy/compose/tests/test_workflow_pins.py
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/**
+      - .github/dependabot.yml
+      - deploy/compose/tests/test_workflow_pins.py
+
+permissions:
+  contents: read
+
+jobs:
+  pins:
+    name: Actions pinned to commit SHAs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the pins
+        run: python3 -m unittest discover -s deploy/compose/tests -p test_workflow_pins.py -v
