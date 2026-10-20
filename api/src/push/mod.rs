@@ -359,11 +359,28 @@ async fn deliver(
     // A subscription that has not taken a push for 30 days goes on its next
     // failure (a 413, a 429, a service that is gone).
     let mut failed = Vec::new();
+    let mut refused = Vec::new();
     for (outcome, endpoint) in results {
         match outcome {
             Outcome::Sent => sent.push(endpoint),
             Outcome::Gone => gone.push(endpoint),
+            Outcome::Refused => refused.push(endpoint),
             Outcome::Failed => failed.push(endpoint),
+        }
+    }
+    // A refusal is the subscription's fault only where the same service took
+    // another push of this message. Refused across the board, it is ours (a
+    // VAPID token the service rejects, a clock off, a bad header), and
+    // deleting would silence every phone until its app is opened again.
+    let accepting: Vec<String> = sent.iter().filter_map(|e| push.audience(e)).collect();
+    for endpoint in refused {
+        if push
+            .audience(&endpoint)
+            .is_some_and(|origin| accepting.contains(&origin))
+        {
+            gone.push(endpoint);
+        } else {
+            failed.push(endpoint);
         }
     }
     if !sent.is_empty() {
@@ -434,12 +451,13 @@ fn everyone_may_push(state: &AppState, server: Uuid) -> bool {
 
 enum Outcome {
     Sent,
-    /// 404/410: the browser dropped the subscription. 400/403: the service
-    /// will not take it, e.g. after a VAPID key change; with up to 20 per
-    /// account and 500 recipients a message, such rows are not kept for a
-    /// month of retries. A browser still subscribed sends it again on its
-    /// next start (`syncPush`).
+    /// 404/410: the browser dropped the subscription.
     Gone,
+    /// 400/403: the service will not take it, e.g. one subscribed under an
+    /// old VAPID key. With up to 20 per account and 500 recipients a
+    /// message, such rows are not kept for a month of retries; a browser
+    /// still subscribed sends it again on its next start (`syncPush`).
+    Refused,
     Failed,
 }
 
@@ -476,7 +494,7 @@ async fn send(push: &Push, target: &Target, payload: &[u8], urgency: &str) -> Ou
                 status = response.status().as_u16(),
                 "push service refused the subscription"
             );
-            Outcome::Gone
+            Outcome::Refused
         }
         Ok(response) => {
             warn!(status = response.status().as_u16(), "push service refused");
