@@ -94,6 +94,7 @@ export class Gateway {
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private lastServerAt = 0;
   private stopped = true;
+  private inFront = false;
   /** Bumped by `resetSession` so a frame already in hand cannot fan out. */
   private epoch = 0;
   private eventListeners = new Set<(event: ChatEvent) => void>();
@@ -290,6 +291,13 @@ export class Gateway {
     this.send(st ? { op: "p", st } : { op: "p" });
   }
 
+  /** Whether this page is in front; kept across reconnects. */
+  setInFront(on: boolean): void {
+    if (on === this.inFront) return;
+    this.inFront = on;
+    this.send({ op: "f", on });
+  }
+
   sendTyping(serverId: string, channelId: string, on: boolean): void {
     this.send({ op: "y", s: serverId, c: channelId, on });
   }
@@ -389,6 +397,7 @@ export class Gateway {
           ),
         );
       }
+      if (this.inFront) this.send({ op: "f", on: true });
       for (const listener of this.readyListeners) {
         listener();
       }

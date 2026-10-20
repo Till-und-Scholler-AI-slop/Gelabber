@@ -62,7 +62,8 @@ self.addEventListener("fetch", (event) => {
 
 // Message notifications are shown through this worker's registration
 // (src/pwa/notifications.ts), because phones do not let a page create one
-// itself. Nothing arrives here while the app is closed: there is no push.
+// itself. While the app is closed, direct messages and mentions arrive here
+// as Web Push (src/pwa/push.ts, api/src/push).
 function notificationTarget(data) {
   try {
     const url = new URL(data.path, self.location.origin);
@@ -105,4 +106,84 @@ self.addEventListener("notificationclick", (event) => {
         await open.focus().catch(() => {});
       }),
   );
+});
+
+// The same order as `chronological` in src/messages/pages.ts, enough for two
+// RFC 3339 times of the server: the time, then the id.
+function notOlder(shown, message, at) {
+  if (shown.message === message) return true;
+  if (typeof shown.at !== "string") return false;
+  const a = Date.parse(shown.at);
+  const b = Date.parse(at);
+  if (a !== b) return a > b;
+  return shown.at === at ? shown.message > message : shown.at > at;
+}
+
+// The lock the windows take while they show or close the account's
+// notifications (`alone` in src/pwa/notifications.ts).
+function alone(user, change) {
+  const locks = self.navigator && self.navigator.locks;
+  if (!locks) return change();
+  return locks
+    .request(`gelabber:notifications:${user}`, change)
+    .catch(() => change());
+}
+
+// Every push shows a notification: a browser takes one that shows nothing as
+// a silent push and may end the subscription (`userVisibleOnly`). That holds
+// with a window open too, since the server pushes only when no window is in
+// use. A window may announce the same message; the tag and the lock keep it
+// to one.
+async function showPushed(data) {
+  const tag = `gelabber:${data.user}:${data.channel}`;
+  await alone(data.user, async () => {
+    const shown = await self.registration.getNotifications({ tag });
+    // A window may have shown it already, or a newer one: show that again,
+    // quietly, in its place.
+    const current = shown.find(
+      (n) => n.data && notOlder(n.data, data.message, data.at),
+    );
+    if (current) {
+      await self.registration.showNotification(current.title, {
+        body: current.body,
+        tag,
+        silent: true,
+        icon: "/icons/icon-192.png",
+        data: current.data,
+      });
+      return;
+    }
+    await self.registration.showNotification(data.title, {
+      body: data.body,
+      tag,
+      renotify: true,
+      icon: "/icons/icon-192.png",
+      data: {
+        path: data.path,
+        user: data.user,
+        message: data.message,
+        at: data.at,
+      },
+    });
+  });
+}
+
+self.addEventListener("push", (event) => {
+  let data = null;
+  try {
+    data = event.data ? event.data.json() : null;
+  } catch {
+    // Not from Gelabber's server.
+  }
+  if (
+    !data ||
+    typeof data.title !== "string" ||
+    typeof data.body !== "string" ||
+    typeof data.user !== "string" ||
+    typeof data.channel !== "string" ||
+    typeof data.message !== "string" ||
+    typeof data.at !== "string"
+  )
+    return;
+  event.waitUntil(showPushed(data));
 });

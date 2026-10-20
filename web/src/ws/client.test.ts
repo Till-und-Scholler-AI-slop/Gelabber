@@ -46,6 +46,41 @@ describe("gateway client", () => {
     vi.useRealTimers();
   });
 
+  it("reports the page in front once, and again after a reconnect", async () => {
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 10,
+      maxRetryMs: 10,
+      heartbeatMs: 10_000,
+      deadMs: 20_000,
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    gateway.start();
+    sockets[0]?.emit("open");
+    gateway.setInFront(true);
+    gateway.setInFront(true);
+    const focus = (socket?: FakeSocket) =>
+      socket?.sent.filter((frame) => frame.startsWith('{"op":"f"'));
+    expect(focus(sockets[0])).toEqual(['{"op":"f","on":true}']);
+    sockets[0]?.emit("close");
+    await vi.waitFor(() => {
+      expect(sockets.length).toBe(2);
+    });
+    sockets[1]?.emit("open");
+    expect(focus(sockets[1])).toEqual(['{"op":"f","on":true}']);
+    gateway.setInFront(false);
+    expect(focus(sockets[1])).toEqual([
+      '{"op":"f","on":true}',
+      '{"op":"f","on":false}',
+    ]);
+    gateway.stop();
+  });
+
   it("resubscribes with last seq after a drop and ignores duplicate events", async () => {
     const sockets: FakeSocket[] = [];
     const gateway = new Gateway({

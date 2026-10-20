@@ -58,6 +58,8 @@ pub struct AppState {
     pub metrics: Arc<HttpMetrics>,
     /// Klipy relay; `None` when `KLIPY_API_KEY` is unset.
     pub gifs: Option<Gifs>,
+    /// Web Push sender (#243); `None` without `VAPID_PRIVATE_KEY`.
+    pub push: Option<crate::push::Push>,
     /// Link previews; `None` when `API_LINK_PREVIEWS=false`.
     pub previews: Option<LinkPreviews>,
 }
@@ -115,6 +117,12 @@ impl AppState {
             .map(|gifs| Gifs::new(gifs, metrics.clone()))
             .transpose()
             .map_err(|err| StateError::Http(err.to_string()))?;
+        let push = config
+            .push
+            .as_ref()
+            .map(crate::push::Push::new)
+            .transpose()
+            .map_err(StateError::Http)?;
         let gateway = Gateway::new(
             redis.clone(),
             config.ws_replay,
@@ -148,6 +156,7 @@ impl AppState {
             limiter: Arc::new(Limiter::new()),
             metrics,
             gifs,
+            push,
             previews: config.previews.as_ref().map(LinkPreviews::new),
         })
     }
