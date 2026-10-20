@@ -151,13 +151,42 @@ namespace
 		const auto in      = Sine(0.3, 440.0, kRate);
 		const auto out     = Play(limiter, in);
 		const size_t delay = limiter.DelayFrames();
-		// After the gain's ramp from 1 (kGainSeconds, many times over).
-		const size_t settled = kRate / 10;
-		int worst            = 0;
-		for (size_t i = settled * kChannels; i < out.size(); ++i)
+		int worst = 0;
+		for (size_t i = delay * kChannels; i < out.size(); ++i)
 			worst = std::max(worst, std::abs(out[i] - 2 * in[i - delay * kChannels]));
 		Expect(worst <= 1, "gain 2, quiet: off by " + std::to_string(worst));
 		Expect(limiter.Levels().reduction == 1.0f, "gain 2, quiet: the limiter did nothing");
+	}
+
+	// Two streams, A at 200 % and B at 100 %, then A back to 100 %. The
+	// mix carries each at its volume over the master gain (B at 1/2, then
+	// at 1); the streams' new volumes and the new gain take effect in the
+	// same block. B must not swell or dip in between.
+	void VolumeChangeLeavesTheOtherStreamAlone()
+	{
+		PlayoutLimiter limiter;
+		const auto a = Sine(0.2, 500.0, kRate);
+		const auto b = Sine(0.2, 300.0, kRate);
+		std::vector<int16_t> mix(a.size());
+		std::vector<double> expected(a.size());
+		const size_t change = kRate / 2 / kBlock * kBlock * kChannels;
+		for (size_t i = 0; i < mix.size(); ++i)
+		{
+			const double volumeA = i < change ? 2.0 : 1.0;
+			const double master  = std::max(1.0, volumeA);
+			mix[i]      = static_cast<int16_t>(std::lround(a[i] * (volumeA / master) + b[i] / master));
+			expected[i] = a[i] * volumeA + b[i];
+		}
+		for (size_t at = 0; at < mix.size(); at += kBlock * kChannels)
+		{
+			limiter.SetGain(at < change ? 2.0 : 1.0);
+			limiter.Process(mix.data() + at, kBlock, kChannels, kRate);
+		}
+		const size_t delay = limiter.DelayFrames();
+		double worst       = 0;
+		for (size_t i = delay * kChannels; i < mix.size(); ++i)
+			worst = std::max(worst, std::fabs(mix[i] - expected[i - delay * kChannels]));
+		Expect(worst <= 2.5, "volume change: another stream off by " + std::to_string(worst));
 	}
 
 	void BackToUnity()
@@ -166,7 +195,7 @@ namespace
 		limiter.SetGain(2.0);
 		Play(limiter, Sine(0.9, 440.0, kRate / 2));
 		limiter.SetGain(1.0);
-		// Release and ramp are long over after a second.
+		// The release is long over after a second.
 		Play(limiter, Sine(0.9, 440.0, kRate, kRate / 2));
 		std::vector<int16_t> in(kRate * kChannels);
 		Random random(2);
@@ -214,6 +243,7 @@ int main()
 	LoudMixStaysBelowTheCeiling();
 	LoudNoiseStaysBelowTheCeiling();
 	QuietMixPlaysAtTheGain();
+	VolumeChangeLeavesTheOtherStreamAlone();
 	BackToUnity();
 	GainIsClamped();
 	FormatChange();

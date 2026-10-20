@@ -48,11 +48,11 @@ namespace gelabber
 		static constexpr float kCeiling         = 0.966f;
 		static constexpr double kLookAheadSeconds = 0.0015;
 		static constexpr double kReleaseSeconds   = 0.1;
-		// A new master gain is reached over about this time: a consumer's
-		// new volume lands in libwebrtc a block earlier or later than it.
-		static constexpr double kGainSeconds = 0.01;
 
-		// Any thread. Clamped to 1..2.
+		// Any thread. Clamped to 1..2. Takes effect in one step at the next
+		// block, like the streams' new volumes over it, which are set
+		// before it: a ramp here would let the other streams swell or dip
+		// while it runs.
 		void SetGain(double gain)
 		{
 			target.store(static_cast<float>(std::clamp(gain, 1.0, 2.0)));
@@ -71,14 +71,11 @@ namespace gelabber
 				return;
 			if (channels != layoutChannels || sampleRate != layoutRate)
 				Reset(channels, sampleRate);
-			const float wanted = target.load();
+			const float gain    = target.load();
+			const float ceiling = gain > 1.0f ? kCeiling : 1.0f;
 			for (size_t frame = 0; frame < frames; ++frame)
 			{
 				int16_t* values = samples + frame * channels;
-				current += (wanted - current) * gainStep;
-				if (std::fabs(wanted - current) < 1e-4f)
-					current = wanted;
-				const float ceiling = current > 1.0f ? kCeiling : 1.0f;
 
 				// In: the frame at the master gain, and the limiter gain it
 				// needs.
@@ -86,7 +83,7 @@ namespace gelabber
 				float loudest = 0.0f;
 				for (size_t c = 0; c < channels; ++c)
 				{
-					in[c]   = values[c] / 32768.0f * current;
+					in[c]   = values[c] / 32768.0f * gain;
 					loudest = std::max(loudest, std::fabs(in[c]));
 				}
 				needed[head] = loudest > ceiling ? ceiling / loudest : 1.0f;
@@ -159,7 +156,6 @@ namespace gelabber
 			held            = 1.0;
 			head            = 0;
 			releaseStep     = 1.0 - std::exp(-1.0 / (kReleaseSeconds * newRate));
-			gainStep        = static_cast<float>(1.0 - std::exp(-1.0 / (kGainSeconds * newRate)));
 			windowTarget    = std::max<size_t>(1, newRate / 10);
 			windowFrames    = 0;
 			windowPeak      = 0.0f;
@@ -192,10 +188,7 @@ namespace gelabber
 		// Double: release steps this small stop short of 1 in float.
 		double held{ 1.0 };
 		size_t head{ 0 };
-		// The master gain on its way to `target`.
-		float current{ 1.0f };
 		double releaseStep{ 0.0 };
-		float gainStep{ 1.0f };
 		size_t windowTarget{ 1 };
 		size_t windowFrames{ 0 };
 		float windowPeak{ 0.0f };
