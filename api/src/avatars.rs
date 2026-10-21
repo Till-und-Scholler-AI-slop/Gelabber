@@ -24,6 +24,7 @@ use uuid::Uuid;
 use crate::auth::session::CurrentUser;
 use crate::auth::user::{self, ProfilePatch, User};
 use crate::error::ApiError;
+use crate::limits;
 use crate::state::AppState;
 use crate::storage::StoreError;
 
@@ -170,6 +171,15 @@ async fn upload(
             "image must be at most {width}x{height} pixels"
         )));
     }
+    // The bytes count against the daily upload quota before anything is
+    // stored, so a denied upload leaves nothing behind.
+    limits::consume_upload_quota(
+        &state,
+        &mut *state.db.acquire().await?,
+        current.id,
+        body.len() as i64,
+    )
+    .await?;
     let file = Uuid::new_v4();
     let key = kind.object_key(current.id, file);
     // Durable intent first: if the request dies after the PUT (client
