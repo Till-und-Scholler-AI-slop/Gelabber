@@ -690,6 +690,118 @@ describe("private DM discovery and topicless resync", () => {
     ).toBe(false);
     expect(calls.some((path) => path.includes("/channels/old-dm"))).toBe(false);
   });
+  it("resync reads a first history only for DMs that were not listed before", async () => {
+    const queryClient = client();
+    const { gateway: ws, socket } = gateway();
+    const calls = install((url) => {
+      if (url.pathname === "/api/dms")
+        return json([{ id: "dm-a" }, { id: "dm-b" }, { id: "dm-c" }]);
+      if (url.pathname === "/api/servers") return json([]);
+      if (url.pathname === "/api/channels/dm-c/messages")
+        return json({
+          messages: [{ ...rows(1)[0]!, channel_id: "dm-c", revision: 1 }],
+          has_more: false,
+        });
+      throw new Error(`Unexpected path ${url.pathname}`);
+    });
+    await login(ada.email, "password123");
+    const stamp = takeStamp()!;
+    queryClient.setQueryData(
+      ["user", stamp.userId, stamp.generation, "dms", "list"],
+      [{ id: "dm-a" }, { id: "dm-b" }],
+    );
+    ws.setTopics([
+      { s: "dm-a", c: "dm-a" },
+      { s: "dm-b", c: "dm-b" },
+    ]);
+    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    socket.frame({ op: "resync" });
+    // The resync itself re-sends the resume frames of the known topics.
+    const sentBefore = socket.sent.length;
+    socket.frame({ op: "ok", s: "dm-a", c: "dm-a", n: 3 });
+    socket.frame({ op: "ok", s: "dm-b", c: "dm-b", n: 4 });
+    await vi.waitFor(() => expect(ws.pendingResync).toBeUndefined());
+    await vi.waitFor(() => expect(ws.gapRecoveries()).toEqual([]));
+    expect(ws.cursorsSnapshot.get("c:dm-a")).toBe(3);
+    expect(ws.cursorsSnapshot.get("c:dm-b")).toBe(4);
+    expect(calls.filter((path) => path.startsWith("/api/channels/"))).toEqual([
+      "/api/channels/dm-c/messages",
+    ]);
+    const frames = socket.sent.slice(sentBefore).map((s) => JSON.parse(s));
+    expect(frames).toContainEqual({ op: "s", s: "dm-c", c: "dm-c" });
+    expect(frames.some((f) => f.s === "dm-a" || f.s === "dm-b")).toBe(false);
+    expect(
+      queryClient.getQueryData<InfiniteData<MessagePage>>(
+        messageKeys.channel(stamp.userId, stamp.generation, "dm-c"),
+      )?.pages[0]?.messages,
+    ).toHaveLength(1);
+  });
+  it("an announced DM is read again even when it is listed and its history is cached", async () => {
+    const queryClient = client();
+    const { gateway: ws, socket } = gateway();
+    let reads = 0;
+    install((url) => {
+      if (url.pathname === "/api/dms") return json([{ id: "dm-a" }]);
+      if (url.pathname === "/api/servers") return json([]);
+      if (url.pathname === "/api/channels/dm-a/messages") {
+        reads++;
+        return json({
+          messages: [{ ...rows(1)[0]!, channel_id: "dm-a", revision: 1 }],
+          has_more: false,
+        });
+      }
+      throw new Error(`Unexpected path ${url.pathname}`);
+    });
+    await login(ada.email, "password123");
+    const stamp = takeStamp()!;
+    queryClient.setQueryData(
+      ["user", stamp.userId, stamp.generation, "dms", "list"],
+      [{ id: "dm-a" }],
+    );
+    await queryClient.fetchInfiniteQuery(
+      messageQueryOptions(queryClient, stamp.userId, stamp.generation, "dm-a"),
+    );
+    expect(reads).toBe(1);
+    ws.setTopics([{ s: "dm-a", c: "dm-a" }]);
+    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    socket.frame({ op: "dm", c: "dm-a" });
+    expect(ws.dmDiscoveries()).toEqual(["dm-a"]);
+    await vi.waitFor(() => expect(ws.dmDiscoveries()).toEqual([]));
+    // One canonical refetch of the cached history, then the announced read.
+    expect(reads).toBe(3);
+  });
+  it("a DM announcement reads only the announced history, not every listed DM", async () => {
+    const queryClient = client();
+    const { gateway: ws, socket } = gateway();
+    const calls = install((url) => {
+      if (url.pathname === "/api/dms")
+        return json([{ id: "dm-a" }, { id: "dm-x" }, { id: "dm-b" }]);
+      if (url.pathname === "/api/servers") return json([]);
+      if (url.pathname === "/api/channels/dm-b/messages")
+        return json({ messages: [], has_more: false });
+      throw new Error(`Unexpected path ${url.pathname}`);
+    });
+    await login(ada.email, "password123");
+    const stamp = takeStamp()!;
+    queryClient.setQueryData(
+      ["user", stamp.userId, stamp.generation, "dms", "list"],
+      [{ id: "dm-a" }, { id: "dm-x" }],
+    );
+    ws.setTopics([
+      { s: "dm-a", c: "dm-a" },
+      { s: "dm-x", c: "dm-x" },
+    ]);
+    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    const sentBefore = socket.sent.length;
+    socket.frame({ op: "dm", c: "dm-b" });
+    await vi.waitFor(() => expect(ws.dmDiscoveries()).toEqual([]));
+    expect(calls.filter((path) => path.startsWith("/api/channels/"))).toEqual([
+      "/api/channels/dm-b/messages",
+    ]);
+    expect(socket.sent.slice(sentBefore).map((s) => JSON.parse(s))).toEqual([
+      { op: "s", s: "dm-b", c: "dm-b" },
+    ]);
+  });
 });
 
 it("a second private DM announcement during a held list gets another authoritative discovery read", async () => {

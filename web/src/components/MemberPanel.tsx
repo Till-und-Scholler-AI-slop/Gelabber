@@ -1,5 +1,6 @@
 // Real presence and voice occupancy stay independent of message scroll state.
 import { useId, useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { useSession } from "../auth/session.ts";
 import type { ServerDetail } from "../servers/types.ts";
@@ -41,7 +42,15 @@ export function MemberPanel({ server }: { server: ServerDetail }) {
   const byServer = usePresenceStore((state) => state.byServer);
   const roster = useVoiceRoster((state) => state.byServer);
   const live = useVoiceRoster((state) => state.live);
-  const session = useVoice();
+  const session = useVoice(
+    useShallow((state) => ({
+      status: state.status,
+      serverId: state.serverId,
+      channelId: state.channelId,
+      muted: state.muted,
+      deafened: state.deafened,
+    })),
+  );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profile, setProfile] = useState<{
     serverId: string;
