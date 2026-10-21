@@ -38,7 +38,10 @@ def _find_caddy() -> str:
     )
 
 
-def _adapt(caddyfile_text: str, caddy_bin: str) -> dict[str, Any]:
+def _adapt(
+    caddyfile_text: str, caddy_bin: str, env: dict[str, str] | None = None
+) -> dict[str, Any]:
+    """`caddy adapt`; `env` is merged over this process's environment."""
     with tempfile.NamedTemporaryFile(
         "w", suffix=".Caddyfile", delete=False, encoding="utf-8"
     ) as fh:
@@ -50,6 +53,7 @@ def _adapt(caddyfile_text: str, caddy_bin: str) -> dict[str, Any]:
             check=False,
             capture_output=True,
             text=True,
+            env={**os.environ, **env} if env is not None else None,
         )
         if proc.returncode != 0:
             raise AssertionError(
