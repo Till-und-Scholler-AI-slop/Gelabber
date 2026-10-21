@@ -15,24 +15,6 @@ const RAW = /\b(?:bg-white|(?:neutral|red|emerald|amber)-\d{2,3})\b/g;
 const ALLOWED = new Set([
   "components/EmojiPicker.tsx",
   "components/GifPicker.tsx",
-  "components/InviteDialog.tsx",
-  "components/ServerDialogs.tsx",
-  "components/SessionRecoveryNotice.tsx",
-  "components/VoiceStateIcons.tsx",
-  "pages/DmChannelPage.tsx",
-  "pages/DmIndexPage.tsx",
-  "pages/ForgotPasswordPage.tsx",
-  "pages/InvitePage.tsx",
-  "pages/LoginPage.tsx",
-  "pages/NotFoundPage.tsx",
-  "pages/RegisterPage.tsx",
-  "pages/ResetPasswordPage.tsx",
-  "pages/VerifyEmailPage.tsx",
-  "pages/WorkspaceIndexPage.tsx",
-  "voice/PushToTalkSettings.tsx",
-  "voice/VoiceDiagnostics.tsx",
-  "voice/VoiceSettings.tsx",
-  "voice/VoiceTile.tsx",
 ]);
 
 /** Component files by path under src, with the raw palette classes in each. */

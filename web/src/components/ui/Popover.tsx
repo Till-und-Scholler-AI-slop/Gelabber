@@ -87,10 +87,16 @@ function AnchoredPopover({
   const panel = useRef<HTMLDivElement>(null);
   const close = useLatest(onClose);
   // Rendered into the dialog it is used in, if any: outside a modal dialog
-  // the page is inert. A marker where the popover is placed finds it.
+  // the page is inert. The same for an element in fullscreen, outside which
+  // nothing shows. A marker where the popover is placed finds it.
   const [host, setHost] = useState<Element | null>(null);
   const marker = useCallback((element: HTMLElement | null) => {
-    if (element) setHost(element.closest("dialog") ?? document.body);
+    if (!element) return;
+    const fullscreen = document.fullscreenElement;
+    setHost(
+      element.closest("dialog") ??
+        (fullscreen?.contains(element) ? fullscreen : document.body),
+    );
   }, []);
 
   useLayoutEffect(() => {

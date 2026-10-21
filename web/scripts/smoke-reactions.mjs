@@ -147,7 +147,7 @@ for (const engine of [chromium, firefox]) {
     await member.waitForFunction(
       () =>
         document
-          .querySelector('[aria-label="❤️: 1 Reaktionen, du hast reagiert"]')
+          .querySelector('[aria-label="❤️: 1 Reaktion, du hast reagiert"]')
           ?.getAttribute("aria-pressed") === "true",
     );
     await member.waitForFunction(
@@ -166,18 +166,18 @@ for (const engine of [chromium, firefox]) {
     // Removing the last vote must also survive the Redis cjson [] -> {} shape.
     await row(member)
       .getByRole("button", {
-        name: "❤️: 1 Reaktionen, du hast reagiert",
+        name: "❤️: 1 Reaktion, du hast reagiert",
         exact: true,
       })
       .press("Enter");
     await row(member)
       .getByRole("button", {
-        name: "❤️: 1 Reaktionen, du hast reagiert",
+        name: "❤️: 1 Reaktion, du hast reagiert",
         exact: true,
       })
       .waitFor({ state: "detached" });
     await row(pages[0])
-      .getByRole("button", { name: "❤️: 1 Reaktionen", exact: true })
+      .getByRole("button", { name: "❤️: 1 Reaktion", exact: true })
       .waitFor({ state: "detached" });
     assert.equal(
       await member.evaluate(() =>
@@ -190,7 +190,7 @@ for (const engine of [chromium, firefox]) {
     await request(1, "PUT", heart);
     await row(member)
       .getByRole("button", {
-        name: "❤️: 1 Reaktionen, du hast reagiert",
+        name: "❤️: 1 Reaktion, du hast reagiert",
         exact: true,
       })
       .waitFor();
@@ -204,7 +204,7 @@ for (const engine of [chromium, firefox]) {
     const thumb = `/messages/${message.id}/reactions/${encodeURIComponent("👍")}`;
     await request(0, "PUT", thumb);
     await row(member)
-      .getByRole("button", { name: "👍: 1 Reaktionen", exact: true })
+      .getByRole("button", { name: "👍: 1 Reaktion", exact: true })
       .click();
     await row(member)
       .getByRole("button", {
@@ -305,7 +305,7 @@ for (const engine of [chromium, firefox]) {
         (row) => ({
           index: Number(
             row
-              .querySelector("p")
+              .querySelector(".lr-message-text")
               ?.textContent?.match(/History-anchor-(\d+)/)?.[1],
           ),
           top: row.getBoundingClientRect().top,
@@ -361,13 +361,14 @@ for (const engine of [chromium, firefox]) {
       );
     }
     await growingRow
-      .getByRole("button", { name: "❤️: 1 Reaktionen", exact: true })
+      .getByRole("button", { name: "❤️: 1 Reaktion", exact: true })
       .waitFor();
     await member.waitForFunction(
       ({ index, oldHeight }) => {
         const row = [...document.querySelectorAll(".lr-message-row")].find(
           (row) =>
-            row.querySelector("p")?.textContent === `History-anchor-${index}`,
+            row.querySelector(".lr-message-text")?.textContent ===
+            `History-anchor-${index}`,
         );
         return row && row.getBoundingClientRect().height > oldHeight + 30;
       },
@@ -379,7 +380,8 @@ for (const engine of [chromium, firefox]) {
       ({ index, top }) => {
         const row = [...document.querySelectorAll(".lr-message-row")].find(
           (row) =>
-            row.querySelector("p")?.textContent === `History-anchor-${index}`,
+            row.querySelector(".lr-message-text")?.textContent ===
+            `History-anchor-${index}`,
         );
         return row && Math.abs(row.getBoundingClientRect().top - top) <= 3;
       },
@@ -455,11 +457,11 @@ for (const engine of [chromium, firefox]) {
       })
       .press("Enter");
     await row(member)
-      .getByRole("button", { name: "❤️: 1 Reaktionen", exact: true })
+      .getByRole("button", { name: "❤️: 1 Reaktion", exact: true })
       .waitFor();
     assert.equal(
       await row(member)
-        .getByRole("button", { name: "❤️: 1 Reaktionen", exact: true })
+        .getByRole("button", { name: "❤️: 1 Reaktion", exact: true })
         .isDisabled(),
       true,
     );
@@ -468,13 +470,13 @@ for (const engine of [chromium, firefox]) {
       .filter({ hasText: `Focus-only-${nonce}` });
     await readOnlyRow
       .getByRole("button", {
-        name: "❤️: 1 Reaktionen, du hast reagiert",
+        name: "❤️: 1 Reaktion, du hast reagiert",
         exact: true,
       })
       .press("Enter");
     await readOnlyRow
       .getByRole("button", {
-        name: "❤️: 1 Reaktionen, du hast reagiert",
+        name: "❤️: 1 Reaktion, du hast reagiert",
         exact: true,
       })
       .waitFor({ state: "detached" });
@@ -517,7 +519,7 @@ for (const engine of [chromium, firefox]) {
       .click();
     await dmRow
       .getByRole("button", {
-        name: "👍: 1 Reaktionen, du hast reagiert",
+        name: "👍: 1 Reaktion, du hast reagiert",
         exact: true,
       })
       .waitFor();
@@ -532,7 +534,7 @@ for (const engine of [chromium, firefox]) {
     await member.reload();
     await dmRow
       .getByRole("button", {
-        name: "👍: 1 Reaktionen, du hast reagiert",
+        name: "👍: 1 Reaktion, du hast reagiert",
         exact: true,
       })
       .waitFor();

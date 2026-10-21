@@ -64,3 +64,64 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+/* --lr-warning is drawn for icons (3:1); text takes it a step towards the
+   text colour, for 4.5:1. */
+.stream-source-audio-warning {
+  color: color-mix(in srgb, var(--lr-warning) 70%, var(--lr-text));
+}
+.media-settings-reveal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-surface);
+}
+.media-settings-reveal > p {
+  flex: 1 1 220px;
+}
+/* The settings dialog's tabs, held at the top while the panel scrolls. */
+.voice-settings-tablist {
+  position: sticky;
+  top: calc(-1 * var(--lr-space-2));
+  z-index: 1;
+  display: flex;
+  gap: 4px;
+  margin: calc(-1 * var(--lr-space-2)) 0 20px;
+  padding-top: var(--lr-space-2);
+  border-bottom: 1px solid var(--lr-border);
+  background: var(--lr-elevated);
+}
+.voice-settings-tablist > button {
+  min-height: var(--lr-control-md);
+  margin-bottom: -1px;
+  padding: 0 12px;
+  border-bottom: 2px solid transparent;
+  color: var(--lr-muted);
+  font: var(--lr-type-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.voice-settings-tablist > button:hover {
+  color: var(--lr-text);
+}
+.voice-settings-tablist > button[aria-selected="true"] {
+  border-bottom-color: var(--lr-accent);
+  color: var(--lr-text);
+  font-weight: 600;
+}
+.voice-settings-tablist > button:focus-visible {
+  outline: 2px solid var(--lr-focus);
+  outline-offset: -2px;
+}
+/* A legend sits outside its fieldset's gap; it keeps the same distance. */
+.voice-settings-panel .media-settings-form legend {
+  margin-bottom: 12px;
+}
+@media (pointer: coarse) {
+  .voice-settings-tablist > button {
+    min-height: 44px;
+  }
+}

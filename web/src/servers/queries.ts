@@ -8,6 +8,7 @@
 
 import {
   useMutation,
+  useQueries,
   useQuery,
   useQueryClient,
   type QueryClient,
@@ -98,6 +99,23 @@ export function useServer(id: string | undefined) {
         "code" in error &&
         (error.code === "not_found" || error.code === "forbidden")
       ),
+  });
+}
+
+/** The loaded details of several servers (the quick switcher, the people
+ * to write to); the ones still loading are left out. */
+export function useServerDetails(ids: readonly string[]): ServerDetail[] {
+  const userId = useUserId();
+  const generation = scopeGeneration();
+  return useQueries({
+    queries: ids.map((id) => ({
+      queryKey: serverKeys.detail(userId, generation, id),
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        remote.getServer(id, signal),
+      enabled: userId.length > 0,
+      staleTime: STALE_MS,
+    })),
+    combine: (results) => results.flatMap((result) => result.data ?? []),
   });
 }
 

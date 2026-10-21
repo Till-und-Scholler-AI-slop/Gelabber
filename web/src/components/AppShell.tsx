@@ -14,6 +14,7 @@ import { useFocusReport, useIdlePresence } from "../ws/useLive.ts";
 import { usePushSubscription } from "../pwa/push.ts";
 import { useMessageToastsBridge } from "../messages/useMessageToasts.ts";
 import { ConfirmHost } from "./ConfirmHost.tsx";
+import { InvitePromptHost } from "./InviteDialog.tsx";
 import { isChromeLongPress } from "./longPress.ts";
 import { MessageToasts } from "./MessageToasts.tsx";
 import { NotificationSettingsHost } from "./NotificationSettingsDialog.tsx";
@@ -36,9 +37,15 @@ export function AppShell() {
     select: (state) =>
       state.matches.some((match) => match.routeId === "/workspace"),
   });
+  const bare = useRouterState({
+    select: (state) => state.matches.some((match) => match.staticData.bare),
+  });
   const activeMedia = useVoice(
     (state) =>
-      state.status === "joined" || state.watching || state.playbackBlocked,
+      state.status === "joined" ||
+      state.watching ||
+      state.playbackBlocked ||
+      state.lostCall !== null,
   );
   useGatewaySession(user?.id ?? null);
   useIdlePresence(user?.id ?? null);
@@ -69,7 +76,7 @@ export function AppShell() {
       >
         Zum Inhalt springen
       </a>
-      {!workspace ? (
+      {!workspace && !bare ? (
         <header className="app-header">
           <div className="flex h-full items-center justify-between px-4">
             <Link to="/" className="text-lg font-semibold tracking-tight">
@@ -79,15 +86,19 @@ export function AppShell() {
         </header>
       ) : null}
       <div id="app-content" tabIndex={workspace ? undefined : -1}>
-        <SessionRecoveryNotice />
-        <Outlet />
+        <SessionRecoveryNotice>
+          <Outlet />
+        </SessionRecoveryNotice>
       </div>
       {user ? <AuthenticatedRealtime key={user.id} /> : null}
       <Toasts />
       <MessageToasts />
       <ConfirmHost />
       {user ? <VoiceSettingsDialog /> : null}
-      {user ? <NotificationSettingsHost key={user.id} /> : null}
+      {user ? (
+        <NotificationSettingsHost key={`notifications-${user.id}`} />
+      ) : null}
+      {user ? <InvitePromptHost /> : null}
       {user ? <VoiceSessionControls /> : null}
     </div>
   );

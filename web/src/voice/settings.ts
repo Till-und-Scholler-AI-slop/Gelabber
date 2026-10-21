@@ -229,13 +229,17 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   pttReleaseDelay: PTT_RELEASE_DELAY_DEFAULT,
 };
 
+/** The settings dialog's tab it opens on. */
+export type MediaDialogSection = "audio" | "video" | "diagnostics";
+
 type MediaSettingsState = MediaSettings & {
   dialogOpen: boolean;
+  dialogSection: MediaDialogSection | null;
   /** Not persisted. Set by the live session after a profile change. */
   cameraProfileApply: StreamApply;
   screenProfileApply: StreamApply;
   patch: (partial: Partial<MediaSettings>) => void;
-  openDialog: () => void;
+  openDialog: (section?: MediaDialogSection) => void;
   closeDialog: () => void;
 };
 
@@ -403,6 +407,7 @@ export const useMediaSettings = create<MediaSettingsState>()(
     (set, get) => ({
       ...DEFAULT_MEDIA_SETTINGS,
       dialogOpen: false,
+      dialogSection: null,
       cameraProfileApply: "idle",
       screenProfileApply: "idle",
       patch: (partial) => {
@@ -498,8 +503,9 @@ export const useMediaSettings = create<MediaSettingsState>()(
         });
         listener?.(prev, snapshot(get()));
       },
-      openDialog: () => set({ dialogOpen: true }),
-      closeDialog: () => set({ dialogOpen: false }),
+      openDialog: (section) =>
+        set({ dialogOpen: true, dialogSection: section ?? null }),
+      closeDialog: () => set({ dialogOpen: false, dialogSection: null }),
     }),
     {
       name: SETTINGS_KEY,
@@ -568,6 +574,7 @@ export const useMediaSettings = create<MediaSettingsState>()(
           cameraProfileApply: current.cameraProfileApply,
           screenProfileApply: current.screenProfileApply,
           dialogOpen: current.dialogOpen,
+          dialogSection: current.dialogSection,
         };
       },
     },
@@ -648,6 +655,7 @@ export function resetMediaSettingsForTests(): void {
   useMediaSettings.setState({
     ...DEFAULT_MEDIA_SETTINGS,
     dialogOpen: false,
+    dialogSection: null,
     cameraProfileApply: "idle",
     screenProfileApply: "idle",
   });

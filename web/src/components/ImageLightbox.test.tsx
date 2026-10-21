@@ -32,6 +32,17 @@ describe("image lightbox", () => {
     expect(html).toContain('download="zweites.png"');
   });
 
+  it("offers no download for a link preview's picture", () => {
+    const preview = renderToStaticMarkup(
+      <ImageLightbox
+        image={{ id: "preview:x", src: "/api/previews/p/i", filename: "Seite" }}
+        onClose={() => {}}
+      />,
+    );
+    expect(preview).toContain('src="/api/previews/p/i"');
+    expect(preview).not.toContain("Herunterladen");
+  });
+
   it("has no stepping: a message carries one attachment", () => {
     expect(html).not.toContain("Vorheriges");
     expect(html).not.toContain("Nächstes");

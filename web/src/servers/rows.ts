@@ -44,6 +44,47 @@ export function buildRows(server: ServerDetail): Row[] {
   return rows;
 }
 
+export type SectionRow = { kind: "section"; key: string; label: string };
+
+/**
+ * The sidebar's order: uncategorised text channels, the uncategorised voice
+ * rooms under a "Sprachräume" heading of their own, then the categories.
+ */
+export function sidebarRows(server: ServerDetail): (Row | SectionRow)[] {
+  const base = buildRows(server);
+  const loose = (kind: Channel["kind"]) =>
+    base.filter(
+      (row) =>
+        row.kind === "channel" &&
+        row.channel.category_id === null &&
+        row.channel.kind === kind,
+    );
+  const voice = loose("voice");
+  return [
+    ...loose("text"),
+    ...(voice.length
+      ? [
+          {
+            kind: "section" as const,
+            key: "voice-heading",
+            label: "Sprachräume",
+          },
+          ...voice,
+        ]
+      : []),
+    ...base.filter(
+      (row) => row.kind !== "channel" || row.channel.category_id !== null,
+    ),
+  ];
+}
+
+/** The channels in the order the sidebar lists them. */
+export function channelOrder(server: ServerDetail): Channel[] {
+  return sidebarRows(server).flatMap((row) =>
+    row.kind === "channel" ? [row.channel] : [],
+  );
+}
+
 /** First text channel, preferring the remembered one if it still exists. */
 export function pickChannel(
   server: ServerDetail,

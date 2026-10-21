@@ -101,11 +101,42 @@
   color: var(--lr-text);
 }
 .lr-list-empty {
+  padding-bottom: 16px;
+}
+.lr-list-empty > p {
+  padding: 0 20px;
+  text-align: left;
+}
+/* First load: placeholder rows where the newest messages will be. */
+.lr-list-skeleton {
+  padding: 8px 20px 16px;
+}
+/* Above the oldest message once nothing older exists. */
+.lr-history-start {
   display: flex;
-  height: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 24px 20px 8px;
+  text-align: left;
+}
+.lr-history-start h2 {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 0 24px;
+  gap: 6px;
+  font: var(--lr-type-title);
+  color: var(--lr-text);
+}
+.lr-history-start h2 > svg {
+  color: var(--lr-muted);
+}
+.lr-history-start .gel-avatar {
+  margin-bottom: 8px;
+}
+.lr-history-start p {
+  font: var(--lr-type-ui);
+  font-weight: 400;
+  color: var(--lr-muted);
 }
 .lr-list-loading {
   flex-shrink: 0;
@@ -153,6 +184,75 @@
 .lr-jump-latest:hover {
   background: var(--lr-hover);
 }
+.lr-jump-latest.has-news {
+  border-color: transparent;
+  background: var(--lr-accent);
+  color: var(--lr-accent-ink);
+}
+.lr-jump-latest.has-news:hover {
+  background: var(--lr-accent);
+  filter: brightness(1.08);
+}
+
+/* Opened with unread messages: how many, back to the first, or done. */
+.lr-unread-bar {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: var(--lr-space-2);
+  min-height: 36px;
+  padding: 2px 12px 2px 20px;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--lr-accent) 35%, var(--lr-border));
+  background: var(--lr-selected);
+  color: var(--lr-text);
+  font: var(--lr-type-ui);
+  font-weight: 400;
+}
+.lr-unread-bar > p {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lr-unread-bar strong {
+  font-weight: 600;
+}
+.lr-unread-bar kbd {
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--lr-border-strong);
+  border-radius: var(--lr-radius-xs);
+  font: var(--lr-type-meta);
+  font-size: 11px;
+  color: var(--lr-muted);
+}
+@media (pointer: coarse) {
+  .lr-unread-bar kbd {
+    display: none;
+  }
+}
+@media (max-width: 800px) {
+  .lr-unread-bar {
+    padding-left: 16px;
+  }
+}
+@media (max-width: 520px) {
+  /* One line of text, then the two buttons side by side. */
+  .lr-unread-bar {
+    flex-wrap: wrap;
+    padding-block: 6px;
+  }
+  .lr-unread-bar > p {
+    flex-basis: 100%;
+  }
+  .lr-unread-bar > .ui-button {
+    flex: 1;
+  }
+}
 
 /* Messages */
 .lr-message-row {
@@ -172,8 +272,22 @@
   height: 36px;
   margin-top: 2px;
 }
-.lr-message-continued > span[aria-hidden] {
+/* A grouped message's time sits in the avatar column, shown on hover or
+   focus, so it costs no height. */
+.lr-message-gutter {
+  flex-shrink: 0;
   width: 36px;
+  padding-top: 4px;
+  text-align: right;
+  font-size: 10.5px;
+  line-height: 18px;
+  color: var(--lr-muted);
+  visibility: hidden;
+}
+.lr-message-row:hover .lr-message-gutter,
+.lr-message-row:focus-within .lr-message-gutter,
+.lr-message-row:focus .lr-message-gutter {
+  visibility: visible;
 }
 .lr-message-author {
   font-size: 14px;
@@ -242,6 +356,80 @@ button.lr-reply-header:focus-visible .lr-reply-excerpt {
   margin-left: 4px;
   font-size: 11px;
   color: var(--lr-muted);
+}
+
+/* Own messages on their way, and those that did not arrive. */
+.lr-message-row.is-sending .lr-message-text,
+.lr-message-row.is-sending .lr-attachments,
+.lr-message-row.is-sending .lr-message-gif {
+  opacity: 0.7;
+}
+.lr-message-row.is-failed {
+  background: color-mix(in srgb, var(--lr-danger-bg) 8%, var(--lr-bg));
+  box-shadow: inset 3px 0 0 var(--lr-danger-bg);
+}
+.lr-message-row.is-failed:hover,
+.lr-message-row.is-failed:focus-within {
+  background: color-mix(in srgb, var(--lr-danger-bg) 12%, var(--lr-bg));
+}
+.lr-message-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: var(--lr-type-meta);
+  color: var(--lr-muted);
+}
+.lr-message-status.is-sending {
+  /* A quick send never shows it. */
+  animation: lr-status-in 0s 400ms both;
+}
+.lr-message-status.is-failed {
+  color: var(--lr-danger);
+  font-weight: 600;
+}
+@keyframes lr-status-in {
+  from {
+    visibility: hidden;
+  }
+}
+.lr-message-status-line {
+  margin-top: 2px;
+}
+.lr-message-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: var(--lr-radius-full);
+  animation: lr-spin 0.8s linear infinite;
+}
+@keyframes lr-spin {
+  to {
+    rotate: 1turn;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lr-message-spinner {
+    animation: none;
+  }
+}
+html[data-reduced-motion="true"] .lr-message-spinner {
+  animation: none;
+}
+.lr-message-failure {
+  margin-top: 6px;
+  font: var(--lr-type-ui);
+  font-weight: 400;
+  color: var(--lr-muted);
+}
+.lr-message-row.is-failed .lr-attachment-upload {
+  display: none;
+}
+.lr-message-failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
 }
 
 /* Message markdown (messages/MessageContent.tsx). Code blocks scroll on their
@@ -383,15 +571,55 @@ span.lr-md-codeblock {
   overflow-wrap: anywhere;
 }
 .lr-preview-image {
+  display: block;
   width: 80px;
   height: 80px;
+  padding: 0;
+  overflow: hidden;
   border-radius: var(--lr-radius-small);
+  cursor: zoom-in;
+}
+.lr-preview-image img {
+  width: 100%;
+  height: 100%;
   object-fit: cover;
 }
+/* A banner, not a poster: a preview must not outgrow the message. */
 .lr-preview.is-large .lr-preview-image {
   width: 100%;
   height: auto;
-  max-height: 300px;
+}
+.lr-preview.is-large .lr-preview-image img {
+  height: auto;
+  max-height: 160px;
+}
+@media (max-width: 640px) {
+  /* Phones: a thumbnail beside the title, the full image in the lightbox. */
+  .lr-preview,
+  .lr-preview.is-large:not(.is-video) {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .lr-preview:has(.lr-preview-remove) {
+    padding-right: 30px;
+  }
+  .lr-preview .lr-preview-image,
+  .lr-preview.is-large .lr-preview-image {
+    width: 72px;
+    height: 72px;
+  }
+  .lr-preview.is-large .lr-preview-image img {
+    height: 100%;
+    max-height: none;
+  }
+  .lr-preview-title {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  .lr-preview-description {
+    -webkit-line-clamp: 2;
+  }
 }
 .lr-preview-video {
   position: relative;
@@ -492,32 +720,110 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   background: var(--lr-hover);
   color: var(--lr-text);
 }
-.lr-message-action.is-danger:hover {
-  color: var(--lr-danger);
-}
-@media (hover: none) {
-  /* Touch has no hover: a tap focuses the row and reveals its toolbar. */
-  .lr-message-actions {
-    visibility: hidden;
-  }
-  .lr-message-row:focus-within .lr-message-actions {
-    visibility: visible;
-  }
+.lr-message-action[aria-expanded="true"] {
+  background: var(--lr-hover);
+  color: var(--lr-text);
 }
 @media (pointer: coarse) {
-  /* A toolbar of finger-sized buttons would cover the message text, so each
-     button keeps its size and gets a 44px hit area instead. */
-  .lr-message-actions {
-    gap: 14px;
-    padding-inline: 9px;
+  /* Fingers hold the message instead and get the action sheet, so a tap no
+     longer floats the toolbar over the message above. It stays for a
+     keyboard. Text is copied from the sheet: a held finger selects none. */
+  .lr-message-row:hover .lr-message-actions,
+  .lr-message-row:focus-within .lr-message-actions {
+    opacity: 0;
+    pointer-events: none;
   }
-  .lr-message-action {
-    position: relative;
+  .lr-message-row .lr-message-actions:has(:focus-visible) {
+    opacity: 1;
+    pointer-events: auto;
   }
-  .lr-message-action::after {
-    content: "";
-    position: absolute;
-    inset: -8px -7px;
+  .lr-message-row {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .lr-message-row textarea {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
+/* The actions menu (MessageActionSheet.tsx): a popover at "Mehr", a bottom
+   sheet on touch screens. */
+.lr-message-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+}
+.lr-message-menu-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 2px 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--lr-border);
+}
+.lr-message-menu-emoji {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--lr-radius-full);
+  background: var(--lr-surface);
+  color: var(--lr-muted);
+  font-size: 18px;
+}
+.lr-message-menu-emoji:hover,
+.lr-message-menu-emoji:focus-visible {
+  background: var(--lr-hover);
+  color: var(--lr-text);
+}
+.lr-message-menu-emoji.is-mine {
+  box-shadow: inset 0 0 0 1px var(--lr-accent);
+  background: var(--lr-selected);
+}
+.lr-message-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--lr-control-sm);
+  padding: 0 10px;
+  border-radius: var(--lr-radius-sm);
+  color: var(--lr-text);
+  font: var(--lr-type-ui);
+  text-align: left;
+}
+.lr-message-menu-item > svg {
+  flex-shrink: 0;
+  color: var(--lr-muted);
+}
+.lr-message-menu-item:hover,
+.lr-message-menu-item:focus-visible {
+  background: var(--lr-hover);
+}
+.lr-message-menu-item.is-danger,
+.lr-message-menu-item.is-danger > svg {
+  color: var(--lr-danger);
+}
+.lr-message-menu-divider {
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--lr-border);
+}
+@media (pointer: coarse) {
+  .lr-message-menu-reactions {
+    justify-content: space-between;
+    gap: 6px;
+    padding-bottom: 12px;
+  }
+  .lr-message-menu-emoji {
+    width: 44px;
+    height: 44px;
+    font-size: 22px;
+  }
+  .lr-message-menu-item {
+    min-height: 48px;
+    font-size: 16px;
   }
 }
 
@@ -529,6 +835,9 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 }
 .lr-message-edit textarea {
   width: 100%;
+  min-height: 3.5em;
+  max-height: 50vh;
+  field-sizing: content;
   resize: none;
   padding: 8px 10px;
   border: 1px solid var(--lr-accent);
@@ -945,7 +1254,9 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   color: var(--lr-muted);
 }
 .lr-composer-row textarea:focus-visible {
+  /* The field around it shows focus. */
   outline: none;
+  box-shadow: none;
 }
 @media (pointer: coarse) {
   /* Phones show the whole draft, up to max-height. Browsers without
@@ -989,6 +1300,21 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   color: var(--lr-muted);
   opacity: 0.55;
   cursor: default;
+}
+@media (pointer: coarse) {
+  .lr-composer-row {
+    align-items: flex-end;
+    gap: 6px;
+  }
+  .lr-composer-icon,
+  .lr-composer-send {
+    width: 44px;
+    height: 44px;
+  }
+  .lr-composer-row textarea {
+    min-height: 44px;
+    padding-block: 11px;
+  }
 }
 .lr-composer-attachments {
   display: flex;
@@ -1097,34 +1423,38 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   font-size: 12px;
   color: var(--lr-muted);
 }
-.lr-send-failure {
+.lr-composer-status:empty {
+  padding: 0;
+}
+.lr-composer-file-error {
+  padding: 4px 6px 0;
+}
+/* Sends that did not go through are on their rows; this line finds them. */
+.lr-send-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 8px;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--lr-danger) 45%, var(--lr-border));
-  border-radius: var(--lr-radius);
-  background: color-mix(in srgb, var(--lr-danger) 8%, var(--lr-panel));
-  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: var(--lr-radius-sm);
+  background: color-mix(in srgb, var(--lr-danger-bg) 10%, var(--lr-panel));
+  box-shadow: inset 3px 0 0 var(--lr-danger-bg);
+  font: var(--lr-type-ui);
   color: var(--lr-text);
 }
-.lr-send-failure-content {
-  margin-top: 4px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  color: var(--lr-muted);
+.lr-send-summary > svg {
+  flex-shrink: 0;
+  color: var(--lr-danger);
 }
-.lr-send-failure-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 14px;
-  margin-top: 8px;
+.lr-send-summary > span {
+  flex: 1;
+  min-width: 0;
 }
-.lr-send-failure-actions > button {
+.lr-send-summary > button {
   font-weight: 600;
+  color: var(--lr-text);
   text-decoration: underline;
   text-underline-offset: 2px;
-}
-.lr-send-failure-actions > button:disabled {
-  opacity: 0.5;
 }
 
 /* Live hint below the header: one quiet row per broadcast. */
@@ -1225,6 +1555,14 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   .lr-message-pane:has(.lr-search-overlay) > .lr-composer,
   .lr-message-pane:has(.lr-search-overlay) > [data-testid="typing-bar"] {
     display: none;
+  }
+}
+
+/* After the 34px phone size above. */
+@media (pointer: coarse) and (max-width: 800px) {
+  .lr-header-search {
+    width: 40px;
+    height: 40px;
   }
 }
 

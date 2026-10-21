@@ -9,14 +9,19 @@ import { api } from "../api/client.ts";
  * failed check, the sign-in page simply offers no "forgot password".
  */
 export function useAccountMail(): boolean {
-  const { data } = useQuery({
+  return useAccountMailStatus() === true;
+}
+
+/** Like `useAccountMail`, but `undefined` until the check has finished. */
+export function useAccountMailStatus(): boolean | undefined {
+  const { data, isPending } = useQuery({
     queryKey: ["instance", "mail"],
     queryFn: ({ signal }) =>
       api<{ enabled: boolean }>("/auth/mail", { signal }),
     staleTime: Infinity,
     retry: false,
   });
-  return data?.enabled === true;
+  return isPending ? undefined : data?.enabled === true;
 }
 
 /**
