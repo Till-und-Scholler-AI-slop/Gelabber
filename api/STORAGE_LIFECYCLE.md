@@ -2,8 +2,13 @@
 
 ## API and configuration
 
-Presign/message/download wire shapes and the one-attachment limit stay unchanged.
-A pending attachment expires after ten minutes, matching the issued PUT URL.
+Presign/message/download wire shapes stay unchanged. A message carries up to
+ten files (`ATTACHMENTS_MAX`), at most 25 MiB each and 100 MiB together
+(`api/src/attachments/validate.rs`).
+A pending attachment waits up to one hour for its message (`PENDING_TTL`,
+`api/src/attachments/mod.rs`); its presigned PUT URL expires after ten minutes
+(`PUT_TTL`, `api/src/storage.rs`). Expiry cleanup and the fifteen-minute grace
+run from the pending deadline, not from the URL's.
 Expired unbound attachments cannot be bound or downloaded, even before the
 background worker removes metadata. Binding rechecks DB wall-clock expiry
 after storage HEAD, so a slow HEAD cannot use the transaction's old `now()`
