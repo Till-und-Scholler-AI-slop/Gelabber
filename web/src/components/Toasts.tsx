@@ -1,4 +1,7 @@
+import { useRef } from "react";
+
 import { CloseIcon, WarningIcon } from "./Icons.tsx";
+import { restoreFocus } from "./modalClose.ts";
 import { useToasts, type Toast } from "./toasts.ts";
 import { Button } from "./ui/Button.tsx";
 import { IconButton } from "./ui/IconButton.tsx";
@@ -38,12 +41,28 @@ function ToastCard({ toast }: { toast: Toast }) {
   const dismiss = useToasts((state) => state.dismiss);
   const hold = useToasts((state) => state.hold);
   const release = useToasts((state) => state.release);
+  // Where focus was before it came into the toast: it goes back there when
+  // the toast closes under it, instead of falling to the page.
+  const cameFrom = useRef<HTMLElement | null>(null);
+  const card = useRef<HTMLDivElement>(null);
+  const close = () => {
+    // Unless the action took focus somewhere itself.
+    const focusInside = card.current?.contains(document.activeElement);
+    dismiss(toast.id);
+    if (focusInside) restoreFocus(cameFrom.current);
+  };
   return (
     <div
+      ref={card}
       className={`ui-toast ui-toast--${toast.tone}`}
       onPointerEnter={() => hold(toast.id, "hover")}
       onPointerLeave={() => release(toast.id, "hover")}
-      onFocus={() => hold(toast.id, "focus")}
+      onFocus={(event) => {
+        const from = event.relatedTarget;
+        if (from instanceof HTMLElement && !event.currentTarget.contains(from))
+          cameFrom.current = from;
+        hold(toast.id, "focus");
+      }}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget))
           release(toast.id, "focus");
@@ -60,7 +79,7 @@ function ToastCard({ toast }: { toast: Toast }) {
           className="ui-toast__action"
           onClick={() => {
             toast.action?.onClick();
-            dismiss(toast.id);
+            close();
           }}
         >
           {toast.action.label}
@@ -71,7 +90,7 @@ function ToastCard({ toast }: { toast: Toast }) {
         label="Schließen"
         className="ui-toast__close"
         icon={<CloseIcon size={16} />}
-        onClick={() => dismiss(toast.id)}
+        onClick={close}
       />
     </div>
   );
