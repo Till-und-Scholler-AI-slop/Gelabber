@@ -175,4 +175,27 @@ describe("plain-http origin without Web Locks", () => {
     await client.api("/auth/session");
     expect(sessions).toBe(2);
   });
+
+  // The auth actions recheck the signal themselves, so the case above passes
+  // either way. This one pins the queue's own check, as with Web Locks.
+  it("never runs an action that was aborted while queued", async () => {
+    const { client } = await load();
+    const first = deferred<void>();
+    const ran: string[] = [];
+    const one = client.withSessionCookieLockForTests(async () => {
+      ran.push("one");
+      await first.promise;
+    });
+    const controller = new AbortController();
+    const two = client.withSessionCookieLockForTests(async () => {
+      ran.push("two");
+    }, controller.signal);
+    const rejected = expect(two).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => expect(ran).toEqual(["one"]));
+    controller.abort();
+    first.resolve();
+    await one;
+    await rejected;
+    expect(ran).toEqual(["one"]);
+  });
 });

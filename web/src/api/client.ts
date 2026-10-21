@@ -231,6 +231,9 @@ function withSessionCookieLock<T>(
   return request;
 }
 
+/** Tests: the lock itself, to see which actions it runs. */
+export const withSessionCookieLockForTests = withSessionCookieLock;
+
 function changesAuthCookies(path: string): boolean {
   return (
     path === "/auth/session" ||
