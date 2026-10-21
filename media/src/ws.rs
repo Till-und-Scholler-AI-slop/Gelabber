@@ -22,6 +22,9 @@ use crate::ticket;
 /// Includes complete RTP capabilities/parameters, bounded before JSON decoding.
 pub const MAX_FRAME: usize = 256 * 1024;
 const WRITE_DEADLINE: Duration = Duration::from_secs(2);
+/// How long a retired socket waits for the writer to send a terminal frame
+/// before it falls back to a bare Close.
+const RETIRE_GRACE: Duration = Duration::from_millis(250);
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -100,6 +103,7 @@ async fn run(socket: WebSocket, state: AppState) {
     let mut retirement = tokio::time::interval(Duration::from_millis(250));
     retirement.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut writer_finished = false;
+    let mut retired = false;
     // A socket without a joined room closes at this deadline; Pings and bad
     // frames do not extend it. A join in progress is never cut off, because
     // it runs inside the stream branch below.
@@ -114,7 +118,7 @@ async fn run(socket: WebSocket, state: AppState) {
             }
             _ = retirement.tick(), if joined.is_some() => {
                 let (peer, channel) = joined.unwrap();
-                if !state.sfu.peer_present(peer, channel).await { break; }
+                if !state.sfu.peer_present(peer, channel).await { retired = true; break; }
             }
             incoming = stream.next() => {
                 let message = match incoming {
@@ -146,6 +150,18 @@ async fn run(socket: WebSocket, state: AppState) {
         }
     }
     leave_joined(&state, &mut joined).await;
+    // Sfu::shutdown and watch_authority emit gone/unauthorized only after
+    // leave has removed the peer, so the retirement tick can see it gone
+    // first. The writer then sends that frame and its own Close; the bare
+    // Close below stays the fallback.
+    if retired
+        && !writer_finished
+        && tokio::time::timeout(RETIRE_GRACE, &mut writer)
+            .await
+            .is_ok()
+    {
+        writer_finished = true;
+    }
     if !writer_finished {
         let _ = tokio::time::timeout(WRITE_DEADLINE, writes.send(Message::Close(None))).await;
         drop(writes);

@@ -225,6 +225,32 @@ async fn revoked(ws: &mut Socket, budget: Duration) {
     .await
     .expect("bounded server-side revocation");
 }
+/// Reads up to the first error frame and returns its code; a Close or EOF
+/// before it fails. The server must close right after that frame.
+async fn terminal_before_close(ws: &mut Socket) -> String {
+    use tokio_tungstenite::tungstenite::Message;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        let code = loop {
+            match ws.next().await {
+                Some(Ok(Message::Text(text))) => {
+                    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    if let Some(code) = value["e"].as_str() {
+                        break code.to_owned();
+                    }
+                }
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+                other => panic!("socket ended before its terminal frame: {other:?}"),
+            }
+        };
+        assert!(
+            matches!(ws.next().await, Some(Ok(Message::Close(_))) | None),
+            "server closes right after the terminal frame"
+        );
+        code
+    })
+    .await
+    .expect("bounded terminal frame and Close")
+}
 
 #[tokio::test]
 async fn rejects_consumed_ticket_after_authority_rotation_and_allows_immediate_rejoin() {
@@ -541,4 +567,41 @@ async fn redis_failure_revokes_open_peer_and_rejects_new_ticket_without_affectin
     authority.redis = upstream;
     authority.cleanup().await;
     control.cleanup().await;
+}
+
+#[tokio::test]
+async fn shutdown_delivers_gone_before_close_on_every_socket() {
+    // Shutdown emits "gone" only after leave removed the peer, so a socket's
+    // retirement tick can see the peer gone first. The frame must still
+    // arrive before the Close. Twenty sockets give the race many chances.
+    let (addr, redis, sfu) = serve().await;
+    let mut peers = Vec::new();
+    for _ in 0..20 {
+        let authority = Authority::new(&redis).await;
+        // Without the 3s session lease only shutdown ends these sockets.
+        authority
+            .set(&authority.keys()[2], &authority.claim.claim.u.to_string())
+            .await;
+        let (ws, value) = join(addr, &authority.mint().await).await;
+        assert_eq!(value["op"], "result");
+        peers.push((ws, authority));
+        // Spread the sockets' 250ms retirement ticks over one period.
+        tokio::time::sleep(Duration::from_millis(13)).await;
+    }
+    sfu.shutdown().await;
+    let mut gone = 0;
+    for (ws, _) in &mut peers {
+        let code = terminal_before_close(ws).await;
+        // A peer that shutdown has not reached yet can be revoked by its
+        // authority check, which sees the draining engine; also terminal.
+        assert!(
+            matches!(code.as_str(), "gone" | "unauthorized"),
+            "unexpected terminal frame: {code}"
+        );
+        gone += usize::from(code == "gone");
+    }
+    assert!(gone > 0, "shutdown must send gone");
+    for (_, authority) in &peers {
+        authority.cleanup().await;
+    }
 }
