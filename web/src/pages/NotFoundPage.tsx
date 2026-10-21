@@ -1,5 +1,7 @@
 import { Link } from "@tanstack/react-router";
 
+import "./auth.css";
+
 /** Any path the app does not know, as a whole page (no layout around it). */
 export function NotFoundPage() {
   return (
@@ -13,19 +15,14 @@ export function NotFoundPage() {
  * `<main>`. */
 export function NotFoundCard() {
   return (
-    <section className="lr-auth-card mx-auto max-w-sm">
-      <h1 className="text-2xl font-semibold tracking-tight">
-        Seite nicht gefunden
-      </h1>
-      <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-        Diese Adresse gibt es in Gelabber nicht.
+    <section className="lr-auth-card mx-auto w-full max-w-sm">
+      <h1>Seite nicht gefunden</h1>
+      <p className="auth-lead">Diese Adresse gibt es in Gelabber nicht.</p>
+      <p className="auth-footer">
+        <Link to="/" className="auth-link">
+          Zur Startseite
+        </Link>
       </p>
-      <Link
-        to="/"
-        className="mt-6 inline-block font-medium text-neutral-900 underline underline-offset-2 dark:text-neutral-100"
-      >
-        Zur Startseite
-      </Link>
     </section>
   );
 }

@@ -1,6 +1,7 @@
-// Dialogs for creating a server, creating/renaming a category, and
-// creating/editing a channel. All mutations are optimistic (see
-// `servers/queries.ts`), so the dialog closes the moment the form is valid.
+// Dialogs for adding a server (create or join), creating/renaming a
+// category, and creating/editing a channel. Channel and category mutations
+// are optimistic (see `servers/queries.ts`), so those dialogs close the
+// moment the form is valid.
 
 import { useNavigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
@@ -8,6 +9,8 @@ import { useState, type FormEvent } from "react";
 import { currentUserId, useUserId } from "../auth/scope.ts";
 import { fieldMessage } from "../auth/rules.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
+import { inviteInputMessage, parseInvite } from "../servers/inviteCode.ts";
+import { promptInvite } from "../servers/invitePrompt.ts";
 import { useLastChannel } from "../servers/lastChannel.ts";
 import {
   isPendingId,
@@ -30,11 +33,75 @@ import type {
 } from "../servers/types.ts";
 import { Field } from "./Field.tsx";
 import { FormError } from "./FormError.tsx";
-import { HashIcon, SpeakerIcon } from "./Icons.tsx";
+import { HashIcon, LinkIcon, PlusIcon, SpeakerIcon } from "./Icons.tsx";
 import { GhostButton, Modal } from "./Modal.tsx";
 import { SubmitButton } from "./SubmitButton.tsx";
+import { Button } from "./ui/Button.tsx";
+import { FormField } from "./ui/FormField.tsx";
+import { RadioCard } from "./ui/RadioCard.tsx";
+import { Select } from "./ui/Select.tsx";
+import "./invite.css";
 
 // ---------------------------------------------------------------------------
+
+/** The rail's "+": make a server of your own, or join one by invite. */
+export function AddServerDialog({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [step, setStep] = useState<"choose" | "create" | "join">("choose");
+  const close = () => {
+    onClose();
+    setStep("choose");
+  };
+  const title =
+    step === "create"
+      ? "Server erstellen"
+      : step === "join"
+        ? "Server beitreten"
+        : "Server hinzufügen";
+  return (
+    <Modal open={open} onClose={close} title={title}>
+      {!open ? null : step === "create" ? (
+        <CreateServerForm onClose={close} onBack={() => setStep("choose")} />
+      ) : step === "join" ? (
+        <JoinServerForm
+          autoFocus
+          onJoin={close}
+          onBack={() => setStep("choose")}
+        />
+      ) : (
+        <div className="add-server-choices">
+          <button
+            type="button"
+            className="add-server-choice"
+            onClick={() => setStep("create")}
+          >
+            <PlusIcon size={20} />
+            <span>
+              <strong>Server erstellen</strong>
+              <small>{CREATE_HINT}</small>
+            </span>
+          </button>
+          <button
+            type="button"
+            className="add-server-choice"
+            onClick={() => setStep("join")}
+          >
+            <LinkIcon size={20} />
+            <span>
+              <strong>Server beitreten</strong>
+              <small>Mit einem Einladungslink oder Code.</small>
+            </span>
+          </button>
+        </div>
+      )}
+    </Modal>
+  );
+}
 
 export function CreateServerDialog({
   open,
@@ -50,7 +117,20 @@ export function CreateServerDialog({
   );
 }
 
-function CreateServerForm({ onClose }: { onClose: () => void }) {
+const CREATE_HINT =
+  "Du verwaltest den Server. #allgemein und ein Sprachraum sind gleich da.";
+
+/**
+ * Creates the server, opens its overview and offers an invite link right
+ * away: a server is only useful once people are in it.
+ */
+function CreateServerForm({
+  onClose,
+  onBack,
+}: {
+  onClose: () => void;
+  onBack?: () => void;
+}) {
   const navigate = useNavigate();
   const userId = useUserId();
   const remember = useLastChannel((s) => s.remember);
@@ -71,14 +151,8 @@ function CreateServerForm({ onClose }: { onClose: () => void }) {
         const first = detail.channels.find((c) => c.kind === "text");
         if (first) remember(userId, detail.id, first.id);
         onClose();
-        void navigate(
-          first
-            ? {
-                to: "/s/$serverId/c/$channelId",
-                params: { serverId: detail.id, channelId: first.id },
-              }
-            : { to: "/s/$serverId", params: { serverId: detail.id } },
-        );
+        void navigate({ to: "/s/$serverId", params: { serverId: detail.id } });
+        promptInvite({ userId, id: detail.id, name: detail.name });
       },
       onError: fromError,
     });
@@ -98,13 +172,88 @@ function CreateServerForm({ onClose }: { onClose: () => void }) {
           clearField("name");
         }}
         error={errors.fields.name}
-        hint="Du bist Owner. Ein Kanal #allgemein ist sofort da."
+        hint={CREATE_HINT}
       />
       <FormError message={errors.form} />
       <div className="flex justify-end gap-2">
-        <GhostButton onClick={onClose}>Abbrechen</GhostButton>
+        <GhostButton onClick={onBack ?? onClose}>
+          {onBack ? "Zurück" : "Abbrechen"}
+        </GhostButton>
         <SubmitButton pending={mutation.isPending} pendingLabel="Erstellen…">
           Erstellen
+        </SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * "Einladungslink oder Code": takes whatever was pasted and opens the
+ * invite page, which shows the server before anyone joins. The desktop app
+ * and an installed PWA have no address bar, so this is their way in.
+ */
+export function JoinServerForm({
+  autoFocus,
+  onJoin,
+  onBack,
+  inline = false,
+}: {
+  autoFocus?: boolean;
+  onJoin?: () => void;
+  onBack?: () => void;
+  /** Field and button side by side, without a dialog's button row. */
+  inline?: boolean;
+}) {
+  const navigate = useNavigate();
+  const [value, setValue] = useState("");
+  const [error, setError] = useState<string | undefined>();
+
+  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const parsed = parseInvite(value, window.location.origin);
+    if ("error" in parsed) {
+      setError(inviteInputMessage(parsed.error));
+      event.currentTarget.querySelector<HTMLInputElement>("input")?.focus();
+      return;
+    }
+    onJoin?.();
+    void navigate({ to: "/invite/$code", params: { code: parsed.code } });
+  };
+
+  const field = (
+    <Field
+      id={inline ? "join-invite-inline" : "join-invite"}
+      label="Einladungslink oder Code"
+      type="text"
+      autoComplete="off"
+      autoCapitalize="off"
+      spellCheck={false}
+      autoFocus={autoFocus}
+      placeholder="Link oder Code einfügen"
+      value={value}
+      onChange={(event) => {
+        setValue(event.target.value);
+        setError(undefined);
+      }}
+      error={error}
+    />
+  );
+
+  if (inline) {
+    return (
+      <form onSubmit={onSubmit} noValidate className="join-server-inline">
+        {field}
+        <Button type="submit">Beitreten</Button>
+      </form>
+    );
+  }
+  return (
+    <form onSubmit={onSubmit} noValidate className="flex flex-col gap-5">
+      {field}
+      <div className="flex justify-end gap-2">
+        {onBack ? <GhostButton onClick={onBack}>Zurück</GhostButton> : null}
+        <SubmitButton pending={false} pendingLabel="">
+          Weiter
         </SubmitButton>
       </div>
     </form>
@@ -273,9 +422,7 @@ function ChannelForm({
     <form onSubmit={onSubmit} noValidate className="flex flex-col gap-5">
       {!editing ? (
         <fieldset className="flex flex-col gap-2">
-          <legend className="text-sm font-medium text-neutral-800 dark:text-neutral-200">
-            Kanaltyp
-          </legend>
+          <legend className="ui-label mb-2">Kanaltyp</legend>
           <div className="grid grid-cols-2 gap-2">
             {(
               [
@@ -283,41 +430,24 @@ function ChannelForm({
                 ["voice", "Voice", "Sprache, Go Live"],
               ] as const
             ).map(([value, label, hint]) => (
-              <label
+              <RadioCard
                 key={value}
-                className={[
-                  "flex cursor-pointer flex-col gap-0.5 rounded-lg border px-3 py-2 text-sm transition",
-                  kind === value
-                    ? "border-neutral-900 dark:border-neutral-300 bg-neutral-900 dark:bg-neutral-700 text-white"
-                    : "border-neutral-300 dark:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-800",
-                ].join(" ")}
-              >
-                <input
-                  type="radio"
-                  name="kind"
-                  value={value}
-                  checked={kind === value}
-                  onChange={() => setKind(value)}
-                  className="sr-only"
-                />
-                <span className="flex items-center gap-1.5 font-medium">
-                  {value === "text" ? (
-                    <HashIcon size={14} />
-                  ) : (
-                    <SpeakerIcon size={14} />
-                  )}
-                  {label}
-                </span>
-                <span
-                  className={
-                    kind === value
-                      ? "text-neutral-300"
-                      : "text-neutral-500 dark:text-neutral-400"
-                  }
-                >
-                  {hint}
-                </span>
-              </label>
+                name="kind"
+                value={value}
+                checked={kind === value}
+                onChange={() => setKind(value)}
+                label={
+                  <span className="flex items-center gap-1.5">
+                    {value === "text" ? (
+                      <HashIcon size={14} />
+                    ) : (
+                      <SpeakerIcon size={14} />
+                    )}
+                    {label}
+                  </span>
+                }
+                description={hint}
+              />
             ))}
           </div>
         </fieldset>
@@ -340,18 +470,11 @@ function ChannelForm({
             : undefined
         }
       />
-      <div className="flex flex-col gap-1.5">
-        <label
-          htmlFor="channel-category"
-          className="text-sm font-medium text-neutral-800 dark:text-neutral-200"
-        >
-          Kategorie
-        </label>
-        <select
+      <FormField id="channel-category" label="Kategorie">
+        <Select
           id="channel-category"
           value={parentId}
           onChange={(event) => setCategoryId(event.target.value)}
-          className="rounded-lg border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-3 py-2 text-base text-neutral-900 dark:text-neutral-100 outline-none transition focus:border-neutral-500 dark:focus:border-neutral-400 focus:ring-2 focus:ring-neutral-200 dark:focus:ring-neutral-700"
         >
           <option value="">Ohne Kategorie</option>
           {categories.map((category) => (
@@ -359,8 +482,8 @@ function ChannelForm({
               {category.name}
             </option>
           ))}
-        </select>
-      </div>
+        </Select>
+      </FormField>
       <FormError message={errors.form} />
       <div className="flex justify-end gap-2">
         <GhostButton onClick={onClose}>Abbrechen</GhostButton>

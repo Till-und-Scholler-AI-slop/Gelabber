@@ -1,25 +1,32 @@
 import { useMutation } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 
-import { useAccountMail } from "../auth/mail.ts";
+import { useAccountMailStatus } from "../auth/mail.ts";
+import { isInviteRedirect } from "../auth/redirect.ts";
 import { fieldMessage, validateEmail } from "../auth/rules.ts";
 import { login } from "../auth/session.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
-import { InstallApp } from "../pwa/InstallApp.tsx";
+import { buttonClass } from "../components/ui/buttonClass.ts";
+import { PasswordField } from "../components/ui/PasswordField.tsx";
+import { InstallDisclosure } from "../pwa/InstallApp.tsx";
 import { installHintUseful, useInstallation } from "../pwa/install.ts";
+import { InviteContextBanner } from "./AuthLayout.tsx";
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const { redirect } = useSearch({ from: "/centered/login" });
+  const { redirect, reason } = useSearch({ from: "/auth/login" });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const { errors, clearField, setFields, fromError } = useFormErrors();
+  const form = useRef<HTMLFormElement>(null);
+  const { errors, clearField, setFields, fromError, cooldown } =
+    useFormErrors(form);
   const installHint = useInstallation(installHintUseful);
-  const accountMail = useAccountMail();
+  const accountMail = useAccountMailStatus();
+  const invited = isInviteRedirect(redirect);
 
   const mutation = useMutation({
     mutationFn: () => login(email, password),
@@ -45,21 +52,42 @@ export function LoginPage() {
     mutation.mutate();
   };
 
-  return (
-    <section className="lr-auth-card mx-auto max-w-sm">
-      <h1 className="text-2xl font-semibold tracking-tight">Anmelden</h1>
-      <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-        Noch kein Konto?{" "}
-        <Link
-          to="/register"
-          search={redirect ? { redirect } : {}}
-          className="font-medium text-neutral-900 dark:text-neutral-100 underline underline-offset-2"
-        >
-          Registrieren
-        </Link>
-      </p>
+  const typedEmail = email.trim();
 
-      <form onSubmit={onSubmit} noValidate className="mt-8 flex flex-col gap-5">
+  return (
+    <section className="lr-auth-card">
+      {invited ? <InviteContextBanner /> : null}
+      {reason === "expired" ? (
+        <p role="status" className="auth-banner">
+          Du wurdest abgemeldet. Melde dich erneut an, um weiterzumachen.
+        </p>
+      ) : null}
+      <h1>Anmelden</h1>
+      {invited ? (
+        <>
+          <p className="auth-lead">Neu bei Gelabber?</p>
+          <Link
+            to="/register"
+            search={{ redirect }}
+            className={buttonClass({ size: "lg", className: "mt-3" })}
+          >
+            Konto anlegen
+          </Link>
+        </>
+      ) : (
+        <p className="auth-lead">
+          Noch kein Konto?{" "}
+          <Link
+            to="/register"
+            search={redirect ? { redirect } : {}}
+            className="auth-link"
+          >
+            Registrieren
+          </Link>
+        </p>
+      )}
+
+      <form ref={form} onSubmit={onSubmit} noValidate className="auth-form">
         <Field
           id="email"
           label="E-Mail-Adresse"
@@ -74,10 +102,9 @@ export function LoginPage() {
           }}
           error={errors.fields.email}
         />
-        <Field
+        <PasswordField
           id="password"
           label="Passwort"
-          type="password"
           autoComplete="current-password"
           value={password}
           onChange={(event) => {
@@ -87,19 +114,29 @@ export function LoginPage() {
           error={errors.fields.password}
         />
         <FormError message={errors.form} />
-        <SubmitButton pending={mutation.isPending} pendingLabel="Anmelden…">
+        <SubmitButton
+          size="lg"
+          pending={mutation.isPending}
+          pendingLabel="Anmelden…"
+          cooldown={cooldown}
+        >
           Anmelden
         </SubmitButton>
-        {accountMail && (
-          <Link
-            to="/forgot-password"
-            className="self-start text-sm text-neutral-600 dark:text-neutral-400 underline underline-offset-2"
-          >
-            Passwort vergessen?
-          </Link>
-        )}
+        <p className="auth-recovery">
+          {accountMail === true ? (
+            <Link
+              to="/forgot-password"
+              search={typedEmail ? { email: typedEmail } : {}}
+              className="auth-link"
+            >
+              Passwort vergessen?
+            </Link>
+          ) : accountMail === false ? (
+            "Passwort vergessen? Frag die Person, die diesen Gelabber-Server betreibt."
+          ) : null}
+        </p>
       </form>
-      {installHint && <InstallApp />}
+      {installHint && <InstallDisclosure />}
     </section>
   );
 }
