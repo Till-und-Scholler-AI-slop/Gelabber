@@ -3,6 +3,8 @@ import { CheckIcon, ScreenIcon } from "../components/Icons.tsx";
 import { useBlocker } from "@tanstack/react-router";
 import { confirmAction } from "../components/confirm.ts";
 import { Button } from "../components/ui/Button.tsx";
+import { InlineStatus } from "../components/ui/InlineStatus.tsx";
+import type { InlineStatusValue } from "../components/ui/useInlineStatus.ts";
 import { ChipGroup } from "../components/ui/ChipGroup.tsx";
 import { nextChipIndex } from "../components/ui/chipKeys.ts";
 import { randomUuid } from "../lib/uuid.ts";
@@ -24,7 +26,12 @@ import {
   syncThemes,
   useAccountThemes,
 } from "./account.ts";
-import { endThemePreview, escapeEndsPreview, previewTheme } from "./preview.ts";
+import {
+  endThemePreview,
+  escapeEndsPreview,
+  galleryPreview,
+  previewTheme,
+} from "./preview.ts";
 import { ThemePreview } from "./ThemePreview.tsx";
 import "./themes.css";
 
@@ -111,14 +118,17 @@ function ColorField({
 export function ThemesPanel() {
   const state = useAccountThemes();
   const [filter, setFilter] = useState<Filter>("all");
-  const [selected, setSelected] = useState(state.doc.active);
+  // The card tried on, or null for the account's theme, which then follows
+  // a sync or another device without turning into a preview of the old one.
+  const [picked, setPicked] = useState<string | null>(null);
   const [draft, setDraft] = useState<ThemeDefinition | null>(null);
   const [baseline, setBaseline] = useState("");
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<InlineStatusValue>(null);
   const file = useRef<HTMLInputElement>(null);
   const cards = useRef<(HTMLButtonElement | null)[]>([]);
   const all = [...BUILTIN_THEMES, ...state.doc.customThemes];
   const active = state.doc.active;
+  const selected = picked ?? active;
   const themeName = (id: string) =>
     id === "system"
       ? "System"
@@ -129,7 +139,8 @@ export function ThemesPanel() {
       : (all.find((t) => t.id === selected) ?? builtinTheme("dark"));
   const shown = draft ?? chosen;
   const dirty = draft !== null && JSON.stringify(draft) !== baseline;
-  const previewing = draft === null && selected !== active;
+  const preview = galleryPreview(picked, active, draft !== null);
+  const previewing = preview !== null;
   const blocked =
     state.status === "saving" ||
     state.status === "loading" ||
@@ -158,42 +169,52 @@ export function ThemesPanel() {
   // The gallery tries a theme on across the whole app. Leaving settings or
   // this area puts the account's theme back.
   useEffect(() => {
-    if (previewing) previewTheme(selected);
+    if (preview) previewTheme(preview);
     else endThemePreview();
-  }, [previewing, selected]);
+  }, [preview]);
   useEffect(() => endThemePreview, []);
   const revert = () => {
-    setSelected(active);
-    setNotice("");
+    setPicked(null);
+    setNotice(null);
   };
   useEffect(() => {
     if (!previewing) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (!escapeEndsPreview(event)) return;
       event.preventDefault();
-      setSelected(active);
-      setNotice("");
+      setPicked(null);
+      setNotice(null);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [previewing, active]);
+  }, [previewing]);
   const abandon = async () => !dirty || (await confirmDiscardThemeDraft());
   const open = async (theme: ThemeDefinition, isNew: boolean) => {
     if (!(await abandon())) return;
     setDraft(theme);
     setBaseline(isNew ? "" : JSON.stringify(theme));
-    setNotice("");
+    setNotice(null);
   };
   // Choosing only previews: no scrolling, and focus stays on the card.
   const choose = async (id: string) => {
     if (!(await abandon())) return;
     setDraft(null);
-    setSelected(id);
-    setNotice("");
+    setPicked(id === active ? null : id);
+    setNotice(null);
   };
   const keep = async () => {
-    if (await changeTheme({ kind: "apply", id: selected }))
-      setNotice(`„${themeName(selected)}“ ist jetzt dein Theme.`);
+    const name = themeName(selected);
+    if (await changeTheme({ kind: "apply", id: selected })) {
+      setPicked(null);
+      setNotice({
+        tone: "success",
+        message: `„${name}“ ist jetzt dein Theme.`,
+      });
+    } else
+      setNotice({
+        tone: "error",
+        message: "Nicht gespeichert – erneut versuchen",
+      });
   };
   return (
     <div className="themes-panel">
@@ -227,16 +248,23 @@ export function ThemesPanel() {
           e.target.value = "";
           if (!selectedFile) return;
           if (selectedFile.size > MAX_IMPORT_BYTES) {
-            setNotice("Die Datei darf höchstens 64 KiB groß sein.");
+            setNotice({
+              tone: "error",
+              message: "Die Datei darf höchstens 64 KiB groß sein.",
+            });
             return;
           }
           try {
             const theme = importTheme(await selectedFile.text());
             void open(theme, true);
           } catch (error) {
-            setNotice(
-              error instanceof Error ? error.message : "Import fehlgeschlagen.",
-            );
+            setNotice({
+              tone: "error",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Import fehlgeschlagen.",
+            });
           }
         }}
       />
@@ -274,9 +302,7 @@ export function ThemesPanel() {
           )}
         </div>
       )}
-      <p className="themes-notice" role="status">
-        {notice}
-      </p>
+      <InlineStatus className="themes-notice" status={notice} />
       <ChipGroup
         className="themes-filter"
         label="Themes filtern"
@@ -408,9 +434,12 @@ export function ThemesPanel() {
                     theme: { ...draft, name: draft.name.trim() },
                   })
                 ) {
-                  setSelected(draft.id);
+                  setPicked(null);
                   setDraft(null);
-                  setNotice("Theme gespeichert und angewendet.");
+                  setNotice({
+                    tone: "success",
+                    message: "Theme gespeichert und angewendet.",
+                  });
                 }
               }}
             >
@@ -526,8 +555,11 @@ export function ThemesPanel() {
                         })) &&
                         (await changeTheme({ kind: "delete", id: chosen.id }))
                       ) {
-                        setSelected("dark");
-                        setNotice("Theme gelöscht.");
+                        setPicked(null);
+                        setNotice({
+                          tone: "success",
+                          message: "Theme gelöscht.",
+                        });
                       }
                     }}
                   >

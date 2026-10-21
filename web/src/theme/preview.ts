@@ -20,6 +20,19 @@ export function displayedThemeId(active: string, preview: string | null) {
   return preview ?? active;
 }
 
+/**
+ * The theme the gallery tries on: the picked card, unless it already is the
+ * account's theme or a draft is open in the editor. `picked` is null while
+ * the gallery follows the account, so a sync never brings back an old one.
+ */
+export function galleryPreview(
+  picked: string | null,
+  active: string,
+  drafting: boolean,
+): string | null {
+  return drafting || picked === null || picked === active ? null : picked;
+}
+
 /** Whether an Esc press ends the preview: not when a dialog, a menu or a
  * field already handled it. */
 export function escapeEndsPreview(event: {

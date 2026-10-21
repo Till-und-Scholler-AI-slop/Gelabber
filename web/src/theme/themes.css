@@ -24,13 +24,11 @@
 .theme-file {
   display: none;
 }
-.themes-notice:empty {
-  display: none;
-}
 .themes-notice {
+  display: flex;
+}
+.themes-notice:not(:empty) {
   margin-top: 12px;
-  color: var(--lr-online-text);
-  font: var(--lr-type-meta);
 }
 .themes-filter {
   margin: 20px 0 16px;

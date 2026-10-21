@@ -5,6 +5,7 @@ import {
   displayedThemeId,
   endThemePreview,
   escapeEndsPreview,
+  galleryPreview,
   previewTheme,
   useThemePreview,
 } from "./preview.ts";
@@ -29,6 +30,19 @@ describe("theme preview", () => {
     expect(displayedThemeId("dark", useThemePreview.getState().id)).toBe(
       "dark",
     );
+  });
+
+  it("tries on only a picked card that is not the account's theme", () => {
+    expect(galleryPreview("nord", "dark", false)).toBe("nord");
+    expect(galleryPreview("dark", "dark", false)).toBeNull();
+    // The editor shows its draft in the panel, not across the app.
+    expect(galleryPreview("nord", "dark", true)).toBeNull();
+  });
+
+  it("follows the account when nothing is picked, even after a sync", () => {
+    // Opened with "dark" cached; the account says "nord" a moment later.
+    expect(galleryPreview(null, "dark", false)).toBeNull();
+    expect(galleryPreview(null, "nord", false)).toBeNull();
   });
 
   it("ends on an Esc that nothing else handled", () => {
