@@ -221,7 +221,7 @@ try {
   await guest.page.evaluate(() =>
     Promise.all([window.guardNavigation, window.bootstrapWaiting]),
   );
-  await guest.page.waitForURL((url) => url.pathname === "/profile");
+  await guest.page.waitForURL((url) => url.pathname === "/settings/profil");
   assert.equal(
     await guest.page.getByLabel("Name", { exact: true }).inputValue(),
     "Auth Test owner",
