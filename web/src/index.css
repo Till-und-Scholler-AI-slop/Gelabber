@@ -1481,8 +1481,9 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
   }
 }
 
-/* Theme styles share the same component geometry and hit targets. */
-dialog,
+/* Theme styles share the same component geometry and hit targets. Modal
+   and sheets bring their own elevation (ui.css). */
+dialog:not(.gel-modal, .ui-sheet),
 .media-settings-form fieldset,
 .theme-card {
   box-shadow: var(--lr-shadow-card);

@@ -546,6 +546,17 @@
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
     gap: var(--lr-space-4);
   }
+  /* The reduced-motion kill switches drop every animation, which would keep
+     a skeleton invisible. Showing it after the delay is no motion; a layered
+     !important outranks theirs. */
+  @media (prefers-reduced-motion: reduce) {
+    .ui-skeleton {
+      animation: ui-skeleton-in 0s 150ms forwards !important;
+    }
+  }
+  html[data-reduced-motion="true"] .ui-skeleton {
+    animation: ui-skeleton-in 0s 150ms forwards !important;
+  }
   @keyframes ui-skeleton-in {
     to {
       opacity: 1;
