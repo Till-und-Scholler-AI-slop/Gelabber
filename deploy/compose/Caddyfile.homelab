@@ -62,7 +62,8 @@
 		}
 	}
 
-	# Prometheus scrapes the internal listener; never publish metrics.
+	# Prometheus scrapes media:8081/metrics on the compose network; media itself
+	# no longer serves /media/metrics. Keep this rule for older media images.
 	handle /media/metrics {
 		respond 404
 	}
