@@ -127,11 +127,13 @@ export function Picker<T>({
             </li>
           ))}
         </ul>
-      ) : (
-        <p className="shell-picker-empty">{empty}</p>
-      )}
-      <p className="sr-only" role="status">
-        {options.length === 0 ? "" : `${options.length} Treffer`}
+      ) : null}
+      {/* Read out as the list changes: how many match, or why none does. */}
+      <p
+        className={options.length > 0 ? "sr-only" : "shell-picker-empty"}
+        role="status"
+      >
+        {options.length > 0 ? `${options.length} Treffer` : empty}
       </p>
     </div>
   );
