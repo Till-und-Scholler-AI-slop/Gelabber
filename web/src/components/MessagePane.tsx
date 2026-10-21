@@ -50,6 +50,7 @@ import {
   UNREAD_SEEK_PAGES,
   unreadAnchor,
   visibleMessages,
+  type ReadMark,
 } from "../messages/pages.ts";
 import {
   nonePending,
@@ -299,15 +300,16 @@ export function MessagePane({
   // while reading so the divider does not jump.
   const { data: readRows, isError: readStateFailed } = useReadState();
   const readRow = readRows?.find((row) => row.channel_id === channelId);
-  const [newAfter, setNewAfter] = useState<string | null | undefined>(
+  const [newAfter, setNewAfter] = useState<ReadMark | null | undefined>(
     undefined,
   );
   // How many were unread then, for the bar; null once they are read.
   const [unreadCount, setUnreadCount] = useState<number | null>(null);
   if (newAfter === undefined && (readRows || readStateFailed)) {
-    const unread = readRow && readRow.unread_count > 0 ? readRow : undefined;
-    setNewAfter(unread ? unread.read_message_id : null);
-    setUnreadCount(unread?.read_message_id ? unread.unread_count : null);
+    const id =
+      readRow && readRow.unread_count > 0 ? readRow.read_message_id : null;
+    setNewAfter(id ? { id, order: readRow?.read_order } : null);
+    setUnreadCount(id ? (readRow?.unread_count ?? null) : null);
   }
   if (unreadCount !== null && readRow?.unread_count === 0) setUnreadCount(null);
   // Whether the list opened at the first unread row rather than the end.
@@ -372,6 +374,24 @@ export function MessagePane({
     [items, searchScope],
   );
   const overlay = searching || showingContext;
+  // "Anzeigen" under the composer: to the row that was not sent, and onto
+  // its first action once the list rendered it there.
+  const showAttempt = useCallback(
+    (id: string) => {
+      jumpTo(id);
+      const index = items.findIndex((message) => message.id === id);
+      let frames = 10;
+      const focusAction = () => {
+        const action = panesRef.current?.querySelector<HTMLElement>(
+          `[role="log"] [data-index="${index}"] .lr-message-failure button:not(:disabled)`,
+        );
+        if (action) action.focus({ preventScroll: true });
+        else if (--frames > 0) requestAnimationFrame(focusAction);
+      };
+      if (index >= 0) requestAnimationFrame(focusAction);
+    },
+    [jumpTo, items],
+  );
 
   // The newest row when the reader left the end: what others wrote since
   // is counted on the way back.
@@ -380,10 +400,12 @@ export function MessagePane({
   if (atLatest && awayFrom !== null) setAwayFrom(null);
   else if (!atLatest && awayFrom === null && newestId) setAwayFrom(newestId);
   const arrived = awayFrom ? arrivedSince(items, awayFrom, user?.id) : 0;
-  const readIndex = newAfter
-    ? items.findIndex((message) => message.id === newAfter)
-    : -1;
-  const firstUnread = readIndex >= 0 ? items[readIndex + 1] : undefined;
+  const opensAt = unreadAnchor(
+    items,
+    newAfter ?? null,
+    Boolean(query.hasNextPage),
+  );
+  const firstUnread = opensAt.kind === "row" ? items[opensAt.index] : undefined;
 
   // Close the picture with its message when that is deleted. A result of
   // the search may not be in the loaded list: only "was there, now gone".
@@ -481,7 +503,8 @@ export function MessagePane({
                       <strong>
                         {unreadCount === 1
                           ? "1 neue Nachricht"
-                          : `${unreadCount} neue Nachrichten`}
+                          : // The server counts up to 100.
+                            `${unreadCount > 99 ? "99+" : unreadCount} neue Nachrichten`}
                       </strong>
                       {firstUnread
                         ? ` seit ${formatWhen(firstUnread.created_at)}`
@@ -497,7 +520,13 @@ export function MessagePane({
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => markReadNow()}
+                      aria-keyshortcuts="Escape"
+                      onClick={() => {
+                        markReadNow();
+                        // The bar goes with the unread messages: stay in the
+                        // list rather than on <body>.
+                        focusList();
+                      }}
                     >
                       Als gelesen markieren
                       <kbd aria-hidden="true">Esc</kbd>
@@ -648,7 +677,7 @@ export function MessagePane({
           author={author}
           attempts={channelAttempts}
           onSent={toLatest}
-          onShowAttempt={jumpTo}
+          onShowAttempt={showAttempt}
           onDraftChange={onDraftChange}
           onDraftStop={onDraftStop}
         />
@@ -685,7 +714,7 @@ function MessageList({
   meId: string | undefined;
   /** Last read message when the channel opened; "Neu" goes after it.
    *  `undefined` while the read state is not known yet. */
-  newAfter: string | null | undefined;
+  newAfter: ReadMark | null | undefined;
   canModerate: boolean;
   canSend: boolean;
   hasOlder: boolean;
@@ -737,11 +766,8 @@ function MessageList({
   const lastJump = useRef(unreadJump);
   const edit = useEditMessage(channelId);
   const remove = useDeleteMessage(channelId);
-  const readIndex = newAfter
-    ? items.findIndex((message) => message.id === newAfter)
-    : -1;
-  const newIndex =
-    readIndex >= 0 && readIndex + 1 < items.length ? readIndex + 1 : -1;
+  const opensAt = unreadAnchor(items, newAfter ?? null, hasOlder);
+  const newIndex = opensAt.kind === "row" ? opensAt.index : -1;
 
   // Not on the React Compiler; the warning is about memoising its return value.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -990,7 +1016,8 @@ function MessageList({
     onOpened,
   ]);
 
-  // Older pages until the last read message is loaded.
+  // Older pages until the last read message is loaded, also when
+  // "Springen" adds pages to look through.
   useEffect(() => {
     if (
       opening.current !== "seek" ||
@@ -1004,7 +1031,16 @@ function MessageList({
       return;
     seekPages.current += 1;
     onLoadOlder();
-  }, [items, newAfter, hasOlder, loadingOlder, loadError, ready, onLoadOlder]);
+  }, [
+    items,
+    newAfter,
+    hasOlder,
+    loadingOlder,
+    loadError,
+    ready,
+    onLoadOlder,
+    unreadJump,
+  ]);
 
   const [highlighted, setHighlighted] = useState<string | null>(null);
   const handledFocus = useRef(focusRequest?.n);
@@ -1398,10 +1434,20 @@ function MessageRow({
 
   // A finger held on the row opens the sheet; a right click the menu,
   // except on a link, a picture or selected text, which keep the browser's.
+  // Not in what the row opens over the page (the menu, the emoji picker's
+  // dialog): React passes their events up to the row too.
+  const ownTarget = (event: { currentTarget: Element; target: EventTarget }) =>
+    event.target instanceof Element &&
+    event.currentTarget.contains(event.target) &&
+    event.target.closest("dialog") === event.currentTarget.closest("dialog");
   const menuHandlers = hasMenu
     ? {
         onPointerDown: (event: PointerEvent<HTMLDivElement>) => {
-          if ((event.target as Element).closest("textarea, input")) return;
+          if (
+            !ownTarget(event) ||
+            (event.target as Element).closest("textarea, input")
+          )
+            return;
           gesture.down({
             pointerType: event.pointerType,
             isPrimary: event.isPrimary,
@@ -1415,6 +1461,13 @@ function MessageRow({
         onPointerCancel: gesture.end,
         onPointerLeave: gesture.end,
         onContextMenu: (event: MouseEvent<HTMLDivElement>) => {
+          if (!ownTarget(event)) return;
+          // Already open, e.g. by the long press before a browser's own
+          // contextmenu for the same finger.
+          if (menu !== null) {
+            event.preventDefault();
+            return;
+          }
           const pointer = (
             event.nativeEvent as Partial<globalThis.PointerEvent>
           ).pointerType;

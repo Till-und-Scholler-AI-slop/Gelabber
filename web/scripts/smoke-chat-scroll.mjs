@@ -480,6 +480,39 @@ try {
       `PASS: ${label}: "Als gelesen markieren" marks it read and the bar goes`,
     );
     await again.close();
+
+    // The last read message was deleted since: its order still finds the
+    // first unread one, on the older page.
+    const deleted = await open({
+      unread: {
+        channel_id: TEXT,
+        server_id: SERVER,
+        read_message_id: id(999),
+        read_order: 31,
+        read_at: AT,
+        unread_count: 69,
+      },
+    });
+    await deleted.asked;
+    deleted.releaseOlder();
+    await deleted.page
+      .getByRole("separator", { name: "Neue Nachrichten" })
+      .waitFor();
+    const after = await deleted.page.evaluate(
+      () =>
+        document
+          .querySelector(".lr-new-divider")
+          .closest("[data-index]")
+          .querySelector(".lr-message-text")?.textContent,
+    );
+    assert.ok(
+      after?.startsWith("Nachricht 31."),
+      `${label}: with the read message deleted, "Neu" sits above ${after?.slice(0, 14)}`,
+    );
+    console.log(
+      `PASS: ${label}: a deleted read message still opens at the first unread one`,
+    );
+    await deleted.close();
   }
 
   await olderPage("older page");

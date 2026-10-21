@@ -80,7 +80,11 @@ export function MessageActionItems({
   return (
     <div className="lr-message-menu" onKeyDown={moveFocus}>
       {actions.react ? (
-        <div className="lr-message-menu-reactions" role="group">
+        <div
+          className="lr-message-menu-reactions"
+          role="group"
+          aria-label="Reagieren"
+        >
           {QUICK_REACTIONS.map((emoji) => {
             const given = mine.includes(emoji);
             return (

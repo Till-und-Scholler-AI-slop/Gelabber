@@ -85,27 +85,47 @@ describe("message pages", () => {
 });
 
 describe("unread anchor", () => {
-  const rows = ["a", "b", "c", "d"].map((id) => msg(id));
+  const rows = ["a", "b", "c", "d"].map((id, n) => ({
+    ...msg(id),
+    created_order: (n + 1) * 10,
+  }));
+  const read = (id: string, order?: number) => ({ id, order });
 
   it("opens at the first row after the last read one", () => {
-    expect(unreadAnchor(rows, "b", true)).toEqual({ kind: "row", index: 2 });
+    expect(unreadAnchor(rows, read("b"), true)).toEqual({
+      kind: "row",
+      index: 2,
+    });
   });
 
   it("opens at the end when nothing is unread", () => {
     expect(unreadAnchor(rows, null, true)).toEqual({ kind: "end" });
-    expect(unreadAnchor(rows, "d", true)).toEqual({ kind: "end" });
+    expect(unreadAnchor(rows, read("d"), true)).toEqual({ kind: "end" });
   });
 
   it("pages further while the last read message is not loaded", () => {
-    expect(unreadAnchor(rows, "x", true)).toEqual({ kind: "older" });
+    expect(unreadAnchor(rows, read("x"), true)).toEqual({ kind: "older" });
+    expect(unreadAnchor(rows, read("x", 5), true)).toEqual({ kind: "older" });
   });
 
   it("opens at the end when the last read message is gone for good", () => {
-    expect(unreadAnchor(rows, "x", false)).toEqual({ kind: "end" });
+    expect(unreadAnchor(rows, read("x"), false)).toEqual({ kind: "end" });
+  });
+
+  it("finds the first unread row by order when the read one was deleted", () => {
+    expect(unreadAnchor(rows, read("x", 25), true)).toEqual({
+      kind: "row",
+      index: 2,
+    });
+    expect(unreadAnchor(rows, read("x", 5), false)).toEqual({
+      kind: "row",
+      index: 0,
+    });
+    expect(unreadAnchor(rows, read("x", 45), true)).toEqual({ kind: "end" });
   });
 
   it("does not count an own message that is still being sent", () => {
-    expect(unreadAnchor([...rows, msg("tmp:1")], "d", false)).toEqual({
+    expect(unreadAnchor([...rows, msg("tmp:1")], read("d"), false)).toEqual({
       kind: "end",
     });
   });

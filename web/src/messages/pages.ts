@@ -234,19 +234,39 @@ export type UnreadAnchor =
   /** The last read message is not loaded yet, and older history exists. */
   | { kind: "older" };
 
-/** Where a conversation opens when `readId` was the last message read.
- *  An own message still being sent is not unread. */
+/** The last message read: its id, and its server order (`read_order`). */
+export type ReadMark = { id: string; order?: number | null };
+
+/** Where a conversation opens when `read` was the last message read. The
+ *  read message may have been deleted since: then the first loaded row
+ *  after its order is the first unread one. An own message still being
+ *  sent is not unread. */
 export function unreadAnchor(
-  items: readonly Pick<Message, "id">[],
-  readId: string | null,
+  items: readonly Pick<Message, "id" | "created_order">[],
+  read: ReadMark | null,
   hasOlder: boolean,
 ): UnreadAnchor {
-  if (!readId) return { kind: "end" };
-  const read = items.findIndex((message) => message.id === readId);
-  if (read < 0) return hasOlder ? { kind: "older" } : { kind: "end" };
-  const first = items[read + 1];
+  if (!read) return { kind: "end" };
+  let index = items.findIndex((message) => message.id === read.id) + 1;
+  if (index === 0) {
+    const order = read.order;
+    const after = (message: Pick<Message, "created_order">) =>
+      order != null &&
+      message.created_order !== undefined &&
+      message.created_order > order;
+    const reached =
+      order != null &&
+      items.some(
+        (message) =>
+          message.created_order !== undefined && message.created_order <= order,
+      );
+    if (!reached && hasOlder) return { kind: "older" };
+    index = items.findIndex(after);
+    if (index < 0) return { kind: "end" };
+  }
+  const first = items[index];
   if (!first || first.id.startsWith("tmp:")) return { kind: "end" };
-  return { kind: "row", index: read + 1 };
+  return { kind: "row", index };
 }
 
 /** Same author, same 5-minute window — compact row, no repeated avatar. */
