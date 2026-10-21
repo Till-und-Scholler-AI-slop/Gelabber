@@ -2271,7 +2271,8 @@ function noteMicLost(raw: MediaStream): void {
 }
 
 /** A device came or went. The chosen microphone gone: fall back as if it
- * had ended (some browsers keep the track). Back again: use it again. */
+ * had ended (some browsers keep the track). There (again, or for the first
+ * time since joining without it): use it. */
 async function onDeviceChange(): Promise<void> {
   const chosen = useMediaSettings.getState().audioInputId;
   if (useVoice.getState().status !== "joined" || !chosen || !rawMicStream)
@@ -2293,8 +2294,12 @@ async function onDeviceChange(): Promise<void> {
   )
     return;
   const present = inputs.includes(chosen);
-  if (!present && !micFellBack) fallBackToDefaultMic(raw);
-  else if (present && micFellBack) {
+  // The capture names its device where the browser says: a chosen one that
+  // was missing at joining is no loss when another device comes or goes.
+  const using = raw.getAudioTracks()[0]?.getSettings?.().deviceId;
+  const onChosen = using ? using === chosen : !micFellBack;
+  if (!present && onChosen) fallBackToDefaultMic(raw);
+  else if (present && !onChosen) {
     micFellBack = false;
     void refreshMic();
   }

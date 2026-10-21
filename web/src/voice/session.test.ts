@@ -4614,6 +4614,48 @@ describe("authoritative mediasoup session lifecycle", () => {
     await vi.waitFor(() => expect(env.getUserMediaCalls()).toBe(3));
     expect(env.errors).toHaveLength(1);
   });
+  it("takes the chosen microphone once it appears, without calling it lost", async () => {
+    const devices = new EventTarget();
+    let inputs = ["default", "webcam"];
+    vi.stubGlobal("navigator", {
+      mediaDevices: Object.assign(devices, {
+        enumerateDevices: async () =>
+          inputs.map((deviceId) => ({ kind: "audioinput", deviceId })),
+      }),
+    });
+    useMediaSettings.getState().patch({ audioInputId: "headset" });
+    const env = await joined({
+      mediaStreamFor: (index) => {
+        const stream = fakeStream(`mic-${index}`);
+        // The chosen headset is not there yet: the first capture is the
+        // system default.
+        const deviceId = index === 0 ? "default" : "headset";
+        Object.assign(stream.getAudioTracks()[0]!, {
+          getSettings: () => ({ deviceId }),
+        });
+        return stream;
+      },
+    });
+    // Another device coming or going is no loss of the one in use.
+    inputs = ["default"];
+    devices.dispatchEvent(new Event("devicechange"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(env.getUserMediaCalls()).toBe(1);
+    expect(env.errors).toHaveLength(0);
+    inputs = ["default", "headset"];
+    devices.dispatchEvent(new Event("devicechange"));
+    await vi.waitFor(() =>
+      expect(env.peers[0]!.audio).toBe(env.streams[1]!.getAudioTracks()[0]),
+    );
+    expect(env.errors).toHaveLength(0);
+    // Now it is the one in use, and unplugging it is a loss.
+    inputs = ["default"];
+    devices.dispatchEvent(new Event("devicechange"));
+    await vi.waitFor(() => expect(env.getUserMediaCalls()).toBe(3));
+    expect(messages(env.errors)).toEqual([
+      "Mikrofon getrennt – Standardgerät wird verwendet",
+    ]);
+  });
   it("lets headset buttons mute and hang up while in a call", async () => {
     const handlers = new Map<string, (() => void) | null>();
     const active: boolean[] = [];
