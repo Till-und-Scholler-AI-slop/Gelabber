@@ -291,6 +291,10 @@ impl Sfu {
     pub fn room_count(&self) -> usize {
         self.counters.rooms.load(Ordering::Relaxed)
     }
+    /// The engine's one reconnecting Redis connection, for the join path.
+    pub fn redis(&self) -> &crate::redis_connection::CachedRedis {
+        &self.redis
+    }
     pub fn metrics_text(&self) -> String {
         let c = &self.counters;
         let mut text = String::new();

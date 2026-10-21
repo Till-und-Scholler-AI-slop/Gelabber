@@ -226,7 +226,7 @@ async fn join(
     if watch.is_some_and(|user| user.is_nil()) {
         return Err("bad_request");
     }
-    let claim = ticket::consume(&state.redis, code)
+    let claim = ticket::consume(state.sfu.redis(), code)
         .await
         .map_err(|_| "unauthorized")?
         .ok_or("unauthorized")?;
