@@ -434,6 +434,9 @@ summary {
     opacity: 0.45;
   }
 }
+html[data-reduced-motion="true"] .server-tile-placeholder {
+  animation: none;
+}
 .unread-count--rail {
   position: absolute;
   right: -5px;
@@ -1415,7 +1418,8 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     font-size: 12px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
-  } /* Room for the members button, fixed at the header's right end. */
+  }
+  /* Room for the members button, fixed at the header's right end. */
   .workspace-main
     .lr-channel-content:has(~ .member-drawer-trigger)
     .lr-channel-header {
