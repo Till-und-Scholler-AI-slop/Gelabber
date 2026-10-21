@@ -220,8 +220,11 @@
     max-height: 100%;
     translate: 0 -50%;
   }
-  .ui-password__toggle:hover:not(:disabled) {
+  /* Inside the field the state shows in the icon, not as a filled square. */
+  .ui-password__toggle:hover:not(:disabled),
+  .ui-password__toggle[aria-pressed="true"] {
     background: transparent;
+    color: var(--lr-text);
   }
   .ui-caps-hint {
     display: inline-flex;
@@ -718,7 +721,8 @@
     .gel-modal__body {
       padding-inline: var(--lr-space-4);
     }
-    .gel-modal__body:last-child,
+    /* Whatever ends the sheet clears the home indicator. */
+    .gel-modal:not(:has(> .gel-modal__footer)) > .gel-modal__body,
     .gel-modal__footer {
       padding-bottom: calc(var(--lr-space-4) + var(--lr-safe-bottom));
     }
@@ -874,14 +878,21 @@
     right: 6px;
     z-index: 1;
   }
-  /* In the workspace they sit in the content column, above the composer. */
+  @media (pointer: coarse) {
+    /* Text stays clear of the 44px close button. */
+    .ui-message-toast {
+      padding-right: 56px;
+    }
+  }
+  /* In a conversation they sit above the composer and end where it ends,
+     clear of the member list beside it. */
   .app-shell-workspace .gel-toasts {
     /* One composer line, for browsers without anchor positioning. */
     bottom: calc(74px + var(--lr-toast-floor));
   }
   @supports (anchor-name: --lr-composer) {
     .app-shell-workspace .gel-toasts {
-      right: calc(16px + anchor(--lr-main right, 0px));
+      right: calc(16px + anchor(--lr-composer right, var(--lr-safe-right)));
       bottom: calc(12px + anchor(--lr-composer top, var(--lr-toast-floor)));
     }
   }
