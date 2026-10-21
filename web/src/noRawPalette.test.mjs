@@ -25,8 +25,6 @@ const ALLOWED = new Set([
   "components/ServerDialogs.tsx",
   "components/SessionRecoveryNotice.tsx",
   "components/VoiceStateIcons.tsx",
-  "pages/DmChannelPage.tsx",
-  "pages/DmIndexPage.tsx",
   "pages/ForgotPasswordPage.tsx",
   "pages/InvitePage.tsx",
   "pages/LoginPage.tsx",

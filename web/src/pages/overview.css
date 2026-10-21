@@ -16,8 +16,14 @@
   padding: 0 28px;
   display: flex;
   align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--lr-border);
+  color: var(--lr-text);
+  font: var(--lr-type-title-sm);
+  font-size: 15px;
+}
+.community-overview__bar svg {
   color: var(--lr-muted);
-  font-size: 13px;
 }
 .community-overview__welcome {
   padding: 20px 28px 0;
@@ -28,6 +34,7 @@
   letter-spacing: -0.035em;
   font-weight: 720;
   text-wrap: balance;
+  overflow-wrap: anywhere;
 }
 .community-overview__welcome > p {
   margin-top: 8px;
@@ -35,6 +42,28 @@
   font-size: 17px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+.community-overview__alone {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  margin: 20px 28px 0;
+  padding: 16px 18px;
+  border: 1px solid var(--lr-border);
+  border-left: 3px solid var(--lr-accent);
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-panel);
+  font-size: 15px;
+  line-height: 1.45;
+}
+.community-overview__alone p {
+  flex: 1 1 260px;
+  color: var(--lr-muted);
+}
+.community-overview__alone strong {
+  color: var(--lr-text);
 }
 .community-overview__empty {
   display: flex;
@@ -104,6 +133,12 @@
 }
 .community-overview__place span {
   min-width: 0;
+}
+.community-overview__place.is-unread {
+  border-color: var(--lr-border-strong);
+}
+.community-overview__place.is-unread strong {
+  font-weight: 700;
 }
 .community-overview__place small {
   display: block;
@@ -211,10 +246,12 @@ html[data-reduced-motion="true"] *::after {
   }
 }
 @media (max-width: 800px) {
+  /* The phone's top bar already names the place. */
   .community-overview__bar {
-    height: 45px;
-    padding-inline: 24px;
-    font-size: 13px;
+    display: none;
+  }
+  .community-overview__alone {
+    margin-inline: 24px;
   }
   .community-overview__welcome {
     padding: 20px 24px 0;
