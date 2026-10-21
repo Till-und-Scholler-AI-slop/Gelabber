@@ -16,6 +16,7 @@ import { confirmAction } from "../components/confirm.ts";
 import { CopyIcon } from "../components/Icons.tsx";
 import { LoadError } from "../components/LoadError.tsx";
 import { FormError } from "../components/FormError.tsx";
+import { InviteDialog } from "../components/InviteDialog.tsx";
 import { MemberActionsMenu } from "../components/MemberActions.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { Badge } from "../components/ui/Badge.tsx";
@@ -35,7 +36,6 @@ import {
 import {
   readServer,
   useBans,
-  useCreateInvite,
   useDeleteServer,
   useInvites,
   useLeaveServer,
@@ -286,8 +286,8 @@ function InvitesSection({ server }: { server: ServerDetail }) {
     isFetching,
     refetch,
   } = useInvites(server.id, true);
-  const create = useCreateInvite(server.id);
   const revoke = useRevokeInvite(server.id);
+  const [inviting, setInviting] = useState(false);
   const status = useInlineStatus();
   // When the page opened: "läuft in 6 Tagen ab" needs no live clock.
   const [now] = useState(Date.now);
@@ -309,39 +309,14 @@ function InvitesSection({ server }: { server: ServerDetail }) {
       hint="Jedes Mitglied kann Links erstellen; hier siehst und widerrufst du alle aktiven."
     >
       <div className="settings-actions">
-        <Button
-          pending={create.isPending}
-          pendingLabel="Erstellt…"
-          onClick={() =>
-            create.mutate(
-              {},
-              {
-                onSuccess: async (invite) => {
-                  status.show(
-                    (await copyText(inviteUrl(invite.code)))
-                      ? {
-                          tone: "success",
-                          message: "Link erstellt und kopiert.",
-                        }
-                      : {
-                          tone: "neutral",
-                          message: `Link erstellt. Der Code ist ${invite.code}.`,
-                        },
-                  );
-                },
-                onError: () =>
-                  status.show({
-                    tone: "error",
-                    message: "Kein Link erstellt – erneut versuchen",
-                  }),
-              },
-            )
-          }
-        >
-          Neuen Link erstellen
-        </Button>
+        <Button onClick={() => setInviting(true)}>Neuen Link erstellen</Button>
         <InlineStatus status={status.status} />
       </div>
+      <InviteDialog
+        server={server}
+        open={inviting}
+        onClose={() => setInviting(false)}
+      />
       {isPending ? (
         <p className="settings-hint">Lade Einladungen…</p>
       ) : error ? (
