@@ -243,6 +243,22 @@ try {
   const serverDialog = a.page.getByRole("dialog", { name: "Server erstellen" });
   await serverDialog.getByLabel("Name").fill(`Smoke ${suffix}`);
   await serverDialog.getByRole("button", { name: "Erstellen" }).click();
+  // A new server opens on its overview, with an invite link already made.
+  await a.page.waitForURL(/\/s\/[^/]+$/);
+  const inviteDialog = a.page.getByRole("dialog", { name: /einladen$/ });
+  await a.page.waitForFunction(() =>
+    document
+      .querySelector('input[aria-label="Einladungslink"]')
+      ?.value.includes("/invite/"),
+  );
+  const invite = await inviteDialog
+    .getByRole("textbox", { name: "Einladungslink" })
+    .inputValue();
+  await inviteDialog.getByRole("button", { name: "Schließen" }).click();
+  await a.page
+    .getByRole("link", { name: /allgemein/ })
+    .first()
+    .click();
   await a.page.waitForURL(/\/s\/[^/]+\/c\//);
   const textUrl = a.page.url();
   await a.page
@@ -255,14 +271,6 @@ try {
   await channelDialog.getByRole("button", { name: "Erstellen" }).click();
   await a.page.getByRole("link", { name: "Smoke Voice" }).click();
   const voiceUrl = a.page.url();
-
-  await a.page.getByRole("button", { name: "Leute einladen" }).click();
-  const inviteDialog = a.page.getByRole("dialog", { name: /Einladen zu/ });
-  await inviteDialog.getByRole("button", { name: "Link erstellen" }).click();
-  const invite = await inviteDialog
-    .getByRole("textbox", { name: "Einladungslink" })
-    .inputValue();
-  await inviteDialog.getByRole("button", { name: "Fertig" }).click();
 
   const b = await participant("Smoke B");
   await b.page.goto(invite);
