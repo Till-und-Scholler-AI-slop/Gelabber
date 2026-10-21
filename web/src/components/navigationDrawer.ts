@@ -75,12 +75,20 @@ export function useNavigationDrawer() {
     if (drawerOver(state) !== undefined) return;
     history.push(href, openedState(state, href), QUIET);
   }, [history]);
-  const hide = useCallback(() => {
+  // Settles once the drawer has closed and handed focus back to its button,
+  // so a dialog opened next returns focus there too.
+  const hide = useCallback((): Promise<void> => {
     const { href, state } = history.location;
     const step = closeStep(state, href);
-    if (step === "back") history.back(QUIET);
-    else if (step === "replace")
-      history.replace(href, closedState(state), QUIET);
+    if (step === null) return Promise.resolve();
+    return new Promise((resolve) => {
+      const stop = history.subscribe(() => {
+        stop();
+        window.setTimeout(resolve, 0);
+      });
+      if (step === "back") history.back(QUIET);
+      else history.replace(href, closedState(state), QUIET);
+    });
   }, [history]);
   return {
     open: over !== undefined,

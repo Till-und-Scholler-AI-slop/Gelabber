@@ -191,10 +191,10 @@ export function ChannelSidebar({
   const serverMuted = useServerMuted(server.id);
   const drawer = useNavigationDrawer();
   // On a phone these open from the drawer: it goes first, so the dialog is
-  // not stacked on top of it.
+  // not stacked on top of it and gives focus back to the drawer's button.
   const fromDrawer = (open: () => void) => {
-    drawer.hide();
-    open();
+    if (drawer.open) void drawer.hide().then(open);
+    else open();
   };
   const invite = () => fromDrawer(() => setInviting(true));
   // A new channel goes where the user is: the category of the channel open.

@@ -23,6 +23,17 @@ export function swiped(
 }
 
 /**
+ * Safari on iOS, outside the home screen app (`navigator.standalone` is
+ * false there and missing elsewhere), goes back on the same edge swipe.
+ */
+function browserOwnsEdge(): boolean {
+  return (
+    typeof navigator !== "undefined" &&
+    (navigator as { standalone?: boolean }).standalone === false
+  );
+}
+
+/**
  * Listens while `enabled` (the drawer layout): a touch from the edge calls
  * `onOpen`, a leftward one that starts inside `drawerSelector` `onClose`.
  */
@@ -55,7 +66,11 @@ export function useEdgeSwipe({
       if (latest.current.open) {
         if (target?.closest(drawerSelector))
           gesture = { start, direction: "left" };
-      } else if (start.x <= EDGE_PX && !target?.closest("dialog")) {
+      } else if (
+        start.x <= EDGE_PX &&
+        !target?.closest("dialog") &&
+        !browserOwnsEdge()
+      ) {
         gesture = { start, direction: "right" };
       }
     };

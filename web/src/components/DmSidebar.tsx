@@ -33,8 +33,8 @@ export function DmSidebar({
   const drawer = useNavigationDrawer();
   // From the phone drawer the dialog takes the drawer's place.
   const startNew = () => {
-    drawer.hide();
-    setWriting(true);
+    if (drawer.open) void drawer.hide().then(() => setWriting(true));
+    else setWriting(true);
   };
   return (
     <aside
