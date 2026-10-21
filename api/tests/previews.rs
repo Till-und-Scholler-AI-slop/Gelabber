@@ -545,9 +545,11 @@ fn previews_are_on_by_default_and_off_by_switch() {
         gelabber_api::Config::from_source(|key| match key {
             "DATABASE_URL" => Some("postgres://u:p@db.example.org:5432/x".into()),
             "REDIS_URL" => Some("redis://cache.example.org:6379".into()),
-            "TURN_URLS" => {
-                Some("turn:turn.example.org:3478?transport=udp,turns:[2001:db8::1]:5349".into())
-            }
+            "TURN_URLS" => Some(
+                "turn:turn.example.org:3478?transport=udp,turns:[2001:db8::1]:5349,\
+                 turn://turn2.example.org:3478"
+                    .into(),
+            ),
             "API_LINK_PREVIEW_DENY_HOSTS" => Some(" Intranet.Example.org ,".into()),
             "API_LINK_PREVIEWS" => off.map(str::to_owned),
             _ => None,
@@ -562,8 +564,10 @@ fn previews_are_on_by_default_and_off_by_switch() {
             "cache.example.org",
             "turn.example.org",
             "2001:db8::1",
+            "turn2.example.org",
             "intranet.example.org"
         ]
     );
+    assert!(!on.deny_hosts.iter().any(|host| host.starts_with("//")));
     assert!(config(Some("false")).previews.is_none());
 }
