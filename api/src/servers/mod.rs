@@ -159,8 +159,9 @@ async fn list_servers(
     Ok(Json(views))
 }
 
-/// Creates the server with its owner membership and a first text channel
-/// (`#allgemein` under "Textkanäle"), so it is usable the moment it exists.
+/// Creates the server with its owner membership, a first text channel
+/// (`#allgemein` under "Textkanäle") and a voice room ("Wohnzimmer" under
+/// "Sprachkanäle"), so it is usable the moment it exists.
 /// Answers with the full detail so the client can render it without a
 /// second request.
 async fn create_server(
@@ -195,6 +196,15 @@ async fn create_server(
         Some(category.id),
         "allgemein",
         ChannelKind::Text,
+    )
+    .await?;
+    let voice = channel::insert_category(&mut *tx, server.id, "Sprachkanäle").await?;
+    channel::insert_channel(
+        &mut *tx,
+        server.id,
+        Some(voice.id),
+        "Wohnzimmer",
+        ChannelKind::Voice,
     )
     .await?;
     tx.commit().await?;

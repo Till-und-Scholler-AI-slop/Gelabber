@@ -228,6 +228,49 @@ summary {
 .workspace-mobile-topbar {
   display: none;
 }
+/* A conversation header names its server only on a phone, where the rail
+   is out of sight. */
+.lr-channel-title {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+.lr-channel-title-server {
+  display: none;
+}
+.lr-channel-title-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.lr-channel-title-name > svg {
+  flex-shrink: 0;
+  color: var(--lr-muted);
+}
+@media (max-width: 800px) {
+  .lr-channel-title-server {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--lr-muted);
+    font: var(--lr-type-meta);
+  }
+  .lr-channel-title-name {
+    gap: 4px;
+  }
+  .lr-channel-title-name > svg {
+    width: 16px;
+    height: 16px;
+  }
+  .lr-channel-header .lr-channel-title-name h1 {
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.25;
+  }
+}
 
 .workspace-content,
 .app-shell:not(.app-shell-workspace) > #app-content {
@@ -279,22 +322,6 @@ summary {
 .workspace-drawer::backdrop {
   background: var(--lr-backdrop);
 }
-.workspace-drawer-close {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 8px;
-  border-radius: var(--lr-radius);
-  font-size: 12px;
-  color: var(--lr-muted);
-}
-.workspace-drawer-close svg {
-  transform: rotate(90deg);
-}
-.workspace-drawer-close:hover {
-  background: var(--lr-hover);
-  color: var(--lr-text);
-}
 
 .server-rail {
   display: flex;
@@ -328,6 +355,29 @@ summary {
   background: var(--lr-hover);
   color: var(--lr-accent-text);
 }
+/* The marker at the rail's edge: a short pill for something unread, a tall
+   one for where you are. */
+:is(.server-tile, .server-home-link)::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  width: 4px;
+  height: 0;
+  border-radius: 0 4px 4px 0;
+  background: var(--lr-accent);
+  translate: 0 -50%;
+  transition: height var(--lr-dur-fast) var(--lr-ease);
+}
+:is(.server-tile, .server-home-link).is-unread::before {
+  height: 8px;
+}
+:is(.server-tile, .server-home-link):hover:not(.is-active)::before {
+  height: 16px;
+}
+:is(.server-tile, .server-home-link).is-active::before {
+  height: 28px;
+}
 .server-rail-scroll {
   flex: 0 1 auto;
   min-height: 0;
@@ -337,13 +387,20 @@ summary {
   padding: 8px 0;
   scrollbar-width: thin;
 }
-.server-rail-row {
+.server-rail-row,
+.server-rail-placeholder {
   position: absolute;
   inset-inline: 0;
   display: flex;
   align-items: center;
   justify-content: center;
 }
+.server-rail-placeholder {
+  position: static;
+  height: 60px;
+}
+/* Each server keeps its own theme tint (--lr-tile-1…8) until it has a
+   picture; the letters read on every tint. */
 .server-tile {
   display: inline-flex;
   align-items: center;
@@ -351,31 +408,66 @@ summary {
   width: 44px;
   height: 44px;
   position: relative;
-  border-radius: 14px;
-  color: var(--lr-muted);
-  background: var(--lr-surface);
-  font-size: 14px;
-  font-weight: 650;
-  letter-spacing: 0.5px;
-  flex-shrink: 0;
-}
-.server-tile:hover {
-  background: var(--lr-hover);
+  border-radius: var(--lr-radius-lg);
   color: var(--lr-text);
+  background: var(--server-tile, var(--lr-surface));
+  font: 600 15px / 1 var(--lr-font);
+  letter-spacing: 0.01em;
+  flex-shrink: 0;
+  transition: border-radius var(--lr-dur-fast) var(--lr-ease);
+}
+.server-tile:hover,
+.server-tile.is-active {
+  border-radius: var(--lr-radius-md);
 }
 .server-tile.is-active {
-  background: var(--lr-selected);
-  color: var(--lr-accent-text);
+  box-shadow:
+    0 0 0 2px var(--lr-rail),
+    0 0 0 4px var(--lr-accent);
 }
-.server-tile.is-active::before {
-  content: "";
+.server-tile-placeholder {
+  background: var(--lr-surface);
+  animation: lr-placeholder-pulse 1.4s ease-in-out infinite alternate;
+}
+@keyframes lr-placeholder-pulse {
+  to {
+    opacity: 0.45;
+  }
+}
+html[data-reduced-motion="true"] .server-tile-placeholder {
+  animation: none;
+}
+.unread-count--rail {
   position: absolute;
-  left: -10px;
-  top: 8px;
-  bottom: 8px;
-  width: 4px;
-  border-radius: 0 4px 4px 0;
-  background: var(--lr-accent);
+  right: -5px;
+  bottom: -5px;
+  box-shadow: 0 0 0 2px var(--lr-rail);
+}
+/* Name and news beside a tile, on hover and keyboard focus. */
+.server-tile-tip {
+  position: fixed;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 260px;
+  padding: 7px 10px;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-sm);
+  background: var(--lr-elevated);
+  color: var(--lr-text);
+  box-shadow: var(--lr-shadow-1);
+  font: var(--lr-type-ui);
+  translate: 12px -50%;
+  pointer-events: none;
+}
+.server-tile-tip strong {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.server-tile-tip span {
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
 }
 .server-rail-footer {
   display: flex;
@@ -428,69 +520,62 @@ summary {
   letter-spacing: -0.3px;
 }
 .server-sidebar-heading {
-  justify-content: space-between;
-  gap: 4px;
-  padding: 0 6px 0 16px;
+  gap: 2px;
+  padding: 0 6px 0 8px;
+}
+/* The server's name is the button for everything about the server; only
+   inviting stays one tap away beside it. */
+.server-sidebar-menu {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.server-sidebar-menu-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 8px;
+  border-radius: var(--lr-radius-sm);
+  list-style: none;
+  cursor: pointer;
+}
+.server-sidebar-menu-button::-webkit-details-marker {
+  display: none;
+}
+.server-sidebar-menu-button:hover,
+.server-sidebar-menu[open] > .server-sidebar-menu-button {
+  background: var(--lr-hover);
 }
 .server-sidebar-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font: var(--lr-type-title-sm);
   font-size: 15px;
-  font-weight: 650;
-  letter-spacing: -0.2px;
+  letter-spacing: -0.01em;
 }
-.server-sidebar-actions {
-  display: flex;
+.server-sidebar-muted {
+  display: inline-flex;
   flex-shrink: 0;
-  align-items: center;
-  gap: 0;
+  color: var(--lr-muted);
 }
-.server-sidebar-actions .shell-icon-button {
-  width: 30px;
-  height: 30px;
+.server-sidebar-chevron {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--lr-muted);
+  transition: rotate var(--lr-dur-fast) var(--lr-ease);
 }
-.server-sidebar-actions .shell-icon-button.is-active {
-  background: var(--lr-hover);
-  color: var(--lr-text);
+.server-sidebar-menu[open] .server-sidebar-chevron {
+  rotate: 180deg;
 }
-.sidebar-create-menu {
-  position: relative;
-}
-.sidebar-create-menu > summary {
-  list-style: none;
-}
-.sidebar-create-menu > summary::-webkit-details-marker {
-  display: none;
-}
-.sidebar-create-menu[open] > summary {
-  background: var(--lr-hover);
-  color: var(--lr-text);
-}
-.sidebar-create-menu > nav {
+.server-sidebar-menu > .shell-menu {
   position: absolute;
-  top: 36px;
-  right: -34px;
+  top: calc(100% + 6px);
+  left: 0;
   z-index: 35;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 180px;
-  padding: 6px;
-  background: var(--lr-panel);
-  border: 1px solid var(--lr-border);
-  border-radius: var(--lr-radius);
-  box-shadow: 0 8px 25px #0003;
-}
-.sidebar-create-menu > nav > button {
-  padding: 7px 10px;
-  border-radius: var(--lr-radius-small);
-  font-size: 13px;
-  text-align: left;
-}
-.sidebar-create-menu > nav > button:hover {
-  background: var(--lr-hover);
+  width: max(100%, 208px);
 }
 .sidebar-overview {
   display: flex;
@@ -537,31 +622,32 @@ summary {
   align-items: flex-end;
   justify-content: space-between;
   gap: 5px;
-  padding: 0 3px 5px;
+  padding: 0 3px 5px 8px;
 }
-.sidebar-category-name {
+/* Categories and the automatic voice group read alike: 11px caps on the
+   same inset. */
+.sidebar-category-name,
+.sidebar-section-heading {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.8px;
+  font: var(--lr-type-caps);
+  letter-spacing: 0.06em;
   color: var(--lr-muted);
   text-transform: uppercase;
+}
+.sidebar-category-name {
+  margin-bottom: 2px;
 }
 .sidebar-section-heading {
-  height: 34px;
   display: flex;
   align-items: flex-end;
-  padding: 0 10px 7px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  font-size: 10px;
-  font-weight: 650;
-  color: var(--lr-muted);
+  height: 34px;
+  padding: 0 3px 7px 8px;
 }
 .channel-row {
+  position: relative;
   display: flex;
   align-items: center;
   height: 34px;
@@ -595,10 +681,45 @@ summary {
   height: 17px;
 }
 .channel-row-name {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Unread: the name in full colour and weight, and a bar at the column's
+   edge. Muted conversations never get it (notifyLevel.ts). */
+:is(.channel-row, .dm-row).is-unread :is(.channel-row-name, .dm-row-name) {
+  color: var(--lr-text);
+  font-weight: 600;
+}
+:is(.channel-row, .dm-row).is-unread::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  width: 3px;
+  height: 16px;
+  border-radius: 0 3px 3px 0;
+  background: var(--lr-accent);
+  translate: 0 -50%;
+}
+.channel-row-draft {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--lr-muted);
+}
+.unread-count {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.unread-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--lr-accent);
 }
 .channel-row-live {
   margin-left: auto;
@@ -666,19 +787,30 @@ summary {
   margin-bottom: 14px;
 }
 .dm-sidebar-heading {
+  display: flex;
   flex-shrink: 0;
-  padding: 16px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: var(--lr-header-height);
+  padding: 0 8px 0 16px;
+  border-bottom: 1px solid var(--lr-border);
 }
 .dm-sidebar-heading h2 {
-  font-size: 18px;
-  font-weight: 650;
+  font: var(--lr-type-title-sm);
+  font-size: 15px;
 }
-.dm-sidebar-heading p {
-  color: var(--lr-muted);
-  font-size: 12px;
-  margin-top: 6px;
+.dm-sidebar-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+.dm-sidebar .sidebar-list-scroll {
+  padding-top: 8px;
 }
 .dm-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -688,7 +820,8 @@ summary {
   font-size: 14px;
   color: var(--lr-muted);
 }
-.dm-row > span:last-child {
+.dm-row-name {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -709,10 +842,20 @@ summary {
   min-height: 0;
 }
 .dm-index-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  max-width: 460px;
   margin: auto;
   padding: 32px;
   color: var(--lr-muted);
   text-align: center;
+  text-wrap: balance;
+}
+.dm-index-hint h1 {
+  color: var(--lr-text);
+  font: var(--lr-type-title);
 }
 /* Rendered only while the navigation is a drawer (DmIndexPage). */
 .dm-index-list {
@@ -722,10 +865,15 @@ summary {
   overflow-y: auto;
   padding: 20px 12px calc(20px + var(--lr-safe-bottom));
 }
+.dm-index-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px 12px 10px;
+}
 .dm-index-list h1 {
-  padding: 0 10px 12px;
-  font-size: 20px;
-  font-weight: 650;
+  font: var(--lr-type-title);
 }
 .dm-index-list .dm-row {
   height: 52px;
@@ -1195,6 +1343,12 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
   color: var(--lr-text);
 }
 
+/* The drawers' close button sits in a corner of their first line instead of
+   a header row of its own. */
+.workspace-drawer-close {
+  color: var(--lr-muted);
+}
+
 @media (max-width: 1130px) {
   .member-panel-drawer {
     position: fixed;
@@ -1207,22 +1361,31 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     height: 100dvh;
     padding: var(--lr-safe-top) var(--lr-safe-right) var(--lr-safe-bottom) 0;
     border-left: 1px solid var(--lr-border);
+    translate: 100% 0;
+    transition:
+      translate var(--lr-dur) var(--lr-ease),
+      display var(--lr-dur) allow-discrete,
+      overlay var(--lr-dur) allow-discrete;
+  }
+  .member-panel-drawer[open] {
+    translate: 0 0;
+  }
+  @starting-style {
+    .member-panel-drawer[open] {
+      translate: 100% 0;
+    }
   }
   .member-panel-drawer .workspace-drawer-header {
+    position: absolute;
+    top: var(--lr-safe-top);
+    right: calc(4px + var(--lr-safe-right));
+    z-index: 1;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    min-height: var(--lr-header-height);
-    padding: 10px 17px;
-    border-bottom: 1px solid var(--lr-border);
+    height: var(--lr-header-height);
   }
-  .member-panel-drawer .workspace-drawer-header h2 {
-    font-size: 17px;
-    font-weight: 600;
-  }
-  .member-panel-heading {
-    padding-top: 24px;
+  .member-panel-drawer .member-panel-heading {
+    padding-right: 56px;
   }
   .member-panel {
     border-left: 0;
@@ -1230,26 +1393,37 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
   .member-drawer-trigger {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
+    gap: 6px;
     position: fixed;
-    top: calc(var(--lr-safe-top) + (var(--lr-header-height) - 32px) / 2);
+    top: calc(
+      var(--lr-safe-top) + (var(--lr-header-height) - var(--lr-control-sm)) / 2
+    );
     right: calc(12px + var(--lr-safe-right));
     z-index: 25;
-    height: 32px;
+    height: var(--lr-control-sm);
     padding: 0 10px;
     border: 1px solid var(--lr-border);
-    border-radius: var(--lr-radius);
+    border-radius: var(--lr-radius-sm);
     background: var(--lr-panel);
     color: var(--lr-muted);
-    font-size: 12px;
+    font: var(--lr-type-ui);
+    font-size: 14px;
   }
   .member-drawer-trigger:hover {
     background: var(--lr-hover);
     color: var(--lr-text);
   }
-  .member-drawer-trigger > span {
+  .member-drawer-trigger-count {
     color: var(--lr-text);
-    font-size: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Room for the members button, fixed at the header's right end. */
+  .workspace-main
+    .lr-channel-content:has(~ .member-drawer-trigger)
+    .lr-channel-header {
+    padding-right: 156px;
   }
 }
 @media (max-width: 800px) {
@@ -1261,18 +1435,33 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     height: 100dvh;
     padding: var(--lr-safe-top) 0 0 var(--lr-safe-left);
     border-right: 1px solid var(--lr-border);
+    translate: -100% 0;
+    transition:
+      translate var(--lr-dur) var(--lr-ease),
+      display var(--lr-dur) allow-discrete,
+      overlay var(--lr-dur) allow-discrete;
   }
+  .workspace-navigation[open] {
+    translate: 0 0;
+  }
+  @starting-style {
+    .workspace-navigation[open] {
+      translate: -100% 0;
+    }
+  }
+  /* The close button takes the rail's first line; the rail starts below. */
   .workspace-navigation .workspace-drawer-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    min-height: var(--lr-header-height);
-    padding: 10px 17px;
-    border-bottom: 1px solid var(--lr-border);
+    position: absolute;
+    top: var(--lr-safe-top);
+    left: var(--lr-safe-left);
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    width: var(--lr-rail-width);
+    height: var(--lr-header-height);
   }
-  .workspace-navigation .workspace-drawer-header h2 {
-    font-size: 17px;
-    font-weight: 600;
+  .workspace-navigation .server-rail {
+    padding-top: var(--lr-header-height);
   }
   .workspace-navigation .channel-sidebar {
     width: auto;
@@ -1281,40 +1470,92 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
   .workspace-navigation .sidebar-brand {
     display: none;
   }
+  .workspace-drawer::backdrop {
+    opacity: 0;
+    transition:
+      opacity var(--lr-dur) var(--lr-ease),
+      display var(--lr-dur) allow-discrete,
+      overlay var(--lr-dur) allow-discrete;
+  }
+  .workspace-drawer[open]::backdrop {
+    opacity: 1;
+  }
+  @starting-style {
+    .workspace-drawer[open]::backdrop {
+      opacity: 0;
+    }
+  }
   .workspace-mobile-topbar {
     display: flex;
     align-items: center;
+    gap: 6px;
     flex-shrink: 0;
     min-height: var(--lr-header-height);
-    padding: 10px 16px;
+    padding: 4px 16px 4px 4px;
     border-bottom: 1px solid var(--lr-border);
+  }
+  /* The members button is fixed at the bar's right end. */
+  .workspace-main:has(.member-drawer-trigger) > .workspace-mobile-topbar {
+    padding-right: 72px;
   }
   .workspace-navigation-trigger {
     position: relative;
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+    border-radius: var(--lr-radius-md);
+    color: var(--lr-text);
+  }
+  .workspace-navigation-trigger:hover {
+    background: var(--lr-hover);
+  }
+  .workspace-navigation-tile {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--lr-radius-sm);
+    background: var(--server-tile, var(--lr-surface));
+    color: var(--lr-text);
+    font: 600 12px / 1 var(--lr-font);
+  }
+  /* Every unread badge sits inside the closed drawer; its button sums them
+     up: a red count for mentions, a dot for anything else. */
+  .workspace-navigation-count {
+    position: absolute;
+    top: 2px;
+    right: 0;
     display: inline-flex;
     align-items: center;
-    gap: 9px;
-    min-height: 36px;
-    padding-right: 10px;
-    border-radius: var(--lr-radius);
-    font-size: 17px;
-    font-weight: 650;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: var(--lr-radius-full);
+    background: var(--lr-danger-bg);
+    color: var(--lr-on-danger);
+    box-shadow: 0 0 0 2px var(--lr-bg);
+    font: 700 11px / 1 var(--lr-font);
   }
-  .workspace-navigation-trigger svg {
-    transform: rotate(-90deg);
-    color: var(--lr-muted);
-  }
-  /* Every unread badge sits inside the closed drawer; its button shows that
-     there is something to find. */
   .workspace-navigation-unread {
     position: absolute;
-    top: calc(50% - 15px);
-    left: 13px;
-    width: 11px;
-    height: 11px;
-    border: 2px solid var(--lr-bg);
+    top: 7px;
+    right: 6px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
     background: var(--lr-accent);
+    box-shadow: 0 0 0 2px var(--lr-bg);
+  }
+  .workspace-mobile-place {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font: var(--lr-type-title-sm);
+    font-size: 17px;
   }
   /* Conversations bring their own header: the navigation button joins it
      instead of stacking a second bar above it. */
@@ -1328,22 +1569,27 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     padding: 0 0 0 4px;
     border-bottom: 0;
   }
-  .workspace-main:has(.lr-channel-header) .workspace-navigation-trigger {
-    justify-content: center;
-    width: 44px;
-    height: 44px;
-    padding: 0;
-  }
-  .workspace-main:has(.lr-channel-header)
-    .workspace-navigation-trigger
-    > span:not(.workspace-navigation-unread) {
+  .workspace-main:has(.lr-channel-header) .workspace-mobile-place {
     display: none;
   }
-  .workspace-main:has(.lr-channel-header) .workspace-navigation-unread {
-    left: 25px;
-  }
   .workspace-main:has(.lr-channel-header) .lr-channel-header {
-    padding-left: 50px;
+    padding-left: 52px;
+  }
+  .workspace-main
+    .lr-channel-content:has(~ .member-drawer-trigger)
+    .lr-channel-header {
+    padding-right: 68px;
+  }
+  .member-drawer-trigger {
+    right: calc(4px + var(--lr-safe-right));
+    top: calc(var(--lr-safe-top) + (var(--lr-header-height) - 44px) / 2);
+    height: 44px;
+    padding: 0 8px;
+    border-color: transparent;
+    background: transparent;
+  }
+  .member-drawer-trigger-label {
+    display: none;
   }
   .user-panel {
     min-height: 62px;
@@ -1369,14 +1615,6 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
 @media (max-width: 370px) {
   .workspace-navigation .server-rail {
     width: var(--lr-rail-width);
-  }
-  .server-tile {
-    width: 44px;
-    height: 44px;
-    border-radius: 16px;
-  }
-  .server-tile.is-active::before {
-    left: -10px;
   }
   .user-panel-profile {
     gap: 8px;
@@ -1432,10 +1670,6 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     user-select: text;
   }
   /* 44px targets in both drawers. */
-  .workspace-drawer .workspace-drawer-header {
-    padding-block: 4px;
-  }
-  .workspace-drawer-close,
   .sidebar-overview,
   .member-profile-button {
     min-height: 44px;
@@ -1444,10 +1678,17 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     height: 44px;
   }
   .server-create-button,
-  .server-sidebar-actions .shell-icon-button,
-  .user-panel .shell-icon-button {
+  .server-sidebar-heading .shell-icon-button,
+  .user-panel .shell-icon-button,
+  .lr-header-icon {
     width: 44px;
     height: 44px;
+  }
+  .server-sidebar-menu-button {
+    height: 44px;
+  }
+  .server-sidebar-menu > .shell-menu {
+    width: max(100%, 240px);
   }
   /* ChannelSidebar lays its virtual rows out at the matching pitch. */
   .channel-row,
@@ -1458,17 +1699,16 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     align-items: center;
     padding-bottom: 0;
   }
+  .sidebar-participant {
+    height: 40px;
+  }
   .sidebar-action-small {
     width: 44px;
     height: 44px;
   }
-  .sidebar-create-menu > nav {
-    top: 48px;
-  }
   .user-panel-menu > nav {
     bottom: 52px;
   }
-  .sidebar-create-menu > nav > button,
   .user-panel-menu > nav > :is(a, button) {
     padding-block: 12px;
   }

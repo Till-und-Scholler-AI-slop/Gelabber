@@ -563,7 +563,7 @@ export async function sendMessageAttempt(
           ...(rejected ?? []),
         ].join(" "),
       });
-      notifyError(error);
+      // No toast: the row itself says it was not sent and offers the retry.
     }
     throw error;
   }

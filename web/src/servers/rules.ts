@@ -4,8 +4,6 @@ import type { FieldCode } from "../api/client.ts";
 import type { ChannelKind } from "./types.ts";
 
 export const SERVER_NAME_MAX = 100;
-export const INVITE_MAX_USES_MAX = 10_000;
-export const INVITE_EXPIRES_HOURS_MAX = 24 * 365;
 
 const chars = (value: string): number => Array.from(value).length;
 // eslint-disable-next-line no-control-regex
@@ -51,23 +49,5 @@ export function validateChannelName(
   const base = validateName(raw);
   if (base) return base;
   if (kind === "text" && slugifyChannelName(raw).length === 0) return "invalid";
-  return null;
-}
-
-/** Empty = unlimited; otherwise 1…10 000. */
-export function validateMaxUses(raw: string): FieldCode | null {
-  if (raw.trim() === "") return null;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 1 || n > INVITE_MAX_USES_MAX)
-    return "invalid";
-  return null;
-}
-
-/** Empty = never; otherwise whole hours, 1…8760. */
-export function validateExpiresInHours(raw: string): FieldCode | null {
-  if (raw.trim() === "") return null;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 1 || n > INVITE_EXPIRES_HOURS_MAX)
-    return "invalid";
   return null;
 }

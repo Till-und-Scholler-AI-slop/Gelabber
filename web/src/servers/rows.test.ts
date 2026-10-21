@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildRows, pickChannel } from "./rows.ts";
+import { buildRows, channelOrder, pickChannel, sidebarRows } from "./rows.ts";
 import type { Category, Channel, ServerDetail } from "./types.ts";
 
 const server: ServerDetail = {
@@ -82,5 +82,41 @@ describe("sidebar rows", () => {
       )?.id,
     ).toBe("v");
     expect(pickChannel({ ...server, channels: [] }, undefined)).toBeUndefined();
+  });
+});
+
+describe("sidebar order", () => {
+  const withLooseVoice: ServerDetail = {
+    ...server,
+    channels: [channel("zocken", null, "Zocken", "voice"), ...server.channels],
+  };
+
+  it("groups uncategorised voice rooms under their own heading", () => {
+    expect(
+      sidebarRows(withLooseVoice).map((row) =>
+        row.kind === "section" ? `section:${row.label}` : row.key,
+      ),
+    ).toEqual([
+      "loose",
+      "section:Sprachräume",
+      "zocken",
+      "cat-text",
+      "allgemein",
+      "dev",
+      "cat-empty",
+      "empty:cat-empty",
+      "cat-voice",
+      "lounge",
+    ]);
+  });
+
+  it("lists the channels in that order", () => {
+    expect(channelOrder(withLooseVoice).map((c) => c.id)).toEqual([
+      "loose",
+      "zocken",
+      "allgemein",
+      "dev",
+      "lounge",
+    ]);
   });
 });
