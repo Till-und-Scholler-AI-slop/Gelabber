@@ -192,9 +192,9 @@ mod authorization_tests {
 
     // API and media production code build these keys from the helpers or the
     // prefix constants above (media's CONSUME Lua takes the prefixes as ARGV).
-    // media/tests/browser-lifecycle.mjs, web/scripts/e2e/*.mjs,
-    // api/tests/voice_aggregate.rs and media/tests/live_claim.rs hard-code the
-    // same strings, so a format change has to update them as well.
+    // web/scripts/e2e/*.mjs, api/tests/voice_aggregate.rs and
+    // media/tests/live_claim.rs hard-code the same strings, so a format change
+    // has to update them as well.
     #[test]
     fn authority_key_formats_are_pinned() {
         let server = Uuid::from_u128(1);
