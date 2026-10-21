@@ -343,15 +343,33 @@ impl Gateway {
             .await
             .map_err(super::hub::redis_err)?;
 
-        let mut snap = Vec::new();
+        let mut ids = Vec::new();
         let mut malformed = Vec::new();
-        let mut stale = Vec::new();
         for raw in users {
-            let Ok(user_id) = raw.parse::<Uuid>() else {
-                malformed.push(raw);
-                continue;
-            };
-            match self.user_status(user_id).await? {
+            match raw.parse::<Uuid>() {
+                Ok(user_id) => ids.push(user_id),
+                Err(_) => malformed.push(raw),
+            }
+        }
+        // Every member's status in one round trip. MGET without a key is an
+        // error, so an empty set skips it.
+        let statuses: Vec<Option<String>> = if ids.is_empty() {
+            Vec::new()
+        } else {
+            self.with_conn(|mut conn| {
+                let mut cmd = redis::cmd("MGET");
+                for user_id in &ids {
+                    cmd.arg(user_key(*user_id));
+                }
+                async move { cmd.query_async::<Vec<Option<String>>>(&mut conn).await }
+            })
+            .await
+            .map_err(super::hub::redis_err)?
+        };
+        let mut snap = Vec::new();
+        let mut stale = Vec::new();
+        for (user_id, raw) in ids.into_iter().zip(statuses) {
+            match raw.as_deref().and_then(PresenceStatus::parse) {
                 Some(st) => snap.push(PresenceEntry { u: user_id, st }),
                 None => stale.push(user_id),
             }
@@ -639,17 +657,6 @@ impl Gateway {
             .await
             .map_err(super::hub::redis_err)?;
         Ok((parse_st(&prev), parse_st(&agg)))
-    }
-
-    async fn user_status(&self, user_id: Uuid) -> Result<Option<PresenceStatus>, ApiError> {
-        let raw: Option<String> = self
-            .with_conn(|mut conn| {
-                let key = user_key(user_id);
-                async move { redis::cmd("GET").arg(key).query_async(&mut conn).await }
-            })
-            .await
-            .map_err(super::hub::redis_err)?;
-        Ok(raw.as_deref().and_then(PresenceStatus::parse))
     }
 
     async fn broadcast_presence(
