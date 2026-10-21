@@ -1,4 +1,7 @@
 //! Gelabber's authenticated v4 mediasoup control WebSocket.
+//! A socket without a joined room lives at most `MEDIA_JOIN_DEADLINE_MS`.
+//! There is no Origin check on purpose: the socket is authenticated by the
+//! single-use ticket in its first frame, not by a cookie.
 use axum::Router;
 use axum::extract::State;
 use axum::extract::ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
@@ -19,6 +22,9 @@ use crate::ticket;
 /// Includes complete RTP capabilities/parameters, bounded before JSON decoding.
 pub const MAX_FRAME: usize = 256 * 1024;
 const WRITE_DEADLINE: Duration = Duration::from_secs(2);
+/// How long a retired socket waits for the writer to send a terminal frame
+/// before it falls back to a bare Close.
+const RETIRE_GRACE: Duration = Duration::from_millis(250);
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -97,21 +103,36 @@ async fn run(socket: WebSocket, state: AppState) {
     let mut retirement = tokio::time::interval(Duration::from_millis(250));
     retirement.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut writer_finished = false;
+    let mut retired = false;
+    // A socket without a joined room closes at this deadline; Pings and bad
+    // frames do not extend it. A join in progress is never cut off, because
+    // it runs inside the stream branch below.
+    let join_deadline = tokio::time::sleep(state.join_deadline);
+    tokio::pin!(join_deadline);
     loop {
         tokio::select! {
             _ = &mut writer => { writer_finished = true; break; }
+            _ = &mut join_deadline, if joined.is_none() => {
+                debug!("media socket closed: no join before deadline");
+                break;
+            }
             _ = retirement.tick(), if joined.is_some() => {
                 let (peer, channel) = joined.unwrap();
-                if !state.sfu.peer_present(peer, channel).await { break; }
+                if !state.sfu.peer_present(peer, channel).await { retired = true; break; }
             }
             incoming = stream.next() => {
                 let message = match incoming {
                     Some(Ok(Message::Text(text))) => {
+                        let was_joined = joined.is_some();
                         let response = match parse_frame(&text) {
                             Ok(frame) => handle(&state, frame, &tx, &mut joined, &mut last_id).await,
                             Err(error) => error.into_frame(),
                         };
                         identity.send_replace(joined);
+                        if was_joined && joined.is_none() {
+                            // After a leave the socket gets a fresh deadline to rejoin.
+                            join_deadline.as_mut().reset(tokio::time::Instant::now() + state.join_deadline);
+                        }
                         let close = terminal(&response);
                         if close { leave_joined(&state, &mut joined).await; }
                         let Ok(text) = response.to_json() else { break; };
@@ -129,6 +150,18 @@ async fn run(socket: WebSocket, state: AppState) {
         }
     }
     leave_joined(&state, &mut joined).await;
+    // Sfu::shutdown and watch_authority emit gone/unauthorized only after
+    // leave has removed the peer, so the retirement tick can see it gone
+    // first. The writer then sends that frame and its own Close; the bare
+    // Close below stays the fallback.
+    if retired
+        && !writer_finished
+        && tokio::time::timeout(RETIRE_GRACE, &mut writer)
+            .await
+            .is_ok()
+    {
+        writer_finished = true;
+    }
     if !writer_finished {
         let _ = tokio::time::timeout(WRITE_DEADLINE, writes.send(Message::Close(None))).await;
         drop(writes);
@@ -209,7 +242,7 @@ async fn join(
     if watch.is_some_and(|user| user.is_nil()) {
         return Err("bad_request");
     }
-    let claim = ticket::consume(&state.redis, code)
+    let claim = ticket::consume(state.sfu.redis(), code)
         .await
         .map_err(|_| "unauthorized")?
         .ok_or("unauthorized")?;

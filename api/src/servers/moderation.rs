@@ -200,13 +200,35 @@ pub(super) async fn after_removal(
     user_id: Uuid,
     reason: &'static str,
 ) -> Result<(), ApiError> {
-    let channel_ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM channels WHERE server_id = $1")
-        .bind(server_id)
-        .fetch_all(db)
-        .await?;
+    let channel_ids = channel_ids(db, server_id).await?;
+    after_removal_with(state, server_id, user_id, &channel_ids, reason).await
+}
+
+/// The server's channels, whose voice and subscriptions a removal revokes.
+pub(super) async fn channel_ids(
+    db: &mut sqlx::PgConnection,
+    server_id: Uuid,
+) -> Result<Vec<Uuid>, ApiError> {
+    Ok(
+        sqlx::query_scalar("SELECT id FROM channels WHERE server_id = $1")
+            .bind(server_id)
+            .fetch_all(db)
+            .await?,
+    )
+}
+
+/// `after_removal` with the server's channels already loaded, so a server
+/// delete reads them once for all its members instead of once per member.
+pub(super) async fn after_removal_with(
+    state: &AppState,
+    server_id: Uuid,
+    user_id: Uuid,
+    channel_ids: &[Uuid],
+    reason: &'static str,
+) -> Result<(), ApiError> {
     state
         .gateway
-        .revoke_server(user_id, server_id, &channel_ids, reason)
+        .revoke_server(user_id, server_id, channel_ids, reason)
         .await?;
     if let Err(err) = state
         .gateway

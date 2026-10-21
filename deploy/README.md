@@ -17,9 +17,10 @@ Since v0.6 (#188) the stack no longer starts with known values:
 - **No default passwords.** `POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `MINIO_APP_PASSWORD` and `TURN_PASSWORD` (plus `GRAFANA_ADMIN_PASSWORD` with observability) must be set in `.env`; otherwise `docker compose` stops with a message. Generate one with `openssl rand -hex 24`. `POSTGRES_PASSWORD` only applies when the database volume is created; an existing volume keeps its password until you change it with `ALTER USER gelabber PASSWORD '…'`.
 - **With `API_COOKIE_SECURE=true`** (that is, behind TLS) the API refuses to start while one of these passwords is still a former repository default (`gelabber`, `gelabbergelabber`, `gelabberturn`, `change-me…`). Change the password first (Postgres as above, MinIO and TURN in `.env`), then restart.
 - **The API has no MinIO root access** (#196). The one-shot service `minio-init` signs in as root, creates the bucket and the user `MINIO_APP_USER` (default `gelabber-api`) with a policy for `MINIO_BUCKET` only (read, write, delete objects; no other bucket, no admin API), and exits. The API gets only that user (`MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` in the container); the root credentials stay in `minio` and `minio-init`. A leaked API environment therefore exposes the attachments, not the whole MinIO instance. Upgrading an existing install: see "MinIO user" below.
-- **Plain HTTP on this machine only.** The bundled Caddy listens on `127.0.0.1` by default. Without `API_COOKIE_SECURE=true` the API signs in only on `localhost`/`127.0.0.1`; other machines get `insecure_transport`, because the session cookie would otherwise cross the network unencrypted. For other machines put TLS in front (your own Caddy, see below) and set `API_COOKIE_SECURE=true`. For a trusted test network only: `API_ALLOW_PLAIN_HTTP=true`.
+- **Plain HTTP on this machine only.** The bundled Caddy listens on `127.0.0.1` by default. Without `API_COOKIE_SECURE=true` the API signs in only on `localhost`/`127.0.0.1`; other machines get `insecure_transport`, because the session cookie would otherwise cross the network unencrypted. For other machines put TLS in front (your own Caddy, see below) and set `API_COOKIE_SECURE=true`. For a trusted test network only: `API_ALLOW_PLAIN_HTTP=true`. In this mode browser tabs do not coordinate sign-in and sign-out with each other, and browsers allow microphone, camera and screen share only in a secure context, so voice and video in the browser need TLS (the desktop app uses native media).
 - **HSTS.** With `API_COOKIE_SECURE=true` the API sends `Strict-Transport-Security: max-age=31536000` (without subdomains), whichever proxy terminates TLS.
-- **Sign-in protection.** Besides 20 attempts per minute and address, the API locks an account for 15 minutes after 10 failed attempts (`API_RATE_LOGIN_FAILURES_PER_ACCOUNT`, `0` turns it off). The address is the rightmost `X-Forwarded-For` entry, the one the Caddy in front of the API wrote.
+- **Browser security headers.** The web image sends `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `X-Frame-Options: DENY` and a `Permissions-Policy` that turns off features the app never uses (geolocation, payment, USB, serial, HID, MIDI) with every file, and a Content-Security-Policy with the app shell (see "Content-Security-Policy" below). Camera, microphone, screen capture and the YouTube embed are not restricted.
+- **Sign-in protection.** Besides 20 attempts per minute and address, the API locks an account for 15 minutes after 10 failed attempts (`API_RATE_LOGIN_FAILURES_PER_ACCOUNT`, `0` turns it off). The address is the client's as the Caddy next to the API resolved it, with IPv6 counted per /64. Behind a proxy of your own, the bundled Caddy takes it from the proxies in `GELABBER_TRUSTED_PROXIES` (default `private_ranges`, see "Client addresses" below). The API believes the `X-Forwarded-For` header from whoever reaches it, so never publish the API port (the homelab overlay's `GELABBER_API_BIND`) beyond loopback or a network only your proxy can reach.
 
 ## Existing Caddy
 
@@ -47,7 +48,16 @@ gelabber.example.com {
 
 If the proxy in front instead writes a port into `Host` that the browser does not use, `/ws` answers 403 since v0.6 ("Cross-origin WebSocket is not allowed."). That happens with `proxy_set_header Host $host:$proxy_port;` (the upstream's port, 8088 above) and with `$host:$server_port` behind a port translation (443 outside, Nginx on 8443). Under 0.5.x such a configuration worked because the port was cut off. With the v0.6 Caddyfile, login and the REST API keep working, but chat no longer updates and voice does not connect. The remedy is the `Host` line on the proxy in front, not the Caddyfile.
 
-**Content-Security-Policy.** The stack sets none. If you set one for the app host on your own proxy, it must let the desktop app reach its native part: add `ipc:` (Linux) and `http://ipc.localhost` (Windows) to `connect-src`, for example `connect-src 'self' ipc: http://ipc.localhost`. Without `connect-src`, `default-src` applies. Without these sources the app falls back to a slow path: it keeps working, but video in its tiles stays at 320×180 with 15 frames per second, and the tile reports "Geringe Bildqualität" (low picture quality) with the Content-Security-Policy as the reason. Browsers and the installed PWA are not affected.
+**Client addresses.** The rate limits count per client address; sign-in, registration, email verification and password reset share 20 requests per minute and address. Behind your proxy the bundled Caddy sees only that proxy, and without help every user would share its one window. Since v0.7.1 the bundled Caddy therefore believes `X-Forwarded-For` from the peers in `GELABBER_TRUSTED_PROXIES` (`.env`; unset means `private_ranges`, the loopback and private IPv4/IPv6 ranges). It reads the header right to left, skips trusted hops and hands the API the one address it resolved.
+
+- The default covers a proxy on the same host (it reaches the bundled Caddy through the Docker gateway) or on the LAN. The proxy in front must set or append `X-Forwarded-For`: Caddy does so by itself, Nginx needs `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`.
+- Behind a CDN or tunnel, also trust the addresses its requests arrive from, for example a CDN's published ranges: `GELABBER_TRUSTED_PROXIES=private_ranges 173.245.48.0/20 …`. A Caddy of your own in front then needs the same ranges in its global `servers { trusted_proxies static … }` options, or it replaces the header with the CDN's address; Nginx's `$proxy_add_x_forwarded_for` keeps the entry. Otherwise everybody counts as the CDN.
+- `private_ranges` also trusts the clients on your LAN, and the bundled Caddy skips every trusted entry, a client's own private address included. LAN clients can therefore pick the address they are counted under when they reach the bundled Caddy directly (with a widened `GELABBER_HTTP_BIND`, or with rootless Docker and Docker Desktop, where every peer looks like the gateway) and when they come through a proxy in front that appends to `X-Forwarded-For`. Behind a proxy that overwrites the header instead, all LAN clients count as that proxy (or the gateway) and share one window. The per-account lockout and the per-address mail limit still hold. The exact address the bundled Caddy sees your proxy as avoids both (on the same host usually the gateway of the Compose network, `docker network inspect gelabber_default`).
+- An empty value (`GELABBER_TRUSTED_PROXIES=`) trusts no proxy, as before v0.7.1.
+
+**Content-Security-Policy.** Since v0.7.1 the web image sends one with the app shell. It is about scripts only: `script-src 'self' 'wasm-unsafe-eval'` plus the hash of the inline theme script (`'wasm-unsafe-eval'` lets the RNNoise noise suppression compile), `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `frame-src https://www.youtube-nocookie.com` and `frame-ancestors 'none'`. It has no fetch directives (`default-src`, `connect-src`, `img-src`, `media-src`), so uploads and attachments on the MinIO host, link avatars and the desktop app's native part keep working without configuration.
+
+A policy you set for the app host on your own proxy is enforced in addition to this one: a request has to pass both. If it sets `connect-src` or `default-src`, it must let the desktop app reach its native part: add `ipc:` (Linux) and `http://ipc.localhost` (Windows) to `connect-src`, for example `connect-src 'self' ipc: http://ipc.localhost`. Without `connect-src`, `default-src` applies. Without these sources the app falls back to a slow path: it keeps working, but video in its tiles stays at 320×180 with 15 frames per second, and the tile reports "Geringe Bildqualität" (low picture quality) with the Content-Security-Policy as the reason. Browsers and the installed PWA are not affected. To drop the stack's policy, remove the header on your proxy: Caddy `header -Content-Security-Policy` in the app's site block, Nginx `proxy_hide_header Content-Security-Policy;`.
 
 **Without the Compose Caddy:** the overlay publishes web/api/media (and MinIO) on loopback. Template: `deploy/compose/Caddyfile.homelab` (two active site blocks: app + MinIO).
 
@@ -59,8 +69,9 @@ Important: the Compose `.env` does **not** automatically export variables to an 
    - `MINIO_PUBLIC_ENDPOINT=https://minio.example.com` (API presign URL, scheme included)
 3. With a changed `MINIO_API_PORT`, adjust the upstream; in the Docker network `gelabber` the upstream is `minio:9000` (no host port needed). App upstreams likewise: `web:80`, `api:8080`, `media:8081`.
 4. MinIO block: `header_up Host {hostport}` (keep the port, for example `:8443`), URI unchanged; presigns sign host and path.
-5. Validate the configuration (`caddy validate` / `caddy adapt`) and reload Caddy.
-6. With `.home.arpa`: make the browser clients trust the local CA ([Local HTTPS](https://caddyserver.com/docs/automatic-https#local-https)).
+5. Behind a CDN or tunnel, add the global `servers { trusted_proxies … }` snippet from the top of `Caddyfile.homelab` to your Caddy, with the CDN's ranges; otherwise every client counts as the CDN (see "Client addresses"). Keep `GELABBER_API_BIND` on loopback: the API believes `X-Forwarded-For` from whoever reaches its port.
+6. Validate the configuration (`caddy validate` / `caddy adapt`) and reload Caddy.
+7. With `.home.arpa`: make the browser clients trust the local CA ([Local HTTPS](https://caddyserver.com/docs/automatic-https#local-https)).
 
 Environment variables in Caddy: [Caddyfile environment variables](https://caddyserver.com/docs/caddyfile/concepts#environment-variables).
 
@@ -114,6 +125,12 @@ For a digest rollout use the same `--env-file` / `-f` arguments as the rollout. 
 - A second coturn: `COMPOSE_PROFILES=bundled-coturn` plus a free `TURN_PORT` (for example 3479) and relays (`TURN_RELAY_MIN` / `TURN_RELAY_MAX`). `TURN_URLS` goes on the API ticket; the SFU does not read it.
 - Without the overlay: only `TURN_PORT=3479` in `.env` (and free relays).
 
+## Media signaling
+
+The SFU's control WebSocket (`/media/ws`) closes a socket that has not joined a voice channel within `MEDIA_JOIN_DEADLINE_MS` (default 10000 ms), counted from the upgrade and again from a leave. Pings and invalid frames do not extend it. The web client sends its join right after the socket opens, so Compose leaves the key at its default; to change it, add it to the `media` service's `environment` in a Compose override.
+
+Media expects to run behind the reverse proxy. Its HTTP server has no read timeout for the request and header phase, so a client that connects to `media:8081` directly and never finishes its request keeps the connection open. Caddy connects upstream only once it has the full request headers, so this matters only when port 8081 is reachable from outside: keep `GELABBER_MEDIA_BIND` (homelab overlay) on loopback.
+
 ## Behind TLS
 
 - `API_COOKIE_SECURE=true`. The API then accepts the WebSocket (`/ws`) only from `https://` pages; `http://` stays allowed for `localhost` only.
@@ -160,6 +177,7 @@ A message carries up to 10 files, at most 25 MiB each and 100 MiB together. Uplo
 - The size is reserved when the upload is signed.
 - An upload that never joins a message waits up to one hour for it (ten files go up one after another on slow lines), plus 15 minutes for an unfinished transfer. Only then is it removed: bytes that never arrived go back to the quota, bytes that did stay counted.
 - So a user who abandons a large set can see "quota exceeded" for up to 75 minutes afterwards.
+- Avatar and banner uploads count against the same quota. Their bytes are counted when the image is uploaded and stay counted, even if storing it fails. A user who has used up the day's quota cannot upload a new avatar or banner until the next UTC day; removing either, or setting an avatar link, still works.
 
 ## Link previews
 
@@ -231,6 +249,10 @@ Accounts that existed before migration 0021 count as confirmed. Accounts registe
 
 Migration 0021 adds `users.email_verified_at` and the `account_tokens` table. As with every migration, an older API binary does not start against the migrated database; roll back with the backed-up snapshot pair as described below.
 
+## Database connections
+
+The API keeps up to `API_DB_MAX_CONNECTIONS` (default 20) Postgres connections; every open WebSocket checks its session once a second. The stack runs one API process, so keep the value well below Postgres' `max_connections` (100 in the bundled Postgres). After changing it, recreate the API: `docker compose up -d --no-deps --force-recreate api`.
+
 ## Backup
 
 PostgreSQL metadata and MinIO attachments form **one snapshot pair**. Before
@@ -250,13 +272,18 @@ sh ../backup.sh
 
 Encrypt backups that leave the server: with
 `GELABBER_BACKUP_AGE_RECIPIENT=age1…` (an [age](https://age-encryption.org)
-public key) the dump and the MinIO archive are stored only as `*.age`. Before a
-restore, decrypt them with `age -d -i key.txt -o database.pgdump
-database.pgdump.age` (likewise `minio-data.tgz`), then run
-`sha256sum -c SHA256SUMS`.
+public key) the dump and the MinIO archive are encrypted while they are
+written, inside the maintenance window, and stored only as `*.age`; they never
+reach the disk in plain text. A recipient that age does not accept ends the
+script before anything is stopped. `SHA256SUMS` names the files as stored, so
+it can be checked without the key: before a restore, run
+`sha256sum -c SHA256SUMS`, then decrypt with `age -d -i key.txt -o
+database.pgdump database.pgdump.age` (likewise `minio-data.tgz`). Backups made
+by 0.7.0 or earlier list the plain names; check those after decrypting.
 
 On an error the writers stay stopped until the incomplete backup has been
-examined. Archive the released `image-set.json`/`image-set.env`, the active
+examined. A backup directory without `SHA256SUMS`, or with `*.part` files, is
+incomplete. Archive the released `image-set.json`/`image-set.env`, the active
 Compose configuration and the backup time with the pair; keep secrets private.
 A local image ID alone is not a portable replacement for the archived registry
 digest.
@@ -346,9 +373,9 @@ coturn is not part of the image set, but it carries the TURN credentials from `.
 docker compose --env-file .env --env-file next.env up -d --no-deps --force-recreate proxy
 ```
 
-A `caddy reload` is not enough for this. The proxy mounts `./Caddyfile` as a single file, and `git` replaces the file when updating: the running container keeps seeing the old one, and a reload loads the old text again. Only the restarted container (`docker compose restart proxy` is enough when only the Caddyfile changed) reads the new one. **v0.6 is such a release:** the Caddyfile hands `Host` on with its port (`{hostport}`, see "Existing Caddy") and compresses responses. Without this step both stay off and arrive unannounced with the container's next restart.
+A `caddy reload` is not enough for this. The proxy mounts `./Caddyfile` as a single file, and `git` replaces the file when updating: the running container keeps seeing the old one, and a reload loads the old text again. Only the restarted container (`docker compose restart proxy` is enough when only the Caddyfile changed) reads the new one. **v0.6 is such a release:** the Caddyfile hands `Host` on with its port (`{hostport}`, see "Existing Caddy") and compresses responses. Without this step both stay off and arrive unannounced with the container's next restart. **So is v0.7.1:** its Caddyfile and `compose.yaml` hand the API the client address from behind a proxy (see "Client addresses").
 
-**Do not run this step with the homelab overlay (`compose.homelab.yaml`, your own Caddy in front).** The overlay only puts the bundled `proxy` into the `bundled-caddy` profile; a service named explicitly starts anyway. `up … proxy` would therefore start the bundled Caddy on `${GELABBER_HTTP_BIND:-0.0.0.0}:${GELABBER_HTTP_PORT:-80}`: next to your own Caddy, which usually holds port 80 already (the start fails), or open on the network without TLS. Homelab operators instead carry the change from `deploy/compose/Caddyfile.homelab` (v0.6: `header_up Host {hostport}`) into their own Caddy's configuration and reload it there.
+**Do not run this step with the homelab overlay (`compose.homelab.yaml`, your own Caddy in front).** The overlay only puts the bundled `proxy` into the `bundled-caddy` profile; a service named explicitly starts anyway. `up … proxy` would therefore start the bundled Caddy on `${GELABBER_HTTP_BIND:-0.0.0.0}:${GELABBER_HTTP_PORT:-80}`: next to your own Caddy, which usually holds port 80 already (the start fails), or open on the network without TLS. Homelab operators instead carry the change from `deploy/compose/Caddyfile.homelab` (v0.6: `header_up Host {hostport}`) into their own Caddy's configuration and reload it there (v0.7.1: `header_up X-Forwarded-For {client_ip}` on the API upstreams).
 
 **v0.4 → v0.3.1 does not work through an image change:** migrations
 0010/0011 change the SQLx migration ledger. Before starting v0.3.1, the

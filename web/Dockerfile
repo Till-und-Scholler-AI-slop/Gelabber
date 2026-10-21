@@ -19,4 +19,7 @@ LABEL org.opencontainers.image.revision=$OCI_REVISION \
       org.opencontainers.image.source=$OCI_SOURCE
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /src/dist /usr/share/nginx/html
+# The unit tests read nginx.conf but do not parse it as nginx does. A broken
+# line fails the image build here instead of the container at start.
+RUN nginx -t
 EXPOSE 80

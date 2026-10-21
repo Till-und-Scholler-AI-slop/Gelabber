@@ -5,8 +5,8 @@ use axum::http::{Method, StatusCode};
 use common::{Client, SESSION};
 use futures_util::{SinkExt, StreamExt};
 use gelabber_api::auth::session;
-use gelabber_api::media;
 use gelabber_api::{AppState, EventKind, publish_channel};
+use gelabber_shared::ticket::{channel_authority_key, member_authority_key, session_authority_key};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::time::Duration;
@@ -254,7 +254,7 @@ async fn removal(pool: PgPool, mode: &str) {
     };
     assert_eq!(response.status, StatusCode::NO_CONTENT, "{}", response.body);
     assert_ne!(
-        redis_get(media::member_key(sid, uid)).await.as_deref(),
+        redis_get(member_authority_key(sid, uid)).await.as_deref(),
         old["auth"]["member"].as_str()
     );
     publish(&state, sid, text).await;
@@ -366,9 +366,9 @@ async fn deletion(pool: PgPool, whole_server: bool) {
     until(&mut ws, |f| f["op"] == "e" && f["s"] == control.to_string()).await;
     assert!(state.gateway.voice_snapshot(sid).await.unwrap().is_empty());
     let key = if whole_server {
-        media::member_key(sid, owner.user_id().parse().unwrap())
+        member_authority_key(sid, owner.user_id().parse().unwrap())
     } else {
-        media::channel_key(voice)
+        channel_authority_key(voice)
     };
     let old_revision = if whole_server {
         &old["auth"]["member"]
@@ -390,6 +390,152 @@ async fn deleting_channel_cleans_open_voice_and_ticket_authority(pool: PgPool) {
 #[sqlx::test]
 async fn deleting_server_cleans_open_voice_and_ticket_authority(pool: PgPool) {
     deletion(pool, true).await;
+}
+
+/// A channel row that disappears without a push (another API process, a
+/// manual delete) is dropped by the once-a-second recheck, and only that one.
+#[sqlx::test]
+async fn silently_deleted_channel_rows_are_dropped_and_only_those(pool: PgPool) {
+    let (addr, state) = common::serve_ws(pool.clone()).await;
+    let mut owner = register(&state, "owner").await;
+    let (sid, first, voice, _) = server(&mut owner, "Recheck").await;
+    let mut texts = vec![first];
+    for name in ["zwei", "drei"] {
+        let res = owner
+            .send(
+                Method::POST,
+                &format!("/api/servers/{sid}/channels"),
+                Some(json!({"name":name, "kind":"text"})),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+        texts.push(res.body["id"].as_str().unwrap().parse().unwrap());
+    }
+    let mut ws = connect(addr, &owner).await;
+    for cid in &texts {
+        subscribe(&mut ws, sid, *cid).await;
+    }
+    voice_join(&mut ws, sid, voice).await;
+    let gone = texts[1];
+    sqlx::query("DELETE FROM channels WHERE id = $1")
+        .bind(gone)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Two security ticks, with no frame from the client in between.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    for cid in &texts {
+        publish(&state, sid, *cid).await;
+    }
+    let seen = std::cell::RefCell::new(std::collections::HashSet::new());
+    until(&mut ws, |f| {
+        if f["op"] == "e" {
+            assert_ne!(f["c"], gone.to_string(), "event of a deleted channel: {f}");
+            seen.borrow_mut()
+                .insert(f["c"].as_str().unwrap().to_owned());
+        }
+        seen.borrow().len() == 2
+    })
+    .await;
+    assert_eq!(state.gateway.voice_snapshot(sid).await.unwrap().len(), 1);
+
+    sqlx::query("DELETE FROM channels WHERE id = $1")
+        .bind(voice)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Below the 5 s seat lease: only the recheck can clear it this fast.
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !state.gateway.voice_snapshot(sid).await.unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the seat in a deleted voice channel is dropped");
+}
+
+/// A server delete revokes every member, not only the owner, while it reads
+/// the server's channels once for all of them (#294).
+#[sqlx::test]
+async fn server_delete_revokes_every_member(pool: PgPool) {
+    let (addr, state) = common::serve_ws(pool).await;
+    let mut owner = register(&state, "owner").await;
+    let (sid, text, voice, code) = server(&mut owner, "Doomed").await;
+    let mut members = Vec::new();
+    for name in ["ada", "bob", "cem"] {
+        let mut member = register(&state, name).await;
+        join(&mut member, &code).await;
+        members.push(member);
+    }
+    let mut generations = Vec::new();
+    for client in std::iter::once(&mut owner).chain(members.iter_mut()) {
+        let uid: Uuid = client.user_id().parse().unwrap();
+        let generation = claim(client, voice).await["auth"]["member"].clone();
+        assert!(generation.is_string(), "{generation}");
+        generations.push((uid, generation));
+    }
+    let mut redis = redis::Client::open(common::redis_url())
+        .unwrap()
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let presence = format!("gb:p:s:{sid}");
+    let mut sockets = Vec::new();
+    for member in &members[..2] {
+        let uid: Uuid = member.user_id().parse().unwrap();
+        let mut ws = connect(addr, member).await;
+        subscribe(&mut ws, sid, text).await;
+        until(&mut ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+        voice_join(&mut ws, sid, voice).await;
+        let present: bool = redis::cmd("SISMEMBER")
+            .arg(&presence)
+            .arg(uid.to_string())
+            .query_async(&mut redis)
+            .await
+            .unwrap();
+        assert!(present, "{uid}");
+        sockets.push((uid, ws));
+    }
+    assert_eq!(state.gateway.voice_snapshot(sid).await.unwrap().len(), 2);
+
+    let response = owner
+        .send(Method::DELETE, &format!("/api/servers/{sid}"), None)
+        .await;
+    assert_eq!(response.status, StatusCode::NO_CONTENT, "{}", response.body);
+    for (uid, generation) in &generations {
+        assert_ne!(
+            redis_get(member_authority_key(sid, *uid)).await.as_deref(),
+            generation.as_str(),
+            "{uid}"
+        );
+    }
+    assert!(state.gateway.voice_snapshot(sid).await.unwrap().is_empty());
+    for (uid, ws) in &mut sockets {
+        until(ws, |f| {
+            f["op"] == "err" && f["e"] == "not_found" && f["s"] == sid.to_string()
+        })
+        .await;
+        for (key, member) in [
+            (presence.clone(), uid.to_string()),
+            (format!("gb:p:u:{uid}:s"), sid.to_string()),
+        ] {
+            let present: bool = redis::cmd("SISMEMBER")
+                .arg(&key)
+                .arg(&member)
+                .query_async(&mut redis)
+                .await
+                .unwrap();
+            assert!(!present, "{member} still in {key}");
+        }
+    }
+    let denied = members[2]
+        .send(
+            Method::POST,
+            &format!("/api/channels/{voice}/media-ticket"),
+            None,
+        )
+        .await;
+    assert_eq!(denied.status, StatusCode::NOT_FOUND);
 }
 
 #[sqlx::test]
@@ -531,7 +677,7 @@ async fn media_session_lease_dies_when_renewal_stops(pool: PgPool) {
     let mut owner = register(&state, "owner").await;
     let (_, _, voice, _) = server(&mut owner, "Lease").await;
     let ticket = claim(&mut owner, voice).await;
-    let key = media::session_key(ticket["auth"]["session"].as_str().unwrap());
+    let key = session_authority_key(ticket["auth"]["session"].as_str().unwrap());
     assert_eq!(
         redis_get(key.clone()).await.as_deref(),
         Some(owner.user_id())
@@ -620,7 +766,7 @@ async fn idle_media_authority_stops_and_a_new_mint_restarts_it(pool: PgPool) {
     let mut owner = register(&state, "owner").await;
     let (_, _, voice, _) = server(&mut owner, "Idle").await;
     let old = claim(&mut owner, voice).await;
-    let key = media::session_key(old["auth"]["session"].as_str().unwrap());
+    let key = session_authority_key(old["auth"]["session"].as_str().unwrap());
     tokio::time::timeout(Duration::from_secs(40), async {
         while redis_get(key.clone()).await.is_some() {
             tokio::time::sleep(Duration::from_millis(200)).await;
@@ -651,7 +797,7 @@ async fn permission_extension_keeps_voice_but_reduction_revokes_it(pool: PgPool)
     .await;
     until(&mut ws, |f| f["op"] == "sig" && f["t"] == "m").await;
     assert_eq!(
-        redis_get(media::member_key(sid, member.user_id().parse().unwrap()))
+        redis_get(member_authority_key(sid, member.user_id().parse().unwrap()))
             .await
             .as_deref(),
         old["auth"]["member"].as_str()
@@ -669,7 +815,7 @@ async fn permission_extension_keeps_voice_but_reduction_revokes_it(pool: PgPool)
     );
     assert!(state.gateway.voice_snapshot(sid).await.unwrap().is_empty());
     assert_ne!(
-        redis_get(media::member_key(sid, member.user_id().parse().unwrap()))
+        redis_get(member_authority_key(sid, member.user_id().parse().unwrap()))
             .await
             .as_deref(),
         old["auth"]["member"].as_str()

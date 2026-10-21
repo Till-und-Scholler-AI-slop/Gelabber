@@ -20,6 +20,7 @@ import {
   takeSessionStamp,
   takeStamp,
 } from "./scope.ts";
+import { useSession } from "./store.ts";
 import type {
   LogoutResponse,
   ProfilePatch,
@@ -27,17 +28,7 @@ import type {
   User,
 } from "./types.ts";
 
-export type SessionStatus = "unknown" | "anonymous" | "authenticated";
-
-export type SessionState = {
-  status: SessionStatus;
-  user: User | null;
-};
-
-export const useSession = create<SessionState>(() => ({
-  status: "unknown",
-  user: null,
-}));
+export { useSession, type SessionState, type SessionStatus } from "./store.ts";
 
 /** Request failures are not proof that the server ended the session. */
 export const useSessionProblems = create<{

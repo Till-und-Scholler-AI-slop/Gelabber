@@ -65,6 +65,7 @@ typedef enum gm_event_kind {
   GM_EVENT_CONNECTION_STATE = 3,
 } gm_event_kind;
 
+/* json is never null: a NUL-terminated string valid for the call. */
 typedef void (*gm_event_fn)(void* user, gm_event_kind kind, uint64_t request, const char* json);
 
 /* Library */
@@ -247,7 +248,10 @@ GM_API int gm_consumer_set_volume(gm_consumer* consumer, double volume);
 /* A video frame in I420, valid only during the sink call. rotation is 0, 90,
  * 180 or 270 degrees clockwise to apply for display. source_width and
  * source_height are the size of the picture before the sink's limits scaled
- * it down (width and height when they did not). */
+ * it down (width and height when they did not). A plane is width x height
+ * bytes for y and (width + 1) / 2 x (height + 1) / 2 for u and v, its rows
+ * at a stride of at least its width. It holds at least
+ * stride * (rows - 1) + width bytes: the last row need not be padded. */
 typedef struct gm_video_frame
 {
   int width;

@@ -27,6 +27,7 @@ use std::{
     fs,
     net::{SocketAddr, TcpStream},
     path::PathBuf,
+    sync::Mutex,
     time::Duration,
 };
 use tauri::{
@@ -132,14 +133,18 @@ fn configured_server(app: &AppHandle) -> Option<String> {
         .or_else(|| load_settings(app).server)
 }
 
+/// The server [`allow_server`] granted last, whose pages [`gate`] lets call
+/// commands. Kept here: the setting is a file, and `media_view_frame` comes
+/// once a frame.
+static SERVER: Mutex<Option<Url>> = Mutex::new(None);
+
 /// The server's pages may call the media commands, the window and tray
 /// commands, bind the push-to-talk key, open the setup page and see and
 /// install an update of the app, nothing else.
 fn allow_server(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
-    let origin = origin.origin().ascii_serialization();
     app.add_capability(
         CapabilityBuilder::new("server-media")
-            .remote(origin)
+            .remote(origin.origin().ascii_serialization())
             .local(false)
             .window(WINDOW)
             .permission("media")
@@ -147,7 +152,44 @@ fn allow_server(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
             .permission("ptt")
             .permission("update")
             .permission("allow-open-setup"),
-    )
+    )?;
+    if let Ok(mut server) = SERVER.lock() {
+        *server = Some(origin.clone());
+    }
+    Ok(())
+}
+
+/// Whether a command called from `page` runs: from the setup page, and from
+/// the pages of `server`, the one configured now.
+fn command_allowed(page: &Url, server: Option<&Url>) -> bool {
+    is_setup_page(page.as_str()) || server.is_some_and(|server| server.origin() == page.origin())
+}
+
+/// Runs `commands` for the pages [`command_allowed`] lets through and refuses
+/// every other call, after Tauri's own check of the capabilities.
+///
+/// Tauri 2.12.1 cannot take a capability back: `add_capability` only adds
+/// to what one allows. A server the app was switched away from keeps its
+/// grant until the app ends and would reach the commands again whenever the
+/// window shows one of its pages, through the history for one. The page
+/// checked is the one the window shows at the time of the call, so a call the
+/// previous page still makes while the window navigates is refused as well;
+/// the new page's load resets media and push-to-talk anyway.
+fn gate<R: tauri::Runtime>(
+    commands: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    move |invoke| {
+        let allowed = invoke.message.webview_ref().url().is_ok_and(|page| {
+            SERVER
+                .lock()
+                .is_ok_and(|server| command_allowed(&page, server.as_ref()))
+        });
+        if !allowed {
+            invoke.resolver.reject("not the configured server");
+            return true;
+        }
+        commands(invoke)
+    }
 }
 
 /// The webview's own permission requests. Notifications are the server
@@ -227,8 +269,8 @@ fn setup_url(server: Option<&str>, error: Option<&str>) -> Url {
     url
 }
 
-/// Whether `url` is a page of the bundled frontend, the setup page.
-#[cfg(target_os = "linux")]
+/// Whether `url` is a page of the bundled frontend, the setup page. By scheme
+/// and host: `tauri://localhost` has no origin to compare.
 fn is_setup_page(url: &str) -> bool {
     let setup = setup_url(None, None);
     Url::parse(url)
@@ -509,7 +551,7 @@ fn main() {
         .manage(shell::Shell::default())
         .manage(ptt::Ptt::default())
         .manage(update::Updates::default())
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(gate(tauri::generate_handler![
             set_server,
             open_setup,
             shell::shell_info,
@@ -562,7 +604,7 @@ fn main() {
             update::update_dismiss,
             update::update_check,
             update::update_set_auto_check,
-        ])
+        ]))
         .on_page_load(|webview, payload| {
             // A reload or navigation leaves the old page's calls and
             // transports orphaned: they are taken from it before the new
@@ -688,6 +730,56 @@ mod tests {
         assert_eq!(recovery(Some(setup.as_str()), true), Recovery::GiveUp);
         assert_eq!(recovery(None, false), Recovery::Setup);
         assert_eq!(recovery(None, true), Recovery::Setup);
+    }
+
+    /// Commands from the configured server's pages and the setup page only:
+    /// a server the app was switched away from keeps its grant in Tauri.
+    #[test]
+    fn commands_run_for_the_configured_server_and_the_setup_page_only() {
+        use super::command_allowed;
+        let page = |url: &str| url::Url::parse(url).unwrap();
+        let old = server_origin("https://old.example.org").unwrap();
+        let new = server_origin("https://chat.example.org:8443").unwrap();
+        assert!(command_allowed(
+            &page("https://old.example.org/s/1"),
+            Some(&old)
+        ));
+        // After the switch.
+        assert!(!command_allowed(
+            &page("https://old.example.org/s/1"),
+            Some(&new)
+        ));
+        for same in [
+            "https://chat.example.org:8443/",
+            "https://chat.example.org:8443/s/1/c/2?message=3#end",
+        ] {
+            assert!(command_allowed(&page(same), Some(&new)), "{same}");
+        }
+        for foreign in [
+            "https://chat.example.org/",
+            "http://chat.example.org:8443/",
+            "https://evil.example/",
+            "about:blank",
+        ] {
+            assert!(!command_allowed(&page(foreign), Some(&new)), "{foreign}");
+        }
+        // The bundled page on this platform: tauri://localhost, or
+        // http://tauri.localhost on Windows.
+        let setup = setup_url(Some(new.as_str()), Some("nicht erreichbar"));
+        let setup_root = if cfg!(windows) {
+            "http://tauri.localhost/"
+        } else {
+            "tauri://localhost/"
+        };
+        for server in [Some(&new), None] {
+            assert!(command_allowed(&setup, server));
+            assert!(command_allowed(&page(setup_root), server));
+        }
+        // Without a server only the setup page.
+        assert!(!command_allowed(
+            &page("https://chat.example.org:8443/"),
+            None
+        ));
     }
 
     /// Notifications for the server's own pages, never for another origin

@@ -26,9 +26,17 @@ watched, since nobody picks anything (a capture without the picker would).
 It is closed again, which closes the picker. On Linux both are left out, as
 before: a screen capture would open the portal's picker.
 
+The page comes with the Content-Security-Policy the web image sends with its
+shell (web/nginx.conf), its own inline script hashed in place of the theme
+bootstrap. Without 'unsafe-eval' and 'unsafe-inline' the page's calls, the
+frames and the app's own scripts in every page (main.rs, update.rs) have to
+work in WebKitGTK and WebView2 as they will against a real server.
+
 Usage: smoke_server.py <port> <ABI version> [<file to create after the first report>]
 """
 
+import base64
+import hashlib
 import json
 import pathlib
 import sys
@@ -284,6 +292,18 @@ def check_windows_screen(report, problems):
         problems.append(f"media_source_close of the screen source: {report.get('screenClose')}")
 
 
+def policy(page):
+    """The web image's policy for the shell, for this page's inline script.
+
+    Script directives only, no connect-src: the IPC fetches to ipc: and
+    http://ipc.localhost stay allowed, as they are with the real server.
+    """
+    script = page.split(b"<script>", 1)[1].split(b"</script>", 1)[0]
+    digest = base64.b64encode(hashlib.sha256(script).digest()).decode()
+    return (f"script-src 'self' 'wasm-unsafe-eval' 'sha256-{digest}'; object-src 'none'; "
+            "base-uri 'self'; frame-ancestors 'none'")
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.server.gets += 1
@@ -300,6 +320,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         # Loaded again, the page has to come from here: it differs.
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Security-Policy", policy(page))
         self.end_headers()
         self.wfile.write(page)
 

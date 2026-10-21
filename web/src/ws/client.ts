@@ -596,14 +596,17 @@ export class Gateway {
   private scheduleReconnect(): void {
     this.opts.onStatus?.("reconnecting");
     // First drop: reconnect on the next turn so the close handler can
-    // finish. After that, exponential backoff (capped) — still short.
+    // finish. After that, exponential backoff (capped) — still short —
+    // jittered to 50–100 %, so clients dropped together do not retry
+    // together.
+    const base = Math.min(
+      this.opts.maxRetryMs,
+      this.opts.retryMs * 2 ** (this.retryAttempt - 1),
+    );
     const delay =
       this.retryAttempt === 0
         ? 0
-        : Math.min(
-            this.opts.maxRetryMs,
-            this.opts.retryMs * 2 ** (this.retryAttempt - 1),
-          );
+        : Math.round(base * (0.5 + Math.random() * 0.5));
     this.retryAttempt += 1;
     this.reconnectTimer = setTimeout(() => {
       if (!this.stopped) {

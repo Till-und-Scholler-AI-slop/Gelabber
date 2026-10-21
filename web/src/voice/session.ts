@@ -22,7 +22,7 @@ import { create } from "zustand";
 
 import { ApiError, type ApiErrorCode } from "../api/client.ts";
 import { errorMessage } from "../auth/rules.ts";
-import { useSession } from "../auth/session.ts";
+import { useSession } from "../auth/store.ts";
 import { notifyError } from "../components/toasts.ts";
 import { randomUuid } from "../lib/uuid.ts";
 import { getGateway, type Gateway } from "../ws/client.ts";

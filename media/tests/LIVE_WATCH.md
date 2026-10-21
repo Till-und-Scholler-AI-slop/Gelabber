@@ -1,5 +1,9 @@
 # Live claim / Watch integration (08b)
 
+> **Historical** (before v4/mediasoup, webrtc-rs engine). The
+> `media/tests/browser-lifecycle.mjs` runner was removed in v0.7.1. The current
+> acceptance runner is [`web/scripts/e2e`](../../web/scripts/e2e/README.md).
+
 This series is locally tested for review, **not integrated or production media
 acceptance**. Basis failures below are preserved as before evidence; followups
 record their current status. Pins and lockfiles are unchanged.

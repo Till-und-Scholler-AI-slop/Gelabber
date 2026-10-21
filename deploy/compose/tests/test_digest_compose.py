@@ -68,6 +68,25 @@ class DigestCompose(unittest.TestCase):
                               if p['target'] == 3478 and str(p['published']) == '3479'},
                              {'udp', 'tcp'})
 
+    def test_db_pool_size_defaults_to_20_and_is_set_from_env(self):
+        # #293: the homelab overlay must merge api.environment, not replace it.
+        environ = {key: value for key, value in os.environ.items()
+                   if key != 'API_DB_MAX_CONNECTIONS'}
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / 'pool.env'
+            for extra, expected in (('', '20'), ('API_DB_MAX_CONNECTIONS=40\n', '40')):
+                env.write_text(SECRETS + extra)
+                for files in (['compose.yaml'], ['compose.yaml', 'compose.homelab.yaml']):
+                    cmd = ['docker', 'compose', '--project-directory', str(ROOT),
+                           '--env-file', str(env)]
+                    for name in files:
+                        cmd += ['-f', str(ROOT / name)]
+                    config = json.loads(subprocess.check_output(
+                        cmd + ['config', '--format', 'json'], text=True, env=environ))
+                    self.assertEqual(
+                        config['services']['api']['environment']['API_DB_MAX_CONNECTIONS'],
+                        expected, files)
+
 
 @unittest.skipUnless(shutil.which('docker'), 'Docker CLI is unavailable')
 class SecureDefaults(unittest.TestCase):
@@ -116,6 +135,19 @@ class SecureDefaults(unittest.TestCase):
         ports = json.loads(result.stdout)['services']['proxy']['ports']
         self.assertEqual([p['host_ip'] for p in ports], ['127.0.0.1'])
         self.assertEqual(json.loads(result.stdout)['services']['api']['environment']['API_COOKIE_SECURE'], 'false')
+
+    def test_bundled_caddy_trusts_private_proxies_unless_emptied(self):
+        # #287: unset means private_ranges; an explicitly empty value must
+        # stay empty (trust none) rather than fall back to the default.
+        cases = (('', 'private_ranges'),
+                 ('GELABBER_TRUSTED_PROXIES=\n', ''),
+                 ('GELABBER_TRUSTED_PROXIES=192.0.2.10\n', '192.0.2.10'))
+        for extra, expected in cases:
+            with self.subTest(extra=extra):
+                result = self.config(SECRETS + extra)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                proxy = json.loads(result.stdout)['services']['proxy']['environment']
+                self.assertEqual(proxy['GELABBER_TRUSTED_PROXIES'], expected)
 
     def test_examples_ship_no_passwords(self):
         for example in ('.env.example', '.env.homelab.example'):

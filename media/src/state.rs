@@ -8,6 +8,7 @@ use crate::sfu::Sfu;
 pub struct AppState {
     pub redis: redis::Client,
     pub ready_timeout: Duration,
+    pub join_deadline: Duration,
     pub sfu: Arc<Sfu>,
 }
 
@@ -19,6 +20,7 @@ impl AppState {
         Ok(Self {
             redis: redis.clone(),
             ready_timeout: config.ready_timeout,
+            join_deadline: config.join_deadline,
             sfu: Sfu::with_redis(config, redis).await?,
         })
     }

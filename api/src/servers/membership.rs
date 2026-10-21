@@ -1,5 +1,7 @@
 //! Who the caller is inside a server, and what they may do there.
 
+use std::collections::HashMap;
+
 use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -137,6 +139,21 @@ pub async fn revision<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
 ) -> Result<Option<(chrono::DateTime<chrono::Utc>, i32)>, ApiError> {
     Ok(sqlx::query_as("SELECT m.joined_at, CASE WHEN s.owner_id = m.user_id THEN $3 ELSE s.member_permissions END FROM server_members m JOIN servers s ON s.id = m.server_id WHERE m.server_id = $1 AND m.user_id = $2")
         .bind(server_id).bind(user_id).bind(crate::servers::permissions::Permissions::ALL.bits()).fetch_optional(db).await?)
+}
+
+/// [`revision`] for several servers in one query. A server the user is no
+/// longer a member of (or that is gone) has no entry.
+pub async fn revisions<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
+    db: E,
+    user_id: Uuid,
+    server_ids: &[Uuid],
+) -> Result<HashMap<Uuid, (chrono::DateTime<chrono::Utc>, i32)>, ApiError> {
+    let rows: Vec<(Uuid, chrono::DateTime<chrono::Utc>, i32)> = sqlx::query_as("SELECT m.server_id, m.joined_at, CASE WHEN s.owner_id = m.user_id THEN $3 ELSE s.member_permissions END FROM server_members m JOIN servers s ON s.id = m.server_id WHERE m.user_id = $1 AND m.server_id = ANY($2)")
+        .bind(user_id).bind(server_ids).bind(crate::servers::permissions::Permissions::ALL.bits()).fetch_all(db).await?;
+    Ok(rows
+        .into_iter()
+        .map(|(server_id, joined_at, permissions)| (server_id, (joined_at, permissions)))
+        .collect())
 }
 
 #[cfg(test)]

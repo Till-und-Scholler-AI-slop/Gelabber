@@ -1,5 +1,9 @@
 # Negotiated SFU payload binding regression
 
+> **Historical** (before v4/mediasoup, webrtc-rs engine). The
+> `media/tests/browser-lifecycle.mjs` runner was removed in v0.7.1. The current
+> acceptance runner is [`web/scripts/e2e`](../../web/scripts/e2e/README.md).
+
 Observed locally on 2026-09-28 with Rust 1.98.1, Node 26.8.2,
 webrtc/rtc 0.20.5, Redis 8.10.1, Firefox 155 and Chromium 153.0.8010.12.
 Pins and locks are unchanged.
@@ -10,9 +14,10 @@ Pins and locks are unchanged.
 . /tmp/gelabber-toolchain/env.sh
 export CARGO_TARGET_DIR=/home/rafi/Projects/Gelabber/target/stability-media
 cargo build --locked -p gelabber-media
-MEDIA_CASE=renegotiate MEDIA_BROWSER=firefox MEDIA_TEST_LAN=1 \
-  MEDIA_ASSERT_PT_MAPPING=1 MEDIA_RESTARTS=3 MEDIA_ICE_RESTART=0 \
-  node media/tests/browser-lifecycle.mjs
+# Removed in v0.7.1; current runs use web/scripts/e2e.
+# MEDIA_CASE=renegotiate MEDIA_BROWSER=firefox MEDIA_TEST_LAN=1 \
+#   MEDIA_ASSERT_PT_MAPPING=1 MEDIA_RESTARTS=3 MEDIA_ICE_RESTART=0 \
+#   node media/tests/browser-lifecycle.mjs
 ```
 
 Firefox uses a real local interface for the isolated SFU ICE adapter. Binding only

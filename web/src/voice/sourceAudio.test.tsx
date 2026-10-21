@@ -27,10 +27,14 @@ vi.mock("./session.ts", () => ({
 vi.mock("../servers/queries.ts", () => ({
   useServer: () => ({ data: { permissions: ["go_live"] } }),
 }));
-vi.mock("../auth/session.ts", () => ({
+// VoiceRoom reads the user through session.ts, useUserId through store.ts,
+// so both hand out the same one.
+const signedIn = vi.hoisted(() => ({
   useSession: (select: (state: unknown) => unknown) =>
     select({ user: { id: "self", name: "Rafi", avatar_url: null } }),
 }));
+vi.mock("../auth/session.ts", () => signedIn);
+vi.mock("../auth/store.ts", () => signedIn);
 vi.mock("./roster.ts", () => ({
   EMPTY_OCCUPANCY: {},
   useVoiceRoster: (select: (state: unknown) => unknown) =>

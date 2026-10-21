@@ -148,6 +148,43 @@ async fn failed_logins_are_limited_per_account_across_addresses(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn made_up_session_cookies_share_the_address_window(pool: PgPool) {
+    let state = state_with(pool, &[("API_RATE_API_PER_MIN", "3")]);
+    let mut signed_in = signed_up(state.clone()).await;
+    let mut forger = Client::from_state(state);
+    forger.bootstrap().await;
+
+    // `limits::gate` runs before CSRF, so the 429 comes first either way.
+    let from_one_address = |builder: &mut axum::http::request::Builder| {
+        builder
+            .headers_mut()
+            .unwrap()
+            .insert("x-forwarded-for", "203.0.113.9".parse().unwrap());
+    };
+    for i in 0..4 {
+        forger
+            .jar
+            .insert(common::SESSION.to_owned(), format!("forged-{i}"));
+        let res = forger
+            .send_with(Method::POST, "/api/auth/logout", None, from_one_address)
+            .await;
+        if i < 3 {
+            assert_eq!(res.status, StatusCode::OK, "{i}: {}", res.body);
+        } else {
+            assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.body);
+            assert_eq!(res.body["error"], "rate_limited");
+            assert!(res.headers.contains_key(RETRY_AFTER));
+        }
+    }
+
+    // A real session from the same address counts in a window of its own.
+    let res = signed_in
+        .send_with(Method::POST, "/api/auth/logout", None, from_one_address)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+}
+
+#[sqlx::test]
 async fn password_change_ends_every_other_session(pool: PgPool) {
     let state = state_with(pool, &[]);
     let mut first = signed_up(state.clone()).await;
