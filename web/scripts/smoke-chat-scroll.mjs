@@ -90,7 +90,12 @@ function answer(path, method) {
     };
   if (path === "/api/servers") return [server];
   if (path === `/api/servers/${SERVER}`) return detail;
-  if (path === "/api/dms" || path === "/api/messages/unread") return [];
+  if (
+    path === "/api/dms" ||
+    path === "/api/messages/unread" ||
+    path === "/api/notification-settings"
+  )
+    return [];
   if (path === "/api/me/themes")
     return { version: 1, revision: 1, active: "dark", customThemes: [] };
   if (path.endsWith("/read") || method !== "GET")
