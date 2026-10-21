@@ -442,7 +442,9 @@ async fn server_delete_revokes_every_member(pool: PgPool) {
     assert_eq!(response.status, StatusCode::NO_CONTENT, "{}", response.body);
     for (uid, generation) in &generations {
         assert_ne!(
-            redis_get(media::member_key(sid, *uid)).await.as_deref(),
+            redis_get(gelabber_shared::ticket::member_authority_key(sid, *uid))
+                .await
+                .as_deref(),
             generation.as_str(),
             "{uid}"
         );
