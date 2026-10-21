@@ -61,7 +61,7 @@ export function MediaSettingsForm({
   const audioLimit = audioBitrate(settings);
   const videoLimit = videoSendBudget(settings);
   const [microphoneTest, setMicrophoneTest] = useState(false);
-  const { devices, reveal } = useMediaDevices();
+  const { devices, loaded, reveal } = useMediaDevices();
   const [revealFailed, setRevealFailed] = useState(false);
   // The desktop app's native core captures, filters and sends; the texts
   // must not credit a browser with it.
@@ -106,23 +106,26 @@ export function MediaSettingsForm({
               der Ausgabe deines Geräts.
             </p>
           )}
-          {showAudio && !desktop && needsDeviceLabels(devices.audioinput) && (
-            <div className="media-settings-reveal">
-              <p className="text-xs text-lr-muted">
-                {revealFailed
-                  ? "Der Browser gibt die Gerätenamen ohne Mikrofonzugriff nicht heraus."
-                  : "Die Gerätenamen zeigt der Browser erst, wenn du den Mikrofonzugriff erlaubst."}
-              </p>
-              <Button
-                size="sm"
-                onClick={() =>
-                  void reveal("audio").then((ok) => setRevealFailed(!ok))
-                }
-              >
-                Gerätenamen anzeigen
-              </Button>
-            </div>
-          )}
+          {showAudio &&
+            loaded &&
+            !desktop &&
+            needsDeviceLabels(devices.audioinput) && (
+              <div className="media-settings-reveal">
+                <p className="text-xs text-lr-muted">
+                  {revealFailed
+                    ? "Der Browser gibt die Gerätenamen ohne Mikrofonzugriff nicht heraus."
+                    : "Die Gerätenamen zeigt der Browser erst, wenn du den Mikrofonzugriff erlaubst."}
+                </p>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    void reveal("audio").then((ok) => setRevealFailed(!ok))
+                  }
+                >
+                  Gerätenamen anzeigen
+                </Button>
+              </div>
+            )}
           {showVideo && (
             <DeviceSelect
               id="video-input"
@@ -132,16 +135,19 @@ export function MediaSettingsForm({
               onChange={(value) => settings.patch({ videoInputId: value })}
             />
           )}
-          {showVideo && !desktop && needsDeviceLabels(devices.videoinput) && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="self-start"
-              onClick={() => void reveal("video")}
-            >
-              Kameranamen anzeigen
-            </Button>
-          )}
+          {showVideo &&
+            loaded &&
+            !desktop &&
+            needsDeviceLabels(devices.videoinput) && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="self-start"
+                onClick={() => void reveal("video")}
+              >
+                Kameranamen anzeigen
+              </Button>
+            )}
         </fieldset>
       )}
       {(showAudio || showVideo) && (

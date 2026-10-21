@@ -1,6 +1,20 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// A static render keeps a hook's first state: the device list is set here.
+const listing = vi.hoisted(() => ({ loaded: false }));
+vi.mock("./devices.ts", async (original) => {
+  const actual = await original<typeof import("./devices.ts")>();
+  return {
+    ...actual,
+    useMediaDevices: () => ({
+      devices: { audioinput: [], audiooutput: [], videoinput: [] },
+      loaded: listing.loaded,
+      reveal: async () => false,
+    }),
+  };
+});
+
 import { VoiceSettingsTabs } from "../components/VoiceSettingsDialog.tsx";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
 import { QuickCallSettings } from "./QuickCallSettings.tsx";
@@ -63,15 +77,21 @@ describe("settings dialog", () => {
 });
 
 describe("quick call settings", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    listing.loaded = false;
+  });
 
   it("keeps devices, volumes and the input mode one tap away", () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getDisplayMedia() {}, getUserMedia() {} },
     });
-    const html = renderToStaticMarkup(
-      <QuickCallSettings onMore={() => undefined} />,
-    );
+    const quick = () =>
+      renderToStaticMarkup(<QuickCallSettings onMore={() => undefined} />);
+    // Until the first listing is in, nothing asks for names.
+    expect(quick()).not.toContain("Gerätenamen anzeigen");
+    listing.loaded = true;
+    const html = quick();
     expect(html).toContain(">Mikrofon</label>");
     expect(html).toContain(">Kamera</label>");
     expect(html).toContain(">Gespräche</label>");

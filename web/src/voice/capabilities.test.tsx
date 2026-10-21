@@ -339,7 +339,8 @@ describe("settings form", () => {
     expect(html).toContain('id="audio-output"');
     // The system's choice; it names the device once the browser lists one.
     expect(html).toContain('selected="">Standard</option>');
-    expect(html).toContain("Gerätenamen anzeigen");
+    // Asking for names waits for the first listing.
+    expect(html).not.toContain("Gerätenamen anzeigen");
     expect(html).toContain("Browserfilter");
     expect(html).toContain("Andere Werte laufen über Web Audio.");
     expect(html).toContain(

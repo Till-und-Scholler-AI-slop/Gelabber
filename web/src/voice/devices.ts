@@ -100,13 +100,15 @@ export async function revealDeviceNames(
 const mediaDevices = (): Devices | undefined =>
   typeof navigator === "undefined" ? undefined : navigator.mediaDevices;
 
-/** The device lists, kept current while the caller is shown. `reveal`
- * asks for the permission that makes a browser name a kind. */
+/** The device lists, kept current while the caller is shown; `loaded` once
+ * the first listing is in. `reveal` asks for the permission that makes a
+ * browser name a kind. */
 export function useMediaDevices(): {
   devices: DeviceList;
+  loaded: boolean;
   reveal: (kind: "audio" | "video") => Promise<boolean>;
 } {
-  const [devices, setDevices] = useState<DeviceList>(EMPTY);
+  const [devices, setDevices] = useState<DeviceList | null>(null);
   const refresh = useCallback(() => {
     void listMediaDevices()
       .then(setDevices)
@@ -122,5 +124,5 @@ export function useMediaDevices(): {
     },
     [refresh],
   );
-  return { devices, reveal };
+  return { devices: devices ?? EMPTY, loaded: devices !== null, reveal };
 }

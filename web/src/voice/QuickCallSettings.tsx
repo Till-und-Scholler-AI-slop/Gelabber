@@ -66,7 +66,7 @@ export function QuickCallSettings({ onMore }: { onMore: () => void }) {
   const capable = useCapabilities();
   const joined = useVoice((s) => s.status === "joined");
   const micLive = useVoice((s) => s.mic === "live" || s.mic === "ptt-idle");
-  const { devices, reveal } = useMediaDevices();
+  const { devices, loaded, reveal } = useMediaDevices();
   const desktop = isDesktopApp();
   const microphone = deviceChoices(devices.audioinput, settings.audioInputId);
   const speaker = deviceChoices(devices.audiooutput, settings.audioOutputId);
@@ -90,7 +90,7 @@ export function QuickCallSettings({ onMore }: { onMore: () => void }) {
           ))}
         </Select>
         {joined && micLive && !desktop ? <SendLevel /> : null}
-        {!desktop && needsDeviceLabels(devices.audioinput) ? (
+        {loaded && !desktop && needsDeviceLabels(devices.audioinput) ? (
           <div className="voice-quick-reveal">
             <span>
               {denied
@@ -141,7 +141,7 @@ export function QuickCallSettings({ onMore }: { onMore: () => void }) {
               </option>
             ))}
           </Select>
-          {!desktop && needsDeviceLabels(devices.videoinput) ? (
+          {loaded && !desktop && needsDeviceLabels(devices.videoinput) ? (
             <Button
               size="sm"
               variant="ghost"
@@ -234,14 +234,27 @@ function Volume({
   );
 }
 
+const TRACK_CHECK_MS = 1_000;
+
+function sendTrack(): MediaStreamTrack | null {
+  const track = voiceMicrophones().sender?.track;
+  return track && track.readyState !== "ended" ? track : null;
+}
+
 /** What the call sends right now, from a copy of the microphone track the
  * call holds: no second capture, which a phone would take the first one
  * away for. */
 function SendLevel() {
   const [level, setLevel] = useState(0);
+  const [track, setTrack] = useState(sendTrack);
+  // Another microphone chosen here replaces the call's track a moment
+  // later; the copy follows, so the old device is let go.
   useEffect(() => {
-    const track = voiceMicrophones().sender?.track;
-    if (!track || track.readyState === "ended") return;
+    const timer = setInterval(() => setTrack(sendTrack()), TRACK_CHECK_MS);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    if (!track) return;
     const copy = track.clone();
     const meter = createMicrophoneSession(
       { onState: () => {}, onLevel: setLevel },
@@ -259,14 +272,14 @@ function SendLevel() {
       meter.stop();
       copy.stop();
     };
-  }, []);
+  }, [track]);
   return (
     <meter
       className="voice-quick-level"
       min={0}
       max={100}
       low={8}
-      value={level}
+      value={track ? level : 0}
       aria-label="Pegel, den die anderen hören"
     />
   );
