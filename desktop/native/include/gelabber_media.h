@@ -39,7 +39,7 @@
 extern "C" {
 #endif
 
-#define GM_ABI_VERSION 9
+#define GM_ABI_VERSION 10
 
 typedef struct gm_engine gm_engine;
 typedef struct gm_device gm_device;
@@ -73,6 +73,12 @@ GM_API const char* gm_last_error(void);
 GM_API void gm_string_free(char* s);
 /* Route libwebrtc logs to stderr: 0 none, 1 error, 2 warning, 3 info, 4 verbose. */
 GM_API void gm_set_log_level(int level);
+/* The system's video codecs beside libwebrtc's own, as an engine would use
+ * them: {"h264":{"encoder","hardwareEncoder","decoder"}}, encoder and decoder
+ * being the GStreamer element (Linux) or the Media Foundation MFT's name
+ * (Windows), or null; "h264" is null where the core has no such codecs. Needs
+ * no engine; the first call may take a while (GStreamer scans its plugins). */
+GM_API char* gm_video_codecs(void);
 
 /* Engine: libwebrtc threads, PeerConnectionFactory, audio device module and
  * codec factories. One per process is enough.

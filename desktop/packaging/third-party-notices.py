@@ -61,16 +61,16 @@ WIDTH = 78
 
 # Raise when the wording or layout of a kept part changes, so that an old
 # copy of it is not taken over.
-LIBWEBRTC_PART = 2
+LIBWEBRTC_PART = 3
 CORE_PART = 1
 
 # The build configuration the fixed sentences of parts 1 and 2 describe.
 # The script stops when the repository says something else.
 EXPECTED_FACTS = {
-    "Linux libwebrtc is built with rtc_use_h264=true and FFmpeg's Chrome branding": True,
-    "Windows libwebrtc is built with rtc_use_h264=true": True,
+    "Linux libwebrtc is built with rtc_use_h264=false": True,
+    "Windows libwebrtc is built with rtc_use_h264=false": True,
     "Windows libwebrtc is built with use_custom_libcxx=false": True,
-    "the core defines WEBRTC_USE_H264 on Linux only": True,
+    "the core does not define WEBRTC_USE_H264": True,
     "the core links the static MSVC runtime on Windows": True,
     "the Windows installer embeds the WebView2 bootstrapper": True,
 }
@@ -92,20 +92,12 @@ CODE = (".h", ".c", ".cc", ".cpp", ".py", ".gn", ".gni", ".asm", ".S", ".inc", "
 # looked at by hand: True prints the file, a sentence says why it is not
 # printed. A licence file found there without an entry stops the script,
 # unless its text is already part of a printed one.
-FFMPEG_OTHER_CONFIGURATIONS = (
-    "FFmpeg's licence texts for builds configured with --enable-gpl or --enable-version3. "
-    "The config.h of this build says CONFIG_GPL 0 and CONFIG_VERSION3 0."
-)
 BESIDE_THE_LICENCE = {
     "PATENTS": True,
     "license_template.txt": (
         "The comment that WebRTC's own source files begin with; it refers to LICENSE and "
         "PATENTS."
     ),
-    "third_party/ffmpeg/COPYING.LGPLv2.1": True,
-    "third_party/ffmpeg/COPYING.GPLv2": FFMPEG_OTHER_CONFIGURATIONS,
-    "third_party/ffmpeg/COPYING.GPLv3": FFMPEG_OTHER_CONFIGURATIONS,
-    "third_party/ffmpeg/COPYING.LGPLv3": FFMPEG_OTHER_CONFIGURATIONS,
     # LICENSE.md names it as the place of the IJG licence.
     "third_party/libjpeg_turbo/README.ijg": True,
     "third_party/libyuv/PATENTS": True,
@@ -352,12 +344,14 @@ def build_facts():
     h264 = [line for line in cmake if "WEBRTC_USE_H264" in line]
     bundle = json.loads(read(REPO / "desktop/app/tauri.bundle.windows.json"))["bundle"]
     return {
-        "Linux libwebrtc is built with rtc_use_h264=true and FFmpeg's Chrome branding": (
-            "rtc_use_h264=true" in gn_args and 'ffmpeg_branding="Chrome"' in gn_args
+        "Linux libwebrtc is built with rtc_use_h264=false": (
+            "rtc_use_h264=false" in gn_args and "rtc_use_h264=true" not in gn_args
         ),
-        "Windows libwebrtc is built with rtc_use_h264=true": "'rtc_use_h264=true'" in windows,
+        "Windows libwebrtc is built with rtc_use_h264=false": (
+            "'rtc_use_h264=false'" in windows and "'rtc_use_h264=true'" not in windows
+        ),
         "Windows libwebrtc is built with use_custom_libcxx=false": "'use_custom_libcxx=false'" in windows,
-        "the core defines WEBRTC_USE_H264 on Linux only": len(h264) == 1 and "WEBRTC_LINUX" in h264[0],
+        "the core does not define WEBRTC_USE_H264": not h264,
         "the core links the static MSVC runtime on Windows": any(
             'CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded"' in line for line in cmake
         ),
@@ -718,36 +712,6 @@ def field(label, text):
     return [f"  {label:<9} {lines[0]}"] + [" " * 12 + line for line in lines[1:]]
 
 
-def ffmpeg_configuration(src, gn_args, library):
-    branding = next(a.split("=", 1)[1].strip('"') for a in gn_args if a.startswith("ffmpeg_branding="))
-    config = Path("third_party/ffmpeg/chromium/config") / branding / "linux/x64"
-    header = read(src / config / "config.h")
-    licence = re.search(r'#define FFMPEG_LICENSE "(.*)"', header)[1]
-    switches = {
-        name: re.search(rf"#define CONFIG_{name} (\d)", header)[1] for name in ("GPL", "NONFREE", "VERSION3")
-    }
-    if licence != "LGPL version 2.1 or later" or set(switches.values()) != {"0"}:
-        die(f"{config}/config.h: the sentences on FFmpeg describe an LGPL 2.1 configuration")
-    enabled = {}
-    components = read(src / config / "config_components.h")
-    for name, kind in re.findall(r"#define CONFIG_(\w+)_(DECODER|PARSER|DEMUXER|ENCODER|MUXER) 1", components):
-        enabled.setdefault(kind.lower(), []).append(name.lower())
-    out = para(
-        f"Licence of this build as its configuration states it ({config}/config.h): "
-        f"FFMPEG_LICENSE \"{licence}\", CONFIG_GPL {switches['GPL']}, CONFIG_NONFREE "
-        f"{switches['NONFREE']}, CONFIG_VERSION3 {switches['VERSION3']}.")
-    out += para(
-        "Components that configuration enables, which are compiled into the libwebrtc "
-        f"package, and which of them are among the symbols of {CORE_LIBRARY} (Linux; FFmpeg "
-        "registers a component as ff_<name>_<kind>):")
-    for kind in sorted(enabled):
-        names = sorted(enabled[kind])
-        linked = [name for name in names if f"ff_{name}_{kind}" in library]
-        which = "none" if not linked else "all" if linked == names else series(linked)
-        out += para(f"{kind}s ({len(names)}; in {CORE_LIBRARY}: {which}):", 2) + listing(names, 4)
-    return out
-
-
 def leading_comment(text):
     comment = re.match(r"\s*/\*(.*?)\*/", text, re.S)
     lines = [re.sub(r"^\s*\*? ?", "", line).rstrip() for line in comment[1].splitlines()] if comment else []
@@ -830,8 +794,10 @@ def libwebrtc_part(src, out_name, core_build):
 
     libraries, notes = run_webrtc_generator(src, out_dir, targets)
     names = [name for name, _ in libraries]
-    if not {"libc++", "libc++abi", "llvm-libc", "ffmpeg", "openh264"} <= set(names):
+    if not {"libc++", "libc++abi", "llvm-libc"} <= set(names):
         die("the Windows paragraph of part 2 names libraries that are no longer in the list")
+    if {"ffmpeg", "openh264"} & set(names):
+        die("parts 1 and 2 say that libwebrtc is built without H.264, but the list has ffmpeg or openh264")
 
     # Where each library lives in the tree: the directory of its
     # README.chromium, else that of its licence file; the rest is libwebrtc.
@@ -852,9 +818,6 @@ def libwebrtc_part(src, out_name, core_build):
     own, readers, users, licence_files = build_survey(src, objects, roots)
     if not own.get("webrtc", set()) & present:
         die(f"{CORE_LIBRARY} has no symbol of libwebrtc's object files: not built against {out_dir}?")
-    for name in ("ffmpeg", "openh264"):
-        if not own.get(name, set()) & present:
-            die(f"parts 1 and 2 say that {name} is in {CORE_LIBRARY}, but no object file of it is")
 
     def on_linux(name):
         mine, others = own.get(name, set()), readers.get(name, set())
@@ -944,9 +907,8 @@ def libwebrtc_part(src, out_name, core_build):
         "Windows build, which uses Microsoft's C++ standard library and C runtime instead "
         "(see part 1).")
     out += item(
-        "ffmpeg and openh264 are compiled into the Windows libwebrtc package as well "
-        "(rtc_use_h264=true), but the media core is built without WEBRTC_USE_H264 on "
-        "Windows, so its own code refers to neither (see part 1).")
+        "rtc_use_h264=false, as for Linux: neither build compiles OpenH264 or FFmpeg (see "
+        "part 1).")
     out += para(
         "Whether the Windows build depends on third-party libraries that the Linux build "
         "lacks was not established. gelabber_media.dll was not looked into: the lines "
@@ -991,21 +953,6 @@ def libwebrtc_part(src, out_name, core_build):
         heading += field("Linux", on_linux(name))
 
         body = ""
-        if name == "ffmpeg":
-            body += para(
-                f"FFmpeg is linked statically, as part of libwebrtc, into {CORE_LIBRARY} "
-                "(Linux). It is Chromium's copy of FFmpeg, unchanged. The source code is the "
-                "repository and commit named above; the commands that build it into the media "
-                "core are desktop/native/scripts/build-libwebrtc-linux.sh "
-                f"and desktop/native/CMakeLists.txt in the Gelabber repository ({GELABBER_URL}) "
-                "at the tag of the release.")
-            body += ffmpeg_configuration(src, gn_args, library) + "\n"
-        if name == "openh264":
-            body += para(
-                f"OpenH264 is linked statically, as part of libwebrtc, into {CORE_LIBRARY} "
-                "(Linux), built from the source named above. The README.chromium of libwebrtc's "
-                "tree notes for it that licences other than the BSD licence of the source apply "
-                "to builds (MPEG LA patents) and refers to www.openh264.org.") + "\n"
         difference = compared(name, fields.get("License", ""), [plain(read(src / f)) for f in printed])
         if difference:
             body += para(difference) + "\n"
@@ -1477,6 +1424,20 @@ def scope_part():
         "notices of those headers. Nothing else was collected for header files of system "
         "libraries or of the compilers.")
     out += item(
+        "H.264. The packages contain no H.264 codec: both libwebrtc builds are made with "
+        "rtc_use_h264=false, so neither compiles OpenH264 or FFmpeg, and the media core is "
+        "compiled without WEBRTC_USE_H264. The media core encodes and decodes H.264 only "
+        "through codecs of the operating system, loaded when it runs: GStreamer elements on "
+        "Linux (the graphics drivers' VA-API or NVIDIA elements, or a software element such "
+        "as openh264enc, x264enc or avdec_h264 that the system has installed) and Media "
+        "Foundation transforms on Windows (those of the graphics driver, or Microsoft's). "
+        "Without them it uses no H.264. The job that builds the Windows package "
+        f"({WINDOWS_JOB} in {WORKFLOW_NAME}) also searches the gelabber_media.dll of every "
+        "build for names from OpenH264, from FFmpeg and from libwebrtc's wrappers around "
+        "the two, and fails when it finds one; a release takes its installer from a run of "
+        "that job only. That is a search for names in the file, not proof that it holds "
+        "none of that code.")
+    out += item(
         "The web client. The application shows the pages of the Gelabber server it is "
         "connected to; they are not in the packages.")
     out += item(
@@ -1506,26 +1467,6 @@ def scope_part():
         "What part 2 says about the contents of the Linux media core was found in a build "
         "made on the machine that generated it, not in the released library.", 2)
     out += "\nOpen points\n"
-    out += item(
-        "H.264 on Linux. libwebrtc is built with rtc_use_h264=true for Linux, so "
-        "libgelabber_media.so contains OpenH264 (an H.264 encoder) and decoders of "
-        "Chromium's FFmpeg build with the \"Chrome\" branding (H.264 and the others that "
-        "this configuration enables); see the entries ffmpeg and openh264 in part 2. How "
-        "the patent licensing of H.264, and of the other codecs in that FFmpeg "
-        "configuration, applies to distributing this build has not been settled by the "
-        "project (issue #165 in the Gelabber repository). This file does not answer that "
-        "question.")
-    out += item(
-        "H.264 on Windows. The libwebrtc package for Windows is built with "
-        "rtc_use_h264=true as well, but the media core is compiled without "
-        "WEBRTC_USE_H264 there, so its own code refers to neither OpenH264 nor FFmpeg. "
-        "Whether the linker left code of either in gelabber_media.dll was not looked at "
-        "for this file, which is written on Linux. The job that builds the Windows "
-        f"package ({WINDOWS_JOB} in the workflow named above) searches the "
-        "gelabber_media.dll of every build for names from OpenH264, from FFmpeg and from "
-        "libwebrtc's wrappers around the two, and fails when it finds one; a release takes "
-        "its installer from a run of that job only. That is a search for names in the "
-        "file, not proof that it holds none of that code.")
     out += item(
         "Microsoft's runtime in the Windows programs. gelabber_media.dll links "
         "Microsoft's C runtime and C++ standard library statically "

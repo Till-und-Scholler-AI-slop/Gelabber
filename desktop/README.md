@@ -330,24 +330,41 @@ separate decision.
   a refused Go Live left a claim that blocked the channel. (A capture that
   fails or is cancelled still does that with such a client, on either
   system.)
-- Video encode: the app sends VP8, encoded in software by libwebrtc's
-  libvpx. The web client names the codec of every producer and takes VP8
-  wherever the device has it (`codec` in
-  `web/src/voice/mediasoupConnection.ts`), and the core produces what it is
-  asked for. The Linux core has H264 all the same, and its tests run it:
-  through the system's GStreamer when that has a hardware element
-  (`nvh264enc`, `vah264enc`, `vah264lpenc`, `vaapih264enc`; gst-plugins-bad),
-  otherwise OpenH264; `GELABBER_H264_ENCODER=<element>|none` overrides the
-  choice, and a caller that names no codec gets H264 before VP8. None of
-  that reaches the app: there gst-plugins-bad and the variable change
-  nothing. Hardware encoding in the app would start in the web client (ask
-  for `video/h264` when the core reports a hardware encoder), and shipping
-  H264 needs a licensing decision first. The Windows core is built without
-  H264. Decode is libwebrtc's: libvpx for VP8/VP9, on Linux FFmpeg (Chrome
-  branding) for H264.
-- Simulcast: libvpx and OpenH264 encode a producer's layers in one encoder,
-  and only when every layer has exactly the top layer's aspect. A layer is
-  the picture divided by its `scaleResolutionDownBy`, so a 1366x768 screen
+- Video codecs: the web client names the codec of every producer
+  (`chooseVideoCodec` in `web/src/voice/videoCodec.ts`) among those every
+  receiver in the room decodes, which the media server announces. It takes
+  H264 where the device encodes it in hardware and VP8 otherwise; the core
+  produces what it is asked for, and a caller that names no codec gets H264
+  before VP8. `media_info` reports the feature `h264-hardware` and, under
+  `videoCodecs`, what `gm_video_codecs` found.
+  - Neither libwebrtc build carries H264 (`rtc_use_h264=false`, no OpenH264
+    or FFmpeg) and the core is compiled without `WEBRTC_USE_H264`: H264 is
+    the system's alone, so the packages ship no H264 codec. A system
+    without one has no H264 in its RTP capabilities, and the room falls
+    back to VP8 through the negotiation above.
+  - Linux encode: through the system's GStreamer, a hardware element
+    (`nvh264enc`, `vah264enc`, `vah264lpenc`, `vaapih264enc`; with
+    `h264parse` from gst-plugins-bad) else a software one (`openh264enc`,
+    `x264enc`), each simulcast layer on its own encoder behind
+    `SimulcastEncoderAdapter`, which hands a failing hardware encoder over
+    to the software element. `GELABBER_H264_ENCODER=<element>|none`
+    overrides the choice; an element named this way that encodes on the CPU
+    (`x264enc`) does not count as hardware. VP8/VP9 are libvpx's.
+  - Linux decode: through GStreamer, a hardware decoder (`nvh264dec`,
+    `vah264dec`, `vaapih264dec`) behind libwebrtc's software fallback to a
+    software element (`avdec_h264`, `openh264dec`), else the software
+    element alone; `GELABBER_H264_DECODER=<element>|none` overrides it
+    (`avdec_h264` in CI). VP8/VP9 are libvpx's, AV1 dav1d's.
+  - Windows: H264 through Media Foundation (`native/src/mf_h264.cc`), which
+    ships with Windows and the GPU drivers: the GPU's encoder MFT (NVENC,
+    AMF, Quick Sync) where there is one, else Microsoft's software encoder,
+    and Microsoft's decoder, on the GPU through DXVA where it gets a
+    Direct3D 11 device. An encoder MFT covers one picture, so the core runs
+    one per simulcast layer itself. A hardware MFT that fails is replaced by
+    the next one. VP8, VP9 and AV1 are in software.
+- Simulcast: libvpx encodes a producer's layers in one encoder, and only
+  when every layer has exactly the top layer's aspect. A layer is the
+  picture divided by its `scaleResolutionDownBy`, so a 1366x768 screen
   over the web client's 4 and 1 would be 342x192 below 1366x768: refused,
   and nothing is sent. Local video sources therefore crop to multiples of 4
   (1364x768), and the software encoders tell libwebrtc that their alignment
