@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -6,15 +7,24 @@ import type { Member, Server } from "../servers/types.ts";
 const fixture = vi.hoisted(() => ({
   kickPending: false,
   banPending: false,
+  kick: vi.fn(),
+  ban: vi.fn(),
+  confirm: vi.fn<(options: { title: string }) => Promise<boolean>>(
+    async () => false,
+  ),
 }));
 vi.mock("../auth/session.ts", () => ({
   useSession: (select: (state: unknown) => unknown) =>
     select({ user: { id: "self", name: "Rafi", avatar_url: null } }),
 }));
 vi.mock("../servers/queries.ts", () => ({
-  useKickMember: () => ({ isPending: fixture.kickPending, mutate: vi.fn() }),
-  useBanMember: () => ({ isPending: fixture.banPending, mutate: vi.fn() }),
+  useKickMember: () => ({
+    isPending: fixture.kickPending,
+    mutate: fixture.kick,
+  }),
+  useBanMember: () => ({ isPending: fixture.banPending, mutate: fixture.ban }),
 }));
+vi.mock("./confirm.ts", () => ({ confirmAction: fixture.confirm }));
 
 import { MemberActions } from "./MemberActions.tsx";
 
@@ -33,29 +43,65 @@ const member = (overrides: Partial<Member> = {}): Member => ({
 });
 /** The attribute React writes for a disabled button. */
 const DISABLED = ' disabled=""';
-/** The opening tag of the button whose accessible name is `label`. */
+/** The opening tag of the button labelled `label`. */
 function button(html: string, label: string): string {
-  const match = html.match(
-    new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`),
-  );
+  const match = html.match(new RegExp(`<button[^>]*>${label}</button>`));
   expect(match).not.toBeNull();
   return match![0];
+}
+type Props = { children?: unknown; onClick?: () => Promise<void> };
+/** The kick and ban buttons, from the element tree MemberActions returns. */
+function handlers() {
+  const details = MemberActions({ server, member: member() }) as ReactElement<{
+    children: ReactElement<Props>[];
+  }>;
+  const actions = details.props.children[1] as ReactElement<Props>;
+  const [kick, ban] = actions.props.children as ReactElement<Props>[];
+  return { kick: kick.props.onClick!, ban: ban.props.onClick! };
 }
 
 describe("member actions", () => {
   beforeEach(() => {
     fixture.kickPending = false;
     fixture.banPending = false;
+    fixture.kick.mockReset();
+    fixture.ban.mockReset();
+    fixture.confirm.mockReset().mockResolvedValue(false);
   });
 
-  it("names each button after the member it acts on", () => {
+  it("keeps kick and ban in a closed Moderation section", () => {
     const html = renderToStaticMarkup(
       <MemberActions server={server} member={member()} />,
     );
-    expect(button(html, "Kick Jonas")).not.toContain(DISABLED);
-    expect(button(html, "Ban Jonas")).not.toContain(DISABLED);
-    expect(html).toContain(">Kick</button>");
-    expect(html).toContain(">Ban</button>");
+    expect(html).toMatch(
+      /^<details class="member-moderation"><summary>Moderation<\/summary>/,
+    );
+    expect(html).not.toContain("<details open");
+    expect(button(html, "Vom Server entfernen")).not.toContain(DISABLED);
+    expect(button(html, "Sperren")).not.toContain(DISABLED);
+  });
+
+  it("asks before it kicks or bans, and does nothing on Abbrechen", async () => {
+    const { kick, ban } = handlers();
+    await kick();
+    await ban();
+    expect(fixture.confirm).toHaveBeenCalledTimes(2);
+    expect(fixture.confirm.mock.calls[0][0]).toMatchObject({
+      title: "Jonas vom Server entfernen?",
+      confirmLabel: "Entfernen",
+    });
+    expect(fixture.confirm.mock.calls[1][0]).toMatchObject({
+      title: "Jonas sperren?",
+      confirmLabel: "Sperren",
+    });
+    expect(fixture.kick).not.toHaveBeenCalled();
+    expect(fixture.ban).not.toHaveBeenCalled();
+
+    fixture.confirm.mockResolvedValue(true);
+    await handlers().kick();
+    expect(fixture.kick).toHaveBeenCalledWith("jonas");
+    await handlers().ban();
+    expect(fixture.ban).toHaveBeenCalledWith("jonas");
   });
 
   it("allows one kick or ban at a time", () => {
@@ -63,16 +109,16 @@ describe("member actions", () => {
     let html = renderToStaticMarkup(
       <MemberActions server={server} member={member()} />,
     );
-    expect(button(html, "Kick Jonas")).toContain(DISABLED);
-    expect(button(html, "Ban Jonas")).toContain(DISABLED);
+    expect(button(html, "Vom Server entfernen")).toContain(DISABLED);
+    expect(button(html, "Sperren")).toContain(DISABLED);
 
     fixture.kickPending = false;
     fixture.banPending = true;
     html = renderToStaticMarkup(
       <MemberActions server={server} member={member()} />,
     );
-    expect(button(html, "Kick Jonas")).toContain(DISABLED);
-    expect(button(html, "Ban Jonas")).toContain(DISABLED);
+    expect(button(html, "Vom Server entfernen")).toContain(DISABLED);
+    expect(button(html, "Sperren")).toContain(DISABLED);
   });
 
   it("shows nothing for the owner, oneself or without manage_server", () => {

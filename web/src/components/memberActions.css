@@ -1,0 +1,54 @@
+/* Moderation in a member's profile: collapsed, under a divider. */
+.member-moderation {
+  padding-top: var(--lr-space-3);
+  border-top: 1px solid var(--lr-border);
+}
+.member-moderation > summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--lr-control-sm);
+  border-radius: var(--lr-radius-sm);
+  font: var(--lr-type-caps);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--lr-muted);
+  cursor: pointer;
+}
+.member-moderation > summary:hover {
+  color: var(--lr-text);
+}
+.member-moderation__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lr-space-2);
+  margin-top: var(--lr-space-2);
+}
+
+/* The "…" menu on a member row. */
+.member-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+}
+.member-menu__item {
+  display: flex;
+  align-items: center;
+  min-height: var(--lr-control-md);
+  padding: 0 var(--lr-space-3);
+  border-radius: var(--lr-radius-sm);
+  font: var(--lr-type-ui);
+  text-align: left;
+  color: var(--lr-text);
+  cursor: pointer;
+}
+.member-menu__item:hover {
+  background: var(--lr-hover);
+}
+.member-menu__item--danger {
+  color: var(--lr-danger);
+}
+@media (pointer: coarse) {
+  .member-menu__item {
+    min-height: 48px;
+  }
+}
