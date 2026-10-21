@@ -160,6 +160,7 @@ A message carries up to 10 files, at most 25 MiB each and 100 MiB together. Uplo
 - The size is reserved when the upload is signed.
 - An upload that never joins a message waits up to one hour for it (ten files go up one after another on slow lines), plus 15 minutes for an unfinished transfer. Only then is it removed: bytes that never arrived go back to the quota, bytes that did stay counted.
 - So a user who abandons a large set can see "quota exceeded" for up to 75 minutes afterwards.
+- Avatar and banner uploads count against the same quota. Their bytes are counted when the image is uploaded and stay counted, even if storing it fails. A user who has used up the day's quota cannot upload a new avatar or banner until the next UTC day; removing either, or setting an avatar link, still works.
 
 ## Link previews
 

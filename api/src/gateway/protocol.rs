@@ -332,6 +332,10 @@ impl SigEvent {
 
 /// One compact create/edit/delete event. This is what Redis stores and
 /// what the client sees as `{"op":"e", …}`.
+///
+/// Field order matters: `PUBLISH_LUA` (hub.rs) replaces the first `"n":0`
+/// and the first `"ep":null` of the serialized placeholder. Keep `n` and
+/// `ep` before `d`, and keep `ep` serialized as `null` when unset.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Event {
     pub t: EventKind,
@@ -810,6 +814,29 @@ mod tests {
         assert!(!json.contains("kind"));
         assert!(!json.contains("server_id"));
         assert!(!json.contains("payload"));
+    }
+
+    /// The publish template as `EventLog::publish_revision` builds it: the
+    /// Lua substitutes the first `"n":0` and `"ep":null`, which must be the
+    /// envelope's even when the delta holds the same text.
+    #[test]
+    fn event_placeholders_precede_delta() {
+        let template = serde_json::to_string(&Event {
+            t: EventKind::E,
+            s: Uuid::from_u128(1),
+            c: Some(Uuid::from_u128(2)),
+            n: 0,
+            ep: None,
+            r: Some(9),
+            i: Some(Uuid::from_u128(3)),
+            d: Some(serde_json::json!({"n":0,"ep":null,"x":[{"n":0}]})),
+        })
+        .unwrap();
+        let delta = template.find(r#""d":"#).expect("delta");
+        let n = template.find(r#""n":0"#).expect("n placeholder");
+        let ep = template.find(r#""ep":null"#).expect("ep placeholder");
+        assert!(n < delta, "{template}");
+        assert!(ep < delta, "{template}");
     }
 
     #[test]

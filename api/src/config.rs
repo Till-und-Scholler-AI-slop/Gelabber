@@ -585,16 +585,11 @@ fn parse_previews(
             add(&host);
         }
     }
-    // `turn:host:port?transport=udp`, `turns:host`: no `//`, so by hand.
+    // `turn:host:port?transport=udp`, `turns:[v6]:port`: no `//`, so by
+    // hand. That also takes the `turn://host` form some operators write,
+    // and `stun:` entries alike.
     for turn in get(TURN_URLS).unwrap_or_default().split(',') {
-        let rest = turn.trim().split_once(':').map_or("", |(_, rest)| rest);
-        let rest = rest.split('?').next().unwrap_or("");
-        let host = if let Some(v6) = rest.strip_prefix('[') {
-            v6.split(']').next().unwrap_or("")
-        } else {
-            rest.split(':').next().unwrap_or("")
-        };
-        add(host);
+        add(ice_url_host(turn));
     }
     for host in get(API_LINK_PREVIEW_DENY_HOSTS)
         .unwrap_or_default()
@@ -603,6 +598,21 @@ fn parse_previews(
         add(host);
     }
     Ok(Some(PreviewConfig { deny_hosts }))
+}
+
+/// The host of one `TURN_URLS` entry, without brackets: `turn:h:3478`,
+/// `turns:[2001:db8::1]:5349?transport=tcp` and `turn://h:3478` all name
+/// `h` or the v6 address. Empty when there is no host.
+fn ice_url_host(url: &str) -> &str {
+    let rest = url.trim().split_once(':').map_or("", |(_, rest)| rest);
+    let rest = rest.strip_prefix("//").unwrap_or(rest);
+    let rest = rest.split('?').next().unwrap_or("");
+    let rest = rest.split('/').next().unwrap_or("");
+    if let Some(v6) = rest.strip_prefix('[') {
+        v6.split(']').next().unwrap_or("")
+    } else {
+        rest.split(':').next().unwrap_or("")
+    }
 }
 
 fn parse_gifs(get: &impl Fn(&str) -> Option<String>) -> Result<Option<GifConfig>, ConfigError> {
@@ -966,6 +976,19 @@ mod tests {
         assert_eq!(config.limits.gif_media_per_min, 500);
         assert_eq!(config.limits.gif_per_min, Limits::default().gif_per_min);
         assert_eq!(config.limits.api_per_min, Limits::default().api_per_min);
+    }
+
+    #[test]
+    fn ice_url_host_takes_both_uri_forms() {
+        assert_eq!(ice_url_host("turn:h:3478?transport=udp"), "h");
+        assert_eq!(ice_url_host("turns:[2001:db8::1]:5349"), "2001:db8::1");
+        assert_eq!(ice_url_host(" turn://h:3478 "), "h");
+        assert_eq!(ice_url_host("turn://[::1]:3478?transport=tcp"), "::1");
+        assert_eq!(ice_url_host("turn://h/"), "h");
+        assert_eq!(ice_url_host("stun:h"), "h");
+        assert_eq!(ice_url_host("stun://h:3478"), "h");
+        assert_eq!(ice_url_host(""), "");
+        assert_eq!(ice_url_host("turn:"), "");
     }
 
     #[test]

@@ -2,8 +2,13 @@
 
 ## API and configuration
 
-Presign/message/download wire shapes and the one-attachment limit stay unchanged.
-A pending attachment expires after ten minutes, matching the issued PUT URL.
+Presign/message/download wire shapes stay unchanged. A message carries up to
+ten files (`ATTACHMENTS_MAX`), at most 25 MiB each and 100 MiB together
+(`api/src/attachments/validate.rs`).
+A pending attachment waits up to one hour for its message (`PENDING_TTL`,
+`api/src/attachments/mod.rs`); its presigned PUT URL expires after ten minutes
+(`PUT_TTL`, `api/src/storage.rs`). Expiry cleanup and the fifteen-minute grace
+run from the pending deadline, not from the URL's.
 Expired unbound attachments cannot be bound or downloaded, even before the
 background worker removes metadata. Binding rechecks DB wall-clock expiry
 after storage HEAD, so a slow HEAD cannot use the transaction's old `now()`
@@ -111,6 +116,15 @@ avatars travel with message authors and ban lists beyond a shared server; a
 banner only to those who may see the card (`GET /api/users/{id}`: the person,
 members of a shared server, DM peers).
 
+Avatar and banner bytes count against the daily upload quota
+(`API_UPLOAD_QUOTA_BYTES_PER_DAY`, see below) as consumed immediately: after
+the type and pixel checks, and before the pending row and the PUT, the body
+size is added to today's `consumed`. A denied upload (`429 quota_exceeded`)
+stores nothing. The charge is not refunded when the PUT or the profile save
+fails afterwards. Storage stays bounded without it, since a replaced image is
+deleted; the quota bounds the daily write volume per account, which the
+in-process, per-session hourly upload bucket does not.
+
 Migration 0013 (profile card columns) is additive; the previous binary ignores
 the new columns. It does refuse to start while `_sqlx_migrations` lists a
 version it does not know. Rolling back to a binary without 0013 therefore
@@ -128,6 +142,13 @@ under `banners/` in the bucket until removed by hand.
 until the attachment INSERT trigger records its reservation and the same
 transaction commits. Concurrent requests cannot all pass a stale SUM. Failure
 rolls back both metadata and reservation; zero configured cap means unlimited.
+
+Avatar and banner uploads have no attachment row and take no reservation.
+`limits::consume_upload_quota` adds their bytes to `consumed` in one
+autocommit conditional upsert under the same cap (reserved plus consumed plus
+the new bytes). It holds no other lock, so it forms no cycle with presign or
+the cleanup worker. Those bytes are never refunded, also not after a failed PUT
+or profile save.
 
 Binding moves reserved bytes to consumed. Message/channel/server deletion never
 refunds consumed bytes. An expiry HEAD404 cannot rule out a valid PUT that began

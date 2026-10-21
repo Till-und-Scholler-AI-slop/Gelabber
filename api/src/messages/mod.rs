@@ -493,10 +493,17 @@ async fn delete_message(
 
     let mut tx = state.db.begin().await?;
     delivery::lock_channel(&mut tx, current.channel_id).await?;
-    sqlx::query("DELETE FROM messages WHERE id = $1")
+    let deleted = sqlx::query("DELETE FROM messages WHERE id = $1")
         .bind(message_id)
         .execute(&mut *tx)
-        .await?;
+        .await?
+        .rows_affected();
+    // A concurrent delete won the channel lock first: the message is gone,
+    // as asked, and its one delete event is already queued.
+    if deleted == 0 {
+        tx.rollback().await?;
+        return Ok(StatusCode::NO_CONTENT);
+    }
     info!(
         channel_id = %current.channel_id,
         message_id = %message_id,

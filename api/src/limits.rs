@@ -375,6 +375,44 @@ pub async fn reserve_upload_quota(
     }
 }
 
+/// Charge `size` bytes to today's `consumed` at once, for uploads with no
+/// attachment row to reserve against: avatars and banners. They are small
+/// and replace the previous image, so this bounds write volume, not storage.
+/// One autocommit statement that holds no other lock; never refunded, also
+/// not when the PUT or the profile save fails afterwards.
+pub async fn consume_upload_quota(
+    state: &AppState,
+    db: &mut sqlx::PgConnection,
+    uploader_id: Uuid,
+    size: i64,
+) -> Result<(), ApiError> {
+    let cap = state.limits.upload_bytes_per_day;
+    let cap = if cap == 0 {
+        i64::MAX
+    } else {
+        cap.min(i64::MAX as u64) as i64
+    };
+    let day: Option<chrono::NaiveDate> = sqlx::query_scalar(
+        "INSERT INTO upload_daily_usage (uploader_id, day, consumed) \
+         SELECT $1, (now() AT TIME ZONE 'UTC')::date, $2 WHERE $2 <= $3 \
+         ON CONFLICT (uploader_id, day) DO UPDATE \
+         SET consumed=upload_daily_usage.consumed + $2 \
+         WHERE upload_daily_usage.reserved <= $3 - $2 \
+           AND upload_daily_usage.consumed <= $3 - $2 - upload_daily_usage.reserved \
+         RETURNING day",
+    )
+    .bind(uploader_id)
+    .bind(size)
+    .bind(cap)
+    .fetch_optional(db)
+    .await?;
+    if day.is_none() {
+        state.metrics.rate_limited("quota");
+        return Err(ApiError::QuotaExceeded);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

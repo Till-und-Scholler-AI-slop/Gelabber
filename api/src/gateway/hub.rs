@@ -24,9 +24,13 @@ use crate::error::ApiError;
 const SUBSCRIBER_RETRY: Duration = Duration::from_millis(200);
 
 /// One Redis turn: assign seq, append the replay list, PUBLISH.
-/// `ARGV[1]` is compact event JSON with `n` as placeholder 0 (serde order
-/// is `t`,`n`,`d`). Seq is string-substituted — Lua cjson would turn `[]`
-/// into `{}`.
+/// `ARGV[1]` is compact event JSON with the placeholders `"n":0` and
+/// `"ep":null`. Seq and epoch are string-substituted — Lua cjson would turn
+/// `[]` into `{}` — and only the FIRST match of each is replaced. That is
+/// the envelope's own field only while `Event` serializes `n` and `ep`
+/// before `d` (today `t,s,c,n,ep,r,i,d`) and `ep` stays `null` when unset
+/// (no `skip_serializing_if`); otherwise a delta's own `"n":0` would get
+/// the seq. `protocol::tests::event_placeholders_precede_delta` pins this.
 const PUBLISH_LUA: &str = r#"
 for i=1,5 do
   local expected=({'string','list','none','string','hash'})[i]
