@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  arrivedSince,
   confirmedPendingIds,
   encodeCursor,
   flattenPages,
   isContinued,
   olderCursor,
   stampOlder,
+  unreadAnchor,
   visibleMessages,
 } from "./pages.ts";
 import type { Message, MessagePage } from "./types.ts";
@@ -79,5 +81,52 @@ describe("message pages", () => {
     expect(isContinued(first, later)).toBe(false);
     expect(isContinued(first, other)).toBe(false);
     expect(isContinued(undefined, first)).toBe(false);
+  });
+});
+
+describe("unread anchor", () => {
+  const rows = ["a", "b", "c", "d"].map((id) => msg(id));
+
+  it("opens at the first row after the last read one", () => {
+    expect(unreadAnchor(rows, "b", true)).toEqual({ kind: "row", index: 2 });
+  });
+
+  it("opens at the end when nothing is unread", () => {
+    expect(unreadAnchor(rows, null, true)).toEqual({ kind: "end" });
+    expect(unreadAnchor(rows, "d", true)).toEqual({ kind: "end" });
+  });
+
+  it("pages further while the last read message is not loaded", () => {
+    expect(unreadAnchor(rows, "x", true)).toEqual({ kind: "older" });
+  });
+
+  it("opens at the end when the last read message is gone for good", () => {
+    expect(unreadAnchor(rows, "x", false)).toEqual({ kind: "end" });
+  });
+
+  it("does not count an own message that is still being sent", () => {
+    expect(unreadAnchor([...rows, msg("tmp:1")], "d", false)).toEqual({
+      kind: "end",
+    });
+  });
+});
+
+describe("arrivals while scrolled up", () => {
+  const from = (id: string, author: string) => ({
+    ...msg(id),
+    author: { id: author, name: author, avatar_url: null },
+  });
+
+  it("counts what others wrote below the row the reader left", () => {
+    const rows = [
+      from("a", "ada"),
+      from("b", "bo"),
+      from("c", "me"),
+      from("d", "bo"),
+      from("tmp:1", "me"),
+    ];
+    expect(arrivedSince(rows, "a", "me")).toBe(2);
+    expect(arrivedSince(rows, "d", "me")).toBe(0);
+    expect(arrivedSince(rows, "gone", "me")).toBe(0);
   });
 });

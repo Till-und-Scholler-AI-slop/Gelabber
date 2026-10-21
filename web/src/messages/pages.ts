@@ -206,6 +206,49 @@ export function confirmedPendingIds(
   return pending.filter((m) => seen.has(m.id)).map((m) => m.id);
 }
 
+/** Messages from others below `id`, the newest row when the reader
+ *  scrolled away from the end. */
+export function arrivedSince(
+  items: readonly Pick<Message, "id" | "author">[],
+  id: string,
+  me: string | undefined,
+): number {
+  const at = items.findIndex((message) => message.id === id);
+  if (at < 0) return 0;
+  return items
+    .slice(at + 1)
+    .filter(
+      (message) => message.author.id !== me && !message.id.startsWith("tmp:"),
+    ).length;
+}
+
+/** Older pages a conversation fetches to open at its first unread row;
+ *  past that it opens at the oldest one fetched. */
+export const UNREAD_SEEK_PAGES = 10;
+
+export type UnreadAnchor =
+  /** Nothing unread follows a loaded row: open at the newest message. */
+  | { kind: "end" }
+  /** The first unread row. */
+  | { kind: "row"; index: number }
+  /** The last read message is not loaded yet, and older history exists. */
+  | { kind: "older" };
+
+/** Where a conversation opens when `readId` was the last message read.
+ *  An own message still being sent is not unread. */
+export function unreadAnchor(
+  items: readonly Pick<Message, "id">[],
+  readId: string | null,
+  hasOlder: boolean,
+): UnreadAnchor {
+  if (!readId) return { kind: "end" };
+  const read = items.findIndex((message) => message.id === readId);
+  if (read < 0) return hasOlder ? { kind: "older" } : { kind: "end" };
+  const first = items[read + 1];
+  if (!first || first.id.startsWith("tmp:")) return { kind: "end" };
+  return { kind: "row", index: read + 1 };
+}
+
 /** Same author, same 5-minute window — compact row, no repeated avatar. */
 export function isContinued(
   previous: Message | undefined,
