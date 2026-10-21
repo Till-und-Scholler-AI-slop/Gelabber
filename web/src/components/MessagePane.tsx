@@ -1989,11 +1989,12 @@ function Composer({
     composerInput.current?.focus();
   };
   // "Bearbeiten" on a row that was not sent: its text and files come back
-  // here, replacing what the composer holds.
+  // here, after anything written since, which must not be lost.
   useImperativeHandle(handle, () => ({
     takeBack: (attempt) => {
-      setDraft(fromWire(attempt.content, members));
-      addFiles(attempt.files, []);
+      const text = fromWire(attempt.content, members);
+      setDraft(draft.trim() ? `${draft}\n${text}` : text);
+      addFiles(attempt.files);
       discardAttempt(attempt.id);
       composerInput.current?.focus();
     },
