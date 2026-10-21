@@ -4,7 +4,9 @@
 	# in front. Peers in GELABBER_TRUSTED_PROXIES (Compose default
 	# private_ranges, empty trusts none) may report the client in
 	# X-Forwarded-For; strict mode reads it right to left and skips trusted
-	# hops, so an entry the client wrote itself never wins.
+	# hops, so an entry the client wrote itself never wins unless the
+	# client's own address is trusted too (a LAN client under
+	# private_ranges, see deploy/README.md, "Client addresses").
 	servers {
 		trusted_proxies static {$GELABBER_TRUSTED_PROXIES}
 		trusted_proxies_strict

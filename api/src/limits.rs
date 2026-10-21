@@ -1,13 +1,14 @@
 //! Server-side rate limits and upload quotas (issue #16).
 //!
 //! Mutations under `/api` go through [`gate`] before CSRF. Auth (sign-in,
-//! registration, password reset) is keyed by client address, IPv6 per /64;
-//! everything else by a hash of the session cookie, or by the address when
-//! there is no cookie shaped like a session token. Failed logins are also
-//! counted per account ([`login_blocked`] / [`login_failed`]), so spreading
-//! guesses over many addresses does not multiply them. Upload *bytes* are
-//! a durable daily quota in Postgres so a restart cannot reset them.
-//! Request windows live in process — v1 is a single node.
+//! registration, email verification, password reset) is keyed by client
+//! address, IPv6 per /64; everything else by a hash of the session cookie,
+//! or by the address when there is no cookie shaped like a session token.
+//! Failed logins are also counted per account ([`login_blocked`] /
+//! [`login_failed`]), so spreading guesses over many addresses does not
+//! multiply them. Upload *bytes* are a durable daily quota in Postgres so
+//! a restart cannot reset them. Request windows live in process — v1 is a
+//! single node.
 //!
 //! Denied requests are `429` with a stable error code (`rate_limited` or
 //! `quota_exceeded`) and `Retry-After`. The UI maps those codes; it does not
