@@ -480,7 +480,8 @@ separate decision.
   voice pipeline's stop while the test runs. Choosing another microphone or
   output (`gm_audio_configure`) restarts the side that a stream or the test
   wants running, also after a restart that failed before; a device that
-  cannot be selected or started gives the previous one back, running
+  cannot be selected or started gives the previous one back, running, or
+  the system default once that one is unplugged
   (`native/src/audio_device_switch.h`). CI switches devices on
   pipewire-pulse only, not on Windows. The test
   session also provides null-sink "speakers" and a

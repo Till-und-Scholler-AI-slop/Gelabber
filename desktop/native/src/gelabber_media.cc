@@ -1942,12 +1942,22 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 					[&] { return adm.InitRecording(); },
 					[&] { return adm.StartRecording(); },
 				};
+				// Once the previous device is unplugged, a rollback goes to
+				// the default (PreviousAudioDevice).
+				const bool previousListed = FindAudioDevice(devices, inputId).has_value();
 				switch (gelabber::SwitchDevice(ops, wanted, *index, PreviousAudioDevice(devices, inputId)))
 				{
 					case gelabber::SwitchResult::Switched:
 						break;
 					case gelabber::SwitchResult::KeptPrevious:
-						error = "cannot use input device " + id + ", kept the previous one";
+						if (previousListed)
+							error = "cannot use input device " + id + ", kept the previous one";
+						else
+						{
+							std::lock_guard lock(engine->audioMutex);
+							engine->inputId = "";
+							error = "cannot use input device " + id + ", fell back to the default device";
+						}
 						return;
 					case gelabber::SwitchResult::Stopped:
 						error = wanted ? "cannot restart capture on " + id : "cannot select input device " + id;
@@ -1977,12 +1987,20 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 					[&] { return adm.InitPlayout(); },
 					[&] { return adm.StartPlayout(); },
 				};
+				const bool previousListed = FindAudioDevice(devices, outputId).has_value();
 				switch (gelabber::SwitchDevice(ops, wanted, *index, PreviousAudioDevice(devices, outputId)))
 				{
 					case gelabber::SwitchResult::Switched:
 						break;
 					case gelabber::SwitchResult::KeptPrevious:
-						error = "cannot use output device " + id + ", kept the previous one";
+						if (previousListed)
+							error = "cannot use output device " + id + ", kept the previous one";
+						else
+						{
+							std::lock_guard lock(engine->audioMutex);
+							engine->outputId = "";
+							error = "cannot use output device " + id + ", fell back to the default device";
+						}
 						return;
 					case gelabber::SwitchResult::Stopped:
 						error = wanted ? "cannot restart playout on " + id : "cannot select output device " + id;
