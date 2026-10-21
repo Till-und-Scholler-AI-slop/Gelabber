@@ -241,27 +241,12 @@ async fn rejects_consumed_ticket_after_authority_rotation_and_allows_immediate_r
     revoked(&mut ws, Duration::from_millis(1700)).await;
     let (_, stale) = join(addr, &outstanding).await;
     assert_eq!(stale["e"], "unauthorized");
-    // Retained API compatibility deny must not block the new incarnation.
-    authority
-        .set(
-            &gelabber_shared::ticket::deny_key(authority.claim.claim.s, authority.claim.claim.u),
-            "1",
-        )
-        .await;
+    // A ticket of the new member generation rejoins immediately.
     let fresh = authority.mint().await;
     let (mut next, accepted) = join(addr, &fresh).await;
     assert_eq!(accepted["op"], "result");
     next.close(None).await.unwrap();
     authority.cleanup().await;
-    let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
-    let _: () = redis::cmd("DEL")
-        .arg(gelabber_shared::ticket::deny_key(
-            authority.claim.claim.s,
-            authority.claim.claim.u,
-        ))
-        .query_async(&mut conn)
-        .await
-        .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(sfu.room_count(), 0);
 }

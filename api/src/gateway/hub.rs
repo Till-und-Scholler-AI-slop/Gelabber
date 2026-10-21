@@ -738,28 +738,6 @@ impl VoiceRoster {
             .map_err(redis_err)?;
         Ok(())
     }
-
-    /// Short Redis deny so the SFU drops this user's peer even if the tab
-    /// ignores the gateway frame.
-    pub async fn deny(&self, user_id: Uuid, server_id: Uuid) -> Result<(), ApiError> {
-        let key = gelabber_shared::ticket::deny_key(server_id, user_id);
-        let ttl = gelabber_shared::ticket::DENY_TTL_SECS;
-        self.connections
-            .with_conn(|mut conn| {
-                let key = key.clone();
-                async move {
-                    redis::cmd("SET")
-                        .arg(key)
-                        .arg("1")
-                        .arg("EX")
-                        .arg(ttl)
-                        .query_async::<()>(&mut conn)
-                        .await
-                }
-            })
-            .await
-            .map_err(redis_err)
-    }
 }
 
 impl Gateway {
@@ -815,7 +793,6 @@ impl Gateway {
         reason: &'static str,
     ) -> Result<(), ApiError> {
         crate::media::revoke_member(&self.connections.redis, server_id, user_id).await?;
-        self.voice.deny(user_id, server_id).await?;
         let conns: Vec<ConnId> = self
             .connections
             .inner
@@ -1100,7 +1077,6 @@ impl Gateway {
         server_id: Uuid,
     ) -> Result<(), ApiError> {
         crate::media::revoke_member(&self.connections.redis, server_id, user_id).await?;
-        self.voice.deny(user_id, server_id).await?;
         let ids: Vec<ConnId> = self
             .connections
             .inner

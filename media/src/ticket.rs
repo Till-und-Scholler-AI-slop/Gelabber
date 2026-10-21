@@ -31,6 +31,10 @@ redis.call('SET', KEYS[4], '1', 'EX', 35)
 return 1
 "#;
 
+// The authority keys depend on the ticket payload, which is only known after
+// GETDEL, so they cannot be passed as KEYS[]. ARGV[1..4] carry the member,
+// channel, session and demand prefixes from gelabber_shared::ticket instead,
+// so the key formats have one source.
 const CONSUME: &str = r#"
 local raw = redis.call('GETDEL', KEYS[1])
 if not raw then return false end
@@ -44,11 +48,11 @@ if type(claim.u) ~= 'string' or type(claim.s) ~= 'string' or type(claim.c) ~= 's
   or auth.expires_at > 9007199254740991 or auth.expires_at ~= math.floor(auth.expires_at)
   then return false end
 local now = redis.call('TIME')
-if redis.call('GET', 'gb:auth:member:' .. claim.s .. ':' .. claim.u) ~= auth.member
-  or redis.call('GET', 'gb:auth:channel:' .. claim.c) ~= auth.channel
-  or redis.call('GET', 'gb:auth:session:' .. auth.session) ~= claim.u
+if redis.call('GET', ARGV[1] .. claim.s .. ':' .. claim.u) ~= auth.member
+  or redis.call('GET', ARGV[2] .. claim.c) ~= auth.channel
+  or redis.call('GET', ARGV[3] .. auth.session) ~= claim.u
   or tonumber(now[1]) >= auth.expires_at then return false end
-redis.call('SET', 'gb:auth:demand:' .. auth.session, '1', 'EX', 35)
+redis.call('SET', ARGV[4] .. auth.session, '1', 'EX', 35)
 return raw
 "#;
 
@@ -71,6 +75,10 @@ pub async fn consume(
             .arg(CONSUME)
             .arg(1)
             .arg(redis_key(code))
+            .arg(ticket::MEMBER_AUTHORITY_PREFIX)
+            .arg(ticket::CHANNEL_AUTHORITY_PREFIX)
+            .arg(ticket::SESSION_AUTHORITY_PREFIX)
+            .arg(ticket::MEDIA_DEMAND_PREFIX)
             .query_async(&mut conn)
             .await?;
         Ok(raw
@@ -129,5 +137,13 @@ mod tests {
         assert_eq!(decode(&raw).unwrap(), claim);
         assert!(!raw.contains("token"));
         assert!(!raw.contains("livekit"));
+    }
+
+    #[test]
+    fn consume_takes_the_authority_prefixes_from_shared() {
+        assert!(!CONSUME.contains("gb:auth:"));
+        for arg in ["ARGV[1]", "ARGV[2]", "ARGV[3]", "ARGV[4]"] {
+            assert!(CONSUME.contains(arg), "{arg}");
+        }
     }
 }

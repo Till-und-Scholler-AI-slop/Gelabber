@@ -13,7 +13,10 @@ use axum::Router;
 use axum::extract::State;
 use axum::routing::post;
 use gelabber_shared::ice::IceServer;
-use gelabber_shared::ticket::{self, TicketClaim};
+use gelabber_shared::ticket::{
+    self, TicketClaim, channel_authority_key, media_demand_key, member_authority_key,
+    session_authority_key, session_owner_key,
+};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -110,9 +113,9 @@ async fn mint(
         .get_multiplexed_async_connection()
         .await
         .map_err(|err| ApiError::Internal(format!("redis: {err}")))?;
-    let member_key = member_key(claim.s, claim.u);
-    let channel_key = channel_key(claim.c);
-    let session_key = session_key(&session.key());
+    let member_key = member_authority_key(claim.s, claim.u);
+    let channel_key = channel_authority_key(claim.c);
+    let session_key = session_authority_key(&session.key());
     let secs = ttl.as_secs().max(1).min(
         (session.expires_at - chrono::Utc::now())
             .num_seconds()
@@ -131,7 +134,7 @@ async fn mint(
             .key(&member_key)
             .key(&channel_key)
             .key(&session_key)
-            .key(demand_key(&session.key()))
+            .key(media_demand_key(&session.key()))
             .arg(&base)
             .arg(secs)
             .arg(Uuid::new_v4().to_string())
@@ -154,8 +157,8 @@ async fn mint(
 // 03b must enforce this envelope at ticket consume, peer attach and throughout
 // peer lifetime, fail closed on missing keys/Redis errors, and reject legacy
 // tickets. A missing epoch creates a fresh nonce, so a Redis reset cannot revive
-// a ticket from an earlier Redis lifetime. The existing 120 s deny is retained
-// until 03b replaces it with these generations (immediate rejoin then works).
+// a ticket from an earlier Redis lifetime. These generations alone enforce
+// kick/ban/leave, so a fresh membership can rejoin immediately.
 const MINT_LUA: &str = r#"
 if redis.call('EXISTS', KEYS[1]) == 1 then return nil end
 redis.call('SET', KEYS[2], ARGV[3], 'NX')
@@ -171,16 +174,6 @@ claim.auth = {session = ARGV[5], expires_at = tonumber(ARGV[6]),
 redis.call('SET', KEYS[1], cjson.encode(claim), 'EX', ARGV[2])
 return 'OK'
 "#;
-
-pub fn member_key(server_id: Uuid, user_id: Uuid) -> String {
-    format!("gb:auth:member:{server_id}:{user_id}")
-}
-pub fn channel_key(channel_id: Uuid) -> String {
-    format!("gb:auth:channel:{channel_id}")
-}
-pub fn session_key(hash: &str) -> String {
-    format!("gb:auth:session:{hash}")
-}
 
 async fn rotate(redis: &redis::Client, key: String) -> Result<(), ApiError> {
     let mut conn = redis
@@ -202,10 +195,10 @@ pub async fn revoke_member(
     server_id: Uuid,
     user_id: Uuid,
 ) -> Result<(), ApiError> {
-    rotate(redis, member_key(server_id, user_id)).await
+    rotate(redis, member_authority_key(server_id, user_id)).await
 }
 pub async fn revoke_channel(redis: &redis::Client, channel_id: Uuid) -> Result<(), ApiError> {
-    rotate(redis, channel_key(channel_id)).await
+    rotate(redis, channel_authority_key(channel_id)).await
 }
 pub async fn revoke_session(redis: &redis::Client, hash: &str) -> Result<(), ApiError> {
     let mut conn = redis
@@ -213,7 +206,7 @@ pub async fn revoke_session(redis: &redis::Client, hash: &str) -> Result<(), Api
         .await
         .map_err(|err| ApiError::Internal(format!("redis: {err}")))?;
     redis::cmd("DEL")
-        .arg(session_key(hash))
+        .arg(session_authority_key(hash))
         .query_async::<()>(&mut conn)
         .await
         .map_err(|err| ApiError::Internal(format!("redis: {err}")))
@@ -240,16 +233,6 @@ redis.call('DEL', KEYS[1], KEYS[2])
 return 1
 "#;
 
-/// Media 03b refreshes this demand key (SET 1 EX 35) every second while at
-/// least one authenticated peer is using this session. Do not delete it on
-/// peer leave: another tab or an outstanding ticket may still need it.
-pub fn demand_key(hash: &str) -> String {
-    format!("gb:auth:demand:{hash}")
-}
-fn owner_key(hash: &str) -> String {
-    format!("gb:auth:owner:{hash}")
-}
-
 async fn maintain_session(state: &AppState, session: &CurrentSession) -> Result<(), ApiError> {
     let key = session.key();
     let Some(generation) = state.gateway.track_media_session(&key).await else {
@@ -262,7 +245,7 @@ async fn maintain_session(state: &AppState, session: &CurrentSession) -> Result<
         state
             .gateway
             .with_redis(|mut conn| {
-                let (owner, generation) = (owner_key(&key), generation.to_string());
+                let (owner, generation) = (session_owner_key(&key), generation.to_string());
                 async move {
                     redis::cmd("SET")
                         .arg(owner)
@@ -293,8 +276,11 @@ async fn maintain_session(state: &AppState, session: &CurrentSession) -> Result<
                 state
                     .gateway
                     .with_redis(|mut conn| {
-                        let (lease, demand, owner) =
-                            (session_key(&key), demand_key(&key), owner_key(&key));
+                        let (lease, demand, owner) = (
+                            session_authority_key(&key),
+                            media_demand_key(&key),
+                            session_owner_key(&key),
+                        );
                         let (user, expires_at) =
                             (session.user.id.to_string(), session.expires_at.timestamp());
                         let generation = generation.to_string();
@@ -328,7 +314,7 @@ async fn maintain_session(state: &AppState, session: &CurrentSession) -> Result<
             let result = tokio::time::timeout(
                 Duration::from_millis(500),
                 state.gateway.with_redis(|mut conn| {
-                    let (lease, owner) = (session_key(&key), owner_key(&key));
+                    let (lease, owner) = (session_authority_key(&key), session_owner_key(&key));
                     let generation = generation.to_string();
                     async move {
                         redis::Script::new(CLEANUP_OWNER_LUA)
@@ -395,7 +381,7 @@ mod tests {
         let hash = Uuid::new_v4().to_string();
         let new_owner = Uuid::new_v4().to_string();
         redis::cmd("SET")
-            .arg(session_key(&hash))
+            .arg(session_authority_key(&hash))
             .arg("user")
             .arg("EX")
             .arg(10)
@@ -403,7 +389,7 @@ mod tests {
             .await
             .unwrap();
         redis::cmd("SET")
-            .arg(owner_key(&hash))
+            .arg(session_owner_key(&hash))
             .arg(&new_owner)
             .arg("EX")
             .arg(10)
@@ -411,22 +397,22 @@ mod tests {
             .await
             .unwrap();
         let removed: i32 = redis::Script::new(CLEANUP_OWNER_LUA)
-            .key(session_key(&hash))
-            .key(owner_key(&hash))
+            .key(session_authority_key(&hash))
+            .key(session_owner_key(&hash))
             .arg(Uuid::new_v4().to_string())
             .invoke_async(&mut conn)
             .await
             .unwrap();
         assert_eq!(removed, 0);
         let user: String = redis::cmd("GET")
-            .arg(session_key(&hash))
+            .arg(session_authority_key(&hash))
             .query_async(&mut conn)
             .await
             .unwrap();
         assert_eq!(user, "user");
         let removed: i32 = redis::Script::new(CLEANUP_OWNER_LUA)
-            .key(session_key(&hash))
-            .key(owner_key(&hash))
+            .key(session_authority_key(&hash))
+            .key(session_owner_key(&hash))
             .arg(new_owner)
             .invoke_async(&mut conn)
             .await

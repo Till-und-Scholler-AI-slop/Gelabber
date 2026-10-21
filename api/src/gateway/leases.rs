@@ -8,6 +8,9 @@ use uuid::Uuid;
 
 pub const VOICE_LEASE_MS: u64 = 5000;
 
+/// JSON value of the channel's Live claim. The ACQUIRE Lua in
+/// media/src/live.rs parses the fields u, s, c, session, seat and nonce, so
+/// renaming or removing one is a wire change across both crates.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct LiveOwner {
     pub u: Uuid,
@@ -135,7 +138,7 @@ fn server_key(s: Uuid) -> String {
     format!("gb:voice:server:{s}")
 }
 pub fn live_key(c: Uuid) -> String {
-    format!("gb:live:{c}")
+    gelabber_shared::ticket::live_claim_key(c)
 }
 fn encode<T: Serialize>(value: &T) -> Result<String, ApiError> {
     serde_json::to_string(value).map_err(|err| ApiError::Internal(format!("voice state: {err}")))

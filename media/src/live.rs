@@ -62,7 +62,7 @@ pub async fn try_acquire(
             ))
             .arg(ticket::channel_authority_key(authority.claim.c))
             .arg(ticket::session_authority_key(&authority.auth.session))
-            .arg(format!("gb:live:{}", authority.claim.c))
+            .arg(ticket::live_claim_key(authority.claim.c))
             .arg(peer_key(nonce))
             .arg(authority.auth.member.to_string())
             .arg(authority.auth.channel.to_string())
