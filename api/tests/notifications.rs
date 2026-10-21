@@ -368,3 +368,108 @@ async fn settings_are_validated_and_scoped_to_members(pool: PgPool) {
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
     }
 }
+
+/// How many settings name one of `ids`, for anybody.
+async fn stored(pool: &PgPool, ids: &[&str]) -> i64 {
+    let ids: Vec<uuid::Uuid> = ids.iter().map(|id| id.parse().unwrap()).collect();
+    sqlx::query_scalar("SELECT count(*) FROM notification_settings WHERE scope_id = ANY($1)")
+        .bind(ids)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// A deleted server or channel takes its settings along. The triggers doing
+/// that find the rows by scope alone, which has its own index (#294).
+#[sqlx::test]
+async fn deleting_a_server_or_channel_forgets_its_settings(pool: PgPool) {
+    let indexed: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_indexes \
+         WHERE tablename = 'notification_settings' \
+           AND indexname = 'notification_settings_scope_idx')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(indexed);
+
+    let World {
+        mut a,
+        mut b,
+        server,
+        channel,
+    } = setup(&pool).await;
+    let mut channels = vec![channel];
+    for name in ["zwei", "drei"] {
+        let r = a
+            .send(
+                Method::POST,
+                &format!("/api/servers/{server}/channels"),
+                Some(json!({ "name": name })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+        channels.push(r.body["id"].as_str().unwrap().to_owned());
+    }
+    for client in [&mut a, &mut b] {
+        let (status, body) = set(
+            client,
+            &format!("/api/servers/{server}/notification-settings"),
+            json!({"level": "mentions"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        for channel in &channels {
+            let (status, body) = set(
+                client,
+                &format!("/api/channels/{channel}/notification-settings"),
+                json!({"muted": true}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+        }
+    }
+    // Another server of Ada's keeps its settings throughout.
+    let other = a
+        .send(Method::POST, "/api/servers", Some(json!({"name":"Andere"})))
+        .await;
+    assert_eq!(other.status, StatusCode::CREATED, "{}", other.body);
+    let other_server = other.body["id"].as_str().unwrap().to_owned();
+    let other_channel = other.body["channels"][0]["id"].as_str().unwrap().to_owned();
+    for path in [
+        format!("/api/servers/{other_server}/notification-settings"),
+        format!("/api/channels/{other_channel}/notification-settings"),
+    ] {
+        let (status, body) = set(&mut a, &path, json!({"level": "none"})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let mut scopes: Vec<&str> = channels.iter().map(String::as_str).collect();
+    scopes.push(&server);
+    assert_eq!(stored(&pool, &scopes).await, 8);
+
+    let gone = a
+        .send(
+            Method::DELETE,
+            &format!("/api/channels/{}", channels[2]),
+            None,
+        )
+        .await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.body);
+    assert_eq!(stored(&pool, &[channels[2].as_str()]).await, 0);
+    assert_eq!(stored(&pool, &scopes).await, 6);
+
+    // The server's own rows and, by the channel cascade, its channels'.
+    let gone = a
+        .send(Method::DELETE, &format!("/api/servers/{server}"), None)
+        .await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.body);
+    assert_eq!(stored(&pool, &scopes).await, 0);
+    assert_eq!(
+        stored(&pool, &[other_server.as_str(), other_channel.as_str()]).await,
+        2
+    );
+    let listed = b
+        .send(Method::GET, "/api/notification-settings", None)
+        .await;
+    assert_eq!(listed.body, json!([]));
+}
