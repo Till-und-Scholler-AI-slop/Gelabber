@@ -2112,11 +2112,7 @@ fn validate_parameters(kind: SourceKind, rtp: &RtpParameters) -> Result<(), SfuE
     {
         return Err(SfuError::BadAnnounce);
     }
-    let first = serde_json::to_value(&rtp.codecs[0]).map_err(SfuError::negotiation)?;
-    let mime = first["mimeType"]
-        .as_str()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+    let mime = rtp.codecs[0].mime_type().as_str().to_ascii_lowercase();
     if kind.is_video() {
         if !matches!(
             mime.as_str(),
