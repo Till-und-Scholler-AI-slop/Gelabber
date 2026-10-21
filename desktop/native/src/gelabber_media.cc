@@ -4,6 +4,7 @@
 #define GM_BUILDING 1
 #include "gelabber_media.h"
 #include "app_audio.h"
+#include "audio_device_switch.h"
 #include "capture_dsp.h"
 #include "local_video_source.h"
 #include "playout_limiter.h"
@@ -539,6 +540,15 @@ namespace
 		return std::nullopt;
 	}
 
+	// The device to go back to when a switch away from `id` fails: that one,
+	// or the system default once it is gone.
+	std::optional<int> PreviousAudioDevice(const std::vector<AudioDeviceEntry>& devices, const std::string& id)
+	{
+		if (const auto index = FindAudioDevice(devices, id))
+			return index;
+		return FindAudioDevice(devices, "");
+	}
+
 	// Windows has two defaults. The system default is the console role:
 	// streams on the communications role make Windows turn every other
 	// application down for as long as they run.
@@ -1028,6 +1038,13 @@ namespace
 			if (!streamsRecording && inner->Recording())
 				inner->StopRecording();
 			return true;
+		}
+
+		// Whether capture should run, for a stream or for the test. The
+		// module itself may be stopped after a restart that failed.
+		bool CaptureWanted() const
+		{
+			return streamsRecording || monitoring;
 		}
 
 		// The voice pipeline sees its own recording state, so a stream
@@ -1893,46 +1910,102 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 
 		std::string error;
 		engine->worker->BlockingCall([&] {
+			// The inner module, not the monitor: the monitor's StopRecording
+			// holds back while the microphone test runs, and the module then
+			// refuses another device.
 			auto& adm = *engine->adm;
+			// The selected ids change only here, on the worker.
+			std::string inputId, outputId;
+			{
+				std::lock_guard lock(engine->audioMutex);
+				inputId  = engine->inputId;
+				outputId = engine->outputId;
+			}
 			if (input)
 			{
-				const auto id    = options["input"].get<std::string>();
-				const auto index = FindAudioDevice(RecordingDevices(adm), id);
+				const auto id      = options["input"].get<std::string>();
+				const auto devices = RecordingDevices(adm);
+				const auto index   = FindAudioDevice(devices, id);
 				if (!index)
 				{
 					error = "unknown input device " + id;
 					return;
 				}
-				const bool running = adm.Recording();
-				if (running)
-					adm.StopRecording();
-				if (SelectRecordingDevice(adm, *index) != 0)
-					error = "cannot select input device " + id;
-				if (running && (adm.InitRecording() != 0 || adm.StartRecording() != 0))
-					error = "cannot restart capture on " + id;
-				if (!error.empty())
-					return;
+				// Whether capture should run, not whether the module runs: a
+				// restart that failed before is tried again, which the page's
+				// fallback to the default device relies on.
+				const bool wanted = engine->monitor ? engine->monitor->CaptureWanted() : adm.Recording();
+				const gelabber::DeviceOps ops{
+					[&] { return adm.StopRecording(); },
+					[&] { return adm.RecordingIsInitialized(); },
+					[&](int device) { return SelectRecordingDevice(adm, device); },
+					[&] { return adm.InitRecording(); },
+					[&] { return adm.StartRecording(); },
+				};
+				// Once the previous device is unplugged, a rollback goes to
+				// the default (PreviousAudioDevice).
+				const bool previousListed = FindAudioDevice(devices, inputId).has_value();
+				switch (gelabber::SwitchDevice(ops, wanted, *index, PreviousAudioDevice(devices, inputId)))
+				{
+					case gelabber::SwitchResult::Switched:
+						break;
+					case gelabber::SwitchResult::KeptPrevious:
+						if (previousListed)
+							error = "cannot use input device " + id + ", kept the previous one";
+						else
+						{
+							std::lock_guard lock(engine->audioMutex);
+							engine->inputId = "";
+							error = "cannot use input device " + id + ", fell back to the default device";
+						}
+						return;
+					case gelabber::SwitchResult::Stopped:
+						error = wanted ? "cannot restart capture on " + id : "cannot select input device " + id;
+						return;
+				}
 				std::lock_guard lock(engine->audioMutex);
 				engine->inputId = id;
 			}
 			if (output)
 			{
-				const auto id    = options["output"].get<std::string>();
-				const auto index = FindAudioDevice(PlayoutDevices(adm), id);
+				const auto id      = options["output"].get<std::string>();
+				const auto devices = PlayoutDevices(adm);
+				const auto index   = FindAudioDevice(devices, id);
 				if (!index)
 				{
 					error = "unknown output device " + id;
 					return;
 				}
-				const bool running = adm.Playing();
-				if (running)
-					adm.StopPlayout();
-				if (SelectPlayoutDevice(adm, *index) != 0)
-					error = "cannot select output device " + id;
-				if (running && (adm.InitPlayout() != 0 || adm.StartPlayout() != 0))
-					error = "cannot restart playout on " + id;
-				if (!error.empty())
-					return;
+				// The monitor passes playout through: the voice pipeline sees
+				// the module's own state and starts it again for its next
+				// stream.
+				const bool wanted = adm.Playing();
+				const gelabber::DeviceOps ops{
+					[&] { return adm.StopPlayout(); },
+					[&] { return adm.PlayoutIsInitialized(); },
+					[&](int device) { return SelectPlayoutDevice(adm, device); },
+					[&] { return adm.InitPlayout(); },
+					[&] { return adm.StartPlayout(); },
+				};
+				const bool previousListed = FindAudioDevice(devices, outputId).has_value();
+				switch (gelabber::SwitchDevice(ops, wanted, *index, PreviousAudioDevice(devices, outputId)))
+				{
+					case gelabber::SwitchResult::Switched:
+						break;
+					case gelabber::SwitchResult::KeptPrevious:
+						if (previousListed)
+							error = "cannot use output device " + id + ", kept the previous one";
+						else
+						{
+							std::lock_guard lock(engine->audioMutex);
+							engine->outputId = "";
+							error = "cannot use output device " + id + ", fell back to the default device";
+						}
+						return;
+					case gelabber::SwitchResult::Stopped:
+						error = wanted ? "cannot restart playout on " + id : "cannot select output device " + id;
+						return;
+				}
 				std::lock_guard lock(engine->audioMutex);
 				engine->outputId = id;
 			}
