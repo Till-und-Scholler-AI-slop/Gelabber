@@ -836,7 +836,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 .lr-message-edit textarea {
   width: 100%;
   min-height: 3.5em;
-  max-height: 50vh;
+  max-height: calc(var(--lr-100dvh) * 0.5);
   field-sizing: content;
   resize: none;
   padding: 8px 10px;

@@ -4,7 +4,7 @@
   isolation: isolate;
   display: grid;
   place-items: center;
-  min-height: calc(100dvh - var(--lr-safe-top));
+  min-height: calc(var(--lr-100dvh) - var(--lr-safe-top));
   padding: var(--lr-space-8) var(--lr-space-4);
 }
 @media (min-width: 800px) {
@@ -186,7 +186,7 @@
   place-content: center;
   justify-items: center;
   gap: 12px;
-  min-height: calc(100dvh - var(--lr-safe-top));
+  min-height: calc(var(--lr-100dvh) - var(--lr-safe-top));
   animation: app-placeholder-in 240ms ease-out 300ms both;
 }
 .app-placeholder--immediate {

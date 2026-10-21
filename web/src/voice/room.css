@@ -46,7 +46,7 @@
   min-width: 0;
 }
 .voice-room-spotlight .voice-video-tile {
-  max-height: min(62vh, 640px);
+  max-height: min(calc(var(--lr-100dvh) * 0.62), 640px);
 }
 .voice-room-filmstrip-tile {
   flex: 0 0 auto;
