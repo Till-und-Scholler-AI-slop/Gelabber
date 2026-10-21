@@ -235,9 +235,7 @@ export async function startHarness() {
     await owner.page.locator(`a[href="${textPath}"]`).first().click();
     await owner.page.waitForURL((url) => url.pathname === textPath);
     async function channel(name, kind = "Voice") {
-      await owner.page
-        .locator('summary[aria-label="Kanal oder Kategorie erstellen"]')
-        .click();
+      await owner.page.locator("summary.server-sidebar-menu-button").click();
       await owner.page
         .getByRole("button", { name: "Kanal erstellen", exact: true })
         .click();

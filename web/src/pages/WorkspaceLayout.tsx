@@ -6,13 +6,20 @@ import {
   useParams,
   useRouterState,
 } from "@tanstack/react-router";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 
 import { ApiError } from "../api/client.ts";
 import { useUserId } from "../auth/scope.ts";
 import { ChannelSidebar } from "../components/ChannelSidebar.tsx";
 import { DmSidebar } from "../components/DmSidebar.tsx";
-import { ChevronIcon } from "../components/Icons.tsx";
+import { MenuIcon } from "../components/Icons.tsx";
+import { QuickSwitcher, ShortcutSheet } from "../components/QuickSwitcher.tsx";
 import { RequireUser } from "../components/RequireUser.tsx";
 import { ServerRail } from "../components/ServerRail.tsx";
 import { SidebarPlaceholder } from "../components/SidebarPlaceholder.tsx";
@@ -21,9 +28,16 @@ import {
   NAVIGATION_DRAWER_MAX_WIDTH,
   WorkspaceDrawer,
 } from "../components/WorkspaceNavigation.tsx";
+import { useEdgeSwipe } from "../components/edgeSwipe.ts";
+import { tileInitials, tileTint } from "../components/initials.ts";
+import { useNavigationDrawer } from "../components/navigationDrawer.ts";
 import { notify } from "../components/toasts.ts";
+import { useMediaQuery } from "../components/useMediaQuery.ts";
+import { useShellShortcuts } from "../components/useShellShortcuts.ts";
 import { useDms } from "../dms/queries.ts";
+import { useMuteClock } from "../messages/notificationSettings.ts";
 import { useReadState, useReadingChannel } from "../messages/readState.ts";
+import { unreadMark } from "../messages/unreadIndicators.ts";
 import { forgetServer, useServer, useServers } from "../servers/queries.ts";
 
 export function WorkspaceLayout() {
@@ -46,6 +60,7 @@ function Workspace() {
   if (onDms) return <SelectedDms channelId={channelId} />;
   return (
     <WorkspaceFrame
+      place="Gelabber"
       sidebar={
         <aside className="channel-sidebar" aria-label="Navigation">
           <div className="sidebar-brand">Gelabber</div>
@@ -63,34 +78,63 @@ function Workspace() {
   );
 }
 
+/** What the phone's top bar names: a server (its tile leads the drawer
+ * button) or a plain label. */
+type Place = string | { id: string; name: string };
+
 function WorkspaceFrame({
   sidebar,
+  place,
   serverId,
   dmActive = false,
 }: {
   sidebar: ReactNode;
+  place: Place;
   serverId?: string;
   dmActive?: boolean;
 }) {
-  const [navigationOpen, setNavigationOpen] = useState(false);
+  const drawer = useNavigationDrawer();
   const navigationId = useId();
-  const unreadId = useId();
-  // Phones keep every unread badge inside the closed drawer.
+  const { channelId } = useParams({ strict: false });
+  const [switching, setSwitching] = useState(false);
+  const [showingKeys, setShowingKeys] = useState(false);
+  useShellShortcuts({
+    serverId,
+    channelId,
+    dms: dmActive,
+    onSwitcher: () => setSwitching(true),
+    onHelp: () => setShowingKeys(true),
+  });
+  const phone = useMediaQuery(`(max-width: ${NAVIGATION_DRAWER_MAX_WIDTH}px)`);
+  useEdgeSwipe({
+    enabled: phone,
+    open: drawer.open,
+    drawerSelector: ".workspace-navigation",
+    onOpen: drawer.show,
+    onClose: drawer.hide,
+  });
+  // Phones keep every unread badge inside the closed drawer; its button
+  // sums them up, with mutes and notification levels applied.
   const reading = useReadingChannel();
+  const now = useMuteClock();
   const { data: readRows } = useReadState();
-  const unread = (readRows ?? []).some(
-    (row) => row.channel_id !== reading && row.unread_count > 0,
-  );
+  const mark = unreadMark(readRows ?? [], reading, now);
+  const count = mark.count > 99 ? "99+" : String(mark.count);
+  const label =
+    mark.count > 0
+      ? `Navigation öffnen, ${mark.count > 99 ? "mehr als 99" : mark.count} ${mark.count === 1 ? "Benachrichtigung" : "Benachrichtigungen"}`
+      : mark.any
+        ? "Navigation öffnen, ungelesene Nachrichten"
+        : "Navigation öffnen";
   return (
     <div className="workspace">
       <WorkspaceDrawer
         id={navigationId}
-        open={navigationOpen}
-        onClose={() => setNavigationOpen(false)}
+        open={drawer.open}
+        onClose={drawer.hide}
         title="Navigation"
         breakpoint={NAVIGATION_DRAWER_MAX_WIDTH}
         className="workspace-navigation"
-        closeOnNavigate
       >
         <ServerRail activeId={serverId} dmActive={dmActive} />
         {sidebar}
@@ -100,23 +144,36 @@ function WorkspaceFrame({
           <button
             type="button"
             className="workspace-navigation-trigger"
-            aria-label="Navigation öffnen"
-            aria-expanded={navigationOpen}
+            aria-label={label}
+            aria-expanded={drawer.open}
             aria-controls={navigationId}
-            aria-describedby={unread ? unreadId : undefined}
-            onClick={() => setNavigationOpen(true)}
+            onClick={drawer.show}
           >
-            <ChevronIcon size={21} />
-            {unread ? (
+            {typeof place === "string" ? (
+              <MenuIcon size={22} />
+            ) : (
               <span
-                id={unreadId}
-                role="img"
-                aria-label="Ungelesene Nachrichten"
+                className="workspace-navigation-tile"
+                style={{ "--server-tile": tileTint(place.id) } as CSSProperties}
+                aria-hidden="true"
+              >
+                {tileInitials(place.name)}
+              </span>
+            )}
+            {mark.count > 0 ? (
+              <span className="workspace-navigation-count" aria-hidden="true">
+                {count}
+              </span>
+            ) : mark.any ? (
+              <span
                 className="workspace-navigation-unread"
+                aria-hidden="true"
               />
             ) : null}
-            <span>Gelabber</span>
           </button>
+          <span className="workspace-mobile-place">
+            {typeof place === "string" ? place : place.name}
+          </span>
         </header>
         <main
           id="workspace-content"
@@ -126,6 +183,12 @@ function WorkspaceFrame({
           <Outlet />
         </main>
       </div>
+      <QuickSwitcher
+        open={switching}
+        onClose={() => setSwitching(false)}
+        current={channelId}
+      />
+      <ShortcutSheet open={showingKeys} onClose={() => setShowingKeys(false)} />
     </div>
   );
 }
@@ -141,6 +204,8 @@ function SelectedServer({
   const navigate = useNavigate();
   const userId = useUserId();
   const { data: server, error, isFetching, refetch } = useServer(serverId);
+  const { data: servers } = useServers();
+  const listed = servers?.find((row) => row.id === serverId);
   const gone =
     error instanceof ApiError &&
     (error.code === "not_found" || error.code === "forbidden");
@@ -158,6 +223,7 @@ function SelectedServer({
   return (
     <WorkspaceFrame
       serverId={serverId}
+      place={server ?? listed ?? "Gelabber"}
       sidebar={
         server ? (
           <ChannelSidebar server={server} activeChannelId={channelId} />
@@ -184,6 +250,7 @@ function SelectedDms({ channelId }: { channelId: string | undefined }) {
   return (
     <WorkspaceFrame
       dmActive
+      place="Nachrichten"
       sidebar={
         dms ? (
           <DmSidebar dms={dms} activeChannelId={channelId} />

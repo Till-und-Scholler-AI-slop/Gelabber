@@ -671,30 +671,30 @@ export async function mediaScenarios(h, f) {
           "call-dock-covers-chat-controls",
         );
         if (viewport.width <= 800) {
-          await page.getByRole("button", { name: "Navigation öffnen" }).click();
+          await page
+            .getByRole("button", { name: /^Navigation öffnen/ })
+            .click();
         } else {
           check(metrics.channelsHeight >= 156, "channel-navigation-collapsed");
         }
         // Scroll to the owner's controls, including on short landscape drawers.
-        await page
-          .locator('summary[aria-label="Kanal oder Kategorie erstellen"]')
-          .click();
+        await page.locator("summary.server-sidebar-menu-button").click();
         await page
           .getByRole("button", { name: "Kanal erstellen", exact: true })
           .click();
         await page
           .getByRole("dialog", { name: "Kanal erstellen", exact: true })
           .waitFor();
-        await page.keyboard.press("Escape");
+        // The drawer makes way for a dialog opened from it.
         if (viewport.width <= 800) {
           check(
-            await page
+            !(await page
               .getByRole("dialog", { name: "Navigation", exact: true })
-              .isVisible(),
-            "nested-escape-closed-navigation",
+              .isVisible()),
+            "navigation-stacked-under-dialog",
           );
-          await page.keyboard.press("Escape");
         }
+        await page.keyboard.press("Escape");
         results.push({ viewport, ...metrics });
       }
       return { viewports: results };

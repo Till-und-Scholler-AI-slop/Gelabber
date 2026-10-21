@@ -200,10 +200,7 @@ try {
     "navigation and members trap Tab and restore focus on Escape",
     async () => {
       await page.setViewportSize({ width: 320, height: 740 });
-      const opener = page.getByRole("button", {
-        name: "Navigation öffnen",
-        exact: true,
-      });
+      const opener = page.getByRole("button", { name: /^Navigation öffnen/ });
       await opener.focus();
       await page.keyboard.press("Enter");
       const navigation = page.getByRole("dialog", {
