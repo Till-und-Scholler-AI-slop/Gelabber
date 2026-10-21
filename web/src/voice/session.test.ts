@@ -36,6 +36,7 @@ import type {
 } from "./mediasoupConnection.ts";
 import type { TrackKind } from "../ws/protocol.ts";
 import { resetSessionForTests, useSession } from "../auth/session.ts";
+import { ApiError } from "../api/client.ts";
 import { errorMessage } from "../auth/rules.ts";
 import { randomUuid } from "../lib/uuid.ts";
 import {
@@ -1502,9 +1503,12 @@ describe("voice session", () => {
       joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
       await vi.waitFor(() => expect(peers[0]?.audio).toBeTruthy());
       expect(peers[0]?.audio?.enabled).toBe(false);
+      // The call bar tells a held-back microphone from a broken one.
+      expect(useVoice.getState().mic).toBe("ptt-idle");
       const before = sent.length;
       key("keydown");
       expect(peers[0]?.audio?.enabled).toBe(true);
+      expect(useVoice.getState().mic).toBe("live");
       key("keyup");
       // The release delay keeps the end of a word.
       expect(peers[0]?.audio?.enabled).toBe(true);
@@ -1524,6 +1528,7 @@ describe("voice session", () => {
       // Back to voice activity: the microphone sends again.
       useMediaSettings.getState().patch({ voiceInput: "activity" });
       expect(peers[0]?.audio?.enabled).toBe(true);
+      expect(useVoice.getState().mic).toBe("live");
     } finally {
       vi.unstubAllGlobals();
     }
@@ -4476,6 +4481,148 @@ describe("authoritative mediasoup session lifecycle", () => {
     expect(env.peers).toHaveLength(1);
     expect(env.getUserMediaCalls()).toBe(1);
     expect(useVoice.getState().status).toBe("joined");
+  });
+  it("reports the connection from joining through ICE and socket recovery", async () => {
+    const env = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    expect(useVoice.getState().connection).toBe("connecting");
+    await vi.waitFor(() => expect(env.peers[0]?.started).toBe(true));
+    expect(useVoice.getState().connection).toBe("connected");
+    const seat = env.peers[0]!;
+    seat.setTransportState("send", "disconnected");
+    seat.setTransportState("recv", "failed");
+    expect(useVoice.getState().connection).toBe("reconnecting");
+    // One direction back is not the call back.
+    seat.setTransportState("send", "connected");
+    expect(useVoice.getState().connection).toBe("reconnecting");
+    seat.setTransportState("recv", "connected");
+    expect(useVoice.getState().connection).toBe("connected");
+    env.closeMedia();
+    expect(useVoice.getState().connection).toBe("reconnecting");
+    await vi.waitFor(() => expect(env.peers[1]?.started).toBe(true));
+    expect(useVoice.getState().connection).toBe("connected");
+    expect(useVoice.getState().status).toBe("joined");
+    leaveVoice();
+    expect(useVoice.getState().connection).toBe("idle");
+  });
+  it("keeps a call whose recovery gave up, to join it again", async () => {
+    const env = await joined({
+      ticketError: (index) => (index > 0 ? new Error("offline") : undefined),
+    });
+    vi.useFakeTimers();
+    env.closeMedia();
+    await vi.advanceTimersByTimeAsync(60_000);
+    const state = useVoice.getState();
+    expect(state.status).toBe("idle");
+    expect(state.connection).toBe("failed");
+    expect(state.lostCall).toEqual({
+      serverId: "srv",
+      channelId: "voice",
+      channelName: "Voice",
+    });
+    expect(messages(env.errors)).toContain(
+      "Die Sprachverbindung konnte nicht wiederhergestellt werden. Bitte erneut beitreten.",
+    );
+    vi.useRealTimers();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    expect(useVoice.getState().lostCall).toBeNull();
+    expect(useVoice.getState().connection).toBe("connecting");
+  });
+  it("offers no rejoin for a refusal", async () => {
+    install({
+      ticketError: () => new ApiError("forbidden", 403, "forbidden"),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    await vi.waitFor(() => expect(useVoice.getState().status).toBe("idle"));
+    expect(useVoice.getState().connection).toBe("idle");
+    expect(useVoice.getState().lostCall).toBeNull();
+  });
+  it("says when the microphone is refused or missing", async () => {
+    const refused = await joined({
+      media: false,
+      mediaError: () =>
+        new DOMException("Permission denied", "NotAllowedError"),
+    });
+    await vi.waitFor(() => expect(useVoice.getState().mic).toBe("denied"));
+    expect(refused.peers[0]?.audio).toBeFalsy();
+    leaveVoice();
+    expect(useVoice.getState().mic).toBe("live");
+    resetVoiceForTests();
+    await joined({
+      media: false,
+      mediaError: () => new DOMException("none", "NotFoundError"),
+    });
+    await vi.waitFor(() => expect(useVoice.getState().mic).toBe("unavailable"));
+  });
+  it("falls back to the default microphone when the live one is unplugged", async () => {
+    useMediaSettings.getState().patch({ audioInputId: "headset" });
+    const env = await joined();
+    const sending = env.peers[0]!.audio;
+    const lost = env.streams[0]!.getAudioTracks()[0]!;
+    expect(useVoice.getState().mic).toBe("live");
+    lost.dispatchEvent(new Event("ended"));
+    expect(useVoice.getState().mic).toBe("unavailable");
+    expect(messages(env.errors)).toEqual([
+      "Mikrofon getrennt – Standardgerät wird verwendet",
+    ]);
+    await vi.waitFor(() => expect(env.peers[0]!.audio).not.toBe(sending));
+    expect(useVoice.getState().mic).toBe("live");
+    expect(env.getUserMediaCalls()).toBe(2);
+    // The chosen device stays chosen for when it is back.
+    expect(useMediaSettings.getState().audioInputId).toBe("headset");
+    // A stopped capture is no loss.
+    leaveVoice();
+    lost.dispatchEvent(new Event("ended"));
+    expect(env.errors).toHaveLength(1);
+  });
+  it("switches back to the chosen microphone when it is plugged in again", async () => {
+    const devices = new EventTarget();
+    let inputs = ["default", "headset"];
+    vi.stubGlobal("navigator", {
+      mediaDevices: Object.assign(devices, {
+        enumerateDevices: async () =>
+          inputs.map((deviceId) => ({ kind: "audioinput", deviceId })),
+      }),
+    });
+    useMediaSettings.getState().patch({ audioInputId: "headset" });
+    const env = await joined();
+    inputs = ["default"];
+    devices.dispatchEvent(new Event("devicechange"));
+    await vi.waitFor(() => expect(env.getUserMediaCalls()).toBe(2));
+    expect(messages(env.errors)).toEqual([
+      "Mikrofon getrennt – Standardgerät wird verwendet",
+    ]);
+    // The browser ends the old track as well: said once.
+    env.streams[0]!.getAudioTracks()[0]!.dispatchEvent(new Event("ended"));
+    await vi.waitFor(() =>
+      expect(env.peers[0]!.audio).toBe(env.streams[1]!.getAudioTracks()[0]),
+    );
+    inputs = ["default", "headset"];
+    devices.dispatchEvent(new Event("devicechange"));
+    await vi.waitFor(() => expect(env.getUserMediaCalls()).toBe(3));
+    expect(env.errors).toHaveLength(1);
+  });
+  it("lets headset buttons mute and hang up while in a call", async () => {
+    const handlers = new Map<string, (() => void) | null>();
+    const active: boolean[] = [];
+    vi.stubGlobal("navigator", {
+      mediaSession: {
+        setActionHandler: (action: string, handler: (() => void) | null) =>
+          handlers.set(action, handler),
+        setMicrophoneActive: (on: boolean) => {
+          active.push(on);
+        },
+      },
+    });
+    await joined();
+    expect(active).toEqual([true]);
+    handlers.get("togglemicrophone")!();
+    expect(useVoice.getState().muted).toBe(true);
+    expect(active).toEqual([true, false]);
+    handlers.get("hangup")!();
+    expect(useVoice.getState().status).toBe("idle");
+    expect(handlers.get("togglemicrophone")).toBeNull();
+    expect(handlers.get("hangup")).toBeNull();
   });
   it("bounds ICE recovery and rebuilds with the same capture and preferences", async () => {
     const env = await joined();

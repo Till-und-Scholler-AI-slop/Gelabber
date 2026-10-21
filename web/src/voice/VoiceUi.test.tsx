@@ -99,6 +99,9 @@ function goLiveControl(html: string): string {
 beforeEach(() => {
   fixture.voice = {
     status: "idle",
+    connection: "idle",
+    mic: "live",
+    lostCall: null,
     serverId: null,
     channelId: null,
     channelName: null,

@@ -122,6 +122,7 @@ let binding: PushToTalkBinding | null = null;
 let gateListener: (() => void) | null = null;
 let pageHeld = false;
 let nativeHeld = false;
+let touchHeld = false;
 let releaseTimer: ReturnType<typeof setTimeout> | null = null;
 /** Moves with every binding; events of an older one are dropped. */
 let generation = 0;
@@ -161,6 +162,7 @@ function end(): void {
   releaseTimer = null;
   pageHeld = false;
   nativeHeld = false;
+  touchHeld = false;
   binding = null;
   if (nativeBound) {
     nativeBound = false;
@@ -231,11 +233,12 @@ function onNativeEvent(event: NativeEvent): void {
   }
 }
 
-function setHeld(source: "page" | "native", down: boolean): void {
+function setHeld(source: "page" | "native" | "touch", down: boolean): void {
   if (!binding) return;
   if (source === "page") pageHeld = down;
-  else nativeHeld = down;
-  const held = pageHeld || nativeHeld;
+  else if (source === "native") nativeHeld = down;
+  else touchHeld = down;
+  const held = pageHeld || nativeHeld || touchHeld;
   const state = usePushToTalk.getState();
   if (held === state.held) return;
   if (releaseTimer !== null) clearTimeout(releaseTimer);
@@ -257,6 +260,51 @@ function close(): void {
   if (state.held || !state.open) return;
   usePushToTalk.setState({ open: false });
   gateListener?.();
+}
+
+/** The hold-to-talk button of a touch screen, held like the key. It works
+ * without a key, too: a phone has none to bind. */
+export function holdToTalk(down: boolean): void {
+  setHeld("touch", down);
+}
+
+export type CallShortcut = "mute" | "deafen";
+
+const CALL_SHORTCUT_KEYS: Record<string, CallShortcut> = {
+  KeyM: "mute",
+  KeyD: "deafen",
+};
+
+/** Strg+Umschalt+M mutes and Strg+Umschalt+D deafens (⌘ instead of Strg on
+ * a Mac), in text fields too: the combination types nothing. A push-to-talk
+ * key on the same letter keeps it, so one press never does both. */
+export function callShortcut(
+  event: Pick<
+    KeyboardEvent,
+    "code" | "ctrlKey" | "metaKey" | "shiftKey" | "altKey" | "repeat"
+  > & { isComposing?: boolean },
+  pttKey: string | null,
+): CallShortcut | null {
+  if (!event.shiftKey || event.altKey || event.repeat || event.isComposing)
+    return null;
+  // Strg or ⌘, not both: AltGr and other chords stay the system's.
+  if (event.ctrlKey === event.metaKey) return null;
+  const action = CALL_SHORTCUT_KEYS[event.code];
+  if (!action || event.code === pttKey) return null;
+  return action;
+}
+
+function applePlatform(): boolean {
+  return (
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "")
+  );
+}
+
+/** How the tooltips write the shortcut: "Strg+Umschalt+M" or "⌘+Umschalt+M". */
+export function callShortcutLabel(action: CallShortcut): string {
+  const key = action === "mute" ? "M" : "D";
+  return `${applePlatform() ? "⌘" : "Strg"}+Umschalt+${key}`;
 }
 
 /** Keys that write nothing into a text field; only these count while the

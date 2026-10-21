@@ -2,9 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setNativeBridgeForTests, type NativeBridge } from "./native/bridge.ts";
 import {
+  callShortcut,
+  callShortcutLabel,
   clampReleaseDelay,
   configurePushToTalk,
   globalKeyNote,
+  holdToTalk,
   onPushToTalkGate,
   pushToTalkCode,
   pushToTalkKeyLabel,
@@ -284,5 +287,72 @@ describe("push-to-talk", () => {
     expect(
       globalKeyNote({ state: "failed", reason: "Abgebrochen." }, false),
     ).toContain("nur, solange Gelabber im Vordergrund ist: Abgebrochen.");
+  });
+  it("opens the microphone while the touch button is held, with or without a key", () => {
+    configurePushToTalk({ key: "", releaseDelay: 0 });
+    expect(pushToTalkOpen()).toBe(false);
+    expect(gate).toHaveBeenCalledTimes(1);
+    holdToTalk(true);
+    expect(pushToTalkOpen()).toBe(true);
+    expect(gate).toHaveBeenCalledTimes(2);
+    holdToTalk(false);
+    expect(pushToTalkOpen()).toBe(false);
+    // The key and the button together: released only when both are.
+    configurePushToTalk({ key: "F13", releaseDelay: 0 });
+    press("keydown", "F13");
+    holdToTalk(true);
+    press("keyup", "F13");
+    expect(pushToTalkOpen()).toBe(true);
+    holdToTalk(false);
+    expect(pushToTalkOpen()).toBe(false);
+    // Outside a call it does nothing.
+    configurePushToTalk(null);
+    holdToTalk(true);
+    expect(usePushToTalk.getState().held).toBe(false);
+  });
+});
+
+describe("call shortcuts", () => {
+  const key = (code: string, extra: Partial<KeyboardEvent> = {}) => ({
+    code,
+    ctrlKey: true,
+    metaKey: false,
+    shiftKey: true,
+    altKey: false,
+    repeat: false,
+    ...extra,
+  });
+
+  it("mutes with Strg+Umschalt+M and deafens with Strg+Umschalt+D", () => {
+    expect(callShortcut(key("KeyM"), null)).toBe("mute");
+    expect(callShortcut(key("KeyD"), null)).toBe("deafen");
+    expect(
+      callShortcut(key("KeyM", { ctrlKey: false, metaKey: true }), null),
+    ).toBe("mute");
+  });
+
+  it("leaves every other chord alone", () => {
+    expect(callShortcut(key("KeyM", { shiftKey: false }), null)).toBeNull();
+    expect(callShortcut(key("KeyM", { ctrlKey: false }), null)).toBeNull();
+    expect(callShortcut(key("KeyM", { altKey: true }), null)).toBeNull();
+    expect(callShortcut(key("KeyM", { metaKey: true }), null)).toBeNull();
+    expect(callShortcut(key("KeyM", { repeat: true }), null)).toBeNull();
+    expect(
+      callShortcut({ ...key("KeyD"), isComposing: true }, null),
+    ).toBeNull();
+    expect(callShortcut(key("KeyK"), null)).toBeNull();
+  });
+
+  it("skips a combination whose letter is the push-to-talk key", () => {
+    expect(callShortcut(key("KeyM"), "KeyM")).toBeNull();
+    expect(callShortcut(key("KeyD"), "KeyM")).toBe("deafen");
+    expect(callShortcut(key("KeyM"), "ControlLeft")).toBe("mute");
+  });
+
+  it("writes the shortcut the way the platform does", () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel", userAgent: "" });
+    expect(callShortcutLabel("mute")).toBe("⌘+Umschalt+M");
+    vi.stubGlobal("navigator", { platform: "Linux x86_64", userAgent: "" });
+    expect(callShortcutLabel("deafen")).toBe("Strg+Umschalt+D");
   });
 });
