@@ -1262,7 +1262,6 @@ dependencies = [
  "futures-util",
  "gelabber-shared",
  "mediasoup",
- "rand 0.10.2",
  "redis",
  "serde",
  "serde_json",
