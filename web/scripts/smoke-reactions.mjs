@@ -305,7 +305,7 @@ for (const engine of [chromium, firefox]) {
         (row) => ({
           index: Number(
             row
-              .querySelector("p")
+              .querySelector(".lr-message-text")
               ?.textContent?.match(/History-anchor-(\d+)/)?.[1],
           ),
           top: row.getBoundingClientRect().top,
@@ -367,7 +367,8 @@ for (const engine of [chromium, firefox]) {
       ({ index, oldHeight }) => {
         const row = [...document.querySelectorAll(".lr-message-row")].find(
           (row) =>
-            row.querySelector("p")?.textContent === `History-anchor-${index}`,
+            row.querySelector(".lr-message-text")?.textContent ===
+            `History-anchor-${index}`,
         );
         return row && row.getBoundingClientRect().height > oldHeight + 30;
       },
@@ -379,7 +380,8 @@ for (const engine of [chromium, firefox]) {
       ({ index, top }) => {
         const row = [...document.querySelectorAll(".lr-message-row")].find(
           (row) =>
-            row.querySelector("p")?.textContent === `History-anchor-${index}`,
+            row.querySelector(".lr-message-text")?.textContent ===
+            `History-anchor-${index}`,
         );
         return row && Math.abs(row.getBoundingClientRect().top - top) <= 3;
       },
