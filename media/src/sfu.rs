@@ -2225,7 +2225,7 @@ async fn stop_consumer(c: &NativeConsumer, dead: &AtomicBool) {
         _ => c.confirm_closed().await,
     }
 }
-fn fail_closed(reason: &'static str) -> ! {
+pub(crate) fn fail_closed(reason: &'static str) -> ! {
     error!(
         reason,
         "terminating media service to stop native forwarding"
