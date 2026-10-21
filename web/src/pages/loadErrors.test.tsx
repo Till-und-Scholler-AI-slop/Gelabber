@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -12,12 +13,18 @@ const fixture = vi.hoisted(() => ({
 vi.mock("@tanstack/react-router", () => ({
   useParams: () => ({ serverId: "s1", channelId: "c1" }),
   useNavigate: () => () => Promise.resolve(),
+  Link: ({ children, to }: { children: ReactNode; to: string }) => (
+    <a href={to}>{children}</a>
+  ),
 }));
 vi.mock("../servers/queries.ts", () => ({
   useServer: () => fixture.server,
   useServers: () => fixture.servers,
 }));
 vi.mock("../auth/scope.ts", () => ({ useUserId: () => "u1" }));
+vi.mock("../dms/queries.ts", () => ({
+  useDms: () => ({ data: [], isPending: false, isError: false }),
+}));
 vi.mock("../auth/session.ts", () => ({
   useSession: (select: (state: unknown) => unknown) =>
     select({ user: { id: "u1", name: "Rafi" } }),
@@ -50,6 +57,7 @@ vi.mock("../voice/LiveHint.tsx", () => ({ LiveHint: () => null }));
 vi.mock("../ws/useLive.ts", () => ({ useTypingInput: () => ({}) }));
 vi.mock("../components/ServerDialogs.tsx", () => ({
   CreateServerDialog: () => null,
+  JoinServerForm: () => <form aria-label="Einladung" />,
 }));
 
 import { ChannelPage } from "./ChannelPage.tsx";
@@ -119,11 +127,23 @@ describe("workspace start page load error", () => {
     );
   });
 
-  it("explains how to get a server without an alert or retry", () => {
+  it("welcomes someone without a server with both ways in", () => {
     fixture.servers = { ...base, data: [] };
     const html = renderToStaticMarkup(<WorkspaceIndexPage />);
-    expect(html).toContain("Du bist noch in keinem Server.");
+    expect(html).toContain("Willkommen, Rafi");
+    expect(html).toContain("<h2>Eigenen Server erstellen</h2>");
+    expect(html).toMatch(/ui-button--primary[^>]*>Server erstellen<\/button>/);
+    expect(html).toContain("<h2>Einladung erhalten?</h2>");
+    expect(html).toContain('<form aria-label="Einladung">');
     expect(html).not.toContain('role="alert"');
     expect(html).not.toContain("Erneut versuchen");
+  });
+
+  it("holds the place of the welcome while the list loads", () => {
+    fixture.servers = { ...base, isPending: true };
+    const html = renderToStaticMarkup(<WorkspaceIndexPage />);
+    expect(html).toContain("ui-main-skeleton--overview");
+    expect(html).toContain("Wird geladen…");
+    expect(html).not.toContain("Willkommen");
   });
 });

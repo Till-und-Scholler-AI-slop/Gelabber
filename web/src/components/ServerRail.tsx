@@ -20,7 +20,7 @@ import { prefetchServer, useServers } from "../servers/queries.ts";
 import type { Server } from "../servers/types.ts";
 import { useVoiceRoster } from "../voice/roster.ts";
 import { ChatIcon, PlusIcon } from "./Icons.tsx";
-import { CreateServerDialog } from "./ServerDialogs.tsx";
+import { AddServerDialog } from "./ServerDialogs.tsx";
 import { tileInitials, tileTint } from "./initials.ts";
 import { useNavigationDrawer } from "./navigationDrawer.ts";
 import { LIST_ROW, ROW_ITEM, listStop, moveWithinList } from "./rowKeys.ts";
@@ -35,7 +35,7 @@ export function ServerRail({
   dmActive: boolean;
 }) {
   const { data: servers, isPending } = useServers();
-  const [creating, setCreating] = useState(false);
+  const [adding, setAdding] = useState(false);
   return (
     <nav aria-label="Server" className="server-rail">
       <HomeTile active={dmActive} />
@@ -47,15 +47,15 @@ export function ServerRail({
       <div className="server-rail-footer">
         <button
           type="button"
-          onClick={() => setCreating(true)}
-          title="Server erstellen"
-          aria-label="Server erstellen"
+          onClick={() => setAdding(true)}
+          title="Server hinzufügen"
+          aria-label="Server hinzufügen"
           className="server-create-button"
         >
           <PlusIcon size={20} />
         </button>
       </div>
-      <CreateServerDialog open={creating} onClose={() => setCreating(false)} />
+      <AddServerDialog open={adding} onClose={() => setAdding(false)} />
     </nav>
   );
 }

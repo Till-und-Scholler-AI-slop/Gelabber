@@ -149,15 +149,6 @@
 .lr-channel-content {
   background: var(--lr-bg);
 }
-.lr-auth-card {
-  padding: 32px;
-  border: 1px solid var(--lr-border);
-  border-radius: 18px;
-  background: var(--lr-panel);
-}
-.lr-auth-card h1 {
-  font-size: 29px;
-}
 .lr-account-page h1 {
   font-size: 30px;
   margin-bottom: 8px;
@@ -269,8 +260,5 @@ html[data-reduced-motion="true"] *::after {
   }
   .community-overview__empty {
     padding: 28px 24px;
-  }
-  .lr-auth-card {
-    padding: 24px;
   }
 }

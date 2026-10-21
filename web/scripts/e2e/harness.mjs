@@ -1,4 +1,4 @@
-/* global process, console, window, fetch, URL */
+/* global process, console, window, document, fetch, URL */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -220,10 +220,23 @@ export async function startHarness() {
     await dialog
       .getByRole("button", { name: "Erstellen", exact: true })
       .click();
-    // Creating a community now opens its overview. Select the actual text
-    // channel through the UI before continuing the message scenarios.
+    // Creating a community opens its overview with an invite link already
+    // made. Keep the link, then select the actual text channel through the
+    // UI before continuing the message scenarios.
     await owner.page.waitForURL(/\/s\/[^/]+(?:\/c\/[^/]+)?$/);
     const serverId = new URL(owner.page.url()).pathname.split("/")[2];
+    dialog = owner.page.getByRole("dialog", { name: /einladen$/ });
+    await owner.page.waitForFunction(() =>
+      document
+        .querySelector('input[aria-label="Einladungslink"]')
+        ?.value.includes("/invite/"),
+    );
+    const invite = await dialog
+      .getByRole("textbox", { name: "Einladungslink" })
+      .inputValue();
+    await dialog
+      .getByRole("button", { name: "Schließen", exact: true })
+      .click();
     servers.push({ owner, id: serverId });
     const detail = await api(owner, `/servers/${serverId}`);
     check(detail.status === 200, "fixture-server-detail-missing");
@@ -263,17 +276,6 @@ export async function startHarness() {
     }
     const voicePath = await channel("E2E Voice A");
     const otherPath = await channel("E2E Voice B");
-    await owner.page
-      .getByRole("button", { name: "Leute einladen", exact: true })
-      .click();
-    dialog = owner.page.getByRole("dialog", { name: /Einladen zu/ });
-    await dialog
-      .getByRole("button", { name: "Link erstellen", exact: true })
-      .click();
-    const invite = await dialog
-      .getByRole("textbox", { name: "Einladungslink" })
-      .inputValue();
-    await dialog.getByRole("button", { name: "Fertig", exact: true }).click();
     async function join(who) {
       await who.page.goto(invite);
       await who.page

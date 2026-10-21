@@ -20,9 +20,17 @@ export function tileInitials(name: string): string {
   return first.toUpperCase() + second.toLowerCase();
 }
 
-/** One of the eight theme tile tints (`--lr-tile-1…8`), stable per id. */
-export function tileTint(id: string): string {
+/**
+ * Which of the eight `--lr-tile-*` tints a server gets: stable per id, so a
+ * server keeps its colour on every screen.
+ */
+export function tileTone(id: string): number {
   let hash = 0;
-  for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) | 0;
-  return `var(--lr-tile-${(Math.abs(hash) % 8) + 1})`;
+  for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return (hash % 8) + 1;
+}
+
+/** The tint from `tileTone` as a CSS value (`var(--lr-tile-N)`). */
+export function tileTint(id: string): string {
+  return `var(--lr-tile-${tileTone(id)})`;
 }

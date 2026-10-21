@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { initials, tileInitials, tileTint } from "./initials.ts";
+import { initials, tileInitials, tileTint, tileTone } from "./initials.ts";
 
 describe("initials", () => {
   it("takes the first letter of up to two words", () => {
@@ -42,5 +42,17 @@ describe("server tile tint", () => {
       Array.from({ length: 64 }, (_, i) => tileTint(`server-${i}`)),
     );
     expect(tints.size).toBe(8);
+  });
+});
+
+describe("tile tone", () => {
+  it("picks one of eight tints, the same one every time", () => {
+    const ids = ["a", "b", "server-1", "7f2c9a1e-0000-4000-8000-000000000000"];
+    for (const id of ids) {
+      expect(tileTone(id)).toBeGreaterThanOrEqual(1);
+      expect(tileTone(id)).toBeLessThanOrEqual(8);
+      expect(tileTone(id)).toBe(tileTone(id));
+    }
+    expect(new Set(ids.map(tileTone)).size).toBeGreaterThan(1);
   });
 });

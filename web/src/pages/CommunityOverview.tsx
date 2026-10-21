@@ -3,8 +3,8 @@ import { useState } from "react";
 import { useUserId } from "../auth/scope.ts";
 import {
   ChatIcon,
+  CopyIcon,
   HashIcon,
-  LinkIcon,
   PencilIcon,
   SpeakerIcon,
 } from "../components/Icons.tsx";
@@ -86,10 +86,10 @@ export function CommunityOverview({ server }: { server: ServerDetail }) {
             </p>
             <Button
               variant="primary"
-              icon={<LinkIcon size={16} />}
+              icon={<CopyIcon size={16} />}
               onClick={() => setInviting(true)}
             >
-              Leute einladen
+              Link kopieren
             </Button>
             <InviteDialog
               server={server}

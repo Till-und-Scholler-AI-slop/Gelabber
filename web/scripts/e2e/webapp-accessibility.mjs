@@ -336,10 +336,16 @@ try {
     async () => {
       await page.setViewportSize({ width: 1280, height: 720 });
       const opener = page.getByRole("button", {
-        name: "Server erstellen",
+        name: "Server hinzufügen",
         exact: true,
       });
       await opener.focus();
+      await page.keyboard.press("Enter");
+      // The rail's "+" asks first: create a server or join one.
+      const choice = page
+        .getByRole("dialog", { name: "Server hinzufügen", exact: true })
+        .getByRole("button", { name: /^Server erstellen/ });
+      await until(() => focused(choice), Boolean, "add-server-first-choice");
       await page.keyboard.press("Enter");
       const dialog = page.getByRole("dialog", {
         name: "Server erstellen",
