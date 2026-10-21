@@ -8,6 +8,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
+import { pageZoom } from "../../interface/zoom.ts";
 import { dialogInitialFocus } from "../dialogFocus.ts";
 import { outsideBox } from "../modalClose.ts";
 import { useMediaQuery } from "../useMediaQuery.ts";
@@ -102,6 +103,7 @@ function AnchoredPopover({
         { width: element.offsetWidth, height: element.offsetHeight },
         { width: window.innerWidth, height: window.innerHeight },
         placement,
+        pageZoom(element),
       );
       element.style.top = `${top}px`;
       element.style.left = `${left}px`;

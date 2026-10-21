@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useEffect, useId, useRef, type CSSProperties } from "react";
 
+import { pageZoom } from "../interface/zoom.ts";
 import { can } from "../servers/permissions.ts";
 import { useServer } from "../servers/queries.ts";
 import {
@@ -78,7 +79,7 @@ export function VoiceSessionControls({
     const update = () =>
       document.documentElement.style.setProperty(
         "--lr-media-space",
-        `${Math.ceil(dock.getBoundingClientRect().height)}px`,
+        `${Math.ceil(dock.getBoundingClientRect().height / pageZoom(dock))}px`,
       );
     update();
     const observer = new ResizeObserver(update);

@@ -42,8 +42,8 @@
   position: fixed;
   inset: var(--viewer-top) var(--viewer-right) var(--viewer-bottom)
     var(--viewer-left);
-  width: calc(100vw - var(--viewer-left) - var(--viewer-right));
-  height: calc(100dvh - var(--viewer-top) - var(--viewer-bottom));
+  width: calc(var(--lr-100vw) - var(--viewer-left) - var(--viewer-right));
+  height: calc(var(--lr-100dvh) - var(--viewer-top) - var(--viewer-bottom));
   max-width: none;
   max-height: none;
   margin: auto;
@@ -83,8 +83,8 @@
   background: #000;
 }
 .voice-video-tile:fullscreen {
-  width: 100vw;
-  height: 100dvh;
+  width: var(--lr-100vw);
+  height: var(--lr-100dvh);
   aspect-ratio: auto;
   border-radius: 0;
   background: #000;
@@ -111,8 +111,8 @@
 @media (max-width: 640px) {
   .stream-viewer {
     inset: 0;
-    width: 100vw;
-    height: 100dvh;
+    width: var(--lr-100vw);
+    height: var(--lr-100dvh);
     /* Edge to edge, with only the content clear of the cut-outs. */
     padding: var(--lr-safe-top) var(--lr-safe-right) var(--lr-safe-bottom)
       var(--lr-safe-left);
