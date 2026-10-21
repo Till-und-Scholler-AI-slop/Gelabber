@@ -3,7 +3,11 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useRef, useState, type FormEvent } from "react";
 
 import { ApiError } from "../api/client.ts";
-import { isInviteRedirect, savePendingRedirect } from "../auth/redirect.ts";
+import {
+  isInviteRedirect,
+  savePendingRedirect,
+  takePendingRedirect,
+} from "../auth/redirect.ts";
 import {
   PASSWORD_MIN,
   errorMessage,
@@ -182,7 +186,9 @@ export function MailSent({
     // Signing in to an unconfirmed account sends a fresh link.
     mutationFn: () => login(email, password),
     onSuccess: () => {
-      // Confirmed meanwhile, on another device: signed in now.
+      // Confirmed meanwhile, on another device: signed in now, and the
+      // parked target is not needed any more.
+      takePendingRedirect();
       void navigate({ href: redirect ?? "/", replace: true });
     },
     onError: (error) => {

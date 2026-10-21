@@ -2,8 +2,9 @@ import { useMutation } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useRef, useState, type FormEvent } from "react";
 
+import { ApiError } from "../api/client.ts";
 import { useAccountMailStatus } from "../auth/mail.ts";
-import { isInviteRedirect } from "../auth/redirect.ts";
+import { isInviteRedirect, savePendingRedirect } from "../auth/redirect.ts";
 import { fieldMessage, validateEmail } from "../auth/rules.ts";
 import { login } from "../auth/session.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
@@ -35,7 +36,17 @@ export function LoginPage() {
       // route change, nothing reloads.
       void navigate({ href: redirect ?? "/", replace: true });
     },
-    onError: fromError,
+    onError: (error) => {
+      // A fresh confirmation link is on its way; it opens in a new tab,
+      // which only knows where to continue from here.
+      if (
+        redirect &&
+        error instanceof ApiError &&
+        error.code === "email_unverified"
+      )
+        savePendingRedirect(redirect);
+      fromError(error);
+    },
   });
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {

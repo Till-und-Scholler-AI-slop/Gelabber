@@ -53,8 +53,15 @@ export function AddServerDialog({
   onClose: () => void;
 }) {
   const [step, setStep] = useState<"choose" | "create" | "join">("choose");
+  // After "Zurück", focus returns to the choice that was taken.
+  const [from, setFrom] = useState<"create" | "join" | null>(null);
   const close = () => {
     onClose();
+    setStep("choose");
+    setFrom(null);
+  };
+  const back = () => {
+    setFrom(step === "choose" ? null : step);
     setStep("choose");
   };
   const title =
@@ -66,18 +73,15 @@ export function AddServerDialog({
   return (
     <Modal open={open} onClose={close} title={title}>
       {!open ? null : step === "create" ? (
-        <CreateServerForm onClose={close} onBack={() => setStep("choose")} />
+        <CreateServerForm onClose={close} onBack={back} />
       ) : step === "join" ? (
-        <JoinServerForm
-          autoFocus
-          onJoin={close}
-          onBack={() => setStep("choose")}
-        />
+        <JoinServerForm autoFocus onJoin={close} onBack={back} />
       ) : (
         <div className="add-server-choices">
           <button
             type="button"
             className="add-server-choice"
+            autoFocus={from === "create"}
             onClick={() => setStep("create")}
           >
             <PlusIcon size={20} />
@@ -89,6 +93,7 @@ export function AddServerDialog({
           <button
             type="button"
             className="add-server-choice"
+            autoFocus={from === "join"}
             onClick={() => setStep("join")}
           >
             <LinkIcon size={20} />
@@ -252,9 +257,9 @@ export function JoinServerForm({
       {field}
       <div className="flex justify-end gap-2">
         {onBack ? <GhostButton onClick={onBack}>Zurück</GhostButton> : null}
-        <SubmitButton pending={false} pendingLabel="">
+        <Button type="submit" variant="primary">
           Weiter
-        </SubmitButton>
+        </Button>
       </div>
     </form>
   );
