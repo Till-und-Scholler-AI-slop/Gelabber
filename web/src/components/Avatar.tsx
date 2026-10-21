@@ -9,6 +9,9 @@ type AvatarProps = {
   url: string | null;
   size?: AvatarSize;
   className?: string;
+  /** The name is written right next to it: hide the picture from screen
+   * readers instead of reading the name twice. */
+  decorative?: boolean;
 };
 
 /** Image when there is a working URL, initials otherwise — never a broken image icon. */
@@ -17,6 +20,7 @@ export function Avatar({
   url,
   size = "sm",
   className = "",
+  decorative = false,
 }: AvatarProps) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const showImage = url !== null && url.length > 0 && failedUrl !== url;
@@ -24,12 +28,12 @@ export function Avatar({
   return (
     <span
       className={`gel-avatar gel-avatar-${size} ${className}`}
-      aria-hidden={showImage ? undefined : true}
+      aria-hidden={showImage && !decorative ? undefined : true}
     >
       {showImage ? (
         <img
           src={url}
-          alt={`Avatar von ${name}`}
+          alt={decorative ? "" : `Avatar von ${name}`}
           // Avatar URLs may point anywhere (#208); do not tell that host
           // which Gelabber page the viewer is on.
           referrerPolicy="no-referrer"

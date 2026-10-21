@@ -1,3 +1,5 @@
+import { Button } from "./ui/Button.tsx";
+
 export function LoadError({
   message,
   pending = false,
@@ -8,19 +10,16 @@ export function LoadError({
   onRetry: () => void;
 }) {
   return (
-    <div
-      role="alert"
-      className="flex flex-col items-start gap-3 rounded-lg border border-red-300 p-4 text-sm text-red-700 dark:border-red-800 dark:text-red-300"
-    >
+    <div role="alert" className="ui-load-error">
       <p>{message}</p>
-      <button
-        type="button"
-        disabled={pending}
+      <Button
+        size="sm"
+        pending={pending}
+        pendingLabel="Wird geladen…"
         onClick={onRetry}
-        className="rounded border px-3 py-2 font-medium disabled:opacity-50"
       >
-        {pending ? "Wird geladen…" : "Erneut versuchen"}
-      </button>
+        Erneut versuchen
+      </Button>
     </div>
   );
 }

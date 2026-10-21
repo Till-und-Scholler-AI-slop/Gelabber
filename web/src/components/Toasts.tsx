@@ -1,29 +1,78 @@
-import { useToasts } from "./toasts.ts";
+import { CloseIcon, WarningIcon } from "./Icons.tsx";
+import { useToasts, type Toast } from "./toasts.ts";
+import { Button } from "./ui/Button.tsx";
+import { IconButton } from "./ui/IconButton.tsx";
+import "./ui/ui.css";
 
+/**
+ * Both live regions are always in the page, empty or not: a region that
+ * appears together with its first message is not announced by most screen
+ * readers. Notices are polite, errors interrupt.
+ */
 export function Toasts() {
-  const toasts = useToasts((state) => state.toasts);
+  return <ToastRegions toasts={useToasts((state) => state.toasts)} />;
+}
+
+export function ToastRegions({ toasts }: { toasts: Toast[] }) {
+  return (
+    <div className="gel-toasts">
+      <div role="status" className="gel-toasts__region">
+        {toasts
+          .filter((toast) => toast.tone === "info")
+          .map((toast) => (
+            <ToastCard key={toast.id} toast={toast} />
+          ))}
+      </div>
+      <div role="alert" className="gel-toasts__region">
+        {toasts
+          .filter((toast) => toast.tone === "error")
+          .map((toast) => (
+            <ToastCard key={toast.id} toast={toast} />
+          ))}
+      </div>
+    </div>
+  );
+}
+
+function ToastCard({ toast }: { toast: Toast }) {
   const dismiss = useToasts((state) => state.dismiss);
-  if (toasts.length === 0) return null;
+  const hold = useToasts((state) => state.hold);
+  const release = useToasts((state) => state.release);
   return (
     <div
-      aria-live="polite"
-      className="gel-toasts pointer-events-none fixed inset-x-0 z-50 flex flex-col items-center gap-2 px-4"
+      className={`ui-toast ui-toast--${toast.tone}`}
+      onPointerEnter={() => hold(toast.id, "hover")}
+      onPointerLeave={() => release(toast.id, "hover")}
+      onFocus={() => hold(toast.id, "focus")}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget))
+          release(toast.id, "focus");
+      }}
     >
-      {toasts.map((toast) => (
-        <button
-          key={toast.id}
-          type="button"
-          onClick={() => dismiss(toast.id)}
-          className={[
-            "pointer-events-auto rounded-lg px-4 py-2 text-sm shadow-lg",
-            toast.tone === "error"
-              ? "bg-red-600 text-white"
-              : "bg-neutral-900 dark:bg-neutral-700 text-white",
-          ].join(" ")}
+      {toast.tone === "error" ? (
+        <WarningIcon size={16} className="ui-toast__icon" />
+      ) : null}
+      <p className="ui-toast__message">{toast.message}</p>
+      {toast.action ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="ui-toast__action"
+          onClick={() => {
+            toast.action?.onClick();
+            dismiss(toast.id);
+          }}
         >
-          {toast.message}
-        </button>
-      ))}
+          {toast.action.label}
+        </Button>
+      ) : null}
+      <IconButton
+        size="sm"
+        label="Schließen"
+        className="ui-toast__close"
+        icon={<CloseIcon size={16} />}
+        onClick={() => dismiss(toast.id)}
+      />
     </div>
   );
 }

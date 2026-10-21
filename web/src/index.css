@@ -279,27 +279,6 @@ summary {
 .workspace-drawer::backdrop {
   background: var(--lr-backdrop);
 }
-.gel-modal {
-  max-height: calc(
-    100dvh - 32px - 2 * max(var(--lr-safe-top), var(--lr-safe-bottom))
-  );
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.gel-confirm-danger {
-  background: var(--lr-danger-bg);
-  color: #fff;
-}
-/* Notices sit bottom centre, above whatever owns the bottom edge. */
-.gel-toasts {
-  --lr-toast-floor: var(--lr-safe-bottom);
-  bottom: calc(16px + var(--lr-toast-floor));
-}
-/* New messages are announced top right, below the header line. */
-.gel-message-toasts {
-  top: calc(64px + var(--lr-safe-top));
-  right: calc(16px + var(--lr-safe-right));
-}
 .workspace-drawer-close {
   display: inline-flex;
   align-items: center;
@@ -1385,26 +1364,6 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
   }
   .living-room-title {
     font-size: 34px;
-  }
-}
-/* On phones, upright or on their side, the bottom edge belongs to the call
-   dock and, in a conversation, to the composer above it. */
-@media (max-width: 800px), (pointer: coarse) {
-  .has-active-media .gel-toasts {
-    /* No dock, and no space, where the call sits in the sidebar instead. */
-    --lr-toast-floor: max(var(--lr-media-space), var(--lr-safe-bottom));
-  }
-  .app-shell-workspace .gel-toasts {
-    /* One composer line, for browsers without anchor positioning. */
-    bottom: calc(74px + var(--lr-toast-floor));
-  }
-  @supports (anchor-name: --lr-composer) {
-    /* Centred over the content column, clear of a sidebar beside it. */
-    .app-shell-workspace .gel-toasts {
-      right: anchor(--lr-main right, 0px);
-      bottom: calc(16px + anchor(--lr-composer top, var(--lr-toast-floor)));
-      left: anchor(--lr-main left, 0px);
-    }
   }
 }
 @media (max-width: 370px) {

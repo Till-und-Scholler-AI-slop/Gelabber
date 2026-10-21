@@ -232,6 +232,7 @@ export function useMessageToastsBridge(): void {
           dm,
           channelLabel: label,
           author: message.author.name,
+          authorAvatar: message.author.avatar_url ?? null,
           mentioned,
           preview,
         });
