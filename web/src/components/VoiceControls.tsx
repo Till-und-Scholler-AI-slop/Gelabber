@@ -289,7 +289,7 @@ function ShareMenu({ canGoLive, liveTakenBy }: ShareProps) {
               : "Teilen"
         }
         onClick={() => setOpen((value) => !value)}
-        className={`${BUTTON} voice-control-share${live ? " voice-control-live" : on ? " is-on" : ""}`}
+        className={`${BUTTON}${live ? " voice-control-live" : on ? " is-on" : ""}`}
       >
         {live ? <LiveIcon size={17} /> : <ScreenIcon size={17} />}
         <ChevronIcon size={12} className="voice-control-caret" />
