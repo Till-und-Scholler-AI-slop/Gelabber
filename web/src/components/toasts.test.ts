@@ -111,6 +111,24 @@ describe("toast timing", () => {
     expect(shown()).toEqual([]);
   });
 
+  it("keeps every undo offer, even with the same text", () => {
+    const undone: string[] = [];
+    for (const id of ["a", "b"])
+      notify("Link widerrufen", {
+        action: { label: "Rückgängig", onClick: () => undone.push(id) },
+      });
+    notify("Kopiert.");
+    notify("Kopiert.");
+    const toasts = useToasts.getState().toasts;
+    expect(toasts.map((toast) => toast.message)).toEqual([
+      "Link widerrufen",
+      "Link widerrufen",
+      "Kopiert.",
+    ]);
+    for (const toast of toasts) toast.action?.onClick();
+    expect(undone).toEqual(["a", "b"]);
+  });
+
   it("carries an action for undo", () => {
     let undone = false;
     notify("Link widerrufen", {

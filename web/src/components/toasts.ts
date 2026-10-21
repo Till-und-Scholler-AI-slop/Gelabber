@@ -64,7 +64,12 @@ export const useToasts = create<ToastState>((set) => ({
   toasts: [],
   push: (tone, message, options = {}) => {
     const current = useToasts.getState().toasts;
-    if (current.some((t) => t.tone === tone && t.message === message))
+    // A burst of the same notice shows once. One with an action is its own
+    // offer: a second "Link widerrufen" undoes a different link.
+    if (
+      !options.action &&
+      current.some((t) => t.tone === tone && t.message === message && !t.action)
+    )
       return null;
     if (
       tone === "error" &&
