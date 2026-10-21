@@ -202,14 +202,6 @@ html[data-reduced-motion="true"] *::after {
   transition: none !important;
   scroll-behavior: auto !important;
 }
-.lr-submit {
-  background: var(--lr-accent);
-  color: var(--lr-accent-ink);
-}
-.lr-submit:hover:not(:disabled) {
-  background: var(--lr-accent);
-  filter: brightness(1.08);
-}
 @media (max-width: 1200px) {
   .community-overview__welcome {
     padding-inline: 28px;
