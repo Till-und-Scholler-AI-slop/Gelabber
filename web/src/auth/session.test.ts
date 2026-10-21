@@ -104,16 +104,18 @@ describe("session store", () => {
     expect(useSessionProblems.getState().retryAt).not.toBeNull();
 
     let answer: (response: Response) => void = () => {};
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() => new Promise<Response>((resolve) => (answer = resolve))),
+    const fetch = vi.fn(
+      () => new Promise<Response>((resolve) => (answer = resolve)),
     );
+    vi.stubGlobal("fetch", fetch);
     const retry = retrySession();
     expect(useSessionProblems.getState()).toMatchObject({
       bootstrap: problem,
       checking: true,
       retryAt: null,
     });
+    // The request goes out once the auth cookie lock is held.
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     answer(json(200, { user: ada, csrf_token: "back" }));
     await retry;
     expect(useSessionProblems.getState()).toMatchObject({
