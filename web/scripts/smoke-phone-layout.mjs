@@ -7,7 +7,7 @@
 //    is sent, and the field is as tall as the stylesheet makes it, also
 //    after the phone was turned;
 //  - a phone on its side in a call whose sound the browser blocks: "Ton
-//    starten" is on screen, in the sidebar's call card and in the dock.
+//    starten" is on screen in the call bar.
 // WebKit itself is not covered here; real phones remain device checks.
 // Run in web/: node scripts/smoke-phone-layout.mjs
 // GELABBER_PHONE_BROWSER_EXECUTABLE names a Chromium other than Playwright's.
@@ -358,10 +358,9 @@ const call = (page, container) =>
 
 async function blockedSound() {
   const sizes = [
-    // Wide enough for the sidebar and its call card.
-    [844, 390, ".voice-session-card"],
-    [915, 412, ".voice-session-card"],
-    // Narrower phones keep the dock.
+    // The call bar sits at the bottom at every width.
+    [844, 390, ".voice-session-dock"],
+    [915, 412, ".voice-session-dock"],
     [740, 360, ".voice-session-dock"],
     [667, 375, ".voice-session-dock"],
     // Upright: the row keeps its place below the controls.
@@ -437,7 +436,7 @@ try {
   console.log("PASS: the script's heights are the stylesheet's at every step");
   await blockedSound();
   console.log(
-    'PASS: "Ton starten" is on screen on a phone on its side, in the call card and in the dock',
+    'PASS: "Ton starten" is on screen on a phone on its side, in the call bar',
   );
   assert.deepEqual(problems, [], "the page reported errors");
   console.log(

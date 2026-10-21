@@ -665,14 +665,14 @@ try {
         unreadBefore + 1,
       );
       const mute = dock.getByRole("button", {
-        name: "Mikrofon aus",
+        name: "Stummschalten",
         exact: true,
       });
       await mute.focus();
       await page.keyboard.press("Enter");
       assert.equal(
         await dock
-          .getByRole("button", { name: "Mikrofon an", exact: true })
+          .getByRole("button", { name: "Stummschalten", exact: true })
           .getAttribute("aria-pressed"),
         "true",
       );
