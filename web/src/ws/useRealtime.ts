@@ -11,6 +11,7 @@ import { useSession } from "../auth/session.ts";
 import { notify } from "../components/toasts.ts";
 import { listDms } from "../dms/api.ts";
 import { dmKeys } from "../dms/queries.ts";
+import type { DirectMessage } from "../dms/types.ts";
 import { listServers } from "../servers/api.ts";
 import { serverKeys } from "../servers/queries.ts";
 import { applyChannelEvent, messageQueryOptions } from "../messages/queries.ts";
@@ -121,6 +122,17 @@ export function attachRealtimeRecovery(
           else query.setState({ data: undefined });
         }
         if (!discover) return;
+        // DMs already in the cached list are subscribed through the
+        // notification topics. The snapshot need not predate the resync: a
+        // replaced attempt or a list refetch may already have written it.
+        const cachedDms = client.getQueryData<DirectMessage[]>(
+          dmKeys.list(stamp.userId, stamp.generation),
+        );
+        const alreadyListed = new Set(
+          (Array.isArray(cachedDms) ? cachedDms : []).flatMap((dm) =>
+            typeof dm?.id === "string" && dm.id ? [dm.id] : [],
+          ),
+        );
         // Explicit queries also work when this socket has no known topics or
         // cached DM list. Cancelled older reads cannot swallow discovery.
         const dms = await client.fetchQuery({
@@ -138,18 +150,28 @@ export function attachRealtimeRecovery(
         if (!alive() || attempt !== version) return;
         const requested = new Set(announced);
         // Resync discovers DMs missed before notification delivery resumed.
+        // A DM that was already listed is subscribed through the notification
+        // topics: its cached history was reconciled by the invalidation above,
+        // an uncached one loads when opened, and unread state comes from read
+        // state. Only announced and newly listed DMs need a first history.
         const known = Array.isArray(dms) ? dms : [];
         for (const dm of known) {
           if (typeof dm.id !== "string" || !dm.id) continue;
+          // Idempotent: a topic that is already desired sends no frame.
+          gateway.addTopic({ s: dm.id, c: dm.id });
           if (
             !requested.has(dm.id) &&
-            client.getQueryData(
-              messageQueryOptions(client, stamp.userId, stamp.generation, dm.id)
-                .queryKey,
-            )
+            (alreadyListed.has(dm.id) ||
+              client.getQueryData(
+                messageQueryOptions(
+                  client,
+                  stamp.userId,
+                  stamp.generation,
+                  dm.id,
+                ).queryKey,
+              ))
           )
             continue;
-          gateway.addTopic({ s: dm.id, c: dm.id });
           await client.fetchInfiniteQuery({
             ...messageQueryOptions(
               client,

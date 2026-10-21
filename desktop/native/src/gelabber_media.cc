@@ -4,8 +4,10 @@
 #define GM_BUILDING 1
 #include "gelabber_media.h"
 #include "app_audio.h"
+#include "audio_device_switch.h"
 #include "capture_dsp.h"
 #include "local_video_source.h"
+#include "playout_limiter.h"
 
 #include "mediasoupclient.hpp"
 
@@ -35,13 +37,11 @@
 #include <api/video_codecs/video_decoder_factory_template_dav1d_adapter.h>
 #include <api/video_codecs/video_decoder_factory_template_libvpx_vp8_adapter.h>
 #include <api/video_codecs/video_decoder_factory_template_libvpx_vp9_adapter.h>
-#include <api/video_codecs/video_decoder_factory_template_open_h264_adapter.h>
 #include <api/video_codecs/video_encoder.h>
 #include <api/video_codecs/video_encoder_factory_template.h>
 #include <api/video_codecs/video_encoder_factory_template_libaom_av1_adapter.h>
 #include <api/video_codecs/video_encoder_factory_template_libvpx_vp8_adapter.h>
 #include <api/video_codecs/video_encoder_factory_template_libvpx_vp9_adapter.h>
-#include <api/video_codecs/video_encoder_factory_template_open_h264_adapter.h>
 #include <audio/utility/audio_frame_operations.h>
 #include <media/base/adapted_video_track_source.h>
 #include <modules/audio_processing/audio_buffer.h>
@@ -52,12 +52,17 @@
 #include <rtc_base/time_utils.h>
 
 #if defined(WEBRTC_LINUX)
-// Hardware H264 through GStreamer, behind libwebrtc's simulcast adapter. The
-// Windows libwebrtc package does not carry the adapter.
+// H264 through GStreamer: encoders behind libwebrtc's simulcast adapter
+// (which the Windows libwebrtc package does not carry), hardware decoders
+// behind its software fallback.
+#  include "gst_h264_decoder.h"
 #  include "gst_h264_encoder.h"
+#  include <api/video_codecs/video_decoder_software_fallback_wrapper.h>
 #  include <media/engine/simulcast_encoder_adapter.h>
 #endif
 #if defined(WEBRTC_WIN)
+// H264 through Media Foundation.
+#  include "mf_h264.h"
 #  include <rtc_base/win32_socket_init.h>
 #endif
 
@@ -535,6 +540,15 @@ namespace
 		return std::nullopt;
 	}
 
+	// The device to go back to when a switch away from `id` fails: that one,
+	// or the system default once it is gone.
+	std::optional<int> PreviousAudioDevice(const std::vector<AudioDeviceEntry>& devices, const std::string& id)
+	{
+		if (const auto index = FindAudioDevice(devices, id))
+			return index;
+		return FindAudioDevice(devices, "");
+	}
+
 	// Windows has two defaults. The system default is the console role:
 	// streams on the communications role make Windows turn every other
 	// application down for as long as they run.
@@ -835,9 +849,10 @@ namespace
 	// Between the audio device module and the voice engine. Capture runs
 	// through the APM (echo cancellation against the playout, noise
 	// suppression, the post-processor) here and goes to the microphone
-	// sources only, instead of to every send stream. Playout passes through
-	// to the engine's own transport, which also feeds the APM's echo
-	// reference.
+	// sources only, instead of to every send stream. Playout comes from the
+	// engine's own transport, which also feeds the APM's echo reference, and
+	// leaves through the playout limiter: the master gain of volumes above
+	// 100 % applies there, after the echo reference was taken.
 	class CaptureTransport : public webrtc::AudioTransport
 	{
 	public:
@@ -935,7 +950,8 @@ namespace
 		  int64_t* ntpTimeMs) override
 		{
 			if (auto* transport = render.load())
-				return transport->NeedMorePlayData(
+			{
+				const auto result = transport->NeedMorePlayData(
 				  samplesPerChannel,
 				  bytesPerSample,
 				  channels,
@@ -944,6 +960,12 @@ namespace
 				  samplesOut,
 				  elapsedTimeMs,
 				  ntpTimeMs);
+				// bytesPerSample is per frame, as for capture.
+				if (result == 0 && bytesPerSample == channels * sizeof(int16_t))
+					playout.Process(
+					  static_cast<int16_t*>(audio), std::min(samplesOut, samplesPerChannel), channels, sampleRate);
+				return result;
+			}
 			std::memset(audio, 0, samplesPerChannel * bytesPerSample);
 			samplesOut = samplesPerChannel;
 			return 0;
@@ -963,6 +985,11 @@ namespace
 				  bitsPerSample, sampleRate, channels, frames, audio, elapsedTimeMs, ntpTimeMs);
 		}
 
+		gelabber::PlayoutLimiter& Playout()
+		{
+			return playout;
+		}
+
 	private:
 		static void ApplyGain(webrtc::AudioFrame& target, float gain)
 		{
@@ -977,6 +1004,7 @@ namespace
 		const std::shared_ptr<gelabber::CaptureDsp> dsp;
 		const std::shared_ptr<MicrophoneHub> hub;
 		std::atomic<webrtc::AudioTransport*> render{ nullptr };
+		gelabber::PlayoutLimiter playout;
 		// Capture thread only.
 		webrtc::AudioFrame frame;
 		webrtc::AudioFrame stereoFrame;
@@ -1010,6 +1038,13 @@ namespace
 			if (!streamsRecording && inner->Recording())
 				inner->StopRecording();
 			return true;
+		}
+
+		// Whether capture should run, for a stream or for the test. The
+		// module itself may be stopped after a restart that failed.
+		bool CaptureWanted() const
+		{
+			return streamsRecording || monitoring;
 		}
 
 		// The voice pipeline sees its own recording state, so a stream
@@ -1294,14 +1329,15 @@ namespace
 		}
 	};
 
+	// libwebrtc's own encoders. Neither libwebrtc build carries H264
+	// (rtc_use_h264=false): H264 is the system's alone, see EncoderFactory.
 	using SoftwareEncoderFactory = webrtc::VideoEncoderFactoryTemplate<
-	  webrtc::OpenH264EncoderTemplateAdapter,
 	  webrtc::LibvpxVp8EncoderTemplateAdapter,
 	  webrtc::LibvpxVp9EncoderTemplateAdapter,
 	  webrtc::LibaomAv1EncoderTemplateAdapter>;
 
 	// A software encoder that holds libwebrtc to its simulcast layers. libvpx
-	// (VP8) and OpenH264 encode the layers of a producer in one encoder and
+	// (VP8) encodes the layers of a producer in one encoder and
 	// refuse a set in which a layer has not exactly the top layer's aspect
 	// (WEBRTC_VIDEO_CODEC_ERR_SIMULCAST_PARAMETERS_NOT_SUPPORTED): the frame
 	// has to divide by every layer's scaleResolutionDownBy. libwebrtc's own
@@ -1376,24 +1412,48 @@ namespace
 		const std::unique_ptr<webrtc::VideoEncoder> encoder;
 	};
 
-	// libwebrtc's software encoders. On Linux H264 moves to a hardware
-	// encoder (GStreamer: VA-API/NVENC) when the system has one. Hardware
-	// H264 runs per simulcast layer behind SimulcastEncoderAdapter, which
-	// also falls back to OpenH264 when the hardware encoder fails.
+	// The H264 formats the system's codecs take part in: Constrained
+	// Baseline and Baseline in packetization mode 1, which the router and
+	// every receiver have.
+	std::vector<webrtc::SdpVideoFormat> SystemH264Formats()
+	{
+		std::vector<webrtc::SdpVideoFormat> formats;
+		for (const char* profile : { "42e01f", "42001f" })
+			formats.emplace_back(
+			  "H264",
+			  webrtc::CodecParameterMap{ { "level-asymmetry-allowed", "1" },
+			                             { "packetization-mode", "1" },
+			                             { "profile-level-id", profile } });
+		return formats;
+	}
+
+	// libwebrtc's software encoders for VP8, VP9 and AV1, and H264 through
+	// the system where it has an encoder. Linux: GStreamer, a hardware
+	// element (VA-API/NVENC) else a software one, per simulcast layer behind
+	// SimulcastEncoderAdapter, which hands a failing hardware encoder over to
+	// the software element. Windows: Media Foundation, the GPU's encoder
+	// else Microsoft's software one.
 	class EncoderFactory : public webrtc::VideoEncoderFactory
 	{
 	public:
 		EncoderFactory()
 		{
+#if defined(WEBRTC_WIN)
+			const auto& codecs = gelabber::FindMfH264Codecs();
+			if (!codecs.encoder.empty())
+				h264 = SystemH264Formats();
+			h264Hardware = codecs.hardwareEncoder;
+#endif
 #if defined(WEBRTC_LINUX)
 			const auto element = gelabber::FindGstH264Encoder();
 			if (!element.empty())
 			{
-				std::vector<webrtc::SdpVideoFormat> h264;
-				for (const auto& format : software.GetSupportedFormats())
-					if (lower(format.name) == "h264")
-						h264.push_back(format);
-				hardware = gelabber::CreateGstH264EncoderFactory(element, std::move(h264));
+				h264         = SystemH264Formats();
+				h264Hardware = gelabber::IsHardwareH264Encoder(element);
+				primary      = gelabber::CreateGstH264EncoderFactory(element, h264);
+				if (const auto software = gelabber::FindGstH264SoftwareEncoder();
+				    h264Hardware && !software.empty())
+					fallback = gelabber::CreateGstH264EncoderFactory(software, h264);
 				RTC_LOG(LS_INFO) << "H264 encoder: GStreamer " << element;
 			}
 #endif
@@ -1401,22 +1461,39 @@ namespace
 
 		std::vector<webrtc::SdpVideoFormat> GetSupportedFormats() const override
 		{
-			return software.GetSupportedFormats();
+			auto formats = software.GetSupportedFormats();
+			formats.insert(formats.end(), h264.begin(), h264.end());
+			return formats;
 		}
 
 		CodecSupport QueryCodecSupport(
 		  const webrtc::SdpVideoFormat& format, std::optional<std::string> scalabilityMode) const override
 		{
-			return software.QueryCodecSupport(format, scalabilityMode);
+			if (lower(format.name) != "h264")
+				return software.QueryCodecSupport(format, scalabilityMode);
+			CodecSupport support;
+			support.is_supported = !h264.empty() && format.IsCodecInList(h264) &&
+			                       (!scalabilityMode || *scalabilityMode == "L1T1");
+			support.is_power_efficient = support.is_supported && h264Hardware;
+			return support;
 		}
 
 		std::unique_ptr<webrtc::VideoEncoder> Create(
 		  const webrtc::Environment& env, const webrtc::SdpVideoFormat& format) override
 		{
-#if defined(WEBRTC_LINUX)
-			if (hardware && lower(format.name) == "h264")
-				return std::make_unique<webrtc::SimulcastEncoderAdapter>(env, hardware.get(), &software, format);
+			if (lower(format.name) == "h264")
+			{
+				if (h264.empty())
+					return nullptr;
+#if defined(WEBRTC_WIN)
+				return gelabber::CreateMfH264Encoder();
+#elif defined(WEBRTC_LINUX)
+				return std::make_unique<webrtc::SimulcastEncoderAdapter>(
+				  env, primary.get(), fallback.get(), format);
+#else
+				return nullptr;
 #endif
+			}
 			auto encoder = software.Create(env, format);
 			if (!encoder)
 				return nullptr;
@@ -1425,8 +1502,77 @@ namespace
 
 	private:
 		SoftwareEncoderFactory software;
+		std::vector<webrtc::SdpVideoFormat> h264;
+		bool h264Hardware{ false };
 #if defined(WEBRTC_LINUX)
-		std::unique_ptr<webrtc::VideoEncoderFactory> hardware;
+		std::unique_ptr<webrtc::VideoEncoderFactory> primary;
+		std::unique_ptr<webrtc::VideoEncoderFactory> fallback;
+#endif
+	};
+
+	using SoftwareDecoderFactory = webrtc::VideoDecoderFactoryTemplate<
+	  webrtc::LibvpxVp8DecoderTemplateAdapter,
+	  webrtc::LibvpxVp9DecoderTemplateAdapter,
+	  webrtc::Dav1dDecoderTemplateAdapter>;
+
+	// libwebrtc's software decoders for VP8, VP9 and AV1, and H264 through
+	// the system where it has a decoder. Linux: GStreamer, a hardware
+	// element (NVDEC/VA-API) behind a software element it hands over to when
+	// it fails, else the software element alone. Windows: Microsoft's
+	// decoder, on the GPU through DXVA where it can.
+	class DecoderFactory : public webrtc::VideoDecoderFactory
+	{
+	public:
+		DecoderFactory()
+		{
+#if defined(WEBRTC_WIN)
+			if (!gelabber::FindMfH264Codecs().decoder.empty())
+				h264 = SystemH264Formats();
+#endif
+#if defined(WEBRTC_LINUX)
+			element = gelabber::FindGstH264Decoder();
+			if (!element.empty())
+			{
+				h264 = SystemH264Formats();
+				if (gelabber::IsHardwareH264Decoder(element))
+					fallback = gelabber::FindGstH264SoftwareDecoder();
+				RTC_LOG(LS_INFO) << "H264 decoder: GStreamer " << element;
+			}
+#endif
+		}
+
+		std::vector<webrtc::SdpVideoFormat> GetSupportedFormats() const override
+		{
+			auto formats = software.GetSupportedFormats();
+			formats.insert(formats.end(), h264.begin(), h264.end());
+			return formats;
+		}
+
+		std::unique_ptr<webrtc::VideoDecoder> Create(
+		  const webrtc::Environment& env, const webrtc::SdpVideoFormat& format) override
+		{
+			if (lower(format.name) != "h264")
+				return software.Create(env, format);
+			if (h264.empty())
+				return nullptr;
+#if defined(WEBRTC_WIN)
+			return gelabber::CreateMfH264Decoder();
+#elif defined(WEBRTC_LINUX)
+			if (fallback.empty())
+				return gelabber::CreateGstH264Decoder(element, false);
+			return webrtc::CreateVideoDecoderSoftwareFallbackWrapper(
+			  env, gelabber::CreateGstH264Decoder(fallback, false), gelabber::CreateGstH264Decoder(element, true));
+#else
+			return nullptr;
+#endif
+		}
+
+	private:
+		SoftwareDecoderFactory software;
+		std::vector<webrtc::SdpVideoFormat> h264;
+#if defined(WEBRTC_LINUX)
+		std::string element;
+		std::string fallback;
 #endif
 	};
 
@@ -1469,6 +1615,9 @@ struct gm_engine
 	std::mutex audioMutex;
 	std::string inputId;
 	std::string outputId;
+	// The audio consumers and their volumes (ApplyPlaybackVolumes).
+	std::mutex playbackMutex;
+	std::vector<gm_consumer*> audioConsumers;
 
 	mediasoupclient::PeerConnection::Options Options() const
 	{
@@ -1542,14 +1691,47 @@ struct gm_producer
 
 struct gm_consumer
 {
+	gm_engine* engine{ nullptr };
 	mediasoupclient::Consumer* consumer{ nullptr };
 	std::unique_ptr<FrameCounter> counter;
 	std::unique_ptr<AudioLevelSink> audio;
 	std::string id;
+	// Audio: the volume asked for (0..2), and the one its receive stream
+	// plays at (libwebrtc starts it at 1). Under the engine's playbackMutex.
+	double volume{ 1.0 };
+	double streamVolume{ 1.0 };
 };
 
 namespace
 {
+	// Playback above 100 % (#223). libwebrtc scales a receive stream with
+	// saturation, so a loud speaker clips on its own above 1. The largest
+	// volume above 1 is therefore the master gain of the playout limiter,
+	// after the mix, and every stream plays at its volume over that gain:
+	// each still ends at its own volume, and only the sum can reach the
+	// limiter. Without the platform device module there is no playout to
+	// limit, and streams take their volume as it is. Called with the
+	// engine's playbackMutex held.
+	void ApplyPlaybackVolumes(gm_engine& engine)
+	{
+		double master = 1.0;
+		if (engine.monitor)
+			for (const auto* consumer : engine.audioConsumers)
+				master = std::max(master, consumer->volume);
+		for (auto* consumer : engine.audioConsumers)
+		{
+			const double stream = consumer->volume / master;
+			if (stream == consumer->streamVolume)
+				continue;
+			// RemoteAudioSource scales the decoded audio by this factor.
+			static_cast<webrtc::AudioTrackInterface*>(consumer->consumer->GetTrack())
+			  ->GetSource()
+			  ->SetVolume(stream);
+			consumer->streamVolume = stream;
+		}
+		engine.capture->Playout().SetGain(master);
+	}
+
 	std::string CaptureMode(const json& options)
 	{
 		auto mode = options.value("processingMode", std::string("enhanced"));
@@ -1649,7 +1831,6 @@ gm_engine* gm_engine_new(const char* optionsJson)
 		}
 
 
-		// TODO(desktop): hardware H264 decoding.
 		engine->factory = webrtc::CreatePeerConnectionFactory(
 		  engine->network.get(),
 		  engine->worker.get(),
@@ -1658,11 +1839,7 @@ gm_engine* gm_engine_new(const char* optionsJson)
 		  webrtc::CreateBuiltinAudioEncoderFactory(),
 		  webrtc::CreateBuiltinAudioDecoderFactory(),
 		  std::make_unique<EncoderFactory>(),
-		  std::make_unique<webrtc::VideoDecoderFactoryTemplate<
-		    webrtc::OpenH264DecoderTemplateAdapter,
-		    webrtc::LibvpxVp8DecoderTemplateAdapter,
-		    webrtc::LibvpxVp9DecoderTemplateAdapter,
-		    webrtc::Dav1dDecoderTemplateAdapter>>(),
+		  std::make_unique<DecoderFactory>(),
 		  nullptr,
 		  engine->apm);
 		if (!engine->factory)
@@ -1733,46 +1910,102 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 
 		std::string error;
 		engine->worker->BlockingCall([&] {
+			// The inner module, not the monitor: the monitor's StopRecording
+			// holds back while the microphone test runs, and the module then
+			// refuses another device.
 			auto& adm = *engine->adm;
+			// The selected ids change only here, on the worker.
+			std::string inputId, outputId;
+			{
+				std::lock_guard lock(engine->audioMutex);
+				inputId  = engine->inputId;
+				outputId = engine->outputId;
+			}
 			if (input)
 			{
-				const auto id    = options["input"].get<std::string>();
-				const auto index = FindAudioDevice(RecordingDevices(adm), id);
+				const auto id      = options["input"].get<std::string>();
+				const auto devices = RecordingDevices(adm);
+				const auto index   = FindAudioDevice(devices, id);
 				if (!index)
 				{
 					error = "unknown input device " + id;
 					return;
 				}
-				const bool running = adm.Recording();
-				if (running)
-					adm.StopRecording();
-				if (SelectRecordingDevice(adm, *index) != 0)
-					error = "cannot select input device " + id;
-				if (running && (adm.InitRecording() != 0 || adm.StartRecording() != 0))
-					error = "cannot restart capture on " + id;
-				if (!error.empty())
-					return;
+				// Whether capture should run, not whether the module runs: a
+				// restart that failed before is tried again, which the page's
+				// fallback to the default device relies on.
+				const bool wanted = engine->monitor ? engine->monitor->CaptureWanted() : adm.Recording();
+				const gelabber::DeviceOps ops{
+					[&] { return adm.StopRecording(); },
+					[&] { return adm.RecordingIsInitialized(); },
+					[&](int device) { return SelectRecordingDevice(adm, device); },
+					[&] { return adm.InitRecording(); },
+					[&] { return adm.StartRecording(); },
+				};
+				// Once the previous device is unplugged, a rollback goes to
+				// the default (PreviousAudioDevice).
+				const bool previousListed = FindAudioDevice(devices, inputId).has_value();
+				switch (gelabber::SwitchDevice(ops, wanted, *index, PreviousAudioDevice(devices, inputId)))
+				{
+					case gelabber::SwitchResult::Switched:
+						break;
+					case gelabber::SwitchResult::KeptPrevious:
+						if (previousListed)
+							error = "cannot use input device " + id + ", kept the previous one";
+						else
+						{
+							std::lock_guard lock(engine->audioMutex);
+							engine->inputId = "";
+							error = "cannot use input device " + id + ", fell back to the default device";
+						}
+						return;
+					case gelabber::SwitchResult::Stopped:
+						error = wanted ? "cannot restart capture on " + id : "cannot select input device " + id;
+						return;
+				}
 				std::lock_guard lock(engine->audioMutex);
 				engine->inputId = id;
 			}
 			if (output)
 			{
-				const auto id    = options["output"].get<std::string>();
-				const auto index = FindAudioDevice(PlayoutDevices(adm), id);
+				const auto id      = options["output"].get<std::string>();
+				const auto devices = PlayoutDevices(adm);
+				const auto index   = FindAudioDevice(devices, id);
 				if (!index)
 				{
 					error = "unknown output device " + id;
 					return;
 				}
-				const bool running = adm.Playing();
-				if (running)
-					adm.StopPlayout();
-				if (SelectPlayoutDevice(adm, *index) != 0)
-					error = "cannot select output device " + id;
-				if (running && (adm.InitPlayout() != 0 || adm.StartPlayout() != 0))
-					error = "cannot restart playout on " + id;
-				if (!error.empty())
-					return;
+				// The monitor passes playout through: the voice pipeline sees
+				// the module's own state and starts it again for its next
+				// stream.
+				const bool wanted = adm.Playing();
+				const gelabber::DeviceOps ops{
+					[&] { return adm.StopPlayout(); },
+					[&] { return adm.PlayoutIsInitialized(); },
+					[&](int device) { return SelectPlayoutDevice(adm, device); },
+					[&] { return adm.InitPlayout(); },
+					[&] { return adm.StartPlayout(); },
+				};
+				const bool previousListed = FindAudioDevice(devices, outputId).has_value();
+				switch (gelabber::SwitchDevice(ops, wanted, *index, PreviousAudioDevice(devices, outputId)))
+				{
+					case gelabber::SwitchResult::Switched:
+						break;
+					case gelabber::SwitchResult::KeptPrevious:
+						if (previousListed)
+							error = "cannot use output device " + id + ", kept the previous one";
+						else
+						{
+							std::lock_guard lock(engine->audioMutex);
+							engine->outputId = "";
+							error = "cannot use output device " + id + ", fell back to the default device";
+						}
+						return;
+					case gelabber::SwitchResult::Stopped:
+						error = wanted ? "cannot restart playout on " + id : "cannot select output device " + id;
+						return;
+				}
 				std::lock_guard lock(engine->audioMutex);
 				engine->outputId = id;
 			}
@@ -1804,13 +2037,19 @@ int gm_audio_monitor(gm_engine* engine, const char* optionsJson)
 char* gm_audio_levels(gm_engine* engine)
 {
 	return guarded<char*>(nullptr, [&] {
-		const auto levels = engine->dsp->Levels();
+		const auto levels  = engine->dsp->Levels();
+		const auto playout = engine->capture->Playout().Levels();
 		return dupString(json{ { "input", levels.raw },
 		                       { "processed", levels.processed },
 		                       { "clipping", levels.clipping },
 		                       { "denoised", levels.denoised },
 		                       { "blocks", levels.blocks },
-		                       { "channels", levels.channels } }
+		                       { "channels", levels.channels },
+		                       { "playout",
+		                         { { "gain", playout.gain },
+		                           { "peak", playout.peak },
+		                           { "reduction", playout.reduction },
+		                           { "windows", playout.windows } } } }
 		                   .dump());
 	});
 }
@@ -2069,6 +2308,27 @@ gm_source* gm_source_new_app_audio(gm_engine* engine, const char* optionsJson)
 		auto* out     = new gm_source{ engine, track, nullptr };
 		out->appAudio = std::move(capture);
 		return out;
+	});
+}
+
+char* gm_video_codecs(void)
+{
+	return guarded<char*>(nullptr, [&] {
+		json h264 = nullptr;
+#if defined(WEBRTC_LINUX)
+		// The same choice the engine's factories make; GStreamer loads once.
+		const auto encoder = gelabber::FindGstH264Encoder();
+		const auto decoder = gelabber::FindGstH264Decoder();
+		h264 = { { "encoder", encoder.empty() ? json(nullptr) : json(encoder) },
+			     { "hardwareEncoder", gelabber::IsHardwareH264Encoder(encoder) },
+			     { "decoder", decoder.empty() ? json(nullptr) : json(decoder) } };
+#elif defined(WEBRTC_WIN)
+		const auto& codecs = gelabber::FindMfH264Codecs();
+		h264 = { { "encoder", codecs.encoder.empty() ? json(nullptr) : json(codecs.encoder) },
+			     { "hardwareEncoder", codecs.hardwareEncoder },
+			     { "decoder", codecs.decoder.empty() ? json(nullptr) : json(codecs.decoder) } };
+#endif
+		return dupString(json({ { "h264", h264 } }).dump());
 	});
 }
 
@@ -2398,6 +2658,7 @@ gm_consumer* gm_transport_consume(gm_transport* transport, const char* consumerJ
 		  &rtp,
 		  params.value("appData", json::object()));
 		auto out      = std::make_unique<gm_consumer>();
+		out->engine   = transport->device->engine;
 		out->consumer = consumer;
 		out->id       = consumer->GetId();
 		if (consumer->GetKind() == "video")
@@ -2411,6 +2672,10 @@ gm_consumer* gm_transport_consume(gm_transport* transport, const char* consumerJ
 			out->audio  = std::make_unique<AudioLevelSink>();
 			auto* track = static_cast<webrtc::AudioTrackInterface*>(consumer->GetTrack());
 			track->AddSink(out->audio.get());
+			// At 1 like a new stream, under a master gain already above it.
+			std::lock_guard lock(out->engine->playbackMutex);
+			out->engine->audioConsumers.push_back(out.get());
+			ApplyPlaybackVolumes(*out->engine);
 		}
 		return out.release();
 	});
@@ -2430,6 +2695,10 @@ void gm_consumer_free(gm_consumer* consumer)
 		{
 			auto* track = static_cast<webrtc::AudioTrackInterface*>(consumer->consumer->GetTrack());
 			track->RemoveSink(consumer->audio.get());
+			// The master gain may drop with it.
+			std::lock_guard lock(consumer->engine->playbackMutex);
+			std::erase(consumer->engine->audioConsumers, consumer);
+			ApplyPlaybackVolumes(*consumer->engine);
 		}
 		if (!consumer->consumer->IsClosed())
 			consumer->consumer->Close();
@@ -2536,9 +2805,9 @@ int gm_consumer_set_volume(gm_consumer* consumer, double volume)
 			throw std::invalid_argument("volume needs an audio consumer");
 		if (!std::isfinite(volume))
 			throw std::invalid_argument("volume must be a number");
-		auto* track = static_cast<webrtc::AudioTrackInterface*>(consumer->consumer->GetTrack());
-		// RemoteAudioSource scales the decoded audio by this factor (0..10).
-		track->GetSource()->SetVolume(std::clamp(volume, 0.0, 2.0));
+		std::lock_guard lock(consumer->engine->playbackMutex);
+		consumer->volume = std::clamp(volume, 0.0, 2.0);
+		ApplyPlaybackVolumes(*consumer->engine);
 		return 0;
 	});
 }

@@ -7,6 +7,7 @@
    fetch, localStorage, getComputedStyle, self, NotificationEvent, setTimeout,
    ServiceWorkerRegistration */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   mkdtemp,
   readFile,
@@ -86,6 +87,15 @@ async function contextFor(
   // Isolated fixture responses; this smoke neither connects to a database nor
   // creates real accounts. Real browser and worker behavior remains unmocked.
   let signedIn = authenticated;
+  // What the shell's Content-Security-Policy refused in this document.
+  await context.addInitScript(() => {
+    window.pwaViolations = [];
+    document.addEventListener("securitypolicyviolation", (event) =>
+      window.pwaViolations.push(
+        `${event.effectiveDirective} ${event.blockedURI}`,
+      ),
+    );
+  });
   await context.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/auth/logout") signedIn = false;
@@ -138,6 +148,7 @@ async function until(check, message) {
   }
   assert.fail(message);
 }
+const violations = (page) => page.evaluate(() => window.pwaViolations);
 const controlled = (page) =>
   page.waitForFunction(
     () => navigator.serviceWorker.controller !== null,
@@ -169,8 +180,29 @@ const get = (path, headers = {}) =>
     redirect: "manual",
   });
 
+// web/nginx.conf sends these from every location, 404s included.
+function secured(response, what) {
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff", what);
+  assert.equal(response.headers.get("referrer-policy"), "same-origin", what);
+  assert.equal(response.headers.get("x-frame-options"), "DENY", what);
+  assert.match(
+    response.headers.get("permissions-policy") ?? "",
+    /^geolocation=\(\), /,
+    what,
+  );
+}
+
 async function serving() {
   const html = await (await get("/")).text();
+  // The built shell's inline script must be the one the policy pins, or the
+  // browser refuses it and the page shows the wrong theme until the app runs.
+  const inline = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)]
+    .filter(([, attributes]) => !/\ssrc=/.test(attributes))
+    .map(
+      ([, , body]) =>
+        `'sha256-${createHash("sha256").update(body).digest("base64")}'`,
+    );
+  assert.equal(inline.length, 1, "the shell has one inline script");
   for (const path of [
     "/",
     "/login",
@@ -187,6 +219,17 @@ async function serving() {
       `${path}: no browser may keep the app shell`,
     );
     assert.equal(response.headers.get("content-encoding"), "gzip", path);
+    const policy = response.headers.get("content-security-policy") ?? "";
+    assert.match(
+      policy,
+      /^script-src 'self' 'wasm-unsafe-eval' /,
+      `${path}: the app shell comes with its Content-Security-Policy`,
+    );
+    assert(
+      policy.split(";")[0].split(" ").includes(inline[0]),
+      `${path}: the policy does not pin the built shell's inline script ${inline[0]}`,
+    );
+    secured(response, path);
     assert.equal(await response.text(), html, path);
   }
 
@@ -215,6 +258,7 @@ async function serving() {
       asset.endsWith(".js") ? /javascript/ : /text\/css/,
       asset,
     );
+    secured(response, asset);
     await response.arrayBuffer();
   }
   for (const missing of [
@@ -235,6 +279,7 @@ async function serving() {
       /immutable|max-age/,
       `${missing}: the 404 must not be cacheable for a year`,
     );
+    secured(response, missing);
     await response.arrayBuffer();
   }
 
@@ -249,6 +294,15 @@ async function serving() {
   assert.equal(worker.headers.get("cache-control"), "no-cache");
   const offline = await get("/offline.html");
   assert.equal(offline.headers.get("cache-control"), "no-cache");
+  for (const [path, response] of [
+    ["/manifest.webmanifest", manifest],
+    ["/sw.js", worker],
+    ["/offline.html", offline],
+  ]) {
+    secured(response, path);
+    // Only the shell has a policy; the offline page runs inline scripts.
+    assert.equal(response.headers.get("content-security-policy"), null, path);
+  }
 
   // The tab icon used to be a 2 MB banner.
   const icon = html.match(/<link\s+rel="icon"[^>]*\shref="([^"]+)"/)?.[1];
@@ -268,7 +322,7 @@ async function serving() {
     "the built shell must ask for the manifest with cookies",
   );
   console.log(
-    "PASS: app shell never stored (no-store), hashed assets immutable and gzip, missing files 404, small favicon",
+    "PASS: app shell never stored (no-store) and sent with its Content-Security-Policy, security headers everywhere, hashed assets immutable and gzip, missing files 404, small favicon",
   );
 }
 
@@ -283,6 +337,11 @@ async function androidInstallAndOffline() {
   await page.goto(url("/login"));
   await installHeading(page).waitFor();
   await controlled(page);
+  assert.deepEqual(
+    await violations(page),
+    [],
+    "the shell must start under its Content-Security-Policy",
+  );
   const cdp = await android.newCDPSession(page);
   const manifest = await cdp.send("Page.getAppManifest");
   assert.deepEqual(
@@ -888,6 +947,9 @@ async function messageNotifications() {
   );
   await page.evaluate(() => window.pwaBackground(false));
   await second.evaluate(() => window.pwaBackground(false));
+  // The signed-in app, its toasts and notifications ran under the policy.
+  assert.deepEqual(await violations(page), []);
+  assert.deepEqual(await violations(second), []);
 
   // Signing out in any window takes the account's notifications along.
   await signOut.click();

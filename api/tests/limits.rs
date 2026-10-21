@@ -197,3 +197,69 @@ async fn avatar_uploads_count_against_the_upload_rate(pool: PgPool) {
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
     assert_eq!(body["error"], "rate_limited");
 }
+
+#[sqlx::test]
+async fn avatar_and_banner_bytes_count_against_the_daily_quota(pool: PgPool) {
+    let png = gelabber_api::image_size::fixtures::png(64, 64);
+    let size = png.len() as i64;
+    // Room for both images and ten bytes more.
+    let quota = (2 * size + 10).to_string();
+    let mut client = Client::from_state(state_with(
+        pool.clone(),
+        &[("API_UPLOAD_QUOTA_BYTES_PER_DAY", quota.as_str())],
+    ));
+    client.bootstrap().await;
+    let res = client
+        .register("ada@example.com", "password123", "Ada")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let uid: uuid::Uuid = client.user_id().parse().unwrap();
+
+    for path in ["/api/me/avatar", "/api/me/banner"] {
+        let (status, body) = client
+            .send_bytes(Method::PUT, path, "image/png", png.clone())
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let (status, body) = client
+        .send_bytes(Method::PUT, "/api/me/avatar", "image/png", png)
+        .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(body["error"], "quota_exceeded");
+    // Denied before its pending cleanup row or the PUT.
+    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM storage_cleanup")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(pending, 0);
+
+    // Attachments draw on the same day's bytes.
+    let server = create_server(&mut client).await;
+    let channel = text_channel_id(&server);
+    let denied = client
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel}/attachments"),
+            Some(json!({
+                "filename": "a.txt",
+                "content_type": "text/plain",
+                "size": 11,
+            })),
+        )
+        .await;
+    assert_eq!(
+        denied.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        denied.body
+    );
+    assert_eq!(denied.body["error"], "quota_exceeded");
+
+    let (reserved, consumed): (i64, i64) =
+        sqlx::query_as("SELECT reserved, consumed FROM upload_daily_usage WHERE uploader_id = $1")
+            .bind(uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((reserved, consumed), (0, 2 * size));
+}

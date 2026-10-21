@@ -339,8 +339,9 @@ async fn delete_server(
             .bind(server_id)
             .fetch_all(&mut *tx)
             .await?;
+    let channel_ids = moderation::channel_ids(&mut tx, server_id).await?;
     for uid in members {
-        moderation::after_removal(&state, &mut tx, server_id, uid, "not_found").await?;
+        moderation::after_removal_with(&state, server_id, uid, &channel_ids, "not_found").await?;
     }
     sqlx::query("DELETE FROM servers WHERE id = $1")
         .bind(server_id)

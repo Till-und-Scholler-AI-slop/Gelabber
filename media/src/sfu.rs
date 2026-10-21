@@ -138,10 +138,51 @@ enum StopResource {
     Publication(Arc<Publication>),
     Subscription(Arc<Subscription>),
 }
-#[derive(Default)]
 struct RoomData {
     peers: HashMap<PeerId, PeerData>,
     publications: HashMap<String, Arc<Publication>>,
+    /// The common video codecs as last announced (`ServerFrame::Codecs`),
+    /// and how often they changed.
+    video_codecs: Vec<String>,
+    codecs_revision: u64,
+}
+impl Default for RoomData {
+    /// What a room without receivers has: every router codec. Peers that
+    /// state no capabilities change nothing, so no frame goes out for them.
+    fn default() -> Self {
+        Self {
+            peers: HashMap::new(),
+            publications: HashMap::new(),
+            video_codecs: common_video_codecs(std::iter::empty()),
+            codecs_revision: 0,
+        }
+    }
+}
+impl RoomData {
+    /// Recomputes the common video codecs; the peers to tell and the frame
+    /// when they changed. `except` gets them in its RPC result instead.
+    fn update_video_codecs(
+        &mut self,
+        except: Option<PeerId>,
+    ) -> Option<(Vec<Arc<Peer>>, ServerFrame)> {
+        let next = common_video_codecs(self.peers.values().filter_map(|p| p.capabilities.as_ref()));
+        if next == self.video_codecs {
+            return None;
+        }
+        self.video_codecs = next;
+        self.codecs_revision += 1;
+        let peers = self
+            .peers
+            .iter()
+            .filter(|(id, _)| Some(**id) != except)
+            .map(|(_, p)| p.peer.clone())
+            .collect();
+        let frame = ServerFrame::Codecs {
+            video: self.video_codecs.clone(),
+            revision: self.codecs_revision,
+        };
+        Some((peers, frame))
+    }
 }
 struct Room {
     router: OnceCell<Router>,
@@ -249,6 +290,10 @@ impl Sfu {
     }
     pub fn room_count(&self) -> usize {
         self.counters.rooms.load(Ordering::Relaxed)
+    }
+    /// The engine's one reconnecting Redis connection, for the join path.
+    pub fn redis(&self) -> &crate::redis_connection::CachedRedis {
+        &self.redis
     }
     pub fn metrics_text(&self) -> String {
         let c = &self.counters;
@@ -463,9 +508,13 @@ impl Sfu {
                     return Err(SfuError::BadAnnounce);
                 }
                 p.capabilities = Some(caps);
+                let changed = data.update_video_codecs(Some(id));
+                let codecs =
+                    json!({ "video": data.video_codecs, "revision": data.codecs_revision });
                 drop(data);
+                self.announce_video_codecs(changed);
                 self.schedule_attach(channel, id).await;
-                Ok(json!({}))
+                Ok(json!({ "codecs": codecs }))
             }
             ClientFrame::CreateTransport { direction, .. } => {
                 let send = direction == TransportDirection::Send;
@@ -666,6 +715,7 @@ impl Sfu {
                     let RoomData {
                         peers,
                         publications,
+                        ..
                     } = &mut *data;
                     peers.get_mut(&id).is_some_and(|p| {
                         note_consumer_failure(
@@ -1638,13 +1688,29 @@ impl Sfu {
         // Sources are stopped and Live leases released above. Final transport
         // samples are optional and concurrent, bounded to 500ms total.
         join_all(transports.iter().map(|t| self.sample_transport(t))).await;
-        if let Some(p) = room.data.lock().await.peers.remove(&id) {
-            self.counters
-                .transports
-                .fetch_sub(p.transports.len(), Ordering::Relaxed);
-            self.counters.peers.fetch_sub(1, Ordering::Relaxed);
-        }
+        let changed = {
+            let mut data = room.data.lock().await;
+            let removed = data.peers.remove(&id);
+            if let Some(p) = &removed {
+                self.counters
+                    .transports
+                    .fetch_sub(p.transports.len(), Ordering::Relaxed);
+                self.counters.peers.fetch_sub(1, Ordering::Relaxed);
+            }
+            removed.and_then(|_| data.update_video_codecs(None))
+        };
+        // The one who could not decode the others' codec left: they may
+        // send a better one again.
+        self.announce_video_codecs(changed);
         self.remove_empty_room(channel, &room).await;
+    }
+    fn announce_video_codecs(self: &Arc<Self>, changed: Option<(Vec<Arc<Peer>>, ServerFrame)>) {
+        let Some((peers, frame)) = changed else {
+            return;
+        };
+        for peer in peers {
+            self.emit(&peer, frame.clone());
+        }
     }
     async fn remove_empty_room(&self, channel: Uuid, room: &Arc<Room>) {
         let mut rooms = self.rooms.lock().await;
@@ -2046,11 +2112,7 @@ fn validate_parameters(kind: SourceKind, rtp: &RtpParameters) -> Result<(), SfuE
     {
         return Err(SfuError::BadAnnounce);
     }
-    let first = serde_json::to_value(&rtp.codecs[0]).map_err(SfuError::negotiation)?;
-    let mime = first["mimeType"]
-        .as_str()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+    let mime = rtp.codecs[0].mime_type().as_str().to_ascii_lowercase();
     if kind.is_video() {
         if !matches!(
             mime.as_str(),
@@ -2062,6 +2124,43 @@ fn validate_parameters(kind: SourceKind, rtp: &RtpParameters) -> Result<(), SfuE
         return Err(SfuError::UnsupportedCodec);
     }
     Ok(())
+}
+/// The router's video codecs, in its order, that every one of `receivers`
+/// can decode; all of them without receivers. H264 counts in the form
+/// publishers send it: packetization mode 1, Constrained Baseline (profile
+/// 0x42 with constraint_set1), the profile every WebRTC H264 decoder has
+/// and the one mediasoup matches a 42e01f producer against.
+fn common_video_codecs<'a>(receivers: impl Iterator<Item = &'a RtpCapabilities>) -> Vec<String> {
+    const ROUTER: [&str; 4] = ["video/vp8", "video/vp9", "video/h264", "video/av1"];
+    let mut common: Vec<&str> = ROUTER.to_vec();
+    for caps in receivers {
+        let decodes: Vec<String> = caps
+            .codecs
+            .iter()
+            .filter_map(|codec| serde_json::to_value(codec).ok())
+            .filter(|codec| {
+                let mime = codec["mimeType"].as_str().unwrap_or_default();
+                if !mime.eq_ignore_ascii_case("video/h264") {
+                    return true;
+                }
+                let parameters = &codec["parameters"];
+                let mode = parameters["packetization-mode"].as_u64().unwrap_or(0);
+                let profile = parameters["profile-level-id"].as_str().unwrap_or("42001f");
+                let constrained = profile
+                    .get(2..4)
+                    .and_then(|iop| u8::from_str_radix(iop, 16).ok())
+                    .is_some_and(|iop| iop & 0x40 != 0);
+                mode == 1
+                    && constrained
+                    && profile
+                        .get(..2)
+                        .is_some_and(|p| p.eq_ignore_ascii_case("42"))
+            })
+            .filter_map(|codec| codec["mimeType"].as_str().map(str::to_ascii_lowercase))
+            .collect();
+        common.retain(|mime| decodes.iter().any(|d| d == mime));
+    }
+    common.into_iter().map(str::to_owned).collect()
 }
 fn preferred_layer(h: u16, congested: bool, height: u16, layers: u8) -> u8 {
     if layers <= 1 || congested || h == 0 || h <= height.saturating_div(4).max(1) {
@@ -2126,7 +2225,7 @@ async fn stop_consumer(c: &NativeConsumer, dead: &AtomicBool) {
         _ => c.confirm_closed().await,
     }
 }
-fn fail_closed(reason: &'static str) -> ! {
+pub(crate) fn fail_closed(reason: &'static str) -> ! {
     error!(
         reason,
         "terminating media service to stop native forwarding"
@@ -2142,6 +2241,54 @@ mod tests {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+
+    fn receiver(codecs: Value) -> RtpCapabilities {
+        serde_json::from_value(json!({ "codecs": codecs, "headerExtensions": [] })).unwrap()
+    }
+
+    #[test]
+    fn video_codecs_are_those_every_receiver_decodes() {
+        let h264 = |profile: &str, mode: u8| {
+            json!({"kind":"video","mimeType":"video/H264","clockRate":90000,"preferredPayloadType":102,
+                "parameters":{"profile-level-id":profile,"packetization-mode":mode}})
+        };
+        let vp8 = json!({"kind":"video","mimeType":"video/VP8","clockRate":90000,"preferredPayloadType":96});
+        let av1 = json!({"kind":"video","mimeType":"video/AV1","clockRate":90000,"preferredPayloadType":45});
+        let opus = json!({"kind":"audio","mimeType":"audio/opus","clockRate":48000,"channels":2,"preferredPayloadType":111});
+        let none: [RtpCapabilities; 0] = [];
+        assert_eq!(
+            common_video_codecs(none.iter()),
+            ["video/vp8", "video/vp9", "video/h264", "video/av1"]
+        );
+        let chrome = receiver(json!([opus, vp8, h264("42e01f", 1), av1]));
+        let desktop = receiver(json!([opus, vp8, h264("42e01f", 1)]));
+        assert_eq!(
+            common_video_codecs([&chrome].into_iter()),
+            ["video/vp8", "video/h264", "video/av1"]
+        );
+        assert_eq!(
+            common_video_codecs([&chrome, &desktop].into_iter()),
+            ["video/vp8", "video/h264"]
+        );
+        // Firefox without its H264 plugin; decoders of plain Baseline, High
+        // or mode 0 only.
+        let firefox = receiver(json!([opus, vp8, av1]));
+        let high_only = receiver(json!([
+            opus,
+            vp8,
+            h264("42001f", 1),
+            h264("640032", 1),
+            h264("42e01f", 0)
+        ]));
+        assert_eq!(
+            common_video_codecs([&chrome, &firefox].into_iter()),
+            ["video/vp8", "video/av1"]
+        );
+        assert_eq!(common_video_codecs([&high_only].into_iter()), ["video/vp8"]);
+        // A room starts with the set of no receivers: peers that state no
+        // capabilities (old clients, tests) are never sent a codecs frame.
+        assert!(RoomData::default().update_video_codecs(None).is_none());
+    }
 
     #[test]
     fn consumer_failures_stop_retrying_per_producer() {
@@ -2304,6 +2451,7 @@ mod tests {
                 },
             )]),
             publications: HashMap::from([(publication.id(), publication.clone())]),
+            ..RoomData::default()
         };
         sfu.rooms.lock().await.insert(
             channel,

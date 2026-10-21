@@ -98,6 +98,16 @@ pub fn set_log_level(level: LogLevel) {
     unsafe { ffi::gm_set_log_level(level as i32) }
 }
 
+/// The system's video codecs beside libwebrtc's own, as an engine uses them:
+/// `{"h264":{"encoder","hardwareEncoder","decoder"}}`, encoder and decoder
+/// being GStreamer elements (Linux), Media Foundation MFTs (Windows) or null;
+/// `"h264"` is null where the core has no such codecs. Blocks while GStreamer
+/// scans its plugins the first time.
+pub fn video_codecs() -> Result<Value> {
+    // SAFETY: no arguments; the result is a malloc'ed string or null.
+    owned_json(unsafe { ffi::gm_video_codecs() })
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Audio {
     /// System audio devices (Linux: PulseAudio API, served by pipewire-pulse
@@ -185,7 +195,8 @@ impl Engine {
     }
 
     /// Microphone meters while capture runs, 0..100:
-    /// `{"input","processed","clipping","denoised","blocks","channels"}`.
+    /// `{"input","processed","clipping","denoised","blocks","channels"}`,
+    /// and the playout limiter's `"playout": {"gain","peak","reduction","windows"}`.
     pub fn audio_levels(&self) -> Result<Value> {
         // SAFETY: live engine.
         owned_json(unsafe { ffi::gm_audio_levels(self.raw()) })
@@ -303,29 +314,42 @@ unsafe extern "C" fn on_event(
     request: u64,
     json: *const c_char,
 ) {
-    // SAFETY: `user` is the EventSink owned by TransportInner, freed only after
-    // gm_transport_free returned; `json` is a valid C string for this call.
-    let sink = unsafe { &*(user as *const EventSink) };
-    let text = unsafe { CStr::from_ptr(json) }.to_string_lossy();
-    let payload: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-    let event = match kind {
-        ffi::GM_EVENT_CONNECT => TransportEvent::Connect {
-            request,
-            dtls_parameters: payload,
-        },
-        ffi::GM_EVENT_PRODUCE => TransportEvent::Produce {
-            request,
-            kind: payload["kind"].as_str().unwrap_or_default().to_owned(),
-            rtp_parameters: payload["rtpParameters"].clone(),
-            app_data: payload["appData"].clone(),
-        },
-        ffi::GM_EVENT_CONNECTION_STATE => TransportEvent::ConnectionState(
-            payload["state"].as_str().unwrap_or_default().to_owned(),
-        ),
-        _ => return,
-    };
-    // A dropped receiver only means nobody listens any more.
-    let _ = sink.0.lock().map(|tx| tx.send(event));
+    if user.is_null() {
+        return;
+    }
+    // A panic must not unwind into C++.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // SAFETY: `user` is the EventSink owned by TransportInner, freed only
+        // after gm_transport_free returned; `json` is null or a valid C string
+        // for this call.
+        let sink = unsafe { &*(user as *const EventSink) };
+        // Still forwarded without a payload: connect and produce wait for
+        // their answer.
+        let payload: Value = if json.is_null() {
+            Value::Null
+        } else {
+            let text = unsafe { CStr::from_ptr(json) }.to_string_lossy();
+            serde_json::from_str(&text).unwrap_or(Value::Null)
+        };
+        let event = match kind {
+            ffi::GM_EVENT_CONNECT => TransportEvent::Connect {
+                request,
+                dtls_parameters: payload,
+            },
+            ffi::GM_EVENT_PRODUCE => TransportEvent::Produce {
+                request,
+                kind: payload["kind"].as_str().unwrap_or_default().to_owned(),
+                rtp_parameters: payload["rtpParameters"].clone(),
+                app_data: payload["appData"].clone(),
+            },
+            ffi::GM_EVENT_CONNECTION_STATE => TransportEvent::ConnectionState(
+                payload["state"].as_str().unwrap_or_default().to_owned(),
+            ),
+            _ => return,
+        };
+        // A dropped receiver only means nobody listens any more.
+        let _ = sink.0.lock().map(|tx| tx.send(event));
+    }));
 }
 
 struct TransportInner {
@@ -737,6 +761,11 @@ impl Producer {
 }
 
 /// A video frame in I420, borrowed for the duration of the sink call.
+///
+/// A plane is `width` x `height` bytes for `y` and `width.div_ceil(2)` x
+/// `height.div_ceil(2)` for `u` and `v`, its rows at a stride of at least its
+/// width. A slice ends with the last row: `stride * (rows - 1) + width`
+/// bytes, as the last row need not be padded to the stride.
 pub struct VideoFrame<'a> {
     pub width: u32,
     pub height: u32,
@@ -800,8 +829,8 @@ unsafe extern "C" fn video_sink_trampoline(user: *mut c_void, frame: *const ffi:
     let (Ok(width), Ok(height)) = (u32::try_from(frame.width), u32::try_from(frame.height)) else {
         return;
     };
-    let rows = height as usize;
-    let chroma_rows = rows.div_ceil(2);
+    let (columns, rows) = (width as usize, height as usize);
+    let (chroma_columns, chroma_rows) = (columns.div_ceil(2), rows.div_ceil(2));
     let stride = |s: c_int| usize::try_from(s).unwrap_or(0);
     let (stride_y, stride_u, stride_v) = (
         stride(frame.stride_y),
@@ -811,14 +840,23 @@ unsafe extern "C" fn video_sink_trampoline(user: *mut c_void, frame: *const ffi:
     if frame.y.is_null() || frame.u.is_null() || frame.v.is_null() {
         return;
     }
-    // SAFETY: I420 planes of the given strides and heights.
+    // A frame that breaks the header's contract is dropped.
+    let (Some(len_y), Some(len_u), Some(len_v)) = (
+        plane_len(stride_y, columns, rows),
+        plane_len(stride_u, chroma_columns, chroma_rows),
+        plane_len(stride_v, chroma_columns, chroma_rows),
+    ) else {
+        return;
+    };
+    // SAFETY: I420 planes of the given strides and sizes, each at least as
+    // long as its rows reach (gm_video_frame in gelabber_media.h).
     let frame = unsafe {
         VideoFrame {
             width,
             height,
-            y: std::slice::from_raw_parts(frame.y, stride_y * rows),
-            u: std::slice::from_raw_parts(frame.u, stride_u * chroma_rows),
-            v: std::slice::from_raw_parts(frame.v, stride_v * chroma_rows),
+            y: std::slice::from_raw_parts(frame.y, len_y),
+            u: std::slice::from_raw_parts(frame.u, len_u),
+            v: std::slice::from_raw_parts(frame.v, len_v),
             stride_y,
             stride_u,
             stride_v,
@@ -830,6 +868,16 @@ unsafe extern "C" fn video_sink_trampoline(user: *mut c_void, frame: *const ffi:
     };
     // A panicking sink must not unwind into C++.
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sink(&frame)));
+}
+
+/// Bytes a plane of `rows` rows of `width` bytes spans at `stride`, up to the
+/// end of its last row. `None` for an empty plane, a stride shorter than a
+/// row, or a size beyond `usize`.
+fn plane_len(stride: usize, width: usize, rows: usize) -> Option<usize> {
+    if rows == 0 || width == 0 || stride < width {
+        return None;
+    }
+    stride.checked_mul(rows - 1)?.checked_add(width)
 }
 
 // A new field must also be dropped in `Consumer::close_released`.
@@ -886,7 +934,8 @@ impl Consumer {
         check(unsafe { ffi::gm_consumer_pause(self.ptr.as_ptr(), paused as i32) })
     }
 
-    /// Playback volume of an audio consumer, 0..2.
+    /// Playback volume of an audio consumer, 0..2. Above 1 the boost applies
+    /// after the mix, through the playout limiter.
     pub fn set_volume(&self, volume: f64) -> Result<()> {
         // SAFETY: live consumer.
         check(unsafe { ffi::gm_consumer_set_volume(self.ptr.as_ptr(), volume) })
@@ -917,5 +966,31 @@ impl Consumer {
     pub fn stats(&self) -> Result<Value> {
         // SAFETY: live consumer.
         owned_json(unsafe { ffi::gm_consumer_stats(self.ptr.as_ptr()) })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plane_len;
+
+    #[test]
+    fn plane_len_ends_at_the_last_row() {
+        // 3 rows of 4 bytes at a stride of 8: the last row is not padded.
+        assert_eq!(plane_len(8, 4, 3), Some(8 * 2 + 4));
+        assert_eq!(plane_len(4, 4, 3), Some(12));
+        assert_eq!(plane_len(4, 4, 1), Some(4));
+    }
+
+    #[test]
+    fn plane_len_refuses_broken_planes() {
+        assert_eq!(plane_len(8, 4, 0), None, "no rows");
+        assert_eq!(plane_len(8, 0, 3), None, "no columns");
+        assert_eq!(plane_len(3, 4, 3), None, "stride shorter than a row");
+        assert_eq!(plane_len(usize::MAX, 4, 3), None, "overflow in the rows");
+        assert_eq!(
+            plane_len(usize::MAX, usize::MAX, 2),
+            None,
+            "overflow in the last row"
+        );
     }
 }

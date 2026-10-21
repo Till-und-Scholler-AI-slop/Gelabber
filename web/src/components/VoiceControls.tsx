@@ -29,6 +29,7 @@ import {
   useVoice,
 } from "../voice/session.ts";
 import { useCapabilities } from "../voice/capabilities.ts";
+import { usePushToTalk } from "../voice/pushToTalk.ts";
 import {
   sharesSourceAudio,
   sourceAudioChoice,
@@ -42,15 +43,22 @@ function VoiceAudioToggles({ className }: { className: string }) {
   const muted = useVoice((s) => s.muted);
   const deafened = useVoice((s) => s.deafened);
   const micOff = muted || deafened;
+  const pushToTalk = usePushToTalk((s) => s.active);
+  // With push-to-talk the button shows the key at work: lit while it opens
+  // the microphone.
+  const talking = usePushToTalk((s) => s.active && s.open) && !micOff;
+  const title =
+    (micOff ? "Mikrofon an" : "Mikrofon aus") +
+    (pushToTalk && !micOff ? " (Push-to-Talk)" : "");
   return (
     <>
       <button
         type="button"
         aria-pressed={micOff}
         aria-label={micOff ? "Mikrofon an" : "Mikrofon aus"}
-        title={micOff ? "Mikrofon an" : "Mikrofon aus"}
+        title={title}
         onClick={() => toggleMute()}
-        className={`${className}${micOff ? " is-off" : ""}`}
+        className={`${className}${micOff ? " is-off" : ""}${talking ? " is-talking" : ""}`}
       >
         {micOff ? <MicOffIcon size={17} /> : <MicIcon size={17} />}
       </button>

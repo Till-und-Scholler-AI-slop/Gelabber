@@ -4,7 +4,7 @@
 
 import { sessionCookieGeneration } from "../api/client.ts";
 
-import { useSession } from "./session.ts";
+import { useSession } from "./store.ts";
 
 export type ScopeStamp = {
   userId: string;

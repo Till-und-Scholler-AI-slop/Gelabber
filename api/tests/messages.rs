@@ -3,9 +3,14 @@
 
 mod common;
 
+use std::time::Duration;
+
 use axum::http::{Method, StatusCode};
+use gelabber_api::EventKind;
+use gelabber_api::gateway::{Topic, delivery};
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use uuid::Uuid;
 
 use common::Client;
 
@@ -496,4 +501,95 @@ async fn dead_id_cursor_still_pages_with_time_bound(pool: PgPool) {
         .map(|m| m["id"].as_str().unwrap())
         .collect();
     assert_eq!(newer_ids, vec![c["id"].as_str().unwrap()]);
+}
+
+/// Two deletes of one message (author and moderator) both find it, then
+/// queue on the channel lock held here. The one that runs second deletes
+/// nothing: it answers 204 like the first and publishes no second event.
+#[sqlx::test]
+async fn concurrent_deletes_publish_one_delete_event(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let server_id: Uuid = server["id"].as_str().unwrap().parse().unwrap();
+    let channel_id = text_channel_id(&server);
+    let channel: Uuid = channel_id.parse().unwrap();
+    let posted = post_message(&mut member, &channel_id, "einmal weg").await;
+    let message: Uuid = posted["id"].as_str().unwrap().parse().unwrap();
+
+    // The same key as `delivery::lock_channel`.
+    let mut blocker = pool.acquire().await.unwrap();
+    sqlx::query("SELECT pg_advisory_lock(hashtextextended($1, 507))")
+        .bind(channel.to_string())
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+    let path = format!("/api/messages/{message}");
+    let by_author = tokio::spawn({
+        let path = path.clone();
+        async move { member.send(Method::DELETE, &path, None).await }
+    });
+    let by_owner = tokio::spawn(async move { owner.send(Method::DELETE, &path, None).await });
+    // Both have passed `message_for` once they wait on the lock.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_stat_activity \
+                 WHERE datname = current_database() AND wait_event = 'advisory'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            if waiting >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("both deletes wait on the channel lock");
+    sqlx::query("SELECT pg_advisory_unlock(hashtextextended($1, 507))")
+        .bind(channel.to_string())
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+    drop(blocker);
+    let by_author = by_author.await.unwrap();
+    let by_owner = by_owner.await.unwrap();
+    assert_eq!(
+        by_author.status,
+        StatusCode::NO_CONTENT,
+        "{}",
+        by_author.body
+    );
+    assert_eq!(by_owner.status, StatusCode::NO_CONTENT, "{}", by_owner.body);
+
+    // The winner's own delivery attempt can find the channel still locked
+    // by the loser; drain the outbox before reading the replay log.
+    let state = common::state(pool.clone());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let _ = delivery::deliver_pending(&state, 32).await;
+            let queued: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM gateway_outbox WHERE channel_id = $1")
+                    .bind(channel)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            if queued == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("outbox delivered");
+    let deletes = state
+        .gateway
+        .load_log(Topic::of(server_id, Some(channel)))
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.t == EventKind::D && event.i == Some(message))
+        .count();
+    assert_eq!(deletes, 1);
 }

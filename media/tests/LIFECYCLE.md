@@ -1,5 +1,9 @@
 # Local SFU lifecycle regression
 
+> **Historical** (before v4/mediasoup, webrtc-rs engine). The
+> `media/tests/browser-lifecycle.mjs` runner was removed in v0.7.1. The current
+> acceptance runner is [`web/scripts/e2e`](../../web/scripts/e2e/README.md).
+
 Run with the locked toolchain, installed `web/node_modules`, Playwright Chromium,
 and an isolated local Redis (the runner accepts only 127.0.0.1). Build
 `gelabber-media`, then run:
@@ -8,7 +12,8 @@ and an isolated local Redis (the runner accepts only 127.0.0.1). Build
 . /tmp/gelabber-toolchain/env.sh
 export CARGO_TARGET_DIR=/home/rafi/Projects/Gelabber/target/stability-media
 cargo build --locked -p gelabber-media
-node media/tests/browser-lifecycle.mjs
+# Removed in v0.7.1; current runs use web/scripts/e2e.
+# node media/tests/browser-lifecycle.mjs
 ```
 
 The runner starts its own SFU on 18081, uses unique one-use test tickets with TTL,
@@ -59,8 +64,9 @@ of 64 routed messages. Existing media tests and strict Clippy remained green.
 
 ## Production web session recovery (assignment 02)
 
-`MEDIA_CASE=recovery node media/tests/browser-lifecycle.mjs` starts an additional
-local Vite server on 15173 and imports the actual `session.ts` and media socket.
+`MEDIA_CASE=recovery node media/tests/browser-lifecycle.mjs` (removed in v0.7.1)
+starts an additional local Vite server on 15173 and imports the actual
+`session.ts` and media socket.
 It denies microphone capture, verifies decoded video and voice reception, starts
 one synthetic screen capture with a click, closes the media transport and rejects
 ticket requests for eight seconds. On the final 01+02 stand, Chromium 153 recovered
@@ -106,8 +112,9 @@ Logs: `/tmp/gelabber-media-watch-unavailable-{before,all,lint,build}.log` and
 To run just that comparison against a separately started local SFU:
 
 ```sh
-MEDIA_CASE=renegotiate MEDIA_RESTARTS=1 MEDIA_ICE_RESTART=0 \
-  node media/tests/browser-lifecycle.mjs
+# Removed in v0.7.1; current runs use web/scripts/e2e.
+# MEDIA_CASE=renegotiate MEDIA_RESTARTS=1 MEDIA_ICE_RESTART=0 \
+#   node media/tests/browser-lifecycle.mjs
 ```
 
 ## Limits

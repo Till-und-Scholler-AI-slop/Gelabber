@@ -13,7 +13,8 @@ use uuid::Uuid;
 
 use super::MessagingChannel;
 use crate::{
-    error::ApiError, gateway::PresenceStatus, servers::permissions::Permission, state::AppState,
+    error::ApiError, gateway::PresenceStatus, previews::urls::prose,
+    servers::permissions::Permission, state::AppState,
 };
 
 /// More named users than this are not kept; `@everyone` exists for that.
@@ -40,29 +41,42 @@ pub struct Parsed {
 pub struct Granted {
     pub everyone: bool,
     pub here: bool,
-    /// Whom an earlier `@here` reached: the mentions beyond the named users.
-    /// A kept `@here` reaches them again instead of whoever is online at
-    /// the edit, so editing cannot ping more people.
-    pub here_users: Vec<Uuid>,
+    /// Whom an earlier `@here` reached, where that is known. A kept `@here`
+    /// reaches them again instead of whoever is online at the edit, so
+    /// editing cannot ping more people.
+    pub here_users: Option<Vec<Uuid>>,
 }
 
 impl Granted {
-    /// From the stored message: `@everyone` is its flag, `@here` shows as
-    /// mentions beyond the users the text names.
-    pub fn of(content: &str, mentions_everyone: bool, mentions: &[Uuid]) -> Self {
-        let parsed = parse(content);
-        let here_users: Vec<Uuid> = if parsed.here {
-            mentions
-                .iter()
-                .filter(|id| !parsed.users.contains(id))
-                .copied()
-                .collect()
-        } else {
-            Vec::new()
+    /// From the stored message. `here_users` is the message's own record of
+    /// whom `@here` reached (`messages.here_users`); a message written
+    /// before it was kept (`None`) shows `@here` as mentions beyond the
+    /// users the text names, which loses a named user `@here` also reached.
+    pub fn of(
+        content: &str,
+        mentions_everyone: bool,
+        mentions: &[Uuid],
+        here_users: Option<&[Uuid]>,
+    ) -> Self {
+        let here_users = match here_users {
+            Some(users) => Some(users.to_vec()),
+            None => {
+                let parsed = parse(content);
+                let beyond: Vec<Uuid> = if parsed.here {
+                    mentions
+                        .iter()
+                        .filter(|id| !parsed.users.contains(id))
+                        .copied()
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                (!beyond.is_empty()).then_some(beyond)
+            }
         };
         Self {
             everyone: mentions_everyone,
-            here: mentions_everyone || !here_users.is_empty(),
+            here: mentions_everyone || here_users.is_some(),
             here_users,
         }
     }
@@ -72,32 +86,9 @@ impl Granted {
 pub struct Resolved {
     pub users: Vec<Uuid>,
     pub everyone: bool,
-}
-
-/// The text outside inline code and fenced code blocks.
-fn outside_code(content: &str) -> String {
-    let mut out = String::with_capacity(content.len());
-    let mut rest = content;
-    while let Some(start) = rest.find('`') {
-        out.push_str(&rest[..start]);
-        let ticks = rest[start..].chars().take_while(|c| *c == '`').count();
-        let fence = &rest[start..start + ticks];
-        let after = &rest[start + ticks..];
-        match after.find(fence) {
-            // Code: dropped, a space keeps the words around it apart.
-            Some(end) => {
-                out.push(' ');
-                rest = &after[end + ticks..];
-            }
-            // An unclosed run of backticks is plain text.
-            None => {
-                out.push_str(fence);
-                rest = after;
-            }
-        }
-    }
-    out.push_str(rest);
-    out
+    /// Whom `@here` reached in a server channel, named or not; `None`
+    /// without a granted `@here`. Stored so an edit can keep them.
+    pub here_users: Option<Vec<Uuid>>,
 }
 
 /// Escaped with a backslash (`\@everyone`, `\<@id>`): plain text, as the
@@ -106,8 +97,8 @@ fn escaped(text: &str, at: usize) -> bool {
     text[..at].chars().rev().take_while(|c| *c == '\\').count() % 2 == 1
 }
 
-/// `@word` on its own: not inside an address (`a@everyone.org`), a link, a
-/// longer word (`@everyoneelse`) or after another `@` (`@@here`), and not
+/// `@word` on its own: not inside an address (`a@everyone.org`), a path
+/// (`mastodon.social/@here`), a longer word (`@everyoneelse`) or after another `@` (`@@here`), and not
 /// escaped.
 fn has_keyword(text: &str, word: &str) -> bool {
     let needle = format!("@{word}");
@@ -118,21 +109,11 @@ fn has_keyword(text: &str, word: &str) -> bool {
         !before.is_some_and(|c| word_char(c) || c == '@' || c == '/')
             && !after.is_some_and(|c| word_char(c) || c == '@')
             && !escaped(text, at)
-            && !in_url(text, at)
     })
 }
 
-/// Part of a link (`https://mastodon.social/@here`): the word it sits in
-/// has a scheme. The web client shows such text as a link, not a ping.
-fn in_url(text: &str, at: usize) -> bool {
-    let start = text[..at]
-        .rfind(char::is_whitespace)
-        .map_or(0, |space| space + 1);
-    text[start..at].contains("://")
-}
-
 pub fn parse(content: &str) -> Parsed {
-    let text = outside_code(content);
+    let text = prose(content);
     let mut users = Vec::new();
     let mut rest = text.as_str();
     while let Some(start) = rest.find("<@") {
@@ -180,6 +161,7 @@ pub(crate) async fn resolve(
             Ok(Resolved {
                 users,
                 everyone: parsed.everyone || parsed.here,
+                here_users: None,
             })
         }
         MessagingChannel::Server { member } => {
@@ -206,15 +188,15 @@ pub(crate) async fn resolve(
                         .is_ok());
             let everyone = crowd && parsed.everyone;
             let here = crowd && parsed.here && !parsed.everyone;
-            let mut wanted = parsed.users;
-            if here && !granted.here_users.is_empty() {
+            let mut reached = Vec::new();
+            if here && let Some(before) = &granted.here_users {
                 // An edit keeping `@here`: the same people as before.
-                wanted.extend(granted.here_users.iter().copied());
+                reached.extend(before.iter().copied());
             } else if here {
                 // Best effort: without Redis `@here` reaches nobody, the
                 // message itself still goes out.
                 match state.gateway.presence_snapshot(member.server.id).await {
-                    Ok(online) => wanted.extend(
+                    Ok(online) => reached.extend(
                         online
                             .into_iter()
                             .filter(|entry| {
@@ -228,6 +210,8 @@ pub(crate) async fn resolve(
                     }
                 }
             }
+            let mut wanted = parsed.users;
+            wanted.extend(reached.iter().copied());
             let users: Vec<Uuid> = sqlx::query_scalar(
                 "SELECT user_id FROM server_members WHERE server_id=$1 AND user_id=ANY($2) \
                  AND user_id<>$3 ORDER BY user_id",
@@ -237,7 +221,19 @@ pub(crate) async fn resolve(
             .bind(author)
             .fetch_all(&state.db)
             .await?;
-            Ok(Resolved { users, everyone })
+            // Members only: someone who left since an earlier `@here` drops out.
+            let here_users = here.then(|| {
+                users
+                    .iter()
+                    .filter(|id| reached.contains(id))
+                    .copied()
+                    .collect()
+            });
+            Ok(Resolved {
+                users,
+                everyone,
+                here_users,
+            })
         }
     }
 }
@@ -256,21 +252,47 @@ mod tests {
     #[test]
     fn granted_reads_here_from_mentions_beyond_the_named() {
         let named = format!("@here <@{A}>");
-        assert_eq!(Granted::of(&named, false, &ids(&[A])), Granted::default());
         assert_eq!(
-            Granted::of(&named, false, &ids(&[A, B])),
+            Granted::of(&named, false, &ids(&[A]), None),
+            Granted::default()
+        );
+        assert_eq!(
+            Granted::of(&named, false, &ids(&[A, B]), None),
             Granted {
                 everyone: false,
                 here: true,
-                here_users: ids(&[B]),
+                here_users: Some(ids(&[B])),
             }
         );
         assert_eq!(
-            Granted::of("@everyone", true, &[]),
+            Granted::of("@everyone", true, &[], None),
             Granted {
                 everyone: true,
                 here: true,
-                here_users: Vec::new(),
+                here_users: None,
+            }
+        );
+    }
+
+    /// The stored record wins: a named user `@here` also reached stays, and
+    /// an `@here` that reached nobody is still granted.
+    #[test]
+    fn granted_prefers_the_stored_here_users() {
+        let named = format!("@here <@{A}>");
+        assert_eq!(
+            Granted::of(&named, false, &ids(&[A, B]), Some(&ids(&[A, B]))),
+            Granted {
+                everyone: false,
+                here: true,
+                here_users: Some(ids(&[A, B])),
+            }
+        );
+        assert_eq!(
+            Granted::of("@here", false, &[], Some(&[])),
+            Granted {
+                everyone: false,
+                here: true,
+                here_users: Some(Vec::new()),
             }
         );
     }
@@ -299,6 +321,22 @@ mod tests {
         assert!(!parse("see https://example.org/?to=@everyone").everyone);
         assert!(!parse("mastodon.social/@here").here);
         assert!(parse("https://example.org @here").here);
+    }
+
+    /// A ping inside text the web client draws as a link is part of the
+    /// link; anything it does not link is text and pings (#276).
+    #[test]
+    fn links_follow_the_web_client() {
+        assert!(!parse("<https://example.org/?q=@here>").here);
+        assert!(!parse("<mailto:x.@here>").here);
+        assert!(!parse("https://x`c`@here").here);
+        assert!(!parse("(https://example.org/@here)").here);
+        assert!(parse("ftp://x/?q=@here").here);
+        assert!(parse("https://x.org\"@here").here);
+        assert!(parse("xhttps://x.org?q=@here").here);
+        assert!(parse("https:// @here").here);
+        // An escaped backtick opens no code.
+        assert!(parse("\\`@here`").here);
     }
 
     #[test]

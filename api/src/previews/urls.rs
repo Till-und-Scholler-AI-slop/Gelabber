@@ -57,6 +57,61 @@ pub fn preview_urls(content: &str) -> Vec<Url> {
     found
 }
 
+/// The text the web client shows as plain prose: code blocks, code spans and
+/// links (bare or in `<…>`) each become one space, the rest stays as typed,
+/// escapes included. Mentions read this (`messages/mentions.rs`), so a ping
+/// is highlighted exactly where it reaches someone: `@here` inside a link is
+/// part of the link, `ftp://x/?q=@here` is no link and pings.
+pub fn prose(content: &str) -> String {
+    let chars: Vec<char> = content.chars().collect();
+    let mut out = String::with_capacity(content.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\\'
+            && chars
+                .get(i + 1)
+                .is_some_and(|n| !n.is_alphanumeric() && !n.is_whitespace())
+        {
+            out.push(c);
+            out.push(chars[i + 1]);
+            i += 2;
+            continue;
+        }
+        let skip = if starts_with(&chars, i, "```")
+            && let Some(end) = find(&chars, i + 3, "```")
+        {
+            Some(end + 3 - i)
+        } else if c == '`' {
+            let run = run_length(&chars, i, '`');
+            match code_span_end(&chars, i, run) {
+                Some(end) => Some(end - i),
+                // An unclosed run of backticks is plain text.
+                None => {
+                    out.extend(&chars[i..i + run]);
+                    i += run;
+                    continue;
+                }
+            }
+        } else if c == '<' {
+            angle_link(&chars, i)
+        } else {
+            bare_url(&chars, i).map(|(_, len)| len)
+        };
+        match skip {
+            Some(len) => {
+                out.push(' ');
+                i += len;
+            }
+            None => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
 fn starts_with(chars: &[char], i: usize, pat: &str) -> bool {
     (i..)
         .zip(pat.chars())

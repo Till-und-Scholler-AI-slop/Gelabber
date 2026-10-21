@@ -60,6 +60,63 @@ fn level(levels: &Value, key: &str) -> f64 {
     levels[key].as_f64().unwrap_or(0.0)
 }
 
+/// `kCeiling` of desktop/native/src/playout_limiter.h.
+const PLAYOUT_CEILING: f64 = 0.966;
+
+/// Polls the playout limiter's levels until `ready` accepts a 100 ms window
+/// that started after this call.
+async fn playout_when(engine: &Engine, what: &str, ready: impl Fn(&Value) -> bool) -> Value {
+    let windows = |l: &Value| l["playout"]["windows"].as_u64().unwrap_or(0);
+    let start = Instant::now();
+    let mut levels = engine.audio_levels().unwrap();
+    // Skip the window in progress.
+    let fresh_after = windows(&levels) + 2;
+    let accept = |l: &Value| windows(l) >= fresh_after && ready(&l["playout"]);
+    while !accept(&levels) && start.elapsed() < Duration::from_secs(15) {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        levels = engine.audio_levels().unwrap();
+    }
+    let playout = levels["playout"].clone();
+    eprintln!("{what}: {playout}");
+    assert!(
+        windows(&levels) >= fresh_after,
+        "{what}: playout stalled: {playout}"
+    );
+    assert!(ready(&playout), "{what}: {playout}");
+    playout
+}
+
+/// Volume above 100 % (#223): the consumer's stream plays at 1 and the rest
+/// is the master gain after the mix, where the limiter keeps the boosted
+/// noise below full scale instead of clipping it.
+async fn volume_above_one(engine: &Engine, consumer: &Consumer) {
+    let peak = |p: &Value| level(p, "peak");
+    consumer.set_volume(1.0).unwrap();
+    let unity = playout_when(engine, "playout at volume 1", |p| {
+        p["gain"] == 1.0 && peak(p) > 0.0
+    })
+    .await;
+    assert_eq!(unity["reduction"], 1.0, "volume 1 is left alone: {unity}");
+
+    consumer.set_volume(2.0).unwrap();
+    let boosted = playout_when(engine, "playout at volume 2", |p| {
+        p["gain"] == 2.0 && peak(p) > 0.0
+    })
+    .await;
+    assert!(
+        peak(&boosted) <= PLAYOUT_CEILING + 1e-3,
+        "volume 2 stays below the ceiling: {boosted}"
+    );
+    // Twice as loud, or as loud as the limiter lets it be.
+    assert!(
+        peak(&boosted) >= (peak(&unity) * 1.4).min(PLAYOUT_CEILING * 0.8),
+        "volume 2 is louder: {unity} then {boosted}"
+    );
+
+    consumer.set_volume(0.5).unwrap();
+    playout_when(engine, "playout at volume 0.5", |p| p["gain"] == 1.0).await;
+}
+
 /// How long the session's noise still plays, where the session says when it
 /// ends (GELABBER_TEST_NOISE_ENDS, seconds since the epoch).
 fn noise_left() -> Option<Duration> {
@@ -350,7 +407,7 @@ async fn voice_modes(server: &Server, mic_id: &str, speakers_id: &str) {
         "consumer: audioLevel {} samplesPlayed {}",
         played["audioLevel"], played["samplesPlayed"]
     );
-    consumer.set_volume(0.5).unwrap();
+    volume_above_one(&engine, &consumer).await;
 
     let browser = levels_when(&engine, "browser mode", |l| level(l, "input") >= 10.0).await;
     assert_eq!(browser["denoised"], false);
@@ -744,42 +801,48 @@ async fn voice_modes(server: &Server, mic_id: &str, speakers_id: &str) {
         level(l, "input") >= 10.0
     })
     .await;
+
+    // Another microphone while the call sends (#296): capture restarts on it
+    // and the selection follows. Last, because the test microphone records
+    // only zeros after the restart, so only capture processing is checked.
+    for input in ["", mic_id] {
+        engine.configure_audio(&json!({"input": input})).unwrap();
+        assert_eq!(engine.audio_devices().unwrap()["input"], input);
+        levels_when(
+            &engine,
+            &format!("capture after switching to {input:?}"),
+            |_| true,
+        )
+        .await;
+    }
     drop(original_producer);
 }
 
-/// Source audio against sound cards whose clocks are off the system clock,
-/// which a real card's always is and the session's null sinks never are.
-/// desktop/native/tests/app_audio_mix_test.cc runs the mix's buffering and
-/// pacing against simulated cards; it is plain C++ without the core's
-/// libraries, built here with the host's compiler (GELABBER_HOST_CXX, else
-/// c++).
-#[test]
-fn the_source_audio_mix_follows_a_sound_card_whose_clock_is_off() {
-    if !cfg!(target_os = "linux") {
-        eprintln!("skipped: the mix belongs to the PipeWire capture");
-        return;
-    }
+/// Builds `desktop/native/tests/<name>.cc`, plain C++ without the core's
+/// libraries, with the host's compiler (GELABBER_HOST_CXX, else c++) and
+/// runs it. False when there is no compiler.
+fn run_host_test(name: &str, what: &str) -> bool {
     let native = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../native");
     let compiler = std::env::var("GELABBER_HOST_CXX").unwrap_or_else(|_| "c++".to_owned());
-    let program = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("app_audio_mix_test");
+    let program = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
     let built = std::process::Command::new(&compiler)
         .args(["-std=c++20", "-O2", "-I"])
         .arg(native.join("src"))
         .arg("-o")
         .arg(&program)
-        .arg(native.join("tests/app_audio_mix_test.cc"))
+        .arg(native.join(format!("tests/{name}.cc")))
         .output();
     let built = match built {
         Ok(built) => built,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             eprintln!("skipped: no C++ compiler {compiler:?} on this machine");
-            return;
+            return false;
         }
         Err(error) => panic!("{compiler}: {error}"),
     };
     assert!(
         built.status.success(),
-        "{compiler} on app_audio_mix_test.cc: {}",
+        "{compiler} on {name}.cc: {}",
         String::from_utf8_lossy(&built.stderr)
     );
     let run = std::process::Command::new(&program)
@@ -787,8 +850,35 @@ fn the_source_audio_mix_follows_a_sound_card_whose_clock_is_off() {
         .expect("the built test");
     let said = String::from_utf8_lossy(&run.stdout);
     eprint!("{said}");
-    assert!(
-        run.status.success(),
-        "the mix against simulated cards:\n{said}"
-    );
+    assert!(run.status.success(), "{what}:\n{said}");
+    true
+}
+
+/// Source audio against sound cards whose clocks are off the system clock,
+/// which a real card's always is and the session's null sinks never are.
+/// desktop/native/tests/app_audio_mix_test.cc runs the mix's buffering and
+/// pacing against simulated cards.
+#[test]
+fn the_source_audio_mix_follows_a_sound_card_whose_clock_is_off() {
+    if !cfg!(target_os = "linux") {
+        eprintln!("skipped: the mix belongs to the PipeWire capture");
+        return;
+    }
+    run_host_test("app_audio_mix_test", "the mix against simulated cards");
+}
+
+/// Playback above 100 % on generated mixes: desktop/native/tests/
+/// playout_limiter_test.cc runs the playout limiter without a sound card,
+/// on every platform.
+#[test]
+fn the_playout_limiter_keeps_a_boost_below_full_scale() {
+    run_host_test("playout_limiter_test", "the playout limiter");
+}
+
+/// Switching the microphone or the speakers while they run (#296):
+/// desktop/native/tests/audio_device_switch_test.cc runs the switch against
+/// a fake device module that refuses devices, on every platform.
+#[test]
+fn a_failed_device_switch_keeps_the_previous_device() {
+    run_host_test("audio_device_switch_test", "device switching with rollback");
 }

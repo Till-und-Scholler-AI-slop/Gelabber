@@ -29,12 +29,16 @@ vi.mock("./session.ts", () => ({
   toggleShare: vi.fn(),
   toggleSourceWatch: vi.fn(),
 }));
-vi.mock("../auth/session.ts", () => ({
+// VoiceRoom reads the user through session.ts, useUserId through store.ts,
+// so both hand out the same one.
+const signedIn = vi.hoisted(() => ({
   useSession: (select: (state: unknown) => unknown) =>
     select({
       user: { id: "self", name: "Rafi", avatar_url: "/real-self.png" },
     }),
 }));
+vi.mock("../auth/session.ts", () => signedIn);
+vi.mock("../auth/store.ts", () => signedIn);
 vi.mock("../servers/queries.ts", () => ({
   useServer: (id: string | undefined) => {
     fixture.requestedServer = id;

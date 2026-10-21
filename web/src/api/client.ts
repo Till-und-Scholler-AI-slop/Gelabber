@@ -31,6 +31,8 @@ export type ApiErrorCode =
   | "forbidden"
   | "not_found"
   | "email_taken"
+  | "email_unverified"
+  | "token_invalid"
   | "theme_conflict"
   | "invite_invalid"
   | "banned"
@@ -197,24 +199,31 @@ export function setSessionReconciler(reconcile: () => Promise<void>): void {
 }
 
 let cookieQueue: Promise<void> = Promise.resolve();
+let warnedWithoutLocks = false;
 
 /** Set-Cookie is applied by the browser before JS can discard a stale result.
- * Web Locks serialize cookie-changing auth requests across same-origin tabs;
- * the local queue also covers non-browser callers without a LockManager. */
+ * Web Locks serialize cookie-changing auth requests across same-origin tabs.
+ * Without a LockManager (insecure origins such as an API_ALLOW_PLAIN_HTTP LAN
+ * test, non-browser callers) they are serialized within this tab only; the
+ * cookie-state fence in localStorage still detects changes from other tabs. */
 function withSessionCookieLock<T>(
   action: () => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
-  if (typeof window !== "undefined" && !navigator.locks) {
-    throw new DOMException(
-      "This browser cannot coordinate account changes.",
-      "AbortError",
-    );
-  }
   if (typeof navigator !== "undefined" && navigator.locks) {
     return navigator.locks.request("gelabber:auth-cookies", { signal }, action);
   }
-  const request = cookieQueue.then(action);
+  if (typeof window !== "undefined" && !warnedWithoutLocks) {
+    warnedWithoutLocks = true;
+    console.warn(
+      "[gelabber] auth: no Web Locks on this origin, sign-in and sign-out are serialized within this tab only.",
+    );
+  }
+  // An abort while queued rejects like a lock request that never got the lock.
+  const request = cookieQueue.then(() => {
+    signal?.throwIfAborted();
+    return action();
+  });
   cookieQueue = request.then(
     () => undefined,
     () => undefined,
@@ -222,13 +231,28 @@ function withSessionCookieLock<T>(
   return request;
 }
 
+/** Tests: the lock itself, to see which actions it runs. */
+export const withSessionCookieLockForTests = withSessionCookieLock;
+
 function changesAuthCookies(path: string): boolean {
   return (
     path === "/auth/session" ||
-    path === "/auth/login" ||
-    path === "/auth/register" ||
+    isSignInPath(path) ||
     path === "/auth/password" ||
     isLogoutPath(path)
+  );
+}
+
+/**
+ * Explicit sign-ins: credentials or a mailed link. Registration with
+ * account mail answers `user: null` and leaves the browser signed out.
+ */
+function isSignInPath(path: string): boolean {
+  return (
+    path === "/auth/login" ||
+    path === "/auth/register" ||
+    path === "/auth/verify-email" ||
+    path === "/auth/password-reset/confirm"
   );
 }
 
@@ -309,6 +333,8 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "forbidden",
   "not_found",
   "email_taken",
+  "email_unverified",
+  "token_invalid",
   "theme_conflict",
   "invite_invalid",
   "banned",
@@ -504,7 +530,7 @@ async function retryWithSession(
   if (!session.ok || !isSessionPayload(payload)) return first;
 
   const isLogout = isLogoutPath(path);
-  const isSignIn = path === "/auth/login" || path === "/auth/register";
+  const isSignIn = isSignInPath(path);
   const expectedId =
     isLogout && options.logoutUserId !== undefined
       ? options.logoutUserId

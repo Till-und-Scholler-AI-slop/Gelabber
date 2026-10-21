@@ -1,0 +1,9 @@
+# Global push-to-talk (src/commands.rs PTT_COMMANDS). Granted at runtime to
+# the configured server origin with the `media` set.
+[[set]]
+identifier = "ptt"
+description = "Bind the Gelabber server's push-to-talk key outside the window, while a call runs."
+permissions = [
+  "allow-ptt-bind",
+  "allow-ptt-unbind",
+]

@@ -1,12 +1,13 @@
 #!/bin/sh
 # Bundled coturn. Static long-term credentials unless TURN_AUTH_SECRET is a
 # private value shared with the API. The retired public default is refused
-# so a copied fallback cannot turn REST on by itself.
+# so a copied fallback cannot turn REST on by itself. Static mode needs
+# TURN_PASSWORD; there is no default password.
 set -eu
 
 secret="${TURN_AUTH_SECRET:-}"
 user="${TURN_USERNAME:-gelabber}"
-pass="${TURN_PASSWORD:-gelabberturn}"
+pass="${TURN_PASSWORD:-}"
 realm="${TURN_REALM:-gelabber.local}"
 external_ip="${TURN_EXTERNAL_IP:-127.0.0.1}"
 relay_min="${TURN_RELAY_MIN:-49160}"
@@ -38,6 +39,11 @@ if [ -n "$secret" ]; then
   # REST credentials are still long-term (`expiry:user`). No static --user.
   # shellcheck disable=SC2086
   exec turnserver $common --lt-cred-mech --use-auth-secret --static-auth-secret="$secret"
+fi
+
+if [ -z "$pass" ]; then
+  echo "TURN_PASSWORD is not set. Set it in .env (see deploy/README.md), or set a private TURN_AUTH_SECRET shared with the API." >&2
+  exit 1
 fi
 
 # shellcheck disable=SC2086

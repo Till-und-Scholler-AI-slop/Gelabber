@@ -1,6 +1,8 @@
-//! Prometheus scrape for the SFU. `GET /metrics` (and `/media/metrics` so
-//! a Caddy `/media/*` prefix still works) exports rooms, peers, forwarded
-//! RTP bytes and ICE failures. `/health` and `/ready` are unchanged.
+//! Prometheus scrape for the SFU. `GET /metrics` exports rooms, peers,
+//! forwarded RTP bytes and ICE failures. Prometheus scrapes it on the
+//! internal compose network (`media:8081/metrics`). There is no `/media/*`
+//! alias on purpose, so a proxy that forwards `/media/*` cannot publish it.
+//! `/health` and `/ready` are unchanged.
 
 use axum::Router;
 use axum::extract::State;
@@ -12,9 +14,7 @@ use axum::routing::get;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/metrics", get(scrape))
-        .route("/media/metrics", get(scrape))
+    Router::new().route("/metrics", get(scrape))
 }
 
 async fn scrape(State(state): State<AppState>) -> Response {

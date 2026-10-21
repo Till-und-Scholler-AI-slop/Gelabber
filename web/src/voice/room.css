@@ -395,6 +395,11 @@
 .voice-control-compact.is-off:hover {
   color: var(--lr-danger);
 }
+/* Push-to-talk: the key holds the microphone open. */
+.voice-control-compact.is-talking,
+.voice-control-compact.is-talking:hover {
+  color: var(--lr-speaking);
+}
 .voice-session-dock .voice-control-leave,
 .voice-session-card .voice-control-leave {
   color: var(--lr-danger);

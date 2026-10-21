@@ -39,7 +39,7 @@
 extern "C" {
 #endif
 
-#define GM_ABI_VERSION 9
+#define GM_ABI_VERSION 10
 
 typedef struct gm_engine gm_engine;
 typedef struct gm_device gm_device;
@@ -65,6 +65,7 @@ typedef enum gm_event_kind {
   GM_EVENT_CONNECTION_STATE = 3,
 } gm_event_kind;
 
+/* json is never null: a NUL-terminated string valid for the call. */
 typedef void (*gm_event_fn)(void* user, gm_event_kind kind, uint64_t request, const char* json);
 
 /* Library */
@@ -73,6 +74,12 @@ GM_API const char* gm_last_error(void);
 GM_API void gm_string_free(char* s);
 /* Route libwebrtc logs to stderr: 0 none, 1 error, 2 warning, 3 info, 4 verbose. */
 GM_API void gm_set_log_level(int level);
+/* The system's video codecs beside libwebrtc's own, as an engine would use
+ * them: {"h264":{"encoder","hardwareEncoder","decoder"}}, encoder and decoder
+ * being the GStreamer element (Linux) or the Media Foundation MFT's name
+ * (Windows), or null; "h264" is null where the core has no such codecs. Needs
+ * no engine; the first call may take a while (GStreamer scans its plugins). */
+GM_API char* gm_video_codecs(void);
 
 /* Engine: libwebrtc threads, PeerConnectionFactory, audio device module and
  * codec factories. One per process is enough.
@@ -102,7 +109,11 @@ GM_API int gm_audio_monitor(gm_engine* engine, const char* options_json);
 /* Microphone meters while capture runs, 0..100 like the web client's:
  * {"input": before RNNoise and gain, "processed": as sent, "clipping": bool,
  *  "denoised": bool (RNNoise ran), "blocks": 10 ms blocks processed so far
- *  (stops growing while capture is idle), "channels": of the last block}. */
+ *  (stops growing while capture is idle), "channels": of the last block,
+ *  "playout": {"gain": master gain of volumes above 1 (1..2), "peak": loudest
+ *  sample played in the last 100 ms (fraction of full scale), "reduction":
+ *  the limiter's smallest gain in it (1 = untouched), "windows": 100 ms
+ *  windows played so far}}. */
 GM_API char* gm_audio_levels(gm_engine* engine);
 
 /* Device: loads router RTP capabilities (server `capabilities` frame). */
@@ -229,12 +240,18 @@ GM_API void gm_consumer_free(gm_consumer* consumer);
 GM_API int gm_consumer_free_released(gm_consumer* consumer);
 GM_API const char* gm_consumer_id(gm_consumer* consumer);
 GM_API int gm_consumer_pause(gm_consumer* consumer, int paused);
-/* Playback volume of an audio consumer, 0..2 (1 = as received; 0 = silent). */
+/* Playback volume of an audio consumer, 0..2 (1 = as received; 0 = silent).
+ * Above 1 the stream itself plays at 1 at most: the largest volume above 1
+ * applies to the whole playout after the mix, through a limiter (see
+ * gm_audio_levels), so a loud speaker is limited instead of clipped. */
 GM_API int gm_consumer_set_volume(gm_consumer* consumer, double volume);
 /* A video frame in I420, valid only during the sink call. rotation is 0, 90,
  * 180 or 270 degrees clockwise to apply for display. source_width and
  * source_height are the size of the picture before the sink's limits scaled
- * it down (width and height when they did not). */
+ * it down (width and height when they did not). A plane is width x height
+ * bytes for y and (width + 1) / 2 x (height + 1) / 2 for u and v, its rows
+ * at a stride of at least its width. It holds at least
+ * stride * (rows - 1) + width bytes: the last row need not be padded. */
 typedef struct gm_video_frame
 {
   int width;

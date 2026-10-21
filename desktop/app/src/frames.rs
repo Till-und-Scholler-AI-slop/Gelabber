@@ -62,7 +62,9 @@ pub type Waiter = Box<dyn FnOnce(std::result::Result<Vec<u8>, &'static str>) + S
 
 const CLOSED: &str = "view closed";
 
-fn copy_plane(out: &mut Vec<u8>, src: &[u8], stride: usize, width: usize, rows: usize) {
+/// Appends the plane's `rows` rows of `width` bytes, without the stride's
+/// padding. The plane has to hold them ([`planes_hold`]).
+pub(crate) fn copy_plane(out: &mut Vec<u8>, src: &[u8], stride: usize, width: usize, rows: usize) {
     if stride == width {
         out.extend_from_slice(&src[..width * rows]);
     } else {
@@ -72,21 +74,34 @@ fn copy_plane(out: &mut Vec<u8>, src: &[u8], stride: usize, width: usize, rows: 
     }
 }
 
+/// Whether the frame has a picture and each of its planes holds the rows its
+/// size says at its stride, which [`copy_plane`] reads.
+pub(crate) fn planes_hold(frame: &VideoFrame<'_>) -> bool {
+    let (width, height) = (frame.width as usize, frame.height as usize);
+    let (chroma_width, chroma_height) = (width.div_ceil(2), height.div_ceil(2));
+    let holds = |plane: &[u8], stride: usize, width: usize, rows: usize| {
+        rows > 0
+            && width > 0
+            && stride >= width
+            && stride
+                .checked_mul(rows - 1)
+                .and_then(|end| end.checked_add(width))
+                .is_some_and(|end| plane.len() >= end)
+    };
+    holds(frame.y, frame.stride_y, width, height)
+        && holds(frame.u, frame.stride_u, chroma_width, chroma_height)
+        && holds(frame.v, frame.stride_v, chroma_width, chroma_height)
+}
+
 /// Writes the frame's packet into `out`; `bt709` is the matrix of its
 /// colours ([`Origin::bt709`]). False, with `out` untouched, for a frame
 /// whose planes are shorter than its size says.
 fn pack(out: &mut Vec<u8>, frame: &VideoFrame<'_>, seq: u32, bt709: bool) -> bool {
-    let (width, height) = (frame.width as usize, frame.height as usize);
-    let (chroma_width, chroma_height) = (width.div_ceil(2), height.div_ceil(2));
-    let holds = |plane: &[u8], stride: usize, width: usize, rows: usize| {
-        rows > 0 && stride >= width && plane.len() >= stride * (rows - 1) + width
-    };
-    if !holds(frame.y, frame.stride_y, width, height)
-        || !holds(frame.u, frame.stride_u, chroma_width, chroma_height)
-        || !holds(frame.v, frame.stride_v, chroma_width, chroma_height)
-    {
+    if !planes_hold(frame) {
         return false;
     }
+    let (width, height) = (frame.width as usize, frame.height as usize);
+    let (chroma_width, chroma_height) = (width.div_ceil(2), height.div_ceil(2));
     let mut flags = if bt709 { FLAG_BT709 } else { 0 };
     flags |= (((frame.rotation / 90) & 3) as u8) << 1;
     out.clear();
@@ -871,6 +886,39 @@ mod tests {
         short.v = &planes.v[..10];
         assert!(!pack(&mut packet, &short, 2, false));
         assert_eq!(packet, before);
+    }
+
+    #[test]
+    fn planes_hold_the_rows_their_size_says() {
+        let planes = Planes::bars(64, 36, false);
+        assert!(planes_hold(&frame(&planes, 0)));
+        // Padded strides; the last row need not be padded.
+        let mut y = Vec::new();
+        for row in planes.y.chunks(64) {
+            y.extend_from_slice(row);
+            y.extend_from_slice(&[0xee; 16]);
+        }
+        let mut padded = frame(&planes, 0);
+        padded.y = &y[..80 * 35 + 64];
+        padded.stride_y = 80;
+        assert!(planes_hold(&padded));
+        let mut packet = Vec::new();
+        assert!(pack(&mut packet, &padded, 1, false));
+        assert_eq!(&packet[HEADER_LEN..HEADER_LEN + 64 * 36], &planes.y[..]);
+        // A byte short of the last row.
+        padded.y = &y[..80 * 35 + 63];
+        assert!(!planes_hold(&padded), "short plane");
+
+        let mut narrow = frame(&planes, 0);
+        narrow.stride_u = 31;
+        assert!(!planes_hold(&narrow), "stride shorter than a row");
+
+        let mut empty = frame(&planes, 0);
+        empty.height = 0;
+        assert!(!planes_hold(&empty), "no rows");
+        empty.height = 36;
+        empty.width = 0;
+        assert!(!planes_hold(&empty), "no columns");
     }
 
     #[test]

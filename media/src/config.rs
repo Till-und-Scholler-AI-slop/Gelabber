@@ -8,6 +8,7 @@ use std::time::Duration;
 pub const MEDIA_ADDR: &str = "MEDIA_ADDR";
 pub const REDIS_URL: &str = "REDIS_URL";
 pub const MEDIA_READY_TIMEOUT_MS: &str = "MEDIA_READY_TIMEOUT_MS";
+pub const MEDIA_JOIN_DEADLINE_MS: &str = "MEDIA_JOIN_DEADLINE_MS";
 pub const MEDIA_ICE_BIND: &str = "MEDIA_ICE_BIND";
 pub const MEDIA_ICE_PORT_MAX: &str = "MEDIA_ICE_PORT_MAX";
 pub const MEDIA_ADVERTISED_IP: &str = "MEDIA_ADVERTISED_IP";
@@ -15,6 +16,7 @@ pub const RUST_LOG: &str = "RUST_LOG";
 
 const DEFAULT_MEDIA_ADDR: &str = "0.0.0.0:8081";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
+const DEFAULT_JOIN_DEADLINE_MS: u64 = 10_000;
 const DEFAULT_ICE_BIND: &str = "0.0.0.0:10000";
 
 #[derive(Debug, Clone)]
@@ -22,10 +24,14 @@ pub struct Config {
     pub media_addr: SocketAddr,
     pub redis_url: String,
     pub ready_timeout: Duration,
+    /// How long a `/ws` socket may stay open without a joined room, both
+    /// after the upgrade and after a leave.
+    pub join_deadline: Duration,
     /// Shared native UDP listener (`ip:port`). Test port `0` selects one port
     /// from the explicit 20000..=30000 range. Production defaults to UDP 10000.
     pub ice_bind: String,
-    /// Reserved deployment range; the shared listener uses only `ice_bind`.
+    /// Reserved for the per-worker UDP port range of the worker pool (#290).
+    /// Currently unused: the shared listener binds only `ice_bind`.
     pub ice_port_max: Option<u16>,
     /// 1:1 NAT advertised address for host candidates. Empty = bind only.
     pub advertised_ip: Option<String>,
@@ -74,6 +80,11 @@ impl Config {
             None => DEFAULT_READY_TIMEOUT_MS,
         };
 
+        let join_deadline_ms = match get(MEDIA_JOIN_DEADLINE_MS) {
+            Some(raw) => parse_positive::<u64>(MEDIA_JOIN_DEADLINE_MS, &raw)?,
+            None => DEFAULT_JOIN_DEADLINE_MS,
+        };
+
         let ice_bind = get(MEDIA_ICE_BIND).unwrap_or_else(|| DEFAULT_ICE_BIND.to_owned());
         let ice_addr = ice_bind.parse::<SocketAddr>().map_err(|_| {
             invalid(
@@ -114,6 +125,7 @@ impl Config {
             media_addr,
             redis_url,
             ready_timeout: Duration::from_millis(ready_timeout_ms),
+            join_deadline: Duration::from_millis(join_deadline_ms),
             ice_bind,
             ice_port_max,
             advertised_ip,
@@ -168,6 +180,39 @@ mod tests {
         assert_eq!(config.ice_bind, "0.0.0.0:10000");
         assert!(config.ice_port_max.is_none());
         assert!(config.advertised_ip.is_none());
+        assert_eq!(config.join_deadline, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn parses_join_deadline() {
+        let config = Config::from_source(source(&[
+            (REDIS_URL, "redis://localhost"),
+            (MEDIA_JOIN_DEADLINE_MS, "250"),
+        ]))
+        .expect("valid");
+        assert_eq!(config.join_deadline, Duration::from_millis(250));
+
+        let blank = Config::from_source(source(&[
+            (REDIS_URL, "redis://localhost"),
+            (MEDIA_JOIN_DEADLINE_MS, "  "),
+        ]))
+        .expect("blank falls back to the default");
+        assert_eq!(blank.join_deadline, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn rejects_zero_or_non_numeric_join_deadline() {
+        for raw in ["0", "abc"] {
+            let err = Config::from_source(source(&[
+                (REDIS_URL, "redis://localhost"),
+                (MEDIA_JOIN_DEADLINE_MS, raw),
+            ]))
+            .unwrap_err();
+            assert!(
+                matches!(&err, ConfigError::Invalid { key, .. } if *key == MEDIA_JOIN_DEADLINE_MS),
+                "{raw}: {err}"
+            );
+        }
     }
 
     #[test]

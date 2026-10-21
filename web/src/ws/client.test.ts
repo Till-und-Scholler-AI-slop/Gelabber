@@ -166,6 +166,49 @@ describe("gateway client", () => {
     gateway.stop();
   });
 
+  it("jitters later reconnects between half and all of the backoff", async () => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random");
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 100,
+      maxRetryMs: 400,
+      heartbeatMs: 60_000,
+      deadMs: 120_000,
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+
+    gateway.start();
+    // The first retry stays immediate.
+    sockets[0]?.emit("close");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2);
+    // No socket opens, so every close is the next attempt:
+    // [backoff, Math.random(), expected delay].
+    for (const [base, value, delay] of [
+      [100, 0, 50],
+      [200, 0.999, 200],
+      [400, 0, 200],
+      [400, 0.999, 400],
+    ] as const) {
+      random.mockReturnValueOnce(value);
+      const count = sockets.length;
+      sockets[count - 1]?.emit("close");
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(sockets, `backoff ${base}`).toHaveLength(count);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(sockets, `backoff ${base}`).toHaveLength(count + 1);
+    }
+
+    gateway.stop();
+    random.mockRestore();
+  });
+
   it("routes signaling off the chat event stream", () => {
     const sockets: FakeSocket[] = [];
     const gateway = new Gateway({

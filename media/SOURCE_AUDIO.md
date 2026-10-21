@@ -114,7 +114,7 @@ These control checks do not establish actual RTP playback. The existing
 and real native transport/playback. `GELABBER_SOURCE_AUDIO_RECEIVER=firefox` selects
 a Firefox receiver; both Playwright browsers must be installed. Browser results
 must identify the exact executed runtime/test freeze, and older SFU reports remain
-historical. `media/tests/browser-lifecycle.mjs` and the dated media test documents
-record the previous engine and are not v4 acceptance gates. Native tab/system
-capture availability, audible quality, physical devices and WAN/relay acceptance
-remain separate from these local synthetic controls.
+historical. `media/tests/browser-lifecycle.mjs` (removed in v0.7.1) and the dated
+media test documents record the previous engine and are not v4 acceptance gates.
+Native tab/system capture availability, audible quality, physical devices and
+WAN/relay acceptance remain separate from these local synthetic controls.

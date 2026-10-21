@@ -401,8 +401,9 @@ pub fn can_receive(capabilities: &Value, mime: &str) -> bool {
 }
 
 /// What in the environment says the core must have H264, given the values of
-/// GELABBER_EXPECT_H264 and GELABBER_EXPECT_ENCODER: the first set to 1, or
-/// the second naming the H264 encoder a test is to find.
+/// GELABBER_EXPECT_H264 and GELABBER_EXPECT_ENCODER (or _DECODER): the first
+/// set to 1, or the second naming the H264 encoder (or decoder) a test is to
+/// find.
 pub fn h264_demanded_by(
     expect_h264: Option<&str>,
     expect_encoder: Option<&str>,
@@ -410,22 +411,25 @@ pub fn h264_demanded_by(
     if expect_h264 == Some("1") {
         Some("GELABBER_EXPECT_H264=1")
     } else if expect_encoder.is_some_and(|name| !name.is_empty()) {
-        Some("GELABBER_EXPECT_ENCODER is set")
+        Some("GELABBER_EXPECT_ENCODER or _DECODER is set")
     } else {
         None
     }
 }
 
-/// Whether the H264 half of a test runs. The Windows core has no H264, so a
-/// device without it only skips that half; GELABBER_EXPECT_H264=1 (set where
+/// Whether the H264 half of a test runs. The Windows core has H264 only where
+/// Media Foundation has its codecs, so a device without it only skips that
+/// half; GELABBER_EXPECT_H264=1 (set where
 /// the core is built with H264, as on Linux) turns a missing codec into a
-/// failure instead, and so does GELABBER_EXPECT_ENCODER: its check needs an
-/// H264 producer.
+/// failure instead, and so do GELABBER_EXPECT_ENCODER and _DECODER: their
+/// checks need an H264 producer and consumer.
 pub fn h264_under_test(capabilities: &Value) -> bool {
     let available = can_receive(capabilities, "video/h264");
     let (expect_h264, expect_encoder) = (
         std::env::var("GELABBER_EXPECT_H264").ok(),
-        std::env::var("GELABBER_EXPECT_ENCODER").ok(),
+        std::env::var("GELABBER_EXPECT_ENCODER")
+            .ok()
+            .or_else(|| std::env::var("GELABBER_EXPECT_DECODER").ok()),
     );
     if let Some(demand) = h264_demanded_by(expect_h264.as_deref(), expect_encoder.as_deref()) {
         assert!(available, "{demand}, but the native device has no H264");
@@ -450,5 +454,32 @@ pub fn check_encoder(name: &str, stats: &Value) {
     assert!(
         found.iter().any(|i| i.contains(&expected)),
         "{name} encoder {found:?}, expected {expected}"
+    );
+}
+
+/// With GELABBER_EXPECT_DECODER set, some inbound-rtp entry of a consumer's
+/// stats must name it as `decoderImplementation` (e.g. "GStreamer
+/// avdec_h264"), and `video_codecs` must report its element.
+pub fn check_decoder(name: &str, stats: &Value) {
+    let Ok(expected) = std::env::var("GELABBER_EXPECT_DECODER") else {
+        return;
+    };
+    let found: Vec<String> = stats["rtc"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|s| s["type"] == "inbound-rtp")
+        .filter_map(|s| s["decoderImplementation"].as_str().map(str::to_owned))
+        .collect();
+    eprintln!("{name} decoder: {found:?}");
+    assert!(
+        found.iter().any(|i| i.contains(&expected)),
+        "{name} decoder {found:?}, expected {expected}"
+    );
+    let codecs = gelabber_media_core::video_codecs().unwrap();
+    let element = codecs["h264"]["decoder"].as_str().unwrap_or_default();
+    assert!(
+        !element.is_empty() && expected.contains(element),
+        "video_codecs {codecs}, expected {expected}"
     );
 }

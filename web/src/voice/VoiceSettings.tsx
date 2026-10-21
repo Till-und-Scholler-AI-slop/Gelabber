@@ -4,6 +4,7 @@ import { isDesktopApp } from "./native/bridge.ts";
 import { listNativeAudioApps } from "./native/capture.ts";
 import { hasNativeFeature } from "./native/features.ts";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
+import { PushToTalkSettings } from "./PushToTalkSettings.tsx";
 // Shared Voice/Video + notification form. Used on /settings and in-call.
 
 import { useEffect, useState, type ReactNode } from "react";
@@ -237,6 +238,7 @@ export function MediaSettingsForm({
               }
             />
           </fieldset>
+          <PushToTalkSettings />
           <fieldset className="flex flex-col gap-3">
             <legend className="text-sm font-semibold">
               Mikrofonverarbeitung

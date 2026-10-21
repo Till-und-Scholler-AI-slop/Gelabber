@@ -17,9 +17,23 @@ them as optional):
   webkit2gtk-4.1 gtk3 libsoup3 gst-plugins-base gst-plugins-good
   pipewire pipewire-pulse xdg-desktop-portal xdg-desktop-portal-hyprland
   vulkan-icd-loader plus the GPU's Vulkan driver (nvidia-utils, vulkan-intel)
-Camera, screen and Go Live are sent as VP8, encoded in software. No
-package adds hardware encoding: the app does not use the H264 encoders of
-gst-plugins-bad.
+Video on the GPU (optional): the app has no H264 codec of its own and uses
+the system's GStreamer for it. With gst-plugins-bad (h264parse, NVIDIA's
+nvcodec) and gst-plugin-va (Intel, AMD) it encodes and decodes H264 on the
+graphics card; gst-libav (avdec_h264) decodes H264 on the CPU where the
+card cannot. It sends H264 only when it encodes on the card and everyone in
+the call can decode it; otherwise, and without those packages, it sends VP8
+encoded on the CPU.
+
+Push-to-talk: choose "Push-to-Talk" in the voice settings. In a call the
+app takes the key through the desktop's GlobalShortcuts portal, so it also
+works while another window is in front. KDE and GNOME (48 or later) ask
+once which key to use, suggesting the one chosen in the settings. On
+Hyprland bind it yourself in hyprland.conf:
+  bind = , F13, global, gelabber-desktop:push-to-talk
+(any key instead of F13; "hyprctl globalshortcuts" lists the exact name,
+which is ":push-to-talk" with xdg-desktop-portal before 1.19). Without the
+portal the key works only while the window has the focus.
 
 Logs: GELABBER_MEDIA_LOG=1 ./gelabber-desktop ...
 Small video: when a video tile says "Geringe Bildqualität" and, with the
@@ -32,6 +46,5 @@ Licences: THIRD-PARTY-NOTICES.txt lists the third-party software in the two
 binaries, with its licences and their texts, and what is still open. It is
 next to this file in the tarball; the package installs it as
 /usr/share/licenses/gelabber-desktop/THIRD-PARTY-NOTICES.txt.
-libgelabber_media.so contains OpenH264 (H264 encoder) and FFmpeg decoders
-from libwebrtc (LGPL; H264, AAC and others). How H264 licensing applies to
-this build is not settled (issue #165); do not redistribute it until it is.
+libgelabber_media.so contains no H264 codec (no OpenH264, no FFmpeg); H264
+comes from the system's GStreamer, as above.

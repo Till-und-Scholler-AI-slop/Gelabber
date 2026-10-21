@@ -275,7 +275,8 @@ type FieldName =
   | "size"
   | "attachment_ids"
   | "gif"
-  | "q";
+  | "q"
+  | "token";
 
 const FIELD_LABEL: Record<FieldName, string> = {
   email: "E-Mail-Adresse",
@@ -306,6 +307,7 @@ const FIELD_LABEL: Record<FieldName, string> = {
   attachment_ids: "Anhang",
   gif: "GIF",
   q: "Suche",
+  token: "Link",
 };
 
 /** German inline copy for a field code. Unknown fields fall back to generic text. */
@@ -372,6 +374,10 @@ export function errorMessage(code: ApiErrorCode): string {
       return "Auf einem anderen Gerät geändert. Bitte erneut versuchen.";
     case "email_taken":
       return "Diese E-Mail-Adresse ist schon registriert.";
+    case "email_unverified":
+      return "Bitte bestätige zuerst deine E-Mail-Adresse. Wir haben dir gerade einen neuen Link geschickt.";
+    case "token_invalid":
+      return "Dieser Link ist abgelaufen oder wurde schon benutzt.";
     case "unauthenticated":
       return "Bitte melde dich erneut an.";
     case "csrf_invalid":

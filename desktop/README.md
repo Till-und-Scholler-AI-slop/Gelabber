@@ -20,11 +20,13 @@ and watching. What users get to read ships from `app/package/`.
 | `native/scripts/` | Reproducible libwebrtc builds (Linux, Windows); a test desktop session with a ScreenCast portal |
 | `native/patches/` | Patches applied to libwebrtc; `libmediasoupclient/` to libmediasoupclient |
 | `native/tests/app_audio_mix_test.cc` | The source-audio mix against simulated sound cards whose clocks are off; plain C++, built and run by `core/tests/voice.rs` with the host's compiler |
+| `native/tests/playout_limiter_test.cc` | The playout limiter for volumes above 100 % on generated mixes; plain C++, built and run by `core/tests/voice.rs` like the mix test |
+| `native/tests/audio_device_switch_test.cc` | Switching the microphone or speakers against a fake device module that refuses devices: restart, and rollback to the previous device; plain C++, built and run by `core/tests/voice.rs` like the mix test |
 | `core/` | Rust crate `gelabber-media-core`: safe API over the C ABI |
 | `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.29 with the server's router codecs; on Windows also application sound through process loopback |
 | `core/tests/source_preview.rs` | Video sinks for views in the app: a local source without a producer, scaling and rate limits, sinks going away mid-frame |
 | `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode, and the screen as the web client shares it: VP8 in two simulcast layers (`GELABBER_TEST_SCREEN=1`); on Windows the primary monitor through Windows.Graphics.Capture as VP8 in two layers (`GELABBER_TEST_SCREEN_MONITOR=1`) |
-| `app/` | Tauri 2 app `gelabber-desktop`: window on the server origin, bundled setup page, media commands (`src/media.rs`), updates of the Windows app (`src/update.rs`, `updater.pub`) |
+| `app/` | Tauri 2 app `gelabber-desktop`: window on the server origin, bundled setup page, media commands (`src/media.rs`), global push-to-talk (`src/ptt.rs`: low-level hook on Windows, GlobalShortcuts portal on Linux), updates of the Windows app (`src/update.rs`, `updater.pub`) |
 | `app/scripts/smoke.sh` | Starts the app on a stand-in origin under Xvfb and checks which commands the page reaches and that the frames of a test-pattern view arrive; then kills the page's web process and checks that the app loads the page again |
 | `app/scripts/smoke.ps1` | The same on Windows, against a built or installed `gelabber-desktop.exe` |
 | `app/tauri.bundle.windows.json` | What the Windows installer (NSIS) holds: the app, `gelabber_media.dll` from `app/bundle-input/`, README and third-party notices |
@@ -177,7 +179,9 @@ the web client's user menu lead back to that page at any time; **F5** or
 **Strg+R** reload the current page.
 Only the configured origin gets the `media`, `shell` and `update` permission sets
 (`app/permissions/`) plus `allow-open-setup`; every page load closes the previous page's
-transports, producers and sources.
+transports, producers and sources. Tauri cannot take such a grant back, so
+after a change of server the app itself refuses every command that does not
+come from the setup page or the current server's pages.
 
 The `shell` commands (`app/src/shell.rs`) carry the web client's unread state
 out of the window: a number on the launcher (Linux, where the desktop shows
@@ -329,24 +333,41 @@ separate decision.
   a refused Go Live left a claim that blocked the channel. (A capture that
   fails or is cancelled still does that with such a client, on either
   system.)
-- Video encode: the app sends VP8, encoded in software by libwebrtc's
-  libvpx. The web client names the codec of every producer and takes VP8
-  wherever the device has it (`codec` in
-  `web/src/voice/mediasoupConnection.ts`), and the core produces what it is
-  asked for. The Linux core has H264 all the same, and its tests run it:
-  through the system's GStreamer when that has a hardware element
-  (`nvh264enc`, `vah264enc`, `vah264lpenc`, `vaapih264enc`; gst-plugins-bad),
-  otherwise OpenH264; `GELABBER_H264_ENCODER=<element>|none` overrides the
-  choice, and a caller that names no codec gets H264 before VP8. None of
-  that reaches the app: there gst-plugins-bad and the variable change
-  nothing. Hardware encoding in the app would start in the web client (ask
-  for `video/h264` when the core reports a hardware encoder), and shipping
-  H264 needs a licensing decision first. The Windows core is built without
-  H264. Decode is libwebrtc's: libvpx for VP8/VP9, on Linux FFmpeg (Chrome
-  branding) for H264.
-- Simulcast: libvpx and OpenH264 encode a producer's layers in one encoder,
-  and only when every layer has exactly the top layer's aspect. A layer is
-  the picture divided by its `scaleResolutionDownBy`, so a 1366x768 screen
+- Video codecs: the web client names the codec of every producer
+  (`chooseVideoCodec` in `web/src/voice/videoCodec.ts`) among those every
+  receiver in the room decodes, which the media server announces. It takes
+  H264 where the device encodes it in hardware and VP8 otherwise; the core
+  produces what it is asked for, and a caller that names no codec gets H264
+  before VP8. `media_info` reports the feature `h264-hardware` and, under
+  `videoCodecs`, what `gm_video_codecs` found.
+  - Neither libwebrtc build carries H264 (`rtc_use_h264=false`, no OpenH264
+    or FFmpeg) and the core is compiled without `WEBRTC_USE_H264`: H264 is
+    the system's alone, so the packages ship no H264 codec. A system
+    without one has no H264 in its RTP capabilities, and the room falls
+    back to VP8 through the negotiation above.
+  - Linux encode: through the system's GStreamer, a hardware element
+    (`nvh264enc`, `vah264enc`, `vah264lpenc`, `vaapih264enc`; with
+    `h264parse` from gst-plugins-bad) else a software one (`openh264enc`,
+    `x264enc`), each simulcast layer on its own encoder behind
+    `SimulcastEncoderAdapter`, which hands a failing hardware encoder over
+    to the software element. `GELABBER_H264_ENCODER=<element>|none`
+    overrides the choice; an element named this way that encodes on the CPU
+    (`x264enc`) does not count as hardware. VP8/VP9 are libvpx's.
+  - Linux decode: through GStreamer, a hardware decoder (`nvh264dec`,
+    `vah264dec`, `vaapih264dec`) behind libwebrtc's software fallback to a
+    software element (`avdec_h264`, `openh264dec`), else the software
+    element alone; `GELABBER_H264_DECODER=<element>|none` overrides it
+    (`avdec_h264` in CI). VP8/VP9 are libvpx's, AV1 dav1d's.
+  - Windows: H264 through Media Foundation (`native/src/mf_h264.cc`), which
+    ships with Windows and the GPU drivers: the GPU's encoder MFT (NVENC,
+    AMF, Quick Sync) where there is one, else Microsoft's software encoder,
+    and Microsoft's decoder, on the GPU through DXVA where it gets a
+    Direct3D 11 device. An encoder MFT covers one picture, so the core runs
+    one per simulcast layer itself. A hardware MFT that fails is replaced by
+    the next one. VP8, VP9 and AV1 are in software.
+- Simulcast: libvpx encodes a producer's layers in one encoder, and only
+  when every layer has exactly the top layer's aspect. A layer is the
+  picture divided by its `scaleResolutionDownBy`, so a 1366x768 screen
   over the web client's 4 and 1 would be 342x192 below 1366x768: refused,
   and nothing is sent. Local video sources therefore crop to multiples of 4
   (1364x768), and the software encoders tell libwebrtc that their alignment
@@ -426,7 +447,8 @@ separate decision.
   window (`app/src/viewer.rs`), for web clients from before the views in the
   page and as a pop-out for newer ones: winit on its own thread next to the
   webview's GTK loop, wgpu drawing the decoded I420 planes (BT.601, as the
-  views in the page), letterboxed. It shares the consumer's sink with the page views and
+  views in the page), turned by the frame's rotation (CVO, a phone held
+  upright) and letterboxed. It shares the consumer's sink with the page views and
   shows the stream unscaled, so while a window is open the views of that
   consumer get full-size frames too, whatever size they asked for; only a
   view's own `maxFps` still holds. The web client therefore keeps no view
@@ -442,12 +464,26 @@ separate decision.
   uses the APM's noise suppression/AGC, `original` captures stereo without
   either. Input gain and meters (0..100, the web formula) run in the same
   post-processor; per-consumer playback volume replaces the web's audio
-  elements. The APM runs with `WebRTC-MutedStateKillSwitch`: otherwise
+  elements. Above 100 % no receive stream is scaled above 1 (libwebrtc
+  saturates each one on its own, which clips a loud speaker): the largest
+  volume becomes a master gain on the playout after the mix, every stream
+  plays at its volume over it, and a look-ahead limiter
+  (`native/src/playout_limiter.h`, 1.5 ms, ceiling -0.3 dBFS) keeps the sum
+  below full scale. The output is 1.5 ms behind the mix at every volume; at
+  100 % and below the samples pass unchanged. The echo canceller's
+  reference is the mix before the master gain, which it sees as a louder
+  echo path. The APM runs with `WebRTC-MutedStateKillSwitch`: otherwise
   closing one audio producer marks the shared APM's output unused and stops
   RNNoise, gain and meters for the remaining microphone stream. The
   microphone test (`gm_audio_monitor`) keeps the device module recording
   without a call through a pass-through module that only holds back the
-  voice pipeline's stop while the test runs. The test
+  voice pipeline's stop while the test runs. Choosing another microphone or
+  output (`gm_audio_configure`) restarts the side that a stream or the test
+  wants running, also after a restart that failed before; a device that
+  cannot be selected or started gives the previous one back, running, or
+  the system default once that one is unplugged
+  (`native/src/audio_device_switch.h`). CI switches devices on
+  pipewire-pulse only, not on Windows. The test
   session also provides null-sink "speakers" and a
   noise-playing "microphone" for `core/tests/voice.rs`. The noise lasts
   ten minutes from the session's start; the test says so when it is started

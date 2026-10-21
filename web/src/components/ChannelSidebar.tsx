@@ -185,7 +185,9 @@ export function ChannelSidebar({
   });
   const manageChannels = can(server, "manage_channels");
   const manageServer = can(server, "manage_server");
-  const voice = useVoice();
+  const voiceChannelId = useVoice((s) =>
+    s.serverId === server.id ? s.channelId : null,
+  );
   const live = useVoiceRoster((s) => s.live[server.id] ?? EMPTY_LIVE);
   const occupancy = useVoiceRoster(
     (s) => s.byServer[server.id] ?? EMPTY_OCCUPANCY,
@@ -282,7 +284,7 @@ export function ChannelSidebar({
         server={server}
         rows={rows}
         activeChannelId={activeChannelId}
-        voiceChannelId={voice.serverId === server.id ? voice.channelId : null}
+        voiceChannelId={voiceChannelId}
         liveChannels={live}
         manageChannels={manageChannels}
         onEditChannel={(channel) => setChannelDialog({ mode: "edit", channel })}

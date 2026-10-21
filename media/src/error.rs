@@ -15,7 +15,8 @@ pub enum SfuError {
     UnsupportedCodec,
     /// Native worker/listener is unavailable.
     Unavailable,
-    /// Kick/ban deny is set for this user on this server.
+    /// Authority revoked: member/channel generation or session mismatch,
+    /// expiry, or peer removed.
     Revoked,
     Negotiation(String),
     Ice(String),

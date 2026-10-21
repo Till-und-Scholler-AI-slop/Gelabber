@@ -32,7 +32,7 @@ pub async fn create(db: &PgPool, user_id: Uuid, ttl: Duration) -> Result<String,
 }
 
 /// Resolves a raw cookie token to its user. Expired rows are treated as
-/// absent (and cleaned up opportunistically by `revoke`).
+/// absent; the next sign-in sweeps them (`revoke`).
 pub async fn resolve<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     db: E,
     raw: &str,
@@ -51,9 +51,13 @@ pub async fn resolve<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     .await?)
 }
 
-/// Removes the session behind `raw` (if any) and, in the same statement,
-/// every expired row. Called on logout and before a new login/register so a
-/// browser never accumulates more than one live row per sign-in.
+/// Removes the session behind `raw` (if given) and, in the same statement,
+/// every expired row. Its caller is `signed_in` (login, register without
+/// account mail, change-password, verify-email, password-reset confirm),
+/// which sweeps the expired rows of every browser this way; logout and the
+/// browser's own previous session go through [`revoke_current`] instead.
+/// The sweep is backed by `sessions_expires_at_idx`, so it costs the rows
+/// that expired since the last sign-in; `tests/auth.rs` pins it.
 pub async fn revoke(db: &PgPool, raw: Option<&str>) -> Result<(), ApiError> {
     let hash = raw.filter(|raw| token::is_valid(raw)).map(token::hash);
     sqlx::query("DELETE FROM sessions WHERE token_hash = $1 OR expires_at <= now()")

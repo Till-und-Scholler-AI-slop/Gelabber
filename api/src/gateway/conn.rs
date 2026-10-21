@@ -59,9 +59,15 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
     // The first tick fires immediately; skip it so we do not heartbeat
     // before the client has had a chance to subscribe.
     beat.tick().await;
-    let mut security = tokio::time::interval(std::time::Duration::from_secs(1));
+    // A per-socket phase spreads the checks over the second, so sockets that
+    // reconnect together do not ask the pool on the same millisecond. The
+    // first check still lands within 1 s of connect.
+    let phase = std::time::Duration::from_millis((conn.redis_id().as_u128() % 1000) as u64);
+    let mut security = tokio::time::interval_at(
+        tokio::time::Instant::now() + phase,
+        std::time::Duration::from_secs(1),
+    );
     security.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    security.tick().await;
 
     let (mut sink, mut stream) = socket.split();
 
@@ -71,9 +77,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
             _ = revoked.changed() => break,
             _ = &mut expired => break,
             _ = security.tick() => {
-                let Ok(Ok(Some(mut session_guard))) = tokio::time::timeout(std::time::Duration::from_secs(1), session.lock_live(&state.db)).await else { break; };
-                if state.gateway.reconcile_access(conn, &mut session_guard).await.is_err() { break; }
-                if !matches!(tokio::time::timeout(std::time::Duration::from_secs(1), state.gateway.refresh_voice(conn)).await, Ok(Ok(()))) { break; }
+                if !security_tick(&state, &session, conn).await { break; }
             }
             incoming = stream.next() => {
                 let mut live_hint = None;
@@ -146,6 +150,9 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
             _ = beat.tick() => {
                 let Ok(Ok(Some(mut session_guard))) = tokio::time::timeout(std::time::Duration::from_secs(1), session.lock_live(&state.db)).await else { break; };
                 if state.gateway.reconcile_access(conn, &mut session_guard).await.is_err() { break; }
+                // Nothing below needs the transaction: return the connection
+                // before the Redis writes and the socket write.
+                if session_guard.rollback().await.is_err() { break; }
                 if last_client.elapsed() >= state.ws_dead {
                     debug!(user_id = %user.id, "ws silent death");
                     break;
@@ -189,6 +196,42 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
             .await;
     }
     debug!(user_id = %user.id, "ws disconnected");
+}
+
+/// Recheck the session and every subscription, then renew voice leases.
+/// `false` ends the socket. The transaction is read-only and ends before
+/// the renewal, which does Redis I/O and waits on the process-wide
+/// `voice_ops` mutex. The `voice_snap` frames the renewal queues are
+/// authorized again at dequeue: `deliver` runs its own `lock_live`,
+/// `reconcile_access` and `scope_allowed`.
+async fn security_tick(state: &AppState, session: &CurrentSession, conn: ConnId) -> bool {
+    let Ok(Ok(Some(mut session_guard))) = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        session.lock_live(&state.db),
+    )
+    .await
+    else {
+        return false;
+    };
+    if state
+        .gateway
+        .reconcile_access(conn, &mut session_guard)
+        .await
+        .is_err()
+    {
+        return false;
+    }
+    if session_guard.rollback().await.is_err() {
+        return false;
+    }
+    matches!(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            state.gateway.refresh_voice(conn),
+        )
+        .await,
+        Ok(Ok(()))
+    )
 }
 
 async fn handle_text(
@@ -291,6 +334,8 @@ async fn subscribe(
             .gateway
             .bind_server(conn, &mut *db, server_id, user.id)
             .await?;
+    } else {
+        state.gateway.mark_dm(conn, server_id).await;
     }
     state.gateway.watch_server(conn, server_id).await;
     let topic = Topic::of(server_id, channel_id);
@@ -634,5 +679,103 @@ mod tests {
             .map(|run| run.into_iter().map(|(_, json)| json).collect())
             .collect();
         assert_eq!(runs, expected);
+    }
+
+    /// The tick waits on `voice_ops` while another voice operation holds it.
+    /// On a one-connection pool, that wait must not keep the only connection.
+    #[sqlx::test]
+    async fn security_tick_returns_the_pool_connection_before_voice_renewal(pool: sqlx::PgPool) {
+        use std::time::Duration;
+        let config = crate::Config::from_source(|key| match key {
+            "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
+            "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".into()),
+            "REDIS_URL" => Some(std::env::var("REDIS_URL").unwrap()),
+            _ => None,
+        })
+        .unwrap();
+        let small = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_secs(2))
+            .connect_with(pool.connect_options().as_ref().clone())
+            .await
+            .unwrap();
+        let state = AppState::with_pool(&config, small.clone()).unwrap();
+        let user = crate::auth::user::insert(&pool, "tick@example.test", "tick", "unused")
+            .await
+            .unwrap();
+        let raw = crate::auth::session::create(&pool, user.id, Duration::from_secs(600))
+            .await
+            .unwrap();
+        let hash = crate::token::hash(&raw);
+        let expires_at =
+            sqlx::query_scalar("SELECT expires_at FROM sessions WHERE token_hash = $1")
+                .bind(&hash)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let session = CurrentSession {
+            user,
+            hash,
+            expires_at,
+        };
+        let server: Uuid = sqlx::query_scalar(
+            "INSERT INTO servers (name, owner_id) VALUES ('Tick', $1) RETURNING id",
+        )
+        .bind(session.user.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO server_members (server_id, user_id) VALUES ($1, $2)")
+            .bind(server)
+            .bind(session.user.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let voice: Uuid = sqlx::query_scalar(
+            "INSERT INTO channels (server_id, name, kind) VALUES ($1, 'Voice', 'voice') RETURNING id",
+        )
+        .bind(server)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        state
+            .gateway
+            .wait_ready(Duration::from_secs(2))
+            .await
+            .unwrap();
+        let (tx, _rx) = mpsc::channel(super::super::hub::OUTBOUND_CAPACITY);
+        let (conn, _revoked) = state
+            .gateway
+            .attach_session(session.user.id, session.key(), tx)
+            .await;
+        // A seat the owner may keep, so reconcile_access leaves it and the
+        // renewal has to take voice_ops.
+        state
+            .gateway
+            .join_voice(conn, session.user.id, server, voice)
+            .await
+            .unwrap();
+
+        let busy = state.gateway.connections.inner.voice_ops.lock().await;
+        let tick = tokio::spawn({
+            let (state, session) = (state.clone(), session.clone());
+            async move { security_tick(&state, &session, conn).await }
+        });
+        // Long enough for the session check and reconcile on a local database.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!tick.is_finished(), "the tick waits on voice_ops");
+        let free = tokio::time::timeout(Duration::from_millis(200), small.acquire()).await;
+        assert!(
+            matches!(free, Ok(Ok(_))),
+            "the tick kept the only pool connection while waiting on voice_ops"
+        );
+        drop(free);
+        drop(busy);
+        assert!(
+            tick.await.unwrap(),
+            "the tick renews once voice_ops is free"
+        );
+        assert!(state.gateway.in_voice(conn, server, voice).await);
+        state.gateway.detach(conn).await;
     }
 }

@@ -6,16 +6,17 @@
 //! mediasoup version the Gelabber media gateway runs, and media flows both ways.
 //!
 //! Opus and VP8 always run. H264 runs where the core has it (not on Windows);
-//! GELABBER_EXPECT_H264=1 makes a core without it fail, and so does
-//! GELABBER_EXPECT_ENCODER, which names the H264 encoder to find.
+//! GELABBER_EXPECT_H264=1 makes a core without it fail, and so do
+//! GELABBER_EXPECT_ENCODER and GELABBER_EXPECT_DECODER, which name the H264
+//! encoder and decoder to find.
 //! GELABBER_TEST_LISTEN_IP puts the server on another address of the machine
 //! than 127.0.0.1 (see `listen_ip_from`).
 
 mod common;
 
 use common::{
-    Server, blocking, check_encoder, h264_demanded_by, h264_under_test, layers_of, listen_ip,
-    listen_ip_from, outbound_rtp, simulcast_sizes, wait_for,
+    Server, blocking, check_decoder, check_encoder, h264_demanded_by, h264_under_test, layers_of,
+    listen_ip, listen_ip_from, outbound_rtp, simulcast_sizes, wait_for,
 };
 use gelabber_media_core::{Audio, Device, Direction, Engine, Source, Transport, VideoFrame};
 use mediasoup::prelude::*;
@@ -79,6 +80,10 @@ async fn round_trip(server: &Server) {
             "native can receive {mime}"
         );
     }
+    eprintln!(
+        "system video codecs: {}",
+        gelabber_media_core::video_codecs().unwrap()
+    );
     let with_h264 = h264_under_test(&recv_caps);
     if !with_h264 {
         eprintln!("no H264 in this core: Opus and VP8 only");
@@ -276,6 +281,9 @@ async fn round_trip(server: &Server) {
         }
     }
     assert!(missing.is_empty(), "no decoded frames for {missing:?}");
+    if let Some((name, _, native)) = consumers.iter().find(|(name, ..)| *name == "H264") {
+        check_decoder(name, &native.stats().unwrap());
+    }
 
     // Frames for the viewer: I420 planes of the decoded size. A failed
     // assertion in the sink is caught at the FFI boundary and shows as
@@ -295,9 +303,12 @@ async fn round_trip(server: &Server) {
     viewer
         .set_video_sink(Some(Box::new(move |frame: &VideoFrame<'_>| {
             let (w, h) = (frame.width as usize, frame.height as usize);
-            assert!(frame.stride_y >= w && frame.stride_u >= w.div_ceil(2));
-            assert!(frame.y.len() >= frame.stride_y * h);
-            assert!(frame.v.len() >= frame.stride_v * h.div_ceil(2));
+            let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
+            assert!(frame.stride_y >= w && frame.stride_u >= cw && frame.stride_v >= cw);
+            // Up to the end of the last row (gm_video_frame).
+            assert!(frame.y.len() >= frame.stride_y * (h - 1) + w);
+            assert!(frame.u.len() >= frame.stride_u * (ch - 1) + cw);
+            assert!(frame.v.len() >= frame.stride_v * (ch - 1) + cw);
             let row = &frame.y[..w];
             let mut seen = sink_seen.lock().unwrap();
             seen.frames += 1;
@@ -514,7 +525,7 @@ fn an_expected_encoder_demands_h264() {
     );
     assert_eq!(
         h264_demanded_by(None, Some("GStreamer x264enc")),
-        Some("GELABBER_EXPECT_ENCODER is set")
+        Some("GELABBER_EXPECT_ENCODER or _DECODER is set")
     );
 }
 
