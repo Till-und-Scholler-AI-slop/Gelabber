@@ -1227,7 +1227,7 @@ impl Gateway {
         F: FnMut(redis::aio::MultiplexedConnection) -> Fut,
         Fut: std::future::Future<Output = Result<T, redis::RedisError>>,
     {
-        self.connections.with_conn(op).await
+        self.with_redis(op).await
     }
 
     /// The cached command connection for callers outside the gateway (the
