@@ -284,6 +284,10 @@
     margin-left: 0;
   }
 }
+/* A lost call has nothing between its status and its actions. */
+.voice-session-dock .voice-session-lost > .voice-session-head {
+  flex: 1 1 auto;
+}
 .voice-session-signal {
   flex-shrink: 0;
   margin-left: 2px;
@@ -554,7 +558,10 @@ a.voice-session-link:hover > span {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  width: min(300px, 100%);
+}
+/* Anchored, the menu keeps one width; as a sheet it spans the screen. */
+.ui-popover.voice-share-menu {
+  width: 320px;
 }
 .voice-menu-item {
   display: flex;

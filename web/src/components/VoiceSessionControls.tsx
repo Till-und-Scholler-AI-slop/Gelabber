@@ -165,7 +165,7 @@ export function VoiceSessionControls() {
           </div>
         ) : null}
         {lost ? (
-          <div className="voice-session-call">
+          <div className="voice-session-call voice-session-lost">
             <div className="voice-session-head" data-connection="failed">
               <WarningIcon size={16} className="voice-session-signal" />
               <span className="voice-session-link">
