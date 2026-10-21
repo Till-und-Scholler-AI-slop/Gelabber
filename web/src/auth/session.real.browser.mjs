@@ -1,4 +1,4 @@
-/* global window, location, console, process, fetch */
+/* global window, document, location, console, process, fetch */
 // Runs the actual React router and auth bootstrap against a local real API.
 // Start the coordinator's API at 8080, then: node src/auth/session.real.browser.mjs
 import assert from "node:assert/strict";
@@ -82,19 +82,19 @@ try {
     .getByLabel("Name", { exact: true })
     .fill(`Auth Invite ${suffix}`);
   await dialog.getByRole("button", { name: "Erstellen", exact: true }).click();
-  await owner.page.waitForURL(/\/s\/[^/]+\/c\//);
+  // A new server opens on its overview, with an invite link already made.
+  await owner.page.waitForURL(/\/s\/[^/]+$/);
   serverId = new URL(owner.page.url()).pathname.split("/")[2];
-  await owner.page
-    .getByRole("button", { name: "Leute einladen", exact: true })
-    .click();
-  dialog = owner.page.getByRole("dialog", { name: /Einladen zu/ });
-  await dialog
-    .getByRole("button", { name: "Link erstellen", exact: true })
-    .click();
+  dialog = owner.page.getByRole("dialog", { name: /einladen$/ });
+  await owner.page.waitForFunction(() =>
+    document
+      .querySelector('input[aria-label="Einladungslink"]')
+      ?.value.includes("/invite/"),
+  );
   const invite = await dialog
     .getByRole("textbox", { name: "Einladungslink" })
     .inputValue();
-  await dialog.getByRole("button", { name: "Fertig", exact: true }).click();
+  await dialog.getByRole("button", { name: "Schließen", exact: true }).click();
   const guest = await account("guest");
   const before = await state(guest.page);
   await guest.page.goto(invite);

@@ -108,6 +108,7 @@ function answer(path, method, body) {
     path === "/api/notification-settings"
   )
     return [];
+  if (path === "/api/notification-privacy") return { hide_content: false };
   if (path === "/api/me/themes")
     return { version: 1, revision: 1, active: "dark", customThemes: [] };
   if (path === `/api/channels/${TEXT}/messages`)

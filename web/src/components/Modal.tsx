@@ -92,9 +92,13 @@ export function Modal({
         event.stopPropagation();
         close();
       }}
-      onClose={() => {
+      onClose={(event) => {
         // A browser may close a dialog without a cancel event (Chrome does
-        // for a repeated Esc); keep the owner's state in step.
+        // for a repeated Esc); keep the owner's state in step. The event is
+        // queued, so it can arrive after the dialog was shown again (one
+        // mounted open closes and reopens at once under StrictMode): a
+        // dialog that is open by then was not closed.
+        if (event.currentTarget.open) return;
         if (latest.current.open) latest.current.onClose();
       }}
       onClick={(event) => {

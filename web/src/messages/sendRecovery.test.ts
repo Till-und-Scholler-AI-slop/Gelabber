@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { login, resetSessionForTests } from "../auth/session.ts";
 import { takeStamp } from "../auth/scope.ts";
 import { releaseUserScope } from "../auth/release.ts";
+import { clearToasts, useToasts } from "../components/toasts.ts";
 import {
   resetPendingMessages,
   usePendingMessages,
@@ -72,6 +73,7 @@ const attempts = () => Object.values(usePendingMessages.getState().attempts);
 beforeEach(() => {
   resetSessionForTests();
   resetPendingMessages();
+  clearToasts();
   requests = [];
 });
 afterEach(() => {
@@ -99,6 +101,8 @@ describe("durable send attempts with controlled HTTP responses", () => {
     expect(attempts()).toMatchObject([
       { content: "A", status: "failed", stage: "bind" },
     ]);
+    // The failed row reports it; a toast would say the same twice.
+    expect(useToasts.getState().toasts).toEqual([]);
     // Off screen the confirmed B is released; the failed A row stays.
     expect(
       usePendingMessages.getState().byChannel.c?.map((m) => m.content),

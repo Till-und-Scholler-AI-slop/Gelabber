@@ -39,6 +39,26 @@ export function displayedReactions(
   return result.filter((reaction) => reaction.user_ids.length > 0);
 }
 
+/** Who reacted, for the chip's tooltip: "Rafi, Lena und 3 weitere". The
+ *  viewer is "du"; someone no longer listed is left to the count. */
+export function reactorNames(
+  userIds: readonly string[],
+  nameOf: (id: string) => string | undefined,
+  me: string,
+  shown = 3,
+): string {
+  const names = userIds.flatMap((id) => {
+    const name = id === me ? "du" : nameOf(id);
+    return name ? [name] : [];
+  });
+  const rest = userIds.length - Math.min(names.length, shown);
+  const listed = names.slice(0, shown);
+  if (listed.length === 0) return "";
+  if (rest > 0) return `${listed.join(", ")} und ${rest} weitere`;
+  if (listed.length === 1) return listed[0]!;
+  return `${listed.slice(0, -1).join(", ")} und ${listed.at(-1)}`;
+}
+
 export function reactionMutationOptions(
   client: QueryClient,
   channelId: string,

@@ -504,7 +504,9 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       await f.join(other);
       let stage = "other-voice-room-navigation";
       try {
-        await other.page.locator(`a[href="${f.otherPath}"]`).click();
+        await other.page
+          .locator(`.channel-sidebar a[href="${f.otherPath}"]`)
+          .click();
         await click(other, "Beitreten");
         await until(
           () => snapshot(other),
@@ -537,7 +539,9 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         );
         // Active Live adds status text to the accessible channel name. The
         // fixture's exact channel href still targets the actual SPA link.
-        await f.watcher.page.locator(`a[href="${f.otherPath}"]`).click();
+        await f.watcher.page
+          .locator(`.channel-sidebar a[href="${f.otherPath}"]`)
+          .click();
         await nativeEvaluate(f.watcher, () => {
           window.__e2e.rejectPlayback = true;
         });
