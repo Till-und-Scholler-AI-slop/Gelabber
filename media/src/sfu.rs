@@ -291,6 +291,10 @@ impl Sfu {
     pub fn room_count(&self) -> usize {
         self.counters.rooms.load(Ordering::Relaxed)
     }
+    /// The engine's one reconnecting Redis connection, for the join path.
+    pub fn redis(&self) -> &crate::redis_connection::CachedRedis {
+        &self.redis
+    }
     pub fn metrics_text(&self) -> String {
         let c = &self.counters;
         let mut text = String::new();
@@ -2108,11 +2112,7 @@ fn validate_parameters(kind: SourceKind, rtp: &RtpParameters) -> Result<(), SfuE
     {
         return Err(SfuError::BadAnnounce);
     }
-    let first = serde_json::to_value(&rtp.codecs[0]).map_err(SfuError::negotiation)?;
-    let mime = first["mimeType"]
-        .as_str()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+    let mime = rtp.codecs[0].mime_type().as_str().to_ascii_lowercase();
     if kind.is_video() {
         if !matches!(
             mime.as_str(),
@@ -2225,7 +2225,7 @@ async fn stop_consumer(c: &NativeConsumer, dead: &AtomicBool) {
         _ => c.confirm_closed().await,
     }
 }
-fn fail_closed(reason: &'static str) -> ! {
+pub(crate) fn fail_closed(reason: &'static str) -> ! {
     error!(
         reason,
         "terminating media service to stop native forwarding"

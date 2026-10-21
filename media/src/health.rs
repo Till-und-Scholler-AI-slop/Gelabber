@@ -108,6 +108,9 @@ async fn ready(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse
     )
 }
 
+/// Probes over a fresh connection on purpose, not the engine's cached one:
+/// ConnectionManager retries its initial connect, which would turn a refused
+/// connection into `timed_out` and hide `connection_refused`.
 async fn ping_redis(state: &AppState) -> Result<(), String> {
     let mut conn = state
         .redis

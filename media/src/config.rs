@@ -30,7 +30,8 @@ pub struct Config {
     /// Shared native UDP listener (`ip:port`). Test port `0` selects one port
     /// from the explicit 20000..=30000 range. Production defaults to UDP 10000.
     pub ice_bind: String,
-    /// Reserved deployment range; the shared listener uses only `ice_bind`.
+    /// Reserved for the per-worker UDP port range of the worker pool (#290).
+    /// Currently unused: the shared listener binds only `ice_bind`.
     pub ice_port_max: Option<u16>,
     /// 1:1 NAT advertised address for host candidates. Empty = bind only.
     pub advertised_ip: Option<String>,

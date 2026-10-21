@@ -6,8 +6,8 @@ contract. A publishing voice connection uses separate SDK send and receive PCs
 (at most two active PCs); a watch-only connection uses one receive PC. Native
 transport compaction preserves captures and creates fresh Producer/Consumer IDs.
 Use the current executed test/runtime freeze when reporting limits or results.
-The previous engine's `media/tests/browser-lifecycle.mjs`, dated media test docs
-and historical reports are not v4 acceptance gates. See
+The previous engine's `media/tests/browser-lifecycle.mjs` (removed in v0.7.1),
+dated media test docs and historical reports are not v4 acceptance gates. See
 [SOURCE_AUDIO.md](../../../media/SOURCE_AUDIO.md) and the
 [migration document](../../../docs/v0.4-mediasoup-migration.md).
 
