@@ -53,11 +53,13 @@ export function AppearanceSettings() {
   const themes = useAccountThemes();
   const status = useInlineStatus();
   const active = themes.doc.active;
-  const blocked =
-    themes.status === "saving" ||
+  // Not disabled while a choice saves: a disabled radio would drop the
+  // keyboard focus that just picked it.
+  const unavailable =
     themes.status === "loading" ||
     themes.status === "error" ||
-    !!themes.pending;
+    themes.status === "conflict";
+  const saving = themes.status === "saving" || !!themes.pending;
   const otherTheme = MODES.some((mode) => mode.id === active)
     ? null
     : (themes.doc.customThemes.find((theme) => theme.id === active) ??
@@ -78,8 +80,9 @@ export function AppearanceSettings() {
                 name="theme-mode"
                 className="ui-check"
                 checked={active === mode.id}
-                disabled={blocked}
+                disabled={unavailable}
                 onChange={async () => {
+                  if (saving) return;
                   status.show(
                     (await changeTheme({ kind: "apply", id: mode.id }))
                       ? { tone: "success", message: "Gespeichert." }
@@ -98,6 +101,9 @@ export function AppearanceSettings() {
             </label>
           ))}
         </div>
+        {unavailable && themes.error ? (
+          <p className="ui-field-error">{themes.error}</p>
+        ) : null}
         <p className="settings-hint">
           {otherTheme ? `Gerade aktiv: ${otherTheme.name}. ` : null}
           <Link

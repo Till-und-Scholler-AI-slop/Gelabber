@@ -9,7 +9,7 @@ import { can } from "../servers/permissions.ts";
 import { useBanMember, useKickMember } from "../servers/queries.ts";
 import type { Member, Server } from "../servers/types.ts";
 import { confirmAction } from "./confirm.ts";
-import { MoreIcon } from "./Icons.tsx";
+import { ChevronIcon, MoreIcon } from "./Icons.tsx";
 import { Button } from "./ui/Button.tsx";
 import { IconButton } from "./ui/IconButton.tsx";
 import { Popover } from "./ui/Popover.tsx";
@@ -63,7 +63,10 @@ export function MemberActions(props: ModerationProps) {
   if (!allowed) return null;
   return (
     <details className="member-moderation">
-      <summary>Moderation</summary>
+      <summary>
+        Moderation
+        <ChevronIcon size={14} />
+      </summary>
       <div className="member-moderation__actions">
         <Button
           variant="danger-outline"

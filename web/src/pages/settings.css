@@ -366,38 +366,59 @@
   background: var(--lr-bg);
   border-bottom: 1px solid var(--lr-border);
 }
-/* Folded, the card shrinks to a strip: a thin banner, a smaller avatar and
-   the name beside it. Status and "Über mich" wait for the full view. */
+/* Folded, the card shrinks to a strip of about 120px: a thin banner, a
+   smaller avatar and the name beside it. Status and "Über mich" wait for
+   the full view. */
 @container (max-width: 759.98px) {
   .profile-card-preview:not(.is-open) .profile-card__banner {
-    height: 44px;
+    height: 28px;
   }
   .profile-card-preview:not(.is-open) .profile-card__avatar {
-    top: 12px;
-    left: 12px;
-    scale: 0.72;
+    top: 6px;
+    left: 10px;
+    scale: 0.6;
     transform-origin: top left;
   }
   .profile-card-preview:not(.is-open) .profile-card__body {
-    padding: 8px 14px 12px 92px;
+    gap: 0;
+    min-height: 60px;
+    padding: 8px 128px 10px 78px;
   }
   .profile-card-preview:not(.is-open) .profile-card__identity h3 {
-    font-size: 17px;
+    overflow: hidden;
+    font: var(--lr-type-title-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .profile-card-preview:not(.is-open) .profile-card__pronouns,
+  .profile-card-preview:not(.is-open) .profile-card__presence {
+    font: var(--lr-type-meta);
   }
   .profile-card-preview:not(.is-open) .profile-card__status,
   .profile-card-preview:not(.is-open) .profile-card__about {
     display: none;
   }
+  .profile-card-preview:not(.is-open) .profile-card-preview__toggle {
+    position: absolute;
+    right: 24px;
+    bottom: 20px;
+    margin: 0;
+  }
 }
 .profile-card-preview__toggle {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   min-height: 32px;
   margin: 4px auto 0;
-  padding: 0 12px;
+  padding: 0 10px;
   border-radius: var(--lr-radius-sm);
   font: var(--lr-type-meta);
   color: var(--lr-accent-text);
   cursor: pointer;
+}
+.profile-card-preview__toggle[aria-expanded="true"] svg {
+  rotate: 180deg;
 }
 .profile-card-preview__toggle:hover {
   background: var(--lr-hover);
@@ -405,6 +426,9 @@
 @media (pointer: coarse) {
   .profile-card-preview__toggle {
     min-height: 44px;
+  }
+  .profile-card-preview:not(.is-open) .profile-card-preview__toggle {
+    bottom: 14px;
   }
 }
 @container (min-width: 760px) {

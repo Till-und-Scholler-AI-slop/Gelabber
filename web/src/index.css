@@ -805,7 +805,7 @@ summary {
 }
 /* Your status, from the name in the user panel. */
 .ui-popover.user-status-popover {
-  width: 300px;
+  width: 320px;
 }
 .user-status-card {
   display: flex;

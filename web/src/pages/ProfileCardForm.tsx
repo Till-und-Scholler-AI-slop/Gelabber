@@ -1,4 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
+import { useBlocker } from "@tanstack/react-router";
 import {
   useId,
   useRef,
@@ -34,9 +35,10 @@ import type { AvatarDecoration, User } from "../auth/types.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { Avatar } from "../components/Avatar.tsx";
 import { AvatarFrame } from "../components/AvatarFrame.tsx";
+import { confirmAction } from "../components/confirm.ts";
 import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
-import { CloseIcon } from "../components/Icons.tsx";
+import { ChevronIcon, CloseIcon } from "../components/Icons.tsx";
 import { ProfileCardView } from "../components/ProfileCard.tsx";
 import { DECORATION_LABEL } from "../components/profileStyle.ts";
 import { SubmitButton } from "../components/SubmitButton.tsx";
@@ -64,6 +66,18 @@ export function ProfileCardForm({ user }: { user: User }) {
   const busy = useProfileWrites((state) => state.pending > 0);
   const dirty = Object.keys(profileCardPatch(form, user)).length > 0;
   const bioCountId = useId();
+  // Every settings area is its own page now: leaving one with unsaved card
+  // changes asks first, like the theme editor.
+  useBlocker({
+    shouldBlockFn: async () =>
+      dirty &&
+      !(await confirmAction({
+        title: "Ungespeicherte Änderungen verwerfen?",
+        message: "Deine Änderungen an der Profilkarte gehen verloren.",
+        confirmLabel: "Verwerfen",
+      })),
+    enableBeforeUnload: dirty,
+  });
 
   const edit = <K extends keyof CardForm>(field: K, value: CardForm[K]) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -188,7 +202,8 @@ export function ProfileCardForm({ user }: { user: User }) {
           aria-expanded={previewOpen}
           onClick={() => setPreviewOpen((open) => !open)}
         >
-          {previewOpen ? "Vorschau verkleinern" : "Ganze Vorschau zeigen"}
+          Ganze Karte
+          <ChevronIcon size={14} />
         </button>
       </div>
 

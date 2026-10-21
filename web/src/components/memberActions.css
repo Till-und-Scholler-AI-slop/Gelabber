@@ -14,8 +14,22 @@
   color: var(--lr-muted);
   cursor: pointer;
 }
+.member-moderation > summary::-webkit-details-marker {
+  display: none;
+}
+.member-moderation > summary svg {
+  margin-left: var(--lr-space-1);
+}
+.member-moderation[open] > summary svg {
+  rotate: 180deg;
+}
 .member-moderation > summary:hover {
   color: var(--lr-text);
+}
+@media (pointer: coarse) {
+  .member-moderation > summary {
+    min-height: 44px;
+  }
 }
 .member-moderation__actions {
   display: flex;

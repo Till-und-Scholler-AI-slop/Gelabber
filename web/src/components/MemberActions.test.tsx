@@ -74,7 +74,7 @@ describe("member actions", () => {
       <MemberActions server={server} member={member()} />,
     );
     expect(html).toMatch(
-      /^<details class="member-moderation"><summary>Moderation<\/summary>/,
+      /^<details class="member-moderation"><summary>Moderation<svg/,
     );
     expect(html).not.toContain("<details open");
     expect(button(html, "Vom Server entfernen")).not.toContain(DISABLED);
