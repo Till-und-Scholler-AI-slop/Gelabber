@@ -44,7 +44,8 @@ jobs:
       group: desktop-libwebrtc-linux-${{ github.ref }}
       cancel-in-progress: false
     runs-on: ubuntu-24.04
-    timeout-minutes: 330
+    # GitHub's limit: the build plus the renewal of the notices after it.
+    timeout-minutes: 360
     outputs:
       key: ${{ steps.key.outputs.key }}
     steps:
@@ -101,6 +102,47 @@ jobs:
         with:
           path: /mnt/libwebrtc-package
           key: ${{ steps.key.outputs.key }}
+
+      # Part 2 of the third-party notices is made from this checkout and
+      # build, which no other job has: a changed libwebrtc build (the cache
+      # key) is when that part needs renewing. With a debug build of the core
+      # against the fresh package, the script writes the whole file afresh;
+      # the step summary says whether it differs from the committed one, the
+      # artifact holds it and the log its diff (gzip, base64), to be
+      # committed. The "Third-party notices" job holds the branch to it.
+      - name: Rust toolchain (notices)
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@1.98.1
+
+      - name: Renew the third-party notices
+        id: notices
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          GELABBER_LIBWEBRTC_DIR: /mnt/libwebrtc-package
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build python3-venv
+          cargo build --manifest-path desktop/Cargo.toml -p gelabber-media-core
+          build=$(ls -d desktop/target/debug/build/gelabber-media-core-*/out/build | head -n 1)
+          python3 desktop/packaging/third-party-notices.py --webrtc-src /mnt/webrtc/src --core-build "$build"
+          notices=desktop/app/package/THIRD-PARTY-NOTICES.txt
+          if git diff --quiet -- "$notices"; then
+            echo "Third-party notices: unchanged." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Third-party notices: renewed, $(git diff --numstat -- "$notices" | awk '{print "+" $1 " -" $2}') lines; commit the artifact third-party-notices." >> "$GITHUB_STEP_SUMMARY"
+            echo "::group::diff of $notices (gzip, base64)"
+            git diff -- "$notices" | gzip -9 | base64 -w 0
+            echo
+            echo "::endgroup::"
+          fi
+
+      - name: Upload the renewed notices
+        if: steps.notices.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: third-party-notices
+          path: desktop/app/package/THIRD-PARTY-NOTICES.txt
 
   libwebrtc-windows:
     name: libwebrtc (Windows x64)
@@ -220,20 +262,21 @@ jobs:
         run: cargo clippy --manifest-path desktop/Cargo.toml --all-targets -- -D warnings
 
       # GStreamer and the test desktop (PipeWire, pipewire-pulse,
-      # xdg-desktop-portal). x264enc
-      # stands in for VA-API/NVENC, which runners lack, to test the GStreamer
-      # encoder path itself.
+      # xdg-desktop-portal). x264enc and avdec_h264 stand in for
+      # VA-API/NVENC/NVDEC, which runners lack, to test the GStreamer encoder
+      # and decoder paths themselves.
       - name: Test packages
         run: |
           sudo apt-get install -y --no-install-recommends pipewire wireplumber pipewire-pulse \
             pulseaudio-utils xdg-desktop-portal \
             libpipewire-0.3-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-bad \
-            gstreamer1.0-plugins-ugly python3-gi
+            gstreamer1.0-plugins-ugly gstreamer1.0-libav python3-gi
 
       # Every test of the workspace: the loopback call, the video sinks of
       # views inside the app (source_preview), the app's unit tests. The
-      # loopback call covers H264 only where the core has it (the Windows core
-      # has none), so this core, built with H264, must be held to it.
+      # loopback call covers H264 only where the core has it (on Windows only
+      # with Media Foundation's codecs), so this core, built with H264, must be
+      # held to it.
       - name: Loopback call against mediasoup 0.29
         env:
           GELABBER_EXPECT_H264: "1"
@@ -244,6 +287,14 @@ jobs:
           GELABBER_EXPECT_H264: "1"
           GELABBER_H264_ENCODER: x264enc
           GELABBER_EXPECT_ENCODER: GStreamer x264enc
+          GELABBER_MEDIA_LOG: "1"
+        run: cargo test --manifest-path desktop/Cargo.toml --test mediasoup_loopback -- --nocapture
+
+      - name: Loopback call with the GStreamer H264 decoder
+        env:
+          GELABBER_EXPECT_H264: "1"
+          GELABBER_H264_DECODER: avdec_h264
+          GELABBER_EXPECT_DECODER: GStreamer avdec_h264
           GELABBER_MEDIA_LOG: "1"
         run: cargo test --manifest-path desktop/Cargo.toml --test mediasoup_loopback -- --nocapture
 
@@ -343,6 +394,11 @@ jobs:
           echo "$exported"
           if echo "$exported" | grep -v '^gm_'; then
             echo "only gm_* symbols may be exported"; exit 1
+          fi
+          # libwebrtc is built with rtc_use_h264=false: no OpenH264, FFmpeg or
+          # libwebrtc's wrappers around them in the symbol table.
+          if nm -C "$lib" | grep -E 'WelsInitEncoderExt|CWelsH264SVCEncoder|H264EncoderImpl|H264DecoderImpl|avcodec_open2|ff_h264_decoder'; then
+            echo "the core carries H264 code of OpenH264 or FFmpeg"; exit 1
           fi
           stripped="$(mktemp)"
           strip --strip-unneeded -o "$stripped" "$lib"
@@ -752,8 +808,9 @@ jobs:
 
       # What ships, read with dumpbin:
       # - the DLL exports the C ABI (gm_*) and nothing else;
-      # - no H264 encoder or decoder is linked in: the libwebrtc package holds
-      #   OpenH264 and FFmpeg, the Windows core is built without H264;
+      # - no H264 encoder or decoder of libwebrtc's is linked in: the package
+      #   is built without OpenH264 and FFmpeg (rtc_use_h264=false), and the
+      #   core takes H264 from Media Foundation;
       # - neither file needs anything a clean Windows 10 or 11 lacks.
       #   Acceptable are DLLs of Windows itself (in System32 of this image),
       #   API sets (api-ms-win-*, ext-ms-win-*) and with them the Universal
@@ -804,6 +861,9 @@ jobs:
           $dllNeeds = @(Needs $dll.FullName)
           $exeNeeds = @(Needs $exe.FullName)
           $dllMissing = @(Missing $dllNeeds @())
+          # Windows N lacks mfplat.dll without the Media Feature Pack: the
+          # core loads it only when it looks for H264 (/DELAYLOAD).
+          $delayed = (& $dumpbin /nologo /dependents $dll.FullName | Out-String) -match '(?s)delay load dependencies:.*\bmfplat\.dll'
           $exeMissing = @(Missing $exeNeeds @('gelabber_media.dll'))
 
           $content = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($dll.FullName))
@@ -827,6 +887,7 @@ jobs:
             if ($h264) { "gelabber_media.dll carries H264 code of OpenH264 or FFmpeg: $($h264 -join ', ')" }
             if (-not $dllNeeds -or $exeNeeds -notcontains 'gelabber_media.dll') { 'could not read the dependencies with dumpbin' }
             if ($dllMissing) { "gelabber_media.dll needs what a clean Windows lacks: $($dllMissing -join ', ')" }
+            if (-not $delayed) { 'gelabber_media.dll does not delay-load mfplat.dll' }
             if ($exeMissing) { "gelabber-desktop.exe needs what a clean Windows lacks: $($exeMissing -join ', ')" }
           )
           if ($problems) {
@@ -925,8 +986,10 @@ jobs:
 
       # The call the Linux job makes, on dummy audio and test patterns through
       # an in-process mediasoup worker: ICE, DTLS, SRTP, Opus, VP8 simulcast,
-      # decode, and the video sinks of views inside the app. This core has no
-      # H264, so neither GELABBER_EXPECT_H264 nor GELABBER_EXPECT_ENCODER.
+      # decode, and the video sinks of views inside the app. This core has
+      # H264 only where Media Foundation has its codecs (a runner may lack
+      # them), so neither GELABBER_EXPECT_H264 nor GELABBER_EXPECT_ENCODER;
+      # where it has them, the call covers H264 through them as well.
       # The voice test needs devices and skips without its GELABBER_TEST_*
       # switch. GELABBER_TEST_SCREEN_MONITOR lets the core capture the
       # primary monitor without the system picker, which nobody could click

@@ -81,12 +81,10 @@ gn_args=(
   rtc_link_pipewire=false
   # Omarchy/Hyprland is Wayland-only; no X11 capture or link dependency.
   rtc_use_x11=false
-  # Software H264 fallback: OpenH264 encodes, FFmpeg decodes. FFmpeg only
-  # carries its H264 decoder with the "Chrome" branding. Hardware encoders
-  # come from the core's own encoder factory.
-  rtc_use_h264=true
-  proprietary_codecs=true
-  'ffmpeg_branding="Chrome"'
+  # No H264 of libwebrtc's own (OpenH264, FFmpeg): the core takes H264
+  # from the system's GStreamer, on the GPU where the system can.
+  rtc_use_h264=false
+  proprietary_codecs=false
   enable_rust=false
   enable_rust_cxx=false
   enable_chromium_prelude=false
@@ -95,7 +93,7 @@ gn_args=(
 )
 gn gen "$out" --args="${gn_args[*]}"
 # :default leaves out SimulcastEncoderAdapter, which the core wraps around
-# hardware H264 encoders.
+# the system's H264 encoders.
 ninja -C "$out" :default media:rtc_simulcast_encoder_adapter \
   buildtools/third_party/libc++ buildtools/third_party/libc++abi
 

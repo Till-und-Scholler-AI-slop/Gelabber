@@ -162,17 +162,18 @@ target_include_directories(gelabber_media
 target_link_libraries(gelabber_media PRIVATE mediasoupclient rnnoise)
 
 if(UNIX AND NOT APPLE)
-  # WEBRTC_USE_H264 matches rtc_use_h264=true; without it the OpenH264
-  # template adapters advertise no H264 formats.
-  target_compile_definitions(gelabber_media PRIVATE WEBRTC_LINUX WEBRTC_USE_H264)
+  # libwebrtc is built with rtc_use_h264=false and WEBRTC_USE_H264 stays
+  # undefined: H264 comes from the system's GStreamer alone.
+  target_compile_definitions(gelabber_media PRIVATE WEBRTC_LINUX)
   target_compile_definitions(mediasoupclient PUBLIC WEBRTC_LINUX)
 
   # Screen capture: xdg-desktop-portal over GLib/GIO, PipeWire dlopened by
   # libwebrtc (rtc_link_pipewire=false), GBM/DRM for DMA-BUF frames. The
   # defines match libwebrtc's pipewire_config; DesktopCaptureOptions changes
-  # layout with them. Hardware H264 loads the system GStreamer with dlopen.
-  target_sources(gelabber_media PRIVATE src/screen_source_pipewire.cc src/gst_h264_encoder.cc
-    src/app_audio_pipewire.cc)
+  # layout with them. H264 (encoding and decoding, on the GPU where the
+  # system can) loads the system GStreamer with dlopen.
+  target_sources(gelabber_media PRIVATE src/screen_source_pipewire.cc src/gst_common.cc
+    src/gst_h264_encoder.cc src/gst_h264_decoder.cc src/app_audio_pipewire.cc)
   target_compile_definitions(gelabber_media PRIVATE WEBRTC_USE_PIPEWIRE WEBRTC_USE_GIO)
   target_include_directories(gelabber_media SYSTEM PRIVATE
     "${GELABBER_LIBWEBRTC_DIR}/include/third_party/libyuv/include"
@@ -200,9 +201,10 @@ if(WIN32)
   # C++/WinRT, Direct3D 11 for the frames (src/screen_source_win.cc).
   # Application sound: WASAPI process loopback (src/app_audio_win.cc), which
   # needs a Windows SDK of 10.0.20348 or later to build.
-  # WEBRTC_USE_H264 stays undefined: video is VP8 (which the web client asks
-  # for everywhere), and no OpenH264 or FFmpeg H264 code is referenced.
-  target_sources(gelabber_media PRIVATE src/screen_source_win.cc src/app_audio_win.cc)
+  # H264: Media Foundation's encoder and decoder MFTs (src/mf_h264.cc), which
+  # come with Windows and the GPU drivers. libwebrtc is built with
+  # rtc_use_h264=false and WEBRTC_USE_H264 stays undefined.
+  target_sources(gelabber_media PRIVATE src/screen_source_win.cc src/app_audio_win.cc src/mf_h264.cc)
   # WEBRTC_WIN, NOMINMAX and WIN32_LEAN_AND_MEAN come from libmediasoupclient;
   # these are the other Windows defines libwebrtc is built with. The screen
   # source does not use libwebrtc's DesktopCapturer, so RTC_ENABLE_WIN_WGC
@@ -266,6 +268,10 @@ if(WIN32)
     d3d11 runtimeobject
     # application sound: ActivateAudioInterfaceAsync
     mmdevapi
+    # H264: Media Foundation (MFT enumeration, samples, DXGI device manager).
+    # mfplat.dll is delay-loaded (below): Windows N lacks it without the
+    # Media Feature Pack, and the core must load there all the same.
+    mfplat mfuuid delayimp
     # abseil
     dbghelp bcrypt
     ole32 oleaut32 uuid user32 gdi32 advapi32 shell32 shlwapi version)
@@ -289,6 +295,7 @@ if(WIN32)
   # Only the GM_API functions (__declspec(dllexport)) leave the DLL; nothing
   # else in it is declared for export, so there is no version script here.
   target_link_options(gelabber_media PRIVATE
+    /DELAYLOAD:mfplat.dll
     /OPT:REF
     /OPT:ICF
     # A DLL with a static CRT needs no manifest, and without one the build
