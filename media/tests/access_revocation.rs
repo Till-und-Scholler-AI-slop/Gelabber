@@ -569,11 +569,13 @@ async fn redis_failure_revokes_open_peer_and_rejects_new_ticket_without_affectin
     control.cleanup().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn shutdown_delivers_gone_before_close_on_every_socket() {
     // Shutdown emits "gone" only after leave removed the peer, so a socket's
     // retirement tick can see the peer gone first. The frame must still
-    // arrive before the Close. Twenty sockets give the race many chances.
+    // arrive before the Close. Worker threads let those ticks run while
+    // shutdown is in that gap, but the gap is short: this pins the order on
+    // every socket and catches the bare-Close race only by chance.
     let (addr, redis, sfu) = serve().await;
     let mut peers = Vec::new();
     for _ in 0..20 {
