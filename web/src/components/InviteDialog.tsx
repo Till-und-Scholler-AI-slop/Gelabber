@@ -2,6 +2,7 @@
 // clipboard or the share sheet. Any member may invite; expiry and use limits
 // sit behind a disclosure.
 
+import { useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import { ApiError } from "../api/client.ts";
@@ -54,19 +55,40 @@ export function InviteDialog({
   );
 }
 
-/** The invite dialog a new server opens with (`promptInvite`). */
+/**
+ * The invite dialog a new server opens with (`promptInvite`). It waits until
+ * the server's page has rendered: a drawer that page opens after the dialog
+ * would take Esc away from it (Chrome).
+ */
 export function InvitePromptHost() {
   const userId = useUserId();
   const prompt = useInvitePrompt((state) => state.prompt);
-  if (!prompt || prompt.userId !== userId) return null;
-  return (
-    <InviteDialog
-      key={prompt.id}
-      server={prompt}
-      open
-      onClose={dismissInvitePrompt}
-    />
-  );
+  const id = prompt && prompt.userId === userId ? prompt.id : null;
+  const landed = useRouterState({
+    select: (state) =>
+      id !== null &&
+      state.status === "idle" &&
+      (state.location.pathname === `/s/${id}` ||
+        state.location.pathname.startsWith(`/s/${id}/`)),
+  });
+  const [shown, setShown] = useState<string | null>(null);
+  useEffect(() => {
+    if (!landed || id === null) return;
+    const frame = requestAnimationFrame(() => setShown(id));
+    return () => cancelAnimationFrame(frame);
+  }, [landed, id]);
+  if (!prompt || id === null || shown !== id) return null;
+  const close = () => {
+    dismissInvitePrompt();
+    // What created the server is gone; carry on in the server's page.
+    requestAnimationFrame(() => {
+      if (document.activeElement === document.body)
+        document
+          .getElementById("workspace-content")
+          ?.focus({ preventScroll: true });
+    });
+  };
+  return <InviteDialog key={prompt.id} server={prompt} open onClose={close} />;
 }
 
 /**
@@ -77,8 +99,14 @@ export function InvitePromptHost() {
 export function InviteLinkPanel({ server }: { server: InviteServer }) {
   const create = useCreateInvite(server.id);
   const revoke = useRevokeInvite(server.id);
+  // `terms` is what the chips ask for; `current` the link on screen and the
+  // terms it was made with, which differ while a new link is on its way.
   const [terms, setTerms] = useState<InviteTerms>(DEFAULT_INVITE_TERMS);
-  const [invite, setInvite] = useState<Invite | null>(null);
+  const [current, setCurrent] = useState<{
+    invite: Invite;
+    terms: InviteTerms;
+  } | null>(null);
+  const invite = current?.invite ?? null;
   const handedOut = useRef(false);
   const started = useRef(false);
   const latest = useRef(0);
@@ -86,6 +114,7 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
 
   const makeLink = (next: InviteTerms, previous: Invite | null) => {
     const request = ++latest.current;
+    const previousTerms = current?.terms ?? DEFAULT_INVITE_TERMS;
     create
       .mutateAsync(inviteInput(next))
       .then((created) => {
@@ -94,7 +123,7 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
           revoke.mutate(created.code);
           return;
         }
-        setInvite(created);
+        setCurrent({ invite: created, terms: next });
         if (previous) {
           if (!handedOut.current) revoke.mutate(previous.code);
           show({
@@ -105,7 +134,8 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
         handedOut.current = false;
       })
       .catch(() => {
-        // Shown from `create.error`.
+        // Shown from `create.error`; the chips go back to the link shown.
+        if (request === latest.current && previous) setTerms(previousTerms);
       });
   };
 
@@ -123,9 +153,13 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
   };
 
   const link = invite ? inviteUrl(invite.code) : "";
-  const summary = termsSummary(terms);
+  const summary = termsSummary(current?.terms ?? terms);
 
   const copy = async () => {
+    if (create.isPending) {
+      show({ tone: "neutral", message: "Der Link wird gerade erstellt." });
+      return;
+    }
     if (!link) return;
     if (await copyText(link)) {
       handedOut.current = true;
@@ -186,6 +220,7 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
           icon={<ShareIcon size={16} />}
           onClick={() =>
             link &&
+            !create.isPending &&
             void share({
               title: `Einladung zu ${server.name}`,
               text: `Komm zu ${server.name} auf Gelabber:`,

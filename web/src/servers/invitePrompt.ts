@@ -1,6 +1,6 @@
 // "Lade deine Leute ein" right after creating a server. The prompt lives
-// outside the page that asked for it: creating navigates away from there,
-// and on a phone the asking rail sits in a drawer that closes.
+// outside the dialog that asked for it: creating closes that dialog and
+// navigates away from the page it was opened on.
 
 import { create } from "zustand";
 
