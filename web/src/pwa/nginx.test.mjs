@@ -1,8 +1,10 @@
 // Pins the rules in web/nginx.conf that decide whether a browser, an
-// installed app or the desktop app picks up a new deployment. The browser
-// smoke (scripts/smoke-pwa.mjs) checks the same against a running nginx, but
-// needs docker and a browser; this runs with the unit tests.
+// installed app or the desktop app picks up a new deployment, and the
+// security headers it sends. The browser smoke (scripts/smoke-pwa.mjs) checks
+// the same against a running nginx, but needs docker and a browser; this runs
+// with the unit tests.
 /* global URL */
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -14,7 +16,28 @@ function parse(text) {
   const blocks = new Map();
   const stack = [];
   let statement = "";
-  for (const char of text.replace(/#.*$/gm, "")) {
+  // Inside quotes `;` and `#` belong to the value: the Content-Security-Policy
+  // is a list of directives with `;` between them.
+  let quote = null;
+  let comment = false;
+  for (const char of text) {
+    if (comment) {
+      if (char === "\n") {
+        comment = false;
+        statement += char;
+      }
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      statement += char;
+      continue;
+    }
+    if (char === "#") {
+      comment = true;
+      continue;
+    }
+    if (char === '"' || char === "'") quote = char;
     if (char !== ";" && char !== "{" && char !== "}") {
       statement += char;
       continue;
@@ -32,19 +55,53 @@ function parse(text) {
 
 const blocks = parse(source);
 const location = (name) => blocks.get(name) ?? [];
+/** Every `location` in the file, by the name `blocks` keeps it under. */
+const locations = [...source.matchAll(/^\s*location\s+([^{]*?)\s*\{/gm)].map(
+  ([, name]) => name.replace(/\s+/g, " "),
+);
 const NO_CACHE = 'add_header Cache-Control "no-cache" always';
 const NO_STORE = 'add_header Cache-Control "no-store" always';
 const MISSING_IS_404 = "try_files $uri =404";
+const SECURITY_HEADERS = [
+  'add_header X-Content-Type-Options "nosniff" always',
+  'add_header Referrer-Policy "same-origin" always',
+  'add_header X-Frame-Options "DENY" always',
+  'add_header Permissions-Policy "geolocation=(), payment=(), usb=(), serial=(), hid=(), midi=()" always',
+];
+/** A location's directives without the security headers every one repeats. */
+const ownDirectives = (name) =>
+  location(name).filter((line) => !SECURITY_HEADERS.includes(line));
+const CSP = "add_header Content-Security-Policy ";
+
+/** The shell's Content-Security-Policy: sources per directive. */
+function shellPolicy() {
+  const headers = location("= /index.html").filter((line) =>
+    line.startsWith(CSP),
+  );
+  expect(headers).toHaveLength(1);
+  const value = headers[0].match(/^add_header \S+ "([^"]*)" always$/)?.[1];
+  expect(value, headers[0]).toBeDefined();
+  return new Map(
+    value
+      .split(";")
+      .map((directive) => directive.trim().split(" "))
+      .filter(([name]) => name)
+      .map(([name, ...sources]) => [name, sources]),
+  );
+}
 
 describe("production nginx config", () => {
   it("lets no browser keep the app shell, including deep links", () => {
     // Not `no-cache`: a restored tab, a discarded tab coming back and a back
     // navigation take a stored copy without asking the server, and the old
     // shell then starts the old client from its immutable files.
-    expect(location("= /index.html")).toEqual([NO_STORE]);
+    expect(ownDirectives("= /index.html")).toEqual([
+      NO_STORE,
+      expect.stringMatching(/^add_header Content-Security-Policy /),
+    ]);
     // Unknown paths are app routes and end in the shell by internal redirect,
     // which is what brings them under the location above.
-    expect(location("/")).toEqual(["try_files $uri $uri/ /index.html"]);
+    expect(ownDirectives("/")).toEqual(["try_files $uri $uri/ /index.html"]);
   });
 
   it("serves hashed build output as immutable and never as the app shell", () => {
@@ -109,6 +166,115 @@ describe("production nginx config", () => {
       ]),
     );
     expect(types).not.toContain("wasm");
+  });
+
+  it("sends the security headers from every location", () => {
+    expect(locations).toEqual(
+      expect.arrayContaining([
+        "= /manifest.webmanifest",
+        "= /sw.js",
+        "= /offline.html",
+        "= /index.html",
+        "/assets/",
+        "/icons/",
+        "/audio/",
+        "/images/",
+        "/",
+      ]),
+    );
+    for (const name of locations) {
+      for (const header of SECURITY_HEADERS) {
+        // Once, with this value, and with `always`, so a 404 has them too.
+        const [, field] = header.split(" ");
+        expect(
+          location(name).filter((line) =>
+            line.startsWith(`add_header ${field} `),
+          ),
+          `${name}: ${field}`,
+        ).toEqual([header]);
+      }
+    }
+    // Voice, screen sharing, the output device and copying need these; the
+    // YouTube embed is given the rest (LinkPreviews.tsx).
+    const permissions = [...blocks.values()]
+      .flat()
+      .filter((line) => line.startsWith("add_header Permissions-Policy "));
+    expect(permissions.length).toBeGreaterThan(0);
+    for (const line of permissions) {
+      for (const feature of [
+        "camera",
+        "microphone",
+        "display-capture",
+        "speaker-selection",
+        "clipboard",
+        "autoplay",
+        "fullscreen",
+        "picture-in-picture",
+        "encrypted-media",
+      ]) {
+        expect(line, feature).not.toContain(feature);
+      }
+    }
+  });
+
+  it("sends a Content-Security-Policy about scripts with the shell", () => {
+    const policy = shellPolicy();
+    expect(
+      policy.get("script-src").filter((source) => !source.startsWith("'sha")),
+    ).toEqual(["'self'", "'wasm-unsafe-eval'"]);
+    expect(policy.get("object-src")).toEqual(["'none'"]);
+    expect(policy.get("base-uri")).toEqual(["'self'"]);
+    expect(policy.get("form-action")).toEqual(["'self'"]);
+    expect(policy.get("frame-ancestors")).toEqual(["'none'"]);
+    // The YouTube embed in LinkPreviews.tsx is the app's only frame.
+    expect(policy.get("frame-src")).toEqual([
+      "https://www.youtube-nocookie.com",
+    ]);
+    const sources = [...policy.values()].flat();
+    expect(sources).not.toContain("'unsafe-inline'");
+    expect(sources).not.toContain("'unsafe-eval'");
+    // Fetch directives would block uploads and attachments on the MinIO
+    // origin, link avatars on any https host and the desktop app's native
+    // part on ipc: and http://ipc.localhost (deploy/README.md). style-src
+    // would block the inline style of the shell and React's style attributes.
+    for (const name of [
+      "default-src",
+      "connect-src",
+      "img-src",
+      "media-src",
+      "style-src",
+    ]) {
+      expect(policy.has(name), name).toBe(false);
+    }
+    // Only the shell: offline.html, the one other document, is static and
+    // runs inline scripts of its own.
+    for (const [name, directives] of blocks) {
+      if (name === "= /index.html") continue;
+      expect(
+        directives.filter((line) => line.startsWith(CSP)),
+        name,
+      ).toEqual([]);
+    }
+  });
+
+  it("lets the shell's inline script run, and no other", () => {
+    const html = readFileSync(new URL("index.html", web), "utf8");
+    const inline = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)]
+      .filter(([, attributes]) => !/\ssrc=/.test(attributes))
+      .map(([, , body]) => body);
+    // The theme bootstrap. Another inline script needs a hash of its own.
+    expect(inline).toHaveLength(1);
+    expect(
+      shellPolicy()
+        .get("script-src")
+        .filter((source) => source.startsWith("'sha")),
+      "after editing the inline script in index.html, update its hash in nginx.conf",
+    ).toEqual(
+      inline.map(
+        (body) =>
+          `'sha256-${createHash("sha256").update(body).digest("base64")}'`,
+      ),
+    );
   });
 
   it("sets headers only inside locations", () => {
