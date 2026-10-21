@@ -200,17 +200,16 @@ try {
     "navigation and members trap Tab and restore focus on Escape",
     async () => {
       await page.setViewportSize({ width: 320, height: 740 });
-      const opener = page.getByRole("button", {
-        name: "Navigation öffnen",
-        exact: true,
-      });
+      const opener = page.getByRole("button", { name: /^Navigation öffnen/ });
       await opener.focus();
       await page.keyboard.press("Enter");
       const navigation = page.getByRole("dialog", {
         name: "Navigation",
         exact: true,
       });
-      await navigation.locator(`a[href="${chatPath}"]`).waitFor();
+      await navigation
+        .locator(`a.channel-row-link[href="${chatPath}"]`)
+        .waitFor();
       assert.ok(
         await navigation.evaluate((el) => el.contains(document.activeElement)),
       );
@@ -230,7 +229,10 @@ try {
       await navigation.waitFor({ state: "hidden" });
       assert.ok(await focused(opener));
       await capture("03-navigation-escape");
-      const members = page.getByRole("button", { name: /Mitglieder/ });
+      // Not the drawer's own "Mitglieder schließen" while it slides out.
+      const members = page.getByRole("button", {
+        name: /^Mitglieder \(\d+\)$/,
+      });
       await tabTo(members);
       await page.keyboard.press("Enter");
       const panel = page.getByRole("dialog", {
@@ -334,10 +336,16 @@ try {
     async () => {
       await page.setViewportSize({ width: 1280, height: 720 });
       const opener = page.getByRole("button", {
-        name: "Server erstellen",
+        name: "Server hinzufügen",
         exact: true,
       });
       await opener.focus();
+      await page.keyboard.press("Enter");
+      // The rail's "+" asks first: create a server or join one.
+      const choice = page
+        .getByRole("dialog", { name: "Server hinzufügen", exact: true })
+        .getByRole("button", { name: /^Server erstellen/ });
+      await until(() => focused(choice), Boolean, "add-server-first-choice");
       await page.keyboard.press("Enter");
       const dialog = page.getByRole("dialog", {
         name: "Server erstellen",
@@ -574,7 +582,7 @@ try {
         .waitFor();
       // SPA navigation preserves the actual call and its dock ownership.
       await page.setViewportSize({ width: 1280, height: 720 });
-      await page.locator(`a[href="${chatPath}"]`).first().click();
+      await page.locator(`a.channel-row-link[href="${chatPath}"]`).click();
       await log.waitFor();
       await matrix("13-call-dock", () => dock.waitFor());
       await page.setViewportSize({ width: 390, height: 400 });

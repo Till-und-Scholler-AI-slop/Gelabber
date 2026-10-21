@@ -114,7 +114,9 @@ pub async fn insert_category<'e>(
     server_id: Uuid,
     name: &str,
 ) -> Result<Category, ApiError> {
-    Ok(sqlx::query_as::<_, Category>("INSERT INTO categories (server_id, name) VALUES ($1, $2) RETURNING id, server_id, name, created_at")
+    // `clock_timestamp()`, not `now()`: rows created in one transaction keep
+    // their order, which `ORDER BY created_at` relies on.
+    Ok(sqlx::query_as::<_, Category>("INSERT INTO categories (server_id, name, created_at) VALUES ($1, $2, clock_timestamp()) RETURNING id, server_id, name, created_at")
     .bind(server_id)
     .bind(name)
     .fetch_one(db)
@@ -129,7 +131,9 @@ pub async fn insert_channel<'e>(
     kind: ChannelKind,
 ) -> Result<Channel, ApiError> {
     Ok(sqlx::query_as::<_, Channel>(
-        "INSERT INTO channels (server_id, category_id, name, kind) VALUES ($1, $2, $3, $4) \
+        // See `insert_category` for `clock_timestamp()`.
+        "INSERT INTO channels (server_id, category_id, name, kind, created_at) \
+         VALUES ($1, $2, $3, $4, clock_timestamp()) \
          RETURNING id, server_id, category_id, name, kind, created_at",
     )
     .bind(server_id)

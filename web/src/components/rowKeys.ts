@@ -1,6 +1,7 @@
 // A sidebar row with actions is one Tab stop; the arrow keys move between
 // its link and its buttons. The stop roves like a toolbar's: it stays on
 // the item last focused, so Tab away and Shift+Tab back lands there again.
+// A whole list is one Tab stop too: ↑ and ↓ move between its rows.
 
 import { useState, type FocusEvent, type KeyboardEvent } from "react";
 
@@ -49,9 +50,10 @@ export function moveWithinRow(event: KeyboardEvent<HTMLElement>): void {
 /**
  * The roving Tab stop of one row: spread `keys` on the row and give item
  * `i` `tabIndex(i)`. Off (every item in the normal Tab order) while the
- * row has no actions.
+ * row has no actions. A row of a list that is not the list's Tab stop
+ * (`stop` false) takes no Tab stop at all.
  */
-export function useRovingRow(enabled: boolean) {
+export function useRovingRow(enabled: boolean, stop = true) {
   const [current, setCurrent] = useState(0);
   return {
     keys: {
@@ -64,8 +66,63 @@ export function useRovingRow(enabled: boolean) {
       },
     },
     tabIndex: (index: number): number | undefined =>
-      enabled ? (index === current ? 0 : -1) : undefined,
+      !stop ? -1 : enabled ? (index === current ? 0 : -1) : undefined,
   };
+}
+
+/** Marks the rows of a list that take focus, in DOM order. */
+export const LIST_ROW = { "data-list-row": "" } as const;
+
+/** Row index to focus after `key` in a vertical list, or `null`. */
+export function listStep(
+  key: string,
+  index: number,
+  count: number,
+): number | null {
+  if (index < 0 || count === 0) return null;
+  switch (key) {
+    case "ArrowDown":
+      return Math.min(index + 1, count - 1);
+    case "ArrowUp":
+      return Math.max(index - 1, 0);
+    default:
+      return null;
+  }
+}
+
+/**
+ * ↑ and ↓ on a list (`onKeyDown` of its element): focus the first item of
+ * the next or previous row. With a modifier the keys are the shell's
+ * (Alt+↑ switches channels), and at the ends they scroll as usual.
+ */
+export function moveWithinList(event: KeyboardEvent<HTMLElement>): void {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  const rows = [
+    ...event.currentTarget.querySelectorAll<HTMLElement>("[data-list-row]"),
+  ];
+  const target = event.target as Node;
+  const index = rows.findIndex((row) => row.contains(target));
+  const next = listStep(event.key, index, rows.length);
+  if (next === null || next === index) return;
+  const item = rows[next]?.querySelector<HTMLElement>("[data-row-item]");
+  if (!item) return;
+  event.preventDefault();
+  item.focus();
+}
+
+/**
+ * The row holding a list's one Tab stop: the row focused last, else the
+ * `preferred` one (the open conversation), else the first. Only mounted
+ * rows of a virtual list count, so Tab never skips the list.
+ */
+export function listStop(
+  rendered: readonly string[],
+  focused: string | null,
+  preferred: string | undefined,
+): string | undefined {
+  for (const key of [focused, preferred])
+    if (key && rendered.includes(key)) return key;
+  return rendered[0];
 }
 
 /**

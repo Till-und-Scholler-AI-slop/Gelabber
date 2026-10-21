@@ -1,0 +1,141 @@
+/* InviteDialog / InviteLinkPanel */
+.invite-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-3);
+}
+.invite-panel__lead {
+  color: var(--lr-muted);
+  font: var(--lr-type-body);
+}
+.invite-panel__link {
+  display: flex;
+  gap: var(--lr-space-2);
+}
+.invite-panel__url {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  text-overflow: ellipsis;
+}
+.invite-panel__status {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+}
+.invite-panel__terms {
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+.invite-panel > .ui-button {
+  align-self: flex-start;
+}
+.invite-panel__terms-editor {
+  margin-top: var(--lr-space-1);
+  border-top: 1px solid var(--lr-border);
+  padding-top: var(--lr-space-3);
+}
+.invite-panel__terms-editor > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lr-space-1);
+  min-height: var(--lr-control-sm);
+  color: var(--lr-muted);
+  font: var(--lr-type-ui);
+  cursor: pointer;
+  list-style: none;
+}
+.invite-panel__terms-editor > summary::-webkit-details-marker {
+  display: none;
+}
+.invite-panel__terms-editor > summary:hover {
+  color: var(--lr-text);
+}
+.invite-panel__terms-editor > summary svg {
+  transform: rotate(-90deg);
+  transition: transform var(--lr-dur-fast) var(--lr-ease);
+}
+.invite-panel__terms-editor[open] > summary svg {
+  transform: none;
+}
+.invite-panel__chips {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-2);
+  margin-top: var(--lr-space-2);
+}
+.invite-panel__caps {
+  margin-top: var(--lr-space-2);
+  color: var(--lr-muted);
+  font: var(--lr-type-caps);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+@media (max-width: 480px) {
+  .invite-panel__link {
+    flex-direction: column;
+  }
+  .invite-panel > .ui-button {
+    align-self: stretch;
+  }
+}
+
+/* AddServerDialog: two big choices. */
+.add-server-choices {
+  display: grid;
+  gap: var(--lr-space-2);
+}
+.add-server-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--lr-space-3);
+  min-height: 64px;
+  padding: var(--lr-space-3) var(--lr-space-4);
+  border: 1px solid var(--lr-border-strong);
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-panel);
+  color: var(--lr-text);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--lr-dur-fast) var(--lr-ease),
+    border-color var(--lr-dur-fast) var(--lr-ease);
+}
+.add-server-choice:hover {
+  border-color: var(--lr-accent);
+  background: var(--lr-hover);
+}
+.add-server-choice > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--lr-accent-text);
+}
+.add-server-choice > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.add-server-choice strong {
+  font: var(--lr-type-title-sm);
+  font-size: 14px;
+}
+.add-server-choice small {
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+
+/* JoinServerForm, inline: the button sits beside the field. */
+.join-server-inline {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--lr-space-2);
+}
+.join-server-inline > .ui-form-field {
+  flex: 1;
+  min-width: 0;
+}
+.join-server-inline > .ui-button {
+  /* Level with the input under its label. */
+  margin-top: calc(13px * 1.35 + var(--lr-space-1_5));
+}
