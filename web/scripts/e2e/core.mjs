@@ -108,7 +108,17 @@ export async function coreScenarios(h, f) {
       await click(f.owner, "Speichern");
       await visible(f.member, edited);
       await contentInRest(f.member, chat, edited);
-      await click(f.owner, "Nachricht löschen");
+      const own = f.owner.page
+        .getByRole("log", { name: "Nachrichten" })
+        .locator(".lr-message-row")
+        .filter({ hasText: edited });
+      await own.hover();
+      await own
+        .getByRole("button", { name: "Weitere Aktionen", exact: true })
+        .click();
+      await f.owner.page
+        .getByRole("menuitem", { name: "Löschen", exact: true })
+        .click();
       await confirmDialog(f.owner, "Löschen");
       await f.member.page
         .getByRole("log", { name: "Nachrichten" })
@@ -440,10 +450,11 @@ export async function coreScenarios(h, f) {
       // Navigate by observed href without a reload (draft must survive unmount).
       await f.owner.page.locator(`a[href="${f.textPath}"]`).click();
       const retained = f.owner.page
-        .getByRole("alert")
+        .getByRole("log", { name: "Nachrichten" })
+        .locator(".lr-message-row.is-failed")
         .filter({ hasText: "E2E recoverable send attempt" });
       const retry = retained.getByRole("button", {
-        name: "Sendung wiederholen",
+        name: "Erneut senden",
         exact: true,
       });
       await retry.waitFor();

@@ -110,6 +110,7 @@ function DmChat({ dm }: { dm: DirectMessage }) {
               canSendFiles
               mention="@"
               members={mentionable}
+              peer={dm.peer}
               notify={{
                 scope: "channel",
                 id: dm.id,

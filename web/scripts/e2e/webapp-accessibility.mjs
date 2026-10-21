@@ -308,7 +308,7 @@ try {
       );
       assert.ok(await focused(add));
       const own = row.getByRole("button", {
-        name: "❤️: 1 Reaktionen, du hast reagiert",
+        name: "❤️: 1 Reaktion, du hast reagiert",
         exact: true,
       });
       await own.waitFor();
