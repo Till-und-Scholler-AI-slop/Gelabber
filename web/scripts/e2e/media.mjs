@@ -613,7 +613,10 @@ export async function mediaScenarios(h, f) {
           .count()) === 1,
         "duplicate-in-room-call-controls",
       );
-      await page.locator(`a[href="${f.textPath}"]`).first().click();
+      await page
+        .locator(`.channel-sidebar a[href="${f.textPath}"]`)
+        .first()
+        .click();
       await page.locator("textarea").waitFor();
       for (const viewport of [
         { width: 1487, height: 1058 },

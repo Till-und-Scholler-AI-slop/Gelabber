@@ -207,7 +207,9 @@ try {
         name: "Navigation",
         exact: true,
       });
-      await navigation.locator(`a[href="${chatPath}"]`).waitFor();
+      await navigation
+        .locator(`a.channel-row-link[href="${chatPath}"]`)
+        .waitFor();
       assert.ok(
         await navigation.evaluate((el) => el.contains(document.activeElement)),
       );
@@ -227,7 +229,10 @@ try {
       await navigation.waitFor({ state: "hidden" });
       assert.ok(await focused(opener));
       await capture("03-navigation-escape");
-      const members = page.getByRole("button", { name: /Mitglieder/ });
+      // Not the drawer's own "Mitglieder schließen" while it slides out.
+      const members = page.getByRole("button", {
+        name: /^Mitglieder \(\d+\)$/,
+      });
       await tabTo(members);
       await page.keyboard.press("Enter");
       const panel = page.getByRole("dialog", {
@@ -571,7 +576,7 @@ try {
         .waitFor();
       // SPA navigation preserves the actual call and its dock ownership.
       await page.setViewportSize({ width: 1280, height: 720 });
-      await page.locator(`a[href="${chatPath}"]`).first().click();
+      await page.locator(`a.channel-row-link[href="${chatPath}"]`).click();
       await log.waitFor();
       await matrix("13-call-dock", () => dock.waitFor());
       await page.setViewportSize({ width: 390, height: 400 });
