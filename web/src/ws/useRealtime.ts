@@ -122,8 +122,9 @@ export function attachRealtimeRecovery(
           else query.setState({ data: undefined });
         }
         if (!discover) return;
-        // The list is left out of the invalidation above while discovering,
-        // so this is still the DM set from before the resync.
+        // DMs already in the cached list are subscribed through the
+        // notification topics. The snapshot need not predate the resync: a
+        // replaced attempt or a list refetch may already have written it.
         const cachedDms = client.getQueryData<DirectMessage[]>(
           dmKeys.list(stamp.userId, stamp.generation),
         );
