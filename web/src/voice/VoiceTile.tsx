@@ -257,16 +257,40 @@ function VideoSurface({
   const [fullscreen, setFullscreen] = useState(false);
   const [awake, wake] = useWake(viewer);
   const immersive = viewer || fullscreen;
+  const wasFullscreen = useRef(false);
+  const refocus = useRef(false);
   useEffect(() => {
     const update = () => {
-      const on = document.fullscreenElement === figureRef.current;
+      const figure = figureRef.current;
+      const on = document.fullscreenElement === figure;
+      const was = wasFullscreen.current;
+      wasFullscreen.current = on;
       setFullscreen(on);
       if (on) wake();
-      else if (isScreen) lockLandscape(false);
+      else if (was) {
+        if (isScreen) lockLandscape(false);
+        const active = document.activeElement;
+        refocus.current =
+          active === null ||
+          active === document.body ||
+          Boolean(figure?.contains(active));
+      }
     };
     document.addEventListener("fullscreenchange", update);
     return () => document.removeEventListener("fullscreenchange", update);
   }, [isScreen, wake]);
+  useEffect(() => {
+    const figure = figureRef.current;
+    // The button that asked for fullscreen makes way for the strip: the
+    // picture takes the focus, and with it M and Space. Back out, the
+    // button has it again.
+    if (fullscreen) figure?.focus({ preventScroll: true });
+    else if (refocus.current)
+      figure
+        ?.querySelector<HTMLElement>("[data-fullscreen-toggle]")
+        ?.focus({ preventScroll: true });
+    refocus.current = false;
+  }, [fullscreen]);
   const ref = useRef<HTMLVideoElement>(null);
   const enterFullscreen = async () => {
     const figure = figureRef.current;
@@ -381,18 +405,26 @@ function VideoSurface({
     wake();
     const target = event.target as HTMLElement;
     const key = event.key.toLowerCase();
+    // Space presses a focused button; M only gives way to typing.
+    const taken =
+      key === " "
+        ? target.closest("input, select, textarea, button, a")
+        : target.closest("select, textarea, input:not([type='range'])");
     if (
       joined &&
       (key === "m" || key === " ") &&
       !event.ctrlKey &&
       !event.metaKey &&
       !event.altKey &&
-      !target.closest("input, select, textarea, button, a")
+      !taken
     ) {
       event.preventDefault();
       toggleMute();
     }
   };
+  // Under a finger the actions show on a first tap; that tap does not also
+  // press one of them unseen.
+  const shownOnPress = useRef(true);
 
   return (
     <figure
@@ -402,15 +434,34 @@ function VideoSurface({
       data-awake={awake || undefined}
       onPointerMove={immersive ? wake : undefined}
       onPointerDown={(event) => {
-        if (immersive || event.pointerType !== "mouse") wake();
+        if (immersive) wake();
+        else if (event.pointerType !== "mouse") {
+          shownOnPress.current = awake;
+          wake();
+        }
+      }}
+      onClickCapture={(event) => {
+        const hidden = !shownOnPress.current;
+        shownOnPress.current = true;
+        if (
+          hidden &&
+          (event.target as Element).closest(".voice-video-actions")
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
       }}
       onFocus={immersive ? wake : undefined}
       onKeyDown={onKeyDown}
       onClick={
         onSelect
           ? (event) => {
-              // The picture, not one of the buttons on it.
-              if (!(event.target as Element).closest("button, a, input"))
+              // The picture, not one of the buttons on it or a menu of it.
+              const target = event.target as Element;
+              if (
+                event.currentTarget.contains(target) &&
+                !target.closest("button, a, input")
+              )
                 onSelect();
             }
           : undefined
@@ -596,6 +647,7 @@ function VideoSurface({
               size="sm"
               label="Vollbild"
               title="Vollbild (auch per Doppelklick)"
+              data-fullscreen-toggle=""
               icon={<ExpandIcon size={16} />}
               onClick={() => void enterFullscreen()}
               className="voice-video-action"
