@@ -24,7 +24,6 @@ const ALLOWED = new Set([
   "components/NotificationSettingsDialog.tsx",
   "components/ServerDialogs.tsx",
   "components/SessionRecoveryNotice.tsx",
-  "components/VoiceStateIcons.tsx",
   "pages/DmChannelPage.tsx",
   "pages/DmIndexPage.tsx",
   "pages/ForgotPasswordPage.tsx",

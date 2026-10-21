@@ -28,6 +28,8 @@ vi.mock("./session.ts", () => ({
   toggleMute: vi.fn(),
   toggleShare: vi.fn(),
   toggleSourceWatch: vi.fn(),
+  retryMicrophone: vi.fn(),
+  dismissLostCall: vi.fn(),
 }));
 // VoiceRoom reads the user through session.ts, useUserId through store.ts,
 // so both hand out the same one.
@@ -77,8 +79,23 @@ vi.mock("./VoiceTile.tsx", () => ({
   ),
 }));
 
+// A static render shows a store's initial state; push-to-talk is read as it
+// is set here.
+vi.mock("./pushToTalk.ts", async (original) => {
+  const actual = await original<typeof import("./pushToTalk.ts")>();
+  const current = (select: (state: unknown) => unknown) =>
+    select(actual.usePushToTalk.getState());
+  return {
+    ...actual,
+    usePushToTalk: Object.assign(current, actual.usePushToTalk),
+  };
+});
+
 import { VoiceRoom } from "./VoiceRoom.tsx";
+import { ShareMenuItems, VoiceControls } from "../components/VoiceControls.tsx";
 import { VoiceSessionControls } from "../components/VoiceSessionControls.tsx";
+import { callAnnouncement } from "./callBar.ts";
+import { resetPushToTalkForTests, usePushToTalk } from "./pushToTalk.ts";
 
 const stream = { id: "source-from-a" } as MediaStream;
 const server = {
@@ -87,13 +104,22 @@ const server = {
   permissions: ["join_voice"],
   members: [],
 } as unknown as ServerDetail;
-/** The one Go Live / Live beenden button in rendered markup. */
-function goLiveControl(html: string): string {
-  const match = html.match(
-    /<button[^>]*aria-label="(?:Go Live|Live beenden)"[^>]*>/,
+/** The opening tag of the control with this name, or null. */
+function control(html: string, label: string): string | null {
+  return (
+    html.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0] ??
+    null
   );
-  expect(match).not.toBeNull();
-  return match![0];
+}
+/** The Teilen menu's entry with this label, through its hint, or null. */
+function entry(html: string, label: string): string | null {
+  return (
+    html.match(
+      new RegExp(
+        `<button[^>]*role="menuitem"[^>]*>(?:(?!</button>).)*?<strong>${label}</strong>(?:(?!</button>).)*</button>`,
+      ),
+    )?.[0] ?? null
+  );
 }
 
 beforeEach(() => {
@@ -265,10 +291,10 @@ describe("active media UI", () => {
     expect(html).toContain("Taub");
     expect(html).not.toContain("Du bist noch nicht verbunden");
     expect(html).not.toContain("Dazukommen");
-    expect(html).not.toContain('aria-label="Mikrofon aus"');
+    expect(html).not.toContain('aria-label="Stummschalten"');
     expect(html).not.toContain("Verlassen");
     const controls = renderToStaticMarkup(<VoiceSessionControls />);
-    expect(controls).toContain('aria-label="Mikrofon an"');
+    expect(control(controls, "Stummschalten")).toContain('aria-pressed="true"');
     expect(controls).toContain("Verlassen");
   });
 
@@ -321,6 +347,7 @@ describe("active media UI", () => {
 
   it("keeps global Watch stop and the original channel name outside a room", () => {
     const html = renderToStaticMarkup(<VoiceSessionControls />);
+    expect(html).toContain('role="status" class="sr-only"');
     expect(html).toContain('aria-label="Aktive Medien"');
     expect(html).toContain("Stage A");
     expect(html).toContain("Nicht mehr zuschauen");
@@ -340,25 +367,190 @@ describe("active media UI", () => {
     const html = renderToStaticMarkup(<VoiceSessionControls />);
     expect(fixture.requestedServer).toBe("a");
     expect(html).toContain("Voice A");
-    expect(html).toContain('aria-label="Live beenden"');
+    expect(control(html, "Teilen")).toContain('aria-pressed="true"');
+    expect(control(html, "Teilen")).toContain("voice-control-live");
     expect(html).toContain("Verlassen");
-    expect(html).not.toContain('aria-label="Go Live"');
+    const menu = (liveTakenBy: string | null = null) =>
+      renderToStaticMarkup(
+        <ShareMenuItems
+          canGoLive={fixture.server!.permissions.includes("go_live")}
+          liveTakenBy={liveTakenBy}
+        />,
+      );
+    expect(entry(menu(), "Live beenden")).not.toBeNull();
+    expect(entry(menu(), "Go Live")).toBeNull();
     fixture.voice.live = false;
-    expect(renderToStaticMarkup(<VoiceSessionControls />)).not.toContain(
-      'aria-label="Go Live"',
-    );
+    expect(entry(menu(), "Go Live")).toBeNull();
     fixture.server.permissions = ["go_live"];
     // alice is live in this channel and the members list does not name her.
-    const taken = goLiveControl(renderToStaticMarkup(<VoiceSessionControls />));
-    expect(taken).toContain('aria-label="Go Live"');
-    expect(taken).toContain('title="Jemand ist gerade live."');
+    const taken = entry(menu("Jemand"), "Go Live");
     expect(taken).toContain('aria-disabled="true"');
-    expect(taken).toContain('aria-pressed="false"');
+    expect(taken).toContain("Jemand ist gerade live.");
+    expect(entry(menu(), "Go Live")).not.toContain("aria-disabled");
     fixture.voice.live = true;
-    const own = goLiveControl(renderToStaticMarkup(<VoiceSessionControls />));
-    expect(own).toContain('aria-label="Live beenden"');
-    expect(own).toContain('title="Live beenden"');
-    expect(own).not.toContain("aria-disabled");
+    expect(entry(menu("Jemand"), "Live beenden")).not.toContain(
+      "aria-disabled",
+    );
+  });
+  it("keeps one name per toggle and says its state with aria-pressed", () => {
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+      watching: false,
+    });
+    const tags = () => {
+      const html = renderToStaticMarkup(<VoiceControls canGoLive />);
+      return ["Stummschalten", "Taubschalten", "Kamera", "Teilen"].map(
+        (label) => control(html, label),
+      );
+    };
+    for (const tag of tags()) expect(tag).toContain('aria-pressed="false"');
+    Object.assign(fixture.voice, {
+      muted: true,
+      deafened: true,
+      camera: true,
+      sharing: true,
+    });
+    for (const tag of tags()) expect(tag).toContain('aria-pressed="true"');
+    const [mic, deafen, camera, share] = tags();
+    // What a press does stays in the tooltip, with its shortcut.
+    expect(mic).toContain("Stummschaltung aufheben (Strg+Umschalt+M)");
+    expect(deafen).toContain("Taubschaltung aufheben (Strg+Umschalt+D)");
+    expect(camera).toContain('title="Kamera ausschalten"');
+    // Media that is on wears the accent pill.
+    expect(camera).toContain("is-on");
+    expect(share).toContain("is-on");
+    expect(share).toContain('aria-haspopup="menu"');
+  });
+  it("lists the three ways to share in the Teilen menu", () => {
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+      watching: false,
+    });
+    const html = renderToStaticMarkup(<ShareMenuItems canGoLive />);
+    expect(html.match(/role="menuitem"/g)).toHaveLength(2);
+    expect(entry(html, "Bildschirm im Raum teilen")).toContain(
+      "Sehen alle im Sprachkanal",
+    );
+    expect(entry(html, "Go Live")).toContain(
+      "Auch für Zuschauer ohne Beitritt",
+    );
+    expect(html).toMatch(
+      /role="menuitemcheckbox" aria-label="Ton mitsenden" aria-checked="false"/,
+    );
+    // While sharing, ending it comes first.
+    fixture.voice.sharing = true;
+    const sharing = renderToStaticMarkup(<ShareMenuItems canGoLive />);
+    expect(sharing.indexOf("<strong>Teilen beenden</strong>")).toBe(
+      sharing.indexOf("<strong>"),
+    );
+    expect(entry(sharing, "Bildschirm im Raum teilen")).toBeNull();
+  });
+  it("tells a missing or held-back microphone from a working one", () => {
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+      watching: false,
+      mic: "denied",
+    });
+    const render = () => renderToStaticMarkup(<VoiceControls />);
+    expect(control(render(), "Stummschalten")).toBeNull();
+    expect(control(render(), "Kein Mikrofon")).toContain(
+      'aria-haspopup="dialog"',
+    );
+    expect(render()).toContain("voice-control-dot");
+    fixture.voice.mic = "unavailable";
+    expect(control(render(), "Kein Mikrofon")).not.toBeNull();
+    try {
+      usePushToTalk.setState({ active: true, open: false });
+      fixture.voice.mic = "ptt-idle";
+      const idle = render();
+      expect(control(idle, "Stummschalten")).toContain("is-ptt-idle");
+      expect(idle).toContain(">PTT</span>");
+      usePushToTalk.setState({ open: true });
+      fixture.voice.mic = "live";
+      expect(control(render(), "Stummschalten")).toContain("is-talking");
+    } finally {
+      resetPushToTalkForTests();
+    }
+  });
+  it("says how the connection is doing", () => {
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+      channelName: "Zocken",
+      watching: false,
+      connection: "connecting",
+    });
+    fixture.server = { ...server, name: "Spieleabend" } as ServerDetail;
+    const render = () => renderToStaticMarkup(<VoiceSessionControls />);
+    expect(render()).toContain("Verbinde …");
+    expect(render()).toContain("Zocken · Spieleabend");
+    expect(render()).not.toContain("voice-quality-bars");
+    fixture.voice.connection = "reconnecting";
+    expect(render()).toContain("Verbindung wird wiederhergestellt …");
+    fixture.voice.connection = "connected";
+    expect(render()).toContain(">Verbunden<");
+    expect(render()).toContain(
+      'aria-label="Verbindung: wird gemessen …. Details anzeigen"',
+    );
+    fixture.voice.connection = "failed";
+    expect(render()).toContain("Verbindung verloren");
+    expect(render()).toContain("Erneut versuchen");
+  });
+  it("offers a lost call again after the session left it", () => {
+    Object.assign(fixture.voice, {
+      status: "idle",
+      watching: false,
+      connection: "failed",
+      lostCall: { serverId: "a", channelId: "stage", channelName: "Zocken" },
+    });
+    const html = renderToStaticMarkup(<VoiceSessionControls />);
+    expect(html).toContain("Verbindung verloren");
+    expect(html).toContain("Zocken");
+    expect(html).toContain("Erneut versuchen");
+    expect(control(html, "Schließen")).not.toBeNull();
+    expect(html).not.toContain("Verlassen");
+    expect(html).not.toContain("Wiedergabe-Lautstärke");
+  });
+  it("announces joining, trouble and leaving once", () => {
+    const at = (
+      status: "idle" | "joined",
+      connection: VoiceState["connection"],
+      channelName: string | null = "Zocken",
+    ) => ({ status, connection, channelName });
+    expect(
+      callAnnouncement(at("idle", "idle"), at("joined", "connecting")),
+    ).toBeNull();
+    expect(
+      callAnnouncement(at("joined", "connecting"), at("joined", "connected")),
+    ).toBe("Mit Zocken verbunden");
+    expect(
+      callAnnouncement(at("joined", "connected"), at("joined", "reconnecting")),
+    ).toBe("Verbindung wird wiederhergestellt");
+    expect(
+      callAnnouncement(at("joined", "reconnecting"), at("joined", "connected")),
+    ).toBe("Verbindung wiederhergestellt");
+    expect(
+      callAnnouncement(
+        at("joined", "connected"),
+        at("joined", "connected", "Quatschecke"),
+      ),
+    ).toBe("Mit Quatschecke verbunden");
+    expect(
+      callAnnouncement(at("joined", "connected"), at("idle", "idle")),
+    ).toBe("Getrennt");
+    expect(
+      callAnnouncement(at("joined", "reconnecting"), at("idle", "failed")),
+    ).toBe("Verbindung verloren");
+    expect(
+      callAnnouncement(at("idle", "failed"), at("idle", "idle")),
+    ).toBeNull();
   });
   it("shows a playback action while blocked and hides it while deafened", () => {
     fixture.voice.playbackBlocked = true;

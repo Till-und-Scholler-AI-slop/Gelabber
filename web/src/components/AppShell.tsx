@@ -46,7 +46,10 @@ export function AppShell() {
   });
   const activeMedia = useVoice(
     (state) =>
-      state.status === "joined" || state.watching || state.playbackBlocked,
+      state.status === "joined" ||
+      state.watching ||
+      state.playbackBlocked ||
+      state.lostCall !== null,
   );
   useGatewaySession(user?.id ?? null);
   useIdlePresence(user?.id ?? null);
