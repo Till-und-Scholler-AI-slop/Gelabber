@@ -807,6 +807,119 @@ async fn coming_online_publishes_one_presence_frame(pool: PgPool) {
     assert_eq!(online, 1, "one frame per presence change");
 }
 
+/// The snapshot reads every member's status in one round trip (#294) and
+/// lists exactly the members that have one. A member whose status is gone
+/// and a member that is no user id leave the set; one whose status cannot
+/// be read is left out of the snapshot.
+#[sqlx::test]
+async fn presence_snapshot_lists_only_members_with_a_status(pool: PgPool) {
+    let (mut owner, mut bob) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Snap").await;
+    let (server_id, _) = ids(&server);
+    join_member(&mut owner, &mut bob, &server_id.to_string()).await;
+    let mut more = Vec::new();
+    for (email, name) in [("cem@example.com", "Cem"), ("dora@example.com", "Dora")] {
+        let mut client = Client::new(pool.clone());
+        client.bootstrap().await;
+        let res = client.register(email, "password123", name).await;
+        assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+        join_member(&mut owner, &mut client, &server_id.to_string()).await;
+        more.push(client);
+    }
+    let dora = more.pop().unwrap();
+    let cem = more.pop().unwrap();
+
+    let (addr, state) = common::serve_ws(pool).await;
+    let mut online = Vec::new();
+    for client in [&owner, &bob, &cem] {
+        let mut ws = connect(addr, &session_cookie(client), None).await;
+        send_json(&mut ws, json!({ "op": "s", "s": server_id })).await;
+        recv_until(&mut ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+        online.push(ws);
+    }
+
+    // Cem's status runs out while he stays in the set; the set also holds
+    // junk and a member whose status is no status.
+    let prefix = gelabber_api::gateway::protocol::REDIS_PREFIX;
+    let set = format!("{prefix}p:s:{server_id}");
+    let ghost = Uuid::new_v4().to_string();
+    let mut redis = state
+        .redis
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    redis::cmd("DEL")
+        .arg(format!("{prefix}p:u:{}", cem.user_id()))
+        .query_async::<i64>(&mut redis)
+        .await
+        .unwrap();
+    redis::cmd("SET")
+        .arg(format!("{prefix}p:u:{ghost}"))
+        .arg("?")
+        .arg("PX")
+        .arg(10_000)
+        .query_async::<()>(&mut redis)
+        .await
+        .unwrap();
+    redis::cmd("SADD")
+        .arg(&set)
+        .arg("bogus")
+        .arg(&ghost)
+        .query_async::<i64>(&mut redis)
+        .await
+        .unwrap();
+
+    let mut dora_ws = connect(addr, &session_cookie(&dora), None).await;
+    send_json(&mut dora_ws, json!({ "op": "s", "s": server_id })).await;
+    let snap = recv_until(&mut dora_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    let entries = snap["snap"].as_array().unwrap();
+    let mut listed: Vec<&str> = entries.iter().map(|e| e["u"].as_str().unwrap()).collect();
+    listed.sort_unstable();
+    let mut expected = vec![owner.user_id(), bob.user_id(), dora.user_id()];
+    expected.sort_unstable();
+    assert_eq!(listed, expected, "{snap}");
+    assert!(entries.iter().all(|e| e["st"] == "o"), "{snap}");
+
+    for (member, kept) in [
+        (owner.user_id(), true),
+        (cem.user_id(), false),
+        ("bogus", false),
+    ] {
+        let is: bool = redis::cmd("SISMEMBER")
+            .arg(&set)
+            .arg(member)
+            .query_async(&mut redis)
+            .await
+            .unwrap();
+        assert_eq!(is, kept, "{member}");
+    }
+
+    // Nothing to read: an empty set, and one holding junk only.
+    let gateway = &state.gateway;
+    assert!(
+        gateway
+            .presence_snapshot(Uuid::new_v4())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let junk = Uuid::new_v4();
+    let junk_set = format!("{prefix}p:s:{junk}");
+    redis::cmd("SADD")
+        .arg(&junk_set)
+        .arg("bogus")
+        .query_async::<i64>(&mut redis)
+        .await
+        .unwrap();
+    assert!(gateway.presence_snapshot(junk).await.unwrap().is_empty());
+    let left: i64 = redis::cmd("EXISTS")
+        .arg(&junk_set)
+        .query_async(&mut redis)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+}
+
 #[sqlx::test]
 async fn two_clients_keep_user_online_until_the_last_goes_idle(pool: PgPool) {
     let (mut owner, _) = two_users(pool.clone()).await;
