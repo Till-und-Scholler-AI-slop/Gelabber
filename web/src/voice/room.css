@@ -288,6 +288,26 @@
 .voice-session-dock .voice-session-lost > .voice-session-head {
   flex: 1 1 auto;
 }
+.voice-session-head > .ui-button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+/* A call that failed in its seat says so on a row of its own where the bar
+   is narrow, with room for "Erneut versuchen". */
+@media (max-width: 1023px) {
+  .voice-session-dock .voice-session-call.is-failed {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .voice-session-dock .voice-session-call.is-failed > .voice-session-head {
+    flex: 1 1 100%;
+  }
+}
+@media (max-width: 800px) {
+  .voice-session-dock .voice-session-call.is-failed > .voice-control-leave {
+    margin-left: auto;
+  }
+}
 .voice-session-signal {
   flex-shrink: 0;
   margin-left: 2px;
@@ -489,7 +509,9 @@ a.voice-session-link:hover > span {
 .voice-session-dock .voice-control-leave:hover {
   background: color-mix(in srgb, var(--lr-danger-bg), black 12%);
 }
-@media (max-width: 800px) {
+/* Below a laptop's width the bar after the sidebar has no room for words:
+   "Kein Mikrofon" and "Verlassen" keep their names and tooltips only. */
+@media (max-width: 1023px) {
   .voice-session-dock .voice-control-text {
     display: none;
   }
@@ -616,6 +638,10 @@ a.voice-session-link:hover > span {
 .voice-menu-switch {
   align-items: center;
   justify-content: space-between;
+}
+/* In line with the entries' labels, past their icons. */
+.voice-menu-switch > span:first-child {
+  padding-left: 27px;
 }
 .voice-menu-switch-track {
   position: relative;
@@ -756,7 +782,8 @@ a.voice-session-link:hover > span {
   margin: 0 8px 6px;
   padding: 3px 10px;
   border-radius: var(--lr-radius-full);
-  background: color-mix(in srgb, var(--lr-online) 14%, var(--lr-panel));
+  /* Light enough for --lr-online-text to keep 4.5:1 in the light theme. */
+  background: color-mix(in srgb, var(--lr-online) 8%, var(--lr-panel));
   color: var(--lr-online-text);
   font: var(--lr-type-meta);
   font-weight: 500;

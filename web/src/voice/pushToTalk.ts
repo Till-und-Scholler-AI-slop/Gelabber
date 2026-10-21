@@ -307,6 +307,12 @@ export function callShortcutLabel(action: CallShortcut): string {
   return `${applePlatform() ? "⌘" : "Strg"}+Umschalt+${key}`;
 }
 
+/** The same shortcut for `aria-keyshortcuts`: "Control+Shift+M". */
+export function callShortcutKeys(action: CallShortcut): string {
+  const key = action === "mute" ? "M" : "D";
+  return `${applePlatform() ? "Meta" : "Control"}+Shift+${key}`;
+}
+
 /** Keys that write nothing into a text field; only these count while the
  * user types. */
 function writesNothing(code: string): boolean {

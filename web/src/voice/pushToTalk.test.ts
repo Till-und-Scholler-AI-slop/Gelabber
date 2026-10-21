@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setNativeBridgeForTests, type NativeBridge } from "./native/bridge.ts";
 import {
   callShortcut,
+  callShortcutKeys,
   callShortcutLabel,
   clampReleaseDelay,
   configurePushToTalk,
@@ -352,7 +353,9 @@ describe("call shortcuts", () => {
   it("writes the shortcut the way the platform does", () => {
     vi.stubGlobal("navigator", { platform: "MacIntel", userAgent: "" });
     expect(callShortcutLabel("mute")).toBe("⌘+Umschalt+M");
+    expect(callShortcutKeys("mute")).toBe("Meta+Shift+M");
     vi.stubGlobal("navigator", { platform: "Linux x86_64", userAgent: "" });
     expect(callShortcutLabel("deafen")).toBe("Strg+Umschalt+D");
+    expect(callShortcutKeys("deafen")).toBe("Control+Shift+D");
   });
 });

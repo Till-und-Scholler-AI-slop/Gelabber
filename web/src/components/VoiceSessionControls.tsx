@@ -150,7 +150,9 @@ export function VoiceSessionControls() {
         className="voice-session-dock"
       >
         {joined ? (
-          <div className="voice-session-call">
+          <div
+            className={`voice-session-call${voice.connection === "failed" ? " is-failed" : ""}`}
+          >
             <CallStatus voice={voice} server={server} joined={joined} />
             <CallPeople
               server={server}
@@ -417,7 +419,7 @@ function QualityBars() {
       type="button"
       className="voice-quality-bars"
       data-level={quality?.level ?? 0}
-      aria-label={`${label}. Details anzeigen`}
+      aria-label={`${label} – Details anzeigen`}
       title={label}
       onClick={() => openSettings("diagnostics")}
     >

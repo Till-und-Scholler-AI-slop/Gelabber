@@ -42,6 +42,7 @@ import {
 import { useCapabilities } from "../voice/capabilities.ts";
 import { isDesktopApp } from "../voice/native/bridge.ts";
 import {
+  callShortcutKeys,
   callShortcutLabel,
   holdToTalk,
   usePushToTalk,
@@ -83,6 +84,7 @@ export function VoiceAudioToggles({
           type="button"
           aria-pressed={micOff}
           aria-label="Stummschalten"
+          aria-keyshortcuts={callShortcutKeys("mute")}
           title={`${micOff ? "Stummschaltung aufheben" : "Stummschalten"} (${callShortcutLabel("mute")})${pushToTalk && !micOff ? " · Push-to-Talk" : ""}`}
           onClick={() => toggleMute()}
           className={`${className}${micOff ? " is-off" : ""}${talking ? " is-talking" : ""}${idle ? " is-ptt-idle" : ""}`}
@@ -99,6 +101,7 @@ export function VoiceAudioToggles({
         type="button"
         aria-pressed={deafened}
         aria-label="Taubschalten"
+        aria-keyshortcuts={callShortcutKeys("deafen")}
         title={`${deafened ? "Taubschaltung aufheben" : "Taubschalten"} (${callShortcutLabel("deafen")})`}
         onClick={() => toggleDeafen()}
         className={`${className}${deafened ? " is-off" : ""}`}
@@ -146,9 +149,11 @@ function MicProblem({
         className="voice-mic-problem"
       >
         <p>
-          {denied
-            ? "Der Browser erlaubt den Mikrofonzugriff nicht. Erlaube ihn in den Website-Einstellungen und versuch es dann erneut."
-            : "Es wurde kein Mikrofon gefunden, oder es ist gerade belegt."}{" "}
+          {!denied
+            ? "Es wurde kein Mikrofon gefunden, oder es ist gerade belegt."
+            : isDesktopApp()
+              ? "Gelabber darf das Mikrofon nicht nutzen. Erlaube den Zugriff in den Systemeinstellungen und versuch es dann erneut."
+              : "Der Browser erlaubt den Mikrofonzugriff nicht. Erlaube ihn in den Website-Einstellungen und versuch es dann erneut."}{" "}
           Du hörst weiter zu.
         </p>
         <div className="voice-mic-problem-actions">

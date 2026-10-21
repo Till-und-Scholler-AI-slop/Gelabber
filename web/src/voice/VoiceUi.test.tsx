@@ -417,6 +417,8 @@ describe("active media UI", () => {
     // What a press does stays in the tooltip, with its shortcut.
     expect(mic).toContain("Stummschaltung aufheben (Strg+Umschalt+M)");
     expect(deafen).toContain("Taubschaltung aufheben (Strg+Umschalt+D)");
+    expect(mic).toContain('aria-keyshortcuts="Control+Shift+M"');
+    expect(deafen).toContain('aria-keyshortcuts="Control+Shift+D"');
     expect(camera).toContain('title="Kamera ausschalten"');
     // Media that is on wears the accent pill.
     expect(camera).toContain("is-on");
@@ -497,7 +499,7 @@ describe("active media UI", () => {
     fixture.voice.connection = "connected";
     expect(render()).toContain(">Verbunden<");
     expect(render()).toContain(
-      'aria-label="Verbindung: wird gemessen …. Details anzeigen"',
+      'aria-label="Verbindung: wird gemessen … – Details anzeigen"',
     );
     fixture.voice.connection = "failed";
     expect(render()).toContain("Verbindung verloren");
