@@ -19,6 +19,15 @@ describe("stream settings form", () => {
   });
 });
 
+describe("in-call settings", () => {
+  it("leave message notifications to the settings page", () => {
+    const html = renderToStaticMarkup(<MediaSettingsForm />);
+    expect(html).not.toContain("Nachrichten");
+    expect(html).not.toContain('id="message-toasts"');
+    expect(html).not.toContain('id="desktop-notify"');
+  });
+});
+
 describe("source-audio form", () => {
   afterEach(() => vi.unstubAllGlobals());
 

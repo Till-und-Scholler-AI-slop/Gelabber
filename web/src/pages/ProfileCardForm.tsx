@@ -36,9 +36,14 @@ import { Avatar } from "../components/Avatar.tsx";
 import { AvatarFrame } from "../components/AvatarFrame.tsx";
 import { Field } from "../components/Field.tsx";
 import { FormError } from "../components/FormError.tsx";
+import { CloseIcon } from "../components/Icons.tsx";
 import { ProfileCardView } from "../components/ProfileCard.tsx";
 import { DECORATION_LABEL } from "../components/profileStyle.ts";
 import { SubmitButton } from "../components/SubmitButton.tsx";
+import { Button } from "../components/ui/Button.tsx";
+import { IconButton } from "../components/ui/IconButton.tsx";
+import { InlineStatus } from "../components/ui/InlineStatus.tsx";
+import { Textarea } from "../components/ui/Textarea.tsx";
 
 /** What a color picker shows while no color is set. */
 const PICKER_DEFAULT = "#7c6cf2";
@@ -47,15 +52,17 @@ type Upload = { file: File; release: () => void };
 
 /**
  * Profile card editor: banner, colors, avatar decoration, pronouns, status
- * text and "Über mich", with a live preview of the card others see.
+ * text and "Über mich", next to a live preview of the card others see. The
+ * banner image saves at once; everything else waits for the save bar.
  */
 export function ProfileCardForm({ user }: { user: User }) {
   const [form, setForm] = useState<CardForm>(() => cardFormOf(user));
   const [saved, setSaved] = useState(false);
-  const { errors, clearField, setFields, fromError } = useFormErrors();
+  const [bannerSaved, setBannerSaved] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const { errors, clear, clearField, setFields, fromError } = useFormErrors();
   const busy = useProfileWrites((state) => state.pending > 0);
   const dirty = Object.keys(profileCardPatch(form, user)).length > 0;
-  const unchangedId = useId();
   const bioCountId = useId();
 
   const edit = <K extends keyof CardForm>(field: K, value: CardForm[K]) => {
@@ -91,7 +98,7 @@ export function ProfileCardForm({ user }: { user: User }) {
     },
     onSuccess: () => {
       clearField("banner_url");
-      setSaved(true);
+      setBannerSaved(true);
     },
     onError: (error) => {
       if (error instanceof AvatarImageError) {
@@ -111,7 +118,7 @@ export function ProfileCardForm({ user }: { user: User }) {
     },
     onSuccess: () => {
       clearField("banner_url");
-      setSaved(true);
+      setBannerSaved(true);
     },
     onError: fromError,
   });
@@ -122,13 +129,13 @@ export function ProfileCardForm({ user }: { user: User }) {
     if (!file) return;
     const release = claimProfileWrite();
     if (!release) return;
-    setSaved(false);
+    setBannerSaved(false);
     upload.mutate({ file, release });
   };
   const onRemoveBanner = () => {
     const release = claimProfileWrite();
     if (!release) return;
-    setSaved(false);
+    setBannerSaved(false);
     removal.mutate(release);
   };
 
@@ -149,23 +156,19 @@ export function ProfileCardForm({ user }: { user: User }) {
     if (release) mutation.mutate(release);
   };
 
-  const unchanged = !dirty && !saved && !busy;
   const bioLength = profileTextLength(form.bio);
   // No `maxLength` on the textarea: pasting a longer text and trimming it
   // must work, and the browser would count UTF-16 units before the API's
   // trim. Over the limit the field is marked invalid right away instead.
   const bioInvalid = Boolean(errors.fields.bio) || bioLength > BIO_MAX;
+  const bioDescription = [errors.fields.bio ? "bio-error" : null, bioCountId]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <section className="lr-account-page mx-auto mt-12 max-w-md">
-      <h2 className="text-xl font-semibold tracking-tight">Profilkarte</h2>
-      <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-        So sehen dich andere, wenn sie auf dich tippen – im Browser, in der App
-        und auf dem Handy.
-      </p>
-
+    <div className="profile-card-editor">
       <div
-        className="mt-6"
+        className={`profile-card-preview${previewOpen ? " is-open" : ""}`}
         role="group"
         aria-label="Vorschau deiner Profilkarte"
       >
@@ -178,59 +181,76 @@ export function ProfileCardForm({ user }: { user: User }) {
             banner_url: user.banner_url ?? null,
           }}
         />
+        {/* Phones show a strip of the card while editing; this opens all of it. */}
+        <button
+          type="button"
+          className="profile-card-preview__toggle"
+          aria-expanded={previewOpen}
+          onClick={() => setPreviewOpen((open) => !open)}
+        >
+          {previewOpen ? "Vorschau verkleinern" : "Ganze Vorschau zeigen"}
+        </button>
       </div>
 
       <form
         onSubmit={onSubmit}
         noValidate
-        className="mt-6 flex flex-col gap-6"
+        className="settings-form"
         aria-label="Profilkarte bearbeiten"
       >
-        <div className="flex flex-col gap-2">
-          <span className="text-sm font-medium text-neutral-800 dark:text-neutral-200">
-            Banner
-          </span>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
+        <div className="ui-form-field">
+          <span className="ui-label">Banner</span>
+          <div className="settings-actions">
+            <Button
+              size="sm"
               onClick={() => picker.current?.click()}
               disabled={busy}
-              className="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium transition hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:hover:bg-neutral-800"
+              pending={upload.isPending}
+              pendingLabel="Lädt hoch…"
             >
-              {upload.isPending ? "Lädt hoch…" : "Bannerbild hochladen"}
-            </button>
+              Bannerbild hochladen
+            </Button>
             {user.banner_url ? (
-              <button
-                type="button"
+              <Button
+                size="sm"
+                variant="ghost"
                 onClick={onRemoveBanner}
                 disabled={busy}
-                className="rounded-lg px-3 py-1.5 text-sm font-medium text-neutral-600 transition hover:bg-neutral-100 disabled:opacity-60 dark:text-neutral-400 dark:hover:bg-neutral-800"
+                pending={removal.isPending}
+                pendingLabel="Entfernt…"
               >
-                {removal.isPending ? "Entfernt…" : "Bannerbild entfernen"}
-              </button>
+                Bannerbild entfernen
+              </Button>
             ) : null}
+            <InlineStatus
+              status={
+                bannerSaved
+                  ? { tone: "success", message: "Banner gespeichert." }
+                  : null
+              }
+            />
           </div>
           <input
             ref={picker}
             type="file"
             accept="image/png,image/jpeg,image/webp,image/gif"
-            className="hidden"
+            hidden
             aria-label="Bannerbild auswählen"
             onChange={onPick}
           />
           {errors.fields.banner_url ? (
-            <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+            <p role="alert" className="ui-field-error">
               {errors.fields.banner_url}
             </p>
           ) : (
-            <p className="text-sm text-neutral-500 dark:text-neutral-400">
-              Breites Bild, wird auf 3 : 1 zugeschnitten. Ohne Bild zeigen wir
-              die Bannerfarbe.
+            <p className="ui-hint">
+              Breites Bild, wird auf 3 : 1 zugeschnitten und sofort gespeichert.
+              Ohne Bild zeigen wir die Bannerfarbe.
             </p>
           )}
         </div>
 
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+        <div className="settings-field-pair">
           <ColorField
             id="banner_color"
             label="Bannerfarbe"
@@ -248,10 +268,8 @@ export function ProfileCardForm({ user }: { user: User }) {
           />
         </div>
 
-        <fieldset className="flex flex-col gap-2">
-          <legend className="mb-2 text-sm font-medium text-neutral-800 dark:text-neutral-200">
-            Avatar-Rahmen
-          </legend>
+        <fieldset className="settings-fieldset">
+          <legend className="ui-label">Avatar-Rahmen</legend>
           <div className="deco-picker">
             {(["", ...AVATAR_DECORATIONS] as const).map((decoration) => (
               <label key={decoration || "none"} className="deco-option">
@@ -271,7 +289,12 @@ export function ProfileCardForm({ user }: { user: User }) {
                   decoration={decoration || null}
                   accent={form.accent_color || null}
                 >
-                  <Avatar name={user.name} url={user.avatar_url} size="md" />
+                  <Avatar
+                    name={user.name}
+                    url={user.avatar_url}
+                    size="md"
+                    decorative
+                  />
                 </AvatarFrame>
                 <span>
                   {decoration ? DECORATION_LABEL[decoration] : "Keiner"}
@@ -280,9 +303,7 @@ export function ProfileCardForm({ user }: { user: User }) {
             ))}
           </div>
           {errors.fields.avatar_decoration ? (
-            <p role="alert" className="text-sm text-red-600 dark:text-red-400">
-              {errors.fields.avatar_decoration}
-            </p>
+            <p className="ui-field-error">{errors.fields.avatar_decoration}</p>
           ) : null}
         </fieldset>
 
@@ -307,73 +328,71 @@ export function ProfileCardForm({ user }: { user: User }) {
           error={errors.fields.status_text}
           hint="Steht in der Mitgliederliste unter deinem Namen."
         />
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="bio"
-            className="text-sm font-medium text-neutral-800 dark:text-neutral-200"
-          >
+        <div className="ui-form-field">
+          <label htmlFor="bio" className="ui-label">
             Über mich
           </label>
-          <textarea
+          <Textarea
             id="bio"
             rows={4}
             value={form.bio}
             onChange={(event) => edit("bio", event.target.value)}
-            aria-invalid={bioInvalid ? true : undefined}
-            aria-describedby={errors.fields.bio ? "bio-error" : bioCountId}
-            className={[
-              "resize-y rounded-lg border bg-white px-3 py-2 text-base text-neutral-900 outline-none transition focus:ring-2 focus:ring-offset-0 dark:bg-neutral-900 dark:text-neutral-100",
-              bioInvalid
-                ? "border-red-400 focus:border-red-500 focus:ring-red-200 dark:border-red-600 dark:focus:border-red-400 dark:focus:ring-red-900"
-                : "border-neutral-300 focus:border-neutral-500 focus:ring-neutral-200 dark:border-neutral-600 dark:focus:border-neutral-400 dark:focus:ring-neutral-700",
-            ].join(" ")}
+            invalid={bioInvalid}
+            aria-describedby={bioDescription}
+            className="resize-y"
           />
           {errors.fields.bio ? (
-            <p
-              id="bio-error"
-              role="alert"
-              className="text-sm text-red-600 dark:text-red-400"
-            >
+            <p id="bio-error" className="ui-field-error">
               {errors.fields.bio}
             </p>
           ) : null}
           <p
             id={bioCountId}
-            className={`text-sm ${bioLength > BIO_MAX ? "text-red-600 dark:text-red-400" : "text-neutral-500 dark:text-neutral-400"}`}
+            className={bioLength > BIO_MAX ? "ui-field-error" : "ui-hint"}
           >
             {bioLength} / {BIO_MAX} Zeichen
           </p>
         </div>
 
         <FormError message={errors.form} />
-        <div className="flex items-center gap-4">
-          <SubmitButton
-            pending={mutation.isPending}
-            pendingLabel="Speichern…"
-            disabled={!dirty || (busy && !mutation.isPending)}
-            aria-describedby={unchanged ? unchangedId : undefined}
-          >
-            Profilkarte speichern
-          </SubmitButton>
-          {unchanged ? (
-            <span
-              id={unchangedId}
-              className="text-sm text-neutral-600 dark:text-neutral-400"
-            >
-              Noch nichts geändert.
-            </span>
+        {/* Sticks to the bottom while there is something to save. */}
+        <div
+          className={`settings-save-bar${dirty || mutation.isPending ? " is-dirty" : ""}`}
+        >
+          {dirty || mutation.isPending ? (
+            <>
+              <span className="settings-save-bar__text">
+                Ungespeicherte Änderungen
+              </span>
+              <Button
+                variant="ghost"
+                disabled={mutation.isPending}
+                onClick={() => {
+                  setForm(cardFormOf(user));
+                  clear();
+                }}
+              >
+                Verwerfen
+              </Button>
+              <SubmitButton
+                pending={mutation.isPending}
+                pendingLabel="Speichern…"
+                disabled={busy && !mutation.isPending}
+              >
+                Speichern
+              </SubmitButton>
+            </>
           ) : null}
-          {saved && !dirty ? (
-            <span
-              role="status"
-              className="text-sm text-emerald-700 dark:text-emerald-300"
-            >
-              Gespeichert.
-            </span>
-          ) : null}
+          <InlineStatus
+            status={
+              saved && !dirty
+                ? { tone: "success", message: "Gespeichert." }
+                : null
+            }
+          />
         </div>
       </form>
-    </section>
+    </div>
   );
 }
 
@@ -394,14 +413,11 @@ function ColorField({
   error?: string | undefined;
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <label
-        htmlFor={id}
-        className="text-sm font-medium text-neutral-800 dark:text-neutral-200"
-      >
+    <div className="ui-form-field">
+      <label htmlFor={id} className="ui-label">
         {label}
       </label>
-      <div className="flex items-center gap-3">
+      <div className="settings-color-field">
         <input
           id={id}
           type="color"
@@ -409,31 +425,22 @@ function ColorField({
           onChange={(event) => onChange(event.target.value)}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? `${id}-error` : `${id}-value`}
-          className="h-9 w-12 shrink-0 cursor-pointer rounded-md border border-neutral-300 bg-transparent p-0.5 dark:border-neutral-600"
+          className="settings-color-swatch"
         />
-        <span
-          id={`${id}-value`}
-          className="text-sm text-neutral-600 dark:text-neutral-400"
-        >
+        <span id={`${id}-value`} className="settings-hint">
           {value ? value.toLowerCase() : "Standard"}
         </span>
         {value ? (
-          <button
-            type="button"
+          <IconButton
+            size="sm"
+            label={`${label} zurücksetzen`}
+            icon={<CloseIcon size={16} />}
             onClick={() => onChange("")}
-            aria-label={`${label} zurücksetzen`}
-            className="rounded-md px-2 py-1 text-sm text-neutral-600 transition hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
-          >
-            Zurücksetzen
-          </button>
+          />
         ) : null}
       </div>
       {error ? (
-        <p
-          id={`${id}-error`}
-          role="alert"
-          className="text-sm text-red-600 dark:text-red-400"
-        >
+        <p id={`${id}-error`} className="ui-field-error">
           {error}
         </p>
       ) : null}

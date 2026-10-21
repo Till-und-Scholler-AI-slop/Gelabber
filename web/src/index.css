@@ -753,7 +753,14 @@ summary {
   gap: 9px;
   min-width: 0;
   flex: 1;
+  padding: 2px 4px 2px 2px;
   border-radius: var(--lr-radius);
+  text-align: left;
+  cursor: pointer;
+}
+.user-panel-profile:hover,
+.user-panel-profile[aria-expanded="true"] {
+  background: var(--lr-hover);
 }
 .user-panel-profile > span:last-child {
   min-width: 0;
@@ -789,6 +796,63 @@ summary {
 .shell-icon-button:hover {
   background: var(--lr-hover);
   color: var(--lr-text);
+}
+/* Your status, from the name in the user panel. */
+.ui-popover.user-status-popover {
+  width: 300px;
+}
+.user-status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px;
+}
+.user-status-card__who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.user-status-card__who > span {
+  min-width: 0;
+}
+.user-status-card__who strong {
+  display: block;
+  overflow: hidden;
+  font: var(--lr-type-title-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-status-card__who small {
+  font: var(--lr-type-meta);
+  color: var(--lr-muted);
+}
+.user-status-card__form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.user-status-card__row {
+  display: flex;
+  gap: 8px;
+}
+.user-status-card__row .ui-field {
+  flex: 1;
+  min-width: 0;
+}
+.user-status-card__link {
+  display: flex;
+  align-items: center;
+  min-height: var(--lr-control-md);
+  margin: 0 -4px -4px;
+  padding: 0 8px;
+  border-top: 1px solid var(--lr-border);
+  border-radius: 0 0 var(--lr-radius-sm) var(--lr-radius-sm);
+  font: var(--lr-type-ui);
+  color: var(--lr-text);
+}
+.user-status-card__link:hover {
+  background: var(--lr-hover);
 }
 .user-panel-menu {
   position: relative;

@@ -363,9 +363,6 @@ describe("settings form", () => {
         "Die Desktop-App passt die tatsächliche Bitrate an die Verbindung an.",
       );
       expect(html).toContain("Standard-Ausgabegerät des Systems");
-      expect(html).toContain(
-        "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist",
-      );
       expect(html).not.toMatch(/Browser|Web Audio|\bTab\b/);
     },
   );

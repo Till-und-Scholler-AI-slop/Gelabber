@@ -5,12 +5,11 @@ import { listNativeAudioApps } from "./native/capture.ts";
 import { hasNativeFeature } from "./native/features.ts";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
 import { PushToTalkSettings } from "./PushToTalkSettings.tsx";
-// Shared Voice/Video + notification form. Used on /settings and in-call.
+// Shared Voice/Video form. Used on /settings and in-call.
 
 import { useEffect, useState, type ReactNode } from "react";
 import "./quality.css";
 import { playCallSound } from "./callSounds.ts";
-import { CloseToTray } from "../components/CloseToTray.tsx";
 
 import {
   AUDIO_PROCESSING,
@@ -44,7 +43,7 @@ const emptyDevices: DeviceList = {
   videoinput: [],
 };
 
-type SettingsSection = "all" | "audio" | "video" | "notifications";
+type SettingsSection = "all" | "audio" | "video";
 
 export function MediaSettingsForm({
   section = "all",
@@ -53,7 +52,6 @@ export function MediaSettingsForm({
 }) {
   const showAudio = section === "all" || section === "audio";
   const showVideo = section === "all" || section === "video";
-  const showNotifications = section === "all" || section === "notifications";
   const settings = useMediaSettings();
   const processing = useAudioProcessing();
   const audioLimit = audioBitrate(settings);
@@ -508,48 +506,6 @@ export function MediaSettingsForm({
       )}
       {microphoneTest && (
         <MicrophoneTest onClose={() => setMicrophoneTest(false)} />
-      )}
-      {showNotifications && (
-        <fieldset className="flex flex-col gap-2">
-          <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
-            Nachrichten
-          </legend>
-          <Toggle
-            id="message-toasts"
-            label="Popup bei neuen Nachrichten in anderen Chats"
-            checked={settings.messageToasts}
-            onChange={(messageToasts) => settings.patch({ messageToasts })}
-          />
-          <Toggle
-            id="desktop-notify"
-            label={
-              desktop
-                ? "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist"
-                : "Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist"
-            }
-            checked={settings.desktopNotify}
-            onChange={(desktopNotify) => {
-              settings.patch({ desktopNotify });
-              if (desktopNotify && typeof Notification !== "undefined") {
-                void Notification.requestPermission();
-              }
-            }}
-          />
-          <Toggle
-            id="message-sound"
-            label="Ton bei Benachrichtigungen am Computer"
-            checked={settings.messageSound}
-            disabled={!settings.desktopNotify}
-            onChange={(messageSound) => settings.patch({ messageSound })}
-          />
-          <p className="text-xs text-neutral-600 dark:text-neutral-400">
-            Höchstens ein Ton für mehrere Nachrichten kurz hintereinander,
-            keiner während du taub geschaltet bist, so laut wie die Töne für
-            Gespräche. Auf dem Handy klingt die Benachrichtigung so, wie das
-            Gerät eingestellt ist.
-          </p>
-          {desktop && <CloseToTray />}
-        </fieldset>
       )}
     </div>
   );

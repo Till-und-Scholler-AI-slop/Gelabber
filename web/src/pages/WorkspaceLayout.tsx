@@ -25,6 +25,7 @@ import { notify } from "../components/toasts.ts";
 import { useDms } from "../dms/queries.ts";
 import { useReadState, useReadingChannel } from "../messages/readState.ts";
 import { forgetServer, useServer, useServers } from "../servers/queries.ts";
+import { SettingsSidebar } from "./UserSettingsPage.tsx";
 
 export function WorkspaceLayout() {
   return (
@@ -38,12 +39,15 @@ function Workspace() {
   const { serverId, channelId } = useParams({ strict: false });
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const onDms = pathname === "/d" || pathname.startsWith("/d/");
+  const onSettings =
+    pathname === "/settings" || pathname.startsWith("/settings/");
   // Before the early returns so hooks keep their order; the rail shares it.
   const { data: servers } = useServers();
 
   if (serverId)
     return <SelectedServer serverId={serverId} channelId={channelId} />;
   if (onDms) return <SelectedDms channelId={channelId} />;
+  if (onSettings) return <WorkspaceFrame sidebar={<SettingsSidebar />} />;
   return (
     <WorkspaceFrame
       sidebar={

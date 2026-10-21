@@ -1609,15 +1609,3 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 .server-tile.is-muted {
   opacity: 0.6;
 }
-.notify-choice {
-  padding: 6px 10px;
-  border: 1px solid var(--lr-border);
-  border-radius: var(--lr-radius-small);
-  font-size: 13px;
-}
-.notify-choice:hover:not(:disabled) {
-  background: var(--lr-hover);
-}
-.notify-choice:disabled {
-  opacity: 0.6;
-}

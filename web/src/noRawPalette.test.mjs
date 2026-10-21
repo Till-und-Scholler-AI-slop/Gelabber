@@ -13,15 +13,10 @@ const src = fileURLToPath(new URL(".", import.meta.url));
 const RAW = /\b(?:bg-white|(?:neutral|red|emerald|amber)-\d{2,3})\b/g;
 
 const ALLOWED = new Set([
-  "components/AppShell.tsx",
-  "components/CloseToTray.tsx",
   "components/EmojiPicker.tsx",
   "components/GifPicker.tsx",
   "components/InviteDialog.tsx",
   "components/MemberActions.tsx",
-  "components/NotificationPermission.tsx",
-  "components/NotificationPrivacy.tsx",
-  "components/NotificationSettingsDialog.tsx",
   "components/ServerDialogs.tsx",
   "components/SessionRecoveryNotice.tsx",
   "components/VoiceStateIcons.tsx",
@@ -31,8 +26,6 @@ const ALLOWED = new Set([
   "pages/InvitePage.tsx",
   "pages/LoginPage.tsx",
   "pages/NotFoundPage.tsx",
-  "pages/ProfileCardForm.tsx",
-  "pages/ProfilePage.tsx",
   "pages/RegisterPage.tsx",
   "pages/ResetPasswordPage.tsx",
   "pages/ServerSettingsPage.tsx",

@@ -6,6 +6,7 @@ import {
 } from "../messages/notify.ts";
 import { useInstallation } from "../pwa/install.ts";
 import { syncPush, type PushResult } from "../pwa/push.ts";
+import { Button } from "./ui/Button.tsx";
 
 function permission(): NotificationPermissionState {
   return typeof Notification === "undefined"
@@ -55,7 +56,7 @@ export function NotificationPermissionStatus() {
     }
   };
   return (
-    <div className="rounded-lg border border-neutral-300 p-3 text-sm dark:border-neutral-700">
+    <div className="settings-note">
       <p role="status">
         {notificationPermissionText(state, {
           // The desktop app is not bound by the browser's HTTPS rule.
@@ -81,14 +82,13 @@ export function NotificationPermissionStatus() {
         )
       )}
       {state === "default" && (
-        <button
-          type="button"
-          disabled={pending}
+        <Button
+          className="mt-2"
+          pending={pending}
           onClick={() => void request()}
-          className="mt-2 rounded border px-3 py-2 font-medium disabled:opacity-50"
         >
           Benachrichtigungen erlauben
-        </button>
+        </Button>
       )}
       {failed && (
         <p role="alert">
