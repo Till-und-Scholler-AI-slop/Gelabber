@@ -12,6 +12,7 @@ import {
 } from "./media.ts";
 import {
   configureVoice,
+  dismissLostCall,
   joinVoice,
   leaveVoice,
   resetVoiceForTests,
@@ -4527,6 +4528,17 @@ describe("authoritative mediasoup session lifecycle", () => {
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
     expect(useVoice.getState().lostCall).toBeNull();
     expect(useVoice.getState().connection).toBe("connecting");
+    // Put away instead of joined again.
+    leaveVoice();
+    useVoice.setState({
+      connection: "failed",
+      lostCall: { serverId: "srv", channelId: "voice", channelName: "Voice" },
+    });
+    dismissLostCall();
+    expect(useVoice.getState()).toMatchObject({
+      connection: "idle",
+      lostCall: null,
+    });
   });
   it("offers no rejoin for a refusal", async () => {
     install({

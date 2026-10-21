@@ -2300,6 +2300,12 @@ async function onDeviceChange(): Promise<void> {
   }
 }
 
+/** Puts away the note of a call whose connection was lost. */
+export function dismissLostCall(): void {
+  if (useVoice.getState().status === "joined") return;
+  useVoice.setState({ connection: "idle", lostCall: null });
+}
+
 /** The user asks for the microphone again after it was missing or refused. */
 export function retryMicrophone(): void {
   if (useVoice.getState().status !== "joined") return;
