@@ -89,7 +89,7 @@ export function LocallyMutedIcon({ userId }: { userId: string }) {
 export function LocallyMutedMark() {
   return (
     <span className="user-volume-muted" title="Lokal stummgeschaltet">
-      <SpeakerOffIcon size={13} />
+      <SpeakerOffIcon size={16} />
       <span className="sr-only">Lokal stummgeschaltet</span>
     </span>
   );

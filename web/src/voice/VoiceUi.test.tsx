@@ -91,11 +91,22 @@ vi.mock("./pushToTalk.ts", async (original) => {
   };
 });
 
+vi.mock("./userVolume.ts", async (original) => {
+  const actual = await original<typeof import("./userVolume.ts")>();
+  const current = (select: (state: unknown) => unknown) =>
+    select(actual.useUserVolumes.getState());
+  return {
+    ...actual,
+    useUserVolumes: Object.assign(current, actual.useUserVolumes),
+  };
+});
+
 import { VoiceRoom } from "./VoiceRoom.tsx";
 import { ShareMenuItems, VoiceControls } from "../components/VoiceControls.tsx";
 import { VoiceSessionControls } from "../components/VoiceSessionControls.tsx";
 import { callAnnouncement } from "./callBar.ts";
 import { resetPushToTalkForTests, usePushToTalk } from "./pushToTalk.ts";
+import { resetUserVolumesForTests, useUserVolumes } from "./userVolume.ts";
 
 const stream = { id: "source-from-a" } as MediaStream;
 const server = {
@@ -200,7 +211,9 @@ describe("active media UI", () => {
       />,
     );
     expect(html).not.toContain('data-source="source-from-a"');
-    expect(html).toContain("Beitreten");
+    // Joined elsewhere, the way in says what it does, and is its own name.
+    expect(html).toContain("Hierher wechseln</button>");
+    expect(html).not.toContain('aria-label="Beitreten"');
   });
   it("binds Live to the current publisher even if an old publication remains in the seat", () => {
     fixture.live = { a: { stage: "bob" } };
@@ -263,11 +276,19 @@ describe("active media UI", () => {
     expect(html).toContain("Alice");
     expect(html).toContain("/real-alice.png");
     expect(html).toContain("Stumm");
-    expect(html).toContain("Rafi (du)");
-    expect(html).toContain("Du bist noch nicht verbunden");
-    expect(html).toContain("Dazukommen");
-    expect(html).toContain('aria-label="Beitreten"');
-    expect(html).toContain("Mikrofon testen");
+    // One line on who is there, and a free seat instead of a card for self.
+    expect(html).toContain("Alice ist da.");
+    expect(html).not.toContain("Rafi (du)");
+    expect(html).not.toContain("noch nicht verbunden");
+    expect(html.match(/<li class="voice-room-seat"/g)).toHaveLength(1);
+    expect(html).toContain("Platz frei");
+    // The visible text is the button's name.
+    expect(html).toMatch(
+      /<button[^>]*>(?:<svg.*?<\/svg>)?Dazukommen<\/button>/,
+    );
+    expect(html).not.toContain('aria-label="Beitreten"');
+    expect(html).toContain('aria-label="Mikrofon testen"');
+    expect(html).toContain('aria-label="Voice-Einstellungen"');
     expect(html).not.toContain("Bob");
     expect(html).not.toContain("Spricht gerade");
     expect(html).not.toContain("Zuschauen");
@@ -320,10 +341,20 @@ describe("active media UI", () => {
           channelName="Room"
         />,
       );
-    expect(render("a").match(/data-source="source-from-a"/g)).toHaveLength(2);
-    expect(render("a")).toContain("Raster");
-    expect(render("a")).toContain("Bildschirm");
-    expect(render("a")).toContain("Kamera");
+    const html = render("a");
+    expect(html.match(/data-source="source-from-a"/g)).toHaveLength(2);
+    // The share on the stage, above the people; the camera in its owner's
+    // place, so Alice is one list entry. No chips to switch layouts.
+    expect(html.indexOf('aria-label="Übertragungen"')).toBeLessThan(
+      html.indexOf('aria-label="Teilnehmer im Sprachkanal"'),
+    );
+    expect(html).toContain('<div class="voice-room-spotlight">');
+    expect(html.match(/<li class="voice-room-participant/g)).toHaveLength(2);
+    expect(html).toMatch(
+      /<li class="voice-room-participant has-video"(?:(?!<\/li>).)*data-source="source-from-a"/,
+    );
+    expect(html).toContain("Teilt den Bildschirm");
+    expect(html).not.toContain("Raster");
     expect(render("b")).not.toContain('data-source="source-from-a"');
     expect(render("a", "other")).not.toContain('data-source="source-from-a"');
   });
@@ -604,14 +635,17 @@ describe("active media UI", () => {
     const tiles = html.match(/<li class="voice-room-participant[^"]*"/g);
     // alice, bob (muted), carol, and the own seat (muted here).
     expect(tiles).toEqual([
-      '<li class="voice-room-participant is-speaking"',
+      '<li class="voice-room-participant is-speaking has-video"',
       '<li class="voice-room-participant"',
       '<li class="voice-room-participant"',
       '<li class="voice-room-participant"',
     ]);
     expect(html).toContain("Spricht");
-    expect(html.match(/gel-avatar-lg is-speaking/g)).toHaveLength(1);
-    expect(html).toContain('data-source="source-from-a" data-speaking="true"');
+    // Alice's camera is in her entry and carries the one ring.
+    expect(html).not.toContain("gel-avatar-lg is-speaking");
+    expect(html).toMatch(
+      /<li class="voice-room-participant is-speaking has-video"(?:(?!<\/li>).)*data-source="source-from-a" data-speaking="true"/,
+    );
 
     // Another room of the same server shows no levels of this call.
     const other = renderToStaticMarkup(
@@ -627,5 +661,51 @@ describe("active media UI", () => {
     const dock = renderToStaticMarkup(<VoiceSessionControls />);
     expect(dock).toContain('class="voice-session-people"');
     expect(dock.match(/is-speaking/g)).toHaveLength(1);
+  });
+
+  it("seats the first one in, and keeps everyone's volume one press away", () => {
+    fixture.live = {};
+    fixture.voice.watching = false;
+    const members = ["alice", "bob"].map((id) => ({
+      user_id: id,
+      name: id[0]!.toUpperCase() + id.slice(1),
+      avatar_url: null,
+      joined_at: "",
+      role: "member",
+    }));
+    const room = () =>
+      renderToStaticMarkup(
+        <VoiceRoom
+          server={{ ...server, members } as unknown as ServerDetail}
+          channelId="stage"
+          channelName="Stage"
+          named
+        />,
+      );
+    const empty = room();
+    expect(empty).toContain('<h2 class="voice-room-name">Stage</h2>');
+    expect(empty).toContain("Noch niemand da – komm als Erste:r dazu.");
+    expect(empty.match(/<li class="voice-room-seat"/g)).toHaveLength(3);
+
+    fixture.roster = {
+      a: {
+        alice: { channelId: "stage", muted: false, deafened: false },
+        bob: { channelId: "stage", muted: false, deafened: false },
+      },
+    };
+    useUserVolumes.getState().setVolume("bob", 0.7);
+    try {
+      const html = room();
+      expect(html).toContain("Alice und Bob sind da.");
+      expect(html).toContain('aria-label="Optionen für Alice"');
+      expect(html).toContain('aria-label="Optionen für Bob"');
+      // Bob is quieter here: the card says so.
+      expect(html).toMatch(
+        /class="voice-room-volume-chip"[^>]*><span class="sr-only">Lautstärke <\/span>70 %/,
+      );
+      expect(html.match(/voice-room-volume-chip/g)).toHaveLength(1);
+    } finally {
+      resetUserVolumesForTests();
+    }
   });
 });

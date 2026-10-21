@@ -178,7 +178,7 @@ function soundControl(): "on" | "off" | null {
 }
 /** The same switch in the settings form. */
 function soundSetting(): "on" | "off" | null {
-  const input = form().match(/<input id="share-source-audio"[^>]*>/)?.[0];
+  const input = form().match(/<input[^>]*id="share-source-audio"[^>]*>/)?.[0];
   if (!input) return null;
   return input.includes("checked") ? "on" : "off";
 }
@@ -624,8 +624,8 @@ describe("the own share's tile", () => {
       null
     );
   }
-  const SCREEN = "Du \\(du\\) — Bildschirm";
-  const LIVE = "Du \\(du\\) — Live";
+  const SCREEN = "Rafi \\(du\\) — Bildschirm";
+  const LIVE = "Rafi \\(du\\) — Live";
   const running = { id: "capture" } as MediaStream;
 
   it("browser: a picker gave no sound", async () => {

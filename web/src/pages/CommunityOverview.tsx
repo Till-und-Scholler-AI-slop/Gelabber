@@ -55,6 +55,7 @@ export function CommunityOverview({ server }: { server: ServerDetail }) {
             server={server}
             channelId={room.id}
             channelName={room.name}
+            named
           />
         ) : (
           <div className="community-overview__empty">

@@ -37,10 +37,6 @@ const ALLOWED = new Set([
   "pages/ServerSettingsPage.tsx",
   "pages/VerifyEmailPage.tsx",
   "pages/WorkspaceIndexPage.tsx",
-  "voice/PushToTalkSettings.tsx",
-  "voice/VoiceDiagnostics.tsx",
-  "voice/VoiceSettings.tsx",
-  "voice/VoiceTile.tsx",
 ]);
 
 /** Component files by path under src, with the raw palette classes in each. */
