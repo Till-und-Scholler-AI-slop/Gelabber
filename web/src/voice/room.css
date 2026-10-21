@@ -2,9 +2,11 @@
    people, and the way in. One set of rules; the phone's follow them. The
    inline padding lines the room up with the overview's heading. */
 .voice-room {
+  --voice-room-inline: 28px;
+  --voice-room-bottom: 28px;
   width: 100%;
   min-width: 0;
-  padding: 20px 28px 28px;
+  padding: 20px var(--voice-room-inline) var(--voice-room-bottom);
   color: var(--lr-text);
   text-align: left;
 }
@@ -81,7 +83,8 @@
     border-color 0.15s ease-out,
     box-shadow 0.15s ease-out;
 }
-html[data-compact-rooms="true"] .voice-room-participant,
+/* A camera keeps its card's shape: everything on it lies over the picture. */
+html[data-compact-rooms="true"] .voice-room-participant:not(.has-video),
 html[data-compact-rooms="true"] .voice-room-seat {
   aspect-ratio: auto;
 }
@@ -229,6 +232,24 @@ html[data-compact-rooms="true"] .voice-room-seat {
   z-index: 3;
   color: #fff;
 }
+/* A participant's menu: their name, their volume, their profile. */
+.ui-popover.voice-participant-menu {
+  width: 288px;
+  padding: 12px;
+}
+.voice-participant-name {
+  display: block;
+  margin-bottom: 10px;
+  font: var(--lr-type-ui);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+/* A row of the menu, its label in line with the volume's. */
+.voice-participant-profile {
+  justify-content: flex-start;
+  width: calc(100% + 2 * var(--lr-space-3));
+  margin: 8px calc(-1 * var(--lr-space-3)) 0;
+}
 /* Free seats before joining: an empty chair, not a person. */
 .voice-room-seat {
   color: var(--lr-subtle);
@@ -252,7 +273,6 @@ html[data-compact-rooms="true"] .voice-room-seat {
   font: var(--lr-type-ui);
   font-weight: 400;
 }
-.voice-room-button,
 .voice-control {
   display: inline-flex;
   align-items: center;
@@ -269,7 +289,6 @@ html[data-compact-rooms="true"] .voice-room-seat {
   cursor: pointer;
   transition: background 0.15s;
 }
-.voice-room-button:hover,
 .voice-control:hover {
   background: var(--lr-hover);
 }
@@ -281,21 +300,6 @@ html[data-compact-rooms="true"] .voice-room-seat {
 .voice-room-primary:hover {
   background: color-mix(in srgb, var(--lr-accent), white 14%);
 }
-.voice-room-text-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 44px;
-  padding: 8px 2px;
-  color: var(--lr-muted);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  cursor: pointer;
-  font-size: 13px;
-}
-.voice-room-text-button:hover {
-  color: var(--lr-text);
-}
 .voice-room-muted {
   color: var(--lr-muted);
 }
@@ -305,13 +309,14 @@ html[data-compact-rooms="true"] .voice-room-seat {
 }
 @media (max-width: 800px) {
   .voice-room {
-    padding-inline: 24px;
+    --voice-room-inline: 24px;
   }
 }
 /* A phone: three people to a row, as avatars with their names under them. */
 @media (max-width: 640px) {
   .voice-room {
-    padding: 16px 24px 24px;
+    --voice-room-bottom: 24px;
+    padding-top: 16px;
   }
   .voice-room-participants {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -342,9 +347,17 @@ html[data-compact-rooms="true"] .voice-room-seat {
   .voice-room-connection {
     border-color: var(--lr-bg);
   }
-  .voice-room-participant-marks {
-    top: 0;
-    left: 0;
+  /* Under the name, where they belong to it. "Stumm" and "Taub" are said
+     there already; a changed volume and a local mute are not. */
+  .voice-room-participant:not(.has-video) > .voice-room-participant-marks {
+    position: static;
+    justify-content: center;
+    margin-top: 2px;
+  }
+  .voice-room-participant:not(.has-video)
+    > .voice-room-participant-marks
+    .voice-state-icons {
+    display: none;
   }
   .voice-room-participant .voice-room-participant-more {
     top: -6px;
@@ -391,8 +404,9 @@ html[data-compact-rooms="true"] .voice-room-seat {
     bottom: 0;
     z-index: 5;
     flex-wrap: nowrap;
-    margin: auto -24px -24px;
-    padding: 10px 24px;
+    margin: auto calc(-1 * var(--voice-room-inline))
+      calc(-1 * var(--voice-room-bottom));
+    padding: 10px var(--voice-room-inline);
     border-top: 1px solid var(--lr-border);
     background: var(--lr-panel);
   }
@@ -1133,7 +1147,6 @@ a.voice-session-link:hover > span {
   outline-offset: 3px;
 }
 @media (prefers-reduced-motion: reduce) {
-  .voice-room-button,
   .voice-control,
   .voice-menu-switch-track,
   .voice-menu-switch-track::before {

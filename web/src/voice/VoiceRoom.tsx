@@ -6,7 +6,7 @@
 // spotlight, the others in a filmstrip. A camera stays in its owner's
 // place, so each person appears once, unless it is pinned to the spotlight.
 
-import { useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
 import { can } from "../servers/permissions.ts";
 import type { Member, ServerDetail } from "../servers/types.ts";
@@ -426,6 +426,8 @@ function Participant({
   const menuAnchor = useRef<HTMLButtonElement>(null);
   const hasMenu = Boolean(member) && !self;
   const [press] = useState(() => createLongPress(() => setMenu(true)));
+  // Someone who leaves mid-press opens nothing.
+  useEffect(() => press.up, [press]);
   const name = member?.name ?? (self ? fallbackName : "Mitglied");
   const status = deafened
     ? "Taub"
@@ -451,6 +453,15 @@ function Participant({
       onPointerMove={hasMenu ? (event) => press.move(event) : undefined}
       onPointerUp={hasMenu ? press.up : undefined}
       onPointerCancel={hasMenu ? press.up : undefined}
+      onTouchEnd={
+        hasMenu
+          ? (event) => {
+              // The finger that opened the menu lifts over its backdrop: no
+              // click may follow and close it again.
+              if (press.consumeClick()) event.preventDefault();
+            }
+          : undefined
+      }
       onContextMenu={(event) => {
         // A right click, or Android's long press: the volume menu.
         if (!hasMenu) return;
@@ -571,7 +582,12 @@ function ParticipantMenu({
         <strong className="voice-participant-name">{name}</strong>
       )}
       <UserVolumeControl userId={userId} name={name} />
-      <Button size="sm" variant="ghost" onClick={onProfile}>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="voice-participant-profile"
+        onClick={onProfile}
+      >
         Profil ansehen
       </Button>
     </Popover>
