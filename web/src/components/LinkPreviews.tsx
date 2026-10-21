@@ -108,7 +108,6 @@ function PreviewCard({
               id: `preview:${preview.url}`,
               src: preview.image.url,
               filename: name,
-              download: preview.image.url,
             })
           }
         >

@@ -6,8 +6,9 @@ export type LightboxImage = {
   id: string;
   src: string;
   filename: string;
-  /** Saves the file (`?download=1`), see `attachmentDownloadUrl`. */
-  download: string;
+  /** Saves the file (`?download=1`), see `attachmentDownloadUrl`. Absent
+   *  for a link preview's picture, which the API serves only for display. */
+  download?: string;
 };
 
 /**
@@ -68,9 +69,11 @@ export function ImageLightbox({
         {/* The API answers this link with `Content-Disposition: attachment`
             (from MinIO after its redirect too), so the file is saved and the
             app, with a running call, stays where it is. */}
-        <a href={image.download} download={image.filename}>
-          Herunterladen
-        </a>
+        {image.download ? (
+          <a href={image.download} download={image.filename}>
+            Herunterladen
+          </a>
+        ) : null}
         <button
           ref={close}
           type="button"
