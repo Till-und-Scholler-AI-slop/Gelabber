@@ -3,12 +3,14 @@ import { useSession } from "../auth/session.ts";
 import { applyDefinition } from "./theme.ts";
 import { builtinTheme } from "./presets.ts";
 import { bindThemeAccount, syncThemes, useAccountThemes } from "./account.ts";
+import { displayedThemeId, useThemePreview } from "./preview.ts";
 
 export function ThemeController() {
   const sessionStatus = useSession((s) => s.status);
   const owner = useAccountThemes((s) => s.owner);
   const user = useSession((s) => s.user?.id ?? null);
   const doc = useAccountThemes((s) => s.doc);
+  const preview = useThemePreview((s) => s.id);
   useEffect(() => {
     if (sessionStatus === "unknown") return;
     bindThemeAccount(user);
@@ -26,22 +28,20 @@ export function ThemeController() {
   useEffect(() => {
     if (sessionStatus === "unknown" || owner !== user) return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const shown = displayedThemeId(doc.active, preview);
     const apply = () => {
       const id =
-        doc.active === "system"
-          ? media.matches
-            ? "dark"
-            : "light"
-          : doc.active;
+        shown === "system" ? (media.matches ? "dark" : "light") : shown;
       applyDefinition(
         doc.customThemes.find((t) => t.id === id) ?? builtinTheme(id),
-        doc.active === "system",
+        shown === "system",
+        { remember: preview === null },
       );
     };
     apply();
-    if (doc.active !== "system") return;
+    if (shown !== "system") return;
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
-  }, [doc, owner, user, sessionStatus]);
+  }, [doc, preview, owner, user, sessionStatus]);
   return null;
 }
