@@ -247,7 +247,7 @@ button.lr-reply-header:focus-visible .lr-reply-excerpt {
 /* Message markdown (messages/MessageContent.tsx). Code blocks scroll on their
    own so a long line never widens the pane. */
 .lr-md-link {
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, var(--lr-accent) 45%, transparent);
   text-underline-offset: 2px;
@@ -366,7 +366,7 @@ span.lr-md-codeblock {
 .lr-preview-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
   overflow-wrap: anywhere;
 }
 .lr-preview-title:hover {
@@ -614,7 +614,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 }
 .lr-message-gif:focus-visible,
 .lr-gif-tile:focus-visible {
-  outline: 2px solid var(--lr-accent);
+  outline: 2px solid var(--lr-focus);
   outline-offset: 2px;
 }
 .lr-message-gif-badge {
@@ -747,7 +747,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 }
 .lr-attachment-file > svg {
   flex-shrink: 0;
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
 }
 .lr-attachment-file > span:first-of-type {
   min-width: 0;
@@ -843,7 +843,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 }
 .lr-attachment-text summary > svg {
   flex-shrink: 0;
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
 }
 .lr-attachment-text summary > span:first-of-type {
   min-width: 0;
@@ -916,7 +916,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 .lr-composer-drop {
   margin: 0;
   padding: 10px 14px 0;
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
   font-size: 13px;
   font-weight: 600;
 }
@@ -1424,7 +1424,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   color: var(--lr-muted);
 }
 .lr-search-hit:hover > span {
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
 }
 
 .lr-header-search > kbd {
@@ -1459,7 +1459,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 .lr-new-divider {
   padding-top: 6px;
   padding-bottom: 2px;
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.4px;
@@ -1561,20 +1561,20 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   border-radius: 4px;
   padding: 0 2px;
   background: color-mix(in srgb, var(--lr-accent) 18%, transparent);
-  color: color-mix(in srgb, var(--lr-accent) 75%, var(--lr-text));
+  color: var(--lr-accent-text);
   font-weight: 600;
 }
 .lr-mention.is-me {
-  background: color-mix(in srgb, var(--lr-away) 26%, transparent);
+  background: color-mix(in srgb, var(--lr-warning) 26%, transparent);
   color: var(--lr-text);
 }
 .lr-message-row.is-mentioned {
-  background: color-mix(in srgb, var(--lr-away) 9%, var(--lr-bg));
-  box-shadow: inset 2px 0 0 var(--lr-away);
+  background: color-mix(in srgb, var(--lr-warning) 9%, var(--lr-bg));
+  box-shadow: inset 2px 0 0 var(--lr-warning);
 }
 .lr-message-row.is-mentioned:hover,
 .lr-message-row.is-mentioned:focus-within {
-  background: color-mix(in srgb, var(--lr-away) 13%, var(--lr-bg));
+  background: color-mix(in srgb, var(--lr-warning) 13%, var(--lr-bg));
 }
 .lr-mention-list {
   margin: 0;

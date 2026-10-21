@@ -19,7 +19,7 @@
   font-weight: 600;
 }
 .stream-quality-heading > span {
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
   background: var(--lr-selected);
   padding: 3px 8px;
   border-radius: var(--lr-radius-small);

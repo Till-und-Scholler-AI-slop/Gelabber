@@ -47,7 +47,7 @@
   color: var(--lr-muted);
 }
 .community-overview__empty svg {
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
 }
 .community-overview__empty h2 {
   font-size: 24px;
@@ -156,7 +156,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
 }
 .member-profile__actions {
   display: flex;

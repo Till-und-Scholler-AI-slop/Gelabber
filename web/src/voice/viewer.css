@@ -30,7 +30,7 @@
 }
 .voice-video-actions button:focus-visible,
 .stream-viewer-header button:focus-visible {
-  outline: 2px solid var(--lr-accent);
+  outline: 2px solid var(--lr-focus);
   outline-offset: 2px;
 }
 .stream-viewer {
