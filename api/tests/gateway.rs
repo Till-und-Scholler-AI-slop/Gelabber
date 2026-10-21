@@ -1172,6 +1172,33 @@ async fn redis_topic_reset_changes_epoch_and_old_cursor_gets_gap(pool: PgPool) {
     recv_until(&mut ws, |f| f["op"] == "ok").await;
 }
 
+/// The real `PUBLISH_LUA`: a delta that carries the placeholder text itself
+/// keeps it, and only the envelope gets the seq and the epoch.
+#[sqlx::test]
+async fn publish_substitutes_only_the_envelope_placeholders(pool: PgPool) {
+    use gelabber_api::EventDraft;
+    use gelabber_api::gateway::Topic;
+    let state = common::ws_state(pool);
+    let (s, c) = (Uuid::new_v4(), Uuid::new_v4());
+    let delta = json!({"n":0,"ep":null,"x":[{"n":0}]});
+    let published = state
+        .gateway
+        .publish(EventDraft {
+            kind: EventKind::E,
+            server_id: s,
+            channel_id: Some(c),
+            entity_id: Some(Uuid::new_v4()),
+            delta: Some(delta.clone()),
+        })
+        .await
+        .expect("publish");
+    let log = state.gateway.load_log(Topic::of(s, Some(c))).await.unwrap();
+    assert_eq!(log, [published]);
+    assert!(log[0].n >= 1);
+    assert!(log[0].ep.is_some());
+    assert_eq!(log[0].d, Some(delta));
+}
+
 #[sqlx::test]
 async fn committed_message_retries_after_redis_failure_and_ack_retry_is_deduplicated(pool: PgPool) {
     use gelabber_api::gateway::{Topic, delivery};
