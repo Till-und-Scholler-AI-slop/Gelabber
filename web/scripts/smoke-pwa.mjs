@@ -229,6 +229,12 @@ async function serving() {
       policy.split(";")[0].split(" ").includes(inline[0]),
       `${path}: the policy does not pin the built shell's inline script ${inline[0]}`,
     );
+    // The app runs under the fetch directives a Compose stack gets.
+    assert.match(
+      policy,
+      /; default-src 'self'; connect-src 'self' \S+ ipc: http:\/\/ipc\.localhost;/,
+      `${path}: no fetch directives; start the server with MINIO_PUBLIC_ENDPOINT and the entrypoint script (docs/v0.6-pwa.md)`,
+    );
     secured(response, path);
     assert.equal(await response.text(), html, path);
   }
@@ -252,7 +258,14 @@ async function serving() {
       "public, max-age=31536000, immutable",
       asset,
     );
-    assert.equal(response.headers.get("content-encoding"), "gzip", asset);
+    // Below gzip_min_length (nginx.conf) nginx sends the file as it is.
+    // (the build's runtime chunk is smaller); a gzipped one has no length.
+    const length = response.headers.get("content-length");
+    assert.equal(
+      response.headers.get("content-encoding"),
+      length !== null && Number(length) < 1024 ? null : "gzip",
+      asset,
+    );
     assert.match(
       response.headers.get("content-type"),
       asset.endsWith(".js") ? /javascript/ : /text\/css/,
@@ -322,7 +335,7 @@ async function serving() {
     "the built shell must ask for the manifest with cookies",
   );
   console.log(
-    "PASS: app shell never stored (no-store) and sent with its Content-Security-Policy, security headers everywhere, hashed assets immutable and gzip, missing files 404, small favicon",
+    "PASS: app shell never stored (no-store) and sent with its Content-Security-Policy and fetch directives, security headers everywhere, hashed assets immutable and gzip, missing files 404, small favicon",
   );
 }
 

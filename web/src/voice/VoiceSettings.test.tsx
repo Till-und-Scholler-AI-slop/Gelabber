@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 // A static render keeps a hook's first state: the device list is set here.
 const listing = vi.hoisted(() => ({ loaded: false }));
@@ -19,6 +19,7 @@ import { VoiceSettingsTabs } from "../components/VoiceSettingsDialog.tsx";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
 import { CallSound, QuickCallSettings } from "./QuickCallSettings.tsx";
 import { MediaSettingsForm } from "./VoiceSettings.tsx";
+import { VoiceSettingsPanelPart } from "./voiceSettingsPanelPart.ts";
 
 describe("stream settings form", () => {
   it("shows camera and screen profiles with resolution, fps, and budget", () => {
@@ -67,6 +68,8 @@ describe("source-audio form", () => {
 });
 
 describe("settings dialog", () => {
+  // The tab bodies are a chunk of their own; loaded, they render at once.
+  beforeAll(() => VoiceSettingsPanelPart.preload());
   it("shows one area at a time, opening where it was asked to", () => {
     const tabs = (initial: "audio" | "video" | "diagnostics") =>
       renderToStaticMarkup(<VoiceSettingsTabs initial={initial} />);

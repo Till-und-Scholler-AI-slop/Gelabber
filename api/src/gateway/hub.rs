@@ -1,9 +1,9 @@
 //! Local socket table + Redis 8 Pub/Sub fan-out.
 //!
 //! `PUBLISH` is the live path. A bounded Redis list per topic is the
-//! reconnect buffer (Pub/Sub itself does not store messages). Each API
-//! process keeps one `PSUBSCRIBE gb:*` connection and delivers matching
-//! events to sockets subscribed on this process.
+//! reconnect buffer (Pub/Sub itself does not store messages, see
+//! `event_log`). Each API process keeps one `PSUBSCRIBE gb:*` connection and
+//! delivers matching events to sockets subscribed on this process (`fanout`).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -21,45 +21,10 @@ use super::protocol::{
 };
 use crate::error::ApiError;
 
-const SUBSCRIBER_RETRY: Duration = Duration::from_millis(200);
+mod event_log;
+mod fanout;
 
-/// One Redis turn: assign seq, append the replay list, PUBLISH.
-/// `ARGV[1]` is compact event JSON with the placeholders `"n":0` and
-/// `"ep":null`. Seq and epoch are string-substituted — Lua cjson would turn
-/// `[]` into `{}` — and only the FIRST match of each is replaced. That is
-/// the envelope's own field only while `Event` serializes `n` and `ep`
-/// before `d` (today `t,s,c,n,ep,r,i,d`) and `ep` stays `null` when unset
-/// (no `skip_serializing_if`); otherwise a delta's own `"n":0` would get
-/// the seq. `protocol::tests::event_placeholders_precede_delta` pins this.
-const PUBLISH_LUA: &str = r#"
-for i=1,5 do
-  local expected=({'string','list','none','string','hash'})[i]
-  if i~=3 then
-    local actual=redis.call('TYPE',KEYS[i]).ok
-    if actual~='none' and actual~=expected then return redis.error_reply('wrong realtime key type') end
-  end
-end
-local epoch = redis.call('GET', KEYS[4])
-if not epoch then epoch = ARGV[3]; redis.call('SET', KEYS[4], epoch) end
-if tonumber(ARGV[4]) > 0 then
-  local last = tonumber(redis.call('HGET', KEYS[5], 'r') or '0')
-  if last >= tonumber(ARGV[4]) then return {0, redis.call('HGET', KEYS[5], 'raw')} end
-end
-local n = redis.call('INCR', KEYS[1])
-local raw = string.gsub(ARGV[1], '"n":0', '"n":' .. n, 1)
-raw = string.gsub(raw, '"ep":null', '"ep":"' .. epoch .. '"', 1)
-redis.call('LPUSH', KEYS[2], raw)
-redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[2]))
-redis.call('PUBLISH', KEYS[3], raw)
-if tonumber(ARGV[4]) > 0 then redis.call('HSET', KEYS[5], 'r', ARGV[4], 'raw', raw) end
-return {n, raw}
-"#;
-const SNAPSHOT_LUA: &str = r#"
-local epoch = redis.call('GET', KEYS[3])
-if not epoch then epoch = ARGV[1]; redis.call('SET', KEYS[3], epoch) end
-redis.call('SET', KEYS[1], '0', 'NX')
-return {redis.call('GET', KEYS[1]), epoch, redis.call('LRANGE', KEYS[2], 0, -1)}
-"#;
+pub use event_log::EventLog;
 
 /// A reconnecting socket receives one presence frame per member that comes
 /// back with it while it is still busy subscribing, so this bounds how many
@@ -69,8 +34,6 @@ return {redis.call('GET', KEYS[1]), epoch, redis.call('LRANGE', KEYS[2], 0, -1)}
 /// resyncs. The channel grows in 32-slot blocks as frames queue, so only a
 /// backed-up socket pays for the larger bound.
 pub const OUTBOUND_CAPACITY: usize = 1024;
-const CATCH_UP_CAPACITY: usize = 128;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ConnId(u64, Uuid);
 
@@ -156,14 +119,6 @@ pub struct ConnTable {
     pub(super) inner: Arc<Inner>,
 }
 
-/// Sequenced chat log (`publish` / `catch_up`). Messages live in Postgres;
-/// this is the replay buffer and the fan-out, not voice and not RTP.
-#[derive(Clone)]
-pub struct EventLog {
-    replay: usize,
-    connections: ConnTable,
-}
-
 /// Voice occupancy, publications, and the Go Live claim. Ephemeral Redis,
 /// separate from the chat log.
 #[derive(Clone)]
@@ -198,38 +153,6 @@ impl ConnTable {
                 media_sessions: Mutex::new(HashMap::new()),
             }),
         }
-    }
-
-    pub fn ensure_subscriber(&self) {
-        if self.inner.started.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        let this = self.clone();
-        tokio::spawn(async move {
-            this.run_subscriber().await;
-        });
-        let roster = VoiceRoster {
-            connections: self.clone(),
-        };
-        tokio::spawn(async move {
-            roster.run_rosters().await;
-        });
-    }
-
-    pub fn is_ready(&self) -> bool {
-        self.inner.subscribed.load(Ordering::SeqCst)
-    }
-
-    pub async fn wait_ready(&self, timeout: Duration) -> Result<(), String> {
-        self.ensure_subscriber();
-        let started = tokio::time::Instant::now();
-        while started.elapsed() < timeout {
-            if self.is_ready() {
-                return Ok(());
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        Err("redis pub/sub subscriber did not become ready".into())
     }
 
     pub async fn attach(&self, user_id: Uuid, tx: mpsc::Sender<ServerFrame>) -> ConnId {
@@ -403,396 +326,6 @@ impl ConnTable {
                 socket.recheck.notify_one();
             }
         }
-    }
-
-    /// Drop a user's live seats on one server after kick/ban: unsubscribe
-    /// chat topics, leave voice rooms, tell their sockets why.
-    async fn run_subscriber(&self) {
-        loop {
-            match self.subscribe_once().await {
-                Ok(()) => warn!("redis pub/sub stream ended"),
-                Err(err) => debug!(error = %err, "redis pub/sub not ready; retrying"),
-            }
-            self.inner.subscribed.store(false, Ordering::SeqCst);
-            tokio::time::sleep(SUBSCRIBER_RETRY).await;
-        }
-    }
-
-    async fn resync_sockets(&self) {
-        let mut sockets = self.inner.sockets.write().await;
-        for socket in sockets.values_mut() {
-            socket.catching_up.clear();
-            socket.epochs.clear();
-            socket.send(ServerFrame::Resync);
-        }
-    }
-
-    async fn subscribe_once(&self) -> Result<(), redis::RedisError> {
-        let mut pubsub =
-            tokio::time::timeout(Duration::from_secs(1), self.redis.get_async_pubsub())
-                .await
-                .map_err(|_| {
-                    redis::RedisError::from(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "Redis PubSub connect",
-                    ))
-                })??;
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            pubsub.psubscribe(format!("{REDIS_PREFIX}*")),
-        )
-        .await
-        .map_err(|_| {
-            redis::RedisError::from(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "Redis PubSub subscribe",
-            ))
-        })??;
-        // Revocation notices published while this process was not subscribed
-        // are gone. The resync frame stands in for them: its delivery runs
-        // the session and access check like every dequeued batch.
-        self.resync_sockets().await;
-        self.inner.subscribed.store(true, Ordering::SeqCst);
-        debug!("gateway subscribed to redis pub/sub");
-        let (mut sink, mut stream) = pubsub.split();
-        let mut ping = tokio::time::interval(Duration::from_secs(1));
-        loop {
-            let msg = tokio::select! {
-                message=stream.next()=> match message {Some(message)=>message,None=>break},
-                _=ping.tick()=> {
-                    tokio::time::timeout(Duration::from_secs(1),sink.ping::<redis::Value>()).await.map_err(|_|redis::RedisError::from(std::io::Error::new(std::io::ErrorKind::TimedOut,"Redis PubSub ping")))??;
-                    continue;
-                }
-            };
-            let channel = msg.get_channel_name().to_owned();
-            match msg.get_payload::<String>() {
-                Ok(raw) => self.deliver_raw(&channel, &raw).await,
-                Err(err) => warn!(error = %err, "invalid redis pub/sub payload"),
-            }
-        }
-        Ok(())
-    }
-
-    async fn deliver_raw(&self, channel: &str, raw: &str) {
-        #[derive(serde::Deserialize)]
-        struct Discovery {
-            c: Uuid,
-        }
-        if channel == RECHECK_CHANNEL {
-            match serde_json::from_str::<Recheck>(raw) {
-                Ok(target) => {
-                    Self::recheck_local(&*self.inner.sockets.read().await, &target);
-                }
-                Err(_) => warn!(channel, "redis payload is not a recheck notice"),
-            }
-            return;
-        }
-        if let Some(raw_user) = channel.strip_prefix("gb:dm:") {
-            if let (Ok(user), Ok(Discovery { c })) = (
-                raw_user.parse::<Uuid>(),
-                serde_json::from_str::<Discovery>(raw),
-            ) {
-                for socket in self
-                    .inner
-                    .sockets
-                    .read()
-                    .await
-                    .values()
-                    .filter(|socket| socket.user_id == user)
-                {
-                    socket.send(ServerFrame::Dm { c });
-                }
-            }
-            return;
-        }
-        if let Some(raw_user) = channel.strip_prefix(USER_PREFIX) {
-            match (
-                raw_user.parse::<Uuid>(),
-                serde_json::from_str::<super::protocol::UserFrame>(raw),
-            ) {
-                (Ok(user), Ok(frame)) => {
-                    let frame = ServerFrame::from(frame);
-                    for socket in self
-                        .inner
-                        .sockets
-                        .read()
-                        .await
-                        .values()
-                        .filter(|socket| socket.user_id == user)
-                    {
-                        socket.send(frame.clone());
-                    }
-                }
-                _ => warn!(channel, "redis payload is not a user frame"),
-            }
-            return;
-        }
-        if let Some(channel_id) = voice_channel_id(channel) {
-            match serde_json::from_str::<SigEvent>(raw) {
-                Ok(event) => {
-                    self.deliver_sig(channel_id, ServerFrame::sig(event)).await;
-                }
-                Err(_) => warn!(channel, "redis payload is not a sig frame"),
-            }
-            return;
-        }
-        if let Some(live) = LiveTopic::from_redis_channel(channel) {
-            match serde_json::from_str::<super::protocol::LiveFrame>(raw) {
-                Ok(frame) => self.deliver_live(live, frame.into()).await,
-                Err(err) => warn!(channel, error = %err, "redis payload is not a live frame"),
-            }
-            return;
-        }
-        let Some(topic) = Topic::from_redis_channel(channel) else {
-            return;
-        };
-        let Ok(event) = serde_json::from_str::<Event>(raw) else {
-            warn!(channel, "redis payload is not a compact event");
-            return;
-        };
-        self.deliver(topic, event).await;
-    }
-
-    async fn deliver_sig(&self, channel_id: Uuid, frame: ServerFrame) {
-        let server_id = match &frame {
-            ServerFrame::Sig { s, .. } => *s,
-            _ => return,
-        };
-        let sockets = self.inner.sockets.read().await;
-        for socket in sockets.values() {
-            let in_room = socket.rooms.contains_key(&channel_id);
-            if in_room || socket.servers.contains(&server_id) {
-                socket.send(frame.clone());
-            }
-        }
-    }
-
-    async fn deliver_live(&self, live: LiveTopic, frame: ServerFrame) {
-        let sockets = self.inner.sockets.read().await;
-        for socket in sockets.values() {
-            let want = match live {
-                LiveTopic::Presence(server_id) => socket.servers.contains(&server_id),
-                LiveTopic::Typing(channel_id) => {
-                    socket.topics.contains(&Topic::Channel(channel_id))
-                }
-            };
-            if want {
-                socket.send(frame.clone());
-            }
-        }
-    }
-
-    async fn deliver(&self, topic: Topic, event: Event) {
-        let mut sockets = self.inner.sockets.write().await;
-        for socket in sockets.values_mut() {
-            if !socket.topics.contains(&topic) {
-                continue;
-            }
-            if *socket.closed.borrow() {
-                continue;
-            }
-            let buffered: usize = socket.catching_up.values().map(Vec::len).sum();
-            if let Some(buf) = socket.catching_up.get_mut(&topic) {
-                if buffered >= CATCH_UP_CAPACITY {
-                    socket.catching_up.clear();
-                    socket.closed.send_replace(true);
-                    continue;
-                }
-                buf.push(event.clone());
-                continue;
-            }
-            if let Some(epoch) = event.ep
-                && socket
-                    .epochs
-                    .insert(topic, epoch)
-                    .is_some_and(|previous| previous != epoch)
-            {
-                socket.send(ServerFrame::gap(event.s, event.c).with_epoch(epoch));
-            }
-            socket.send(ServerFrame::event(event.clone()));
-        }
-    }
-
-    async fn redis_conn(&self) -> Result<redis::aio::MultiplexedConnection, redis::RedisError> {
-        let mut slot = self.inner.conn.lock().await;
-        if let Some(conn) = slot.as_ref() {
-            return Ok(conn.clone());
-        }
-        let conn = self
-            .redis
-            .get_multiplexed_async_connection_with_config(
-                &redis::AsyncConnectionConfig::new()
-                    .set_response_timeout(Some(Duration::from_secs(1)))
-                    .set_connection_timeout(Some(Duration::from_secs(1))),
-            )
-            .await?;
-        *slot = Some(conn.clone());
-        Ok(conn)
-    }
-
-    async fn reset_conn(&self) {
-        *self.inner.conn.lock().await = None;
-    }
-
-    pub(super) async fn with_conn<T, F, Fut>(&self, mut op: F) -> Result<T, redis::RedisError>
-    where
-        F: FnMut(redis::aio::MultiplexedConnection) -> Fut,
-        Fut: std::future::Future<Output = Result<T, redis::RedisError>>,
-    {
-        let conn = self.redis_conn().await?;
-        match op(conn).await {
-            Ok(value) => Ok(value),
-            Err(err) if err.is_connection_dropped() || err.is_io_error() => {
-                self.reset_conn().await;
-                let conn = self.redis_conn().await?;
-                op(conn).await
-            }
-            Err(err) => Err(err),
-        }
-    }
-}
-
-impl EventLog {
-    /// Assign seq, append the replay buffer, PUBLISH — one Lua turn so a
-    /// concurrent writer cannot `PUBLISH` 2 before 1.
-    pub async fn publish(&self, draft: EventDraft) -> Result<Event, ApiError> {
-        self.publish_revision(draft, None).await
-    }
-
-    pub(super) async fn publish_revision(
-        &self,
-        draft: EventDraft,
-        revision: Option<i64>,
-    ) -> Result<Event, ApiError> {
-        self.connections.ensure_subscriber();
-        let topic = draft.topic();
-        let placeholder = Event {
-            t: draft.kind,
-            s: draft.server_id,
-            c: draft.channel_id,
-            n: 0,
-            ep: None,
-            r: revision,
-            i: draft.entity_id,
-            d: draft.delta,
-        };
-        let template = serde_json::to_string(&placeholder)
-            .map_err(|err| ApiError::Internal(format!("serialize event: {err}")))?;
-        let replay_end = (self.replay - 1) as i64;
-        let seq_key = topic.seq_key();
-        let log_key = topic.log_key();
-        let channel = topic.redis_channel();
-
-        let (n, raw): (u64, String) = self
-            .connections
-            .with_conn(|mut conn| {
-                let seq_key = seq_key.clone();
-                let log_key = log_key.clone();
-                let channel = channel.clone();
-                let template = template.clone();
-                async move {
-                    redis::Script::new(PUBLISH_LUA)
-                        .key(seq_key)
-                        .key(log_key)
-                        .key(channel)
-                        .key(topic.epoch_key())
-                        .key(topic.delivery_key())
-                        .arg(template)
-                        .arg(replay_end)
-                        .arg(Uuid::new_v4().to_string())
-                        .arg(revision.unwrap_or(0))
-                        .invoke_async(&mut conn)
-                        .await
-                }
-            })
-            .await
-            .map_err(redis_err)?;
-
-        match serde_json::from_str::<Event>(&raw) {
-            Ok(event) => Ok(event),
-            Err(_) => Ok(Event { n, ..placeholder }),
-        }
-    }
-
-    pub async fn current_seq(&self, topic: Topic) -> Result<u64, ApiError> {
-        let n: Option<u64> = self
-            .connections
-            .with_conn(|mut conn| {
-                let key = topic.seq_key();
-                async move { redis::cmd("GET").arg(key).query_async(&mut conn).await }
-            })
-            .await
-            .map_err(redis_err)?;
-        Ok(n.unwrap_or(0))
-    }
-
-    pub async fn load_log(&self, topic: Topic) -> Result<Vec<Event>, ApiError> {
-        let rows: Vec<String> = self
-            .connections
-            .with_conn(|mut conn| {
-                let key = topic.log_key();
-                async move {
-                    redis::cmd("LRANGE")
-                        .arg(key)
-                        .arg(0)
-                        .arg(-1)
-                        .query_async(&mut conn)
-                        .await
-                }
-            })
-            .await
-            .map_err(redis_err)?;
-        let mut events = Vec::with_capacity(rows.len());
-        for raw in rows {
-            match serde_json::from_str::<Event>(&raw) {
-                Ok(event) => events.push(event),
-                Err(err) => warn!(error = %err, "dropping unreadable replay row"),
-            }
-        }
-        Ok(events)
-    }
-
-    pub async fn catch_up(
-        &self,
-        topic: Topic,
-        client_n: Option<u64>,
-    ) -> Result<(u64, CatchUp<Event>), ApiError> {
-        let (current, _, plan) = self.catch_up_epoch(topic, client_n, None).await?;
-        Ok((current, plan))
-    }
-    pub async fn catch_up_epoch(
-        &self,
-        topic: Topic,
-        client_n: Option<u64>,
-        client_epoch: Option<Uuid>,
-    ) -> Result<(u64, Uuid, CatchUp<Event>), ApiError> {
-        let (current, epoch, rows): (u64, String, Vec<String>) = self
-            .connections
-            .with_conn(|mut conn| async move {
-                redis::Script::new(SNAPSHOT_LUA)
-                    .key(topic.seq_key())
-                    .key(topic.log_key())
-                    .key(topic.epoch_key())
-                    .arg(Uuid::new_v4().to_string())
-                    .invoke_async(&mut conn)
-                    .await
-            })
-            .await
-            .map_err(redis_err)?;
-        let epoch: Uuid = epoch
-            .parse()
-            .map_err(|_| ApiError::Internal("invalid Redis epoch".into()))?;
-        let events: Vec<Event> = rows
-            .into_iter()
-            .filter_map(|row| serde_json::from_str(&row).ok())
-            .filter(|event: &Event| event.ep == Some(epoch) && event.n <= current)
-            .collect();
-        let plan = if client_epoch.is_some_and(|previous| previous != epoch) {
-            CatchUp::Gap
-        } else {
-            plan_catch_up(client_n, current, &events, |e| e.n)
-        };
-        Ok((current, epoch, plan))
     }
 }
 
@@ -1470,7 +1003,6 @@ impl Gateway {
     }
 
     /// Fan-out a live signaling frame. No seq, no replay list.
-    /// Fan-out a live signaling frame. No seq, no replay list.
     pub async fn publish_sig(&self, event: SigEvent) -> Result<(), ApiError> {
         self.voice.publish_sig(event).await
     }
@@ -1536,17 +1068,9 @@ pub fn voice_redis_channel(channel_id: Uuid) -> String {
     format!("{REDIS_PREFIX}v:{channel_id}")
 }
 
-fn voice_channel_id(name: &str) -> Option<Uuid> {
-    let rest = name.strip_prefix(REDIS_PREFIX)?;
-    let (kind, id) = rest.split_once(':')?;
-    if kind != "v" {
-        return None;
-    }
-    Uuid::parse_str(id).ok()
-}
-
 #[cfg(test)]
 mod resilience_tests {
+    use super::fanout::CATCH_UP_CAPACITY;
     use super::*;
     fn gateway() -> Gateway {
         Gateway::new(

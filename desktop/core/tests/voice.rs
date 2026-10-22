@@ -113,6 +113,17 @@ async fn volume_above_one(engine: &Engine, consumer: &Consumer) {
         "volume 2 is louder: {unity} then {boosted}"
     );
 
+    // Up to 400 %, still below the ceiling; more is clamped.
+    consumer.set_volume(9.0).unwrap();
+    let highest = playout_when(engine, "playout at volume 4", |p| {
+        p["gain"] == 4.0 && peak(p) > 0.0
+    })
+    .await;
+    assert!(
+        peak(&highest) <= PLAYOUT_CEILING + 1e-3,
+        "volume 4 stays below the ceiling: {highest}"
+    );
+
     consumer.set_volume(0.5).unwrap();
     playout_when(engine, "playout at volume 0.5", |p| p["gain"] == 1.0).await;
 }

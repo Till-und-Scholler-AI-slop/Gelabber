@@ -37,6 +37,9 @@ import {
   type VideoFrameRate,
   formatVideoBitrate,
   MAX_PLAYBACK_VOLUME,
+  PLAYBACK_SLIDER_MAX,
+  playbackSliderPosition,
+  playbackSliderVolume,
   sharesSourceAudio,
   SOURCE_AUDIO_CARRIES_CALL,
   sourceAudioCarriesCall,
@@ -44,6 +47,13 @@ import {
   useMediaSettings,
   videoSendBudget,
 } from "./settings.ts";
+
+/** 100 % sits in the middle of a playback slider. */
+const PLAYBACK_SCALE = [
+  "0 %",
+  "100 %",
+  `${MAX_PLAYBACK_VOLUME * 100} %`,
+] as const;
 
 type SettingsSection = "all" | "audio" | "video";
 
@@ -182,11 +192,12 @@ export function MediaSettingsForm({
               id="output-volume"
               label="Gespräche"
               min={0}
-              max={MAX_PLAYBACK_VOLUME * 100}
-              value={Math.round(settings.outputVolume * 100)}
+              max={PLAYBACK_SLIDER_MAX}
+              value={playbackSliderPosition(settings.outputVolume)}
               suffix={`${Math.round(settings.outputVolume * 100)} %`}
+              scale={PLAYBACK_SCALE}
               onChange={(value) =>
-                settings.patch({ outputVolume: value / 100 })
+                settings.patch({ outputVolume: playbackSliderVolume(value) })
               }
               hint={
                 desktop
@@ -198,11 +209,14 @@ export function MediaSettingsForm({
               id="source-audio-volume"
               label="Stream-Ton"
               min={0}
-              max={MAX_PLAYBACK_VOLUME * 100}
-              value={Math.round(settings.sourceAudioVolume * 100)}
+              max={PLAYBACK_SLIDER_MAX}
+              value={playbackSliderPosition(settings.sourceAudioVolume)}
               suffix={`${Math.round(settings.sourceAudioVolume * 100)} %`}
+              scale={PLAYBACK_SCALE}
               onChange={(value) =>
-                settings.patch({ sourceAudioVolume: value / 100 })
+                settings.patch({
+                  sourceAudioVolume: playbackSliderVolume(value),
+                })
               }
               hint="Der Ton von Lives hat eine eigene Lautstärke. Taub schaltet auch diesen Ton aus."
             />
@@ -351,10 +365,7 @@ export function MediaSettingsForm({
           {/* Only where a Live can carry sound; the same switch sits in
               the Live menu of the call controls. */}
           {capable.appAudio && (
-            <section
-              className="stream-source-audio"
-              aria-label="Ton im Live"
-            >
+            <section className="stream-source-audio" aria-label="Ton im Live">
               <Toggle
                 id="share-source-audio"
                 label="Ton mitsenden"

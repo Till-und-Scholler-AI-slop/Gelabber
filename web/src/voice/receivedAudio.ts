@@ -335,7 +335,7 @@ export class ReceivedAudio {
   }
 
   /** Up to 100 % on the element itself, above that through the Web Audio
-   * boost. Native outputs scale up to 200 % on their own. */
+   * boost. Native outputs scale up to 400 % on their own. */
   private setOutputVolume(
     el: HTMLAudioElement,
     muted: boolean,

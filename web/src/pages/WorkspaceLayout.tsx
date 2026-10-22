@@ -19,6 +19,7 @@ import { useUserId } from "../auth/scope.ts";
 import { ChannelSidebar } from "../components/ChannelSidebar.tsx";
 import { DmSidebar } from "../components/DmSidebar.tsx";
 import { MenuIcon } from "../components/Icons.tsx";
+import { preloadPartsWhenIdle } from "../components/lazyPart.tsx";
 import { QuickSwitcher, ShortcutSheet } from "../components/QuickSwitcher.tsx";
 import { RequireUser } from "../components/RequireUser.tsx";
 import { ServerRail } from "../components/ServerRail.tsx";
@@ -57,6 +58,9 @@ function Workspace() {
     pathname === "/settings" || pathname.startsWith("/settings/");
   // Before the early returns so hooks keep their order; the rail shares it.
   const { data: servers } = useServers();
+  // Voice room and settings load in the background once the first screen is
+  // up, so a click does not wait for them and a deploy cannot take them away.
+  useEffect(() => preloadPartsWhenIdle(), []);
 
   if (serverId)
     return <SelectedServer serverId={serverId} channelId={channelId} />;

@@ -421,6 +421,9 @@ function install(opts?: {
   gateProduce?: (kind: TrackKind) => Promise<void> | undefined;
   /** Hold the versioned Join response while rejection/cancellation is tested. */
   holdJoin?: boolean;
+  /** Per media socket (0-based): the SFU refuses it (a 429 upgrade), so it
+   * closes without answering its join. */
+  refuseMedia?: (socketIndex: number) => boolean;
   mediaVersion?: number;
 }) {
   const sent: ClientFrame[] = [];
@@ -531,10 +534,15 @@ function install(opts?: {
     openMedia: () => {
       const closeHandlers = new Set<() => void>();
       let alive = true;
+      const refused = opts?.refuseMedia?.(mediaSockets.length) ?? false;
       const socket: MediaSocket = {
         send: (frame) => {
           mediaSent.push(frame);
           if (frame.op === "j" && opts?.holdJoin) return;
+          if (refused) {
+            queueMicrotask(() => socket.close());
+            return;
+          }
           const error =
             frame.op === "produce" ? opts?.produceError?.(frame.k) : undefined;
           if (error) {
@@ -873,6 +881,27 @@ describe("voice session", () => {
     emitReady();
     expect(mediaSent.filter((frame) => frame.op === "j")).toHaveLength(2);
     expect(useVoice.getState().status).toBe("joined");
+  });
+
+  it("rejoins on its own after the SFU evicts it and refuses the first reconnect", async () => {
+    // A heartbeat eviction closes the socket; the first new socket then meets
+    // the pending-socket cap (#286) and closes before its join is answered.
+    const { emitReady, mediaSent, closeMedia, errors } = install({
+      refuseMedia: (index) => index === 1,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() =>
+      expect(mediaSent.filter((frame) => frame.op === "j")).toHaveLength(1),
+    );
+    closeMedia();
+    await vi.waitFor(
+      () =>
+        expect(mediaSent.filter((frame) => frame.op === "j")).toHaveLength(3),
+      { timeout: 5000 },
+    );
+    emitReady();
+    expect(useVoice.getState().status).toBe("joined");
+    expect(errors).toEqual([]);
   });
 
   it("publishes a microphone allowed while the media connection was rebuilt", async () => {
@@ -4511,19 +4540,19 @@ describe("stream sound in the desktop app", () => {
     await vi.waitFor(() => expect(volumeOf(11)).toBe(1));
     useUserVolumes.getState().setVolume("u-bob", 1.5);
     useMediaSettings.getState().patch({ outputVolume: 0.8 });
-    // The native core scales above 100 % by itself, up to 200 %.
+    // The native core scales above 100 % by itself, up to 400 %.
     expect(volumeOf(11)).toBeCloseTo(1.2);
     expect(volumeOf(12)).toBeCloseTo(0.8);
-    useUserVolumes.getState().setVolume("u-bob", 2);
+    useUserVolumes.getState().setVolume("u-bob", 4);
     useMediaSettings.getState().patch({ outputVolume: 2 });
-    expect(volumeOf(11)).toBe(2);
+    expect(volumeOf(11)).toBe(4);
     useUserVolumes.getState().setMuted("u-cara", true);
     expect(volumeOf(12)).toBe(0);
-    expect(volumeOf(11)).toBe(2);
+    expect(volumeOf(11)).toBe(4);
     toggleDeafen();
     expect(volumeOf(11)).toBe(0);
     toggleDeafen();
-    expect(volumeOf(11)).toBe(2);
+    expect(volumeOf(11)).toBe(4);
     expect(volumeOf(12)).toBe(0);
   });
 
