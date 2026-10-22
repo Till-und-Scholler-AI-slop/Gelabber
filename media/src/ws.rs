@@ -14,8 +14,9 @@ use axum::routing::get;
 use axum::{Extension, Router};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
-use std::net::SocketAddr;
-use std::time::Duration;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use uuid::Uuid;
@@ -32,6 +33,7 @@ const WRITE_DEADLINE: Duration = Duration::from_secs(2);
 /// How long a retired socket waits for the writer to send a terminal frame
 /// before it falls back to a bare Close.
 const RETIRE_GRACE: Duration = Duration::from_millis(250);
+const SHARED_ADDRESS_WARN_EVERY: Duration = Duration::from_secs(600);
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -44,12 +46,16 @@ async fn upgrade(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
-    let key = client_key(&headers, peer.map(|Extension(ConnectInfo(addr))| addr));
+    let peer = peer.map(|Extension(ConnectInfo(addr))| addr);
+    let key = client_key(&headers, peer);
     // Refused before the upgrade: a plain HTTP answer holds no socket task.
     let slot = match state.pending.acquire(&key) {
         Ok(slot) => slot,
         Err(reason) => {
             debug!(?reason, "media socket refused: too many pending sockets");
+            if reason == Refused::PerIp && proxy_without_forwarded_for(&headers, peer) {
+                warn_shared_address(peer);
+            }
             let status = match reason {
                 Refused::PerIp => StatusCode::TOO_MANY_REQUESTS,
                 Refused::Total => StatusCode::SERVICE_UNAVAILABLE,
@@ -71,6 +77,38 @@ fn client_key(headers: &HeaderMap, peer: Option<SocketAddr>) -> String {
             .filter_map(|value| value.to_str().ok()),
         peer.map(|addr| addr.ip()),
     )
+}
+/// A refusal for a private or loopback peer that sent no `X-Forwarded-For`
+/// usually means a proxy in front that does not forward the client address:
+/// then every client counts as that proxy and shares its pending slots.
+fn proxy_without_forwarded_for(headers: &HeaderMap, peer: Option<SocketAddr>) -> bool {
+    if headers.contains_key("x-forwarded-for") {
+        return false;
+    }
+    match peer.map(|addr| addr.ip().to_canonical()) {
+        Some(IpAddr::V4(ip)) => ip.is_private() || ip.is_loopback() || ip.is_link_local(),
+        Some(IpAddr::V6(ip)) => {
+            ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local()
+        }
+        None => true,
+    }
+}
+/// At most once per [`SHARED_ADDRESS_WARN_EVERY`], so a reconnect storm
+/// does not flood the log.
+fn warn_shared_address(peer: Option<SocketAddr>) {
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|err| err.into_inner());
+    if last.is_some_and(|at| at.elapsed() < SHARED_ADDRESS_WARN_EVERY) {
+        return;
+    }
+    *last = Some(Instant::now());
+    warn!(
+        peer = ?peer.map(|addr| addr.ip()),
+        "pending-socket cap reached for a private address without X-Forwarded-For; \
+         if a proxy is in front of media, it must send the client address \
+         (Caddy: header_up X-Forwarded-For {{client_ip}}), or all its clients \
+         share one address's MEDIA_PENDING_PER_IP"
+    );
 }
 fn terminal(frame: &ServerFrame) -> bool {
     matches!(frame,ServerFrame::Err { e,.. } if matches!(e.as_str(),"unauthorized"|"gone"|"update_required"))
@@ -344,6 +382,40 @@ async fn send(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn only_private_peers_without_forwarded_for_look_like_a_proxy() {
+        let forwarded = {
+            let mut headers = HeaderMap::new();
+            headers.insert("x-forwarded-for", "198.51.100.1".parse().unwrap());
+            headers
+        };
+        let bare = HeaderMap::new();
+        let peer = |raw: &str| Some(SocketAddr::new(raw.parse().unwrap(), 4000));
+        for private in [
+            "127.0.0.1",
+            "10.0.0.5",
+            "172.18.0.1",
+            "192.168.1.2",
+            "::1",
+            "fd00::5",
+            "::ffff:10.0.0.5",
+        ] {
+            assert!(
+                proxy_without_forwarded_for(&bare, peer(private)),
+                "{private}"
+            );
+            assert!(
+                !proxy_without_forwarded_for(&forwarded, peer(private)),
+                "{private}"
+            );
+        }
+        for public in ["198.51.100.7", "2001:db8::1"] {
+            assert!(
+                !proxy_without_forwarded_for(&bare, peer(public)),
+                "{public}"
+            );
+        }
+    }
     #[test]
     fn schema_errors_retain_request_identity() {
         assert!(matches!(
