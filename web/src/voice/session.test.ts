@@ -23,6 +23,7 @@ import {
   toggleSourceWatch,
   retryPlayback,
   useVoice,
+  voiceSessionForTests,
   type RtpSender,
 } from "./session.ts";
 import type {
@@ -42,6 +43,9 @@ import {
   useVoiceDiagnostics,
 } from "./diagnostics.ts";
 import { setNativeBridgeForTests } from "./native/bridge.ts";
+import receivedAudioSource from "./receivedAudio.ts?raw";
+import sessionSource from "./session.ts?raw";
+import videoLimitsSource from "./videoLimits.ts?raw";
 import { NativeStream, NativeTrack } from "./native/tracks.ts";
 import { resetUserVolumesForTests, useUserVolumes } from "./userVolume.ts";
 import { resetVoiceRoster, useVoiceRoster, voiceOf } from "./roster.ts";
@@ -5021,5 +5025,73 @@ describe("stream sound in the desktop app", () => {
         .called("media_source_state")
         .some((args) => args.source === app.sounds[0]),
     ).toBe(false);
+  });
+});
+
+describe("voice session reset", () => {
+  afterEach(() => {
+    resetVoiceForTests();
+    resetVoiceRoster();
+    resetMediaSettingsForTests();
+    trackSeq = 0;
+    vi.restoreAllMocks();
+  });
+
+  it("leaves nothing of a call behind; only the epochs move on", async () => {
+    const { peers } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers[0]?.sender("a")).toBeTruthy());
+    toggleMute();
+    toggleCamera();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    const before = voiceSessionForTests().current;
+    expect(before.bound).toBe(true);
+    expect(before.seat.connection).not.toBeNull();
+    expect(before.micEpoch).toBeGreaterThan(0);
+
+    resetVoiceForTests();
+
+    const { current, fresh, epochs } = voiceSessionForTests();
+    expect(current).not.toBe(before);
+    expect(Object.keys(current).sort()).toEqual(Object.keys(fresh).sort());
+    for (const key of Object.keys(current) as (keyof typeof current)[]) {
+      const value = current[key];
+      if (epochs.includes(key)) {
+        expect(value, key).toBe(before[key]);
+      } else if (typeof value === "object" && value !== null) {
+        expect(value, key).not.toBe(before[key]);
+        if (value instanceof Map || value instanceof Set)
+          expect(value.size, key).toBe(0);
+      } else {
+        expect(value, key).toEqual(fresh[key]);
+      }
+    }
+    expect(current.seat.generation).toBe(0);
+    expect(current.seatRetry.active).toBe(false);
+    expect(current.receivedAudio.playbackBlocked).toBe(false);
+    expect(useVoice.getState().status).toBe("idle");
+  });
+
+  it("keeps the module's state on the session object only", () => {
+    // A module-level `let` or collection would outlive resetVoiceForTests.
+    for (const [name, source] of [
+      ["session.ts", sessionSource],
+      ["receivedAudio.ts", receivedAudioSource],
+      ["videoLimits.ts", videoLimitsSource],
+    ] as const) {
+      const lets = [...source.matchAll(/^(?:export\s+)?let\s+(\w+)/gm)].map(
+        (match) => match[1],
+      );
+      const collections = [
+        ...source.matchAll(/^(?:export\s+)?const\s+(\w+)[^=\n]*=\s*new\s/gm),
+      ].map((match) => match[1]);
+      expect({ name, lets, collections }).toEqual({
+        name,
+        lets: name === "session.ts" ? ["voice"] : [],
+        collections: [],
+      });
+    }
   });
 });
