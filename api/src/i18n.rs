@@ -65,7 +65,7 @@ pub fn system_text(locale: Locale, message: &SystemMessage, author: &str) -> Str
         (Locale::De, system::LIVE_STARTED) => {
             format!("{author} ist live in {}.", message.param("voice_name"))
         }
-        (Locale::De, _) => "Systemnachricht".into(),
+        (Locale::De, _) => format!("Systemnachricht von {author}"),
     }
 }
 
@@ -83,6 +83,6 @@ mod tests {
             kind: "later_kind".into(),
             params: serde_json::json!({}),
         };
-        assert_eq!(system_text(de, &unknown, "Ada"), "Systemnachricht");
+        assert_eq!(system_text(de, &unknown, "Ada"), "Systemnachricht von Ada");
     }
 }

@@ -35,6 +35,6 @@ export function systemText(system: SystemMessage, author: string): string {
     case "live_started":
       return `${author} ist live in ${param(system, "voice_name")}.`;
     default:
-      return "Systemnachricht";
+      return `Systemnachricht von ${author}`;
   }
 }

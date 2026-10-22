@@ -29,7 +29,7 @@ describe("system messages", () => {
 
   it("names a kind it does not know yet", () => {
     expect(systemText({ kind: "later", params: {} }, "Ada")).toBe(
-      "Systemnachricht",
+      "Systemnachricht von Ada",
     );
   });
 
