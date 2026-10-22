@@ -103,6 +103,25 @@ async fn a_request_slides_the_expiry(pool: PgPool) {
     assert_near(expires_at, Utc::now() + chrono::Duration::hours(1));
 }
 
+/// Mutations renew too, not only reads (they may resolve the session in the
+/// rate-limit gate before the handler's extractor runs).
+#[sqlx::test]
+async fn a_mutation_slides_the_expiry(pool: PgPool) {
+    let mut client = signed_in(lifetime_state(pool.clone(), "4", "1")).await;
+    set_row(&pool, 600, 300).await;
+
+    let res = client
+        .send(
+            Method::POST,
+            "/api/servers",
+            Some(json!({ "name": "Renew" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let (_, expires_at) = row(&pool).await;
+    assert_near(expires_at, Utc::now() + chrono::Duration::hours(1));
+}
+
 #[sqlx::test]
 async fn renewal_never_passes_the_absolute_end(pool: PgPool) {
     let mut client = signed_in(lifetime_state(pool.clone(), "4", "1")).await;
