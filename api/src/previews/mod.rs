@@ -10,6 +10,9 @@
 //! site; a YouTube video loads from `youtube-nocookie.com` only once the
 //! viewer presses play.
 //!
+//! Every link that gets no card logs why at `info`, with its host but not
+//! the URL, and counts in `gelabber_link_previews_total` (#349).
+//!
 //! `API_LINK_PREVIEWS=false` turns all of it off; links stay links.
 
 pub mod html;
@@ -30,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{FromRow, PgConnection, PgPool};
 use tokio::sync::{Semaphore, mpsc};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use url::Url;
 use uuid::Uuid;
 
@@ -251,6 +254,12 @@ async fn process(state: &AppState, job: Job) {
             // here (a host that timed out itself got one in the fetcher),
             // and the rest of the message's links go without a card.
             Err(_) => {
+                state.metrics.link_preview("budget");
+                info!(
+                    host = host_of(url),
+                    reason = "budget",
+                    "link preview: no card, the message's time is spent"
+                );
                 debug!(url = %url, "link preview budget spent");
                 break;
             }
@@ -259,6 +268,10 @@ async fn process(state: &AppState, job: Job) {
     if let Err(err) = crate::messages::attach_previews(state, &job, &ids).await {
         warn!(error = err.code(), message_id = %job.message_id, "link previews not attached");
     }
+}
+
+fn host_of(url: &Url) -> &str {
+    url.host_str().unwrap_or("")
 }
 
 fn url_hash(url: &Url) -> Vec<u8> {
@@ -290,20 +303,64 @@ async fn preview_for(state: &AppState, url: &Url) -> Result<Option<Uuid>, ApiErr
     .await?;
     let last_ok = cached.as_ref().and_then(|c| c.last_ok);
     if cached.as_ref().is_some_and(|c| c.fresh) {
+        if last_ok.is_some() {
+            state.metrics.link_preview("cached");
+        } else {
+            state.metrics.link_preview("retry_later");
+            info!(
+                host = host_of(url),
+                reason = "retry_later",
+                "link preview: no card, the last try failed less than {RETRY_HOURS} h ago"
+            );
+        }
         return Ok(last_ok);
     }
     let previews = state.previews.as_ref().expect("previews on");
-    let unfurled = match unfurl(&previews.inner, url).await {
-        Ok(unfurled) => Some(unfurled),
+    let mut unfurled = match unfurl(&previews.inner, url).await {
+        Ok(unfurled) => {
+            state.metrics.link_preview("ok");
+            Some(unfurled)
+        }
         Err(err) => {
+            state.metrics.link_preview(err.code());
+            info!(
+                host = host_of(url),
+                reason = err.code(),
+                detail = %err,
+                "link preview: no card"
+            );
             debug!(url = %url, error = ?err, "link preview fetch failed");
             None
         }
     };
     let id = Uuid::new_v4();
-    let image = match unfurled.as_ref().and_then(|u| u.image.as_ref()) {
-        Some(image) => store_image(state, id, image).await.ok(),
+    // An image that cannot be fetched or stored costs the card its image,
+    // never its text.
+    let image = match unfurled.as_mut().and_then(|u| u.image.take()) {
         None => None,
+        Some(Err(reason)) => {
+            state.metrics.link_preview_image(reason);
+            info!(
+                host = host_of(url),
+                reason, "link preview: card without its image"
+            );
+            None
+        }
+        Some(Ok(image)) => match store_image(state, id, &image).await {
+            Ok(stored) => {
+                state.metrics.link_preview_image("stored");
+                Some(stored)
+            }
+            Err(err) => {
+                state.metrics.link_preview_image("store_failed");
+                warn!(
+                    host = host_of(url),
+                    error = ?err,
+                    "link preview image not stored; the card keeps its text"
+                );
+                None
+            }
+        },
     };
     let saved = save(&state.db, id, &hash, url, unfurled.as_ref(), image.as_ref()).await;
     if saved.is_err()
@@ -322,7 +379,8 @@ async fn preview_for(state: &AppState, url: &Url) -> Result<Option<Uuid>, ApiErr
 struct Unfurled {
     meta: html::Meta,
     youtube_id: Option<String>,
-    image: Option<Image>,
+    /// `None` when the page names no image; the error is a fixed reason.
+    image: Option<Result<Image, &'static str>>,
 }
 
 struct Image {
@@ -333,10 +391,29 @@ struct Image {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)] // Read through `Debug` in the logs.
 enum UnfurlError {
     Fetch(FetchError),
     Empty,
+}
+
+impl UnfurlError {
+    /// The fixed reason for logs and the metric label.
+    fn code(&self) -> &'static str {
+        match self {
+            Self::Fetch(err) => err.code(),
+            Self::Empty => "no_metadata",
+        }
+    }
+}
+
+impl std::fmt::Display for UnfurlError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // `Status(403)`, `Refused("address")`, the client's error text.
+            Self::Fetch(err) => write!(f, "{err}"),
+            Self::Empty => f.write_str("no title, description or image"),
+        }
+    }
 }
 
 impl From<FetchError> for UnfurlError {
@@ -359,7 +436,7 @@ async fn unfurl(previews: &Inner, url: &Url) -> Result<Unfurled, UnfurlError> {
         return Err(UnfurlError::Empty);
     }
     let image = match &meta.image {
-        Some(image_url) => fetch_image(policy, image_url).await,
+        Some(image_url) => Some(fetch_image(policy, image_url).await),
         None => None,
     };
     Ok(Unfurled {
@@ -369,15 +446,19 @@ async fn unfurl(previews: &Inner, url: &Url) -> Result<Unfurled, UnfurlError> {
     })
 }
 
-/// A raster image whose header proves a sane size (no SVG, no pixel bombs).
-async fn fetch_image(policy: &Fetcher, url: &Url) -> Option<Image> {
-    let fetched = policy.get(url, Kind::Image).await.ok()?;
-    let content_type = crate::avatars::sniff(&fetched.body)?;
-    let (width, height) = crate::image_size::dimensions(&fetched.body)?;
+/// A raster image whose header proves a sane size (no SVG, no pixel bombs),
+/// or why not.
+async fn fetch_image(policy: &Fetcher, url: &Url) -> Result<Image, &'static str> {
+    let fetched = policy
+        .get(url, Kind::Image)
+        .await
+        .map_err(|err| err.code())?;
+    let content_type = crate::avatars::sniff(&fetched.body).ok_or("not_an_image")?;
+    let (width, height) = crate::image_size::dimensions(&fetched.body).ok_or("not_an_image")?;
     if width > IMAGE_MAX_EDGE || height > IMAGE_MAX_EDGE {
-        return None;
+        return Err("dimensions");
     }
-    Some(Image {
+    Ok(Image {
         bytes: fetched.body,
         content_type,
         width,

@@ -221,6 +221,27 @@ Links in messages get a preview card (title, description, image; YouTube with a 
 
 The linked sites see the server's IP address. `API_LINK_PREVIEWS=false` turns previews off; links stay clickable. Authors (and moderators) can remove the previews of a message.
 
+Hosts on your own network get no preview, on purpose: a name like `wiki.example.org` that resolves to a LAN address (`192.168.x.x`, `10.x.x.x`, …) from the server is refused like any internal target, so a message cannot make the API probe the LAN. Only cards for public sites appear. The API sends a user agent that ends in `like Twitterbot`, as Telegram's preview bot does; some sites (TikTok, for example) serve their title and image only to preview bots they know. Previews appear only for messages sent or edited after the update that brought them, and only for bare links (not in code, in `||spoilers||` or in `<…>`). A PDF or other non-HTML link gets no card.
+
+When a link shows no card, the API log says why, at the default `info` level, with the host but not the full URL: `docker compose logs api | grep "link preview"`. Each line has a `reason`:
+
+| `reason` | Meaning |
+|---|---|
+| `refused` | Private or local address, local name, denied host, port other than 80/443, or a redirect to one of those. `detail` says which (`Refused("address")`, `Refused("host")`, …). |
+| `dns` | The name did not resolve from the API container. |
+| `timeout` | No answer within 5 s; the host is skipped for 10 minutes. |
+| `backoff` | The host timed out less than 10 minutes ago. |
+| `http` | Connection or TLS error; `detail` has the client's text. |
+| `status` | The site answered with an error status (`detail`: `Status(403)` and so on), often bot protection. |
+| `redirects` | More than three redirects. |
+| `content_type` | Not an HTML page (a PDF, an image, a download). |
+| `too_large` | Body larger than the limit. |
+| `no_metadata` | The page has no title, description or image. |
+| `budget` | The message's 8 s were spent on its earlier links. |
+| `retry_later` | The same link failed less than an hour ago and is not fetched again yet. |
+
+A card whose image could not be fetched keeps its text (`link preview: card without its image`). If MinIO cannot store the image, the card also keeps its text and the API logs a warning, `link preview image not stored`. `/metrics` counts each link under `gelabber_link_previews_total{outcome}` (the reasons above, plus `ok` and `cached`) and each card image under `gelabber_link_preview_images_total{outcome}` (`stored`, `store_failed`, or the fetch reason, `not_an_image` or `dimensions`). For the full URL as well, set `RUST_LOG=info,gelabber_api::previews=debug`.
+
 ## GIFs
 
 GIF search and trending in chat and direct messages come from [KLIPY](https://klipy.com) and are off until `KLIPY_API_KEY` is set in `.env`. Without it `GET /api/gifs` reports `enabled: false`, the composer shows no GIF button and the search, trending and media routes answer 404.

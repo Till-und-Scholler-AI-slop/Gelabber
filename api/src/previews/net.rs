@@ -34,10 +34,13 @@ pub const MAX_REDIRECTS: usize = 3;
 pub const HTML_MAX_BYTES: usize = 1024 * 1024;
 pub const IMAGE_MAX_BYTES: usize = 5 * 1024 * 1024;
 pub const JSON_MAX_BYTES: usize = 256 * 1024;
+/// "like Twitterbot", as Telegram's preview bot says it: sites such as
+/// TikTok serve their OpenGraph tags only to preview bots they know and
+/// give anyone else an empty app shell (#349).
 pub const USER_AGENT: &str = concat!(
     "Mozilla/5.0 (compatible; GelabberBot/",
     env!("CARGO_PKG_VERSION"),
-    "; +https://github.com/Till-und-Scholler-AI-slop/Gelabber)"
+    "; +https://github.com/Till-und-Scholler-AI-slop/Gelabber; like Twitterbot)"
 );
 
 /// Host names that are never fetched, whatever they resolve to: single
@@ -80,6 +83,23 @@ pub enum FetchError {
     TooLarge,
     /// The host timed out recently ([`BACKOFF`]).
     Backoff,
+}
+
+impl FetchError {
+    /// A short, fixed reason for logs and the metric label.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Refused(_) => "refused",
+            Self::Dns => "dns",
+            Self::Timeout => "timeout",
+            Self::Http(_) => "http",
+            Self::Status(_) => "status",
+            Self::TooManyRedirects => "redirects",
+            Self::ContentType => "content_type",
+            Self::TooLarge => "too_large",
+            Self::Backoff => "backoff",
+        }
+    }
 }
 
 impl fmt::Display for FetchError {
@@ -315,7 +335,9 @@ impl Fetcher {
             self.slow_down(url);
             FetchError::Timeout
         } else {
-            FetchError::Http(err.to_string())
+            // Without the URL: the reason is logged at `info`, and the
+            // query string of a message's link may hold a token.
+            FetchError::Http(err.without_url().to_string())
         }
     }
 }
@@ -657,6 +679,29 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn a_connection_error_does_not_carry_the_url() {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let fetcher = Fetcher::new(Policy {
+            trusted: vec![closed],
+            ..Policy::default()
+        });
+        let url = Url::parse(&format!("http://{closed}/page?token=secret")).unwrap();
+        let err = fetcher.get(&url, Kind::Html).await.unwrap_err();
+        assert_eq!(err.code(), "http", "{err}");
+        assert!(!err.to_string().contains("secret"), "{err}");
+    }
+
+    /// TikTok and others give unknown agents a page without OpenGraph tags.
+    #[test]
+    fn the_agent_names_itself_like_known_preview_bots() {
+        assert!(USER_AGENT.starts_with("Mozilla/5.0 (compatible; GelabberBot/"));
+        assert!(USER_AGENT.ends_with("; like Twitterbot)"), "{USER_AGENT}");
     }
 
     #[test]
