@@ -347,7 +347,6 @@ async function sample() {
     .map((el) => ({
       source: el.dataset.sourceAudio ?? null,
       publisher: el.dataset.publisher ?? null,
-      connection: el.dataset.connection ?? null,
       paused: el.paused,
       muted: el.muted,
       volume: el.volume,
@@ -792,8 +791,7 @@ async function sourceScenario(receiver, kind) {
           !el.paused &&
           el.tracks.length === 1 &&
           el.tracks[0].kind === audioKind &&
-          el.publisher === owner.id &&
-          el.connection === "voice",
+          el.publisher === owner.id,
       ) &&
       state.videos.some(
         (video) =>
