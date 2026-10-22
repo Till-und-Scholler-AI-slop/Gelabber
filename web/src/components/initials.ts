@@ -7,3 +7,13 @@ export function initials(name: string): string {
     .join("");
   return letters.toUpperCase() || "?";
 }
+
+/**
+ * Which of the eight `--lr-tile-*` tints a server gets: stable per id, so a
+ * server keeps its colour on every screen.
+ */
+export function tileTone(id: string): number {
+  let hash = 0;
+  for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return (hash % 8) + 1;
+}

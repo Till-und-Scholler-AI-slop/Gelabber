@@ -1,3 +1,4 @@
+import { ChevronIcon } from "../components/Icons.tsx";
 import {
   promptInstallation,
   useInstallation,
@@ -7,6 +8,24 @@ import "./install.css";
 
 export function InstallApp() {
   return <InstallPanel state={useInstallation()} />;
+}
+
+/** The same panel behind one line, where signing in comes first. */
+export function InstallDisclosure() {
+  return <InstallDisclosurePanel state={useInstallation()} />;
+}
+
+export function InstallDisclosurePanel({ state }: { state: InstallState }) {
+  if (state.native) return null;
+  return (
+    <details className="pwa-install-disclosure">
+      <summary>
+        Gelabber als App installieren
+        <ChevronIcon size={14} />
+      </summary>
+      <InstallPanel state={state} />
+    </details>
+  );
 }
 
 export function InstallPanel({ state }: { state: InstallState }) {
