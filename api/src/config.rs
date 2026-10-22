@@ -16,6 +16,7 @@ pub const API_DB_MAX_CONNECTIONS: &str = "API_DB_MAX_CONNECTIONS";
 pub const API_COOKIE_SECURE: &str = "API_COOKIE_SECURE";
 pub const API_ALLOW_PLAIN_HTTP: &str = "API_ALLOW_PLAIN_HTTP";
 pub const API_SESSION_TTL_HOURS: &str = "API_SESSION_TTL_HOURS";
+pub const API_SESSION_IDLE_HOURS: &str = "API_SESSION_IDLE_HOURS";
 pub const API_WS_HEARTBEAT_MS: &str = "API_WS_HEARTBEAT_MS";
 pub const API_WS_DEAD_MS: &str = "API_WS_DEAD_MS";
 pub const API_WS_REPLAY: &str = "API_WS_REPLAY";
@@ -75,6 +76,7 @@ const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
 const DEFAULT_DB_MAX_CONNECTIONS: u32 = 20;
 const DEFAULT_SESSION_TTL_HOURS: u64 = 24 * 30;
+const DEFAULT_SESSION_IDLE_HOURS: u64 = 24 * 14;
 const DEFAULT_WS_HEARTBEAT_MS: u64 = 15_000;
 const DEFAULT_WS_DEAD_MS: u64 = 30_000;
 const DEFAULT_WS_REPLAY: usize = 256;
@@ -104,8 +106,14 @@ pub struct Config {
     /// in clear text over any other network. This lets a trusted test
     /// network sign in over plain HTTP anyway.
     pub allow_plain_http: bool,
-    /// Lifetime of a session cookie and its database row.
+    /// Absolute lifetime of a session, counted from sign-in: the cookie's
+    /// `Max-Age` and the latest its database row can ever expire.
     pub session_ttl: Duration,
+    /// Sliding idle timeout: a session that goes unused this long ends
+    /// before `session_ttl`. Every use pushes the row's expiry to
+    /// `now + session_idle`, never past `created_at + session_ttl`
+    /// (`auth::session::touch`). Never longer than `session_ttl`.
+    pub session_idle: Duration,
     /// How often the gateway sends an application heartbeat (`{"op":"h"}`).
     pub ws_heartbeat: Duration,
     /// Close a socket that has sent nothing for this long (silent death).
@@ -343,6 +351,23 @@ impl Config {
             Some(raw) => parse_positive::<u64>(API_SESSION_TTL_HOURS, &raw)?,
             None => DEFAULT_SESSION_TTL_HOURS,
         };
+        // The default shrinks to a short configured TTL; an explicit idle
+        // timeout longer than the TTL would never take effect, so it is a
+        // configuration mistake.
+        let session_idle_hours = match get(API_SESSION_IDLE_HOURS) {
+            Some(raw) => {
+                let hours = parse_positive::<u64>(API_SESSION_IDLE_HOURS, &raw)?;
+                if hours > session_ttl_hours {
+                    return Err(invalid(
+                        API_SESSION_IDLE_HOURS,
+                        &raw,
+                        "must not be greater than API_SESSION_TTL_HOURS",
+                    ));
+                }
+                hours
+            }
+            None => DEFAULT_SESSION_IDLE_HOURS.min(session_ttl_hours),
+        };
 
         let ws_heartbeat_ms = match get(API_WS_HEARTBEAT_MS) {
             Some(raw) => parse_positive::<u64>(API_WS_HEARTBEAT_MS, &raw)?,
@@ -425,6 +450,7 @@ impl Config {
             cookie_secure,
             allow_plain_http,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
+            session_idle: Duration::from_secs(session_idle_hours * 3600),
             ws_heartbeat: Duration::from_millis(ws_heartbeat_ms),
             ws_dead: Duration::from_millis(ws_dead_ms),
             ws_replay,
@@ -891,6 +917,7 @@ mod tests {
         assert_eq!(config.db_max_connections, 20);
         assert!(!config.cookie_secure);
         assert_eq!(config.session_ttl, Duration::from_secs(30 * 24 * 3600));
+        assert_eq!(config.session_idle, Duration::from_secs(14 * 24 * 3600));
         assert_eq!(config.ws_heartbeat, Duration::from_millis(15_000));
         assert_eq!(config.ws_dead, Duration::from_millis(30_000));
         assert_eq!(config.ws_replay, 256);
@@ -1117,6 +1144,41 @@ mod tests {
 
         assert!(config.cookie_secure);
         assert_eq!(config.session_ttl, Duration::from_secs(12 * 3600));
+        // The default idle timeout (14 days) shrinks to a shorter TTL.
+        assert_eq!(config.session_idle, Duration::from_secs(12 * 3600));
+    }
+
+    #[test]
+    fn parses_session_idle_timeout() {
+        let config = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (API_SESSION_IDLE_HOURS, "48"),
+        ]))
+        .expect("valid config");
+        assert_eq!(config.session_ttl, Duration::from_secs(30 * 24 * 3600));
+        assert_eq!(config.session_idle, Duration::from_secs(48 * 3600));
+    }
+
+    #[test]
+    fn rejects_session_idle_longer_than_ttl() {
+        let err = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (API_SESSION_TTL_HOURS, "24"),
+            (API_SESSION_IDLE_HOURS, "25"),
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConfigError::Invalid {
+                    key: API_SESSION_IDLE_HOURS,
+                    ..
+                }
+            ),
+            "{err}"
+        );
     }
 
     #[test]

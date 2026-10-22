@@ -34,6 +34,7 @@ pub struct AppState {
     pub cookie_secure: bool,
     pub allow_plain_http: bool,
     pub session_ttl: Duration,
+    pub session_idle: Duration,
     /// Native WS gateway (issue #6). Facade over the three realtime jobs.
     pub gateway: Gateway,
     /// Socket table and Redis subscriber.
@@ -148,6 +149,7 @@ impl AppState {
             cookie_secure: config.cookie_secure,
             allow_plain_http: config.allow_plain_http,
             session_ttl: config.session_ttl,
+            session_idle: config.session_idle,
             connections: gateway.connections.clone(),
             events: gateway.events.clone(),
             voice: gateway.voice.clone(),

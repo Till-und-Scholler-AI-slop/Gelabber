@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
+use tracing::warn;
 use uuid::Uuid;
 
 use super::user::{self, User};
@@ -31,8 +32,33 @@ pub async fn create(db: &PgPool, user_id: Uuid, ttl: Duration) -> Result<String,
     Ok(raw)
 }
 
+const SESSION_ROW: &str = "SELECT u.id, u.email, u.name, u.avatar_url, u.created_at, u.bio, \
+         u.pronouns, u.status_text, u.accent_color, u.banner_color, u.banner_url, \
+         u.avatar_decoration, s.created_at AS session_created_at, s.expires_at \
+     FROM sessions s JOIN users u ON u.id = s.user_id \
+     WHERE s.token_hash = $1 AND s.expires_at > now()";
+
+#[derive(sqlx::FromRow)]
+struct SessionRow {
+    #[sqlx(flatten)]
+    user: User,
+    session_created_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+}
+
+async fn lookup<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
+    db: E,
+    hash: &[u8],
+) -> Result<Option<SessionRow>, ApiError> {
+    Ok(sqlx::query_as::<_, SessionRow>(SESSION_ROW)
+        .bind(hash)
+        .fetch_optional(db)
+        .await?)
+}
+
 /// Resolves a raw cookie token to its user. Expired rows are treated as
-/// absent; the next sign-in sweeps them (`revoke`).
+/// absent; the next sign-in sweeps them (`revoke`). Read-only: the request
+/// extractors renew the session on top ([`touch`]).
 pub async fn resolve<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     db: E,
     raw: &str,
@@ -40,15 +66,92 @@ pub async fn resolve<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     if !token::is_valid(raw) {
         return Ok(None);
     }
-    Ok(sqlx::query_as::<_, User>(
-        "SELECT u.id, u.email, u.name, u.avatar_url, u.created_at, u.bio, u.pronouns, \
-             u.status_text, u.accent_color, u.banner_color, u.banner_url, u.avatar_decoration \
-         FROM sessions s JOIN users u ON u.id = s.user_id \
-         WHERE s.token_hash = $1 AND s.expires_at > now()",
+    Ok(lookup(db, &token::hash(raw)).await?.map(|row| row.user))
+}
+
+/// Where a session used now should expire: `idle` from now, but never past
+/// its absolute end (`created_at + ttl`).
+pub fn renewed_expiry(
+    created_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+    idle: Duration,
+    ttl: Duration,
+) -> DateTime<Utc> {
+    let after = |from: DateTime<Utc>, d: Duration| {
+        chrono::Duration::from_std(d)
+            .ok()
+            .and_then(|d| from.checked_add_signed(d))
+            .unwrap_or(DateTime::<Utc>::MAX_UTC)
+    };
+    after(now, idle).min(after(created_at, ttl))
+}
+
+/// How far the expiry must move before [`touch`] writes it: a twelfth of the
+/// idle window, at most an hour. A busy session costs one `UPDATE` per step,
+/// not one per request, and may end up to one step before `idle` is over.
+fn renew_step(idle: Duration) -> chrono::Duration {
+    chrono::Duration::from_std((idle / 12).min(Duration::from_secs(3600)))
+        .unwrap_or(chrono::Duration::zero())
+}
+
+/// Whether a session expiring at `expires_at` is due for renewal.
+pub fn needs_renewal(
+    created_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+    idle: Duration,
+    ttl: Duration,
+) -> bool {
+    renewed_expiry(created_at, Utc::now(), idle, ttl) - expires_at >= renew_step(idle)
+}
+
+/// Sliding lifetime (#195): a use of the session pushes its expiry to
+/// [`renewed_expiry`]. Throttled by [`needs_renewal`]; only ever moves the
+/// expiry forward, and never revives a row that has already expired or was
+/// revoked meanwhile. Returns the expiry the row has afterwards, or `None`
+/// when it is gone. The cookie keeps its `Max-Age` of the absolute TTL; the
+/// row alone decides whether the session is still alive.
+pub async fn touch(
+    state: &AppState,
+    hash: &[u8],
+    created_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+) -> Result<Option<DateTime<Utc>>, ApiError> {
+    if !needs_renewal(
+        created_at,
+        expires_at,
+        state.session_idle,
+        state.session_ttl,
+    ) {
+        return Ok(Some(expires_at));
+    }
+    let target = renewed_expiry(
+        created_at,
+        Utc::now(),
+        state.session_idle,
+        state.session_ttl,
+    );
+    Ok(sqlx::query_scalar(
+        "UPDATE sessions SET expires_at = GREATEST(expires_at, $2) \
+         WHERE token_hash = $1 AND expires_at > now() RETURNING expires_at",
     )
-    .bind(token::hash(raw))
-    .fetch_optional(db)
+    .bind(hash)
+    .bind(target)
+    .fetch_optional(&state.db)
     .await?)
+}
+
+/// [`touch`] for the request extractors: a failed renewal must not fail a
+/// request the session already authorized. The session then simply keeps
+/// its current expiry until the next use.
+async fn renew(state: &AppState, hash: &[u8], row: &SessionRow) -> DateTime<Utc> {
+    match touch(state, hash, row.session_created_at, row.expires_at).await {
+        Ok(Some(expires_at)) => expires_at,
+        Ok(None) => row.expires_at,
+        Err(err) => {
+            warn!(error = err.code(), "session not renewed");
+            row.expires_at
+        }
+    }
 }
 
 /// Removes the session behind `raw` (if given) and, in the same statement,
@@ -75,10 +178,17 @@ impl FromRequestParts<AppState> for MaybeUser {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
-        let Some(raw) = cookies::get(&parts.headers, SESSION_COOKIE) else {
+        let Some(raw) =
+            cookies::get(&parts.headers, SESSION_COOKIE).filter(|raw| token::is_valid(raw))
+        else {
             return Ok(Self(None));
         };
-        Ok(Self(resolve(&state.db, &raw).await?))
+        let hash = token::hash(&raw);
+        let Some(row) = lookup(&state.db, &hash).await? else {
+            return Ok(Self(None));
+        };
+        renew(state, &hash, &row).await;
+        Ok(Self(Some(row.user)))
     }
 }
 
@@ -111,7 +221,9 @@ pub async fn reload(db: &PgPool, id: Uuid) -> Result<User, ApiError> {
 pub struct CurrentSession {
     pub user: User,
     pub hash: Vec<u8>,
-    pub expires_at: chrono::DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    /// The row's expiry after this request renewed it.
+    pub expires_at: DateTime<Utc>,
 }
 
 impl CurrentSession {
@@ -138,19 +250,14 @@ impl FromRequestParts<AppState> for CurrentSession {
             .filter(|raw| token::is_valid(raw))
             .ok_or(ApiError::Unauthenticated)?;
         let hash = token::hash(&raw);
-        #[derive(sqlx::FromRow)]
-        struct Row {
-            #[sqlx(flatten)]
-            user: User,
-            expires_at: chrono::DateTime<Utc>,
-        }
-        let row = sqlx::query_as::<_, Row>(
-            "SELECT u.id, u.email, u.name, u.avatar_url, u.created_at, u.bio, u.pronouns, u.status_text, u.accent_color, u.banner_color, u.banner_url, u.avatar_decoration, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1 AND s.expires_at > now()",
-        ).bind(&hash).fetch_optional(&state.db).await?.ok_or(ApiError::Unauthenticated)?;
-        let Row { user, expires_at } = row;
+        let row = lookup(&state.db, &hash)
+            .await?
+            .ok_or(ApiError::Unauthenticated)?;
+        let expires_at = renew(state, &hash, &row).await;
         Ok(Self {
-            user,
+            user: row.user,
             hash,
+            created_at: row.session_created_at,
             expires_at,
         })
     }
