@@ -1839,6 +1839,7 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
   }
 }
 /* A theme switch crossfades the page (ThemeController), quickly. */
+::view-transition-group(root),
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation-duration: var(--lr-dur);
