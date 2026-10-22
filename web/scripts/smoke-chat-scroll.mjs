@@ -11,10 +11,11 @@
 // Afterwards the reader must still be able to scroll away. A picture's
 // lightbox closes when its message is deleted. With unread messages the
 // list opens at the first of them, after fetching the page it is on, and
-// marks nothing read until asked to.
+// marks nothing read until asked to. A toast above the composer leaves the
+// newest message and its actions uncovered (#354).
 // Run in web/: node scripts/smoke-chat-scroll.mjs
 // GELABBER_CHAT_BROWSER_EXECUTABLE names a Chromium other than Playwright's.
-/* global process, console, window, document, URL, requestAnimationFrame, setTimeout */
+/* global process, console, window, document, getComputedStyle, URL, requestAnimationFrame, setTimeout */
 import assert from "node:assert/strict";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -611,6 +612,86 @@ try {
     );
     console.log(
       `PASS: ${label}: Esc returns focus to the picture; deleting its message closes it and focus stays in the list`,
+    );
+    await opened.close();
+  }
+
+  {
+    // A toast above the composer must not cover the newest message or its
+    // actions (#354): the list makes room and stays at its end.
+    const label = "toast";
+    const opened = await open();
+    const { page, send } = opened;
+    // One short line that continues the last author's: its actions sit
+    // lowest, where the toast goes.
+    send({
+      t: "c",
+      d: {
+        ...message(100),
+        author: all[99].author,
+        content: "Nachricht 100. Kurz.",
+      },
+    });
+    const newest = page
+      .locator('[role="log"] [data-index]')
+      .filter({ hasText: "Nachricht 100." });
+    await newest.waitFor();
+    await frames(page, 8);
+    await newest.hover();
+    await newest.getByRole("button", { name: "Weitere Aktionen" }).click();
+    await page.getByRole("menuitem", { name: "Text kopieren" }).click();
+    const toast = page.locator(".ui-toast");
+    await toast.waitFor();
+    // The toast's rise and the room it takes.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await newest.hover();
+    await frames(page, 4);
+    const placed = await page.evaluate(() => {
+      const log = document.querySelector('[role="log"]');
+      const rows = log.querySelectorAll("[data-index]");
+      const row = rows[rows.length - 1];
+      const actions = row.querySelector(".lr-message-actions");
+      const tools = actions.getBoundingClientRect();
+      const card = document.querySelector(".ui-toast").getBoundingClientRect();
+      const hit = document.elementFromPoint(
+        tools.left + tools.width / 2,
+        tools.top + tools.height / 2,
+      );
+      return {
+        hit: actions.contains(hit),
+        rowBottom: Math.round(row.getBoundingClientRect().bottom),
+        listBottom: Math.round(log.getBoundingClientRect().bottom),
+        toastTop: Math.round(card.top),
+        atEnd: log.scrollHeight - log.scrollTop - log.clientHeight <= 2,
+      };
+    });
+    assert.ok(
+      placed.hit,
+      `${label}: the newest message's actions are covered while a toast shows`,
+    );
+    assert.ok(
+      placed.listBottom <= placed.toastTop && placed.atEnd,
+      `${label}: the list ends at ${placed.listBottom}px (at its end: ${placed.atEnd}), the toast starts at ${placed.toastTop}px`,
+    );
+    await toast.getByRole("button", { name: "Schließen" }).click();
+    await toast.waitFor({ state: "detached" });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const after = await page.evaluate(() => {
+      const log = document.querySelector('[role="log"]');
+      return {
+        space: getComputedStyle(document.documentElement)
+          .getPropertyValue("--lr-toast-space")
+          .trim(),
+        listBottom: Math.round(log.getBoundingClientRect().bottom),
+        atEnd: log.scrollHeight - log.scrollTop - log.clientHeight <= 2,
+      };
+    });
+    assert.ok(
+      after.space === "0px" && after.atEnd,
+      `${label}: after the toast the room is ${after.space} and the list is ${after.atEnd ? "" : "not "}at its end`,
+    );
+    console.log(
+      `PASS: ${label}: the list gives ${after.listBottom - placed.listBottom}px to a toast, keeps the newest message's actions reachable, and takes the room back`,
     );
     await opened.close();
   }
