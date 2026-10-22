@@ -515,6 +515,11 @@ async fn off_runtime(job: impl FnOnce() + Send + 'static) -> Result<()> {
 /// - "h264-hardware": the core encodes H264 on the GPU or a media engine;
 ///   the web client then prefers H264 where the room can decode it. Added by
 ///   `media_info` when the system has such an encoder.
+/// - "av1-hardware": the same for AV1, which the web client prefers even to
+///   H264 (issue #318).
+/// - "av1-hardware-decode": the core decodes AV1 on the GPU. Without it the
+///   web client does not offer to receive AV1, which comes as one stream, so
+///   that the room stays on H264 or VP8 with layers.
 ///
 /// The only place that decides the list. An app before v0.6 reports none.
 const FEATURES: &[&str] = if cfg!(any(target_os = "linux", windows)) {
@@ -540,6 +545,12 @@ pub async fn media_info() -> Value {
     let mut features = FEATURES.to_vec();
     if codecs["h264"]["hardwareEncoder"] == true {
         features.push("h264-hardware");
+    }
+    if codecs["av1"]["hardwareEncoder"] == true {
+        features.push("av1-hardware");
+    }
+    if codecs["av1"]["hardwareDecoder"] == true {
+        features.push("av1-hardware-decode");
     }
     json!({
         "abi": gelabber_media_core::ABI_VERSION,

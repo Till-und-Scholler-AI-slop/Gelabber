@@ -14,6 +14,9 @@
 //! push gets another one under the same `Topic`. A push service still
 //! holding the first (a phone offline) replaces it; one already shown is
 //! replaced on screen by "Nachricht gelöscht" (`web/public/sw.js`).
+//!
+//! The words of a push come from `crate::i18n`, in each recipient's locale
+//! (#314).
 
 pub mod webpush;
 
@@ -35,6 +38,7 @@ use crate::{
     auth::session::{CurrentSession, CurrentUser},
     config::PushConfig,
     error::{ApiError, FieldErrors},
+    i18n::{self, Locale},
     json::Body,
     messages::Message,
     state::AppState,
@@ -65,9 +69,6 @@ const PREVIEW_CHARS: usize = 180;
 
 /// How often expired `push_receipts` are dropped.
 const PRUNE_EVERY: Duration = Duration::from_secs(10 * 60);
-
-/// What a recalled message's notification says instead.
-pub const RECALLED: &str = "Nachricht gelöscht";
 
 #[derive(Clone)]
 pub struct Push {
@@ -360,13 +361,12 @@ async fn deliver(
     if targets.is_empty() {
         return Ok(());
     }
-    let (title, path) = heading(state, message, server).await?;
-    let body = if targets.iter().all(|t| t.hide_content) {
+    let (place, path) = heading(state, message, server).await?;
+    let named = if targets.iter().all(|t| t.hide_content) {
         String::new()
     } else {
-        preview(state, message).await?
+        with_names(state, message).await?
     };
-    let hidden = hidden_title(&message.author.name);
     let users: Vec<Uuid> = {
         let mut users: Vec<Uuid> = targets.iter().map(|t| t.user_id).collect();
         users.sort_unstable();
@@ -381,14 +381,21 @@ async fn deliver(
             .into_iter()
             .filter(|target| !in_front.contains(&target.user_id))
             .filter_map(|target| {
+                let locale = Locale::of_recipient(target.user_id);
                 let (title, body) = if target.hide_content {
-                    (hidden.as_str(), "")
+                    (
+                        i18n::new_message_from(locale, &message.author.name),
+                        String::new(),
+                    )
                 } else {
-                    (title.as_str(), body.as_str())
+                    (
+                        title(locale, &message.author.name, &place),
+                        preview(locale, message, &named),
+                    )
                 };
                 let payload = Payload {
-                    title,
-                    body,
+                    title: &title,
+                    body: &body,
                     path: &path,
                     user: target.user_id,
                     channel: message.channel_id,
@@ -580,16 +587,17 @@ async fn send_recall(
     if targets.is_empty() {
         return Ok(());
     }
-    let (title, path) = heading(state, message, server).await?;
-    let hidden = hidden_title(&message.author.name);
+    let (place, path) = heading(state, message, server).await?;
     let results = futures_util::stream::iter(targets.into_iter().filter_map(|target| {
+        let locale = Locale::of_recipient(target.user_id);
+        let title = if target.hide_content {
+            i18n::new_message_from(locale, &message.author.name)
+        } else {
+            title(locale, &message.author.name, &place)
+        };
         let payload = Payload {
-            title: if target.hide_content {
-                hidden.as_str()
-            } else {
-                title.as_str()
-            },
-            body: RECALLED,
+            title: &title,
+            body: i18n::message_deleted(locale),
             path: &path,
             user: target.user_id,
             channel: message.channel_id,
@@ -717,42 +725,48 @@ async fn send(push: &Push, target: &Target, payload: &[u8], urgency: &str, topic
     }
 }
 
-/// "Ada" for a DM, "Ada · #allgemein" for a server channel; and where a tap
-/// leads (`conversationPath` in web/src/messages/notify.ts).
+/// Where a message was written: a DM, or a server channel whose name may
+/// be gone by now.
+enum Place {
+    Dm,
+    Channel(Option<String>),
+}
+
+/// Where the message was written, and where a tap leads
+/// (`conversationPath` in web/src/messages/notify.ts).
 async fn heading(
     state: &AppState,
     message: &Message,
     server: Option<Uuid>,
-) -> Result<(String, String), ApiError> {
+) -> Result<(Place, String), ApiError> {
     let Some(server) = server else {
-        return Ok((
-            message.author.name.clone(),
-            format!("/d/{}", message.channel_id),
-        ));
+        return Ok((Place::Dm, format!("/d/{}", message.channel_id)));
     };
     let channel: Option<String> = sqlx::query_scalar("SELECT name FROM channels WHERE id=$1")
         .bind(message.channel_id)
         .fetch_optional(&state.db)
         .await?;
     Ok((
-        format!(
-            "{} · #{}",
-            message.author.name,
-            channel.unwrap_or_else(|| "Kanal".into())
-        ),
+        Place::Channel(channel),
         format!("/s/{server}/c/{}", message.channel_id),
     ))
 }
 
-/// All a notification says for an account that hides the content: who wrote.
-/// The pages show the same (`notificationText` in
-/// web/src/messages/notificationPrivacy.ts).
-pub fn hidden_title(author: &str) -> String {
-    format!("Neue Nachricht von {author}")
+/// "Ada" for a DM, "Ada · #allgemein" for a server channel.
+fn title(locale: Locale, author: &str, place: &Place) -> String {
+    match place {
+        Place::Dm => author.to_owned(),
+        Place::Channel(name) => format!(
+            "{author} · #{}",
+            name.as_deref()
+                .unwrap_or_else(|| i18n::unnamed_channel(locale))
+        ),
+    }
 }
 
-/// The text with mentions as names, cut short; a file or GIF named as such.
-async fn preview(state: &AppState, message: &Message) -> Result<String, ApiError> {
+/// The text with the mentions of people still around as names; the same
+/// for every recipient, so it is read once.
+async fn with_names(state: &AppState, message: &Message) -> Result<String, ApiError> {
     let mut text = message.content.clone();
     if !message.mentions.is_empty() {
         let names: Vec<(Uuid, String)> =
@@ -764,20 +778,29 @@ async fn preview(state: &AppState, message: &Message) -> Result<String, ApiError
             text = text.replace(&format!("<@{id}>"), &format!("@{name}"));
         }
     }
-    let text = readable(&text);
-    Ok(if !text.is_empty() {
+    Ok(text)
+}
+
+/// The text ([`with_names`]) cut short; a file, GIF or system message
+/// named as such in the recipient's language.
+fn preview(locale: Locale, message: &Message, named: &str) -> String {
+    if let Some(system) = &message.system {
+        return cut(&i18n::system_text(locale, system, &message.author.name));
+    }
+    let text = readable(named, locale);
+    if !text.is_empty() {
         cut(&text)
     } else if message.gif.is_some() {
-        "GIF".into()
+        i18n::gif(locale).into()
     } else if !message.attachments.is_empty() {
-        "Datei".into()
+        i18n::file(locale).into()
     } else {
         String::new()
-    })
+    }
 }
 
 /// Tokens of people no longer around as "@Unbekannt", whitespace folded.
-fn readable(text: &str) -> String {
+fn readable(text: &str, locale: Locale) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find("<@") {
@@ -785,7 +808,8 @@ fn readable(text: &str) -> String {
         let after = &rest[start + 2..];
         match after.find('>') {
             Some(end) if Uuid::parse_str(&after[..end]).is_ok() => {
-                out.push_str("@Unbekannt");
+                out.push('@');
+                out.push_str(i18n::unknown_user(locale));
                 rest = &after[end + 1..];
             }
             _ => {
@@ -871,10 +895,10 @@ mod tests {
     #[test]
     fn previews_are_short_and_readable() {
         assert_eq!(
-            readable("hi  <@0190f7a2-0000-7000-8000-00000000000a>\n!"),
+            readable("hi  <@0190f7a2-0000-7000-8000-00000000000a>\n!", Locale::De),
             "hi @Unbekannt !"
         );
-        assert_eq!(readable("a <@x> b"), "a <@x> b");
+        assert_eq!(readable("a <@x> b", Locale::De), "a <@x> b");
         let long = "x".repeat(400);
         assert_eq!(cut(&long).chars().count(), PREVIEW_CHARS);
         assert!(cut(&long).ends_with('…'));

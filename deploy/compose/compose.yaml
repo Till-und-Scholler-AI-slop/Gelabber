@@ -30,6 +30,10 @@ services:
       dockerfile: Dockerfile
       tags:
         - gelabber/web:v0.7.1
+    environment:
+      # The same value as the API's: the app shell's Content-Security-Policy
+      # allows uploads and attachments on this origin only (#288).
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}
     expose:
       - "80"
     restart: unless-stopped

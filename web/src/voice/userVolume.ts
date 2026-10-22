@@ -151,7 +151,7 @@ export function userVolumeOf(
 
 /**
  * What a participant's voice plays at: the output volume times their own
- * volume, up to the 200 % the boost and the native core allow. Deafen and a
+ * volume, up to the 400 % the boost and the native core allow. Deafen and a
  * local mute silence it; the per-user level comes back with them.
  */
 export function effectiveVoiceVolume(input: {

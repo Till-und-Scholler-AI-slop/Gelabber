@@ -398,14 +398,14 @@ describe("desktop app media", () => {
       consumer,
       volume: 0.5,
     });
-    // The native core amplifies up to 200 %.
-    output.volume = 1.6;
+    // The native core amplifies up to 400 %.
+    output.volume = 3.2;
     expect(core.calledWith("media_consumer_set_volume").at(-1)).toEqual({
       consumer,
-      volume: 1.6,
+      volume: 3.2,
     });
-    output.volume = 5;
-    expect(output.volume).toBe(2);
+    output.volume = 9;
+    expect(output.volume).toBe(4);
     output.volume = 0.5;
     output.muted = true;
     expect(core.calledWith("media_consumer_set_volume").at(-1)).toEqual({
@@ -772,9 +772,9 @@ describe("desktop app media", () => {
       core.info = info;
       await loadNativeFeatures();
       core.screenStates = [{ state: "pending" }, { state: "failed" }];
-      await expect(nativeGetDisplayMedia({ video: true })).rejects.toMatchObject(
-        { name: "NotAllowedError" },
-      );
+      await expect(
+        nativeGetDisplayMedia({ video: true }),
+      ).rejects.toMatchObject({ name: "NotAllowedError" });
       await tick();
       expect(core.calledWith("media_source_close")).toHaveLength(1);
     },

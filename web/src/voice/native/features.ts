@@ -19,8 +19,12 @@ export type NativeFeature =
   | "app-audio-excludes-self"
   /** The page gets video frames and draws them itself. */
   | "video-frames"
-  /** The core encodes H.264 in hardware (see `hardwareH264`). */
+  /** The core encodes H.264 in hardware (see `hardwareVideo`). */
   | "h264-hardware"
+  /** The core encodes AV1 in hardware (see `hardwareVideo`). */
+  | "av1-hardware"
+  /** The core decodes AV1 in hardware (see `hardwareAv1Decoding`). */
+  | "av1-hardware-decode"
   /** The core tells a picker the user closed ("cancelled") from a capture
    * that failed. No app sends it yet: at the pinned libwebrtc a portal that
    * answers a cancel with a non-zero response (xdg-desktop-portal-hyprland)

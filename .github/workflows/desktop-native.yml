@@ -262,9 +262,9 @@ jobs:
         run: cargo clippy --manifest-path desktop/Cargo.toml --all-targets -- -D warnings
 
       # GStreamer and the test desktop (PipeWire, pipewire-pulse,
-      # xdg-desktop-portal). x264enc and avdec_h264 stand in for
-      # VA-API/NVENC/NVDEC, which runners lack, to test the GStreamer encoder
-      # and decoder paths themselves.
+      # xdg-desktop-portal). x264enc and avdec_h264 (av1enc and av1dec for
+      # AV1) stand in for VA-API/NVENC/NVDEC, which runners lack, to test the
+      # GStreamer encoder and decoder paths themselves.
       - name: Test packages
         run: |
           sudo apt-get install -y --no-install-recommends pipewire wireplumber pipewire-pulse \
@@ -295,6 +295,32 @@ jobs:
           GELABBER_EXPECT_H264: "1"
           GELABBER_H264_DECODER: avdec_h264
           GELABBER_EXPECT_DECODER: GStreamer avdec_h264
+          GELABBER_MEDIA_LOG: "1"
+        run: cargo test --manifest-path desktop/Cargo.toml --test mediasoup_loopback -- --nocapture
+
+      # AV1 through GStreamer in front of libaom and dav1d: av1enc and av1dec
+      # (libaom in gst-plugins-bad) stand in for NVENC/VA-API/NVDEC.
+      - name: Loopback call with GStreamer AV1 codecs
+        env:
+          GELABBER_EXPECT_H264: "1"
+          GELABBER_AV1_ENCODER: av1enc
+          GELABBER_EXPECT_AV1_ENCODER: GStreamer av1enc
+          GELABBER_AV1_DECODER: av1dec
+          GELABBER_EXPECT_AV1_DECODER: GStreamer av1dec
+          GELABBER_MEDIA_LOG: "1"
+        run: cargo test --manifest-path desktop/Cargo.toml --test mediasoup_loopback -- --nocapture
+
+      # System AV1 codecs that fail: identity as the encoder hands raw
+      # pictures to av1parse, which refuses them once the call runs; as the
+      # decoder it cannot link AV1 to videoconvert, so it does not start.
+      # libaom and dav1d take over.
+      - name: Loopback call with failing GStreamer AV1 codecs
+        env:
+          GELABBER_EXPECT_H264: "1"
+          GELABBER_AV1_ENCODER: identity
+          GELABBER_EXPECT_AV1_ENCODER: libaom
+          GELABBER_AV1_DECODER: identity
+          GELABBER_EXPECT_AV1_DECODER: dav1d
           GELABBER_MEDIA_LOG: "1"
         run: cargo test --manifest-path desktop/Cargo.toml --test mediasoup_loopback -- --nocapture
 

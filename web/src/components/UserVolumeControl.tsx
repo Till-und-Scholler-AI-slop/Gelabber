@@ -1,5 +1,10 @@
 import { useId, type CSSProperties } from "react";
-import { MAX_PLAYBACK_VOLUME } from "../voice/settings.ts";
+import {
+  PLAYBACK_SLIDER_MAX,
+  playbackSliderFill,
+  playbackSliderPosition,
+  playbackSliderVolume,
+} from "../voice/settings.ts";
 import {
   userVolumeOf,
   useUserVolumes,
@@ -44,14 +49,18 @@ export function UserVolumeView({
         id={`${id}-volume`}
         type="range"
         min={0}
-        max={MAX_PLAYBACK_VOLUME * 100}
+        max={PLAYBACK_SLIDER_MAX}
         step={1}
-        value={Math.round(level.volume * 100)}
-        style={rangeFill(level.volume)}
+        value={playbackSliderPosition(level.volume)}
+        style={
+          {
+            "--lr-range-value": playbackSliderFill(level.volume),
+          } as CSSProperties
+        }
         aria-valuetext={`${Math.round(level.volume * 100)} %`}
         disabled={level.muted}
         onChange={(event) =>
-          setVolume(userId, Number(event.target.value) / 100)
+          setVolume(userId, playbackSliderVolume(Number(event.target.value)))
         }
         className="lr-range"
       />
@@ -93,12 +102,4 @@ export function LocallyMutedMark() {
       <span className="sr-only">Lokal stummgeschaltet</span>
     </span>
   );
-}
-
-/** Filled share of a 0–200 % `.lr-range` slider (WebKit has no progress
- * pseudo). */
-function rangeFill(value: number): CSSProperties {
-  return {
-    "--lr-range-value": `${Math.round((value / MAX_PLAYBACK_VOLUME) * 100)}%`,
-  } as CSSProperties;
 }

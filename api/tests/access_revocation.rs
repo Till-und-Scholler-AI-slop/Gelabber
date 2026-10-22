@@ -865,7 +865,7 @@ async fn go_live_with_one_pool_connection_keeps_bootstrap_responsive_and_persist
     assert_eq!(bootstrap.status, StatusCode::OK);
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
-            let hint: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM messages WHERE channel_id = $1 AND content LIKE '%ist live%')")
+            let hint: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM messages WHERE channel_id = $1 AND system_kind = 'live_started')")
                 .bind(text).fetch_one(&pool).await.unwrap();
             if hint { break; }
             tokio::time::sleep(Duration::from_millis(10)).await;

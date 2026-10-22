@@ -14,7 +14,7 @@
 
 mod common;
 
-use common::{Server, blocking, wait_for};
+use common::{Server, blocking, run_host_test, wait_for};
 use gelabber_media_core::{
     Audio, Consumer, Device, Direction, Engine, Producer, Source, Transport,
 };
@@ -111,6 +111,17 @@ async fn volume_above_one(engine: &Engine, consumer: &Consumer) {
     assert!(
         peak(&boosted) >= (peak(&unity) * 1.4).min(PLAYOUT_CEILING * 0.8),
         "volume 2 is louder: {unity} then {boosted}"
+    );
+
+    // Up to 400 %, still below the ceiling; more is clamped.
+    consumer.set_volume(9.0).unwrap();
+    let highest = playout_when(engine, "playout at volume 4", |p| {
+        p["gain"] == 4.0 && peak(p) > 0.0
+    })
+    .await;
+    assert!(
+        peak(&highest) <= PLAYOUT_CEILING + 1e-3,
+        "volume 4 stays below the ceiling: {highest}"
     );
 
     consumer.set_volume(0.5).unwrap();
@@ -816,42 +827,6 @@ async fn voice_modes(server: &Server, mic_id: &str, speakers_id: &str) {
         .await;
     }
     drop(original_producer);
-}
-
-/// Builds `desktop/native/tests/<name>.cc`, plain C++ without the core's
-/// libraries, with the host's compiler (GELABBER_HOST_CXX, else c++) and
-/// runs it. False when there is no compiler.
-fn run_host_test(name: &str, what: &str) -> bool {
-    let native = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../native");
-    let compiler = std::env::var("GELABBER_HOST_CXX").unwrap_or_else(|_| "c++".to_owned());
-    let program = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
-    let built = std::process::Command::new(&compiler)
-        .args(["-std=c++20", "-O2", "-I"])
-        .arg(native.join("src"))
-        .arg("-o")
-        .arg(&program)
-        .arg(native.join(format!("tests/{name}.cc")))
-        .output();
-    let built = match built {
-        Ok(built) => built,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("skipped: no C++ compiler {compiler:?} on this machine");
-            return false;
-        }
-        Err(error) => panic!("{compiler}: {error}"),
-    };
-    assert!(
-        built.status.success(),
-        "{compiler} on {name}.cc: {}",
-        String::from_utf8_lossy(&built.stderr)
-    );
-    let run = std::process::Command::new(&program)
-        .output()
-        .expect("the built test");
-    let said = String::from_utf8_lossy(&run.stdout);
-    eprint!("{said}");
-    assert!(run.status.success(), "{what}:\n{said}");
-    true
 }
 
 /// Source audio against sound cards whose clocks are off the system clock,
