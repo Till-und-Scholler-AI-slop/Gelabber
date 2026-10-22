@@ -752,7 +752,7 @@ export function editMessageOptions(client: QueryClient, channelId: string) {
         queryKey: messageKeys.channel(ctx.userId, ctx.generation, channelId),
         exact: true,
       });
-      notifyError(error);
+      notifyError(error, "Änderung nicht gespeichert.");
     },
     onSuccess: (
       message: Message,
@@ -1051,7 +1051,7 @@ export function deleteMessageOptions(client: QueryClient, channelId: string) {
         queryKey: messageKeys.channel(ctx.userId, ctx.generation, channelId),
         exact: true,
       });
-      notifyError(error);
+      notifyError(error, "Nachricht nicht gelöscht.");
     },
   };
 }
