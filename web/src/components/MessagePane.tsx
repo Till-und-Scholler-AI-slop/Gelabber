@@ -2118,7 +2118,7 @@ function Composer({
         </div>
       ) : null}
       <label className="sr-only" htmlFor={`compose-${channelId}`}>
-        Nachricht in {mention}
+        Nachricht an {mention}
         {channelName}
       </label>
       <div className="lr-composer-field">
