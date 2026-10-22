@@ -30,7 +30,7 @@ async function fresh(f, name) {
 async function visible(a, content) {
   const escaped = content.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   await log(a)
-    .locator("p")
+    .locator(".lr-message-text")
     .filter({ hasText: new RegExp(`^${escaped}(?:\\s*\\(bearbeitet\\))?$`) })
     .waitFor();
 }

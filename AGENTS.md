@@ -33,7 +33,7 @@ Keep CI lean. Pull requests check only what is needed to merge safely.
 
 - **Pull requests:** fmt, clippy/lint, tests, build, and one representative integration check per area. Aim for under 15 minutes per workflow with a warm cache.
 - **After merge (push to `main`/`v*`) and releases:** packaging, installers, package repositories, signing and uploads. Do not run these on every PR.
-- **Manual diagnostics** (fault matrices, soak and stability loops) go in their own `workflow_dispatch` workflow, not behind `if: inputs.*` steps in the PR gate (see `e2e-extended.yml`).
+- **Manual diagnostics** (fault matrices, soak and stability loops) go in their own workflow, started by hand or by a PR label, not behind `if: inputs.*` steps in the PR gate (see `e2e-extended.yml`: label `e2e-extended`).
 - **Lists of scripts** go behind one entry point (e.g. `npm run test:checks`), not one CI line per file. CI and developers run the same command.
 - **New check:** say what it catches that existing checks miss. Add it to an existing job unless a parallel job saves wall time. Remove checks that a new one replaces.
 - **Every workflow** sets top-level `permissions`, by default `contents: read`, with jobs adding only what they need. Every job sets `timeout-minutes`. Actions stay pinned to commit SHAs (`workflow-pins.yml`).

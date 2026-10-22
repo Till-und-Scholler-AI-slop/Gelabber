@@ -27,11 +27,11 @@ async function send(a, text) {
   await click(a, "Senden");
 }
 async function present(a, text) {
-  // The UI appends an edited marker inside the content paragraph. Match the
-  // complete content, allowing only that known marker, never a text prefix.
+  // The row's text (markdown, no <p>) ends in an edited marker once edited.
+  // Match the complete content, allowing only that marker, never a prefix.
   const escaped = text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   await log(a)
-    .locator("p")
+    .locator(".lr-message-text")
     .filter({ hasText: new RegExp(`^${escaped}(?:\\s*\\(bearbeitet\\))?$`) })
     .waitFor();
 }
@@ -60,7 +60,8 @@ export async function chatFaultScenarios(h, f) {
     const c = await fresh(f, "E2E parallel attempts");
     const hold = latch();
     let posts = 0,
-      held = false;
+      held = false,
+      routeError = false;
     const bytes = await readFile(
       new URL("../fixtures/smoke.png", import.meta.url),
     );
@@ -72,11 +73,18 @@ export async function chatFaultScenarios(h, f) {
         if (route.request().postDataJSON().content === text && posts === 1) {
           held = true;
           await hold.promise;
-          return route.fulfill({
-            status: 429,
-            contentType: "application/json",
-            body: '{"error":"rate_limited"}',
-          });
+          // The client gives up on a request after 10 s; fulfilling it then
+          // throws here, outside the scenario, and would hide its failure.
+          try {
+            return await route.fulfill({
+              status: 429,
+              contentType: "application/json",
+              body: '{"error":"rate_limited"}',
+            });
+          } catch {
+            routeError = true;
+            return;
+          }
         }
       }
       await route.continue();
@@ -114,10 +122,11 @@ export async function chatFaultScenarios(h, f) {
       const before = await messages(f.member, c.id);
       check(
         posts === 2 &&
+          !routeError &&
           before.filter((m) => m.content === success).length === 1 &&
           !before.some((m) => m.content === text),
         "parallel-control-invalid",
-        { posts },
+        { posts, routeError },
       );
       await f.owner.page.unroute(c.endpoint);
       await failed
