@@ -5,7 +5,7 @@ use mediasoup::prelude::*;
 use std::{
     future::Future,
     sync::{
-        Mutex,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -125,15 +125,26 @@ pub struct NativeProducer {
     id: ProducerId,
     confirmed: AtomicBool,
     transport: WebRtcTransport,
+    /// Set once the owning worker died or hung. Its thread forwards nothing
+    /// more, and a hung one would never answer the confirmation dump.
+    worker_lost: Arc<AtomicBool>,
 }
 impl NativeProducer {
-    pub fn new(producer: Producer, transport: WebRtcTransport) -> Self {
+    pub fn new(
+        producer: Producer,
+        transport: WebRtcTransport,
+        worker_lost: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             id: producer.id(),
             confirmed: AtomicBool::new(false),
             resource: Resource::new(producer),
             transport,
+            worker_lost,
         }
+    }
+    pub fn worker_lost(&self) -> bool {
+        self.worker_lost.load(Ordering::SeqCst)
     }
     pub fn id(&self) -> ProducerId {
         self.id
@@ -166,9 +177,9 @@ impl NativeProducer {
         self.resource.close();
         // A local drop only enqueues the native close. Confirm removal before
         // terminal events or lease release; the worker heartbeat guards stalls.
-        let (id, transport) = (self.id, &self.transport);
+        let (id, transport, lost) = (self.id, &self.transport, &self.worker_lost);
         let removed = await_native_removal(
-            || transport.closed(),
+            || transport.closed() || lost.load(Ordering::SeqCst),
             move || async move {
                 tokio::time::timeout(DUMP_TIMEOUT, transport.dump())
                     .await
@@ -191,17 +202,28 @@ pub struct NativeConsumer {
     id: ConsumerId,
     confirmed: AtomicBool,
     transport: WebRtcTransport,
+    /// Set once the owning worker died or hung. Its thread forwards nothing
+    /// more, and a hung one would never answer the confirmation dump.
+    worker_lost: Arc<AtomicBool>,
     rtp: RtpParameters,
 }
 impl NativeConsumer {
-    pub fn new(consumer: Consumer, transport: WebRtcTransport) -> Self {
+    pub fn new(
+        consumer: Consumer,
+        transport: WebRtcTransport,
+        worker_lost: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             id: consumer.id(),
             confirmed: AtomicBool::new(false),
             rtp: consumer.rtp_parameters().clone(),
             resource: Resource::new(consumer),
             transport,
+            worker_lost,
         }
+    }
+    pub fn worker_lost(&self) -> bool {
+        self.worker_lost.load(Ordering::SeqCst)
     }
     pub fn id(&self) -> ConsumerId {
         self.id
@@ -240,9 +262,9 @@ impl NativeConsumer {
     }
     pub async fn confirm_closed(&self) {
         self.resource.close();
-        let (id, transport) = (self.id, &self.transport);
+        let (id, transport, lost) = (self.id, &self.transport, &self.worker_lost);
         let removed = await_native_removal(
-            || transport.closed(),
+            || transport.closed() || lost.load(Ordering::SeqCst),
             move || async move {
                 tokio::time::timeout(DUMP_TIMEOUT, transport.dump())
                     .await
