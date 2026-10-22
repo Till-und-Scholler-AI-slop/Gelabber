@@ -1,8 +1,7 @@
 // Local voice state, capture and playback; mediasoup owns browser transport.
 // Join updates the store immediately; ticket / ICE / getUserMedia run after.
 // Camera and Live (a screen): local preview first, publish on the media path.
-// An older client's Go Live is received like a Live. Chat WS: presence
-// (j/l/p/u).
+// Chat WS: presence (j/l/p/u).
 // Own versioned Media WS: public mediasoup-client transport and source signaling.
 // The parts of a call live beside it: sessionState.ts (the state every part
 // shares), callMicrophone.ts, localVideo.ts, localSourceAudio.ts,
@@ -291,13 +290,13 @@ function upsert(
 
 function noteReceived(
   userId: string,
-  kind: "v" | "s" | "l",
+  kind: "v" | "s",
   stream: MediaStream,
   track: MediaStreamTrack,
 ): void {
   // Retire an old tile alias before binding the SDK Consumer's current source.
   for (const [publisher, sources] of voice.receivedVideo) {
-    for (const previousKind of ["v", "s", "l"] as const) {
+    for (const previousKind of ["v", "s"] as const) {
       if (
         (publisher !== userId || previousKind !== kind) &&
         sources[previousKind]?.getVideoTracks().includes(track)
@@ -313,25 +312,25 @@ function noteReceived(
     if (!held || held[kind] !== stream) return;
     const next = { ...held };
     delete next[kind];
-    if (!next.v && !next.s && !next.l) voice.receivedVideo.delete(userId);
+    if (!next.v && !next.s) voice.receivedVideo.delete(userId);
     else voice.receivedVideo.set(userId, next);
     dropRemote(userId, kind);
   });
 }
 
 /** An explicit unpublish ends that tile. A later `t:"p"` must not restore it. */
-function forgetReceived(userId: string, kind: "v" | "s" | "l"): void {
+function forgetReceived(userId: string, kind: "v" | "s"): void {
   const held = voice.receivedVideo.get(userId);
   if (held?.[kind]) {
     const next = { ...held };
     delete next[kind];
-    if (!next.v && !next.s && !next.l) voice.receivedVideo.delete(userId);
+    if (!next.v && !next.s) voice.receivedVideo.delete(userId);
     else voice.receivedVideo.set(userId, next);
   }
   dropRemote(userId, kind);
 }
 
-function reattachReceived(userId: string, kind: "v" | "s" | "l"): void {
+function reattachReceived(userId: string, kind: "v" | "s"): void {
   const stream = voice.receivedVideo.get(userId)?.[kind];
   if (!stream) return;
   const dead = stream
@@ -359,7 +358,7 @@ function clearReceived(): void {
   voice.receivedVideo.clear();
 }
 
-function dropRemote(userId: string, kind?: "v" | "s" | "l"): void {
+function dropRemote(userId: string, kind?: "v" | "s"): void {
   const state = useVoice.getState();
   if (!state.remote[userId]) return;
   if (!kind) {
@@ -371,7 +370,7 @@ function dropRemote(userId: string, kind?: "v" | "s" | "l"): void {
   const current = { ...state.remote[userId] };
   if (kind) delete current[kind];
   const next = { ...state.remote };
-  if (!current.v && !current.s && !current.l) {
+  if (!current.v && !current.s) {
     delete next[userId];
   } else {
     next[userId] = current;
@@ -449,9 +448,9 @@ function onSig(event: SigEvent): void {
           [userId]: { pubs },
         },
       });
-      if (event.t === "u" && (event.k === "sa" || event.k === "la"))
-        voice.receivedAudio.dropSource(userId, event.k === "sa" ? "s" : "l");
-      if (event.k === "v" || event.k === "s" || event.k === "l") {
+      if (event.t === "u" && event.k === "sa")
+        voice.receivedAudio.dropSource(userId, "s");
+      if (event.k === "v" || event.k === "s") {
         if (event.t === "u") {
           // Gateway `t:"l"` keeps a track that is still arriving. `t:"u"`
           // means that the camera or a Live actually ended.
@@ -551,7 +550,6 @@ function diagnosticVideoSources(): Record<string, VideoSource> {
   for (const source of voice.seat.connection?.consumers() ?? []) {
     if (source.k === "v") sources[source.track.id] = "camera";
     if (source.k === "s") sources[source.track.id] = "screen";
-    if (source.k === "l") sources[source.track.id] = "live";
   }
   return sources;
 }
@@ -624,8 +622,7 @@ function voiceCaps(): Caps {
     const encodings = sender.getParameters?.().encodings;
     if (!encodings?.length) continue;
     const kind = sender.sourceKind;
-    const source: AudioSource =
-      kind === "sa" ? "screen-audio" : kind === "la" ? "live-audio" : "voice";
+    const source: AudioSource = kind === "sa" ? "screen-audio" : "voice";
     audioLimits[source] = encodings.every(
       (encoding) => typeof encoding.maxBitrate === "number",
     )
@@ -641,9 +638,7 @@ function voiceCaps(): Caps {
       sender.track.kind === "audio"
         ? kind === "sa"
           ? "screen-audio"
-          : kind === "la"
-            ? "live-audio"
-            : "voice"
+          : "voice"
         : diagnosticVideoSources()[sender.track.id];
     if (source) senderPriorities[source] = readSenderPriority(sender);
   }
@@ -684,8 +679,8 @@ function attachSeatDiagnostics(generation: number): void {
 }
 
 function codecOptionsFor(kind: TrackKind): ProducerCodecOptions {
-  if (kind === "v" || kind === "s" || kind === "l") return {};
-  const source = kind === "sa" || kind === "la";
+  if (kind === "v" || kind === "s") return {};
+  const source = kind === "sa";
   const original = useMediaSettings.getState().processingMode === "original";
   const bitrate = source ? sourceAudioBitrate() : audioBitrate();
   return {
@@ -707,7 +702,7 @@ function closeReceivedSource(source: ReceivedSource): void {
   voice.receivedIdentity.delete(source.track);
   voice.receivedAudio.close(source.track, source.kind === "audio");
   if (source.kind === "audio") return;
-  if (source.k !== "v" && source.k !== "s" && source.k !== "l") return;
+  if (source.k !== "v" && source.k !== "s") return;
   const held = voice.receivedVideo.get(source.owner)?.[source.k];
   if (held === source.stream) {
     forgetReceived(source.owner, source.k);
@@ -1163,7 +1158,7 @@ function onMediaFrame(frame: MediaServerFrame): void {
     return;
   }
   if (!voice.seat.accepted) {
-    rollbackSeat(new MediaError(frame.e, frame.lc));
+    rollbackSeat(new MediaError(frame.e));
     return;
   }
   reportStreamOnce(frame.e);
@@ -1390,7 +1385,7 @@ export function voiceSessionForTests(): {
 }
 
 /** A user's source subscription survives route changes and transport recovery. */
-export function toggleSourceWatch(userId: string, kind: "s" | "l"): void {
+export function toggleSourceWatch(userId: string, kind: "s"): void {
   const state = useVoice.getState();
   if (state.status !== "joined" || userId === currentUserId()) return;
   const on = !state.sourceSubscriptions[userId]?.[kind];
@@ -1415,10 +1410,10 @@ export function toggleSourceWatch(userId: string, kind: "s" | "l"): void {
 
 function parseIncomingVideo(
   track: MediaStreamTrack,
-): { userId: string; k: "v" | "s" | "l" } | null {
+): { userId: string; k: "v" | "s" } | null {
   const identity = voice.receivedIdentity.get(track);
   const parsed = identity ? { userId: identity.owner, k: identity.k } : null;
-  return parsed && (parsed.k === "v" || parsed.k === "s" || parsed.k === "l")
+  return parsed && (parsed.k === "v" || parsed.k === "s")
     ? { userId: parsed.userId, k: parsed.k }
     : null;
 }
@@ -1558,9 +1553,8 @@ async function startPeer(
     for (const [userId, subscriptions] of Object.entries(
       useVoice.getState().sourceSubscriptions,
     ))
-      for (const kind of ["s", "l"] as const)
-        if (subscriptions[kind])
-          await voice.seat.request("w", { u: userId, k: kind, on: true });
+      if (subscriptions.s)
+        await voice.seat.request("w", { u: userId, k: "s", on: true });
     attachSeatDiagnostics(mine);
   } catch (error) {
     if (voice.seat.generation !== mine) return;

@@ -27,18 +27,6 @@ export async function deleteTopicKeys(target, keys) {
   );
   return count;
 }
-export async function ownedLiveExists(target, id) {
-  assert.match(
-    id,
-    /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/,
-  );
-  const url = new URL(target);
-  assert.equal(url.protocol, "redis:");
-  assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(url.hostname));
-  const count = await integerCommand(url, ["EXISTS", `gb:live:${id}`]);
-  assert.ok(count === 0 || count === 1);
-  return count;
-}
 async function integerCommand(url, parts) {
   const db = url.pathname.slice(1) || "0";
   assert.match(db, /^\d+$/);

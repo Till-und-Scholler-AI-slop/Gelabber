@@ -94,7 +94,7 @@ impl Sfu {
                         if let (Some(sfu), Some(room), Some(p)) =
                             (weak.upgrade(), room.upgrade(), publication.upgrade())
                         {
-                            sfu.remove_publication(&room, &p, true).await;
+                            sfu.retire_publication(&room, &p).await;
                         }
                     });
                 })

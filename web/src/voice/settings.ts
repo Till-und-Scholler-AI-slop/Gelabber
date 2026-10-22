@@ -179,7 +179,7 @@ export type MediaSettings = {
   economyMode: boolean;
   /** Camera capture + that sender's share of the video budget. */
   cameraProfile: StreamProfileId;
-  /** Live (a display capture); older clients used it for Go Live too. */
+  /** Live (a display capture). */
   screenProfile: StreamProfileId;
   /** 0 = no custom limit; otherwise explicit shared video payload cap in bit/s. */
   videoUploadLimit: number;

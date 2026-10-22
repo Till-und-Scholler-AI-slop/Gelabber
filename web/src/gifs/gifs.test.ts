@@ -150,6 +150,7 @@ describe("sending a GIF", () => {
     expect(post?.body).toEqual({
       content: "",
       gif: { slug: gif.slug, query: "hallo" },
+      nonce: expect.any(String),
     });
   });
 
@@ -196,6 +197,8 @@ describe("sending a GIF", () => {
     expect(posts.at(-1)?.body).toEqual({
       content: "",
       gif: { slug: gif.slug, query: "" },
+      // The retry is the same attempt: the same nonce (#355).
+      nonce: attempt!.id.slice("tmp:".length),
     });
   });
 });

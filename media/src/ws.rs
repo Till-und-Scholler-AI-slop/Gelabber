@@ -308,11 +308,11 @@ async fn handle(
     }
     *last_id = id;
     let result = match frame {
-        ClientFrame::Join { tk, w, v, .. } => {
+        ClientFrame::Join { tk, v, .. } => {
             if joined.is_some() {
                 Err("bad_request")
             } else {
-                join(state, &tk, w, v, out, joined).await
+                join(state, &tk, v, out, joined).await
             }
         }
         ClientFrame::Leave { .. } => {
@@ -338,14 +338,10 @@ async fn handle(
 async fn join(
     state: &AppState,
     code: &str,
-    watch: Option<Uuid>,
     version: u8,
     out: &mpsc::Sender<ServerFrame>,
     joined: &mut Option<(PeerId, Uuid)>,
 ) -> Result<Value, &'static str> {
-    if watch.is_some_and(|user| user.is_nil()) {
-        return Err("bad_request");
-    }
     let claim = ticket::consume(state.sfu.redis(), code)
         .await
         .map_err(|_| "unauthorized")?
@@ -354,7 +350,7 @@ async fn join(
     let user = claim.claim.u;
     let peer = state
         .sfu
-        .join_authorized_watch_version(claim, watch, version, out.clone())
+        .join_authorized_version(claim, version, out.clone())
         .await
         .map_err(|err| err.code())?;
     *joined = Some((peer, channel));

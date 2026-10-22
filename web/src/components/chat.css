@@ -1315,9 +1315,21 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   flex-shrink: 0;
   padding: 0 16px 14px;
 }
+/* Room for the toasts above the composer (Toasts.tsx measures them), so
+   they do not cover the newest message and its actions (#354). The list
+   above gives way and, at its end, keeps the newest message in view. With
+   toasts it is their height plus the 12px they keep from the composer. */
+.lr-toast-space {
+  flex-shrink: 0;
+  height: calc(
+    var(--lr-toast-space, 0px) + min(var(--lr-toast-space, 0px), 12px)
+  );
+  transition: height var(--lr-dur) var(--lr-ease-standard);
+}
+
 .lr-composer,
 .lr-composer-readonly {
-  /* Toasts on phones sit above it, however tall the draft is. */
+  /* Toasts sit above it, however tall the draft is. */
   anchor-name: --lr-composer;
 }
 .lr-composer-readonly {
