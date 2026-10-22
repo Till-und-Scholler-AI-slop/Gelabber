@@ -20,6 +20,7 @@ import {
   editMessageOptions,
   messageKeys,
   messageQueryOptions,
+  OFFLINE_SEND_WAIT_MS,
   sendMessageAttempt,
 } from "./queries.ts";
 import type { Message, MessagePage } from "./types.ts";
@@ -299,6 +300,28 @@ describe("durable send attempts with controlled HTTP responses", () => {
       expect(attempts()).toEqual([]);
       expect(requests.filter((k) => k.endsWith("/messages"))).toHaveLength(1);
     } finally {
+      onlineManager.setOnline(true);
+    }
+  });
+
+  it("tries a send anyway when the device keeps saying offline", async () => {
+    routes(() => json(200, row("server-w", "waited")));
+    await login(user.email, "password");
+    onlineManager.setOnline(false);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const sending = sendMessageAttempt("c", author, { content: "waited" });
+      await vi.advanceTimersByTimeAsync(OFFLINE_SEND_WAIT_MS - 1);
+      expect(attempts()).toMatchObject([
+        { content: "waited", status: "sending" },
+      ]);
+      expect(requests.filter((k) => k.endsWith("/messages"))).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      await sending;
+      expect(attempts()).toEqual([]);
+      expect(requests.filter((k) => k.endsWith("/messages"))).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
       onlineManager.setOnline(true);
     }
   });

@@ -406,19 +406,28 @@ function requireAttempt(attempt: SendAttempt): void {
     throw new DOMException("Session changed", "AbortError");
 }
 
-/** Resolves once the device is online. Nothing has left before that, so a
- *  send made offline only waits, on screen, and is never in doubt. */
+/** How long a send made offline waits for the network before it tries
+ *  anyway: some platforms report offline wrongly (captive portals, some
+ *  VPN or WebKitGTK setups), and a try ends in a visible error instead of
+ *  "sendet" forever. */
+export const OFFLINE_SEND_WAIT_MS = 30_000;
+
+/** Resolves once the device is online, or after OFFLINE_SEND_WAIT_MS.
+ *  Nothing has left before that, so a send made offline only waits, on
+ *  screen, and is never in doubt. */
 function untilOnline(signal: AbortSignal): Promise<void> {
   if (onlineManager.isOnline() || signal.aborted) return Promise.resolve();
   return new Promise((resolve) => {
     const done = () => {
       off();
+      clearTimeout(timer);
       signal.removeEventListener("abort", done);
       resolve();
     };
     const off = onlineManager.subscribe((online) => {
       if (online) done();
     });
+    const timer = setTimeout(done, OFFLINE_SEND_WAIT_MS);
     signal.addEventListener("abort", done);
   });
 }
