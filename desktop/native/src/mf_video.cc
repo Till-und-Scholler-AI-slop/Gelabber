@@ -1,9 +1,12 @@
-#include "mf_h264.h"
+#include "mf_video.h"
+
+#include "av1_obu.h"
 
 #include <api/video/encoded_image.h>
 #include <api/video/i420_buffer.h>
 #include <api/video/video_bitrate_allocation.h>
 #include <api/video/video_frame.h>
+#include <api/video_codecs/scalability_mode.h>
 #include <api/video_codecs/video_codec.h>
 #include <common_video/h264/h264_bitstream_parser.h>
 #include <modules/video_coding/include/video_codec_interface.h>
@@ -96,41 +99,54 @@ namespace gelabber
 			return list;
 		}
 
-		std::string Name(IMFActivate* activate)
+		std::string Name(IMFActivate* activate, SystemCodec codec)
 		{
+			const std::string unnamed = std::string(CodecName(codec)) + " MFT";
 			wchar_t* name = nullptr;
 			UINT32 length = 0;
 			if (FAILED(activate->GetAllocatedString(MFT_FRIENDLY_NAME_Attribute, &name, &length)))
-				return "H264 MFT";
+				return unnamed;
 			auto out = Utf8(name);
 			CoTaskMemFree(name);
-			return out.empty() ? "H264 MFT" : out;
+			return out.empty() ? unnamed : out;
 		}
 
-		std::vector<winrt::com_ptr<IMFActivate>> HardwareEncoders()
+		// MFVideoFormat_AV1 (FCC('AV01')), spelled out: older Windows SDKs
+		// lack it.
+		constexpr GUID kAv1Format = { 0x31305641, 0x0000, 0x0010, { 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71 } };
+
+		const GUID& FormatOf(SystemCodec codec)
+		{
+			return codec == SystemCodec::kH264 ? MFVideoFormat_H264 : kAv1Format;
+		}
+
+		std::vector<winrt::com_ptr<IMFActivate>> HardwareEncoders(SystemCodec codec)
 		{
 			return Enumerate(
 			  MFT_CATEGORY_VIDEO_ENCODER,
 			  MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER,
 			  MFVideoFormat_NV12,
-			  MFVideoFormat_H264);
+			  FormatOf(codec));
 		}
 
-		std::vector<winrt::com_ptr<IMFActivate>> SoftwareEncoders()
+		// AV1 on the CPU is libaom's, not an MFT's.
+		std::vector<winrt::com_ptr<IMFActivate>> SoftwareEncoders(SystemCodec codec)
 		{
+			if (codec != SystemCodec::kH264)
+				return {};
 			return Enumerate(
 			  MFT_CATEGORY_VIDEO_ENCODER,
 			  MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER,
 			  MFVideoFormat_NV12,
-			  MFVideoFormat_H264);
+			  FormatOf(codec));
 		}
 
-		std::vector<winrt::com_ptr<IMFActivate>> Decoders()
+		std::vector<winrt::com_ptr<IMFActivate>> Decoders(SystemCodec codec)
 		{
 			return Enumerate(
 			  MFT_CATEGORY_VIDEO_DECODER,
 			  MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER,
-			  MFVideoFormat_H264,
+			  FormatOf(codec),
 			  MFVideoFormat_NV12);
 		}
 
@@ -181,6 +197,13 @@ namespace gelabber
 			return sample;
 		}
 
+		// An AV1 temporal delimiter OBU, with its size field.
+		constexpr uint8_t kTemporalDelimiter[] = { av1::kTemporalDelimiter << 3 | 0x02, 0x00 };
+
+		// Inputs without a decoded frame after which a decoder counts as
+		// stuck (two seconds at 30 fps).
+		constexpr int kStuckAfter = 60;
+
 		enum class Pulled
 		{
 			Frame,
@@ -218,7 +241,7 @@ namespace gelabber
 				std::weak_ptr<EncoderSession> session;
 			};
 
-			explicit EncoderSession(Sink sink) : sink(std::move(sink))
+			EncoderSession(SystemCodec codec, Sink sink) : codec(codec), sink(std::move(sink))
 			{
 			}
 
@@ -233,7 +256,7 @@ namespace gelabber
 			{
 				for (const auto& candidate : candidates)
 				{
-					const auto name = Name(candidate.get());
+					const auto name = Name(candidate.get(), codec);
 					if (excluded.count(name))
 						continue;
 					if (Start(candidate, width, height, fps, bps))
@@ -357,20 +380,25 @@ namespace gelabber
 				// Key frames come when libwebrtc asks for them.
 				SetValue(codecApi.get(), CODECAPI_AVEncMPVGOPSize, static_cast<UINT32>(fps) * 60);
 
-				// Encoders take their output type first. Constrained Baseline
-				// is what the router and every receiver have.
+				// Encoders take their output type first. H264: Constrained
+				// Baseline is what the router and every receiver have. AV1: the
+				// profile follows from NV12 (Main, 8 bits, 4:2:0).
+				std::vector<std::optional<UINT32>> profiles{ std::nullopt };
+				if (codec == SystemCodec::kH264)
+					profiles = { static_cast<UINT32>(eAVEncH264VProfile_ConstrainedBase),
+						         static_cast<UINT32>(eAVEncH264VProfile_Base) };
 				bool output = false;
-				for (UINT32 profile : { static_cast<UINT32>(eAVEncH264VProfile_ConstrainedBase),
-				                        static_cast<UINT32>(eAVEncH264VProfile_Base) })
+				for (const auto profile : profiles)
 				{
 					winrt::com_ptr<IMFMediaType> type;
 					if (FAILED(MFCreateMediaType(type.put())))
 						return false;
 					type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-					type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
+					type->SetGUID(MF_MT_SUBTYPE, FormatOf(codec));
 					type->SetUINT32(MF_MT_AVG_BITRATE, bps);
 					type->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-					type->SetUINT32(MF_MT_MPEG2_PROFILE, profile);
+					if (profile)
+						type->SetUINT32(MF_MT_MPEG2_PROFILE, *profile);
 					MFSetAttributeSize(type.get(), MF_MT_FRAME_SIZE, width, height);
 					MFSetAttributeRatio(type.get(), MF_MT_FRAME_RATE, fps, 1);
 					MFSetAttributeRatio(type.get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
@@ -432,6 +460,9 @@ namespace gelabber
 				return true;
 			}
 
+			// H264: SPS/PPS in Annex B. AV1: the sequence header OBU, from the
+			// blob itself or from the configOBUs of an AV1CodecConfigurationRecord
+			// (av1C, first byte 0x81).
 			void ReadSequenceHeader()
 			{
 				header.clear();
@@ -443,6 +474,11 @@ namespace gelabber
 					header.resize(size);
 					if (FAILED(current->GetBlob(MF_MT_MPEG_SEQUENCE_HEADER, header.data(), size, nullptr)))
 						header.clear();
+				}
+				if (codec == SystemCodec::kAv1 && !header.empty())
+				{
+					const size_t skip = header.size() > 4 && header[0] == 0x81 ? 4 : 0;
+					header            = av1::SequenceHeader(header.data() + skip, header.size() - skip);
 				}
 			}
 
@@ -565,18 +601,33 @@ namespace gelabber
 				if (FAILED(sample->ConvertToContiguousBuffer(buffer.put())) ||
 				    FAILED(buffer->Lock(&data, nullptr, &length)))
 					return;
-				const bool key = clean || HasNal(data, length, 5);
+				bool key;
 				std::vector<uint8_t> bytes;
-				// Some encoders keep SPS/PPS in the media type only.
-				if (key && !header.empty() && !HasNal(data, length, 7))
-					bytes.insert(bytes.end(), header.begin(), header.end());
-				bytes.insert(bytes.end(), data, data + length);
+				if (codec == SystemCodec::kH264)
+				{
+					key = clean || HasNal(data, length, 5);
+					// Some encoders keep SPS/PPS in the media type only.
+					if (key && !header.empty() && !HasNal(data, length, 7))
+						bytes.insert(bytes.end(), header.begin(), header.end());
+					bytes.insert(bytes.end(), data, data + length);
+				}
+				else
+				{
+					key = clean;
+					// The last sequence header goes in front of a key frame
+					// that comes without one.
+					if (auto inBand = av1::SequenceHeader(data, length); !inBand.empty())
+						header = std::move(inBand);
+					bytes = key ? av1::WithSequenceHeader(data, length, header)
+					            : std::vector<uint8_t>(data, data + length);
+				}
 				buffer->Unlock();
 				std::lock_guard lock(sinkMutex);
 				if (sink && !bytes.empty())
 					sink(bytes.data(), bytes.size(), time, key);
 			}
 
+			const SystemCodec codec;
 			std::mutex sinkMutex;
 			Sink sink;
 			std::mutex ioMutex;
@@ -596,27 +647,37 @@ namespace gelabber
 		};
 
 		// One picture size on one MFT, like libwebrtc's single-stream
-		// encoders. A failing MFT is replaced by the next candidate.
+		// encoders. A failing MFT is replaced by the next candidate. AV1 runs
+		// behind libaom (HardwareFirstEncoder), which takes over once no MFT
+		// is left.
 		class MfEncoder : public webrtc::VideoEncoder
 		{
 		public:
+			explicit MfEncoder(SystemCodec codec) : codec(codec)
+			{
+			}
+
 			~MfEncoder() override
 			{
 				Release();
 			}
 
-			int InitEncode(const webrtc::VideoCodec* codec, const Settings&) override
+			int InitEncode(const webrtc::VideoCodec* settings, const Settings&) override
 			{
 				Release();
-				if (!codec || codec->codecType != webrtc::kVideoCodecH264 || codec->width < 2 ||
-				    codec->height < 2 || codec->numberOfSimulcastStreams > 1 || !EnsureMf())
+				if (!settings || settings->codecType != Type() || settings->width < 2 || settings->height < 2 ||
+				    settings->numberOfSimulcastStreams > 1 || !EnsureMf())
 					return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
-				width  = codec->width & ~1;
-				height = codec->height & ~1;
-				fps    = std::max<int>(1, codec->maxFramerate);
-				bitrate.store(std::max<uint32_t>(codec->startBitrate, 100) * 1000);
+				// AV1 in one spatial and one temporal layer; libaom does the others.
+				if (codec == SystemCodec::kAv1 &&
+				    settings->GetScalabilityMode().value_or(webrtc::ScalabilityMode::kL1T1) != webrtc::ScalabilityMode::kL1T1)
+					return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
+				width  = settings->width & ~1;
+				height = settings->height & ~1;
+				fps    = std::max<int>(1, settings->maxFramerate);
+				bitrate.store(std::max<uint32_t>(settings->startBitrate, 100) * 1000);
 				excluded.clear();
-				return Open() ? WEBRTC_VIDEO_CODEC_OK : WEBRTC_VIDEO_CODEC_ERROR;
+				return Open() ? WEBRTC_VIDEO_CODEC_OK : NoEncoder();
 			}
 
 			int32_t RegisterEncodeCompleteCallback(webrtc::EncodedImageCallback* callback) override
@@ -649,7 +710,7 @@ namespace gelabber
 					session->Close();
 					session.reset();
 					if (!Open())
-						return WEBRTC_VIDEO_CODEC_ERROR;
+						return NoEncoder();
 					forceKey = true;
 				}
 				const uint32_t target = bitrate.load();
@@ -737,11 +798,14 @@ namespace gelabber
 			{
 				EncoderInfo info;
 				info.supports_native_handle         = false;
-				info.implementation_name            = "Media Foundation " + (session ? session->name : "H264");
+				info.implementation_name =
+				  "Media Foundation " + (session ? session->name : std::string(CodecName(codec)));
 				info.is_hardware_accelerated        = session && session->Hardware();
 				info.supports_simulcast             = false;
 				info.requested_resolution_alignment = 2;
-				info.scaling_settings               = ScalingSettings(24, 37);
+				// libwebrtc reads no QP from AV1 (see Deliver).
+				info.scaling_settings =
+				  codec == SystemCodec::kH264 ? ScalingSettings(24, 37) : ScalingSettings(ScalingSettings::kOff);
 				info.preferred_pixel_formats        = { webrtc::VideoFrameBuffer::Type::kI420,
 					                                    webrtc::VideoFrameBuffer::Type::kNV12 };
 				return info;
@@ -758,20 +822,33 @@ namespace gelabber
 				std::optional<webrtc::ColorSpace> colorSpace;
 			};
 
+			webrtc::VideoCodecType Type() const
+			{
+				return codec == SystemCodec::kH264 ? webrtc::kVideoCodecH264 : webrtc::kVideoCodecAV1;
+			}
+
+			// Without an MFT: AV1 hands over to libaom, H264 has nothing else.
+			int NoEncoder() const
+			{
+				return codec == SystemCodec::kH264 ? WEBRTC_VIDEO_CODEC_ERROR : WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
+			}
+
 			bool Open()
 			{
 				auto next = std::make_shared<EncoderSession>(
+				  codec,
 				  [this](const uint8_t* data, size_t size, LONGLONG time, bool key) { Deliver(data, size, time, key); });
-				if (!next->Open(HardwareEncoders(), excluded, width, height, fps, bitrate.load()) &&
-				    !next->Open(SoftwareEncoders(), excluded, width, height, fps, bitrate.load()))
+				if (!next->Open(HardwareEncoders(codec), excluded, width, height, fps, bitrate.load()) &&
+				    !next->Open(SoftwareEncoders(codec), excluded, width, height, fps, bitrate.load()))
 				{
-					RTC_LOG(LS_WARNING) << "no Media Foundation H264 encoder takes " << width << "x" << height;
+					RTC_LOG(LS_WARNING) << "no Media Foundation " << CodecName(codec) << " encoder takes " << width
+					                    << "x" << height;
 					return false;
 				}
 				appliedBitrate = bitrate.load();
 				session        = std::move(next);
-				RTC_LOG(LS_INFO) << "Media Foundation H264 " << session->name << " " << width << "x" << height
-				                 << "@" << fps;
+				RTC_LOG(LS_INFO) << "Media Foundation " << CodecName(codec) << " " << session->name << " " << width
+				                 << "x" << height << "@" << fps;
 				return true;
 			}
 
@@ -797,18 +874,22 @@ namespace gelabber
 				image.SetColorSpace(meta.colorSpace);
 				image._frameType =
 				  key ? webrtc::VideoFrameType::kVideoFrameKey : webrtc::VideoFrameType::kVideoFrameDelta;
-				parser.ParseBitstream(image);
-				image.qp_ = parser.GetLastSliceQp().value_or(-1);
 
 				webrtc::CodecSpecificInfo info;
-				info.codecType                             = webrtc::kVideoCodecH264;
-				info.codecSpecific.H264.packetization_mode = webrtc::H264PacketizationMode::NonInterleaved;
-				info.codecSpecific.H264.temporal_idx       = webrtc::kNoTemporalIdx;
-				info.codecSpecific.H264.idr_frame          = key;
-				info.codecSpecific.H264.base_layer_sync    = false;
+				info.codecType = Type();
+				if (codec == SystemCodec::kH264)
+				{
+					parser.ParseBitstream(image);
+					image.qp_ = parser.GetLastSliceQp().value_or(-1);
+					info.codecSpecific.H264.packetization_mode = webrtc::H264PacketizationMode::NonInterleaved;
+					info.codecSpecific.H264.temporal_idx       = webrtc::kNoTemporalIdx;
+					info.codecSpecific.H264.idr_frame          = key;
+					info.codecSpecific.H264.base_layer_sync    = false;
+				}
 				callback->OnEncodedImage(image, &info);
 			}
 
+			const SystemCodec codec;
 			std::shared_ptr<EncoderSession> session;
 			std::set<std::string> excluded;
 			int width{ 0 };
@@ -861,7 +942,7 @@ namespace gelabber
 					layer->owner    = this;
 					layer->width    = single.width;
 					layer->height   = single.height;
-					layer->encoder  = std::make_unique<MfEncoder>();
+					layer->encoder  = std::make_unique<MfEncoder>(SystemCodec::kH264);
 					layer->encoder->RegisterEncodeCompleteCallback(layer.get());
 					const int result = layer->encoder->InitEncode(&single, settings);
 					if (result != WEBRTC_VIDEO_CODEC_OK)
@@ -949,7 +1030,8 @@ namespace gelabber
 
 			EncoderInfo GetEncoderInfo() const override
 			{
-				EncoderInfo info = layers.empty() ? MfEncoder().GetEncoderInfo() : layers.front()->encoder->GetEncoderInfo();
+				EncoderInfo info = layers.empty() ? MfEncoder(SystemCodec::kH264).GetEncoderInfo()
+				                                  : layers.front()->encoder->GetEncoderInfo();
 				info.supports_simulcast                     = true;
 				info.apply_alignment_to_all_simulcast_layers = true;
 				return info;
@@ -984,9 +1066,16 @@ namespace gelabber
 
 		// Microsoft's H264 decoder MFT, on the GPU through DXVA when it gets
 		// a Direct3D 11 device. Synchronous: frames come out of Decode().
+		// AV1: Microsoft's AV1 decoder (AV1 Video Extension) only where it
+		// decodes through DXVA, behind dav1d (HardwareFirstDecoder), which
+		// takes over when it fails or puts out no frames.
 		class MfDecoder : public webrtc::VideoDecoder
 		{
 		public:
+			explicit MfDecoder(SystemCodec codec) : codec(codec)
+			{
+			}
+
 			~MfDecoder() override
 			{
 				Release();
@@ -1002,12 +1091,14 @@ namespace gelabber
 				const auto size = settings.max_render_resolution();
 				const UINT32 width  = size.Valid() ? static_cast<UINT32>(size.Width()) : 1280;
 				const UINT32 height = size.Valid() ? static_cast<UINT32>(size.Height()) : 720;
-				for (const auto& candidate : Decoders())
+				for (const auto& candidate : Decoders(codec))
 				{
-					if (Start(candidate, width, height))
+					// dav1d on the CPU beats an MFT on the CPU.
+					if (Start(candidate, width, height) && (codec == SystemCodec::kH264 || dxva))
 					{
-						name = Name(candidate.get());
-						RTC_LOG(LS_INFO) << "Media Foundation H264 decoder " << name << (dxva ? " (DXVA)" : "");
+						name = Name(candidate.get(), codec);
+						RTC_LOG(LS_INFO) << "Media Foundation " << CodecName(codec) << " decoder " << name
+						                 << (dxva ? " (DXVA)" : "");
 						return true;
 					}
 					Release();
@@ -1021,15 +1112,22 @@ namespace gelabber
 					return WEBRTC_VIDEO_CODEC_UNINITIALIZED;
 				if (!input.data() || input.size() == 0)
 					return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
-				auto sample = NewSample(static_cast<DWORD>(input.size()));
+				// AV1: libwebrtc's temporal units come without the temporal
+				// delimiter the bitstream format starts each of them with.
+				const bool delimit = codec == SystemCodec::kAv1 &&
+				                     ((input.data()[0] >> 3) & 0x0f) != av1::kTemporalDelimiter;
+				const size_t size  = input.size() + (delimit ? sizeof(kTemporalDelimiter) : 0);
+				auto sample = NewSample(static_cast<DWORD>(size));
 				winrt::com_ptr<IMFMediaBuffer> buffer;
 				BYTE* data = nullptr;
 				if (!sample || FAILED(sample->GetBufferByIndex(0, buffer.put())) ||
 				    FAILED(buffer->Lock(&data, nullptr, nullptr)))
 					return WEBRTC_VIDEO_CODEC_ERROR;
-				std::memcpy(data, input.data(), input.size());
+				if (delimit)
+					std::memcpy(data, kTemporalDelimiter, sizeof(kTemporalDelimiter));
+				std::memcpy(data + (delimit ? sizeof(kTemporalDelimiter) : 0), input.data(), input.size());
 				buffer->Unlock();
-				buffer->SetCurrentLength(static_cast<DWORD>(input.size()));
+				buffer->SetCurrentLength(static_cast<DWORD>(size));
 				// Only the order counts: one millisecond per frame.
 				const LONGLONG time = static_cast<LONGLONG>(++count) * 10'000;
 				sample->SetSampleTime(time);
@@ -1047,12 +1145,19 @@ namespace gelabber
 				if (result == MF_E_NOTACCEPTING)
 				{
 					if (!Drain())
-						return WEBRTC_VIDEO_CODEC_ERROR;
+						return Failed();
 					result = transform->ProcessInput(0, sample.get(), 0);
 				}
-				if (FAILED(result))
-					return WEBRTC_VIDEO_CODEC_ERROR;
-				return Drain() ? WEBRTC_VIDEO_CODEC_OK : WEBRTC_VIDEO_CODEC_ERROR;
+				if (FAILED(result) || !Drain())
+					return Failed();
+				// A decoder that stops putting out frames without an error
+				// hands over like a failed one.
+				if (codec == SystemCodec::kAv1 && ++sinceOutput > kStuckAfter)
+				{
+					RTC_LOG(LS_WARNING) << "Media Foundation " << name << " puts out no frames";
+					return Failed();
+				}
+				return WEBRTC_VIDEO_CODEC_OK;
 			}
 
 			int32_t RegisterDecodeCompleteCallback(webrtc::DecodedImageCallback* callback) override
@@ -1076,6 +1181,7 @@ namespace gelabber
 				device    = nullptr;
 				dxva      = false;
 				pending.clear();
+				sinceOutput = 0;
 				return WEBRTC_VIDEO_CODEC_OK;
 			}
 
@@ -1098,6 +1204,13 @@ namespace gelabber
 				std::optional<webrtc::ColorSpace> colorSpace;
 			};
 
+			// AV1 hands over to dav1d; H264 has nothing else, and the error
+			// makes libwebrtc ask for a key frame.
+			int32_t Failed() const
+			{
+				return codec == SystemCodec::kH264 ? WEBRTC_VIDEO_CODEC_ERROR : WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
+			}
+
 			bool Start(const winrt::com_ptr<IMFActivate>& candidate, UINT32 width, UINT32 height)
 			{
 				activate = candidate;
@@ -1114,7 +1227,7 @@ namespace gelabber
 				if (FAILED(MFCreateMediaType(input.put())))
 					return false;
 				input->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-				input->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
+				input->SetGUID(MF_MT_SUBTYPE, FormatOf(codec));
 				input->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
 				MFSetAttributeSize(input.get(), MF_MT_FRAME_SIZE, width, height);
 				if (FAILED(transform->SetInputType(0, input.get(), 0)) || !SelectOutput())
@@ -1242,6 +1355,7 @@ namespace gelabber
 					return;
 				const Pending meta = pending.front();
 				pending.pop_front();
+				sinceOutput = 0;
 
 				winrt::com_ptr<IMFMediaBuffer> buffer;
 				if (FAILED(sample->GetBufferByIndex(0, buffer.put())))
@@ -1288,6 +1402,7 @@ namespace gelabber
 				callback->Decoded(frame, std::nullopt, std::nullopt);
 			}
 
+			const SystemCodec codec;
 			winrt::com_ptr<IMFActivate> activate;
 			winrt::com_ptr<IMFTransform> transform;
 			winrt::com_ptr<ID3D11Device> device;
@@ -1302,56 +1417,63 @@ namespace gelabber
 			int pictureHeight{ 0 };
 			int stride{ 0 };
 			uint64_t count{ 0 };
+			int sinceOutput{ 0 };
 			webrtc::DecodedImageCallback* callback{ nullptr };
 			std::deque<Pending> pending;
 		};
 
 		// What the system has, in the order the encoder picks.
-		MfH264Codecs Look()
+		MfCodecs Look(SystemCodec codec)
 		{
-			MfH264Codecs found;
-			if (auto hardware = HardwareEncoders(); !hardware.empty())
+			MfCodecs found;
+			if (auto hardware = HardwareEncoders(codec); !hardware.empty())
 			{
-				found.encoder         = Name(hardware.front().get());
+				found.encoder         = Name(hardware.front().get(), codec);
 				found.hardwareEncoder = true;
 			}
-			else if (auto software = SoftwareEncoders(); !software.empty())
-				found.encoder = Name(software.front().get());
-			if (auto decoders = Decoders(); !decoders.empty())
-				found.decoder = Name(decoders.front().get());
-			RTC_LOG(LS_INFO) << "Media Foundation H264: encoder \"" << found.encoder << "\""
+			else if (auto software = SoftwareEncoders(codec); !software.empty())
+				found.encoder = Name(software.front().get(), codec);
+			if (auto decoders = Decoders(codec); !decoders.empty())
+				found.decoder = Name(decoders.front().get(), codec);
+			RTC_LOG(LS_INFO) << "Media Foundation " << CodecName(codec) << ": encoder \"" << found.encoder << "\""
 			                 << (found.hardwareEncoder ? " (hardware)" : "") << ", decoder \"" << found.decoder
 			                 << "\"";
 			return found;
 		}
-	} // namespace
 
-	const MfH264Codecs& FindMfH264Codecs()
-	{
 		// On a thread of its own: EnsureMf joins the calling thread to COM's
 		// multithreaded apartment, which an app's UI thread must not be in.
-		static const MfH264Codecs codecs = [] {
-			MfH264Codecs found;
-			std::thread([&found] {
+		MfCodecs LookOnce(SystemCodec codec)
+		{
+			MfCodecs found;
+			std::thread([&found, codec] {
 				if (EnsureMf())
-					found = Look();
+					found = Look(codec);
 			}).join();
 			return found;
-		}();
-		return codecs;
+		}
+	} // namespace
+
+	const MfCodecs& FindMfCodecs(SystemCodec codec)
+	{
+		static const MfCodecs h264 = LookOnce(SystemCodec::kH264);
+		static const MfCodecs av1  = LookOnce(SystemCodec::kAv1);
+		return codec == SystemCodec::kH264 ? h264 : av1;
 	}
 
-	std::unique_ptr<webrtc::VideoEncoder> CreateMfH264Encoder()
+	std::unique_ptr<webrtc::VideoEncoder> CreateMfEncoder(SystemCodec codec)
 	{
-		if (FindMfH264Codecs().encoder.empty())
+		if (FindMfCodecs(codec).encoder.empty())
 			return nullptr;
-		return std::make_unique<LayeredEncoder>();
+		if (codec == SystemCodec::kH264)
+			return std::make_unique<LayeredEncoder>();
+		return std::make_unique<MfEncoder>(codec);
 	}
 
-	std::unique_ptr<webrtc::VideoDecoder> CreateMfH264Decoder()
+	std::unique_ptr<webrtc::VideoDecoder> CreateMfDecoder(SystemCodec codec)
 	{
-		if (FindMfH264Codecs().decoder.empty())
+		if (FindMfCodecs(codec).decoder.empty())
 			return nullptr;
-		return std::make_unique<MfDecoder>();
+		return std::make_unique<MfDecoder>(codec);
 	}
 } // namespace gelabber

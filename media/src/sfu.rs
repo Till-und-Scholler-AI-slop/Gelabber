@@ -2120,6 +2120,11 @@ fn validate_parameters(kind: SourceKind, rtp: &RtpParameters) -> Result<(), SfuE
         ) {
             return Err(SfuError::UnsupportedCodec);
         }
+        // mediasoup forwards VP9 and AV1 as one stream or SVC, never as
+        // simulcast layers; its worker would refuse the producer later.
+        if matches!(mime.as_str(), "video/vp9" | "video/av1") && rtp.encodings.len() > 1 {
+            return Err(SfuError::UnsupportedCodec);
+        }
     } else if mime != "audio/opus" || rtp.encodings.len() > 1 {
         return Err(SfuError::UnsupportedCodec);
     }
@@ -2244,6 +2249,32 @@ mod tests {
 
     fn receiver(codecs: Value) -> RtpCapabilities {
         serde_json::from_value(json!({ "codecs": codecs, "headerExtensions": [] })).unwrap()
+    }
+
+    #[test]
+    fn av1_and_vp9_come_as_one_stream() {
+        let sent = |mime: &str, layers: usize| -> RtpParameters {
+            let encodings: Vec<Value> = (0..layers)
+                .map(|layer| json!({ "ssrc": 1000 + layer, "rid": format!("r{layer}") }))
+                .collect();
+            serde_json::from_value(json!({
+                "codecs": [{"mimeType": mime, "payloadType": 45, "clockRate": 90000}],
+                "encodings": encodings,
+                "headerExtensions": [],
+                "rtcp": {},
+            }))
+            .unwrap()
+        };
+        for mime in ["video/AV1", "video/VP9"] {
+            assert!(validate_parameters(SourceKind::Camera, &sent(mime, 1)).is_ok());
+            assert!(matches!(
+                validate_parameters(SourceKind::Screen, &sent(mime, 2)),
+                Err(SfuError::UnsupportedCodec)
+            ));
+        }
+        for mime in ["video/VP8", "video/H264"] {
+            assert!(validate_parameters(SourceKind::Camera, &sent(mime, 2)).is_ok());
+        }
     }
 
     #[test]

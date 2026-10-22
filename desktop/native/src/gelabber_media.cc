@@ -51,18 +51,20 @@
 #include <rtc_base/thread.h>
 #include <rtc_base/time_utils.h>
 
+// AV1 on the GPU in front of libaom and dav1d (both systems).
+#include "codec_fallback.h"
 #if defined(WEBRTC_LINUX)
-// H264 through GStreamer: encoders behind libwebrtc's simulcast adapter
-// (which the Windows libwebrtc package does not carry), hardware decoders
-// behind its software fallback.
-#  include "gst_h264_decoder.h"
-#  include "gst_h264_encoder.h"
+// H264 and AV1 through GStreamer: H264 encoders behind libwebrtc's
+// simulcast adapter (which the Windows libwebrtc package does not carry),
+// hardware H264 decoders behind its software fallback.
+#  include "gst_video_decoder.h"
+#  include "gst_video_encoder.h"
 #  include <api/video_codecs/video_decoder_software_fallback_wrapper.h>
 #  include <media/engine/simulcast_encoder_adapter.h>
 #endif
 #if defined(WEBRTC_WIN)
-// H264 through Media Foundation.
-#  include "mf_h264.h"
+// H264 and AV1 through Media Foundation.
+#  include "mf_video.h"
 #  include <rtc_base/win32_socket_init.h>
 #endif
 
@@ -1427,35 +1429,45 @@ namespace
 		return formats;
 	}
 
-	// libwebrtc's software encoders for VP8, VP9 and AV1, and H264 through
-	// the system where it has an encoder. Linux: GStreamer, a hardware
+	// libwebrtc's software encoders for VP8, VP9 and AV1, H264 through the
+	// system where it has an encoder, and AV1 through the system where it
+	// has a hardware encoder, in front of libaom (HardwareFirstEncoder),
+	// which takes over when it fails. Linux: GStreamer; for H264 a hardware
 	// element (VA-API/NVENC) else a software one, per simulcast layer behind
-	// SimulcastEncoderAdapter, which hands a failing hardware encoder over to
-	// the software element. Windows: Media Foundation, the GPU's encoder
-	// else Microsoft's software one.
+	// SimulcastEncoderAdapter, which hands a failing hardware encoder over
+	// to the software element. Windows: Media Foundation, for H264 the GPU's
+	// encoder else Microsoft's software one.
 	class EncoderFactory : public webrtc::VideoEncoderFactory
 	{
 	public:
 		EncoderFactory()
 		{
 #if defined(WEBRTC_WIN)
-			const auto& codecs = gelabber::FindMfH264Codecs();
+			const auto& codecs = gelabber::FindMfCodecs(gelabber::SystemCodec::kH264);
 			if (!codecs.encoder.empty())
 				h264 = SystemH264Formats();
 			h264Hardware = codecs.hardwareEncoder;
+			const auto& av1Codecs = gelabber::FindMfCodecs(gelabber::SystemCodec::kAv1);
+			av1System             = !av1Codecs.encoder.empty();
+			av1Hardware           = av1Codecs.hardwareEncoder;
 #endif
 #if defined(WEBRTC_LINUX)
-			const auto element = gelabber::FindGstH264Encoder();
+			const auto element = gelabber::FindGstEncoder(gelabber::SystemCodec::kH264);
 			if (!element.empty())
 			{
 				h264         = SystemH264Formats();
-				h264Hardware = gelabber::IsHardwareH264Encoder(element);
-				primary      = gelabber::CreateGstH264EncoderFactory(element, h264);
-				if (const auto software = gelabber::FindGstH264SoftwareEncoder();
+				h264Hardware = gelabber::IsHardwareEncoder(element);
+				primary      = gelabber::CreateGstEncoderFactory(gelabber::SystemCodec::kH264, element, h264);
+				if (const auto software = gelabber::FindGstSoftwareEncoder(gelabber::SystemCodec::kH264);
 				    h264Hardware && !software.empty())
-					fallback = gelabber::CreateGstH264EncoderFactory(software, h264);
+					fallback = gelabber::CreateGstEncoderFactory(gelabber::SystemCodec::kH264, software, h264);
 				RTC_LOG(LS_INFO) << "H264 encoder: GStreamer " << element;
 			}
+			av1Element  = gelabber::FindGstEncoder(gelabber::SystemCodec::kAv1);
+			av1System   = !av1Element.empty();
+			av1Hardware = gelabber::IsHardwareEncoder(av1Element);
+			if (av1System)
+				RTC_LOG(LS_INFO) << "AV1 encoder: GStreamer " << av1Element << " in front of libaom";
 #endif
 		}
 
@@ -1469,7 +1481,15 @@ namespace
 		CodecSupport QueryCodecSupport(
 		  const webrtc::SdpVideoFormat& format, std::optional<std::string> scalabilityMode) const override
 		{
-			if (lower(format.name) != "h264")
+			const auto name = lower(format.name);
+			if (name == "av1")
+			{
+				auto support = software.QueryCodecSupport(format, scalabilityMode);
+				support.is_power_efficient =
+				  support.is_supported && av1Hardware && (!scalabilityMode || *scalabilityMode == "L1T1");
+				return support;
+			}
+			if (name != "h264")
 				return software.QueryCodecSupport(format, scalabilityMode);
 			CodecSupport support;
 			support.is_supported = !h264.empty() && format.IsCodecInList(h264) &&
@@ -1481,12 +1501,13 @@ namespace
 		std::unique_ptr<webrtc::VideoEncoder> Create(
 		  const webrtc::Environment& env, const webrtc::SdpVideoFormat& format) override
 		{
-			if (lower(format.name) == "h264")
+			const auto name = lower(format.name);
+			if (name == "h264")
 			{
 				if (h264.empty())
 					return nullptr;
 #if defined(WEBRTC_WIN)
-				return gelabber::CreateMfH264Encoder();
+				return gelabber::CreateMfEncoder(gelabber::SystemCodec::kH264);
 #elif defined(WEBRTC_LINUX)
 				return std::make_unique<webrtc::SimulcastEncoderAdapter>(
 				  env, primary.get(), fallback.get(), format);
@@ -1497,6 +1518,18 @@ namespace
 			auto encoder = software.Create(env, format);
 			if (!encoder)
 				return nullptr;
+			if (name == "av1" && av1System)
+			{
+#if defined(WEBRTC_WIN)
+				auto system = gelabber::CreateMfEncoder(gelabber::SystemCodec::kAv1);
+#elif defined(WEBRTC_LINUX)
+				auto system = gelabber::CreateGstEncoder(gelabber::SystemCodec::kAv1, av1Element);
+#else
+				std::unique_ptr<webrtc::VideoEncoder> system;
+#endif
+				if (system)
+					return std::make_unique<gelabber::HardwareFirstEncoder>(std::move(system), std::move(encoder));
+			}
 			return std::make_unique<SimulcastAlignedEncoder>(std::move(encoder));
 		}
 
@@ -1504,9 +1537,14 @@ namespace
 		SoftwareEncoderFactory software;
 		std::vector<webrtc::SdpVideoFormat> h264;
 		bool h264Hardware{ false };
+		// The system has an AV1 encoder; on the GPU (else only a forced
+		// software element, for tests).
+		bool av1System{ false };
+		bool av1Hardware{ false };
 #if defined(WEBRTC_LINUX)
 		std::unique_ptr<webrtc::VideoEncoderFactory> primary;
 		std::unique_ptr<webrtc::VideoEncoderFactory> fallback;
+		std::string av1Element;
 #endif
 	};
 
@@ -1515,29 +1553,36 @@ namespace
 	  webrtc::LibvpxVp9DecoderTemplateAdapter,
 	  webrtc::Dav1dDecoderTemplateAdapter>;
 
-	// libwebrtc's software decoders for VP8, VP9 and AV1, and H264 through
-	// the system where it has a decoder. Linux: GStreamer, a hardware
-	// element (NVDEC/VA-API) behind a software element it hands over to when
-	// it fails, else the software element alone. Windows: Microsoft's
-	// decoder, on the GPU through DXVA where it can.
+	// libwebrtc's software decoders for VP8, VP9 and AV1, H264 through the
+	// system where it has a decoder, and AV1 through the system where it
+	// decodes on the GPU, in front of dav1d (HardwareFirstDecoder). Linux:
+	// GStreamer; for H264 a hardware element (NVDEC/VA-API) behind a
+	// software element it hands over to when it fails, else the software
+	// element alone. Windows: Microsoft's decoders, on the GPU through DXVA
+	// where they can.
 	class DecoderFactory : public webrtc::VideoDecoderFactory
 	{
 	public:
 		DecoderFactory()
 		{
 #if defined(WEBRTC_WIN)
-			if (!gelabber::FindMfH264Codecs().decoder.empty())
+			if (!gelabber::FindMfCodecs(gelabber::SystemCodec::kH264).decoder.empty())
 				h264 = SystemH264Formats();
+			av1System = !gelabber::FindMfCodecs(gelabber::SystemCodec::kAv1).decoder.empty();
 #endif
 #if defined(WEBRTC_LINUX)
-			element = gelabber::FindGstH264Decoder();
+			element = gelabber::FindGstDecoder(gelabber::SystemCodec::kH264);
 			if (!element.empty())
 			{
 				h264 = SystemH264Formats();
-				if (gelabber::IsHardwareH264Decoder(element))
-					fallback = gelabber::FindGstH264SoftwareDecoder();
+				if (gelabber::IsHardwareDecoder(element))
+					fallback = gelabber::FindGstSoftwareDecoder(gelabber::SystemCodec::kH264);
 				RTC_LOG(LS_INFO) << "H264 decoder: GStreamer " << element;
 			}
+			av1Element = gelabber::FindGstDecoder(gelabber::SystemCodec::kAv1);
+			av1System  = !av1Element.empty();
+			if (av1System)
+				RTC_LOG(LS_INFO) << "AV1 decoder: GStreamer " << av1Element << " in front of dav1d";
 #endif
 		}
 
@@ -1551,17 +1596,34 @@ namespace
 		std::unique_ptr<webrtc::VideoDecoder> Create(
 		  const webrtc::Environment& env, const webrtc::SdpVideoFormat& format) override
 		{
-			if (lower(format.name) != "h264")
+			const auto name = lower(format.name);
+			if (name == "av1" && av1System)
+			{
+				auto dav1d = software.Create(env, format);
+#if defined(WEBRTC_WIN)
+				auto system = gelabber::CreateMfDecoder(gelabber::SystemCodec::kAv1);
+#elif defined(WEBRTC_LINUX)
+				auto system = gelabber::CreateGstDecoder(gelabber::SystemCodec::kAv1, av1Element, true);
+#else
+				std::unique_ptr<webrtc::VideoDecoder> system;
+#endif
+				if (!dav1d || !system)
+					return dav1d;
+				return std::make_unique<gelabber::HardwareFirstDecoder>(std::move(system), std::move(dav1d));
+			}
+			if (name != "h264")
 				return software.Create(env, format);
 			if (h264.empty())
 				return nullptr;
 #if defined(WEBRTC_WIN)
-			return gelabber::CreateMfH264Decoder();
+			return gelabber::CreateMfDecoder(gelabber::SystemCodec::kH264);
 #elif defined(WEBRTC_LINUX)
 			if (fallback.empty())
-				return gelabber::CreateGstH264Decoder(element, false);
+				return gelabber::CreateGstDecoder(gelabber::SystemCodec::kH264, element, false);
 			return webrtc::CreateVideoDecoderSoftwareFallbackWrapper(
-			  env, gelabber::CreateGstH264Decoder(fallback, false), gelabber::CreateGstH264Decoder(element, true));
+			  env,
+			  gelabber::CreateGstDecoder(gelabber::SystemCodec::kH264, fallback, false),
+			  gelabber::CreateGstDecoder(gelabber::SystemCodec::kH264, element, true));
 #else
 			return nullptr;
 #endif
@@ -1570,9 +1632,11 @@ namespace
 	private:
 		SoftwareDecoderFactory software;
 		std::vector<webrtc::SdpVideoFormat> h264;
+		bool av1System{ false };
 #if defined(WEBRTC_LINUX)
 		std::string element;
 		std::string fallback;
+		std::string av1Element;
 #endif
 	};
 
@@ -2314,21 +2378,28 @@ gm_source* gm_source_new_app_audio(gm_engine* engine, const char* optionsJson)
 char* gm_video_codecs(void)
 {
 	return guarded<char*>(nullptr, [&] {
-		json h264 = nullptr;
+		json out = { { "h264", nullptr }, { "av1", nullptr } };
+		const auto entry = [](const std::string& encoder, bool hardware, const std::string& decoder) {
+			return json{ { "encoder", encoder.empty() ? json(nullptr) : json(encoder) },
+				         { "hardwareEncoder", hardware },
+				         { "decoder", decoder.empty() ? json(nullptr) : json(decoder) } };
+		};
+		for (const auto codec : { gelabber::SystemCodec::kH264, gelabber::SystemCodec::kAv1 })
+		{
+			const auto key = codec == gelabber::SystemCodec::kH264 ? "h264" : "av1";
 #if defined(WEBRTC_LINUX)
-		// The same choice the engine's factories make; GStreamer loads once.
-		const auto encoder = gelabber::FindGstH264Encoder();
-		const auto decoder = gelabber::FindGstH264Decoder();
-		h264 = { { "encoder", encoder.empty() ? json(nullptr) : json(encoder) },
-			     { "hardwareEncoder", gelabber::IsHardwareH264Encoder(encoder) },
-			     { "decoder", decoder.empty() ? json(nullptr) : json(decoder) } };
+			// The same choice the engine's factories make; GStreamer loads once.
+			const auto encoder = gelabber::FindGstEncoder(codec);
+			out[key] = entry(encoder, gelabber::IsHardwareEncoder(encoder), gelabber::FindGstDecoder(codec));
 #elif defined(WEBRTC_WIN)
-		const auto& codecs = gelabber::FindMfH264Codecs();
-		h264 = { { "encoder", codecs.encoder.empty() ? json(nullptr) : json(codecs.encoder) },
-			     { "hardwareEncoder", codecs.hardwareEncoder },
-			     { "decoder", codecs.decoder.empty() ? json(nullptr) : json(codecs.decoder) } };
+			const auto& codecs = gelabber::FindMfCodecs(codec);
+			out[key]           = entry(codecs.encoder, codecs.hardwareEncoder, codecs.decoder);
+#else
+			(void)key;
+			(void)entry;
 #endif
-		return dupString(json({ { "h264", h264 } }).dump());
+		}
+		return dupString(out.dump());
 	});
 }
 

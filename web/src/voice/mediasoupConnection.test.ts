@@ -1917,13 +1917,25 @@ describe("video codec negotiation", () => {
     clockRate: 90000,
     parameters: { "packetization-mode": 1, "profile-level-id": profile },
   });
-  const withH264: RtpCapabilities = {
-    codecs: [...capabilities.codecs!, h264("42001f"), h264("42e01f")],
+  const av1 = {
+    kind: "video" as const,
+    mimeType: "video/AV1",
+    preferredPayloadType: 45,
+    clockRate: 90000,
   };
-  function negotiating(hardware: boolean, video: string[]) {
+  const withH264: RtpCapabilities = {
+    codecs: [...capabilities.codecs!, h264("42001f"), h264("42e01f"), av1],
+  };
+  function negotiating(
+    hardware: boolean | { av1: boolean; h264: boolean },
+    video: string[],
+  ) {
     const onRepublished = vi.fn();
     const f = fixture("voice", undefined, {
-      hardwareH264: async () => hardware,
+      hardwareVideo: async () =>
+        typeof hardware === "boolean"
+          ? { av1: false, h264: hardware }
+          : hardware,
       onRepublished,
     });
     f.device.sendRtpCapabilities = withH264;
@@ -1940,7 +1952,9 @@ describe("video codec negotiation", () => {
       .map(([options]) => options);
 
   it("keeps VP8 when the server does not name codecs", async () => {
-    const f = fixture("voice", undefined, { hardwareH264: async () => true });
+    const f = fixture("voice", undefined, {
+      hardwareVideo: async () => ({ av1: true, h264: true }),
+    });
     f.device.sendRtpCapabilities = withH264;
     await f.start();
     await f.connection.publish(publication("v", new Capture("cam", "video")));
@@ -1960,6 +1974,47 @@ describe("video codec negotiation", () => {
     await sw.start();
     await sw.connection.publish(publication("v", new Capture("cam", "video")));
     expect(sent(sw)[0].codec?.mimeType).toBe("video/VP8");
+  });
+
+  it("sends AV1 as one stream where it is encoded in hardware", async () => {
+    const all = ["video/vp8", "video/h264", "video/av1"];
+    const hw = negotiating({ av1: true, h264: true }, all);
+    await hw.start();
+    await hw.connection.publish(publication("v", new Capture("cam", "video")));
+    expect(sent(hw)[0].codec).toEqual(av1);
+    // mediasoup forwards AV1 as one stream or SVC, never simulcast.
+    expect(sent(hw)[0].encodings).toBeUndefined();
+    // AV1 on the CPU: H.264 in hardware, else VP8.
+    const h264Only = negotiating({ av1: false, h264: true }, all);
+    await h264Only.start();
+    await h264Only.connection.publish(
+      publication("v", new Capture("cam", "video")),
+    );
+    expect(sent(h264Only)[0].codec).toEqual(h264("42e01f"));
+    const sw = negotiating({ av1: false, h264: false }, all);
+    await sw.start();
+    await sw.connection.publish(publication("v", new Capture("cam", "video")));
+    expect(sent(sw)[0].codec?.mimeType).toBe("video/VP8");
+  });
+
+  it("leaves AV1 when someone joins who cannot decode it", async () => {
+    const f = negotiating({ av1: true, h264: true }, [
+      "video/vp8",
+      "video/h264",
+      "video/av1",
+    ]);
+    await f.start();
+    await f.connection.publish(publication("v", new Capture("cam", "video")));
+    expect(sent(f)[0].codec?.mimeType).toBe("video/AV1");
+    f.connection.handleEvent({
+      op: "codecs",
+      video: ["video/vp8", "video/h264"],
+      revision: 2,
+    });
+    await vi.waitFor(() => expect(f.onRepublished).toHaveBeenCalledTimes(1));
+    expect(sent(f).at(-1)!.codec).toEqual(h264("42e01f"));
+    expect(sent(f).at(-1)!.encodings).toHaveLength(2);
+    expect(f.onError).not.toHaveBeenCalled();
   });
 
   it("sends a screen and its sound again when the room's codecs change", async () => {

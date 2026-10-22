@@ -515,6 +515,8 @@ async fn off_runtime(job: impl FnOnce() + Send + 'static) -> Result<()> {
 /// - "h264-hardware": the core encodes H264 on the GPU or a media engine;
 ///   the web client then prefers H264 where the room can decode it. Added by
 ///   `media_info` when the system has such an encoder.
+/// - "av1-hardware": the same for AV1, which the web client prefers even to
+///   H264 (issue #318).
 ///
 /// The only place that decides the list. An app before v0.6 reports none.
 const FEATURES: &[&str] = if cfg!(any(target_os = "linux", windows)) {
@@ -540,6 +542,9 @@ pub async fn media_info() -> Value {
     let mut features = FEATURES.to_vec();
     if codecs["h264"]["hardwareEncoder"] == true {
         features.push("h264-hardware");
+    }
+    if codecs["av1"]["hardwareEncoder"] == true {
+        features.push("av1-hardware");
     }
     json!({
         "abi": gelabber_media_core::ABI_VERSION,
@@ -1175,6 +1180,7 @@ mod tests {
         "app-audio-excludes-self",
         "video-frames",
         "h264-hardware",
+        "av1-hardware",
     ];
 
     /// What the web client reads: the fields of v0.5 stay, and `features` is
@@ -1198,25 +1204,26 @@ mod tests {
         } else {
             &[]
         };
-        // The hardware encoder depends on the machine, not on the build.
-        let hardware = info["videoCodecs"]["h264"]["hardwareEncoder"] == true;
+        // The hardware encoders depend on the machine, not on the build;
+        // they come last, H264 before AV1.
         let mut features: Vec<Value> = info["features"].as_array().unwrap().clone();
-        assert_eq!(
-            features.last() == Some(&json!("h264-hardware")),
-            hardware,
-            "{info}"
-        );
-        if hardware {
-            features.pop();
+        for (codec, feature) in [("av1", "av1-hardware"), ("h264", "h264-hardware")] {
+            let hardware = info["videoCodecs"][codec]["hardwareEncoder"] == true;
+            assert_eq!(features.last() == Some(&json!(feature)), hardware, "{info}");
+            if hardware {
+                features.pop();
+            }
         }
         assert_eq!(
             features,
             serde_json::json!(today).as_array().unwrap().clone()
         );
-        if cfg!(any(target_os = "linux", windows)) {
-            assert!(info["videoCodecs"]["h264"].is_object(), "{info}");
-        } else {
-            assert!(info["videoCodecs"]["h264"].is_null(), "{info}");
+        for codec in ["h264", "av1"] {
+            if cfg!(any(target_os = "linux", windows)) {
+                assert!(info["videoCodecs"][codec].is_object(), "{info}");
+            } else {
+                assert!(info["videoCodecs"][codec].is_null(), "{info}");
+            }
         }
         for feature in FEATURES {
             assert!(

@@ -336,35 +336,59 @@ separate decision.
 - Video codecs: the web client names the codec of every producer
   (`chooseVideoCodec` in `web/src/voice/videoCodec.ts`) among those every
   receiver in the room decodes, which the media server announces. It takes
-  H264 where the device encodes it in hardware and VP8 otherwise; the core
-  produces what it is asked for, and a caller that names no codec gets H264
-  before VP8. `media_info` reports the feature `h264-hardware` and, under
-  `videoCodecs`, what `gm_video_codecs` found.
+  AV1 where the device encodes it in hardware, then H264 where the device
+  encodes that in hardware, else VP8; AV1 on the CPU never comes before VP8
+  (issue #318). The core produces what it is asked for, and a caller that
+  names no codec gets H264 before VP8. `media_info` reports the features
+  `h264-hardware` and `av1-hardware` and, under `videoCodecs`, what
+  `gm_video_codecs` found. mediasoup forwards AV1 (like VP9) as one stream
+  or SVC, never in simulcast layers, so AV1 goes out as one stream and the
+  server refuses AV1 or VP9 producers with more than one encoding.
   - Neither libwebrtc build carries H264 (`rtc_use_h264=false`, no OpenH264
     or FFmpeg) and the core is compiled without `WEBRTC_USE_H264`: H264 is
     the system's alone, so the packages ship no H264 codec. A system
     without one has no H264 in its RTP capabilities, and the room falls
     back to VP8 through the negotiation above.
-  - Linux encode: through the system's GStreamer, a hardware element
+  - AV1 is libaom's (encoding) and dav1d's (decoding) inside libwebrtc,
+    on the CPU, on every system. Where the system has an AV1 codec on the
+    GPU, it runs in front of them (`HardwareFirstEncoder`,
+    `HardwareFirstDecoder` in `native/src/codec_fallback.h`), which hand a
+    codec that does not start or fails while it runs over to libaom or
+    dav1d for good. A key frame without a sequence header gets the last one
+    in front (`native/src/av1_obu.h`).
+  - Linux encode: through the system's GStreamer. H264: a hardware element
     (`nvh264enc`, `vah264enc`, `vah264lpenc`, `vaapih264enc`; with
     `h264parse` from gst-plugins-bad) else a software one (`openh264enc`,
     `x264enc`), each simulcast layer on its own encoder behind
     `SimulcastEncoderAdapter`, which hands a failing hardware encoder over
     to the software element. `GELABBER_H264_ENCODER=<element>|none`
     overrides the choice; an element named this way that encodes on the CPU
-    (`x264enc`) does not count as hardware. VP8/VP9 are libvpx's.
-  - Linux decode: through GStreamer, a hardware decoder (`nvh264dec`,
-    `vah264dec`, `vaapih264dec`) behind libwebrtc's software fallback to a
-    software element (`avdec_h264`, `openh264dec`), else the software
-    element alone; `GELABBER_H264_DECODER=<element>|none` overrides it
-    (`avdec_h264` in CI). VP8/VP9 are libvpx's, AV1 dav1d's.
-  - Windows: H264 through Media Foundation (`native/src/mf_h264.cc`), which
-    ships with Windows and the GPU drivers: the GPU's encoder MFT (NVENC,
-    AMF, Quick Sync) where there is one, else Microsoft's software encoder,
-    and Microsoft's decoder, on the GPU through DXVA where it gets a
-    Direct3D 11 device. An encoder MFT covers one picture, so the core runs
-    one per simulcast layer itself. A hardware MFT that fails is replaced by
-    the next one. VP8, VP9 and AV1 are in software.
+    (`x264enc`) does not count as hardware. AV1: a hardware element only
+    (`nvav1enc` from GStreamer 1.24, `vaav1enc`, `vaav1lpenc`; with
+    `av1parse` from gst-plugins-bad), `GELABBER_AV1_ENCODER=<element>|none`
+    (`av1enc` in CI). VP8/VP9 are libvpx's.
+  - Linux decode: through GStreamer. H264: a hardware decoder
+    (`nvh264dec`, `vah264dec`, `vaapih264dec`) behind libwebrtc's software
+    fallback to a software element (`avdec_h264`, `openh264dec`), else the
+    software element alone; `GELABBER_H264_DECODER=<element>|none`
+    overrides it (`avdec_h264` in CI). AV1: a hardware decoder (`nvav1dec`,
+    `vaav1dec`, `vaapiav1dec`) in front of dav1d,
+    `GELABBER_AV1_DECODER=<element>|none` (`av1dec` in CI). VP8/VP9 are
+    libvpx's.
+  - On Arch (Omarchy) these elements are optional packages: `gst-plugins-bad`
+    (h264parse, av1parse, NVIDIA's nvcodec), `gst-plugin-va` (Intel and
+    AMD) and `gst-libav` (H264 decoding on the CPU). Without them calls use
+    VP8, and AV1 runs on the CPU when the room sends it.
+  - Windows: H264 and AV1 through Media Foundation
+    (`native/src/mf_video.cc`), which ships with Windows and the GPU
+    drivers. H264: the GPU's encoder MFT (NVENC, AMF, Quick Sync) where
+    there is one, else Microsoft's software encoder, and Microsoft's
+    decoder, on the GPU through DXVA where it gets a Direct3D 11 device. An
+    encoder MFT covers one picture, so the core runs one per simulcast
+    layer itself. A hardware MFT that fails is replaced by the next one.
+    AV1: the GPU's encoder MFT and Microsoft's AV1 decoder (AV1 Video
+    Extension) where it decodes through DXVA, in front of libaom and dav1d.
+    VP8 and VP9 are in software.
 - Simulcast: libvpx encodes a producer's layers in one encoder, and only
   when every layer has exactly the top layer's aspect. A layer is the
   picture divided by its `scaleResolutionDownBy`, so a 1366x768 screen

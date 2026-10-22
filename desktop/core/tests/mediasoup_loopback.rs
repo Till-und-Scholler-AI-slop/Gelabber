@@ -5,10 +5,13 @@
 //! Proves the spike: libmediasoupclient's parameters are accepted by the same
 //! mediasoup version the Gelabber media gateway runs, and media flows both ways.
 //!
-//! Opus and VP8 always run. H264 runs where the core has it (not on Windows);
-//! GELABBER_EXPECT_H264=1 makes a core without it fail, and so do
-//! GELABBER_EXPECT_ENCODER and GELABBER_EXPECT_DECODER, which name the H264
-//! encoder and decoder to find.
+//! Opus, VP8 and AV1 always run, AV1 as one stream (mediasoup forwards it
+//! as one stream or SVC, never simulcast). H264 runs where the core has it
+//! (on Windows only with Media Foundation's codecs); GELABBER_EXPECT_H264=1
+//! makes a core without it fail, and so do GELABBER_EXPECT_ENCODER and
+//! GELABBER_EXPECT_DECODER, which name the H264 encoder and decoder to find.
+//! GELABBER_EXPECT_AV1_ENCODER and _DECODER name AV1's: libaom and dav1d,
+//! or a system codec in front of them (GELABBER_AV1_ENCODER, _DECODER).
 //! GELABBER_TEST_LISTEN_IP puts the server on another address of the machine
 //! than 127.0.0.1 (see `listen_ip_from`).
 
@@ -16,7 +19,7 @@ mod common;
 
 use common::{
     Server, blocking, check_decoder, check_encoder, h264_demanded_by, h264_under_test, layers_of,
-    listen_ip, listen_ip_from, outbound_rtp, simulcast_sizes, wait_for,
+    listen_ip, listen_ip_from, outbound_rtp, run_host_test, simulcast_sizes, wait_for,
 };
 use gelabber_media_core::{Audio, Device, Direction, Engine, Source, Transport, VideoFrame};
 use mediasoup::prelude::*;
@@ -74,7 +77,7 @@ async fn round_trip(server: &Server) {
         .map(|c| c["mimeType"].as_str().unwrap().to_ascii_lowercase())
         .collect();
     eprintln!("native receive codecs: {recv_codecs:?}");
-    for mime in ["audio/opus", "video/vp8"] {
+    for mime in ["audio/opus", "video/vp8", "video/av1"] {
         assert!(
             recv_codecs.iter().any(|c| c == mime),
             "native can receive {mime}"
@@ -117,24 +120,40 @@ async fn round_trip(server: &Server) {
     };
     // Two simulcast layers like the web client (scaleResolutionDownBy 4 and 1).
     let layers = json!([{ "scaleResolutionDownBy": 4 }, { "scaleResolutionDownBy": 1 }]);
+    // Per codec: its name, the producer's options and the test pattern's
+    // size. AV1 like the web client sends it: one stream, at a size libaom
+    // keeps up with on a runner.
     let mut codecs = Vec::new();
     if with_h264 {
         codecs.push((
             "H264",
             json!({"codec": "video/H264", "encodings": layers, "codecOptions": {"videoGoogleStartBitrate": 1000}}),
+            (1280, 720),
         ));
     }
-    codecs.push(("VP8", json!({"codec": "video/VP8", "encodings": layers})));
+    codecs.push((
+        "VP8",
+        json!({"codec": "video/VP8", "encodings": layers}),
+        (1280, 720),
+    ));
+    codecs.push((
+        "AV1",
+        json!({"codec": "video/AV1", "codecOptions": {"videoGoogleStartBitrate": 1000}}),
+        (640, 360),
+    ));
     // Per codec: its name and the native producer of its own test pattern.
     let mut produced = Vec::new();
-    for (name, options) in codecs {
-        let source = Source::test_pattern(&engine, 1280, 720, 30).unwrap();
+    for (name, options, (width, height)) in codecs {
+        let source = Source::test_pattern(&engine, width, height, 30).unwrap();
         let send = send.clone();
         let producer = blocking(move || send.produce(&source, &options))
             .await
             .unwrap();
-        if name == "H264" {
-            eprintln!("H264 rtpParameters: {}", producer.rtp_parameters().unwrap());
+        if name != "VP8" {
+            eprintln!(
+                "{name} rtpParameters: {}",
+                producer.rtp_parameters().unwrap()
+            );
         }
         produced.push((name, producer));
     }
@@ -171,17 +190,18 @@ async fn round_trip(server: &Server) {
         )
         .await;
     }
-    // Both simulcast layers must come up. The 720p layer only starts once
-    // libwebrtc's bandwidth estimate and CPU budget allow it, so poll; on
-    // failure print the sender's own per-layer view (qualityLimitationReason,
-    // frameWidth, active) next to the server's.
+    // Both simulcast layers must come up (AV1: its one stream). The 720p
+    // layer only starts once libwebrtc's bandwidth estimate and CPU budget
+    // allow it, so poll; on failure print the sender's own per-layer view
+    // (qualityLimitationReason, frameWidth, active) next to the server's.
     for (name, producer, native) in &video {
+        let expected = if *name == "AV1" { 1 } else { 2 };
         let start = Instant::now();
         let mut live = 0;
         while start.elapsed() < Duration::from_secs(20) {
             let stats = producer.get_stats().await.unwrap();
             live = stats.iter().filter(|s| s.byte_count > 0).count();
-            if live == 2 {
+            if live == expected {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -195,13 +215,21 @@ async fn round_trip(server: &Server) {
                 .map(|s| (s.ssrc, s.rid.clone(), s.byte_count, s.bitrate, s.score))
                 .collect::<Vec<_>>()
         );
-        if live != 2 {
+        if live != expected {
             eprintln!("{name} native outbound-rtp: {}", outbound_rtp(native));
         }
-        assert_eq!(live, 2, "{name} sends both simulcast layers");
+        assert_eq!(live, expected, "{name} sends all its layers");
     }
-    if let Some((name, _, native)) = video.iter().find(|(name, ..)| *name == "H264") {
-        check_encoder(name, &native.stats().unwrap());
+    for (name, _, native) in &video {
+        match *name {
+            "H264" => check_encoder(name, &native.stats().unwrap(), "GELABBER_EXPECT_ENCODER"),
+            "AV1" => check_encoder(
+                name,
+                &native.stats().unwrap(),
+                "GELABBER_EXPECT_AV1_ENCODER",
+            ),
+            _ => {}
+        }
     }
 
     // Receive side: the server consumes for the native client, paused until
@@ -281,8 +309,19 @@ async fn round_trip(server: &Server) {
         }
     }
     assert!(missing.is_empty(), "no decoded frames for {missing:?}");
-    if let Some((name, _, native)) = consumers.iter().find(|(name, ..)| *name == "H264") {
-        check_decoder(name, &native.stats().unwrap());
+    for (name, _, native) in &consumers {
+        let stats = native.stats().unwrap();
+        match *name {
+            "H264" => check_decoder(name, &stats, "GELABBER_EXPECT_DECODER", "h264", true),
+            // A system decoder named here is in front of dav1d; "dav1d" is
+            // the one behind it.
+            "AV1" => {
+                let element = std::env::var("GELABBER_EXPECT_AV1_DECODER")
+                    .is_ok_and(|expected| expected.starts_with("GStreamer"));
+                check_decoder(name, &stats, "GELABBER_EXPECT_AV1_DECODER", "av1", element)
+            }
+            _ => {}
+        }
     }
 
     // Frames for the viewer: I420 planes of the decoded size. A failed
@@ -511,6 +550,14 @@ fn windows_application_sound_starts_and_ends() {
         }
     }
     Source::test_pattern(&engine, 640, 360, 30).unwrap();
+}
+
+/// AV1 temporal units as the core's system encoders hand them on:
+/// desktop/native/tests/av1_obu_test.cc runs the OBU parser without an
+/// encoder, on every platform.
+#[test]
+fn av1_key_frames_carry_a_sequence_header() {
+    run_host_test("av1_obu_test", "AV1 OBUs");
 }
 
 /// A run that names the H264 encoder to find must not pass on a core without
