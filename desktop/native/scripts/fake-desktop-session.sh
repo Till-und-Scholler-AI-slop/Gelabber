@@ -98,6 +98,14 @@ wireplumber &
 pids+=($!)
 pipewire-pulse &
 pids+=($!)
+# No pactl before pipewire-pulse has its socket: libpulse creates
+# $XDG_RUNTIME_DIR/pulse itself, and if that lands between pipewire-pulse's
+# stat and mkdir of the directory, pipewire-pulse fails with
+# "mkdir() .../pulse failed: File exists" and the session has no sound server.
+for _ in $(seq 50); do
+  [[ -S "$runtime/pulse/native" ]] && break
+  sleep 0.1
+done
 for _ in $(seq 50); do
   pactl info >/dev/null 2>&1 && break
   sleep 0.1
