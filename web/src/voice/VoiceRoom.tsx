@@ -2,9 +2,10 @@
 // Camera and screen tiles render local streams immediately; SFU publish
 // is background work and never rides the chat socket.
 //
-// Shares (Live, screens) take the stage above the people: one in the
-// spotlight, the others in a filmstrip. A camera stays in its owner's
-// place, so each person appears once, unless it is pinned to the spotlight.
+// Lives take the stage above the people: one in the spotlight, the others
+// in a filmstrip. A camera stays in its owner's place, so each person
+// appears once, unless it is pinned to the spotlight. A Live is watched in
+// the room: outside it, the room only says who is live.
 
 import { useEffect, useRef, useState, type RefObject } from "react";
 
@@ -20,15 +21,13 @@ import { Popover } from "../components/ui/Popover.tsx";
 import { POPOVER_SHEET_QUERY } from "../components/ui/popoverPosition.ts";
 import { useMediaQuery } from "../components/useMediaQuery.ts";
 import { useSession } from "../auth/session.ts";
-import {
-  joinVoice,
-  stopWatching,
-  useVoice,
-  watchLive,
-  toggleSourceWatch,
-} from "./session.ts";
+import { joinVoice, useVoice, toggleSourceWatch } from "./session.ts";
 import { isDesktopApp } from "./native/bridge.ts";
-import { EMPTY_OCCUPANCY, liveOf, useVoiceRoster } from "./roster.ts";
+import {
+  EMPTY_LIVE_PEOPLE,
+  EMPTY_OCCUPANCY,
+  useVoiceRoster,
+} from "./roster.ts";
 import { useSpeakingUsers } from "./speaking.ts";
 import { VoiceTile } from "./VoiceTile.tsx";
 import {
@@ -45,6 +44,8 @@ import "./room.css";
 type StageTile = {
   id: string;
   kind: StageKind;
+  /** The track of a Live: a screen, or an older client's Go Live. */
+  source?: "s" | "l";
   userId: string;
   stream: MediaStream | null;
   name: string;
@@ -74,18 +75,13 @@ export function VoiceRoom({
   const roster = useVoiceRoster(
     (s) => s.byServer[server.id] ?? EMPTY_OCCUPANCY,
   );
-  const liveUser = useVoiceRoster((s) => liveOf(s.live, server.id, channelId));
+  const livePeople = useVoiceRoster(
+    (s) => s.live[server.id]?.[channelId] ?? EMPTY_LIVE_PEOPLE,
+  );
   const here =
     voice.status === "joined" &&
     voice.serverId === server.id &&
     voice.channelId === channelId;
-  const watching =
-    voice.watching &&
-    voice.watchServerId === server.id &&
-    voice.watchChannelId === channelId;
-  const liveStreamFor = (id: string) =>
-    (here ? voice.remote[id]?.l : null) ??
-    (watching && voice.watchPublisherId === id ? voice.watchStream : null);
   const speakingUsers = useSpeakingUsers(server.id, channelId);
   const roomKey = `${server.id}/${channelId}`;
   const [testingMicrophone, setTestingMicrophone] = useState<string | null>(
@@ -130,30 +126,27 @@ export function VoiceRoom({
     !(id === me && here
       ? voice.muted || voice.deafened
       : flags.muted || flags.deafened);
-  let liveTile: StageTile | null = null;
-  for (const [id, flags] of occupants) {
-    const pubs = here ? (voice.participants[id]?.pubs ?? []) : [];
-    const self = here && id === me;
+  // Pictures only inside: a Live is watched in the room.
+  for (const [id, flags] of here ? occupants : []) {
+    const pubs = voice.participants[id]?.pubs ?? [];
+    const self = id === me;
     const name = nameOf(id);
     const cameraOn = self ? voice.camera : pubs.includes("v");
-    const sharing = self ? voice.sharing : pubs.includes("s");
-    const isLive = self ? voice.live : liveUser === id;
-    if (isLive && !liveTile) {
-      liveTile = {
-        id: `${id}-l`,
-        kind: "live",
-        userId: id,
-        stream: self ? voice.localLive : liveStreamFor(id),
-        name: `${name} — Live`,
-      };
-    }
-    if (sharing) {
+    const screen = self ? voice.sharing : pubs.includes("s");
+    // An older client's Go Live shows like any other Live.
+    const goLive = !self && pubs.includes("l");
+    for (const [source, on, stream] of [
+      ["s", screen, self ? voice.localScreen : voice.remote[id]?.s],
+      ["l", goLive, voice.remote[id]?.l],
+    ] as const) {
+      if (!on) continue;
       shares.push({
-        id: `${id}-s`,
-        kind: "screen",
+        id: `${id}-${source}`,
+        kind: "live",
+        source,
         userId: id,
-        stream: self ? voice.localScreen : (voice.remote[id]?.s ?? null),
-        name: `${name} — Bildschirm`,
+        stream: stream ?? null,
+        name: `${name} — Live`,
       });
     }
     if (cameraOn) {
@@ -168,27 +161,26 @@ export function VoiceRoom({
       });
     }
   }
-
-  if (!liveTile && liveUser) {
-    liveTile = {
-      id: `${liveUser}-l`,
-      kind: "live",
-      userId: liveUser,
-      stream:
-        here && liveUser === me ? voice.localLive : liveStreamFor(liveUser),
-      name: `${nameOf(liveUser)} — Live`,
-    };
-  }
-  if (liveTile) shares.unshift(liveTile);
+  // Whoever went live first keeps the spotlight when another joins in.
+  const order = Object.keys(livePeople);
+  const rank = (tile: StageTile) => {
+    const at = order.indexOf(tile.userId);
+    return at === -1 ? order.length : at;
+  };
+  shares.sort((a, b) => rank(a) - rank(b));
+  const isLive = (id: string) =>
+    Boolean(livePeople[id]) ||
+    shares.some((tile) => tile.userId === id) ||
+    (id === me && here && voice.sharing);
 
   const sourceProps = (tile: StageTile) => {
-    if (tile.kind === "camera") return {};
-    const kind = tile.kind === "screen" ? ("s" as const) : ("l" as const);
+    if (!tile.source) return {};
+    const kind = tile.source;
     if (tile.userId === me && here) {
-      const status = voice.sourceAudio[kind];
+      const status = voice.sourceAudio.s;
       // The reason stands next to the call controls. A picker withholds
       // sound in a browser only; the desktop app captures it by itself.
-      const silent = voice.sourceAudioNote[kind]?.silent;
+      const silent = voice.sourceAudioNote.s?.silent;
       return {
         sourceAudioNotice:
           status === "unavailable"
@@ -200,7 +192,7 @@ export function VoiceRoom({
               : status === "sharing"
                 ? silent
                   ? `Kein Ton von „${silent}“`
-                  : "Ton wird geteilt"
+                  : "Ton wird mitgesendet"
                 : undefined,
       };
     }
@@ -211,10 +203,7 @@ export function VoiceRoom({
           toggle: () => toggleSourceWatch(tile.userId, kind),
         },
       };
-    // Watching a Live from outside the call.
-    return !here && watching && tile.kind === "live"
-      ? { onStopWatching: stopWatching }
-      : {};
+    return {};
   };
 
   const { spotlight, filmstrip } = arrangeStage(
@@ -225,9 +214,12 @@ export function VoiceRoom({
   const togglePin = (id: string) =>
     setPinned((current) => (current === id ? null : id));
   const stageTiles = spotlight ? [spotlight, ...filmstrip] : [];
-  const liveOn = Boolean(liveUser) || (here && voice.live);
+  const liveOn = occupants.some(([id]) => isLive(id));
   const others = occupants
     .filter(([id]) => id !== me)
+    .map(([id]) => members.get(id)?.name ?? "Jemand");
+  const othersLive = occupants
+    .filter(([id]) => id !== me && isLive(id))
     .map(([id]) => members.get(id)?.name ?? "Jemand");
   const elsewhere = voice.status === "joined" && !here;
   const freeSeats =
@@ -247,7 +239,7 @@ export function VoiceRoom({
         </h2>
       ) : null}
       <p className="voice-room-summary">
-        {roomSummary(others, { here, canJoin: allowed })}
+        {roomSummary(others, { here, canJoin: allowed, live: othersLive })}
       </p>
       {stageTiles.length > 0 ? (
         <div
@@ -274,7 +266,7 @@ export function VoiceRoom({
                     {...sourceProps(tile)}
                     stream={tile.stream}
                     label={tile.name}
-                    screen={tile.kind !== "camera"}
+                    screen={tile.kind === "live"}
                     live={tile.kind === "live"}
                     mirror={tile.mirror ?? false}
                     speaking={tile.speaking ?? false}
@@ -307,15 +299,7 @@ export function VoiceRoom({
               muted={id === me && here ? voice.muted : flags.muted}
               deafened={id === me && here ? voice.deafened : flags.deafened}
               speaking={speaks(id, flags)}
-              media={
-                liveUser === id || (id === me && here && voice.live)
-                  ? "Live"
-                  : shares.some((tile) => tile.id === `${id}-s`)
-                    ? "Teilt den Bildschirm"
-                    : camera
-                      ? "Kamera an"
-                      : null
-              }
+              media={isLive(id) ? "Live" : camera ? "Kamera an" : null}
               camera={camera && camera !== spotlight ? camera : null}
               pinned={pinned}
               onTogglePin={togglePin}
@@ -354,15 +338,6 @@ export function VoiceRoom({
               Du hast in diesem Server kein Recht, Voice beizutreten.
             </p>
           )}
-          {!watching && liveOn && allowed ? (
-            <Button
-              onClick={() =>
-                watchLive({ serverId: server.id, channelId, channelName })
-              }
-            >
-              Zuschauen
-            </Button>
-          ) : null}
           <IconButton
             variant="secondary"
             label="Mikrofon testen"

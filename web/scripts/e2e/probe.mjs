@@ -14,7 +14,6 @@ export function instrument({ relay }) {
     heldTracks: [],
     incomingTracks: [],
     outgoingSources: new Map(),
-    heldLiveClaims: [],
     rejectedSdp: 0,
     rejectedSdpErrors: [],
     renderedVideos: new WeakMap(),
@@ -245,17 +244,7 @@ export function instrument({ relay }) {
             item.offers++;
             item.maxSdp = Math.max(item.maxSdp, frame.sdp.length);
           }
-          if (
-            item.plane === "gateway" &&
-            frame.op === "sig" &&
-            frame.k === "l" &&
-            frame.t === "p" &&
-            state.holdLiveClaims
-          ) {
-            state.heldLiveClaims.push(() => send(data));
-            return;
-          }
-          if (frame.op === "sig" && frame.k === "l") {
+          if (frame.op === "sig" && frame.k === "s") {
             if (frame.t === "p") item.liveOn++;
             else if (frame.t === "u") item.liveOff++;
           }
@@ -491,7 +480,7 @@ export async function sampleVideoConsumers({ publisher, deadlineEpochMs }) {
     const sourceSsrcs = new Set();
     for (const source of sources) {
       result.sources++;
-      if (source.publisher === publisher && source.sourceKind === "l")
+      if (source.publisher === publisher && source.sourceKind === "s")
         result.selectedLiveSources++;
       else result.foreignSources++;
       const encodings = source.rtpParameters?.encodings;
@@ -844,11 +833,7 @@ export async function sample({ deadlineEpochMs } = {}) {
     const callbackFrames = rendered.presented || rendered.callbacks;
     const hasQuality = Number.isSafeInteger(qualityFrames) && qualityFrames > 0;
     return {
-      kind: caption.includes("— Live")
-        ? "live"
-        : caption.includes("— Bildschirm")
-          ? "screen"
-          : "camera",
+      kind: caption.includes("— Live") ? "live" : "camera",
       width: video.videoWidth,
       height: video.videoHeight,
       paused: video.paused,
@@ -917,17 +902,16 @@ export async function sample({ deadlineEpochMs } = {}) {
       return {
         selectedLive: incoming.filter(
           (t) =>
-            t.publisher === state.expectedLivePublisher && t.sourceKind === "l",
+            t.publisher === state.expectedLivePublisher && t.sourceKind === "s",
         ).length,
         foreign: incoming.filter(
           (t) =>
-            t.publisher !== state.expectedLivePublisher || t.sourceKind !== "l",
+            t.publisher !== state.expectedLivePublisher || t.sourceKind !== "s",
         ).length,
       };
     })(),
     heldTrackCount: state.heldTracks.length,
     heldVideoTracks: state.heldTracks.filter((t) => t.kind === "video").length,
-    heldLiveClaimCount: state.heldLiveClaims.length,
     playback: [...state.mediaElements].map((el) => ({
       kind: el.tagName === "AUDIO" ? "audio" : "video",
       paused: el.paused,

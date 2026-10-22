@@ -4,10 +4,16 @@ import { useShallow } from "zustand/react/shallow";
 
 import { useSession } from "../auth/session.ts";
 import type { ServerDetail } from "../servers/types.ts";
-import { useVoiceRoster, voiceOf, type VoiceFlags } from "../voice/roster.ts";
+import {
+  EMPTY_LIVE,
+  isLiveIn,
+  useVoiceRoster,
+  voiceOf,
+  type VoiceFlags,
+} from "../voice/roster.ts";
 import { useVoice } from "../voice/session.ts";
 import { groupMembers, presenceOf, usePresenceStore } from "../ws/live.ts";
-import { ScreenIcon, UsersIcon } from "./Icons.tsx";
+import { LiveIcon, UsersIcon } from "./Icons.tsx";
 import { toggleMemberPanel, useMemberPanelHidden } from "./memberPanelState.ts";
 import { MemberProfileDialog } from "./MemberProfileDialog.tsx";
 import { PresenceAvatar } from "./PresenceAvatar.tsx";
@@ -129,7 +135,8 @@ export function MemberPanel({
                       me,
                       session,
                     );
-                    const isLive = Object.values(live[serverId] ?? {}).includes(
+                    const isLive = isLiveIn(
+                      live[serverId] ?? EMPTY_LIVE,
                       member.user_id,
                     );
                     return (
@@ -173,7 +180,12 @@ export function MemberPanel({
                               <span>{group.label}</span>
                             )}
                             {isLive ? (
-                              <small>Teilt live seinen Bildschirm</small>
+                              <small>
+                                Live
+                                {flags
+                                  ? ` in ${names.get(flags.channelId) ?? "einem Sprachkanal"}`
+                                  : ""}
+                              </small>
                             ) : flags ? (
                               <small>
                                 {names.get(flags.channelId) ?? "Im Sprachraum"}
@@ -190,9 +202,9 @@ export function MemberPanel({
                               }
                             />
                             {isLive && (
-                              <ScreenIcon
+                              <LiveIcon
                                 size={20}
-                                aria-label="Live-Bildschirmübertragung"
+                                aria-label="Live"
                                 aria-hidden={false}
                               />
                             )}

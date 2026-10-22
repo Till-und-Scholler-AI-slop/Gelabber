@@ -1,6 +1,6 @@
 # Gelabber
 
-Chat, Voice und Go Live für eine Community auf einem Rechner. Eigenes WebSocket und eigene Signalisierung; selbst gehostetes mediasoup mit offiziellem Rust- und Browser-SDK.
+Chat, Voice und Live für eine Community auf einem Rechner: Wer live geht, zeigt allen im Sprachkanal einen Bildschirm oder ein Fenster, auch mehrere gleichzeitig. Eigenes WebSocket und eigene Signalisierung; selbst gehostetes mediasoup mit offiziellem Rust- und Browser-SDK.
 
 ## Start
 

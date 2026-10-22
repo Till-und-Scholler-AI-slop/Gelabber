@@ -292,3 +292,70 @@ async fn until_a_session_waits_for_a_lock(pool: &PgPool) {
     }
     panic!("the read-all never waited for the channel row");
 }
+
+/// History from before joining stays out of the counts and the bulk reads,
+/// whether there is no read position yet or one on an old message (#277:
+/// both are now found through the time index, not by walking the history).
+#[sqlx::test]
+async fn history_before_joining_stays_read(pool: PgPool) {
+    let mut a = user(&pool, "a@test.example", "Ada").await;
+    let mut c = user(&pool, "c@test.example", "Cem").await;
+    let mut b = user(&pool, "b@test.example", "Bob").await;
+    let (sid, general) = server(&mut a, &mut c, "Eins").await;
+    let quiet = channel(&mut a, &sid, "ruhig").await;
+    let old = post(&mut a, &general, "alt @everyone").await;
+    post(&mut a, &quiet, "auch alt @everyone").await;
+    let invite = a
+        .send(
+            Method::POST,
+            &format!("/api/servers/{sid}/invites"),
+            Some(json!({})),
+        )
+        .await;
+    let code = invite.body["code"].as_str().unwrap();
+    let joined = b
+        .send(Method::POST, &format!("/api/invites/{code}/join"), None)
+        .await;
+    assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
+
+    let rows = unread(&mut b).await;
+    for id in [&general, &quiet] {
+        let row = rows.iter().find(|r| r["channel_id"] == *id).unwrap();
+        assert_eq!(row["unread_count"], 0, "{row}");
+        assert_eq!(row["mention_count"], 0, "{row}");
+    }
+    // Read up to an old message: still nothing before joining counts.
+    let r = b
+        .send(
+            Method::PUT,
+            &format!("/api/channels/{general}/read"),
+            Some(json!({ "message_id": old["id"] })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["unread_count"], 0);
+    post(&mut a, &general, "neu @everyone").await;
+    let rows = unread(&mut b).await;
+    let row = rows.iter().find(|r| r["channel_id"] == general).unwrap();
+    assert_eq!(row["unread_count"], 1, "{row}");
+    assert_eq!(row["mention_count"], 1, "{row}");
+
+    // The quiet channel has nothing to read, so nothing to write.
+    let r = b
+        .send(Method::PUT, "/api/messages/read-all", Some(json!({})))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    let moved: Vec<&Value> = r.body.as_array().unwrap().iter().collect();
+    assert_eq!(moved.len(), 1, "{}", r.body);
+    assert_eq!(moved[0]["channel_id"], general.as_str());
+    assert_eq!(moved[0]["unread_count"], 0);
+    let r = b
+        .send(
+            Method::PUT,
+            &format!("/api/channels/{quiet}/read"),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(r.body["read_message_id"], Value::Null);
+}

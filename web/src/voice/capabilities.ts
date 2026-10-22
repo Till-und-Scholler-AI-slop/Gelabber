@@ -19,14 +19,14 @@ function browserCaptures(method: "getDisplayMedia" | "getUserMedia"): boolean {
   );
 }
 
-/** Screen share and Go Live; both are display captures. */
+/** Live: a display capture. */
 export function canShareScreen(): boolean {
   return isDesktopApp()
     ? hasNativeFeature("screen")
     : browserCaptures("getDisplayMedia");
 }
 
-/** A share can carry sound. The desktop app captures an application's; a
+/** A Live can carry sound. The desktop app captures an application's; a
  * browser offers it in its own picker, or answers with video only. */
 export function canShareAppAudio(): boolean {
   if (!canShareScreen()) return false;
