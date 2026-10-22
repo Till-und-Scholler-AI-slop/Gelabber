@@ -1838,6 +1838,12 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     --avatar-size: 40px;
   }
 }
+/* A theme switch crossfades the page (ThemeController), quickly. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--lr-dur);
+  animation-timing-function: var(--lr-ease-standard);
+}
 /* The kill switches: with less motion asked for, from the system or in the
    app, nothing moves. */
 @media (prefers-reduced-motion: reduce) {
