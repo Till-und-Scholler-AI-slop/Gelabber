@@ -335,7 +335,9 @@ impl Fetcher {
             self.slow_down(url);
             FetchError::Timeout
         } else {
-            FetchError::Http(err.to_string())
+            // Without the URL: the reason is logged at `info`, and the
+            // query string of a message's link may hold a token.
+            FetchError::Http(err.without_url().to_string())
         }
     }
 }
@@ -677,6 +679,22 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn a_connection_error_does_not_carry_the_url() {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let fetcher = Fetcher::new(Policy {
+            trusted: vec![closed],
+            ..Policy::default()
+        });
+        let url = Url::parse(&format!("http://{closed}/page?token=secret")).unwrap();
+        let err = fetcher.get(&url, Kind::Html).await.unwrap_err();
+        assert_eq!(err.code(), "http", "{err}");
+        assert!(!err.to_string().contains("secret"), "{err}");
     }
 
     /// TikTok and others give unknown agents a page without OpenGraph tags.
