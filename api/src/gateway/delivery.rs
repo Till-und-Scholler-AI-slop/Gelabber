@@ -58,7 +58,7 @@ struct Candidate {
 
 async fn candidates(state: &AppState, limit: usize) -> Result<Vec<Candidate>, ApiError> {
     // Hold only the scan cursor across DB selection, never across channel locks
-    // or Redis I/O. HTTP retries and the periodic worker share the same cursor.
+    // or Redis I/O. The worker and any direct caller share the same cursor.
     let mut scan = state.connections.inner.delivery_scan.lock().await;
     if scan.after >= scan.through {
         scan.after = 0;
@@ -74,6 +74,14 @@ async fn candidates(state: &AppState, limit: usize) -> Result<Vec<Candidate>, Ap
     ).bind(scan.after).bind(scan.through).bind(limit as i64).fetch_all(&state.db).await?;
     scan.after = rows.last().map(|r| r.id).unwrap_or(scan.through);
     Ok(rows)
+}
+
+/// Tell this instance's delivery worker that a committed write left outbox
+/// rows. The worker publishes them right away, so write handlers no longer
+/// run a delivery pass before their response (#294). A wake that arrives
+/// during a pass is kept and starts another pass right after it.
+pub fn wake(state: &AppState) {
+    state.connections.inner.delivery_wake.notify_one();
 }
 
 /// At most 32 head candidates and publications per invocation. Busy heads
@@ -166,10 +174,19 @@ impl Gateway {
         }
         tokio::spawn(async move {
             while !state.db.is_closed() {
-                if let Err(err) = deliver_pending(&state, 32).await {
-                    tracing::debug!(error = err.code(), "outbox delivery will retry");
+                let full = match deliver_pending(&state, 32).await {
+                    Ok(delivered) => delivered == 32,
+                    Err(err) => {
+                        tracing::debug!(error = err.code(), "outbox delivery will retry");
+                        false
+                    }
+                };
+                // A full batch may have left more behind: go again at once.
+                // Otherwise wait for the next write's wake, or the poll.
+                if !full {
+                    let wake = state.connections.inner.delivery_wake.notified();
+                    let _ = tokio::time::timeout(Duration::from_millis(200), wake).await;
                 }
-                tokio::time::sleep(Duration::from_millis(200)).await;
             }
         });
     }
