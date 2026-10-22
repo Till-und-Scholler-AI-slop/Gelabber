@@ -1,14 +1,21 @@
 //! Bounded callers with owned completion of late native creation replies.
 use crate::error::SfuError;
-use std::{fmt::Display, future::Future, time::Duration};
+use std::{fmt::Display, future::Future, sync::Arc, time::Duration};
 use tokio::sync::{Semaphore, oneshot};
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
 // Timed-out operations retain their slot until completion. A responsive worker
 // with stuck individual requests must not accumulate unlimited cleanup tasks.
-static COMMANDS: Semaphore = Semaphore::const_new(256);
+const COMMAND_SLOTS: usize = 256;
+
+/// One worker's command slots. Each worker has its own, so a stuck worker
+/// cannot take the slots of the healthy ones.
+pub(crate) fn command_slots() -> Arc<Semaphore> {
+    Arc::new(Semaphore::new(COMMAND_SLOTS))
+}
 
 pub(crate) async fn native<R, T, E, F>(
+    slots: &Arc<Semaphore>,
     resource: R,
     command: impl FnOnce(R) -> F + Send + 'static,
 ) -> Result<T, SfuError>
@@ -18,7 +25,10 @@ where
     E: Display + Send + 'static,
     F: Future<Output = Result<T, E>> + Send + 'static,
 {
-    let permit = COMMANDS.try_acquire().map_err(|_| SfuError::Unavailable)?;
+    let permit = slots
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| SfuError::Unavailable)?;
     let (send, receive) = oneshot::channel();
     tokio::spawn(async move {
         let _permit = permit;
@@ -54,9 +64,10 @@ mod tests {
         let dropped = Arc::new(AtomicBool::new(false));
         let (complete, pending) = oneshot::channel();
         let late = dropped.clone();
+        let slots = command_slots();
         let result = tokio::time::timeout(
             COMMAND_TIMEOUT + Duration::from_millis(500),
-            native(pending, move |pending| async move {
+            native(&slots, pending, move |pending| async move {
                 pending.await.unwrap();
                 Ok::<_, std::io::Error>(Handle(late))
             }),
@@ -67,9 +78,13 @@ mod tests {
         assert!(!dropped.load(Ordering::SeqCst));
         // Other operations can still complete while this one awaits its reply.
         assert_eq!(
-            native(7, |value| async move { Ok::<_, std::io::Error>(value) })
-                .await
-                .unwrap(),
+            native(
+                &slots,
+                7,
+                |value| async move { Ok::<_, std::io::Error>(value) }
+            )
+            .await
+            .unwrap(),
             7
         );
         complete.send(()).unwrap();
@@ -88,11 +103,15 @@ mod tests {
         let (started, ready) = oneshot::channel();
         let (complete, pending) = oneshot::channel();
         let late = dropped.clone();
-        let caller = tokio::spawn(native(pending, move |pending| async move {
-            started.send(()).unwrap();
-            pending.await.unwrap();
-            Ok::<_, std::io::Error>(Handle(late))
-        }));
+        let slots = command_slots();
+        let caller = tokio::spawn(async move {
+            native(&slots, pending, move |pending| async move {
+                started.send(()).unwrap();
+                pending.await.unwrap();
+                Ok::<_, std::io::Error>(Handle(late))
+            })
+            .await
+        });
         ready.await.unwrap();
         caller.abort();
         assert!(caller.await.unwrap_err().is_cancelled());
@@ -104,5 +123,43 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_stuck_worker_does_not_take_the_slots_of_another() {
+        let (stuck, healthy) = (command_slots(), command_slots());
+        let mut pending = Vec::new();
+        for _ in 0..COMMAND_SLOTS {
+            let (hold, wait) = oneshot::channel::<()>();
+            pending.push(hold);
+            let slots = stuck.clone();
+            tokio::spawn(async move {
+                let _ = native(&slots, wait, |wait| async move {
+                    let _ = wait.await;
+                    Ok::<_, std::io::Error>(())
+                })
+                .await;
+            });
+        }
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while stuck.available_permits() > 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(matches!(
+            native(&stuck, (), |()| async { Ok::<_, std::io::Error>(()) }).await,
+            Err(SfuError::Unavailable)
+        ));
+        assert_eq!(
+            native(&healthy, 3, |value| async move {
+                Ok::<_, std::io::Error>(value)
+            })
+            .await
+            .unwrap(),
+            3
+        );
+        drop(pending);
     }
 }
