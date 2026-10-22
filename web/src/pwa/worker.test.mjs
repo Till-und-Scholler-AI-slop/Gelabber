@@ -38,7 +38,7 @@ function appWindow(path, state = {}) {
   return client;
 }
 
-function worker({ windows = [], notifications = [] } = {}) {
+function worker({ windows = [], notifications = [], endpoint } = {}) {
   const handlers = new Map();
   const shown = [...notifications];
   const showNotification = vi.fn(async (title, options) => {
@@ -66,7 +66,13 @@ function worker({ windows = [], notifications = [] } = {}) {
     self: {
       location: { origin },
       clients: { claim, matchAll, openWindow },
-      registration: { showNotification, getNotifications },
+      registration: {
+        showNotification,
+        getNotifications,
+        pushManager: {
+          getSubscription: async () => (endpoint ? { endpoint } : null),
+        },
+      },
       addEventListener: (name, handler) => handlers.set(name, handler),
     },
     caches: {
@@ -411,6 +417,86 @@ describe("PWA push", () => {
     await older.push(message);
     expect(older.showNotification).toHaveBeenCalledOnce();
     expect(older.showNotification.mock.calls[0][1].renotify).toBe(true);
+  });
+
+  it("replaces a recalled message on screen quietly, without its text", async () => {
+    const recall = { ...message, body: "Nachricht gelöscht", recall: true };
+    const w = worker({
+      notifications: [
+        {
+          title: "Ada · #allgemein",
+          body: "@Bob schau mal",
+          tag: "gelabber:u1:c1",
+          data: { message: "m2", at: message.at },
+        },
+      ],
+    });
+    await w.push(recall);
+    expect(w.showNotification).toHaveBeenCalledExactlyOnceWith(
+      "Ada · #allgemein",
+      {
+        body: "Nachricht gelöscht",
+        tag: "gelabber:u1:c1",
+        silent: true,
+        icon: "/icons/icon-192.png",
+        data: {
+          path: "/s/s1/c/c1",
+          user: "u1",
+          message: "m2",
+          at: "2026-10-17T10:00:00.000002Z",
+        },
+      },
+    );
+  });
+
+  it("brings nothing back that was swiped away, except where Safari needs it", async () => {
+    const recall = { ...message, body: "Nachricht gelöscht", recall: true };
+    // Chromium and Firefox put up with an occasional push that shows nothing.
+    for (const endpoint of [
+      "https://fcm.googleapis.com/fcm/send/x",
+      "https://updates.push.services.mozilla.com/wpush/v2/x",
+    ]) {
+      const w = worker({ endpoint });
+      await w.push(recall);
+      expect(w.showNotification).not.toHaveBeenCalled();
+    }
+    // Safari ends the subscription after a few: a quiet notification, and
+    // the same where the endpoint cannot be read.
+    for (const endpoint of ["https://web.push.apple.com/x", undefined]) {
+      const w = worker({ endpoint });
+      await w.push(recall);
+      expect(w.showNotification).toHaveBeenCalledOnce();
+      expect(w.showNotification.mock.calls[0][1]).toMatchObject({
+        body: "Nachricht gelöscht",
+        silent: true,
+      });
+      expect(w.showNotification.mock.calls[0][1].renotify).toBeUndefined();
+    }
+  });
+
+  it("leaves another message shown in the conversation as it is", async () => {
+    const data = { message: "m3", at: "2026-10-17T10:00:00.000003Z" };
+    const w = worker({
+      notifications: [
+        {
+          title: "Ada · #allgemein",
+          body: "neuer",
+          tag: "gelabber:u1:c1",
+          data,
+        },
+      ],
+    });
+    await w.push({ ...message, body: "Nachricht gelöscht", recall: true });
+    expect(w.showNotification).toHaveBeenCalledExactlyOnceWith(
+      "Ada · #allgemein",
+      {
+        body: "neuer",
+        tag: "gelabber:u1:c1",
+        silent: true,
+        icon: "/icons/icon-192.png",
+        data,
+      },
+    );
   });
 
   it("ignores pushes that are not Gelabber messages", async () => {

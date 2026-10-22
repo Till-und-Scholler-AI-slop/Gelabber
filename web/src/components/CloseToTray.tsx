@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { desktopShellInfo, setCloseToTray } from "../messages/desktopShell.ts";
+import { Switch } from "./ui/Switch.tsx";
 
 /** Desktop app with a tray only: closing the window hides it there. */
 export function CloseToTray() {
@@ -20,32 +21,25 @@ export function CloseToTray() {
   if (!state?.tray) return null;
   return (
     <>
-      <label
-        htmlFor="close-to-tray"
-        className="flex items-center gap-2 text-sm"
-      >
-        <input
-          id="close-to-tray"
-          type="checkbox"
-          checked={state.on}
-          onChange={(event) => {
-            const on = event.target.checked;
-            setFailed(false);
-            setState({ ...state, on });
-            void setCloseToTray(on).then((ok) => {
-              if (ok) return;
-              setFailed(true);
-              setState({ ...state, on: !on });
-            });
-          }}
-        />
-        Fenster schließen minimiert in den Infobereich
-      </label>
-      <p className="text-xs text-neutral-600 dark:text-neutral-400">
-        Ein laufender Anruf geht weiter. Beenden über das Symbol im Infobereich.
-      </p>
+      <Switch
+        id="close-to-tray"
+        className="settings-row"
+        label="Fenster schließen minimiert in den Infobereich"
+        description="Ein laufender Anruf geht weiter. Beenden über das Symbol im Infobereich."
+        checked={state.on}
+        onChange={(event) => {
+          const on = event.target.checked;
+          setFailed(false);
+          setState({ ...state, on });
+          void setCloseToTray(on).then((ok) => {
+            if (ok) return;
+            setFailed(true);
+            setState({ ...state, on: !on });
+          });
+        }}
+      />
       {failed && (
-        <p role="alert" className="text-xs">
+        <p role="alert" className="ui-field-error">
           Die Einstellung konnte nicht gespeichert werden.
         </p>
       )}

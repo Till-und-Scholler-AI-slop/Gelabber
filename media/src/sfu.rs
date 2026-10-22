@@ -39,6 +39,11 @@ const WATCH_LIMIT: usize = 64;
 const CONSUMER_LIMIT: usize = 1024;
 /// Browser-reported failures per producer before a viewer stops re-consuming it.
 const CONSUMER_FAILURE_LIMIT: u8 = 5;
+/// Consumers one attach pass creates at the same time.
+const ATTACH_CONCURRENCY: usize = 8;
+// Consumer creations of all attach passes together. Native commands fail fast
+// once their 256 slots are taken, so joins must leave room for RPCs and stops.
+static ATTACH_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(128);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PeerId(pub Uuid);
@@ -132,6 +137,14 @@ impl Subscription {
             && self.publication.valid()
             && self.watch.as_ref().is_none_or(|g| g.valid())
     }
+}
+/// A consumer an attach pass reserved and tried to create, not yet announced.
+struct PreparedConsumer {
+    producer_id: String,
+    transport: WebRtcTransport,
+    peer: Arc<Peer>,
+    created: Result<Arc<Subscription>, SfuError>,
+    retry_native: bool,
 }
 #[derive(Clone)]
 enum StopResource {
@@ -1231,35 +1244,110 @@ impl Sfu {
             .values()
             .cloned()
             .collect();
-        for pubn in pubs {
-            if let Err(err) = self.attach(&room, id, pubn).await
-                && !matches!(err, SfuError::Forbidden | SfuError::Unavailable)
-            {
+        let results = self
+            .attach_batch(&room, id, pubs, |transport, options| {
+                native(transport, move |transport| async move {
+                    transport.consume(options).await
+                })
+            })
+            .await;
+        for err in results.into_iter().filter_map(Result::err) {
+            if !matches!(err, SfuError::Forbidden | SfuError::Unavailable) {
                 warn!(?id, code = err.code(), "consumer attach failed");
             }
         }
     }
-    async fn attach(
+    /// One attach pass: creates paused consumers for `pubs`, a few at a time,
+    /// then checks the viewer's authority once and announces them. The check
+    /// follows every creation of the pass, so it is as late for each consumer
+    /// as a check per consumer would be, without a Redis round trip each.
+    async fn attach_batch<C, F>(
         self: &Arc<Self>,
         room: &Arc<Room>,
         id: PeerId,
-        pubn: Arc<Publication>,
-    ) -> Result<(), SfuError> {
-        self.attach_with(room, id, pubn, |transport, options| {
-            native(transport, move |transport| async move {
-                transport.consume(options).await
-            })
-        })
-        .await
-    }
-    async fn attach_with<F>(
-        self: &Arc<Self>,
-        room: &Arc<Room>,
-        id: PeerId,
-        pubn: Arc<Publication>,
-        create: impl FnOnce(WebRtcTransport, ConsumerOptions) -> F + Send,
-    ) -> Result<(), SfuError>
+        pubs: Vec<Arc<Publication>>,
+        create: C,
+    ) -> Vec<Result<(), SfuError>>
     where
+        C: Fn(WebRtcTransport, ConsumerOptions) -> F + Sync,
+        F: Future<Output = Result<Consumer, SfuError>> + Send,
+    {
+        let prepared: Vec<_> = stream::iter(pubs)
+            .map(|pubn| self.prepare_consumer(room, id, pubn, &create))
+            .buffer_unordered(ATTACH_CONCURRENCY)
+            .collect()
+            .await;
+        let mut results = Vec::with_capacity(prepared.len());
+        let mut reserved = Vec::new();
+        for item in prepared {
+            match item {
+                Ok(Some(p)) => reserved.push(p),
+                Ok(None) => results.push(Ok(())),
+                Err(error) => results.push(Err(error)),
+            }
+        }
+        let Some(peer) = reserved.first().map(|p| p.peer.clone()) else {
+            return results;
+        };
+        let check = if reserved.iter().any(|p| p.created.is_ok()) {
+            crate::ticket::validate_authority(&self.redis, &peer.authority).await
+        } else {
+            Ok(true)
+        };
+        // A Redis failure denies the pass like a revocation but is retried,
+        // since it fails every consumer of the join at once.
+        let redis_failed = check.is_err();
+        let authorized = check.unwrap_or(false);
+        for p in &mut reserved {
+            if let Ok(sub) = &p.created
+                && (!authorized || !sub.valid())
+            {
+                stop_consumer(&sub.consumer, &self.dead).await;
+                p.created = Err(if redis_failed {
+                    SfuError::Unavailable
+                } else {
+                    SfuError::Revoked
+                });
+            }
+        }
+        let (mut recreated, mut retry_native) = (false, redis_failed);
+        for p in reserved {
+            let result = match p.created {
+                Ok(sub) => self.commit_consumer(room, id, &p.transport, sub).await,
+                Err(error) => Err(error),
+            };
+            recreated |= {
+                let mut data = room.data.lock().await;
+                data.peers.get_mut(&id).is_some_and(|d| {
+                    d.pending_consumers.remove(&p.producer_id);
+                    d.transports
+                        .get(&false)
+                        .is_some_and(|t| t.id() != p.transport.id())
+                })
+            };
+            retry_native |= p.retry_native;
+            results.push(result);
+        }
+        if recreated {
+            self.schedule_attach(peer.authority.claim.c, id).await;
+        } else if retry_native {
+            // Reservations are cleared before retry, and the next attempt rechecks
+            // grants, capabilities, capacity and current receive transport.
+            self.retry_attach(peer.authority.claim.c, peer);
+        }
+        results
+    }
+    /// Reserves `pubn` for the viewer and creates its paused native consumer;
+    /// announces nothing. `Ok(None)`: already consumed, pending or given up.
+    async fn prepare_consumer<C, F>(
+        &self,
+        room: &Room,
+        id: PeerId,
+        pubn: Arc<Publication>,
+        create: &C,
+    ) -> Result<Option<PreparedConsumer>, SfuError>
+    where
+        C: Fn(WebRtcTransport, ConsumerOptions) -> F + Sync,
         F: Future<Output = Result<Consumer, SfuError>> + Send,
     {
         let producer_id = pubn.id();
@@ -1275,7 +1363,7 @@ impl Sfu {
                     .get(&producer_id)
                     .is_some_and(|failures| *failures >= CONSUMER_FAILURE_LIMIT)
             {
-                return Ok(());
+                return Ok(None);
             }
             if p.consumers.len() + p.pending_consumers.len() >= CONSUMER_LIMIT {
                 return Err(SfuError::Unavailable);
@@ -1290,7 +1378,7 @@ impl Sfu {
             (p.peer.clone(), transport, caps, watch)
         };
         let mut retry_native = false;
-        let result = async {
+        let created = async {
             if !room
                 .router
                 .get()
@@ -1307,15 +1395,21 @@ impl Sfu {
                     temporal_layer: None,
                 });
             }
-            let consumer = match create(transport.clone(), options).await {
-                Ok(consumer) => consumer,
-                Err(error) => {
-                    retry_native =
-                        matches!(error, SfuError::Unavailable | SfuError::Negotiation(_));
-                    return Err(error);
+            let consumer = {
+                let _slot = ATTACH_SLOTS
+                    .acquire()
+                    .await
+                    .map_err(|_| SfuError::Unavailable)?;
+                match create(transport.clone(), options).await {
+                    Ok(consumer) => consumer,
+                    Err(error) => {
+                        retry_native =
+                            matches!(error, SfuError::Unavailable | SfuError::Negotiation(_));
+                        return Err(error);
+                    }
                 }
             };
-            let sub = Arc::new(Subscription {
+            Ok(Arc::new(Subscription {
                 consumer: NativeConsumer::new(consumer, transport.clone()),
                 publication: pubn,
                 peer: peer.clone(),
@@ -1323,72 +1417,64 @@ impl Sfu {
                 grant: Grant::new(),
                 generation: Uuid::new_v4(),
                 gate: Mutex::new(()),
-            });
-            if !sub.valid()
-                || !crate::ticket::validate_authority(&self.redis, &peer.authority)
-                    .await
-                    .unwrap_or(false)
-            {
-                stop_consumer(&sub.consumer, &self.dead).await;
-                return Err(SfuError::Revoked);
-            }
-            {
-                let mut data = room.data.lock().await;
-                let p = data.peers.get_mut(&id).ok_or(SfuError::Revoked)?;
-                if !sub.valid()
-                    || !p
-                        .transports
-                        .get(&false)
-                        .is_some_and(|t| t.id() == transport.id())
-                {
-                    return Err(SfuError::Forbidden);
-                }
-                p.consumers
-                    .insert(sub.consumer.id().to_string(), sub.clone());
-                self.counters.consumers.fetch_add(1, Ordering::Relaxed);
-            }
-            self.observe_consumer(room, &sub);
-            self.emit(
-                &peer,
-                ServerFrame::Consumer {
-                    consumer_id: sub.consumer.id().to_string(),
-                    producer_id: sub.publication.id(),
-                    owner: sub.publication.peer.authority.claim.u,
-                    k: sub.publication.kind,
-                    epoch: sub.publication.epoch,
-                    generation: sub.generation,
-                    parent: sub.publication.parent.as_ref().map(|p| p.id()),
-                    kind: if sub.publication.kind.is_video() {
-                        "video"
-                    } else {
-                        "audio"
-                    }
-                    .into(),
-                    rtp_parameters: serde_json::to_value(sub.consumer.rtp_parameters())
-                        .map_err(SfuError::negotiation)?,
-                    paused: sub.publication.producer.paused(),
-                },
-            );
-            Ok(())
+            }))
         }
         .await;
-        let recreated = {
+        Ok(Some(PreparedConsumer {
+            producer_id,
+            transport,
+            peer,
+            created,
+            retry_native,
+        }))
+    }
+    /// Installs and announces an authorized consumer unless its grants or the
+    /// viewer's receive transport changed meanwhile.
+    async fn commit_consumer(
+        self: &Arc<Self>,
+        room: &Arc<Room>,
+        id: PeerId,
+        transport: &WebRtcTransport,
+        sub: Arc<Subscription>,
+    ) -> Result<(), SfuError> {
+        {
             let mut data = room.data.lock().await;
-            data.peers.get_mut(&id).is_some_and(|p| {
-                p.pending_consumers.remove(&producer_id);
-                p.transports
+            let p = data.peers.get_mut(&id).ok_or(SfuError::Revoked)?;
+            if !sub.valid()
+                || !p
+                    .transports
                     .get(&false)
-                    .is_some_and(|t| t.id() != transport.id())
-            })
-        };
-        if recreated {
-            self.schedule_attach(peer.authority.claim.c, id).await;
-        } else if retry_native {
-            // Reservation is cleared before retry, and the next attempt rechecks
-            // grants, capabilities, capacity and current receive transport.
-            self.retry_attach(peer.authority.claim.c, peer.clone());
+                    .is_some_and(|t| t.id() == transport.id())
+            {
+                return Err(SfuError::Forbidden);
+            }
+            p.consumers
+                .insert(sub.consumer.id().to_string(), sub.clone());
+            self.counters.consumers.fetch_add(1, Ordering::Relaxed);
         }
-        result
+        self.observe_consumer(room, &sub);
+        self.emit(
+            &sub.peer,
+            ServerFrame::Consumer {
+                consumer_id: sub.consumer.id().to_string(),
+                producer_id: sub.publication.id(),
+                owner: sub.publication.peer.authority.claim.u,
+                k: sub.publication.kind,
+                epoch: sub.publication.epoch,
+                generation: sub.generation,
+                parent: sub.publication.parent.as_ref().map(|p| p.id()),
+                kind: if sub.publication.kind.is_video() {
+                    "video"
+                } else {
+                    "audio"
+                }
+                .into(),
+                rtp_parameters: serde_json::to_value(sub.consumer.rtp_parameters())
+                    .map_err(SfuError::negotiation)?,
+                paused: sub.publication.producer.paused(),
+            },
+        );
+        Ok(())
     }
     async fn set_watch(
         self: &Arc<Self>,
@@ -2472,74 +2558,254 @@ mod tests {
         (sfu, peer, publication, rx)
     }
 
+    /// A second member joined to the fixture's room with its authority keys in
+    /// Redis, a receive transport and the router's capabilities, ready to consume.
+    struct Viewer {
+        id: PeerId,
+        events: mpsc::Receiver<ServerFrame>,
+        transport: WebRtcTransport,
+        keys: Vec<String>,
+    }
+    impl Viewer {
+        async fn join(sfu: &Arc<Sfu>, owner: &Peer, room: &Room, capacity: usize) -> Self {
+            use crate::redis_connection::ConnectionSource;
+            use gelabber_shared::ticket;
+            let channel = owner.authority.claim.c;
+            let mut authority = owner.authority.clone();
+            authority.claim.u = Uuid::new_v4();
+            authority.auth.member = Uuid::new_v4();
+            authority.auth.session = Uuid::new_v4().simple().to_string().repeat(2);
+            let keys = [
+                (
+                    ticket::member_authority_key(authority.claim.s, authority.claim.u),
+                    authority.auth.member.to_string(),
+                ),
+                (
+                    ticket::channel_authority_key(channel),
+                    authority.auth.channel.to_string(),
+                ),
+                (
+                    ticket::session_authority_key(&authority.auth.session),
+                    authority.claim.u.to_string(),
+                ),
+            ];
+            let mut redis = sfu.redis.connection().await.unwrap();
+            for (key, value) in &keys {
+                let _: () = redis::cmd("SET")
+                    .arg(key)
+                    .arg(value)
+                    .arg("EX")
+                    .arg(30)
+                    .query_async(&mut redis)
+                    .await
+                    .unwrap();
+            }
+            let (out, events) = mpsc::channel(capacity);
+            let id = sfu
+                .join_authorized_watch_version(authority, None, MEDIA_PROTOCOL_VERSION, out)
+                .await
+                .unwrap();
+            let router = room.router.get().unwrap();
+            let mut options = WebRtcTransportOptions::new_with_server(sfu.server.clone());
+            options.app_data = AppData::new(AtomicU64::new(0));
+            let transport = native(router.clone(), move |router| async move {
+                router.create_webrtc_transport(options).await
+            })
+            .await
+            .unwrap();
+            {
+                let mut data = room.data.lock().await;
+                let peer = data.peers.get_mut(&id).unwrap();
+                peer.transports.insert(false, transport.clone());
+                peer.capabilities = Some(
+                    serde_json::from_value(
+                        serde_json::to_value(router.rtp_capabilities()).unwrap(),
+                    )
+                    .unwrap(),
+                );
+            }
+            sfu.counters.transports.fetch_add(1, Ordering::Relaxed);
+            Self {
+                id,
+                events,
+                transport,
+                keys: keys.into_iter().map(|(key, _)| key).collect(),
+            }
+        }
+        async fn revoke(&self, sfu: &Sfu) {
+            use crate::redis_connection::ConnectionSource;
+            let mut redis = sfu.redis.connection().await.unwrap();
+            for key in &self.keys {
+                let _: () = redis::cmd("DEL")
+                    .arg(key)
+                    .query_async(&mut redis)
+                    .await
+                    .unwrap();
+            }
+        }
+    }
+
+    /// Adds `count` audio publications of the fixture's owner to its room, each
+    /// on its own native producer, as a full voice room has.
+    async fn publish_many(owner: &Arc<Peer>, room: &Room, count: u32) -> Vec<Arc<Publication>> {
+        let transport = room.data.lock().await.peers[&owner.id].transports[&true].clone();
+        let mut publications = Vec::new();
+        for index in 0..count {
+            let rtp = serde_json::from_value(json!({
+                "codecs":[{"mimeType":"audio/opus","payloadType":111,"clockRate":48000,
+                    "channels":2,"parameters":{},"rtcpFeedback":[]}],
+                "headerExtensions":[],"encodings":[{"ssrc":10_000 + index}],
+                "rtcp":{"cname":format!("attach-{index}"),"reducedSize":true}
+            }))
+            .unwrap();
+            let producer = native(transport.clone(), move |transport| async move {
+                transport
+                    .produce(ProducerOptions::new(MediaKind::Audio, rtp))
+                    .await
+            })
+            .await
+            .unwrap();
+            publications.push(Arc::new(Publication {
+                producer: NativeProducer::new(producer, transport.clone()),
+                peer: owner.clone(),
+                kind: SourceKind::Mic,
+                epoch: Uuid::new_v4(),
+                parent: None,
+                live: None,
+                grant: Grant::new(),
+                gate: Mutex::new(()),
+                height: 0,
+                layers: 1,
+                packet_samples: StdMutex::new(HashMap::new()),
+            }));
+        }
+        let mut data = room.data.lock().await;
+        for publication in &publications {
+            data.publications
+                .insert(publication.id(), publication.clone());
+        }
+        publications
+    }
+
+    /// Joining a room with 40 publications: every one is consumed and announced
+    /// in one attach pass. Prints the pass time to compare join latency.
     #[tokio::test]
-    async fn native_consume_timeout_retries_without_room_activity_and_retires_late_consumer() {
-        use crate::redis_connection::ConnectionSource;
-        use gelabber_shared::ticket;
+    async fn attach_pass_announces_every_publication_of_a_full_room() {
+        const PUBLICATIONS: u32 = 40;
+        let (sfu, owner, _publication, _owner_events) = stopping_fixture().await;
+        let channel = owner.authority.claim.c;
+        let room = sfu.room(channel).await.unwrap();
+        publish_many(&owner, &room, PUBLICATIONS - 1).await;
+        let mut viewer = Viewer::join(&sfu, &owner, &room, 64).await;
+        let started = Instant::now();
+        sfu.attach_existing(channel, viewer.id).await;
+        let elapsed = started.elapsed();
+        // Written past libtest's capture so the CI log keeps the number.
+        let _ = std::io::Write::write_all(
+            &mut std::io::stderr(),
+            format!("attach pass for {PUBLICATIONS} publications took {elapsed:?}\n").as_bytes(),
+        );
+        let mut announced = HashSet::new();
+        while let Ok(frame) = viewer.events.try_recv() {
+            if let ServerFrame::Consumer { producer_id, .. } = frame {
+                announced.insert(producer_id);
+            }
+        }
+        assert_eq!(announced.len(), PUBLICATIONS as usize);
+        {
+            let data = room.data.lock().await;
+            let peer = &data.peers[&viewer.id];
+            assert_eq!(peer.consumers.len(), PUBLICATIONS as usize);
+            assert!(peer.pending_consumers.is_empty());
+        }
+        assert_eq!(
+            viewer.transport.dump().await.unwrap().consumer_ids.len(),
+            PUBLICATIONS as usize
+        );
+        sfu.leave(viewer.id, channel).await;
+        viewer.revoke(&sfu).await;
+    }
+
+    /// Authority that lapses while a pass creates its consumers: none of them
+    /// is announced or kept, and every native consumer is closed again.
+    #[tokio::test]
+    async fn attach_pass_announces_nothing_after_revocation() {
+        const PUBLICATIONS: usize = 12;
         let (sfu, owner, publication, _owner_events) = stopping_fixture().await;
         let channel = owner.authority.claim.c;
         let room = sfu.room(channel).await.unwrap();
-        let mut authority = owner.authority.clone();
-        authority.claim.u = Uuid::new_v4();
-        authority.auth.member = Uuid::new_v4();
-        authority.auth.session = Uuid::new_v4().simple().to_string().repeat(2);
-        let keys = [
-            (
-                ticket::member_authority_key(authority.claim.s, authority.claim.u),
-                authority.auth.member.to_string(),
-            ),
-            (
-                ticket::channel_authority_key(channel),
-                authority.auth.channel.to_string(),
-            ),
-            (
-                ticket::session_authority_key(&authority.auth.session),
-                authority.claim.u.to_string(),
-            ),
-        ];
-        let mut redis = sfu.redis.connection().await.unwrap();
-        for (key, value) in &keys {
-            let _: () = redis::cmd("SET")
-                .arg(key)
-                .arg(value)
-                .arg("EX")
-                .arg(30)
-                .query_async(&mut redis)
-                .await
-                .unwrap();
+        let mut pubs = publish_many(&owner, &room, PUBLICATIONS as u32 - 1).await;
+        pubs.push(publication);
+        let mut viewer = Viewer::join(&sfu, &owner, &room, 64).await;
+        let created = Arc::new(AtomicUsize::new(0));
+        let client = redis::Client::open(std::env::var("REDIS_URL").unwrap()).unwrap();
+        let probe = (created.clone(), client, viewer.keys.clone());
+        let results = sfu
+            .attach_batch(&room, viewer.id, pubs, move |transport, options| {
+                let (created, client, keys) = probe.clone();
+                native(transport, move |transport| async move {
+                    let consumer = transport.consume(options).await;
+                    // The last creation of the pass revokes before it returns,
+                    // so the pass's single check must see the revocation.
+                    if created.fetch_add(1, Ordering::SeqCst) + 1 == PUBLICATIONS {
+                        let mut redis = client.get_multiplexed_async_connection().await.unwrap();
+                        let _: () = redis::cmd("DEL")
+                            .arg(&keys)
+                            .query_async(&mut redis)
+                            .await
+                            .unwrap();
+                    }
+                    consumer
+                })
+            })
+            .await;
+        assert_eq!(created.load(Ordering::SeqCst), PUBLICATIONS);
+        assert_eq!(results.len(), PUBLICATIONS);
+        assert!(
+            results.iter().all(|r| matches!(r, Err(SfuError::Revoked))),
+            "{results:?}"
+        );
+        while let Ok(frame) = viewer.events.try_recv() {
+            assert!(!matches!(frame, ServerFrame::Consumer { .. }));
         }
-        let (out, mut events) = mpsc::channel(16);
-        let viewer = sfu
-            .join_authorized_watch_version(authority, None, MEDIA_PROTOCOL_VERSION, out)
-            .await
-            .unwrap();
-        let router = room.router.get().unwrap();
-        let mut options = WebRtcTransportOptions::new_with_server(sfu.server.clone());
-        options.app_data = AppData::new(AtomicU64::new(0));
-        let transport = native(router.clone(), move |router| async move {
-            router.create_webrtc_transport(options).await
+        // The authority watcher may already have removed the viewer.
+        if let Some(peer) = room.data.lock().await.peers.get(&viewer.id) {
+            assert!(peer.consumers.is_empty());
+            assert!(peer.pending_consumers.is_empty());
+        }
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while viewer
+                .transport
+                .dump()
+                .await
+                .is_ok_and(|dump| !dump.consumer_ids.is_empty())
+            {
+                tokio::task::yield_now().await;
+            }
         })
         .await
-        .unwrap();
-        {
-            let mut data = room.data.lock().await;
-            let peer = data.peers.get_mut(&viewer).unwrap();
-            peer.transports.insert(false, transport.clone());
-            peer.capabilities = Some(
-                serde_json::from_value(serde_json::to_value(router.rtp_capabilities()).unwrap())
-                    .unwrap(),
-            );
-        }
-        sfu.counters.transports.fetch_add(1, Ordering::Relaxed);
+        .expect("revoked consumers must be closed natively");
+        sfu.leave(viewer.id, channel).await;
+    }
+
+    #[tokio::test]
+    async fn native_consume_timeout_retries_without_room_activity_and_retires_late_consumer() {
+        let (sfu, owner, publication, _owner_events) = stopping_fixture().await;
+        let channel = owner.authority.claim.c;
+        let room = sfu.room(channel).await.unwrap();
+        let mut joined = Viewer::join(&sfu, &owner, &room, 16).await;
+        let (viewer, transport) = (joined.id, joined.transport.clone());
         let (complete, pending) = tokio::sync::oneshot::channel();
         let (late_created, late_ready) = tokio::sync::oneshot::channel();
+        let probe = StdMutex::new(Some((pending, late_created)));
         let result = tokio::time::timeout(
             Duration::from_secs(3),
-            sfu.attach_with(
+            sfu.attach_batch(
                 &room,
                 viewer,
-                publication.clone(),
+                vec![publication.clone()],
                 move |transport, options| {
+                    let (pending, late_created) = probe.lock().unwrap().take().unwrap();
                     native(transport, move |transport| async move {
                         pending.await.unwrap();
                         let result = transport.consume(options).await;
@@ -2552,8 +2818,8 @@ mod tests {
         )
         .await
         .expect("attach must release its pending reservation after timeout");
-        assert!(matches!(result, Err(SfuError::Unavailable)));
-        let event = tokio::time::timeout(Duration::from_secs(3), events.recv())
+        assert!(matches!(result[..], [Err(SfuError::Unavailable)]));
+        let event = tokio::time::timeout(Duration::from_secs(3), joined.events.recv())
             .await
             .unwrap()
             .unwrap();
@@ -2586,13 +2852,7 @@ mod tests {
         .await
         .expect("late unannounced consumer must be closed");
         sfu.leave(viewer, channel).await;
-        for (key, _) in keys {
-            let _: () = redis::cmd("DEL")
-                .arg(key)
-                .query_async(&mut redis)
-                .await
-                .unwrap();
-        }
+        joined.revoke(&sfu).await;
     }
 
     async fn assert_terminal_after_native_stop(revoke: bool) {

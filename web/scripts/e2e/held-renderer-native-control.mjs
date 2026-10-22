@@ -28,7 +28,7 @@ try {
     const f = await h.fixture();
     try {
       await click(f.owner, "Beitreten");
-      await click(f.owner, "Go Live");
+      await click(f.owner, "Live gehen");
       await click(f.watcher, "Zuschauen");
       await progress(f.watcher);
       const positive = await holdActiveMedia(f.watcher, { renderer: true });

@@ -13,6 +13,7 @@ import {
   type InfiniteData,
   type QueryClient,
   infiniteQueryOptions,
+  onlineManager,
   replaceEqualDeep,
 } from "@tanstack/react-query";
 
@@ -405,6 +406,32 @@ function requireAttempt(attempt: SendAttempt): void {
     throw new DOMException("Session changed", "AbortError");
 }
 
+/** How long a send made offline waits for the network before it tries
+ *  anyway: some platforms report offline wrongly (captive portals, some
+ *  VPN or WebKitGTK setups), and a try ends in a visible error instead of
+ *  "sendet" forever. */
+export const OFFLINE_SEND_WAIT_MS = 30_000;
+
+/** Resolves once the device is online, or after OFFLINE_SEND_WAIT_MS.
+ *  Nothing has left before that, so a send made offline only waits, on
+ *  screen, and is never in doubt. */
+function untilOnline(signal: AbortSignal): Promise<void> {
+  if (onlineManager.isOnline() || signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      off();
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const off = onlineManager.subscribe((online) => {
+      if (online) done();
+    });
+    const timer = setTimeout(done, OFFLINE_SEND_WAIT_MS);
+    signal.addEventListener("abort", done);
+  });
+}
+
 /** The attempt owns its file/status even when the mutation observer unmounts. */
 export async function sendMessageAttempt(
   channelId: string,
@@ -461,6 +488,8 @@ export async function sendMessageAttempt(
   attempt = { ...attempt, status: "sending", error: undefined };
   saveAttempt(attempt);
   try {
+    await untilOnline(attempt.controller.signal);
+    requireAttempt(attempt);
     // One after another: the upload link is the bottleneck, and a retry
     // continues after the files that already arrived.
     for (
@@ -563,7 +592,7 @@ export async function sendMessageAttempt(
           ...(rejected ?? []),
         ].join(" "),
       });
-      notifyError(error);
+      // No toast: the row itself says it was not sent and offers the retry.
     }
     throw error;
   }
@@ -630,6 +659,9 @@ export function useSendMessage(channelId: string, author: MessageAuthor) {
     mutationFn: (input: SendInput & { attemptId?: string }) =>
       sendMessageAttempt(channelId, author, input),
     retry: false,
+    // Paused offline, the attempt would not even show its row; it waits
+    // for the network itself instead.
+    networkMode: "always",
   });
 }
 
@@ -729,7 +761,7 @@ export function editMessageOptions(client: QueryClient, channelId: string) {
         queryKey: messageKeys.channel(ctx.userId, ctx.generation, channelId),
         exact: true,
       });
-      notifyError(error);
+      notifyError(error, "Änderung nicht gespeichert.");
     },
     onSuccess: (
       message: Message,
@@ -1028,7 +1060,7 @@ export function deleteMessageOptions(client: QueryClient, channelId: string) {
         queryKey: messageKeys.channel(ctx.userId, ctx.generation, channelId),
         exact: true,
       });
-      notifyError(error);
+      notifyError(error, "Nachricht nicht gelöscht.");
     },
   };
 }

@@ -55,20 +55,24 @@ The subsequent mediasoup implementation remains feature-PR work targeting
 PR protection still apply. Physical iOS/Omarchy acceptance remains deferred.
 This instruction does not authorize main merges, release or deployment.
 
-## Current development line: v0.6
+## Current development line: v0.8
 
-`v0.6` was cut from `main` (`v0.5.2` plus the design follow-up #184, `502274d`)
-on 2026-10-09 at Rafael's request and is protected by the **Version branches**
-ruleset (`refs/heads/v[0-9]*`: PRs required, same review requirements as
-`main`). Major product work for this line targets `v0.6` through feature PRs:
-the installable phone PWA, the Windows desktop release (step 6 of #165, a
-download on the GitHub release), and video inside the desktop app (watched
-streams, own camera and own stream) with sound for shared screens. Do not
-target new feature PRs at `v0.5`. Release a completed line only from `main`
-after its version PR, CI and image publishing have finished.
+`v0.8` was cut from the `v0.7.1` line (`5ab3a90`) on 2026-10-21 at Rafael's
+request and is protected by the **Version branches** ruleset
+(`refs/heads/v[0-9]*`: PRs required, same review requirements as `main`).
+Major product work for this line targets `v0.8` through feature PRs: the UX
+redesign (#322 to #330: theme tokens and shared UI primitives, first run and
+invites, shell navigation, chat, the bottom call bar, the voice room, settings,
+motion and small details, and one "Live gehen" that replaces screen share and
+Go Live in the client) and the gateway follow-ups (#346). The redesign PRs are
+stacked: merge them in order and retarget the next one to `v0.8` after each
+merge. Do not target new feature PRs at `v0.7.1` or older lines. Release a
+completed line only from `main` after its version PR, CI and image publishing
+have finished.
 
-`v0.5` shipped the Linux desktop app as `v0.5.0` on 2026-10-08 (#170, decided
-by Silas) and is complete.
+`v0.6` shipped as `v0.6.0`/`v0.6.1`, `v0.7` as `v0.7.0` and `v0.7.1` as
+`v0.7.1`; those lines are complete. `v0.5` shipped the Linux desktop app as
+`v0.5.0` on 2026-10-08 (#170, decided by Silas) and is complete.
 
 ## Shipped line: latest published main tag
 

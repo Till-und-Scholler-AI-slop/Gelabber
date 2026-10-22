@@ -46,7 +46,7 @@ struct SessionRow {
     expires_at: DateTime<Utc>,
 }
 
-async fn lookup<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
+async fn row_of<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     db: E,
     hash: &[u8],
 ) -> Result<Option<SessionRow>, ApiError> {
@@ -66,7 +66,7 @@ pub async fn resolve<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     if !token::is_valid(raw) {
         return Ok(None);
     }
-    Ok(lookup(db, &token::hash(raw)).await?.map(|row| row.user))
+    Ok(row_of(db, &token::hash(raw)).await?.map(|row| row.user))
 }
 
 /// Where a session used now should expire: `idle` from now, but never past
@@ -143,13 +143,13 @@ pub async fn touch(
 /// [`touch`] for the request extractors: a failed renewal must not fail a
 /// request the session already authorized. The session then simply keeps
 /// its current expiry until the next use.
-async fn renew(state: &AppState, hash: &[u8], row: &SessionRow) -> DateTime<Utc> {
-    match touch(state, hash, row.session_created_at, row.expires_at).await {
+async fn renew(state: &AppState, session: &CurrentSession) -> DateTime<Utc> {
+    match touch(state, &session.hash, session.created_at, session.expires_at).await {
         Ok(Some(expires_at)) => expires_at,
-        Ok(None) => row.expires_at,
+        Ok(None) => session.expires_at,
         Err(err) => {
             warn!(error = err.code(), "session not renewed");
-            row.expires_at
+            session.expires_at
         }
     }
 }
@@ -178,17 +178,9 @@ impl FromRequestParts<AppState> for MaybeUser {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
-        let Some(raw) =
-            cookies::get(&parts.headers, SESSION_COOKIE).filter(|raw| token::is_valid(raw))
-        else {
-            return Ok(Self(None));
-        };
-        let hash = token::hash(&raw);
-        let Some(row) = lookup(&state.db, &hash).await? else {
-            return Ok(Self(None));
-        };
-        renew(state, &hash, &row).await;
-        Ok(Self(Some(row.user)))
+        Ok(Self(
+            session_of(parts, state).await?.map(|session| session.user),
+        ))
     }
 }
 
@@ -246,21 +238,60 @@ impl FromRequestParts<AppState> for CurrentSession {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
-        let raw = cookies::get(&parts.headers, SESSION_COOKIE)
-            .filter(|raw| token::is_valid(raw))
-            .ok_or(ApiError::Unauthenticated)?;
-        let hash = token::hash(&raw);
-        let row = lookup(&state.db, &hash)
+        session_of(parts, state)
             .await?
-            .ok_or(ApiError::Unauthenticated)?;
-        let expires_at = renew(state, &hash, &row).await;
-        Ok(Self {
-            user: row.user,
-            hash,
-            created_at: row.session_created_at,
-            expires_at,
-        })
+            .ok_or(ApiError::Unauthenticated)
     }
+}
+
+/// The live session behind a raw cookie token, or `None`. Expired rows are
+/// treated as absent, like in [`resolve`]; a cookie no token can have costs
+/// no query.
+pub async fn lookup(db: &PgPool, raw: &str) -> Result<Option<CurrentSession>, ApiError> {
+    if !token::is_valid(raw) {
+        return Ok(None);
+    }
+    let hash = token::hash(raw);
+    Ok(row_of(db, &hash).await?.map(|row| CurrentSession {
+        user: row.user,
+        hash,
+        created_at: row.session_created_at,
+        expires_at: row.expires_at,
+    }))
+}
+
+/// The session `limits::gate` looked up for this request, `None` when the
+/// cookie matches no live one. Mutations under `/api` carry it, so their
+/// extractors do not query the session a second time.
+#[derive(Debug, Clone)]
+pub struct Resolved(pub Option<CurrentSession>);
+
+/// The request's session: the one the gate resolved, else a lookup of the
+/// cookie (GETs, `/ws`, and the sign-in routes, which the gate keys by
+/// address alone). Either way this use renews it ([`renew`], #195); the
+/// renewed expiry goes back into [`Resolved`], so a second extractor of
+/// the same request does not write again.
+async fn session_of(
+    parts: &mut Parts,
+    state: &AppState,
+) -> Result<Option<CurrentSession>, ApiError> {
+    let resolved = parts.extensions.get::<Resolved>().cloned();
+    let from_gate = resolved.is_some();
+    let session = match resolved {
+        Some(Resolved(session)) => session,
+        None => match cookies::get(&parts.headers, SESSION_COOKIE) {
+            Some(raw) => lookup(&state.db, &raw).await?,
+            None => None,
+        },
+    };
+    let Some(mut session) = session else {
+        return Ok(None);
+    };
+    session.expires_at = renew(state, &session).await;
+    if from_gate {
+        parts.extensions.insert(Resolved(Some(session.clone())));
+    }
+    Ok(Some(session))
 }
 
 /// Stable Redis identifier for the stored hash, never the raw cookie token.

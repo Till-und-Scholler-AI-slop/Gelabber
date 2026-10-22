@@ -12,7 +12,8 @@ import { MessagePane } from "../components/MessagePane.tsx";
 import "../components/chat.css";
 import { Redirect } from "../components/Redirect.tsx";
 import { TypingBar } from "../components/TypingBar.tsx";
-import { VoiceRoom } from "../voice/VoiceRoom.tsx";
+import { MainSkeleton, SkeletonRows } from "../components/ui/Skeleton.tsx";
+import { VoiceRoomPart } from "../voice/voiceRoomPart.ts";
 import { LiveHint } from "../voice/LiveHint.tsx";
 import { useLastChannel } from "../servers/lastChannel.ts";
 import { can } from "../servers/permissions.ts";
@@ -43,17 +44,23 @@ export function ChannelPage() {
         />
       </div>
     );
-  if (!server) return null;
+  if (!server) return <MainSkeleton kind="chat" />;
   if (!channel) {
     return <Redirect to="/s/$serverId" params={{ serverId }} />;
   }
 
   const Icon = channel.kind === "voice" ? SpeakerIcon : HashIcon;
 
+  // On a phone the header is the only place that names the server.
   const title = (
     <>
-      <Icon size={18} />
-      <h1>{channel.name}</h1>
+      <div className="lr-channel-title">
+        <span className="lr-channel-title-server">{server.name}</span>
+        <span className="lr-channel-title-name">
+          <Icon size={18} />
+          <h1>{channel.name}</h1>
+        </span>
+      </div>
       <LiveHint server={server} variant="pill" />
     </>
   );
@@ -69,10 +76,11 @@ export function ChannelPage() {
               <MemberPanelToggle />
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <VoiceRoom
+              <VoiceRoomPart.Component
                 server={server}
                 channelId={channel.id}
                 channelName={channel.name}
+                fallback={<SkeletonRows count={3} avatars />}
               />
             </div>
           </>

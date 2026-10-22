@@ -17,11 +17,15 @@ Redis TIME determines expirations, not API wall clocks.
 
 Gateway renews active seats / claims every second, right after the 03a
 DB-session and membership checks of the same tick (the session transaction
-ends before Redis I/O; roster frames are authorized again at dequeue). Lost
-claims clear Live and emit `sig u/k:l`; a refresh never reclaims an expired
-claim. Explicit start issues a new nonce. A dead process or failed cleanup
-leaves at most 5 seconds of occupancy / claim. Passive server watchers receive
-`sig r/snap` replacements on roster changes every second.
+ends before Redis I/O). Lost claims clear Live and emit `sig u/k:l`; a refresh
+never reclaims an expired claim. Explicit start issues a new nonce. A dead
+process or failed cleanup leaves at most 5 seconds of occupancy / claim.
+Passive server watchers receive `sig r/snap` replacements on roster changes
+every second. Each API process reads a server's roster once per second for all
+its sockets on that server and queues it to those whose last roster differs;
+roster frames are authorized again at dequeue. A socket stops getting a
+server's rosters, presence and signaling when it unsubscribes the last topic of
+that server and holds no seat there.
 
 Live start acknowledgement / peer snapshot: `{"op":"sig","t":"p",
 "s":"…","c":"…","u":"…","k":"l","lc":"<nonce>"}`.

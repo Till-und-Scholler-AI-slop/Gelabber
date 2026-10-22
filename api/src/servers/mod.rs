@@ -27,6 +27,7 @@ use uuid::Uuid;
 
 use crate::auth::session::CurrentUser;
 use crate::error::{ApiError, FieldErrors};
+use crate::gateway::Recheck;
 use crate::json::Body;
 use crate::path::Id;
 use crate::state::AppState;
@@ -159,8 +160,9 @@ async fn list_servers(
     Ok(Json(views))
 }
 
-/// Creates the server with its owner membership and a first text channel
-/// (`#allgemein` under "Textkanäle"), so it is usable the moment it exists.
+/// Creates the server with its owner membership, a first text channel
+/// (`#allgemein` under "Textkanäle") and a voice room ("Wohnzimmer" under
+/// "Sprachkanäle"), so it is usable the moment it exists.
 /// Answers with the full detail so the client can render it without a
 /// second request.
 async fn create_server(
@@ -195,6 +197,15 @@ async fn create_server(
         Some(category.id),
         "allgemein",
         ChannelKind::Text,
+    )
+    .await?;
+    let voice = channel::insert_category(&mut *tx, server.id, "Sprachkanäle").await?;
+    channel::insert_channel(
+        &mut *tx,
+        server.id,
+        Some(voice.id),
+        "Wohnzimmer",
+        ChannelKind::Voice,
     )
     .await?;
     tx.commit().await?;
@@ -297,12 +308,13 @@ async fn update_server(
     if let Some(flags) = member_permissions {
         info!(server_id = %server_id, member_permissions = %flags, "member permissions changed");
     }
-    if member_permissions.is_some_and(|flags| {
+    let voice_reduced = member_permissions.is_some_and(|flags| {
         member.server.member_permissions.bits()
             & !flags.bits()
             & (Permission::JoinVoice as i32 | Permission::GoLive as i32)
             != 0
-    }) {
+    });
+    if voice_reduced {
         let members: Vec<Uuid> = sqlx::query_scalar(
             "SELECT user_id FROM server_members WHERE server_id = $1 AND user_id <> $2",
         )
@@ -315,6 +327,12 @@ async fn update_server(
         }
     }
     tx.commit().await?;
+    if voice_reduced {
+        state
+            .gateway
+            .announce_recheck(Recheck::Server(server_id))
+            .await;
+    }
     Ok(Json(
         Membership {
             server,
@@ -348,6 +366,10 @@ async fn delete_server(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    state
+        .gateway
+        .announce_recheck(Recheck::Server(server_id))
+        .await;
     info!(server_id = %server_id, "server deleted");
     Ok(StatusCode::NO_CONTENT)
 }
@@ -374,6 +396,7 @@ async fn leave_server(
         .await?;
     moderation::after_removal(&state, &mut tx, server_id, user.id, "not_found").await?;
     tx.commit().await?;
+    state.gateway.announce_recheck(Recheck::User(user.id)).await;
     info!(server_id = %server_id, user_id = %user.id, "member left");
     Ok(StatusCode::NO_CONTENT)
 }

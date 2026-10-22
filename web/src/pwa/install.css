@@ -38,3 +38,39 @@
 .pwa-install-note {
   color: var(--lr-muted);
 }
+
+/* The sign-in page offers the panel behind one line. */
+.pwa-install-disclosure {
+  margin-top: var(--lr-space-5);
+  font: var(--lr-type-ui);
+}
+.pwa-install-disclosure > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lr-space-1);
+  color: var(--lr-muted);
+  cursor: pointer;
+  list-style: none;
+}
+.pwa-install-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.pwa-install-disclosure > summary svg {
+  transform: rotate(-90deg);
+  transition: transform var(--lr-dur-fast) var(--lr-ease);
+}
+.pwa-install-disclosure[open] > summary svg {
+  transform: none;
+}
+.pwa-install-disclosure > summary:hover {
+  color: var(--lr-text);
+}
+.pwa-install-disclosure .pwa-install {
+  margin-top: var(--lr-space-3);
+}
+@media (pointer: coarse) {
+  .pwa-install-disclosure > summary {
+    padding-block: 12px;
+    margin-block: -12px;
+  }
+}
