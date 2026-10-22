@@ -180,8 +180,47 @@ export function removePending(channelId: string, id: string): void {
   usePendingMessages.getState().remove(channelId, id);
 }
 
+/** The nonce a send carries: the uuid of its `tmp:` attempt id (#355). */
+export function attemptNonce(id: string): string {
+  return id.slice("tmp:".length);
+}
+
+/** Sends whose live event came before the POST answer, by attempt id. */
+const echoed = new Map<string, Message>();
+
+/**
+ * A created message arrived live (#355). When it is one's own and names a
+ * send attempt of this device, the server row takes over from the `tmp:` row
+ * now, as it lands in the page, so the two never show side by side while
+ * the POST answer is still on its way: both carry the server id, and
+ * `visibleMessages` shows that id once. An attempt that is not sending any
+ * more (its answer was lost) is settled: it was saved.
+ */
+export function confirmEcho(
+  channelId: string,
+  userId: string,
+  message: Message,
+): void {
+  if (!message.nonce || message.author.id !== userId) return;
+  const id = `tmp:${message.nonce}`;
+  const attempt = usePendingMessages.getState().attempts[id];
+  if (attempt?.channelId !== channelId || attempt.stamp.userId !== userId)
+    return;
+  confirmPending(channelId, id, message);
+  if (attempt.status === "sending") echoed.set(id, message);
+  else forgetAttempt(id);
+}
+
+/** The live copy of a send still waiting for its POST answer, taken once. */
+export function takeEcho(id: string): Message | undefined {
+  const message = echoed.get(id);
+  echoed.delete(id);
+  return message;
+}
+
 /** Drop every in-flight optimistic row. Account switches must not keep them. */
 export function resetPendingMessages(): void {
+  echoed.clear();
   const state = usePendingMessages.getState();
   for (const attempt of Object.values(state.attempts))
     attempt.controller.abort();
