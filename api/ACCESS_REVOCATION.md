@@ -64,8 +64,17 @@ logout commits the targeted DB delete, cancels local sockets, attempts bounded
 Redis cleanup and retries; the session lease cannot continue renewing.
 
 Gateway sockets independently recheck DB membership incarnation (`joined_at`)
-and media permissions before handling/dequeuing frames and on a one-second
-security timer. This covers another API instance and leave/rejoin between ticks.
+and media permissions before handling/dequeuing frames and on a security timer:
+every second while the socket holds a voice seat (each seat renewal follows a
+passed check), otherwise once 10 seconds have passed without any check. After
+a kick, ban, leave, server or channel delete, a voice permission reduction or a
+session revocation commits, the API publishes a notice on `gb:rv`
+(`{"u":user}`, `{"s":server}`, `{"c":channel}` or `{"k":session}`), and every
+API process checks the sockets it names at once. The notice carries no
+authority: receivers only run the DB check. A lost notice is bounded by the
+10-second timer; a Pub/Sub reconnect resyncs every socket, and that delivery
+runs the check too. This covers another API instance and leave/rejoin between
+checks.
 Existing chat subscriptions survive media-only permission reductions. Grants do
 not revoke existing voice or tickets. Queue capacity/voice crash leases remain
 05a/05b work.

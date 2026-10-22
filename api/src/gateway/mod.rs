@@ -38,7 +38,7 @@ use crate::auth::session::CurrentSession;
 use crate::error::ApiError;
 use crate::state::AppState;
 
-pub use hub::{ConnTable, EventLog, Gateway, VoiceRoster};
+pub use hub::{ConnTable, EventLog, Gateway, Recheck, VoiceRoster};
 pub use protocol::{Event, EventDraft, EventKind, PresenceStatus, Topic};
 
 pub fn router() -> Router<AppState> {

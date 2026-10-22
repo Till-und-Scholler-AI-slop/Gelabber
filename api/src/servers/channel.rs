@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use crate::auth::session::CurrentUser;
 use crate::error::{ApiError, FieldErrors};
+use crate::gateway::Recheck;
 use crate::json::Body;
 use crate::path::Id;
 use crate::state::AppState;
@@ -369,6 +370,10 @@ async fn delete_channel(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    state
+        .gateway
+        .announce_recheck(Recheck::Channel(channel_id))
+        .await;
     info!(server_id = %member.server.id, channel_id = %channel_id, "channel deleted");
     Ok(StatusCode::NO_CONTENT)
 }
