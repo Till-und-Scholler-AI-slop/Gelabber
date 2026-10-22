@@ -43,8 +43,12 @@ import {
   useVoiceDiagnostics,
 } from "./diagnostics.ts";
 import { setNativeBridgeForTests } from "./native/bridge.ts";
+import callMicrophoneSource from "./callMicrophone.ts?raw";
+import localSourceAudioSource from "./localSourceAudio.ts?raw";
+import localVideoSource from "./localVideo.ts?raw";
 import receivedAudioSource from "./receivedAudio.ts?raw";
 import sessionSource from "./session.ts?raw";
+import sessionStateSource from "./sessionState.ts?raw";
 import videoLimitsSource from "./videoLimits.ts?raw";
 import { NativeStream, NativeTrack } from "./native/tracks.ts";
 import { resetUserVolumesForTests, useUserVolumes } from "./userVolume.ts";
@@ -5049,6 +5053,10 @@ describe("voice session reset", () => {
     // A module-level `let` or collection would outlive resetVoiceForTests.
     for (const [name, source] of [
       ["session.ts", sessionSource],
+      ["sessionState.ts", sessionStateSource],
+      ["callMicrophone.ts", callMicrophoneSource],
+      ["localVideo.ts", localVideoSource],
+      ["localSourceAudio.ts", localSourceAudioSource],
       ["receivedAudio.ts", receivedAudioSource],
       ["videoLimits.ts", videoLimitsSource],
     ] as const) {
@@ -5060,7 +5068,7 @@ describe("voice session reset", () => {
       ].map((match) => match[1]);
       expect({ name, lets, collections }).toEqual({
         name,
-        lets: name === "session.ts" ? ["voice"] : [],
+        lets: name === "sessionState.ts" ? ["voice"] : [],
         collections: [],
       });
     }
