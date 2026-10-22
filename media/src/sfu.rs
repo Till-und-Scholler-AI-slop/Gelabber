@@ -2472,65 +2472,181 @@ mod tests {
         (sfu, peer, publication, rx)
     }
 
+    /// A second member joined to the fixture's room with its authority keys in
+    /// Redis, a receive transport and the router's capabilities, ready to consume.
+    struct Viewer {
+        id: PeerId,
+        events: mpsc::Receiver<ServerFrame>,
+        transport: WebRtcTransport,
+        keys: Vec<String>,
+    }
+    impl Viewer {
+        async fn join(sfu: &Arc<Sfu>, owner: &Peer, room: &Room, capacity: usize) -> Self {
+            use crate::redis_connection::ConnectionSource;
+            use gelabber_shared::ticket;
+            let channel = owner.authority.claim.c;
+            let mut authority = owner.authority.clone();
+            authority.claim.u = Uuid::new_v4();
+            authority.auth.member = Uuid::new_v4();
+            authority.auth.session = Uuid::new_v4().simple().to_string().repeat(2);
+            let keys = [
+                (
+                    ticket::member_authority_key(authority.claim.s, authority.claim.u),
+                    authority.auth.member.to_string(),
+                ),
+                (
+                    ticket::channel_authority_key(channel),
+                    authority.auth.channel.to_string(),
+                ),
+                (
+                    ticket::session_authority_key(&authority.auth.session),
+                    authority.claim.u.to_string(),
+                ),
+            ];
+            let mut redis = sfu.redis.connection().await.unwrap();
+            for (key, value) in &keys {
+                let _: () = redis::cmd("SET")
+                    .arg(key)
+                    .arg(value)
+                    .arg("EX")
+                    .arg(30)
+                    .query_async(&mut redis)
+                    .await
+                    .unwrap();
+            }
+            let (out, events) = mpsc::channel(capacity);
+            let id = sfu
+                .join_authorized_watch_version(authority, None, MEDIA_PROTOCOL_VERSION, out)
+                .await
+                .unwrap();
+            let router = room.router.get().unwrap();
+            let mut options = WebRtcTransportOptions::new_with_server(sfu.server.clone());
+            options.app_data = AppData::new(AtomicU64::new(0));
+            let transport = native(router.clone(), move |router| async move {
+                router.create_webrtc_transport(options).await
+            })
+            .await
+            .unwrap();
+            {
+                let mut data = room.data.lock().await;
+                let peer = data.peers.get_mut(&id).unwrap();
+                peer.transports.insert(false, transport.clone());
+                peer.capabilities = Some(
+                    serde_json::from_value(
+                        serde_json::to_value(router.rtp_capabilities()).unwrap(),
+                    )
+                    .unwrap(),
+                );
+            }
+            sfu.counters.transports.fetch_add(1, Ordering::Relaxed);
+            Self {
+                id,
+                events,
+                transport,
+                keys: keys.into_iter().map(|(key, _)| key).collect(),
+            }
+        }
+        async fn revoke(&self, sfu: &Sfu) {
+            use crate::redis_connection::ConnectionSource;
+            let mut redis = sfu.redis.connection().await.unwrap();
+            for key in &self.keys {
+                let _: () = redis::cmd("DEL")
+                    .arg(key)
+                    .query_async(&mut redis)
+                    .await
+                    .unwrap();
+            }
+        }
+    }
+
+    /// Adds `count` audio publications of the fixture's owner to its room, each
+    /// on its own native producer, as a full voice room has.
+    async fn publish_many(owner: &Arc<Peer>, room: &Room, count: u32) -> Vec<Arc<Publication>> {
+        let transport = room.data.lock().await.peers[&owner.id].transports[&true].clone();
+        let mut publications = Vec::new();
+        for index in 0..count {
+            let rtp = serde_json::from_value(json!({
+                "codecs":[{"mimeType":"audio/opus","payloadType":111,"clockRate":48000,
+                    "channels":2,"parameters":{},"rtcpFeedback":[]}],
+                "headerExtensions":[],"encodings":[{"ssrc":10_000 + index}],
+                "rtcp":{"cname":format!("attach-{index}"),"reducedSize":true}
+            }))
+            .unwrap();
+            let producer = native(transport.clone(), move |transport| async move {
+                transport
+                    .produce(ProducerOptions::new(MediaKind::Audio, rtp))
+                    .await
+            })
+            .await
+            .unwrap();
+            publications.push(Arc::new(Publication {
+                producer: NativeProducer::new(producer, transport.clone()),
+                peer: owner.clone(),
+                kind: SourceKind::Mic,
+                epoch: Uuid::new_v4(),
+                parent: None,
+                live: None,
+                grant: Grant::new(),
+                gate: Mutex::new(()),
+                height: 0,
+                layers: 1,
+                packet_samples: StdMutex::new(HashMap::new()),
+            }));
+        }
+        let mut data = room.data.lock().await;
+        for publication in &publications {
+            data.publications
+                .insert(publication.id(), publication.clone());
+        }
+        publications
+    }
+
+    /// Joining a room with 40 publications: every one is consumed and announced
+    /// in one attach pass. Prints the pass time to compare join latency.
+    #[tokio::test]
+    async fn attach_pass_announces_every_publication_of_a_full_room() {
+        const PUBLICATIONS: u32 = 40;
+        let (sfu, owner, _publication, _owner_events) = stopping_fixture().await;
+        let channel = owner.authority.claim.c;
+        let room = sfu.room(channel).await.unwrap();
+        publish_many(&owner, &room, PUBLICATIONS - 1).await;
+        let mut viewer = Viewer::join(&sfu, &owner, &room, 64).await;
+        let started = Instant::now();
+        sfu.attach_existing(channel, viewer.id).await;
+        let elapsed = started.elapsed();
+        // Written past libtest's capture so the CI log keeps the number.
+        let _ = std::io::Write::write_all(
+            &mut std::io::stderr(),
+            format!("attach pass for {PUBLICATIONS} publications took {elapsed:?}\n").as_bytes(),
+        );
+        let mut announced = HashSet::new();
+        while let Ok(frame) = viewer.events.try_recv() {
+            if let ServerFrame::Consumer { producer_id, .. } = frame {
+                announced.insert(producer_id);
+            }
+        }
+        assert_eq!(announced.len(), PUBLICATIONS as usize);
+        {
+            let data = room.data.lock().await;
+            let peer = &data.peers[&viewer.id];
+            assert_eq!(peer.consumers.len(), PUBLICATIONS as usize);
+            assert!(peer.pending_consumers.is_empty());
+        }
+        assert_eq!(
+            viewer.transport.dump().await.unwrap().consumer_ids.len(),
+            PUBLICATIONS as usize
+        );
+        sfu.leave(viewer.id, channel).await;
+        viewer.revoke(&sfu).await;
+    }
+
     #[tokio::test]
     async fn native_consume_timeout_retries_without_room_activity_and_retires_late_consumer() {
-        use crate::redis_connection::ConnectionSource;
-        use gelabber_shared::ticket;
         let (sfu, owner, publication, _owner_events) = stopping_fixture().await;
         let channel = owner.authority.claim.c;
         let room = sfu.room(channel).await.unwrap();
-        let mut authority = owner.authority.clone();
-        authority.claim.u = Uuid::new_v4();
-        authority.auth.member = Uuid::new_v4();
-        authority.auth.session = Uuid::new_v4().simple().to_string().repeat(2);
-        let keys = [
-            (
-                ticket::member_authority_key(authority.claim.s, authority.claim.u),
-                authority.auth.member.to_string(),
-            ),
-            (
-                ticket::channel_authority_key(channel),
-                authority.auth.channel.to_string(),
-            ),
-            (
-                ticket::session_authority_key(&authority.auth.session),
-                authority.claim.u.to_string(),
-            ),
-        ];
-        let mut redis = sfu.redis.connection().await.unwrap();
-        for (key, value) in &keys {
-            let _: () = redis::cmd("SET")
-                .arg(key)
-                .arg(value)
-                .arg("EX")
-                .arg(30)
-                .query_async(&mut redis)
-                .await
-                .unwrap();
-        }
-        let (out, mut events) = mpsc::channel(16);
-        let viewer = sfu
-            .join_authorized_watch_version(authority, None, MEDIA_PROTOCOL_VERSION, out)
-            .await
-            .unwrap();
-        let router = room.router.get().unwrap();
-        let mut options = WebRtcTransportOptions::new_with_server(sfu.server.clone());
-        options.app_data = AppData::new(AtomicU64::new(0));
-        let transport = native(router.clone(), move |router| async move {
-            router.create_webrtc_transport(options).await
-        })
-        .await
-        .unwrap();
-        {
-            let mut data = room.data.lock().await;
-            let peer = data.peers.get_mut(&viewer).unwrap();
-            peer.transports.insert(false, transport.clone());
-            peer.capabilities = Some(
-                serde_json::from_value(serde_json::to_value(router.rtp_capabilities()).unwrap())
-                    .unwrap(),
-            );
-        }
-        sfu.counters.transports.fetch_add(1, Ordering::Relaxed);
+        let mut joined = Viewer::join(&sfu, &owner, &room, 16).await;
+        let (viewer, transport) = (joined.id, joined.transport.clone());
         let (complete, pending) = tokio::sync::oneshot::channel();
         let (late_created, late_ready) = tokio::sync::oneshot::channel();
         let result = tokio::time::timeout(
@@ -2553,7 +2669,7 @@ mod tests {
         .await
         .expect("attach must release its pending reservation after timeout");
         assert!(matches!(result, Err(SfuError::Unavailable)));
-        let event = tokio::time::timeout(Duration::from_secs(3), events.recv())
+        let event = tokio::time::timeout(Duration::from_secs(3), joined.events.recv())
             .await
             .unwrap()
             .unwrap();
@@ -2586,13 +2702,7 @@ mod tests {
         .await
         .expect("late unannounced consumer must be closed");
         sfu.leave(viewer, channel).await;
-        for (key, _) in keys {
-            let _: () = redis::cmd("DEL")
-                .arg(key)
-                .query_async(&mut redis)
-                .await
-                .unwrap();
-        }
+        joined.revoke(&sfu).await;
     }
 
     async fn assert_terminal_after_native_stop(revoke: bool) {
