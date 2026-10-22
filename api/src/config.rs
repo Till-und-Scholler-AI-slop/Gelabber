@@ -58,6 +58,7 @@ pub const DEFAULT_PUSH_HOSTS: &[&str] = &[
     "push.apple.com",
 ];
 pub const KLIPY_CONTENT_FILTER: &str = "KLIPY_CONTENT_FILTER";
+pub const KLIPY_CACHE_SECS: &str = "KLIPY_CACHE_SECS";
 pub const API_LINK_PREVIEWS: &str = "API_LINK_PREVIEWS";
 pub const API_LINK_PREVIEW_DENY_HOSTS: &str = "API_LINK_PREVIEW_DENY_HOSTS";
 pub const API_RATE_PREVIEW_PER_MIN: &str = "API_RATE_PREVIEW_PER_MIN";
@@ -239,6 +240,9 @@ pub struct GifConfig {
     pub media_origins: Vec<String>,
     /// Klipy's `content_filter`: `off`, `low`, `medium` or `high`.
     pub content_filter: String,
+    /// How long a search or trending page stays in Redis, shared by every
+    /// user. Zero asks Klipy every time.
+    pub cache_ttl: Duration,
 }
 
 impl fmt::Debug for GifConfig {
@@ -248,6 +252,7 @@ impl fmt::Debug for GifConfig {
             .field("api_base", &self.api_base)
             .field("media_origins", &self.media_origins)
             .field("content_filter", &self.content_filter)
+            .field("cache_ttl", &self.cache_ttl)
             .finish()
     }
 }
@@ -259,6 +264,8 @@ pub const KLIPY_MEDIA_ORIGINS: &[&str] = &[
     "https://static2.klipy.com",
 ];
 const DEFAULT_KLIPY_CONTENT_FILTER: &str = "medium";
+const DEFAULT_KLIPY_CACHE_SECS: u64 = 600;
+const KLIPY_CACHE_SECS_MAX: u64 = 86_400;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MinioConfig {
@@ -670,6 +677,20 @@ fn parse_gifs(get: &impl Fn(&str) -> Option<String>) -> Result<Option<GifConfig>
         }
         None => DEFAULT_KLIPY_CONTENT_FILTER.to_owned(),
     };
+    let cache_secs = match get(KLIPY_CACHE_SECS) {
+        Some(raw) => {
+            let secs = parse_u64_allow_zero(KLIPY_CACHE_SECS, &raw)?;
+            if secs > KLIPY_CACHE_SECS_MAX {
+                return Err(invalid(
+                    KLIPY_CACHE_SECS,
+                    &raw,
+                    "expected at most 86400 (one day)",
+                ));
+            }
+            secs
+        }
+        None => DEFAULT_KLIPY_CACHE_SECS,
+    };
     Ok(Some(GifConfig {
         api_key,
         api_base: KLIPY_API_BASE.to_owned(),
@@ -678,6 +699,7 @@ fn parse_gifs(get: &impl Fn(&str) -> Option<String>) -> Result<Option<GifConfig>
             .map(|o| (*o).to_owned())
             .collect(),
         content_filter,
+        cache_ttl: Duration::from_secs(cache_secs),
     }))
 }
 
@@ -945,6 +967,7 @@ mod tests {
         assert_eq!(gifs.api_key, "key-123_A");
         assert_eq!(gifs.api_base, "https://api.klipy.com");
         assert_eq!(gifs.content_filter, "medium");
+        assert_eq!(gifs.cache_ttl, Duration::from_secs(600));
         assert!(
             gifs.media_origins
                 .contains(&"https://static.klipy.com".to_owned())
@@ -986,6 +1009,33 @@ mod tests {
         assert!(
             matches!(err, ConfigError::Invalid { key: KLIPY_API_KEY, ref value, .. } if value == "<redacted>")
         );
+    }
+
+    #[test]
+    fn klipy_cache_can_be_tuned_or_turned_off() {
+        let ttl = |raw: &str| {
+            Config::from_source(source(&[
+                (DATABASE_URL, "postgres://u:p@localhost/db"),
+                (REDIS_URL, "redis://localhost"),
+                (KLIPY_API_KEY, "key"),
+                (KLIPY_CACHE_SECS, raw),
+            ]))
+            .map(|config| config.gifs.expect("gifs on").cache_ttl)
+        };
+        assert_eq!(ttl("0").unwrap(), Duration::ZERO);
+        assert_eq!(ttl(" 300 ").unwrap(), Duration::from_secs(300));
+        for raw in ["86401", "-1", "ten"] {
+            assert!(
+                matches!(
+                    ttl(raw),
+                    Err(ConfigError::Invalid {
+                        key: KLIPY_CACHE_SECS,
+                        ..
+                    })
+                ),
+                "{raw}"
+            );
+        }
     }
 
     #[test]
