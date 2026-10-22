@@ -826,6 +826,33 @@
     font: var(--lr-type-body);
     pointer-events: auto;
   }
+  /* Toasts rise into their stack and fade away, with a slight settle. */
+  .ui-toast,
+  .ui-message-toast {
+    transition:
+      opacity var(--lr-dur) var(--lr-ease-enter),
+      translate var(--lr-dur) var(--lr-ease-enter),
+      scale var(--lr-dur) var(--lr-ease-enter),
+      background-color var(--lr-dur-micro) var(--lr-ease-standard);
+  }
+  .ui-toast[data-state="closed"],
+  .ui-message-toast[data-state="closed"] {
+    opacity: 0;
+    scale: 0.98;
+    transition-duration: var(--lr-dur-exit);
+    transition-timing-function: var(--lr-ease-exit);
+  }
+  @starting-style {
+    .ui-toast {
+      opacity: 0;
+      translate: 0 8px;
+    }
+    /* New messages come in from the top edge they sit against. */
+    .ui-message-toast {
+      opacity: 0;
+      translate: 0 -8px;
+    }
+  }
   .ui-toast--error {
     border-left: 3px solid var(--lr-danger);
   }
