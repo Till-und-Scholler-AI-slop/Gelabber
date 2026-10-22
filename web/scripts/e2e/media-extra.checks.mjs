@@ -9,7 +9,7 @@ test("source identity reorder delivers authoritative Consumer messages without n
   const delivered = [];
   const state = {
     holdTracks: false,
-    heldTracks: ["camera", "screen", "live"].map((source) => ({
+    heldTracks: ["camera", "live"].map((source) => ({
       event: Object.freeze({
         data: JSON.stringify({ op: "consumer", source }),
       }),
@@ -93,12 +93,8 @@ test("source identity reorder delivers authoritative Consumer messages without n
     { owner: actor, member: actor, watcher: actor },
     { begin: async () => {}, reset: async () => {}, options: {} },
   );
-  assert.deepEqual(delivered, ["live", "screen", "camera"]);
-  assert.deepEqual(Array.from(result.deliveredKinds), [
-    "video",
-    "video",
-    "video",
-  ]);
+  assert.deepEqual(delivered, ["live", "camera"]);
+  assert.deepEqual(Array.from(result.deliveredKinds), ["video", "video"]);
   assert.equal(result.consumerAnnouncementOrder, "reversed");
   assert.equal(state.holdTracks, false);
   assert.equal(state.heldTracks.length, 0);

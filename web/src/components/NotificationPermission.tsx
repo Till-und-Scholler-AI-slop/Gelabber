@@ -35,7 +35,7 @@ export function NotificationPermissionStatus() {
   const system = useSystemNotifications();
   if (system) {
     return (
-      <div className="rounded-lg border border-neutral-300 p-3 text-sm dark:border-neutral-700">
+      <div className="settings-note">
         <p role="status">
           Gelabber zeigt Benachrichtigungen über dein System an, wie andere Apps
           auch. Ob sie erscheinen, auf dem Sperrbildschirm oder während „Nicht

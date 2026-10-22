@@ -1557,11 +1557,6 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 .lr-live-hint button:hover {
   filter: brightness(1.1);
 }
-.lr-live-hint button.is-quiet {
-  background: transparent;
-  color: var(--lr-muted);
-  border: 1px solid var(--lr-border);
-}
 .lr-live-badge {
   display: inline-grid;
   place-items: center;

@@ -34,10 +34,13 @@ import { useVoice } from "../voice/session.ts";
 import { useSpeaking } from "../voice/speaking.ts";
 import {
   EMPTY_LIVE,
+  EMPTY_LIVE_PEOPLE,
   EMPTY_OCCUPANCY,
   useVoiceRoster,
+  type LiveMap,
   type VoiceFlags,
 } from "../voice/roster.ts";
+import { liveSentence } from "../voice/roomSummary.ts";
 import { can } from "../servers/permissions.ts";
 import { useMenuDetails } from "./menuDetails.ts";
 import { useNavigationDrawer } from "./navigationDrawer.ts";
@@ -109,7 +112,7 @@ function withParticipants(
   rows: SidebarRow[],
   server: ServerDetail,
   occupancy: Record<string, VoiceFlags>,
-  live: Record<string, string>,
+  live: LiveMap,
 ): SidebarRow[] {
   const members = new Map(server.members.map((m) => [m.user_id, m]));
   const byChannel = new Map<string, ParticipantRow[]>();
@@ -125,7 +128,7 @@ function withParticipants(
       key: `participant:${flags.channelId}:${userId}`,
       member,
       flags,
-      live: live[flags.channelId] === userId,
+      live: Boolean(live[flags.channelId]?.[userId]),
     });
     byChannel.set(flags.channelId, list);
   }
@@ -385,7 +388,7 @@ export function ChannelList({
   rows: SidebarRow[];
   activeChannelId: string | undefined;
   voiceChannelId: string | null;
-  liveChannels: Record<string, string>;
+  liveChannels: LiveMap;
   manageChannels: boolean;
   onEditChannel: (channel: Channel) => void;
   onCreateChannel: (categoryId: string | null) => void;
@@ -545,7 +548,13 @@ export function ChannelList({
                   channel={row.channel}
                   active={row.channel.id === activeChannelId}
                   inVoice={row.channel.id === voiceChannelId}
-                  live={Boolean(liveChannels[row.channel.id])}
+                  live={Object.keys(
+                    liveChannels[row.channel.id] ?? EMPTY_LIVE_PEOPLE,
+                  ).map(
+                    (id) =>
+                      server.members.find((member) => member.user_id === id)
+                        ?.name ?? "Jemand",
+                  )}
                   manage={manageChannels}
                   coarse={touch}
                   stop={row.key === stop}
@@ -856,7 +865,8 @@ export function ChannelRow({
   channel: Channel;
   active: boolean;
   inVoice: boolean;
-  live: boolean;
+  /** Who is live in this voice channel. */
+  live: readonly string[];
   manage: boolean;
   /** A touch screen: one "…" button instead of the hover actions. */
   coarse: boolean;
@@ -886,10 +896,11 @@ export function ChannelRow({
         </span>
       ) : null}
       {text ? <UnreadBadge channelId={channel.id} showDot={false} /> : null}
-      {live ? (
-        <span className="channel-row-live">Live</span>
-      ) : inVoice ? (
-        <span className="channel-row-connected" title="Verbunden" />
+      {live.length > 0 ? (
+        <span className="channel-row-live" title={liveSentence(live, false)}>
+          <span aria-hidden="true">Live</span>
+          <span className="sr-only">{liveSentence(live, false)}</span>
+        </span>
       ) : null}
     </>
   );
@@ -899,6 +910,7 @@ export function ChannelRow({
     unread ? "is-unread" : "",
     pending ? "opacity-50" : "",
     muted && text ? "is-muted" : "",
+    inVoice ? "is-in-voice" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -916,6 +928,7 @@ export function ChannelRow({
           params={{ serverId: channel.server_id, channelId: channel.id }}
           aria-current={active ? "page" : undefined}
           aria-describedby={hintId}
+          title={inVoice ? `${channel.name} · verbunden` : undefined}
           tabIndex={roving.tabIndex(0)}
           className="channel-row-link"
           onContextMenu={

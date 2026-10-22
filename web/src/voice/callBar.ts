@@ -1,5 +1,5 @@
 // What the call bar says beyond its controls: the one notice it shows about
-// the own share's sound, and what a screen reader hears when the call
+// the own Live's sound, and what a screen reader hears when the call
 // changes.
 
 import type { VoiceState } from "./session.ts";
@@ -8,31 +8,28 @@ import { SOURCE_AUDIO_CARRIES_CALL, sourceAudioScope } from "./settings.ts";
 export type NoticeContext = {
   desktop: boolean;
   appAudio: boolean;
-  /** In a call, with share sound switched on. */
+  /** In a call, with the sound of a Live switched on. */
   sharesSound: boolean;
   carriesCall: boolean;
   sourceAudioApp: string;
 };
 
-/** What the dock may have to say about the own share's sound, most
- * important first. It shows one at a time; each is about a share that
+/** What the dock may have to say about the own Live's sound, most
+ * important first. It shows one at a time; each is about a Live that
  * runs, never a warning ahead of one. */
 export function dockNotices(
-  voice: Pick<
-    VoiceState,
-    "sourceAudio" | "sourceAudioNote" | "localScreen" | "localLive"
-  >,
+  voice: Pick<VoiceState, "sourceAudio" | "sourceAudioNote" | "localScreen">,
   context: NoticeContext,
 ): { key: string; text: string }[] {
-  const { sourceAudio, sourceAudioNote: notes } = voice;
-  const failed = notes.s?.failed ?? notes.l?.failed;
-  const silent = notes.s?.silent ?? notes.l?.silent;
-  const running = sourceAudio.s === "sharing" || sourceAudio.l === "sharing";
+  const sound = voice.sourceAudio.s;
+  const failed = voice.sourceAudioNote.s?.failed;
+  const silent = voice.sourceAudioNote.s?.silent;
+  const running = sound === "sharing";
   const notices: { id: string; text: string | null }[] = [
     {
       id: "unavailable",
       text:
-        sourceAudio.s === "unavailable" || sourceAudio.l === "unavailable"
+        sound === "unavailable"
           ? `${
               !context.desktop
                 ? "Der Browser hat keinen Stream-Ton freigegeben."
@@ -47,14 +44,14 @@ export function dockNotices(
     {
       id: "unsupported",
       text:
-        sourceAudio.s === "unsupported" || sourceAudio.l === "unsupported"
+        sound === "unsupported"
           ? "Dieser Medienserver unterstützt Stream-Ton noch nicht. Das Video läuft weiter."
           : null,
     },
     {
       id: "ended",
       text:
-        sourceAudio.s === "ended" || sourceAudio.l === "ended"
+        sound === "ended"
           ? "Der Stream-Ton wurde beendet. Das Video läuft weiter."
           : null,
     },
@@ -81,15 +78,15 @@ export function dockNotices(
           : null,
     },
     {
-      // A browser hands sound over in its picker only: a share that started
+      // A browser hands sound over in its picker only: a Live that started
       // without it stays without it.
       id: "next-share",
       text:
         context.sharesSound &&
         !context.desktop &&
-        ((voice.localScreen && sourceAudio.s === "off") ||
-          (voice.localLive && sourceAudio.l === "off"))
-          ? "Der Stream-Ton kommt mit der nächsten Freigabe dazu."
+        voice.localScreen &&
+        sound === "off"
+          ? "Der Stream-Ton kommt mit deinem nächsten Live dazu."
           : null,
     },
   ];

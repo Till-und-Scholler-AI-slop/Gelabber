@@ -1,11 +1,11 @@
 // How a room's pictures are laid out: one spotlight, a filmstrip of the
-// other shares, and cameras in their owners' places among the participants.
+// other Lives, and cameras in their owners' places among the participants.
 
-export type StageKind = "live" | "screen" | "camera";
+export type StageKind = "live" | "camera";
 
-/** Live first, then screens: a share takes the spotlight unless someone
- * pinned another picture there, a camera included. The filmstrip holds the
- * shares that are not in it; cameras stay with their owners. */
+/** The first Live takes the spotlight unless someone pinned another picture
+ * there, a camera included. The filmstrip holds the Lives that are not in
+ * it; cameras stay with their owners. */
 export function arrangeStage<T extends { id: string; kind: StageKind }>(
   shares: readonly T[],
   cameras: readonly T[],
