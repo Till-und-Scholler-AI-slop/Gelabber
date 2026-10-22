@@ -23,8 +23,11 @@ const MAX_CLIENT_BYTES: usize = 16 * 1024;
 
 /// How long a socket without a voice seat goes without a session and access
 /// check while it sends and receives nothing. Revocations reach it at once
-/// through [`super::hub::Recheck`]; this bounds a lost notice. A socket with
-/// a seat checks every second, before each lease renewal.
+/// through [`super::hub::Recheck`]; this bounds a lost notice (Redis down
+/// included). A socket with a seat still checks every second: each check
+/// gates a 5 s lease renewal, and renewing on a lost notice would keep a
+/// revoked user in the roster for up to this backstop instead of one tick.
+/// Seat holders are the few sockets in a call, so that poll stays cheap.
 const SECURITY_BACKSTOP: std::time::Duration = std::time::Duration::from_secs(10);
 
 enum FrameEffect {

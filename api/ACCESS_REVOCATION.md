@@ -72,8 +72,11 @@ session revocation commits, the API publishes a notice on `gb:rv`
 (`{"u":user}`, `{"s":server}`, `{"c":channel}` or `{"k":session}`), and every
 API process checks the sockets it names at once. The notice carries no
 authority: receivers only run the DB check. A lost notice is bounded by the
-10-second timer; a Pub/Sub reconnect resyncs every socket, and that delivery
-runs the check too. This covers another API instance and leave/rejoin between
+10-second timer: while Redis is down, no notice arrives and that timer (plus
+the checks on every frame in and every dequeued batch) is all that applies.
+A Pub/Sub reconnect resyncs every socket, and that delivery runs the check
+too. Seat holders keep the one-second check because it gates each lease
+renewal; a notice only makes their revocation faster. This covers another API instance and leave/rejoin between
 checks.
 Existing chat subscriptions survive media-only permission reductions. Grants do
 not revoke existing voice or tickets. Queue capacity/voice crash leases remain
