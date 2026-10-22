@@ -1,7 +1,9 @@
 //! Own product authority/control; mediasoup is the sole production media engine.
 //! Graph locks only reserve/commit. Native awaits use per-resource gates so a
 //! denied grant cannot be resumed after its confirmed native pause.
-use crate::native_command::native;
+//! A pool of engines (one worker, WebRtcServer and UDP port each) carries the
+//! rooms; a lost engine closes only its own rooms while the others keep running.
+use crate::native_command::{command_slots, native};
 use crate::native_resource::{NativeConsumer, NativeProducer};
 use crate::{
     config::Config,
@@ -27,8 +29,8 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::{Mutex, Notify, OnceCell, mpsc};
-use tracing::{error, warn};
+use tokio::sync::{Mutex, Notify, OnceCell, Semaphore, mpsc};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 const STOP_TIMEOUT: Duration = Duration::from_millis(500);
@@ -39,11 +41,16 @@ const WATCH_LIMIT: usize = 64;
 const CONSUMER_LIMIT: usize = 1024;
 /// Browser-reported failures per producer before a viewer stops re-consuming it.
 const CONSUMER_FAILURE_LIMIT: u8 = 5;
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
+const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
+const RESPAWN_FIRST: Duration = Duration::from_secs(1);
+const RESPAWN_MAX: Duration = Duration::from_secs(60);
 /// Consumers one attach pass creates at the same time.
 const ATTACH_CONCURRENCY: usize = 8;
-// Consumer creations of all attach passes together. Native commands fail fast
-// once their 256 slots are taken, so joins must leave room for RPCs and stops.
-static ATTACH_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(128);
+// Consumer creations of all attach passes on one worker together. Native
+// commands fail fast once the worker's 256 slots are taken, so joins must leave
+// room for RPCs and stops.
+const ATTACH_SLOTS: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PeerId(pub Uuid);
@@ -197,10 +204,133 @@ impl RoomData {
         Some((peers, frame))
     }
 }
+/// One mediasoup worker (a native thread) with its own WebRtcServer, UDP
+/// port and command slots. A room stays on its engine for its lifetime.
+struct Engine {
+    slot: usize,
+    worker: Worker,
+    server: WebRtcServer,
+    /// Set when the worker died or missed its heartbeat; never cleared. The
+    /// slot gets a new engine instead.
+    lost: Arc<AtomicBool>,
+    exited: Arc<Notify>,
+    /// When `engine_lost` handled this engine; it runs once per engine.
+    lost_at: StdMutex<Option<Instant>>,
+    commands: Arc<Semaphore>,
+    attach: Semaphore,
+    rooms: AtomicUsize,
+    peers: AtomicUsize,
+}
+impl Engine {
+    async fn start(
+        manager: &WorkerManager,
+        slot: usize,
+        listen: ListenInfo,
+    ) -> Result<Arc<Self>, SfuError> {
+        let commands = command_slots();
+        let mut settings = WorkerSettings::default();
+        settings.log_level = WorkerLogLevel::Error;
+        let worker = native(&commands, manager.clone(), move |manager| async move {
+            manager.create_worker(settings).await
+        })
+        .await?;
+        let lost = Arc::new(AtomicBool::new(false));
+        let exited = Arc::new(Notify::new());
+        {
+            let (lost, exited) = (lost.clone(), exited.clone());
+            worker
+                .on_dead(move |result| {
+                    lost.store(true, Ordering::SeqCst);
+                    error!(slot, ?result, "mediasoup worker exited");
+                    exited.notify_one();
+                })
+                .detach();
+        }
+        let server = native(&commands, worker.clone(), move |worker| async move {
+            worker
+                .create_webrtc_server(WebRtcServerOptions::new(WebRtcServerListenInfos::new(
+                    listen,
+                )))
+                .await
+        })
+        .await?;
+        Ok(Arc::new(Self {
+            slot,
+            worker,
+            server,
+            lost,
+            exited,
+            lost_at: StdMutex::new(None),
+            commands,
+            attach: Semaphore::new(ATTACH_SLOTS),
+            rooms: AtomicUsize::new(0),
+            peers: AtomicUsize::new(0),
+        }))
+    }
+    fn alive(&self) -> bool {
+        !self.lost.load(Ordering::SeqCst) && !self.worker.closed() && !self.server.closed()
+    }
+    /// How long this slot has been without a live worker; zero while alive.
+    fn down_for(&self) -> Duration {
+        self.lost_at
+            .lock()
+            .unwrap()
+            .map(|at| at.elapsed())
+            .unwrap_or_default()
+    }
+    async fn native<R, T, E, F>(
+        &self,
+        resource: R,
+        command: impl FnOnce(R) -> F + Send + 'static,
+    ) -> Result<T, SfuError>
+    where
+        R: Send + 'static,
+        T: Send + 'static,
+        E: std::fmt::Display + Send + 'static,
+        F: Future<Output = Result<T, E>> + Send + 'static,
+    {
+        native(&self.commands, resource, command).await
+    }
+}
+/// Worker `slot` binds the configured port + slot; test port 0 lets each
+/// worker pick its own port from the bounded range.
+fn listen_info(bind: std::net::SocketAddr, announced: Option<String>, slot: usize) -> ListenInfo {
+    let port = bind.port();
+    ListenInfo {
+        protocol: Protocol::Udp,
+        ip: bind.ip(),
+        announced_address: announced,
+        expose_internal_ip: false,
+        // `Config` checked that port + slot stays within u16.
+        port: (port != 0).then(|| port + slot as u16),
+        // Explicit bounded local test allocation; production binds fixed UDP.
+        port_range: (port == 0).then_some(20000..=30000),
+        flags: None,
+        send_buffer_size: None,
+        recv_buffer_size: None,
+    }
+}
 struct Room {
+    engine: Arc<Engine>,
     router: OnceCell<Router>,
     data: Mutex<RoomData>,
     joining: AtomicUsize,
+}
+impl Room {
+    fn new(engine: Arc<Engine>, router: Option<Router>) -> Self {
+        engine.rooms.fetch_add(1, Ordering::Relaxed);
+        Self {
+            engine,
+            router: OnceCell::new_with(router),
+            data: Mutex::new(RoomData::default()),
+            joining: AtomicUsize::new(0),
+        }
+    }
+}
+impl Drop for Room {
+    fn drop(&mut self) {
+        self.engine.rooms.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 #[derive(Default)]
 struct Counters {
@@ -216,90 +346,244 @@ struct Counters {
     jitter_microseconds: AtomicU64,
     ice_disconnects: AtomicU64,
     outbound_overflows: AtomicU64,
+    worker_failures: AtomicU64,
+    worker_restarts: AtomicU64,
+}
+/// Live and configured workers, for `/ready` and the metrics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerStatus {
+    pub live: usize,
+    pub total: usize,
 }
 pub struct Sfu {
     redis: crate::redis_connection::CachedRedis,
-    worker: Worker,
-    server: WebRtcServer,
+    manager: WorkerManager,
+    bind: std::net::SocketAddr,
+    announced_ip: Option<String>,
+    /// One engine per slot; a lost engine is replaced in its slot.
+    engines: StdMutex<Vec<Arc<Engine>>>,
     rooms: Mutex<HashMap<Uuid, Arc<Room>>>,
     counters: Counters,
-    dead: Arc<AtomicBool>,
     draining: AtomicBool,
 }
 impl Sfu {
     pub async fn with_redis(config: &Config, redis: redis::Client) -> Result<Arc<Self>, SfuError> {
         let bind: std::net::SocketAddr = config.ice_bind.parse().map_err(SfuError::negotiation)?;
-        let mut settings = WorkerSettings::default();
-        settings.log_level = WorkerLogLevel::Error;
-        let worker = native(WorkerManager::new(), move |manager| async move {
-            manager.create_worker(settings).await
-        })
-        .await?;
-        let dead = Arc::new(AtomicBool::new(false));
-        let exited = dead.clone();
-        worker
-            .on_dead(move |result| {
-                exited.store(true, Ordering::SeqCst);
-                error!(?result, "mediasoup worker exited");
-                // Unexpected worker death is terminal so the process supervisor
-                // can restart a fresh engine; readiness alone does not restart it.
-                fail_closed("mediasoup worker unexpectedly exited");
-            })
-            .detach();
-        let listen = ListenInfo {
-            protocol: Protocol::Udp,
-            ip: bind.ip(),
-            announced_address: config.advertised_ip.clone(),
-            expose_internal_ip: false,
-            port: (bind.port() != 0).then_some(bind.port()),
-            // Explicit bounded local test allocation; production binds fixed UDP.
-            port_range: (bind.port() == 0).then_some(20000..=30000),
-            flags: None,
-            send_buffer_size: None,
-            recv_buffer_size: None,
-        };
-        let server = native(worker.clone(), move |worker| async move {
-            worker
-                .create_webrtc_server(WebRtcServerOptions::new(WebRtcServerListenInfos::new(
-                    listen,
-                )))
-                .await
-        })
-        .await?;
+        let manager = WorkerManager::new();
+        let mut engines = Vec::with_capacity(config.workers);
+        for slot in 0..config.workers.max(1) {
+            engines.push(
+                Engine::start(
+                    &manager,
+                    slot,
+                    listen_info(bind, config.advertised_ip.clone(), slot),
+                )
+                .await?,
+            );
+        }
         let sfu = Arc::new(Self {
             redis: crate::redis_connection::CachedRedis::new(redis),
-            worker,
-            server,
+            manager,
+            bind,
+            announced_ip: config.advertised_ip.clone(),
+            engines: StdMutex::new(engines.clone()),
             rooms: Mutex::new(HashMap::new()),
             counters: Counters::default(),
-            dead,
             draining: AtomicBool::new(false),
         });
         Self::watch_stats(Arc::downgrade(&sfu));
-        let weak = Arc::downgrade(&sfu);
+        for engine in engines {
+            Self::supervise(Arc::downgrade(&sfu), engine);
+        }
+        Ok(sfu)
+    }
+    /// Watches one engine until its worker exits or misses the heartbeat.
+    fn supervise(weak: Weak<Self>, engine: Arc<Engine>) {
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            let mut interval = tokio::time::interval(HEARTBEAT_INTERVAL);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            loop {
-                interval.tick().await;
-                let Some(sfu) = weak.upgrade() else {
-                    break;
-                };
+            let reason = loop {
+                tokio::select! {
+                    _ = engine.exited.notified() => break "mediasoup worker unexpectedly exited",
+                    _ = interval.tick() => {}
+                }
+                if weak.strong_count() == 0 {
+                    return;
+                }
+                // `on_dead` sets `lost` before it notifies, so this tick can
+                // see the exit first.
+                if engine.lost.load(Ordering::SeqCst) {
+                    break "mediasoup worker unexpectedly exited";
+                }
                 if !matches!(
-                    tokio::time::timeout(Duration::from_secs(5), sfu.worker.dump()).await,
+                    tokio::time::timeout(HEARTBEAT_TIMEOUT, engine.worker.dump()).await,
                     Ok(Ok(_))
                 ) {
-                    fail_closed("native worker heartbeat unresponsive");
+                    break "native worker heartbeat unresponsive";
+                }
+            };
+            if let Some(sfu) = weak.upgrade() {
+                sfu.engine_lost(&engine, reason).await;
+            }
+        });
+    }
+    /// A lost worker forwards nothing more (exited) or cannot be reclaimed
+    /// (hung): its rooms are closed and their peers told `gone`, so clients
+    /// rejoin on a live worker. Without a live worker the process exits, so
+    /// the process supervisor can restart a fresh engine.
+    async fn engine_lost(self: &Arc<Self>, engine: &Arc<Engine>, reason: &'static str) {
+        engine.lost.store(true, Ordering::SeqCst);
+        {
+            let mut lost_at = engine.lost_at.lock().unwrap();
+            if lost_at.is_some() {
+                return;
+            }
+            *lost_at = Some(Instant::now());
+        }
+        self.counters
+            .worker_failures
+            .fetch_add(1, Ordering::Relaxed);
+        let live = self.workers().live;
+        error!(slot = engine.slot, reason, live, "media worker lost");
+        if live == 0 {
+            fail_closed(reason);
+        }
+        self.close_engine_rooms(engine).await;
+        self.respawn(engine.slot);
+    }
+    async fn close_engine_rooms(self: &Arc<Self>, engine: &Arc<Engine>) {
+        let lost: Vec<_> = {
+            let mut rooms = self.rooms.lock().await;
+            let channels: Vec<_> = rooms
+                .iter()
+                .filter(|(_, room)| Arc::ptr_eq(&room.engine, engine))
+                .map(|(channel, _)| *channel)
+                .collect();
+            channels
+                .into_iter()
+                .filter_map(|channel| rooms.remove(&channel))
+                .collect()
+        };
+        // A later join for the same channel builds a new room on a live engine.
+        self.counters.rooms.fetch_sub(lost.len(), Ordering::Relaxed);
+        for room in lost {
+            self.close_lost_room(&room).await;
+        }
+    }
+    /// Removes every peer of a room whose engine is lost. Grants stop first;
+    /// native handles are only dropped, because the worker cannot confirm a
+    /// pause any more. A late join or RPC on this room sees the lost engine.
+    async fn close_lost_room(self: &Arc<Self>, room: &Arc<Room>) {
+        let (peers, producers) = {
+            let mut data = room.data.lock().await;
+            let producers = data.publications.len();
+            data.publications.clear();
+            (
+                data.peers.drain().map(|(_, p)| p).collect::<Vec<_>>(),
+                producers,
+            )
+        };
+        let c = &self.counters;
+        c.producers.fetch_sub(producers, Ordering::Relaxed);
+        c.peers.fetch_sub(peers.len(), Ordering::Relaxed);
+        room.engine.peers.fetch_sub(peers.len(), Ordering::Relaxed);
+        for p in &peers {
+            p.peer.grant.stop();
+            for watch in p.watches.values() {
+                watch.stop();
+            }
+            for publication in p.publications.values() {
+                publication.grant.stop();
+                publication.producer.resource.close();
+            }
+            for sub in p.consumers.values() {
+                sub.grant.stop();
+                sub.consumer.resource.close();
+            }
+            c.consumers.fetch_sub(p.consumers.len(), Ordering::Relaxed);
+            c.transports
+                .fetch_sub(p.transports.len(), Ordering::Relaxed);
+        }
+        // Clients reconnect on `gone`; a Live lease they reclaim before its
+        // release below is answered `live_busy` and retried.
+        for p in &peers {
+            self.emit(&p.peer, ServerFrame::error("gone"));
+        }
+        for p in &peers {
+            let _lease = p.peer.lease_gate.lock().await;
+            if let Some(live) = p
+                .publications
+                .get(&SourceKind::Live)
+                .and_then(|p| p.live.as_ref())
+            {
+                crate::live::release(&self.redis, live.nonce, p.peer.id.0).await;
+            }
+        }
+    }
+    /// Replaces a lost engine in its slot, on the same UDP port. A hung worker
+    /// still holds that port, so retries back off up to a minute.
+    fn respawn(self: &Arc<Self>, slot: usize) {
+        let weak = Arc::downgrade(self);
+        tokio::spawn(async move {
+            let mut delay = RESPAWN_FIRST;
+            loop {
+                tokio::time::sleep(delay).await;
+                let Some(sfu) = weak.upgrade() else { return };
+                if sfu.draining.load(Ordering::SeqCst) {
+                    return;
+                }
+                let listen = listen_info(sfu.bind, sfu.announced_ip.clone(), slot);
+                match Engine::start(&sfu.manager, slot, listen).await {
+                    Ok(engine) => {
+                        sfu.engines.lock().unwrap()[slot] = engine.clone();
+                        sfu.counters.worker_restarts.fetch_add(1, Ordering::Relaxed);
+                        info!(slot, "media worker replaced");
+                        Self::supervise(weak, engine);
+                        return;
+                    }
+                    Err(err) => {
+                        let down_s = sfu.engines.lock().unwrap()[slot].down_for().as_secs();
+                        // A hung worker keeps its port until the process restarts.
+                        warn!(
+                            slot,
+                            down_s,
+                            error = %err,
+                            "media worker restart failed; restart the service if this persists"
+                        );
+                        delay = (delay * 2).min(RESPAWN_MAX);
+                    }
                 }
             }
         });
-        Ok(sfu)
+    }
+    /// The live engine with the fewest peers, then rooms, for a new room.
+    fn pick_engine(&self) -> Option<Arc<Engine>> {
+        self.engines
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|engine| engine.alive())
+            .min_by_key(|engine| {
+                (
+                    engine.peers.load(Ordering::Relaxed),
+                    engine.rooms.load(Ordering::Relaxed),
+                    engine.slot,
+                )
+            })
+            .cloned()
+    }
+    pub fn workers(&self) -> WorkerStatus {
+        let engines = self.engines.lock().unwrap();
+        WorkerStatus {
+            live: engines.iter().filter(|engine| engine.alive()).count(),
+            total: engines.len(),
+        }
     }
     pub fn ready(&self) -> bool {
-        !self.draining.load(Ordering::SeqCst)
-            && !self.dead.load(Ordering::SeqCst)
-            && !self.worker.closed()
-            && !self.server.closed()
+        !self.draining.load(Ordering::SeqCst) && self.workers().live > 0
+    }
+    fn room_ready(&self, room: &Room) -> bool {
+        !self.draining.load(Ordering::SeqCst) && room.engine.alive()
     }
     pub fn room_count(&self) -> usize {
         self.counters.rooms.load(Ordering::Relaxed)
@@ -341,6 +625,34 @@ impl Sfu {
         }
         text.push_str(&format!("# TYPE gelabber_mediasoup_ice_disconnects_total counter\ngelabber_mediasoup_ice_disconnects_total {}\n",c.ice_disconnects.load(Ordering::Relaxed)));
         text.push_str(&format!("# TYPE gelabber_media_outbound_overflows_total counter\ngelabber_media_outbound_overflows_total {}\n", c.outbound_overflows.load(Ordering::Relaxed)));
+        let workers = self.workers();
+        text.push_str(&format!("# HELP gelabber_media_workers Configured native mediasoup workers.\n# TYPE gelabber_media_workers gauge\ngelabber_media_workers {}\n# HELP gelabber_media_workers_live Workers that accept rooms; fewer than configured while a lost worker is replaced.\n# TYPE gelabber_media_workers_live gauge\ngelabber_media_workers_live {}\n", workers.total, workers.live));
+        text.push_str(&format!("# TYPE gelabber_media_worker_failures_total counter\ngelabber_media_worker_failures_total {}\n# TYPE gelabber_media_worker_restarts_total counter\ngelabber_media_worker_restarts_total {}\n", c.worker_failures.load(Ordering::Relaxed), c.worker_restarts.load(Ordering::Relaxed)));
+        let engines = self.engines.lock().unwrap().clone();
+        text.push_str("# TYPE gelabber_media_worker_rooms gauge\n");
+        for engine in &engines {
+            text.push_str(&format!(
+                "gelabber_media_worker_rooms{{worker=\"{}\"}} {}\n",
+                engine.slot,
+                engine.rooms.load(Ordering::Relaxed)
+            ));
+        }
+        text.push_str("# HELP gelabber_media_worker_down_seconds Time since the slot lost its worker, 0 while it has a live one; a growing value means the replacement keeps failing (a hung worker holds its port until a restart).\n# TYPE gelabber_media_worker_down_seconds gauge\n");
+        for engine in &engines {
+            text.push_str(&format!(
+                "gelabber_media_worker_down_seconds{{worker=\"{}\"}} {}\n",
+                engine.slot,
+                engine.down_for().as_secs()
+            ));
+        }
+        text.push_str("# TYPE gelabber_media_worker_peers gauge\n");
+        for engine in &engines {
+            text.push_str(&format!(
+                "gelabber_media_worker_peers{{worker=\"{}\"}} {}\n",
+                engine.slot,
+                engine.peers.load(Ordering::Relaxed)
+            ));
+        }
         text.push_str("# HELP gelabber_media_rtp_packets_total Measured native source packet deltas; failed final samples may omit packets; absent when current input stats are unavailable.\n# TYPE gelabber_media_rtp_packets_total counter\n# HELP gelabber_media_rtp_jitter_ms Maximum current native source jitter converted from RTP clock ticks; absent when unavailable.\n# TYPE gelabber_media_rtp_jitter_ms gauge\n# HELP gelabber_media_rtp_lost_total Unavailable: native signed loss gauges do not preserve the previous reorder-aware monotonic counter.\n");
         if c.input_available.load(Ordering::Relaxed) || c.producers.load(Ordering::Relaxed) == 0 {
             text.push_str(&format!(
@@ -389,30 +701,30 @@ impl Sfu {
         let channel = authority.claim.c;
         let room = {
             let mut rooms = self.rooms.lock().await;
-            let room = rooms
-                .entry(channel)
-                .or_insert_with(|| {
+            let room = match rooms.get(&channel) {
+                Some(room) => room.clone(),
+                None => {
+                    let engine = self.pick_engine().ok_or(SfuError::Unavailable)?;
+                    let room = Arc::new(Room::new(engine, None));
                     self.counters.rooms.fetch_add(1, Ordering::Relaxed);
-                    Arc::new(Room {
-                        router: OnceCell::new(),
-                        data: Mutex::new(RoomData::default()),
-                        joining: AtomicUsize::new(0),
-                    })
-                })
-                .clone();
+                    rooms.insert(channel, room.clone());
+                    room
+                }
+            };
             room.joining.fetch_add(1, Ordering::SeqCst);
             room
         };
         let built = room
             .router
             .get_or_try_init(|| async {
-                native(self.worker.clone(), |worker| async move {
-                    worker
-                        .create_router(RouterOptions::new(router_codecs()?))
-                        .await
-                        .map_err(SfuError::negotiation)
-                })
-                .await
+                room.engine
+                    .native(room.engine.worker.clone(), |worker| async move {
+                        worker
+                            .create_router(RouterOptions::new(router_codecs()?))
+                            .await
+                            .map_err(SfuError::negotiation)
+                    })
+                    .await
             })
             .await;
         if let Err(err) = built {
@@ -423,7 +735,7 @@ impl Sfu {
         if !crate::ticket::validate_authority(&self.redis, &authority)
             .await
             .unwrap_or(false)
-            || !self.ready()
+            || !self.room_ready(&room)
         {
             room.joining.fetch_sub(1, Ordering::SeqCst);
             self.remove_empty_room(channel, &room).await;
@@ -443,7 +755,16 @@ impl Sfu {
             retry_scheduled: AtomicBool::new(false),
             attach_failures: AtomicUsize::new(0),
         });
-        room.data.lock().await.peers.insert(
+        let mut data = room.data.lock().await;
+        // A lost engine's rooms are closed under this lock after `lost` is
+        // set: either that close sees this peer, or this check sees `lost`.
+        if !room.engine.alive() {
+            drop(data);
+            room.joining.fetch_sub(1, Ordering::SeqCst);
+            self.remove_empty_room(channel, &room).await;
+            return Err(SfuError::Unavailable);
+        }
+        data.peers.insert(
             id,
             PeerData {
                 peer: peer.clone(),
@@ -459,7 +780,9 @@ impl Sfu {
                 retired_transports: VecDeque::new(),
             },
         );
+        drop(data);
         self.counters.peers.fetch_add(1, Ordering::Relaxed);
+        room.engine.peers.fetch_add(1, Ordering::Relaxed);
         room.joining.fetch_sub(1, Ordering::SeqCst);
         Self::watch_authority(Arc::downgrade(self), channel, Arc::downgrade(&peer));
         Ok(id)
@@ -497,7 +820,7 @@ impl Sfu {
             .peer
             .clone();
         let _rpc = peer.rpc_gate.lock().await;
-        if !peer.grant.valid() || !self.ready() {
+        if !peer.grant.valid() || !self.room_ready(&room) {
             self.leave(id, channel).await;
             return Err(SfuError::Revoked);
         }
@@ -546,17 +869,19 @@ impl Sfu {
                 {
                     return Err(SfuError::BadAnnounce);
                 }
-                let mut opts = WebRtcTransportOptions::new_with_server(self.server.clone());
+                let mut opts = WebRtcTransportOptions::new_with_server(room.engine.server.clone());
                 opts.enable_tcp = false;
                 opts.prefer_udp = true;
                 // Last sample belongs to the native transport lifetime, keeping
                 // historical totals without retaining an unbounded ID cache.
                 opts.app_data = AppData::new(AtomicU64::new(0));
-                let transport = native(
-                    room.router.get().ok_or(SfuError::Unavailable)?.clone(),
-                    move |router| async move { router.create_webrtc_transport(opts).await },
-                )
-                .await?;
+                let transport = room
+                    .engine
+                    .native(
+                        room.router.get().ok_or(SfuError::Unavailable)?.clone(),
+                        move |router| async move { router.create_webrtc_transport(opts).await },
+                    )
+                    .await?;
                 let weak = Arc::downgrade(self);
                 transport
                     .on_ice_state_change(move |state| {
@@ -588,11 +913,12 @@ impl Sfu {
                 let t = self.transport(&room, id, &transport_id).await?;
                 let dtls_parameters = serde_json::from_value::<DtlsParameters>(dtls)
                     .map_err(|_| SfuError::BadAnnounce)?;
-                native(t, move |t| async move {
-                    t.connect(WebRtcTransportRemoteParameters { dtls_parameters })
-                        .await
-                })
-                .await?;
+                room.engine
+                    .native(t, move |t| async move {
+                        t.connect(WebRtcTransportRemoteParameters { dtls_parameters })
+                            .await
+                    })
+                    .await?;
                 if !peer.grant.valid() {
                     return Err(SfuError::Revoked);
                 }
@@ -600,7 +926,10 @@ impl Sfu {
             }
             ClientFrame::RestartIce { transport_id, .. } => {
                 let t = self.transport(&room, id, &transport_id).await?;
-                let ice = native(t, |t| async move { t.restart_ice().await }).await?;
+                let ice = room
+                    .engine
+                    .native(t, |t| async move { t.restart_ice().await })
+                    .await?;
                 if !peer.grant.valid() {
                     return Err(SfuError::Revoked);
                 }
@@ -638,7 +967,7 @@ impl Sfu {
             ClientFrame::PauseProducer { producer_id, .. } => {
                 let p = self.own_publication(&room, id, &producer_id).await?;
                 let _gate = p.gate.lock().await;
-                stop_producer(&p.producer, &self.dead).await;
+                stop_producer(&p.producer).await;
                 Ok(json!({}))
             }
             ClientFrame::ResumeProducer { producer_id, .. } => {
@@ -647,16 +976,18 @@ impl Sfu {
                 if !p.valid() {
                     return Err(SfuError::Forbidden);
                 }
-                if let Err(error) = native(p.clone(), |resource| async move {
-                    resource.producer.resume().await
-                })
-                .await
+                if let Err(error) = room
+                    .engine
+                    .native(p.clone(), |resource| async move {
+                        resource.producer.resume().await
+                    })
+                    .await
                 {
                     p.producer.confirm_closed().await;
                     return Err(error);
                 }
                 if !p.valid() {
-                    stop_producer(&p.producer, &self.dead).await;
+                    stop_producer(&p.producer).await;
                     return Err(SfuError::Forbidden);
                 }
                 Ok(json!({}))
@@ -688,10 +1019,12 @@ impl Sfu {
                 if !s.valid() {
                     return Err(SfuError::Forbidden);
                 }
-                if let Err(error) = native(s.clone(), |resource| async move {
-                    resource.consumer.resume().await
-                })
-                .await
+                if let Err(error) = room
+                    .engine
+                    .native(s.clone(), |resource| async move {
+                        resource.consumer.resume().await
+                    })
+                    .await
                 {
                     s.consumer.confirm_closed().await;
                     drop(_gate);
@@ -700,7 +1033,7 @@ impl Sfu {
                     return Err(error);
                 }
                 if !s.valid() {
-                    stop_consumer(&s.consumer, &self.dead).await;
+                    stop_consumer(&s.consumer).await;
                     return Err(SfuError::Forbidden);
                 }
                 peer.attach_failures.store(0, Ordering::Relaxed);
@@ -764,20 +1097,21 @@ impl Sfu {
                     return Err(SfuError::Forbidden);
                 }
                 if s.publication.layers > 1 {
-                    native(s.clone(), move |s| async move {
-                        s.consumer
-                            .set_preferred_layers(ConsumerLayers {
-                                spatial_layer: preferred_layer(
-                                    h,
-                                    congested,
-                                    s.publication.height,
-                                    s.publication.layers,
-                                ),
-                                temporal_layer: None,
-                            })
-                            .await
-                    })
-                    .await?
+                    room.engine
+                        .native(s.clone(), move |s| async move {
+                            s.consumer
+                                .set_preferred_layers(ConsumerLayers {
+                                    spatial_layer: preferred_layer(
+                                        h,
+                                        congested,
+                                        s.publication.height,
+                                        s.publication.layers,
+                                    ),
+                                    temporal_layer: None,
+                                })
+                                .await
+                        })
+                        .await?
                 }
                 Ok(json!({}))
             }
@@ -899,12 +1233,18 @@ impl Sfu {
                 parameters,
             );
             options.paused = true;
-            let producer = native(transport.clone(), move |transport| async move {
-                transport.produce(options).await
-            })
-            .await?;
+            let producer = room
+                .engine
+                .native(transport.clone(), move |transport| async move {
+                    transport.produce(options).await
+                })
+                .await?;
             let pubn = Arc::new(Publication {
-                producer: NativeProducer::new(producer, transport.clone()),
+                producer: NativeProducer::new(
+                    producer,
+                    transport.clone(),
+                    room.engine.lost.clone(),
+                ),
                 peer: peer.clone(),
                 kind,
                 epoch,
@@ -921,7 +1261,7 @@ impl Sfu {
                 .unwrap_or(false)
                 || !pubn.valid()
             {
-                stop_producer(&pubn.producer, &self.dead).await;
+                stop_producer(&pubn.producer).await;
                 return Err(SfuError::Revoked);
             }
             // Atomically replace the slot with a still-paused new Producer. This actual
@@ -965,7 +1305,7 @@ impl Sfu {
                 }
             };
             if !committed {
-                stop_producer(&pubn.producer, &self.dead).await;
+                stop_producer(&pubn.producer).await;
                 return Err(SfuError::Revoked);
             }
             if let Some(old) = old.as_ref().filter(|o| o.kind == SourceKind::Live)
@@ -979,16 +1319,18 @@ impl Sfu {
                 if !pubn.valid() {
                     return Err(SfuError::Forbidden);
                 }
-                if let Err(error) = native(pubn.clone(), |resource| async move {
-                    resource.producer.resume().await
-                })
-                .await
+                if let Err(error) = room
+                    .engine
+                    .native(pubn.clone(), |resource| async move {
+                        resource.producer.resume().await
+                    })
+                    .await
                 {
                     pubn.producer.confirm_closed().await;
                     return Err(error);
                 }
                 if !pubn.valid() {
-                    stop_producer(&pubn.producer, &self.dead).await;
+                    stop_producer(&pubn.producer).await;
                     return Err(SfuError::Forbidden);
                 }
             }
@@ -1244,11 +1586,17 @@ impl Sfu {
             .values()
             .cloned()
             .collect();
+        let engine = room.engine.clone();
         let results = self
             .attach_batch(&room, id, pubs, |transport, options| {
-                native(transport, move |transport| async move {
-                    transport.consume(options).await
-                })
+                let engine = engine.clone();
+                async move {
+                    engine
+                        .native(transport, move |transport| async move {
+                            transport.consume(options).await
+                        })
+                        .await
+                }
             })
             .await;
         for err in results.into_iter().filter_map(Result::err) {
@@ -1302,7 +1650,7 @@ impl Sfu {
             if let Ok(sub) = &p.created
                 && (!authorized || !sub.valid())
             {
-                stop_consumer(&sub.consumer, &self.dead).await;
+                stop_consumer(&sub.consumer).await;
                 p.created = Err(if redis_failed {
                     SfuError::Unavailable
                 } else {
@@ -1396,7 +1744,9 @@ impl Sfu {
                 });
             }
             let consumer = {
-                let _slot = ATTACH_SLOTS
+                let _slot = room
+                    .engine
+                    .attach
                     .acquire()
                     .await
                     .map_err(|_| SfuError::Unavailable)?;
@@ -1410,7 +1760,11 @@ impl Sfu {
                 }
             };
             Ok(Arc::new(Subscription {
-                consumer: NativeConsumer::new(consumer, transport.clone()),
+                consumer: NativeConsumer::new(
+                    consumer,
+                    transport.clone(),
+                    room.engine.lost.clone(),
+                ),
                 publication: pubn,
                 peer: peer.clone(),
                 watch,
@@ -1547,7 +1901,7 @@ impl Sfu {
                 StopResource::Publication(p) => {
                     let _gate = stop_gate(&p.gate).await;
                     if _gate.is_some() {
-                        stop_producer(&p.producer, &self.dead).await;
+                        stop_producer(&p.producer).await;
                     } else {
                         p.producer.confirm_closed().await;
                     }
@@ -1555,7 +1909,7 @@ impl Sfu {
                 StopResource::Subscription(s) => {
                     let _gate = stop_gate(&s.gate).await;
                     if _gate.is_some() {
-                        stop_consumer(&s.consumer, &self.dead).await;
+                        stop_consumer(&s.consumer).await;
                     } else {
                         s.consumer.confirm_closed().await;
                     }
@@ -1782,6 +2136,7 @@ impl Sfu {
                     .transports
                     .fetch_sub(p.transports.len(), Ordering::Relaxed);
                 self.counters.peers.fetch_sub(1, Ordering::Relaxed);
+                room.engine.peers.fetch_sub(1, Ordering::Relaxed);
             }
             removed.and_then(|_| data.update_video_codecs(None))
         };
@@ -2303,8 +2658,8 @@ async fn stop_batch<F: Future<Output = ()>>(
     )
     .await
 }
-async fn stop_producer(p: &NativeProducer, dead: &AtomicBool) {
-    if dead.load(Ordering::SeqCst) || p.closed() || p.paused() {
+async fn stop_producer(p: &NativeProducer) {
+    if p.worker_lost() || p.closed() || p.paused() {
         return;
     }
     match tokio::time::timeout(STOP_TIMEOUT, p.pause()).await {
@@ -2312,8 +2667,8 @@ async fn stop_producer(p: &NativeProducer, dead: &AtomicBool) {
         _ => p.confirm_closed().await,
     }
 }
-async fn stop_consumer(c: &NativeConsumer, dead: &AtomicBool) {
-    if dead.load(Ordering::SeqCst) || c.closed() || c.paused() {
+async fn stop_consumer(c: &NativeConsumer) {
+    if c.worker_lost() || c.closed() || c.paused() {
         return;
     }
     match tokio::time::timeout(STOP_TIMEOUT, c.pause()).await {
@@ -2337,6 +2692,10 @@ mod tests {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+
+    fn first_engine(sfu: &Sfu) -> Arc<Engine> {
+        sfu.engines.lock().unwrap()[0].clone()
+    }
 
     fn receiver(codecs: Value) -> RtpCapabilities {
         serde_json::from_value(json!({ "codecs": codecs, "headerExtensions": [] })).unwrap()
@@ -2482,20 +2841,23 @@ mod tests {
         )
         .await
         .unwrap();
-        let router = native(sfu.worker.clone(), |worker| async move {
-            worker
-                .create_router(RouterOptions::new(router_codecs().unwrap()))
-                .await
-        })
-        .await
-        .unwrap();
-        let mut options = WebRtcTransportOptions::new_with_server(sfu.server.clone());
+        let engine = first_engine(&sfu);
+        let router = engine
+            .native(engine.worker.clone(), |worker| async move {
+                worker
+                    .create_router(RouterOptions::new(router_codecs().unwrap()))
+                    .await
+            })
+            .await
+            .unwrap();
+        let mut options = WebRtcTransportOptions::new_with_server(engine.server.clone());
         options.app_data = AppData::new(AtomicU64::new(0));
-        let transport = native(router.clone(), move |router| async move {
-            router.create_webrtc_transport(options).await
-        })
-        .await
-        .unwrap();
+        let transport = engine
+            .native(router.clone(), move |router| async move {
+                router.create_webrtc_transport(options).await
+            })
+            .await
+            .unwrap();
         let rtp = serde_json::from_value(json!({
             "codecs":[{"mimeType":"audio/opus","payloadType":111,"clockRate":48000,
                 "channels":2,"parameters":{},"rtcpFeedback":[]}],
@@ -2503,13 +2865,14 @@ mod tests {
             "rtcp":{"cname":"stop-order-test","reducedSize":true}
         }))
         .unwrap();
-        let producer = native(transport.clone(), move |transport| async move {
-            transport
-                .produce(ProducerOptions::new(MediaKind::Audio, rtp))
-                .await
-        })
-        .await
-        .unwrap();
+        let producer = engine
+            .native(transport.clone(), move |transport| async move {
+                transport
+                    .produce(ProducerOptions::new(MediaKind::Audio, rtp))
+                    .await
+            })
+            .await
+            .unwrap();
         assert!(!producer.paused());
         let (out, rx) = mpsc::channel(16);
         // Deliberately absent authority keys trigger the real denial path.
@@ -2543,7 +2906,7 @@ mod tests {
             attach_failures: AtomicUsize::new(0),
         });
         let publication = Arc::new(Publication {
-            producer: NativeProducer::new(producer, transport.clone()),
+            producer: NativeProducer::new(producer, transport.clone(), engine.lost.clone()),
             peer: peer.clone(),
             kind: SourceKind::Mic,
             epoch: Uuid::new_v4(),
@@ -2575,14 +2938,10 @@ mod tests {
             publications: HashMap::from([(publication.id(), publication.clone())]),
             ..RoomData::default()
         };
-        sfu.rooms.lock().await.insert(
-            channel,
-            Arc::new(Room {
-                router: OnceCell::new_with(Some(router)),
-                data: Mutex::new(data),
-                joining: AtomicUsize::new(0),
-            }),
-        );
+        let mut room = Room::new(engine.clone(), Some(router));
+        *room.data.get_mut() = data;
+        sfu.rooms.lock().await.insert(channel, Arc::new(room));
+        engine.peers.store(1, Ordering::Relaxed);
         for counter in [
             &sfu.counters.rooms,
             &sfu.counters.peers,
@@ -2642,13 +3001,15 @@ mod tests {
                 .await
                 .unwrap();
             let router = room.router.get().unwrap();
-            let mut options = WebRtcTransportOptions::new_with_server(sfu.server.clone());
+            let mut options = WebRtcTransportOptions::new_with_server(room.engine.server.clone());
             options.app_data = AppData::new(AtomicU64::new(0));
-            let transport = native(router.clone(), move |router| async move {
-                router.create_webrtc_transport(options).await
-            })
-            .await
-            .unwrap();
+            let transport = room
+                .engine
+                .native(router.clone(), move |router| async move {
+                    router.create_webrtc_transport(options).await
+                })
+                .await
+                .unwrap();
             {
                 let mut data = room.data.lock().await;
                 let peer = data.peers.get_mut(&id).unwrap();
@@ -2694,15 +3055,21 @@ mod tests {
                 "rtcp":{"cname":format!("attach-{index}"),"reducedSize":true}
             }))
             .unwrap();
-            let producer = native(transport.clone(), move |transport| async move {
-                transport
-                    .produce(ProducerOptions::new(MediaKind::Audio, rtp))
-                    .await
-            })
-            .await
-            .unwrap();
+            let producer = room
+                .engine
+                .native(transport.clone(), move |transport| async move {
+                    transport
+                        .produce(ProducerOptions::new(MediaKind::Audio, rtp))
+                        .await
+                })
+                .await
+                .unwrap();
             publications.push(Arc::new(Publication {
-                producer: NativeProducer::new(producer, transport.clone()),
+                producer: NativeProducer::new(
+                    producer,
+                    transport.clone(),
+                    room.engine.lost.clone(),
+                ),
                 peer: owner.clone(),
                 kind: SourceKind::Mic,
                 epoch: Uuid::new_v4(),
@@ -2775,24 +3142,35 @@ mod tests {
         let mut viewer = Viewer::join(&sfu, &owner, &room, 64).await;
         let created = Arc::new(AtomicUsize::new(0));
         let client = redis::Client::open(std::env::var("REDIS_URL").unwrap()).unwrap();
-        let probe = (created.clone(), client, viewer.keys.clone());
+        let probe = (
+            created.clone(),
+            client,
+            viewer.keys.clone(),
+            room.engine.clone(),
+        );
         let results = sfu
             .attach_batch(&room, viewer.id, pubs, move |transport, options| {
-                let (created, client, keys) = probe.clone();
-                native(transport, move |transport| async move {
-                    let consumer = transport.consume(options).await;
-                    // The last creation of the pass revokes before it returns,
-                    // so the pass's single check must see the revocation.
-                    if created.fetch_add(1, Ordering::SeqCst) + 1 == PUBLICATIONS {
-                        let mut redis = client.get_multiplexed_async_connection().await.unwrap();
-                        let _: () = redis::cmd("DEL")
-                            .arg(&keys)
-                            .query_async(&mut redis)
-                            .await
-                            .unwrap();
-                    }
-                    consumer
-                })
+                let (created, client, keys, engine) = probe.clone();
+                async move {
+                    engine
+                        .native(transport, move |transport| async move {
+                            let consumer = transport.consume(options).await;
+                            // The last creation of the pass revokes before it
+                            // returns, so the pass's single check must see the
+                            // revocation.
+                            if created.fetch_add(1, Ordering::SeqCst) + 1 == PUBLICATIONS {
+                                let mut redis =
+                                    client.get_multiplexed_async_connection().await.unwrap();
+                                let _: () = redis::cmd("DEL")
+                                    .arg(&keys)
+                                    .query_async(&mut redis)
+                                    .await
+                                    .unwrap();
+                            }
+                            consumer
+                        })
+                        .await
+                }
             })
             .await;
         assert_eq!(created.load(Ordering::SeqCst), PUBLICATIONS);
@@ -2834,6 +3212,7 @@ mod tests {
         let (complete, pending) = tokio::sync::oneshot::channel();
         let (late_created, late_ready) = tokio::sync::oneshot::channel();
         let probe = StdMutex::new(Some((pending, late_created)));
+        let engine = room.engine.clone();
         let result = tokio::time::timeout(
             Duration::from_secs(3),
             sfu.attach_batch(
@@ -2842,13 +3221,18 @@ mod tests {
                 vec![publication.clone()],
                 move |transport, options| {
                     let (pending, late_created) = probe.lock().unwrap().take().unwrap();
-                    native(transport, move |transport| async move {
-                        pending.await.unwrap();
-                        let result = transport.consume(options).await;
-                        assert!(result.is_ok(), "probe must create a real late consumer");
-                        late_created.send(()).unwrap();
-                        result
-                    })
+                    let engine = engine.clone();
+                    async move {
+                        engine
+                            .native(transport, move |transport| async move {
+                                pending.await.unwrap();
+                                let result = transport.consume(options).await;
+                                assert!(result.is_ok(), "probe must create a real late consumer");
+                                late_created.send(()).unwrap();
+                                result
+                            })
+                            .await
+                    }
                 },
             ),
         )
@@ -2988,13 +3372,15 @@ mod tests {
             .with(|producer| producer.rtp_parameters().clone())
             .unwrap();
         rtp.encodings[0].ssrc = Some(5678);
-        let other = native(transport.clone(), move |transport| async move {
-            transport
-                .produce(ProducerOptions::new(MediaKind::Audio, rtp))
-                .await
-        })
-        .await
-        .unwrap();
+        let engine = first_engine(&sfu);
+        let other = engine
+            .native(transport.clone(), move |transport| async move {
+                transport
+                    .produce(ProducerOptions::new(MediaKind::Audio, rtp))
+                    .await
+            })
+            .await
+            .unwrap();
         let _gate = publication.gate.lock().await;
         tokio::time::timeout(
             Duration::from_secs(2),
@@ -3007,6 +3393,237 @@ mod tests {
         assert!(!dump.producer_ids.contains(&publication.producer.id()));
         assert!(dump.producer_ids.contains(&other.id()));
         assert!(!other.paused());
+        assert!(sfu.ready());
+    }
+
+    async fn pool(workers: usize) -> Arc<Sfu> {
+        let workers = workers.to_string();
+        let config = Config::from_source(|key| match key {
+            "REDIS_URL" => Some(std::env::var(key).expect("isolated REDIS_URL required")),
+            "MEDIA_ICE_BIND" => Some("127.0.0.1:0".into()),
+            "MEDIA_WORKERS" => Some(workers.clone()),
+            _ => None,
+        })
+        .unwrap();
+        Sfu::with_redis(
+            &config,
+            redis::Client::open(config.redis_url.as_str()).unwrap(),
+        )
+        .await
+        .unwrap()
+    }
+
+    /// A room with one peer and a receive transport on `engine`, counted like a join.
+    async fn seat(
+        sfu: &Arc<Sfu>,
+        engine: &Arc<Engine>,
+    ) -> (Uuid, Arc<Peer>, mpsc::Receiver<ServerFrame>) {
+        let router = engine
+            .native(engine.worker.clone(), |worker| async move {
+                worker
+                    .create_router(RouterOptions::new(router_codecs().unwrap()))
+                    .await
+            })
+            .await
+            .unwrap();
+        let mut options = WebRtcTransportOptions::new_with_server(engine.server.clone());
+        options.app_data = AppData::new(AtomicU64::new(0));
+        let transport = engine
+            .native(router.clone(), move |router| async move {
+                router.create_webrtc_transport(options).await
+            })
+            .await
+            .unwrap();
+        let channel = Uuid::new_v4();
+        let (out, rx) = mpsc::channel(16);
+        let peer = Arc::new(Peer {
+            id: PeerId(Uuid::new_v4()),
+            authority: AuthorizedTicketClaim {
+                claim: TicketClaim {
+                    u: Uuid::new_v4(),
+                    s: Uuid::new_v4(),
+                    c: channel,
+                    g: false,
+                },
+                auth: TicketAuthorization {
+                    session: Uuid::new_v4().simple().to_string().repeat(2),
+                    expires_at: 9_007_199_254_740_991,
+                    member: Uuid::new_v4(),
+                    channel: Uuid::new_v4(),
+                },
+            },
+            watch_user: None,
+            grant: Grant::new(),
+            out,
+            rpc_gate: Mutex::new(()),
+            lease_gate: Mutex::new(()),
+            attach_scheduled: AtomicBool::new(false),
+            attach_dirty: AtomicBool::new(false),
+            retry_scheduled: AtomicBool::new(false),
+            attach_failures: AtomicUsize::new(0),
+        });
+        let mut room = Room::new(engine.clone(), Some(router));
+        room.data.get_mut().peers.insert(
+            peer.id,
+            PeerData {
+                peer: peer.clone(),
+                capabilities: None,
+                transports: HashMap::from([(false, transport)]),
+                publications: HashMap::new(),
+                consumers: HashMap::new(),
+                pending_consumers: HashSet::new(),
+                failed_consumers: HashMap::new(),
+                watches: HashMap::new(),
+                withdrawn_live: VecDeque::new(),
+                retired_producers: VecDeque::new(),
+                retired_transports: VecDeque::new(),
+            },
+        );
+        sfu.rooms.lock().await.insert(channel, Arc::new(room));
+        for counter in [
+            &sfu.counters.rooms,
+            &sfu.counters.peers,
+            &sfu.counters.transports,
+        ] {
+            counter.fetch_add(1, Ordering::Relaxed);
+        }
+        engine.peers.fetch_add(1, Ordering::Relaxed);
+        (channel, peer, rx)
+    }
+
+    #[tokio::test]
+    async fn new_rooms_go_to_the_least_loaded_live_worker() {
+        let sfu = pool(3).await;
+        let engines = sfu.engines.lock().unwrap().clone();
+        assert_eq!(sfu.workers(), WorkerStatus { live: 3, total: 3 });
+        // Each worker has its own WebRtcServer and so its own UDP port.
+        let mut ports = HashSet::new();
+        for engine in &engines {
+            let (channel, _, _) = seat(&sfu, engine).await;
+            let room = sfu.rooms.lock().await.remove(&channel).unwrap();
+            let data = room.data.lock().await;
+            let transport = data.peers.values().next().unwrap().transports[&false].clone();
+            ports.insert(transport.ice_candidates()[0].port);
+            drop(data);
+            let mut data = room.data.lock().await;
+            data.peers.clear();
+            for counter in [
+                &sfu.counters.rooms,
+                &sfu.counters.peers,
+                &sfu.counters.transports,
+            ] {
+                counter.fetch_sub(1, Ordering::Relaxed);
+            }
+            engine.peers.fetch_sub(1, Ordering::Relaxed);
+        }
+        assert_eq!(ports.len(), 3);
+        assert_eq!(sfu.pick_engine().unwrap().slot, 0);
+        let (_a, _pa, _ra) = seat(&sfu, &engines[0]).await;
+        assert_eq!(sfu.pick_engine().unwrap().slot, 1);
+        let (_b, _pb, _rb) = seat(&sfu, &engines[1]).await;
+        let (_c, _pc, _rc) = seat(&sfu, &engines[1]).await;
+        assert_eq!(sfu.pick_engine().unwrap().slot, 2);
+        engines[2].lost.store(true, Ordering::SeqCst);
+        assert_eq!(sfu.pick_engine().unwrap().slot, 0);
+        assert_eq!(sfu.workers(), WorkerStatus { live: 2, total: 3 });
+        assert!(sfu.ready());
+        let metrics = sfu.metrics_text();
+        assert!(metrics.contains("gelabber_media_workers 3\n"), "{metrics}");
+        assert!(
+            metrics.contains("gelabber_media_workers_live 2\n"),
+            "{metrics}"
+        );
+        assert!(
+            metrics.contains("gelabber_media_worker_peers{worker=\"1\"} 2\n"),
+            "{metrics}"
+        );
+    }
+
+    #[tokio::test]
+    async fn lost_worker_closes_only_its_rooms_and_is_replaced() {
+        let sfu = pool(2).await;
+        let engines = sfu.engines.lock().unwrap().clone();
+        let (lost_channel, lost_peer, mut lost_rx) = seat(&sfu, &engines[0]).await;
+        let (kept_channel, kept_peer, mut kept_rx) = seat(&sfu, &engines[1]).await;
+        sfu.engine_lost(&engines[0], "test: worker lost").await;
+
+        let frame = lost_rx.try_recv().expect("peer of the lost worker is told");
+        assert!(
+            matches!(&frame, ServerFrame::Err { e, .. } if e == "gone"),
+            "{frame:?}"
+        );
+        assert!(!lost_peer.grant.valid());
+        assert!(!sfu.peer_present(lost_peer.id, lost_channel).await);
+        assert!(sfu.room(lost_channel).await.is_err());
+
+        assert!(
+            kept_rx.try_recv().is_err(),
+            "other worker's peers are untouched"
+        );
+        assert!(kept_peer.grant.valid());
+        assert!(sfu.peer_present(kept_peer.id, kept_channel).await);
+        assert!(engines[1].alive());
+        assert!(sfu.ready());
+        assert_eq!(sfu.room_count(), 1);
+        assert_eq!(sfu.counters.peers.load(Ordering::Relaxed), 1);
+        assert_eq!(sfu.counters.transports.load(Ordering::Relaxed), 1);
+        assert_eq!(sfu.workers(), WorkerStatus { live: 1, total: 2 });
+        // New rooms avoid the lost worker until its slot is replaced.
+        assert_eq!(sfu.pick_engine().unwrap().slot, 1);
+
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while sfu.workers().live < 2 {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("lost slot gets a new worker");
+        let replaced = first_engine(&sfu);
+        assert!(!Arc::ptr_eq(&replaced, &engines[0]));
+        assert!(replaced.alive());
+        assert_eq!(sfu.counters.worker_failures.load(Ordering::Relaxed), 1);
+        assert_eq!(sfu.counters.worker_restarts.load(Ordering::Relaxed), 1);
+        assert_eq!(sfu.pick_engine().unwrap().slot, 0);
+    }
+
+    #[tokio::test]
+    async fn worker_exit_seen_by_a_heartbeat_tick_first_still_closes_its_rooms() {
+        let sfu = pool(2).await;
+        let engines = sfu.engines.lock().unwrap().clone();
+        let (channel, peer, mut rx) = seat(&sfu, &engines[0]).await;
+        // `on_dead`'s order: `lost` first, the notification afterwards. A tick
+        // in between must not end the supervisor without handling the loss.
+        engines[0].lost.store(true, Ordering::SeqCst);
+        tokio::time::sleep(HEARTBEAT_INTERVAL * 2).await;
+        engines[0].exited.notify_one();
+        let frame = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("the supervisor handles the loss")
+            .unwrap();
+        assert!(
+            matches!(&frame, ServerFrame::Err { e, .. } if e == "gone"),
+            "{frame:?}"
+        );
+        assert!(!sfu.peer_present(peer.id, channel).await);
+        // Handled once although both the tick and the notification saw it.
+        tokio::time::sleep(HEARTBEAT_INTERVAL * 2).await;
+        assert_eq!(sfu.counters.worker_failures.load(Ordering::Relaxed), 1);
+        assert!(engines[0].down_for() > Duration::ZERO);
+        let metrics = sfu.metrics_text();
+        assert!(
+            metrics.contains("gelabber_media_worker_down_seconds{worker=\"1\"} 0\n"),
+            "{metrics}"
+        );
+    }
+
+    #[tokio::test]
+    async fn rooms_of_a_lost_worker_refuse_rpcs_while_the_pool_stays_ready() {
+        let sfu = pool(2).await;
+        let engine = first_engine(&sfu);
+        let (channel, _peer, _rx) = seat(&sfu, &engine).await;
+        let room = sfu.room(channel).await.unwrap();
+        engine.lost.store(true, Ordering::SeqCst);
+        assert!(!sfu.room_ready(&room));
         assert!(sfu.ready());
     }
 
