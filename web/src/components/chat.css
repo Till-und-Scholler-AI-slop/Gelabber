@@ -1617,6 +1617,15 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   border-color: color-mix(in srgb, var(--lr-accent) 60%, var(--lr-border));
   background: var(--lr-selected);
 }
+/* The one bit of bounce in the app: a reaction just added pops once. */
+.lr-reaction.is-popping {
+  animation: lr-reaction-pop 260ms var(--lr-ease-standard);
+}
+@keyframes lr-reaction-pop {
+  40% {
+    scale: 1.14;
+  }
+}
 .lr-reaction:disabled,
 .lr-reaction[aria-disabled="true"],
 .lr-message-action[aria-disabled="true"] {
