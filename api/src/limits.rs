@@ -65,6 +65,12 @@ const SOFT_KEYS: usize = 4096;
 /// `HashMap` overhead included.
 const MAX_KEYS: usize = 65_536;
 const SWEEP_EVERY: Duration = Duration::from_secs(10);
+/// How long the gate keys a session cookie by the account its last lookup
+/// found, without a new one. Only the bucket key relies on it; the handler
+/// still gets a fresh lookup.
+const SESSION_MEMO_TTL: Duration = MINUTE;
+/// Most cookies the gate remembers; at this many it starts over.
+const SESSION_MEMO_MAX: usize = 16_384;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
@@ -149,6 +155,10 @@ impl Inner {
     }
 }
 
+/// The account a session cookie had at a lookup, and until when the gate
+/// goes by it.
+type SessionMemo = (Option<Uuid>, Instant);
+
 /// Fixed-window counters, keyed by `bucket:id`. Cheap and enough for one
 /// process. Past [`SOFT_KEYS`] expired windows are dropped every
 /// [`SWEEP_EVERY`], not on every hit; at [`MAX_KEYS`] a new key first makes
@@ -158,6 +168,11 @@ pub struct Limiter {
     inner: Mutex<Inner>,
     soft: usize,
     hard: usize,
+    /// Account of each recently looked-up session cookie, by the first half
+    /// of its hash, `None` for a cookie with no live session; see
+    /// [`Self::session_owner`].
+    sessions: Mutex<HashMap<[u8; 16], SessionMemo>>,
+    sessions_max: usize,
 }
 
 impl Limiter {
@@ -174,7 +189,32 @@ impl Limiter {
             }),
             soft,
             hard,
+            sessions: Mutex::new(HashMap::new()),
+            sessions_max: SESSION_MEMO_MAX.min(hard),
         }
+    }
+
+    /// The account the gate's last lookup of session cookie `raw` found
+    /// (`Some(None)`: no live session), if that lookup is less than
+    /// [`SESSION_MEMO_TTL`] old. A request the gate refuses then costs no
+    /// query, also when it carries the same made-up cookie each time.
+    fn session_owner(&self, raw: &str) -> Option<Option<Uuid>> {
+        let now = Instant::now();
+        let sessions = self.sessions.lock().unwrap_or_else(|err| err.into_inner());
+        sessions
+            .get(&memo_key(raw))
+            .filter(|(_, until)| now < *until)
+            .map(|(owner, _)| *owner)
+    }
+
+    fn remember_session(&self, raw: &str, owner: Option<Uuid>) {
+        let mut sessions = self.sessions.lock().unwrap_or_else(|err| err.into_inner());
+        // Starting over costs each forgotten cookie one lookup, and keeps
+        // a flood of made-up cookies from making every insert scan the map.
+        if sessions.len() >= self.sessions_max {
+            sessions.clear();
+        }
+        sessions.insert(memo_key(raw), (owner, Instant::now() + SESSION_MEMO_TTL));
     }
 
     /// Records one hit. `Err(retry_after)`, in seconds, means the caller is
@@ -258,7 +298,10 @@ impl Default for Limiter {
 /// Outside the sign-in routes the session cookie is resolved here, once:
 /// its account is the key of the session buckets, so a user's sessions
 /// share one allowance, and the handler's extractors take the result from
-/// the request ([`session::Resolved`]) instead of querying again.
+/// the request ([`session::Resolved`]) instead of querying again. The key
+/// comes from a lookup at most [`SESSION_MEMO_TTL`] old, so a refused
+/// request with a cookie seen recently costs no query; one let through
+/// always gets a current lookup.
 pub async fn gate(
     State(state): State<AppState>,
     mut request: Request,
@@ -288,13 +331,32 @@ pub async fn gate(
             || (request.method() == Method::PUT
                 && matches!(path, "/api/me/avatar" | "/api/me/banner"));
         let message = request.method() == Method::POST && path.ends_with("/messages");
-        let resolved = match cookies::get(request.headers(), SESSION_COOKIE) {
-            Some(raw) => session::lookup(&state.db, &raw).await?,
+        let raw = cookies::get(request.headers(), SESSION_COOKIE)
+            .filter(|raw| crate::token::is_valid(raw));
+        let mut resolved = None;
+        let owner = match raw.as_deref() {
             None => None,
+            Some(raw) => match state.limiter.session_owner(raw) {
+                Some(owner) => owner,
+                None => {
+                    let session = lookup(&state, raw).await?;
+                    let owner = session.as_ref().map(|session| session.user.id);
+                    resolved = Some(session);
+                    owner
+                }
+            },
         };
-        let actor = actor_key(resolved.as_ref().map(|session| session.user.id), &ip);
-        request.extensions_mut().insert(session::Resolved(resolved));
-        session_buckets(&state, &actor, upload, message)
+        let outcome = session_buckets(&state, &actor_key(owner, &ip), upload, message);
+        if outcome.is_ok() {
+            // Let through: the handler gets the session as it is now.
+            let session = match (resolved, raw.as_deref()) {
+                (Some(session), _) => session,
+                (None, Some(raw)) => lookup(&state, raw).await?,
+                (None, None) => None,
+            };
+            request.extensions_mut().insert(session::Resolved(session));
+        }
+        outcome
     };
 
     if let Err((bucket, retry_after)) = outcome {
@@ -303,6 +365,22 @@ pub async fn gate(
     }
 
     Ok(next.run(request).await)
+}
+
+/// [`session::lookup`], remembered for the next request's bucket key.
+async fn lookup(state: &AppState, raw: &str) -> Result<Option<session::CurrentSession>, ApiError> {
+    let session = session::lookup(&state.db, raw).await?;
+    state
+        .limiter
+        .remember_session(raw, session.as_ref().map(|session| session.user.id));
+    Ok(session)
+}
+
+fn memo_key(raw: &str) -> [u8; 16] {
+    let hash = crate::token::hash(raw);
+    let mut key = [0; 16];
+    key.copy_from_slice(&hash[..16]);
+    key
 }
 
 /// `up` or `msg` where they apply, then `api`, all for `actor`.
@@ -640,6 +718,25 @@ mod tests {
         assert_eq!(actor_key(Some(id), "198.51.100.1"), key);
         assert_ne!(actor_key(Some(Uuid::new_v4()), "192.0.2.7"), key);
         assert_eq!(actor_key(None, "192.0.2.7"), "192.0.2.7");
+    }
+
+    #[test]
+    fn the_gate_remembers_whose_cookie_it_looked_up() {
+        let limiter = Limiter::with_caps(8, 4);
+        let ada = crate::token::generate();
+        let made_up = crate::token::generate();
+        assert_eq!(limiter.session_owner(&ada), None);
+        let id = Uuid::new_v4();
+        limiter.remember_session(&ada, Some(id));
+        limiter.remember_session(&made_up, None);
+        assert_eq!(limiter.session_owner(&ada), Some(Some(id)));
+        assert_eq!(limiter.session_owner(&made_up), Some(None));
+        // At the cap it starts over instead of growing.
+        for _ in 0..3 {
+            limiter.remember_session(&crate::token::generate(), None);
+        }
+        assert_eq!(limiter.session_owner(&ada), None);
+        assert!(limiter.sessions.lock().unwrap().len() <= 4);
     }
 
     #[test]

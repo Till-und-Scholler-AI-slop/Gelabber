@@ -344,7 +344,7 @@ async fn made_up_session_cookies_share_the_address_window(pool: PgPool) {
 
 #[sqlx::test]
 async fn a_revoked_session_counts_against_the_address(pool: PgPool) {
-    let state = state_with(pool, &[("API_RATE_API_PER_MIN", "1")]);
+    let state = state_with(pool, &[("API_RATE_API_PER_MIN", "2")]);
     let mut ada = Client::from_state(state.clone());
     ada.bootstrap().await;
     let res = ada.register("ada@example.com", "password123", "Ada").await;
@@ -353,13 +353,44 @@ async fn a_revoked_session_counts_against_the_address(pool: PgPool) {
     let out = ada.send(Method::POST, "/api/auth/logout", None).await;
     assert!(out.status.is_success(), "{}", out.body);
 
-    // Logout used the account's window; the dead cookie now uses the
-    // address's, which is still open, and then is refused like any other.
+    // Logout and the first request with the dead cookie still count for
+    // the account: the gate keys by its lookup before logout. That request
+    // looks the session up again and finds none, so from then on the
+    // cookie counts against the address, whose window is still open.
     ada.jar.insert(common::SESSION.to_owned(), stale);
-    let res = ada
+    for _ in 0..3 {
+        let res = ada
+            .send(Method::POST, "/api/servers", Some(json!({ "name": "X" })))
+            .await;
+        assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.body);
+    }
+    let denied = ada
         .send(Method::POST, "/api/servers", Some(json!({ "name": "X" })))
         .await;
-    assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.body);
+    assert_eq!(
+        denied.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        denied.body
+    );
+}
+
+#[sqlx::test]
+async fn a_refused_request_costs_no_session_lookup(pool: PgPool) {
+    let state = state_with(pool.clone(), &[("API_RATE_API_PER_MIN", "1")]);
+    let mut ada = Client::from_state(state);
+    ada.bootstrap().await;
+    let res = ada.register("ada@example.com", "password123", "Ada").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    create_server(&mut ada).await;
+
+    // Gone from the table, so a lookup would find no session, key the
+    // request by the (still open) address window and answer 401. The gate
+    // goes by its recent lookup instead and refuses without a query.
+    sqlx::query("DELETE FROM sessions")
+        .execute(&pool)
+        .await
+        .unwrap();
     let denied = ada
         .send(Method::POST, "/api/servers", Some(json!({ "name": "X" })))
         .await;
