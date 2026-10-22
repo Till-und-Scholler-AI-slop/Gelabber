@@ -24,7 +24,7 @@ Since v0.6 (#188) the stack no longer starts with known values:
 
 ## Existing Caddy
 
-UDP (TURN + SFU ICE 10000) does not go through Caddy; the host/router ports stay open.
+UDP (TURN + SFU ICE 10000, one more port per extra media worker, see "Media workers") does not go through Caddy; the host/router ports stay open.
 
 **Small diff:** bundled Caddy on loopback, your Caddy in front of it.
 
@@ -128,6 +128,22 @@ For a digest rollout use the same `--env-file` / `-f` arguments as the rollout. 
 ## Media signaling
 
 The SFU's control WebSocket (`/media/ws`) closes a socket that has not joined a voice channel within `MEDIA_JOIN_DEADLINE_MS` (default 10000 ms), counted from the upgrade and again from a leave. Pings and invalid frames do not extend it. The web client sends its join right after the socket opens, so Compose leaves the key at its default; to change it, add it to the `media` service's `environment` in a Compose override.
+
+## Media workers
+
+The SFU runs `MEDIA_WORKERS` native mediasoup workers (default 1). Each worker uses one CPU core and its own UDP port: worker 0 binds 10000, worker 1 binds 10001, and so on. A new voice channel goes to the live worker with the fewest participants; all participants of one channel stay on the same worker, so one very large channel is still limited to one core.
+
+To use more cores, set both values in `.env` and recreate `media`:
+
+```bash
+# deploy/compose/.env
+MEDIA_WORKERS=4
+MEDIA_ICE_PORT_MAX=10003
+```
+
+`MEDIA_ICE_PORT_MAX` must be at least `10000 + MEDIA_WORKERS - 1`; otherwise the media service refuses to start and names the missing port. Compose publishes UDP 10000 up to `MEDIA_ICE_PORT_MAX`. Open and forward the whole range in the host firewall and on the router: a port that is missing breaks voice only for the channels that land on that worker, which is easy to miss. The startup log line `gelabber-media listening` lists `udp_ports`, and `/media/ready` reports `workers.live` and `workers.total`.
+
+If one worker stops or stops answering, only the calls on that worker end; clients reconnect on their own and land on a live worker. The service replaces the worker on the same port in the background. With a single worker, or when no worker is left, the service exits as before and Docker restarts it. Prometheus gets `gelabber_media_workers`, `gelabber_media_workers_live`, `gelabber_media_worker_failures_total`, `gelabber_media_worker_restarts_total` and per worker `gelabber_media_worker_rooms` / `gelabber_media_worker_peers`.
 
 Media expects to run behind the reverse proxy. Its HTTP server has no read timeout for the request and header phase, so a client that connects to `media:8081` directly and never finishes its request keeps the connection open. Caddy connects upstream only once it has the full request headers, so this matters only when port 8081 is reachable from outside: keep `GELABBER_MEDIA_BIND` (homelab overlay) on loopback.
 

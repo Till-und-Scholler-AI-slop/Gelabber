@@ -12,7 +12,7 @@ docker compose up
 
 Dann [http://localhost](http://localhost). App-Images: `ghcr.io/till-und-scholler-ai-slop/gelabber/{api,web,media}:v0.7.0`. Fehlt das Paket (GHCR oft privat), baut Compose aus dem Source. `docker compose up --build` erzwingt den Build; auf arm64 ist er nötig, Image-CI baut `linux/amd64`. MinIO bleibt auf `ghcr.io/till-und-scholler-ai-slop/gelabber/minio:RELEASE.2025-10-15T17-29-55Z`.
 
-Postgres, Redis und MinIO-Konsole hängen nur an Loopback. UDP für Voice (coturn 3478 + Relay, SFU 10000) geht nicht durch Caddy.
+Postgres, Redis und MinIO-Konsole hängen nur an Loopback. UDP für Voice (coturn 3478 + Relay, SFU 10000 plus ein Port je weiterem Medien-Worker, siehe `deploy/README.md`) geht nicht durch Caddy.
 
 Operator-Doku (bestehendes Caddy, TURN-Port, TLS, Backup, Grafana): [deploy/README.md](deploy/README.md).
 
