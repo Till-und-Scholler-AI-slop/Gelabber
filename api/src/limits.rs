@@ -2,8 +2,9 @@
 //!
 //! Mutations under `/api` go through [`gate`] before CSRF. Auth (sign-in,
 //! registration, email verification, password reset) is keyed by client
-//! address, IPv6 per /64; everything else by a hash of the session cookie,
-//! or by the address when there is no cookie shaped like a session token.
+//! address, IPv6 per /64; everything else by the account of the session,
+//! which the gate resolves once for the handler as well, or by the address
+//! when the cookie matches no live session.
 //! Failed logins are also counted per account ([`login_blocked`] /
 //! [`login_failed`]), so spreading guesses over many addresses does not
 //! multiply them. Upload *bytes* are a durable daily quota in Postgres so
@@ -25,6 +26,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 use uuid::Uuid;
 
+use crate::auth::session;
 use crate::cookies::{self, SESSION_COOKIE};
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -63,6 +65,12 @@ const SOFT_KEYS: usize = 4096;
 /// `HashMap` overhead included.
 const MAX_KEYS: usize = 65_536;
 const SWEEP_EVERY: Duration = Duration::from_secs(10);
+/// How long the gate keys a session cookie by the account its last lookup
+/// found, without a new one. Only the bucket key relies on it; the handler
+/// still gets a fresh lookup.
+const SESSION_MEMO_TTL: Duration = MINUTE;
+/// Most cookies the gate remembers; at this many it starts over.
+const SESSION_MEMO_MAX: usize = 16_384;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
@@ -118,9 +126,9 @@ impl Inner {
     /// Makes room for a new key once the map holds `hard` of them: expired
     /// windows go first; if that is not enough, the eighth of the keys whose
     /// windows end soonest, the per-account counts (login failures, account
-    /// mail) last. Anyone can mint session-bucket keys, hour-long upload
-    /// windows among them, with a made-up session-shaped cookie per request,
-    /// and such a flood must not end a lockout early. Per-account counts only
+    /// mail) last. Anyone holding an IPv6 prefix can mint address keys,
+    /// hour-long upload windows among them, one per /64, and such a flood
+    /// must not end a lockout early. Per-account counts only
     /// grow through the per-address auth window, so filling the map with them
     /// takes many addresses; then the ones closest to their end go first.
     fn make_room(&mut self, now: Instant, hard: usize) {
@@ -147,6 +155,10 @@ impl Inner {
     }
 }
 
+/// The account a session cookie had at a lookup, and until when the gate
+/// goes by it.
+type SessionMemo = (Option<Uuid>, Instant);
+
 /// Fixed-window counters, keyed by `bucket:id`. Cheap and enough for one
 /// process. Past [`SOFT_KEYS`] expired windows are dropped every
 /// [`SWEEP_EVERY`], not on every hit; at [`MAX_KEYS`] a new key first makes
@@ -156,6 +168,11 @@ pub struct Limiter {
     inner: Mutex<Inner>,
     soft: usize,
     hard: usize,
+    /// Account of each recently looked-up session cookie, by the first half
+    /// of its hash, `None` for a cookie with no live session; see
+    /// [`Self::session_owner`].
+    sessions: Mutex<HashMap<[u8; 16], SessionMemo>>,
+    sessions_max: usize,
 }
 
 impl Limiter {
@@ -172,7 +189,32 @@ impl Limiter {
             }),
             soft,
             hard,
+            sessions: Mutex::new(HashMap::new()),
+            sessions_max: SESSION_MEMO_MAX.min(hard),
         }
+    }
+
+    /// The account the gate's last lookup of session cookie `raw` found
+    /// (`Some(None)`: no live session), if that lookup is less than
+    /// [`SESSION_MEMO_TTL`] old. A request the gate refuses then costs no
+    /// query, also when it carries the same made-up cookie each time.
+    fn session_owner(&self, raw: &str) -> Option<Option<Uuid>> {
+        let now = Instant::now();
+        let sessions = self.sessions.lock().unwrap_or_else(|err| err.into_inner());
+        sessions
+            .get(&memo_key(raw))
+            .filter(|(_, until)| now < *until)
+            .map(|(owner, _)| *owner)
+    }
+
+    fn remember_session(&self, raw: &str, owner: Option<Uuid>) {
+        let mut sessions = self.sessions.lock().unwrap_or_else(|err| err.into_inner());
+        // Starting over costs each forgotten cookie one lookup, and keeps
+        // a flood of made-up cookies from making every insert scan the map.
+        if sessions.len() >= self.sessions_max {
+            sessions.clear();
+        }
+        sessions.insert(memo_key(raw), (owner, Instant::now() + SESSION_MEMO_TTL));
     }
 
     /// Records one hit. `Err(retry_after)`, in seconds, means the caller is
@@ -252,22 +294,29 @@ impl Default for Limiter {
 
 /// Outer middleware: count mutating `/api` requests. GET/HEAD/OPTIONS
 /// pass. Health, ready, metrics and `/ws` are not on this router.
+///
+/// Outside the sign-in routes the session cookie is resolved here, once:
+/// its account is the key of the session buckets, so a user's sessions
+/// share one allowance, and the handler's extractors take the result from
+/// the request ([`session::Resolved`]) instead of querying again. The key
+/// comes from a lookup at most [`SESSION_MEMO_TTL`] old, so a refused
+/// request with a cookie seen recently costs no query; one let through
+/// always gets a current lookup.
 pub async fn gate(
     State(state): State<AppState>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
     if is_safe(request.method()) {
         return Ok(next.run(request).await);
     }
 
-    let path = request.uri().path();
     let peer = request
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .map(|info| info.0.ip());
     let ip = client_ip(request.headers(), peer);
-    let actor = actor_key(request.headers(), &ip);
+    let path = request.uri().path();
 
     let outcome = if is_auth_path(path) {
         check(
@@ -277,50 +326,37 @@ pub async fn gate(
             state.limits.auth_per_min,
             MINUTE,
         )
-    } else if (request.method() == Method::POST && path.ends_with("/attachments"))
-        || (request.method() == Method::PUT && matches!(path, "/api/me/avatar" | "/api/me/banner"))
-    {
-        check(
-            &state.limiter,
-            "up",
-            &actor,
-            state.limits.upload_per_hour,
-            HOUR,
-        )
-        .and_then(|()| {
-            check(
-                &state.limiter,
-                "api",
-                &actor,
-                state.limits.api_per_min,
-                MINUTE,
-            )
-        })
-    } else if request.method() == Method::POST && path.ends_with("/messages") {
-        check(
-            &state.limiter,
-            "msg",
-            &actor,
-            state.limits.msg_per_min,
-            MINUTE,
-        )
-        .and_then(|()| {
-            check(
-                &state.limiter,
-                "api",
-                &actor,
-                state.limits.api_per_min,
-                MINUTE,
-            )
-        })
     } else {
-        check(
-            &state.limiter,
-            "api",
-            &actor,
-            state.limits.api_per_min,
-            MINUTE,
-        )
+        let upload = (request.method() == Method::POST && path.ends_with("/attachments"))
+            || (request.method() == Method::PUT
+                && matches!(path, "/api/me/avatar" | "/api/me/banner"));
+        let message = request.method() == Method::POST && path.ends_with("/messages");
+        let raw = cookies::get(request.headers(), SESSION_COOKIE)
+            .filter(|raw| crate::token::is_valid(raw));
+        let mut resolved = None;
+        let owner = match raw.as_deref() {
+            None => None,
+            Some(raw) => match state.limiter.session_owner(raw) {
+                Some(owner) => owner,
+                None => {
+                    let session = lookup(&state, raw).await?;
+                    let owner = session.as_ref().map(|session| session.user.id);
+                    resolved = Some(session);
+                    owner
+                }
+            },
+        };
+        let outcome = session_buckets(&state, &actor_key(owner, &ip), upload, message);
+        if outcome.is_ok() {
+            // Let through: the handler gets the session as it is now.
+            let session = match (resolved, raw.as_deref()) {
+                (Some(session), _) => session,
+                (None, Some(raw)) => lookup(&state, raw).await?,
+                (None, None) => None,
+            };
+            request.extensions_mut().insert(session::Resolved(session));
+        }
+        outcome
     };
 
     if let Err((bucket, retry_after)) = outcome {
@@ -329,6 +365,55 @@ pub async fn gate(
     }
 
     Ok(next.run(request).await)
+}
+
+/// [`session::lookup`], remembered for the next request's bucket key.
+async fn lookup(state: &AppState, raw: &str) -> Result<Option<session::CurrentSession>, ApiError> {
+    let session = session::lookup(&state.db, raw).await?;
+    state
+        .limiter
+        .remember_session(raw, session.as_ref().map(|session| session.user.id));
+    Ok(session)
+}
+
+fn memo_key(raw: &str) -> [u8; 16] {
+    let hash = crate::token::hash(raw);
+    let mut key = [0; 16];
+    key.copy_from_slice(&hash[..16]);
+    key
+}
+
+/// `up` or `msg` where they apply, then `api`, all for `actor`.
+fn session_buckets(
+    state: &AppState,
+    actor: &str,
+    upload: bool,
+    message: bool,
+) -> Result<(), (&'static str, u64)> {
+    if upload {
+        check(
+            &state.limiter,
+            "up",
+            actor,
+            state.limits.upload_per_hour,
+            HOUR,
+        )?;
+    } else if message {
+        check(
+            &state.limiter,
+            "msg",
+            actor,
+            state.limits.msg_per_min,
+            MINUTE,
+        )?;
+    }
+    check(
+        &state.limiter,
+        "api",
+        actor,
+        state.limits.api_per_min,
+        MINUTE,
+    )
 }
 
 /// Routes an anonymous caller uses to sign in or to make the API send mail;
@@ -421,18 +506,14 @@ fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>) -> String {
     )
 }
 
-/// Whom the session buckets (`api`, `msg`, `up`) count: the session cookie
-/// when it is shaped like a token, as part of its hash so the limiter never
-/// holds a live token, otherwise the client address. A cookie no session can
-/// have therefore shares the address's windows instead of opening its own.
-fn actor_key(headers: &HeaderMap, ip: &str) -> String {
-    match cookies::get(headers, SESSION_COOKIE) {
-        Some(raw) if crate::token::is_valid(&raw) => {
-            // 128 of the 256 bits are plenty to tell sessions apart.
-            let hash = crate::auth::session::fingerprint(&crate::token::hash(&raw));
-            format!("s:{}", &hash[..32])
-        }
-        _ => ip.to_owned(),
+/// Whom the session buckets (`api`, `msg`, `up`) count: the account of a
+/// live session, otherwise the client address. A cookie that matches no
+/// session, made up or expired, therefore shares the address's windows
+/// instead of opening its own, and signing in again does not reset them.
+fn actor_key(user: Option<Uuid>, ip: &str) -> String {
+    match user {
+        Some(id) => format!("u:{id}"),
+        None => ip.to_owned(),
     }
 }
 
@@ -564,36 +645,34 @@ mod tests {
         assert_eq!(client_ip(&headers, None), "unknown");
     }
 
-    fn with_session(cookie: &str) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            axum::http::header::COOKIE,
-            format!("{SESSION_COOKIE}={cookie}").parse().unwrap(),
-        );
-        headers
+    #[test]
+    fn a_signed_in_caller_is_keyed_by_account() {
+        let id = Uuid::new_v4();
+        let key = actor_key(Some(id), "192.0.2.7");
+        assert_eq!(key, format!("u:{id}"));
+        // The same account from anywhere, and never an address.
+        assert_eq!(actor_key(Some(id), "198.51.100.1"), key);
+        assert_ne!(actor_key(Some(Uuid::new_v4()), "192.0.2.7"), key);
+        assert_eq!(actor_key(None, "192.0.2.7"), "192.0.2.7");
     }
 
     #[test]
-    fn a_token_shaped_session_cookie_is_keyed_by_its_hash() {
-        let token = crate::token::generate();
-        let key = actor_key(&with_session(&token), "192.0.2.7");
-        assert!(key.starts_with("s:"), "{key}");
-        assert_eq!(key.len(), 2 + 32);
-        assert!(!key.contains(&token));
-        assert!(!key.contains(&token[..32]));
-        assert_eq!(actor_key(&with_session(&token), "198.51.100.1"), key);
-        let other = actor_key(&with_session(&crate::token::generate()), "192.0.2.7");
-        assert_ne!(other, key);
-    }
-
-    #[test]
-    fn other_session_cookies_count_against_the_address() {
-        let not_hex = "g".repeat(64);
-        let short = "f".repeat(63);
-        for cookie in ["not-a-token", "abc123", not_hex.as_str(), short.as_str()] {
-            assert_eq!(actor_key(&with_session(cookie), "192.0.2.7"), "192.0.2.7");
+    fn the_gate_remembers_whose_cookie_it_looked_up() {
+        let limiter = Limiter::with_caps(8, 4);
+        let ada = crate::token::generate();
+        let made_up = crate::token::generate();
+        assert_eq!(limiter.session_owner(&ada), None);
+        let id = Uuid::new_v4();
+        limiter.remember_session(&ada, Some(id));
+        limiter.remember_session(&made_up, None);
+        assert_eq!(limiter.session_owner(&ada), Some(Some(id)));
+        assert_eq!(limiter.session_owner(&made_up), Some(None));
+        // At the cap it starts over instead of growing.
+        for _ in 0..3 {
+            limiter.remember_session(&crate::token::generate(), None);
         }
-        assert_eq!(actor_key(&HeaderMap::new(), "192.0.2.7"), "192.0.2.7");
+        assert_eq!(limiter.session_owner(&ada), None);
+        assert!(limiter.sessions.lock().unwrap().len() <= 4);
     }
 
     #[test]
@@ -626,8 +705,8 @@ mod tests {
 
     #[test]
     fn per_account_counts_outlive_a_flood_of_hour_long_windows() {
-        // A made-up session-shaped cookie per upload request mints one of
-        // these each; they end later than a lockout that is well under way.
+        // One /64 per upload request mints one of these each; they end
+        // later than a lockout that is well under way.
         let limiter = Limiter::with_caps(8, 64);
         for _ in 0..2 {
             limiter
