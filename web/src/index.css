@@ -88,9 +88,22 @@
   --lr-control-md: 36px;
   --lr-radius-full: 999px;
 
+  /* Motion: quiet and quick. Micro for presses and hovers, standard for
+     state changes and small surfaces, large for dialogs, sheets and
+     drawers. A surface leaves in about 70% of the time it took to come
+     in, accelerating away; nothing runs longer than 300ms. */
+  --lr-dur-micro: 100ms;
   --lr-dur-fast: 120ms;
   --lr-dur: 180ms;
+  --lr-dur-large: 240ms;
+  --lr-dur-exit: 130ms;
+  --lr-dur-large-exit: 170ms;
   --lr-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --lr-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --lr-ease-enter: var(--lr-ease);
+  --lr-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  /* How far a pressed control gives way. */
+  --lr-press-scale: 0.97;
 
   --lr-rail-width: 64px;
   --lr-sidebar-width: 224px;
@@ -111,15 +124,28 @@
     --lr-control-md: 44px;
   }
 }
+/* Less motion, from the system or Gelabber's own switch: no durations and
+   no press scale. The kill switches further down also drop every running
+   transition and animation, and usePresence() unmounts at once. */
 @media (prefers-reduced-motion: reduce) {
   :root {
+    --lr-dur-micro: 0ms;
     --lr-dur-fast: 0ms;
     --lr-dur: 0ms;
+    --lr-dur-large: 0ms;
+    --lr-dur-exit: 0ms;
+    --lr-dur-large-exit: 0ms;
+    --lr-press-scale: 1;
   }
 }
 html[data-reduced-motion="true"] {
+  --lr-dur-micro: 0ms;
   --lr-dur-fast: 0ms;
   --lr-dur: 0ms;
+  --lr-dur-large: 0ms;
+  --lr-dur-exit: 0ms;
+  --lr-dur-large-exit: 0ms;
+  --lr-press-scale: 1;
 }
 html {
   zoom: var(--lr-ui-scale);
@@ -1693,6 +1719,8 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     --avatar-size: 40px;
   }
 }
+/* The kill switches: with less motion asked for, from the system or in the
+   app, nothing moves. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -1701,6 +1729,13 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     transition: none !important;
     scroll-behavior: auto !important;
   }
+}
+html[data-reduced-motion="true"] *,
+html[data-reduced-motion="true"] *::before,
+html[data-reduced-motion="true"] *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
 }
 
 .sidebar-action-small {
