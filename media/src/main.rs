@@ -30,10 +30,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .map_err(|err| format!("failed to bind {}: {err}", config.media_addr))?;
     let local_addr = listener.local_addr()?;
 
+    // A partly forwarded range fails ICE only for the channels on the
+    // unforwarded workers, so the expected range is stated at startup.
+    let udp_ports = match config.ice_ports() {
+        Some(ports) if ports.start() == ports.end() => ports.start().to_string(),
+        Some(ports) => format!("{}-{}", ports.start(), ports.end()),
+        None => "ephemeral 20000-30000".to_owned(),
+    };
     info!(
         addr = %local_addr,
         ice_bind = %config.ice_bind,
-        "gelabber-media listening"
+        workers = config.workers,
+        udp_ports = %udp_ports,
+        "gelabber-media listening; publish and forward every UDP port listed"
     );
 
     let engine = state.sfu.clone();

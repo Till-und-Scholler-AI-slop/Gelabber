@@ -25,7 +25,7 @@ Since v0.6 (#188) the stack no longer starts with known values:
 
 ## Existing Caddy
 
-UDP (TURN + SFU ICE 10000) does not go through Caddy; the host/router ports stay open.
+UDP (TURN + SFU ICE 10000, one more port per extra media worker, see "Media workers") does not go through Caddy; the host/router ports stay open.
 
 **Small diff:** bundled Caddy on loopback, your Caddy in front of it.
 
@@ -153,6 +153,22 @@ A joined socket is pinged every `MEDIA_HEARTBEAT_MS` (default 20000 ms). Browser
 
 Media expects to run behind the reverse proxy. Its HTTP server has no read timeout for the request and header phase, so a client that connects to `media:8081` directly and never finishes its request keeps the connection open. Caddy connects upstream only once it has the full request headers, so this matters only when port 8081 is reachable from outside: keep `GELABBER_MEDIA_BIND` (homelab overlay) on loopback. Media also believes `X-Forwarded-For` from whoever reaches that port.
 
+## Media workers
+
+The SFU runs `MEDIA_WORKERS` native mediasoup workers (default 1). Each worker uses one CPU core and its own UDP port: worker 0 binds 10000, worker 1 binds 10001, and so on. A new voice channel goes to the live worker with the fewest participants; all participants of one channel stay on the same worker, so one very large channel is still limited to one core.
+
+To use more cores, set both values in `.env` and recreate `media`:
+
+```bash
+# deploy/compose/.env
+MEDIA_WORKERS=4
+MEDIA_ICE_PORT_MAX=10003
+```
+
+`MEDIA_ICE_PORT_MAX` must be at least `10000 + MEDIA_WORKERS - 1`; otherwise the media service refuses to start and names the missing port. Compose publishes UDP 10000 up to `MEDIA_ICE_PORT_MAX`. Open and forward the whole range in the host firewall and on the router: a port that is missing breaks voice only for the channels that land on that worker, which is easy to miss. The startup log line `gelabber-media listening` lists `udp_ports`, and `/media/ready` reports `workers.live` and `workers.total`.
+
+If one worker stops or stops answering, only the calls on that worker end; clients reconnect on their own and land on a live worker. The service replaces the worker on the same port in the background. With a single worker, or when no worker is left, the service exits as before and Docker restarts it. Prometheus gets `gelabber_media_workers`, `gelabber_media_workers_live`, `gelabber_media_worker_failures_total`, `gelabber_media_worker_restarts_total` and per worker `gelabber_media_worker_rooms` / `gelabber_media_worker_peers`.
+
 ## Behind TLS
 
 - `API_COOKIE_SECURE=true`. The API then accepts the WebSocket (`/ws`) only from `https://` pages; `http://` stays allowed for `localhost` only.
@@ -222,24 +238,49 @@ Links in messages get a preview card (title, description, image; YouTube with a 
 
 The linked sites see the server's IP address. `API_LINK_PREVIEWS=false` turns previews off; links stay clickable. Authors (and moderators) can remove the previews of a message.
 
+Hosts on your own network get no preview, on purpose: a name like `wiki.example.org` that resolves to a LAN address (`192.168.x.x`, `10.x.x.x`, …) from the server is refused like any internal target, so a message cannot make the API probe the LAN. Only cards for public sites appear. The API sends a user agent that ends in `like Twitterbot`, as Telegram's preview bot does; some sites (TikTok, for example) serve their title and image only to preview bots they know. Previews appear only for messages sent or edited after the update that brought them, and only for bare links (not in code, in `||spoilers||` or in `<…>`). A PDF or other non-HTML link gets no card.
+
+When a link shows no card, the API log says why, at the default `info` level, with the host but not the full URL: `docker compose logs api | grep "link preview"`. Each line has a `reason`:
+
+| `reason` | Meaning |
+|---|---|
+| `refused` | Private or local address, local name, denied host, port other than 80/443, or a redirect to one of those. `detail` says which (`Refused("address")`, `Refused("host")`, …). |
+| `dns` | The name did not resolve from the API container. |
+| `timeout` | No answer within 5 s; the host is skipped for 10 minutes. |
+| `backoff` | The host timed out less than 10 minutes ago. |
+| `http` | Connection or TLS error; `detail` has the client's text. |
+| `status` | The site answered with an error status (`detail`: `Status(403)` and so on), often bot protection. |
+| `redirects` | More than three redirects. |
+| `content_type` | Not an HTML page (a PDF, an image, a download). |
+| `too_large` | Body larger than the limit. |
+| `no_metadata` | The page has no title, description or image. |
+| `budget` | The message's 8 s were spent on its earlier links. |
+| `retry_later` | The same link failed less than an hour ago and is not fetched again yet. |
+
+A card whose image could not be fetched keeps its text (`link preview: card without its image`). If MinIO cannot store the image, the card also keeps its text and the API logs a warning, `link preview image not stored`. `/metrics` counts each link under `gelabber_link_previews_total{outcome}` (the reasons above, plus `ok` and `cached`) and each card image under `gelabber_link_preview_images_total{outcome}` (`stored`, `store_failed`, or the fetch reason, `not_an_image` or `dimensions`). For the full URL as well, set `RUST_LOG=info,gelabber_api::previews=debug`.
+
 ## GIFs
 
 GIF search and trending in chat and direct messages come from [KLIPY](https://klipy.com) and are off until `KLIPY_API_KEY` is set in `.env`. Without it `GET /api/gifs` reports `enabled: false`, the composer shows no GIF button and the search, trending and media routes answer 404.
 
 The API makes every KLIPY call itself and relays the GIF images from KLIPY's media hosts (`static*.klipy.com`) under `/api/gifs/media`; browsers and the desktop app talk only to Gelabber and never see the key. KLIPY sees each user only as a hash of the account ID and the key, not as a name or address. A sent GIF is an ordinary chat message that stores KLIPY's slug, size and media URLs; it does not touch voice signaling or the SFU.
 
-KLIPY's terms require their written approval for server-side requests and for proxying or caching their media (developers@klipy.com). Get it before you set the key. Testing keys are limited to 100 requests per hour, shared by every user of the instance.
+KLIPY's terms require their written approval for server-side requests and for proxying or caching their media (developers@klipy.com). Get it before you set the key.
+
+Testing keys are limited to 100 requests per hour, shared by every user of the instance. Every search page, trending page and sent GIF is one request, so a handful of people looking for GIFs uses that up within minutes, and the picker then stays empty until the hour is over. A testing key is fine for trying GIFs out; for regular use, ask KLIPY for a production key.
 
 - `KLIPY_CONTENT_FILTER`: `off`, `low`, `medium` (default) or `high`.
+- `KLIPY_CACHE_SECS`: how long a search or trending page stays in Redis (default 600, `0` turns the cache off, at most 86400). The cache is shared by all users: the same search (case and extra spaces do not count) or trending page within that time costs no request and answers without waiting for KLIPY. Trending is then the same for everyone instead of KLIPY's per-user order. Only the result lists are cached, not the images.
 - `API_RATE_GIF_PER_MIN`: search, trending and sent GIFs (each a KLIPY API request) per user per minute (default 30, `0` turns the limit off). It is per user; it does not keep the whole instance under a testing key's 100 per hour.
 - `API_RATE_GIF_MEDIA_PER_MIN`: image loads through the relay per user per minute (default 240, `0` turns the limit off). They go to KLIPY's media hosts, not its API. At most 128 relay streams run at once across all users; past that the relay answers 502.
 
-When KLIPY itself answers 429, the key's quota is used up for every user. The API logs it, counts it as `gelabber_rate_limited_total{bucket="klipy"}` and answers the client 502 `upstream_unavailable`, not as the user's own limit.
+When KLIPY itself answers 429, the key's quota is used up for every user. The API logs it once, counts it as `gelabber_rate_limited_total{bucket="klipy"}` and stops asking KLIPY for as long as its `Retry-After` says (60 s without one, at most an hour). Meanwhile search, trending and sending a GIF answer at once with 503 `upstream_quota` and a `Retry-After`, and the picker says that the server's GIF quota is used up and when to try again, instead of loading. Cached pages are still served.
+
+`/metrics` shows how long KLIPY takes (`gelabber_upstream_request_duration_seconds{upstream="klipy",operation="search|trending|items"}`, a histogram that includes failed and timed-out calls; the API gives up after 8 s) and how often the cache answers (`gelabber_cache_total{cache="gif_feed",result="hit|miss"}`).
 
 After changing these values, recreate the API: `docker compose up -d --no-deps --force-recreate api`.
 
 Migration 0012 adds the nullable `messages.gif` column. As with every migration, an older API binary does not start against the migrated database (SQLx ledger); roll back with the backed-up snapshot pair as described below.
-
 
 ## Push notifications
 

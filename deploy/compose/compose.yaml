@@ -78,6 +78,7 @@ services:
       # Empty turns GIF search off. The key never reaches a browser.
       KLIPY_API_KEY: ${KLIPY_API_KEY:-}
       KLIPY_CONTENT_FILTER: ${KLIPY_CONTENT_FILTER:-medium}
+      KLIPY_CACHE_SECS: ${KLIPY_CACHE_SECS:-600}
       API_RATE_GIF_PER_MIN: ${API_RATE_GIF_PER_MIN:-30}
       API_RATE_GIF_MEDIA_PER_MIN: ${API_RATE_GIF_MEDIA_PER_MIN:-240}
       # Empty turns Web Push off.
@@ -120,13 +121,17 @@ services:
       MEDIA_ADDR: 0.0.0.0:8081
       REDIS_URL: redis://redis:6379
       MEDIA_ICE_BIND: 0.0.0.0:10000
+      # One UDP port per worker: worker i binds 10000 + i, so the published
+      # range must reach 10000 + MEDIA_WORKERS - 1 (the media service checks).
+      MEDIA_WORKERS: ${MEDIA_WORKERS:-1}
+      MEDIA_ICE_PORT_MAX: ${MEDIA_ICE_PORT_MAX:-10000}
       MEDIA_ADVERTISED_IP: ${MEDIA_ADVERTISED_IP:-127.0.0.1}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     expose:
       - "8081"
     ports:
-      - "10000:10000/udp"
+      - "10000-${MEDIA_ICE_PORT_MAX:-10000}:10000-${MEDIA_ICE_PORT_MAX:-10000}/udp"
     depends_on:
       redis:
         condition: service_healthy

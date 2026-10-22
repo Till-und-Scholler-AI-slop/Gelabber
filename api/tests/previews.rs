@@ -1,7 +1,8 @@
 //! Link previews (#254) against a local stand-in site: cards with title,
 //! description and an image served by the API, YouTube through oEmbed, the
 //! SSRF guard refusing internal targets and redirects to them, slow pages
-//! not holding up sending, removal by the author and the off switch.
+//! not holding up sending, removal by the author and the off switch. Each
+//! link's outcome is counted for `/metrics` (#349).
 
 mod common;
 
@@ -14,8 +15,11 @@ use axum::extract::State;
 use axum::http::header::{CONTENT_TYPE, LOCATION};
 use axum::http::{Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
+use gelabber_api::AppState;
+use gelabber_api::config::MinioConfig;
 use gelabber_api::previews::LinkPreviews;
 use gelabber_api::previews::net::Policy;
+use gelabber_api::storage::ObjectStore;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
@@ -135,6 +139,10 @@ async fn serve_site() -> (Site, Policy) {
 async fn signed_in(pool: PgPool, previews: Option<LinkPreviews>) -> (Client, String) {
     let mut state = common::state(pool);
     state.previews = previews;
+    signed_in_with(state).await
+}
+
+async fn signed_in_with(state: AppState) -> (Client, String) {
     let mut client = Client::from_state(state);
     client.bootstrap().await;
     let res = client
@@ -189,6 +197,13 @@ async fn message(client: &mut Client, channel: &str, id: &str) -> Value {
         .find(|m| m["id"] == id)
         .cloned()
         .expect("message")
+}
+
+/// The API's Prometheus text.
+async fn metrics(client: &mut Client) -> String {
+    let (status, _, bytes) = client.send_raw(Method::GET, "/metrics", None).await;
+    assert_eq!(status, StatusCode::OK);
+    String::from_utf8(bytes).unwrap()
 }
 
 /// The message once its previews are in, or after `limit` without them.
@@ -263,6 +278,56 @@ async fn a_link_gets_a_card_with_an_image_from_the_api(pool: PgPool) {
     .await;
     assert_eq!(again["previews"][0]["title"], "Kaffee & Kuchen");
     assert_eq!(site.seen.lock().unwrap().len(), fetched);
+
+    let text = metrics(&mut client).await;
+    for line in [
+        "gelabber_link_previews_total{outcome=\"ok\"} 1",
+        "gelabber_link_previews_total{outcome=\"cached\"} 1",
+        "gelabber_link_preview_images_total{outcome=\"stored\"} 1",
+    ] {
+        assert!(text.contains(line), "{line}\n{text}");
+    }
+}
+
+/// An object store that cannot take the image costs the card its image,
+/// not its text (#349).
+#[sqlx::test]
+async fn a_card_keeps_its_text_when_the_image_cannot_be_stored(pool: PgPool) {
+    let (site, policy) = serve_site().await;
+    let mut state = common::state(pool);
+    state.previews = Some(LinkPreviews::with_policy(policy));
+    // Nothing listens on port 1.
+    state.store = ObjectStore::from_minio(Some(&MinioConfig {
+        endpoint: "http://127.0.0.1:1".into(),
+        public_endpoint: "http://127.0.0.1:1".into(),
+        access_key: "gelabber".into(),
+        secret_key: "gelabber-secret".into(),
+        bucket: "gelabber".into(),
+        root_credentials: false,
+        delivery: gelabber_api::config::AttachmentDelivery::Redirect,
+    }))
+    .unwrap();
+    let (mut client, channel) = signed_in_with(state).await;
+    let sent = post(&mut client, &channel, &format!("{}/page", site.origin)).await;
+    let message = wait_previews(
+        &mut client,
+        &channel,
+        sent["id"].as_str().unwrap(),
+        Duration::from_secs(15),
+    )
+    .await;
+    let card = &message["previews"][0];
+    assert_eq!(card["title"], "Kaffee & Kuchen");
+    assert_eq!(card["description"], "Alles über <b>Kuchen</b>.");
+    assert!(card.get("image").is_none(), "{card}");
+
+    let text = metrics(&mut client).await;
+    for line in [
+        "gelabber_link_previews_total{outcome=\"ok\"} 1",
+        "gelabber_link_preview_images_total{outcome=\"store_failed\"} 1",
+    ] {
+        assert!(text.contains(line), "{line}\n{text}");
+    }
 }
 
 /// A refetch is a new row: messages keep the card they got, and a failed
@@ -364,6 +429,18 @@ async fn internal_targets_and_redirects_to_them_are_refused(pool: PgPool) {
     // A redirect loop ends after three hops.
     let seen = site.seen.lock().unwrap().clone();
     assert_eq!(seen.iter().filter(|s| *s == "/loop").count(), 4, "{seen:?}");
+
+    // Every link counts once, under the reason it got no card.
+    let text = metrics(&mut client).await;
+    for line in [
+        "gelabber_link_previews_total{outcome=\"refused\"} 8",
+        "gelabber_link_previews_total{outcome=\"redirects\"} 1",
+        "gelabber_link_previews_total{outcome=\"content_type\"} 1",
+        "gelabber_link_previews_total{outcome=\"ok\"} 1",
+        "gelabber_link_preview_images_total{outcome=\"not_an_image\"} 1",
+    ] {
+        assert!(text.contains(line), "{line}\n{text}");
+    }
 }
 
 #[sqlx::test]

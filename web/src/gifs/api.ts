@@ -53,8 +53,13 @@ export function gifLabel(gif: Pick<Gif, "title">): string {
   return gif.title ? `GIF: ${gif.title}` : "GIF";
 }
 
-/** The picker's status line. A full budget says when to try again instead
- *  of a generic failure. */
+/** "45 s", "2 Min." (rounded up): how long until the next try. */
+function waitText(seconds: number): string {
+  return seconds < 60 ? `${seconds} s` : `${Math.ceil(seconds / 60)} Min.`;
+}
+
+/** The picker's status line. A full budget (the user's own or the server's
+ *  GIF quota) says when to try again instead of a generic failure. */
 export function gifFeedStatus({
   pending,
   error,
@@ -72,6 +77,10 @@ export function gifFeedStatus({
       return error.retryAfter
         ? `Zu viele GIF-Anfragen. Bitte in ${error.retryAfter} s noch einmal versuchen.`
         : errorMessage("rate_limited");
+    if (error instanceof ApiError && error.code === "upstream_quota")
+      return error.retryAfter
+        ? `Dieser Server hat sein GIF-Kontingent gerade aufgebraucht. Bitte in ${waitText(error.retryAfter)} noch einmal versuchen.`
+        : errorMessage("upstream_quota");
     if (error instanceof ApiError && error.code === "upstream_unavailable")
       return errorMessage("upstream_unavailable");
     if (count === 0) return "GIFs konnten nicht geladen werden.";

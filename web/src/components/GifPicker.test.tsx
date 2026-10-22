@@ -83,6 +83,19 @@ describe("gif picker status", () => {
     ).toContain("Zu viele Anfragen");
   });
 
+  it("says when the server's GIF quota is back", () => {
+    const quota = (retryAfter: number | null) =>
+      gifFeedStatus({
+        ...base,
+        error: new ApiError("upstream_quota", 503, "x", {}, retryAfter),
+      });
+    expect(quota(45)).toBe(
+      "Dieser Server hat sein GIF-Kontingent gerade aufgebraucht. Bitte in 45 s noch einmal versuchen.",
+    );
+    expect(quota(61)).toContain("in 2 Min. noch einmal");
+    expect(quota(null)).toContain("später noch einmal");
+  });
+
   it("names a provider outage and other failures apart", () => {
     expect(
       gifFeedStatus({

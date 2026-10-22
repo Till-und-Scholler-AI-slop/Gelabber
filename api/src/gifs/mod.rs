@@ -6,19 +6,24 @@
 //!
 //! A sent GIF is an ordinary chat message (`messages.gif`, resolved here by
 //! slug at send time); nothing touches voice signaling or the SFU.
+//!
+//! Klipy's quota belongs to the key, so every user of the instance spends
+//! it. Search and trending pages are therefore kept in Redis for
+//! `KLIPY_CACHE_SECS` and shared by all users, and once Klipy answers 429
+//! the API stops asking it until the cooldown is over.
 
 pub mod klipy;
 
 use std::io;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Query, State};
 use axum::http::header::{
     ACCEPT_LANGUAGE, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, ETAG, IF_MODIFIED_SINCE,
-    IF_NONE_MATCH, LAST_MODIFIED, X_CONTENT_TYPE_OPTIONS,
+    IF_NONE_MATCH, LAST_MODIFIED, RETRY_AFTER, X_CONTENT_TYPE_OPTIONS,
 };
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
@@ -59,6 +64,14 @@ const MEDIA_STREAMS_MAX: usize = 128;
 /// Share triggers in flight. They are best effort: past this one is dropped.
 const SHARES_MAX: usize = 8;
 const FORMATS: &str = "webp,gif,jpg";
+/// How long the API leaves Klipy alone after a 429 that names no
+/// `Retry-After`, and the longest it accepts from one.
+const QUOTA_COOLDOWN: Duration = Duration::from_secs(60);
+const QUOTA_COOLDOWN_MAX: Duration = Duration::from_secs(3600);
+/// The feed cache is a shortcut: a slow or missing Redis falls through to
+/// Klipy instead of holding the picker.
+const CACHE_TIMEOUT: Duration = Duration::from_millis(500);
+const CACHE_METRIC: &str = "gif_feed";
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -86,7 +99,7 @@ pub struct Gif {
     pub still: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GifPage {
     pub gifs: Vec<Gif>,
     pub next_page: Option<u32>,
@@ -112,6 +125,8 @@ struct Inner {
     metrics: Arc<HttpMetrics>,
     media_streams: Arc<Semaphore>,
     shares: Arc<Semaphore>,
+    /// Set by Klipy's 429: until then no API call leaves the server.
+    quota_until: Mutex<Option<Instant>>,
 }
 
 enum Feed<'a> {
@@ -134,6 +149,7 @@ impl Gifs {
                 metrics,
                 media_streams: Arc::new(Semaphore::new(MEDIA_STREAMS_MAX)),
                 shares: Arc::new(Semaphore::new(SHARES_MAX)),
+                quota_until: Mutex::new(None),
             }),
         })
     }
@@ -146,10 +162,84 @@ impl Gifs {
         hash.update(self.inner.config.api_key.as_bytes());
         hash.update(b"\0");
         hash.update(user_id.as_bytes());
-        hash.finalize()[..16]
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
+        hex(&hash.finalize()[..16])
+    }
+
+    /// The Redis key of one search or trending page, `None` with the cache
+    /// off. Not per user: every user of the instance spends the same quota,
+    /// so Klipy's personalisation of trending is given up on a hit. The
+    /// key, base and filter are part of it, so a config change starts over.
+    fn cache_key(&self, feed: &Feed<'_>, page: u32, locale: Option<&str>) -> Option<String> {
+        let config = &self.inner.config;
+        if config.cache_ttl.is_zero() {
+            return None;
+        }
+        let (kind, q) = match feed {
+            Feed::Trending => ("trending", ""),
+            Feed::Search(q) => ("search", *q),
+        };
+        let mut hash = Sha256::new();
+        for part in [
+            config.api_base.as_str(),
+            config.api_key.as_str(),
+            config.content_filter.as_str(),
+            kind,
+            q,
+            &page.to_string(),
+            locale.unwrap_or_default(),
+        ] {
+            hash.update(part.as_bytes());
+            hash.update(b"\0");
+        }
+        Some(format!("gifs:feed:v1:{}", hex(&hash.finalize())))
+    }
+
+    /// While Klipy's last 429 holds, answers at once instead of asking again.
+    fn quota_check(&self) -> Result<(), ApiError> {
+        let mut until = self
+            .inner
+            .quota_until
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        match *until {
+            Some(deadline) => {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    *until = None;
+                    return Ok(());
+                }
+                Err(ApiError::UpstreamQuota {
+                    retry_after: left.as_secs_f64().ceil() as u64,
+                })
+            }
+            None => Ok(()),
+        }
+    }
+
+    fn quota_exhausted(&self, retry_after: Option<&reqwest::header::HeaderValue>) -> ApiError {
+        let cooldown = retry_after
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .map(Duration::from_secs)
+            .unwrap_or(QUOTA_COOLDOWN)
+            .clamp(Duration::from_secs(1), QUOTA_COOLDOWN_MAX);
+        *self
+            .inner
+            .quota_until
+            .lock()
+            .unwrap_or_else(|err| err.into_inner()) = Some(Instant::now() + cooldown);
+        // The key's quota is shared by every user of the instance, so this
+        // is not the caller's own limit: an upstream failure the operator
+        // has to see (log line and `rate_limited{bucket="klipy"}`). One per
+        // cooldown, since no call goes out until it ends.
+        self.inner.metrics.rate_limited("klipy");
+        warn!(
+            cooldown_secs = cooldown.as_secs(),
+            "klipy returned 429: API key quota exhausted, pausing GIF requests"
+        );
+        ApiError::UpstreamQuota {
+            retry_after: cooldown.as_secs(),
+        }
     }
 
     /// `{base}/api/v1/{key}/gifs/{path}`. The key is a path segment, so no
@@ -164,7 +254,19 @@ impl Gifs {
         .map_err(|_| ApiError::Internal("gif endpoint url".to_owned()))
     }
 
-    async fn get_json(&self, url: Url) -> Result<Value, ApiError> {
+    /// One Klipy API call, timed into
+    /// `gelabber_upstream_request_duration_seconds{upstream="klipy"}`.
+    async fn get_json(&self, operation: &'static str, url: Url) -> Result<Value, ApiError> {
+        self.quota_check()?;
+        let started = Instant::now();
+        let result = self.fetch_json(url).await;
+        self.inner
+            .metrics
+            .upstream(PROVIDER, operation, started.elapsed());
+        result
+    }
+
+    async fn fetch_json(&self, url: Url) -> Result<Value, ApiError> {
         let response = self
             .inner
             .http
@@ -175,13 +277,7 @@ impl Gifs {
             .map_err(|err| ApiError::Upstream(format!("klipy: {}", err.without_url())))?;
         let status = response.status();
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            // The key's quota is shared by every user of the instance, so this
-            // is not the caller's own limit: an upstream failure the operator
-            // has to see (log line and `rate_limited{bucket="klipy"}`).
-            self.inner.metrics.rate_limited("klipy");
-            return Err(ApiError::Upstream(
-                "klipy returned 429: API key quota exhausted".to_owned(),
-            ));
+            return Err(self.quota_exhausted(response.headers().get(RETRY_AFTER)));
         }
         if !status.is_success() {
             return Err(ApiError::Upstream(format!("klipy returned {status}")));
@@ -202,10 +298,11 @@ impl Gifs {
         page: u32,
         locale: Option<String>,
     ) -> Result<GifPage, ApiError> {
-        let mut url = self.endpoint(match feed {
+        let operation = match feed {
             Feed::Trending => "trending",
             Feed::Search(_) => "search",
-        })?;
+        };
+        let mut url = self.endpoint(operation)?;
         {
             let mut query = url.query_pairs_mut();
             query
@@ -221,7 +318,7 @@ impl Gifs {
                 query.append_pair("locale", &locale);
             }
         }
-        let body = self.get_json(url).await?;
+        let body = self.get_json(operation, url).await?;
         Ok(klipy::page(
             &body,
             page,
@@ -236,7 +333,7 @@ impl Gifs {
         url.query_pairs_mut()
             .append_pair("slugs", slug)
             .append_pair("format_filter", FORMATS);
-        let body = self.get_json(url).await?;
+        let body = self.get_json("items", url).await?;
         Ok(
             klipy::items(&body, Size::Message, &self.inner.config.media_origins)
                 .into_iter()
@@ -293,6 +390,92 @@ impl Gifs {
                 ApiError::Upstream("gif media: all relay streams busy".to_owned())
             })
     }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// A search or trending page from the shared cache, else from Klipy (and
+/// then cached). Redis trouble only costs the shortcut.
+async fn cached_feed(
+    state: &AppState,
+    gifs: &Gifs,
+    feed: Feed<'_>,
+    user_id: Uuid,
+    page: u32,
+    locale: Option<String>,
+) -> Result<GifPage, ApiError> {
+    let key = gifs.cache_key(&feed, page, locale.as_deref());
+    if let Some(key) = &key {
+        let hit = cache_get(state, key).await;
+        gifs.inner.metrics.cache(CACHE_METRIC, hit.is_some());
+        if let Some(hit) = hit {
+            return Ok(hit);
+        }
+    }
+    let result = gifs.feed(feed, user_id, page, locale).await?;
+    if let Some(key) = key {
+        cache_put(state, key, &result, gifs.inner.config.cache_ttl).await;
+    }
+    Ok(result)
+}
+
+async fn cache_get(state: &AppState, key: &str) -> Option<GifPage> {
+    let key = key.to_owned();
+    let lookup = state.gateway.with_redis(move |mut conn| {
+        let key = key.clone();
+        async move {
+            redis::cmd("GET")
+                .arg(key)
+                .query_async::<Option<String>>(&mut conn)
+                .await
+        }
+    });
+    match tokio::time::timeout(CACHE_TIMEOUT, lookup).await {
+        Ok(Ok(raw)) => raw.and_then(|raw| serde_json::from_str(&raw).ok()),
+        Ok(Err(err)) => {
+            debug!(error = %err, "gif cache read failed");
+            None
+        }
+        Err(_) => {
+            debug!("gif cache read timed out");
+            None
+        }
+    }
+}
+
+async fn cache_put(state: &AppState, key: String, page: &GifPage, ttl: Duration) {
+    let Ok(raw) = serde_json::to_string(page) else {
+        return;
+    };
+    let ttl_ms = u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX);
+    let store = state.gateway.with_redis(move |mut conn| {
+        let (key, raw) = (key.clone(), raw.clone());
+        async move {
+            redis::cmd("SET")
+                .arg(key)
+                .arg(raw)
+                .arg("PX")
+                .arg(ttl_ms)
+                .query_async::<()>(&mut conn)
+                .await
+        }
+    });
+    match tokio::time::timeout(CACHE_TIMEOUT, store).await {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => debug!(error = %err, "gif cache write failed"),
+        Err(_) => debug!("gif cache write timed out"),
+    }
+}
+
+/// Klipy's search ignores case and extra spaces; one spelling per search
+/// lets the cache serve "Cat " and "cat" alike.
+fn normalize_query(q: &str) -> String {
+    q.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 fn enabled(state: &AppState) -> Result<&Gifs, ApiError> {
@@ -401,8 +584,15 @@ async fn trending(
     let page = page(params.page)?;
     rate_limit(&state, user.id)?;
     Ok(Json(
-        gifs.feed(Feed::Trending, user.id, page, locale(&headers))
-            .await?,
+        cached_feed(
+            &state,
+            gifs,
+            Feed::Trending,
+            user.id,
+            page,
+            locale(&headers),
+        )
+        .await?,
     ))
 }
 
@@ -427,9 +617,17 @@ async fn search(
     }
     let page = page(params.page)?;
     rate_limit(&state, user.id)?;
+    let q = normalize_query(q);
     Ok(Json(
-        gifs.feed(Feed::Search(q), user.id, page, locale(&headers))
-            .await?,
+        cached_feed(
+            &state,
+            gifs,
+            Feed::Search(&q),
+            user.id,
+            page,
+            locale(&headers),
+        )
+        .await?,
     ))
 }
 
@@ -572,6 +770,7 @@ mod tests {
                 api_base: "https://api.klipy.com".into(),
                 media_origins: vec![],
                 content_filter: "medium".into(),
+                cache_ttl: Duration::from_secs(600),
             },
             Arc::new(HttpMetrics::new()),
         )
@@ -581,6 +780,67 @@ mod tests {
         assert_ne!(gifs.customer_id(user), gifs.customer_id(Uuid::from_u128(8)));
         assert_eq!(gifs.customer_id(user).len(), 32);
         assert!(!gifs.customer_id(user).contains(&user.simple().to_string()));
+    }
+
+    fn relay(cache_secs: u64) -> Gifs {
+        Gifs::new(
+            &GifConfig {
+                api_key: "key".into(),
+                api_base: "https://api.klipy.com".into(),
+                media_origins: vec![],
+                content_filter: "medium".into(),
+                cache_ttl: Duration::from_secs(cache_secs),
+            },
+            Arc::new(HttpMetrics::new()),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn cache_key_separates_what_klipy_answers_differently() {
+        let gifs = relay(600);
+        let key = |feed: Feed<'_>, page: u32, locale: Option<&str>| {
+            gifs.cache_key(&feed, page, locale).unwrap()
+        };
+        let base = key(Feed::Search("cat"), 1, Some("de"));
+        assert!(base.starts_with("gifs:feed:v1:"));
+        assert!(!base.contains("cat") && !base.contains("key"));
+        assert_eq!(base, key(Feed::Search("cat"), 1, Some("de")));
+        for other in [
+            key(Feed::Search("cats"), 1, Some("de")),
+            key(Feed::Search("cat"), 2, Some("de")),
+            key(Feed::Search("cat"), 1, Some("at")),
+            key(Feed::Search("cat"), 1, None),
+            key(Feed::Trending, 1, Some("de")),
+        ] {
+            assert_ne!(base, other);
+        }
+        assert_eq!(relay(0).cache_key(&Feed::Trending, 1, None), None);
+    }
+
+    #[test]
+    fn queries_are_folded_for_the_cache() {
+        assert_eq!(normalize_query("  Hallo   Welt "), "hallo welt");
+        assert_eq!(normalize_query("ÄRGER"), "ärger");
+    }
+
+    #[test]
+    fn a_429_pauses_klipy_calls_for_its_retry_after() {
+        let gifs = relay(600);
+        assert!(gifs.quota_check().is_ok());
+        let err = gifs.quota_exhausted(Some(&HeaderValue::from_static("120")));
+        assert!(matches!(err, ApiError::UpstreamQuota { retry_after: 120 }));
+        assert!(matches!(
+            gifs.quota_check(),
+            Err(ApiError::UpstreamQuota { retry_after }) if (119..=120).contains(&retry_after)
+        ));
+        let err = gifs.quota_exhausted(Some(&HeaderValue::from_static("soon")));
+        assert!(matches!(err, ApiError::UpstreamQuota { retry_after: 60 }));
+        let err = gifs.quota_exhausted(Some(&HeaderValue::from_static("999999")));
+        assert!(matches!(err, ApiError::UpstreamQuota { retry_after: 3600 }));
+        *gifs.inner.quota_until.lock().unwrap() = Some(Instant::now());
+        assert!(gifs.quota_check().is_ok(), "an expired pause lifts itself");
+        assert!(gifs.inner.quota_until.lock().unwrap().is_none());
     }
 
     #[test]

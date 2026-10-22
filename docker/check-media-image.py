@@ -112,6 +112,7 @@ def smoke(image, revision):
             "--label", f"{OWNER_LABEL}={token}", "--publish", "127.0.0.1::8081",
             "--env", "MEDIA_ADDR=0.0.0.0:8081", "--env", f"REDIS_URL=redis://{redis['name']}:6379",
             "--env", "MEDIA_ICE_BIND=0.0.0.0:10000", "--env", "MEDIA_ICE_PORT_MAX=10031",
+            "--env", "MEDIA_WORKERS=2",
             "--env", "MEDIA_ADVERTISED_IP=127.0.0.1", candidate["image"])
         record = inspect("container", candidate["name"])
         owned_container(record, name=candidate["name"], image=candidate["image"],
