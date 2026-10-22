@@ -43,6 +43,7 @@ import {
 
 import { useSession } from "../auth/session.ts";
 import { fieldMessage } from "../auth/rules.ts";
+import { useLocalDay } from "../lib/localDay.ts";
 import { arrivals, type Arrival } from "../messages/arrivals.ts";
 import {
   arrivedSince,
@@ -774,6 +775,9 @@ function MessageList({
   const lastJump = useRef(unreadJump);
   const edit = useEditMessage(channelId);
   const remove = useDeleteMessage(channelId);
+  // Day dividers and the times beside the rows read the clock as they
+  // render; this renders them again when the date changes.
+  useLocalDay();
   // Rows that just came in live fade in (arrivals.ts); each row keeps what
   // it was told when it mounted.
   const [shownItems, setShownItems] = useState(items);
