@@ -67,7 +67,6 @@ pub(super) struct VoiceSeat {
     pub(super) pubs: HashSet<TrackKind>,
     pub(super) muted: bool,
     pub(super) deafened: bool,
-    pub(super) live: Option<super::leases::LiveOwner>,
 }
 
 pub(super) struct Socket {
@@ -120,7 +119,7 @@ pub struct ConnTable {
     pub(super) inner: Arc<Inner>,
 }
 
-/// Voice occupancy, publications, and the Go Live claim. Ephemeral Redis,
+/// Voice occupancy and publications. Ephemeral Redis,
 /// separate from the chat log.
 #[derive(Clone)]
 pub struct VoiceRoster {

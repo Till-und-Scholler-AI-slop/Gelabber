@@ -346,7 +346,7 @@ impl Sfu {
         kind: WatchKind,
         on: bool,
     ) -> Result<(), SfuError> {
-        if user.is_nil() || user == peer.authority.claim.u || peer.watch_user.is_some() {
+        if user.is_nil() || user == peer.authority.claim.u {
             return Err(SfuError::Forbidden);
         }
         let stopped = {
@@ -390,23 +390,13 @@ pub(super) fn receives(
         return Err(SfuError::Forbidden);
     }
     match pubn.kind {
-        SourceKind::Mic => Ok(None),
-        SourceKind::Camera if peer.peer.watch_user.is_none() => Ok(None),
-        SourceKind::Live | SourceKind::LiveAudio if peer.peer.watch_user == Some(owner) => Ok(None),
-        SourceKind::Screen | SourceKind::ScreenAudio if peer.peer.watch_user.is_none() => peer
+        SourceKind::Mic | SourceKind::Camera => Ok(None),
+        SourceKind::Screen | SourceKind::ScreenAudio => peer
             .watches
             .get(&(owner, WatchKind::Screen))
             .filter(|g| g.valid())
             .cloned()
             .map(Some)
             .ok_or(SfuError::Forbidden),
-        SourceKind::Live | SourceKind::LiveAudio if peer.peer.watch_user.is_none() => peer
-            .watches
-            .get(&(owner, WatchKind::Live))
-            .filter(|g| g.valid())
-            .cloned()
-            .map(Some)
-            .ok_or(SfuError::Forbidden),
-        _ => Err(SfuError::Forbidden),
     }
 }

@@ -41,7 +41,7 @@ pub struct AppState {
     pub connections: ConnTable,
     /// Sequenced chat log (`publish` / `catch_up`).
     pub events: EventLog,
-    /// Voice roster: seats, publications, Go Live claim.
+    /// Voice roster: seats and publications.
     pub voice: VoiceRoster,
     pub ws_heartbeat: Duration,
     pub ws_dead: Duration,

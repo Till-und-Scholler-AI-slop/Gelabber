@@ -37,7 +37,6 @@ export type VoiceParticipant = {
 export type RemoteVideo = {
   v?: MediaStream;
   s?: MediaStream;
-  l?: MediaStream;
 };
 
 export type VoiceState = {
@@ -57,8 +56,8 @@ export type VoiceState = {
   /** The own Live's sound. */
   sourceAudio: Record<"s", SourceAudioStatus>;
   sourceAudioNote: Record<"s", SourceAudioNote | null>;
-  /** Whose Live (a screen, or an older client's Go Live) plays here. */
-  sourceSubscriptions: Record<string, Partial<Record<"s" | "l", boolean>>>;
+  /** Whose Live plays here. */
+  sourceSubscriptions: Record<string, Partial<Record<"s", boolean>>>;
   localCamera: MediaStream | null;
   localScreen: MediaStream | null;
   playbackBlocked: boolean;

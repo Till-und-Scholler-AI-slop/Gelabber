@@ -34,8 +34,8 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 mod attach;
+mod authority;
 mod codecs;
-mod live_binding;
 mod rpc;
 mod stats;
 mod stop;
@@ -47,8 +47,6 @@ use stop::{remember_retired, stop_consumer, stop_producer};
 
 const STOP_TIMEOUT: Duration = Duration::from_millis(500);
 const STOP_CONCURRENCY: usize = 64;
-// The deadline includes both an in-flight resource gate and native pause ACK.
-const LIVE_STOP_MARGIN: Duration = Duration::from_millis(1250);
 const WATCH_LIMIT: usize = 64;
 const CONSUMER_LIMIT: usize = 1024;
 /// Browser-reported failures per producer before a viewer stops re-consuming it.
@@ -84,11 +82,9 @@ impl Grant {
 struct Peer {
     id: PeerId,
     authority: AuthorizedTicketClaim,
-    watch_user: Option<Uuid>,
     grant: Arc<Grant>,
     out: mpsc::Sender<ServerFrame>,
     rpc_gate: Mutex<()>,
-    lease_gate: Mutex<()>,
     attach_scheduled: AtomicBool,
     attach_dirty: AtomicBool,
     retry_scheduled: AtomicBool,
@@ -104,14 +100,8 @@ struct PeerData {
     /// Producer ID -> `consumerFailed` reports from this viewer for that producer.
     failed_consumers: HashMap<String, u8>,
     watches: HashMap<(Uuid, WatchKind), Arc<Grant>>,
-    withdrawn_live: VecDeque<Uuid>,
     retired_producers: VecDeque<String>,
     retired_transports: VecDeque<String>,
-}
-struct LiveBinding {
-    nonce: Uuid,
-    deadline: StdMutex<Instant>,
-    changed: Notify,
 }
 struct Publication {
     producer: NativeProducer,
@@ -119,7 +109,6 @@ struct Publication {
     kind: SourceKind,
     epoch: Uuid,
     parent: Option<Arc<Publication>>,
-    live: Option<Arc<LiveBinding>>,
     grant: Arc<Grant>,
     gate: Mutex<()>,
     height: u16,
@@ -134,10 +123,6 @@ impl Publication {
         self.grant.valid()
             && self.peer.grant.valid()
             && self.parent.as_ref().is_none_or(|p| p.valid())
-            && self
-                .live
-                .as_ref()
-                .is_none_or(|l| Instant::now() + LIVE_STOP_MARGIN < *l.deadline.lock().unwrap())
     }
 }
 struct Subscription {
@@ -516,20 +501,9 @@ impl Sfu {
             c.transports
                 .fetch_sub(p.transports.len(), Ordering::Relaxed);
         }
-        // Clients reconnect on `gone`; a Live lease they reclaim before its
-        // release below is answered `live_busy` and retried.
+        // Clients reconnect on `gone`.
         for p in &peers {
             self.emit(&p.peer, ServerFrame::error("gone"));
-        }
-        for p in &peers {
-            let _lease = p.peer.lease_gate.lock().await;
-            if let Some(live) = p
-                .publications
-                .get(&SourceKind::Live)
-                .and_then(|p| p.live.as_ref())
-            {
-                crate::live::release(&self.redis, live.nonce, p.peer.id.0).await;
-            }
         }
     }
     /// Replaces a lost engine in its slot, on the same UDP port. A hung worker
@@ -612,18 +586,14 @@ impl Sfu {
             .cloned()
             .ok_or(SfuError::NotInRoom)
     }
-    pub async fn join_authorized_watch_version(
+    pub async fn join_authorized_version(
         self: &Arc<Self>,
         authority: AuthorizedTicketClaim,
-        watch_user: Option<Uuid>,
         version: u8,
         out: mpsc::Sender<ServerFrame>,
     ) -> Result<PeerId, SfuError> {
         if version != MEDIA_PROTOCOL_VERSION {
             return Err(SfuError::ProtocolVersion);
-        }
-        if watch_user.is_some_and(|u| u.is_nil()) {
-            return Err(SfuError::BadAnnounce);
         }
         if !self.ready() {
             return Err(SfuError::Unavailable);
@@ -681,11 +651,9 @@ impl Sfu {
         let peer = Arc::new(Peer {
             id,
             authority,
-            watch_user,
             grant: Grant::new(),
             out,
             rpc_gate: Mutex::new(()),
-            lease_gate: Mutex::new(()),
             attach_scheduled: AtomicBool::new(false),
             attach_dirty: AtomicBool::new(false),
             retry_scheduled: AtomicBool::new(false),
@@ -711,7 +679,6 @@ impl Sfu {
                 pending_consumers: HashSet::new(),
                 failed_consumers: HashMap::new(),
                 watches: HashMap::new(),
-                withdrawn_live: VecDeque::new(),
                 retired_producers: VecDeque::new(),
                 retired_transports: VecDeque::new(),
             },
@@ -743,7 +710,7 @@ impl Sfu {
         let Ok(room) = self.room(channel).await else {
             return;
         };
-        let (peer, pubs, subs) = {
+        let (pubs, subs) = {
             let data = room.data.lock().await;
             let Some(p) = data.peers.get(&id) else { return };
             p.peer.grant.stop();
@@ -754,7 +721,6 @@ impl Sfu {
                 s.grant.stop()
             }
             (
-                p.peer.clone(),
                 p.publications.values().cloned().collect::<Vec<_>>(),
                 p.consumers.values().cloned().collect::<Vec<_>>(),
             )
@@ -766,14 +732,6 @@ impl Sfu {
         for sub in subs {
             self.forget_consumer(&room, &sub).await;
         }
-        let _lease = peer.lease_gate.lock().await;
-        for p in &pubs {
-            if p.kind == SourceKind::Live
-                && let Some(live) = &p.live
-            {
-                crate::live::release(&self.redis, live.nonce, id.0).await;
-            }
-        }
         let transports: Vec<_> = room
             .data
             .lock()
@@ -782,8 +740,8 @@ impl Sfu {
             .get(&id)
             .map(|p| p.transports.values().cloned().collect())
             .unwrap_or_default();
-        // Sources are stopped and Live leases released above. Final transport
-        // samples are optional and concurrent, bounded to 500ms total.
+        // Sources are stopped above. Final transport samples are optional
+        // and concurrent, bounded to 500ms total.
         join_all(transports.iter().map(|t| self.sample_transport(t))).await;
         let changed = {
             let mut data = room.data.lock().await;

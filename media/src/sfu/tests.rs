@@ -210,11 +210,9 @@ async fn stopping_fixture() -> (
                 channel: Uuid::new_v4(),
             },
         },
-        watch_user: None,
         grant: Grant::new(),
         out,
         rpc_gate: Mutex::new(()),
-        lease_gate: Mutex::new(()),
         attach_scheduled: AtomicBool::new(false),
         attach_dirty: AtomicBool::new(false),
         retry_scheduled: AtomicBool::new(false),
@@ -226,7 +224,6 @@ async fn stopping_fixture() -> (
         kind: SourceKind::Mic,
         epoch: Uuid::new_v4(),
         parent: None,
-        live: None,
         grant: Grant::new(),
         gate: Mutex::new(()),
         height: 0,
@@ -245,7 +242,6 @@ async fn stopping_fixture() -> (
                 pending_consumers: HashSet::new(),
                 failed_consumers: HashMap::new(),
                 watches: HashMap::new(),
-                withdrawn_live: VecDeque::new(),
                 retired_producers: VecDeque::new(),
                 retired_transports: VecDeque::new(),
             },
@@ -312,7 +308,7 @@ impl Viewer {
         }
         let (out, events) = mpsc::channel(capacity);
         let id = sfu
-            .join_authorized_watch_version(authority, None, MEDIA_PROTOCOL_VERSION, out)
+            .join_authorized_version(authority, MEDIA_PROTOCOL_VERSION, out)
             .await
             .unwrap();
         let router = room.router.get().unwrap();
@@ -383,7 +379,6 @@ async fn publish_many(owner: &Arc<Peer>, room: &Room, count: u32) -> Vec<Arc<Pub
             kind: SourceKind::Mic,
             epoch: Uuid::new_v4(),
             parent: None,
-            live: None,
             grant: Grant::new(),
             gate: Mutex::new(()),
             height: 0,
@@ -761,11 +756,9 @@ async fn seat(
                 channel: Uuid::new_v4(),
             },
         },
-        watch_user: None,
         grant: Grant::new(),
         out,
         rpc_gate: Mutex::new(()),
-        lease_gate: Mutex::new(()),
         attach_scheduled: AtomicBool::new(false),
         attach_dirty: AtomicBool::new(false),
         retry_scheduled: AtomicBool::new(false),
@@ -783,7 +776,6 @@ async fn seat(
             pending_consumers: HashSet::new(),
             failed_consumers: HashMap::new(),
             watches: HashMap::new(),
-            withdrawn_live: VecDeque::new(),
             retired_producers: VecDeque::new(),
             retired_transports: VecDeque::new(),
         },

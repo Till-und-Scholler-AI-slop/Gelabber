@@ -141,7 +141,7 @@ export type VoiceSession = {
   receivedIdentity: WeakMap<MediaStreamTrack, ReceivedSource>;
   receivedAudio: ReceivedAudio;
   /** Video still arriving on the open media peer, keyed by publisher. */
-  receivedVideo: Map<string, Partial<Record<"v" | "s" | "l", MediaStream>>>;
+  receivedVideo: Map<string, Partial<Record<"v" | "s", MediaStream>>>;
 };
 
 /** The epochs an answer is held to. They only ever move on, also across a
@@ -382,10 +382,7 @@ export async function applySendBitrate(): Promise<void> {
     const params = sender.getParameters?.();
     if (!params?.encodings.length) continue;
     for (const encoding of params.encodings) {
-      const cap =
-        sender.sourceKind === "sa" || sender.sourceKind === "la"
-          ? sourceAudioBitrate()
-          : bitrate;
+      const cap = sender.sourceKind === "sa" ? sourceAudioBitrate() : bitrate;
       if (cap === null) delete encoding.maxBitrate;
       else encoding.maxBitrate = cap;
     }

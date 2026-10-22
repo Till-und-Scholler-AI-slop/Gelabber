@@ -26,8 +26,8 @@ export const DIAGNOSTIC_LIMITS = {
 } as const;
 
 export type ConnectionRole = "voice" | "watch";
-export type VideoSource = "camera" | "screen" | "live";
-export type AudioSource = "voice" | "screen-audio" | "live-audio";
+export type VideoSource = "camera" | "screen";
+export type AudioSource = "voice" | "screen-audio";
 export type FlowSource =
   "voice" | VideoSource | AudioSource | "video" | "watch";
 export type Phase = "voice-only" | "stream-on" | "stream-off" | "watch";
@@ -625,7 +625,7 @@ export function reduceConnection(input: {
     const sourceLimit =
       kind === "video" &&
       direction === "send" &&
-      (source === "camera" || source === "screen" || source === "live")
+      (source === "camera" || source === "screen")
         ? input.caps.videoLimits?.[source]
         : undefined;
     const fpsGauge = gauge(entry.framesPerSecond);
@@ -653,7 +653,7 @@ export function reduceConnection(input: {
             ? input.caps.audioLimits &&
               Object.hasOwn(input.caps.audioLimits, source)
               ? (input.caps.audioLimits[source as AudioSource] ?? null)
-              : source === "screen-audio" || source === "live-audio"
+              : source === "screen-audio"
                 ? (input.caps.sourceAudioMaxBitrate ?? null)
                 : input.caps.audioMaxBitrate
             : input.caps.videoLimits
@@ -740,7 +740,6 @@ function sourceOf(
   if (kind === "audio" && track) {
     if (audioSources?.[track]) return audioSources[track];
     if (/:(?:sa)(?:[-:]|$)/.test(track)) return "screen-audio";
-    if (/:(?:la)(?:[-:]|$)/.test(track)) return "live-audio";
   }
   if (role === "watch") return "watch";
   if (kind === "video" && direction === "send") {
@@ -1187,8 +1186,6 @@ export const SOURCE_LABEL: Record<FlowSource, string> = {
   camera: "Kamera",
   screen: "Live",
   "screen-audio": "Live-Ton",
-  "live-audio": "Live-Ton (ältere App)",
-  live: "Live (ältere App)",
   video: "Video",
   watch: "Watch",
 };

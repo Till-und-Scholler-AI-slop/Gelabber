@@ -211,7 +211,7 @@ describe("owned correlated media RPC", () => {
     const f = socketFixture();
     await accept(f);
     const one = f.peer.request("w", { u: OWNER, k: "s", on: true });
-    const two = f.peer.request("w", { u: OWNER, k: "l", on: true });
+    const two = f.peer.request("w", { u: OWNER, k: "s", on: false });
     f.emit({ op: "result", id: 3, data: { second: true } });
     f.emit({ op: "result", id: 90, data: {} });
     f.emit({ op: "result", id: 2, data: { first: true } });
@@ -219,17 +219,16 @@ describe("owned correlated media RPC", () => {
     await expect(two).resolves.toEqual({ second: true });
     f.peer.close();
   });
-  it("keeps the Live claim on a correlated denial", async () => {
+  it("rejects a correlated denial with its code", async () => {
     const f = socketFixture();
     await accept(f);
     const request = f.peer.request("produce", {
-      k: "l",
+      k: "s",
       epoch: EPOCH,
-      lc: EPOCH,
       rtp: { codecs: [] },
     });
-    f.emit({ op: "err", id: 2, e: "forbidden", lc: EPOCH });
-    await expect(request).rejects.toEqual(new MediaError("forbidden", EPOCH));
+    f.emit({ op: "err", id: 2, e: "forbidden" });
+    await expect(request).rejects.toEqual(new MediaError("forbidden"));
     f.peer.close();
   });
   it("bounds outstanding requests and cancels every promise on socket close", async () => {
@@ -273,7 +272,7 @@ describe("owned correlated media RPC", () => {
     const localDeadline = Date.now() + 75;
     const timed = f.peer.request(
       "produce",
-      { k: "l", epoch: EPOCH, lc: EPOCH, rtp: { codecs: [] } },
+      { k: "s", epoch: EPOCH, rtp: { codecs: [] } },
       localDeadline,
     );
     const rejected = expect(timed).rejects.toMatchObject({
@@ -303,12 +302,12 @@ describe("owned correlated media RPC", () => {
     await accept(f);
     const before = f.sent.length;
     await expect(
-      f.peer.request("w", { u: OWNER, k: "l", on: true }, Date.now()),
+      f.peer.request("w", { u: OWNER, k: "s", on: true }, Date.now()),
     ).rejects.toMatchObject({ code: "request_timeout" });
     expect(f.sent).toHaveLength(before);
     const next = f.peer.request(
       "w",
-      { u: OWNER, k: "l", on: true },
+      { u: OWNER, k: "s", on: true },
       Date.now() + 50,
     );
     expect(f.sent.at(-1)?.id).toBe(2);
@@ -322,7 +321,7 @@ describe("owned correlated media RPC", () => {
     await accept(f);
     const request = f.peer.request(
       "w",
-      { u: OWNER, k: "l", on: true },
+      { u: OWNER, k: "s", on: true },
       Date.now() + 50,
     );
     f.emit({ op: "result", id: 2, data: {} });
@@ -351,7 +350,7 @@ describe("owned correlated media RPC", () => {
       .catch((e: unknown) => e);
     expect(f.sent.at(-1)?.id).toBe(0xffffffff);
     await expect(
-      f.peer.request("w", { u: OWNER, k: "l", on: true }),
+      f.peer.request("w", { u: OWNER, k: "s", on: true }),
     ).rejects.toMatchObject({ code: "request_id_exhausted" });
     expect(await last).toMatchObject({ code: "connection_closed" });
     expect(f.peer.isOpen()).toBe(false);

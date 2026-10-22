@@ -26,7 +26,7 @@ import {
 import { useVoice } from "./voiceStore.ts";
 
 type VoiceAudio = { el: HTMLAudioElement; userId: string | null };
-type SourceKind = "s" | "l";
+type SourceKind = "s";
 
 export class ReceivedAudio {
   private readonly voiceAudio = new Map<MediaStreamTrack, VoiceAudio>();
@@ -128,8 +128,8 @@ export class ReceivedAudio {
   diagnosticSources(sources: Record<string, AudioSource>): void {
     for (const [track, source] of this.receivedAudioSources)
       sources[track.id] = source;
-    for (const [track, source] of this.sourceAudio)
-      sources[track.id] = source.kind === "s" ? "screen-audio" : "live-audio";
+    for (const track of this.sourceAudio.keys())
+      sources[track.id] = "screen-audio";
   }
 
   /** Call synchronously from a click so the browser grants playback activation. */
@@ -218,15 +218,11 @@ export class ReceivedAudio {
   ): boolean {
     const identity = this.hooks.identity(track);
     const parsed = identity ? { userId: identity.owner, k: identity.k } : null;
-    if (!parsed || (parsed.k !== "sa" && parsed.k !== "la")) return false;
+    if (!parsed || parsed.k !== "sa") return false;
     this.dropVoiceAudio(track);
     const state = useVoice.getState();
-    // An older client's Go Live sound (`la`) plays like a Live's.
-    const kind = parsed.k === "sa" ? "s" : "l";
-    this.receivedAudioSources.set(
-      track,
-      kind === "s" ? "screen-audio" : "live-audio",
-    );
+    const kind = "s";
+    this.receivedAudioSources.set(track, "screen-audio");
     this.receivedSourceAudio.set(track, {
       stream,
       userId: parsed.userId,
