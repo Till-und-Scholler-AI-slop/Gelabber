@@ -19,6 +19,7 @@ pub enum Locale {
 impl Locale {
     /// Every account reads German until a second language ships.
     pub fn of_recipient(_user: uuid::Uuid) -> Self {
+        // TODO(#356): read the account's locale once there is a second one.
         Self::De
     }
 }
