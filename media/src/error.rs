@@ -7,7 +7,7 @@ use std::fmt;
 pub enum SfuError {
     NotInRoom,
     BadAnnounce,
-    /// Go Live announced without the ticket bit.
+    /// Screen source announced without the ticket's go_live bit.
     Forbidden,
     ProtocolVersion,
     UnsupportedCodec,

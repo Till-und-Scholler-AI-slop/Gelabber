@@ -5,6 +5,7 @@ import type { TrackKind } from "../ws/protocol.ts";
 import { isDesktopApp } from "./native/bridge.ts";
 import { loadNativeFeatures } from "./native/features.ts";
 import type { MediaConnection } from "./mediasoupConnection.ts";
+import { MediaError } from "./media.ts";
 import { noteDiagnosticEvent } from "./diagnostics.ts";
 import {
   type StreamKind,
@@ -593,7 +594,12 @@ export async function publishLocal(
     }
   } catch (error) {
     if (current()) {
-      reportStreamOnce(error instanceof Error ? error.message : "produce");
+      if (error instanceof MediaError && error.code === "forbidden")
+        // The seat's ticket predates a go_live grant: only a new one has it.
+        voice.deps?.onError?.(
+          new Error("Betritt den Sprachkanal neu, um live zu gehen."),
+        );
+      else reportStreamOnce(error instanceof Error ? error.message : "produce");
       stopLocalVideo(kind);
     }
   }

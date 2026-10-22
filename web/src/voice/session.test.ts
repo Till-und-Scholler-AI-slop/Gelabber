@@ -4223,6 +4223,28 @@ describe("display-source audio", () => {
     expect(useVoice.getState().sourceAudio.s).toBe("off");
   });
 
+  it("asks to rejoin when the media server refuses a screen for a ticket without go_live", async () => {
+    const capture = fakeVideoStream("stale-ticket", false);
+    const env = await joined({
+      displayStreamFor: () => capture,
+      produceError: (kind) =>
+        kind === "s" ? new Error("forbidden") : undefined,
+    });
+    toggleShare();
+    await vi.waitFor(() => expect(env.errors).toHaveLength(1));
+    expect(useVoice.getState().localScreen).toBeNull();
+    expect(streamStopped(capture)).toBe(true);
+    expect(useVoice.getState().status).toBe("joined");
+    expect(env.errors.map((error) => (error as Error).message)).toEqual([
+      "Betritt den Sprachkanal neu, um live zu gehen.",
+    ]);
+    expect(
+      env.sent.some(
+        (frame) => frame.op === "sig" && frame.t === "p" && frame.k === "s",
+      ),
+    ).toBe(false);
+  });
+
   it("falls back on the granted display track without reopening capture", async () => {
     useMediaSettings
       .getState()
