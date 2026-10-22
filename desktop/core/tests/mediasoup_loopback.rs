@@ -122,7 +122,8 @@ async fn round_trip(server: &Server) {
     let layers = json!([{ "scaleResolutionDownBy": 4 }, { "scaleResolutionDownBy": 1 }]);
     // Per codec: its name, the producer's options and the test pattern's
     // size. AV1 like the web client sends it: one stream, at a size libaom
-    // keeps up with on a runner.
+    // keeps up with on a runner, and capped so that it leaves the bandwidth
+    // estimate room for the 720p layers of the others.
     let mut codecs = Vec::new();
     if with_h264 {
         codecs.push((
@@ -138,7 +139,7 @@ async fn round_trip(server: &Server) {
     ));
     codecs.push((
         "AV1",
-        json!({"codec": "video/AV1", "codecOptions": {"videoGoogleStartBitrate": 1000}}),
+        json!({"codec": "video/AV1", "encodings": [{ "maxBitrate": 300_000 }]}),
         (640, 360),
     ));
     // Per codec: its name and the native producer of its own test pattern.
