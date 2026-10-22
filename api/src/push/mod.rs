@@ -63,6 +63,9 @@ const MAX_DELIVERIES: usize = 16;
 
 const PREVIEW_CHARS: usize = 180;
 
+/// How often expired `push_receipts` are dropped.
+const PRUNE_EVERY: Duration = Duration::from_secs(10 * 60);
+
 /// What a recalled message's notification says instead.
 pub const RECALLED: &str = "Nachricht gelöscht";
 
@@ -73,6 +76,8 @@ pub struct Push {
     http: reqwest::Client,
     dm_deliveries: std::sync::Arc<tokio::sync::Semaphore>,
     server_deliveries: std::sync::Arc<tokio::sync::Semaphore>,
+    /// When this process last dropped expired receipts (Unix seconds).
+    pruned_at: std::sync::Arc<std::sync::atomic::AtomicI64>,
 }
 
 impl Push {
@@ -89,7 +94,30 @@ impl Push {
             http,
             dm_deliveries: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_DELIVERIES)),
             server_deliveries: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_DELIVERIES)),
+            pruned_at: Default::default(),
         })
+    }
+
+    /// Drops receipts past the TTL, at most once per [`PRUNE_EVERY`] and
+    /// process: a recall ignores them anyway, so they only take room.
+    async fn prune_receipts(&self, state: &AppState) {
+        use std::sync::atomic::Ordering;
+        let now = chrono::Utc::now().timestamp();
+        let last = self.pruned_at.load(Ordering::Relaxed);
+        if now - last < PRUNE_EVERY.as_secs() as i64
+            || self
+                .pruned_at
+                .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_err()
+        {
+            return;
+        }
+        let _ = sqlx::query(
+            "DELETE FROM push_receipts WHERE sent_at < now() - make_interval(secs => $1)",
+        )
+        .bind(TTL_SECS as f64)
+        .execute(&state.db)
+        .await;
     }
 
     /// The push service's origin for an endpoint this server may post to.
@@ -397,21 +425,28 @@ async fn deliver(
         .bind(&sent)
         .execute(&state.db)
         .await;
-        let _ = sqlx::query(
-            "DELETE FROM push_receipts WHERE sent_at < now() - make_interval(secs => $1)",
-        )
-        .bind(TTL_SECS as f64)
-        .execute(&state.db)
-        .await;
+        push.prune_receipts(state).await;
         // Deleted while its pushes were on their way: the delete found no
-        // receipts to recall, so recall here.
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM messages WHERE id=$1)")
-            .bind(message.id)
-            .fetch_one(&state.db)
-            .await?;
-        if !exists {
-            let targets = take_receipts(state, message.id).await?;
-            send_recall(state, push, message, server, targets).await?;
+        // receipts to recall, so recall here. The pushes are out either way,
+        // so a failure here is only logged.
+        let exists: Result<bool, sqlx::Error> =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM messages WHERE id=$1)")
+                .bind(message.id)
+                .fetch_one(&state.db)
+                .await;
+        let recalled = match exists {
+            Ok(true) => Ok(()),
+            Ok(false) => match take_receipts(state, message.id).await {
+                Ok(targets) => send_recall(state, push, message, server, targets).await,
+                Err(err) => Err(err),
+            },
+            Err(err) => Err(err.into()),
+        };
+        if let Err(err) = recalled {
+            debug!(
+                error = err.code(),
+                "push not recalled after a racing delete"
+            );
         }
     }
     let sent = sent.len();

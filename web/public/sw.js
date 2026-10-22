@@ -129,8 +129,8 @@ function alone(user, change) {
     .catch(() => change());
 }
 
-// Every push shows a notification: a browser takes one that shows nothing as
-// a silent push and may end the subscription (`userVisibleOnly`). That holds
+// Every message push shows a notification: a browser takes one that shows
+// nothing as a silent push and may end the subscription (`userVisibleOnly`). That holds
 // with a window open too, since the server pushes only when no window is in
 // use. A window may announce the same message; the tag and the lock keep it
 // to one.
@@ -168,16 +168,35 @@ async function showPushed(data) {
   });
 }
 
+// Safari ends a subscription after a few pushes that showed nothing.
+// Chromium and Firefox allow an occasional one: Chromium from a budget the
+// use of the app earns, Firefox from a quota that visits refill.
+async function strictAboutSilentPushes() {
+  try {
+    const subscription = await self.registration.pushManager?.getSubscription();
+    const host = new URL(subscription.endpoint).hostname;
+    return host === "push.apple.com" || host.endsWith(".push.apple.com");
+  } catch {
+    return true;
+  }
+}
+
 // A deleted message (`recall` from api/src/push): what is on screen for it
 // becomes "Nachricht gelöscht", quietly. A newer message shown in its place
 // stays. With nothing shown (the push service replaced the queued message
-// by this one, or it was swiped away) the quiet replacement shows anyway:
-// a push must show something, see above.
+// by this one, or it was swiped away) nothing comes back, except where a
+// push that shows nothing costs the subscription (Safari).
 async function showRecalled(data) {
   const tag = `gelabber:${data.user}:${data.channel}`;
   await alone(data.user, async () => {
     const shown = await self.registration.getNotifications({ tag });
     const other = shown.find((n) => n.data && n.data.message !== data.message);
+    if (
+      !other &&
+      !shown.some((n) => n.data && n.data.message === data.message) &&
+      !(await strictAboutSilentPushes())
+    )
+      return;
     const current = other ?? { title: data.title, body: data.body, data: null };
     await self.registration.showNotification(current.title, {
       body: current.body,

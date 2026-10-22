@@ -38,7 +38,7 @@ function appWindow(path, state = {}) {
   return client;
 }
 
-function worker({ windows = [], notifications = [] } = {}) {
+function worker({ windows = [], notifications = [], endpoint } = {}) {
   const handlers = new Map();
   const shown = [...notifications];
   const showNotification = vi.fn(async (title, options) => {
@@ -66,7 +66,13 @@ function worker({ windows = [], notifications = [] } = {}) {
     self: {
       location: { origin },
       clients: { claim, matchAll, openWindow },
-      registration: { showNotification, getNotifications },
+      registration: {
+        showNotification,
+        getNotifications,
+        pushManager: {
+          getSubscription: async () => (endpoint ? { endpoint } : null),
+        },
+      },
       addEventListener: (name, handler) => handlers.set(name, handler),
     },
     caches: {
@@ -441,16 +447,31 @@ describe("PWA push", () => {
         },
       },
     );
-    // Nothing on screen (the push service dropped the queued message for
-    // this one): still a quiet notification, never a silent push.
-    const empty = worker();
-    await empty.push(recall);
-    expect(empty.showNotification).toHaveBeenCalledOnce();
-    expect(empty.showNotification.mock.calls[0][1]).toMatchObject({
-      body: "Nachricht gelöscht",
-      silent: true,
-    });
-    expect(empty.showNotification.mock.calls[0][1].renotify).toBeUndefined();
+  });
+
+  it("brings nothing back that was swiped away, except where Safari needs it", async () => {
+    const recall = { ...message, body: "Nachricht gelöscht", recall: true };
+    // Chromium and Firefox put up with an occasional push that shows nothing.
+    for (const endpoint of [
+      "https://fcm.googleapis.com/fcm/send/x",
+      "https://updates.push.services.mozilla.com/wpush/v2/x",
+    ]) {
+      const w = worker({ endpoint });
+      await w.push(recall);
+      expect(w.showNotification).not.toHaveBeenCalled();
+    }
+    // Safari ends the subscription after a few: a quiet notification, and
+    // the same where the endpoint cannot be read.
+    for (const endpoint of ["https://web.push.apple.com/x", undefined]) {
+      const w = worker({ endpoint });
+      await w.push(recall);
+      expect(w.showNotification).toHaveBeenCalledOnce();
+      expect(w.showNotification.mock.calls[0][1]).toMatchObject({
+        body: "Nachricht gelöscht",
+        silent: true,
+      });
+      expect(w.showNotification.mock.calls[0][1].renotify).toBeUndefined();
+    }
   });
 
   it("leaves another message shown in the conversation as it is", async () => {
