@@ -2261,7 +2261,7 @@ mod tests {
                 "codecs": [{"mimeType": mime, "payloadType": 45, "clockRate": 90000}],
                 "encodings": encodings,
                 "headerExtensions": [],
-                "rtcp": {},
+                "rtcp": { "reducedSize": true },
             }))
             .unwrap()
         };
