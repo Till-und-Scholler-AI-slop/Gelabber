@@ -1,5 +1,7 @@
 //! `GET /health` (process is up) and `/ready` (Redis plus native media engine).
 //! Caddy proxies `/media` and `/media/*`, so both prefixes are registered.
+//! `/ready` stays 200 while at least one worker is live; `workers` shows a
+//! degraded pool (a lost worker that is being replaced).
 
 use std::time::Instant;
 
@@ -32,6 +34,13 @@ pub struct HealthResponse {
 pub struct ReadyResponse {
     pub status: &'static str,
     pub checks: Checks,
+    pub workers: Workers,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Workers {
+    pub live: usize,
+    pub total: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -85,6 +94,14 @@ async fn ready(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse
         }
     };
 
+    let workers = state.sfu.workers();
+    if workers.live < workers.total {
+        warn!(
+            live = workers.live,
+            total = workers.total,
+            "media worker pool degraded"
+        );
+    }
     let media = if state.sfu.ready() {
         CheckResult::Ok { latency_ms: 0 }
     } else {
@@ -104,6 +121,10 @@ async fn ready(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse
         Json(ReadyResponse {
             status: if ok { "ready" } else { "not_ready" },
             checks: Checks { redis, media },
+            workers: Workers {
+                live: workers.live,
+                total: workers.total,
+            },
         }),
     )
 }
