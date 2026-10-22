@@ -263,3 +263,110 @@ async fn avatar_and_banner_bytes_count_against_the_daily_quota(pool: PgPool) {
             .unwrap();
     assert_eq!((reserved, consumed), (0, 2 * size));
 }
+
+/// A cookie shaped like a session token that no session has.
+fn made_up_session() -> String {
+    gelabber_api::token::generate()
+}
+
+#[sqlx::test]
+async fn an_account_shares_its_windows_across_sessions(pool: PgPool) {
+    let state = state_with(pool, &[("API_RATE_MSG_PER_MIN", "1")]);
+    let mut first = Client::from_state(state.clone());
+    first.bootstrap().await;
+    let res = first
+        .register("ada@example.com", "password123", "Ada")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let mut second = Client::from_state(state);
+    second.bootstrap().await;
+    let res = second.login("ada@example.com", "password123").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_ne!(
+        first.jar.get(common::SESSION),
+        second.jar.get(common::SESSION)
+    );
+
+    let server = create_server(&mut first).await;
+    let channel = text_channel_id(&server);
+    let path = format!("/api/channels/{channel}/messages");
+    let ok = first
+        .send(Method::POST, &path, Some(json!({ "content": "one" })))
+        .await;
+    assert_eq!(ok.status, StatusCode::CREATED, "{}", ok.body);
+
+    // Another session of the same account is no fresh allowance.
+    let denied = second
+        .send(Method::POST, &path, Some(json!({ "content": "two" })))
+        .await;
+    assert_eq!(
+        denied.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        denied.body
+    );
+    assert_eq!(denied.body["error"], "rate_limited");
+}
+
+#[sqlx::test]
+async fn made_up_session_cookies_share_the_address_window(pool: PgPool) {
+    let state = state_with(pool, &[("API_RATE_API_PER_MIN", "2")]);
+    let mut anon = Client::from_state(state.clone());
+    anon.bootstrap().await;
+    for _ in 0..2 {
+        anon.jar
+            .insert(common::SESSION.to_owned(), made_up_session());
+        let res = anon
+            .send(Method::POST, "/api/servers", Some(json!({ "name": "X" })))
+            .await;
+        assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.body);
+    }
+    // A new cookie per request no longer opens a new window.
+    anon.jar
+        .insert(common::SESSION.to_owned(), made_up_session());
+    let denied = anon
+        .send(Method::POST, "/api/servers", Some(json!({ "name": "X" })))
+        .await;
+    assert_eq!(
+        denied.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        denied.body
+    );
+
+    // A signed-in user behind the same address keeps their own window.
+    let mut ada = Client::from_state(state);
+    ada.bootstrap().await;
+    let res = ada.register("ada@example.com", "password123", "Ada").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    create_server(&mut ada).await;
+}
+
+#[sqlx::test]
+async fn a_revoked_session_counts_against_the_address(pool: PgPool) {
+    let state = state_with(pool, &[("API_RATE_API_PER_MIN", "1")]);
+    let mut ada = Client::from_state(state.clone());
+    ada.bootstrap().await;
+    let res = ada.register("ada@example.com", "password123", "Ada").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let stale = ada.jar.get(common::SESSION).cloned().unwrap();
+    let out = ada.send(Method::POST, "/api/auth/logout", None).await;
+    assert!(out.status.is_success(), "{}", out.body);
+
+    // Logout used the account's window; the dead cookie now uses the
+    // address's, which is still open, and then is refused like any other.
+    ada.jar.insert(common::SESSION.to_owned(), stale);
+    let res = ada
+        .send(Method::POST, "/api/servers", Some(json!({ "name": "X" })))
+        .await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.body);
+    let denied = ada
+        .send(Method::POST, "/api/servers", Some(json!({ "name": "X" })))
+        .await;
+    assert_eq!(
+        denied.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        denied.body
+    );
+}
