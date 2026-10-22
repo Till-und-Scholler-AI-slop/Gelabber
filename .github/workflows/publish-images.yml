@@ -38,6 +38,7 @@ jobs:
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -98,8 +99,7 @@ jobs:
             OCI_CREATED=${{ env.OCI_CREATED }}
             OCI_SOURCE=https://github.com/${{ github.repository }}
           cache-from: type=gha,scope=${{ matrix.name }}
-          # Only main writes the layer cache; pull requests read it. Their
-          # copies of the Rust dependency layers evicted main's.
+          # Only main writes the layer cache (quota); pull requests read it.
           cache-to: ${{ github.event_name == 'workflow_run' && format('type=gha,mode=max,scope={0}', matrix.name) || '' }}
       - name: Verify actual media image readiness and normal shutdown
         if: github.event_name == 'pull_request' && matrix.name == 'media'
@@ -122,6 +122,7 @@ jobs:
     needs: publish
     if: github.event_name == 'workflow_run'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       actions: read
       contents: read

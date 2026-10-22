@@ -153,7 +153,6 @@ function peerSnapshotFixture(peers) {
         voiceRoster: [],
         incomingTracks: [],
         heldTracks: [],
-        heldLiveClaims: [],
         mediaElements: new Set(),
         captures: [],
         sockets: [],

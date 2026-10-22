@@ -1,6 +1,6 @@
 // One switch for the whole account (issue #268): notifications say only who
 // wrote, not what or where, so a locked screen shows nothing more. The server
-// sends Web Push that way (`hidden_title` in api/src/push/mod.rs); this
+// sends Web Push that way (`new_message_from` in api/src/i18n.rs); this
 // module gives the page's own notifications the same text.
 import {
   useQuery,

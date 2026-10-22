@@ -21,6 +21,15 @@ use crate::state::AppState;
 
 const MAX_CLIENT_BYTES: usize = 16 * 1024;
 
+/// How long a socket without a voice seat goes without a session and access
+/// check while it sends and receives nothing. Revocations reach it at once
+/// through [`super::hub::Recheck`]; this bounds a lost notice (Redis down
+/// included). A socket with a seat still checks every second: each check
+/// gates a 5 s lease renewal, and renewing on a lost notice would keep a
+/// revoked user in the roster for up to this backstop instead of one tick.
+/// Seat holders are the few sockets in a call, so that poll stays cheap.
+const SECURITY_BACKSTOP: std::time::Duration = std::time::Duration::from_secs(10);
+
 enum FrameEffect {
     /// Heartbeat: keep the socket and Redis TTL, do not reset idle.
     Liveness,
@@ -41,10 +50,16 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
         .gateway
         .attach_session(user.id, session.key(), tx)
         .await;
-    let expiry = (session.expires_at - chrono::Utc::now())
-        .to_std()
-        .unwrap_or_default();
-    let expired = tokio::time::sleep(expiry);
+    let Some(recheck) = state.gateway.recheck_signal(conn).await else {
+        return;
+    };
+    // The upgrade itself just checked the session.
+    let mut checked = Instant::now();
+    // Fast path for the session's end; `lock_live` enforces it as well. The
+    // expiry slides (#195): activity on this socket renews it below, and
+    // requests or other sockets may have renewed it when the timer fires.
+    let mut expires_at = session.expires_at;
+    let expired = tokio::time::sleep_until(until(expires_at));
     tokio::pin!(expired);
     debug!(user_id = %user.id, "ws connected");
 
@@ -60,8 +75,8 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
     // before the client has had a chance to subscribe.
     beat.tick().await;
     // A per-socket phase spreads the checks over the second, so sockets that
-    // reconnect together do not ask the pool on the same millisecond. The
-    // first check still lands within 1 s of connect.
+    // reconnect together do not ask the pool on the same millisecond. Ticks
+    // without a seat only check once `SECURITY_BACKSTOP` has passed.
     let phase = std::time::Duration::from_millis((conn.redis_id().as_u128() % 1000) as u64);
     let mut security = tokio::time::interval_at(
         tokio::time::Instant::now() + phase,
@@ -75,14 +90,27 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
         tokio::select! {
             biased;
             _ = revoked.changed() => break,
-            _ = &mut expired => break,
+            _ = &mut expired => {
+                match current_expiry(&state, &session).await {
+                    Some(at) if at > chrono::Utc::now() => {
+                        expires_at = at;
+                        expired.as_mut().reset(until(at));
+                    }
+                    _ => break,
+                }
+            }
+            _ = recheck.notified() => {
+                if !security_tick(&state, &session, conn, &mut checked, true).await { break; }
+            }
             _ = security.tick() => {
-                if !security_tick(&state, &session, conn).await { break; }
+                if !security_tick(&state, &session, conn, &mut checked, false).await { break; }
             }
             incoming = stream.next() => {
                 let mut live_hint = None;
+                let mut active = false;
                 let Ok(Ok(Some(mut session_guard))) = tokio::time::timeout(std::time::Duration::from_secs(1), session.lock_live(&state.db)).await else { break; };
                 if state.gateway.reconcile_access(conn, &mut session_guard).await.is_err() { break; }
+                checked = Instant::now();
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
                         last_client = Instant::now();
@@ -95,6 +123,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                                 let _ = state.gateway.touch_presence(conn).await;
                             }
                             Ok(FrameEffect::Activity) => {
+                                active = true;
                                 last_activity = Instant::now();
                                 if idle {
                                     idle = false;
@@ -103,6 +132,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                             }
                             Ok(FrameEffect::LiveStarted { server_id, channel_id }) => {
                                 live_hint = Some((server_id, channel_id));
+                                active = true;
                                 last_activity = Instant::now();
                                 if idle {
                                     idle = false;
@@ -116,6 +146,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                             Ok(FrameEffect::Focus(on)) => {
                                 focused = on;
                                 if on {
+                                    active = true;
                                     last_activity = Instant::now();
                                 }
                                 if let Err(err) = state.gateway.set_focus(user.id, conn, on, focus_ttl).await {
@@ -143,6 +174,10 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                 // Return the only pool connection before the hint helper acquires
                 // one. The signaling action itself already passed authorization.
                 if session_guard.commit().await.is_err() { break; }
+                if active && let Some(at) = renew(&state, &session, expires_at).await {
+                    expires_at = at;
+                    expired.as_mut().reset(until(at));
+                }
                 if let Some((server_id, channel_id)) = live_hint {
                     crate::messages::post_live_hint(&state, user, server_id, channel_id).await;
                 }
@@ -150,6 +185,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
             _ = beat.tick() => {
                 let Ok(Ok(Some(mut session_guard))) = tokio::time::timeout(std::time::Duration::from_secs(1), session.lock_live(&state.db)).await else { break; };
                 if state.gateway.reconcile_access(conn, &mut session_guard).await.is_err() { break; }
+                checked = Instant::now();
                 // Nothing below needs the transaction: return the connection
                 // before the Redis writes and the socket write.
                 if session_guard.rollback().await.is_err() { break; }
@@ -171,8 +207,10 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
             frame = rx.recv() => {
                 let Some(frame) = frame else { break };
                 let Ok(batch) = take_batch(frame, &mut rx) else { break };
-                if deliver(&state, &session, user.id, conn, &mut sink, batch).await.is_err() {
-                    break;
+                match deliver(&state, &session, user.id, conn, &mut sink, batch).await {
+                    Ok(true) => checked = Instant::now(),
+                    Ok(false) => {}
+                    Err(_) => break,
                 }
             }
         }
@@ -198,13 +236,74 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
     debug!(user_id = %user.id, "ws disconnected");
 }
 
+fn until(at: chrono::DateTime<chrono::Utc>) -> tokio::time::Instant {
+    tokio::time::Instant::now() + (at - chrono::Utc::now()).to_std().unwrap_or_default()
+}
+
+/// The session row's expiry now, or `None` once it is gone or unreadable.
+async fn current_expiry(
+    state: &AppState,
+    session: &CurrentSession,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        sqlx::query_scalar(
+            "SELECT expires_at FROM sessions WHERE token_hash = $1 AND user_id = $2",
+        )
+        .bind(&session.hash)
+        .bind(session.user.id)
+        .fetch_optional(&state.db),
+    )
+    .await
+    .ok()?
+    .ok()?
+}
+
+/// User activity on the socket counts as a use of the session, heartbeats
+/// do not: a forgotten tab still ends after the idle timeout. Runs after the
+/// frame's transaction committed, because the `UPDATE` would wait for the
+/// `FOR SHARE` lock other sockets of this session hold. Throttled like HTTP
+/// renewals, so most frames never reach the database. A failure only skips
+/// the renewal; `None` keeps the current expiry.
+async fn renew(
+    state: &AppState,
+    session: &CurrentSession,
+    expires_at: chrono::DateTime<chrono::Utc>,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    if !crate::auth::session::needs_renewal(
+        session.created_at,
+        expires_at,
+        state.session_idle,
+        state.session_ttl,
+    ) {
+        return None;
+    }
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        crate::auth::session::touch(state, &session.hash, session.created_at, expires_at),
+    )
+    .await
+    .ok()?
+    .ok()?
+}
+
 /// Recheck the session and every subscription, then renew voice leases.
-/// `false` ends the socket. The transaction is read-only and ends before
-/// the renewal, which does Redis I/O and waits on the process-wide
-/// `voice_ops` mutex. The `voice_snap` frames the renewal queues are
-/// authorized again at dequeue: `deliver` runs its own `lock_live`,
-/// `reconcile_access` and `scope_allowed`.
-async fn security_tick(state: &AppState, session: &CurrentSession, conn: ConnId) -> bool {
+/// `false` ends the socket. A socket with a seat checks on every tick, since
+/// a renewal follows only a passed check; one without a seat only when
+/// `forced` (a [`super::hub::Recheck`] notice) or after `SECURITY_BACKSTOP`
+/// without any check. Every frame in and every delivered batch runs the same
+/// check anyway. The transaction is read-only and ends before the renewal,
+/// which does Redis I/O and waits on the process-wide `voice_ops` mutex.
+async fn security_tick(
+    state: &AppState,
+    session: &CurrentSession,
+    conn: ConnId,
+    checked: &mut Instant,
+    forced: bool,
+) -> bool {
+    if !forced && checked.elapsed() < SECURITY_BACKSTOP && !state.gateway.holds_seat(conn).await {
+        return true;
+    }
     let Ok(Ok(Some(mut session_guard))) = tokio::time::timeout(
         std::time::Duration::from_secs(1),
         session.lock_live(&state.db),
@@ -224,6 +323,7 @@ async fn security_tick(state: &AppState, session: &CurrentSession, conn: ConnId)
     if session_guard.rollback().await.is_err() {
         return false;
     }
+    *checked = Instant::now();
     matches!(
         tokio::time::timeout(
             std::time::Duration::from_secs(1),
@@ -337,8 +437,8 @@ async fn subscribe(
     } else {
         state.gateway.mark_dm(conn, server_id).await;
     }
-    state.gateway.watch_server(conn, server_id).await;
     let topic = Topic::of(server_id, channel_id);
+    state.gateway.watch_topic(conn, server_id, topic).await;
     state.gateway.begin_catch_up(conn, topic).await;
 
     let (current, epoch, plan) = state
@@ -502,7 +602,7 @@ fn take_batch(
 /// check is held until that run is flushed (so a kick cannot commit between
 /// check and write), but never across another server's frames, and no
 /// transaction holds more than one server row. Unscoped frames join the
-/// current run; queue order is kept.
+/// current run; queue order is kept. `true` once a run passed its check.
 async fn deliver(
     state: &AppState,
     session: &CurrentSession,
@@ -510,7 +610,8 @@ async fn deliver(
     conn: ConnId,
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     batch: Vec<(ServerFrame, String)>,
-) -> Result<(), ApiError> {
+) -> Result<bool, ApiError> {
+    let mut checked = false;
     for run in server_runs(batch) {
         let mut db = tokio::time::timeout(
             std::time::Duration::from_secs(1),
@@ -520,6 +621,7 @@ async fn deliver(
         .map_err(|_| ApiError::Internal("session lock timed out".into()))??
         .ok_or(ApiError::Unauthenticated)?;
         state.gateway.reconcile_access(conn, &mut db).await?;
+        checked = true;
         let mut allowed = HashMap::new();
         let mut out = Vec::with_capacity(run.len());
         for (frame, json) in run {
@@ -546,7 +648,7 @@ async fn deliver(
         // the next run takes its own.
         db.rollback().await?;
     }
-    Ok(())
+    Ok(checked)
 }
 
 /// Split a batch where the server of a scoped frame changes.
@@ -681,6 +783,72 @@ mod tests {
         assert_eq!(runs, expected);
     }
 
+    /// Socket activity renews a session that is due, through the frame's
+    /// stale copy of the expiry, and leaves a fresh one alone.
+    #[sqlx::test]
+    async fn activity_renews_a_due_session_only(pool: sqlx::PgPool) {
+        use std::time::Duration;
+        let config = crate::Config::from_source(|key| match key {
+            "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
+            "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".into()),
+            "REDIS_URL" => Some(std::env::var("REDIS_URL").unwrap()),
+            "API_SESSION_TTL_HOURS" => Some("4".to_owned()),
+            "API_SESSION_IDLE_HOURS" => Some("1".to_owned()),
+            _ => None,
+        })
+        .unwrap();
+        let state = AppState::with_pool(&config, pool.clone()).unwrap();
+        let user = crate::auth::user::insert(&pool, "renew@example.test", "renew", "unused")
+            .await
+            .unwrap();
+        let raw = crate::auth::session::create(&pool, user.id, Duration::from_secs(120))
+            .await
+            .unwrap();
+        let hash = crate::token::hash(&raw);
+        let (created_at, expires_at): (
+            chrono::DateTime<chrono::Utc>,
+            chrono::DateTime<chrono::Utc>,
+        ) = sqlx::query_as("SELECT created_at, expires_at FROM sessions WHERE token_hash = $1")
+            .bind(&hash)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let session = CurrentSession {
+            user,
+            hash: hash.clone(),
+            created_at,
+            expires_at,
+        };
+
+        let renewed = renew(&state, &session, expires_at).await.expect("renewed");
+        assert!(
+            renewed - expires_at > chrono::Duration::minutes(55),
+            "{renewed}"
+        );
+        let stored: chrono::DateTime<chrono::Utc> =
+            sqlx::query_scalar("SELECT expires_at FROM sessions WHERE token_hash = $1")
+                .bind(&hash)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stored, renewed);
+        assert_eq!(
+            renew(&state, &session, renewed).await,
+            None,
+            "fresh: no write"
+        );
+
+        sqlx::query("DELETE FROM sessions")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            renew(&state, &session, expires_at).await,
+            None,
+            "gone: no revival"
+        );
+    }
+
     /// The tick waits on `voice_ops` while another voice operation holds it.
     /// On a one-connection pool, that wait must not keep the only connection.
     #[sqlx::test]
@@ -707,8 +875,8 @@ mod tests {
             .await
             .unwrap();
         let hash = crate::token::hash(&raw);
-        let expires_at =
-            sqlx::query_scalar("SELECT expires_at FROM sessions WHERE token_hash = $1")
+        let (created_at, expires_at) =
+            sqlx::query_as("SELECT created_at, expires_at FROM sessions WHERE token_hash = $1")
                 .bind(&hash)
                 .fetch_one(&pool)
                 .await
@@ -716,6 +884,7 @@ mod tests {
         let session = CurrentSession {
             user,
             hash,
+            created_at,
             expires_at,
         };
         let server: Uuid = sqlx::query_scalar(
@@ -759,7 +928,10 @@ mod tests {
         let busy = state.gateway.connections.inner.voice_ops.lock().await;
         let tick = tokio::spawn({
             let (state, session) = (state.clone(), session.clone());
-            async move { security_tick(&state, &session, conn).await }
+            async move {
+                let mut checked = Instant::now();
+                security_tick(&state, &session, conn, &mut checked, false).await
+            }
         });
         // Long enough for the session check and reconcile on a local database.
         tokio::time::sleep(Duration::from_millis(300)).await;

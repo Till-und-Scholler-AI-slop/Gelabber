@@ -101,11 +101,42 @@
   color: var(--lr-text);
 }
 .lr-list-empty {
+  padding-bottom: 16px;
+}
+.lr-list-empty > p {
+  padding: 0 20px;
+  text-align: left;
+}
+/* First load: placeholder rows where the newest messages will be. */
+.lr-list-skeleton {
+  padding: 8px 20px 16px;
+}
+/* Above the oldest message once nothing older exists. */
+.lr-history-start {
   display: flex;
-  height: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 24px 20px 8px;
+  text-align: left;
+}
+.lr-history-start h2 {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 0 24px;
+  gap: 6px;
+  font: var(--lr-type-title);
+  color: var(--lr-text);
+}
+.lr-history-start h2 > svg {
+  color: var(--lr-muted);
+}
+.lr-history-start .gel-avatar {
+  margin-bottom: 8px;
+}
+.lr-history-start p {
+  font: var(--lr-type-ui);
+  font-weight: 400;
+  color: var(--lr-muted);
 }
 .lr-list-loading {
   flex-shrink: 0;
@@ -153,6 +184,89 @@
 .lr-jump-latest:hover {
   background: var(--lr-hover);
 }
+.lr-jump-latest.has-news {
+  border-color: transparent;
+  background: var(--lr-accent);
+  color: var(--lr-accent-ink);
+}
+.lr-jump-latest.has-news:hover {
+  background: var(--lr-accent);
+  filter: brightness(1.08);
+}
+/* Rises into view when the reader leaves the end of the conversation. */
+.lr-jump-latest {
+  transition:
+    opacity var(--lr-dur) var(--lr-ease-enter),
+    translate var(--lr-dur) var(--lr-ease-enter),
+    background-color var(--lr-dur-micro) var(--lr-ease-standard),
+    color var(--lr-dur-micro) var(--lr-ease-standard);
+}
+@starting-style {
+  .lr-jump-latest {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+
+/* Opened with unread messages: how many, back to the first, or done. */
+.lr-unread-bar {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: var(--lr-space-2);
+  min-height: 36px;
+  padding: 2px 12px 2px 20px;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--lr-accent) 35%, var(--lr-border));
+  background: var(--lr-selected);
+  color: var(--lr-text);
+  font: var(--lr-type-ui);
+  font-weight: 400;
+}
+.lr-unread-bar > p {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lr-unread-bar strong {
+  font-weight: 600;
+}
+.lr-unread-bar kbd {
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--lr-border-strong);
+  border-radius: var(--lr-radius-xs);
+  font: var(--lr-type-meta);
+  font-size: 11px;
+  color: var(--lr-muted);
+}
+@media (pointer: coarse) {
+  .lr-unread-bar kbd {
+    display: none;
+  }
+}
+@media (max-width: 800px) {
+  .lr-unread-bar {
+    padding-left: 16px;
+  }
+}
+@media (max-width: 520px) {
+  /* One line of text, then the two buttons side by side. */
+  .lr-unread-bar {
+    flex-wrap: wrap;
+    padding-block: 6px;
+  }
+  .lr-unread-bar > p {
+    flex-basis: 100%;
+  }
+  .lr-unread-bar > .ui-button {
+    flex: 1;
+  }
+}
 
 /* Messages */
 .lr-message-row {
@@ -172,8 +286,22 @@
   height: 36px;
   margin-top: 2px;
 }
-.lr-message-continued > span[aria-hidden] {
+/* A grouped message's time sits in the avatar column, shown on hover or
+   focus, so it costs no height. */
+.lr-message-gutter {
+  flex-shrink: 0;
   width: 36px;
+  padding-top: 4px;
+  text-align: right;
+  font-size: 10.5px;
+  line-height: 18px;
+  color: var(--lr-muted);
+  visibility: hidden;
+}
+.lr-message-row:hover .lr-message-gutter,
+.lr-message-row:focus-within .lr-message-gutter,
+.lr-message-row:focus .lr-message-gutter {
+  visibility: visible;
 }
 .lr-message-author {
   font-size: 14px;
@@ -243,11 +371,121 @@ button.lr-reply-header:focus-visible .lr-reply-excerpt {
   font-size: 11px;
   color: var(--lr-muted);
 }
+/* System messages (#314): one muted line in the text column, the icon where
+   the avatar would be. */
+.lr-message-system-icon {
+  display: flex;
+  justify-content: center;
+  width: 36px;
+  flex-shrink: 0;
+  padding-top: 3px;
+  color: var(--lr-muted);
+}
+.lr-message-system-text {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--lr-muted);
+  overflow-wrap: anywhere;
+}
+
+/* Own messages on their way, and those that did not arrive. */
+.lr-message-row.is-sending .lr-message-text,
+.lr-message-row.is-sending .lr-attachments,
+.lr-message-row.is-sending .lr-message-gif {
+  opacity: 0.7;
+}
+/* A message that comes in live rises into place; one's own, once saved,
+   brightens from its sending look (MessageList, arrivals.ts). */
+.lr-message-row[data-arrival="live"] {
+  animation: lr-message-in var(--lr-dur) var(--lr-ease-enter);
+}
+.lr-message-row[data-arrival="confirmed"]
+  :is(.lr-message-text, .lr-attachments, .lr-message-gif) {
+  animation: lr-message-saved var(--lr-dur) var(--lr-ease-standard);
+}
+@keyframes lr-message-in {
+  from {
+    opacity: 0;
+    translate: 0 3px;
+  }
+}
+@keyframes lr-message-saved {
+  from {
+    opacity: 0.7;
+  }
+}
+.lr-message-row.is-failed {
+  background: color-mix(in srgb, var(--lr-danger-bg) 8%, var(--lr-bg));
+  box-shadow: inset 3px 0 0 var(--lr-danger-bg);
+}
+.lr-message-row.is-failed:hover,
+.lr-message-row.is-failed:focus-within {
+  background: color-mix(in srgb, var(--lr-danger-bg) 12%, var(--lr-bg));
+}
+.lr-message-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: var(--lr-type-meta);
+  color: var(--lr-muted);
+}
+.lr-message-status.is-sending {
+  /* A quick send never shows it. */
+  animation: lr-status-in 0s 400ms both;
+}
+.lr-message-status.is-failed {
+  color: var(--lr-danger);
+  font-weight: 600;
+}
+@keyframes lr-status-in {
+  from {
+    visibility: hidden;
+  }
+}
+.lr-message-status-line {
+  margin-top: 2px;
+}
+.lr-message-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: var(--lr-radius-full);
+  animation: lr-spin 0.8s linear infinite;
+}
+@keyframes lr-spin {
+  to {
+    rotate: 1turn;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lr-message-spinner {
+    animation: none;
+  }
+}
+html[data-reduced-motion="true"] .lr-message-spinner {
+  animation: none;
+}
+.lr-message-failure {
+  margin-top: 6px;
+  font: var(--lr-type-ui);
+  font-weight: 400;
+  color: var(--lr-muted);
+}
+.lr-message-row.is-failed .lr-attachment-upload {
+  display: none;
+}
+.lr-message-failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
 
 /* Message markdown (messages/MessageContent.tsx). Code blocks scroll on their
    own so a long line never widens the pane. */
 .lr-md-link {
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, var(--lr-accent) 45%, transparent);
   text-underline-offset: 2px;
@@ -305,6 +543,9 @@ span.lr-md-codeblock {
   color: var(--lr-muted);
 }
 .lr-md-codeblock-bar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 2px 6px;
   border-radius: var(--lr-radius-small);
   color: var(--lr-muted);
@@ -366,7 +607,7 @@ span.lr-md-codeblock {
 .lr-preview-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
   overflow-wrap: anywhere;
 }
 .lr-preview-title:hover {
@@ -383,15 +624,55 @@ span.lr-md-codeblock {
   overflow-wrap: anywhere;
 }
 .lr-preview-image {
+  display: block;
   width: 80px;
   height: 80px;
+  padding: 0;
+  overflow: hidden;
   border-radius: var(--lr-radius-small);
+  cursor: zoom-in;
+}
+.lr-preview-image img {
+  width: 100%;
+  height: 100%;
   object-fit: cover;
 }
+/* A banner, not a poster: a preview must not outgrow the message. */
 .lr-preview.is-large .lr-preview-image {
   width: 100%;
   height: auto;
-  max-height: 300px;
+}
+.lr-preview.is-large .lr-preview-image img {
+  height: auto;
+  max-height: 160px;
+}
+@media (max-width: 640px) {
+  /* Phones: a thumbnail beside the title, the full image in the lightbox. */
+  .lr-preview,
+  .lr-preview.is-large:not(.is-video) {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .lr-preview:has(.lr-preview-remove) {
+    padding-right: 30px;
+  }
+  .lr-preview .lr-preview-image,
+  .lr-preview.is-large .lr-preview-image {
+    width: 72px;
+    height: 72px;
+  }
+  .lr-preview.is-large .lr-preview-image img {
+    height: 100%;
+    max-height: none;
+  }
+  .lr-preview-title {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  .lr-preview-description {
+    -webkit-line-clamp: 2;
+  }
 }
 .lr-preview-video {
   position: relative;
@@ -492,32 +773,110 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   background: var(--lr-hover);
   color: var(--lr-text);
 }
-.lr-message-action.is-danger:hover {
-  color: var(--lr-danger);
-}
-@media (hover: none) {
-  /* Touch has no hover: a tap focuses the row and reveals its toolbar. */
-  .lr-message-actions {
-    visibility: hidden;
-  }
-  .lr-message-row:focus-within .lr-message-actions {
-    visibility: visible;
-  }
+.lr-message-action[aria-expanded="true"] {
+  background: var(--lr-hover);
+  color: var(--lr-text);
 }
 @media (pointer: coarse) {
-  /* A toolbar of finger-sized buttons would cover the message text, so each
-     button keeps its size and gets a 44px hit area instead. */
-  .lr-message-actions {
-    gap: 14px;
-    padding-inline: 9px;
+  /* Fingers hold the message instead and get the action sheet, so a tap no
+     longer floats the toolbar over the message above. It stays for a
+     keyboard. Text is copied from the sheet: a held finger selects none. */
+  .lr-message-row:hover .lr-message-actions,
+  .lr-message-row:focus-within .lr-message-actions {
+    opacity: 0;
+    pointer-events: none;
   }
-  .lr-message-action {
-    position: relative;
+  .lr-message-row .lr-message-actions:has(:focus-visible) {
+    opacity: 1;
+    pointer-events: auto;
   }
-  .lr-message-action::after {
-    content: "";
-    position: absolute;
-    inset: -8px -7px;
+  .lr-message-row {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .lr-message-row textarea {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
+/* The actions menu (MessageActionSheet.tsx): a popover at "Mehr", a bottom
+   sheet on touch screens. */
+.lr-message-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+}
+.lr-message-menu-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 2px 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--lr-border);
+}
+.lr-message-menu-emoji {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--lr-radius-full);
+  background: var(--lr-surface);
+  color: var(--lr-muted);
+  font-size: 18px;
+}
+.lr-message-menu-emoji:hover,
+.lr-message-menu-emoji:focus-visible {
+  background: var(--lr-hover);
+  color: var(--lr-text);
+}
+.lr-message-menu-emoji.is-mine {
+  box-shadow: inset 0 0 0 1px var(--lr-accent);
+  background: var(--lr-selected);
+}
+.lr-message-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--lr-control-sm);
+  padding: 0 10px;
+  border-radius: var(--lr-radius-sm);
+  color: var(--lr-text);
+  font: var(--lr-type-ui);
+  text-align: left;
+}
+.lr-message-menu-item > svg {
+  flex-shrink: 0;
+  color: var(--lr-muted);
+}
+.lr-message-menu-item:hover,
+.lr-message-menu-item:focus-visible {
+  background: var(--lr-hover);
+}
+.lr-message-menu-item.is-danger,
+.lr-message-menu-item.is-danger > svg {
+  color: var(--lr-danger);
+}
+.lr-message-menu-divider {
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--lr-border);
+}
+@media (pointer: coarse) {
+  .lr-message-menu-reactions {
+    justify-content: space-between;
+    gap: 6px;
+    padding-bottom: 12px;
+  }
+  .lr-message-menu-emoji {
+    width: 44px;
+    height: 44px;
+    font-size: 22px;
+  }
+  .lr-message-menu-item {
+    min-height: 48px;
+    font-size: 16px;
   }
 }
 
@@ -529,6 +888,9 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 }
 .lr-message-edit textarea {
   width: 100%;
+  min-height: 3.5em;
+  max-height: calc(var(--lr-100dvh) * 0.5);
+  field-sizing: content;
   resize: none;
   padding: 8px 10px;
   border: 1px solid var(--lr-accent);
@@ -614,7 +976,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 }
 .lr-message-gif:focus-visible,
 .lr-gif-tile:focus-visible {
-  outline: 2px solid var(--lr-accent);
+  outline: 2px solid var(--lr-focus);
   outline-offset: 2px;
 }
 .lr-message-gif-badge {
@@ -641,7 +1003,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
-  max-height: 50dvh;
+  max-height: calc(var(--lr-100dvh) * 0.5);
   overflow-y: auto;
 }
 @media (min-width: 480px) {
@@ -675,10 +1037,10 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   letter-spacing: 0.04em;
 }
 .lr-lightbox {
-  width: 100vw;
-  max-width: 100vw;
-  height: 100dvh;
-  max-height: 100dvh;
+  width: var(--lr-100vw);
+  max-width: var(--lr-100vw);
+  height: var(--lr-100dvh);
+  max-height: var(--lr-100dvh);
   margin: 0;
   padding: 56px 16px 16px;
   border: 0;
@@ -692,6 +1054,26 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+/* Opens like a dialog: the dimmed page and the picture fade in, the
+   picture settling to its size. */
+.lr-lightbox {
+  transition: opacity var(--lr-dur-large) var(--lr-ease-enter);
+}
+.lr-lightbox::backdrop {
+  transition: opacity var(--lr-dur-large) var(--lr-ease-standard);
+}
+.lr-lightbox > img {
+  transition: scale var(--lr-dur-large) var(--lr-ease-enter);
+}
+@starting-style {
+  .lr-lightbox[open],
+  .lr-lightbox[open]::backdrop {
+    opacity: 0;
+  }
+  .lr-lightbox[open] > img {
+    scale: 0.97;
+  }
 }
 .lr-lightbox > img {
   max-width: 100%;
@@ -747,7 +1129,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 }
 .lr-attachment-file > svg {
   flex-shrink: 0;
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
 }
 .lr-attachment-file > span:first-of-type {
   min-width: 0;
@@ -785,6 +1167,58 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 .lr-attachment-upload {
   font-size: 11px;
   color: var(--lr-muted);
+}
+/* A picture that did not load (#348): the same box, saying so. */
+.lr-attachment-image.is-failed {
+  width: 240px;
+  cursor: default;
+}
+.lr-attachment-grid .lr-attachment-image.is-failed {
+  width: auto;
+  min-width: 0;
+}
+.lr-attachment-image-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 12px;
+  border: 1px dashed var(--lr-border);
+  border-radius: var(--lr-radius);
+  background: var(--lr-panel);
+  font-size: 12px;
+  color: var(--lr-muted);
+}
+.lr-attachment-image-error > svg {
+  color: var(--lr-accent-text);
+}
+.lr-attachment-image-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--lr-text);
+}
+.lr-attachment-image-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.lr-attachment-image-actions > button,
+.lr-attachment-image-actions > a {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--lr-accent-text);
+  cursor: pointer;
+  text-decoration: underline;
 }
 .lr-attachment-image .lr-attachment-upload {
   position: absolute;
@@ -843,7 +1277,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 }
 .lr-attachment-text summary > svg {
   flex-shrink: 0;
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
 }
 .lr-attachment-text summary > span:first-of-type {
   min-width: 0;
@@ -881,9 +1315,21 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   flex-shrink: 0;
   padding: 0 16px 14px;
 }
+/* Room for the toasts above the composer (Toasts.tsx measures them), so
+   they do not cover the newest message and its actions (#354). The list
+   above gives way and, at its end, keeps the newest message in view. With
+   toasts it is their height plus the 12px they keep from the composer. */
+.lr-toast-space {
+  flex-shrink: 0;
+  height: calc(
+    var(--lr-toast-space, 0px) + min(var(--lr-toast-space, 0px), 12px)
+  );
+  transition: height var(--lr-dur) var(--lr-ease-standard);
+}
+
 .lr-composer,
 .lr-composer-readonly {
-  /* Toasts on phones sit above it, however tall the draft is. */
+  /* Toasts sit above it, however tall the draft is. */
   anchor-name: --lr-composer;
 }
 .lr-composer-readonly {
@@ -916,7 +1362,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 .lr-composer-drop {
   margin: 0;
   padding: 10px 14px 0;
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
   font-size: 13px;
   font-weight: 600;
 }
@@ -945,7 +1391,9 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   color: var(--lr-muted);
 }
 .lr-composer-row textarea:focus-visible {
+  /* The field around it shows focus. */
   outline: none;
+  box-shadow: none;
 }
 @media (pointer: coarse) {
   /* Phones show the whole draft, up to max-height. Browsers without
@@ -978,8 +1426,12 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   background: var(--lr-accent);
   color: var(--lr-accent-ink);
   transition:
-    background 0.12s,
-    color 0.12s;
+    background-color var(--lr-dur-fast) var(--lr-ease-standard),
+    color var(--lr-dur-fast) var(--lr-ease-standard),
+    scale var(--lr-dur-micro) var(--lr-ease-standard);
+}
+.lr-composer-send:active:not(:disabled) {
+  scale: var(--lr-press-scale);
 }
 .lr-composer-send:hover:not(:disabled) {
   filter: brightness(1.08);
@@ -989,6 +1441,21 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   color: var(--lr-muted);
   opacity: 0.55;
   cursor: default;
+}
+@media (pointer: coarse) {
+  .lr-composer-row {
+    align-items: flex-end;
+    gap: 6px;
+  }
+  .lr-composer-icon,
+  .lr-composer-send {
+    width: 44px;
+    height: 44px;
+  }
+  .lr-composer-row textarea {
+    min-height: 44px;
+    padding-block: 11px;
+  }
 }
 .lr-composer-attachments {
   display: flex;
@@ -1097,34 +1564,38 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   font-size: 12px;
   color: var(--lr-muted);
 }
-.lr-send-failure {
+.lr-composer-status:empty {
+  padding: 0;
+}
+.lr-composer-file-error {
+  padding: 4px 6px 0;
+}
+/* Sends that did not go through are on their rows; this line finds them. */
+.lr-send-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 8px;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--lr-danger) 45%, var(--lr-border));
-  border-radius: var(--lr-radius);
-  background: color-mix(in srgb, var(--lr-danger) 8%, var(--lr-panel));
-  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: var(--lr-radius-sm);
+  background: color-mix(in srgb, var(--lr-danger-bg) 10%, var(--lr-panel));
+  box-shadow: inset 3px 0 0 var(--lr-danger-bg);
+  font: var(--lr-type-ui);
   color: var(--lr-text);
 }
-.lr-send-failure-content {
-  margin-top: 4px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  color: var(--lr-muted);
+.lr-send-summary > svg {
+  flex-shrink: 0;
+  color: var(--lr-danger);
 }
-.lr-send-failure-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 14px;
-  margin-top: 8px;
+.lr-send-summary > span {
+  flex: 1;
+  min-width: 0;
 }
-.lr-send-failure-actions > button {
+.lr-send-summary > button {
   font-weight: 600;
+  color: var(--lr-text);
   text-decoration: underline;
   text-underline-offset: 2px;
-}
-.lr-send-failure-actions > button:disabled {
-  opacity: 0.5;
 }
 
 /* Live hint below the header: one quiet row per broadcast. */
@@ -1165,11 +1636,6 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 }
 .lr-live-hint button:hover {
   filter: brightness(1.1);
-}
-.lr-live-hint button.is-quiet {
-  background: transparent;
-  color: var(--lr-muted);
-  border: 1px solid var(--lr-border);
 }
 .lr-live-badge {
   display: inline-grid;
@@ -1228,6 +1694,14 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   }
 }
 
+/* After the 34px phone size above. */
+@media (pointer: coarse) and (max-width: 800px) {
+  .lr-header-search {
+    width: 40px;
+    height: 40px;
+  }
+}
+
 /* Reactions under a message; adding one lives in the hover toolbar. */
 .lr-message-reaction-slot {
   display: contents;
@@ -1260,6 +1734,15 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 .lr-reaction.is-mine {
   border-color: color-mix(in srgb, var(--lr-accent) 60%, var(--lr-border));
   background: var(--lr-selected);
+}
+/* The one bit of bounce in the app: a reaction just added pops once. */
+.lr-reaction.is-popping {
+  animation: lr-reaction-pop 260ms var(--lr-ease-standard);
+}
+@keyframes lr-reaction-pop {
+  40% {
+    scale: 1.14;
+  }
 }
 .lr-reaction:disabled,
 .lr-reaction[aria-disabled="true"],
@@ -1424,7 +1907,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   color: var(--lr-muted);
 }
 .lr-search-hit:hover > span {
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
 }
 
 .lr-header-search > kbd {
@@ -1459,7 +1942,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 .lr-new-divider {
   padding-top: 6px;
   padding-bottom: 2px;
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.4px;
@@ -1561,20 +2044,20 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   border-radius: 4px;
   padding: 0 2px;
   background: color-mix(in srgb, var(--lr-accent) 18%, transparent);
-  color: color-mix(in srgb, var(--lr-accent) 75%, var(--lr-text));
+  color: var(--lr-accent-text);
   font-weight: 600;
 }
 .lr-mention.is-me {
-  background: color-mix(in srgb, var(--lr-away) 26%, transparent);
+  background: color-mix(in srgb, var(--lr-warning) 26%, transparent);
   color: var(--lr-text);
 }
 .lr-message-row.is-mentioned {
-  background: color-mix(in srgb, var(--lr-away) 9%, var(--lr-bg));
-  box-shadow: inset 2px 0 0 var(--lr-away);
+  background: color-mix(in srgb, var(--lr-warning) 9%, var(--lr-bg));
+  box-shadow: inset 2px 0 0 var(--lr-warning);
 }
 .lr-message-row.is-mentioned:hover,
 .lr-message-row.is-mentioned:focus-within {
-  background: color-mix(in srgb, var(--lr-away) 13%, var(--lr-bg));
+  background: color-mix(in srgb, var(--lr-warning) 13%, var(--lr-bg));
 }
 .lr-mention-list {
   margin: 0;
@@ -1607,17 +2090,5 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   opacity: 0.5;
 }
 .server-tile.is-muted {
-  opacity: 0.6;
-}
-.notify-choice {
-  padding: 6px 10px;
-  border: 1px solid var(--lr-border);
-  border-radius: var(--lr-radius-small);
-  font-size: 13px;
-}
-.notify-choice:hover:not(:disabled) {
-  background: var(--lr-hover);
-}
-.notify-choice:disabled {
   opacity: 0.6;
 }

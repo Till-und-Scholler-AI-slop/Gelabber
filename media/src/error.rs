@@ -7,10 +7,8 @@ use std::fmt;
 pub enum SfuError {
     NotInRoom,
     BadAnnounce,
-    /// Go Live announced without the ticket bit.
+    /// Screen source announced without the ticket's go_live bit.
     Forbidden,
-    /// Valid Live authority is temporarily unable to publish within its lease fence.
-    LiveBusy,
     ProtocolVersion,
     UnsupportedCodec,
     /// Native worker/listener is unavailable.
@@ -35,7 +33,6 @@ impl SfuError {
         match self {
             Self::NotInRoom | Self::BadAnnounce => "bad_request",
             Self::Forbidden => "forbidden",
-            Self::LiveBusy => "live_busy",
             Self::ProtocolVersion => "unsupported_media_version",
             Self::UnsupportedCodec => "unsupported_codec",
             Self::Unavailable => "unavailable",
@@ -52,7 +49,6 @@ impl fmt::Display for SfuError {
             Self::NotInRoom => write!(f, "not in room"),
             Self::BadAnnounce => write!(f, "bad announce"),
             Self::Forbidden => write!(f, "forbidden"),
-            Self::LiveBusy => write!(f, "live peer lease busy"),
             Self::ProtocolVersion => write!(f, "unsupported media protocol version"),
             Self::UnsupportedCodec => write!(f, "unsupported media codec"),
             Self::Unavailable => write!(f, "unavailable"),

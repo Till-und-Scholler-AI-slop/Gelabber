@@ -20,6 +20,8 @@ services:
   web:
     ports:
       - "${GELABBER_WEB_BIND:-127.0.0.1}:${GELABBER_WEB_PORT:-8088}:80"
+    environment:
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-http://127.0.0.1:9000}
 
   api:
     ports:

@@ -23,25 +23,31 @@ services:
     restart: unless-stopped
 
   web:
-    image: ${GELABBER_WEB_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.7.1}
+    image: ${GELABBER_WEB_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.8.0}
     pull_policy: missing
     build:
       context: ../../web
       dockerfile: Dockerfile
       tags:
-        - gelabber/web:v0.7.1
+        - gelabber/web:v0.8.0
+    environment:
+      # The same values as the API's: the app shell's Content-Security-Policy
+      # allows uploads and attachments on this origin only (#288), or on the
+      # app's own origin with ATTACHMENT_DELIVERY=proxy (#348).
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}
+      ATTACHMENT_DELIVERY: ${ATTACHMENT_DELIVERY:-redirect}
     expose:
       - "80"
     restart: unless-stopped
 
   api:
-    image: ${GELABBER_API_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.7.1}
+    image: ${GELABBER_API_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.8.0}
     pull_policy: missing
     build:
       context: ../..
       dockerfile: api/Dockerfile
       tags:
-        - gelabber/api:v0.7.1
+        - gelabber/api:v0.8.0
     environment:
       API_ADDR: 0.0.0.0:8080
       DATABASE_URL: postgres://${POSTGRES_USER:-gelabber}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (see deploy/README.md)}@postgres:5432/${POSTGRES_DB:-gelabber}
@@ -52,7 +58,13 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_APP_USER:-gelabber-api}
       MINIO_SECRET_KEY: ${MINIO_APP_PASSWORD:?set MINIO_APP_PASSWORD in .env (see deploy/README.md)}
       MINIO_BUCKET: ${MINIO_BUCKET:-gelabber}
+      # redirect: browsers load and upload at MINIO_PUBLIC_ENDPOINT. proxy:
+      # through the API on the app's origin, MinIO stays internal (#348).
+      ATTACHMENT_DELIVERY: ${ATTACHMENT_DELIVERY:-redirect}
       API_COOKIE_SECURE: ${API_COOKIE_SECURE:-false}
+      # Empty keeps the API defaults: 30 days absolute, 14 days idle.
+      API_SESSION_TTL_HOURS: ${API_SESSION_TTL_HOURS:-}
+      API_SESSION_IDLE_HOURS: ${API_SESSION_IDLE_HOURS:-}
       # One API process; keep it well below Postgres max_connections (100).
       API_DB_MAX_CONNECTIONS: ${API_DB_MAX_CONNECTIONS:-20}
       TURN_URLS: ${TURN_URLS:-stun:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478},turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}?transport=udp,turn:${TURN_PUBLIC_HOST:-127.0.0.1}:${TURN_PORT:-3478}?transport=tcp}
@@ -66,6 +78,7 @@ services:
       # Empty turns GIF search off. The key never reaches a browser.
       KLIPY_API_KEY: ${KLIPY_API_KEY:-}
       KLIPY_CONTENT_FILTER: ${KLIPY_CONTENT_FILTER:-medium}
+      KLIPY_CACHE_SECS: ${KLIPY_CACHE_SECS:-600}
       API_RATE_GIF_PER_MIN: ${API_RATE_GIF_PER_MIN:-30}
       API_RATE_GIF_MEDIA_PER_MIN: ${API_RATE_GIF_MEDIA_PER_MIN:-240}
       # Empty turns Web Push off.
@@ -97,24 +110,28 @@ services:
     restart: unless-stopped
 
   media:
-    image: ${GELABBER_MEDIA_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.7.1}
+    image: ${GELABBER_MEDIA_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.8.0}
     pull_policy: missing
     build:
       context: ../..
       dockerfile: media/Dockerfile
       tags:
-        - gelabber/media:v0.7.1
+        - gelabber/media:v0.8.0
     environment:
       MEDIA_ADDR: 0.0.0.0:8081
       REDIS_URL: redis://redis:6379
       MEDIA_ICE_BIND: 0.0.0.0:10000
+      # One UDP port per worker: worker i binds 10000 + i, so the published
+      # range must reach 10000 + MEDIA_WORKERS - 1 (the media service checks).
+      MEDIA_WORKERS: ${MEDIA_WORKERS:-1}
+      MEDIA_ICE_PORT_MAX: ${MEDIA_ICE_PORT_MAX:-10000}
       MEDIA_ADVERTISED_IP: ${MEDIA_ADVERTISED_IP:-127.0.0.1}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     expose:
       - "8081"
     ports:
-      - "10000:10000/udp"
+      - "10000-${MEDIA_ICE_PORT_MAX:-10000}:10000-${MEDIA_ICE_PORT_MAX:-10000}/udp"
     depends_on:
       redis:
         condition: service_healthy

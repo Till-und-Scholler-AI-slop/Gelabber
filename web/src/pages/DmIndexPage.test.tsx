@@ -61,22 +61,26 @@ describe("DM index", () => {
     expect(html).toContain("<h1>Nachrichten</h1>");
     expect(html).toContain(">Silas</a>");
     expect(html).toContain(">Rafi</a>");
-    expect(html).not.toContain("Wähle eine Unterhaltung.");
+    expect(html).not.toContain("Wähle eine Unterhaltung");
+    expect(html).toContain("Neue Nachricht</button>");
   });
 
   it("mounts no rows beside a visible sidebar", () => {
     fixture.drawer = false;
     const html = renderToStaticMarkup(<DmIndexPage />);
-    expect(html).toContain("Wähle eine Unterhaltung.");
+    expect(html).toContain("Wähle eine Unterhaltung oder fang eine neue an.");
+    expect(html).toContain("Neue Nachricht</button>");
     expect(html).not.toContain("<nav");
     expect(fixture.rows).toBe(0);
   });
 
-  it("explains how to start a DM when there is none", () => {
+  it("starts a new message when there is no conversation yet", () => {
     fixture.drawer = true;
     fixture.dms = [];
     const html = renderToStaticMarkup(<DmIndexPage />);
-    expect(html).toContain("Öffne eine Direktnachricht");
+    expect(html).toContain("<h1>Noch keine Unterhaltungen</h1>");
+    expect(html).toContain("ui-button--primary");
+    expect(html).toContain("Neue Nachricht</button>");
     expect(html).not.toContain("<nav");
   });
 });

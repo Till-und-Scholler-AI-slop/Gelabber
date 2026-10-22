@@ -152,7 +152,7 @@ async fn mutate(
     }
     tx.commit().await?;
     if changed {
-        let _ = delivery::deliver_pending(state, 32).await;
+        delivery::wake(state);
     }
     Ok(current)
 }

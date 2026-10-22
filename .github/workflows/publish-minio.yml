@@ -1,8 +1,6 @@
-# Publish the pinned MinIO CE server and client (mc, for minio-init) images
-# so `docker compose up` can pull them. Source-only: deploy/compose/minio and
-# deploy/compose/mc (no FROM minio/minio or minio/mc).
-# Org packages start private. PATCH visibility is attempted; GitHub returns
-# 404 for org containers, so a maintainer must flip Public once in the UI.
+# Builds the pinned MinIO CE server and mc images from source
+# (deploy/compose/minio, deploy/compose/mc) and pushes them from main. New org
+# packages start private; a maintainer sets them Public once in the UI.
 name: Publish MinIO CE image
 
 on:
@@ -36,6 +34,7 @@ env:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write

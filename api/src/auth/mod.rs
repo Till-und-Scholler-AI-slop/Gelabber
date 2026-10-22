@@ -332,7 +332,9 @@ async fn signed_in(
     session::revoke_current(state, previous.as_deref()).await?;
     // Expired-row housekeeping is separate from the targeted logout.
     session::revoke(&state.db, None).await?;
-    let session_token = session::create(&state.db, user.id, state.session_ttl).await?;
+    // The row starts with the idle window and slides from there
+    // (`session::touch`); the cookie carries the absolute lifetime.
+    let session_token = session::create(&state.db, user.id, state.session_idle).await?;
     let csrf_token = token::generate();
 
     let cookies = AppendHeaders([

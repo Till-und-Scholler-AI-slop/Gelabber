@@ -357,7 +357,7 @@ beforeEach(() => {
 });
 
 describe("bounded live publication recovery through the public SDK", () => {
-  it("bounds repeated live_busy failures without losing current captures, epochs, or audio parents", async () => {
+  it("bounds repeated publish failures without losing current captures, epochs, or audio parents", async () => {
     vi.useFakeTimers();
     const f = fixture();
     await f.start();
@@ -365,11 +365,10 @@ describe("bounded live publication recovery through the public SDK", () => {
     const originalDeadline = Date.now() + 10_000;
     const captures = {
       a: new Capture("mic", "audio"),
-      v: new Capture("camera", "video"),
       s: new Capture("screen", "video"),
       sa: new Capture("screen-audio", "audio"),
     };
-    for (const kind of ["a", "v", "s", "sa"] as const) {
+    for (const kind of ["a", "s", "sa"] as const) {
       await f.connection.publish(
         publication(kind, captures[kind], {
           ...(kind === "sa"
@@ -384,30 +383,29 @@ describe("bounded live publication recovery through the public SDK", () => {
     originalCurrent = false;
     vi.setSystemTime(originalDeadline + 1);
     const deadline = Date.now() + 10_000;
-    const live = new Capture("live", "video");
+    const camera = new Capture("camera", "video");
     f.intercept((method, data) =>
-      method === "produce" && (data as MediaRequests["produce"]).k === "l"
+      method === "produce" && (data as MediaRequests["produce"]).k === "v"
         ? Promise.reject(
-            Object.assign(new Error("live_busy"), { code: "live_busy" }),
+            Object.assign(new Error("forbidden"), { code: "forbidden" }),
           )
         : undefined,
     );
     for (let attempt = 0; attempt < 8; attempt += 1) {
       await expect(
         f.connection.publish(
-          publication("l", live, {
-            lc: GENERATION,
+          publication("v", camera, {
             deadlineEpochMs: deadline,
             isCurrent: () => true,
           }),
         ),
-      ).rejects.toMatchObject({ code: "live_busy" });
-      expect(f.connection.sender("l")).toBeUndefined();
+      ).rejects.toMatchObject({ code: "forbidden" });
+      expect(f.connection.sender("v")).toBeUndefined();
       expect(f.connection.sender("sa")!.epoch).toBe(EPOCH);
       expect(
         f.device.transports
           .flatMap((t) => t.producers)
-          .filter((p) => p.track === live.native()),
+          .filter((p) => p.track === camera.native()),
       ).toEqual([]);
     }
     expect(recv.closed).toBe(false);
@@ -438,23 +436,23 @@ describe("bounded live publication recovery through the public SDK", () => {
       f.requests.filter(
         (r) =>
           r.method === "produce" &&
-          (r.data as MediaRequests["produce"]).k === "l",
+          (r.data as MediaRequests["produce"]).k === "v",
       ),
     ).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           deadlineEpochMs: deadline,
-          data: expect.objectContaining({ epoch: EPOCH, lc: GENERATION }),
+          data: expect.objectContaining({ epoch: EPOCH }),
         }),
       ]),
     );
     expect(f.onError).not.toHaveBeenCalled();
     f.intercept(undefined);
     await f.connection.publish(
-      publication("l", live, { lc: GENERATION, deadlineEpochMs: deadline }),
+      publication("v", camera, { deadlineEpochMs: deadline }),
     );
-    expect(f.connection.sender("l")!.track).toBe(live.native());
-    expect(live.stop).not.toHaveBeenCalled();
+    expect(f.connection.sender("v")!.track).toBe(camera.native());
+    expect(camera.stop).not.toHaveBeenCalled();
   });
 
   it("passes one absolute deadline through fresh transport, native connect, and producer RPCs", async () => {
@@ -475,7 +473,7 @@ describe("bounded live publication recovery through the public SDK", () => {
     };
     const deadline = Date.now() + 10_000;
     await f.connection.publish(
-      publication("l", new Capture("live", "video"), {
+      publication("s", new Capture("live", "video"), {
         deadlineEpochMs: deadline,
       }),
     );
@@ -492,7 +490,7 @@ describe("bounded live publication recovery through the public SDK", () => {
     const capture = new Capture("live", "video");
     await expect(
       f.connection.publish(
-        publication("l", capture, {
+        publication("s", capture, {
           deadlineEpochMs: Date.now() - 1,
         }),
       ),
@@ -512,7 +510,7 @@ describe("bounded live publication recovery through the public SDK", () => {
     send.produce.mockImplementationOnce(() => pending.promise);
     const capture = new Capture("live", "video");
     const publishing = f.connection.publish(
-      publication("l", capture, { deadlineEpochMs: Date.now() + 25 }),
+      publication("s", capture, { deadlineEpochMs: Date.now() + 25 }),
     );
     const rejected = expect(publishing).rejects.toMatchObject({
       code: "sdk_timeout",
@@ -526,7 +524,7 @@ describe("bounded live publication recovery through the public SDK", () => {
     pending.resolve(late);
     await tick();
     expect(late.closed).toBe(true);
-    expect(f.connection.sender("l")).toBeUndefined();
+    expect(f.connection.sender("s")).toBeUndefined();
     expect(capture.stop).not.toHaveBeenCalled();
   });
 
@@ -534,18 +532,15 @@ describe("bounded live publication recovery through the public SDK", () => {
     const f = fixture();
     await f.start();
     const capture = new Capture("live", "video");
-    const old = await f.connection.publish(
-      publication("l", capture, { lc: GENERATION }),
-    );
+    const old = await f.connection.publish(publication("s", capture));
     const pending = deferred<{ producerId: string }>();
     f.intercept((method) =>
       method === "produce" ? pending.promise : undefined,
     );
     let current = true;
     const publishing = f.connection.publish(
-      publication("l", capture, {
+      publication("s", capture, {
         epoch: NEXT_EPOCH,
-        lc: NEXT_EPOCH,
         isCurrent: () => current,
       }),
     );
@@ -559,19 +554,19 @@ describe("bounded live publication recovery through the public SDK", () => {
     expect(f.calls("closeProducer")).toContainEqual({
       producerId: "stale-server-live",
     });
-    expect(f.connection.sender("l")).toBe(old);
+    expect(f.connection.sender("s")).toBe(old);
     f.intercept(undefined);
     const next = await f.connection.publish(
-      publication("l", capture, { epoch: NEXT_EPOCH, lc: NEXT_EPOCH }),
+      publication("s", capture, { epoch: NEXT_EPOCH }),
     );
-    await f.connection.closeSource("l", old.producerId);
-    await f.connection.closeSource("l", "stale-server-live");
-    expect(f.connection.sender("l")).toBe(next);
+    await f.connection.closeSource("s", old.producerId);
+    await f.connection.closeSource("s", "stale-server-live");
+    expect(f.connection.sender("s")).toBe(next);
     expect(f.calls("closeProducer")).not.toContainEqual({
       producerId: next.producerId,
     });
-    await f.connection.closeSource("l", next.producerId);
-    expect(f.connection.sender("l")).toBeUndefined();
+    await f.connection.closeSource("s", next.producerId);
+    expect(f.connection.sender("s")).toBeUndefined();
     expect(capture.stop).not.toHaveBeenCalled();
   });
 
@@ -586,7 +581,7 @@ describe("bounded live publication recovery through the public SDK", () => {
     const capture = new Capture("live", "video");
     let current = true;
     const publishing = f.connection.publish(
-      publication("l", capture, { isCurrent: () => current }),
+      publication("s", capture, { isCurrent: () => current }),
     );
     const rejected = expect(publishing).rejects.toMatchObject({
       code: "publication_cancelled",
@@ -602,7 +597,7 @@ describe("bounded live publication recovery through the public SDK", () => {
     await rejected;
     expect(late.closed).toBe(true);
     expect(f.calls("closeProducer")).toContainEqual({ producerId: late.id });
-    expect(f.connection.sender("l")).toBeUndefined();
+    expect(f.connection.sender("s")).toBeUndefined();
     expect(capture.stop).not.toHaveBeenCalled();
   });
 
@@ -620,7 +615,7 @@ describe("bounded live publication recovery through the public SDK", () => {
     const capture = new Capture("live", "video"),
       deadline = Date.now() + 100;
     const publishing = f.connection.publish(
-      publication("l", capture, { deadlineEpochMs: deadline }),
+      publication("s", capture, { deadlineEpochMs: deadline }),
     );
     const rejected = expect(publishing).rejects.toMatchObject({
       code: "live_recovery_timeout",
@@ -661,7 +656,7 @@ describe("bounded live publication recovery through the public SDK", () => {
     );
     const deadline = Date.now() + 100;
     const publishing = f.connection.publish(
-      publication("l", capture, { deadlineEpochMs: deadline }),
+      publication("s", capture, { deadlineEpochMs: deadline }),
     );
     const rejected = expect(publishing).rejects.toMatchObject({
       code: "live_recovery_timeout",
@@ -682,7 +677,7 @@ describe("bounded live publication recovery through the public SDK", () => {
       true,
     );
     expect(f.calls("produce")).toHaveLength(16);
-    expect(f.connection.sender("l")).toBeUndefined();
+    expect(f.connection.sender("s")).toBeUndefined();
     expect(capture.stop).not.toHaveBeenCalled();
   });
 
@@ -702,14 +697,14 @@ describe("bounded live publication recovery through the public SDK", () => {
     f.intercept((method) =>
       method === "produce"
         ? Promise.reject(
-            Object.assign(new Error("live_busy"), { code: "live_busy" }),
+            Object.assign(new Error("forbidden"), { code: "forbidden" }),
           )
         : undefined,
     );
-    const live = new Capture("live", "video");
+    const camera = new Capture("camera", "video");
     await expect(
-      f.connection.publish(publication("l", live)),
-    ).rejects.toMatchObject({ code: "live_busy" });
+      f.connection.publish(publication("v", camera)),
+    ).rejects.toMatchObject({ code: "forbidden" });
     f.intercept(undefined);
     for (let count = 0; count < 15; count++) {
       await f.connection.publish(
@@ -721,7 +716,7 @@ describe("bounded live publication recovery through the public SDK", () => {
     f.device.configureSend = (transport) =>
       transport.produce.mockImplementationOnce(() => pending.promise);
     const publishing = f.connection.publish(
-      publication("l", live, { deadlineEpochMs: Date.now() + 25 }),
+      publication("v", camera, { deadlineEpochMs: Date.now() + 25 }),
     );
     const rejected = expect(publishing).rejects.toMatchObject({
       code: "sdk_timeout",
@@ -747,7 +742,7 @@ describe("bounded live publication recovery through the public SDK", () => {
     await tick();
     expect(late.closed).toBe(true);
     expect(f.connection.senders()).toEqual([]);
-    for (const capture of [mic, screen, audio, live])
+    for (const capture of [mic, screen, audio, camera])
       expect(capture.stop).not.toHaveBeenCalled();
   });
 });
@@ -1102,7 +1097,7 @@ describe("public mediasoup connection lifecycle", () => {
       oldScreenId = screenSender.producerId;
     old.failNativeSendOnce = true;
     await expect(
-      f.connection.publish(publication("l", live, { epoch: NEXT_EPOCH })),
+      f.connection.publish(publication("s", live, { epoch: NEXT_EPOCH })),
     ).rejects.toMatchObject({ name: "OperationError" });
     expect(old.nativeSendTainted).toBe(true);
     expect(old.closed).toBe(true);
@@ -1158,7 +1153,7 @@ describe("public mediasoup connection lifecycle", () => {
     });
     expect(f.connection.sender("a")).toBeDefined();
     const retry = await f.connection.publish(
-      publication("l", live, { epoch: NEXT_EPOCH }),
+      publication("s", live, { epoch: NEXT_EPOCH }),
     );
     expect(retry.track).toBe(live.native());
     expect(retry.epoch).toBe(NEXT_EPOCH);
@@ -1188,7 +1183,7 @@ describe("public mediasoup connection lifecycle", () => {
       transport.failNativeSendOnce = true;
     };
     await expect(
-      f.connection.publish(publication("l", new Capture("live", "video"))),
+      f.connection.publish(publication("s", new Capture("live", "video"))),
     ).rejects.toMatchObject({ name: "OperationError" });
     expect(old.closed).toBe(true);
     expect(f.device.transports).toHaveLength(3);
@@ -1212,7 +1207,7 @@ describe("public mediasoup connection lifecycle", () => {
     );
     old.failNativeSendOnce = true;
     await expect(
-      f.connection.publish(publication("l", live)),
+      f.connection.publish(publication("s", live)),
     ).rejects.toMatchObject({
       name: "OperationError",
     });
@@ -1223,7 +1218,7 @@ describe("public mediasoup connection lifecycle", () => {
     expect(old.closed).toBe(true);
     expect(f.calls("closeTransport")).toEqual([{ transportId: old.id }]);
     expect(f.device.transports).toHaveLength(3);
-    const retry = await f.connection.publish(publication("l", live));
+    const retry = await f.connection.publish(publication("s", live));
     expect(retry.track).toBe(live.native());
     expect(f.device.transports).toHaveLength(3);
     expect(mic.stop).not.toHaveBeenCalled();
@@ -1247,14 +1242,14 @@ describe("public mediasoup connection lifecycle", () => {
       old.nativeSendTainted = true;
       old.produce.mockRejectedValueOnce(failure);
       await expect(
-        f.connection.publish(publication("l", live)),
+        f.connection.publish(publication("s", live)),
       ).rejects.toMatchObject({
         name: "OperationError",
       });
       expect(old.closed).toBe(true);
       expect(f.device.transports).toHaveLength(3);
       expect(f.calls("closeTransport")).toEqual([{ transportId: old.id }]);
-      const retry = await f.connection.publish(publication("l", live));
+      const retry = await f.connection.publish(publication("s", live));
       expect(retry.track).toBe(live.native());
       expect(f.device.transports).toHaveLength(3);
       expect(f.device.transports[0].closed).toBe(false);
@@ -1273,7 +1268,7 @@ describe("public mediasoup connection lifecycle", () => {
       transport.produce.mockImplementationOnce(() => new Promise(() => {}));
     };
     const publishing = f.connection.publish(
-      publication("l", new Capture("live", "video")),
+      publication("s", new Capture("live", "video")),
     );
     const rejected = expect(publishing).rejects.toMatchObject({
       code: "sdk_timeout",
@@ -1302,7 +1297,7 @@ describe("public mediasoup connection lifecycle", () => {
       transport.produce.mockImplementationOnce(() => pending.promise);
     };
     const publishing = f.connection.publish(
-      publication("l", new Capture("live", "video")),
+      publication("s", new Capture("live", "video")),
     );
     const rejected = expect(publishing).rejects.toMatchObject({
       code: "connection_closed",
@@ -1393,9 +1388,9 @@ describe("public mediasoup connection lifecycle", () => {
     expect(capture.stop).not.toHaveBeenCalled();
     send.productionErrors.push(new Error("network disconnected"));
     await expect(
-      f.connection.publish(publication("l", capture)),
+      f.connection.publish(publication("v", capture)),
     ).rejects.toThrow("network disconnected");
-    expect(f.connection.sender("l")).toBeUndefined();
+    expect(f.connection.sender("v")).toBeUndefined();
     expect(f.calls("produce")).toHaveLength(2);
   });
 
@@ -1729,7 +1724,7 @@ describe("public mediasoup connection lifecycle", () => {
     const settled = Promise.allSettled(queued);
     await tick();
     await expect(
-      f.connection.publish(publication("l", capture)),
+      f.connection.publish(publication("s", capture)),
     ).rejects.toMatchObject({ code: "request_overflow" });
     f.connection.close();
     const results = await settled;
@@ -1917,13 +1912,25 @@ describe("video codec negotiation", () => {
     clockRate: 90000,
     parameters: { "packetization-mode": 1, "profile-level-id": profile },
   });
-  const withH264: RtpCapabilities = {
-    codecs: [...capabilities.codecs!, h264("42001f"), h264("42e01f")],
+  const av1 = {
+    kind: "video" as const,
+    mimeType: "video/AV1",
+    preferredPayloadType: 45,
+    clockRate: 90000,
   };
-  function negotiating(hardware: boolean, video: string[]) {
+  const withH264: RtpCapabilities = {
+    codecs: [...capabilities.codecs!, h264("42001f"), h264("42e01f"), av1],
+  };
+  function negotiating(
+    hardware: boolean | { av1: boolean; h264: boolean },
+    video: string[],
+  ) {
     const onRepublished = vi.fn();
     const f = fixture("voice", undefined, {
-      hardwareH264: async () => hardware,
+      hardwareVideo: async () =>
+        typeof hardware === "boolean"
+          ? { av1: false, h264: hardware }
+          : hardware,
       onRepublished,
     });
     f.device.sendRtpCapabilities = withH264;
@@ -1940,7 +1947,9 @@ describe("video codec negotiation", () => {
       .map(([options]) => options);
 
   it("keeps VP8 when the server does not name codecs", async () => {
-    const f = fixture("voice", undefined, { hardwareH264: async () => true });
+    const f = fixture("voice", undefined, {
+      hardwareVideo: async () => ({ av1: true, h264: true }),
+    });
     f.device.sendRtpCapabilities = withH264;
     await f.start();
     await f.connection.publish(publication("v", new Capture("cam", "video")));
@@ -1960,6 +1969,78 @@ describe("video codec negotiation", () => {
     await sw.start();
     await sw.connection.publish(publication("v", new Capture("cam", "video")));
     expect(sent(sw)[0].codec?.mimeType).toBe("video/VP8");
+  });
+
+  it("sends AV1 as one stream where it is encoded in hardware", async () => {
+    const all = ["video/vp8", "video/h264", "video/av1"];
+    const hw = negotiating({ av1: true, h264: true }, all);
+    await hw.start();
+    await hw.connection.publish(publication("v", new Capture("cam", "video")));
+    expect(sent(hw)[0].codec).toEqual(av1);
+    // mediasoup forwards AV1 as one stream or SVC, never simulcast.
+    expect(sent(hw)[0].encodings).toBeUndefined();
+    // AV1 on the CPU: H.264 in hardware, else VP8.
+    const h264Only = negotiating({ av1: false, h264: true }, all);
+    await h264Only.start();
+    await h264Only.connection.publish(
+      publication("v", new Capture("cam", "video")),
+    );
+    expect(sent(h264Only)[0].codec).toEqual(h264("42e01f"));
+    const sw = negotiating({ av1: false, h264: false }, all);
+    await sw.start();
+    await sw.connection.publish(publication("v", new Capture("cam", "video")));
+    expect(sent(sw)[0].codec?.mimeType).toBe("video/VP8");
+  });
+
+  it("leaves AV1 when someone joins who cannot decode it", async () => {
+    const f = negotiating({ av1: true, h264: true }, [
+      "video/vp8",
+      "video/h264",
+      "video/av1",
+    ]);
+    await f.start();
+    await f.connection.publish(publication("v", new Capture("cam", "video")));
+    expect(sent(f)[0].codec?.mimeType).toBe("video/AV1");
+    f.connection.handleEvent({
+      op: "codecs",
+      video: ["video/vp8", "video/h264"],
+      revision: 2,
+    });
+    await vi.waitFor(() => expect(f.onRepublished).toHaveBeenCalledTimes(1));
+    expect(sent(f).at(-1)!.codec).toEqual(h264("42e01f"));
+    expect(sent(f).at(-1)!.encodings).toHaveLength(2);
+    expect(f.onError).not.toHaveBeenCalled();
+  });
+
+  it("offers to receive AV1 only where it is decoded in hardware", async () => {
+    const av1Rtx = {
+      kind: "video" as const,
+      mimeType: "video/rtx",
+      preferredPayloadType: 46,
+      clockRate: 90000,
+      parameters: { apt: 45 },
+    };
+    const receivable: RtpCapabilities = {
+      codecs: [...withH264.codecs!, av1Rtx],
+    };
+    const announced = async (decoding: boolean) => {
+      const f = fixture("voice", undefined, {
+        hardwareAv1Decoding: async () => decoding,
+      });
+      f.device.recvRtpCapabilities = receivable;
+      await f.start();
+      const call = f.requests.find((r) => r.method === "capabilities");
+      return (call?.data as { rtp: RtpCapabilities }).rtp.codecs!.map(
+        (c) => c.mimeType,
+      );
+    };
+    expect(await announced(true)).toContain("video/AV1");
+    const software = await announced(false);
+    expect(software).not.toContain("video/AV1");
+    expect(software).toContain("video/H264");
+    expect(software.filter((m) => m === "video/rtx")).toHaveLength(
+      receivable.codecs!.filter((c) => c.mimeType === "video/rtx").length - 1,
+    );
   });
 
   it("sends a screen and its sound again when the room's codecs change", async () => {

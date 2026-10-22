@@ -159,7 +159,7 @@ const p = await import("./p.ts");
     // Edges of the tree itself, so a broken reader cannot pass vacuously:
     // one after a comment block, and none for a type-only import.
     expect(importsOf("auth/scope.ts")).toContain("auth/store.ts");
-    expect(importsOf("voice/session.ts")).toContain("auth/store.ts");
+    expect(importsOf("voice/sessionState.ts")).toContain("auth/store.ts");
     expect(importsOf("auth/release.ts")).toContain("voice/session.ts");
     expect(importsOf("auth/session.ts")).toContain("auth/store.ts");
     expect(importsOf("auth/session.ts")).not.toContain("auth/types.ts");

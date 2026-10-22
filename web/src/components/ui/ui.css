@@ -1,0 +1,1070 @@
+/* Shared primitives (components/ui) plus Modal and the toasts. A cascade
+   layer, so a Tailwind utility on a primitive still wins over its default. */
+@layer components {
+  /* Buttons */
+  .ui-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--lr-space-2);
+    min-height: var(--lr-control-md);
+    padding: 0 var(--lr-space-4);
+    border: 1px solid transparent;
+    border-radius: var(--lr-radius-sm);
+    font: var(--lr-type-ui);
+    text-align: center;
+    text-decoration: none;
+    cursor: pointer;
+    transition:
+      background-color var(--lr-dur-fast) var(--lr-ease-standard),
+      border-color var(--lr-dur-fast) var(--lr-ease-standard),
+      color var(--lr-dur-fast) var(--lr-ease-standard),
+      filter var(--lr-dur-fast) var(--lr-ease-standard),
+      scale var(--lr-dur-micro) var(--lr-ease-standard);
+  }
+  /* A press gives way a little, and springs back on release. */
+  .ui-button:active:not(:disabled),
+  .ui-icon-button:active:not(:disabled) {
+    scale: var(--lr-press-scale);
+  }
+  .ui-button svg {
+    flex-shrink: 0;
+  }
+  .ui-button--sm {
+    min-height: var(--lr-control-sm);
+    padding-inline: var(--lr-space-3);
+  }
+  .ui-button--lg {
+    min-height: 44px;
+    padding-inline: var(--lr-space-5);
+    font-size: 14px;
+  }
+  .ui-button--primary {
+    background: var(--lr-accent);
+    color: var(--lr-accent-ink);
+    font-weight: 600;
+  }
+  .ui-button--primary:hover:not(:disabled) {
+    filter: brightness(1.07);
+  }
+  .ui-button--secondary {
+    border-color: var(--lr-border-strong);
+    background: var(--lr-surface);
+    color: var(--lr-text);
+  }
+  .ui-button--secondary:hover:not(:disabled) {
+    background: var(--lr-hover);
+  }
+  .ui-button--ghost {
+    background: transparent;
+    color: var(--lr-text);
+  }
+  .ui-button--ghost:hover:not(:disabled) {
+    background: var(--lr-hover);
+  }
+  .ui-button--danger {
+    background: var(--lr-danger-bg);
+    color: var(--lr-on-danger);
+    font-weight: 600;
+  }
+  .ui-button--danger:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
+  .ui-button--danger-outline {
+    border-color: var(--lr-danger);
+    background: transparent;
+    color: var(--lr-danger);
+  }
+  .ui-button--danger-outline:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--lr-danger-bg) 14%, transparent);
+  }
+  /* Disabled reads as unavailable, not as a dimmed primary. A pending
+     button keeps its look: it is busy, not unavailable. */
+  .ui-button:disabled:not([aria-busy="true"]) {
+    border-color: var(--lr-border);
+    background: var(--lr-surface);
+    color: var(--lr-subtle);
+    filter: none;
+    cursor: not-allowed;
+  }
+  .ui-button[aria-busy="true"] {
+    cursor: progress;
+  }
+
+  .ui-icon-button {
+    display: inline-grid;
+    flex-shrink: 0;
+    place-items: center;
+    width: var(--lr-control-md);
+    height: var(--lr-control-md);
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--lr-radius-sm);
+    background: transparent;
+    color: var(--lr-muted);
+    cursor: pointer;
+    transition:
+      background-color var(--lr-dur-fast) var(--lr-ease-standard),
+      color var(--lr-dur-fast) var(--lr-ease-standard),
+      scale var(--lr-dur-micro) var(--lr-ease-standard);
+  }
+  .ui-icon-button--xs {
+    width: var(--lr-control-xs);
+    height: var(--lr-control-xs);
+  }
+  .ui-icon-button--sm {
+    width: var(--lr-control-sm);
+    height: var(--lr-control-sm);
+  }
+  .ui-icon-button--secondary {
+    border-color: var(--lr-border-strong);
+    background: var(--lr-surface);
+    color: var(--lr-text);
+  }
+  .ui-icon-button:hover:not(:disabled) {
+    background: var(--lr-hover);
+    color: var(--lr-text);
+  }
+  .ui-icon-button[aria-pressed="true"] {
+    background: var(--lr-accent);
+    color: var(--lr-accent-ink);
+  }
+  .ui-icon-button:disabled {
+    color: var(--lr-subtle);
+    cursor: not-allowed;
+  }
+
+  /* Copy controls: label and icon crossfade to "Kopiert" and a check in
+     the same spot (CopyLabel). */
+  .ui-copy-icon,
+  .ui-copy-label {
+    display: inline-grid;
+  }
+  .ui-copy-icon > *,
+  .ui-copy-label > * {
+    grid-area: 1 / 1;
+    transition:
+      opacity var(--lr-dur-fast) var(--lr-ease-standard),
+      scale var(--lr-dur-fast) var(--lr-ease-enter);
+  }
+  .ui-copy-label > :last-child {
+    justify-self: center;
+  }
+  :is(.ui-copy-icon, .ui-copy-label)[data-copied="false"] > :last-child,
+  :is(.ui-copy-icon, .ui-copy-label)[data-copied="true"] > :first-child {
+    opacity: 0;
+  }
+  .ui-copy-icon[data-copied="false"] > :last-child,
+  .ui-copy-icon[data-copied="true"] > :first-child {
+    scale: 0.6;
+  }
+  .ui-copy-icon[data-copied="true"] {
+    color: var(--lr-online-text);
+  }
+  .ui-button--primary .ui-copy-icon[data-copied="true"] {
+    color: inherit;
+  }
+
+  /* Form fields */
+  .ui-form-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lr-space-1_5);
+    min-width: 0;
+  }
+  .ui-label {
+    font: var(--lr-type-ui);
+    color: var(--lr-text);
+  }
+  .ui-hint,
+  .ui-field-error {
+    font: var(--lr-type-meta);
+    color: var(--lr-muted);
+  }
+  .ui-field-error {
+    color: var(--lr-danger);
+  }
+  .ui-field {
+    width: 100%;
+    min-width: 0;
+    min-height: var(--lr-control-md);
+    padding: 7px 11px;
+    border: 1px solid var(--lr-border-strong);
+    border-radius: var(--lr-radius-sm);
+    background: var(--lr-bg);
+    color: var(--lr-text);
+    font: var(--lr-type-body);
+    transition: border-color var(--lr-dur-fast) var(--lr-ease);
+  }
+  .ui-field::placeholder {
+    color: var(--lr-subtle);
+    opacity: 1;
+  }
+  .ui-field:focus {
+    border-color: var(--lr-focus);
+  }
+  .ui-field[aria-invalid="true"] {
+    border-color: var(--lr-danger);
+  }
+  .ui-field:disabled,
+  .ui-field[readonly] {
+    background: var(--lr-surface);
+  }
+  .ui-field:disabled {
+    color: var(--lr-subtle);
+    cursor: not-allowed;
+  }
+  @media (pointer: coarse) {
+    /* 16px keeps iOS from zooming into a focused field. */
+    .ui-field {
+      font-size: var(--lr-type-input-touch);
+    }
+  }
+  textarea.ui-field {
+    min-height: 88px;
+    resize: vertical;
+  }
+  .ui-select {
+    position: relative;
+    display: flex;
+    min-width: 0;
+  }
+  .ui-select select {
+    appearance: none;
+    padding-right: 34px;
+    cursor: pointer;
+  }
+  .ui-select > svg {
+    position: absolute;
+    top: 50%;
+    right: 11px;
+    translate: 0 -50%;
+    color: var(--lr-muted);
+    pointer-events: none;
+  }
+  .ui-password {
+    position: relative;
+    display: flex;
+  }
+  .ui-password .ui-field {
+    padding-right: 48px;
+  }
+  .ui-password__toggle {
+    position: absolute;
+    top: 50%;
+    right: 0;
+    width: 44px;
+    height: 44px;
+    max-height: 100%;
+    translate: 0 -50%;
+  }
+  /* Inside the field the state shows in the icon, not as a filled square. */
+  .ui-password__toggle:hover:not(:disabled),
+  .ui-password__toggle[aria-pressed="true"] {
+    background: transparent;
+    color: var(--lr-text);
+  }
+  .ui-caps-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--lr-space-1_5);
+    font: var(--lr-type-meta);
+    color: var(--lr-warning);
+  }
+
+  /* Switch, checkbox, radio card */
+  .ui-switch {
+    appearance: none;
+    position: relative;
+    flex-shrink: 0;
+    width: 38px;
+    height: 22px;
+    margin: 0;
+    border: 1px solid var(--lr-border-strong);
+    border-radius: var(--lr-radius-full);
+    background: var(--lr-surface);
+    cursor: pointer;
+    transition:
+      background-color var(--lr-dur) var(--lr-ease-standard),
+      border-color var(--lr-dur) var(--lr-ease-standard);
+  }
+  .ui-switch::before {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--lr-muted);
+    transition:
+      translate var(--lr-dur) var(--lr-ease-standard),
+      background-color var(--lr-dur) var(--lr-ease-standard);
+  }
+  .ui-switch:checked {
+    border-color: var(--lr-accent);
+    background: var(--lr-accent);
+  }
+  .ui-switch:checked::before {
+    translate: 16px 0;
+    background: var(--lr-accent-ink);
+  }
+  .ui-switch:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .ui-check {
+    appearance: none;
+    display: inline-grid;
+    flex-shrink: 0;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    border: 1px solid var(--lr-border-strong);
+    border-radius: var(--lr-radius-xs);
+    background: var(--lr-bg);
+    cursor: pointer;
+  }
+  .ui-check[type="radio"] {
+    border-radius: 50%;
+  }
+  .ui-check::before {
+    content: "";
+    width: 12px;
+    height: 12px;
+    scale: 0;
+    background: var(--lr-accent-ink);
+    clip-path: polygon(14% 52%, 0 66%, 38% 100%, 100% 22%, 86% 8%, 38% 72%);
+    transition: scale var(--lr-dur-fast) var(--lr-ease);
+  }
+  .ui-check[type="radio"]::before {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    clip-path: none;
+  }
+  .ui-check:checked {
+    border-color: var(--lr-accent);
+    background: var(--lr-accent);
+  }
+  .ui-check:checked::before {
+    scale: 1;
+  }
+  .ui-check:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .ui-choice-row {
+    display: flex;
+    align-items: center;
+    gap: var(--lr-space-3);
+    min-height: var(--lr-control-md);
+    padding-block: var(--lr-space-1);
+    cursor: pointer;
+  }
+  .ui-choice-row--between {
+    justify-content: space-between;
+  }
+  .ui-choice-row:has(:disabled) {
+    cursor: not-allowed;
+  }
+  .ui-choice-text {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    font: var(--lr-type-ui);
+  }
+  .ui-choice-text small {
+    font: var(--lr-type-meta);
+    color: var(--lr-muted);
+  }
+  .ui-radio-card {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--lr-space-3);
+    min-height: 44px;
+    padding: var(--lr-space-3);
+    border: 1px solid var(--lr-border-strong);
+    border-radius: var(--lr-radius-md);
+    background: var(--lr-panel);
+    cursor: pointer;
+    transition:
+      background-color var(--lr-dur-fast) var(--lr-ease),
+      border-color var(--lr-dur-fast) var(--lr-ease);
+  }
+  .ui-radio-card:hover {
+    background: var(--lr-hover);
+  }
+  .ui-radio-card:has(:checked) {
+    border-color: var(--lr-accent);
+    background: var(--lr-selected);
+  }
+  .ui-radio-card:has(:disabled) {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .ui-radio-card .ui-check {
+    margin-top: 1px;
+  }
+
+  /* Badge and chips */
+  .ui-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--lr-space-1);
+    min-height: 20px;
+    padding: 0 var(--lr-space-1_5);
+    border-radius: var(--lr-radius-xs);
+    background: var(--lr-surface);
+    color: var(--lr-muted);
+    font: var(--lr-type-caps);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .ui-badge--accent {
+    background: color-mix(in srgb, var(--lr-accent) 16%, transparent);
+    color: var(--lr-accent-text);
+  }
+  .ui-badge--success {
+    background: color-mix(in srgb, var(--lr-online) 14%, transparent);
+    color: var(--lr-online-text);
+  }
+  .ui-badge--warning {
+    background: color-mix(in srgb, var(--lr-warning) 16%, transparent);
+    color: var(--lr-text);
+  }
+  .ui-badge--danger {
+    background: color-mix(in srgb, var(--lr-danger-bg) 18%, transparent);
+    color: var(--lr-danger);
+  }
+  .ui-badge--count {
+    min-width: 18px;
+    min-height: 18px;
+    justify-content: center;
+    padding: 0 5px;
+    border-radius: var(--lr-radius-full);
+    background: var(--lr-danger-bg);
+    color: var(--lr-on-danger);
+    font: 700 11px / 1 var(--lr-font);
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .ui-chip-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lr-space-2);
+  }
+  .ui-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--lr-control-sm);
+    padding: 0 var(--lr-space-3);
+    border: 1px solid var(--lr-border-strong);
+    border-radius: var(--lr-radius-full);
+    background: transparent;
+    color: var(--lr-text);
+    font: var(--lr-type-ui);
+    cursor: pointer;
+    transition:
+      background-color var(--lr-dur-fast) var(--lr-ease-standard),
+      border-color var(--lr-dur-fast) var(--lr-ease-standard),
+      scale var(--lr-dur-micro) var(--lr-ease-standard);
+  }
+  .ui-chip:active:not(:disabled) {
+    scale: var(--lr-press-scale);
+  }
+  .ui-chip:hover:not(:disabled) {
+    background: var(--lr-hover);
+  }
+  .ui-chip[aria-checked="true"] {
+    border-color: var(--lr-accent);
+    background: var(--lr-selected);
+    font-weight: 600;
+  }
+  .ui-chip:disabled {
+    color: var(--lr-subtle);
+    cursor: not-allowed;
+  }
+
+  /* Status lines and errors */
+  .ui-inline-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--lr-space-1_5);
+    min-height: 20px;
+    font: var(--lr-type-meta);
+    color: var(--lr-muted);
+  }
+  .ui-inline-status:empty {
+    min-height: 0;
+  }
+  .ui-inline-status--success {
+    color: var(--lr-online-text);
+  }
+  .ui-inline-status--error {
+    color: var(--lr-danger);
+  }
+  .ui-form-error,
+  .ui-load-error {
+    padding: 10px var(--lr-space-3);
+    border-left: 3px solid var(--lr-danger);
+    border-radius: var(--lr-radius-sm);
+    background: color-mix(in srgb, var(--lr-danger-bg) 18%, transparent);
+    color: var(--lr-danger);
+    font: var(--lr-type-body);
+  }
+  .ui-load-error {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--lr-space-3);
+  }
+  .ui-load-error p {
+    color: var(--lr-text);
+  }
+
+  /* Skeletons: visible only once loading takes longer than 150ms. */
+  .ui-skeleton {
+    opacity: 0;
+    animation: ui-skeleton-in var(--lr-dur) ease-out 150ms forwards;
+  }
+  .ui-skeleton-block {
+    border-radius: var(--lr-radius-sm);
+    background: linear-gradient(
+        90deg,
+        transparent 0,
+        color-mix(in srgb, var(--lr-text) 6%, transparent) 50%,
+        transparent 100%
+      )
+      0 0 / 200% 100% var(--lr-surface);
+    animation: ui-skeleton-shimmer 1.4s linear infinite;
+  }
+  .ui-skeleton-rows {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lr-space-4);
+  }
+  .ui-skeleton-row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--lr-space-3);
+  }
+  .ui-skeleton-row > div {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--lr-space-2);
+  }
+  .ui-skeleton-avatar {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+  }
+  .ui-skeleton-line {
+    height: 10px;
+  }
+  .ui-skeleton-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lr-space-3);
+    padding: var(--lr-space-5);
+    border: 1px solid var(--lr-border);
+    border-radius: var(--lr-radius-lg);
+    background: var(--lr-panel);
+  }
+  .ui-main-skeleton {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--lr-space-6);
+    min-height: 0;
+    padding: var(--lr-space-6);
+    overflow: hidden;
+  }
+  .ui-main-skeleton--chat {
+    justify-content: flex-end;
+  }
+  .ui-main-skeleton__cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+    gap: var(--lr-space-4);
+  }
+  /* The reduced-motion kill switches drop every animation, which would keep
+     a skeleton invisible. Showing it after the delay is no motion; a layered
+     !important outranks theirs. */
+  @media (prefers-reduced-motion: reduce) {
+    .ui-skeleton {
+      animation: ui-skeleton-in 0s 150ms forwards !important;
+    }
+  }
+  html[data-reduced-motion="true"] .ui-skeleton {
+    animation: ui-skeleton-in 0s 150ms forwards !important;
+  }
+  @keyframes ui-skeleton-in {
+    to {
+      opacity: 1;
+    }
+  }
+  /* What replaces a skeleton fades in over it (useAfterSkeleton). */
+  .ui-reveal {
+    animation: ui-reveal var(--lr-dur-fast) ease-out;
+  }
+  @keyframes ui-reveal {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes ui-skeleton-shimmer {
+    to {
+      background-position: -200% 0;
+    }
+  }
+
+  /* Popover, and its bottom sheet on phones */
+  .ui-popover {
+    position: fixed;
+    z-index: 60;
+    min-width: 180px;
+    max-width: min(360px, calc(var(--lr-100vw) - 16px));
+    max-height: calc(var(--lr-100dvh) - 16px);
+    margin: 0;
+    padding: var(--lr-space-2);
+    overflow: auto;
+    border: 1px solid var(--lr-border);
+    border-radius: var(--lr-radius-lg);
+    background: var(--lr-elevated);
+    color: var(--lr-text);
+    box-shadow: var(--lr-shadow-1);
+    /* Grows out of its anchor (transform-origin from Popover.tsx) and
+       shrinks back into it, a little faster. */
+    transition:
+      opacity var(--lr-dur) var(--lr-ease-enter),
+      scale var(--lr-dur) var(--lr-ease-enter);
+  }
+  .ui-popover[data-state="closed"] {
+    opacity: 0;
+    scale: 0.96;
+    transition-duration: var(--lr-dur-exit);
+    transition-timing-function: var(--lr-ease-exit);
+  }
+  .ui-sheet {
+    width: 100%;
+    max-width: none;
+    max-height: calc(var(--lr-100dvh) * 0.9);
+    margin: auto 0 0;
+    padding: var(--lr-space-2) var(--lr-space-4)
+      calc(var(--lr-space-4) + var(--lr-safe-bottom));
+    overflow: auto;
+    overscroll-behavior: contain;
+    border: 0;
+    border-top: 1px solid var(--lr-border);
+    border-radius: var(--lr-radius-xl) var(--lr-radius-xl) 0 0;
+    background: var(--lr-elevated);
+    color: var(--lr-text);
+    box-shadow: var(--lr-shadow-2);
+    transition:
+      translate var(--lr-dur-large) var(--lr-ease-enter),
+      opacity var(--lr-dur) var(--lr-ease-enter);
+  }
+  .ui-sheet::backdrop {
+    background: var(--lr-backdrop);
+    transition: opacity var(--lr-dur-large) var(--lr-ease-standard);
+  }
+  .ui-sheet[data-state="closed"] {
+    translate: 0 100%;
+    opacity: 0;
+    transition-duration: var(--lr-dur-large-exit);
+    transition-timing-function: var(--lr-ease-exit);
+  }
+  .ui-sheet[data-state="closed"]::backdrop {
+    opacity: 0;
+    transition-duration: var(--lr-dur-large-exit);
+  }
+  /* Closed sheets and dialogs (Popover, Modal) are closed at once, so the
+     page takes clicks and focus again; where a closed dialog can stay in
+     the top layer for its exit, it does, placed as when it was modal.
+     Elsewhere it goes at once. */
+  @supports (overlay: auto) {
+    :is(.ui-sheet, .gel-modal)[data-state="closed"] {
+      position: fixed;
+      inset: 0;
+      transition-property: opacity, scale, translate, display, overlay;
+      transition-behavior: allow-discrete;
+    }
+    :is(.ui-sheet, .gel-modal)[data-state="closed"]::backdrop {
+      pointer-events: none;
+    }
+  }
+  .ui-sheet__title {
+    margin-bottom: var(--lr-space-2);
+    padding-block: var(--lr-space-2);
+    border-radius: var(--lr-radius-sm);
+    font: var(--lr-type-title-sm);
+  }
+  .ui-sheet__grip {
+    width: 36px;
+    height: 4px;
+    margin: 0 auto var(--lr-space-2);
+    border-radius: var(--lr-radius-full);
+    background: var(--lr-border-strong);
+  }
+  @starting-style {
+    .ui-popover {
+      opacity: 0;
+      scale: 0.96;
+    }
+    .ui-sheet[open] {
+      translate: 0 100%;
+      opacity: 0;
+    }
+    .ui-sheet[open]::backdrop {
+      opacity: 0;
+    }
+  }
+
+  /* Modal: a centred card on wide screens, a bottom sheet on phones. */
+  .gel-modal {
+    flex-direction: column;
+    width: calc(100% - 2rem);
+    max-width: 28rem;
+    max-height: calc(
+      var(--lr-100dvh) - 32px - 2 *
+        max(var(--lr-safe-top), var(--lr-safe-bottom))
+    );
+    margin: auto;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid var(--lr-border);
+    border-radius: var(--lr-radius-xl);
+    background: var(--lr-elevated);
+    color: var(--lr-text);
+    box-shadow: var(--lr-shadow-2);
+    transition:
+      opacity var(--lr-dur-large) var(--lr-ease-enter),
+      scale var(--lr-dur-large) var(--lr-ease-enter),
+      translate var(--lr-dur-large) var(--lr-ease-enter);
+  }
+  .gel-modal[open] {
+    display: flex;
+  }
+  .gel-modal--wide {
+    max-width: 32rem;
+  }
+  .gel-modal::backdrop {
+    background: var(--lr-backdrop);
+    transition: opacity var(--lr-dur-large) var(--lr-ease-standard);
+  }
+  /* Leaving: closed and inert, it fades out (kept drawn, see .ui-sheet). */
+  .gel-modal[data-state="closed"] {
+    opacity: 0;
+    scale: 0.97;
+    transition-duration: var(--lr-dur-large-exit);
+    transition-timing-function: var(--lr-ease-exit);
+  }
+  .gel-modal[data-state="closed"]::backdrop {
+    opacity: 0;
+    transition-duration: var(--lr-dur-large-exit);
+  }
+  .gel-modal__header {
+    flex-shrink: 0;
+    padding: var(--lr-space-5) 64px var(--lr-space-3) var(--lr-space-6);
+  }
+  .gel-modal__header h2 {
+    font: var(--lr-type-title-sm);
+    overflow-wrap: anywhere;
+  }
+  .gel-modal__close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+  }
+  .gel-modal__body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--lr-space-5);
+    min-height: 0;
+    padding: var(--lr-space-2) var(--lr-space-6) var(--lr-space-6);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    font: var(--lr-type-body);
+  }
+  .gel-modal__footer {
+    display: flex;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--lr-space-2);
+    padding: var(--lr-space-3) var(--lr-space-6) var(--lr-space-4);
+    border-top: 1px solid var(--lr-border);
+  }
+  @starting-style {
+    .gel-modal[open] {
+      opacity: 0;
+      scale: 0.97;
+    }
+    .gel-modal[open]::backdrop {
+      opacity: 0;
+    }
+  }
+  @media (max-width: 639px) {
+    .gel-modal,
+    .gel-modal--wide {
+      width: 100%;
+      max-width: none;
+      max-height: calc(var(--lr-100dvh) * 0.9);
+      margin: auto 0 0;
+      border-width: 1px 0 0;
+      border-radius: var(--lr-radius-xl) var(--lr-radius-xl) 0 0;
+    }
+    .gel-modal__header {
+      padding-inline: var(--lr-space-4) 60px;
+    }
+    .gel-modal__close {
+      top: 8px;
+      right: 8px;
+    }
+    .gel-modal__body {
+      padding-inline: var(--lr-space-4);
+    }
+    /* Whatever ends the sheet clears the home indicator. */
+    .gel-modal:not(:has(> .gel-modal__footer)) > .gel-modal__body,
+    .gel-modal__footer {
+      padding-bottom: calc(var(--lr-space-4) + var(--lr-safe-bottom));
+    }
+    .gel-modal__footer {
+      padding-inline: var(--lr-space-4);
+    }
+    .gel-modal__footer > .ui-button {
+      flex: 1;
+    }
+    /* The bottom sheet rises and sinks instead. */
+    .gel-modal[data-state="closed"] {
+      opacity: 1;
+      scale: 1;
+      translate: 0 100%;
+    }
+    @starting-style {
+      .gel-modal[open] {
+        opacity: 1;
+        scale: 1;
+        translate: 0 100%;
+      }
+    }
+  }
+
+  /* Toasts: bottom right on desktop, bottom centre above the call dock and
+     the composer on phones. */
+  .gel-toasts {
+    --lr-toast-floor: var(--lr-safe-bottom);
+    position: fixed;
+    right: calc(16px + var(--lr-safe-right));
+    bottom: calc(16px + var(--lr-toast-floor));
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--lr-space-2);
+    width: min(380px, calc(var(--lr-100vw) - 32px));
+    pointer-events: none;
+  }
+  .gel-toasts__region {
+    display: flex;
+    flex-direction: column;
+    align-items: inherit;
+    gap: var(--lr-space-2);
+    width: 100%;
+  }
+  .ui-toast {
+    display: flex;
+    align-items: center;
+    gap: var(--lr-space-3);
+    width: 100%;
+    padding: var(--lr-space-3) var(--lr-space-2) var(--lr-space-3)
+      var(--lr-space-3);
+    border: 1px solid var(--lr-border);
+    border-radius: var(--lr-radius-lg);
+    background: var(--lr-elevated);
+    color: var(--lr-text);
+    box-shadow: var(--lr-shadow-2);
+    font: var(--lr-type-body);
+    pointer-events: auto;
+  }
+  /* Toasts rise into their stack and fade away, with a slight settle. */
+  .ui-toast,
+  .ui-message-toast {
+    transition:
+      opacity var(--lr-dur) var(--lr-ease-enter),
+      translate var(--lr-dur) var(--lr-ease-enter),
+      scale var(--lr-dur) var(--lr-ease-enter),
+      background-color var(--lr-dur-micro) var(--lr-ease-standard);
+  }
+  .ui-toast[data-state="closed"],
+  .ui-message-toast[data-state="closed"] {
+    opacity: 0;
+    scale: 0.98;
+    transition-duration: var(--lr-dur-exit);
+    transition-timing-function: var(--lr-ease-exit);
+  }
+  @starting-style {
+    .ui-toast {
+      opacity: 0;
+      translate: 0 8px;
+    }
+    /* New messages come in from the top edge they sit against. */
+    .ui-message-toast {
+      opacity: 0;
+      translate: 0 -8px;
+    }
+  }
+  .ui-toast--error {
+    border-left: 3px solid var(--lr-danger);
+  }
+  .ui-toast__icon {
+    flex-shrink: 0;
+  }
+  .ui-toast--error .ui-toast__icon {
+    color: var(--lr-danger);
+  }
+  .ui-toast__message {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .ui-toast__action {
+    margin-block: -6px;
+    color: var(--lr-accent-text);
+    font-weight: 600;
+  }
+  .ui-toast__close {
+    margin-block: -6px;
+  }
+
+  /* New messages: top right on desktop, a banner under the status bar on
+     phones. */
+  .gel-message-toasts {
+    position: fixed;
+    top: calc(64px + var(--lr-safe-top));
+    right: calc(16px + var(--lr-safe-right));
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    gap: var(--lr-space-2);
+    width: min(calc(var(--lr-100vw) - 32px), 22rem);
+    pointer-events: none;
+  }
+  .ui-message-toast {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--lr-space-3);
+    padding: var(--lr-space-3) var(--lr-space-10) var(--lr-space-3)
+      var(--lr-space-3);
+    border: 1px solid var(--lr-border);
+    border-radius: var(--lr-radius-lg);
+    background: var(--lr-elevated);
+    box-shadow: var(--lr-shadow-2);
+    pointer-events: auto;
+  }
+  .ui-message-toast__open {
+    position: static;
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--lr-text);
+    text-align: left;
+    cursor: pointer;
+  }
+  /* The whole card opens the conversation; the close button sits above. */
+  .ui-message-toast__open::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+  }
+  .ui-message-toast:hover {
+    background: color-mix(in srgb, var(--lr-elevated) 92%, var(--lr-text));
+  }
+  .ui-message-toast__open > span {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .ui-message-toast__where {
+    font: var(--lr-type-meta);
+    color: var(--lr-muted);
+  }
+  .ui-message-toast__who {
+    font: var(--lr-type-ui);
+    font-weight: 600;
+  }
+  .ui-message-toast__who small {
+    font-weight: 400;
+    font-size: inherit;
+    color: var(--lr-muted);
+  }
+  .ui-message-toast__preview {
+    font: var(--lr-type-body);
+    color: var(--lr-muted);
+  }
+  .ui-message-toast__close {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 1;
+  }
+  @media (pointer: coarse) {
+    /* Text stays clear of the 44px close button. */
+    .ui-message-toast {
+      padding-right: 56px;
+    }
+  }
+  /* In a conversation they sit above the composer and end where it ends,
+     clear of the member list beside it. The message list makes room for
+     them there (.lr-toast-space in chat.css). */
+  .app-shell-workspace .gel-toasts {
+    /* One composer line, for browsers without anchor positioning. */
+    bottom: calc(74px + var(--lr-toast-floor));
+  }
+  @supports (anchor-name: --lr-composer) {
+    .app-shell-workspace .gel-toasts {
+      right: calc(16px + anchor(--lr-composer right, var(--lr-safe-right)));
+      bottom: calc(12px + anchor(--lr-composer top, var(--lr-toast-floor)));
+    }
+  }
+  @media (max-width: 800px), (pointer: coarse) {
+    .gel-toasts {
+      left: calc(16px + var(--lr-safe-left));
+      align-items: center;
+      width: auto;
+      max-width: 420px;
+      margin-inline: auto;
+    }
+    /* On phones the bottom edge belongs to the call dock. */
+    .has-active-media .gel-toasts {
+      --lr-toast-floor: max(var(--lr-media-space), var(--lr-safe-bottom));
+    }
+    @supports (anchor-name: --lr-composer) {
+      /* Centred over the content column, clear of a sidebar beside it. */
+      .app-shell-workspace .gel-toasts {
+        left: calc(16px + anchor(--lr-main left, 0px));
+      }
+    }
+    .gel-message-toasts {
+      top: calc(8px + var(--lr-safe-top));
+      right: calc(8px + var(--lr-safe-right));
+      left: calc(8px + var(--lr-safe-left));
+      width: auto;
+    }
+  }
+}

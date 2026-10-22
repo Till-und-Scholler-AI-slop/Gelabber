@@ -154,18 +154,118 @@ export function ensureContrast(
   }
   return target;
 }
+/** A colour on the HSL wheel, as `#rrggbb`. */
+export function hsl(
+  hue: number,
+  saturation: number,
+  lightness: number,
+): string {
+  const k = (n: number) => (n + hue / 30) % 12;
+  const a = saturation * Math.min(lightness, 1 - lightness);
+  return (
+    "#" +
+    [0, 8, 4]
+      .map((n) =>
+        Math.round(
+          (lightness - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1))) * 255,
+        )
+          .toString(16)
+          .padStart(2, "0"),
+      )
+      .join("")
+  );
+}
+// Server tiles without artwork: muted hues that sit quietly next to the
+// accent. Dark themes use deep tints, light themes pale ones.
+const TILE_HUES = [18, 42, 88, 145, 188, 214, 258, 322];
+/**
+ * Every colour the interface derives from a theme's eight editable ones.
+ * The accent stays a fill (buttons, switches, markers); text and icons in
+ * the accent colour use `accentText`, which is darkened or lightened until
+ * it reads on every surface.
+ */
+export function derivedColors(theme: ThemeDefinition) {
+  const c = theme.colors,
+    dark = theme.mode === "dark";
+  const elevated = dark
+    ? mix(c.panel, c.text, 0.04)
+    : mix(c.background, "#ffffff", 0.6);
+  const selected = mix(c.panel, c.accent, 0.18);
+  const hover = mix(c.panel, c.text, 0.08);
+  const online = ensureContrast(
+    dark ? "#85d69b" : "#287a45",
+    [c.background, c.panel, c.surface],
+    3,
+  );
+  const accentText = ensureContrast(c.accent, [
+    c.background,
+    c.panel,
+    c.surface,
+    selected,
+  ]);
+  const muted = ensureContrast(c.muted, [c.panel, c.surface, hover]);
+  return {
+    elevated,
+    selected,
+    hover,
+    muted,
+    subtle: ensureContrast(mix(muted, c.background, 0.25), [c.panel, elevated]),
+    borderStrong: ensureContrast(
+      mix(c.border, c.text, 0.35),
+      [c.background, c.panel, c.surface, elevated],
+      3,
+    ),
+    accentInk: readableInk(c.accent),
+    accentText,
+    online,
+    onlineText: ensureContrast(online, [c.panel, c.surface]),
+    warning: ensureContrast("#d8a657", [c.background, c.panel, c.surface], 3),
+    danger: ensureContrast(dark ? "#f39b98" : "#a12b29", [
+      c.background,
+      c.panel,
+      c.surface,
+    ]),
+    dangerBg: dark ? "#8f302d" : "#b33b38",
+    tiles: TILE_HUES.map((hue) => {
+      const tile = dark ? hsl(hue, 0.3, 0.3) : hsl(hue, 0.45, 0.85);
+      for (let step = 0; step <= 100; step += 5) {
+        const next = mix(tile, c.background, step / 100);
+        if (contrast(c.text, next) >= 4.5) return next;
+      }
+      return c.background;
+    }),
+  };
+}
 export function contrastIssues(theme: ThemeDefinition): string[] {
   const c = theme.colors,
+    d = derivedColors(theme),
     backgrounds = [c.background, c.panel, c.surface, c.rail];
   const issues = [];
   if (backgrounds.some((bg) => contrast(c.text, bg) < 4.5))
     issues.push("Text ist auf mindestens einer Fläche schwer lesbar.");
   if (backgrounds.some((bg) => contrast(c.muted, bg) < 4.5))
     issues.push("Sekundärtext braucht mehr Kontrast.");
-  if (backgrounds.some((bg) => contrast(c.accent, bg) < 3))
-    issues.push("Die Akzentfarbe hebt sich zu wenig ab.");
+  if (contrast(d.accentInk, c.accent) < 4.5)
+    issues.push("Schrift auf der Akzentfarbe ist schwer lesbar.");
+  if (
+    [c.background, c.panel, c.surface, d.selected].some(
+      (bg) => contrast(d.accentText, bg) < 4.5,
+    )
+  )
+    issues.push("Links in der Akzentfarbe heben sich zu wenig ab.");
+  if (
+    [c.background, c.panel, c.surface, d.elevated].some(
+      (bg) => contrast(d.borderStrong, bg) < 3,
+    )
+  )
+    issues.push("Rahmen von Eingabefeldern heben sich zu wenig ab.");
   return issues;
 }
+/**
+ * Raises text and secondary text to 4.5:1. The accent is left alone unless
+ * neither dark nor light ink is readable on it: it is a fill, and accent
+ * text gets its own derived colour.
+ */
 export function fixContrast(theme: ThemeDefinition): ThemeDefinition {
   const colors = { ...theme.colors };
   const backgrounds = [
@@ -176,11 +276,26 @@ export function fixContrast(theme: ThemeDefinition): ThemeDefinition {
   ];
   colors.text = ensureContrast(colors.text, backgrounds);
   colors.muted = ensureContrast(colors.muted, backgrounds);
-  colors.accent = ensureContrast(colors.accent, backgrounds, 3);
+  const ink = readableInk(colors.accent);
+  if (contrast(ink, colors.accent) < 4.5) {
+    const away = ink === "#ffffff" ? "#000000" : "#ffffff";
+    const accent = colors.accent;
+    for (let step = 1; step <= 100; step++) {
+      colors.accent = mix(accent, away, step / 100);
+      if (contrast(readableInk(colors.accent), colors.accent) >= 4.5) break;
+    }
+  }
   return { ...theme, colors };
 }
+const RADII: Record<ThemeStyle, number[]> = {
+  clear: [3, 5, 7, 10, 14],
+  soft: [6, 8, 12, 16, 20],
+  terminal: [1, 2, 2, 2, 3],
+};
 export function themeVariables(theme: ThemeDefinition): Record<string, string> {
-  const c = theme.colors;
+  const c = theme.colors,
+    d = derivedColors(theme),
+    dark = theme.mode === "dark";
   const neutral =
     theme.mode === "dark"
       ? [
@@ -209,6 +324,7 @@ export function themeVariables(theme: ThemeDefinition): Record<string, string> {
           c.text,
           c.text,
         ];
+  const [xs, sm, md, lg, xl] = RADII[theme.style].map((r) => `${r}px`);
   return {
     ...Object.fromEntries(
       [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950].map((shade, i) => [
@@ -216,54 +332,60 @@ export function themeVariables(theme: ThemeDefinition): Record<string, string> {
         neutral[i],
       ]),
     ),
+    ...Object.fromEntries(
+      d.tiles.map((tile, i) => [`--lr-tile-${i + 1}`, tile]),
+    ),
     "--font-sans": "var(--lr-font)",
-    "--radius-sm": "var(--lr-radius-small)",
-    "--radius-md": "var(--lr-radius-small)",
-    "--radius-lg": "var(--lr-radius)",
-    "--radius-xl": "var(--lr-radius)",
+    // Tailwind's rounded-* utilities follow the theme style too.
+    "--radius-xs": "var(--lr-radius-xs)",
+    "--radius-sm": "var(--lr-radius-sm)",
+    "--radius-md": "var(--lr-radius-sm)",
+    "--radius-lg": "var(--lr-radius-sm)",
+    "--radius-xl": "var(--lr-radius-md)",
+    "--radius-2xl": "var(--lr-radius-xl)",
+    "--radius-3xl": "var(--lr-radius-xl)",
     "--lr-bg": c.background,
     "--lr-panel": c.panel,
     "--lr-surface": c.surface,
     "--lr-rail": c.rail,
+    "--lr-elevated": d.elevated,
     "--lr-text": c.text,
-    "--lr-muted": c.muted,
+    "--lr-muted": d.muted,
+    "--lr-subtle": d.subtle,
     "--lr-border": c.border,
+    "--lr-border-strong": d.borderStrong,
     "--lr-accent": c.accent,
-    "--lr-accent-ink": readableInk(c.accent),
-    "--lr-hover": mix(c.panel, c.text, 0.08),
-    "--lr-selected": mix(c.panel, c.accent, 0.18),
-    "--lr-online": ensureContrast(
-      theme.mode === "dark" ? "#85d69b" : "#287a45",
-      [c.background, c.panel, c.surface],
-      3,
-    ),
-    "--lr-away": ensureContrast(
-      "#d8a657",
-      [c.background, c.panel, c.surface],
-      3,
-    ),
-    "--lr-danger": ensureContrast(
-      theme.mode === "dark" ? "#f39b98" : "#a12b29",
-      [c.background, c.panel, c.surface],
-      4.5,
-    ),
-    "--lr-danger-bg": theme.mode === "dark" ? "#8f302d" : "#b33b38",
+    "--lr-accent-ink": d.accentInk,
+    "--lr-accent-text": d.accentText,
+    "--lr-focus": d.accentText,
+    "--lr-hover": d.hover,
+    "--lr-selected": d.selected,
+    "--lr-online": d.online,
+    "--lr-online-text": d.onlineText,
+    "--lr-warning": d.warning,
+    "--lr-danger": d.danger,
+    "--lr-danger-bg": d.dangerBg,
+    "--lr-on-danger": "#ffffff",
+    "--lr-backdrop": dark ? "rgb(9 12 13 / 0.72)" : "rgb(37 40 41 / 0.45)",
     "--lr-font":
       theme.style === "terminal"
         ? 'ui-monospace, "Cascadia Code", monospace'
         : 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    "--lr-radius":
-      theme.style === "soft"
-        ? "14px"
-        : theme.style === "terminal"
-          ? "2px"
-          : "7px",
-    "--lr-radius-small":
-      theme.style === "soft"
-        ? "8px"
-        : theme.style === "terminal"
-          ? "1px"
-          : "4px",
-    "--lr-shadow": theme.style === "soft" ? "0 6px 22px #00000012" : "none",
+    "--lr-radius-xs": xs,
+    "--lr-radius-sm": sm,
+    "--lr-radius-md": md,
+    "--lr-radius-lg": lg,
+    "--lr-radius-xl": xl,
+    // Older names, still used across the stylesheets.
+    "--lr-radius": md,
+    "--lr-radius-small": sm,
+    "--lr-shadow-1": dark
+      ? "0 8px 24px rgb(0 0 0 / 0.32)"
+      : "0 8px 24px rgb(60 45 20 / 0.12)",
+    "--lr-shadow-2": dark
+      ? "0 18px 48px rgb(0 0 0 / 0.5)"
+      : "0 18px 48px rgb(60 45 20 / 0.18)",
+    "--lr-shadow-card":
+      theme.style === "soft" ? "0 6px 22px #00000012" : "none",
   };
 }

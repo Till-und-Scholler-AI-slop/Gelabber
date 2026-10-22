@@ -1,5 +1,5 @@
 //! Shared by the integration tests: a mediasoup 0.29 router configured like
-//! the media gateway (media/src/sfu.rs) and the event loop that answers native
+//! the media gateway (media/src/sfu/) and the event loop that answers native
 //! transport events the way the gateway does.
 #![allow(dead_code)]
 
@@ -21,7 +21,7 @@ use std::{
 };
 use tokio::runtime::Handle;
 
-/// Copy of `router_codecs` in media/src/sfu.rs (v0.4.0).
+/// Copy of `router_codecs` in media/src/sfu/codecs.rs (v0.4.0).
 pub fn router_codecs() -> Vec<RtpCodecCapability> {
     let feedback = json!([{"type":"nack"},{"type":"nack","parameter":"pli"},{"type":"ccm","parameter":"fir"},{"type":"goog-remb"},{"type":"transport-cc"}]);
     let mut codecs = vec![
@@ -44,7 +44,7 @@ pub fn router_codecs() -> Vec<RtpCodecCapability> {
     serde_json::from_value(Value::Array(codecs)).unwrap()
 }
 
-/// Same checks as `validate_parameters` in media/src/sfu.rs.
+/// Same checks as `validate_parameters` in media/src/sfu/codecs.rs.
 pub fn validate_like_server(kind: &str, rtp: &RtpParameters) {
     assert!(
         !rtp.codecs.is_empty() && rtp.codecs.len() <= 16,
@@ -157,7 +157,7 @@ impl Server {
         }
     }
 
-    /// Mirrors `ClientFrame::CreateTransport` in media/src/sfu.rs.
+    /// Mirrors `ClientFrame::CreateTransport` in media/src/sfu/rpc.rs.
     pub async fn transport(&self) -> (WebRtcTransport, Value) {
         let mut options = WebRtcTransportOptions::new_with_server(self.webrtc.clone());
         options.enable_tcp = false;
@@ -277,7 +277,7 @@ fn answer(
             ..
         } => {
             let mut rtp: RtpParameters = serde_json::from_value(rtp_parameters).unwrap();
-            // As media/src/sfu.rs: a RID-only offer (simulcast without an
+            // As media/src/sfu/rpc.rs: a RID-only offer (simulcast without an
             // audio or single-layer section before it) carries no CNAME, and
             // the worker refuses Some("") but picks one for None.
             if rtp.rtcp.cname.as_deref() == Some("") {
@@ -437,10 +437,11 @@ pub fn h264_under_test(capabilities: &Value) -> bool {
     available
 }
 
-/// With GELABBER_EXPECT_ENCODER set, some outbound-rtp entry's
+/// With `variable` (GELABBER_EXPECT_ENCODER for H264,
+/// GELABBER_EXPECT_AV1_ENCODER) set, some outbound-rtp entry's
 /// `encoderImplementation` must contain it (e.g. "GStreamer x264enc").
-pub fn check_encoder(name: &str, stats: &Value) {
-    let Ok(expected) = std::env::var("GELABBER_EXPECT_ENCODER") else {
+pub fn check_encoder(name: &str, stats: &Value, variable: &str) {
+    let Ok(expected) = std::env::var(variable) else {
         return;
     };
     let found: Vec<String> = stats
@@ -457,11 +458,13 @@ pub fn check_encoder(name: &str, stats: &Value) {
     );
 }
 
-/// With GELABBER_EXPECT_DECODER set, some inbound-rtp entry of a consumer's
+/// With `variable` (GELABBER_EXPECT_DECODER for H264,
+/// GELABBER_EXPECT_AV1_DECODER) set, some inbound-rtp entry of a consumer's
 /// stats must name it as `decoderImplementation` (e.g. "GStreamer
-/// avdec_h264"), and `video_codecs` must report its element.
-pub fn check_decoder(name: &str, stats: &Value) {
-    let Ok(expected) = std::env::var("GELABBER_EXPECT_DECODER") else {
+/// avdec_h264"). For a GStreamer element (`element`, true where one is
+/// expected), `video_codecs` must report it under `codec` ("h264", "av1").
+pub fn check_decoder(name: &str, stats: &Value, variable: &str, codec: &str, element: bool) {
+    let Ok(expected) = std::env::var(variable) else {
         return;
     };
     let found: Vec<String> = stats["rtc"]
@@ -476,10 +479,49 @@ pub fn check_decoder(name: &str, stats: &Value) {
         found.iter().any(|i| i.contains(&expected)),
         "{name} decoder {found:?}, expected {expected}"
     );
+    if !element {
+        return;
+    }
     let codecs = gelabber_media_core::video_codecs().unwrap();
-    let element = codecs["h264"]["decoder"].as_str().unwrap_or_default();
+    let reported = codecs[codec]["decoder"].as_str().unwrap_or_default();
     assert!(
-        !element.is_empty() && expected.contains(element),
+        !reported.is_empty() && expected.contains(reported),
         "video_codecs {codecs}, expected {expected}"
     );
+}
+
+/// Builds `desktop/native/tests/<name>.cc`, plain C++ without the core's
+/// libraries, with the host's compiler (GELABBER_HOST_CXX, else c++) and
+/// runs it. False when there is no compiler.
+pub fn run_host_test(name: &str, what: &str) -> bool {
+    let native = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../native");
+    let compiler = std::env::var("GELABBER_HOST_CXX").unwrap_or_else(|_| "c++".to_owned());
+    let program = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let built = std::process::Command::new(&compiler)
+        .args(["-std=c++20", "-O2", "-I"])
+        .arg(native.join("src"))
+        .arg("-o")
+        .arg(&program)
+        .arg(native.join(format!("tests/{name}.cc")))
+        .output();
+    let built = match built {
+        Ok(built) => built,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("skipped: no C++ compiler {compiler:?} on this machine");
+            return false;
+        }
+        Err(error) => panic!("{compiler}: {error}"),
+    };
+    assert!(
+        built.status.success(),
+        "{compiler} on {name}.cc: {}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let run = std::process::Command::new(&program)
+        .output()
+        .expect("the built test");
+    let said = String::from_utf8_lossy(&run.stdout);
+    eprint!("{said}");
+    assert!(run.status.success(), "{what}:\n{said}");
+    true
 }

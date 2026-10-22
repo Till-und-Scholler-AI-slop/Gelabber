@@ -27,6 +27,19 @@ If a new `v*` name would miss that pattern, add the same protection by hand befo
 - After every merged hotfix on `main`, promptly open a sync PR from `main` (or a dedicated sync branch containing it) to the current `v*` branch. Preserve the hotfix commits so ancestry proves the sync; require the usual review and CI before merging. Feature branches then merge the updated version branch.
 - Keep fixes independently reviewable. Review and merge each focused fix before a release PR bundles it; a release bundle does not replace the individual reviews.
 
+## CI workflows (`.github/workflows`)
+
+Keep CI lean. Pull requests check only what is needed to merge safely.
+
+- **Pull requests:** fmt, clippy/lint, tests, build, and one representative integration check per area. Aim for under 15 minutes per workflow with a warm cache.
+- **After merge (push to `main`/`v*`) and releases:** packaging, installers, package repositories, signing and uploads. Do not run these on every PR.
+- **Manual diagnostics** (fault matrices, soak and stability loops) go in their own workflow, started by hand or by a PR label, not behind `if: inputs.*` steps in the PR gate (see `e2e-extended.yml`: label `e2e-extended`).
+- **Lists of scripts** go behind one entry point (e.g. `npm run test:checks`), not one CI line per file. CI and developers run the same command.
+- **New check:** say what it catches that existing checks miss. Add it to an existing job unless a parallel job saves wall time. Remove checks that a new one replaces.
+- **Every workflow** sets top-level `permissions`, by default `contents: read`, with jobs adding only what they need. Every job sets `timeout-minutes`. Actions stay pinned to commit SHAs (`workflow-pins.yml`).
+- **Caches** are saved only by pushes (`save-if`, `cache-to`). Pull requests only read them, because per-PR copies exceed the repository's cache quota.
+- **Comments** in workflows are one or two lines saying why. Longer reasoning and history go in commit messages or `docs/`.
+
 ## Product
 
 No LiveKit, Daily, Agora, Twilio, Stream, or Socket.IO. Own WebSocket and own product signaling. Keep the locked stack pins.
@@ -55,24 +68,28 @@ The subsequent mediasoup implementation remains feature-PR work targeting
 PR protection still apply. Physical iOS/Omarchy acceptance remains deferred.
 This instruction does not authorize main merges, release or deployment.
 
-## Current development line: v0.6
+## Current development line: v0.8
 
-`v0.6` was cut from `main` (`v0.5.2` plus the design follow-up #184, `502274d`)
-on 2026-10-09 at Rafael's request and is protected by the **Version branches**
-ruleset (`refs/heads/v[0-9]*`: PRs required, same review requirements as
-`main`). Major product work for this line targets `v0.6` through feature PRs:
-the installable phone PWA, the Windows desktop release (step 6 of #165, a
-download on the GitHub release), and video inside the desktop app (watched
-streams, own camera and own stream) with sound for shared screens. Do not
-target new feature PRs at `v0.5`. Release a completed line only from `main`
-after its version PR, CI and image publishing have finished.
+`v0.8` was cut from the `v0.7.1` line (`5ab3a90`) on 2026-10-21 at Rafael's
+request and is protected by the **Version branches** ruleset
+(`refs/heads/v[0-9]*`: PRs required, same review requirements as `main`).
+Major product work for this line targets `v0.8` through feature PRs: the UX
+redesign (#322 to #330: theme tokens and shared UI primitives, first run and
+invites, shell navigation, chat, the bottom call bar, the voice room, settings,
+motion and small details, and one "Live gehen" that replaces screen share and
+Go Live in the client) and the gateway follow-ups (#346). The redesign PRs are
+stacked: merge them in order and retarget the next one to `v0.8` after each
+merge. Do not target new feature PRs at `v0.7.1` or older lines. Release a
+completed line only from `main` after its version PR, CI and image publishing
+have finished.
 
-`v0.5` shipped the Linux desktop app as `v0.5.0` on 2026-10-08 (#170, decided
-by Silas) and is complete.
+`v0.6` shipped as `v0.6.0`/`v0.6.1`, `v0.7` as `v0.7.0` and `v0.7.1` as
+`v0.7.1`; those lines are complete. `v0.5` shipped the Linux desktop app as
+`v0.5.0` on 2026-10-08 (#170, decided by Silas) and is complete.
 
 ## Shipped line: latest published main tag
 
-The latest published release is currently `v0.7.1`. Hotfixes for the shipped
+The latest published release is currently `v0.8.0`. Hotfixes for the shipped
 minor go to `main`, followed by a sync PR to the current development branch once
 one exists; a feature-branch version is not a release.
 

@@ -2,12 +2,13 @@
 //! and is not behind CSRF. `/health` and `/ready` stay as they are.
 //!
 //! Counters are process-local (one API container). Cardinality is bounded:
-//! method + status, plus a small set of rate-limit bucket names.
+//! method + status, plus small fixed sets of rate-limit buckets, upstream
+//! calls, caches and link preview outcomes.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::extract::{Request, State};
@@ -43,6 +44,25 @@ pub struct HttpMetrics {
     duration_ms_sum: AtomicU64,
     duration_count: AtomicU64,
     rate_limited: Mutex<BTreeMap<&'static str, u64>>,
+    /// Link previews per link, by outcome (`previews::Outcome`).
+    link_previews: Mutex<BTreeMap<&'static str, u64>>,
+    /// Their images, by outcome.
+    link_preview_images: Mutex<BTreeMap<&'static str, u64>>,
+    /// `(upstream, operation)` → call durations.
+    upstream: Mutex<BTreeMap<(&'static str, &'static str), Histogram>>,
+    /// `(cache, hit|miss)` → lookups.
+    cache: Mutex<BTreeMap<(&'static str, &'static str), u64>>,
+}
+
+/// Upper bounds in seconds. The GIF provider's calls time out at 8 s.
+const UPSTREAM_BUCKETS: [f64; 8] = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0];
+
+#[derive(Default)]
+struct Histogram {
+    /// Cumulative: `buckets[i]` counts calls of at most `UPSTREAM_BUCKETS[i]`.
+    buckets: [u64; UPSTREAM_BUCKETS.len()],
+    count: u64,
+    sum: f64,
 }
 
 impl HttpMetrics {
@@ -65,6 +85,35 @@ impl HttpMetrics {
             .lock()
             .unwrap_or_else(|err| err.into_inner());
         *map.entry(bucket).or_insert(0) += 1;
+    }
+
+    pub fn link_preview(&self, outcome: &'static str) {
+        bump(&self.link_previews, outcome);
+    }
+
+    pub fn link_preview_image(&self, outcome: &'static str) {
+        bump(&self.link_preview_images, outcome);
+    }
+
+    /// One call to an outside service, finished or failed, timed from send
+    /// to the last body byte.
+    pub fn upstream(&self, upstream: &'static str, operation: &'static str, took: Duration) {
+        let seconds = took.as_secs_f64();
+        let mut map = self.upstream.lock().unwrap_or_else(|err| err.into_inner());
+        let histogram = map.entry((upstream, operation)).or_default();
+        for (count, bound) in histogram.buckets.iter_mut().zip(UPSTREAM_BUCKETS) {
+            if seconds <= bound {
+                *count += 1;
+            }
+        }
+        histogram.count += 1;
+        histogram.sum += seconds;
+    }
+
+    pub fn cache(&self, cache: &'static str, hit: bool) {
+        let mut map = self.cache.lock().unwrap_or_else(|err| err.into_inner());
+        *map.entry((cache, if hit { "hit" } else { "miss" }))
+            .or_insert(0) += 1;
     }
 
     pub fn render(&self) -> String {
@@ -112,7 +161,75 @@ impl HttpMetrics {
                 ));
             }
         }
+
+        out.push_str(
+            "# HELP gelabber_upstream_request_duration_seconds Calls to outside services the API relays.\n",
+        );
+        out.push_str("# TYPE gelabber_upstream_request_duration_seconds histogram\n");
+        {
+            let map = self.upstream.lock().unwrap_or_else(|err| err.into_inner());
+            for ((upstream, operation), histogram) in map.iter() {
+                let labels = format!("upstream=\"{upstream}\",operation=\"{operation}\"");
+                for (count, bound) in histogram.buckets.iter().zip(UPSTREAM_BUCKETS) {
+                    out.push_str(&format!(
+                        "gelabber_upstream_request_duration_seconds_bucket{{{labels},le=\"{bound}\"}} {count}\n"
+                    ));
+                }
+                let (count, sum) = (histogram.count, histogram.sum);
+                out.push_str(&format!(
+                    "gelabber_upstream_request_duration_seconds_bucket{{{labels},le=\"+Inf\"}} {count}\n"
+                ));
+                out.push_str(&format!(
+                    "gelabber_upstream_request_duration_seconds_sum{{{labels}}} {sum}\n"
+                ));
+                out.push_str(&format!(
+                    "gelabber_upstream_request_duration_seconds_count{{{labels}}} {count}\n"
+                ));
+            }
+        }
+
+        out.push_str("# HELP gelabber_cache_total Lookups in the API's caches.\n");
+        out.push_str("# TYPE gelabber_cache_total counter\n");
+        {
+            let map = self.cache.lock().unwrap_or_else(|err| err.into_inner());
+            for ((cache, result), count) in map.iter() {
+                out.push_str(&format!(
+                    "gelabber_cache_total{{cache=\"{cache}\",result=\"{result}\"}} {count}\n"
+                ));
+            }
+        }
+
+        out.push_str(
+            "# HELP gelabber_link_previews_total Links looked at for a preview card, by outcome.\n",
+        );
+        out.push_str("# TYPE gelabber_link_previews_total counter\n");
+        render_outcomes(
+            &mut out,
+            "gelabber_link_previews_total",
+            &self.link_previews,
+        );
+        out.push_str(
+            "# HELP gelabber_link_preview_images_total Preview card images, by outcome.\n",
+        );
+        out.push_str("# TYPE gelabber_link_preview_images_total counter\n");
+        render_outcomes(
+            &mut out,
+            "gelabber_link_preview_images_total",
+            &self.link_preview_images,
+        );
         out
+    }
+}
+
+fn bump(map: &Mutex<BTreeMap<&'static str, u64>>, key: &'static str) {
+    let mut map = map.lock().unwrap_or_else(|err| err.into_inner());
+    *map.entry(key).or_insert(0) += 1;
+}
+
+fn render_outcomes(out: &mut String, name: &str, map: &Mutex<BTreeMap<&'static str, u64>>) {
+    let map = map.lock().unwrap_or_else(|err| err.into_inner());
+    for (outcome, count) in map.iter() {
+        out.push_str(&format!("{name}{{outcome=\"{outcome}\"}} {count}\n"));
     }
 }
 
@@ -140,10 +257,39 @@ mod tests {
         let metrics = HttpMetrics::new();
         metrics.observe("GET", 200, 12);
         metrics.rate_limited("auth");
+        metrics.link_preview("timeout");
+        metrics.link_preview_image("store_failed");
         let text = metrics.render();
         assert!(text.contains("# TYPE gelabber_http_requests_total counter"));
         assert!(text.contains("method=\"GET\",status=\"200\""));
         assert!(text.contains("gelabber_rate_limited_total{bucket=\"auth\"} 1"));
         assert!(text.contains("gelabber_http_request_duration_seconds_count 1"));
+        assert!(text.contains("# TYPE gelabber_link_previews_total counter"));
+        assert!(text.contains("gelabber_link_previews_total{outcome=\"timeout\"} 1"));
+        assert!(text.contains("gelabber_link_preview_images_total{outcome=\"store_failed\"} 1"));
+    }
+
+    #[test]
+    fn upstream_histogram_is_cumulative() {
+        let metrics = HttpMetrics::new();
+        metrics.upstream("klipy", "search", Duration::from_millis(300));
+        metrics.upstream("klipy", "search", Duration::from_secs(9));
+        metrics.cache("gif_feed", true);
+        metrics.cache("gif_feed", false);
+        metrics.cache("gif_feed", true);
+        let text = metrics.render();
+        let labels = "upstream=\"klipy\",operation=\"search\"";
+        assert!(text.contains("# TYPE gelabber_upstream_request_duration_seconds histogram"));
+        for (le, count) in [("0.25", 0), ("0.5", 1), ("8", 1), ("16", 2), ("+Inf", 2)] {
+            let line = format!(
+                "gelabber_upstream_request_duration_seconds_bucket{{{labels},le=\"{le}\"}} {count}\n"
+            );
+            assert!(text.contains(&line), "{line}");
+        }
+        assert!(text.contains(&format!(
+            "gelabber_upstream_request_duration_seconds_count{{{labels}}} 2"
+        )));
+        assert!(text.contains("gelabber_cache_total{cache=\"gif_feed\",result=\"hit\"} 2"));
+        assert!(text.contains("gelabber_cache_total{cache=\"gif_feed\",result=\"miss\"} 1"));
     }
 }

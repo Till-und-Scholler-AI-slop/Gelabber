@@ -57,6 +57,9 @@ export async function sessionAudioControl({
     first() {
       return this;
     },
+    getByRole() {
+      return this;
+    },
   };
   function actor(name) {
     const microphone = { kind: "audio", readyState: "live", enabled: true };

@@ -184,18 +184,16 @@ impl SigKind {
     }
 }
 
-/// Microphone / camera / screen / live and paired source audio on pub/unpub.
-/// Camera (`v`) and screen (`s`) are in-channel (issue 13).
-/// Go Live (`l`) is one track per voice channel (issue 14).
+/// Microphone / camera / screen and the screen's source audio on pub/unpub.
+/// Camera (`v`) and screen (`s`) are in-channel (issue 13); a screen is a
+/// Live. The old one-per-channel Go Live (`l`/`la`) is gone (#353).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TrackKind {
     A,
     V,
     S,
-    L,
     Sa,
-    La,
 }
 
 impl TrackKind {
@@ -204,16 +202,13 @@ impl TrackKind {
             Self::A => "a",
             Self::V => "v",
             Self::S => "s",
-            Self::L => "l",
             Self::Sa => "sa",
-            Self::La => "la",
         }
     }
 
     pub fn source_parent(self) -> Option<Self> {
         match self {
             Self::Sa => Some(Self::S),
-            Self::La => Some(Self::L),
             _ => None,
         }
     }
@@ -221,7 +216,6 @@ impl TrackKind {
     pub fn source_audio(self) -> Option<Self> {
         match self {
             Self::S => Some(Self::Sa),
-            Self::L => Some(Self::La),
             _ => None,
         }
     }
@@ -236,9 +230,9 @@ pub struct VoiceEntry {
     pub m: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub d: bool,
-    /// Occupant holds the channel's Go Live track.
+    /// Occupant publishes a screen (`s`): Live, several per channel.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub l: bool,
+    pub s: bool,
 }
 
 /// Compact signaling payload. Redis Pub/Sub carries this as `{"op":"sig",…}`.
@@ -251,9 +245,6 @@ pub struct SigEvent {
     pub u: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub k: Option<TrackKind>,
-    /// Externally verified exclusive Live claim nonce; never chosen by client.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lc: Option<Uuid>,
     /// Mute / deafen: the new value. Omitted on join/leave/media.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on: Option<bool>,
@@ -276,7 +267,6 @@ impl SigEvent {
             c: channel_id,
             u: user_id,
             k: None,
-            lc: None,
             on: None,
             m: None,
             d: None,
@@ -491,8 +481,6 @@ pub enum ServerFrame {
         #[serde(skip_serializing_if = "Option::is_none")]
         on: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        lc: Option<Uuid>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         m: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         d: Option<bool>,
@@ -599,7 +587,6 @@ impl ServerFrame {
             c: Some(event.c),
             u: Some(event.u),
             k: event.k,
-            lc: event.lc,
             on: event.on,
             m: event.m,
             d: event.d,
@@ -614,7 +601,6 @@ impl ServerFrame {
             c: None,
             u: None,
             k: None,
-            lc: None,
             on: None,
             m: None,
             d: None,
@@ -963,13 +949,14 @@ mod tests {
                 c: Uuid::from_u128(2),
                 m: true,
                 d: false,
-                l: false,
+                s: true,
             }],
         )
         .to_json()
         .unwrap();
         assert!(json.starts_with(r#"{"op":"sig","t":"r""#));
         assert!(json.contains(r#""m":true"#));
+        assert!(json.contains(r#""s":true"#));
         assert!(!json.contains(r#""d""#));
         assert!(!json.contains("\"n\""));
     }
@@ -997,16 +984,9 @@ mod tests {
         assert!(json.contains(r#""k":"s""#));
         assert!(!json.contains("livekit"));
         assert!(!json.contains("go_live"));
-        let json = ServerFrame::sig(SigEvent::published(
-            Uuid::from_u128(1),
-            Uuid::from_u128(2),
-            Uuid::from_u128(3),
-            TrackKind::L,
-        ))
-        .to_json()
-        .unwrap();
-        assert!(json.contains(r#""k":"l""#));
-        assert!(!json.contains("livekit"));
-        assert!(!json.contains("\"go_live\""));
+        // The old Go Live tracks are gone (#353).
+        for kind in ["l", "la"] {
+            assert!(serde_json::from_value::<TrackKind>(serde_json::json!(kind)).is_err());
+        }
     }
 }

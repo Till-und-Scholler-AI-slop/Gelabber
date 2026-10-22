@@ -1,9 +1,9 @@
 //! Local socket table + Redis 8 Pub/Sub fan-out.
 //!
 //! `PUBLISH` is the live path. A bounded Redis list per topic is the
-//! reconnect buffer (Pub/Sub itself does not store messages). Each API
-//! process keeps one `PSUBSCRIBE gb:*` connection and delivers matching
-//! events to sockets subscribed on this process.
+//! reconnect buffer (Pub/Sub itself does not store messages, see
+//! `event_log`). Each API process keeps one `PSUBSCRIBE gb:*` connection and
+//! delivers matching events to sockets subscribed on this process (`fanout`).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -21,45 +21,10 @@ use super::protocol::{
 };
 use crate::error::ApiError;
 
-const SUBSCRIBER_RETRY: Duration = Duration::from_millis(200);
+mod event_log;
+mod fanout;
 
-/// One Redis turn: assign seq, append the replay list, PUBLISH.
-/// `ARGV[1]` is compact event JSON with the placeholders `"n":0` and
-/// `"ep":null`. Seq and epoch are string-substituted — Lua cjson would turn
-/// `[]` into `{}` — and only the FIRST match of each is replaced. That is
-/// the envelope's own field only while `Event` serializes `n` and `ep`
-/// before `d` (today `t,s,c,n,ep,r,i,d`) and `ep` stays `null` when unset
-/// (no `skip_serializing_if`); otherwise a delta's own `"n":0` would get
-/// the seq. `protocol::tests::event_placeholders_precede_delta` pins this.
-const PUBLISH_LUA: &str = r#"
-for i=1,5 do
-  local expected=({'string','list','none','string','hash'})[i]
-  if i~=3 then
-    local actual=redis.call('TYPE',KEYS[i]).ok
-    if actual~='none' and actual~=expected then return redis.error_reply('wrong realtime key type') end
-  end
-end
-local epoch = redis.call('GET', KEYS[4])
-if not epoch then epoch = ARGV[3]; redis.call('SET', KEYS[4], epoch) end
-if tonumber(ARGV[4]) > 0 then
-  local last = tonumber(redis.call('HGET', KEYS[5], 'r') or '0')
-  if last >= tonumber(ARGV[4]) then return {0, redis.call('HGET', KEYS[5], 'raw')} end
-end
-local n = redis.call('INCR', KEYS[1])
-local raw = string.gsub(ARGV[1], '"n":0', '"n":' .. n, 1)
-raw = string.gsub(raw, '"ep":null', '"ep":"' .. epoch .. '"', 1)
-redis.call('LPUSH', KEYS[2], raw)
-redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[2]))
-redis.call('PUBLISH', KEYS[3], raw)
-if tonumber(ARGV[4]) > 0 then redis.call('HSET', KEYS[5], 'r', ARGV[4], 'raw', raw) end
-return {n, raw}
-"#;
-const SNAPSHOT_LUA: &str = r#"
-local epoch = redis.call('GET', KEYS[3])
-if not epoch then epoch = ARGV[1]; redis.call('SET', KEYS[3], epoch) end
-redis.call('SET', KEYS[1], '0', 'NX')
-return {redis.call('GET', KEYS[1]), epoch, redis.call('LRANGE', KEYS[2], 0, -1)}
-"#;
+pub use event_log::EventLog;
 
 /// A reconnecting socket receives one presence frame per member that comes
 /// back with it while it is still busy subscribing, so this bounds how many
@@ -69,8 +34,6 @@ return {redis.call('GET', KEYS[1]), epoch, redis.call('LRANGE', KEYS[2], 0, -1)}
 /// resyncs. The channel grows in 32-slot blocks as frames queue, so only a
 /// backed-up socket pays for the larger bound.
 pub const OUTBOUND_CAPACITY: usize = 1024;
-const CATCH_UP_CAPACITY: usize = 128;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ConnId(u64, Uuid);
 
@@ -89,6 +52,7 @@ pub(super) struct Inner {
     started: AtomicBool,
     pub(super) delivery_started: AtomicBool,
     pub(super) delivery_scan: Mutex<super::delivery::ScanCursor>,
+    pub(super) delivery_wake: tokio::sync::Notify,
     subscribed: AtomicBool,
     conn: Mutex<Option<redis::aio::MultiplexedConnection>>,
     pub(super) sockets: RwLock<HashMap<ConnId, Socket>>,
@@ -103,7 +67,6 @@ pub(super) struct VoiceSeat {
     pub(super) pubs: HashSet<TrackKind>,
     pub(super) muted: bool,
     pub(super) deafened: bool,
-    pub(super) live: Option<super::leases::LiveOwner>,
 }
 
 pub(super) struct Socket {
@@ -112,6 +75,10 @@ pub(super) struct Socket {
     access: HashMap<Uuid, (chrono::DateTime<chrono::Utc>, i32)>,
     /// Servers this socket has subscribed to (channel or server topic).
     pub(super) servers: HashSet<Uuid>,
+    /// The server of each subscribed topic. When the last topic of a server
+    /// goes and no voice seat is left there, the server leaves `servers`
+    /// and `access` too, so its presence, signaling and rosters stop.
+    scopes: HashMap<Topic, Uuid>,
     /// DM ids in `servers` (a DM topic is `s == c`). They keep presence and
     /// signaling fan-out, but have no voice roster to refresh.
     pub(super) dms: HashSet<Uuid>,
@@ -121,6 +88,10 @@ pub(super) struct Socket {
     topics: HashSet<Topic>,
     epochs: HashMap<Topic, Uuid>,
     closed: tokio::sync::watch::Sender<bool>,
+    /// Wakes the socket for an immediate session and access check after a
+    /// revocation on any API process ([`Recheck`]). Carries no authority;
+    /// the check reads the DB.
+    recheck: Arc<tokio::sync::Notify>,
     /// Voice rooms this socket has joined (`op: "sig"`). Independent of
     /// chat topic subscriptions.
     pub(super) rooms: HashMap<Uuid, VoiceSeat>,
@@ -148,15 +119,7 @@ pub struct ConnTable {
     pub(super) inner: Arc<Inner>,
 }
 
-/// Sequenced chat log (`publish` / `catch_up`). Messages live in Postgres;
-/// this is the replay buffer and the fan-out, not voice and not RTP.
-#[derive(Clone)]
-pub struct EventLog {
-    replay: usize,
-    connections: ConnTable,
-}
-
-/// Voice occupancy, publications, and the Go Live claim. Ephemeral Redis,
+/// Voice occupancy and publications. Ephemeral Redis,
 /// separate from the chat log.
 #[derive(Clone)]
 pub struct VoiceRoster {
@@ -183,6 +146,7 @@ impl ConnTable {
                 started: AtomicBool::new(false),
                 delivery_started: AtomicBool::new(false),
                 delivery_scan: Mutex::new(super::delivery::ScanCursor::default()),
+                delivery_wake: tokio::sync::Notify::new(),
                 subscribed: AtomicBool::new(false),
                 conn: Mutex::new(None),
                 sockets: RwLock::new(HashMap::new()),
@@ -190,32 +154,6 @@ impl ConnTable {
                 media_sessions: Mutex::new(HashMap::new()),
             }),
         }
-    }
-
-    pub fn ensure_subscriber(&self) {
-        if self.inner.started.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        let this = self.clone();
-        tokio::spawn(async move {
-            this.run_subscriber().await;
-        });
-    }
-
-    pub fn is_ready(&self) -> bool {
-        self.inner.subscribed.load(Ordering::SeqCst)
-    }
-
-    pub async fn wait_ready(&self, timeout: Duration) -> Result<(), String> {
-        self.ensure_subscriber();
-        let started = tokio::time::Instant::now();
-        while started.elapsed() < timeout {
-            if self.is_ready() {
-                return Ok(());
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        Err("redis pub/sub subscriber did not become ready".into())
     }
 
     pub async fn attach(&self, user_id: Uuid, tx: mpsc::Sender<ServerFrame>) -> ConnId {
@@ -231,12 +169,14 @@ impl ConnTable {
                 session: None,
                 access: HashMap::new(),
                 servers: HashSet::new(),
+                scopes: HashMap::new(),
                 dms: HashSet::new(),
                 voice_rosters: HashMap::new(),
                 typing: HashSet::new(),
                 topics: HashSet::new(),
                 epochs: HashMap::new(),
                 closed: tokio::sync::watch::channel(false).0,
+                recheck: Arc::new(tokio::sync::Notify::new()),
                 rooms: HashMap::new(),
                 catching_up: HashMap::new(),
                 tx,
@@ -248,6 +188,15 @@ impl ConnTable {
     pub async fn watch_server(&self, id: ConnId, server_id: Uuid) {
         if let Some(socket) = self.inner.sockets.write().await.get_mut(&id) {
             socket.servers.insert(server_id);
+        }
+    }
+
+    /// [`Self::watch_server`] for a topic the socket subscribes to, so the
+    /// server can be dropped again with its last topic.
+    pub async fn watch_topic(&self, id: ConnId, server_id: Uuid, topic: Topic) {
+        if let Some(socket) = self.inner.sockets.write().await.get_mut(&id) {
+            socket.servers.insert(server_id);
+            socket.scopes.insert(topic, server_id);
         }
     }
 
@@ -332,389 +281,52 @@ impl ConnTable {
             .unwrap_or(0)
     }
 
+    /// Drop the topic and, with the last topic of its server, the server.
+    /// A voice seat on that server keeps it: signaling and the membership
+    /// recheck still need it. Presence keys stay; the user is still online
+    /// and `clear_conn` reads the user's Redis server set on detach.
     pub async fn unsubscribe(&self, id: ConnId, topic: Topic) {
         if let Some(socket) = self.inner.sockets.write().await.get_mut(&id) {
             socket.topics.remove(&topic);
             socket.catching_up.remove(&topic);
-        }
-    }
-
-    /// Drop a user's live seats on one server after kick/ban: unsubscribe
-    /// chat topics, leave voice rooms, tell their sockets why.
-    async fn run_subscriber(&self) {
-        loop {
-            match self.subscribe_once().await {
-                Ok(()) => warn!("redis pub/sub stream ended"),
-                Err(err) => debug!(error = %err, "redis pub/sub not ready; retrying"),
-            }
-            self.inner.subscribed.store(false, Ordering::SeqCst);
-            tokio::time::sleep(SUBSCRIBER_RETRY).await;
-        }
-    }
-
-    async fn resync_sockets(&self) {
-        let mut sockets = self.inner.sockets.write().await;
-        for socket in sockets.values_mut() {
-            socket.catching_up.clear();
-            socket.epochs.clear();
-            socket.send(ServerFrame::Resync);
-        }
-    }
-
-    async fn subscribe_once(&self) -> Result<(), redis::RedisError> {
-        let mut pubsub =
-            tokio::time::timeout(Duration::from_secs(1), self.redis.get_async_pubsub())
-                .await
-                .map_err(|_| {
-                    redis::RedisError::from(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "Redis PubSub connect",
-                    ))
-                })??;
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            pubsub.psubscribe(format!("{REDIS_PREFIX}*")),
-        )
-        .await
-        .map_err(|_| {
-            redis::RedisError::from(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "Redis PubSub subscribe",
-            ))
-        })??;
-        self.resync_sockets().await;
-        self.inner.subscribed.store(true, Ordering::SeqCst);
-        debug!("gateway subscribed to redis pub/sub");
-        let (mut sink, mut stream) = pubsub.split();
-        let mut ping = tokio::time::interval(Duration::from_secs(1));
-        loop {
-            let msg = tokio::select! {
-                message=stream.next()=> match message {Some(message)=>message,None=>break},
-                _=ping.tick()=> {
-                    tokio::time::timeout(Duration::from_secs(1),sink.ping::<redis::Value>()).await.map_err(|_|redis::RedisError::from(std::io::Error::new(std::io::ErrorKind::TimedOut,"Redis PubSub ping")))??;
-                    continue;
-                }
-            };
-            let channel = msg.get_channel_name().to_owned();
-            match msg.get_payload::<String>() {
-                Ok(raw) => self.deliver_raw(&channel, &raw).await,
-                Err(err) => warn!(error = %err, "invalid redis pub/sub payload"),
-            }
-        }
-        Ok(())
-    }
-
-    async fn deliver_raw(&self, channel: &str, raw: &str) {
-        #[derive(serde::Deserialize)]
-        struct Discovery {
-            c: Uuid,
-        }
-        if let Some(raw_user) = channel.strip_prefix("gb:dm:") {
-            if let (Ok(user), Ok(Discovery { c })) = (
-                raw_user.parse::<Uuid>(),
-                serde_json::from_str::<Discovery>(raw),
-            ) {
-                for socket in self
-                    .inner
-                    .sockets
-                    .read()
-                    .await
-                    .values()
-                    .filter(|socket| socket.user_id == user)
-                {
-                    socket.send(ServerFrame::Dm { c });
-                }
-            }
-            return;
-        }
-        if let Some(raw_user) = channel.strip_prefix(USER_PREFIX) {
-            match (
-                raw_user.parse::<Uuid>(),
-                serde_json::from_str::<super::protocol::UserFrame>(raw),
-            ) {
-                (Ok(user), Ok(frame)) => {
-                    let frame = ServerFrame::from(frame);
-                    for socket in self
-                        .inner
-                        .sockets
-                        .read()
-                        .await
-                        .values()
-                        .filter(|socket| socket.user_id == user)
-                    {
-                        socket.send(frame.clone());
-                    }
-                }
-                _ => warn!(channel, "redis payload is not a user frame"),
-            }
-            return;
-        }
-        if let Some(channel_id) = voice_channel_id(channel) {
-            match serde_json::from_str::<SigEvent>(raw) {
-                Ok(event) => {
-                    self.deliver_sig(channel_id, ServerFrame::sig(event)).await;
-                }
-                Err(_) => warn!(channel, "redis payload is not a sig frame"),
-            }
-            return;
-        }
-        if let Some(live) = LiveTopic::from_redis_channel(channel) {
-            match serde_json::from_str::<super::protocol::LiveFrame>(raw) {
-                Ok(frame) => self.deliver_live(live, frame.into()).await,
-                Err(err) => warn!(channel, error = %err, "redis payload is not a live frame"),
-            }
-            return;
-        }
-        let Some(topic) = Topic::from_redis_channel(channel) else {
-            return;
-        };
-        let Ok(event) = serde_json::from_str::<Event>(raw) else {
-            warn!(channel, "redis payload is not a compact event");
-            return;
-        };
-        self.deliver(topic, event).await;
-    }
-
-    async fn deliver_sig(&self, channel_id: Uuid, frame: ServerFrame) {
-        let server_id = match &frame {
-            ServerFrame::Sig { s, .. } => *s,
-            _ => return,
-        };
-        let sockets = self.inner.sockets.read().await;
-        for socket in sockets.values() {
-            let in_room = socket.rooms.contains_key(&channel_id);
-            if in_room || socket.servers.contains(&server_id) {
-                socket.send(frame.clone());
-            }
-        }
-    }
-
-    async fn deliver_live(&self, live: LiveTopic, frame: ServerFrame) {
-        let sockets = self.inner.sockets.read().await;
-        for socket in sockets.values() {
-            let want = match live {
-                LiveTopic::Presence(server_id) => socket.servers.contains(&server_id),
-                LiveTopic::Typing(channel_id) => {
-                    socket.topics.contains(&Topic::Channel(channel_id))
-                }
-            };
-            if want {
-                socket.send(frame.clone());
-            }
-        }
-    }
-
-    async fn deliver(&self, topic: Topic, event: Event) {
-        let mut sockets = self.inner.sockets.write().await;
-        for socket in sockets.values_mut() {
-            if !socket.topics.contains(&topic) {
-                continue;
-            }
-            if *socket.closed.borrow() {
-                continue;
-            }
-            let buffered: usize = socket.catching_up.values().map(Vec::len).sum();
-            if let Some(buf) = socket.catching_up.get_mut(&topic) {
-                if buffered >= CATCH_UP_CAPACITY {
-                    socket.catching_up.clear();
-                    socket.closed.send_replace(true);
-                    continue;
-                }
-                buf.push(event.clone());
-                continue;
-            }
-            if let Some(epoch) = event.ep
-                && socket
-                    .epochs
-                    .insert(topic, epoch)
-                    .is_some_and(|previous| previous != epoch)
+            if let Some(server) = socket.scopes.remove(&topic)
+                && !socket.scopes.values().any(|sid| *sid == server)
+                && !socket.rooms.values().any(|seat| seat.server_id == server)
             {
-                socket.send(ServerFrame::gap(event.s, event.c).with_epoch(epoch));
+                socket.servers.remove(&server);
+                socket.dms.remove(&server);
+                socket.access.remove(&server);
+                socket.voice_rosters.remove(&server);
             }
-            socket.send(ServerFrame::event(event.clone()));
         }
     }
 
-    async fn redis_conn(&self) -> Result<redis::aio::MultiplexedConnection, redis::RedisError> {
-        let mut slot = self.inner.conn.lock().await;
-        if let Some(conn) = slot.as_ref() {
-            return Ok(conn.clone());
-        }
-        let conn = self
-            .redis
-            .get_multiplexed_async_connection_with_config(
-                &redis::AsyncConnectionConfig::new()
-                    .set_response_timeout(Some(Duration::from_secs(1)))
-                    .set_connection_timeout(Some(Duration::from_secs(1))),
-            )
-            .await?;
-        *slot = Some(conn.clone());
-        Ok(conn)
-    }
-
-    async fn reset_conn(&self) {
-        *self.inner.conn.lock().await = None;
-    }
-
-    pub(super) async fn with_conn<T, F, Fut>(&self, mut op: F) -> Result<T, redis::RedisError>
-    where
-        F: FnMut(redis::aio::MultiplexedConnection) -> Fut,
-        Fut: std::future::Future<Output = Result<T, redis::RedisError>>,
-    {
-        let conn = self.redis_conn().await?;
-        match op(conn).await {
-            Ok(value) => Ok(value),
-            Err(err) if err.is_connection_dropped() || err.is_io_error() => {
-                self.reset_conn().await;
-                let conn = self.redis_conn().await?;
-                op(conn).await
-            }
-            Err(err) => Err(err),
-        }
-    }
-}
-
-impl EventLog {
-    /// Assign seq, append the replay buffer, PUBLISH — one Lua turn so a
-    /// concurrent writer cannot `PUBLISH` 2 before 1.
-    pub async fn publish(&self, draft: EventDraft) -> Result<Event, ApiError> {
-        self.publish_revision(draft, None).await
-    }
-
-    pub(super) async fn publish_revision(
-        &self,
-        draft: EventDraft,
-        revision: Option<i64>,
-    ) -> Result<Event, ApiError> {
-        self.connections.ensure_subscriber();
-        let topic = draft.topic();
-        let placeholder = Event {
-            t: draft.kind,
-            s: draft.server_id,
-            c: draft.channel_id,
-            n: 0,
-            ep: None,
-            r: revision,
-            i: draft.entity_id,
-            d: draft.delta,
-        };
-        let template = serde_json::to_string(&placeholder)
-            .map_err(|err| ApiError::Internal(format!("serialize event: {err}")))?;
-        let replay_end = (self.replay - 1) as i64;
-        let seq_key = topic.seq_key();
-        let log_key = topic.log_key();
-        let channel = topic.redis_channel();
-
-        let (n, raw): (u64, String) = self
-            .connections
-            .with_conn(|mut conn| {
-                let seq_key = seq_key.clone();
-                let log_key = log_key.clone();
-                let channel = channel.clone();
-                let template = template.clone();
-                async move {
-                    redis::Script::new(PUBLISH_LUA)
-                        .key(seq_key)
-                        .key(log_key)
-                        .key(channel)
-                        .key(topic.epoch_key())
-                        .key(topic.delivery_key())
-                        .arg(template)
-                        .arg(replay_end)
-                        .arg(Uuid::new_v4().to_string())
-                        .arg(revision.unwrap_or(0))
-                        .invoke_async(&mut conn)
-                        .await
+    /// Wake local sockets that `target` may concern for an immediate check.
+    fn recheck_local(sockets: &HashMap<ConnId, Socket>, target: &Recheck) {
+        for socket in sockets.values() {
+            let wanted = match target {
+                Recheck::User(user_id) => socket.user_id == *user_id,
+                Recheck::Server(server_id) => {
+                    socket.access.contains_key(server_id)
+                        || socket.servers.contains(server_id)
+                        || socket
+                            .rooms
+                            .values()
+                            .any(|seat| seat.server_id == *server_id)
                 }
-            })
-            .await
-            .map_err(redis_err)?;
-
-        match serde_json::from_str::<Event>(&raw) {
-            Ok(event) => Ok(event),
-            Err(_) => Ok(Event { n, ..placeholder }),
-        }
-    }
-
-    pub async fn current_seq(&self, topic: Topic) -> Result<u64, ApiError> {
-        let n: Option<u64> = self
-            .connections
-            .with_conn(|mut conn| {
-                let key = topic.seq_key();
-                async move { redis::cmd("GET").arg(key).query_async(&mut conn).await }
-            })
-            .await
-            .map_err(redis_err)?;
-        Ok(n.unwrap_or(0))
-    }
-
-    pub async fn load_log(&self, topic: Topic) -> Result<Vec<Event>, ApiError> {
-        let rows: Vec<String> = self
-            .connections
-            .with_conn(|mut conn| {
-                let key = topic.log_key();
-                async move {
-                    redis::cmd("LRANGE")
-                        .arg(key)
-                        .arg(0)
-                        .arg(-1)
-                        .query_async(&mut conn)
-                        .await
+                Recheck::Channel(channel_id) => {
+                    socket.topics.contains(&Topic::Channel(*channel_id))
+                        || socket.rooms.contains_key(channel_id)
                 }
-            })
-            .await
-            .map_err(redis_err)?;
-        let mut events = Vec::with_capacity(rows.len());
-        for raw in rows {
-            match serde_json::from_str::<Event>(&raw) {
-                Ok(event) => events.push(event),
-                Err(err) => warn!(error = %err, "dropping unreadable replay row"),
+                Recheck::Session(key) => socket
+                    .session
+                    .as_ref()
+                    .is_some_and(|(session, _)| session == key),
+            };
+            if wanted {
+                socket.recheck.notify_one();
             }
         }
-        Ok(events)
-    }
-
-    pub async fn catch_up(
-        &self,
-        topic: Topic,
-        client_n: Option<u64>,
-    ) -> Result<(u64, CatchUp<Event>), ApiError> {
-        let (current, _, plan) = self.catch_up_epoch(topic, client_n, None).await?;
-        Ok((current, plan))
-    }
-    pub async fn catch_up_epoch(
-        &self,
-        topic: Topic,
-        client_n: Option<u64>,
-        client_epoch: Option<Uuid>,
-    ) -> Result<(u64, Uuid, CatchUp<Event>), ApiError> {
-        let (current, epoch, rows): (u64, String, Vec<String>) = self
-            .connections
-            .with_conn(|mut conn| async move {
-                redis::Script::new(SNAPSHOT_LUA)
-                    .key(topic.seq_key())
-                    .key(topic.log_key())
-                    .key(topic.epoch_key())
-                    .arg(Uuid::new_v4().to_string())
-                    .invoke_async(&mut conn)
-                    .await
-            })
-            .await
-            .map_err(redis_err)?;
-        let epoch: Uuid = epoch
-            .parse()
-            .map_err(|_| ApiError::Internal("invalid Redis epoch".into()))?;
-        let events: Vec<Event> = rows
-            .into_iter()
-            .filter_map(|row| serde_json::from_str(&row).ok())
-            .filter(|event: &Event| event.ep == Some(epoch) && event.n <= current)
-            .collect();
-        let plan = if client_epoch.is_some_and(|previous| previous != epoch) {
-            CatchUp::Gap
-        } else {
-            plan_catch_up(client_n, current, &events, |e| e.n)
-        };
-        Ok((current, epoch, plan))
     }
 }
 
@@ -787,31 +399,52 @@ impl Gateway {
         Some((socket.user_id, socket.servers, socket.typing))
     }
 
-    /// Drop a user's live seats on one server after kick/ban: unsubscribe
-    /// chat topics, leave voice rooms, tell their sockets why.
+    /// Drop users' live seats on one server after kick/ban/leave or a server
+    /// delete: rotate their media generations, unsubscribe chat topics,
+    /// leave voice rooms, tell their sockets why. The rotations share one
+    /// pipeline and the socket table is scanned once for all users. Presence
+    /// is the caller's job ([`Gateway::forget_server_presence`]), once per
+    /// user rather than once per socket.
     pub async fn revoke_server(
         &self,
-        user_id: Uuid,
+        user_ids: &[Uuid],
         server_id: Uuid,
         channel_ids: &[Uuid],
         reason: &'static str,
     ) -> Result<(), ApiError> {
-        crate::media::revoke_member(&self.connections.redis, server_id, user_id).await?;
-        let conns: Vec<ConnId> = self
-            .connections
+        self.revoke_members(server_id, user_ids).await?;
+        for id in self.local_conns(user_ids).await {
+            self.drop_server_access(id, server_id, channel_ids, reason, false)
+                .await;
+        }
+        Ok(())
+    }
+
+    async fn revoke_members(&self, server_id: Uuid, user_ids: &[Uuid]) -> Result<(), ApiError> {
+        if user_ids.is_empty() {
+            return Ok(());
+        }
+        self.connections
+            .with_conn(|mut conn| {
+                let user_ids = user_ids.to_vec();
+                async move { crate::media::revoke_members(&mut conn, server_id, &user_ids).await }
+            })
+            .await
+            .map_err(redis_err)
+    }
+
+    /// This instance's sockets of any of `user_ids`, from one table scan.
+    async fn local_conns(&self, user_ids: &[Uuid]) -> Vec<ConnId> {
+        let users: HashSet<Uuid> = user_ids.iter().copied().collect();
+        self.connections
             .inner
             .sockets
             .read()
             .await
             .iter()
-            .filter(|(_, socket)| socket.user_id == user_id)
+            .filter(|(_, socket)| users.contains(&socket.user_id))
             .map(|(id, _)| *id)
-            .collect();
-        for id in conns {
-            self.clear_server_access(id, server_id, channel_ids, reason)
-                .await;
-        }
-        Ok(())
+            .collect()
     }
 
     async fn clear_server_access(
@@ -821,38 +454,66 @@ impl Gateway {
         channel_ids: &[Uuid],
         reason: &'static str,
     ) {
-        let Some((user_id, rooms, typing)) = ({
-            let mut sockets = self.connections.inner.sockets.write().await;
-            sockets.get_mut(&id).map(|socket| {
-                socket.access.remove(&server_id);
-                socket.servers.remove(&server_id);
-                socket.dms.remove(&server_id);
-                socket.topics.remove(&Topic::Server(server_id));
-                socket.catching_up.remove(&Topic::Server(server_id));
-                for channel_id in channel_ids {
-                    socket.topics.remove(&Topic::Channel(*channel_id));
-                    socket.catching_up.remove(&Topic::Channel(*channel_id));
-                }
-                let rooms: Vec<Uuid> = socket
-                    .rooms
-                    .iter()
-                    .filter(|(_, seat)| seat.server_id == server_id)
-                    .map(|(cid, _)| *cid)
-                    .collect();
-                let typing: Vec<(Uuid, Uuid)> = socket
-                    .typing
-                    .iter()
-                    .filter(|(sid, _)| *sid == server_id)
-                    .copied()
-                    .collect();
-                for pair in &typing {
-                    socket.typing.remove(pair);
-                }
-                socket.send(ServerFrame::error(reason, Some(server_id), None));
-                (socket.user_id, rooms, typing)
-            })
-        }) else {
+        // A removal on this process may have cleared the server since the
+        // caller read the socket's access; it already sent the error frame
+        // and cleaned presence, so do not repeat either.
+        let Some(user_id) = self
+            .drop_server_access(id, server_id, channel_ids, reason, true)
+            .await
+        else {
             return;
+        };
+        // The membership-revision recheck relies on this per-socket cleanup.
+        if let Err(err) = self.forget_server_presence(&[user_id], server_id).await {
+            warn!(error = err.code(), "server presence cleanup failed");
+        }
+    }
+
+    /// Everything [`Gateway::clear_server_access`] does except presence.
+    /// Returns the socket's user, or `None` when the socket is gone or, with
+    /// `only_if_held`, no longer holds access to the server.
+    async fn drop_server_access(
+        &self,
+        id: ConnId,
+        server_id: Uuid,
+        channel_ids: &[Uuid],
+        reason: &'static str,
+        only_if_held: bool,
+    ) -> Option<Uuid> {
+        let (user_id, rooms, typing) = {
+            let mut sockets = self.connections.inner.sockets.write().await;
+            let socket = sockets.get_mut(&id)?;
+            if only_if_held && !socket.access.contains_key(&server_id) {
+                return None;
+            }
+            socket.access.remove(&server_id);
+            socket.servers.remove(&server_id);
+            socket.dms.remove(&server_id);
+            socket.scopes.retain(|_, sid| *sid != server_id);
+            socket.voice_rosters.remove(&server_id);
+            socket.topics.remove(&Topic::Server(server_id));
+            socket.catching_up.remove(&Topic::Server(server_id));
+            for channel_id in channel_ids {
+                socket.topics.remove(&Topic::Channel(*channel_id));
+                socket.catching_up.remove(&Topic::Channel(*channel_id));
+            }
+            let rooms: Vec<Uuid> = socket
+                .rooms
+                .iter()
+                .filter(|(_, seat)| seat.server_id == server_id)
+                .map(|(cid, _)| *cid)
+                .collect();
+            let typing: Vec<(Uuid, Uuid)> = socket
+                .typing
+                .iter()
+                .filter(|(sid, _)| *sid == server_id)
+                .copied()
+                .collect();
+            for pair in &typing {
+                socket.typing.remove(pair);
+            }
+            socket.send(ServerFrame::error(reason, Some(server_id), None));
+            (socket.user_id, rooms, typing)
         };
         for cid in rooms {
             if let Err(err) = self.leave_voice(id, user_id, server_id, cid).await {
@@ -864,9 +525,7 @@ impl Gateway {
                 warn!(error = err.code(), "typing cleanup failed");
             }
         }
-        if let Err(err) = self.forget_server_presence(user_id, server_id).await {
-            warn!(error = err.code(), "server presence cleanup failed");
-        }
+        Some(user_id)
     }
 
     pub async fn track_media_session(&self, key: &str) -> Option<Uuid> {
@@ -917,17 +576,84 @@ impl Gateway {
         (id, receiver)
     }
 
+    /// Close this process's sockets of a session whose row is already
+    /// deleted, then tell the other API processes to check theirs.
     pub async fn revoke_session(&self, hash: &str) {
-        let mut sockets = self.connections.inner.sockets.write().await;
-        for socket in sockets.values_mut() {
-            if let Some((session, cancel)) = &socket.session
-                && session == hash
-            {
-                socket.topics.clear();
-                socket.catching_up.clear();
-                let _ = cancel.send(true);
+        {
+            let mut sockets = self.connections.inner.sockets.write().await;
+            for socket in sockets.values_mut() {
+                if let Some((session, cancel)) = &socket.session
+                    && session == hash
+                {
+                    socket.topics.clear();
+                    socket.catching_up.clear();
+                    let _ = cancel.send(true);
+                }
             }
         }
+        self.announce_recheck(Recheck::Session(hash.to_owned()))
+            .await;
+    }
+
+    /// Ask every API process to check the sockets `target` may concern now
+    /// instead of at their next periodic check. Call it after the change is
+    /// committed: the check reads the DB, and a check that runs first sees
+    /// nothing to revoke. Best effort; a lost notice leaves the periodic
+    /// check, and a Pub/Sub reconnect resyncs (and so checks) every socket.
+    pub async fn announce_recheck(&self, target: Recheck) {
+        let raw = match serde_json::to_string(&target) {
+            Ok(raw) => raw,
+            Err(err) => {
+                warn!(error = %err, "recheck notice not serialized");
+                return;
+            }
+        };
+        // Bounded like the logout cleanup: the change is committed already,
+        // and a slow Redis must not hold the response.
+        let published = tokio::time::timeout(
+            Duration::from_millis(500),
+            self.connections.with_conn(|mut conn| {
+                let raw = raw.clone();
+                async move {
+                    redis::cmd("PUBLISH")
+                        .arg(RECHECK_CHANNEL)
+                        .arg(raw)
+                        .query_async::<()>(&mut conn)
+                        .await
+                }
+            }),
+        )
+        .await;
+        match published {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                warn!(error = %err, "recheck notice not published; periodic checks remain")
+            }
+            Err(_) => warn!("recheck notice timed out; periodic checks remain"),
+        }
+    }
+
+    /// Resolves when this socket should check now. `None` once detached.
+    pub async fn recheck_signal(&self, id: ConnId) -> Option<Arc<tokio::sync::Notify>> {
+        self.connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .get(&id)
+            .map(|socket| socket.recheck.clone())
+    }
+
+    /// Whether this socket holds a voice seat, whose lease the security tick
+    /// renews every second right after its check.
+    pub async fn holds_seat(&self, id: ConnId) -> bool {
+        self.connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .get(&id)
+            .is_some_and(|socket| !socket.rooms.is_empty())
     }
 
     pub async fn wants_frame(&self, id: ConnId, frame: &ServerFrame) -> bool {
@@ -1049,8 +775,18 @@ impl Gateway {
                 if revision.1 & !current.1 & 48 != 0 {
                     self.clear_voice_access(id, sid).await?;
                 }
-                if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
-                    socket.access.insert(sid, current);
+                // Refresh only: a removal that cleared the server after the
+                // snapshot above must not get its access back from this check.
+                if let Some(held) = self
+                    .connections
+                    .inner
+                    .sockets
+                    .write()
+                    .await
+                    .get_mut(&id)
+                    .and_then(|socket| socket.access.get_mut(&sid))
+                {
+                    *held = current;
                 }
             }
         }
@@ -1075,23 +811,15 @@ impl Gateway {
         Ok(())
     }
 
+    /// Cut voice for `user_ids` after a permission reduction: one rotation
+    /// pipeline and one socket table scan for all of them.
     pub async fn revoke_voice_access(
         &self,
-        user_id: Uuid,
+        user_ids: &[Uuid],
         server_id: Uuid,
     ) -> Result<(), ApiError> {
-        crate::media::revoke_member(&self.connections.redis, server_id, user_id).await?;
-        let ids: Vec<ConnId> = self
-            .connections
-            .inner
-            .sockets
-            .read()
-            .await
-            .iter()
-            .filter(|(_, socket)| socket.user_id == user_id)
-            .map(|(id, _)| *id)
-            .collect();
-        for id in ids {
+        self.revoke_members(server_id, user_ids).await?;
+        for id in self.local_conns(user_ids).await {
             self.clear_voice_access(id, server_id).await?;
         }
         Ok(())
@@ -1167,6 +895,10 @@ impl Gateway {
 
     pub async fn watch_server(&self, id: ConnId, server_id: Uuid) {
         self.connections.watch_server(id, server_id).await
+    }
+
+    pub async fn watch_topic(&self, id: ConnId, server_id: Uuid, topic: Topic) {
+        self.connections.watch_topic(id, server_id, topic).await
     }
 
     pub async fn mark_dm(&self, id: ConnId, dm_id: Uuid) {
@@ -1319,7 +1051,6 @@ impl Gateway {
     }
 
     /// Fan-out a live signaling frame. No seq, no replay list.
-    /// Fan-out a live signaling frame. No seq, no replay list.
     pub async fn publish_sig(&self, event: SigEvent) -> Result<(), ApiError> {
         self.voice.publish_sig(event).await
     }
@@ -1332,6 +1063,25 @@ pub(super) fn redis_err(err: redis::RedisError) -> ApiError {
 /// Frames for every socket of one account, whatever it subscribed to: its
 /// read positions and notification settings (`gb:u:{user}`).
 const USER_PREFIX: &str = "gb:u:";
+
+/// Revocation notices between API processes, see [`Recheck`].
+const RECHECK_CHANNEL: &str = "gb:rv";
+
+/// Which sockets a committed revocation may concern: an account (kick, ban,
+/// leave), every socket bound to a server (server delete, lost voice
+/// permissions), a channel (delete) or one session (logout, password
+/// change). Receivers only check those sockets against the DB.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Recheck {
+    #[serde(rename = "u")]
+    User(Uuid),
+    #[serde(rename = "s")]
+    Server(Uuid),
+    #[serde(rename = "c")]
+    Channel(Uuid),
+    #[serde(rename = "k")]
+    Session(String),
+}
 
 impl Gateway {
     /// Best effort: a socket that misses one catches up with the next REST
@@ -1366,17 +1116,9 @@ pub fn voice_redis_channel(channel_id: Uuid) -> String {
     format!("{REDIS_PREFIX}v:{channel_id}")
 }
 
-fn voice_channel_id(name: &str) -> Option<Uuid> {
-    let rest = name.strip_prefix(REDIS_PREFIX)?;
-    let (kind, id) = rest.split_once(':')?;
-    if kind != "v" {
-        return None;
-    }
-    Uuid::parse_str(id).ok()
-}
-
 #[cfg(test)]
 mod resilience_tests {
+    use super::fanout::CATCH_UP_CAPACITY;
     use super::*;
     fn gateway() -> Gateway {
         Gateway::new(
@@ -1436,6 +1178,110 @@ mod resilience_tests {
         g.detach(fast).await;
         g.detach(catching).await;
     }
+    /// Whether the socket still watches a server and holds its membership.
+    async fn watched(g: &Gateway, id: ConnId) -> (bool, bool) {
+        let sockets = g.connections.inner.sockets.read().await;
+        let socket = &sockets[&id];
+        (!socket.servers.is_empty(), !socket.access.is_empty())
+    }
+
+    #[tokio::test]
+    async fn last_unsubscribe_of_a_server_drops_it_unless_a_seat_is_there() {
+        let g = gateway();
+        g.wait_ready(Duration::from_secs(2)).await.unwrap();
+        let (u, s, text, other) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let (tx, _rx) = mpsc::channel(128);
+        let (id, _) = g.attach_session(u, "prune".into(), tx).await;
+        let g = &g;
+        let bind = |id| async move {
+            if let Some(socket) = g.connections.inner.sockets.write().await.get_mut(&id) {
+                socket.access.insert(s, (chrono::Utc::now(), 0));
+                socket.voice_rosters.insert(s, Vec::new());
+            }
+        };
+        bind(id).await;
+        for topic in [Topic::Server(s), Topic::Channel(text)] {
+            g.watch_topic(id, s, topic).await;
+            g.begin_catch_up(id, topic).await;
+            g.finish_catch_up(id, topic, 0).await;
+        }
+        g.unsubscribe(id, Topic::Channel(text)).await;
+        assert_eq!(
+            watched(g, id).await,
+            (true, true),
+            "the server topic is left"
+        );
+        g.unsubscribe(id, Topic::Server(s)).await;
+        assert_eq!(watched(g, id).await, (false, false));
+        assert!(
+            g.connections.inner.sockets.read().await[&id]
+                .voice_rosters
+                .is_empty()
+        );
+        // No presence or signaling for it any more.
+        assert!(
+            !g.wants_frame(
+                id,
+                &ServerFrame::presence(s, u, super::super::protocol::PresenceStatus::Online)
+            )
+            .await
+        );
+
+        // A seat on the server keeps it through the last unsubscribe.
+        bind(id).await;
+        g.watch_topic(id, s, Topic::Channel(text)).await;
+        g.join_voice(id, u, s, other).await.unwrap();
+        g.unsubscribe(id, Topic::Channel(text)).await;
+        assert_eq!(watched(g, id).await, (true, true));
+        g.detach(id).await;
+    }
+
+    #[tokio::test]
+    async fn recheck_notice_wakes_only_the_sockets_it_names_on_every_process() {
+        let (a, b) = (gateway(), gateway());
+        a.wait_ready(Duration::from_secs(2)).await.unwrap();
+        b.wait_ready(Duration::from_secs(2)).await.unwrap();
+        let (u, other, s, c) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let (tx, _rx) = mpsc::channel(128);
+        let (mine, _) = b.attach_session(u, "mine".into(), tx).await;
+        let (tx, _rx2) = mpsc::channel(128);
+        let (theirs, _) = b.attach_session(other, "theirs".into(), tx).await;
+        b.watch_topic(theirs, s, Topic::Channel(c)).await;
+        b.begin_catch_up(theirs, Topic::Channel(c)).await;
+        let mine_signal = b.recheck_signal(mine).await.unwrap();
+        let theirs_signal = b.recheck_signal(theirs).await.unwrap();
+        let woke = |signal: Arc<tokio::sync::Notify>| async move {
+            tokio::time::timeout(Duration::from_millis(500), signal.notified())
+                .await
+                .is_ok()
+        };
+
+        // Published on process `a`, delivered to the sockets of `b`.
+        a.announce_recheck(Recheck::User(u)).await;
+        assert!(woke(mine_signal.clone()).await);
+        assert!(!woke(theirs_signal.clone()).await);
+        a.announce_recheck(Recheck::Channel(c)).await;
+        assert!(woke(theirs_signal.clone()).await);
+        assert!(!woke(mine_signal.clone()).await);
+        a.announce_recheck(Recheck::Server(s)).await;
+        assert!(woke(theirs_signal.clone()).await);
+        a.announce_recheck(Recheck::Session("mine".into())).await;
+        assert!(woke(mine_signal.clone()).await);
+        assert!(!woke(theirs_signal).await);
+        b.detach(mine).await;
+        b.detach(theirs).await;
+    }
+
     #[tokio::test]
     async fn seq_epoch_and_log_snapshot_are_atomic_under_concurrent_publish() {
         let g = gateway();

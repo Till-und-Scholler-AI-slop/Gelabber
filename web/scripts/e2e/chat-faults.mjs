@@ -21,17 +21,19 @@ function latch() {
 const log = (a) => a.page.getByRole("log", { name: "Nachrichten" });
 const row = (a, text) =>
   log(a).locator("div.group").filter({ hasText: text }).first();
-const alert = (a, text) => a.page.getByRole("alert").filter({ hasText: text });
+// A send that did not go through stays on its row, with what to do next.
+const failedRow = (a, text) =>
+  log(a).locator(".lr-message-row.is-failed").filter({ hasText: text });
 async function send(a, text) {
   await a.page.locator("form textarea").last().fill(text);
   await click(a, "Senden");
 }
 async function present(a, text) {
-  // The UI appends an edited marker inside the content paragraph. Match the
-  // complete content, allowing only that known marker, never a text prefix.
+  // The row's text (markdown, no <p>) ends in an edited marker once edited.
+  // Match the complete content, allowing only that marker, never a prefix.
   const escaped = text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   await log(a)
-    .locator("p")
+    .locator(".lr-message-text")
     .filter({ hasText: new RegExp(`^${escaped}(?:\\s*\\(bearbeitet\\))?$`) })
     .waitFor();
 }
@@ -60,7 +62,8 @@ export async function chatFaultScenarios(h, f) {
     const c = await fresh(f, "E2E parallel attempts");
     const hold = latch();
     let posts = 0,
-      held = false;
+      held = false,
+      routeError = false;
     const bytes = await readFile(
       new URL("../fixtures/smoke.png", import.meta.url),
     );
@@ -72,11 +75,18 @@ export async function chatFaultScenarios(h, f) {
         if (route.request().postDataJSON().content === text && posts === 1) {
           held = true;
           await hold.promise;
-          return route.fulfill({
-            status: 429,
-            contentType: "application/json",
-            body: '{"error":"rate_limited"}',
-          });
+          // The client gives up on a request after 10 s; fulfilling it then
+          // throws here, outside the scenario, and would hide its failure.
+          try {
+            return await route.fulfill({
+              status: 429,
+              contentType: "application/json",
+              body: '{"error":"rate_limited"}',
+            });
+          } catch {
+            routeError = true;
+            return;
+          }
         }
       }
       await route.continue();
@@ -102,26 +112,31 @@ export async function chatFaultScenarios(h, f) {
         .getByRole("link", { name: "E2E Voice B", exact: true })
         .click();
       hold.release();
-      await f.owner.page.locator(`a[href="${c.path}"]`).click();
-      const failed = alert(f.owner, text);
+      await f.owner.page
+        .locator(`.channel-sidebar a[href="${c.path}"]`)
+        .click();
+      const failed = failedRow(f.owner, text);
       await failed
-        .getByRole("button", { name: "Sendung wiederholen", exact: true })
+        .getByRole("button", { name: "Erneut senden", exact: true })
         .waitFor();
       check(
-        (await failed.getByText("parallel.png", { exact: true }).count()) === 1,
+        (await failed
+          .getByRole("img", { name: "parallel.png", exact: true })
+          .count()) === 1,
         "failed-attempt-lost-file",
       );
       const before = await messages(f.member, c.id);
       check(
         posts === 2 &&
+          !routeError &&
           before.filter((m) => m.content === success).length === 1 &&
           !before.some((m) => m.content === text),
         "parallel-control-invalid",
-        { posts },
+        { posts, routeError },
       );
       await f.owner.page.unroute(c.endpoint);
       await failed
-        .getByRole("button", { name: "Sendung wiederholen", exact: true })
+        .getByRole("button", { name: "Erneut senden", exact: true })
         .click();
       await present(f.member, text);
       const after = await messages(f.member, c.id);
@@ -182,7 +197,7 @@ export async function chatFaultScenarios(h, f) {
       try {
         await send(f.owner, text);
         await present(f.member, text);
-        const uncertain = alert(f.owner, text);
+        const uncertain = failedRow(f.owner, text);
         await uncertain
           .getByText("Die Nachricht kann bereits gespeichert sein.", {
             exact: false,
@@ -195,7 +210,7 @@ export async function chatFaultScenarios(h, f) {
             posts === 1 &&
             persisted.filter((m) => m.content === text).length === 1 &&
             (await uncertain
-              .getByRole("button", { name: "Sendung wiederholen", exact: true })
+              .getByRole("button", { name: "Erneut senden", exact: true })
               .count()) === 0,
           "ambiguous-commit-offered-or-performed-duplicate-retry",
           { controlConfirmed: committed, posts },
@@ -265,7 +280,10 @@ export async function chatFaultScenarios(h, f) {
           } else {
             await row(f.owner, original).hover();
             await row(f.owner, original)
-              .getByRole("button", { name: "Nachricht löschen", exact: true })
+              .getByRole("button", { name: "Weitere Aktionen", exact: true })
+              .click();
+            await f.owner.page
+              .getByRole("menuitem", { name: "Löschen", exact: true })
               .click();
             await confirmDialog(f.owner, "Löschen");
             await log(f.owner)
@@ -494,9 +512,9 @@ export async function chatFaultScenarios(h, f) {
           buffer: bytes,
         });
         await send(f.owner, "E2E aborted upload text");
-        const failed = alert(f.owner, "E2E aborted upload text");
+        const failed = failedRow(f.owner, "E2E aborted upload text");
         await failed
-          .getByRole("button", { name: "Sendung wiederholen", exact: true })
+          .getByRole("button", { name: "Erneut senden", exact: true })
           .waitFor();
         check(
           puts === 1 &&
@@ -508,7 +526,7 @@ export async function chatFaultScenarios(h, f) {
         );
         await f.owner.page.unroute(endpoint);
         await failed
-          .getByRole("button", { name: "Sendung wiederholen", exact: true })
+          .getByRole("button", { name: "Erneut senden", exact: true })
           .click();
         await present(f.member, "E2E aborted upload text");
         const rest = await messages(f.member, c.id);

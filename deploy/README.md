@@ -20,11 +20,12 @@ Since v0.6 (#188) the stack no longer starts with known values:
 - **Plain HTTP on this machine only.** The bundled Caddy listens on `127.0.0.1` by default. Without `API_COOKIE_SECURE=true` the API signs in only on `localhost`/`127.0.0.1`; other machines get `insecure_transport`, because the session cookie would otherwise cross the network unencrypted. For other machines put TLS in front (your own Caddy, see below) and set `API_COOKIE_SECURE=true`. For a trusted test network only: `API_ALLOW_PLAIN_HTTP=true`. In this mode browser tabs do not coordinate sign-in and sign-out with each other, and browsers allow microphone, camera and screen share only in a secure context, so voice and video in the browser need TLS (the desktop app uses native media).
 - **HSTS.** With `API_COOKIE_SECURE=true` the API sends `Strict-Transport-Security: max-age=31536000` (without subdomains), whichever proxy terminates TLS.
 - **Browser security headers.** The web image sends `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `X-Frame-Options: DENY` and a `Permissions-Policy` that turns off features the app never uses (geolocation, payment, USB, serial, HID, MIDI) with every file, and a Content-Security-Policy with the app shell (see "Content-Security-Policy" below). Camera, microphone, screen capture and the YouTube embed are not restricted.
+- **Session lifetime.** A sign-in lasts at most 30 days (`API_SESSION_TTL_HOURS`, default `720`) and ends earlier after 14 days without use (`API_SESSION_IDLE_HOURS`, default `336`, at most the TTL). Every request and every activity on the WebSocket (subscribing, typing, voice, focus) extends the idle window again; heartbeats do not. The web app refreshes in the background, though: a visible tab checks the read state every 15 s, and new messages in an open conversation refetch data even in a hidden tab, so a tab that stays open keeps its session alive. "Idle" therefore means "no Gelabber tab or app open", not "nobody at the keyboard"; the absolute lifetime still ends such a session. A device that stays away longer signs in again, and its push notifications stop with its session. Sessions from before v0.8 keep at most 14 days from the upgrade; the upgrade uses 14 days whatever `API_SESSION_IDLE_HOURS` says, so with a shorter idle value existing sessions get that longer window once.
 - **Sign-in protection.** Besides 20 attempts per minute and address, the API locks an account for 15 minutes after 10 failed attempts (`API_RATE_LOGIN_FAILURES_PER_ACCOUNT`, `0` turns it off). The address is the client's as the Caddy next to the API resolved it, with IPv6 counted per /64. Behind a proxy of your own, the bundled Caddy takes it from the proxies in `GELABBER_TRUSTED_PROXIES` (default `private_ranges`, see "Client addresses" below). The API believes the `X-Forwarded-For` header from whoever reaches it, so never publish the API port (the homelab overlay's `GELABBER_API_BIND`) beyond loopback or a network only your proxy can reach.
 
 ## Existing Caddy
 
-UDP (TURN + SFU ICE 10000) does not go through Caddy; the host/router ports stay open.
+UDP (TURN + SFU ICE 10000, one more port per extra media worker, see "Media workers") does not go through Caddy; the host/router ports stay open.
 
 **Small diff:** bundled Caddy on loopback, your Caddy in front of it.
 
@@ -48,7 +49,7 @@ gelabber.example.com {
 
 If the proxy in front instead writes a port into `Host` that the browser does not use, `/ws` answers 403 since v0.6 ("Cross-origin WebSocket is not allowed."). That happens with `proxy_set_header Host $host:$proxy_port;` (the upstream's port, 8088 above) and with `$host:$server_port` behind a port translation (443 outside, Nginx on 8443). Under 0.5.x such a configuration worked because the port was cut off. With the v0.6 Caddyfile, login and the REST API keep working, but chat no longer updates and voice does not connect. The remedy is the `Host` line on the proxy in front, not the Caddyfile.
 
-**Client addresses.** The rate limits count per client address; sign-in, registration, email verification and password reset share 20 requests per minute and address. Behind your proxy the bundled Caddy sees only that proxy, and without help every user would share its one window. Since v0.7.1 the bundled Caddy therefore believes `X-Forwarded-For` from the peers in `GELABBER_TRUSTED_PROXIES` (`.env`; unset means `private_ranges`, the loopback and private IPv4/IPv6 ranges). It reads the header right to left, skips trusted hops and hands the API the one address it resolved.
+**Client addresses.** Sign-in, registration, email verification and password reset share 20 requests per minute and client address. Other changes count per account when signed in (all sessions of one account share the windows) and per client address otherwise, also with a session cookie that matches no live session. Behind your proxy the bundled Caddy sees only that proxy, and without help every user would share its one window. Since v0.7.1 the bundled Caddy therefore believes `X-Forwarded-For` from the peers in `GELABBER_TRUSTED_PROXIES` (`.env`; unset means `private_ranges`, the loopback and private IPv4/IPv6 ranges). It reads the header right to left, skips trusted hops and hands the API the one address it resolved.
 
 - The default covers a proxy on the same host (it reaches the bundled Caddy through the Docker gateway) or on the LAN. The proxy in front must set or append `X-Forwarded-For`: Caddy does so by itself, Nginx needs `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`.
 - Behind a CDN or tunnel, also trust the addresses its requests arrive from, for example a CDN's published ranges: `GELABBER_TRUSTED_PROXIES=private_ranges 173.245.48.0/20 …`. A Caddy of your own in front then needs the same ranges in its global `servers { trusted_proxies static … }` options, or it replaces the header with the CDN's address; Nginx's `$proxy_add_x_forwarded_for` keeps the entry. Otherwise everybody counts as the CDN.
@@ -60,7 +61,19 @@ If the proxy in front instead writes a port into `Host` that the browser does no
   4. Last resort, `GELABBER_TRUSTED_PROXIES=`: every client then shares one window, which one client can use up for all.
 - An empty value (`GELABBER_TRUSTED_PROXIES=`) trusts no proxy, as before v0.7.1.
 
-**Content-Security-Policy.** Since v0.7.1 the web image sends one with the app shell. It is about scripts only: `script-src 'self' 'wasm-unsafe-eval'` plus the hash of the inline theme script (`'wasm-unsafe-eval'` lets the RNNoise noise suppression compile), `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `frame-src https://www.youtube-nocookie.com` and `frame-ancestors 'none'`. It has no fetch directives (`default-src`, `connect-src`, `img-src`, `media-src`), so uploads and attachments on the MinIO host, link avatars and the desktop app's native part keep working without configuration.
+**Content-Security-Policy.** Since v0.7.1 the web image sends one with the app shell: `script-src 'self' 'wasm-unsafe-eval'` plus the hash of the inline theme script (`'wasm-unsafe-eval'` lets the RNNoise noise suppression compile), `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `frame-src https://www.youtube-nocookie.com` and `frame-ancestors 'none'`.
+
+Since v0.8 it also limits where the app may load from and connect to, once the web container knows the MinIO origin. `compose.yaml` hands it `MINIO_PUBLIC_ENDPOINT`, the same value the API signs upload and attachment links with, and the policy then adds:
+
+- `default-src 'self'`
+- `connect-src 'self' <MinIO origin> ipc: http://ipc.localhost`: the API, the gateway and media WebSockets, presigned uploads, and the desktop app's native part (`ipc:` on Linux, `http://ipc.localhost` on Windows)
+- `img-src 'self' data: blob: https: <MinIO origin>`: attachments, upload previews, and link avatars, which may sit on any https host
+- `media-src 'self' data: blob: <MinIO origin>`: video and audio attachments, call sounds, microphone test clips
+- `style-src 'self' 'unsafe-inline'`
+
+With `ATTACHMENT_DELIVERY=proxy` (see "Attachments through the API") the web container gets the same setting and the policy names no MinIO origin at all: `connect-src 'self' ipc: http://ipc.localhost`, `img-src 'self' data: blob: https:`, `media-src 'self' data: blob:`.
+
+The origin is scheme, host and port of `MINIO_PUBLIC_ENDPOINT`; the web container's log names it at startup. Without the variable, with a value no policy can name (an IPv6 address, a host with `_`) or with a web container from a `compose.yaml` before v0.8 (an update of the images alone), the policy keeps these directives out, as in v0.7.1, and the log says so. Set `MINIO_PUBLIC_ENDPOINT` in `.env`, not in the `api` service: a value only the API has breaks uploads and attachments in the browser with a Content-Security-Policy error in its console. After changing it, recreate `web` together with `api` (`docker compose up -d api web`).
 
 A policy you set for the app host on your own proxy is enforced in addition to this one: a request has to pass both. If it sets `connect-src` or `default-src`, it must let the desktop app reach its native part: add `ipc:` (Linux) and `http://ipc.localhost` (Windows) to `connect-src`, for example `connect-src 'self' ipc: http://ipc.localhost`. Without `connect-src`, `default-src` applies. Without these sources the app falls back to a slow path: it keeps working, but video in its tiles stays at 320×180 with 15 frames per second, and the tile reports "Geringe Bildqualität" (low picture quality) with the Content-Security-Policy as the reason. Browsers and the installed PWA are not affected. To drop the stack's policy, remove the header on your proxy: Caddy `header -Content-Security-Policy` in the app's site block, Nginx `proxy_hide_header Content-Security-Policy;`.
 
@@ -74,7 +87,7 @@ Important: the Compose `.env` does **not** automatically export variables to an 
    - `MINIO_PUBLIC_ENDPOINT=https://minio.example.com` (API presign URL, scheme included)
 3. With a changed `MINIO_API_PORT`, adjust the upstream; in the Docker network `gelabber` the upstream is `minio:9000` (no host port needed). App upstreams likewise: `web:80`, `api:8080`, `media:8081`.
 4. MinIO block: `header_up Host {hostport}` (keep the port, for example `:8443`), URI unchanged; presigns sign host and path.
-5. Behind a CDN or tunnel, add the global `servers { trusted_proxies … }` snippet from the top of `Caddyfile.homelab` to your Caddy, with the CDN's ranges; otherwise every client counts as the CDN (see "Client addresses"). Keep `GELABBER_API_BIND` on loopback: the API believes `X-Forwarded-For` from whoever reaches its port.
+5. Behind a CDN or tunnel, add the global `servers { trusted_proxies … }` snippet from the top of `Caddyfile.homelab` to your Caddy, with the CDN's ranges; otherwise every client counts as the CDN (see "Client addresses"). Keep `GELABBER_API_BIND` and `GELABBER_MEDIA_BIND` on loopback: the API and media believe `X-Forwarded-For` from whoever reaches their ports.
 6. Validate the configuration (`caddy validate` / `caddy adapt`) and reload Caddy.
 7. With `.home.arpa`: make the browser clients trust the local CA ([Local HTTPS](https://caddyserver.com/docs/automatic-https#local-https)).
 
@@ -134,12 +147,32 @@ For a digest rollout use the same `--env-file` / `-f` arguments as the rollout. 
 
 The SFU's control WebSocket (`/media/ws`) closes a socket that has not joined a voice channel within `MEDIA_JOIN_DEADLINE_MS` (default 10000 ms), counted from the upgrade and again from a leave. Pings and invalid frames do not extend it. The web client sends its join right after the socket opens, so Compose leaves the key at its default; to change it, add it to the `media` service's `environment` in a Compose override.
 
-Media expects to run behind the reverse proxy. Its HTTP server has no read timeout for the request and header phase, so a client that connects to `media:8081` directly and never finishes its request keeps the connection open. Caddy connects upstream only once it has the full request headers, so this matters only when port 8081 is reachable from outside: keep `GELABBER_MEDIA_BIND` (homelab overlay) on loopback.
+Until it joins, a socket holds no ticket, so anyone can open one. Each client address (IPv6 per /64) may therefore hold `MEDIA_PENDING_PER_IP` such sockets (default 16), and the whole SFU `MEDIA_PENDING_MAX` (default 1024). Past either cap the upgrade is answered with `429` or `503` and no socket is opened. A joined socket no longer counts; after a leave it counts again until it rejoins. The address is the rightmost `X-Forwarded-For` entry, which the Caddy in front sets to the client it resolved, as for the API (see "Client addresses"); without the header it is the TCP peer. Behind a Caddy of your own, add `header_up X-Forwarded-For {client_ip}` to the media upstream as in `Caddyfile.homelab`; without it, clients behind a CDN or tunnel your Caddy trusts all count as that proxy and share its slots. A proxy other than Caddy must send the client address in `X-Forwarded-For` (Nginx: `$proxy_add_x_forwarded_for`). When the cap refuses a private or loopback address that sent no such header, media logs a warning (at most every 10 minutes), since that is usually a proxy that forwards no client address. The phase before the join lasts well under a second for the app, so 16 is enough for a household or office behind one address; under a large shared NAT (carrier-grade NAT, a university) raise `MEDIA_PENDING_PER_IP` in a Compose override if `gelabber_media_refused_sockets_total{reason="per_ip"}` climbs. The app retries a refused connection with a growing delay. `/metrics` reports `gelabber_media_pending_sockets` and `gelabber_media_refused_sockets_total`.
+
+A joined socket is pinged every `MEDIA_HEARTBEAT_MS` (default 20000 ms). Browsers answer on their own; a socket from which nothing arrived for `MEDIA_IDLE_TIMEOUT_MS` (default 60000 ms, longer than the heartbeat) is closed at the next ping, and its peer leaves the call. This removes peers whose connection died without a close, for example after a network change, instead of keeping them in the room.
+
+Media expects to run behind the reverse proxy. Its HTTP server has no read timeout for the request and header phase, so a client that connects to `media:8081` directly and never finishes its request keeps the connection open. Caddy connects upstream only once it has the full request headers, so this matters only when port 8081 is reachable from outside: keep `GELABBER_MEDIA_BIND` (homelab overlay) on loopback. Media also believes `X-Forwarded-For` from whoever reaches that port.
+
+## Media workers
+
+The SFU runs `MEDIA_WORKERS` native mediasoup workers (default 1). Each worker uses one CPU core and its own UDP port: worker 0 binds 10000, worker 1 binds 10001, and so on. A new voice channel goes to the live worker with the fewest participants; all participants of one channel stay on the same worker, so one very large channel is still limited to one core.
+
+To use more cores, set both values in `.env` and recreate `media`:
+
+```bash
+# deploy/compose/.env
+MEDIA_WORKERS=4
+MEDIA_ICE_PORT_MAX=10003
+```
+
+`MEDIA_ICE_PORT_MAX` must be at least `10000 + MEDIA_WORKERS - 1`; otherwise the media service refuses to start and names the missing port. Compose publishes UDP 10000 up to `MEDIA_ICE_PORT_MAX`. Open and forward the whole range in the host firewall and on the router: a port that is missing breaks voice only for the channels that land on that worker, which is easy to miss. The startup log line `gelabber-media listening` lists `udp_ports`, and `/media/ready` reports `workers.live` and `workers.total`.
+
+If one worker stops or stops answering, only the calls on that worker end; clients reconnect on their own and land on a live worker. The service replaces the worker on the same port in the background. With a single worker, or when no worker is left, the service exits as before and Docker restarts it. Prometheus gets `gelabber_media_workers`, `gelabber_media_workers_live`, `gelabber_media_worker_failures_total`, `gelabber_media_worker_restarts_total` and per worker `gelabber_media_worker_rooms` / `gelabber_media_worker_peers`.
 
 ## Behind TLS
 
 - `API_COOKIE_SECURE=true`. The API then accepts the WebSocket (`/ws`) only from `https://` pages; `http://` stays allowed for `localhost` only.
-- `GELABBER_MINIO_DOMAIN` (Caddy host, for example `minio.example.com`) and `MINIO_PUBLIC_ENDPOINT` (full URL, for example `https://minio.example.com`) must match the active MinIO site in the **real** Caddy config (the Compose `.env` alone is not enough for an external Caddy); no path prefix, presigns sign host and path. `MINIO_API_CORS_ALLOW_ORIGIN` = the Gelabber origin
+- `GELABBER_MINIO_DOMAIN` (Caddy host, for example `minio.example.com`) and `MINIO_PUBLIC_ENDPOINT` (full URL, for example `https://minio.example.com`) must match the active MinIO site in the **real** Caddy config (the Compose `.env` alone is not enough for an external Caddy); no path prefix, presigns sign host and path. `MINIO_API_CORS_ALLOW_ORIGIN` = the Gelabber origin. Without a second domain for MinIO, set `ATTACHMENT_DELIVERY=proxy` instead (see "Attachments through the API")
 - `TURN_PUBLIC_HOST`, `TURN_EXTERNAL_IP`, `MEDIA_ADVERTISED_IP` = the address clients reach
 
 ### MinIO user
@@ -164,18 +197,33 @@ Rollback to an API before v0.7 needs the old `compose.yaml` too (it reads only `
 
 ### MinIO on 443
 
-Browsers upload and download attachments directly from MinIO through presigned URLs, so `MINIO_PUBLIC_ENDPOINT` is public by design. Put it on its own subdomain behind your TLS Caddy, not on a published port such as `https://example.com:9000`: networks that only allow 80/443 then load no images, and the S3 API (plus the console on 9001, if published) faces the internet without the proxy in front. The move fixes reachability and removes the directly published 9000/9001 (console included), but it does not shrink the S3 API's attack surface: the Caddy MinIO site forwards every path and method, so `https://minio.example.com` still serves the whole S3/admin API. Since #196 the API signs with a bucket-scoped user instead of root, so presigned links and a leaked API environment reach only the Gelabber bucket; the root password still guards the admin API, keep it private. The API logs a warning at startup when an `https://` endpoint carries a port other than 443.
+With the default `ATTACHMENT_DELIVERY=redirect`, browsers upload and download attachments directly from MinIO through presigned URLs, so `MINIO_PUBLIC_ENDPOINT` is public by design and must be reachable from every browser; otherwise images stay empty boxes and uploads fail. If you cannot give MinIO a host of its own, use "Attachments through the API" below. Put it on its own subdomain behind your TLS Caddy, not on a published port such as `https://example.com:9000`: networks that only allow 80/443 then load no images, and the S3 API (plus the console on 9001, if published) faces the internet without the proxy in front. The move fixes reachability and removes the directly published 9000/9001 (console included), but it does not shrink the S3 API's attack surface: the Caddy MinIO site forwards every path and method, so `https://minio.example.com` still serves the whole S3/admin API. Since #196 the API signs with a bucket-scoped user instead of root, so presigned links and a leaked API environment reach only the Gelabber bucket; the root password still guards the admin API, keep it private. The API logs a warning at startup when an `https://` endpoint carries a port other than 443, and, with `API_COOKIE_SECURE=true`, when the endpoint is a loopback address (`localhost`, `127.0.0.1`) or plain `http://`, which browsers on other machines cannot use.
 
 1. DNS for `minio.example.com`, and the MinIO site from `Caddyfile.homelab` in your Caddy with `minio.example.com` as its address (the default is `minio.home.arpa`; `header_up Host {hostport}`, URI unchanged).
 2. `.env`: `MINIO_PUBLIC_ENDPOINT=https://minio.example.com`, `MINIO_API_CORS_ALLOW_ORIGIN=https://example.com`. Leave `MINIO_API_BIND` and `MINIO_CONSOLE_BIND` as they are for now: open browsers cache the attachment redirect for the rest of its signing window and keep following the old `:9000` link for up to 30 minutes, so the old port must stay reachable that long.
-3. `docker compose up -d minio api`. Check from outside that `curl -I https://minio.example.com/minio/health/live` answers 200, and that an attachment link now redirects to `https://minio.example.com/…`: with `curl -I` and your session cookie, or in a private window.
+3. `docker compose up -d minio api web` (`web` allows the new origin in its Content-Security-Policy). Check from outside that `curl -I https://minio.example.com/minio/health/live` answers 200, and that an attachment link now redirects to `https://minio.example.com/…`: with `curl -I` and your session cookie, or in a private window.
 4. About 30 minutes later, set `MINIO_API_BIND=127.0.0.1` and `MINIO_CONSOLE_BIND=127.0.0.1` in `.env`, run `docker compose up -d minio`, and close 9000/9001 in the firewall. Check from outside that `curl -I https://example.com:9000/minio/health/live` fails. In the app, upload a new image and check that it loads (its redirect cannot come from a cache), then hard-reload (Ctrl+Shift+R) and check that an existing image still loads.
 
-If you cannot wait, do step 4 right after step 3: browsers that were already open may then miss some images for up to 30 minutes, until their cached redirects run out or the page is hard-reloaded.
+If you cannot wait, do step 4 right after step 3: browsers that were already open may then miss some images for up to 30 minutes, until their cached redirects run out or the page is hard-reloaded. The same holds after step 3 for a page loaded with the new policy: it no longer allows the old `:9000` origin, so a redirect a browser cached before the move shows a missing image until it runs out or the page is hard-reloaded.
 
 A path prefix (`https://example.com/s3/…`) does not work: presigns sign host and path.
 
+### Attachments through the API
+
+`ATTACHMENT_DELIVERY=proxy` (since v0.8, #348) keeps MinIO off the internet entirely: browsers upload to `PUT /api/attachments/{id}/upload` and load attachments from `GET /api/attachments/{id}` on the app's own origin, and the API streams both to and from MinIO over the internal endpoint. One domain is enough; no MinIO site in Caddy, no CORS setting, and `MINIO_PUBLIC_ENDPOINT` is not used. Membership, upload rules (only the uploader, ten minutes, signed type and size) and cache times stay the same as with presigned links (`api/STORAGE_LIFECYCLE.md`). Video seeking works: the API passes a single byte range on to MinIO.
+
+The cost is traffic: every attachment byte now passes through the API and your reverse proxy instead of going to MinIO directly. For a small instance that is fine; a busy one with many large videos is better off with a MinIO host of its own.
+
+1. `.env`: `ATTACHMENT_DELIVERY=proxy`. Keep `MINIO_API_BIND=127.0.0.1` (the default).
+2. `docker compose up -d api web`. Both need the setting: the API for the links, the web container for its Content-Security-Policy (its log says `uploads and attachments go through the API`). The API logs `attachments go through the API (ATTACHMENT_DELIVERY=proxy)` at startup.
+3. A proxy in front of the stack must let request bodies of 25 MiB through on `/api` (Nginx: `client_max_body_size 26m;`, its default is 1 MiB). Caddy has no limit by default.
+4. In the app, upload a new image and check that it loads, then hard-reload (Ctrl+Shift+R) and check that an older one still loads.
+
+Switching from `redirect`: pages that are already open keep their cached redirects to the old MinIO URL for up to 30 minutes; if that URL was never reachable, nothing gets worse. Once every client has reloaded, the MinIO site in your Caddy and any published 9000/9001 can go. Switching back to `redirect` needs a reachable `MINIO_PUBLIC_ENDPOINT` again, and `docker compose up -d api web`.
+
 ## Attachments
+
+How the bytes travel: see "MinIO on 443" (`ATTACHMENT_DELIVERY=redirect`, the default) and "Attachments through the API" (`proxy`). A picture that does not load shows "Bild konnte nicht geladen werden." with a retry and a download link instead of an empty box; if that happens for every picture, check the API's startup warnings about `MINIO_PUBLIC_ENDPOINT`.
 
 A message carries up to 10 files, at most 25 MiB each and 100 MiB together. Uploads count against a per-user daily quota, `API_UPLOAD_QUOTA_BYTES_PER_DAY` (default 1 GiB, `0` turns it off):
 
@@ -190,24 +238,49 @@ Links in messages get a preview card (title, description, image; YouTube with a 
 
 The linked sites see the server's IP address. `API_LINK_PREVIEWS=false` turns previews off; links stay clickable. Authors (and moderators) can remove the previews of a message.
 
+Hosts on your own network get no preview, on purpose: a name like `wiki.example.org` that resolves to a LAN address (`192.168.x.x`, `10.x.x.x`, …) from the server is refused like any internal target, so a message cannot make the API probe the LAN. Only cards for public sites appear. The API sends a user agent that ends in `like Twitterbot`, as Telegram's preview bot does; some sites (TikTok, for example) serve their title and image only to preview bots they know. Previews appear only for messages sent or edited after the update that brought them, and only for bare links (not in code, in `||spoilers||` or in `<…>`). A PDF or other non-HTML link gets no card.
+
+When a link shows no card, the API log says why, at the default `info` level, with the host but not the full URL: `docker compose logs api | grep "link preview"`. Each line has a `reason`:
+
+| `reason` | Meaning |
+|---|---|
+| `refused` | Private or local address, local name, denied host, port other than 80/443, or a redirect to one of those. `detail` says which (`Refused("address")`, `Refused("host")`, …). |
+| `dns` | The name did not resolve from the API container. |
+| `timeout` | No answer within 5 s; the host is skipped for 10 minutes. |
+| `backoff` | The host timed out less than 10 minutes ago. |
+| `http` | Connection or TLS error; `detail` has the client's text. |
+| `status` | The site answered with an error status (`detail`: `Status(403)` and so on), often bot protection. |
+| `redirects` | More than three redirects. |
+| `content_type` | Not an HTML page (a PDF, an image, a download). |
+| `too_large` | Body larger than the limit. |
+| `no_metadata` | The page has no title, description or image. |
+| `budget` | The message's 8 s were spent on its earlier links. |
+| `retry_later` | The same link failed less than an hour ago and is not fetched again yet. |
+
+A card whose image could not be fetched keeps its text (`link preview: card without its image`). If MinIO cannot store the image, the card also keeps its text and the API logs a warning, `link preview image not stored`. `/metrics` counts each link under `gelabber_link_previews_total{outcome}` (the reasons above, plus `ok` and `cached`) and each card image under `gelabber_link_preview_images_total{outcome}` (`stored`, `store_failed`, or the fetch reason, `not_an_image` or `dimensions`). For the full URL as well, set `RUST_LOG=info,gelabber_api::previews=debug`.
+
 ## GIFs
 
 GIF search and trending in chat and direct messages come from [KLIPY](https://klipy.com) and are off until `KLIPY_API_KEY` is set in `.env`. Without it `GET /api/gifs` reports `enabled: false`, the composer shows no GIF button and the search, trending and media routes answer 404.
 
 The API makes every KLIPY call itself and relays the GIF images from KLIPY's media hosts (`static*.klipy.com`) under `/api/gifs/media`; browsers and the desktop app talk only to Gelabber and never see the key. KLIPY sees each user only as a hash of the account ID and the key, not as a name or address. A sent GIF is an ordinary chat message that stores KLIPY's slug, size and media URLs; it does not touch voice signaling or the SFU.
 
-KLIPY's terms require their written approval for server-side requests and for proxying or caching their media (developers@klipy.com). Get it before you set the key. Testing keys are limited to 100 requests per hour, shared by every user of the instance.
+KLIPY's terms require their written approval for server-side requests and for proxying or caching their media (developers@klipy.com). Get it before you set the key.
+
+Testing keys are limited to 100 requests per hour, shared by every user of the instance. Every search page, trending page and sent GIF is one request, so a handful of people looking for GIFs uses that up within minutes, and the picker then stays empty until the hour is over. A testing key is fine for trying GIFs out; for regular use, ask KLIPY for a production key.
 
 - `KLIPY_CONTENT_FILTER`: `off`, `low`, `medium` (default) or `high`.
+- `KLIPY_CACHE_SECS`: how long a search or trending page stays in Redis (default 600, `0` turns the cache off, at most 86400). The cache is shared by all users: the same search (case and extra spaces do not count) or trending page within that time costs no request and answers without waiting for KLIPY. Trending is then the same for everyone instead of KLIPY's per-user order. Only the result lists are cached, not the images.
 - `API_RATE_GIF_PER_MIN`: search, trending and sent GIFs (each a KLIPY API request) per user per minute (default 30, `0` turns the limit off). It is per user; it does not keep the whole instance under a testing key's 100 per hour.
 - `API_RATE_GIF_MEDIA_PER_MIN`: image loads through the relay per user per minute (default 240, `0` turns the limit off). They go to KLIPY's media hosts, not its API. At most 128 relay streams run at once across all users; past that the relay answers 502.
 
-When KLIPY itself answers 429, the key's quota is used up for every user. The API logs it, counts it as `gelabber_rate_limited_total{bucket="klipy"}` and answers the client 502 `upstream_unavailable`, not as the user's own limit.
+When KLIPY itself answers 429, the key's quota is used up for every user. The API logs it once, counts it as `gelabber_rate_limited_total{bucket="klipy"}` and stops asking KLIPY for as long as its `Retry-After` says (60 s without one, at most an hour). Meanwhile search, trending and sending a GIF answer at once with 503 `upstream_quota` and a `Retry-After`, and the picker says that the server's GIF quota is used up and when to try again, instead of loading. Cached pages are still served.
+
+`/metrics` shows how long KLIPY takes (`gelabber_upstream_request_duration_seconds{upstream="klipy",operation="search|trending|items"}`, a histogram that includes failed and timed-out calls; the API gives up after 8 s) and how often the cache answers (`gelabber_cache_total{cache="gif_feed",result="hit|miss"}`).
 
 After changing these values, recreate the API: `docker compose up -d --no-deps --force-recreate api`.
 
 Migration 0012 adds the nullable `messages.gif` column. As with every migration, an older API binary does not start against the migrated database (SQLx ledger); roll back with the backed-up snapshot pair as described below.
-
 
 ## Push notifications
 
@@ -333,7 +406,7 @@ The existing separate GitHub Actions layer caches for API and media stay. Cold b
 
 The slow local cache acceptance starts with `python3 docker/check-rust-cache.py --baseline-ref <commit-before-cache-change> --output /tmp/gelabber-rust-cache`. It checks source, shared, version and feature changes in buildx caches of their own and compares three different source rebuilds with the previous Dockerfiles. JSON and full logs contain the cache hits and the measured run times of the build stage, without image export; at least 20 percent improvement is checked. `--keep-images` then exports images from the unchanged source state for a separate readiness check. This runner belongs to local acceptance and does not run in CI.
 
-The Compose default is the published version `v0.7.1`. Existing release tags are not overwritten. MinIO independently uses the existing CE pin `RELEASE.2025-10-15T17-29-55Z`. Org packages can be private: `docker login ghcr.io` or build locally. All stack pins stay. The source build sets `CARGO_HTTP_CAINFO`; with TLS inspection, `docker/rust-build-ca.sh` appends the presented chain.
+The Compose default is the published version `v0.8.0`. Existing release tags are not overwritten. MinIO independently uses the existing CE pin `RELEASE.2025-10-15T17-29-55Z`. Org packages can be private: `docker login ghcr.io` or build locally. All stack pins stay. The source build sets `CARGO_HTTP_CAINFO`; with TLS inspection, `docker/rust-build-ca.sh` appends the presented chain.
 
 CI runs for **every main commit**, so that deploy/workflow changes have a definite CI SHA too. PR path filters cover `shared/**`, all workspace members, Docker contexts, lockfiles and workflows. The image workflow builds PRs without pushing. On main it starts only after a successful `CI` push run of the same SHA; failed/cancelled CI starts no publish job.
 
@@ -378,9 +451,9 @@ coturn is not part of the image set, but it carries the TURN credentials from `.
 docker compose --env-file .env --env-file next.env up -d --no-deps --force-recreate proxy
 ```
 
-A `caddy reload` is not enough for this. The proxy mounts `./Caddyfile` as a single file, and `git` replaces the file when updating: the running container keeps seeing the old one, and a reload loads the old text again. Only the restarted container (`docker compose restart proxy` is enough when only the Caddyfile changed) reads the new one. **v0.6 is such a release:** the Caddyfile hands `Host` on with its port (`{hostport}`, see "Existing Caddy") and compresses responses. Without this step both stay off and arrive unannounced with the container's next restart. **So is v0.7.1:** its Caddyfile and `compose.yaml` hand the API the client address from behind a proxy (see "Client addresses"). With rootless Docker, Docker Desktop, a proxy container in front, or an IPv6 or widened `GELABBER_HTTP_BIND`, read that section before this step: in some of those setups the default lets clients pick the address they are counted under.
+A `caddy reload` is not enough for this. The proxy mounts `./Caddyfile` as a single file, and `git` replaces the file when updating: the running container keeps seeing the old one, and a reload loads the old text again. Only the restarted container (`docker compose restart proxy` is enough when only the Caddyfile changed) reads the new one. **v0.6 is such a release:** the Caddyfile hands `Host` on with its port (`{hostport}`, see "Existing Caddy") and compresses responses. Without this step both stay off and arrive unannounced with the container's next restart. **So is v0.7.1:** its Caddyfile and `compose.yaml` hand the API the client address from behind a proxy (see "Client addresses"). With rootless Docker, Docker Desktop, a proxy container in front, or an IPv6 or widened `GELABBER_HTTP_BIND`, read that section before this step: in some of those setups the default lets clients pick the address they are counted under. **So is v0.8:** its Caddyfile hands media the client address as well (see "Media signaling").
 
-**Do not run this step with the homelab overlay (`compose.homelab.yaml`, your own Caddy in front).** The overlay only puts the bundled `proxy` into the `bundled-caddy` profile; a service named explicitly starts anyway. `up … proxy` would therefore start the bundled Caddy on `${GELABBER_HTTP_BIND:-0.0.0.0}:${GELABBER_HTTP_PORT:-80}`: next to your own Caddy, which usually holds port 80 already (the start fails), or open on the network without TLS. Homelab operators instead carry the change from `deploy/compose/Caddyfile.homelab` (v0.6: `header_up Host {hostport}`) into their own Caddy's configuration and reload it there (v0.7.1: `header_up X-Forwarded-For {client_ip}` on the API upstreams).
+**Do not run this step with the homelab overlay (`compose.homelab.yaml`, your own Caddy in front).** The overlay only puts the bundled `proxy` into the `bundled-caddy` profile; a service named explicitly starts anyway. `up … proxy` would therefore start the bundled Caddy on `${GELABBER_HTTP_BIND:-0.0.0.0}:${GELABBER_HTTP_PORT:-80}`: next to your own Caddy, which usually holds port 80 already (the start fails), or open on the network without TLS. Homelab operators instead carry the change from `deploy/compose/Caddyfile.homelab` (v0.6: `header_up Host {hostport}`) into their own Caddy's configuration and reload it there (v0.7.1: `header_up X-Forwarded-For {client_ip}` on the API upstreams; v0.8: the same line on the media upstream).
 
 **v0.4 → v0.3.1 does not work through an image change:** migrations
 0010/0011 change the SQLx migration ledger. Before starting v0.3.1, the

@@ -51,6 +51,26 @@ file. A browser ignores `<a download>` after a cross-origin redirect. That
 redirect is `Cache-Control: private, no-store`. The memory store answers
 `attachment` instead of `inline` for it.
 
+## Delivery through the API (#348)
+
+With `ATTACHMENT_DELIVERY=proxy` the browser never talks to MinIO. The presign
+answer names `PUT /api/attachments/{id}/upload` as the upload link and lists
+the caller's `X-CSRF-Token` among its headers, so a client that only replays
+those headers (as the web client always did) passes the CSRF check. That
+route keeps the rules of the signed link: only the uploader, only for
+`PUT_TTL` after the presign and before binding, the signed `Content-Type` and
+exactly the signed `Content-Length`; the API streams the body to MinIO over
+the internal endpoint with that length. `GET /api/attachments/{id}` then
+streams the object instead of redirecting, passing a single `bytes=` range
+on (`206`, or `416` past the end) so players can seek. The answer carries the
+headers MinIO would have sent for a signed link, plus
+`Content-Security-Policy: sandbox`, because the file now comes from the app's
+own origin. Display answers are `Cache-Control: private, max-age=3600`, the
+same 60-minute bound as above; the save variant is `private, no-store`. The
+in-memory store always works this way. Downloads and uploads use their own
+HTTP client without an overall deadline (10 s to connect, 60 s between
+reads), because a 25 MiB file may take minutes on a slow line.
+
 ## Transactions and cleanup
 
 Migration 0008 adds `storage_cleanup` and an attachment DELETE trigger. Message,

@@ -9,6 +9,14 @@
 //!
 //! An account that hides the content of its notifications (#268) gets only
 //! "Neue Nachricht von Ada": no preview, no conversation.
+//!
+//! A deleted message is recalled (#277): each subscription that took its
+//! push gets another one under the same `Topic`. A push service still
+//! holding the first (a phone offline) replaces it; one already shown is
+//! replaced on screen by "Nachricht gelöscht" (`web/public/sw.js`).
+//!
+//! The words of a push come from `crate::i18n`, in each recipient's locale
+//! (#314).
 
 pub mod webpush;
 
@@ -30,6 +38,7 @@ use crate::{
     auth::session::{CurrentSession, CurrentUser},
     config::PushConfig,
     error::{ApiError, FieldErrors},
+    i18n::{self, Locale},
     json::Body,
     messages::Message,
     state::AppState,
@@ -39,7 +48,8 @@ use webpush::{Receiver, Vapid};
 /// More subscriptions per account are not kept; the oldest go first.
 const MAX_PER_USER: i64 = 20;
 const MAX_ENDPOINT: usize = 1024;
-/// A push older than this is not worth showing any more.
+/// A push older than this is not worth showing any more. As long, a push
+/// service may still hold it, and `push_receipts` keep who took it.
 const TTL_SECS: u64 = 3600;
 /// `@everyone` in a server with more members than this pushes only to the
 /// ones named in the message: a crowd that large is not paged by phone.
@@ -57,6 +67,9 @@ const MAX_DELIVERIES: usize = 16;
 
 const PREVIEW_CHARS: usize = 180;
 
+/// How often expired `push_receipts` are dropped.
+const PRUNE_EVERY: Duration = Duration::from_secs(10 * 60);
+
 #[derive(Clone)]
 pub struct Push {
     vapid: Vapid,
@@ -64,6 +77,8 @@ pub struct Push {
     http: reqwest::Client,
     dm_deliveries: std::sync::Arc<tokio::sync::Semaphore>,
     server_deliveries: std::sync::Arc<tokio::sync::Semaphore>,
+    /// When this process last dropped expired receipts (Unix seconds).
+    pruned_at: std::sync::Arc<std::sync::atomic::AtomicI64>,
 }
 
 impl Push {
@@ -80,7 +95,30 @@ impl Push {
             http,
             dm_deliveries: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_DELIVERIES)),
             server_deliveries: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_DELIVERIES)),
+            pruned_at: Default::default(),
         })
+    }
+
+    /// Drops receipts past the TTL, at most once per [`PRUNE_EVERY`] and
+    /// process: a recall ignores them anyway, so they only take room.
+    async fn prune_receipts(&self, state: &AppState) {
+        use std::sync::atomic::Ordering;
+        let now = chrono::Utc::now().timestamp();
+        let last = self.pruned_at.load(Ordering::Relaxed);
+        if now - last < PRUNE_EVERY.as_secs() as i64
+            || self
+                .pruned_at
+                .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_err()
+        {
+            return;
+        }
+        let _ = sqlx::query(
+            "DELETE FROM push_receipts WHERE sent_at < now() - make_interval(secs => $1)",
+        )
+        .bind(TTL_SECS as f64)
+        .execute(&state.db)
+        .await;
     }
 
     /// The push service's origin for an endpoint this server may post to.
@@ -220,6 +258,9 @@ struct Payload<'a> {
     channel: Uuid,
     message: Uuid,
     at: chrono::DateTime<chrono::Utc>,
+    /// The message was deleted: its notification goes, whatever it said.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    recall: bool,
 }
 
 #[derive(sqlx::FromRow)]
@@ -320,13 +361,12 @@ async fn deliver(
     if targets.is_empty() {
         return Ok(());
     }
-    let (title, path) = heading(state, message, server).await?;
-    let body = if targets.iter().all(|t| t.hide_content) {
+    let (place, path) = heading(state, message, server).await?;
+    let named = if targets.iter().all(|t| t.hide_content) {
         String::new()
     } else {
-        preview(state, message).await?
+        with_names(state, message).await?
     };
-    let hidden = hidden_title(&message.author.name);
     let users: Vec<Uuid> = {
         let mut users: Vec<Uuid> = targets.iter().map(|t| t.user_id).collect();
         users.sort_unstable();
@@ -341,19 +381,27 @@ async fn deliver(
             .into_iter()
             .filter(|target| !in_front.contains(&target.user_id))
             .filter_map(|target| {
+                let locale = Locale::of_recipient(target.user_id);
                 let (title, body) = if target.hide_content {
-                    (hidden.as_str(), "")
+                    (
+                        i18n::new_message_from(locale, &message.author.name),
+                        String::new(),
+                    )
                 } else {
-                    (title.as_str(), body.as_str())
+                    (
+                        title(locale, &message.author.name, &place),
+                        preview(locale, message, &named),
+                    )
                 };
                 let payload = Payload {
-                    title,
-                    body,
+                    title: &title,
+                    body: &body,
                     path: &path,
                     user: target.user_id,
                     channel: message.channel_id,
                     message: message.id,
                     at: message.created_at,
+                    recall: false,
                 };
                 match serde_json::to_vec(&payload) {
                     Ok(raw) => Some((target, raw)),
@@ -364,12 +412,58 @@ async fn deliver(
                 }
             })
             .map(|(target, raw)| async move {
-                (send(push, &target, &raw, urgency).await, target.endpoint)
+                (
+                    send(push, &target, &raw, urgency, message.id).await,
+                    target.endpoint,
+                )
             }),
     )
     .buffer_unordered(8)
     .collect::<Vec<_>>()
     .await;
+    let sent = settle(state, push, results).await;
+    if !sent.is_empty() {
+        let _ = sqlx::query(
+            "INSERT INTO push_receipts (message_id, endpoint)
+             SELECT $1, endpoint FROM push_subscriptions WHERE endpoint=ANY($2)
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(message.id)
+        .bind(&sent)
+        .execute(&state.db)
+        .await;
+        push.prune_receipts(state).await;
+        // Deleted while its pushes were on their way: the delete found no
+        // receipts to recall, so recall here. The pushes are out either way,
+        // so a failure here is only logged.
+        let exists: Result<bool, sqlx::Error> =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM messages WHERE id=$1)")
+                .bind(message.id)
+                .fetch_one(&state.db)
+                .await;
+        let recalled = match exists {
+            Ok(true) => Ok(()),
+            Ok(false) => match take_receipts(state, message.id).await {
+                Ok(targets) => send_recall(state, push, message, server, targets).await,
+                Err(err) => Err(err),
+            },
+            Err(err) => Err(err.into()),
+        };
+        if let Err(err) = recalled {
+            debug!(
+                error = err.code(),
+                "push not recalled after a racing delete"
+            );
+        }
+    }
+    let sent = sent.len();
+    debug!(message_id = %message.id, sent, "push delivered");
+    Ok(())
+}
+
+/// Records what the push services answered; returns the endpoints that took
+/// the push.
+async fn settle(state: &AppState, push: &Push, results: Vec<(Outcome, String)>) -> Vec<String> {
     let mut sent = Vec::new();
     let mut gone = Vec::new();
     // A subscription that has not taken a push for 30 days goes on its next
@@ -425,8 +519,111 @@ async fn deliver(
         .execute(&state.db)
         .await;
     }
-    let sent = sent.len();
-    debug!(message_id = %message.id, sent, "push delivered");
+    sent
+}
+
+/// After a message is deleted: recall its pushes in the background.
+pub fn recall(state: &AppState, message: &Message, server: Option<Uuid>) {
+    let Some(push) = state.push.clone() else {
+        return;
+    };
+    let state = state.clone();
+    let message = message.clone();
+    tokio::spawn(async move {
+        let targets = match take_receipts(&state, message.id).await {
+            Ok(targets) if targets.is_empty() => return,
+            Ok(targets) => targets,
+            Err(err) => {
+                debug!(error = err.code(), "push not recalled");
+                return;
+            }
+        };
+        // Unlike a new message's push, a recall waits for its turn: dropped,
+        // the preview it should take down stays.
+        let deliveries = if server.is_none() {
+            &push.dm_deliveries
+        } else {
+            &push.server_deliveries
+        };
+        let Ok(slot) = deliveries.clone().acquire_owned().await else {
+            return;
+        };
+        if let Err(err) = send_recall(&state, &push, &message, server, targets).await {
+            debug!(error = err.code(), "push not recalled");
+        }
+        drop(slot);
+    });
+}
+
+/// The subscriptions that took the message's push within the TTL. Taking
+/// the receipts deletes them, so a recall from the delete and one from a
+/// delivery that raced it do not both send.
+async fn take_receipts(state: &AppState, message: Uuid) -> Result<Vec<Target>, ApiError> {
+    Ok(sqlx::query_as(
+        "WITH taken AS (
+            DELETE FROM push_receipts WHERE message_id=$1 RETURNING endpoint, sent_at
+         )
+         SELECT p.endpoint, p.user_id, p.p256dh, p.auth,
+                u.notifications_hide_content AS hide_content
+         FROM taken t
+         JOIN push_subscriptions p ON p.endpoint=t.endpoint
+         JOIN users u ON u.id=p.user_id
+         WHERE t.sent_at >= now() - make_interval(secs => $2)",
+    )
+    .bind(message)
+    .bind(TTL_SECS as f64)
+    .fetch_all(&state.db)
+    .await?)
+}
+
+/// Sends each of `targets` a replacement under the same topic.
+async fn send_recall(
+    state: &AppState,
+    push: &Push,
+    message: &Message,
+    server: Option<Uuid>,
+    targets: Vec<Target>,
+) -> Result<(), ApiError> {
+    if targets.is_empty() {
+        return Ok(());
+    }
+    let (place, path) = heading(state, message, server).await?;
+    let results = futures_util::stream::iter(targets.into_iter().filter_map(|target| {
+        let locale = Locale::of_recipient(target.user_id);
+        let title = if target.hide_content {
+            i18n::new_message_from(locale, &message.author.name)
+        } else {
+            title(locale, &message.author.name, &place)
+        };
+        let payload = Payload {
+            title: &title,
+            body: i18n::message_deleted(locale),
+            path: &path,
+            user: target.user_id,
+            channel: message.channel_id,
+            message: message.id,
+            at: message.created_at,
+            recall: true,
+        };
+        match serde_json::to_vec(&payload) {
+            Ok(raw) => Some((target, raw)),
+            Err(err) => {
+                warn!(error = %err, "push payload not encoded");
+                None
+            }
+        }
+    }))
+    .map(|(target, raw)| async move {
+        (
+            send(push, &target, &raw, "normal", message.id).await,
+            target.endpoint,
+        )
+    })
+    .buffer_unordered(8)
+    .collect::<Vec<_>>()
+    .await;
+    let sent = settle(state, push, results).await.len();
+    debug!(message_id = %message.id, sent, "push recalled");
     Ok(())
 }
 
@@ -477,7 +674,9 @@ enum Outcome {
     Failed,
 }
 
-async fn send(push: &Push, target: &Target, payload: &[u8], urgency: &str) -> Outcome {
+/// `topic` names what the push is about: a later push with the same topic
+/// replaces it at the push service while it is not delivered yet.
+async fn send(push: &Push, target: &Target, payload: &[u8], urgency: &str, topic: Uuid) -> Outcome {
     let Some(audience) = push.audience(&target.endpoint) else {
         return Outcome::Gone;
     };
@@ -497,6 +696,9 @@ async fn send(push: &Push, target: &Target, payload: &[u8], urgency: &str) -> Ou
         )
         .header("TTL", TTL_SECS.to_string())
         .header("Urgency", urgency)
+        // 32 hex digits: within the 32 URL-safe base64 characters RFC 8030
+        // allows a topic.
+        .header("Topic", topic.simple().to_string())
         .header("Content-Encoding", "aes128gcm")
         .header("Content-Type", "application/octet-stream")
         .body(body)
@@ -523,42 +725,48 @@ async fn send(push: &Push, target: &Target, payload: &[u8], urgency: &str) -> Ou
     }
 }
 
-/// "Ada" for a DM, "Ada · #allgemein" for a server channel; and where a tap
-/// leads (`conversationPath` in web/src/messages/notify.ts).
+/// Where a message was written: a DM, or a server channel whose name may
+/// be gone by now.
+enum Place {
+    Dm,
+    Channel(Option<String>),
+}
+
+/// Where the message was written, and where a tap leads
+/// (`conversationPath` in web/src/messages/notify.ts).
 async fn heading(
     state: &AppState,
     message: &Message,
     server: Option<Uuid>,
-) -> Result<(String, String), ApiError> {
+) -> Result<(Place, String), ApiError> {
     let Some(server) = server else {
-        return Ok((
-            message.author.name.clone(),
-            format!("/d/{}", message.channel_id),
-        ));
+        return Ok((Place::Dm, format!("/d/{}", message.channel_id)));
     };
     let channel: Option<String> = sqlx::query_scalar("SELECT name FROM channels WHERE id=$1")
         .bind(message.channel_id)
         .fetch_optional(&state.db)
         .await?;
     Ok((
-        format!(
-            "{} · #{}",
-            message.author.name,
-            channel.unwrap_or_else(|| "Kanal".into())
-        ),
+        Place::Channel(channel),
         format!("/s/{server}/c/{}", message.channel_id),
     ))
 }
 
-/// All a notification says for an account that hides the content: who wrote.
-/// The pages show the same (`notificationText` in
-/// web/src/messages/notificationPrivacy.ts).
-pub fn hidden_title(author: &str) -> String {
-    format!("Neue Nachricht von {author}")
+/// "Ada" for a DM, "Ada · #allgemein" for a server channel.
+fn title(locale: Locale, author: &str, place: &Place) -> String {
+    match place {
+        Place::Dm => author.to_owned(),
+        Place::Channel(name) => format!(
+            "{author} · #{}",
+            name.as_deref()
+                .unwrap_or_else(|| i18n::unnamed_channel(locale))
+        ),
+    }
 }
 
-/// The text with mentions as names, cut short; a file or GIF named as such.
-async fn preview(state: &AppState, message: &Message) -> Result<String, ApiError> {
+/// The text with the mentions of people still around as names; the same
+/// for every recipient, so it is read once.
+async fn with_names(state: &AppState, message: &Message) -> Result<String, ApiError> {
     let mut text = message.content.clone();
     if !message.mentions.is_empty() {
         let names: Vec<(Uuid, String)> =
@@ -570,20 +778,29 @@ async fn preview(state: &AppState, message: &Message) -> Result<String, ApiError
             text = text.replace(&format!("<@{id}>"), &format!("@{name}"));
         }
     }
-    let text = readable(&text);
-    Ok(if !text.is_empty() {
+    Ok(text)
+}
+
+/// The text ([`with_names`]) cut short; a file, GIF or system message
+/// named as such in the recipient's language.
+fn preview(locale: Locale, message: &Message, named: &str) -> String {
+    if let Some(system) = &message.system {
+        return cut(&i18n::system_text(locale, system, &message.author.name));
+    }
+    let text = readable(named, locale);
+    if !text.is_empty() {
         cut(&text)
     } else if message.gif.is_some() {
-        "GIF".into()
+        i18n::gif(locale).into()
     } else if !message.attachments.is_empty() {
-        "Datei".into()
+        i18n::file(locale).into()
     } else {
         String::new()
-    })
+    }
 }
 
 /// Tokens of people no longer around as "@Unbekannt", whitespace folded.
-fn readable(text: &str) -> String {
+fn readable(text: &str, locale: Locale) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find("<@") {
@@ -591,7 +808,8 @@ fn readable(text: &str) -> String {
         let after = &rest[start + 2..];
         match after.find('>') {
             Some(end) if Uuid::parse_str(&after[..end]).is_ok() => {
-                out.push_str("@Unbekannt");
+                out.push('@');
+                out.push_str(i18n::unknown_user(locale));
                 rest = &after[end + 1..];
             }
             _ => {
@@ -677,10 +895,10 @@ mod tests {
     #[test]
     fn previews_are_short_and_readable() {
         assert_eq!(
-            readable("hi  <@0190f7a2-0000-7000-8000-00000000000a>\n!"),
+            readable("hi  <@0190f7a2-0000-7000-8000-00000000000a>\n!", Locale::De),
             "hi @Unbekannt !"
         );
-        assert_eq!(readable("a <@x> b"), "a <@x> b");
+        assert_eq!(readable("a <@x> b", Locale::De), "a <@x> b");
         let long = "x".repeat(400);
         assert_eq!(cut(&long).chars().count(), PREVIEW_CHARS);
         assert!(cut(&long).ends_with('…'));

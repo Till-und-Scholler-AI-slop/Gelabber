@@ -14,6 +14,7 @@
 pub mod mentions;
 pub mod reactions;
 pub mod replies;
+pub mod system;
 pub mod validate;
 mod workflows;
 
@@ -42,6 +43,7 @@ use crate::servers::membership::{self, Membership};
 use crate::servers::permissions::Permission;
 use crate::state::AppState;
 
+use self::system::SystemMessage;
 use self::validate::Cursor;
 
 pub fn router() -> Router<AppState> {
@@ -94,6 +96,15 @@ pub struct Message {
     /// Link previews (#254), filled in after sending by an edit event.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub previews: Vec<LinkPreview>,
+    /// Written by the server, not typed (#314): the client renders the text
+    /// from kind and params, and `content` is empty (`system.rs`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<SystemMessage>,
+    /// The sender's send attempt (#355), echoed on the create response and
+    /// its event only: the sending client swaps its pending row for this
+    /// message in one render, whichever of the two arrives first.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -122,6 +133,8 @@ struct MessageRow {
     gif: Option<sqlx::types::Json<Gif>>,
     mentions: Vec<Uuid>,
     mentions_everyone: bool,
+    system_kind: Option<String>,
+    system_params: Option<sqlx::types::Json<serde_json::Value>>,
 }
 
 impl From<MessageRow> for Message {
@@ -146,6 +159,8 @@ impl From<MessageRow> for Message {
             mention_everyone: row.mentions_everyone,
             reply: None,
             previews: Vec::new(),
+            system: SystemMessage::from_columns(row.system_kind, row.system_params),
+            nonce: None,
         }
     }
 }
@@ -162,6 +177,8 @@ struct MessageInsert {
     gif: Option<sqlx::types::Json<Gif>>,
     mentions: Vec<Uuid>,
     mentions_everyone: bool,
+    system_kind: Option<String>,
+    system_params: Option<sqlx::types::Json<serde_json::Value>>,
 }
 
 impl MessageInsert {
@@ -186,6 +203,8 @@ impl MessageInsert {
             mention_everyone: self.mentions_everyone,
             reply: None,
             previews: Vec::new(),
+            system: SystemMessage::from_columns(self.system_kind, self.system_params),
+            nonce: None,
         }
     }
 }
@@ -202,6 +221,9 @@ pub struct CreateBody {
     /// Answer this message of the same channel.
     #[serde(default)]
     pub reply_to: Option<Uuid>,
+    /// The client's id for this send attempt, echoed back as `nonce`.
+    #[serde(default)]
+    pub nonce: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -308,7 +330,7 @@ async fn create_message(
     let row = sqlx::query_as::<_, MessageInsert>(
         "INSERT INTO messages (channel_id, author_id, content, gif, mentions, mentions_everyone, reply_to, here_users) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
-         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, mentions_everyone",
+         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, mentions_everyone, system_kind, system_params",
     )
     .bind(channel_id)
     .bind(user.id)
@@ -332,6 +354,7 @@ async fn create_message(
     };
     let mut message = row.into_message(&user);
     message.attachments = bound;
+    message.nonce = body.nonce;
     persist_event(
         &mut tx,
         access.event_server_id(),
@@ -344,7 +367,7 @@ async fn create_message(
     if let (Some(gif), Some(pick), Some(gifs)) = (&message.gif, &body.gif, &state.gifs) {
         gifs.shared(&gif.slug, pick.query.trim(), user.id);
     }
-    let _ = delivery::deliver_pending(&state, 32).await;
+    delivery::wake(&state);
     let server = match &access {
         MessagingChannel::Server { member, .. } => Some(member.server.id),
         MessagingChannel::Dm { .. } => None,
@@ -392,6 +415,12 @@ async fn update_message(
             "not_editable",
         )])));
     }
+    if current.system.is_some() {
+        return Err(ApiError::Validation(FieldErrors::from([(
+            "system",
+            "not_editable",
+        )])));
+    }
 
     let mut errors = FieldErrors::new();
     let content = validate::content_optional(&body.content, &mut errors);
@@ -428,7 +457,7 @@ async fn update_message(
     let row = sqlx::query_as::<_, MessageInsert>(
         "UPDATE messages SET content = $2, edited_at = now(), mentions = $3, mentions_everyone = $4, here_users = $5 \
          WHERE id = $1 \
-         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, mentions_everyone",
+         RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, mentions_everyone, system_kind, system_params",
     )
     .bind(message_id)
     .bind(&content)
@@ -464,7 +493,7 @@ async fn update_message(
     )
     .await?;
     tx.commit().await?;
-    let _ = delivery::deliver_pending(&state, 32).await;
+    delivery::wake(&state);
     if !suppressed {
         previews::enqueue(
             &state,
@@ -523,7 +552,12 @@ async fn delete_message(
     )
     .await?;
     tx.commit().await?;
-    let _ = delivery::deliver_pending(&state, 32).await;
+    delivery::wake(&state);
+    let server = match &access {
+        MessagingChannel::Server { member, .. } => Some(member.server.id),
+        MessagingChannel::Dm { .. } => None,
+    };
+    crate::push::recall(&state, &current, server);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -626,7 +660,7 @@ async fn suppress_previews(
     }
     tx.commit().await?;
     if removed {
-        let _ = delivery::deliver_pending(&state, 32).await;
+        delivery::wake(&state);
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -685,12 +719,14 @@ pub(crate) async fn attach_previews(
     message.attachments = attachments::for_message(&mut *tx, job.message_id).await?;
     persist_event(&mut tx, job.server_id, EventKind::E, &mut message).await?;
     tx.commit().await?;
-    let _ = delivery::deliver_pending(state, 32).await;
+    delivery::wake(state);
     Ok(())
 }
 
-/// Best-effort notice in the server's oldest text channel when Go Live starts.
-/// The badge is already local; this must not fail the signaling frame.
+/// Best-effort notice in the server's oldest text channel when someone goes
+/// live (shares a screen). The badge is already local; this must not fail
+/// the signaling frame. Once per person and voice channel until they have
+/// been off Live there for ten minutes.
 pub(crate) async fn post_live_hint(state: &AppState, user: &User, server_id: Uuid, voice_id: Uuid) {
     let voice_name = match sqlx::query_scalar::<_, String>(
         "SELECT name FROM channels WHERE id = $1 AND server_id = $2 AND kind = 'voice'",
@@ -726,11 +762,29 @@ pub(crate) async fn post_live_hint(state: &AppState, user: &User, server_id: Uui
     let Some(text_id) = text_id else {
         return;
     };
-    let content = format!("{} ist live in {voice_name}.", user.name);
+    match state.gateway.claim_live_hint(user.id, voice_id).await {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(err) => {
+            warn!(error = err.code(), "live hint: cooldown");
+            return;
+        }
+    }
+    let system = SystemMessage::live_started(voice_id, &voice_name);
     let result: Result<(),ApiError> = async {
         let mut tx=state.db.begin().await?;
         delivery::lock_channel(&mut tx,text_id).await?;
-        let row=sqlx::query_as::<_,MessageInsert>("INSERT INTO messages (channel_id, author_id, content) VALUES ($1,$2,$3) RETURNING id,channel_id,content,created_at,edited_at,revision,created_order,gif,mentions,mentions_everyone").bind(text_id).bind(user.id).bind(content).fetch_one(&mut *tx).await?;
+        let row = sqlx::query_as::<_, MessageInsert>(
+            "INSERT INTO messages (channel_id, author_id, content, system_kind, system_params) \
+             VALUES ($1, $2, '', $3, $4) \
+             RETURNING id, channel_id, content, created_at, edited_at, revision, created_order, gif, mentions, mentions_everyone, system_kind, system_params",
+        )
+        .bind(text_id)
+        .bind(user.id)
+        .bind(&system.kind)
+        .bind(sqlx::types::Json(&system.params))
+        .fetch_one(&mut *tx)
+        .await?;
         let mut message=row.into_message(user);
         persist_event(&mut tx,server_id,EventKind::C,&mut message).await?;
         tx.commit().await?;
@@ -738,9 +792,13 @@ pub(crate) async fn post_live_hint(state: &AppState, user: &User, server_id: Uui
     }.await;
     if let Err(err) = result {
         warn!(error = err.code(), "live hint persistence failed");
+        // Nothing was posted: the next start of this Live may try again.
+        if let Err(err) = state.gateway.release_live_hint(user.id, voice_id).await {
+            warn!(error = err.code(), "live hint: release cooldown");
+        }
         return;
     }
-    let _ = delivery::deliver_pending(state, 32).await;
+    delivery::wake(state);
 }
 
 /// Text channel (via server membership) or 1:1 DM (via channel_members).
@@ -804,7 +862,7 @@ pub(crate) async fn messaging_channel(
 }
 
 const MESSAGE_BY_ID_SQL: &str = "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
          FROM messages m JOIN users u ON u.id = m.author_id \
          WHERE m.id = $1";
 
@@ -838,7 +896,7 @@ async fn load_page(
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::Before, "before").await?;
         sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) < ($2, $3) \
              ORDER BY m.created_at DESC, m.id DESC \
@@ -854,7 +912,7 @@ async fn load_page(
         let (at, id) = resolve_bound(db, channel_id, cursor, Bound::After, "after").await?;
         let mut newer = sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 AND (m.created_at, m.id) > ($2, $3) \
              ORDER BY m.created_at ASC, m.id ASC \
@@ -879,7 +937,7 @@ async fn load_page(
     } else {
         sqlx::query_as::<_, MessageRow>(
             "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \
-                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
+                    u.avatar_url AS author_avatar_url, m.content, m.created_at, m.edited_at, m.revision, m.created_order, m.gif, m.mentions, m.mentions_everyone, m.system_kind, m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions \
              FROM messages m JOIN users u ON u.id = m.author_id \
              WHERE m.channel_id = $1 \
              ORDER BY m.created_at DESC, m.id DESC \

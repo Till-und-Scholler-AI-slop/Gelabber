@@ -72,29 +72,28 @@ export function PushToTalkSettings() {
 
   return (
     <fieldset className="flex flex-col gap-3">
-      <legend className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+      <legend className="text-sm font-semibold text-lr-text">
         Sprachübertragung
       </legend>
       {(Object.keys(MODES) as VoiceInputMode[]).map((mode) => (
         <label key={mode} className="flex items-start gap-2 text-sm">
           <input
             type="radio"
+            className="ui-check"
             name="voice-input"
             checked={voiceInput === mode}
             onChange={() => patch({ voiceInput: mode })}
           />
           <span>
             {MODES[mode].label}
-            <small className="block text-neutral-500">{MODES[mode].hint}</small>
+            <small className="block text-lr-muted">{MODES[mode].hint}</small>
           </span>
         </label>
       ))}
       {voiceInput === "ptt" && (
         <>
           <div className="flex items-center gap-2 text-sm">
-            <span className="font-medium text-neutral-800 dark:text-neutral-200">
-              Taste
-            </span>
+            <span className="font-medium text-lr-text">Taste</span>
             <button
               type="button"
               id="ptt-key"
@@ -110,7 +109,7 @@ export function PushToTalkSettings() {
             </button>
           </div>
           {!pttKey && (
-            <p role="status" className="text-xs text-neutral-500">
+            <p role="status" className="text-xs text-lr-muted">
               Ohne Taste bleibt dein Mikrofon im Gespräch stumm.
             </p>
           )}
@@ -118,11 +117,11 @@ export function PushToTalkSettings() {
             <div className="flex items-center justify-between gap-2 text-sm">
               <label
                 htmlFor="ptt-release-delay"
-                className="font-medium text-neutral-800 dark:text-neutral-200"
+                className="font-medium text-lr-text"
               >
                 Nachlaufzeit
               </label>
-              <span className="tabular-nums text-neutral-500 dark:text-neutral-400">
+              <span className="tabular-nums text-lr-muted">
                 {releaseDelay} ms
               </span>
             </div>
@@ -138,13 +137,13 @@ export function PushToTalkSettings() {
               }
               className="w-full"
             />
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+            <p className="text-xs text-lr-muted">
               So lange sendet das Mikrofon nach dem Loslassen weiter, damit das
               letzte Wort nicht abreißt.
             </p>
           </div>
           {pttKey && (
-            <p role="status" className="text-xs text-neutral-500">
+            <p role="status" className="text-xs text-lr-muted">
               {desktop
                 ? globalKeyNote(global, onWindows())
                 : "Im Browser wirkt die Taste nur, solange Gelabber im Vordergrund ist. Die Desktop-App hört sie auch im Hintergrund."}

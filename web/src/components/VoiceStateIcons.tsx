@@ -2,6 +2,7 @@
 // when voice state flips (issue 12).
 
 import { HeadsetOffIcon, MicOffIcon, SpeakerIcon } from "./Icons.tsx";
+import "../voice/room.css";
 
 const SLOT = "flex size-3.5 shrink-0 items-center justify-center";
 
@@ -33,18 +34,18 @@ export function VoiceStateIcons({
 
   return (
     <span
-      className="flex w-8 shrink-0 items-center justify-end gap-0.5 text-neutral-500 dark:text-neutral-400"
+      className="voice-state-icons flex w-8 shrink-0 items-center justify-end gap-0.5"
+      // A named image: a bare span's label is not read out everywhere.
+      role={title ? "img" : undefined}
       title={title}
       aria-label={title}
+      aria-hidden={title ? undefined : true}
     >
       <span className={SLOT}>
         {micOff ? (
           <MicOffIcon size={14} />
         ) : inVoice ? (
-          <SpeakerIcon
-            size={14}
-            className="text-emerald-600 dark:text-emerald-400"
-          />
+          <SpeakerIcon size={14} className="voice-state-icons-speaker" />
         ) : null}
       </span>
       <span className={SLOT}>

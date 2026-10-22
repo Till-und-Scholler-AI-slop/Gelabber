@@ -117,7 +117,7 @@ async fn pings_do_not_extend_the_deadline() {
 async fn joined_socket_outlives_the_deadline() {
     let (addr, redis) = serve("200").await;
     let (code, _lease) = ticket(&redis).await;
-    let mut peer = Peer::join(addr, &code, None).await;
+    let mut peer = Peer::join(addr, &code).await;
     // Four deadlines pass; whatever the room sends meanwhile is no Close.
     let ended = tokio::time::timeout(Duration::from_millis(800), async {
         loop {
@@ -142,7 +142,7 @@ async fn joined_socket_outlives_the_deadline() {
 async fn left_socket_is_closed_at_the_deadline() {
     let (addr, redis) = serve("200").await;
     let (code, _lease) = ticket(&redis).await;
-    let mut peer = Peer::join(addr, &code, None).await;
+    let mut peer = Peer::join(addr, &code).await;
     peer.ok(json!({"op":"l"})).await;
     closes_within(&mut peer.socket, Duration::from_secs(2)).await;
 }
@@ -152,7 +152,7 @@ async fn leave_starts_a_fresh_deadline_for_a_rejoin() {
     let (addr, redis) = serve("1000").await;
     let (first, _first) = ticket(&redis).await;
     let (second, _second) = ticket(&redis).await;
-    let mut peer = Peer::join(addr, &first, None).await;
+    let mut peer = Peer::join(addr, &first).await;
     // The deadline from the upgrade passes while the socket is joined.
     tokio::time::sleep(Duration::from_millis(1500)).await;
     peer.ok(json!({"op":"l"})).await;

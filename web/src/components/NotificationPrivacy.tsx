@@ -4,6 +4,8 @@ import {
   useChangeNotificationPrivacy,
   useNotificationPrivacy,
 } from "../messages/notificationPrivacy.ts";
+import { SettingsGroup } from "./SettingsGroup.tsx";
+import { Switch } from "./ui/Switch.tsx";
 
 /** The account's switch for notifications without the message (#268). */
 export function NotificationPrivacySetting() {
@@ -23,29 +25,20 @@ export function NotificationPrivacySetting() {
     }
   };
   return (
-    <fieldset className="settings-group">
-      <legend>Sperrbildschirm</legend>
-      <label className="settings-preference">
-        <span>
-          <strong>Inhalt in Benachrichtigungen verbergen</strong>
-          <small>
-            Benachrichtigungen zeigen nur „Neue Nachricht von …“, ohne Text und
-            ohne Chat. Gilt für alle Geräte deines Accounts.
-          </small>
-        </span>
-        <input
-          type="checkbox"
-          role="switch"
-          checked={data?.hide_content ?? false}
-          disabled={isPending || saving}
-          onChange={(event) => void toggle(event.target.checked)}
-        />
-      </label>
+    <SettingsGroup title="Sperrbildschirm" scope="account">
+      <Switch
+        className="settings-row"
+        label="Inhalt in Benachrichtigungen verbergen"
+        description="Benachrichtigungen zeigen nur „Neue Nachricht von …“, ohne Text und ohne Chat. Gilt für alle Geräte deines Accounts."
+        checked={data?.hide_content ?? false}
+        disabled={isPending || saving}
+        onChange={(event) => void toggle(event.target.checked)}
+      />
       {failed && (
-        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+        <p role="alert" className="ui-field-error">
           Die Einstellung konnte nicht gespeichert werden. Versuche es erneut.
         </p>
       )}
-    </fieldset>
+    </SettingsGroup>
   );
 }

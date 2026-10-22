@@ -37,15 +37,18 @@ floors/tombstones for deletes. Older HTTP responses / events must not overwrite
 newer entities or resurrect a deletion whose revision has already been seen.
 Duplicate transport events do not create duplicate messages.
 
-Message create/edit/delete and Go Live text notices persist an outbox row in
+Message create/edit/delete and Live text notices persist an outbox row in
 the same Postgres transaction as the write. DM creation persists discovery for
 both participants in its transaction. Channel advisory transaction locks order
 writers and delivery; the database sequence allocates revisions while that
-lock is held. Delivery retries automatically, in batches of at most 32 every
-200 ms. Each invocation examines at most 32 channel heads. A process-local cursor
+lock is held. A per-process delivery worker publishes the outbox in batches of
+at most 32. A committed write wakes it, so the HTTP request does not wait for
+Redis publication; without a wake it polls every 200 ms, and after a full batch
+it runs again at once. A wake during a pass is kept and starts the next pass.
+Each invocation examines at most 32 channel heads. A process-local cursor
 advances past busy heads across invocations, with a captured maximum revision
 per finite pass; continuous new writes cannot keep old heads from being revisited.
-The periodic worker and HTTP attempts share that cursor. Restarting the process
+Restarting the process
 restarts the scan, while every unacknowledged row stays durable. An occupied
 channel is skipped so another channel can proceed. Retry
 backoff preserves per-channel order. HTTP success means durable commit; Redis

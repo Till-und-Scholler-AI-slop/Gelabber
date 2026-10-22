@@ -24,7 +24,14 @@ import { ViewerLayerController } from "./viewerLayers.ts";
 import { isDesktopApp } from "./native/bridge.ts";
 import { createNativeDevice } from "./native/device.ts";
 import { createStream } from "./native/tracks.ts";
-import { chooseVideoCodec, hardwareH264 } from "./videoCodec.ts";
+import {
+  chooseVideoCodec,
+  hardwareAv1Decoding,
+  hardwareVideo,
+  receivableCapabilities,
+  SOFTWARE_VIDEO,
+  type HardwareVideo,
+} from "./videoCodec.ts";
 
 export type RtpSenderParameters = {
   encodings: Array<{
@@ -50,7 +57,6 @@ export type MediaPublication = {
   track: MediaStreamTrack;
   streamId: string;
   epoch: string;
-  lc?: string;
   parent?: string;
   paused?: boolean;
   /** Transient local operation controls; never part of the product wire. */
@@ -79,7 +85,9 @@ export type MediaConnectionOptions = {
   onRepublished?(): void;
   deviceFactory?: () => Promise<Device>;
   /** Test injection; production asks the browser or the desktop app. */
-  hardwareH264?: () => Promise<boolean>;
+  hardwareVideo?: () => Promise<HardwareVideo>;
+  /** Test injection; production asks the browser or the desktop app. */
+  hardwareAv1Decoding?: () => Promise<boolean>;
   /** Test injection; production SDK operations are bounded to ten seconds. */
   sdkTimeoutMs?: number;
   /** Test injection; production waits SDK_LOAD_TIMEOUT_MS for the chunk. */
@@ -153,9 +161,9 @@ type Publication = {
   mime: string;
   paused: boolean;
 };
-const VIDEO_KINDS: readonly TrackKind[] = ["v", "s", "l"];
+const VIDEO_KINDS: readonly TrackKind[] = ["v", "s"];
 /** The sound sent with a video source; the server ends it with its parent. */
-const CHILD: Partial<Record<TrackKind, TrackKind>> = { s: "sa", l: "la" };
+const CHILD: Partial<Record<TrackKind, TrackKind>> = { s: "sa" };
 function emitMediaHook(name: string, detail: unknown): void {
   if (typeof window !== "undefined" && typeof CustomEvent !== "undefined")
     window.dispatchEvent(new CustomEvent(name, { detail }));
@@ -323,8 +331,14 @@ export class MediasoupConnection implements MediaConnection {
       throw error;
     }
     this.device = device;
+    // AV1 comes as one stream: only a device that decodes it in hardware
+    // offers to receive it (issue #318).
+    const av1Decoding = await (
+      this.options.hardwareAv1Decoding ?? hardwareAv1Decoding
+    )();
+    this.live();
     const announced = await this.options.request("capabilities", {
-      rtp: device.recvRtpCapabilities,
+      rtp: receivableCapabilities(device.recvRtpCapabilities, av1Decoding),
     });
     this.live();
     if (isVideoCodecs(announced?.codecs))
@@ -395,7 +409,6 @@ export class MediasoupConnection implements MediaConnection {
               rtp: rtpParameters,
               epoch: publication.epoch,
               ...(publication.parent ? { parent: publication.parent } : {}),
-              ...(publication.lc ? { lc: publication.lc } : {}),
               ...(old ? { expectedOldProducerId: old } : {}),
               ...(publication.track.kind === "video"
                 ? {
@@ -506,7 +519,7 @@ export class MediasoupConnection implements MediaConnection {
     const device = this.device;
     if (!device || !device.canProduce(input.track.kind as "audio" | "video"))
       throw new MediaError("unsupported_codec");
-    if ((input.kind === "sa" || input.kind === "la") && !input.parent)
+    if (input.kind === "sa" && !input.parent)
       throw new MediaError("missing_parent");
     const codec =
       input.track.kind === "video"
@@ -531,7 +544,6 @@ export class MediasoupConnection implements MediaConnection {
       previous &&
       previous.codec === signature &&
       previous.input.epoch === input.epoch &&
-      previous.input.lc === input.lc &&
       previous.input.parent === input.parent
     ) {
       if (previous.producer.track !== input.track)
@@ -567,8 +579,8 @@ export class MediasoupConnection implements MediaConnection {
       await this.compactSend();
       previous = this.publications.get(input.kind);
     }
-    if (input.kind === "sa" || input.kind === "la") {
-      const parent = this.publications.get(input.kind === "sa" ? "s" : "l");
+    if (input.kind === "sa") {
+      const parent = this.publications.get("s");
       if (!parent || parent.input.epoch !== input.epoch)
         throw new MediaError("missing_parent");
       input = { ...input, parent: parent.producer.id };
@@ -576,6 +588,7 @@ export class MediasoupConnection implements MediaConnection {
     const transport = await this.sendTransport();
     this.checkPublication(input);
     // Two simulcast layers where browsers and the native core encode them.
+    // mediasoup takes VP9 and AV1 as one stream or SVC only, not simulcast.
     const layered = mime === "video/vp8" || mime === "video/h264";
     const base = {
       track: input.track,
@@ -728,9 +741,11 @@ export class MediasoupConnection implements MediaConnection {
 
   private async videoCodec(device: Device) {
     const allowed = this.videoCodecs?.video ?? null;
+    // Asked only where it can change the choice.
     const hardware =
-      allowed?.includes("video/h264") === true &&
-      (await (this.options.hardwareH264 ?? hardwareH264)());
+      allowed?.includes("video/h264") || allowed?.includes("video/av1")
+        ? await (this.options.hardwareVideo ?? hardwareVideo)()
+        : SOFTWARE_VIDEO;
     return chooseVideoCodec(
       device.sendRtpCapabilities.codecs ?? [],
       allowed,
@@ -796,11 +811,7 @@ export class MediasoupConnection implements MediaConnection {
       .flatMap((p) =>
         p.producer.track ? [{ ...p.input, track: p.producer.track }] : [],
       )
-      .sort(
-        (a, b) =>
-          Number(a.kind === "sa" || a.kind === "la") -
-          Number(b.kind === "sa" || b.kind === "la"),
-      );
+      .sort((a, b) => Number(a.kind === "sa") - Number(b.kind === "sa"));
     this.compactingSend = true;
     this.publications.clear();
     this.send = null;

@@ -9,10 +9,13 @@
 // an edit arrives while that page is on its way, and for a reader who sits
 // scrolled up while rows below are deleted and rows above grow (#215).
 // Afterwards the reader must still be able to scroll away. A picture's
-// lightbox closes when its message is deleted.
+// lightbox closes when its message is deleted. With unread messages the
+// list opens at the first of them, after fetching the page it is on, and
+// marks nothing read until asked to. A toast above the composer leaves the
+// newest message and its actions uncovered (#354).
 // Run in web/: node scripts/smoke-chat-scroll.mjs
 // GELABBER_CHAT_BROWSER_EXECUTABLE names a Chromium other than Playwright's.
-/* global process, console, window, document, URL, requestAnimationFrame, setTimeout */
+/* global process, console, window, document, getComputedStyle, URL, requestAnimationFrame, setTimeout */
 import assert from "node:assert/strict";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -82,7 +85,7 @@ const all = Array.from({ length: 100 }, (_, n) => message(n));
 const newest = all.slice(50);
 const older = all.slice(0, 50);
 
-function answer(path, method) {
+function answer(path, method, unread) {
   if (path === "/api/auth/session")
     return {
       user: { ...person(ME, "Lena"), email: "lena@example.test" },
@@ -90,7 +93,8 @@ function answer(path, method) {
     };
   if (path === "/api/servers") return [server];
   if (path === `/api/servers/${SERVER}`) return detail;
-  if (path === "/api/dms" || path === "/api/messages/unread") return [];
+  if (path === "/api/messages/unread") return unread ? [unread] : [];
+  if (path === "/api/dms" || path === "/api/notification-settings") return [];
   if (path === "/api/me/themes")
     return { version: 1, revision: 1, active: "dark", customThemes: [] };
   if (path.endsWith("/read") || method !== "GET")
@@ -170,7 +174,7 @@ const visibleNames = (page) =>
  * A fresh page on the channel. The older page waits until `releaseOlder()`;
  * `send()` pushes a chat event for the channel through the gateway.
  */
-async function open() {
+async function open({ unread, shown = "Nachricht 99." } = {}) {
   const context = await browser.newContext({
     viewport: { width: 1100, height: 760 },
     locale: "de-DE",
@@ -178,6 +182,8 @@ async function open() {
   });
   let olderAsked;
   let releaseOlder;
+  /** Read positions the app wrote. */
+  const marks = [];
   const asked = new Promise((resolve) => {
     olderAsked = resolve;
   });
@@ -201,10 +207,12 @@ async function open() {
         body: JSON.stringify({ messages: older, has_more: false }),
       });
     }
+    if (url.pathname.endsWith("/read") && request.method() === "PUT")
+      marks.push(request.postData());
     if (url.pathname.startsWith("/api/"))
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify(answer(url.pathname, request.method())),
+        body: JSON.stringify(answer(url.pathname, request.method(), unread)),
       });
     return route.fulfill({
       path: join(out, files.has(url.pathname) ? url.pathname : "index.html"),
@@ -248,7 +256,7 @@ async function open() {
   page.setDefaultTimeout(15_000);
   page.on("pageerror", (error) => problems.push(error.message));
   await page.goto(`${ORIGIN}/s/${SERVER}/c/${TEXT}`);
-  await page.getByText("Nachricht 99.").waitFor();
+  await page.getByText(shown).waitFor();
   await channelSubscribed;
   await frames(page, 8);
   const box = await page.locator('[role="log"]').boundingBox();
@@ -257,7 +265,7 @@ async function open() {
     problems.push(...(await page.evaluate(() => window.smokeErrors)));
     await context.close();
   };
-  return { page, asked, releaseOlder, send, close };
+  return { page, asked, releaseOlder, send, close, marks };
 }
 
 /** An edit of message `n`: the same text (same length) or `content`. */
@@ -379,6 +387,135 @@ try {
     env: { ...process.env, DBUS_SESSION_BUS_ADDRESS: "disabled:" },
   });
 
+  {
+    // Message 30 was the last one read: it is on the older page, which the
+    // list fetches before it opens at message 31.
+    const label = "unread";
+    const opened = await open({
+      unread: {
+        channel_id: TEXT,
+        server_id: SERVER,
+        read_message_id: all[30].id,
+        read_order: 31,
+        read_at: AT,
+        unread_count: 69,
+      },
+    });
+    const { page, asked, releaseOlder, marks } = opened;
+    await asked;
+    releaseOlder();
+    const divider = page.getByRole("separator", { name: "Neue Nachrichten" });
+    await divider.waitFor();
+    await frames(page, 8);
+    const at = async () =>
+      page.evaluate(() => {
+        const log = document
+          .querySelector('[role="log"]')
+          .getBoundingClientRect();
+        const line = document
+          .querySelector(".lr-new-divider")
+          .getBoundingClientRect();
+        return { top: line.top - log.top, height: log.height };
+      });
+    const placed = await at();
+    assert.ok(
+      Math.abs(placed.top - placed.height / 3) <= 24,
+      `${label}: "Neu" is ${Math.round(placed.top)}px from the top of a ${Math.round(placed.height)}px list, not a third down`,
+    );
+    const moves = await drift(
+      page,
+      "Nachricht 31",
+      (await rowTop(page, "Nachricht 31")) ?? 0,
+    );
+    assert.ok(
+      still(moves),
+      `${label}: the first unread row moved by ${moves.join(", ")} px while rows were measured`,
+    );
+    await page.getByText("69 neue Nachrichten").waitFor();
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    assert.deepEqual(
+      marks,
+      [],
+      `${label}: marked read before the reader got there`,
+    );
+    console.log(
+      `PASS: ${label}: opens with "Neu" ${Math.round(placed.top)}px down a ${Math.round(placed.height)}px list, holds it, and marks nothing read`,
+    );
+    // Reading down to the newest message marks it read.
+    for (let step = 0; step < 80 && marks.length === 0; step++) {
+      await page.mouse.wheel(0, 600);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    assert.ok(
+      marks.some((body) => body?.includes(all[99].id)),
+      `${label}: reading to the end marked nothing read (${marks.join(", ")})`,
+    );
+    console.log(`PASS: ${label}: reading to the end marks it read`);
+    await opened.close();
+
+    const again = await open({
+      unread: {
+        channel_id: TEXT,
+        server_id: SERVER,
+        read_message_id: all[60].id,
+        read_order: 61,
+        read_at: AT,
+        unread_count: 39,
+      },
+      shown: "Nachricht 61.",
+    });
+    await again.page.getByText("39 neue Nachrichten").waitFor();
+    await again.page
+      .getByRole("button", { name: /Als gelesen markieren/ })
+      .click();
+    await again.page
+      .getByText("39 neue Nachrichten")
+      .waitFor({ state: "detached" });
+    assert.equal(
+      again.marks.length,
+      1,
+      `${label}: "Als gelesen markieren" wrote no read position`,
+    );
+    console.log(
+      `PASS: ${label}: "Als gelesen markieren" marks it read and the bar goes`,
+    );
+    await again.close();
+
+    // The last read message was deleted since: its order still finds the
+    // first unread one, on the older page.
+    const deleted = await open({
+      unread: {
+        channel_id: TEXT,
+        server_id: SERVER,
+        read_message_id: id(999),
+        read_order: 31,
+        read_at: AT,
+        unread_count: 69,
+      },
+    });
+    await deleted.asked;
+    deleted.releaseOlder();
+    await deleted.page
+      .getByRole("separator", { name: "Neue Nachrichten" })
+      .waitFor();
+    const after = await deleted.page.evaluate(
+      () =>
+        document
+          .querySelector(".lr-new-divider")
+          .closest("[data-index]")
+          .querySelector(".lr-message-text")?.textContent,
+    );
+    assert.ok(
+      after?.startsWith("Nachricht 31."),
+      `${label}: with the read message deleted, "Neu" sits above ${after?.slice(0, 14)}`,
+    );
+    console.log(
+      `PASS: ${label}: a deleted read message still opens at the first unread one`,
+    );
+    await deleted.close();
+  }
+
   await olderPage("older page");
   // An edit commit while the page is on its way must not move the anchor
   // to a row rendered above the viewport. Longer steps leave the reader
@@ -475,6 +612,86 @@ try {
     );
     console.log(
       `PASS: ${label}: Esc returns focus to the picture; deleting its message closes it and focus stays in the list`,
+    );
+    await opened.close();
+  }
+
+  {
+    // A toast above the composer must not cover the newest message or its
+    // actions (#354): the list makes room and stays at its end.
+    const label = "toast";
+    const opened = await open();
+    const { page, send } = opened;
+    // One short line that continues the last author's: its actions sit
+    // lowest, where the toast goes.
+    send({
+      t: "c",
+      d: {
+        ...message(100),
+        author: all[99].author,
+        content: "Nachricht 100. Kurz.",
+      },
+    });
+    const newest = page
+      .locator('[role="log"] [data-index]')
+      .filter({ hasText: "Nachricht 100." });
+    await newest.waitFor();
+    await frames(page, 8);
+    await newest.hover();
+    await newest.getByRole("button", { name: "Weitere Aktionen" }).click();
+    await page.getByRole("menuitem", { name: "Text kopieren" }).click();
+    const toast = page.locator(".ui-toast");
+    await toast.waitFor();
+    // The toast's rise and the room it takes.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await newest.hover();
+    await frames(page, 4);
+    const placed = await page.evaluate(() => {
+      const log = document.querySelector('[role="log"]');
+      const rows = log.querySelectorAll("[data-index]");
+      const row = rows[rows.length - 1];
+      const actions = row.querySelector(".lr-message-actions");
+      const tools = actions.getBoundingClientRect();
+      const card = document.querySelector(".ui-toast").getBoundingClientRect();
+      const hit = document.elementFromPoint(
+        tools.left + tools.width / 2,
+        tools.top + tools.height / 2,
+      );
+      return {
+        hit: actions.contains(hit),
+        rowBottom: Math.round(row.getBoundingClientRect().bottom),
+        listBottom: Math.round(log.getBoundingClientRect().bottom),
+        toastTop: Math.round(card.top),
+        atEnd: log.scrollHeight - log.scrollTop - log.clientHeight <= 2,
+      };
+    });
+    assert.ok(
+      placed.hit,
+      `${label}: the newest message's actions are covered while a toast shows`,
+    );
+    assert.ok(
+      placed.listBottom <= placed.toastTop && placed.atEnd,
+      `${label}: the list ends at ${placed.listBottom}px (at its end: ${placed.atEnd}), the toast starts at ${placed.toastTop}px`,
+    );
+    await toast.getByRole("button", { name: "Schließen" }).click();
+    await toast.waitFor({ state: "detached" });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const after = await page.evaluate(() => {
+      const log = document.querySelector('[role="log"]');
+      return {
+        space: getComputedStyle(document.documentElement)
+          .getPropertyValue("--lr-toast-space")
+          .trim(),
+        listBottom: Math.round(log.getBoundingClientRect().bottom),
+        atEnd: log.scrollHeight - log.scrollTop - log.clientHeight <= 2,
+      };
+    });
+    assert.ok(
+      after.space === "0px" && after.atEnd,
+      `${label}: after the toast the room is ${after.space} and the list is ${after.atEnd ? "" : "not "}at its end`,
+    );
+    console.log(
+      `PASS: ${label}: the list gives ${after.listBottom - placed.listBottom}px to a toast, keeps the newest message's actions reachable, and takes the room back`,
     );
     await opened.close();
   }

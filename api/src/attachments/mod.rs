@@ -1,9 +1,11 @@
 //! Presign upload, metadata, and authenticated download (issue #7).
 //!
 //! The client asks for a presigned PUT, writes the bytes to MinIO itself,
-//! then posts a message with `attachment_ids`. The API never accepts the
-//! file body. Downloads go through this module so there is no public
-//! object URL without a membership check.
+//! then posts a message with `attachment_ids`. Downloads go through this
+//! module so there is no public object URL without a membership check.
+//! With `ATTACHMENT_DELIVERY=proxy` (#348) the upload link points at this
+//! module instead of MinIO, and downloads stream through it as well, so
+//! browsers only ever talk to the app's own origin.
 
 pub mod cleanup;
 pub mod sniff;
@@ -13,26 +15,29 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 
 use axum::Router;
+use axum::body::Body as RawBody;
 use axum::extract::{Query, State};
 use axum::http::header::{
-    CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE, VARY, X_CONTENT_TYPE_OPTIONS,
+    ACCEPT_RANGES, CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE,
+    CONTENT_SECURITY_POLICY, CONTENT_TYPE, RANGE, VARY, X_CONTENT_TYPE_OPTIONS,
 };
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Json, Redirect, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use tracing::info;
 use uuid::Uuid;
 
 use crate::auth::session::CurrentUser;
+use crate::csrf::CSRF_HEADER;
 use crate::error::{ApiError, FieldErrors};
 use crate::json::Body;
 use crate::limits;
 use crate::messages::{self, Message};
 use crate::path::Id;
 use crate::state::AppState;
-use crate::storage::{self, ObjectBody, ObjectStore, PUT_TTL, StoreError};
+use crate::storage::{self, ObjectBody, ObjectStore, PUT_TTL, StoreError, StoredObject};
 
 use self::validate::{is_inline, is_text};
 
@@ -47,7 +52,13 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/channels/{id}/attachments", post(presign))
         .route("/api/attachments/{id}", get(download))
+        .route("/api/attachments/{id}/upload", put(upload))
 }
+
+/// How long a browser may keep an attachment it got through the API: the
+/// same 60 minutes a signed MinIO link and its cached copy live
+/// (`storage::GET_TTL`, accepted for access revocation).
+const PROXIED_CACHE: HeaderValue = HeaderValue::from_static("private, max-age=3600");
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Attachment {
@@ -127,6 +138,7 @@ async fn presign(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Id(channel_id): Id,
+    request_headers: HeaderMap,
     Body(body): Body<PresignBody>,
 ) -> Result<(StatusCode, Json<PresignResponse>), ApiError> {
     let access = messages::messaging_channel(&state.db, channel_id, user.id).await?;
@@ -147,10 +159,25 @@ async fn presign(
 
     let id = Uuid::new_v4();
     let object_key = format!("att/{id}");
-    let signed = state
+    let mut signed = state
         .store
         .presign_put(&object_key, &content_type, size)
         .map_err(store_internal)?;
+    if state.store.proxies() {
+        // The upload goes to `upload` below. A mutation there needs the CSRF
+        // header like any other; this request carried a valid one, and the
+        // client sends every header listed here (also one that predates
+        // proxy delivery).
+        signed.url = format!("/api/attachments/{id}/upload");
+        if let Some(token) = request_headers
+            .get(&CSRF_HEADER)
+            .and_then(|value| value.to_str().ok())
+        {
+            signed
+                .headers
+                .push(("X-CSRF-Token".to_owned(), token.to_owned()));
+        }
+    }
 
     let mut tx = state.db.begin().await?;
     // Parent locks precede the ledger lock. A concurrent parent cascade must
@@ -223,6 +250,7 @@ async fn download(
     CurrentUser(user): CurrentUser,
     Id(attachment_id): Id,
     Query(params): Query<DownloadParams>,
+    request_headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let row = sqlx::query_as::<_, StoredRow>(
         "SELECT id, message_id, channel_id, uploader_id, object_key, \
@@ -250,14 +278,19 @@ async fn download(
     // One clock read: the link's signing window and the redirect's cache
     // time must come from the same window.
     let now = SystemTime::now();
-    let body = if save {
-        state
-            .store
-            .download(&row.object_key, &disposition, served, now)
-            .await
-    } else {
-        state.store.get(&row.object_key, served, now).await
-    };
+    let range = request_headers
+        .get(RANGE)
+        .and_then(|value| value.to_str().ok());
+    let body = state
+        .store
+        .serve(
+            &row.object_key,
+            served,
+            save.then_some(disposition.as_str()),
+            range,
+            now,
+        )
+        .await;
     match body {
         Ok(ObjectBody::Redirect(url)) => {
             let mut response = Redirect::temporary(&url).into_response();
@@ -278,28 +311,139 @@ async fn download(
             }
             Ok(response)
         }
-        Ok(ObjectBody::Bytes { bytes, .. }) => Ok(inline_bytes(&disposition, served, bytes)),
+        Ok(ObjectBody::Stream(object)) => Ok(streamed(&disposition, served, save, object)),
         Err(StoreError::NotFound) => Err(ApiError::NotFound),
+        Err(StoreError::RangeNotSatisfiable) => {
+            let mut response = StatusCode::RANGE_NOT_SATISFIABLE.into_response();
+            if let Ok(value) = HeaderValue::from_str(&format!("bytes */{}", row.size_bytes)) {
+                response.headers_mut().insert(CONTENT_RANGE, value);
+            }
+            Ok(response)
+        }
         Err(err) => Err(store_internal(err)),
     }
 }
 
-fn inline_bytes(disposition: &str, content_type: &str, bytes: Vec<u8>) -> Response {
+/// The bytes through the API (proxy delivery, memory store), with the
+/// headers MinIO would have answered a signed link with, and `sandbox` on
+/// top: the file now comes from the app's own origin, so even a document
+/// opened on its own must never run as part of the app.
+fn streamed(disposition: &str, content_type: &str, save: bool, object: StoredObject) -> Response {
     let mut headers = HeaderMap::new();
     if let Ok(value) = HeaderValue::from_str(content_type) {
         headers.insert(CONTENT_TYPE, value);
     }
     headers.insert(
         CACHE_CONTROL,
-        // Attachments never change; the membership check ran just now.
-        HeaderValue::from_static("private, max-age=3600"),
+        if save {
+            HeaderValue::from_static("private, no-store")
+        } else {
+            PROXIED_CACHE
+        },
     );
     headers.insert(VARY, HeaderValue::from_static("Cookie"));
     headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    headers.insert(CONTENT_SECURITY_POLICY, HeaderValue::from_static("sandbox"));
     if let Ok(value) = HeaderValue::from_str(disposition) {
         headers.insert(CONTENT_DISPOSITION, value);
     }
-    (headers, bytes).into_response()
+    if object.ranges {
+        headers.insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    }
+    if let Some(length) = object.content_length {
+        headers.insert(CONTENT_LENGTH, HeaderValue::from(length));
+    }
+    let status = match object
+        .content_range
+        .as_deref()
+        .and_then(|range| HeaderValue::from_str(range).ok())
+    {
+        Some(range) => {
+            headers.insert(CONTENT_RANGE, range);
+            StatusCode::PARTIAL_CONTENT
+        }
+        None => StatusCode::OK,
+    };
+    (status, headers, object.body).into_response()
+}
+
+/// Proxy delivery: the browser's PUT of a presigned upload (#348). The
+/// same rules as MinIO's signed link: only the uploader, only before the
+/// link expires and the file is bound, the signed type and exactly the
+/// signed size. The upload may replace bytes put earlier, as a second PUT
+/// to the link could; `check_uploads` reads them at bind time.
+async fn upload(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Id(attachment_id): Id,
+    request_headers: HeaderMap,
+    body: RawBody,
+) -> Result<StatusCode, ApiError> {
+    if !state.store.proxies() {
+        return Err(ApiError::NotFound);
+    }
+    let row = sqlx::query_as::<_, StoredRow>(
+        "SELECT id, message_id, channel_id, uploader_id, object_key, \
+                filename, content_type, size_bytes \
+         FROM attachments \
+         WHERE id = $1 AND uploader_id = $2 AND message_id IS NULL \
+           AND expires_at > now() AND created_at > now() - make_interval(secs => $3)",
+    )
+    .bind(attachment_id)
+    .bind(user.id)
+    .bind(PUT_TTL.as_secs_f64())
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    messages::messaging_channel(&state.db, row.channel_id, user.id)
+        .await?
+        .require_send_files()?;
+
+    let declared_type = request_headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    if !declared_type.trim().eq_ignore_ascii_case(&row.content_type) {
+        return Err(ApiError::Validation(FieldErrors::from([(
+            "content_type",
+            "invalid",
+        )])));
+    }
+    let declared_size = request_headers
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<i64>().ok());
+    if declared_size != Some(row.size_bytes) {
+        return Err(ApiError::Validation(FieldErrors::from([(
+            "size", "invalid",
+        )])));
+    }
+
+    match state
+        .store
+        .upload(
+            &row.object_key,
+            &row.content_type,
+            row.size_bytes as u64,
+            body,
+        )
+        .await
+    {
+        Ok(()) => {}
+        Err(StoreError::SizeMismatch) => {
+            return Err(ApiError::Validation(FieldErrors::from([(
+                "size", "invalid",
+            )])));
+        }
+        Err(err) => return Err(store_internal(err)),
+    }
+    info!(
+        channel_id = %row.channel_id,
+        attachment_id = %row.id,
+        size = row.size_bytes,
+        "attachment uploaded through the api"
+    );
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// The type a file is served with: the checked type from the database, and

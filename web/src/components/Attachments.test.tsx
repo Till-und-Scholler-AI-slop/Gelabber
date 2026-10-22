@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Attachment } from "../messages/types.ts";
-import { AttachmentList } from "./Attachments.tsx";
+import { AttachmentImageFailed, AttachmentList } from "./Attachments.tsx";
 import { reloadMedia } from "./mediaReload.ts";
 
 const file = (
@@ -90,5 +90,33 @@ describe("reloadMedia", () => {
     const el = media(0, true);
     expect(reloadMedia(el, -Infinity, 100_000)).toBe(false);
     expect(el.load).not.toHaveBeenCalled();
+  });
+});
+
+describe("picture that did not load (#348)", () => {
+  it("says so and offers a retry and the file", () => {
+    const html = renderToStaticMarkup(
+      <AttachmentImageFailed
+        attachment={file("p1", "IMG_9183.jpeg", "image/jpeg")}
+        onRetry={() => undefined}
+      />,
+    );
+    expect(html).toContain("lr-attachment-image is-failed");
+    expect(html).toContain("IMG_9183.jpeg");
+    expect(html).toContain("Bild konnte nicht geladen werden.");
+    expect(html).toContain(">Erneut laden</button>");
+    expect(html).toContain('href="/api/attachments/p1?download=1"');
+    expect(html).toContain('download="IMG_9183.jpeg"');
+  });
+
+  it("has no download while the file is still on its way up", () => {
+    const html = renderToStaticMarkup(
+      <AttachmentImageFailed
+        attachment={file("tmp:1", "neu.png", "image/png")}
+        onRetry={() => undefined}
+      />,
+    );
+    expect(html).toContain(">Erneut laden</button>");
+    expect(html).not.toContain("Herunterladen");
   });
 });

@@ -3,10 +3,22 @@
 // security headers it sends. The browser smoke (scripts/smoke-pwa.mjs) checks
 // the same against a running nginx, but needs docker and a browser; this runs
 // with the unit tests.
-/* global URL */
+/* global URL, process */
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+
+import { fillThemeColours } from "../theme/themeHtml.ts";
 
 const web = new URL("../../", import.meta.url);
 const source = readFileSync(new URL("nginx.conf", web), "utf8");
@@ -73,21 +85,69 @@ const ownDirectives = (name) =>
   location(name).filter((line) => !SECURITY_HEADERS.includes(line));
 const CSP = "add_header Content-Security-Policy ";
 
-/** The shell's Content-Security-Policy: sources per directive. */
-function shellPolicy() {
+const STORAGE_MAP = 'map "" $gelabber_storage_origin';
+const FETCH_MAP = "map $gelabber_storage_origin $gelabber_fetch_directives";
+const entrypoint = fileURLToPath(
+  new URL("docker-entrypoint.d/40-gelabber-storage-origin.sh", web),
+);
+
+/** A map's value for `key`, as nginx picks it: the key's entry or default. */
+function mapped(map, key) {
+  const entries = new Map(
+    (blocks.get(map) ?? [])
+      .map((line) => line.match(/^("[^"]*"|\S+) "([^"]*)"$/))
+      .filter(Boolean)
+      .map(([, name, value]) => [name, value]),
+  );
+  return entries.get(`"${key}"`) ?? entries.get("default");
+}
+
+/** The shell's Content-Security-Policy: sources per directive, with the
+ *  MinIO origin the entrypoint hands over (none: the container has none). */
+function shellPolicy(storage = "") {
   const headers = location("= /index.html").filter((line) =>
     line.startsWith(CSP),
   );
   expect(headers).toHaveLength(1);
-  const value = headers[0].match(/^add_header \S+ "([^"]*)" always$/)?.[1];
+  const value = headers[0]
+    .match(/^add_header \S+ "([^"]*)" always$/)?.[1]
+    ?.replace(
+      "$gelabber_fetch_directives",
+      mapped(FETCH_MAP, storage).replaceAll(
+        "$gelabber_storage_origin",
+        storage,
+      ),
+    );
   expect(value, headers[0]).toBeDefined();
-  return new Map(
-    value
-      .split(";")
-      .map((directive) => directive.trim().split(" "))
-      .filter(([name]) => name)
-      .map(([name, ...sources]) => [name, sources]),
+  expect(value).not.toContain("$");
+  const directives = value
+    .split(";")
+    .map((directive) => directive.trim().split(" "))
+    .filter(([name]) => name);
+  // A browser takes a repeated directive only the first time.
+  expect(new Set(directives.map(([name]) => name)).size).toBe(
+    directives.length,
   );
+  return new Map(directives.map(([name, ...sources]) => [name, sources]));
+}
+
+/** What the entrypoint script writes for this MINIO_PUBLIC_ENDPOINT, and
+ *  what it logs. `null`: no file, so no fetch directives. */
+function storageFile(endpoint, delivery) {
+  const dir = mkdtempSync(join(tmpdir(), "gelabber-storage-"));
+  const file = join(dir, "gelabber", "storage-origin.map");
+  try {
+    const env = { PATH: process.env.PATH, GELABBER_STORAGE_MAP: file };
+    if (endpoint !== undefined) env.MINIO_PUBLIC_ENDPOINT = endpoint;
+    if (delivery !== undefined) env.ATTACHMENT_DELIVERY = delivery;
+    const log = execFileSync("sh", [entrypoint], { env, encoding: "utf8" });
+    return {
+      written: existsSync(file) ? readFileSync(file, "utf8") : null,
+      log,
+    };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 describe("production nginx config", () => {
@@ -233,10 +293,8 @@ describe("production nginx config", () => {
     const sources = [...policy.values()].flat();
     expect(sources).not.toContain("'unsafe-inline'");
     expect(sources).not.toContain("'unsafe-eval'");
-    // Fetch directives would block uploads and attachments on the MinIO
-    // origin, link avatars on any https host and the desktop app's native
-    // part on ipc: and http://ipc.localhost (deploy/README.md). style-src
-    // would block the inline style of the shell and React's style attributes.
+    // Without the MinIO origin fetch directives would block uploads and
+    // attachments: a container from an older Compose file has none.
     for (const name of [
       "default-src",
       "connect-src",
@@ -257,8 +315,145 @@ describe("production nginx config", () => {
     }
   });
 
+  it("adds fetch directives once the MinIO origin is known", () => {
+    const storage = "https://minio.example.com";
+    const policy = shellPolicy(storage);
+    // The directives without the origin stay as they are.
+    for (const [name, sources] of shellPolicy())
+      expect(policy.get(name), name).toEqual(sources);
+    expect(policy.get("default-src")).toEqual(["'self'"]);
+    // Presigned uploads, text attachments (fetched through the redirect),
+    // the gateway and media WebSockets ('self'), the desktop app's IPC.
+    expect(policy.get("connect-src")).toEqual([
+      "'self'",
+      storage,
+      "ipc:",
+      "http://ipc.localhost",
+    ]);
+    // Attachments through the redirect, the favicon badge (data:), upload
+    // previews (blob:), link avatars on any https host.
+    expect(policy.get("img-src")).toEqual([
+      "'self'",
+      "data:",
+      "blob:",
+      "https:",
+      storage,
+    ]);
+    // Video and audio attachments, call sounds (data:), microphone test
+    // clips (blob:). No other host.
+    expect(policy.get("media-src")).toEqual([
+      "'self'",
+      "data:",
+      "blob:",
+      storage,
+    ]);
+    // The shell's inline <style>; without style-src, default-src applies.
+    expect(policy.get("style-src")).toEqual(["'self'", "'unsafe-inline'"]);
+    for (const [name, sources] of policy) {
+      if (name !== "style-src")
+        expect(sources, name).not.toContain("'unsafe-inline'");
+      expect(sources, name).not.toContain("*");
+    }
+  });
+
+  it("names no storage host when attachments go through the API (#348)", () => {
+    const policy = shellPolicy("'self'");
+    for (const [name, sources] of shellPolicy())
+      expect(policy.get(name), name).toEqual(sources);
+    expect(policy.get("default-src")).toEqual(["'self'"]);
+    expect(policy.get("connect-src")).toEqual([
+      "'self'",
+      "ipc:",
+      "http://ipc.localhost",
+    ]);
+    expect(policy.get("img-src")).toEqual([
+      "'self'",
+      "data:",
+      "blob:",
+      "https:",
+    ]);
+    expect(policy.get("media-src")).toEqual(["'self'", "data:", "blob:"]);
+    expect(policy.get("style-src")).toEqual(["'self'", "'unsafe-inline'"]);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "hands nginx 'self' with ATTACHMENT_DELIVERY=proxy, whatever the endpoint",
+    () => {
+      for (const endpoint of [
+        undefined,
+        "https://sscholler.de:9000",
+        "http://localhost:9000",
+      ]) {
+        for (const delivery of ["proxy", "PROXY", " proxy "]) {
+          const { written, log } = storageFile(endpoint, delivery);
+          expect(written, `${endpoint} ${delivery}`).toBe(`"" "'self'";\n`);
+          expect(log).toContain("go through the API");
+        }
+      }
+      // Any other value is redirect delivery: MinIO's origin as before.
+      for (const delivery of ["", "redirect", "stream"])
+        expect(
+          storageFile("https://minio.example.com", delivery).written,
+          delivery,
+        ).toBe('"" "https://minio.example.com";\n');
+    },
+  );
+
+  it("takes the MinIO origin from the entrypoint's file only", () => {
+    // Mounted on its own, the file matches nothing and the origin is empty.
+    expect(blocks.get(STORAGE_MAP)).toEqual([
+      'default ""',
+      "include /etc/nginx/gelabber/*.map",
+    ]);
+    expect(mapped(FETCH_MAP, "")).toBe("");
+    expect(readFileSync(entrypoint, "utf8")).toContain(
+      "/etc/nginx/gelabber/storage-origin.map}",
+    );
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "hands nginx the origin of MINIO_PUBLIC_ENDPOINT, or nothing",
+    () => {
+      const origin = (endpoint) => storageFile(endpoint).written;
+      expect(origin("https://minio.example.com")).toBe(
+        '"" "https://minio.example.com";\n',
+      );
+      // Path and case do not matter; the port does.
+      expect(origin("HTTPS://Minio.Example.com/gelabber/")).toBe(
+        '"" "https://minio.example.com";\n',
+      );
+      expect(origin("http://localhost:9000")).toBe(
+        '"" "http://localhost:9000";\n',
+      );
+      expect(origin("http://192.168.1.20:9000")).toBe(
+        '"" "http://192.168.1.20:9000";\n',
+      );
+      // Nothing a policy could name, or could be broken out of: no file, so
+      // the policy keeps its fetch directives out instead of blocking MinIO.
+      for (const endpoint of [
+        undefined,
+        "",
+        "minio.example.com",
+        "ftp://minio.example.com",
+        "http://[::1]:9000",
+        "http://minio_1:9000",
+        "https://user:pass@minio.example.com",
+        'https://minio.example.com"; default "x',
+        "https://minio.example.com; script-src *",
+        "https://minio.example.com:9000:1",
+      ]) {
+        const { written, log } = storageFile(endpoint);
+        expect(written, String(endpoint)).toBeNull();
+        expect(log, String(endpoint)).toContain("no fetch directives");
+      }
+    },
+  );
+
   it("lets the shell's inline script run, and no other", () => {
-    const html = readFileSync(new URL("index.html", web), "utf8");
+    // As built: the theme colours are filled in at build time.
+    const html = fillThemeColours(
+      readFileSync(new URL("index.html", web), "utf8"),
+    );
     const inline = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)]
       .filter(([, attributes]) => !/\ssrc=/.test(attributes))
       .map(([, , body]) => body);

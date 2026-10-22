@@ -1,23 +1,28 @@
 import {
   MutationObserver,
   QueryClient,
+  onlineManager,
   type InfiniteData,
 } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { login, resetSessionForTests } from "../auth/session.ts";
 import { takeStamp } from "../auth/scope.ts";
 import { releaseUserScope } from "../auth/release.ts";
+import { clearToasts, useToasts } from "../components/toasts.ts";
 import {
   resetPendingMessages,
   usePendingMessages,
   discardAttempt,
+  displayPending,
 } from "./pending.ts";
+import { visibleMessages } from "./pages.ts";
 import {
   applyChannelEvent,
   deleteMessageOptions,
   editMessageOptions,
   messageKeys,
   messageQueryOptions,
+  OFFLINE_SEND_WAIT_MS,
   sendMessageAttempt,
 } from "./queries.ts";
 import type { Message, MessagePage } from "./types.ts";
@@ -72,6 +77,7 @@ const attempts = () => Object.values(usePendingMessages.getState().attempts);
 beforeEach(() => {
   resetSessionForTests();
   resetPendingMessages();
+  clearToasts();
   requests = [];
 });
 afterEach(() => {
@@ -99,6 +105,8 @@ describe("durable send attempts with controlled HTTP responses", () => {
     expect(attempts()).toMatchObject([
       { content: "A", status: "failed", stage: "bind" },
     ]);
+    // The failed row reports it; a toast would say the same twice.
+    expect(useToasts.getState().toasts).toEqual([]);
     // Off screen the confirmed B is released; the failed A row stays.
     expect(
       usePendingMessages.getState().byChannel.c?.map((m) => m.content),
@@ -275,6 +283,51 @@ describe("durable send attempts with controlled HTTP responses", () => {
       expect(attempts()).toEqual([]);
     },
   );
+  it("shows a send made offline at once and sends it once the device is back", async () => {
+    routes(() => json(200, row("server-o", "offline")));
+    await login(user.email, "password");
+    onlineManager.setOnline(false);
+    try {
+      const sending = sendMessageAttempt("c", author, { content: "offline" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(attempts()).toMatchObject([
+        { content: "offline", status: "sending" },
+      ]);
+      expect(
+        usePendingMessages.getState().byChannel.c?.map((m) => m.content),
+      ).toEqual(["offline"]);
+      expect(requests.filter((k) => k.includes("/messages"))).toEqual([]);
+      onlineManager.setOnline(true);
+      await sending;
+      expect(attempts()).toEqual([]);
+      expect(requests.filter((k) => k.endsWith("/messages"))).toHaveLength(1);
+    } finally {
+      onlineManager.setOnline(true);
+    }
+  });
+
+  it("tries a send anyway when the device keeps saying offline", async () => {
+    routes(() => json(200, row("server-w", "waited")));
+    await login(user.email, "password");
+    onlineManager.setOnline(false);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const sending = sendMessageAttempt("c", author, { content: "waited" });
+      await vi.advanceTimersByTimeAsync(OFFLINE_SEND_WAIT_MS - 1);
+      expect(attempts()).toMatchObject([
+        { content: "waited", status: "sending" },
+      ]);
+      expect(requests.filter((k) => k.endsWith("/messages"))).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      await sending;
+      expect(attempts()).toEqual([]);
+      expect(requests.filter((k) => k.endsWith("/messages"))).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+      onlineManager.setOnline(true);
+    }
+  });
+
   it("does not repeat a bind with unknown network outcome", async () => {
     routes(() => Promise.reject(new TypeError("network")));
     await login(user.email, "password");
@@ -511,5 +564,124 @@ describe("per-row rollback using real mutation observers", () => {
     );
     await done;
     expect(cached()[0]?.content).toBe("newer REST");
+  });
+});
+
+describe("own live event before the POST answer (#355)", () => {
+  let client: QueryClient;
+  beforeEach(() => {
+    client = new QueryClient();
+  });
+  afterEach(() => client.clear());
+  function seed() {
+    const stamp = takeStamp()!;
+    client.setQueryData(
+      messageKeys.channel(stamp.userId, stamp.generation, "c"),
+      {
+        pages: [{ messages: [row("old")], has_more: false }],
+        pageParams: [undefined],
+      },
+    );
+  }
+  function shown() {
+    const stamp = takeStamp()!;
+    const data = client.getQueryData<InfiniteData<MessagePage>>(
+      messageKeys.channel(stamp.userId, stamp.generation, "c"),
+    )!;
+    return visibleMessages(
+      data.pages,
+      usePendingMessages.getState().byChannel.c ?? [],
+    ).map((m) => m.id);
+  }
+  function echo(nonce: string, id = "server-1") {
+    const stamp = takeStamp()!;
+    applyChannelEvent(client, stamp.userId, stamp.generation, {
+      t: "c",
+      c: "c",
+      i: id,
+      d: { ...row(id, "hallo"), nonce },
+    });
+  }
+  async function posted(): Promise<string> {
+    await vi.waitFor(() =>
+      expect(requests).toContain("POST /api/channels/c/messages"),
+    );
+    const body = (vi.mocked(fetch).mock.calls.at(-1)![1] as RequestInit).body;
+    return JSON.parse(String(body)).nonce as string;
+  }
+
+  it("swaps the pending row for the event's row at once", async () => {
+    const answer = held();
+    routes(() => answer.promise);
+    await login(user.email, "password");
+    seed();
+    const release = displayPending("c");
+    const send = sendMessageAttempt("c", author, { content: "hallo" });
+    const nonce = await posted();
+    expect(attempts()[0]!.id).toBe(`tmp:${nonce}`);
+    expect(shown()).toEqual(["old", `tmp:${nonce}`]);
+
+    echo(nonce);
+    expect(shown()).toEqual(["old", "server-1"]);
+
+    answer.resolve(json(201, { ...row("server-1", "hallo"), nonce }));
+    await expect(send).resolves.toMatchObject({ id: "server-1" });
+    expect(shown()).toEqual(["old", "server-1"]);
+    expect(attempts()).toEqual([]);
+    release();
+  });
+
+  it("counts a send as saved when the event came and the answer got lost", async () => {
+    const answer = held();
+    routes(() => answer.promise);
+    await login(user.email, "password");
+    seed();
+    const send = sendMessageAttempt("c", author, { content: "hallo" });
+    echo(await posted());
+    answer.resolve(json(502, { error: "upstream_failure" }));
+    await expect(send).resolves.toMatchObject({ id: "server-1" });
+    expect(attempts()).toEqual([]);
+    expect(shown()).toEqual(["old", "server-1"]);
+  });
+
+  it("settles an uncertain send once its event arrives", async () => {
+    routes(() => Promise.reject(new TypeError("network")));
+    await login(user.email, "password");
+    seed();
+    const release = displayPending("c");
+    await sendMessageAttempt("c", author, { content: "hallo" }).catch(
+      () => undefined,
+    );
+    const attempt = attempts()[0]!;
+    expect(attempt.status).toBe("uncertain");
+    echo(attempt.id.slice("tmp:".length));
+    expect(attempts()).toEqual([]);
+    expect(shown()).toEqual(["old", "server-1"]);
+    release();
+  });
+
+  it("leaves rows alone for a nonce of another user or channel", async () => {
+    const answer = held();
+    routes(() => answer.promise);
+    await login(user.email, "password");
+    seed();
+    const release = displayPending("c");
+    const send = sendMessageAttempt("c", author, { content: "hallo" });
+    const nonce = await posted();
+    const stamp = takeStamp()!;
+    applyChannelEvent(client, stamp.userId, stamp.generation, {
+      t: "c",
+      c: "c",
+      i: "other",
+      d: {
+        ...row("other", "hallo"),
+        author: { id: "b", name: "Bob", avatar_url: null },
+        nonce,
+      },
+    });
+    expect(shown()).toEqual(["old", "other", `tmp:${nonce}`]);
+    answer.resolve(json(201, { ...row("server-1", "hallo"), nonce }));
+    await send;
+    release();
   });
 });

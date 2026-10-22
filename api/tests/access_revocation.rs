@@ -215,7 +215,9 @@ async fn session_expiry_closes_open_socket_without_client_action(pool: PgPool) {
     let (addr, state) = common::serve_ws(pool.clone()).await;
     let mut owner = register(&state, "owner").await;
     let (sid, text, _, _) = server(&mut owner, "Expiry").await;
-    sqlx::query("UPDATE sessions SET expires_at = now() + interval '400 milliseconds' WHERE token_hash = $1")
+    // At its absolute end (TTL 2 h in the test config), so neither the
+    // upgrade nor the subscribe frame can slide the expiry (#195).
+    sqlx::query("UPDATE sessions SET created_at = now() - interval '2 hours' + interval '400 milliseconds', expires_at = now() + interval '400 milliseconds' WHERE token_hash = $1")
         .bind(gelabber_api::token::hash(&owner.jar[SESSION])).execute(&pool).await.unwrap();
     let mut ws = connect(addr, &owner).await;
     subscribe(&mut ws, sid, text).await;
@@ -317,7 +319,7 @@ async fn voice_followups_cannot_forge_server_channel_pair(pool: PgPool) {
     let mut ws = connect(addr, &owner).await;
     voice_join(&mut ws, sid, voice).await;
     for frame in [
-        json!({"t":"p", "k":"l"}),
+        json!({"t":"p", "k":"s"}),
         json!({"t":"u", "k":"v"}),
         json!({"t":"m", "on":true}),
         json!({"t":"d", "on":true}),
@@ -331,7 +333,7 @@ async fn voice_followups_cannot_forge_server_channel_pair(pool: PgPool) {
         until(&mut ws, |f| f["op"] == "err" && f["s"] == wrong.to_string()).await;
         let actual = state.gateway.voice_snapshot(sid).await.unwrap();
         assert_eq!(actual.len(), 1);
-        assert!(!actual[0].m && !actual[0].d && !actual[0].l);
+        assert!(!actual[0].m && !actual[0].d && !actual[0].s);
         assert!(
             state
                 .gateway
@@ -378,7 +380,7 @@ async fn deletion(pool: PgPool, whole_server: bool) {
     assert_ne!(redis_get(key).await.as_deref(), old_revision.as_str());
     send(
         &mut ws,
-        json!({"op":"sig", "t":"p", "s":sid, "c":voice, "k":"l"}),
+        json!({"op":"sig", "t":"p", "s":sid, "c":voice, "k":"s"}),
     )
     .await;
     until(&mut ws, |f| f["op"] == "err" && f["e"] == "not_found").await;
@@ -455,7 +457,8 @@ async fn silently_deleted_channel_rows_are_dropped_and_only_those(pool: PgPool) 
 }
 
 /// A server delete revokes every member, not only the owner, while it reads
-/// the server's channels once for all of them (#294).
+/// the server's channels once for all of them, and tells the server once per
+/// member that they went offline, however many sockets they had (#294).
 #[sqlx::test]
 async fn server_delete_revokes_every_member(pool: PgPool) {
     let (addr, state) = common::serve_ws(pool).await;
@@ -496,7 +499,20 @@ async fn server_delete_revokes_every_member(pool: PgPool) {
         assert!(present, "{uid}");
         sockets.push((uid, ws));
     }
+    // A second socket for the first member: still one offline frame for them.
+    let mut second = connect(addr, &members[0]).await;
+    subscribe(&mut second, sid, text).await;
+    until(&mut second, |f| f["op"] == "p" && f.get("snap").is_some()).await;
     assert_eq!(state.gateway.voice_snapshot(sid).await.unwrap().len(), 2);
+    let mut presence_feed = redis::Client::open(common::redis_url())
+        .unwrap()
+        .get_async_pubsub()
+        .await
+        .unwrap();
+    presence_feed
+        .subscribe(format!("gb:p:{sid}"))
+        .await
+        .unwrap();
 
     let response = owner
         .send(Method::DELETE, &format!("/api/servers/{sid}"), None)
@@ -509,6 +525,29 @@ async fn server_delete_revokes_every_member(pool: PgPool) {
             "{uid}"
         );
     }
+    let mut offline = std::collections::HashMap::<String, usize>::new();
+    while let Ok(Some(msg)) = tokio::time::timeout(
+        Duration::from_millis(300),
+        presence_feed.on_message().next(),
+    )
+    .await
+    {
+        let frame: Value = serde_json::from_str(&msg.get_payload::<String>().unwrap()).unwrap();
+        if frame["st"] == "x" {
+            *offline
+                .entry(frame["u"].as_str().unwrap().to_owned())
+                .or_default() += 1;
+        }
+    }
+    let expected: std::collections::HashMap<String, usize> = generations
+        .iter()
+        .map(|(uid, _)| (uid.to_string(), 1))
+        .collect();
+    assert_eq!(offline, expected);
+    until(&mut second, |f| {
+        f["op"] == "err" && f["e"] == "not_found" && f["s"] == sid.to_string()
+    })
+    .await;
     assert!(state.gateway.voice_snapshot(sid).await.unwrap().is_empty());
     for (uid, ws) in &mut sockets {
         until(ws, |f| {
@@ -850,11 +889,11 @@ async fn go_live_with_one_pool_connection_keeps_bootstrap_responsive_and_persist
     voice_join(&mut ws, sid, voice).await;
     send(
         &mut ws,
-        json!({"op":"sig", "t":"p", "s":sid, "c":voice, "k":"l"}),
+        json!({"op":"sig", "t":"p", "s":sid, "c":voice, "k":"s"}),
     )
     .await;
     until(&mut ws, |f| {
-        f["op"] == "sig" && f["t"] == "p" && f["k"] == "l"
+        f["op"] == "sig" && f["t"] == "p" && f["k"] == "s"
     })
     .await;
     let bootstrap = tokio::time::timeout(Duration::from_millis(250), owner.bootstrap())
@@ -863,10 +902,85 @@ async fn go_live_with_one_pool_connection_keeps_bootstrap_responsive_and_persist
     assert_eq!(bootstrap.status, StatusCode::OK);
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
-            let hint: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM messages WHERE channel_id = $1 AND content LIKE '%ist live%')")
+            let hint: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM messages WHERE channel_id = $1 AND system_kind = 'live_started')")
                 .bind(text).fetch_one(&pool).await.unwrap();
             if hint { break; }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await.expect("authorized Live hint persists");
+}
+
+/// A socket process whose own periodic checks are far apart: a 15 s
+/// heartbeat and no voice seat, so only the 10 s backstop would check it.
+async fn serve_slow_checks(pool: PgPool) -> (std::net::SocketAddr, AppState) {
+    let redis = common::redis_url();
+    let config = gelabber_api::Config::from_source(|key| match key {
+        "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
+        "API_LINK_PREVIEWS" => Some("false".to_owned()),
+        "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
+        "REDIS_URL" => Some(redis.clone()),
+        "API_WS_HEARTBEAT_MS" => Some("15000".to_owned()),
+        "API_WS_DEAD_MS" => Some("60000".to_owned()),
+        _ => None,
+    })
+    .unwrap();
+    let state = AppState::with_pool(&config, pool).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = gelabber_api::app(state.clone());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    state
+        .gateway
+        .wait_ready(Duration::from_secs(2))
+        .await
+        .unwrap();
+    (addr, state)
+}
+
+/// A kick on another API process reaches an idle socket without a seat at
+/// once, through the `gb:rv` notice, not at its next periodic check.
+#[sqlx::test]
+async fn kick_on_another_process_reaches_an_idle_socket_without_waiting(pool: PgPool) {
+    let (addr, _) = serve_slow_checks(pool.clone()).await;
+    let state = common::ws_state(pool);
+    let mut owner = register(&state, "owner").await;
+    let mut member = register(&state, "member").await;
+    let (sid, text, _, code) = server(&mut owner, "Notice").await;
+    join(&mut member, &code).await;
+    let uid: Uuid = member.user_id().parse().unwrap();
+    let mut ws = connect(addr, &member).await;
+    subscribe(&mut ws, sid, text).await;
+    let response = owner
+        .send(
+            Method::POST,
+            &format!("/api/servers/{sid}/kick"),
+            Some(json!({"user_id":uid})),
+        )
+        .await;
+    assert_eq!(response.status, StatusCode::NO_CONTENT, "{}", response.body);
+    // No frame from either side in between: `until` waits at most 3 s.
+    until(&mut ws, |f| {
+        f["op"] == "err" && f["e"] == "not_found" && f["s"] == sid.to_string()
+    })
+    .await;
+}
+
+/// Logout on another API process closes an idle socket of that session at
+/// once, with nothing published on its topics.
+#[sqlx::test]
+async fn logout_on_another_process_closes_an_idle_socket_without_waiting(pool: PgPool) {
+    let (addr, _) = serve_slow_checks(pool.clone()).await;
+    let state = common::ws_state(pool);
+    let mut owner = register(&state, "owner").await;
+    let (sid, text, _, _) = server(&mut owner, "Logout").await;
+    let mut ws = connect(addr, &owner).await;
+    subscribe(&mut ws, sid, text).await;
+    assert_eq!(
+        owner
+            .send(Method::POST, "/api/auth/logout", None)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    closed_without_events(&mut ws).await;
 }

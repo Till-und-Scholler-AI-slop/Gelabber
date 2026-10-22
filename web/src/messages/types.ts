@@ -1,5 +1,7 @@
 // Wire shapes of `/api/channels/{id}/messages` and `/api/messages/{id}`.
 
+import { asSystem, type SystemMessage } from "./system.ts";
+
 export type MessageAuthor = {
   id: string;
   name: string;
@@ -42,6 +44,12 @@ export type Message = {
   reply?: Reply | null;
   /** Link previews (#254), added by an edit event after sending. */
   previews?: LinkPreview[];
+  /** Written by the server, not typed (#314): the text comes from
+   *  `systemText` and `content` is empty. */
+  system?: SystemMessage | null;
+  /** The sender's attempt id, echoed by the create response and its live
+   *  event only (#355): the uuid of the `tmp:` row the message replaces. */
+  nonce?: string;
 };
 
 /** Preview of an answered message. A deleted original is only
@@ -53,6 +61,8 @@ export type Reply = {
   excerpt?: string;
   has_attachment?: boolean;
   has_gif?: boolean;
+  /** The original is a system message; `excerpt` is then empty. */
+  system?: SystemMessage | null;
 };
 
 /** Characters of the original the server puts in `excerpt`. */
@@ -84,6 +94,7 @@ export function replyTo(original: Message): Reply {
     excerpt: replyExcerpt(original.content),
     has_attachment: asAttachmentList(original.attachments).length > 0,
     has_gif: Boolean(original.gif),
+    ...withSystem(original.system),
   };
 }
 
@@ -106,7 +117,14 @@ export function asReply(value: unknown): Reply | null {
     excerpt: typeof reply.excerpt === "string" ? reply.excerpt : "",
     has_attachment: reply.has_attachment === true,
     has_gif: reply.has_gif === true,
+    ...withSystem(reply.system),
   };
+}
+
+/** `{ system }` for a system message, nothing otherwise. */
+function withSystem(value: unknown): { system?: SystemMessage } {
+  const system = asSystem(value);
+  return system ? { system } : {};
 }
 
 /** A link preview as the API stores it. Text is the page's plain text;

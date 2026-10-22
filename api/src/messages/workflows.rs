@@ -87,15 +87,32 @@ pub(crate) const UNREAD: &str = "WITH visible AS (
 ) SELECT v.channel_id, v.server_id, r.message_id AS read_message_id, r.message_at AS read_at,
     r.created_order AS read_order, v.joined_at AS membership_at,
     (SELECT max(m.created_order) FROM messages m WHERE m.channel_id=v.channel_id) AS latest_order,
-    (SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.channel_id=v.channel_id AND m.author_id<>$1
-      AND m.created_at>=v.joined_at
-      AND (r.created_order IS NULL OR m.created_order>r.created_order) LIMIT 100) bounded) AS unread_count,
-    (SELECT count(*) FROM (SELECT m.mentions, m.mentions_everyone FROM messages m
-      WHERE m.channel_id=v.channel_id AND (m.mentions_everyone OR m.mentions<>'{}') AND m.author_id<>$1
-      AND m.created_at>=v.joined_at
-      AND (r.created_order IS NULL OR m.created_order>r.created_order)
-      ORDER BY m.created_order DESC LIMIT 1000) recent
-      WHERE $1=ANY(recent.mentions) OR recent.mentions_everyone) AS mention_count,
+    -- Without a read position since joining, everything since joining is
+    -- unread: that range is walked by time, so a quiet channel costs one
+    -- index probe instead of its whole history (issue #277). With one, by
+    -- order from it. The ORDER BY keeps the planner on those indexes.
+    CASE WHEN r.created_order IS NULL OR r.message_at<v.joined_at THEN
+      (SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.channel_id=v.channel_id AND m.author_id<>$1
+        AND m.created_at>=v.joined_at AND (r.created_order IS NULL OR m.created_order>r.created_order)
+        ORDER BY m.created_at DESC LIMIT 100) bounded)
+    ELSE
+      (SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.channel_id=v.channel_id AND m.author_id<>$1
+        AND m.created_at>=v.joined_at AND m.created_order>r.created_order
+        ORDER BY m.created_order DESC LIMIT 100) bounded)
+    END AS unread_count,
+    CASE WHEN r.created_order IS NULL OR r.message_at<v.joined_at THEN
+      (SELECT count(*) FROM (SELECT m.mentions, m.mentions_everyone FROM messages m
+        WHERE m.channel_id=v.channel_id AND (m.mentions_everyone OR m.mentions<>'{}') AND m.author_id<>$1
+        AND m.created_at>=v.joined_at AND (r.created_order IS NULL OR m.created_order>r.created_order)
+        ORDER BY m.created_at DESC LIMIT 1000) recent
+        WHERE $1=ANY(recent.mentions) OR recent.mentions_everyone)
+    ELSE
+      (SELECT count(*) FROM (SELECT m.mentions, m.mentions_everyone FROM messages m
+        WHERE m.channel_id=v.channel_id AND (m.mentions_everyone OR m.mentions<>'{}') AND m.author_id<>$1
+        AND m.created_at>=v.joined_at AND m.created_order>r.created_order
+        ORDER BY m.created_order DESC LIMIT 1000) recent
+        WHERE $1=ANY(recent.mentions) OR recent.mentions_everyone)
+    END AS mention_count,
     COALESCE(n.channel_level, n.server_level, 'all') AS level,
     (n.channel_muted OR n.server_muted) AS muted,
     CASE WHEN (n.channel_muted AND n.channel_until IS NULL) OR (n.server_muted AND n.server_until IS NULL)
@@ -128,6 +145,15 @@ struct ReadBody {
     #[serde(default)]
     message_id: Option<Uuid>,
 }
+
+/// The newest message of a conversation since joining. Walking the order
+/// index back from the newest finds it at once when there is one, but in a
+/// channel quiet since then it would pass the whole history to find none
+/// (issue #277): the time index answers first whether there is any.
+const NEWEST_SINCE: &str = "SELECT id,created_at,created_order FROM messages \
+    WHERE channel_id=$1 AND created_at>=$2 \
+      AND EXISTS (SELECT 1 FROM messages q WHERE q.channel_id=$1 AND q.created_at>=$2) \
+    ORDER BY created_order DESC LIMIT 1";
 
 async fn mark_read(
     State(state): State<AppState>,
@@ -177,14 +203,11 @@ async fn mark_read(
             .ok_or(ApiError::NotFound)?,
         ),
         None => {
-            sqlx::query_as(
-                "SELECT id,created_at,created_order FROM messages WHERE channel_id=$1 \
-                 AND created_at>=$2 ORDER BY created_order DESC LIMIT 1",
-            )
-            .bind(channel_id)
-            .bind(joined_at)
-            .fetch_optional(&mut *tx)
-            .await?
+            sqlx::query_as(NEWEST_SINCE)
+                .bind(channel_id)
+                .bind(joined_at)
+                .fetch_optional(&mut *tx)
+                .await?
         }
     };
     // Nothing to read in an empty conversation.
@@ -290,9 +313,11 @@ async fn read_up_to_latest(
         INSERT INTO channel_read_state (user_id,channel_id,membership_at,message_at,message_id,created_order)
         SELECT $1, v.channel_id, v.joined_at, l.created_at, l.id, l.created_order
         FROM visible v
+        -- As `NEWEST_SINCE`, per conversation.
         CROSS JOIN LATERAL (
             SELECT m.id, m.created_at, m.created_order FROM messages m
             WHERE m.channel_id=v.channel_id AND m.created_at>=v.joined_at
+              AND EXISTS (SELECT 1 FROM messages q WHERE q.channel_id=v.channel_id AND q.created_at>=v.joined_at)
             ORDER BY m.created_order DESC LIMIT 1
         ) l
         -- One lock order for every bulk read, so two at once cannot deadlock.
@@ -442,7 +467,7 @@ async fn search(
         None
     };
     let rows: Vec<MessageRow> = sqlx::query_as("SELECT m.id,m.channel_id,m.author_id,u.name AS author_name,
-        u.avatar_url AS author_avatar_url,m.content,m.created_at,m.edited_at,m.revision,m.created_order,m.gif,m.mentions,m.mentions_everyone, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions
+        u.avatar_url AS author_avatar_url,m.content,m.created_at,m.edited_at,m.revision,m.created_order,m.gif,m.mentions,m.mentions_everyone,m.system_kind,m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions
         FROM messages m JOIN users u ON u.id=m.author_id
         WHERE m.channel_id=$1 AND to_tsvector('simple',m.content) @@ websearch_to_tsquery('simple',$2)
           AND ($3::timestamptz IS NULL OR (m.created_at,m.id)<($3,$4))
@@ -489,7 +514,7 @@ async fn context(
              AND (m.created_at,m.id)>=(t.created_at,t.id)
            ORDER BY m.created_at,m.id LIMIT 31)
         ) SELECT m.id,m.channel_id,m.author_id,u.name AS author_name,
-            u.avatar_url AS author_avatar_url,m.content,m.created_at,m.edited_at,m.revision,m.created_order,m.gif,m.mentions,m.mentions_everyone, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions
+            u.avatar_url AS author_avatar_url,m.content,m.created_at,m.edited_at,m.revision,m.created_order,m.gif,m.mentions,m.mentions_everyone,m.system_kind,m.system_params, COALESCE((SELECT jsonb_agg(jsonb_build_object('emoji', r.emoji, 'user_ids', r.user_ids) ORDER BY r.emoji) FROM (SELECT emoji,jsonb_agg(user_id ORDER BY user_id) AS user_ids FROM message_reactions WHERE message_id=m.id GROUP BY emoji) r),'[]'::jsonb) AS reactions
           FROM selected JOIN messages m ON m.id=selected.id JOIN users u ON u.id=m.author_id
           ORDER BY m.created_at,m.id",
     )

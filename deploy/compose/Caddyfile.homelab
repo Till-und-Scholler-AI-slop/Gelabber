@@ -5,9 +5,10 @@
 # With API_COOKIE_SECURE=true, the overlay's default, `/ws` also refuses pages
 # from `http://` origins: the app is served over HTTPS only.
 #
-# The API keys its rate limits by the rightmost X-Forwarded-For entry, so
-# every API upstream below gets exactly one, the client as this Caddy sees
-# it ({client_ip}). Behind a CDN or tunnel that is the CDN; to let Caddy
+# The API keys its rate limits, and media its cap on sockets that have not
+# joined a call, by the rightmost X-Forwarded-For entry, so every API and
+# media upstream below gets exactly one, the client as this Caddy sees it
+# ({client_ip}). Behind a CDN or tunnel that is the CDN; to let Caddy
 # believe the client address the CDN reports, add its ranges to the global
 # options at the top of your Caddyfile:
 #   {
@@ -16,8 +17,9 @@
 #           trusted_proxies_strict
 #       }
 #   }
-# The API believes X-Forwarded-For from whoever reaches it: never publish its
-# port (GELABBER_API_BIND) beyond loopback or a network only this Caddy uses.
+# The API and media believe X-Forwarded-For from whoever reaches them: never
+# publish their ports (GELABBER_API_BIND, GELABBER_MEDIA_BIND) beyond loopback
+# or a network only this Caddy uses.
 #
 # Caddy container on network `gelabber`:
 #   GELABBER_API_UPSTREAM=api:8080
@@ -90,6 +92,7 @@
 	handle @media {
 		reverse_proxy {$GELABBER_MEDIA_UPSTREAM:127.0.0.1:18081} {
 			header_up Host {hostport}
+			header_up X-Forwarded-For {client_ip}
 			transport http {
 				dial_timeout 5s
 				read_timeout 0
@@ -114,7 +117,8 @@
 # Browser uploads and authenticated attachment redirects use this host.
 # Keep it in sync with MINIO_PUBLIC_ENDPOINT: S3 presigns include both Host
 # and path, so forwarding the upload through the app vhost or rewriting it
-# makes every PUT fail with SignatureDoesNotMatch.
+# makes every PUT fail with SignatureDoesNotMatch. Not needed with
+# ATTACHMENT_DELIVERY=proxy: the API carries uploads and attachments.
 {$GELABBER_MINIO_DOMAIN:minio.home.arpa} {
 	reverse_proxy {$GELABBER_MINIO_UPSTREAM:127.0.0.1:9000} {
 		# Preserve Host including non-default port (e.g. :8443) for S3 signatures.

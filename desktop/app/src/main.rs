@@ -15,6 +15,7 @@
 
 mod frames;
 mod media;
+mod notify;
 mod ptt;
 mod shell;
 mod update;
@@ -139,8 +140,8 @@ fn configured_server(app: &AppHandle) -> Option<String> {
 static SERVER: Mutex<Option<Url>> = Mutex::new(None);
 
 /// The server's pages may call the media commands, the window and tray
-/// commands, bind the push-to-talk key, open the setup page and see and
-/// install an update of the app, nothing else.
+/// commands, show system notifications, bind the push-to-talk key, open the
+/// setup page and see and install an update of the app, nothing else.
 fn allow_server(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
     app.add_capability(
         CapabilityBuilder::new("server-media")
@@ -149,6 +150,7 @@ fn allow_server(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
             .window(WINDOW)
             .permission("media")
             .permission("shell")
+            .permission("notify")
             .permission("ptt")
             .permission("update")
             .permission("allow-open-setup"),
@@ -549,6 +551,7 @@ fn main() {
     builder
         .manage(media::Media::default())
         .manage(shell::Shell::default())
+        .manage(notify::Notifications::default())
         .manage(ptt::Ptt::default())
         .manage(update::Updates::default())
         .invoke_handler(gate(tauri::generate_handler![
@@ -558,6 +561,9 @@ fn main() {
             shell::shell_close_to_tray,
             shell::shell_focus,
             shell::shell_unread,
+            notify::notify_info,
+            notify::notify_show,
+            notify::notify_close,
             ptt::ptt_bind,
             ptt::ptt_unbind,
             media::media_info,
@@ -613,10 +619,13 @@ fn main() {
             if payload.event() == PageLoadEvent::Started {
                 webview.state::<media::Media>().reset();
                 webview.state::<ptt::Ptt>().reset();
+                webview.state::<notify::Notifications>().reset();
             }
         })
         .setup(|app| {
             let handle = app.handle().clone();
+            // Before the page can ask for it.
+            notify::start(&handle);
             let server = configured_server(&handle).map(|value| server_origin(&value));
             let url = match server {
                 Some(Ok(origin)) => {
@@ -639,6 +648,9 @@ fn main() {
                 .min_inner_size(480.0, 360.0)
                 .initialization_script(SHORTCUTS)
                 .initialization_script(update::BANNER)
+                // Ctrl/Cmd + plus, minus and 0 zoom like in a browser, on
+                // top of the in-app Textgröße.
+                .zoom_hotkeys_enabled(true)
                 // Only WebView2 takes them; ignored on the other platforms.
                 .additional_browser_args(WEBVIEW2_ARGS)
                 // Tauri's native handler swallows file drops; the chat
@@ -686,8 +698,15 @@ fn main() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Gelabber");
+        .build(tauri::generate_context!())
+        .expect("error while building Gelabber")
+        .run(|app, event| {
+            // What the system shows from this run: no click reaches an
+            // ended app.
+            if let tauri::RunEvent::Exit = event {
+                app.state::<notify::Notifications>().clear();
+            }
+        });
 }
 
 #[cfg(test)]

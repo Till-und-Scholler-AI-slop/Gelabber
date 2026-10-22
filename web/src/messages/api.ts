@@ -32,6 +32,7 @@ export const createMessage = (
   attachmentIds: string[] = [],
   gif?: GifPick,
   replyTo?: string,
+  nonce?: string,
 ) =>
   api<Message>(`/channels/${channelId}/messages`, {
     method: "POST",
@@ -40,6 +41,7 @@ export const createMessage = (
         ? { content: "", gif: { slug: gif.slug, query: gif.query } }
         : { content, attachment_ids: attachmentIds }),
       ...(replyTo ? { reply_to: replyTo } : {}),
+      ...(nonce ? { nonce } : {}),
     },
   });
 
@@ -61,7 +63,11 @@ export const presignAttachment = (channelId: string, body: PresignRequest) =>
 
 const UPLOAD_TIMEOUT_MS = 120_000;
 
-/** PUT the file at the presigned MinIO URL. Not same-origin — no cookies. */
+/** PUT the file at the upload link from the presign answer, with every
+ * header it lists. Usually a signed MinIO URL on another origin, so no
+ * cookies go along; with `ATTACHMENT_DELIVERY=proxy` the API's own
+ * `/api/attachments/{id}/upload`, where the same-origin session cookie and
+ * the listed CSRF header authorise the upload (#348). */
 export async function putPresigned(
   url: string,
   file: File,

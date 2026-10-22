@@ -13,6 +13,8 @@ target/
 vendor/
 
 *.log
+# Redis snapshots of local test runs.
+dump.rdb
 .DS_Store
 .idea/
 .vscode/
@@ -25,3 +27,6 @@ deploy/compose/backups/
 
 __pycache__/
 *.pyc
+
+# Redis snapshot from local test runs
+dump.rdb

@@ -519,6 +519,7 @@ async fn failed_put_keeps_its_pending_cleanup(pool: PgPool) {
             secret_key: "test".into(),
             bucket: "test".into(),
             root_credentials: true,
+            delivery: gelabber_api::config::AttachmentDelivery::Redirect,
         }))
         .unwrap();
     // Same session cookies, now against the failing store.
@@ -559,6 +560,7 @@ async fn real_minio_avatar_upload_fetch_and_replace(pool: PgPool) {
         secret_key: std::env::var("MINIO_ROOT_PASSWORD").expect("local test password"),
         bucket: format!("gb-test-{}", uuid::Uuid::new_v4().simple()),
         root_credentials: true,
+        delivery: gelabber_api::config::AttachmentDelivery::Redirect,
     };
     let mut state = common::state(pool);
     state.store = gelabber_api::storage::ObjectStore::from_minio(Some(&config)).unwrap();

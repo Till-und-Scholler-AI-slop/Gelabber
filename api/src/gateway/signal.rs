@@ -140,9 +140,9 @@ async fn publish(call: &mut Call<'_>) -> Result<(), ApiError> {
     let Some(track) = call.track else {
         return bad(call).await;
     };
-    // Camera (`v`) and screen (`s`) are for anyone already in the voice
-    // room. Go Live (`l`) needs `go_live` and is one track per channel.
-    if matches!(track, TrackKind::L | TrackKind::La) && call.kind == SigKind::P {
+    // Camera (`v`) is for anyone already in the voice room. Going live, a
+    // screen (`s`) and its sound, needs `go_live`. Stopping is free.
+    if matches!(track, TrackKind::S | TrackKind::Sa) && call.kind == SigKind::P {
         match authorize_go_live(&mut *call.db, call.user.id, call.server_id).await {
             Ok(()) => {}
             Err(err) => return reject(call, err).await,
@@ -163,7 +163,7 @@ async fn publish(call: &mut Call<'_>) -> Result<(), ApiError> {
     let Some(live_started) = started else {
         return bad(call).await;
     };
-    call.live_started = track == TrackKind::L && call.kind == SigKind::P && live_started;
+    call.live_started = track == TrackKind::S && call.kind == SigKind::P && live_started;
     Ok(())
 }
 

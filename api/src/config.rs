@@ -16,6 +16,7 @@ pub const API_DB_MAX_CONNECTIONS: &str = "API_DB_MAX_CONNECTIONS";
 pub const API_COOKIE_SECURE: &str = "API_COOKIE_SECURE";
 pub const API_ALLOW_PLAIN_HTTP: &str = "API_ALLOW_PLAIN_HTTP";
 pub const API_SESSION_TTL_HOURS: &str = "API_SESSION_TTL_HOURS";
+pub const API_SESSION_IDLE_HOURS: &str = "API_SESSION_IDLE_HOURS";
 pub const API_WS_HEARTBEAT_MS: &str = "API_WS_HEARTBEAT_MS";
 pub const API_WS_DEAD_MS: &str = "API_WS_DEAD_MS";
 pub const API_WS_REPLAY: &str = "API_WS_REPLAY";
@@ -35,6 +36,7 @@ pub const MINIO_SECRET_KEY: &str = "MINIO_SECRET_KEY";
 pub const MINIO_ROOT_USER: &str = "MINIO_ROOT_USER";
 pub const MINIO_ROOT_PASSWORD: &str = "MINIO_ROOT_PASSWORD";
 pub const MINIO_BUCKET: &str = "MINIO_BUCKET";
+pub const ATTACHMENT_DELIVERY: &str = "ATTACHMENT_DELIVERY";
 pub const API_RATE_AUTH_PER_MIN: &str = "API_RATE_AUTH_PER_MIN";
 pub const API_RATE_API_PER_MIN: &str = "API_RATE_API_PER_MIN";
 pub const API_RATE_MSG_PER_MIN: &str = "API_RATE_MSG_PER_MIN";
@@ -57,6 +59,7 @@ pub const DEFAULT_PUSH_HOSTS: &[&str] = &[
     "push.apple.com",
 ];
 pub const KLIPY_CONTENT_FILTER: &str = "KLIPY_CONTENT_FILTER";
+pub const KLIPY_CACHE_SECS: &str = "KLIPY_CACHE_SECS";
 pub const API_LINK_PREVIEWS: &str = "API_LINK_PREVIEWS";
 pub const API_LINK_PREVIEW_DENY_HOSTS: &str = "API_LINK_PREVIEW_DENY_HOSTS";
 pub const API_RATE_PREVIEW_PER_MIN: &str = "API_RATE_PREVIEW_PER_MIN";
@@ -75,6 +78,7 @@ const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
 const DEFAULT_DB_MAX_CONNECTIONS: u32 = 20;
 const DEFAULT_SESSION_TTL_HOURS: u64 = 24 * 30;
+const DEFAULT_SESSION_IDLE_HOURS: u64 = 24 * 14;
 const DEFAULT_WS_HEARTBEAT_MS: u64 = 15_000;
 const DEFAULT_WS_DEAD_MS: u64 = 30_000;
 const DEFAULT_WS_REPLAY: usize = 256;
@@ -104,8 +108,14 @@ pub struct Config {
     /// in clear text over any other network. This lets a trusted test
     /// network sign in over plain HTTP anyway.
     pub allow_plain_http: bool,
-    /// Lifetime of a session cookie and its database row.
+    /// Absolute lifetime of a session, counted from sign-in: the cookie's
+    /// `Max-Age` and the latest its database row can ever expire.
     pub session_ttl: Duration,
+    /// Sliding idle timeout: a session that goes unused this long ends
+    /// before `session_ttl`. Every use pushes the row's expiry to
+    /// `now + session_idle`, never past `created_at + session_ttl`
+    /// (`auth::session::touch`). Never longer than `session_ttl`.
+    pub session_idle: Duration,
     /// How often the gateway sends an application heartbeat (`{"op":"h"}`).
     pub ws_heartbeat: Duration,
     /// Close a socket that has sent nothing for this long (silent death).
@@ -231,6 +241,9 @@ pub struct GifConfig {
     pub media_origins: Vec<String>,
     /// Klipy's `content_filter`: `off`, `low`, `medium` or `high`.
     pub content_filter: String,
+    /// How long a search or trending page stays in Redis, shared by every
+    /// user. Zero asks Klipy every time.
+    pub cache_ttl: Duration,
 }
 
 impl fmt::Debug for GifConfig {
@@ -240,6 +253,7 @@ impl fmt::Debug for GifConfig {
             .field("api_base", &self.api_base)
             .field("media_origins", &self.media_origins)
             .field("content_filter", &self.content_filter)
+            .field("cache_ttl", &self.cache_ttl)
             .finish()
     }
 }
@@ -251,6 +265,8 @@ pub const KLIPY_MEDIA_ORIGINS: &[&str] = &[
     "https://static2.klipy.com",
 ];
 const DEFAULT_KLIPY_CONTENT_FILTER: &str = "medium";
+const DEFAULT_KLIPY_CACHE_SECS: u64 = 600;
+const KLIPY_CACHE_SECS_MAX: u64 = 86_400;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MinioConfig {
@@ -264,9 +280,70 @@ pub struct MinioConfig {
     /// Signed in with `MINIO_ROOT_*` because `MINIO_ACCESS_KEY` is unset:
     /// a Compose file from before #196. Works, but the API holds root.
     pub root_credentials: bool,
+    /// How attachment bytes reach the browser (#348).
+    pub delivery: AttachmentDelivery,
+}
+
+/// `ATTACHMENT_DELIVERY`: who carries attachment bytes between the browser
+/// and MinIO (#348).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AttachmentDelivery {
+    /// The browser talks to MinIO itself: a presigned PUT for uploads and a
+    /// redirect to a signed link for downloads. Needs `MINIO_PUBLIC_ENDPOINT`
+    /// reachable from every browser (its own host on 443, deploy/README.md).
+    #[default]
+    Redirect,
+    /// Uploads and downloads go through the API on the app's own origin;
+    /// MinIO stays on the internal network and `MINIO_PUBLIC_ENDPOINT` is
+    /// unused. Costs the API the bandwidth of every attachment.
+    Proxy,
 }
 
 impl MinioConfig {
+    /// Startup warnings for a public endpoint browsers likely cannot use.
+    /// Only redirect delivery hands that endpoint to browsers; with
+    /// `cookie_secure` the app runs on HTTPS for other machines, so a
+    /// loopback host or plain HTTP there breaks every attachment (#348).
+    pub fn public_endpoint_warnings(&self, cookie_secure: bool) -> Vec<String> {
+        if self.delivery == AttachmentDelivery::Proxy {
+            return Vec::new();
+        }
+        let fix = "set it to MinIO's own public host (deploy/README.md, MinIO on 443) or ATTACHMENT_DELIVERY=proxy";
+        let mut warnings = Vec::new();
+        if let Some(port) = self.public_port() {
+            warnings.push(format!(
+                "MINIO_PUBLIC_ENDPOINT uses port {port} instead of 443: attachments load and upload only on networks that allow this port; {fix}"
+            ));
+        }
+        if !cookie_secure {
+            return warnings;
+        }
+        let Ok(url) = url::Url::parse(&self.public_endpoint) else {
+            return warnings;
+        };
+        let loopback = match url.host() {
+            Some(url::Host::Domain(host)) => {
+                host.eq_ignore_ascii_case("localhost")
+                    || host.to_ascii_lowercase().ends_with(".localhost")
+            }
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            None => false,
+        };
+        if loopback {
+            warnings.push(format!(
+                "MINIO_PUBLIC_ENDPOINT={} is a loopback address: browsers on other machines cannot load or upload attachments; {fix}",
+                self.public_endpoint
+            ));
+        } else if url.scheme() == "http" {
+            warnings.push(format!(
+                "MINIO_PUBLIC_ENDPOINT={} is plain HTTP while the app runs on HTTPS (API_COOKIE_SECURE=true): browsers block these attachment links; {fix}",
+                self.public_endpoint
+            ));
+        }
+        warnings
+    }
+
     /// The explicit port of an `https://` public endpoint other than 443.
     /// Attachments then load and upload only on networks that allow that
     /// port (#206). Parsed with `url` like the presigner; `Url::port` is
@@ -342,6 +419,23 @@ impl Config {
         let session_ttl_hours = match get(API_SESSION_TTL_HOURS) {
             Some(raw) => parse_positive::<u64>(API_SESSION_TTL_HOURS, &raw)?,
             None => DEFAULT_SESSION_TTL_HOURS,
+        };
+        // The default shrinks to a short configured TTL; an explicit idle
+        // timeout longer than the TTL would never take effect, so it is a
+        // configuration mistake.
+        let session_idle_hours = match get(API_SESSION_IDLE_HOURS) {
+            Some(raw) => {
+                let hours = parse_positive::<u64>(API_SESSION_IDLE_HOURS, &raw)?;
+                if hours > session_ttl_hours {
+                    return Err(invalid(
+                        API_SESSION_IDLE_HOURS,
+                        &raw,
+                        "must not be greater than API_SESSION_TTL_HOURS",
+                    ));
+                }
+                hours
+            }
+            None => DEFAULT_SESSION_IDLE_HOURS.min(session_ttl_hours),
         };
 
         let ws_heartbeat_ms = match get(API_WS_HEARTBEAT_MS) {
@@ -425,6 +519,7 @@ impl Config {
             cookie_secure,
             allow_plain_http,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
+            session_idle: Duration::from_secs(session_idle_hours * 3600),
             ws_heartbeat: Duration::from_millis(ws_heartbeat_ms),
             ws_dead: Duration::from_millis(ws_dead_ms),
             ws_replay,
@@ -644,6 +739,20 @@ fn parse_gifs(get: &impl Fn(&str) -> Option<String>) -> Result<Option<GifConfig>
         }
         None => DEFAULT_KLIPY_CONTENT_FILTER.to_owned(),
     };
+    let cache_secs = match get(KLIPY_CACHE_SECS) {
+        Some(raw) => {
+            let secs = parse_u64_allow_zero(KLIPY_CACHE_SECS, &raw)?;
+            if secs > KLIPY_CACHE_SECS_MAX {
+                return Err(invalid(
+                    KLIPY_CACHE_SECS,
+                    &raw,
+                    "expected at most 86400 (one day)",
+                ));
+            }
+            secs
+        }
+        None => DEFAULT_KLIPY_CACHE_SECS,
+    };
     Ok(Some(GifConfig {
         api_key,
         api_base: KLIPY_API_BASE.to_owned(),
@@ -652,6 +761,7 @@ fn parse_gifs(get: &impl Fn(&str) -> Option<String>) -> Result<Option<GifConfig>
             .map(|o| (*o).to_owned())
             .collect(),
         content_filter,
+        cache_ttl: Duration::from_secs(cache_secs),
     }))
 }
 
@@ -735,6 +845,20 @@ fn parse_minio(get: &impl Fn(&str) -> Option<String>) -> Result<Option<MinioConf
         None => (get(MINIO_ROOT_USER), get(MINIO_ROOT_PASSWORD), true),
     };
     let bucket = get(MINIO_BUCKET);
+    let delivery = match get(ATTACHMENT_DELIVERY) {
+        None => AttachmentDelivery::Redirect,
+        Some(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "redirect" => AttachmentDelivery::Redirect,
+            "proxy" => AttachmentDelivery::Proxy,
+            _ => {
+                return Err(invalid(
+                    ATTACHMENT_DELIVERY,
+                    &raw,
+                    "expected redirect or proxy",
+                ));
+            }
+        },
+    };
     match (endpoint, user, password, bucket) {
         (None, None, None, None) => Ok(None),
         (Some(endpoint), Some(access_key), Some(secret_key), Some(bucket)) => {
@@ -756,6 +880,7 @@ fn parse_minio(get: &impl Fn(&str) -> Option<String>) -> Result<Option<MinioConf
                 secret_key,
                 bucket,
                 root_credentials,
+                delivery,
             }))
         }
         _ => Err(ConfigError::Missing(MINIO_ENDPOINT)),
@@ -891,6 +1016,7 @@ mod tests {
         assert_eq!(config.db_max_connections, 20);
         assert!(!config.cookie_secure);
         assert_eq!(config.session_ttl, Duration::from_secs(30 * 24 * 3600));
+        assert_eq!(config.session_idle, Duration::from_secs(14 * 24 * 3600));
         assert_eq!(config.ws_heartbeat, Duration::from_millis(15_000));
         assert_eq!(config.ws_dead, Duration::from_millis(30_000));
         assert_eq!(config.ws_replay, 256);
@@ -918,6 +1044,7 @@ mod tests {
         assert_eq!(gifs.api_key, "key-123_A");
         assert_eq!(gifs.api_base, "https://api.klipy.com");
         assert_eq!(gifs.content_filter, "medium");
+        assert_eq!(gifs.cache_ttl, Duration::from_secs(600));
         assert!(
             gifs.media_origins
                 .contains(&"https://static.klipy.com".to_owned())
@@ -959,6 +1086,33 @@ mod tests {
         assert!(
             matches!(err, ConfigError::Invalid { key: KLIPY_API_KEY, ref value, .. } if value == "<redacted>")
         );
+    }
+
+    #[test]
+    fn klipy_cache_can_be_tuned_or_turned_off() {
+        let ttl = |raw: &str| {
+            Config::from_source(source(&[
+                (DATABASE_URL, "postgres://u:p@localhost/db"),
+                (REDIS_URL, "redis://localhost"),
+                (KLIPY_API_KEY, "key"),
+                (KLIPY_CACHE_SECS, raw),
+            ]))
+            .map(|config| config.gifs.expect("gifs on").cache_ttl)
+        };
+        assert_eq!(ttl("0").unwrap(), Duration::ZERO);
+        assert_eq!(ttl(" 300 ").unwrap(), Duration::from_secs(300));
+        for raw in ["86401", "-1", "ten"] {
+            assert!(
+                matches!(
+                    ttl(raw),
+                    Err(ConfigError::Invalid {
+                        key: KLIPY_CACHE_SECS,
+                        ..
+                    })
+                ),
+                "{raw}"
+            );
+        }
     }
 
     #[test]
@@ -1038,6 +1192,7 @@ mod tests {
                 secret_key: String::new(),
                 bucket: String::new(),
                 root_credentials: false,
+                delivery: AttachmentDelivery::Redirect,
             }
             .public_port()
         };
@@ -1066,6 +1221,76 @@ mod tests {
         assert_eq!(minio.public_endpoint, "http://minio:9000");
         assert_eq!(minio.bucket, "gelabber");
         assert!(minio.root_credentials);
+    }
+
+    #[test]
+    fn attachment_delivery_defaults_to_redirect_and_takes_proxy() {
+        let delivery = |value: Option<&str>| {
+            let mut pairs = vec![
+                (DATABASE_URL, "postgres://u:p@localhost/db"),
+                (REDIS_URL, "redis://localhost"),
+                (MINIO_ENDPOINT, "http://minio:9000"),
+                (MINIO_ACCESS_KEY, "gelabber-api"),
+                (MINIO_SECRET_KEY, "private-app"),
+                (MINIO_BUCKET, "gelabber"),
+            ];
+            if let Some(value) = value {
+                pairs.push((ATTACHMENT_DELIVERY, value));
+            }
+            Config::from_source(source(&pairs)).map(|config| config.minio.expect("minio").delivery)
+        };
+        assert_eq!(delivery(None), Ok(AttachmentDelivery::Redirect));
+        assert_eq!(delivery(Some("")), Ok(AttachmentDelivery::Redirect));
+        assert_eq!(delivery(Some("redirect")), Ok(AttachmentDelivery::Redirect));
+        assert_eq!(delivery(Some(" Proxy ")), Ok(AttachmentDelivery::Proxy));
+        let error = delivery(Some("stream")).expect_err("unknown mode");
+        assert!(error.to_string().contains(ATTACHMENT_DELIVERY), "{error}");
+    }
+
+    #[test]
+    fn warns_about_a_public_endpoint_browsers_cannot_use() {
+        let warnings = |url: &str, delivery: AttachmentDelivery, cookie_secure: bool| {
+            MinioConfig {
+                endpoint: "http://minio:9000".into(),
+                public_endpoint: url.into(),
+                access_key: String::new(),
+                secret_key: String::new(),
+                bucket: String::new(),
+                root_credentials: false,
+                delivery,
+            }
+            .public_endpoint_warnings(cookie_secure)
+        };
+        use AttachmentDelivery::{Proxy, Redirect};
+        // The case of #348: a port nobody outside can reach.
+        let off_443 = warnings("https://sscholler.de:9000", Redirect, true);
+        assert_eq!(off_443.len(), 1, "{off_443:?}");
+        assert!(off_443[0].contains("port 9000"), "{off_443:?}");
+        assert!(
+            off_443[0].contains("ATTACHMENT_DELIVERY=proxy"),
+            "{off_443:?}"
+        );
+        // Behind TLS, loopback and plain HTTP cannot work for other machines.
+        for url in [
+            "http://localhost:9000",
+            "http://127.0.0.1:9000",
+            "https://minio.localhost",
+            "http://[::1]:9000",
+        ] {
+            let found = warnings(url, Redirect, true);
+            assert!(
+                found.iter().any(|w| w.contains("loopback")),
+                "{url}: {found:?}"
+            );
+        }
+        let plain = warnings("http://minio.example.com", Redirect, true);
+        assert!(plain[0].contains("plain HTTP"), "{plain:?}");
+        // Local development (no TLS) and a proper vHost stay quiet.
+        assert!(warnings("http://localhost:9000", Redirect, false).is_empty());
+        assert!(warnings("https://minio.example.com", Redirect, true).is_empty());
+        // Proxy delivery never hands the endpoint to a browser.
+        assert!(warnings("https://sscholler.de:9000", Proxy, true).is_empty());
+        assert!(warnings("http://localhost:9000", Proxy, true).is_empty());
     }
 
     #[test]
@@ -1117,6 +1342,41 @@ mod tests {
 
         assert!(config.cookie_secure);
         assert_eq!(config.session_ttl, Duration::from_secs(12 * 3600));
+        // The default idle timeout (14 days) shrinks to a shorter TTL.
+        assert_eq!(config.session_idle, Duration::from_secs(12 * 3600));
+    }
+
+    #[test]
+    fn parses_session_idle_timeout() {
+        let config = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (API_SESSION_IDLE_HOURS, "48"),
+        ]))
+        .expect("valid config");
+        assert_eq!(config.session_ttl, Duration::from_secs(30 * 24 * 3600));
+        assert_eq!(config.session_idle, Duration::from_secs(48 * 3600));
+    }
+
+    #[test]
+    fn rejects_session_idle_longer_than_ttl() {
+        let err = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (API_SESSION_TTL_HOURS, "24"),
+            (API_SESSION_IDLE_HOURS, "25"),
+        ]))
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConfigError::Invalid {
+                    key: API_SESSION_IDLE_HOURS,
+                    ..
+                }
+            ),
+            "{err}"
+        );
     }
 
     #[test]

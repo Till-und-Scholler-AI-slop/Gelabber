@@ -179,7 +179,7 @@ export type MediaSettings = {
   economyMode: boolean;
   /** Camera capture + that sender's share of the video budget. */
   cameraProfile: StreamProfileId;
-  /** Screen share and Go Live. Both are display captures. */
+  /** Live (a display capture). */
   screenProfile: StreamProfileId;
   /** 0 = no custom limit; otherwise explicit shared video payload cap in bit/s. */
   videoUploadLimit: number;
@@ -229,13 +229,17 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   pttReleaseDelay: PTT_RELEASE_DELAY_DEFAULT,
 };
 
+/** The settings dialog's tab it opens on. */
+export type MediaDialogSection = "audio" | "video" | "diagnostics";
+
 type MediaSettingsState = MediaSettings & {
   dialogOpen: boolean;
+  dialogSection: MediaDialogSection | null;
   /** Not persisted. Set by the live session after a profile change. */
   cameraProfileApply: StreamApply;
   screenProfileApply: StreamApply;
   patch: (partial: Partial<MediaSettings>) => void;
-  openDialog: () => void;
+  openDialog: (section?: MediaDialogSection) => void;
   closeDialog: () => void;
 };
 
@@ -335,12 +339,48 @@ export function clampVolume(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
-/** Highest playback volume: 200 %, amplified above 100 %. */
-export const MAX_PLAYBACK_VOLUME = 2;
+/** Highest playback volume: 400 %, amplified above 100 % and limited so
+ * that a loud voice cannot clip. */
+export const MAX_PLAYBACK_VOLUME = 4;
 
 export function clampPlaybackVolume(value: number): number {
   if (!Number.isFinite(value)) return 1;
   return Math.min(MAX_PLAYBACK_VOLUME, Math.max(0, value));
+}
+
+/** Steps of a playback slider. The left half runs from 0 to 100 %, the
+ * right half from 100 % to the maximum, so 100 % stays in the middle and
+ * quiet levels keep their fine steps. */
+export const PLAYBACK_SLIDER_MAX = 200;
+const PLAYBACK_SLIDER_HALF = PLAYBACK_SLIDER_MAX / 2;
+
+/** Where `volume` sits on a playback slider. */
+export function playbackSliderPosition(volume: number): number {
+  const value = clampPlaybackVolume(volume);
+  return Math.round(
+    value <= 1
+      ? value * PLAYBACK_SLIDER_HALF
+      : PLAYBACK_SLIDER_HALF +
+          ((value - 1) / (MAX_PLAYBACK_VOLUME - 1)) * PLAYBACK_SLIDER_HALF,
+  );
+}
+
+/** Filled share of a playback slider, for `.lr-range`'s
+ * `--lr-range-value` (WebKit has no progress pseudo). */
+export function playbackSliderFill(volume: number): string {
+  return `${(playbackSliderPosition(volume) * 100) / PLAYBACK_SLIDER_MAX}%`;
+}
+
+/** The volume at a playback slider position, in whole percent. */
+export function playbackSliderVolume(position: number): number {
+  const step = Math.min(PLAYBACK_SLIDER_MAX, Math.max(0, position));
+  const value =
+    step <= PLAYBACK_SLIDER_HALF
+      ? step / PLAYBACK_SLIDER_HALF
+      : 1 +
+        ((step - PLAYBACK_SLIDER_HALF) / PLAYBACK_SLIDER_HALF) *
+          (MAX_PLAYBACK_VOLUME - 1);
+  return Math.round(value * 100) / 100;
 }
 
 export function clampGain(value: number): number {
@@ -402,7 +442,12 @@ export const useMediaSettings = create<MediaSettingsState>()(
   persist(
     (set, get) => ({
       ...DEFAULT_MEDIA_SETTINGS,
+      // The desktop app announces messages while its window is not in
+      // front from the start, as chat apps do; a browser tab waits to be
+      // asked. A choice made before stays as it is.
+      desktopNotify: isDesktopApp(),
       dialogOpen: false,
+      dialogSection: null,
       cameraProfileApply: "idle",
       screenProfileApply: "idle",
       patch: (partial) => {
@@ -498,8 +543,9 @@ export const useMediaSettings = create<MediaSettingsState>()(
         });
         listener?.(prev, snapshot(get()));
       },
-      openDialog: () => set({ dialogOpen: true }),
-      closeDialog: () => set({ dialogOpen: false }),
+      openDialog: (section) =>
+        set({ dialogOpen: true, dialogSection: section ?? null }),
+      closeDialog: () => set({ dialogOpen: false, dialogSection: null }),
     }),
     {
       name: SETTINGS_KEY,
@@ -568,6 +614,7 @@ export const useMediaSettings = create<MediaSettingsState>()(
           cameraProfileApply: current.cameraProfileApply,
           screenProfileApply: current.screenProfileApply,
           dialogOpen: current.dialogOpen,
+          dialogSection: current.dialogSection,
         };
       },
     },
@@ -588,7 +635,7 @@ export function sourceAudioBitrate(
   return settings.economyMode ? 128_000 : null;
 }
 
-/** Whether screen share and Go Live carry sound. Without a choice of his own
+/** Whether a Live carries sound. Without a choice of his own
  * the user gets it where the call stays out of it: in a desktop app whose
  * "every application" leaves out Gelabber itself. A browser captures whatever
  * its picker hands over, the call included, so there it stays off. */
@@ -648,6 +695,7 @@ export function resetMediaSettingsForTests(): void {
   useMediaSettings.setState({
     ...DEFAULT_MEDIA_SETTINGS,
     dialogOpen: false,
+    dialogSection: null,
     cameraProfileApply: "idle",
     screenProfileApply: "idle",
   });

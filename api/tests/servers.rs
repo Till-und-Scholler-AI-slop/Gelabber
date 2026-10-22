@@ -89,7 +89,7 @@ async fn server_routes_require_a_session(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn creating_a_server_makes_the_caller_owner_with_a_first_channel(pool: PgPool) {
+async fn creating_a_server_makes_the_caller_owner_with_a_chat_and_a_voice_room(pool: PgPool) {
     let (mut owner, _) = two_users(pool).await;
 
     let empty = owner.send(Method::GET, "/api/servers", None).await;
@@ -111,13 +111,17 @@ async fn creating_a_server_makes_the_caller_owner_with_a_first_channel(pool: PgP
         json!(["send_messages", "send_files", "join_voice", "go_live"]),
         "default member mask"
     );
-    assert_eq!(server["categories"].as_array().unwrap().len(), 1);
+    assert_eq!(server["categories"].as_array().unwrap().len(), 2);
     assert_eq!(server["categories"][0]["name"], "Textkanäle");
+    assert_eq!(server["categories"][1]["name"], "Sprachkanäle");
     let channels = server["channels"].as_array().unwrap();
-    assert_eq!(channels.len(), 1);
+    assert_eq!(channels.len(), 2);
     assert_eq!(channels[0]["name"], "allgemein");
     assert_eq!(channels[0]["kind"], "text");
     assert_eq!(channels[0]["category_id"], server["categories"][0]["id"]);
+    assert_eq!(channels[1]["name"], "Wohnzimmer");
+    assert_eq!(channels[1]["kind"], "voice");
+    assert_eq!(channels[1]["category_id"], server["categories"][1]["id"]);
     let members = server["members"].as_array().unwrap();
     assert_eq!(members.len(), 1);
     assert_eq!(members[0]["name"], "Ada");
@@ -616,8 +620,17 @@ async fn categories_and_channels_crud_with_manage_channels(pool: PgPool) {
         .iter()
         .map(|c| c["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["allgemein", "off-topic", "Lounge Eins", "neu-hier"]);
-    assert_eq!(detail.body["categories"][1]["name"], "Voice");
+    assert_eq!(
+        names,
+        [
+            "allgemein",
+            "Wohnzimmer",
+            "off-topic",
+            "Lounge Eins",
+            "neu-hier"
+        ]
+    );
+    assert_eq!(detail.body["categories"][2]["name"], "Voice");
 
     // Deleting a category keeps its channels, uncategorised.
     let res = owner
@@ -631,7 +644,7 @@ async fn categories_and_channels_crud_with_manage_channels(pool: PgPool) {
     let detail = owner
         .send(Method::GET, &format!("/api/servers/{id}"), None)
         .await;
-    assert_eq!(detail.body["categories"].as_array().unwrap().len(), 1);
+    assert_eq!(detail.body["categories"].as_array().unwrap().len(), 2);
     let lounge = detail.body["channels"]
         .as_array()
         .unwrap()
