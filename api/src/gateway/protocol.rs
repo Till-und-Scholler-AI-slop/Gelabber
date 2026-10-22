@@ -236,7 +236,7 @@ pub struct VoiceEntry {
     pub m: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub d: bool,
-    /// Occupant holds the channel's Go Live track (clients before 0.8).
+    /// Occupant holds the channel's Go Live track (older clients).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub l: bool,
     /// Occupant publishes a screen (`s`): Live, several per channel.

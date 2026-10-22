@@ -142,7 +142,7 @@ async fn publish(call: &mut Call<'_>) -> Result<(), ApiError> {
     };
     // Camera (`v`) is for anyone already in the voice room. Going live
     // needs `go_live`: a screen (`s`), several per channel, or the Go Live
-    // track (`l`) of clients before 0.8, one per channel. Stopping is free.
+    // track (`l`) of older clients, one per channel. Stopping is free.
     if matches!(
         track,
         TrackKind::S | TrackKind::Sa | TrackKind::L | TrackKind::La
