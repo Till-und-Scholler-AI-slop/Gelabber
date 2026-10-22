@@ -5,10 +5,12 @@ import { Button, GhostButton } from "./Button.tsx";
 import { buttonClass } from "./buttonClass.ts";
 import { nextChipIndex } from "./chipKeys.ts";
 import { ChipGroup } from "./ChipGroup.tsx";
+import { CopyButton } from "./CopyButton.tsx";
 import { fieldDescription } from "./fieldDescription.ts";
 import { IconButton } from "./IconButton.tsx";
 import { InlineStatus } from "./InlineStatus.tsx";
-import { popoverPosition } from "./popoverPosition.ts";
+import { Input } from "./Input.tsx";
+import { popoverOrigin, popoverPosition } from "./popoverPosition.ts";
 import { MainSkeleton, SkeletonRows } from "./Skeleton.tsx";
 import { Switch } from "./Switch.tsx";
 
@@ -78,6 +80,18 @@ describe("fields", () => {
       "a-hint a-caps",
     );
     expect(fieldDescription("a", {})).toBeUndefined();
+  });
+
+  it("lets an autofocused field be the one a modal dialog opens on", () => {
+    // showModal() reads the attribute; React's own autoFocus never sets it
+    // on the client, so the radios above a dialog's name field won out.
+    const field = Input({ autoFocus: true, "aria-label": "Name" });
+    const set: string[] = [];
+    (field.props.ref as (element: unknown) => void)({
+      setAttribute: (name: string) => set.push(name),
+    });
+    expect(set).toEqual(["autofocus"]);
+    expect(Input({ "aria-label": "Name" }).props.ref).toBeUndefined();
   });
 
   it("makes the whole row of a labelled switch the target", () => {
@@ -191,5 +205,44 @@ describe("popover placement", () => {
       top: 600 - 6 - 150,
       left: 240,
     });
+  });
+
+  it("grows out of the anchor, from whichever side it opened on", () => {
+    const below = popoverPosition(anchor, size, viewport, "bottom-end");
+    // The anchor's middle (320) is 180px into a popover that starts at 140.
+    expect(popoverOrigin(anchor, below, size)).toBe("180px 0px");
+    const low = { top: 700, right: 340, bottom: 732, left: 300 };
+    const above = popoverPosition(low, size, viewport, "bottom-start");
+    expect(popoverOrigin(low, above, size)).toBe("20px 150px");
+  });
+
+  it("keeps the origin on the popover when the anchor is wider", () => {
+    const wide = { top: 100, right: 900, bottom: 132, left: 100 };
+    const position = popoverPosition(wide, size, viewport, "bottom-start");
+    expect(popoverOrigin(wide, position, size)).toBe("200px 0px");
+  });
+});
+
+describe("copy button", () => {
+  const html = renderToStaticMarkup(
+    <CopyButton onCopy={async () => true}>Link kopieren</CopyButton>,
+  );
+
+  it("is named by its label, with Kopiert ready in the same spot", () => {
+    expect(html).toContain(
+      '<span class="ui-copy-label" data-copied="false"><span>Link kopieren</span><span aria-hidden="true">Kopiert</span></span>',
+    );
+    expect(html).toContain('class="ui-copy-icon" data-copied="false"');
+  });
+
+  it("has a status for screen readers, empty until it copied", () => {
+    expect(html).toContain('<span role="status" class="sr-only"></span>');
+    expect(
+      renderToStaticMarkup(
+        <CopyButton onCopy={async () => true} announce={false}>
+          Kopieren
+        </CopyButton>,
+      ),
+    ).not.toContain('role="status"');
   });
 });

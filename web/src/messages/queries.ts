@@ -13,6 +13,7 @@ import {
   type InfiniteData,
   type QueryClient,
   infiniteQueryOptions,
+  onlineManager,
   replaceEqualDeep,
 } from "@tanstack/react-query";
 
@@ -405,6 +406,23 @@ function requireAttempt(attempt: SendAttempt): void {
     throw new DOMException("Session changed", "AbortError");
 }
 
+/** Resolves once the device is online. Nothing has left before that, so a
+ *  send made offline only waits, on screen, and is never in doubt. */
+function untilOnline(signal: AbortSignal): Promise<void> {
+  if (onlineManager.isOnline() || signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      off();
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const off = onlineManager.subscribe((online) => {
+      if (online) done();
+    });
+    signal.addEventListener("abort", done);
+  });
+}
+
 /** The attempt owns its file/status even when the mutation observer unmounts. */
 export async function sendMessageAttempt(
   channelId: string,
@@ -461,6 +479,8 @@ export async function sendMessageAttempt(
   attempt = { ...attempt, status: "sending", error: undefined };
   saveAttempt(attempt);
   try {
+    await untilOnline(attempt.controller.signal);
+    requireAttempt(attempt);
     // One after another: the upload link is the bottleneck, and a retry
     // continues after the files that already arrived.
     for (
@@ -630,6 +650,9 @@ export function useSendMessage(channelId: string, author: MessageAuthor) {
     mutationFn: (input: SendInput & { attemptId?: string }) =>
       sendMessageAttempt(channelId, author, input),
     retry: false,
+    // Paused offline, the attempt would not even show its row; it waits
+    // for the network itself instead.
+    networkMode: "always",
   });
 }
 
@@ -729,7 +752,7 @@ export function editMessageOptions(client: QueryClient, channelId: string) {
         queryKey: messageKeys.channel(ctx.userId, ctx.generation, channelId),
         exact: true,
       });
-      notifyError(error);
+      notifyError(error, "Änderung nicht gespeichert.");
     },
     onSuccess: (
       message: Message,
@@ -1028,7 +1051,7 @@ export function deleteMessageOptions(client: QueryClient, channelId: string) {
         queryKey: messageKeys.channel(ctx.userId, ctx.generation, channelId),
         exact: true,
       });
-      notifyError(error);
+      notifyError(error, "Nachricht nicht gelöscht.");
     },
   };
 }

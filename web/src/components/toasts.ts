@@ -145,9 +145,16 @@ function toastText(error: unknown): string | null {
   return errorMessage(error.code);
 }
 
-/** For mutations whose form is already closed: say what went wrong. */
-export function notifyError(error: unknown): void {
+/**
+ * For mutations whose form is already closed: say what went wrong. `failed`
+ * names the change that did not happen ("Nachricht nicht gelöscht."), so
+ * the reader knows which one it was once the screen has moved on.
+ */
+export function notifyError(error: unknown, failed?: string): void {
   if (error instanceof DOMException && error.name === "AbortError") return;
   const message = toastText(error);
-  if (message) useToasts.getState().push("error", message);
+  if (message)
+    useToasts
+      .getState()
+      .push("error", failed ? `${failed} ${message}` : message);
 }

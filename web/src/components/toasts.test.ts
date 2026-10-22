@@ -35,6 +35,22 @@ describe("error toasts", () => {
     expect(useToasts.getState().toasts[0]?.message).toBe("Datei ist ungültig.");
   });
 
+  it("names the change that failed before the reason", () => {
+    notifyError(
+      new ApiError("network", 0, "Network error."),
+      "Nachricht nicht gelöscht.",
+    );
+    // A different change failing for the same reason is its own notice.
+    notifyError(
+      new ApiError("network", 0, "Network error."),
+      "Änderung nicht gespeichert.",
+    );
+    expect(useToasts.getState().toasts.map((toast) => toast.message)).toEqual([
+      "Nachricht nicht gelöscht. Keine Verbindung zum Server.",
+      "Änderung nicht gespeichert. Keine Verbindung zum Server.",
+    ]);
+  });
+
   it("keeps the ApiError text and caps a stack of different errors", () => {
     notifyError(
       new ApiError("forbidden", 403, "Dafür fehlt dir die Berechtigung."),

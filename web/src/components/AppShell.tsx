@@ -14,6 +14,7 @@ import { useFocusReport, useIdlePresence } from "../ws/useLive.ts";
 import { usePushSubscription } from "../pwa/push.ts";
 import { useMessageToastsBridge } from "../messages/useMessageToasts.ts";
 import { ConfirmHost } from "./ConfirmHost.tsx";
+import { ConnectionNotice } from "./ConnectionNotice.tsx";
 import { InvitePromptHost } from "./InviteDialog.tsx";
 import { isChromeLongPress } from "./longPress.ts";
 import { MessageToasts } from "./MessageToasts.tsx";
@@ -88,6 +89,7 @@ export function AppShell() {
         </SessionRecoveryNotice>
       </div>
       {user ? <AuthenticatedRealtime key={user.id} /> : null}
+      {user ? <ConnectionNotice /> : null}
       <Toasts />
       <MessageToasts />
       <ConfirmHost />

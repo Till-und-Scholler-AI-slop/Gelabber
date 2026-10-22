@@ -10,13 +10,16 @@ import { createPortal } from "react-dom";
 
 import { pageZoom } from "../../interface/zoom.ts";
 import { dialogInitialFocus } from "../dialogFocus.ts";
-import { outsideBox } from "../modalClose.ts";
+import { focusLeftWith, outsideBox } from "../modalClose.ts";
 import { useMediaQuery } from "../useMediaQuery.ts";
 import {
   POPOVER_SHEET_QUERY,
+  popoverOrigin,
   popoverPosition,
   type PopoverPlacement,
 } from "./popoverPosition.ts";
+import type { PresenceState } from "./presence.ts";
+import { useLastOpen, usePresence } from "./usePresence.ts";
 import "./ui.css";
 
 export type { PopoverPlacement };
@@ -46,15 +49,36 @@ type PopoverProps = {
   className?: string;
 };
 
+type SurfaceProps = PopoverProps & {
+  /** Takes the panel or sheet, for its exit. */
+  onSurface: (element: HTMLElement | null) => void;
+  state: PresenceState;
+};
+
 /**
  * A small panel attached to the control that opened it. Esc, a press
  * outside and tabbing away close it; focus starts inside and returns to the
- * opener. Under 640px or on a touch screen it is a bottom sheet.
+ * opener. Under 640px or on a touch screen it is a bottom sheet. Closed, it
+ * stays a moment for its exit, inert and showing what it showed.
  */
 export function Popover(props: PopoverProps) {
   const sheet = useMediaQuery(POPOVER_SHEET_QUERY);
-  if (!props.open) return null;
-  return sheet ? <PopoverSheet {...props} /> : <AnchoredPopover {...props} />;
+  const surface = useRef<HTMLElement>(null);
+  const onSurface = useCallback((element: HTMLElement | null) => {
+    surface.current = element;
+  }, []);
+  const { mounted, state } = usePresence(props.open, surface);
+  const [label, children] = useLastOpen(props.open, [
+    props.label,
+    props.children,
+  ] as const);
+  if (!mounted) return null;
+  const Surface = sheet ? PopoverSheet : AnchoredPopover;
+  return (
+    <Surface {...props} label={label} onSurface={onSurface} state={state}>
+      {children}
+    </Surface>
+  );
 }
 
 function useLatest<T>(value: T) {
@@ -67,11 +91,7 @@ function useLatest<T>(value: T) {
 
 /** Back to the opener when focus was in the panel, or was lost with it. */
 function returnFocus(panel: HTMLElement | null, anchor: HTMLElement | null) {
-  const active = document.activeElement;
-  if (
-    anchor?.isConnected &&
-    (active === null || active === document.body || panel?.contains(active))
-  )
+  if (anchor?.isConnected && focusLeftWith(panel, document.activeElement))
     anchor.focus({ preventScroll: true });
 }
 
@@ -83,8 +103,18 @@ function AnchoredPopover({
   role = "dialog",
   children,
   className,
-}: PopoverProps) {
+  onSurface,
+  state,
+}: SurfaceProps) {
   const panel = useRef<HTMLDivElement>(null);
+  const attach = useCallback(
+    (element: HTMLDivElement | null) => {
+      panel.current = element;
+      onSurface(element);
+    },
+    [onSurface],
+  );
+  const open = state === "open";
   const close = useLatest(onClose);
   // Rendered into the dialog it is used in, if any: outside a modal dialog
   // the page is inert. The same for an element in fullscreen, outside which
@@ -99,20 +129,26 @@ function AnchoredPopover({
     );
   }, []);
 
+  // Placed, focused and listening while open; once closed it lets go at
+  // once (focus back to the opener) and only plays its exit.
   useLayoutEffect(() => {
     const element = panel.current;
     const opener = anchor.current;
-    if (!element || !opener) return;
+    if (!open || !element || !opener) return;
     const place = () => {
-      const { top, left } = popoverPosition(
-        opener.getBoundingClientRect(),
-        { width: element.offsetWidth, height: element.offsetHeight },
+      const box = opener.getBoundingClientRect();
+      const size = { width: element.offsetWidth, height: element.offsetHeight };
+      const zoom = pageZoom(element);
+      const position = popoverPosition(
+        box,
+        size,
         { width: window.innerWidth, height: window.innerHeight },
         placement,
-        pageZoom(element),
+        zoom,
       );
-      element.style.top = `${top}px`;
-      element.style.left = `${left}px`;
+      element.style.top = `${position.top}px`;
+      element.style.left = `${position.left}px`;
+      element.style.transformOrigin = popoverOrigin(box, position, size, zoom);
     };
     place();
     focusInside(element);
@@ -150,7 +186,7 @@ function AnchoredPopover({
       element.removeEventListener("focusout", onFocusOut);
       returnFocus(element, opener);
     };
-  }, [anchor, close, placement, host]);
+  }, [open, anchor, close, placement, host]);
 
   return (
     <>
@@ -158,10 +194,12 @@ function AnchoredPopover({
       {host
         ? createPortal(
             <div
-              ref={panel}
+              ref={attach}
               role={role}
               aria-label={label}
               tabIndex={-1}
+              data-state={state}
+              inert={!open}
               className={["ui-popover", className].filter(Boolean).join(" ")}
             >
               {children}
@@ -180,29 +218,45 @@ function PopoverSheet({
   role = "dialog",
   children,
   className,
-}: PopoverProps) {
+  onSurface,
+  state,
+}: SurfaceProps) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const attach = useCallback(
+    (element: HTMLDialogElement | null) => {
+      dialog.current = element;
+      onSurface(element);
+    },
+    [onSurface],
+  );
+  const open = state === "open";
+  // Closed (or gone while open), it lets go of the page and focus at once,
+  // so an entry that moves focus, like "Antworten" to the composer, keeps
+  // it; ui.css keeps the sheet drawn while it slides away.
   useLayoutEffect(() => {
     const element = dialog.current;
     const opener = anchor.current;
-    if (!element) return;
-    element.showModal();
+    if (!element || !open) return;
+    if (!element.open) element.showModal();
     return () => {
       if (element.open) element.close();
       returnFocus(element, opener);
     };
-  }, [anchor]);
+  }, [open, anchor]);
   return createPortal(
     <dialog
-      ref={dialog}
+      ref={attach}
       aria-label={label}
+      data-state={state}
+      inert={!open}
       className={["ui-sheet", className].filter(Boolean).join(" ")}
       onCancel={(event) => {
         event.preventDefault();
-        onClose();
+        if (open) onClose();
       }}
       onClick={(event) => {
         if (
+          open &&
           event.target === event.currentTarget &&
           outsideBox(event, event.currentTarget.getBoundingClientRect())
         )

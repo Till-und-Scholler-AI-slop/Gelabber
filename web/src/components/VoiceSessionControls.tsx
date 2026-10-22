@@ -24,6 +24,7 @@ import {
 import { Button } from "./ui/Button.tsx";
 import { IconButton } from "./ui/IconButton.tsx";
 import { Popover } from "./ui/Popover.tsx";
+import { useLastOpen, usePresence } from "./ui/usePresence.ts";
 import { useMediaQuery } from "./useMediaQuery.ts";
 import { UserVolumeControl } from "./UserVolumeControl.tsx";
 import { useCapabilities } from "../voice/capabilities.ts";
@@ -59,7 +60,7 @@ import "../voice/room.css";
 export function VoiceSessionControls() {
   const dockRef = useRef<HTMLElement>(null);
   const ids = useId();
-  const voice = useVoice();
+  const session = useVoice();
   const volume = useMediaSettings((s) => s.outputVolume);
   const sourceVolume = useMediaSettings((s) => s.sourceAudioVolume);
   const sourceMuted = useMediaSettings((s) => s.sourceAudioMuted);
@@ -69,12 +70,17 @@ export function VoiceSessionControls() {
   const capable = useCapabilities();
   const pushToTalk = usePushToTalk((s) => s.active);
   const touch = useMediaQuery("(pointer: coarse)");
+  const visible =
+    session.status === "joined" ||
+    session.playbackBlocked ||
+    session.lostCall !== null;
+  // Leaving, the bar slides away as it was, not emptied by the leave.
+  const [voice] = useLastOpen(visible, [session] as const);
+  const presence = usePresence(visible, dockRef);
   const { data: server } = useServer(voice.serverId ?? undefined);
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
-  useCallShortcuts(voice.status === "joined");
+  useCallShortcuts(session.status === "joined");
   const lost = voice.status !== "joined" ? voice.lostCall : null;
-  const visible =
-    voice.status === "joined" || voice.playbackBlocked || lost !== null;
   useEffect(() => {
     const dock = dockRef.current;
     if (!visible || !dock) return;
@@ -109,8 +115,8 @@ export function VoiceSessionControls() {
   const current = new Set(notices.map((notice) => notice.key));
   if ([...dismissed].some((key) => !current.has(key)))
     setDismissed(new Set([...dismissed].filter((key) => current.has(key))));
-  const announcement = <CallAnnouncement voice={voice} />;
-  if (!visible) return announcement;
+  const announcement = <CallAnnouncement voice={session} />;
+  if (!presence.mounted) return announcement;
 
   // Stream sound only matters while someone's Live is playing here.
   const showMix =
@@ -126,6 +132,8 @@ export function VoiceSessionControls() {
       <section
         ref={dockRef}
         aria-label="Aktive Medien"
+        data-state={presence.state}
+        inert={!visible}
         className="voice-session-dock"
       >
         {joined ? (

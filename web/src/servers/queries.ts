@@ -374,7 +374,7 @@ export function useUpdateServer(serverId: string) {
       if (lastInFlight() && !resync.current)
         restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
       else resync.current = true;
-      notifyError(error);
+      notifyError(error, "Server nicht gespeichert.");
     },
     onSuccess: (server, _patch, ctx) => {
       if (!stampHolds(ctx)) return;
@@ -409,7 +409,7 @@ export function useDeleteServer() {
     onError: (error, serverId, ctx) => {
       if (!stampHolds(ctx)) return;
       restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
-      notifyError(error);
+      notifyError(error, "Server nicht gelöscht.");
     },
   });
 }
@@ -428,7 +428,7 @@ export function useLeaveServer() {
     onError: (error, serverId, ctx) => {
       if (!stampHolds(ctx)) return;
       restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
-      notifyError(error);
+      notifyError(error, "Server nicht verlassen.");
     },
   });
 }
@@ -489,7 +489,7 @@ export function useCreateCategory(serverId: string) {
         ...detail,
         categories: replaceRow(detail.categories, ctx.tmp, null),
       }));
-      notifyError(error);
+      notifyError(error, "Kategorie nicht erstellt.");
     },
   });
 }
@@ -520,7 +520,7 @@ export function useUpdateCategory(serverId: string) {
     onError: (error, _vars, ctx) => {
       if (!stampHolds(ctx)) return;
       restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
-      notifyError(error);
+      notifyError(error, "Kategorie nicht gespeichert.");
     },
     onSuccess: (category, _vars, ctx) => {
       if (!stampHolds(ctx)) return;
@@ -561,7 +561,7 @@ export function useDeleteCategory(serverId: string) {
     onError: (error, _id, ctx) => {
       if (!stampHolds(ctx)) return;
       restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
-      notifyError(error);
+      notifyError(error, "Kategorie nicht gelöscht.");
     },
   });
 }
@@ -614,7 +614,7 @@ export function useCreateChannel(serverId: string) {
         ...detail,
         channels: replaceRow(detail.channels, ctx.tmp, null),
       }));
-      notifyError(error);
+      notifyError(error, "Kanal nicht erstellt.");
     },
   });
 }
@@ -654,7 +654,7 @@ export function useUpdateChannel(serverId: string) {
     onError: (error, _vars, ctx) => {
       if (!stampHolds(ctx)) return;
       restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
-      notifyError(error);
+      notifyError(error, "Kanal nicht gespeichert.");
     },
     onSuccess: (channel, _vars, ctx) => {
       if (!stampHolds(ctx)) return;
@@ -691,7 +691,7 @@ export function useDeleteChannel(serverId: string) {
     onError: (error, _id, ctx) => {
       if (!stampHolds(ctx)) return;
       restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
-      notifyError(error);
+      notifyError(error, "Kanal nicht gelöscht.");
     },
   });
 }
@@ -739,7 +739,7 @@ export function useRevokeInvite(serverId: string) {
           ctx.previous,
         );
       }
-      notifyError(error);
+      notifyError(error, "Einladung nicht widerrufen.");
     },
   });
 }
@@ -787,7 +787,7 @@ export function useKickMember(serverId: string) {
     onError: (error, _memberId, ctx) => {
       if (!stampHolds(ctx)) return;
       restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
-      notifyError(error);
+      notifyError(error, "Mitglied nicht entfernt.");
     },
   });
 }
@@ -806,7 +806,7 @@ export function useBanMember(serverId: string) {
     onError: (error, _memberId, ctx) => {
       if (!stampHolds(ctx)) return;
       restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
-      notifyError(error);
+      notifyError(error, "Mitglied nicht gesperrt.");
     },
     onSuccess: (_data, _memberId, ctx) => {
       if (!stampHolds(ctx)) return;
@@ -841,7 +841,7 @@ export function useUnbanMember(serverId: string) {
           ctx.previous,
         );
       }
-      notifyError(error);
+      notifyError(error, "Mitglied nicht entsperrt.");
     },
   });
 }

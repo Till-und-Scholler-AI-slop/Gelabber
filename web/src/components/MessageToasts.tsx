@@ -1,25 +1,45 @@
 import { useNavigate } from "@tanstack/react-router";
 
-import { useMessageToasts } from "../messages/toasts.ts";
+import { useMessageToasts, type MessageToast } from "../messages/toasts.ts";
 import { Avatar } from "./Avatar.tsx";
 import { CloseIcon } from "./Icons.tsx";
 import { IconButton } from "./ui/IconButton.tsx";
+import { usePresenceList } from "./ui/usePresence.ts";
 import "./ui/ui.css";
+
+const toastKey = (toast: MessageToast) => toast.id;
 
 export function MessageToasts() {
   const toasts = useMessageToasts((state) => state.toasts);
   const dismiss = useMessageToasts((state) => state.dismiss);
+  const hold = useMessageToasts((state) => state.hold);
+  const release = useMessageToasts((state) => state.release);
   const navigate = useNavigate();
+  // One that is opened, closed or runs out slides away before it goes.
+  const { entries, ref } = usePresenceList(toasts, toastKey);
 
   return (
     <div aria-live="polite" className="gel-message-toasts">
-      {toasts.map((toast) => {
+      {entries.map(({ key, item: toast, state }) => {
         const where =
           toast.count > 1
             ? `${toast.channelLabel} · ${toast.count} neu`
             : toast.channelLabel;
         return (
-          <div key={toast.id} className="ui-message-toast">
+          <div
+            key={key}
+            ref={ref(key)}
+            data-state={state}
+            inert={state === "closed"}
+            className="ui-message-toast"
+            onPointerEnter={() => hold(toast.id, "hover")}
+            onPointerLeave={() => release(toast.id, "hover")}
+            onFocus={() => hold(toast.id, "focus")}
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget))
+                release(toast.id, "focus");
+            }}
+          >
             <Avatar
               name={toast.author}
               url={toast.authorAvatar ?? null}

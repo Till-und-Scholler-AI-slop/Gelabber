@@ -1,5 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useSession } from "../auth/session.ts";
+import { useReducedMotion } from "../interface/useReducedMotion.ts";
 import { applyDefinition } from "./theme.ts";
 import { builtinTheme } from "./presets.ts";
 import { bindThemeAccount, syncThemes, useAccountThemes } from "./account.ts";
@@ -11,6 +12,9 @@ export function ThemeController() {
   const user = useSession((s) => s.user?.id ?? null);
   const doc = useAccountThemes((s) => s.doc);
   const preview = useThemePreview((s) => s.id);
+  const reduced = useReducedMotion();
+  // The theme last put on the page: another one crossfades in.
+  const appliedId = useRef<string | null>(null);
   useEffect(() => {
     if (sessionStatus === "unknown") return;
     bindThemeAccount(user);
@@ -32,16 +36,25 @@ export function ThemeController() {
     const apply = () => {
       const id =
         shown === "system" ? (media.matches ? "dark" : "light") : shown;
-      applyDefinition(
-        doc.customThemes.find((t) => t.id === id) ?? builtinTheme(id),
-        shown === "system",
-        { remember: preview === null },
-      );
+      const put = () =>
+        applyDefinition(
+          doc.customThemes.find((t) => t.id === id) ?? builtinTheme(id),
+          shown === "system",
+          { remember: preview === null },
+        );
+      // A different theme (picked, tried on, the system's turn) crossfades
+      // the page where the browser can; the first paint and edits to the
+      // theme shown apply at once.
+      const switched = appliedId.current !== null && appliedId.current !== id;
+      appliedId.current = id;
+      if (switched && !reduced && document.startViewTransition)
+        document.startViewTransition(put);
+      else put();
     };
     apply();
     if (shown !== "system") return;
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
-  }, [doc, preview, owner, user, sessionStatus]);
+  }, [doc, preview, owner, user, sessionStatus, reduced]);
   return null;
 }

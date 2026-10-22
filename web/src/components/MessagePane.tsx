@@ -43,6 +43,8 @@ import {
 
 import { useSession } from "../auth/session.ts";
 import { fieldMessage } from "../auth/rules.ts";
+import { useLocalDay } from "../lib/localDay.ts";
+import { arrivals, type Arrival } from "../messages/arrivals.ts";
 import {
   arrivedSince,
   confirmedPendingIds,
@@ -122,6 +124,7 @@ import {
 import { longPressGesture, swallowNextClick } from "./longPress.ts";
 import { Button } from "./ui/Button.tsx";
 import { SkeletonRows } from "./ui/Skeleton.tsx";
+import { useAfterSkeleton } from "./ui/useAfterSkeleton.ts";
 import { copyText } from "../servers/clipboard.ts";
 import { notify, notifyError } from "./toasts.ts";
 import { AttachmentList } from "./Attachments.tsx";
@@ -592,8 +595,11 @@ export function MessagePane({
                           canDelete={
                             message.author.id === user?.id || canModerate
                           }
-                          onEdit={(content) =>
-                            contextEdit.mutate({ id: message.id, content })
+                          onEdit={(content, failed) =>
+                            contextEdit.mutate(
+                              { id: message.id, content },
+                              { onError: failed },
+                            )
                           }
                           onDelete={async (skipConfirm) => {
                             if (
@@ -624,8 +630,11 @@ export function MessagePane({
                           canDelete={
                             message.author.id === user?.id || canModerate
                           }
-                          onEdit={(content) =>
-                            contextEdit.mutate({ id: message.id, content })
+                          onEdit={(content, failed) =>
+                            contextEdit.mutate(
+                              { id: message.id, content },
+                              { onError: failed },
+                            )
                           }
                           onDelete={async (skipConfirm) => {
                             if (
@@ -766,6 +775,20 @@ function MessageList({
   const lastJump = useRef(unreadJump);
   const edit = useEditMessage(channelId);
   const remove = useDeleteMessage(channelId);
+  // Day dividers and the times beside the rows read the clock as they
+  // render; this renders them again when the date changes.
+  useLocalDay();
+  // Rows that just came in live fade in (arrivals.ts); each row keeps what
+  // it was told when it mounted.
+  const [shownItems, setShownItems] = useState(items);
+  const [arrived, setArrived] = useState<ReadonlyMap<string, Arrival>>(
+    () => new Map(),
+  );
+  if (shownItems !== items) {
+    setShownItems(items);
+    setArrived(arrivals(shownItems, items, meId));
+  }
+  const revealed = useAfterSkeleton(!ready);
   const opensAt = unreadAnchor(items, newAfter ?? null, hasOlder);
   const newIndex = opensAt.kind === "row" ? opensAt.index : -1;
 
@@ -1217,7 +1240,7 @@ function MessageList({
         // margin: that ResizeObserver loop (scrollbar on/off) is React #185.
         ref={contentRef}
         style={{ height: virtualizer.getTotalSize() }}
-        className="relative mt-auto w-full shrink-0"
+        className={`relative mt-auto w-full shrink-0 ${revealed ? "ui-reveal" : ""}`}
       >
         {virtualizer.getVirtualItems().map((row) => {
           const message = items[row.index];
@@ -1232,7 +1255,7 @@ function MessageList({
               key={row.key}
               data-index={row.index}
               ref={virtualizer.measureElement}
-              className={`absolute inset-x-0${message.id === highlighted ? " lr-message-highlight" : ""}`}
+              className={`absolute inset-x-0 ${message.id === highlighted ? "lr-message-highlight" : ""}`}
               style={{ top: row.start }}
             >
               {row.index === 0 && !hasOlder ? historyStart : null}
@@ -1253,11 +1276,14 @@ function MessageList({
               <MessageRow
                 message={message}
                 continued={continued}
+                arrival={arrived.get(message.id)}
                 mine={message.author.id === meId}
                 canSend={canSend}
                 canDelete={message.author.id === meId || canModerate}
                 attempt={attempts.get(message.id)}
-                onEdit={(content) => edit.mutate({ id: message.id, content })}
+                onEdit={(content, failed) =>
+                  edit.mutate({ id: message.id, content }, { onError: failed })
+                }
                 onDelete={async (skipConfirm) => {
                   if (skipConfirm || (await confirmDelete(message, meId)))
                     remove.mutate(message.id);
@@ -1295,6 +1321,7 @@ function confirmDelete(message: Message, meId: string | undefined) {
 function MessageRow({
   message,
   continued,
+  arrival,
   mine,
   canSend,
   canDelete,
@@ -1304,21 +1331,29 @@ function MessageRow({
 }: {
   message: Message;
   continued: boolean;
+  /** Just came in live: fades in once, as it mounts. */
+  arrival?: Arrival;
   mine: boolean;
   canSend: boolean;
   canDelete: boolean;
   /** The send attempt of a `tmp:` row. */
   attempt?: SendAttempt;
-  onEdit: (content: string) => void;
+  /** `failed` runs if the server turns the change down. */
+  onEdit: (content: string, failed: () => void) => void;
   /** `skipConfirm` with Shift held. */
   onDelete: (skipConfirm: boolean) => void;
 }) {
   const pending = isPendingId(message.id);
+  // Kept from the mount: a later render, or the same row scrolled back
+  // into view, does not play it again.
+  const [arrivedAs] = useState(arrival);
   const { members, me } = useMentions();
   const mentioned = !mine && mentionsMe(message, me);
   const renderMention = useMentionRenderer(message);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
+  /** Whether the editor takes focus when it opens. */
+  const [editFocus, setEditFocus] = useState(true);
   const editInput = useRef<HTMLTextAreaElement>(null);
   const editSuggestions = useMentionSuggestions(draft, (text, caret) => {
     setDraft(text);
@@ -1362,11 +1397,30 @@ function MessageRow({
         ? active
         : rowRef.current;
     setDraft(fromWire(message.content, members));
+    setEditFocus(true);
     setEditing(true);
   };
   const cancelEdit = () => {
     finishEditing();
     setDraft(fromWire(message.content, members));
+  };
+  const saveEdit = () => {
+    // The row shows the change at once. Turned down, it rolls back, and the
+    // editor opens again with what was typed instead of losing it; focus
+    // comes along only if the reader is not busy elsewhere by then.
+    const typed = draft;
+    onEdit(wireDraft, () => {
+      const active = document.activeElement;
+      setEditFocus(
+        !active ||
+          active === document.body ||
+          Boolean(rowRef.current?.contains(active)),
+      );
+      restoreEditFocus.current = false;
+      setDraft(typed);
+      setEditing(true);
+    });
+    finishEditing();
   };
 
   const moreButton = useRef<HTMLButtonElement>(null);
@@ -1548,7 +1602,13 @@ function MessageRow({
 
   if (continued && !editing) {
     return (
-      <div ref={rowRef} tabIndex={-1} className={rowClass} {...menuHandlers}>
+      <div
+        ref={rowRef}
+        tabIndex={-1}
+        className={rowClass}
+        data-arrival={arrivedAs}
+        {...menuHandlers}
+      >
         <span className="lr-message-gutter" aria-hidden="true">
           {sendState ? null : (
             <time dateTime={message.created_at} title={fullWhen}>
@@ -1592,7 +1652,13 @@ function MessageRow({
   }
 
   return (
-    <div ref={rowRef} tabIndex={-1} className={rowClass} {...menuHandlers}>
+    <div
+      ref={rowRef}
+      tabIndex={-1}
+      className={rowClass}
+      data-arrival={arrivedAs}
+      {...menuHandlers}
+    >
       <Avatar name={message.author.name} url={message.author.avatar_url} />
       <div className="min-w-0 flex-1">
         {reply ? <ReplyHeader reply={reply} /> : null}
@@ -1614,8 +1680,7 @@ function MessageRow({
             onSubmit={(event) => {
               event.preventDefault();
               if (error) return;
-              onEdit(wireDraft);
-              finishEditing();
+              saveEdit();
             }}
           >
             {editSuggestions.list}
@@ -1639,15 +1704,12 @@ function MessageRow({
                   !event.nativeEvent.isComposing
                 ) {
                   event.preventDefault();
-                  if (!error) {
-                    onEdit(wireDraft);
-                    finishEditing();
-                  }
+                  if (!error) saveEdit();
                 }
               }}
               rows={2}
               aria-label="Nachricht bearbeiten"
-              autoFocus
+              autoFocus={editFocus}
             />
             {error ? (
               <p className="lr-field-error">{fieldMessage("content", error)}</p>
@@ -2060,7 +2122,7 @@ function Composer({
         </div>
       ) : null}
       <label className="sr-only" htmlFor={`compose-${channelId}`}>
-        Nachricht in {mention}
+        Nachricht an {mention}
         {channelName}
       </label>
       <div className="lr-composer-field">

@@ -5,7 +5,7 @@ import { useServerMuted } from "../messages/notificationSettings.ts";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useId, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 
 import { useUserId } from "../auth/scope.ts";
 import { lastDmStillListed } from "../dms/open.ts";
@@ -24,6 +24,7 @@ import { AddServerDialog } from "./ServerDialogs.tsx";
 import { tileInitials, tileTint } from "./initials.ts";
 import { useNavigationDrawer } from "./navigationDrawer.ts";
 import { LIST_ROW, ROW_ITEM, listStop, moveWithinList } from "./rowKeys.ts";
+import { TIP_GRACE_MS, TIP_WARM_MS, tipDelay } from "./tooltipTiming.ts";
 
 const TILE_PX = 60;
 
@@ -146,19 +147,50 @@ function ServerList({
     focused,
     activeId,
   );
+  // The tooltip waits a moment on a first hover and then follows the
+  // pointer from tile to tile without waiting again (tooltipTiming.ts).
+  const tipTimer = useRef<number | undefined>(undefined);
+  const tipWarmUntil = useRef(0);
+  useEffect(() => () => window.clearTimeout(tipTimer.current), []);
   const showTip = (
     element: HTMLElement,
     name: string,
     summary: string | null,
+    keyboard: boolean,
   ) => {
+    window.clearTimeout(tipTimer.current);
     const box = element.getBoundingClientRect();
-    setTip({ name, summary, top: box.top + box.height / 2, left: box.right });
+    const next = {
+      name,
+      summary,
+      top: box.top + box.height / 2,
+      left: box.right,
+    };
+    const delay = tipDelay({
+      showing: tip !== null,
+      warm: Date.now() < tipWarmUntil.current,
+      keyboard,
+    });
+    if (delay === 0) setTip(next);
+    else tipTimer.current = window.setTimeout(() => setTip(next), delay);
+  };
+  const hideTip = (at: "once" | "soon") => {
+    window.clearTimeout(tipTimer.current);
+    // Only one that was up warms the next: a pointer that merely crossed
+    // the rail still waits on its next hover.
+    const shown = tip !== null;
+    const hide = () => {
+      setTip(null);
+      if (shown) tipWarmUntil.current = Date.now() + TIP_WARM_MS;
+    };
+    if (at === "once") hide();
+    else tipTimer.current = window.setTimeout(hide, TIP_GRACE_MS);
   };
   return (
     <div
       ref={scrollRef}
       className="server-rail-scroll"
-      onScroll={() => setTip(null)}
+      onScroll={() => hideTip("once")}
     >
       <div
         role="list"
@@ -167,7 +199,7 @@ function ServerList({
         onKeyDown={(event) => {
           if (event.key === "Escape" && tip) {
             event.preventDefault();
-            setTip(null);
+            hideTip("once");
             return;
           }
           moveWithinList(event);
@@ -193,7 +225,7 @@ function ServerList({
                 active={server.id === activeId}
                 tabStop={server.id === stop}
                 onTip={showTip}
-                onTipEnd={() => setTip(null)}
+                onTipEnd={() => hideTip("soon")}
               />
             </div>
           );
@@ -225,7 +257,12 @@ function ServerTile({
   server: Server;
   active: boolean;
   tabStop: boolean;
-  onTip: (element: HTMLElement, name: string, summary: string | null) => void;
+  onTip: (
+    element: HTMLElement,
+    name: string,
+    summary: string | null,
+    keyboard: boolean,
+  ) => void;
   onTipEnd: () => void;
 }) {
   const unreadId = useId();
@@ -266,13 +303,13 @@ function ServerTile({
       tabIndex={tabStop ? 0 : -1}
       onPointerEnter={(event) => {
         if (event.pointerType === "mouse")
-          onTip(event.currentTarget, server.name, summary);
+          onTip(event.currentTarget, server.name, summary, false);
         if (userId) prefetchServer(client, userId, server.id);
       }}
       onPointerLeave={onTipEnd}
       onFocus={(event) => {
         if (event.currentTarget.matches(":focus-visible"))
-          onTip(event.currentTarget, server.name, summary);
+          onTip(event.currentTarget, server.name, summary, true);
         if (userId) prefetchServer(client, userId, server.id);
       }}
       onBlur={onTipEnd}
