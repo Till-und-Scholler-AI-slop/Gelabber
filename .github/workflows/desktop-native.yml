@@ -1,9 +1,7 @@
-# Desktop client native media core (libwebrtc + libmediasoupclient) and the
-# desktop app around it, for Linux and Windows: reproducible libwebrtc builds,
-# a loopback call against the server's mediasoup version, the packaged apps
-# (Linux tarball and pacman repository, Windows installer) and, for a
-# release, their upload. The two platforms share no job but the check of the
-# third-party notices, which both uploads wait for.
+# Desktop app for Linux and Windows: libwebrtc builds (cached), the native
+# core with a loopback call against mediasoup, the packaged apps and, for a
+# release, signing and upload. Pull requests run the checks; packaging runs
+# on pushes to main/v* and releases.
 name: Desktop native core
 
 on:
@@ -103,13 +101,8 @@ jobs:
           path: /mnt/libwebrtc-package
           key: ${{ steps.key.outputs.key }}
 
-      # Part 2 of the third-party notices is made from this checkout and
-      # build, which no other job has: a changed libwebrtc build (the cache
-      # key) is when that part needs renewing. With a debug build of the core
-      # against the fresh package, the script writes the whole file afresh;
-      # the step summary says whether it differs from the committed one, the
-      # artifact holds it and the log its diff (gzip, base64), to be
-      # committed. The "Third-party notices" job holds the branch to it.
+      # A new libwebrtc build renews part 2 of the third-party notices: the step
+      # summary says whether it changed, the artifact holds the file to commit.
       - name: Rust toolchain (notices)
         if: steps.cache.outputs.cache-hit != 'true'
         uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
@@ -212,11 +205,8 @@ jobs:
     timeout-minutes: 60
     env:
       GELABBER_LIBWEBRTC_DIR: /mnt/libwebrtc-package
-      # Build scripts and proc macros with the debug info of everything
-      # else. By default they get none, unless a crate the step builds also
-      # needs them at run time: `cargo test --test <name>` then wants other
-      # builds of quote, syn and the like than `cargo test` did, and with
-      # them a second mediasoup worker (some six minutes).
+      # Build scripts get debug info too; otherwise `cargo test --test <name>`
+      # rebuilds quote/syn and a second mediasoup worker (~6 min).
       CARGO_PROFILE_DEV_BUILD_OVERRIDE_DEBUG: "true"
     steps:
       - name: Checkout
@@ -272,11 +262,8 @@ jobs:
             libpipewire-0.3-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-bad \
             gstreamer1.0-plugins-ugly gstreamer1.0-libav python3-gi
 
-      # Every test of the workspace: the loopback call, the video sinks of
-      # views inside the app (source_preview), the app's unit tests. The
-      # loopback call covers H264 only where the core has it (on Windows only
-      # with Media Foundation's codecs), so this core, built with H264, must be
-      # held to it.
+      # Every test of the workspace. This core is built with H264, so the
+      # loopback call must use it.
       - name: Loopback call against mediasoup 0.29
         env:
           GELABBER_EXPECT_H264: "1"
@@ -353,8 +340,9 @@ jobs:
         timeout-minutes: 10
         run: xvfb-run -a cargo test --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --ignored viewer --nocapture
 
-      # Test build for real desktops; the core comes from the steps above.
+      # Packaging runs after merge (main/v*) and for releases, not per PR.
       - name: Package the app
+        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           # Absolute: cargo runs rustc from the workspace, not from here.
@@ -371,6 +359,7 @@ jobs:
           tar -czf "$pkg.tar.gz" "$pkg"
 
       - name: Upload the app
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: gelabber-desktop-linux-x64
@@ -416,15 +405,9 @@ jobs:
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
-  # The Windows side of the Rust code, type-checked and linted on Linux within
-  # minutes; core-windows needs the native build first. Nothing is linked and
-  # no libwebrtc package is needed: an empty directory stands in for the
-  # core. The core's tests stay out, they would build the mediasoup worker.
-  # No job waits for this one: an error that only Windows has must not hold
-  # up the Linux app and the pacman repository. No Rust cache either: the
-  # check is short without one (some 280 crates, most of them only type
-  # checked), and the repository's cache space is better left to the
-  # libwebrtc packages and the two builds.
+  # Windows side of the Rust code, type-checked and linted on Linux in minutes
+  # (an empty directory stands in for the core). Nothing waits for it, and it
+  # has no Rust cache: short without one.
   rust-windows:
     name: Rust for Windows (type check on Linux)
     runs-on: ubuntu-24.04
@@ -455,16 +438,9 @@ jobs:
           cargo clippy --locked --manifest-path desktop/Cargo.toml --target x86_64-pc-windows-msvc \
             -p gelabber-media-core --lib -- -D warnings
 
-  # The packages of both systems ship
-  # desktop/app/package/THIRD-PARTY-NOTICES.txt. Its crate list comes from
-  # desktop/Cargo.lock for both targets, some of its sentences from the
-  # build configuration. A change of either without a refreshed file fails
-  # here; desktop/packaging/third-party-notices.py without arguments writes
-  # the file, or says what else it needs. The builds do not wait for this
-  # job, so a run still reports what else is wrong. The two jobs that attach
-  # the apps to a release do, and with them the pacman repository: no
-  # release goes out with notices that are out of date. No build and no Rust
-  # cache: cargo only reads the lock file and the crates' manifests.
+  # THIRD-PARTY-NOTICES.txt must match desktop/Cargo.lock and the build
+  # configuration (desktop/packaging/third-party-notices.py writes it). The
+  # release uploads wait for this job.
   notices:
     name: Third-party notices
     runs-on: ubuntu-24.04
@@ -486,14 +462,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 -m unittest discover -s desktop/packaging/tests -v
 
-  # The same core as a DLL, the app around it and its installer. First the
-  # steps that build on each other, up to the app installed, started and
-  # removed again; then the checks nothing else needs. Each of those runs
-  # whenever what it looks at was built, so one run reports all that is wrong.
-  # Everything is built in the release profile: the core and the mediasoup
-  # worker once, and the tests run against the DLL that ships.
-  # PowerShell only looks at the exit code of a step's last command; scripts
-  # with more than one set $PSNativeCommandUseErrorActionPreference.
+  # Windows: core DLL, app and installer, installed, started and removed like
+  # a user would, then the checks. Release profile throughout, so the tests
+  # run against the DLL that ships. PowerShell scripts with several commands
+  # set $PSNativeCommandUseErrorActionPreference.
   core-windows:
     name: Native core and app (Windows x64)
     needs: libwebrtc-windows
@@ -510,12 +482,8 @@ jobs:
       GELABBER_LIBWEBRTC_DIR: C:\libwebrtc-package
       # mediasoup-sys (the worker the core's tests call) runs "$PYTHON -m invoke".
       PYTHON: python
-      # The app must start on a Windows without the Visual C++
-      # redistributable ("Check and measure the binaries" holds it to that):
-      # Rust links the C runtime statically, as the core's DLL does. The
-      # mediasoup worker of the tests is linked into a Rust binary too, so
-      # Meson builds it against the same runtime; --vsenv is mediasoup's own
-      # default for MESON_ARGS and must stay when the variable is set.
+      # Static C runtime, so the app starts without the VC++ redistributable;
+      # --vsenv is mediasoup's default and must stay when MESON_ARGS is set.
       RUSTFLAGS: -C target-feature=+crt-static
       MESON_ARGS: --vsenv -Db_vscrt=mt
     steps:
@@ -535,12 +503,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      # mediasoup-sys installs invoke into its build directory and names that
-      # directory in PYTHONPATH with every ":" turned into ";", the drive
-      # letter's too. What is left is a path without a drive, which Python
-      # reads on the drive of the build script's directory: the cargo
-      # registry on C:, while the target directory is on D:. Installed here,
-      # invoke is found without that path.
+      # mediasoup-sys's PYTHONPATH loses its drive letter (cargo registry on C:,
+      # target on D:), so invoke is installed here.
       - name: Python packages for the mediasoup worker
         run: python -m pip install invoke==3.0.3
 
@@ -550,11 +514,8 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      # MSVC's tools stop at 260 characters, and the CMake and Meson trees
-      # below the target directory are deep. A short one, two levels above
-      # the checkout: the Rust cache can only name a target directory
-      # relative to the workspace (desktop/). The core is compiled with the
-      # image's clang-cl and linked with Visual Studio's libraries.
+      # MSVC stops at 260 characters: a short target directory two levels above
+      # the checkout. clang-cl compiles, Visual Studio's libraries link.
       - name: Build tools and target directory
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
@@ -568,19 +529,10 @@ jobs:
           node --version
           cargo --version --verbose
 
-      # The cache of a key (this job, the toolchain, Cargo.toml and
-      # Cargo.lock, RUSTFLAGS, MESON_ARGS) is written once, by the first push
-      # run that does not find it, and never refreshed. What takes long must
-      # therefore be in it: the app's release dependencies and the mediasoup
-      # worker of the tests. A failed run saves nothing until both are built
-      # ("Rust cache also from a run that fails from here on"). `key` is the
-      # cache's generation: raise it when what was saved is not worth having;
-      # the next run then starts from nothing. MESON_ARGS is part of the key
-      # because the worker's build script does not tell cargo that it reads
-      # the variable: a cache would go on handing out the worker built with
-      # the old value. Only pushes to main and the release branches save:
-      # a cache saved by a tag run could only be read by that tag, and one
-      # per pull request pushed the repository past its cache quota.
+      # Written once per key by the first push run without it, never refreshed:
+      # it must hold the release dependencies and the tests' mediasoup worker.
+      # Raise `key` to start over. MESON_ARGS is in the key because the worker's
+      # build script does not tell cargo it reads it. Pull requests only read.
       - name: Rust cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -589,12 +541,8 @@ jobs:
           env-vars: MESON_ARGS
           save-if: ${{ github.event_name == 'push' }}
 
-      # The key update installers are signed with, which the app is built
-      # with (desktop/app/src/update.rs). A release takes the public key of
-      # desktop/app/updater.pub and fails without it; signing takes the
-      # private key from the secrets ("Installer"). Every other run makes a
-      # key of its own: its installer is signed and checked as a release's
-      # is, and its app accepts no update signed with the release key.
+      # Release runs use desktop/app/updater.pub; every other run makes its own
+      # key, so its installer is signed and checked the same way.
       - name: Updater key
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
@@ -676,12 +624,8 @@ jobs:
             "| $name ($($built[0].Name)) | $([math]::Round((Get-Item $name).Length / 1MB, 1)) MiB | $hash |"
           ) | Add-Content $env:GITHUB_STEP_SUMMARY
 
-      # The updater's signature, <installer>.sig, bound to the version: the
-      # app takes no update whose signature names another one
-      # (tauri.conf.json, requireSignedVersion); only the CLI from 2.12.3 on
-      # writes it. Its own step, the only one that sees the release key, and
-      # only in a release run from the release's tag ("Updater key" stopped
-      # any other).
+      # The updater signature (<installer>.sig, bound to the version). Only
+      # release runs from the release's tag see the release key.
       - name: Sign update
         id: sign
         timeout-minutes: 10
@@ -744,11 +688,8 @@ jobs:
           if (-not $after) { throw 'no WebView2 Runtime after the install: the app cannot open its window' }
           "WebView2 Runtime: $after"
 
-      # The installed app on a stand-in server origin, as on Linux: the page
-      # must reach the media commands through IPC, and only those, and get the
-      # frames of a test-pattern view. smoke.ps1 asks for dummy audio itself
-      # (runners have no audio devices); the test pattern is switched on here.
-      # Its own PowerShell, so it runs as it does for a developer.
+      # The installed app on a stand-in server, as on Linux: media commands
+      # through IPC only, frames of a test-pattern view, dummy audio.
       - name: Desktop app smoke test
         timeout-minutes: 10
         env:
@@ -806,21 +747,10 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # What ships, read with dumpbin:
-      # - the DLL exports the C ABI (gm_*) and nothing else;
-      # - no H264 encoder or decoder of libwebrtc's is linked in: the package
-      #   is built without OpenH264 and FFmpeg (rtc_use_h264=false), and the
-      #   core takes H264 from Media Foundation;
-      # - neither file needs anything a clean Windows 10 or 11 lacks.
-      #   Acceptable are DLLs of Windows itself (in System32 of this image),
-      #   API sets (api-ms-win-*, ext-ms-win-*) and with them the Universal
-      #   CRT (api-ms-win-crt-*, ucrtbase.dll), part of Windows since 10, and
-      #   for the app gelabber_media.dll, installed next to it. Not
-      #   acceptable are the Visual C++ runtime in any version or flavour
-      #   (vcruntime*, msvcp*, msvcr*, concrt*, vccorlib*, vcomp*, vcamp*,
-      #   mfc*, atl* followed by a number: this image has them in System32,
-      #   a user's machine need not), the debug CRT (ucrtbased.dll) and
-      #   whatever else is not part of Windows, such as WebView2Loader.dll.
+      # What ships, read with dumpbin: the DLL exports gm_* only, holds no
+      # OpenH264/FFmpeg H264 code, and neither file needs more than a clean
+      # Windows 10/11 has (System32 DLLs, API sets, UCRT; no VC++ runtime, no
+      # debug CRT, no WebView2Loader.dll).
       - name: Check and measure the binaries
         if: ${{ !cancelled() && steps.app.outcome == 'success' }}
         run: |
@@ -906,27 +836,15 @@ jobs:
         timeout-minutes: 45
         run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --no-run
 
-      # From here on the target directory holds both long builds, and a run
-      # that fails (a test, Clippy, one of the installer steps above) saves
-      # its cache all the same: see "Rust cache". Before this point it must
-      # not: a run that stopped at the core, at the app or in the worker's
-      # build (its Python, Meson, a timeout) would pin a cache without them.
-      # The variable is what the saving half of rust-cache goes by after a
-      # failure (post-if in its action.yml; its first half sets it to
-      # false). Should it stop reading it, failed runs save nothing, which
-      # costs time and no more.
+      # From here on both long builds exist, so a failing run still saves its
+      # cache (rust-cache's post step reads this variable).
       - name: Rust cache also from a run that fails from here on
         if: ${{ !cancelled() && steps.app.outcome == 'success' && steps.worker.outcome == 'success' }}
         run: Add-Content $env:GITHUB_ENV 'CACHE_ON_FAILURE=true'
 
-      # Where the mediasoup of the tests below listens. libwebrtc gathers no
-      # loopback candidate: it sends from the machine's own address and gets
-      # its answers there. Linux carries that to and from 127.0.0.1; Windows
-      # is reported to keep a socket on an adapter's address and 127.0.0.1
-      # apart. What this machine does is tried here, with datagrams between
-      # sockets bound like the two ends of the call, and where 127.0.0.1 is
-      # out of reach the tests' server moves to the machine's address
-      # (GELABBER_TEST_LISTEN_IP, desktop/core/tests/common/mod.rs).
+      # libwebrtc sends from the machine's address, which Windows may not route
+      # to 127.0.0.1: probe it, and move the tests' server to the machine's
+      # address if needed (GELABBER_TEST_LISTEN_IP).
       - name: Address for the loopback call
         if: ${{ !cancelled() && steps.core.outcome == 'success' }}
         run: |
@@ -984,20 +902,10 @@ jobs:
             Add-Content $env:GITHUB_ENV "GELABBER_TEST_LISTEN_IP=$listen"
           }
 
-      # The call the Linux job makes, on dummy audio and test patterns through
-      # an in-process mediasoup worker: ICE, DTLS, SRTP, Opus, VP8 simulcast,
-      # decode, and the video sinks of views inside the app. This core has
-      # H264 only where Media Foundation has its codecs (a runner may lack
-      # them), so neither GELABBER_EXPECT_H264 nor GELABBER_EXPECT_ENCODER;
-      # where it has them, the call covers H264 through them as well.
-      # The voice test needs devices and skips without its GELABBER_TEST_*
-      # switch. GELABBER_TEST_SCREEN_MONITOR lets the core capture the
-      # primary monitor without the system picker, which nobody could click
-      # here: Windows.Graphics.Capture, the copy to the CPU and VP8 simulcast
-      # as the web client shares a screen (core/tests/screen_capture.rs). The
-      # test skips, with the reason in the log, where Windows says it cannot
-      # capture. Everything it runs was built by "Tests of the core with their
-      # mediasoup worker (build)".
+      # The Linux job's call through an in-process mediasoup worker. H264 only
+      # where Media Foundation has codecs, so no GELABBER_EXPECT_H264.
+      # GELABBER_TEST_SCREEN_MONITOR captures the primary monitor without the
+      # picker; the test skips where Windows cannot capture.
       - name: Loopback call against mediasoup 0.29
         id: tests
         if: ${{ !cancelled() && steps.worker.outcome == 'success' }}
@@ -1032,12 +940,9 @@ jobs:
           GELABBER_UPDATE_TEST_INSTALLER: ${{ steps.sign.outcome == 'success' && format('{0}\gelabber-desktop-windows-x64-setup.exe', github.workspace) || '' }}
         run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --test-threads=1
 
-      # Package by package like the builds and tests above: one call for the
-      # whole workspace would settle on other features and build the mediasoup
-      # worker again. Clippy runs its own copy of the workspace's build
-      # scripts; an empty directory in place of the core keeps that copy from
-      # compiling the C++ a second time, and lets this step run when the core
-      # did not build.
+      # Package by package, as above: a workspace-wide call would unify other
+      # features and rebuild the worker. The empty core directory keeps Clippy's
+      # build scripts from compiling the C++ again.
       - name: Clippy
         if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
         timeout-minutes: 45
@@ -1055,6 +960,7 @@ jobs:
   # user's install, upgrade and removal against it. Publishing is separate.
   arch-repo:
     name: Arch package and repository
+    if: github.event_name != 'pull_request'
     needs: core-linux
     runs-on: ubuntu-24.04
     container: archlinux:base-devel
@@ -1152,12 +1058,9 @@ jobs:
           TAG: ${{ env.RELEASE_TAG }}
         run: gh release upload "$TAG" gelabber-desktop-linux-x64.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
 
-  # Release only: the Windows installer, its checksum and its updater
-  # signature become release assets, with latest.json, which the installed
-  # apps ask for at releases/latest/download/latest.json (desktop/app/src/
-  # update.rs): the latest release that is no pre-release. Apart from the Linux jobs in both directions: a failure here
-  # leaves the tarball and the pacman repository alone, and the other way
-  # round. The third-party notices are the one thing both wait for.
+  # Release only: installer, checksum, signature and latest.json, which the
+  # installed apps poll (desktop/app/src/update.rs). Independent of the Linux
+  # uploads; both wait for the notices.
   release-asset-windows:
     name: Attach the Windows app to the release
     if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
