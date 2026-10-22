@@ -529,8 +529,26 @@ async function participant(name) {
   return actor;
 }
 
+// While a Live plays, "Lautstärke" in the call bar opens both volumes and
+// the stream's mute.
+async function soundPanel(actor) {
+  const panel = actor.page.getByRole("dialog", {
+    name: "Lautstärke",
+    exact: true,
+  });
+  if (!(await panel.isVisible()))
+    await dock(actor)
+      .getByRole("button", { name: "Lautstärke", exact: true })
+      .click();
+  await panel.waitFor();
+  return panel;
+}
+
 async function setVolume(actor, label, percent) {
-  const slider = dock(actor).getByRole("slider", { name: label, exact: true });
+  const slider = (await soundPanel(actor)).getByRole("slider", {
+    name: label,
+    exact: true,
+  });
   await slider.press("Home");
   for (let value = 0; value < percent; value++)
     await slider.press("ArrowRight");
@@ -627,8 +645,8 @@ async function watch(receiver, kind) {
 
 async function playbackControls(receiver, publisher, kind) {
   const audioKind = `${kind}a`;
-  await setVolume(receiver, "Wiedergabe-Lautstärke", 25);
-  await setVolume(receiver, "Stream-Ton-Lautstärke", 65);
+  await setVolume(receiver, "Gespräche", 25);
+  await setVolume(receiver, "Stream-Ton", 65);
   const expected = (state, muted = false, deafened = false) =>
     sourcePlayback(state, kind).length === 1 &&
     sourcePlayback(state, kind).every(
@@ -644,7 +662,9 @@ async function playbackControls(receiver, publisher, kind) {
     expected,
     "Independent voice/source volume",
   );
-  await dock(receiver)
+  await (
+    await soundPanel(receiver)
+  )
     .getByRole("button", { name: "Stream-Ton stummschalten", exact: true })
     .click();
   await until(
@@ -653,10 +673,13 @@ async function playbackControls(receiver, publisher, kind) {
     "Source mute must preserve voice playback",
   );
   await progress(receiver, [audioKind], publisher.id);
-  await dock(receiver)
+  await (
+    await soundPanel(receiver)
+  )
     .getByRole("button", { name: "Stream-Ton stummschalten", exact: true })
     .click();
   await until(() => snapshot(receiver), expected, "Source unmute");
+  await receiver.page.keyboard.press("Escape");
   await dock(publisher)
     .getByRole("button", { name: "Stummschalten", exact: true })
     .click();

@@ -104,6 +104,7 @@ import { VoiceRoom } from "./VoiceRoom.tsx";
 import { LiveMenuItems, VoiceControls } from "../components/VoiceControls.tsx";
 import { VoiceSessionControls } from "../components/VoiceSessionControls.tsx";
 import { callAnnouncement } from "./callBar.ts";
+import { CallSound } from "./QuickCallSettings.tsx";
 import { resetPushToTalkForTests, usePushToTalk } from "./pushToTalk.ts";
 import { resetUserVolumesForTests, useUserVolumes } from "./userVolume.ts";
 
@@ -426,6 +427,31 @@ describe("active media UI", () => {
     fixture.server.permissions = ["go_live"];
     expect(entry(menu(), "Live gehen")).not.toContain("aria-disabled");
     expect(entry(menu(), "Live gehen")).toContain("Sehen alle im Sprachkanal");
+  });
+  it("keeps the volumes behind one speaker while a Live plays", () => {
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "b",
+      channelId: "stage",
+      channelName: "Voice B",
+    });
+    fixture.server = server;
+    const quiet = renderToStaticMarkup(<VoiceSessionControls />);
+    expect(control(quiet, "Lautstärke")).toBeNull();
+    fixture.voice.sourceSubscriptions = { bob: { s: true } };
+    const html = renderToStaticMarkup(<VoiceSessionControls />);
+    expect(control(html, "Lautstärke")).toContain('aria-haspopup="dialog"');
+    // No slider across the bar: the volumes open from the speaker.
+    expect(html).not.toContain('type="range"');
+    expect(html).not.toContain("voice-session-mix");
+  });
+  it("rests both volumes while deafened and says why", () => {
+    fixture.voice.deafened = true;
+    const html = renderToStaticMarkup(<CallSound />);
+    expect(html.match(/<input[^>]*disabled=""/g)).toHaveLength(2);
+    expect(html).toContain("Taubgeschaltet: Du hörst gerade niemanden.");
+    // The stream's mute stays in reach for after.
+    expect(control(html, "Stream-Ton stummschalten")).not.toContain("disabled");
   });
   it("keeps one name per toggle and says its state with aria-pressed", () => {
     Object.assign(fixture.voice, {

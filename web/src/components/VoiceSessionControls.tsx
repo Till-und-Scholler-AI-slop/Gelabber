@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { pageZoom } from "../interface/zoom.ts";
 import { can } from "../servers/permissions.ts";
@@ -13,14 +13,7 @@ import {
   type VoiceState,
 } from "../voice/session.ts";
 import { HoldToTalk, VoiceControls } from "./VoiceControls.tsx";
-import {
-  CloseIcon,
-  HangUpIcon,
-  SignalIcon,
-  SpeakerIcon,
-  SpeakerOffIcon,
-  WarningIcon,
-} from "./Icons.tsx";
+import { CloseIcon, HangUpIcon, SignalIcon, WarningIcon } from "./Icons.tsx";
 import { Button } from "./ui/Button.tsx";
 import { IconButton } from "./ui/IconButton.tsx";
 import { Popover } from "./ui/Popover.tsx";
@@ -42,7 +35,6 @@ import { Avatar } from "./Avatar.tsx";
 import { useUserId } from "../auth/scope.ts";
 import { isDesktopApp } from "../voice/native/bridge.ts";
 import {
-  MAX_PLAYBACK_VOLUME,
   sharesSourceAudio,
   sourceAudioCarriesCall,
   useMediaSettings,
@@ -59,14 +51,9 @@ import "../voice/room.css";
  * and across the screen on phones and pages without a sidebar. */
 export function VoiceSessionControls() {
   const dockRef = useRef<HTMLElement>(null);
-  const ids = useId();
   const session = useVoice();
-  const volume = useMediaSettings((s) => s.outputVolume);
-  const sourceVolume = useMediaSettings((s) => s.sourceAudioVolume);
-  const sourceMuted = useMediaSettings((s) => s.sourceAudioMuted);
   const sourceAudioShare = useMediaSettings((s) => s.sourceAudioShare);
   const sourceAudioApp = useMediaSettings((s) => s.sourceAudioApp);
-  const patch = useMediaSettings((s) => s.patch);
   const capable = useCapabilities();
   const pushToTalk = usePushToTalk((s) => s.active);
   const touch = useMediaQuery("(pointer: coarse)");
@@ -119,7 +106,7 @@ export function VoiceSessionControls() {
   if (!presence.mounted) return announcement;
 
   // Stream sound only matters while someone's Live is playing here.
-  const showMix =
+  const streamSound =
     joined !== null &&
     Object.values(voice.sourceSubscriptions).some(
       (source) => source.s || source.l,
@@ -146,7 +133,10 @@ export function VoiceSessionControls() {
               serverId={joined.serverId}
               channelId={joined.channelId}
             />
-            <VoiceControls canLive={can(server, "go_live")} />
+            <VoiceControls
+              canLive={can(server, "go_live")}
+              streamSound={streamSound}
+            />
             <LeaveButton />
           </div>
         ) : null}
@@ -180,65 +170,6 @@ export function VoiceSessionControls() {
           </div>
         ) : null}
         {joined && pushToTalk && touch ? <HoldToTalk /> : null}
-        {showMix ? (
-          <div className="voice-session-mix">
-            <div className="voice-session-mix-row">
-              <label htmlFor={`${ids}-voices`}>Stimmen</label>
-              <input
-                id={`${ids}-voices`}
-                type="range"
-                min={0}
-                max={MAX_PLAYBACK_VOLUME * 100}
-                value={Math.round(volume * 100)}
-                style={rangeFill(volume)}
-                aria-label="Wiedergabe-Lautstärke"
-                disabled={voice.deafened}
-                onChange={(event) =>
-                  patch({ outputVolume: Number(event.target.value) / 100 })
-                }
-                className="lr-range"
-              />
-              <span aria-hidden="true" />
-            </div>
-            <div className="voice-session-mix-row" aria-label="Stream-Ton">
-              <label htmlFor={`${ids}-stream`}>Stream-Ton</label>
-              <input
-                id={`${ids}-stream`}
-                type="range"
-                min={0}
-                max={MAX_PLAYBACK_VOLUME * 100}
-                value={Math.round(sourceVolume * 100)}
-                style={rangeFill(sourceVolume)}
-                aria-label="Stream-Ton-Lautstärke"
-                disabled={voice.deafened}
-                onChange={(event) =>
-                  patch({
-                    sourceAudioVolume: Number(event.target.value) / 100,
-                  })
-                }
-                className="lr-range"
-              />
-              <button
-                type="button"
-                className={`voice-control voice-control-compact${sourceMuted ? " is-off" : ""}`}
-                aria-pressed={sourceMuted}
-                aria-label="Stream-Ton stummschalten"
-                title={
-                  sourceMuted
-                    ? "Stream-Ton wieder einschalten"
-                    : "Stream-Ton stummschalten"
-                }
-                onClick={() => patch({ sourceAudioMuted: !sourceMuted })}
-              >
-                {sourceMuted ? (
-                  <SpeakerOffIcon size={16} />
-                ) : (
-                  <SpeakerIcon size={16} />
-                )}
-              </button>
-            </div>
-          </div>
-        ) : null}
         {voice.playbackBlocked && !voice.deafened ? (
           <div role="status" className="voice-session-playback">
             <span>Der Browser blockiert den Ton.</span>
@@ -481,14 +412,6 @@ function CallPeople({
       </Popover>
     </>
   );
-}
-
-/** Filled share of a 0–200 % `.lr-range` playback slider (WebKit has no
- * progress pseudo). */
-function rangeFill(value: number): CSSProperties {
-  return {
-    "--lr-range-value": `${Math.round((value / MAX_PLAYBACK_VOLUME) * 100)}%`,
-  } as CSSProperties;
 }
 
 function LeaveButton() {

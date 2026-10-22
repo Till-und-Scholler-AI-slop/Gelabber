@@ -1,5 +1,5 @@
-// The call's controls: microphone, headset, camera, "Live gehen" and the
-// settings, as icon buttons. Each toggle keeps one name and says its state
+// The call's controls: microphone, headset, camera, "Live gehen", the
+// volumes while a Live plays and the settings, as icon buttons. Each toggle keeps one name and says its state
 // through aria-pressed; the icon shows the state, and media that is on
 // sits on a pill: the camera accent, a Live red. The click flips local
 // state first. Leaving is the session's own button.
@@ -38,7 +38,10 @@ import {
   useVoice,
 } from "../voice/session.ts";
 import { useCapabilities, type Capabilities } from "../voice/capabilities.ts";
-import { QuickCallSettingsButton } from "../voice/QuickCallSettings.tsx";
+import {
+  CallSoundButton,
+  QuickCallSettingsButton,
+} from "../voice/QuickCallSettings.tsx";
 import { isDesktopApp } from "../voice/native/bridge.ts";
 import {
   callShortcutKeys,
@@ -213,7 +216,13 @@ type LiveProps = {
   canLive?: boolean;
 };
 
-export function VoiceControls({ canLive = false }: LiveProps) {
+export function VoiceControls({
+  canLive = false,
+  streamSound = false,
+}: LiveProps & {
+  /** Someone's Live plays here, so its sound gets a control of its own. */
+  streamSound?: boolean;
+}) {
   const camera = useVoice((s) => s.camera);
   const capable = useCapabilities();
 
@@ -241,6 +250,7 @@ export function VoiceControls({ canLive = false }: LiveProps) {
         </Unavailable>
       ) : null}
       <LiveControl canLive={canLive} />
+      {streamSound ? <CallSoundButton className={BUTTON} /> : null}
       <QuickCallSettingsButton className={BUTTON} />
     </div>
   );

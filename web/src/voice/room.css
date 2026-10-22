@@ -870,6 +870,22 @@ a.voice-session-link:hover > span {
   grid-column: 1 / -1;
   width: 100%;
 }
+/* The stream's mute sits after its percentage. */
+.voice-quick-volume.has-action {
+  grid-template-columns: 1fr auto auto;
+}
+.voice-quick-volume > .voice-control-compact {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  /* Into the gap, so both volumes keep the same rhythm. */
+  margin-block: -6px;
+  padding: 0;
+}
+.ui-popover.voice-quick-sound {
+  width: 264px;
+}
 .voice-quick-note {
   margin-top: -6px;
   color: var(--lr-muted);
@@ -1001,30 +1017,6 @@ a.voice-session-link:hover > span {
   border-color: var(--lr-accent);
   background: var(--lr-accent);
   color: var(--lr-accent-ink);
-}
-/* Volumes: one grid so labels, sliders and buttons line up. */
-.voice-session-mix {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 30px;
-  align-items: center;
-  gap: 2px 10px;
-  min-width: 0;
-  padding: 2px 2px 0 4px;
-}
-.voice-session-mix-row {
-  display: contents;
-}
-.voice-session-mix-row > label {
-  font-size: 12px;
-  color: var(--lr-muted);
-  white-space: nowrap;
-}
-.voice-session-dock .voice-session-mix-row > .voice-control-compact {
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
-  min-height: 30px;
-  padding: 0;
 }
 .voice-session-playback {
   display: flex;
@@ -1201,11 +1193,17 @@ html[data-reduced-motion="true"]
   .voice-session-dock {
     max-height: calc(var(--lr-100dvh) * 0.5);
   }
-  .voice-session-dock .voice-control-compact,
-  .voice-session-dock .voice-session-mix-row > .voice-control-compact {
+  .voice-session-dock .voice-control-compact {
     min-width: 44px;
     min-height: 44px;
     height: 44px;
+  }
+  .voice-quick-volume > .voice-control-compact {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    margin-block: -8px;
   }
   .voice-session-dock .voice-session-call > .voice-control-leave {
     margin-left: 8px;

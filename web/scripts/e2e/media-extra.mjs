@@ -681,10 +681,14 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           "session-undeafen-did-not-restore-every-path",
         );
         stage = "session-volume";
-        const volume = f.watcher.page.getByRole("slider", {
-          name: "Wiedergabe-Lautstärke",
-          exact: true,
-        });
+        // The gear's quick settings hold the call volume, Live or not.
+        await f.watcher.page
+          .getByRole("region", { name: "Aktive Medien", exact: true })
+          .getByRole("button", { name: "Voice-Einstellungen", exact: true })
+          .click();
+        const volume = f.watcher.page
+          .getByRole("dialog", { name: "Voice-Einstellungen", exact: true })
+          .getByRole("slider", { name: "Gespräche", exact: true });
         await volume.press("Home");
         for (let i = 0; i < 35; i++) await volume.press("ArrowRight");
         const lower = await until(

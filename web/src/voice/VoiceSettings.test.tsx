@@ -17,7 +17,7 @@ vi.mock("./devices.ts", async (original) => {
 
 import { VoiceSettingsTabs } from "../components/VoiceSettingsDialog.tsx";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
-import { QuickCallSettings } from "./QuickCallSettings.tsx";
+import { CallSound, QuickCallSettings } from "./QuickCallSettings.tsx";
 import { MediaSettingsForm } from "./VoiceSettings.tsx";
 
 describe("stream settings form", () => {
@@ -114,6 +114,19 @@ describe("quick call settings", () => {
     expect(html).toContain("Gerätenamen anzeigen");
     // No meter outside a call: there is nothing being sent.
     expect(html).not.toContain("<meter");
+  });
+});
+
+describe("call sound", () => {
+  it("holds both volumes and the stream's mute", () => {
+    const html = renderToStaticMarkup(<CallSound />);
+    expect(html).toContain(">Gespräche</label>");
+    expect(html).toContain(">Stream-Ton</label>");
+    expect(html).toMatch(
+      /<button[^>]*aria-pressed="false"[^>]*aria-label="Stream-Ton stummschalten"/,
+    );
+    expect(html).not.toContain("disabled");
+    expect(html).not.toContain("Taubgeschaltet");
   });
 });
 
