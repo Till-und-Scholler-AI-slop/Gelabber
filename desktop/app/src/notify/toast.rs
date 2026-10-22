@@ -7,7 +7,8 @@
 //! written at every start (the installer's start menu shortcut carries the
 //! same id, the bundle identifier). A click reaches the app while it runs,
 //! through the toast's `Activated` event; one after the app has ended could
-//! not, so the app takes its toasts down at the start and the end.
+//! not, so the app takes its toasts down at the start and the end. The
+//! uninstaller removes the registry entry again (windows/hooks.nsh).
 
 use std::{
     collections::HashMap,
@@ -39,6 +40,10 @@ type Callback = Arc<dyn Fn(Report) + Send + Sync>;
 pub struct Backend {
     aumid: HSTRING,
     notifier: ToastNotifier,
+    /// The toasts that can still be clicked, by the page's tag. One per
+    /// conversation at most: a newer one takes its place, and a click, a
+    /// swipe or the conversation being read removes it. One that timed out
+    /// into the notification centre stays, since a click there still counts.
     shown: Arc<Mutex<HashMap<String, Shown>>>,
     /// Toast tags are at most 64 characters, the page's longer: each of the
     /// page's tags gets a short one of its own.
@@ -178,21 +183,21 @@ fn register(aumid: &str) {
     let wide = |text: &str| -> Vec<u16> { text.encode_utf16().chain(Some(0)).collect() };
     let key = wide(&format!(r"Software\Classes\AppUserModelId\{aumid}"));
     let set = |name: &str, value: &str| {
-        let (name, value) = (wide(name), wide(value));
+        let (wide_name, value) = (wide(name), wide(value));
         // SAFETY: NUL-terminated UTF-16 strings that outlive the call; the
         // size is the value's in bytes, with its NUL.
         let status = unsafe {
             RegSetKeyValueW(
                 HKEY_CURRENT_USER,
                 key.as_ptr(),
-                name.as_ptr(),
+                wide_name.as_ptr(),
                 REG_SZ,
                 value.as_ptr().cast(),
                 (value.len() * 2) as u32,
             )
         };
         if status != 0 {
-            eprintln!("gelabber: notifications: registering {name:?} failed ({status})");
+            eprintln!("gelabber: notifications: registering {name} failed ({status})");
         }
     };
     set("DisplayName", APP_NAME);
