@@ -87,7 +87,7 @@ async fn mute_deafen_and_leave_deltas_match_all_active_seats() {
 }
 
 #[tokio::test]
-async fn stale_refresh_and_leave_do_not_unpublish_same_user_replacement_claim() {
+async fn stale_refresh_and_leave_do_not_unpublish_same_user_replacement_screen() {
     let old_api = gateway();
     let new_api = gateway();
     let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
@@ -95,7 +95,7 @@ async fn stale_refresh_and_leave_do_not_unpublish_same_user_replacement_claim() 
     let (old, _) = old_api.attach_session(u, "a".repeat(64), tx).await;
     old_api.join_voice(old, u, s, c).await.unwrap();
     old_api
-        .set_voice_pub(old, u, s, c, TrackKind::L, true)
+        .set_voice_pub(old, u, s, c, TrackKind::S, true)
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(5200)).await;
@@ -104,30 +104,17 @@ async fn stale_refresh_and_leave_do_not_unpublish_same_user_replacement_claim() 
     new_api.join_voice(new, u, s, c).await.unwrap();
     let mut sub = subscriber(c).await;
     new_api
-        .set_voice_pub(new, u, s, c, TrackKind::L, true)
+        .set_voice_pub(new, u, s, c, TrackKind::S, true)
         .await
         .unwrap();
     let started = next(&mut sub).await;
-    assert_eq!(started.t, SigKind::P);
-    assert!(started.lc.is_some());
+    assert_eq!((started.t, started.k), (SigKind::P, Some(TrackKind::S)));
     old_api.refresh_voice(old).await.unwrap();
     quiet(&mut sub).await;
     old_api.leave_voice(old, u, s, c).await.unwrap();
     flags(&mut sub, false, false).await;
     quiet(&mut sub).await;
-    assert!(new_api.voice_snapshot(s).await.unwrap()[0].l);
-    let mut redis = redis::Client::open(std::env::var("REDIS_URL").unwrap())
-        .unwrap()
-        .get_multiplexed_async_connection()
-        .await
-        .unwrap();
-    let raw: String = redis::cmd("GET")
-        .arg(format!("gb:live:{c}"))
-        .query_async(&mut redis)
-        .await
-        .unwrap();
-    let owner: serde_json::Value = serde_json::from_str(&raw).unwrap();
-    assert_eq!(owner["nonce"], started.lc.unwrap().to_string());
+    assert!(new_api.voice_snapshot(s).await.unwrap()[0].s);
     old_api.detach(old).await;
     new_api.detach(new).await;
 }
@@ -166,14 +153,14 @@ async fn unpublish_and_leave_keep_another_seats_camera_publication() {
 }
 
 #[tokio::test]
-async fn stale_audio_refresh_preserves_same_user_replacement_live_audio() {
+async fn stale_audio_refresh_preserves_same_user_replacement_screen_audio() {
     let old_api = gateway();
     let new_api = gateway();
     let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
     let (old_tx, _old_rx) = mpsc::channel::<ServerFrame>(128);
     let (old, _) = old_api.attach_session(u, "a".repeat(64), old_tx).await;
     old_api.join_voice(old, u, s, c).await.unwrap();
-    for kind in [TrackKind::L, TrackKind::La] {
+    for kind in [TrackKind::S, TrackKind::Sa] {
         old_api
             .set_voice_pub(old, u, s, c, kind, true)
             .await
@@ -184,14 +171,13 @@ async fn stale_audio_refresh_preserves_same_user_replacement_live_audio() {
     let (new, _) = new_api.attach_session(u, "b".repeat(64), new_tx).await;
     new_api.join_voice(new, u, s, c).await.unwrap();
     let mut sub = subscriber(c).await;
-    for kind in [TrackKind::L, TrackKind::La] {
+    for kind in [TrackKind::S, TrackKind::Sa] {
         new_api
             .set_voice_pub(new, u, s, c, kind, true)
             .await
             .unwrap();
         let event = next(&mut sub).await;
         assert_eq!((event.t, event.k), (SigKind::P, Some(kind)));
-        assert!(event.lc.is_some());
     }
     old_api.refresh_voice(old).await.unwrap();
     quiet(&mut sub).await;
@@ -207,8 +193,8 @@ async fn stale_audio_refresh_preserves_same_user_replacement_live_audio() {
         .join_voice(observer, observer_user, s, c)
         .await
         .unwrap();
-    assert!(snapshot.iter().any(|event| event.k == Some(TrackKind::L)));
-    assert!(snapshot.iter().any(|event| event.k == Some(TrackKind::La)));
+    assert!(snapshot.iter().any(|event| event.k == Some(TrackKind::S)));
+    assert!(snapshot.iter().any(|event| event.k == Some(TrackKind::Sa)));
     old_api.detach(old).await;
     new_api.detach(new).await;
     new_api.detach(observer).await;

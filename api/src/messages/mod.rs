@@ -713,9 +713,9 @@ pub(crate) async fn attach_previews(
 }
 
 /// Best-effort notice in the server's oldest text channel when someone goes
-/// live (a screen, or Go Live of an older client). The badge is already
-/// local; this must not fail the signaling frame. Once per person and voice
-/// channel until they have been off Live there for ten minutes.
+/// live (shares a screen). The badge is already local; this must not fail
+/// the signaling frame. Once per person and voice channel until they have
+/// been off Live there for ten minutes.
 pub(crate) async fn post_live_hint(state: &AppState, user: &User, server_id: Uuid, voice_id: Uuid) {
     let voice_name = match sqlx::query_scalar::<_, String>(
         "SELECT name FROM channels WHERE id = $1 AND server_id = $2 AND kind = 'voice'",

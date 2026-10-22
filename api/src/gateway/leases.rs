@@ -1,4 +1,4 @@
-//! Expiring per-connection voice seats and exclusive live claims.
+//! Expiring per-connection voice seats and their publications.
 use super::hub::{ConnId, Gateway, VoiceRoster, VoiceSeat, redis_err};
 use super::protocol::{ServerFrame, SigEvent, TrackKind, VoiceEntry};
 use crate::error::ApiError;
@@ -11,18 +11,6 @@ pub const VOICE_LEASE_MS: u64 = 5000;
 /// again only after this long without being live there.
 pub const LIVE_HINT_COOLDOWN_MS: u64 = 10 * 60 * 1000;
 
-/// JSON value of the channel's Live claim. The ACQUIRE Lua in
-/// media/src/live.rs parses the fields u, s, c, session, seat and nonce, so
-/// renaming or removing one is a wire change across both crates.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct LiveOwner {
-    pub u: Uuid,
-    pub s: Uuid,
-    pub c: Uuid,
-    pub session: String,
-    pub seat: Uuid,
-    pub nonce: Uuid,
-}
 #[derive(Clone, Serialize, Deserialize)]
 struct SeatRecord {
     id: Uuid,
@@ -31,7 +19,18 @@ struct SeatRecord {
     c: Uuid,
     m: bool,
     d: bool,
+    #[serde(deserialize_with = "known_kinds")]
     p: HashSet<TrackKind>,
+}
+
+/// A seat an API from before #353 wrote can still list the old Go Live
+/// (`l`/`la`) until its lease runs out; those kinds are skipped, not an error.
+fn known_kinds<'de, D: serde::Deserializer<'de>>(d: D) -> Result<HashSet<TrackKind>, D::Error> {
+    let raw = Vec::<serde_json::Value>::deserialize(d)?;
+    Ok(raw
+        .into_iter()
+        .filter_map(|kind| serde_json::from_value(kind).ok())
+        .collect())
 }
 
 // All indexes are leases too. Reads atomically prune expired/missing seats;
@@ -63,35 +62,12 @@ redis.call('ZREM', KEYS[2], KEYS[1])
 redis.call('ZREM', KEYS[3], KEYS[1])
 return 1
 "#;
-// Compare the entire owner (including seat + nonce), not just the user: a late
-// leave/refresh from another tab or an old process cannot release a new claim.
-const CLAIM_LIVE: &str = r#"
-local current = redis.call('GET', KEYS[1])
-if not current then
-  redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
-  return 1
-end
-if current == ARGV[1] then redis.call('PEXPIRE', KEYS[1], ARGV[2]); return 2 end
-return 0
-"#;
-const REFRESH_LIVE: &str = r#"
-if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
-redis.call('PEXPIRE', KEYS[1], ARGV[2]); return 1
-"#;
-const RELEASE_LIVE: &str = r#"
-if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
-redis.call('DEL', KEYS[1]); return 1
-"#;
-
 // Read aggregate and publish in one Redis turn. A concurrent tab cannot make
 // a delta stale between the aggregate read and Pub/Sub publication.
 const AGGREGATE_SIGNAL: &str = r#"
 local now=redis.call('TIME')
 local ms=tonumber(now[1])*1000+math.floor(tonumber(now[2])/1000)
 redis.call('ZREMRANGEBYSCORE',KEYS[1],'-inf',ms)
-local raw=redis.call('GET',KEYS[2])
-local live=nil
-if raw then live=cjson.decode(raw) end
 local count=0
 local muted=true
 local deafened=true
@@ -102,14 +78,12 @@ for _,key in ipairs(redis.call('ZRANGE',KEYS[1],0,-1)) do
     local row=cjson.decode(seat)
     if row.u==ARGV[1] then
       count=count+1; muted=muted and row.m; deafened=deafened and row.d
-      for _,kind in ipairs(row.p) do
-        if (kind~='l' and kind~='la') or (live and live.u==row.u and live.seat==row.id) then pubs[kind]=true end
-      end
+      for _,kind in ipairs(row.p) do pubs[kind]=true end
     end
   else redis.call('ZREM',KEYS[1],key) end
 end
 local base='"s":"'..ARGV[2]..'","c":"'..ARGV[3]..'","u":"'..ARGV[1]..'"'
-local function send(t,extra) redis.call('PUBLISH',KEYS[3],'{"t":"'..t..'",'..base..(extra or '')..'}') end
+local function send(t,extra) redis.call('PUBLISH',KEYS[2],'{"t":"'..t..'",'..base..(extra or '')..'}') end
 local function flags() send('m',',"on":'..tostring(muted)); send('d',',"on":'..tostring(deafened)) end
 if ARGV[4]=='j' and count>0 then send('j',',"m":'..tostring(muted)..',"d":'..tostring(deafened))
 elseif ARGV[4]=='m' and count>0 then send('m',',"on":'..tostring(muted))
@@ -122,11 +96,7 @@ elseif ARGV[4]=='leave' then
   end
 elseif ARGV[4]=='u' then
   for _,kind in ipairs(cjson.decode(ARGV[6])) do if not pubs[kind] then send('u',',"k":"'..kind..'"') end end
-elseif ARGV[4]=='p' and pubs[ARGV[5]] then
-  if ARGV[5]=='l' or ARGV[5]=='la' then
-    if raw~=ARGV[7] then return 0 end
-    send('p',',"k":"'..ARGV[5]..'","lc":"'..live.nonce..'"')
-  else send('p',',"k":"'..ARGV[5]..'"') end
+elseif ARGV[4]=='p' and pubs[ARGV[5]] then send('p',',"k":"'..ARGV[5]..'"')
 end
 return 1
 "#;
@@ -139,9 +109,6 @@ fn room_key(c: Uuid) -> String {
 }
 fn server_key(s: Uuid) -> String {
     format!("gb:voice:server:{s}")
-}
-pub fn live_key(c: Uuid) -> String {
-    gelabber_shared::ticket::live_claim_key(c)
 }
 fn live_hint_key(c: Uuid, u: Uuid) -> String {
     format!("gb:voice:live-hint:{c}:{u}")
@@ -215,73 +182,6 @@ impl VoiceRoster {
             })
             .collect()
     }
-    async fn live_op(&self, script: &'static str, owner: &LiveOwner) -> Result<i32, ApiError> {
-        let raw = encode(owner)?;
-        self.connections
-            .with_conn(|mut conn| {
-                let raw = raw.clone();
-                let owner = owner.clone();
-                async move {
-                    redis::Script::new(script)
-                        .key(live_key(owner.c))
-                        .arg(raw)
-                        .arg(VOICE_LEASE_MS)
-                        .invoke_async(&mut conn)
-                        .await
-                }
-            })
-            .await
-            .map_err(redis_err)
-    }
-    async fn live_owner(&self, c: Uuid) -> Result<Option<LiveOwner>, ApiError> {
-        let raw: Option<String> = self
-            .connections
-            .with_conn(|mut conn| async move {
-                redis::cmd("GET")
-                    .arg(live_key(c))
-                    .query_async(&mut conn)
-                    .await
-            })
-            .await
-            .map_err(redis_err)?;
-        raw.map(|raw| {
-            serde_json::from_str(&raw)
-                .map_err(|err| ApiError::Internal(format!("live claim: {err}")))
-        })
-        .transpose()
-    }
-    /// [`Self::live_owner`] for several channels in one `MGET`.
-    async fn live_owners(
-        &self,
-        channels: HashSet<Uuid>,
-    ) -> Result<HashMap<Uuid, Option<LiveOwner>>, ApiError> {
-        if channels.is_empty() {
-            return Ok(HashMap::new());
-        }
-        let channels: Vec<Uuid> = channels.into_iter().collect();
-        let keys: Vec<String> = channels.iter().map(|c| live_key(*c)).collect();
-        let raws: Vec<Option<String>> = self
-            .connections
-            .with_conn(|mut conn| {
-                let keys = keys.clone();
-                async move { redis::cmd("MGET").arg(keys).query_async(&mut conn).await }
-            })
-            .await
-            .map_err(redis_err)?;
-        channels
-            .into_iter()
-            .zip(raws)
-            .map(|(c, raw)| {
-                let owner = raw
-                    .map(|raw| {
-                        serde_json::from_str(&raw)
-                            .map_err(|err| ApiError::Internal(format!("live claim: {err}")))
-                    })
-                    .transpose()?;
-                Ok((c, owner))
-            })
-            .collect()
-    }
     /// Whether `u` going live in `c` may post the text hint now; claims the
     /// cooldown when it may. A Live switched off and on again, or announced
     /// again after a reconnect, has nothing new to say.
@@ -337,8 +237,7 @@ impl VoiceRoster {
         c: Uuid,
         mode: &str,
         kinds: &HashSet<TrackKind>,
-        live: Option<&LiveOwner>,
-    ) -> Result<bool, ApiError> {
+    ) -> Result<(), ApiError> {
         let mode = mode.to_owned();
         let kinds_raw = encode(kinds)?;
         let kind = kinds
@@ -347,16 +246,12 @@ impl VoiceRoster {
             .map(|kind| kind.as_str())
             .unwrap_or("")
             .to_owned();
-        let owner = live.map(encode).transpose()?.unwrap_or_default();
-        let result: i32 = self
-            .connections
+        self.connections
             .with_conn(|mut conn| {
-                let (mode, kinds_raw, kind, owner) =
-                    (mode.clone(), kinds_raw.clone(), kind.clone(), owner.clone());
+                let (mode, kinds_raw, kind) = (mode.clone(), kinds_raw.clone(), kind.clone());
                 async move {
                     redis::Script::new(AGGREGATE_SIGNAL)
                         .key(room_key(c))
-                        .key(live_key(c))
                         .key(super::hub::voice_redis_channel(c))
                         .arg(u.to_string())
                         .arg(s.to_string())
@@ -364,14 +259,13 @@ impl VoiceRoster {
                         .arg(mode)
                         .arg(kind)
                         .arg(kinds_raw)
-                        .arg(owner)
-                        .invoke_async(&mut conn)
+                        .invoke_async::<i32>(&mut conn)
                         .await
                 }
             })
             .await
             .map_err(redis_err)?;
-        Ok(result == 1)
+        Ok(())
     }
     pub async fn join_voice(
         &self,
@@ -410,7 +304,6 @@ impl VoiceRoster {
                     pubs: HashSet::new(),
                     muted: false,
                     deafened: false,
-                    live: None,
                 })
                 .clone()
         };
@@ -424,17 +317,9 @@ impl VoiceRoster {
             return Err(err);
         }
         let result = async {
-            let live = self.live_owner(c).await?;
             let rows = self.records(room_key(c)).await?;
             let mut peers: HashMap<Uuid, (bool, bool, HashSet<TrackKind>)> = HashMap::new();
-            for mut row in rows.into_iter().filter(|row| row.u != u) {
-                if !live
-                    .as_ref()
-                    .is_some_and(|owner| owner.seat == row.id && owner.u == row.u && owner.s == s)
-                {
-                    row.p.remove(&TrackKind::L);
-                    row.p.remove(&TrackKind::La);
-                }
+            for row in rows.into_iter().filter(|row| row.u != u) {
                 let peer = peers.entry(row.u).or_insert((true, true, HashSet::new()));
                 peer.0 &= row.m;
                 peer.1 &= row.d;
@@ -446,18 +331,10 @@ impl VoiceRoster {
                 joined.replay = true;
                 events.push(joined);
                 for kind in pubs {
-                    let mut event = SigEvent::published(s, c, uid, kind);
-                    if matches!(kind, TrackKind::L | TrackKind::La) {
-                        event.lc = live
-                            .as_ref()
-                            .filter(|owner| owner.u == uid)
-                            .map(|owner| owner.nonce);
-                    }
-                    events.push(event);
+                    events.push(SigEvent::published(s, c, uid, kind));
                 }
             }
-            self.aggregate_signal(u, s, c, "j", &HashSet::new(), None)
-                .await?;
+            self.aggregate_signal(u, s, c, "j", &HashSet::new()).await?;
             Ok(events)
         }
         .await;
@@ -508,10 +385,7 @@ impl VoiceRoster {
             })
             .await
             .map_err(redis_err)?;
-        if let Some(owner) = &seat.live {
-            self.live_op(RELEASE_LIVE, owner).await?;
-        }
-        self.aggregate_signal(u, seat.server_id, c, "leave", &seat.pubs, None)
+        self.aggregate_signal(u, seat.server_id, c, "leave", &seat.pubs)
             .await?;
         Ok(())
     }
@@ -575,14 +449,12 @@ impl VoiceRoster {
                 "m"
             },
             &HashSet::new(),
-            None,
         )
         .await?;
         Ok(true)
     }
     /// `None` when the seat may not change this publication. Otherwise
-    /// whether it starts a Live: a fresh Go Live claim, or a screen this
-    /// seat did not publish before.
+    /// whether it starts a Live: a screen this seat did not publish before.
     pub async fn set_voice_pub(
         &self,
         id: ConnId,
@@ -593,62 +465,23 @@ impl VoiceRoster {
         on: bool,
     ) -> Result<Option<bool>, ApiError> {
         let _guard = self.connections.inner.voice_ops.lock().await;
-        let (mut seat, session) = {
+        let mut seat = {
             let sockets = self.connections.inner.sockets.read().await;
-            let Some(socket) = sockets.get(&id) else {
+            let Some(seat) = sockets
+                .get(&id)
+                .and_then(|socket| socket.rooms.get(&c))
+                .filter(|seat| seat.server_id == s)
+            else {
                 return Ok(None);
             };
-            let Some(seat) = socket.rooms.get(&c).filter(|seat| seat.server_id == s) else {
-                return Ok(None);
-            };
-            (
-                seat.clone(),
-                socket
-                    .session
-                    .as_ref()
-                    .map(|(hash, _)| hash.clone())
-                    .unwrap_or_default(),
-            )
+            seat.clone()
         };
         let previous = seat.clone();
-        if on && let Some(parent) = kind.source_parent() {
-            if !seat.pubs.contains(&parent) {
-                return Ok(None);
-            }
-            if parent == TrackKind::L
-                && (seat.live.is_none() || self.live_owner(c).await?.as_ref() != seat.live.as_ref())
-            {
-                return Ok(None);
-            }
-        }
-        let mut started = false;
-        if kind == TrackKind::L {
-            if on {
-                if session.is_empty() {
-                    return Ok(None);
-                }
-                let current = self.live_owner(c).await?;
-                let owner = seat
-                    .live
-                    .clone()
-                    .filter(|owner| current.as_ref() == Some(owner))
-                    .unwrap_or(LiveOwner {
-                        u,
-                        s,
-                        c,
-                        session,
-                        seat: seat.id,
-                        nonce: Uuid::new_v4(),
-                    });
-                let result = self.live_op(CLAIM_LIVE, &owner).await?;
-                if result == 0 {
-                    return Ok(None);
-                }
-                started = result == 1;
-                seat.live = Some(owner);
-            } else if let Some(owner) = seat.live.take() {
-                self.live_op(RELEASE_LIVE, &owner).await?;
-            }
+        if on
+            && let Some(parent) = kind.source_parent()
+            && !seat.pubs.contains(&parent)
+        {
+            return Ok(None);
         }
         if on {
             seat.pubs.insert(kind);
@@ -658,49 +491,19 @@ impl VoiceRoster {
                 seat.pubs.remove(&audio);
             }
         }
-        if let Err(err) = self.write_seat(id, u, c, &seat).await {
-            if kind == TrackKind::L
-                && started
-                && let Some(owner) = &seat.live
-            {
-                let _ = self.live_op(RELEASE_LIVE, owner).await;
-            }
-            return Err(err);
-        }
+        self.write_seat(id, u, c, &seat).await?;
         if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
             socket.rooms.insert(c, seat.clone());
         }
         if on {
-            let result = self
-                .aggregate_signal(u, s, c, "p", &HashSet::from([kind]), seat.live.as_ref())
-                .await;
-            if result.as_ref().is_ok_and(|accepted| !accepted) {
-                seat.live = None;
-                seat.pubs.remove(&TrackKind::L);
-                seat.pubs.remove(&TrackKind::La);
+            if let Err(err) = self
+                .aggregate_signal(u, s, c, "p", &HashSet::from([kind]))
+                .await
+            {
                 if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
-                    socket.rooms.insert(c, seat.clone());
+                    socket.rooms.insert(c, previous.clone());
                 }
-                let _ = self.write_seat(id, u, c, &seat).await;
-                return Ok(None);
-            }
-            if let Err(err) = result {
-                if kind == TrackKind::L
-                    && started
-                    && let Some(owner) = &seat.live
-                {
-                    let _ = self.live_op(RELEASE_LIVE, owner).await;
-                }
-                let mut restored = previous;
-                if kind == TrackKind::L && started {
-                    restored.live = None;
-                    restored.pubs.remove(&TrackKind::L);
-                    restored.pubs.remove(&TrackKind::La);
-                }
-                if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
-                    socket.rooms.insert(c, restored.clone());
-                }
-                let _ = self.write_seat(id, u, c, &restored).await;
+                let _ = self.write_seat(id, u, c, &previous).await;
                 return Err(err);
             }
         } else {
@@ -710,10 +513,10 @@ impl VoiceRoster {
             {
                 removed.insert(audio);
             }
-            self.aggregate_signal(u, s, c, "u", &removed, None).await?;
+            self.aggregate_signal(u, s, c, "u", &removed).await?;
         }
         Ok(Some(
-            started || (on && kind == TrackKind::S && !previous.pubs.contains(&kind)),
+            on && kind == TrackKind::S && !previous.pubs.contains(&kind),
         ))
     }
     pub async fn voice_snapshot(&self, s: Uuid) -> Result<Vec<VoiceEntry>, ApiError> {
@@ -725,23 +528,15 @@ impl VoiceRoster {
             flags.1 &= row.d;
             flags.2 |= row.p.contains(&TrackKind::S);
         }
-        let live = self
-            .live_owners(groups.keys().map(|(_, c)| *c).collect())
-            .await?;
         // One row per person: where they are live, else the first channel.
-        let rank = |entry: &VoiceEntry| (entry.l, entry.s);
+        let rank = |entry: &VoiceEntry| (!entry.s, entry.c);
         let mut users: HashMap<Uuid, VoiceEntry> = HashMap::new();
         for ((u, c), (m, d, screen)) in groups {
-            let l = live
-                .get(&c)
-                .and_then(Option::as_ref)
-                .is_some_and(|owner| owner.u == u && owner.s == s);
             let entry = VoiceEntry {
                 u,
                 c,
                 m,
                 d,
-                l,
                 s: screen,
             };
             match users.entry(u) {
@@ -749,8 +544,7 @@ impl VoiceRoster {
                     slot.insert(entry);
                 }
                 std::collections::hash_map::Entry::Occupied(mut slot)
-                    if rank(&entry) > rank(slot.get())
-                        || (rank(&entry) == rank(slot.get()) && c < slot.get().c) =>
+                    if rank(&entry) < rank(slot.get()) =>
                 {
                     slot.insert(entry);
                 }
@@ -789,24 +583,8 @@ impl VoiceRoster {
         else {
             return Ok(());
         };
-        for (c, mut seat) in rooms {
-            if let Some(owner) = &seat.live
-                && self.live_op(REFRESH_LIVE, owner).await? == 0
-            {
-                seat.live = None;
-                seat.pubs.remove(&TrackKind::L);
-                let had_audio = seat.pubs.remove(&TrackKind::La);
-                if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
-                    socket.rooms.insert(c, seat.clone());
-                }
-                let mut removed = HashSet::from([TrackKind::L]);
-                if had_audio {
-                    removed.insert(TrackKind::La);
-                }
-                self.aggregate_signal(u, seat.server_id, c, "u", &removed, None)
-                    .await?;
-            }
-            if seat.pubs.contains(&TrackKind::S) || seat.pubs.contains(&TrackKind::L) {
+        for (c, seat) in rooms {
+            if seat.pubs.contains(&TrackKind::S) {
                 self.hold_live_hint(u, c).await?;
             }
             self.write_seat(id, u, c, &seat).await?;
@@ -960,7 +738,6 @@ mod tests {
         assert_eq!(seat.muted, expected.muted);
         assert_eq!(seat.deafened, expected.deafened);
         assert_eq!(seat.pubs, expected.pubs);
-        assert_eq!(seat.live, expected.live);
         let raw: String = redis::cmd("GET")
             .arg(seat_key(expected.id))
             .query_async(&mut redis().await)
@@ -974,54 +751,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_live_retry_preserves_existing_claim_and_previous_seat() {
-        let g = gateway();
-        let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
-        let (id, _rx) = socket(&g, u).await;
-        g.join_voice(id, u, s, c).await.unwrap();
-        g.set_voice_deafen(id, u, s, c, true).await.unwrap();
-        g.set_voice_pub(id, u, s, c, TrackKind::V, true)
-            .await
-            .unwrap();
-        assert_eq!(
-            g.set_voice_pub(id, u, s, c, TrackKind::L, true)
-                .await
-                .unwrap(),
-            Some(true)
-        );
-        g.set_voice_pub(id, u, s, c, TrackKind::La, true)
-            .await
-            .unwrap();
-        let previous = g.connections.inner.sockets.read().await[&id].rooms[&c].clone();
-        let owner = g.voice.live_owner(c).await.unwrap().unwrap();
-        let corrupt = corrupt_aggregate(c).await;
-        let error = g
-            .set_voice_pub(id, u, s, c, TrackKind::L, true)
-            .await
-            .unwrap_err();
-        assert!(
-            matches!(error, ApiError::Internal(ref message) if message.contains("Expected value"))
-        );
-        assert_eq!(g.voice.live_owner(c).await.unwrap(), Some(owner.clone()));
-        assert_seat_restored(&g, id, u, c, &previous).await;
-        redis::cmd("DEL")
-            .arg(corrupt)
-            .query_async::<i32>(&mut redis().await)
-            .await
-            .unwrap();
-        assert!(g.voice_snapshot(s).await.unwrap()[0].l);
-        assert_eq!(
-            g.set_voice_pub(id, u, s, c, TrackKind::L, true)
-                .await
-                .unwrap(),
-            Some(false)
-        );
-        assert_eq!(g.voice.live_owner(c).await.unwrap(), Some(owner));
-        g.detach(id).await;
-    }
-
-    #[tokio::test]
-    async fn failed_live_start_releases_new_claim_and_restores_previous_seat() {
+    async fn failed_screen_start_restores_previous_seat() {
         let g = gateway();
         let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         let (id, _rx) = socket(&g, u).await;
@@ -1033,133 +763,26 @@ mod tests {
         let previous = g.connections.inner.sockets.read().await[&id].rooms[&c].clone();
         let corrupt = corrupt_aggregate(c).await;
         let error = g
-            .set_voice_pub(id, u, s, c, TrackKind::L, true)
+            .set_voice_pub(id, u, s, c, TrackKind::S, true)
             .await
             .unwrap_err();
         assert!(
             matches!(error, ApiError::Internal(ref message) if message.contains("Expected value"))
         );
-        assert!(g.voice.live_owner(c).await.unwrap().is_none());
         assert_seat_restored(&g, id, u, c, &previous).await;
         redis::cmd("DEL")
             .arg(corrupt)
             .query_async::<i32>(&mut redis().await)
             .await
             .unwrap();
-        assert!(!g.voice_snapshot(s).await.unwrap()[0].l);
+        assert!(!g.voice_snapshot(s).await.unwrap()[0].s);
         assert_eq!(
-            g.set_voice_pub(id, u, s, c, TrackKind::L, true)
+            g.set_voice_pub(id, u, s, c, TrackKind::S, true)
                 .await
                 .unwrap(),
             Some(true)
         );
         g.detach(id).await;
-    }
-
-    #[tokio::test]
-    async fn crash_releases_live_and_roster_and_stale_leave_preserves_new_owner() {
-        let a = gateway();
-        let b = gateway();
-        let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
-        let (old, _rx) = socket(&a, u).await;
-        a.join_voice(old, u, s, c).await.unwrap();
-        assert_eq!(
-            a.set_voice_pub(old, u, s, c, TrackKind::L, true)
-                .await
-                .unwrap(),
-            Some(true)
-        );
-        let old_owner = a.voice.live_owner(c).await.unwrap().unwrap();
-        // No renewal or detach models abrupt process death, not graceful leave.
-        tokio::time::sleep(Duration::from_millis(5200)).await;
-        assert!(b.voice_snapshot(s).await.unwrap().is_empty());
-        assert!(b.voice.live_owner(c).await.unwrap().is_none());
-        let (new, _rx2) = socket(&b, u).await;
-        b.join_voice(new, u, s, c).await.unwrap();
-        assert_eq!(
-            b.set_voice_pub(new, u, s, c, TrackKind::L, true)
-                .await
-                .unwrap(),
-            Some(true)
-        );
-        let owner = b.voice.live_owner(c).await.unwrap().unwrap();
-        assert_ne!(owner.nonce, old_owner.nonce);
-        assert_eq!(a.voice.live_op(RELEASE_LIVE, &old_owner).await.unwrap(), 0);
-        a.leave_voice(old, u, s, c).await.unwrap();
-        assert_eq!(b.voice.live_owner(c).await.unwrap(), Some(owner));
-        assert_eq!(b.voice_snapshot(s).await.unwrap().len(), 1);
-        b.detach(new).await;
-    }
-
-    #[tokio::test]
-    async fn two_tabs_of_same_user_have_one_live_owner_and_repeat_start_is_idempotent() {
-        let a = gateway();
-        let b = gateway();
-        let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
-        let (x, _rx) = socket(&a, u).await;
-        let (y, _ry) = socket(&b, u).await;
-        assert_ne!(x.redis_id(), y.redis_id());
-        a.join_voice(x, u, s, c).await.unwrap();
-        b.join_voice(y, u, s, c).await.unwrap();
-        let (one, two) = tokio::join!(
-            a.set_voice_pub(x, u, s, c, TrackKind::L, true),
-            b.set_voice_pub(y, u, s, c, TrackKind::L, true)
-        );
-        let one = one.unwrap();
-        let two = two.unwrap();
-        assert!(matches!(
-            (one, two),
-            (Some(true), None) | (None, Some(true))
-        ));
-        let (winner, id) = if one.is_some() { (&a, x) } else { (&b, y) };
-        let before = winner.voice.live_owner(c).await.unwrap();
-        assert_eq!(
-            winner
-                .set_voice_pub(id, u, s, c, TrackKind::L, true)
-                .await
-                .unwrap(),
-            Some(false)
-        );
-        assert_eq!(winner.voice.live_owner(c).await.unwrap(), before);
-        a.detach(x).await;
-        b.detach(y).await;
-    }
-
-    #[tokio::test]
-    async fn active_owner_renews_beyond_lease_and_expired_claim_is_never_reacquired() {
-        let g = gateway();
-        let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
-        let (id, _rx) = socket(&g, u).await;
-        g.join_voice(id, u, s, c).await.unwrap();
-        g.set_voice_pub(id, u, s, c, TrackKind::L, true)
-            .await
-            .unwrap();
-        let owner = g.voice.live_owner(c).await.unwrap().unwrap();
-        for _ in 0..6 {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            g.refresh_voice(id).await.unwrap();
-        }
-        assert_eq!(g.voice.live_owner(c).await.unwrap(), Some(owner));
-        assert!(g.voice_snapshot(s).await.unwrap()[0].l);
-        redis::cmd("DEL")
-            .arg(live_key(c))
-            .query_async::<i32>(&mut redis().await)
-            .await
-            .unwrap();
-        g.refresh_voice(id).await.unwrap();
-        assert!(g.voice.live_owner(c).await.unwrap().is_none());
-        assert!(!g.voice_snapshot(s).await.unwrap()[0].l);
-        let (other, _ry) = socket(&g, Uuid::new_v4()).await;
-        let snapshot = g.join_voice(other, Uuid::new_v4(), s, c).await.unwrap();
-        assert!(!snapshot.iter().any(|event| event.k == Some(TrackKind::L)));
-        let joins: Vec<_> = snapshot
-            .iter()
-            .filter(|event| event.t == crate::gateway::protocol::SigKind::J)
-            .collect();
-        assert_eq!(joins.len(), 1);
-        assert!(joins[0].replay);
-        g.detach(id).await;
-        g.detach(other).await;
     }
 
     #[tokio::test]
@@ -1233,7 +856,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn roster_refresh_skips_dms_and_reads_each_channels_live_owner() {
+    async fn roster_refresh_skips_dms_and_marks_who_is_live() {
         let g = gateway();
         let (s, dm) = (Uuid::new_v4(), Uuid::new_v4());
         let (a, b, c1, c2) = (
@@ -1247,7 +870,7 @@ mod tests {
         g.join_voice(sa, a, s, c1).await.unwrap();
         g.join_voice(sb, b, s, c2).await.unwrap();
         assert_eq!(
-            g.set_voice_pub(sa, a, s, c1, TrackKind::L, true)
+            g.set_voice_pub(sa, a, s, c1, TrackKind::S, true)
                 .await
                 .unwrap(),
             Some(true)
@@ -1277,7 +900,7 @@ mod tests {
             }
         }
         assert_eq!(snaps.keys().collect::<Vec<_>>(), vec![&s]);
-        let live: HashMap<Uuid, bool> = snaps[&s].iter().map(|row| (row.u, row.l)).collect();
+        let live: HashMap<Uuid, bool> = snaps[&s].iter().map(|row| (row.u, row.s)).collect();
         assert_eq!(live, HashMap::from([(a, true), (b, false)]));
         for id in [sa, sb, sd, watcher] {
             g.detach(id).await;
@@ -1327,7 +950,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn live_audio_is_same_seat_and_expires_with_parent_without_clearing_microphone() {
+    async fn screen_audio_is_same_seat_and_ends_with_its_screen_without_clearing_microphone() {
         let g = gateway();
         let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         let (owner, _rx) = socket(&g, u).await;
@@ -1342,42 +965,57 @@ mod tests {
             Some(false)
         );
         assert_eq!(
-            g.set_voice_pub(owner, u, s, c, TrackKind::L, true)
+            g.set_voice_pub(owner, u, s, c, TrackKind::S, true)
                 .await
                 .unwrap(),
             Some(true)
         );
-        let nonce = g.voice.live_owner(c).await.unwrap().unwrap().nonce;
         assert_eq!(
-            g.set_voice_pub(other_tab, u, s, c, TrackKind::La, true)
+            g.set_voice_pub(other_tab, u, s, c, TrackKind::Sa, true)
                 .await
                 .unwrap(),
             None
         );
         assert_eq!(
-            g.set_voice_pub(owner, u, s, c, TrackKind::La, true)
+            g.set_voice_pub(owner, u, s, c, TrackKind::Sa, true)
                 .await
                 .unwrap(),
             Some(false)
         );
-        assert_eq!(g.voice.live_owner(c).await.unwrap().unwrap().nonce, nonce);
-        redis::cmd("DEL")
-            .arg(live_key(c))
-            .query_async::<()>(&mut redis().await)
-            .await
-            .unwrap();
         assert_eq!(
-            g.set_voice_pub(owner, u, s, c, TrackKind::La, true)
+            g.set_voice_pub(owner, u, s, c, TrackKind::S, false)
                 .await
                 .unwrap(),
-            None
+            Some(false)
         );
-        g.refresh_voice(owner).await.unwrap();
         let seat = g.connections.inner.sockets.read().await[&owner].rooms[&c].clone();
         assert_eq!(seat.pubs, HashSet::from([TrackKind::A]));
-        assert!(seat.live.is_none());
         g.detach(owner).await;
         g.detach(other_tab).await;
+    }
+
+    #[tokio::test]
+    async fn seats_written_with_the_old_go_live_still_read() {
+        let g = gateway();
+        let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let id = Uuid::new_v4();
+        let raw = serde_json::json!({
+            "id": id, "u": u, "s": s, "c": c, "m": false, "d": false,
+            "p": ["a", "l", "la"],
+        });
+        redis::Script::new(WRITE_SEAT)
+            .key(seat_key(id))
+            .key(room_key(c))
+            .key(server_key(s))
+            .arg(raw.to_string())
+            .arg(VOICE_LEASE_MS)
+            .invoke_async::<i32>(&mut redis().await)
+            .await
+            .unwrap();
+        let rows = g.voice.records(room_key(c)).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].p, HashSet::from([TrackKind::A]));
+        assert_eq!(g.voice_snapshot(s).await.unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -1410,7 +1048,7 @@ mod tests {
         let sound = g.set_voice_pub(id, u, s, c, TrackKind::Sa, true).await;
         assert_eq!(sound.unwrap(), Some(false));
         let snapshot = g.voice_snapshot(s).await.unwrap();
-        assert!(snapshot[0].s && !snapshot[0].l);
+        assert!(snapshot[0].s);
         let stopped = g.set_voice_pub(id, u, s, c, TrackKind::S, false).await;
         assert_eq!(stopped.unwrap(), Some(false));
         assert!(!g.voice_snapshot(s).await.unwrap()[0].s);
