@@ -58,7 +58,7 @@ describe("source-audio form", () => {
     const html = renderToStaticMarkup(<MediaSettingsForm />);
     expect(html).toContain('id="share-source-audio"');
     expect(html).toContain("Ton mitsenden");
-    expect(html).toContain('aria-label="Ton beim Live gehen"');
+    expect(html).toContain('aria-label="Ton im Live"');
     expect(html).toContain("im Browserdialog aus");
     expect(html).toContain('id="source-audio-volume"');
     expect(html).toContain("Gespräche");

@@ -309,7 +309,7 @@ describe("stream sound switch", () => {
         choose({ sourceAudioShare });
         expect(soundControl()).toBeNull();
         expect(soundSetting()).toBeNull();
-        expect(form()).not.toContain("Ton beim Live gehen");
+        expect(form()).not.toContain("Ton im Live");
         expect(form()).not.toContain('id="source-audio-app"');
       }
       // Listening to someone else's stream sound is another matter.
@@ -546,7 +546,7 @@ describe("why a share has no sound", () => {
           sourceAudioApp: "",
         },
       ).map((notice) => notice.text),
-    ).toEqual(["Der Stream-Ton kommt beim nächsten Live gehen dazu."]);
+    ).toEqual(["Der Stream-Ton kommt mit deinem nächsten Live dazu."]);
   });
 
   it("gives the desktop app's own reason", async () => {
@@ -575,7 +575,7 @@ describe("why a share has no sound", () => {
   });
 
   it("browser: sound switched on during a Live comes with the next one", async () => {
-    const note = "Der Stream-Ton kommt beim nächsten Live gehen dazu.";
+    const note = "Der Stream-Ton kommt mit deinem nächsten Live dazu.";
     await cases.desktopBrowser();
     const running = { id: "screen" } as MediaStream;
     Object.assign(fixture.voice, { sharing: true, localScreen: running });

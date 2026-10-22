@@ -353,7 +353,7 @@ export function MediaSettingsForm({
           {capable.appAudio && (
             <section
               className="stream-source-audio"
-              aria-label="Ton beim Live gehen"
+              aria-label="Ton im Live"
             >
               <Toggle
                 id="share-source-audio"
@@ -381,7 +381,7 @@ export function MediaSettingsForm({
               )}
               <p className="text-xs text-lr-muted">
                 {!desktop
-                  ? "Gilt ab dem nächsten Live gehen; Ausschalten wirkt sofort. Wähle den Ton im Browserdialog aus; je nach Browser und Quelle ist nur Video verfügbar."
+                  ? "Gilt ab deinem nächsten Live; Ausschalten wirkt sofort. Wähle den Ton im Browserdialog aus; je nach Browser und Quelle ist nur Video verfügbar."
                   : hasNativeFeature("app-audio-excludes-self")
                     ? "Gilt auch während du live bist. Mitgesendet wird der Ton anderer Anwendungen, nie dein Mikrofon oder der Ton des Anrufs."
                     : "Gilt auch während du live bist. Mitgesendet wird der Ton der gewählten Anwendung, nie dein Mikrofon."}{" "}

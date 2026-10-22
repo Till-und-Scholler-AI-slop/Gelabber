@@ -411,7 +411,7 @@ export function LiveMenuItems({
   const soundHint = [
     sourceAudioScope({ sourceAudioApp }) ??
       "Wähle den Ton im Freigabedialog des Browsers aus.",
-    nextLive ? "Kommt beim nächsten Live gehen dazu." : null,
+    nextLive ? "Kommt mit deinem nächsten Live dazu." : null,
     sourceAudioCarriesCall({ sourceAudioShare, sourceAudioApp })
       ? SOURCE_AUDIO_CARRIES_CALL
       : null,

@@ -86,7 +86,7 @@ export function dockNotices(
         !context.desktop &&
         voice.localScreen &&
         sound === "off"
-          ? "Der Stream-Ton kommt beim nächsten Live gehen dazu."
+          ? "Der Stream-Ton kommt mit deinem nächsten Live dazu."
           : null,
     },
   ];
