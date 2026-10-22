@@ -14,8 +14,9 @@ import {
 } from "./callSounds.ts";
 // Local voice state, capture and playback; mediasoup owns browser transport.
 // Join updates the store immediately; ticket / ICE / getUserMedia run after.
-// Camera / screen / Go Live: local preview first, publish on the media path.
-// Watch is subscribe-only — no getUserMedia. Chat WS: presence (j/l/p/u).
+// Camera and Live (a screen): local preview first, publish on the media path.
+// An older client's Go Live is received like a Live. Chat WS: presence
+// (j/l/p/u).
 // Own versioned Media WS: public mediasoup-client transport and source signaling.
 
 import { create } from "zustand";
@@ -27,14 +28,7 @@ import { notifyError } from "../components/toasts.ts";
 import { randomUuid } from "../lib/uuid.ts";
 import { getGateway, type Gateway } from "../ws/client.ts";
 import type { ErrFrame, SigEvent, TrackKind } from "../ws/protocol.ts";
-import {
-  applyLiveEnd,
-  applyLiveStart,
-  applyVoiceJoin,
-  applyVoiceLeave,
-  liveOf,
-  useVoiceRoster,
-} from "./roster.ts";
+import { applyVoiceJoin, applyVoiceLeave } from "./roster.ts";
 import {
   type IceServer,
   type MediaServerFrame,
@@ -76,7 +70,6 @@ import {
   preloadMediaSdk,
   type MediaConnection,
   type MediaConnectionOptions,
-  type MediaPublication,
   type MediaSender,
   type ReceivedSource,
 } from "./mediasoupConnection.ts";
@@ -124,6 +117,21 @@ export type SourceAudioStatus =
 export type SourceAudioNote = { failed?: string; silent?: string };
 
 export type VoiceStatus = "idle" | "joined";
+/** What the call's media connection is doing, for the call bar to say.
+ * Observed only: the retry logic does not read it. `failed` outlives the
+ * call it reports, until the user joins again or dismisses it. */
+export type VoiceConnection =
+  "idle" | "connecting" | "connected" | "reconnecting" | "failed";
+/** Whether the own microphone reaches the call: captured and sending,
+ * missing or refused (the call goes on listening), or held closed by
+ * push-to-talk. */
+export type VoiceMic = "live" | "unavailable" | "denied" | "ptt-idle";
+/** The call a `failed` connection ended, to join it again. */
+export type LostCall = {
+  serverId: string;
+  channelId: string;
+  channelName: string;
+};
 
 export type VoiceParticipant = {
   pubs: TrackKind[];
@@ -137,27 +145,25 @@ export type RemoteVideo = {
 
 export type VoiceState = {
   status: VoiceStatus;
+  connection: VoiceConnection;
+  mic: VoiceMic;
+  lostCall: LostCall | null;
   serverId: string | null;
   channelId: string | null;
   channelName: string | null;
   muted: boolean;
   deafened: boolean;
   camera: boolean;
+  /** The own Live: a screen or window. */
   sharing: boolean;
-  live: boolean;
   sourceWatchSupported: boolean;
-  sourceAudio: Record<"s" | "l", SourceAudioStatus>;
-  sourceAudioNote: Record<"s" | "l", SourceAudioNote | null>;
+  /** The own Live's sound. */
+  sourceAudio: Record<"s", SourceAudioStatus>;
+  sourceAudioNote: Record<"s", SourceAudioNote | null>;
+  /** Whose Live (a screen, or an older client's Go Live) plays here. */
   sourceSubscriptions: Record<string, Partial<Record<"s" | "l", boolean>>>;
   localCamera: MediaStream | null;
   localScreen: MediaStream | null;
-  localLive: MediaStream | null;
-  watching: boolean;
-  watchServerId: string | null;
-  watchChannelId: string | null;
-  watchChannelName: string | null;
-  watchPublisherId: string | null;
-  watchStream: MediaStream | null;
   playbackBlocked: boolean;
   remote: Record<string, RemoteVideo>;
   participants: Record<string, VoiceParticipant>;
@@ -165,6 +171,9 @@ export type VoiceState = {
 
 const idle: VoiceState = {
   status: "idle",
+  connection: "idle",
+  mic: "live",
+  lostCall: null,
   serverId: null,
   channelId: null,
   channelName: null,
@@ -172,20 +181,12 @@ const idle: VoiceState = {
   deafened: false,
   camera: false,
   sharing: false,
-  live: false,
   sourceWatchSupported: false,
-  sourceAudio: { s: "off", l: "off" },
-  sourceAudioNote: { s: null, l: null },
+  sourceAudio: { s: "off" },
+  sourceAudioNote: { s: null },
   sourceSubscriptions: {},
   localCamera: null,
   localScreen: null,
-  localLive: null,
-  watching: false,
-  watchServerId: null,
-  watchChannelId: null,
-  watchChannelName: null,
-  watchPublisherId: null,
-  watchStream: null,
   playbackBlocked: false,
   remote: {},
   participants: {},
@@ -231,28 +232,18 @@ let rawMicStream: MediaStream | null = null;
 let activeMicGain: MicGainInsert | null = null;
 let cameraStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
-let liveStream: MediaStream | null = null;
 /** One element per received microphone, so each participant keeps a
- * volume of their own. Seat and Watch connections each hold theirs. */
+ * volume of their own. */
 type VoiceAudio = { el: HTMLAudioElement; userId: string | null };
 const voiceAudio = new Map<MediaStreamTrack, VoiceAudio>();
-const watchAudio = new Map<MediaStreamTrack, VoiceAudio>();
-const receivedAudioSources = new Map<
-  MediaStreamTrack,
-  { role: "voice" | "watch"; source: AudioSource }
->();
+const receivedAudioSources = new Map<MediaStreamTrack, AudioSource>();
 const receivedSourceAudio = new Map<
   MediaStreamTrack,
   { stream?: MediaStream; userId: string; kind: "s" | "l" }
 >();
 const sourceAudio = new Map<
   MediaStreamTrack,
-  {
-    el: HTMLAudioElement;
-    role: "voice" | "watch";
-    userId: string;
-    kind: "s" | "l";
-  }
+  { el: HTMLAudioElement; userId: string; kind: "s" | "l" }
 >();
 const blockedPlayback = new Set<HTMLAudioElement>();
 /** The browser blocked the boost output: play at 100 % until a click. */
@@ -269,79 +260,26 @@ let micOvertaken = false;
  * join (another channel, or leaving and joining again) moves it on, so an
  * answer from an earlier join never takes over the current one's capture. */
 let micJoin = 0;
+/** Why the call has no microphone, until one is captured again. */
+let micFailure: "unavailable" | "denied" | null = null;
+/** The chosen microphone went away and the default one stands in: it comes
+ * back when the chosen one does. */
+let micFellBack = false;
+/** Captures whose loss has been handled already: unplugging fires both the
+ * track's `ended` and the device list's `devicechange`. */
+const micLossHandled = new WeakSet<MediaStream>();
 /** One stream toast per join. Further failures stay in the console. */
 let streamReported = false;
-let watchReported = false;
 let cameraEpoch = 0;
 let screenEpoch = 0;
 let cameraProfileEpoch = 0;
 let screenProfileEpoch = 0;
-let liveEpoch = 0;
 let awaitingJoin: { serverId: string; channelId: string } | null = null;
-let awaitingLive: {
-  serverId: string;
-  channelId: string;
-  /** Started by a click, not a re-claim of a Live that was already running. */
-  fresh: boolean;
-} | null = null;
-const LIVE_TAKEN_MESSAGE = "In diesem Kanal ist schon jemand live.";
-let liveClaimNonce: string | null = null;
-let liveClaimTimer: ReturnType<typeof setTimeout> | null = null;
-let withdrawnLiveNonce: string | null = null;
-let liveRecoveryDeadline: number | null = null;
-let watchPublisherTimer: ReturnType<typeof setTimeout> | null = null;
-
-function isLiveNonce(value: string | undefined): value is string {
-  return Boolean(
-    value &&
-    /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(value) &&
-    !/^0{8}-0{4}-0{4}-0{4}-0{12}$/.test(value),
-  );
-}
-
-function clearWatchPublisherTimer(): void {
-  if (watchPublisherTimer !== null) clearTimeout(watchPublisherTimer);
-  watchPublisherTimer = null;
-}
-
-function clearLiveClaim(): void {
-  if (liveClaimTimer !== null) clearTimeout(liveClaimTimer);
-  liveClaimTimer = null;
-  liveClaimNonce = null;
-  withdrawnLiveNonce = null;
-  liveRecoveryDeadline = null;
-}
-
-function requestLiveClaim(fresh = false): void {
-  const state = useVoice.getState();
-  if (!state.serverId || !state.channelId || !state.live) return;
-  if (liveClaimTimer !== null) clearTimeout(liveClaimTimer);
-  liveClaimNonce = null;
-  awaitingLive = {
-    serverId: state.serverId,
-    channelId: state.channelId,
-    fresh,
-  };
-  liveClaimTimer = setTimeout(
-    () => {
-      liveClaimTimer = null;
-      if (!awaitingLive) return;
-      awaitingLive = null;
-      stopLocalVideo("l");
-      deps?.onError?.(
-        new Error("Live konnte nicht bestätigt werden. Bitte erneut starten."),
-      );
-    },
-    Math.max(
-      0,
-      Math.min(
-        10000,
-        (liveRecoveryDeadline ?? Date.now() + 10000) - Date.now(),
-      ),
-    ),
-  );
-  sendPub("l", true);
-}
+const LIVE_FORBIDDEN_MESSAGE = "In diesem Server darfst du nicht live gehen.";
+/** A Live (screen) the gateway has not confirmed yet: going live needs
+ * `go_live`, and a refusal has to end the capture, not leave it running
+ * for nobody. */
+let awaitingScreen: { serverId: string; channelId: string } | null = null;
 let audioCommitChain: Promise<void> = Promise.resolve();
 let cameraCommitChain: Promise<void> = Promise.resolve();
 /**
@@ -367,28 +305,20 @@ let republishOnJoin = false;
 const announced = new Set<TrackKind>();
 const pendingMicRaw = new Set<MediaStream>();
 const pendingCameraStreams = new Set<MediaStream>();
-const pendingDisplayStreams = new Map<MediaStream, "s" | "l">();
-
-/** Watch media peer. `watchLive` / `stopWatching` hold this object. */
-let watchCall = new MediaPeer();
+const pendingDisplayStreams = new Set<MediaStream>();
 
 const ICE_DISCONNECTED_RESTART_DELAY_MS = 2000;
 const ICE_RECOVERY_DEADLINE_MS = 10_000;
 type Direction = "send" | "recv";
 type RecoverySlot = Map<Direction, ReturnType<typeof setTimeout>>;
 const seatRecoverySlot: RecoverySlot = new Map();
-const watchRecoverySlot: RecoverySlot = new Map();
 const seatRetry = new MediaRetry();
-const watchRetry = new MediaRetry();
 function clearRecovery(slot: RecoverySlot): void {
   for (const timer of slot.values()) clearTimeout(timer);
   slot.clear();
 }
 function clearSeatReconnectTimer(): void {
   clearRecovery(seatRecoverySlot);
-}
-function clearWatchReconnectTimer(): void {
-  clearRecovery(watchRecoverySlot);
 }
 
 function logVoice(
@@ -400,8 +330,8 @@ function logVoice(
   const fields = {
     step,
     user: currentUserId() ?? undefined,
-    channel: state.channelId ?? state.watchChannelId ?? undefined,
-    server: state.serverId ?? state.watchServerId ?? undefined,
+    channel: state.channelId ?? undefined,
+    server: state.serverId ?? undefined,
     ...extra,
   };
   if (level === "warn") console.warn("[gelabber:voice]", fields);
@@ -428,8 +358,7 @@ async function defaultGetDisplayMedia(
   return navigator.mediaDevices.getDisplayMedia(constraints);
 }
 
-/** Plays a received microphone on an element of its own; `held` is the
- * seat's or the Watch connection's map. */
+/** Plays a received microphone on an element of its own, kept in `held`. */
 function attachVoiceAudio(
   held: Map<MediaStreamTrack, VoiceAudio>,
   track: MediaStreamTrack,
@@ -514,11 +443,7 @@ export function retryPlayback(): void {
   // The click also allows the boost again; applyPlayback restarts it.
   boostBlocked = false;
   applyPlayback();
-  for (const { el } of [
-    ...voiceAudio.values(),
-    ...watchAudio.values(),
-    ...sourceAudio.values(),
-  ]) {
+  for (const { el } of [...voiceAudio.values(), ...sourceAudio.values()]) {
     if (el?.srcObject) playAudio(el);
   }
 }
@@ -587,13 +512,68 @@ function ensureBound(): void {
   onPushToTalkGate(applyLocalAudio);
   unsubscribePushToTalk?.();
   unsubscribePushToTalk = useVoice.subscribe((next, prev) => {
-    if (next.status !== prev.status) syncPushToTalk();
+    if (next.status !== prev.status) {
+      syncPushToTalk();
+      bindMediaSession(next.status === "joined");
+    }
+    if (
+      next.status !== prev.status ||
+      next.muted !== prev.muted ||
+      next.deafened !== prev.deafened
+    )
+      syncMicrophoneActive(next);
   });
   syncPushToTalk();
   // Re-adding the same listener after a rebind is a no-op.
   if (typeof document !== "undefined")
     document.addEventListener("visibilitychange", resumePlayback);
+  if (typeof navigator !== "undefined")
+    navigator.mediaDevices?.addEventListener?.("devicechange", onDeviceChange);
   bound = true;
+}
+
+type CallMediaSession = MediaSession & {
+  setMicrophoneActive?: (active: boolean) => Promise<void> | void;
+};
+
+function callMediaSession(): CallMediaSession | null {
+  return typeof navigator !== "undefined" && navigator.mediaSession
+    ? navigator.mediaSession
+    : null;
+}
+
+/** Headset buttons and the system's call controls: mute and hang up while
+ * in a call. */
+function bindMediaSession(joined: boolean): void {
+  const session = callMediaSession();
+  if (!session) return;
+  const handlers = [
+    ["togglemicrophone", () => toggleMute()],
+    ["hangup", () => leaveVoice()],
+  ] as const;
+  for (const [action, handler] of handlers) {
+    try {
+      // Not in the DOM typings yet; Chromium has them for calls.
+      session.setActionHandler(
+        action as MediaSessionAction,
+        joined ? handler : null,
+      );
+    } catch {
+      // Browsers without call actions throw for them.
+    }
+  }
+}
+
+function syncMicrophoneActive(state: VoiceState): void {
+  const session = callMediaSession();
+  if (!session?.setMicrophoneActive || state.status !== "joined") return;
+  try {
+    void Promise.resolve(
+      session.setMicrophoneActive(!(state.muted || state.deafened)),
+    ).catch(() => undefined);
+  } catch {
+    // Best effort, like the actions.
+  }
 }
 
 function upsert(
@@ -719,38 +699,12 @@ function dropRemote(userId: string, kind?: "v" | "s" | "l"): void {
 
 let soundOnJoin = false;
 
-function onSig(event: SigEvent & { lc?: string }): void {
+function onSig(event: SigEvent): void {
   const state = useVoice.getState();
-  const watchingHere =
-    state.watching &&
-    event.s === state.watchServerId &&
-    event.c === state.watchChannelId;
   const inRoom =
     state.status === "joined" &&
     event.s === state.serverId &&
     event.c === state.channelId;
-  if (watchingHere && event.u === state.watchPublisherId) {
-    if (event.t === "u" && event.k === "la")
-      clearSourcePlayback("watch", event.u, "l");
-    if (event.t === "p" && event.k === "l") clearWatchPublisherTimer();
-    else if (event.t === "l" && watchPublisherTimer === null) {
-      // Gateway detach can be followed by a fresh seat/claim while the native
-      // media peer survives. SFU authority still stops revoked publications;
-      // keep the user's Watch intent for a bounded replacement handshake.
-      watchPublisherTimer = setTimeout(() => {
-        watchPublisherTimer = null;
-        stopWatching();
-      }, 20000);
-    }
-  }
-  if (
-    watchingHere &&
-    event.t === "u" &&
-    event.k === "l" &&
-    (!state.watchPublisherId || event.u === state.watchPublisherId)
-  ) {
-    stopWatching();
-  }
   if (!inRoom) {
     return;
   }
@@ -800,24 +754,8 @@ function onSig(event: SigEvent & { lc?: string }): void {
     case "p":
     case "u": {
       if (!event.k) return;
-      if (event.t === "p" && event.k === "l" && userId === currentUserId()) {
-        if (state.live && isLiveNonce(event.lc)) {
-          if (event.lc === withdrawnLiveNonce) {
-            stopLocalVideo("l");
-            deps?.onError?.(
-              new ApiError("forbidden", 0, errorMessage("forbidden")),
-            );
-            return;
-          }
-          const changed = liveClaimNonce !== event.lc;
-          if (liveClaimTimer !== null) clearTimeout(liveClaimTimer);
-          liveClaimTimer = null;
-          liveClaimNonce = event.lc;
-          withdrawnLiveNonce = null;
-          awaitingLive = null;
-          if (changed && liveStream) void publishLocal("l", liveStream);
-        }
-      }
+      if (event.t === "p" && event.k === "s" && userId === currentUserId())
+        awaitingScreen = null;
       const current = state.participants[userId] ?? { pubs: [] };
       const pubs =
         event.t === "p"
@@ -833,7 +771,7 @@ function onSig(event: SigEvent & { lc?: string }): void {
       });
       if (event.t === "u" && (event.k === "sa" || event.k === "la")) {
         const kind = event.k === "sa" ? "s" : "l";
-        clearSourcePlayback("voice", userId, kind);
+        clearSourcePlayback(userId, kind);
         for (const [track, source] of receivedSourceAudio)
           if (source.userId === userId && source.kind === kind)
             receivedSourceAudio.delete(track);
@@ -841,10 +779,10 @@ function onSig(event: SigEvent & { lc?: string }): void {
       if (event.k === "v" || event.k === "s" || event.k === "l") {
         if (event.t === "u") {
           // Gateway `t:"l"` keeps a track that is still arriving. `t:"u"`
-          // means that camera, screen, or Go Live actually ended.
+          // means that the camera or a Live actually ended.
           forgetReceived(userId, event.k);
           if (event.k !== "v") {
-            clearSourcePlayback("voice", userId, event.k);
+            clearSourcePlayback(userId, event.k);
             for (const [track, source] of receivedSourceAudio) {
               if (source.userId === userId && source.kind === event.k)
                 receivedSourceAudio.delete(track);
@@ -872,18 +810,9 @@ function onErr(err: ErrFrame): void {
     const state = useVoice.getState();
     if (state.channelId === pending.channelId) {
       awaitingJoin = null;
-      awaitingLive = null;
+      awaitingScreen = null;
       stopPeer();
-      useVoice.setState({
-        ...idle,
-        watching: state.watching,
-        watchServerId: state.watchServerId,
-        watchChannelId: state.watchChannelId,
-        watchChannelName: state.watchChannelName,
-        watchPublisherId: state.watchPublisherId,
-        watchStream: state.watchStream,
-        playbackBlocked: state.playbackBlocked,
-      });
+      useVoice.setState({ ...idle, playbackBlocked: state.playbackBlocked });
       const code: ApiErrorCode =
         err.e === "forbidden" ||
         err.e === "not_found" ||
@@ -895,31 +824,16 @@ function onErr(err: ErrFrame): void {
     return;
   }
   if (
-    awaitingLive &&
+    awaitingScreen &&
     !awaitingJoin &&
-    err.s === awaitingLive.serverId &&
-    err.c === awaitingLive.channelId &&
-    (err.e === "forbidden" || err.e === "bad_request")
+    err.s === awaitingScreen.serverId &&
+    err.c === awaitingScreen.channelId &&
+    err.e === "forbidden"
   ) {
-    const fresh = awaitingLive.fresh;
-    awaitingLive = null;
-    if (useVoice.getState().live) {
-      stopLocalVideo("l");
-    }
-    if (err.e === "bad_request") {
-      // The gateway answers a taken Live claim with `bad_request`, but also a
-      // missing seat or session. For a click that most likely means someone's
-      // Live had not reached this roster yet, or this user is live in another
-      // tab. A re-claim after a reconnect can be refused by this user's own
-      // old connection, so keep the generic advice to try again there.
-      deps?.onError?.(
-        fresh
-          ? new Error(LIVE_TAKEN_MESSAGE)
-          : new ApiError("bad_request", 0, errorMessage("bad_request")),
-      );
-      return;
-    }
-    deps?.onError?.(new ApiError("forbidden", 0, errorMessage("forbidden")));
+    // Refused to go live: the seat stays, the screen capture ends.
+    awaitingScreen = null;
+    if (useVoice.getState().sharing) stopLocalVideo("s");
+    deps?.onError?.(new Error(LIVE_FORBIDDEN_MESSAGE));
   }
 }
 
@@ -960,19 +874,16 @@ function stopTracks(stream: MediaStream | null): void {
   stream?.getTracks().forEach((track) => track.stop());
 }
 
-function streamDetail(kind: "v" | "s" | "l"): "camera" | "screen" | "live" {
-  if (kind === "v") return "camera";
-  if (kind === "s") return "screen";
-  return "live";
-}
+/** What the client captures itself: the camera, or a Live. */
+type LocalVideo = "v" | "s";
 
-function noteStream(kind: "v" | "s" | "l", started: boolean): void {
+function noteStream(kind: LocalVideo, started: boolean): void {
   const state = useVoice.getState();
   noteDiagnosticEvent({
     kind: started ? "stream-start" : "stream-stop",
     connection: "voice",
-    detail: streamDetail(kind),
-    streaming: state.camera || state.sharing || state.live,
+    detail: kind === "v" ? "camera" : "screen",
+    streaming: state.camera || state.sharing,
   });
 }
 
@@ -980,16 +891,13 @@ function diagnosticVideoSources(): Record<string, VideoSource> {
   const sources: Record<string, VideoSource> = {};
   const camera = cameraStream?.getVideoTracks()[0];
   const screen = screenStream?.getVideoTracks()[0];
-  const live = liveStream?.getVideoTracks()[0];
   if (camera) sources[camera.id] = "camera";
   if (screen) sources[screen.id] = "screen";
-  if (live) sources[live.id] = "live";
-  for (const connection of [seat.connection, watchCall.connection])
-    for (const source of connection?.consumers() ?? []) {
-      if (source.k === "v") sources[source.track.id] = "camera";
-      if (source.k === "s") sources[source.track.id] = "screen";
-      if (source.k === "l") sources[source.track.id] = "live";
-    }
+  for (const source of seat.connection?.consumers() ?? []) {
+    if (source.k === "v") sources[source.track.id] = "camera";
+    if (source.k === "s") sources[source.track.id] = "screen";
+    if (source.k === "l") sources[source.track.id] = "live";
+  }
   return sources;
 }
 
@@ -997,10 +905,8 @@ function diagnosticAudioSources(): Record<string, AudioSource> {
   const sources: Record<string, AudioSource> = {};
   for (const track of screenStream?.getAudioTracks() ?? [])
     sources[track.id] = "screen-audio";
-  for (const track of liveStream?.getAudioTracks() ?? [])
-    sources[track.id] = "live-audio";
   for (const [track, source] of receivedAudioSources)
-    sources[track.id] = source.source;
+    sources[track.id] = source;
   for (const [track, source] of sourceAudio)
     sources[track.id] = source.kind === "s" ? "screen-audio" : "live-audio";
   return sources;
@@ -1025,7 +931,7 @@ export function voiceMicrophones(): {
 
 function voiceStreaming(): boolean {
   const state = useVoice.getState();
-  return state.camera || state.sharing || state.live;
+  return state.camera || state.sharing;
 }
 
 function voiceCaps(): Caps {
@@ -1125,25 +1031,6 @@ function attachSeatDiagnostics(generation: number): void {
   });
 }
 
-function attachWatchDiagnostics(generation: number): void {
-  attachDiagnostics({
-    role: "watch",
-    caps: defaultCaps,
-    videoSources: diagnosticVideoSources,
-    audioSources: diagnosticAudioSources,
-    streaming: () => false,
-    getReport: async () => {
-      const pc = watchCall.connection;
-      if (watchCall.generation !== generation || !pc?.getStats) return null;
-      try {
-        return statsEntriesFromReport(await pc.getStats());
-      } catch {
-        return null;
-      }
-    },
-  });
-}
-
 function codecOptionsFor(kind: TrackKind): ProducerCodecOptions {
   if (kind === "v" || kind === "s" || kind === "l") return {};
   const source = kind === "sa" || kind === "la";
@@ -1157,15 +1044,11 @@ function codecOptionsFor(kind: TrackKind): ProducerCodecOptions {
     opusMaxAverageBitrate: bitrate ?? (source || original ? 510_000 : 128_000),
   };
 }
-function receiveSource(source: ReceivedSource, role: "voice" | "watch"): void {
+function receiveSource(source: ReceivedSource): void {
   receivedIdentity.set(source.track, source);
-  if (role === "voice") attachIncoming(source.track, source.stream);
-  else attachWatchIncoming(source.track, source.stream);
+  attachIncoming(source.track, source.stream);
 }
-function closeReceivedSource(
-  source: ReceivedSource,
-  role: "voice" | "watch",
-): void {
+function closeReceivedSource(source: ReceivedSource): void {
   if (receivedIdentity.get(source.track) !== source) return;
   receivedIdentity.delete(source.track);
   receivedAudioSources.delete(source.track);
@@ -1177,50 +1060,45 @@ function closeReceivedSource(
       silenceAudio(held.el);
       sourceAudio.delete(source.track);
     }
-    dropVoiceAudio(watchAudio, source.track);
     updatePlaybackBlocked();
     return;
   }
   if (source.k !== "v" && source.k !== "s" && source.k !== "l") return;
-  if (role === "voice") {
-    const held = receivedVideo.get(source.owner)?.[source.k];
-    if (held === source.stream) {
-      forgetReceived(source.owner, source.k);
-      dropRemote(source.owner, source.k);
-    }
-  } else if (useVoice.getState().watchStream === source.stream)
-    useVoice.setState({ watchStream: null });
+  const held = receivedVideo.get(source.owner)?.[source.k];
+  if (held === source.stream) {
+    forgetReceived(source.owner, source.k);
+    dropRemote(source.owner, source.k);
+  }
 }
 function makeMediaConnection(
   peer: MediaPeer,
-  role: "voice" | "watch",
   generation: string,
   iceServers: IceServer[],
   mine: number,
 ): MediaConnection {
   const current = () => peer.generation === mine;
   const connection = (deps?.createMediaConnection ?? createMediaConnection)({
-    role,
+    role: "voice",
     generation,
     iceServers,
     request: (method, data, deadlineEpochMs) =>
       peer.request(method, data, deadlineEpochMs),
     codecOptions: codecOptionsFor,
     onConsumer: (source) => {
-      if (current()) receiveSource(source, role);
+      if (current()) receiveSource(source);
     },
     onConsumerClosed: (source) => {
-      if (current()) closeReceivedSource(source, role);
+      if (current()) closeReceivedSource(source);
     },
     onTransportState: (direction, state) => {
-      if (current()) onTransportState(role, direction, state, mine);
+      if (current()) onTransportState(direction, state, mine);
     },
     onError: (error) => {
       if (current()) deps?.onError?.(error);
     },
     onRepublished: () => {
       // New senders: the upload budget and priorities go on them again.
-      if (!current() || role !== "voice" || !peer.connection) return;
+      if (!current() || !peer.connection) return;
       void enqueueVideoLimits(peer.connection).catch(() => {});
       void applySendBitrate().catch(() => {});
     },
@@ -1253,31 +1131,43 @@ function hasLiveTrack(
   );
 }
 
+/** Reports the connection; observed only, the retries do not read it. */
+function setConnection(connection: VoiceConnection): void {
+  if (useVoice.getState().connection !== connection)
+    useVoice.setState({ connection });
+}
+
+/** The microphone state the call bar shows. */
+function syncMicState(): void {
+  const mic: VoiceMic = micFailure ?? (pushToTalkOpen() ? "live" : "ptt-idle");
+  if (useVoice.getState().mic !== mic) useVoice.setState({ mic });
+}
+
 function stopPeer(preserveCapture = false): void {
   if (!preserveCapture) micForceBrowser = false;
+  if (!preserveCapture) {
+    micFailure = null;
+    micFellBack = false;
+  }
   if (!preserveCapture) {
     micOvertaken = false;
     micJoin += 1;
   }
-  if (!preserveCapture) clearLiveClaim();
+  if (!preserveCapture) awaitingScreen = null;
   seatRetry.cancel(!preserveCapture);
   // A rebuild keeps what is captured, and with it a picker or camera prompt
   // that is still open: what the user answers there goes to the next
-  // connection, a Go Live under the claim it already holds.
-  const open = new Set<"v" | "s" | "l">();
+  // connection.
+  const open = new Set<LocalVideo>();
   if (preserveCapture) {
     for (const [kind, stream] of [
       ["v", cameraStream],
       ["s", screenStream],
-      ["l", liveStream],
     ] as const) {
       if (stream && !hasLiveTrack(stream, "video")) stopLocalVideo(kind);
     }
-    for (const kind of ["v", "s", "l"] as const)
+    for (const kind of ["v", "s"] as const)
       if (captureOpen(kind)) open.add(kind);
-    // A Live with neither a stream nor a picker has nothing left to start.
-    if (useVoice.getState().live && !liveStream && !open.has("l"))
-      releaseUnstartedLive();
   }
   streamReported = false;
   clearSeatReconnectTimer();
@@ -1288,26 +1178,21 @@ function stopPeer(preserveCapture = false): void {
   cameraProfileEpoch += 1;
   screenProfileEpoch += 1;
   // The epoch is what an open capture is held to when it answers.
-  for (const kind of ["v", "s", "l"] as const)
+  for (const kind of ["v", "s"] as const)
     if (!open.has(kind)) bumpVideoEpoch(kind);
   audioCommitChain = Promise.resolve();
   cameraCommitChain = Promise.resolve();
   resetVideoLimitQueue();
-  // The next connection announces what it publishes itself. A Go Live claim
-  // is the gateway's and outlasts the connection: a Live that is kept stays
-  // announced, or giving the media up later would not hand the claim back.
-  const claimed = preserveCapture && announced.has("l");
+  // The next connection announces what it publishes itself.
   announced.clear();
-  if (claimed) announced.add("l");
   for (const stream of pendingMicRaw) stopTracks(stream);
   pendingMicRaw.clear();
   for (const stream of pendingCameraStreams) stopTracks(stream);
   pendingCameraStreams.clear();
-  for (const [stream, kind] of pendingDisplayStreams) {
-    // Picked already; its sound or profile is still under way.
-    if (open.has(kind)) continue;
-    stopTracks(stream);
-    pendingDisplayStreams.delete(stream);
+  // Picked already; its sound or profile is still under way.
+  if (!open.has("s")) {
+    for (const stream of pendingDisplayStreams) stopTracks(stream);
+    pendingDisplayStreams.clear();
   }
   if (
     !preserveCapture ||
@@ -1328,14 +1213,9 @@ function stopPeer(preserveCapture = false): void {
     stopTracks(screenStream);
     screenStream = null;
   }
-  if (!preserveCapture || !hasLiveTrack(liveStream, "video")) {
-    stopTracks(liveStream);
-    liveStream = null;
-  }
-  clearSourcePlayback("voice");
+  clearSourcePlayback();
   receivedSourceAudio.clear();
-  for (const [track, source] of receivedAudioSources)
-    if (source.role === "voice") receivedAudioSources.delete(track);
+  receivedAudioSources.clear();
   clearReceived();
   // Paused and detached: an element left playing keeps the tab's
   // "playing audio" indicator after the call is over.
@@ -1344,45 +1224,45 @@ function stopPeer(preserveCapture = false): void {
   useVoice.setState({
     localCamera: cameraStream,
     localScreen: screenStream,
-    localLive: liveStream,
     sourceAudio: preserveCapture
       ? useVoice.getState().sourceAudio
-      : { s: "off", l: "off" },
+      : { s: "off" },
     sourceAudioNote: preserveCapture
       ? useVoice.getState().sourceAudioNote
-      : { s: null, l: null },
+      : { s: null },
     ...(preserveCapture
       ? {
           camera: !!cameraStream || open.has("v"),
           sharing: !!screenStream || open.has("s"),
-          live: !!liveStream || open.has("l"),
         }
       : {}),
     remote: {},
   });
 }
 
-function rollbackSeat(error?: unknown): void {
+/** Leaves the seat after a failure. `lost` keeps the call to offer joining
+ * it again, for a connection that failed rather than a refusal. */
+function rollbackSeat(error?: unknown, lost = false): void {
   const state = useVoice.getState();
   const serverId = state.serverId;
   const channelId = state.channelId;
   awaitingJoin = null;
-  awaitingLive = null;
   republishOnJoin = false;
-  if (state.live && serverId && channelId) {
-    applyLiveEnd(serverId, channelId, currentUserId() ?? undefined);
-  }
   stopPeer();
   vacateSelf(serverId, channelId);
   useVoice.setState({
     ...idle,
-    watching: state.watching,
-    watchServerId: state.watchServerId,
-    watchChannelId: state.watchChannelId,
-    watchChannelName: state.watchChannelName,
-    watchPublisherId: state.watchPublisherId,
-    watchStream: state.watchStream,
     playbackBlocked: blockedPlayback.size > 0,
+    ...(lost && serverId && channelId
+      ? {
+          connection: "failed" as const,
+          lostCall: {
+            serverId,
+            channelId,
+            channelName: state.channelName ?? "Sprachkanal",
+          },
+        }
+      : {}),
   });
   applyPlayback();
   if (serverId && channelId) {
@@ -1419,6 +1299,7 @@ function applyLocalAudio(): void {
   // Push-to-talk with its key up silences the track only: the producer
   // stays resumed, so pressing the key needs no round trip to the server.
   const silent = micOff || !pushToTalkOpen();
+  syncMicState();
   localStream?.getAudioTracks().forEach((track) => {
     track.enabled = !silent;
   });
@@ -1450,10 +1331,7 @@ function applyVoiceVolumes(): void {
   const deafened = useVoice.getState().deafened;
   const output = useMediaSettings.getState().outputVolume;
   const users = useUserVolumes.getState().users;
-  for (const { el, userId } of [
-    ...voiceAudio.values(),
-    ...watchAudio.values(),
-  ]) {
+  for (const { el, userId } of voiceAudio.values()) {
     const user = userVolumeOf(userId, users);
     setOutputVolume(
       el,
@@ -1477,8 +1355,7 @@ function applyPlayback(): void {
   const deafened = useVoice.getState().deafened;
   const settings = useMediaSettings.getState();
   applyVoiceVolumes();
-  for (const { el } of [...voiceAudio.values(), ...watchAudio.values()])
-    void applySink(el);
+  for (const { el } of voiceAudio.values()) void applySink(el);
   for (const { el } of sourceAudio.values()) {
     setOutputVolume(
       el,
@@ -1655,8 +1532,7 @@ async function applyVideoLimits(
 }
 
 function liveVideoTracks(kind: StreamKind): MediaStreamTrack[] {
-  const streams =
-    kind === "camera" ? [cameraStream] : [screenStream, liveStream];
+  const streams = kind === "camera" ? [cameraStream] : [screenStream];
   const tracks: MediaStreamTrack[] = [];
   for (const stream of streams) {
     const track = stream?.getVideoTracks()[0];
@@ -1730,7 +1606,7 @@ async function applyStreamProfile(kind: StreamKind): Promise<void> {
 const STREAM_PROFILE_FALLBACK =
   "Dieses Streamprofil wird nicht unterstützt. Es läuft eine sicherere Auflösung.";
 
-async function captureVideo(kind: "v" | "s" | "l"): Promise<MediaStream> {
+async function captureVideo(kind: LocalVideo): Promise<MediaStream> {
   const streamKind: StreamKind = kind === "v" ? "camera" : "screen";
   const settings = useMediaSettings.getState();
   const profile =
@@ -1755,7 +1631,7 @@ async function captureVideo(kind: "v" | "s" | "l"): Promise<MediaStream> {
       audio: asked ? { ...SOURCE_AUDIO_CONSTRAINTS } : false,
       video: ladder[0] ?? true,
     });
-    pendingDisplayStreams.set(stream, kind);
+    pendingDisplayStreams.add(stream);
     if (!asked) stream.getAudioTracks().forEach((track) => track.stop());
     // The desktop's picker gives no sound; the app captures it by itself,
     // by the choice as it is now that the picker has closed.
@@ -1764,7 +1640,7 @@ async function captureVideo(kind: "v" | "s" | "l"): Promise<MediaStream> {
     };
     displaySound.set(stream, sound);
     if (desktop && sound.asked) {
-      const captured = await captureNativeSourceAudio(kind, stream);
+      const captured = await captureNativeSourceAudio(stream);
       if ("failed" in captured) sound.failed = captured.failed;
       // Stopped while the sound was being captured: nothing may outlive it.
       else if (!hasLiveTrack(stream, "video")) captured.track.stop();
@@ -1909,24 +1785,42 @@ function failedMicProcessor(owner: MicProcessor): void {
   const sender = audioSender(),
     generation = seat.generation,
     failedTrack = owner.stream.getAudioTracks()[0];
-  micForceBrowser = true;
+  // A capture that ended under the processor is the device gone (unplugged,
+  // taken away), not the processor: the next capture keeps its filters.
+  const lost =
+    rawMicStream !== null && !hasLiveTrack(rawMicStream, "audio")
+      ? rawMicStream
+      : null;
+  if (!lost) micForceBrowser = true;
   disableAudio(owner.stream);
   rawMicStream?.getTracks().forEach((track) => track.stop());
   owner.dispose();
   activeMicGain = null;
   localStream = null;
   rawMicStream = null;
-  noteAudioProcessing({
-    ...owner.info,
-    actual: null,
-    message: "Audioprozessor ausgefallen; Ersatzmikrofon wird aktiviert",
-    contextState: "closed",
-  });
-  deps?.onError?.(
-    new Error(
-      "Audioprozessor ausgefallen; lokale Aufnahme beendet, Browser-Ersatz wird aktiviert",
-    ),
-  );
+  if (lost) {
+    micFailure = "unavailable";
+    syncMicState();
+    noteAudioProcessing({
+      ...owner.info,
+      actual: null,
+      message: "Mikrofon getrennt; Standardgerät wird aktiviert",
+      contextState: "closed",
+    });
+    noteMicLost(lost);
+  } else {
+    noteAudioProcessing({
+      ...owner.info,
+      actual: null,
+      message: "Audioprozessor ausgefallen; Ersatzmikrofon wird aktiviert",
+      contextState: "closed",
+    });
+    deps?.onError?.(
+      new Error(
+        "Audioprozessor ausgefallen; lokale Aufnahme beendet, Browser-Ersatz wird aktiviert",
+      ),
+    );
+  }
   void enqueueAudioCommit(async () => {
     if (seat.generation === generation && sender?.track === failedTrack)
       await replaceSenderTrack(sender, null).catch(() => undefined);
@@ -2053,6 +1947,8 @@ function logMicFailure(error: unknown): void {
 /** A join that goes on without a microphone. */
 function reportJoinMicFailure(error: unknown): void {
   logMicFailure(error);
+  micFailure = micRefused(error) ? "denied" : "unavailable";
+  syncMicState();
   deps?.onError?.(microphoneFailure(error));
   noteAudioProcessing(null);
   const info = useAudioProcessing.getState();
@@ -2094,6 +1990,94 @@ function announceMicrophone(): void {
   if (self) setPub(self, "a", true);
   announced.add("a");
   deps?.gateway.send({ op: "sig", t: "p", s: serverId, c: channelId, k: "a" });
+}
+
+/** A capture that now sends: the call has its microphone again, and watches
+ * for losing it. */
+function noteMicLive(raw: MediaStream): void {
+  micFailure = null;
+  syncMicState();
+  for (const track of raw.getAudioTracks())
+    track.addEventListener("ended", () => onMicEnded(raw));
+}
+
+/** The microphone was unplugged or failed mid-call, where no processor
+ * watches the capture: capture again, which takes the system default while
+ * the chosen device is gone. */
+function onMicEnded(raw: MediaStream): void {
+  if (rawMicStream !== raw || useVoice.getState().status !== "joined") return;
+  micFailure = "unavailable";
+  syncMicState();
+  fallBackToDefaultMic(raw);
+}
+
+function fallBackToDefaultMic(raw: MediaStream): void {
+  if (micLossHandled.has(raw)) return;
+  noteMicLost(raw);
+  void refreshMic();
+}
+
+/** Says once per capture that it is gone, and remembers to switch back. */
+function noteMicLost(raw: MediaStream): void {
+  if (micLossHandled.has(raw)) return;
+  micLossHandled.add(raw);
+  logVoice("warn", "microphone-lost");
+  noteDiagnosticEvent({
+    kind: "device-change",
+    connection: "voice",
+    detail: "audio-input-lost",
+  });
+  micFellBack = useMediaSettings.getState().audioInputId !== "";
+  deps?.onError?.(
+    new Error("Mikrofon getrennt – Standardgerät wird verwendet"),
+  );
+}
+
+/** A device came or went. The chosen microphone gone: fall back as if it
+ * had ended (some browsers keep the track). There (again, or for the first
+ * time since joining without it): use it. */
+async function onDeviceChange(): Promise<void> {
+  const chosen = useMediaSettings.getState().audioInputId;
+  if (useVoice.getState().status !== "joined" || !chosen || !rawMicStream)
+    return;
+  const raw = rawMicStream;
+  let inputs: string[];
+  try {
+    inputs = (await navigator.mediaDevices.enumerateDevices())
+      .filter((device) => device.kind === "audioinput")
+      .map((device) => device.deviceId);
+  } catch {
+    return;
+  }
+  // Without permission the list has no ids and says nothing about the chosen one.
+  if (
+    inputs.every((id) => id === "") ||
+    rawMicStream !== raw ||
+    useMediaSettings.getState().audioInputId !== chosen
+  )
+    return;
+  const present = inputs.includes(chosen);
+  // The capture names its device where the browser says: a chosen one that
+  // was missing at joining is no loss when another device comes or goes.
+  const using = raw.getAudioTracks()[0]?.getSettings?.().deviceId;
+  const onChosen = using ? using === chosen : !micFellBack;
+  if (!present && onChosen) fallBackToDefaultMic(raw);
+  else if (present && !onChosen) {
+    micFellBack = false;
+    void refreshMic();
+  }
+}
+
+/** Puts away the note of a call whose connection was lost. */
+export function dismissLostCall(): void {
+  if (useVoice.getState().status === "joined") return;
+  useVoice.setState({ connection: "idle", lostCall: null });
+}
+
+/** The user asks for the microphone again after it was missing or refused. */
+export function retryMicrophone(): void {
+  if (useVoice.getState().status !== "joined") return;
+  void refreshMic();
 }
 
 async function refreshMic(): Promise<void> {
@@ -2197,6 +2181,7 @@ async function refreshMic(): Promise<void> {
     rawMicStream = raw;
     localStream = send;
     activeMicGain = insert;
+    noteMicLive(raw);
     noteAudioProcessing(insert.info);
     pendingMicRaw.delete(raw);
     applyLocalAudio();
@@ -2405,13 +2390,14 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
     prev.autoGainControl !== next.autoGainControl ||
     prev.processingMode !== next.processingMode;
   if (recaptureMic) micForceBrowser = false;
+  if (prev.audioInputId !== next.audioInputId) micFellBack = false;
   const camChanged = prev.videoInputId !== next.videoInputId;
   const qualityChanged =
     prev.quality !== next.quality ||
     prev.economyMode !== next.economyMode ||
     prev.processingMode !== next.processingMode;
-  if (joined || useVoice.getState().watching) {
-    const connection = joined ? "voice" : "watch";
+  if (joined) {
+    const connection = "voice";
     if (prev.audioInputId !== next.audioInputId) {
       noteDiagnosticEvent({
         kind: "device-change",
@@ -2467,7 +2453,6 @@ async function refreshAudioCodecs(): Promise<void> {
       await commitMicSend(connection, localStream, mine);
     if (seat.connection !== connection || seat.generation !== mine) return;
     if (screenStream) await publishLocal("s", screenStream);
-    if (liveStream && liveClaimNonce) await publishLocal("l", liveStream);
     if (seat.connection === connection && seat.generation === mine)
       applyLocalAudio();
   } catch (error) {
@@ -2515,6 +2500,10 @@ function sendPub(kind: TrackKind, on: boolean): void {
   if (!state.serverId || !state.channelId) return;
   if (on) announced.add(kind);
   else announced.delete(kind);
+  if (kind === "s")
+    awaitingScreen = on
+      ? { serverId: state.serverId, channelId: state.channelId }
+      : null;
   deps?.gateway.send({
     op: "sig",
     t: on ? "p" : "u",
@@ -2526,7 +2515,7 @@ function sendPub(kind: TrackKind, on: boolean): void {
 
 /**
  * The media attempt failed, but the voice seat stays. Drop only the pubs
- * this attempt already announced, and release camera, share, and Go Live.
+ * this attempt already announced, and release the camera and a Live.
  */
 function retractAnnouncedMedia(): void {
   const state = useVoice.getState();
@@ -2544,17 +2533,12 @@ function retractAnnouncedMedia(): void {
       k: kind,
     });
   }
-  awaitingLive = null;
-  if (state.live && state.serverId && state.channelId) {
-    applyLiveEnd(state.serverId, state.channelId, self ?? undefined);
-  }
-  useVoice.setState({ camera: false, sharing: false, live: false });
+  useVoice.setState({ camera: false, sharing: false });
 }
 
 /**
- * The gateway dropped pubs and the Go Live claim on detach. The tracks
- * are still on the peer connection, so announce them again. A rejected
- * live claim takes the existing awaitingLive path. No new capture.
+ * The gateway dropped pubs on detach. The tracks are still on the peer
+ * connection, so announce them again. No new capture.
  */
 function reannounceActive(): void {
   const state = useVoice.getState();
@@ -2568,12 +2552,6 @@ function reannounceActive(): void {
     sendPub("s", true);
     if (hasLiveTrack(screenStream, "audio")) sendPub("sa", true);
   }
-  if (!state.live) return;
-  const self = currentUserId();
-  if (self) {
-    applyLiveStart(state.serverId, state.channelId, self);
-  }
-  requestLiveClaim();
 }
 
 const STREAM_TOAST =
@@ -2585,22 +2563,22 @@ function reportStreamOnce(detail?: string): void {
   deps?.onError?.(new Error(STREAM_TOAST));
 }
 function onTransportState(
-  role: "voice" | "watch",
   direction: Direction,
   state: string,
   mine: number,
 ): void {
-  const peer = role === "voice" ? seat : watchCall;
-  const slot = role === "voice" ? seatRecoverySlot : watchRecoverySlot;
+  const peer = seat;
+  const slot = seatRecoverySlot;
   if (peer.generation !== mine) return;
   if (state === "connected") {
     const timer = slot.get(direction);
     if (timer) clearTimeout(timer);
     slot.delete(direction);
-    (role === "voice" ? seatRetry : watchRetry).cancel();
+    seatRetry.cancel();
+    if (slot.size === 0) setConnection("connected");
     noteDiagnosticEvent({
       kind: "recovery",
-      connection: role,
+      connection: "voice",
       detail: `${direction}:connected`,
     });
     return;
@@ -2608,17 +2586,13 @@ function onTransportState(
   if (state !== "failed" && state !== "disconnected") return;
   noteDiagnosticEvent({
     kind: "ice-error",
-    connection: role,
+    connection: "voice",
     detail: `${direction}:${state}`,
   });
+  setConnection("reconnecting");
   if (slot.has(direction)) return;
   const rebuild = () => {
-    if (peer.generation !== mine) return;
-    if (role === "voice") scheduleSeatRebuild();
-    else {
-      const channel = useVoice.getState().watchChannelId;
-      if (channel) scheduleWatchRebuild(channel);
-    }
+    if (peer.generation === mine) scheduleSeatRebuild();
   };
   const restart = () => {
     if (peer.generation !== mine || !peer.connection) return;
@@ -2676,21 +2650,10 @@ function onMediaFrame(frame: MediaServerFrame): void {
     deps?.onError?.(new Error("Kein freier Sprachplatz."));
     retractAnnouncedMedia();
     stopPeer();
+    setConnection("failed");
     return;
   }
   if (frame.e === "forbidden") {
-    if (isLiveNonce(frame.lc)) {
-      if (
-        !useVoice.getState().live ||
-        (liveClaimNonce && frame.lc !== liveClaimNonce) ||
-        frame.lc === withdrawnLiveNonce
-      )
-        return;
-      withdrawnLiveNonce = frame.lc;
-      liveRecoveryDeadline ??= Date.now() + 10000;
-      requestLiveClaim();
-      return;
-    }
     deps?.onError?.(new ApiError("forbidden", 0, errorMessage("forbidden")));
     return;
   }
@@ -2722,9 +2685,6 @@ export function joinVoice(input: {
   const deafened = prev.status === "joined" && prev.deafened;
   setCallSoundsDeafened(deafened);
   if (prev.status !== "joined") preDeafenMuted = false;
-  const dropWatch =
-    prev.watchServerId === input.serverId &&
-    prev.watchChannelId === input.channelId;
   resetDiagnostics();
   streamReported = false;
   if (
@@ -2742,14 +2702,11 @@ export function joinVoice(input: {
     });
   }
   stopPeer();
-  if (dropWatch) {
-    stopWatching();
-  } else if (prev.watching && watchCall.connection) {
-    attachWatchDiagnostics(watchCall.generation);
-  }
   const self = userId;
   useVoice.setState({
     status: "joined",
+    connection: "connecting",
+    lostCall: null,
     serverId: input.serverId,
     channelId: input.channelId,
     channelName: input.channelName,
@@ -2757,15 +2714,14 @@ export function joinVoice(input: {
     deafened,
     camera: false,
     sharing: false,
-    live: false,
     localCamera: null,
     localScreen: null,
-    localLive: null,
     sourceSubscriptions: {},
     sourceWatchSupported: false,
     remote: {},
     participants: { [self]: { pubs: [] } },
   });
+  syncMicState();
   applyVoiceJoin(input.serverId, self, input.channelId, {
     muted,
     deafened,
@@ -2794,21 +2750,11 @@ export function leaveVoice(): void {
   const serverId = state.serverId;
   const channelId = state.channelId;
   awaitingJoin = null;
-  awaitingLive = null;
   republishOnJoin = false;
-  if (state.live && serverId && channelId) {
-    applyLiveEnd(serverId, channelId, currentUserId() ?? undefined);
-  }
   stopPeer();
   vacateSelf(serverId, channelId);
   useVoice.setState({
     ...idle,
-    watching: state.watching,
-    watchServerId: state.watchServerId,
-    watchChannelId: state.watchChannelId,
-    watchChannelName: state.watchChannelName,
-    watchPublisherId: state.watchPublisherId,
-    watchStream: state.watchStream,
     playbackBlocked: blockedPlayback.size > 0,
   });
   applyPlayback();
@@ -2913,125 +2859,26 @@ export function toggleShare(): void {
   void startLocalVideo("s");
 }
 
-/**
- * Go Live badge flips immediately; display capture and SFU publish follow.
- * One live track per voice channel. Needs `go_live` on the server.
- */
-export function toggleGoLive(): void {
-  ensureBound();
-  const state = useVoice.getState();
-  if (state.status !== "joined" || !state.serverId || !state.channelId) {
-    return;
-  }
-  if (state.live) {
-    awaitingLive = null;
-    stopLocalVideo("l");
-    return;
-  }
-  const self = currentUserId();
-  if (!self) return;
-  const holder = liveOf(
-    useVoiceRoster.getState().live,
-    state.serverId,
-    state.channelId,
-  );
-  if (holder && holder !== self) {
-    // The controls say whose Live it is; this is the backstop for a roster
-    // that changed under the click.
-    deps?.onError?.(new Error(LIVE_TAKEN_MESSAGE));
-    return;
-  }
-  useVoice.setState({ live: true });
-  applyLiveStart(state.serverId, state.channelId, self);
-  void startLocalVideo("l");
-  requestLiveClaim(true);
-}
-
-/**
- * Subscribe to a live track without publishing. No mic permission prompt.
- */
-export function watchLive(input: {
-  serverId: string;
-  channelId: string;
-  channelName: string;
-}): void {
-  installDiagnosticsLogoutReset();
-  ensureBound();
-  const state = useVoice.getState();
-  if (
-    state.status === "joined" &&
-    state.serverId === input.serverId &&
-    state.channelId === input.channelId
-  ) {
-    return;
-  }
-  if (
-    state.watching &&
-    state.watchServerId === input.serverId &&
-    state.watchChannelId === input.channelId
-  ) {
-    return;
-  }
-  const publisher = liveOf(
-    useVoiceRoster.getState().live,
-    input.serverId,
-    input.channelId,
-  );
-  if (!publisher) {
-    deps?.onError?.(new Error("Dieser Stream ist nicht mehr verfügbar."));
-    return;
-  }
-  clearWatchPublisherTimer();
-  useVoice.setState({
-    watching: true,
-    watchServerId: input.serverId,
-    watchChannelId: input.channelId,
-    watchChannelName: input.channelName,
-    watchPublisherId: publisher,
-    watchStream: null,
-  });
-  void startWatchPeer(input.channelId);
-}
-
-export function stopWatching(): void {
-  clearWatchPublisherTimer();
-  stopWatchPeer();
-  useVoice.setState({
-    watching: false,
-    watchServerId: null,
-    watchChannelId: null,
-    watchChannelName: null,
-    watchPublisherId: null,
-    watchStream: null,
-  });
-}
-
 export function resetVoiceForTests(): void {
   soundOnJoin = false;
   stopCallSounds();
   setCallSoundsDeafened(false);
   preDeafenMuted = false;
-  clearWatchPublisherTimer();
   resetDiagnostics();
   streamReported = false;
-  watchReported = false;
   awaitingJoin = null;
-  awaitingLive = null;
+  awaitingScreen = null;
   republishOnJoin = false;
   audioCommitChain = Promise.resolve();
   cameraCommitChain = Promise.resolve();
   clearSeatReconnectTimer();
-  clearWatchReconnectTimer();
-  stopWatchPeer();
   stopPeer();
   resetPlaybackBoostForTests();
   boostBlocked = false;
   voiceAudio.clear();
   sourceAudio.clear();
-  watchAudio.clear();
   blockedPlayback.clear();
   seat = new MediaPeer();
-  watchCall = new MediaPeer();
   resetVideoLimitQueue();
   useVoice.setState({ ...idle });
   deps = null;
@@ -3045,40 +2892,35 @@ export function resetVoiceForTests(): void {
   configurePushToTalk(null);
 }
 
-function endedListener(kind: "v" | "s" | "l"): () => void {
+function endedListener(kind: LocalVideo): () => void {
   return () => {
     const state = useVoice.getState();
     if (kind === "v" && state.camera) stopLocalVideo("v");
     if (kind === "s" && state.sharing) stopLocalVideo("s");
-    if (kind === "l" && state.live) stopLocalVideo("l");
   };
 }
 
-function bindEnded(stream: MediaStream, kind: "v" | "s" | "l"): void {
+function bindEnded(stream: MediaStream, kind: LocalVideo): void {
   const onEnded = endedListener(kind);
   for (const track of stream.getVideoTracks()) {
     track.addEventListener("ended", onEnded);
   }
 }
 
-function videoEpoch(kind: "v" | "s" | "l"): number {
-  if (kind === "v") return cameraEpoch;
-  if (kind === "s") return screenEpoch;
-  return liveEpoch;
+function videoEpoch(kind: LocalVideo): number {
+  return kind === "v" ? cameraEpoch : screenEpoch;
 }
 
-function bumpVideoEpoch(kind: "v" | "s" | "l"): number {
-  if (kind === "v") return ++cameraEpoch;
-  if (kind === "s") return ++screenEpoch;
-  return ++liveEpoch;
+function bumpVideoEpoch(kind: LocalVideo): number {
+  return kind === "v" ? ++cameraEpoch : ++screenEpoch;
 }
 
 /** Epoch of the start whose picker or camera prompt has not answered yet. */
-const openCaptures = new Map<"v" | "s" | "l", number>();
+const openCaptures = new Map<LocalVideo, number>();
 
 /** Stopping bumps the epoch, so an abandoned start is not open. A rebuild of
  * the seat's connection leaves an open start its epoch. */
-function captureOpen(kind: "v" | "s" | "l"): boolean {
+function captureOpen(kind: LocalVideo): boolean {
   return openCaptures.get(kind) === videoEpoch(kind);
 }
 
@@ -3133,7 +2975,7 @@ function displayFailure(error: unknown): Error {
   );
 }
 
-async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
+async function startLocalVideo(kind: LocalVideo): Promise<void> {
   const epoch = bumpVideoEpoch(kind);
   openCaptures.set(kind, epoch);
   // Stopping this kind, leaving the seat and a newer start all move the
@@ -3150,14 +2992,14 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
         new Error(
           kind === "v"
             ? "Die Kamera unterstützt das Streamprofil nicht."
-            : "Die Bildschirmfreigabe unterstützt das Streamprofil nicht.",
+            : "Die Bildschirmaufnahme unterstützt das Streamprofil nicht.",
         ),
       );
     } else if (kind === "v" && cameraUnavailable(error) && newest()) {
       // Otherwise the button just springs back and nothing says why.
       deps?.onError?.(new Error("Die Kamera ist nicht verfügbar."));
     } else if (kind !== "v" && !displayCancelled(error) && newest()) {
-      // The same for a share or a Live: only a cancel needs no word.
+      // The same for a Live: only a cancel needs no word.
       logVoice("warn", "capture", {
         track: kind,
         detail:
@@ -3173,8 +3015,6 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
     if (kind === "s" && newest()) {
       useVoice.setState({ sharing: false });
     }
-    // Only the newest attempt owns the claim; a later start keeps its own.
-    if (kind === "l" && newest()) releaseUnstartedLive();
     return;
   } finally {
     if (openCaptures.get(kind) === epoch) openCaptures.delete(kind);
@@ -3189,44 +3029,35 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   // nothing would ever take this capture down again.
   if (!hasLiveTrack(stream, "video")) {
     stopTracks(stream);
-    if (kind === "v") useVoice.setState({ camera: false });
-    else if (kind === "s") useVoice.setState({ sharing: false });
-    else releaseUnstartedLive();
+    useVoice.setState(kind === "v" ? { camera: false } : { sharing: false });
     return;
   }
   const self = currentUserId();
-  if (kind !== "v") {
+  if (kind === "s") {
     const sound = displaySound.get(stream);
     if (!sharesSourceAudio()) {
       // Switched off while the picker or the capture was still busy.
       stream.getAudioTracks().forEach((track) => track.stop());
-      setSourceAudio(kind, "off");
-    } else if (hasLiveTrack(stream, "audio")) setSourceAudio(kind, "sharing");
+      setSourceAudio("off");
+    } else if (hasLiveTrack(stream, "audio")) setSourceAudio("sharing");
     else if (sound?.asked)
       setSourceAudio(
-        kind,
         "unavailable",
         sound.failed ? { failed: sound.failed } : null,
       );
-    else setSourceAudio(kind, "off");
-    for (const track of stream.getAudioTracks())
-      bindSourceAudio(kind, stream, track);
+    else setSourceAudio("off");
+    for (const track of stream.getAudioTracks()) bindSourceAudio(stream, track);
   }
   bindEnded(stream, kind);
   if (kind === "v") {
     stopTracks(cameraStream);
     cameraStream = stream;
     useVoice.setState({ camera: true, localCamera: stream });
-  } else if (kind === "s") {
+  } else {
     stopTracks(screenStream);
     screenStream = stream;
     stream.getVideoTracks().forEach((track) => hintTrack(track, "detail"));
     useVoice.setState({ sharing: true, localScreen: stream });
-  } else {
-    stopTracks(liveStream);
-    liveStream = stream;
-    stream.getVideoTracks().forEach((track) => hintTrack(track, "detail"));
-    useVoice.setState({ live: true, localLive: stream });
   }
   noteStreamProfileApply(kind === "v" ? "camera" : "screen", "idle");
   if (self) setPub(self, kind, true);
@@ -3238,69 +3069,32 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
   await publishLocal(kind, stream);
 }
 
-/**
- * Go Live claims the channel before display capture answers. A capture that
- * never yields a stream (cancelled picker, no display capture on this device,
- * a source that ended before it could start) hands the claim back, or the
- * room keeps a phantom Live that blocks everyone else until this seat leaves.
- */
-function releaseUnstartedLive(): void {
-  const state = useVoice.getState();
-  const self = currentUserId();
-  clearLiveClaim();
-  awaitingLive = null;
-  useVoice.setState({ live: false, localLive: null });
-  if (state.serverId && state.channelId)
-    applyLiveEnd(state.serverId, state.channelId, self ?? undefined);
-  if (self) setPub(self, "l", false);
-  sendPub("l", false);
-}
-
-function stopLocalVideo(kind: "v" | "s" | "l"): void {
-  for (const [pending, heldKind] of pendingDisplayStreams) {
-    if (heldKind === kind) {
-      stopTracks(pending);
-      pendingDisplayStreams.delete(pending);
-    }
+function stopLocalVideo(kind: LocalVideo): void {
+  if (kind === "s") {
+    for (const pending of pendingDisplayStreams) stopTracks(pending);
+    pendingDisplayStreams.clear();
   }
   const state = useVoice.getState();
   if (kind === "v" && !state.camera && !state.localCamera) return;
   if (kind === "s" && !state.sharing && !state.localScreen) return;
-  if (kind === "l" && !state.live && !state.localLive) return;
-  if (kind === "l") {
-    clearLiveClaim();
-    awaitingLive = null;
-  }
   if (kind === "v") {
     cameraEpoch += 1;
     for (const pending of pendingCameraStreams) stopTracks(pending);
     pendingCameraStreams.clear();
-  } else if (kind === "s") screenEpoch += 1;
-  else liveEpoch += 1;
-  const stream =
-    kind === "v" ? cameraStream : kind === "s" ? screenStream : liveStream;
+  } else screenEpoch += 1;
+  const stream = kind === "v" ? cameraStream : screenStream;
   if (kind === "v") {
     cameraStream = null;
     useVoice.setState({ camera: false, localCamera: null });
-  } else if (kind === "s") {
+  } else {
     screenStream = null;
     useVoice.setState({ sharing: false, localScreen: null });
-  } else {
-    liveStream = null;
-    useVoice.setState({ live: false, localLive: null });
-    if (state.serverId && state.channelId)
-      applyLiveEnd(
-        state.serverId,
-        state.channelId,
-        currentUserId() ?? undefined,
-      );
   }
   const self = currentUserId();
   if (self) setPub(self, kind, false);
   sendPub(kind, false);
   const connection = seat.connection;
-  const kinds: TrackKind[] =
-    kind === "v" ? [kind] : [kind === "s" ? "sa" : "la", kind];
+  const kinds: TrackKind[] = kind === "v" ? [kind] : ["sa", kind];
   for (const source of kinds) {
     if (connection)
       void connection.closeSource(source).catch((error) => {
@@ -3308,124 +3102,41 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
       });
   }
   stopTracks(stream);
-  if (kind !== "v") {
-    setSourceAudio(kind, "off");
-    const audioKind = kind === "s" ? "sa" : "la";
-    if (self) setPub(self, audioKind, false);
-    sendPub(audioKind, false);
+  if (kind === "s") {
+    setSourceAudio("off");
+    if (self) setPub(self, "sa", false);
+    sendPub("sa", false);
   }
   if (seat.connection) void enqueueVideoLimits(seat.connection);
-  if (kind === "v") noteStreamProfileApply("camera", "idle");
-  else if (!screenStream && !liveStream) {
-    noteStreamProfileApply("screen", "idle");
-  }
+  noteStreamProfileApply(kind === "v" ? "camera" : "screen", "idle");
   noteStream(kind, false);
 }
 
 async function publishLocal(
-  kind: "v" | "s" | "l",
+  kind: LocalVideo,
   stream: MediaStream,
 ): Promise<void> {
   const connection = publishingConnection();
-  if (!connection || (kind === "l" && !liveClaimNonce)) return;
+  if (!connection) return;
   const mine = seat.generation,
     epoch = videoEpoch(kind),
-    uuid = captureEpoch(stream),
-    claim = liveClaimNonce;
+    uuid = captureEpoch(stream);
   const current = () =>
     seat.connection === connection &&
     seat.generation === mine &&
-    videoEpoch(kind) === epoch &&
-    (kind !== "l" ||
-      (liveClaimNonce === claim &&
-        seat.isOpen() &&
-        seat.accepted &&
-        useVoice.getState().status === "joined" &&
-        useVoice.getState().live &&
-        useVoice.getState().localLive === stream &&
-        liveStream === stream &&
-        hasLiveTrack(stream, "video")));
+    videoEpoch(kind) === epoch;
   const video = stream
     .getVideoTracks()
     .find((track) => track.readyState !== "ended");
   if (!video) return;
-  const deadline =
-    kind === "l" ? (liveRecoveryDeadline ??= Date.now() + 10_000) : null;
-  const publish = async (
-    input: MediaPublication,
-  ): Promise<MediaSender | null> => {
-    if (deadline === null) return connection.publish(input);
-    while (current()) {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new MediaError("live_recovery_timeout");
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      let expired = false;
-      const work = connection.publish({
-        ...input,
-        deadlineEpochMs: deadline,
-        isCurrent: () => current() && Date.now() < deadline,
-      });
-      // Injected adapters and queued SDK work obey the same total budget too.
-      // Retire a late owned producer by ID; never close a newer source by kind.
-      void work.then(
-        (sender) => {
-          if (expired || !current() || Date.now() >= deadline)
-            void connection
-              .closeSource(input.kind, sender.producerId)
-              .catch(() => {});
-        },
-        () => {},
-      );
-      try {
-        const sender = await Promise.race([
-          work,
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(() => {
-              expired = true;
-              reject(new MediaError("live_recovery_timeout"));
-            }, remaining);
-          }),
-        ]);
-        if (Date.now() >= deadline) {
-          expired = true;
-          throw new MediaError("live_recovery_timeout");
-        }
-        if (!current()) {
-          await connection
-            .closeSource(input.kind, sender.producerId)
-            .catch(() => {});
-          return null;
-        }
-        return sender;
-      } catch (error) {
-        if (!current()) return null;
-        if (
-          input.kind !== "l" ||
-          !(error instanceof MediaError) ||
-          error.code !== "live_busy"
-        )
-          throw error;
-      } finally {
-        clearTimeout(timer);
-      }
-      if (!current()) return null;
-      await new Promise<void>((resolve) =>
-        setTimeout(resolve, Math.max(0, Math.min(200, deadline - Date.now()))),
-      );
-      if (!current()) return null;
-    }
-    return null;
-  };
   try {
     if (!current()) return;
-    const sender = await publish({
+    const sender = await connection.publish({
       kind,
       track: video,
       streamId: stream.id,
       epoch: uuid,
-      ...(kind === "l" ? { lc: claim! } : {}),
     });
-    if (!sender) return;
     if (!current()) {
       if (connection.sender(kind) === sender)
         await connection.closeSource(kind, sender.producerId).catch(() => {});
@@ -3433,45 +3144,40 @@ async function publishLocal(
     }
     const self = currentUserId();
     if (self) setPub(self, kind, true);
-    if (kind !== "l") sendPub(kind, true);
-    if (kind !== "v") {
+    sendPub(kind, true);
+    if (kind === "s") {
       const audio = stream
         .getAudioTracks()
         .find((track) => track.readyState !== "ended");
       if (audio) {
-        const audioKind = kind === "s" ? "sa" : "la";
-        const audioSender = await publish({
-          kind: audioKind,
+        const audioSender = await connection.publish({
+          kind: "sa",
           track: audio,
           streamId: stream.id,
           epoch: uuid,
           parent: sender.producerId,
-          ...(kind === "l" ? { lc: claim! } : {}),
         });
-        if (!audioSender) return;
         if (!current()) {
-          if (connection.sender(audioKind) === audioSender)
+          if (connection.sender("sa") === audioSender)
             await connection
-              .closeSource(audioKind, audioSender.producerId)
+              .closeSource("sa", audioSender.producerId)
               .catch(() => {});
           return;
         }
         if (audio.readyState === "ended") {
           // Switched off, or gone, while the publish was under way: the room
           // has been told so. Close this producer only, never a newer sound.
-          if (connection.sender(audioKind) === audioSender)
+          if (connection.sender("sa") === audioSender)
             await connection
-              .closeSource(audioKind, audioSender.producerId)
+              .closeSource("sa", audioSender.producerId)
               .catch(() => {});
         } else {
-          if (self) setPub(self, audioKind, true);
-          sendPub(audioKind, true);
+          if (self) setPub(self, "sa", true);
+          sendPub("sa", true);
         }
       }
     }
     if (current()) {
-      if (kind === "l" && liveRecoveryDeadline === deadline)
-        liveRecoveryDeadline = null;
       await enqueueVideoLimits(connection);
       await applySendBitrate();
     }
@@ -3483,49 +3189,40 @@ async function publishLocal(
   }
 }
 
+/** The own Live's sound. */
 function setSourceAudio(
-  kind: "s" | "l",
   status: SourceAudioStatus,
   note: SourceAudioNote | null = null,
 ): void {
-  const state = useVoice.getState();
   useVoice.setState({
-    sourceAudio: { ...state.sourceAudio, [kind]: status },
-    sourceAudioNote: { ...state.sourceAudioNote, [kind]: note },
+    sourceAudio: { s: status },
+    sourceAudioNote: { s: note },
   });
 }
 
-function bindSourceAudio(
-  kind: "s" | "l",
-  stream: MediaStream,
-  track: MediaStreamTrack,
-): void {
+function bindSourceAudio(stream: MediaStream, track: MediaStreamTrack): void {
   hintTrack(track, "music");
   track.addEventListener("ended", () => {
-    const active = kind === "s" ? screenStream : liveStream;
-    if (active === stream) stopLocalSourceAudio(kind);
+    if (screenStream === stream) stopLocalSourceAudio();
   });
 }
 
 /** The sound leaves, the video stays: "ended" when the source went away by
  * itself, "off" when the user switched it off. */
 function stopLocalSourceAudio(
-  kind: "s" | "l",
   status: SourceAudioStatus = "ended",
   note: SourceAudioNote | null = null,
 ): void {
-  const stream = kind === "s" ? screenStream : liveStream;
-  const audioKind = kind === "s" ? "sa" : "la";
   const connection = seat.connection;
   if (connection)
-    void connection.closeSource(audioKind).catch((error) => {
+    void connection.closeSource("sa").catch((error) => {
       if (seat.connection === connection) deps?.onError?.(error);
     });
-  for (const track of stream?.getAudioTracks() ?? []) track.stop();
+  for (const track of screenStream?.getAudioTracks() ?? []) track.stop();
   const self = currentUserId();
-  if (self) setPub(self, audioKind, false);
-  sendPub(audioKind, false);
-  setSourceAudio(kind, status, note);
+  if (self) setPub(self, "sa", false);
+  sendPub("sa", false);
+  setSourceAudio(status, note);
 }
 
 /** Whether a display capture was asked for sound, and the desktop app's
@@ -3534,16 +3231,15 @@ const displaySound = new WeakMap<
   MediaStream,
   { asked: boolean; failed?: string }
 >();
-/** Latest change of the sound of a running share; older ones give way. */
-const sourceAudioChanges = { s: 0, l: 0 };
+/** Latest change of the sound of a running Live; older ones give way. */
+let sourceAudioChange = 0;
 /** A chosen application may pause between two songs; only one that stays
  * without a playback stream for this many seconds is reported. */
 const SILENT_SECONDS = 3;
 
-/** Desktop app: the chosen application's sound for `stream`'s share, or the
+/** Desktop app: the chosen application's sound for `stream`'s Live, or the
  * core's reason why there is none. */
 async function captureNativeSourceAudio(
-  kind: "s" | "l",
   stream: MediaStream,
 ): Promise<{ track: MediaStreamTrack } | { failed: string }> {
   const app = useMediaSettings.getState().sourceAudioApp;
@@ -3551,7 +3247,7 @@ async function captureNativeSourceAudio(
   // "Every application" with nothing playing is ordinary silence.
   const heard = (streams: number) => {
     silent = streams > 0 ? 0 : silent + 1;
-    noteSilentSource(kind, stream, silent >= SILENT_SECONDS ? app : null);
+    noteSilentSource(stream, silent >= SILENT_SECONDS ? app : null);
   };
   try {
     return { track: await captureAppAudio(app, app ? heard : undefined) };
@@ -3562,59 +3258,50 @@ async function captureNativeSourceAudio(
   }
 }
 
-function noteSilentSource(
-  kind: "s" | "l",
-  stream: MediaStream,
-  app: string | null,
-): void {
+function noteSilentSource(stream: MediaStream, app: string | null): void {
   const state = useVoice.getState();
-  if ((kind === "s" ? screenStream : liveStream) !== stream) return;
-  if (state.sourceAudio[kind] !== "sharing") return;
-  if ((state.sourceAudioNote[kind]?.silent ?? null) === app) return;
-  setSourceAudio(kind, "sharing", app ? { silent: app } : null);
+  if (screenStream !== stream) return;
+  if (state.sourceAudio.s !== "sharing") return;
+  if ((state.sourceAudioNote.s?.silent ?? null) === app) return;
+  setSourceAudio("sharing", app ? { silent: app } : null);
 }
 
 /**
  * The stream-sound choice changed. Switching it off takes the sound out of a
- * running share at once. Switching it on, or choosing another application,
+ * running Live at once. Switching it on, or choosing another application,
  * needs a new capture: the desktop app starts one next to the running video,
  * a browser could only reopen its picker, so there it waits for the next
- * share.
+ * Live.
  */
 function applySourceAudioChoice(appChanged: boolean): void {
   const wanted = sharesSourceAudio();
   const desktop = isDesktopApp();
-  for (const kind of ["s", "l"] as const) {
-    const stream = kind === "s" ? screenStream : liveStream;
-    if (!stream) continue;
-    sourceAudioChanges[kind] += 1;
-    const running = hasLiveTrack(stream, "audio");
-    if (running && (!wanted || (desktop && appChanged)))
-      stopLocalSourceAudio(kind, "off");
-    else if (!wanted && useVoice.getState().sourceAudio[kind] !== "off")
-      setSourceAudio(kind, "off");
-    if (wanted && desktop && (!running || appChanged))
-      void addLocalSourceAudio(kind, stream);
-  }
+  const stream = screenStream;
+  if (!stream) return;
+  sourceAudioChange += 1;
+  const running = hasLiveTrack(stream, "audio");
+  if (running && (!wanted || (desktop && appChanged)))
+    stopLocalSourceAudio("off");
+  else if (!wanted && useVoice.getState().sourceAudio.s !== "off")
+    setSourceAudio("off");
+  if (wanted && desktop && (!running || appChanged))
+    void addLocalSourceAudio(stream);
 }
 
-/** Desktop app: application sound joins a share that already runs. */
-async function addLocalSourceAudio(
-  kind: "s" | "l",
-  stream: MediaStream,
-): Promise<void> {
-  const change = sourceAudioChanges[kind];
+/** Desktop app: application sound joins a Live that already runs. */
+async function addLocalSourceAudio(stream: MediaStream): Promise<void> {
+  const change = sourceAudioChange;
   const current = () =>
-    sourceAudioChanges[kind] === change &&
-    (kind === "s" ? screenStream : liveStream) === stream &&
+    sourceAudioChange === change &&
+    screenStream === stream &&
     hasLiveTrack(stream, "video");
-  const captured = await captureNativeSourceAudio(kind, stream);
+  const captured = await captureNativeSourceAudio(stream);
   if (!current()) {
     if ("track" in captured) captured.track.stop();
     return;
   }
   if ("failed" in captured) {
-    setSourceAudio(kind, "unavailable", captured);
+    setSourceAudio("unavailable", captured);
     return;
   }
   const track = captured.track;
@@ -3622,40 +3309,35 @@ async function addLocalSourceAudio(
   for (const old of stream.getAudioTracks())
     if (old.readyState === "ended") stream.removeTrack(old);
   stream.addTrack(track);
-  bindSourceAudio(kind, stream, track);
-  setSourceAudio(kind, "sharing");
+  bindSourceAudio(stream, track);
+  setSourceAudio("sharing");
   // Before the video is on the wire, `publishLocal` sends both.
   const connection = seat.connection;
-  const parent = connection?.sender(kind);
-  const claim = liveClaimNonce;
-  if (!connection || !parent || (kind === "l" && !claim)) return;
-  const audioKind = kind === "s" ? "sa" : "la";
+  const parent = connection?.sender("s");
+  if (!connection || !parent) return;
   const mine = () =>
     current() && seat.connection === connection && track.readyState === "live";
   try {
     const sender = await connection.publish({
-      kind: audioKind,
+      kind: "sa",
       track,
       streamId: stream.id,
       epoch: captureEpoch(stream),
       parent: parent.producerId,
-      ...(kind === "l" ? { lc: claim! } : {}),
     });
     if (!mine()) {
-      if (connection.sender(audioKind) === sender)
-        await connection
-          .closeSource(audioKind, sender.producerId)
-          .catch(() => {});
+      if (connection.sender("sa") === sender)
+        await connection.closeSource("sa", sender.producerId).catch(() => {});
       return;
     }
     const self = currentUserId();
-    if (self) setPub(self, audioKind, true);
-    sendPub(audioKind, true);
+    if (self) setPub(self, "sa", true);
+    sendPub("sa", true);
     await applySendBitrate();
   } catch (error) {
     // The video is untouched: only the sound did not make it.
     if (!mine()) return;
-    // The media socket went away under it. The sound stays in the share, and
+    // The media socket went away under it. The sound stays in the Live, and
     // the seat's next connection publishes it with the video.
     if (
       !seat.isOpen() ||
@@ -3664,7 +3346,7 @@ async function addLocalSourceAudio(
       return;
     const failed = error instanceof Error ? error.message : String(error);
     logVoice("warn", "source-audio", { detail: failed });
-    stopLocalSourceAudio(kind, "unavailable", { failed });
+    stopLocalSourceAudio("unavailable", { failed });
   }
 }
 
@@ -3685,7 +3367,7 @@ export function toggleSourceWatch(userId: string, kind: "s" | "l"): void {
       .catch((error) => deps?.onError?.(error));
   if (!on) {
     dropRemote(userId, kind);
-    clearSourcePlayback("voice", userId, kind);
+    clearSourcePlayback(userId, kind);
   } else {
     reattachReceived(userId, kind);
     for (const [track, received] of receivedSourceAudio) {
@@ -3694,22 +3376,14 @@ export function toggleSourceWatch(userId: string, kind: "s" | "l"): void {
         received.kind === kind &&
         track.readyState !== "ended"
       )
-        attachSourceAudio(track, received.stream, "voice");
+        attachSourceAudio(track, received.stream);
     }
   }
 }
 
-function clearSourcePlayback(
-  role: "voice" | "watch",
-  userId?: string,
-  kind?: "s" | "l",
-): void {
+function clearSourcePlayback(userId?: string, kind?: "s" | "l"): void {
   for (const [track, entry] of sourceAudio) {
-    if (
-      entry.role !== role ||
-      (userId && entry.userId !== userId) ||
-      (kind && entry.kind !== kind)
-    )
+    if ((userId && entry.userId !== userId) || (kind && entry.kind !== kind))
       continue;
     silenceAudio(entry.el);
     sourceAudio.delete(track);
@@ -3720,35 +3394,23 @@ function clearSourcePlayback(
 function attachSourceAudio(
   track: MediaStreamTrack,
   stream: MediaStream | undefined,
-  role: "voice" | "watch",
 ): boolean {
   const identity = receivedIdentity.get(track);
   const parsed = identity ? { userId: identity.owner, k: identity.k } : null;
   if (!parsed || (parsed.k !== "sa" && parsed.k !== "la")) return false;
   dropVoiceAudio(voiceAudio, track);
-  dropVoiceAudio(watchAudio, track);
   const state = useVoice.getState();
+  // An older client's Go Live sound (`la`) plays like a Live's.
   const kind = parsed.k === "sa" ? "s" : "l";
-  receivedAudioSources.set(track, {
-    role,
-    source: kind === "s" ? "screen-audio" : "live-audio",
-  });
-  if (role === "voice")
-    receivedSourceAudio.set(track, { stream, userId: parsed.userId, kind });
+  receivedAudioSources.set(track, kind === "s" ? "screen-audio" : "live-audio");
+  receivedSourceAudio.set(track, { stream, userId: parsed.userId, kind });
   const held = sourceAudio.get(track);
   const sameSource =
-    held?.role === role &&
-    held.userId === parsed.userId &&
+    held?.userId === parsed.userId &&
     held.kind === kind &&
     held.el.srcObject === stream;
-  if (held && !sameSource)
-    clearSourcePlayback(held.role, held.userId, held.kind);
-  const allowed =
-    role === "voice"
-      ? state.sourceSubscriptions[parsed.userId]?.[kind]
-      : kind === "l" &&
-        state.watching &&
-        state.watchPublisherId === parsed.userId;
+  if (held && !sameSource) clearSourcePlayback(held.userId, held.kind);
+  const allowed = state.sourceSubscriptions[parsed.userId]?.[kind];
   if (
     !allowed ||
     parsed.userId === currentUserId() ||
@@ -3756,7 +3418,7 @@ function attachSourceAudio(
   )
     return true;
   if (sameSource) return true;
-  clearSourcePlayback(role, parsed.userId, kind);
+  clearSourcePlayback(parsed.userId, kind);
   for (const [previous, source] of receivedSourceAudio) {
     if (
       previous !== track &&
@@ -3772,8 +3434,7 @@ function attachSourceAudio(
   el.srcObject = stream ?? createStream([track]);
   el.setAttribute("data-source-audio", kind);
   el.setAttribute("data-publisher", parsed.userId);
-  el.setAttribute("data-connection", role);
-  sourceAudio.set(track, { el, role, userId: parsed.userId, kind });
+  sourceAudio.set(track, { el, userId: parsed.userId, kind });
   track.addEventListener("ended", () => {
     if (sourceAudio.get(track)?.el !== el) return;
     receivedSourceAudio.delete(track);
@@ -3789,7 +3450,7 @@ function attachSourceAudio(
 
 function forgetSourceAudioReceiver(track: MediaStreamTrack): void {
   const held = sourceAudio.get(track);
-  if (held) clearSourcePlayback(held.role, held.userId, held.kind);
+  if (held) clearSourcePlayback(held.userId, held.kind);
   receivedSourceAudio.delete(track);
 }
 
@@ -3805,9 +3466,9 @@ function parseIncomingVideo(
 
 function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
   if (track.kind === "audio") {
-    if (attachSourceAudio(track, stream, "voice")) return;
+    if (attachSourceAudio(track, stream)) return;
     forgetSourceAudioReceiver(track);
-    receivedAudioSources.set(track, { role: "voice", source: "voice" });
+    receivedAudioSources.set(track, "voice");
     attachVoiceAudio(voiceAudio, track, stream);
     return;
   }
@@ -3839,6 +3500,7 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
 function scheduleSeatRebuild(): void {
   const state = useVoice.getState();
   if (state.status !== "joined" || !state.serverId || !state.channelId) return;
+  setConnection("reconnecting");
   const mine = seat.generation;
   seatRetry.schedule(
     () => {
@@ -3857,6 +3519,7 @@ function scheduleSeatRebuild(): void {
         new Error(
           "Die Sprachverbindung konnte nicht wiederhergestellt werden. Bitte erneut beitreten.",
         ),
+        true,
       ),
   );
 }
@@ -3891,14 +3554,12 @@ async function startPeer(
   const mine = seat.generation + 1;
   const resumeCamera = useVoice.getState().camera;
   const resumeShare = useVoice.getState().sharing;
-  const resumeLive = useVoice.getState().live;
   stopPeer(recovering);
   seat.generation = mine;
   const join = micJoin;
   if (!recovering) {
     if (resumeCamera) useVoice.setState({ camera: true });
     if (resumeShare) useVoice.setState({ sharing: true });
-    if (resumeLive) useVoice.setState({ live: true });
   }
   const fetchTicket = deps?.fetchTicket ?? requestMediaTicket;
   const openMedia = deps?.openMedia ?? openMediaSocket;
@@ -3926,7 +3587,6 @@ async function startPeer(
     if (seat.generation !== mine) return;
     pc = makeMediaConnection(
       seat,
-      "voice",
       joined.generation,
       ticket.ice_servers ?? [],
       mine,
@@ -3934,6 +3594,7 @@ async function startPeer(
     await pc.start(joined.routerRtpCapabilities);
     if (seat.generation !== mine || seat.connection !== pc) return;
     startedConnections.add(pc);
+    setConnection("connected");
     useVoice.setState({ sourceWatchSupported: true });
     for (const [userId, subscriptions] of Object.entries(
       useVoice.getState().sourceSubscriptions,
@@ -3962,7 +3623,7 @@ async function startPeer(
       scheduleSeatRebuild();
       return;
     }
-    rollbackSeat(error);
+    rollbackSeat(error, retryableTicketError(error));
     return;
   }
 
@@ -4035,6 +3696,7 @@ async function startPeer(
           rawMicStream = stream;
           localStream = send;
           activeMicGain = insert;
+          noteMicLive(stream);
           noteAudioProcessing(insert.info);
           pendingMicRaw.delete(stream);
           send
@@ -4081,9 +3743,6 @@ async function startPeer(
   if (pending.localScreen) {
     await publishLocal("s", pending.localScreen);
   }
-  if (pending.localLive) {
-    await publishLocal("l", pending.localLive);
-  }
   // A button pressed during the connect has opened its own picker or prompt,
   // and may have been switched off again while the publishes above ran.
   const wanted = useVoice.getState();
@@ -4103,178 +3762,5 @@ async function startPeer(
   ) {
     void startLocalVideo("s");
   }
-  if (
-    !recovering &&
-    (wanted.live || resumeLive) &&
-    !wanted.localLive &&
-    !captureOpen("l")
-  ) {
-    void startLocalVideo("l");
-  }
   if (seat.generation !== mine) return;
-}
-
-function stopWatchPeer(preserveRetry = false): void {
-  watchRetry.cancel(!preserveRetry);
-  watchReported = false;
-  clearWatchReconnectTimer();
-  clearRecovery(watchRecoverySlot);
-  detachDiagnostics("watch");
-  watchCall.close();
-  clearSourcePlayback("watch");
-  for (const [track, source] of receivedAudioSources)
-    if (source.role === "watch") receivedAudioSources.delete(track);
-  clearVoiceAudio(watchAudio);
-  updatePlaybackBlocked();
-}
-
-function attachWatchIncoming(
-  track: MediaStreamTrack,
-  stream?: MediaStream,
-): void {
-  if (track.kind === "audio") {
-    if (attachSourceAudio(track, stream, "watch")) return;
-    forgetSourceAudioReceiver(track);
-    receivedAudioSources.set(track, { role: "watch", source: "voice" });
-    attachVoiceAudio(watchAudio, track, stream);
-    return;
-  }
-  const parsed = parseIncomingVideo(track);
-  const attached = stream ?? createStream([track]);
-  const state = useVoice.getState();
-  if (!parsed || !attached) {
-    // An untagged track cannot identify the selected publisher.
-    return;
-  }
-  if (
-    parsed.k !== "l" ||
-    (state.watchPublisherId && state.watchPublisherId !== parsed.userId)
-  )
-    return;
-  useVoice.setState({
-    watchStream: attached,
-    watchPublisherId: parsed.userId,
-  });
-}
-
-function onWatchFrame(frame: MediaServerFrame): void {
-  if (frame.op === "result") return;
-  if (frame.op !== "err") {
-    watchCall.connection?.handleEvent(frame);
-    return;
-  }
-  if (frame.e === "unavailable" && watchRetry.active) {
-    const channel = useVoice.getState().watchChannelId;
-    stopWatchPeer(true);
-    if (channel) scheduleWatchRebuild(channel);
-    return;
-  }
-  if (watchReported) return;
-  watchReported = true;
-  stopWatching();
-  deps?.onError?.(
-    new Error(
-      frame.e === "update_required"
-        ? "Bitte Gelabber aktualisieren und den Stream erneut öffnen."
-        : frame.e === "unauthorized"
-          ? errorMessage("unauthenticated")
-          : "Der Stream konnte nicht verbunden werden.",
-    ),
-  );
-}
-
-function scheduleWatchRebuild(channelId: string): void {
-  const mine = watchCall.generation;
-  watchRetry.schedule(
-    () => {
-      const state = useVoice.getState();
-      if (
-        watchCall.generation !== mine ||
-        !state.watching ||
-        state.watchChannelId !== channelId
-      )
-        return;
-      void startWatchPeer(channelId, true);
-    },
-    () => {
-      stopWatching();
-      deps?.onError?.(
-        new Error(
-          "Der Stream konnte nicht wieder verbunden werden. Bitte erneut ansehen.",
-        ),
-      );
-    },
-  );
-}
-
-async function startWatchPeer(
-  channelId: string,
-  recovering = false,
-): Promise<void> {
-  const mine = watchCall.generation + 1;
-  stopWatchPeer(recovering);
-  watchCall.generation = mine;
-  const fetchTicket = deps?.fetchTicket ?? requestMediaTicket;
-  const openMedia = deps?.openMedia ?? openMediaSocket;
-  try {
-    const publisher = useVoice.getState().watchPublisherId;
-    if (!publisher) throw new MediaError("watch_unavailable");
-    if (!deps?.createMediaConnection) preloadMediaSdk();
-    const ticket = await fetchTicket(channelId);
-    if (watchCall.generation !== mine) return;
-    if (useVoice.getState().watchPublisherId !== publisher)
-      throw new MediaError("watch_unavailable");
-    const socket = openMedia(mediaWsUrl(ticket.media_path));
-    watchCall.bind(
-      socket,
-      (frame) => {
-        if (watchCall.generation === mine) onWatchFrame(frame);
-      },
-      () => {
-        if (watchCall.generation === mine && useVoice.getState().watching)
-          scheduleWatchRebuild(channelId);
-      },
-    );
-    const joined = await watchCall.request("j", {
-      tk: ticket.ticket,
-      v: MEDIA_VERSION,
-      w: publisher,
-    });
-    if (watchCall.generation !== mine) return;
-    const connection = makeMediaConnection(
-      watchCall,
-      "watch",
-      joined.generation,
-      ticket.ice_servers ?? [],
-      mine,
-    );
-    await connection.start(joined.routerRtpCapabilities);
-    if (watchCall.generation === mine && watchCall.connection === connection)
-      attachWatchDiagnostics(mine);
-  } catch (error) {
-    if (watchCall.generation !== mine) return;
-    const unloaded = sdkLoadError(error, "den Stream erneut öffnen.");
-    if (unloaded) {
-      stopWatching();
-      deps?.onError?.(unloaded);
-      return;
-    }
-    if (
-      recovering &&
-      retryableTicketError(error) &&
-      !(error instanceof MediaError && error.code === "update_required")
-    ) {
-      stopWatchPeer(true);
-      scheduleWatchRebuild(channelId);
-      return;
-    }
-    stopWatching();
-    deps?.onError?.(
-      error instanceof MediaError && error.code === "update_required"
-        ? new Error(
-            "Bitte Gelabber aktualisieren und den Stream erneut öffnen.",
-          )
-        : error,
-    );
-  }
 }

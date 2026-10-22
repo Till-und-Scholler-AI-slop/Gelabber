@@ -87,13 +87,18 @@ try {
     await send(member, channel, "own excluded");
     assert.equal((await channelState(member, channel)).unread_count, 36);
     await member.page
-      .locator(`a[href="${path}"] [aria-label="36 ungelesene Nachrichten"]`)
+      .locator(
+        `.channel-sidebar a[href="${path}"] [aria-label="36 ungelesene Nachrichten"]`,
+      )
       .waitFor();
   });
   await check(
     "read follows visible latest, preserves history and hidden unread",
     async () => {
-      await member.page.locator(`a[href="${path}"]`).first().click();
+      await member.page
+        .locator(`.channel-sidebar a[href="${path}"]`)
+        .first()
+        .click();
       await member.page.bringToFront();
       await until(
         () => channelState(member, channel),
@@ -194,7 +199,10 @@ try {
   await check(
     "text survives reload, file survives navigation, logout releases both",
     async () => {
-      await member.page.locator(`a[href="${other}"]`).first().click();
+      await member.page
+        .locator(`.channel-sidebar a[href="${other}"]`)
+        .first()
+        .click();
       const composer = member.page.locator("form textarea").last();
       await composer.fill("draft across navigation and reload");
       await member.page.locator('input[type="file"]').setInputFiles({
@@ -202,8 +210,14 @@ try {
         mimeType: "text/plain",
         buffer: Buffer.from("unsent file"),
       });
-      await member.page.locator(`a[href="${path}"]`).first().click();
-      await member.page.locator(`a[href="${other}"]`).first().click();
+      await member.page
+        .locator(`.channel-sidebar a[href="${path}"]`)
+        .first()
+        .click();
+      await member.page
+        .locator(`.channel-sidebar a[href="${other}"]`)
+        .first()
+        .click();
       assert.equal(
         await member.page.locator("form textarea").last().inputValue(),
         "draft across navigation and reload",
@@ -263,7 +277,9 @@ try {
     await until(
       () =>
         member.page
-          .locator(`a[href="${path}"] [aria-label*="ungelesene Nachrichten"]`)
+          .locator(
+            `.channel-sidebar a[href="${path}"] [aria-label*="ungelesene Nachrichten"]`,
+          )
           .count(),
       (count) => count === 0,
       "badge-device-convergence",

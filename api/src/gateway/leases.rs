@@ -7,6 +7,9 @@ use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub const VOICE_LEASE_MS: u64 = 5000;
+/// The text hint of a Live goes out once per person and voice channel, and
+/// again only after this long without being live there.
+pub const LIVE_HINT_COOLDOWN_MS: u64 = 10 * 60 * 1000;
 
 /// JSON value of the channel's Live claim. The ACQUIRE Lua in
 /// media/src/live.rs parses the fields u, s, c, session, seat and nonce, so
@@ -139,6 +142,9 @@ fn server_key(s: Uuid) -> String {
 }
 pub fn live_key(c: Uuid) -> String {
     gelabber_shared::ticket::live_claim_key(c)
+}
+fn live_hint_key(c: Uuid, u: Uuid) -> String {
+    format!("gb:voice:live-hint:{c}:{u}")
 }
 fn encode<T: Serialize>(value: &T) -> Result<String, ApiError> {
     serde_json::to_string(value).map_err(|err| ApiError::Internal(format!("voice state: {err}")))
@@ -275,6 +281,54 @@ impl VoiceRoster {
                 Ok((c, owner))
             })
             .collect()
+    }
+    /// Whether `u` going live in `c` may post the text hint now; claims the
+    /// cooldown when it may. A Live switched off and on again, or announced
+    /// again after a reconnect, has nothing new to say.
+    async fn claim_live_hint(&self, u: Uuid, c: Uuid) -> Result<bool, ApiError> {
+        let set: Option<String> = self
+            .connections
+            .with_conn(|mut conn| async move {
+                redis::cmd("SET")
+                    .arg(live_hint_key(c, u))
+                    .arg(1)
+                    .arg("NX")
+                    .arg("PX")
+                    .arg(LIVE_HINT_COOLDOWN_MS)
+                    .query_async(&mut conn)
+                    .await
+            })
+            .await
+            .map_err(redis_err)?;
+        Ok(set.is_some())
+    }
+    /// Gives back a claim whose hint was never posted, so the next start
+    /// of that Live may post it.
+    async fn release_live_hint(&self, u: Uuid, c: Uuid) -> Result<(), ApiError> {
+        self.connections
+            .with_conn(|mut conn| async move {
+                redis::cmd("DEL")
+                    .arg(live_hint_key(c, u))
+                    .query_async::<i32>(&mut conn)
+                    .await
+            })
+            .await
+            .map_err(redis_err)?;
+        Ok(())
+    }
+    /// The cooldown of a hint runs from the end of its Live, not its start.
+    async fn hold_live_hint(&self, u: Uuid, c: Uuid) -> Result<(), ApiError> {
+        self.connections
+            .with_conn(|mut conn| async move {
+                redis::cmd("PEXPIRE")
+                    .arg(live_hint_key(c, u))
+                    .arg(LIVE_HINT_COOLDOWN_MS)
+                    .query_async::<i32>(&mut conn)
+                    .await
+            })
+            .await
+            .map_err(redis_err)?;
+        Ok(())
     }
     async fn aggregate_signal(
         &self,
@@ -526,6 +580,9 @@ impl VoiceRoster {
         .await?;
         Ok(true)
     }
+    /// `None` when the seat may not change this publication. Otherwise
+    /// whether it starts a Live: a fresh Go Live claim, or a screen this
+    /// seat did not publish before.
     pub async fn set_voice_pub(
         &self,
         id: ConnId,
@@ -655,32 +712,45 @@ impl VoiceRoster {
             }
             self.aggregate_signal(u, s, c, "u", &removed, None).await?;
         }
-        Ok(Some(started))
+        Ok(Some(
+            started || (on && kind == TrackKind::S && !previous.pubs.contains(&kind)),
+        ))
     }
     pub async fn voice_snapshot(&self, s: Uuid) -> Result<Vec<VoiceEntry>, ApiError> {
         let rows = self.records(server_key(s)).await?;
-        let mut groups: HashMap<(Uuid, Uuid), (bool, bool)> = HashMap::new();
+        let mut groups: HashMap<(Uuid, Uuid), (bool, bool, bool)> = HashMap::new();
         for row in rows {
-            let flags = groups.entry((row.u, row.c)).or_insert((true, true));
+            let flags = groups.entry((row.u, row.c)).or_insert((true, true, false));
             flags.0 &= row.m;
             flags.1 &= row.d;
+            flags.2 |= row.p.contains(&TrackKind::S);
         }
         let live = self
             .live_owners(groups.keys().map(|(_, c)| *c).collect())
             .await?;
+        // One row per person: where they are live, else the first channel.
+        let rank = |entry: &VoiceEntry| (entry.l, entry.s);
         let mut users: HashMap<Uuid, VoiceEntry> = HashMap::new();
-        for ((u, c), (m, d)) in groups {
+        for ((u, c), (m, d, screen)) in groups {
             let l = live
                 .get(&c)
                 .and_then(Option::as_ref)
                 .is_some_and(|owner| owner.u == u && owner.s == s);
-            let entry = VoiceEntry { u, c, m, d, l };
+            let entry = VoiceEntry {
+                u,
+                c,
+                m,
+                d,
+                l,
+                s: screen,
+            };
             match users.entry(u) {
                 std::collections::hash_map::Entry::Vacant(slot) => {
                     slot.insert(entry);
                 }
                 std::collections::hash_map::Entry::Occupied(mut slot)
-                    if l || (!slot.get().l && c < slot.get().c) =>
+                    if rank(&entry) > rank(slot.get())
+                        || (rank(&entry) == rank(slot.get()) && c < slot.get().c) =>
                 {
                     slot.insert(entry);
                 }
@@ -736,6 +806,9 @@ impl VoiceRoster {
                 self.aggregate_signal(u, seat.server_id, c, "u", &removed, None)
                     .await?;
             }
+            if seat.pubs.contains(&TrackKind::S) || seat.pubs.contains(&TrackKind::L) {
+                self.hold_live_hint(u, c).await?;
+            }
             self.write_seat(id, u, c, &seat).await?;
             if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
                 socket.rooms.insert(c, seat);
@@ -744,29 +817,88 @@ impl VoiceRoster {
         Ok(())
     }
 }
-impl Gateway {
-    pub async fn refresh_voice(&self, id: ConnId) -> Result<(), ApiError> {
-        self.voice.refresh(id).await?;
-        // A DM has no voice roster; its subscribe already sent the empty one.
-        let servers: Vec<Uuid> = self
+impl VoiceRoster {
+    /// One roster pass a second for the whole process, not one per socket.
+    pub(super) async fn run_rosters(&self) {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            self.refresh_rosters().await;
+        }
+    }
+
+    /// Read each watched server's roster once and queue it to every local
+    /// socket on that server whose last roster differs. A DM has no roster;
+    /// its subscribe already sent the empty one. Frames are authorized again
+    /// at dequeue like every other scoped frame. A server whose read fails
+    /// keeps its last roster until the next pass.
+    pub async fn refresh_rosters(&self) {
+        use futures_util::StreamExt;
+        let servers: HashSet<Uuid> = self
             .connections
             .inner
             .sockets
             .read()
             .await
-            .get(&id)
-            .map(|socket| socket.servers.difference(&socket.dms).copied().collect())
-            .unwrap_or_default();
-        for server in servers {
-            let snapshot = self.voice.voice_snapshot(server).await?;
-            if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id)
-                && socket.voice_rosters.get(&server) != Some(&snapshot)
-            {
-                socket.voice_rosters.insert(server, snapshot.clone());
-                socket.send(ServerFrame::voice_snap(server, snapshot));
+            .values()
+            .flat_map(|socket| socket.servers.difference(&socket.dms).copied())
+            .collect();
+        if servers.is_empty() {
+            return;
+        }
+        let snapshots: Vec<(Uuid, Vec<VoiceEntry>)> = futures_util::stream::iter(servers)
+            .map(|server| async move {
+                let snapshot = tokio::time::timeout(
+                    std::time::Duration::from_secs(1),
+                    self.voice_snapshot(server),
+                )
+                .await;
+                match snapshot {
+                    Ok(Ok(snapshot)) => Some((server, snapshot)),
+                    Ok(Err(err)) => {
+                        tracing::debug!(error = err.code(), %server, "voice roster not read");
+                        None
+                    }
+                    Err(_) => {
+                        tracing::debug!(%server, "voice roster read timed out");
+                        None
+                    }
+                }
+            })
+            .buffer_unordered(16)
+            .filter_map(std::future::ready)
+            .collect()
+            .await;
+        let mut sockets = self.connections.inner.sockets.write().await;
+        for socket in sockets.values_mut() {
+            for (server, snapshot) in &snapshots {
+                if socket.servers.contains(server)
+                    && !socket.dms.contains(server)
+                    && socket.voice_rosters.get(server) != Some(snapshot)
+                {
+                    socket.voice_rosters.insert(*server, snapshot.clone());
+                    socket.send(ServerFrame::voice_snap(*server, snapshot.clone()));
+                }
             }
         }
-        Ok(())
+    }
+}
+impl Gateway {
+    pub async fn claim_live_hint(&self, user: Uuid, channel: Uuid) -> Result<bool, ApiError> {
+        self.voice.claim_live_hint(user, channel).await
+    }
+    pub async fn release_live_hint(&self, user: Uuid, channel: Uuid) -> Result<(), ApiError> {
+        self.voice.release_live_hint(user, channel).await
+    }
+    /// Renew this socket's voice seats. Rosters go out from the process-wide
+    /// pass ([`VoiceRoster::refresh_rosters`]).
+    pub async fn refresh_voice(&self, id: ConnId) -> Result<(), ApiError> {
+        self.voice.refresh(id).await
+    }
+
+    pub async fn refresh_rosters(&self) {
+        self.voice.refresh_rosters().await
     }
 }
 
@@ -1062,12 +1194,12 @@ mod tests {
         a.join_voice(id, u, s, c).await.unwrap();
         let (watcher, mut rx) = socket(&b, Uuid::new_v4()).await;
         b.watch_server(watcher, s).await;
-        b.refresh_voice(watcher).await.unwrap();
+        b.refresh_rosters().await;
         assert!(
             matches!(rx.recv().await,Some(ServerFrame::Sig { snap: Some(rows), .. }) if rows.len()==1)
         );
         tokio::time::sleep(Duration::from_millis(5200)).await;
-        b.refresh_voice(watcher).await.unwrap();
+        b.refresh_rosters().await;
         assert!(
             matches!(rx.recv().await,Some(ServerFrame::Sig { snap: Some(rows), .. }) if rows.is_empty())
         );
@@ -1086,7 +1218,13 @@ mod tests {
             tokio::time::timeout(Duration::from_millis(200), g.refresh_voice(id)).await,
             Ok(Ok(()))
         ));
-        // The roster snapshot still runs for a socket without a seat.
+        // The roster pass does not wait on it either, and still reaches a
+        // socket without a seat.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), g.refresh_rosters())
+                .await
+                .is_ok()
+        );
         assert!(
             matches!(rx.try_recv(), Ok(ServerFrame::Sig { s: got, snap: Some(rows), .. }) if got == s && rows.is_empty())
         );
@@ -1125,7 +1263,7 @@ mod tests {
         g.mark_dm(watcher, dm).await;
         g.watch_server(watcher, dm).await;
         g.watch_server(watcher, s).await;
-        g.refresh_voice(watcher).await.unwrap();
+        g.refresh_rosters().await;
         let mut snaps = HashMap::new();
         while let Ok(frame) = rx.try_recv() {
             // Pub/Sub join and publish frames carry no snapshot.
@@ -1142,6 +1280,48 @@ mod tests {
         let live: HashMap<Uuid, bool> = snaps[&s].iter().map(|row| (row.u, row.l)).collect();
         assert_eq!(live, HashMap::from([(a, true), (b, false)]));
         for id in [sa, sb, sd, watcher] {
+            g.detach(id).await;
+        }
+    }
+
+    /// One pass reads the roster once for every socket on the server and
+    /// sends each socket only what changed for it.
+    #[tokio::test]
+    async fn roster_pass_reaches_every_watcher_once_per_change() {
+        let g = gateway();
+        let (s, c) = (Uuid::new_v4(), Uuid::new_v4());
+        let (first, mut rx1) = socket(&g, Uuid::new_v4()).await;
+        let (second, mut rx2) = socket(&g, Uuid::new_v4()).await;
+        for id in [first, second] {
+            g.watch_server(id, s).await;
+        }
+        let snaps = |rx: &mut mpsc::Receiver<ServerFrame>| {
+            let mut rows = Vec::new();
+            while let Ok(frame) = rx.try_recv() {
+                if let ServerFrame::Sig {
+                    s: got,
+                    snap: Some(snap),
+                    ..
+                } = frame
+                {
+                    assert_eq!(got, s);
+                    rows.push(snap.len());
+                }
+            }
+            rows
+        };
+        g.refresh_rosters().await;
+        g.refresh_rosters().await;
+        assert_eq!(snaps(&mut rx1), vec![0]);
+        assert_eq!(snaps(&mut rx2), vec![0]);
+        let u = Uuid::new_v4();
+        let (member, _rx) = socket(&g, u).await;
+        g.join_voice(member, u, s, c).await.unwrap();
+        g.refresh_rosters().await;
+        g.refresh_rosters().await;
+        assert_eq!(snaps(&mut rx1), vec![1]);
+        assert_eq!(snaps(&mut rx2), vec![1]);
+        for id in [first, second, member] {
             g.detach(id).await;
         }
     }
@@ -1213,6 +1393,68 @@ mod tests {
         assert_ne!(old.id, new.id);
         g.voice.drop_seat(id, u, c, old).await.unwrap();
         assert_eq!(g.voice_snapshot(s).await.unwrap().len(), 1);
+        g.detach(id).await;
+    }
+
+    #[tokio::test]
+    async fn screen_starts_a_live_once_per_seat_and_shows_in_the_snapshot() {
+        let g = gateway();
+        let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let (id, _rx) = socket(&g, u).await;
+        g.join_voice(id, u, s, c).await.unwrap();
+        let started = g.set_voice_pub(id, u, s, c, TrackKind::S, true).await;
+        assert_eq!(started.unwrap(), Some(true));
+        // A re-announcement of the same screen is no new Live.
+        let again = g.set_voice_pub(id, u, s, c, TrackKind::S, true).await;
+        assert_eq!(again.unwrap(), Some(false));
+        let sound = g.set_voice_pub(id, u, s, c, TrackKind::Sa, true).await;
+        assert_eq!(sound.unwrap(), Some(false));
+        let snapshot = g.voice_snapshot(s).await.unwrap();
+        assert!(snapshot[0].s && !snapshot[0].l);
+        let stopped = g.set_voice_pub(id, u, s, c, TrackKind::S, false).await;
+        assert_eq!(stopped.unwrap(), Some(false));
+        assert!(!g.voice_snapshot(s).await.unwrap()[0].s);
+        let restarted = g.set_voice_pub(id, u, s, c, TrackKind::S, true).await;
+        assert_eq!(restarted.unwrap(), Some(true));
+        g.detach(id).await;
+    }
+
+    async fn hint_ttl(c: Uuid, u: Uuid) -> i64 {
+        redis::cmd("PTTL")
+            .arg(live_hint_key(c, u))
+            .query_async(&mut redis().await)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn live_hint_cooldown_holds_while_live() {
+        let g = gateway();
+        let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        assert!(g.claim_live_hint(u, c).await.unwrap());
+        assert!(!g.claim_live_hint(u, c).await.unwrap());
+        // Per person and channel.
+        assert!(g.claim_live_hint(u, Uuid::new_v4()).await.unwrap());
+        assert!(g.claim_live_hint(Uuid::new_v4(), c).await.unwrap());
+        // A claim given back, its hint never posted, may be taken again.
+        g.release_live_hint(u, c).await.unwrap();
+        assert!(g.claim_live_hint(u, c).await.unwrap());
+
+        let (id, _rx) = socket(&g, u).await;
+        g.join_voice(id, u, s, c).await.unwrap();
+        redis::cmd("PEXPIRE")
+            .arg(live_hint_key(c, u))
+            .arg(1000)
+            .query_async::<i32>(&mut redis().await)
+            .await
+            .unwrap();
+        g.refresh_voice(id).await.unwrap();
+        assert!(hint_ttl(c, u).await <= 1000, "not live: it runs down");
+        g.set_voice_pub(id, u, s, c, TrackKind::S, true)
+            .await
+            .unwrap();
+        g.refresh_voice(id).await.unwrap();
+        assert!(hint_ttl(c, u).await > 1000, "live: it starts again");
         g.detach(id).await;
     }
 }

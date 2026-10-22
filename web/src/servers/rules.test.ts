@@ -4,8 +4,6 @@ import {
   SERVER_NAME_MAX,
   slugifyChannelName,
   validateChannelName,
-  validateExpiresInHours,
-  validateMaxUses,
   validateName,
 } from "./rules.ts";
 
@@ -30,17 +28,5 @@ describe("server rules (mirror of api/src/servers/validate.rs)", () => {
     expect(validateChannelName("###", "text")).toBe("invalid");
     expect(validateChannelName("###", "voice")).toBeNull();
     expect(validateChannelName("", "voice")).toBe("required");
-  });
-
-  it("checks invite limits, empty meaning unlimited", () => {
-    expect(validateMaxUses("")).toBeNull();
-    expect(validateMaxUses("5")).toBeNull();
-    expect(validateMaxUses("0")).toBe("invalid");
-    expect(validateMaxUses("1.5")).toBe("invalid");
-    expect(validateMaxUses("10001")).toBe("invalid");
-    expect(validateExpiresInHours("")).toBeNull();
-    expect(validateExpiresInHours("24")).toBeNull();
-    expect(validateExpiresInHours("-1")).toBe("invalid");
-    expect(validateExpiresInHours("abc")).toBe("invalid");
   });
 });

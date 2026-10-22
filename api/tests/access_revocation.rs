@@ -870,3 +870,78 @@ async fn go_live_with_one_pool_connection_keeps_bootstrap_responsive_and_persist
         }
     }).await.expect("authorized Live hint persists");
 }
+
+/// A socket process whose own periodic checks are far apart: a 15 s
+/// heartbeat and no voice seat, so only the 10 s backstop would check it.
+async fn serve_slow_checks(pool: PgPool) -> (std::net::SocketAddr, AppState) {
+    let redis = common::redis_url();
+    let config = gelabber_api::Config::from_source(|key| match key {
+        "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
+        "API_LINK_PREVIEWS" => Some("false".to_owned()),
+        "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".to_owned()),
+        "REDIS_URL" => Some(redis.clone()),
+        "API_WS_HEARTBEAT_MS" => Some("15000".to_owned()),
+        "API_WS_DEAD_MS" => Some("60000".to_owned()),
+        _ => None,
+    })
+    .unwrap();
+    let state = AppState::with_pool(&config, pool).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = gelabber_api::app(state.clone());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    state
+        .gateway
+        .wait_ready(Duration::from_secs(2))
+        .await
+        .unwrap();
+    (addr, state)
+}
+
+/// A kick on another API process reaches an idle socket without a seat at
+/// once, through the `gb:rv` notice, not at its next periodic check.
+#[sqlx::test]
+async fn kick_on_another_process_reaches_an_idle_socket_without_waiting(pool: PgPool) {
+    let (addr, _) = serve_slow_checks(pool.clone()).await;
+    let state = common::ws_state(pool);
+    let mut owner = register(&state, "owner").await;
+    let mut member = register(&state, "member").await;
+    let (sid, text, _, code) = server(&mut owner, "Notice").await;
+    join(&mut member, &code).await;
+    let uid: Uuid = member.user_id().parse().unwrap();
+    let mut ws = connect(addr, &member).await;
+    subscribe(&mut ws, sid, text).await;
+    let response = owner
+        .send(
+            Method::POST,
+            &format!("/api/servers/{sid}/kick"),
+            Some(json!({"user_id":uid})),
+        )
+        .await;
+    assert_eq!(response.status, StatusCode::NO_CONTENT, "{}", response.body);
+    // No frame from either side in between: `until` waits at most 3 s.
+    until(&mut ws, |f| {
+        f["op"] == "err" && f["e"] == "not_found" && f["s"] == sid.to_string()
+    })
+    .await;
+}
+
+/// Logout on another API process closes an idle socket of that session at
+/// once, with nothing published on its topics.
+#[sqlx::test]
+async fn logout_on_another_process_closes_an_idle_socket_without_waiting(pool: PgPool) {
+    let (addr, _) = serve_slow_checks(pool.clone()).await;
+    let state = common::ws_state(pool);
+    let mut owner = register(&state, "owner").await;
+    let (sid, text, _, _) = server(&mut owner, "Logout").await;
+    let mut ws = connect(addr, &owner).await;
+    subscribe(&mut ws, sid, text).await;
+    assert_eq!(
+        owner
+            .send(Method::POST, "/api/auth/logout", None)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    closed_without_events(&mut ws).await;
+}
