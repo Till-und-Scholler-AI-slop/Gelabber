@@ -27,6 +27,19 @@ If a new `v*` name would miss that pattern, add the same protection by hand befo
 - After every merged hotfix on `main`, promptly open a sync PR from `main` (or a dedicated sync branch containing it) to the current `v*` branch. Preserve the hotfix commits so ancestry proves the sync; require the usual review and CI before merging. Feature branches then merge the updated version branch.
 - Keep fixes independently reviewable. Review and merge each focused fix before a release PR bundles it; a release bundle does not replace the individual reviews.
 
+## CI workflows (`.github/workflows`)
+
+Keep CI lean. Pull requests check only what is needed to merge safely.
+
+- **Pull requests:** fmt, clippy/lint, tests, build, and one representative integration check per area. Aim for under 15 minutes per workflow with a warm cache.
+- **After merge (push to `main`/`v*`) and releases:** packaging, installers, package repositories, signing and uploads. Do not run these on every PR.
+- **Manual diagnostics** (fault matrices, soak and stability loops) go in their own workflow, started by hand or by a PR label, not behind `if: inputs.*` steps in the PR gate (see `e2e-extended.yml`: label `e2e-extended`).
+- **Lists of scripts** go behind one entry point (e.g. `npm run test:checks`), not one CI line per file. CI and developers run the same command.
+- **New check:** say what it catches that existing checks miss. Add it to an existing job unless a parallel job saves wall time. Remove checks that a new one replaces.
+- **Every workflow** sets top-level `permissions`, by default `contents: read`, with jobs adding only what they need. Every job sets `timeout-minutes`. Actions stay pinned to commit SHAs (`workflow-pins.yml`).
+- **Caches** are saved only by pushes (`save-if`, `cache-to`). Pull requests only read them, because per-PR copies exceed the repository's cache quota.
+- **Comments** in workflows are one or two lines saying why. Longer reasoning and history go in commit messages or `docs/`.
+
 ## Product
 
 No LiveKit, Daily, Agora, Twilio, Stream, or Socket.IO. Own WebSocket and own product signaling. Keep the locked stack pins.

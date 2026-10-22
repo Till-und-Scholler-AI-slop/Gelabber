@@ -9,11 +9,11 @@ import { join } from "node:path";
 
 test("exact CI fault loop attempts both browsers and both profiles after first failure, retains nonzero, and omits SFU only for core", async () => {
   const workflow = await readFile(
-    new URL("../../../.github/workflows/ci.yml", import.meta.url),
+    new URL("../../../.github/workflows/e2e-extended.yml", import.meta.url),
     "utf8",
   );
   const match =
-    / {6}- name: Real app core and API\/Redis Live-lease faults in both browsers\n {8}if: [^\n]+\n {8}run: \|\n([\s\S]*?)(?=\n {6}- name:)/.exec(
+    / {6}- name: Real app core and API\/Redis Live-lease faults in both browsers\n(?: {8}if: [^\n]+\n)? {8}run: \|\n([\s\S]*?)(?=\n {6}- name:)/.exec(
       workflow,
     );
   assert.ok(match, "Actual workflow loop required");

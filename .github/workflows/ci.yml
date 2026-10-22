@@ -1,15 +1,11 @@
-# Verify API, web, media, and deployment configuration.
-# Compose/browser smoke tests run locally to keep Actions minutes bounded.
-# No image push. No continue-on-error. Missing Postgres/Redis/MinIO fail the job.
+# PR gate for API, media, web and deployment config. No image push, no
+# continue-on-error; missing Postgres/Redis/MinIO fail the job. Manual fault
+# diagnostics live in e2e-extended.yml.
 name: CI
 
 on:
   workflow_dispatch:
     inputs:
-      extended_e2e:
-        description: Run the extended browser and fault diagnostic matrix (strict results)
-        type: boolean
-        default: true
       verify_typing_stability:
         description: Require 20 consecutive isolated typing latency checks (no retries)
         type: boolean
@@ -23,35 +19,59 @@ on:
       - docker/**
       - .dockerignore
       - deploy/compose/**
-      # The backup script, which deploy/compose/tests runs.
+      # Read by deploy/compose/tests.
       - deploy/backup.sh
-      # Operator advice that deploy/compose/tests reads (Caddy's Host header).
       - deploy/README.md
       - Cargo.toml
       - Cargo.lock
       - rust-toolchain.toml
-      # Its version against the server's (deploy/compose/tests).
       - desktop/Cargo.toml
-      # This workflow, and what its deployment tests read (the image
-      # workflow and its script). Other workflows cannot change its result
-      # but by their action pins, which workflow-pins.yml checks.
+      # This workflow and what its deployment tests read.
       - .github/workflows/ci.yml
       - .github/workflows/publish-images.yml
       - .github/workflows/scripts/**
   push:
-    branches: [main]
+    branches: [main, "v[0-9]*"]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  lint:
+    name: Rust lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
+        with:
+          components: rustfmt, clippy
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      # Type check only: DOCS_RS makes mediasoup-sys skip its worker build.
+      - name: Clippy
+        env:
+          DOCS_RS: "1"
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
   rust:
     name: Rust tests
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: read
@@ -118,52 +138,20 @@ jobs:
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
-        with:
-          components: rustfmt
 
       - name: Build verified Debian native CI toolchain
         run: docker build --target base --file media/Dockerfile --tag gelabber-native-ci-toolchain:local .
 
-      - name: Install native tools for separate Ubuntu fault diagnostics
-        if: github.event_name == 'workflow_dispatch' && inputs.extended_e2e
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential python3-venv
-          python3 - <<'PY'
-          import json, subprocess
-          commands = {"gcc": ["gcc", "--version"], "g++": ["g++", "--version"],
-                      "python": ["python3", "--version"]}
-          print(json.dumps({"scope": "Optional Ubuntu fault diagnostics; separate from verified Debian PR gate",
-                            "versions": {name: subprocess.check_output(command, text=True).splitlines()[0]
-                                         for name, command in commands.items()},
-                            "packages": subprocess.check_output(["dpkg-query", "-W", "build-essential",
-                                                                  "gcc", "g++", "python3", "python3-venv"],
-                                                                 text=True).splitlines()}, indent=2))
-          PY
-          native_build_dir="${RUNNER_TEMP}/gelabber-native-build"
-          python3 docker/mediasoup-build-tools.py --destination "$native_build_dir"
-          python3 - "$native_build_dir" "$GITHUB_ENV" <<'PY'
-          import sys
-          from pathlib import Path
-          root = Path(sys.argv[1]).resolve()
-          values = {"PYTHON": root / "native-python", "CARGO_BUILD_JOBS": "2", "PIP_NO_INDEX": "1",
-                    "PIP_FIND_LINKS": root / "wheelhouse", "PIP_CONSTRAINT": root / "constraints.txt",
-                    "MESON_VERSION": "1.12.0", "NINJA_VERSION": "1.13.2"}
-          with open(sys.argv[2], "a") as output:
-              output.writelines(f"{name}={value}\n" for name, value in values.items())
-          PY
-
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          # Keep compiled dependencies when a runtime assertion fails; checks
-          # remain failing and every test is rerun on the next candidate.
           cache-on-failure: true
-          # Written by main only, read by every pull request: one copy per
-          # pull request (some 900 MB) pushed the repository past its cache
-          # quota, and evictions then took the main and desktop caches too.
+          # Pushes save, pull requests only read: per-PR copies (~900 MB)
+          # blew the cache quota.
           save-if: ${{ github.event_name == 'push' }}
+          # The build runs in the Debian image (shared-key), so the runner's
+          # own Rust versions must not change the key and drop the cache.
+          add-rust-environment-hash-key: false
           shared-key: native-debian-${{ hashFiles('media/Dockerfile', 'docker/mediasoup-*', 'docker/install-mediasoup-debian-build-tools.sh') }}
           workspaces: . -> target/native-debian
 
@@ -188,8 +176,7 @@ jobs:
           test -n "$MINIO_ROOT_USER"
           test -n "$MINIO_ROOT_PASSWORD"
           curl -fsS "$MINIO_ENDPOINT/minio/health/ready" >/dev/null
-          # Keep the 100ms latency assertion away from concurrent integration tests.
-          # The skipped test is mandatory in the following isolated step.
+          # The 100 ms typing assertion runs alone in the next step.
           sh docker/run-native-ci.sh test --locked --workspace --all-targets --no-fail-fast -- --skip typing_broadcasts_fast_and_clears_on_stop --test-threads=4
 
       - name: Test typing latency in isolation
@@ -203,69 +190,9 @@ jobs:
           fi
           for ((iteration=1; iteration<=repetitions; iteration++)); do
             echo "Isolated typing latency check ${iteration}/${repetitions}"
-            # Match workspace feature unification to reuse the already built tests.
+            # Same flags as above, so the built tests are reused.
             sh docker/run-native-ci.sh test --locked --workspace --all-targets typing_broadcasts_fast_and_clears_on_stop -- --exact --test-threads=1
           done
-
-      - name: Build owned API and SFU for isolated fault acceptance
-        if: github.event_name == 'workflow_dispatch' && inputs.extended_e2e
-        run: cargo build --locked -p gelabber-api -p gelabber-media
-
-      - name: Node for owned core fault acceptance
-        if: github.event_name == 'workflow_dispatch' && inputs.extended_e2e
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 26.8.2
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Install real browsers and SQL fixture client
-        if: github.event_name == 'workflow_dispatch' && inputs.extended_e2e
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
-          npm ci --prefix web
-          cd web
-          npx playwright install --with-deps chromium firefox
-
-      - name: Prepare dedicated fault database, bucket and immutable API/SFU copies
-        if: github.event_name == 'workflow_dispatch' && inputs.extended_e2e
-        env:
-          GELABBER_E2E_PREPARE_MEDIA: "true"
-        run: node web/scripts/e2e/ci-fault-prepare.mjs
-
-      - name: Real app core and API/Redis Live-lease faults in both browsers
-        if: github.event_name == 'workflow_dispatch' && inputs.extended_e2e
-        run: |
-          set -euo pipefail
-          failed=0
-          for engine in chromium firefox; do
-            for profile in core-faults media-faults; do
-              owned_media_env="$GELABBER_E2E_MEDIA_FAULT_ENV"
-              owned_media_manifest="$GELABBER_E2E_MEDIA_MANIFEST"
-              if [ "$profile" = core-faults ]; then
-                owned_media_env=
-                owned_media_manifest=
-              fi
-              if ! GELABBER_E2E_MEDIA_FAULT_ENV="$owned_media_env" \
-                GELABBER_E2E_MEDIA_MANIFEST="$owned_media_manifest" \
-                GELABBER_E2E_BROWSER="$engine" GELABBER_E2E_PROFILE="$profile" \
-                GELABBER_E2E_REPORT="/tmp/gelabber-e2e/${engine}-${profile}.json" \
-                node web/scripts/e2e/fault-run.mjs; then
-                failed=1
-              fi
-            done
-          done
-          exit "$failed"
-
-      - name: Upload redacted owned fault results
-        if: always() && github.event_name == 'workflow_dispatch' && inputs.extended_e2e
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: app-acceptance-core-faults
-          path: /tmp/gelabber-e2e/*.json
-          if-no-files-found: warn
 
       - name: Dump test MinIO logs
         if: failure()
@@ -281,6 +208,7 @@ jobs:
   web:
     name: Frontend
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: web
@@ -307,25 +235,8 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Test native E2E harness boundaries
-        run: |
-          npm run test:e2e-harness
-          node scripts/e2e/rendered-frames.checks.mjs
-          node scripts/e2e/media-probe.checks.mjs
-          node scripts/e2e/publisher-encoders.checks.mjs
-          node scripts/e2e/receive-loss-proxy.checks.mjs
-          node scripts/e2e/browser-options.checks.mjs
-          node scripts/e2e/native-evaluate.checks.mjs
-          node --experimental-vm-modules scripts/e2e/access-native.checks.mjs
-          node scripts/e2e/held-renderer.checks.mjs
-          node --experimental-vm-modules scripts/e2e/native-finish.checks.mjs
-          node --experimental-vm-modules scripts/e2e/media-extra.checks.mjs
-          node scripts/smoke-netem.checks.mjs
-          node scripts/e2e/faults.checks.mjs
-          node --experimental-vm-modules scripts/e2e/teardown.checks.mjs
-          node --experimental-vm-modules scripts/e2e/media-runtime.checks.mjs
-          node --experimental-vm-modules scripts/e2e/ci-fault-prepare.checks.mjs
-          node scripts/e2e/ci-fault-loop.checks.mjs
+      - name: Test E2E harness and scripts
+        run: npm run test:checks
 
       - name: Build
         run: npm run build
