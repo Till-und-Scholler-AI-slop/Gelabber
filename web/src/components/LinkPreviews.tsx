@@ -62,11 +62,13 @@ function PreviewCard({
   onRemove: (() => void) | null;
 }) {
   const openImage = useContext(OpenImage);
+  // The stored picture can be gone (expired, or the store was reset): the
+  // card then goes on as text instead of showing a broken image.
+  const [imageFailed, setImageFailed] = useState(false);
+  const image = imageFailed ? undefined : preview.image;
   const video = preview.youtube_id !== undefined;
   const large =
-    video ||
-    (preview.image !== undefined &&
-      preview.image.width >= LARGE_IMAGE_MIN_WIDTH);
+    video || (image !== undefined && image.width >= LARGE_IMAGE_MIN_WIDTH);
   const name = preview.title ?? hostOf(preview.url);
   return (
     <article
@@ -83,41 +85,46 @@ function PreviewCard({
             target="_blank"
             rel="noopener noreferrer nofollow"
             className="lr-preview-title"
+            title={preview.title}
           >
             {preview.title}
           </a>
         ) : null}
         {preview.description ? (
-          <p className="lr-preview-description">{preview.description}</p>
+          <p className="lr-preview-description" title={preview.description}>
+            {preview.description}
+          </p>
         ) : null}
       </div>
       {preview.youtube_id ? (
         <YouTubePlayer
           id={preview.youtube_id}
           title={preview.title}
-          image={preview.image?.url}
+          image={image?.url}
+          onImageError={() => setImageFailed(true)}
         />
-      ) : preview.image ? (
+      ) : image ? (
         <button
           type="button"
           className="lr-preview-image"
           aria-label={`Bild vergrößern: ${name}`}
+          title="Bild vergrößern"
           onClick={() =>
-            preview.image &&
             openImage({
               id: `preview:${preview.url}`,
-              src: preview.image.url,
+              src: image.url,
               filename: name,
             })
           }
         >
           <img
-            src={preview.image.url}
-            width={preview.image.width}
-            height={preview.image.height}
+            src={image.url}
+            width={image.width}
+            height={image.height}
             alt=""
             loading="lazy"
             decoding="async"
+            onError={() => setImageFailed(true)}
           />
         </button>
       ) : null}
@@ -140,10 +147,12 @@ function YouTubePlayer({
   id,
   title,
   image,
+  onImageError,
 }: {
   id: string;
   title?: string;
   image?: string;
+  onImageError: () => void;
 }) {
   const [playing, setPlaying] = useState(false);
   if (playing)
@@ -166,7 +175,13 @@ function YouTubePlayer({
       onClick={() => setPlaying(true)}
     >
       {image ? (
-        <img src={image} alt="" loading="lazy" decoding="async" />
+        <img
+          src={image}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          onError={onImageError}
+        />
       ) : null}
       <span className="lr-preview-play" aria-hidden>
         ▶
