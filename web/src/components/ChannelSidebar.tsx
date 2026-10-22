@@ -901,8 +901,6 @@ export function ChannelRow({
           <span aria-hidden="true">Live</span>
           <span className="sr-only">{liveSentence(live, false)}</span>
         </span>
-      ) : inVoice ? (
-        <span className="channel-row-connected" title="Verbunden" />
       ) : null}
     </>
   );
@@ -912,6 +910,7 @@ export function ChannelRow({
     unread ? "is-unread" : "",
     pending ? "opacity-50" : "",
     muted && text ? "is-muted" : "",
+    inVoice ? "is-in-voice" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -929,6 +928,7 @@ export function ChannelRow({
           params={{ serverId: channel.server_id, channelId: channel.id }}
           aria-current={active ? "page" : undefined}
           aria-describedby={hintId}
+          title={inVoice ? `${channel.name} · verbunden` : undefined}
           tabIndex={roving.tabIndex(0)}
           className="channel-row-link"
           onContextMenu={

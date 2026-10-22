@@ -1061,36 +1061,6 @@ a.voice-session-link:hover > span {
 .voice-state-icons-speaker {
   color: var(--lr-online);
 }
-/* The sidebar's note that a call runs, and where. */
-.user-call-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: calc(100% - 16px);
-  margin: 0 8px 6px;
-  padding: 3px 10px;
-  border-radius: var(--lr-radius-full);
-  /* Light enough for --lr-online-text to keep 4.5:1 in the light theme. */
-  background: color-mix(in srgb, var(--lr-online) 8%, var(--lr-panel));
-  color: var(--lr-online-text);
-  font: var(--lr-type-meta);
-  font-weight: 500;
-}
-.user-call-chip > span:last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.user-call-chip:hover {
-  text-decoration: underline;
-}
-.user-call-chip-dot {
-  flex-shrink: 0;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--lr-online);
-}
 .voice-source-audio-notice {
   color: var(--lr-muted);
   line-height: 1.4;

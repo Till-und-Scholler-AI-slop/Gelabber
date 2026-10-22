@@ -119,18 +119,20 @@ function row({
   manage = true,
   voice = false,
   live = [],
+  inVoice = false,
 }: {
   coarse: boolean;
   manage?: boolean;
   voice?: boolean;
   live?: string[];
+  inVoice?: boolean;
 }) {
   const noop = () => {};
   return wrap(
     <ChannelRow
       channel={channel("termine", "cat", voice ? "voice" : "text")}
       active={false}
-      inVoice={false}
+      inVoice={inVoice}
       live={live}
       manage={manage}
       coarse={coarse}
@@ -189,6 +191,22 @@ describe("channel row", () => {
       "Mia ist live",
     );
     expect(row({ coarse: false, voice: true })).not.toContain("live");
+  });
+
+  it("marks the own call's channel, Live or not", () => {
+    const quiet = row({ coarse: false, voice: true, inVoice: true });
+    expect(quiet).toContain("channel-row is-in-voice");
+    expect(quiet).toContain('title="termine · verbunden"');
+    // A Live there keeps both: the badge and the green speaker.
+    const live = row({
+      coarse: false,
+      voice: true,
+      inVoice: true,
+      live: ["Mia"],
+    });
+    expect(live).toContain("is-in-voice");
+    expect(live).toContain("Mia ist live");
+    expect(row({ coarse: false, voice: true })).not.toContain("is-in-voice");
   });
 
   it("keeps read channels plain", () => {
