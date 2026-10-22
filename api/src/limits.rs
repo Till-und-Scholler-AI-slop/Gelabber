@@ -15,7 +15,7 @@
 //! spin.
 
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -408,46 +408,17 @@ fn is_per_account(key: &str) -> bool {
     key.starts_with("login:") || key.starts_with("mail:")
 }
 
-/// The client address the rate limits are keyed by, parsed, with IPv6
-/// grouped per /64 (one subscriber's prefix, like one IPv4 address behind
-/// NAT). Caddy, in front of the API in every supported setup, sends
-/// `X-Forwarded-For` as the one client address it resolved: its peer, or,
-/// when that peer is a proxy it trusts, the rightmost entry that is no
-/// trusted proxy. A proxy that appends instead puts its own peer last. So the
-/// rightmost entry is the one written by the proxy next to the API; entries
-/// to its left come from the client and are not believed, and a rightmost
-/// entry that is no address falls back to the TCP peer, never to one further
-/// left. Without the header (the API reached directly) the TCP peer is the
-/// client.
+/// The client address the rate limits are keyed by, with IPv6 grouped per
+/// /64: the rightmost `X-Forwarded-For` entry, which the Caddy next to the
+/// API wrote, or the TCP peer without one (`gelabber_shared::client_addr`).
 fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>) -> String {
-    forwarded_ip(headers)
-        .or(peer)
-        .map(rate_key)
-        .unwrap_or_else(|| "unknown".to_owned())
-}
-
-fn forwarded_ip(headers: &HeaderMap) -> Option<IpAddr> {
-    headers
-        .get_all("x-forwarded-for")
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|raw| raw.split(','))
-        .map(str::trim)
-        .rfind(|ip| !ip.is_empty())?
-        .parse()
-        .ok()
-}
-
-/// IPv4 as is (also when it arrives IPv4-mapped); IPv6 as its /64, since a
-/// single client usually holds a whole prefix and picks addresses from it.
-fn rate_key(ip: IpAddr) -> String {
-    match ip.to_canonical() {
-        IpAddr::V4(v4) => v4.to_string(),
-        IpAddr::V6(v6) => {
-            let s = v6.segments();
-            format!("{}/64", Ipv6Addr::new(s[0], s[1], s[2], s[3], 0, 0, 0, 0))
-        }
-    }
+    gelabber_shared::client_addr::client_key(
+        headers
+            .get_all("x-forwarded-for")
+            .iter()
+            .filter_map(|value| value.to_str().ok()),
+        peer,
+    )
 }
 
 /// Whom the session buckets (`api`, `msg`, `up`) count: the session cookie
@@ -589,41 +560,6 @@ mod tests {
         // Nothing in front of the API wrote this; the client did.
         headers.insert("x-real-ip", "10.9.9.9".parse().unwrap());
         let peer = Some(IpAddr::from([192, 0, 2, 7]));
-        assert_eq!(client_ip(&headers, peer), "192.0.2.7");
-        assert_eq!(client_ip(&headers, None), "unknown");
-    }
-
-    fn forwarded(value: &str) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", value.parse().unwrap());
-        headers
-    }
-
-    #[test]
-    fn ipv6_clients_are_grouped_per_64() {
-        let one = client_ip(&forwarded("2001:db8:1:2::1"), None);
-        assert_eq!(one, "2001:db8:1:2::/64");
-        assert_eq!(client_ip(&forwarded("2001:db8:1:2:ffff::9"), None), one);
-        assert_eq!(
-            client_ip(&forwarded("2001:db8:1:3::1"), None),
-            "2001:db8:1:3::/64"
-        );
-        let peer = Some("2001:db8:1:2:abcd::5".parse().unwrap());
-        assert_eq!(client_ip(&HeaderMap::new(), peer), one);
-    }
-
-    #[test]
-    fn ipv4_mapped_addresses_count_as_ipv4() {
-        assert_eq!(client_ip(&forwarded("::ffff:1.2.3.4"), None), "1.2.3.4");
-        let peer = Some("::ffff:1.2.3.4".parse().unwrap());
-        assert_eq!(client_ip(&HeaderMap::new(), peer), "1.2.3.4");
-    }
-
-    #[test]
-    fn an_unparsable_rightmost_entry_falls_back_to_the_peer() {
-        let headers = forwarded("10.0.0.9, not-an-ip");
-        let peer = Some(IpAddr::from([192, 0, 2, 7]));
-        // Never the entry further left: the client wrote that one.
         assert_eq!(client_ip(&headers, peer), "192.0.2.7");
         assert_eq!(client_ip(&headers, None), "unknown");
     }

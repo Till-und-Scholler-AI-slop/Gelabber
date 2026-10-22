@@ -1,19 +1,26 @@
 //! Gelabber's authenticated v4 mediasoup control WebSocket.
-//! A socket without a joined room lives at most `MEDIA_JOIN_DEADLINE_MS`.
+//! A socket without a joined room lives at most `MEDIA_JOIN_DEADLINE_MS`,
+//! and each client address may hold `MEDIA_PENDING_PER_IP` of them
+//! (`crate::limits`). A joined socket is pinged every `MEDIA_HEARTBEAT_MS`
+//! and closed once nothing arrived from it for `MEDIA_IDLE_TIMEOUT_MS`.
 //! There is no Origin check on purpose: the socket is authenticated by the
 //! single-use ticket in its first frame, not by a cookie.
-use axum::Router;
-use axum::extract::State;
 use axum::extract::ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
-use axum::response::Response;
+use axum::extract::{ConnectInfo, State};
+use axum::http::header::RETRY_AFTER;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use axum::{Extension, Router};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
+use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+use crate::limits::{PendingSlot, Refused};
 use crate::protocol::{ClientFrame, MEDIA_PROTOCOL_VERSION, OUTBOUND_CAPACITY, ServerFrame};
 use crate::sfu::PeerId;
 use crate::state::AppState;
@@ -31,10 +38,39 @@ pub fn router() -> Router<AppState> {
         .route("/ws", get(upgrade))
         .route("/media/ws", get(upgrade))
 }
-async fn upgrade(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
+async fn upgrade(
+    State(state): State<AppState>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
+    let key = client_key(&headers, peer.map(|Extension(ConnectInfo(addr))| addr));
+    // Refused before the upgrade: a plain HTTP answer holds no socket task.
+    let slot = match state.pending.acquire(&key) {
+        Ok(slot) => slot,
+        Err(reason) => {
+            debug!(?reason, "media socket refused: too many pending sockets");
+            let status = match reason {
+                Refused::PerIp => StatusCode::TOO_MANY_REQUESTS,
+                Refused::Total => StatusCode::SERVICE_UNAVAILABLE,
+            };
+            return (status, [(RETRY_AFTER, "1")]).into_response();
+        }
+    };
     ws.max_message_size(MAX_FRAME)
         .max_frame_size(MAX_FRAME)
-        .on_upgrade(move |socket| run(socket, state))
+        .on_upgrade(move |socket| run(socket, state, key, slot))
+}
+/// The address the pending-socket cap counts: the rightmost
+/// `X-Forwarded-For` entry, which the Caddy in front wrote, or the TCP peer.
+fn client_key(headers: &HeaderMap, peer: Option<SocketAddr>) -> String {
+    gelabber_shared::client_addr::client_key(
+        headers
+            .get_all("x-forwarded-for")
+            .iter()
+            .filter_map(|value| value.to_str().ok()),
+        peer.map(|addr| addr.ip()),
+    )
 }
 fn terminal(frame: &ServerFrame) -> bool {
     matches!(frame,ServerFrame::Err { e,.. } if matches!(e.as_str(),"unauthorized"|"gone"|"update_required"))
@@ -62,7 +98,7 @@ fn parse_frame(text: &str) -> Result<ClientFrame, ParseError> {
         .and_then(|id| u32::try_from(id).ok());
     serde_json::from_value(value).map_err(|_| ParseError { id })
 }
-async fn run(socket: WebSocket, state: AppState) {
+async fn run(socket: WebSocket, state: AppState, key: String, slot: PendingSlot) {
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = mpsc::channel::<ServerFrame>(OUTBOUND_CAPACITY);
     let (writes, mut pending) = mpsc::channel::<Message>(32);
@@ -104,6 +140,15 @@ async fn run(socket: WebSocket, state: AppState) {
     retirement.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut writer_finished = false;
     let mut retired = false;
+    // Held while no room is joined; see `crate::limits`.
+    let mut pending_slot = Some(slot);
+    // Anything from the client, Pongs included, shows the peer is there.
+    let mut last_client = tokio::time::Instant::now();
+    let mut heartbeat = tokio::time::interval_at(
+        tokio::time::Instant::now() + state.heartbeat,
+        state.heartbeat,
+    );
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // A socket without a joined room closes at this deadline; Pings and bad
     // frames do not extend it. A join in progress is never cut off, because
     // it runs inside the stream branch below.
@@ -120,7 +165,17 @@ async fn run(socket: WebSocket, state: AppState) {
                 let (peer, channel) = joined.unwrap();
                 if !state.sfu.peer_present(peer, channel).await { retired = true; break; }
             }
+            // Evicts half-open peers: browsers answer a Ping on their own,
+            // so a peer that stays silent past the timeout is gone.
+            _ = heartbeat.tick(), if joined.is_some() => {
+                if last_client.elapsed() >= state.idle_timeout {
+                    debug!("media socket closed: nothing from the peer before the idle timeout");
+                    break;
+                }
+                if !matches!(tokio::time::timeout(WRITE_DEADLINE, writes.send(Message::Ping(Default::default()))).await, Ok(Ok(()))) { break; }
+            }
             incoming = stream.next() => {
+                if matches!(incoming, Some(Ok(_))) { last_client = tokio::time::Instant::now(); }
                 let message = match incoming {
                     Some(Ok(Message::Text(text))) => {
                         let was_joined = joined.is_some();
@@ -129,11 +184,22 @@ async fn run(socket: WebSocket, state: AppState) {
                             Err(error) => error.into_frame(),
                         };
                         identity.send_replace(joined);
-                        if was_joined && joined.is_none() {
-                            // After a leave the socket gets a fresh deadline to rejoin.
+                        let mut refused = false;
+                        if joined.is_some() {
+                            pending_slot.take();
+                        } else if was_joined {
+                            // After a leave the socket gets a fresh deadline to
+                            // rejoin, and counts as pending again until then.
                             join_deadline.as_mut().reset(tokio::time::Instant::now() + state.join_deadline);
+                            match state.pending.acquire(&key) {
+                                Ok(slot) => { pending_slot.replace(slot); }
+                                Err(reason) => {
+                                    debug!(?reason, "media socket closed after leave: too many pending sockets");
+                                    refused = true;
+                                }
+                            }
                         }
-                        let close = terminal(&response);
+                        let close = terminal(&response) || refused;
                         if close { leave_joined(&state, &mut joined).await; }
                         let Ok(text) = response.to_json() else { break; };
                         if !matches!(tokio::time::timeout(WRITE_DEADLINE, writes.send(Message::Text(text.into()))).await, Ok(Ok(()))) { break; }
