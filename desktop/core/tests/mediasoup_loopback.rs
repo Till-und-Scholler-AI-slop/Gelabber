@@ -1,6 +1,6 @@
 //! Native core against the server's media engine (mediasoup 0.29) on loopback:
 //! ICE-lite, DTLS, SRTP, encoders and decoders, with the router codecs and
-//! transport options of media/src/sfu.rs.
+//! transport options of media/src/sfu/rpc.rs.
 //!
 //! Proves the spike: libmediasoupclient's parameters are accepted by the same
 //! mediasoup version the Gelabber media gateway runs, and media flows both ways.
