@@ -49,6 +49,7 @@ import { readKey, type ReadState } from "./readState.ts";
 import { useMessageToasts } from "./toasts.ts";
 import type { Message } from "./types.ts";
 import { asAttachmentList, asGif, asMentionList } from "./types.ts";
+import { asSystem, systemText } from "./system.ts";
 
 function asCreated(delta: unknown): Message | null {
   if (delta === null || typeof delta !== "object") return null;
@@ -74,6 +75,7 @@ function asCreated(delta: unknown): Message | null {
     gif: asGif(value.gif),
     mentions: asMentionList(value.mentions),
     mention_everyone: value.mention_everyone === true,
+    system: asSystem(value.system),
   };
 }
 
@@ -217,11 +219,14 @@ export function useMessageToastsBridge(): void {
       });
       if (!decision.toast && !decision.desktop) return;
       const label = channelLabel(client, userId, generation, event, dm);
+      const system = asSystem(message.system);
       const preview = previewText(
-        readableMentions(
-          message.content,
-          conversationMembers(client, userId, generation, event, dm),
-        ),
+        system
+          ? systemText(system, message.author.name)
+          : readableMentions(
+              message.content,
+              conversationMembers(client, userId, generation, event, dm),
+            ),
         asAttachmentList(message.attachments).length > 0,
         Boolean(message.gif),
       );

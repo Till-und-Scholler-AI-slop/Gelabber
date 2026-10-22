@@ -683,7 +683,8 @@ async fn go_live_needs_permission_and_is_one_per_channel(pool: PgPool) {
     let taken = recv_until(&mut member_ws, |f| f["op"] == "err").await;
     assert_eq!(taken["e"], "bad_request");
 
-    let mut found = false;
+    // The hint is a system message (#314): kind and params, no sentence.
+    let mut found = None;
     for _ in 0..20 {
         let hint = owner
             .send(
@@ -694,16 +695,46 @@ async fn go_live_needs_permission_and_is_one_per_channel(pool: PgPool) {
             .await;
         assert_eq!(hint.status, StatusCode::OK, "{}", hint.body);
         let messages = hint.body["messages"].as_array().expect("messages");
-        if messages
+        found = messages
             .iter()
-            .any(|row| row["content"].as_str().unwrap_or("").contains("ist live"))
-        {
-            found = true;
+            .find(|row| row["system"]["kind"] == "live_started")
+            .cloned();
+        if found.is_some() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert!(found, "text channel should get a live hint");
+    let hint = found.expect("text channel should get a live hint");
+    assert_eq!(hint["content"], "");
+    assert_eq!(hint["author"]["id"], ada.to_string());
+    assert_eq!(
+        hint["system"]["params"],
+        json!({ "voice_channel_id": voice_id, "voice_name": "Lounge" })
+    );
+    let edit = owner
+        .send(
+            Method::PATCH,
+            &format!("/api/messages/{}", hint["id"].as_str().unwrap()),
+            Some(json!({ "content": "selbst geschrieben" })),
+        )
+        .await;
+    assert_eq!(
+        edit.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        edit.body
+    );
+    assert_eq!(edit.body["fields"]["system"], "not_editable");
+    let answer = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{text_id}/messages"),
+            Some(json!({ "content": "viel Spaß", "reply_to": hint["id"] })),
+        )
+        .await;
+    assert_eq!(answer.status, StatusCode::CREATED, "{}", answer.body);
+    assert_eq!(answer.body["reply"]["excerpt"], "");
+    assert_eq!(answer.body["reply"]["system"], hint["system"]);
 
     send_json(
         &mut owner_ws,

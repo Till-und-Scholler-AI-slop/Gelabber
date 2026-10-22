@@ -214,6 +214,8 @@ export function isContinued(
   if (!previous) return false;
   // A reply shows whom it answers above its text, so it starts a group.
   if (message.reply) return false;
+  // A system message is a line of its own (#314), not part of a group.
+  if (message.system || previous.system) return false;
   if (previous.author.id !== message.author.id) return false;
   const delta =
     Date.parse(message.created_at) - Date.parse(previous.created_at);

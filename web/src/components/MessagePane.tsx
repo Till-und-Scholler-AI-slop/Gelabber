@@ -78,6 +78,7 @@ import {
 } from "../messages/rules.ts";
 import type { Gif, Message, Reply } from "../messages/types.ts";
 import { asAttachmentList, asGif, asReply } from "../messages/types.ts";
+import { asSystem, systemText } from "../messages/system.ts";
 import { gifBox, gifLabel, type GifPick } from "../gifs/api.ts";
 import { useGifStatus } from "../gifs/queries.ts";
 import { useReducedMotion } from "../interface/useReducedMotion.ts";
@@ -92,6 +93,7 @@ import { LinkPreviews } from "./LinkPreviews.tsx";
 import {
   ArrowDownIcon,
   CloseIcon,
+  LiveIcon,
   PaperclipIcon,
   PencilIcon,
   ReplyIcon,
@@ -615,6 +617,7 @@ function MessageList({
         (index === newIndex ? 28 : 0) +
         extra +
         (message.reply ? 22 : 0);
+      if (message.system) return breaks + 32;
       const gif = asGif(message.gif);
       if (gif)
         return (
@@ -1086,7 +1089,8 @@ function MessageRow({
     : null;
   const showDelete = canDelete && !pending && !editing;
   const gif = asGif(message.gif);
-  const showEdit = mine && canSend && !pending && !editing && !gif;
+  const system = asSystem(message.system);
+  const showEdit = mine && canSend && !pending && !editing && !gif && !system;
   const canReact = canSend && !pending && !editing;
   const canReply = canSend && !pending && !editing;
   const reply = asReply(message.reply);
@@ -1122,6 +1126,33 @@ function MessageRow({
         ) : null}
       </span>
     ) : null;
+
+  // A line the server wrote (#314): no author header, never edited.
+  if (system)
+    return (
+      <div
+        tabIndex={-1}
+        className="lr-message-row lr-message-system group flex items-start gap-3"
+      >
+        <span className="lr-message-system-icon" aria-hidden>
+          <LiveIcon size={14} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="lr-message-system-text">
+            {systemText(system, message.author.name)}{" "}
+            <time dateTime={message.created_at} className="lr-message-time">
+              {when}
+            </time>
+          </p>
+          <ReactionBar
+            message={message}
+            canSend={canSend}
+            addSlot={reactionSlot}
+          />
+        </div>
+        {actions}
+      </div>
+    );
 
   if (continued && !editing) {
     return (
@@ -1798,7 +1829,9 @@ function ReplyHeader({ reply }: { reply: Reply }) {
         <span>Die ursprüngliche Nachricht wurde gelöscht.</span>
       </p>
     );
+  const system = asSystem(reply.system);
   const summary =
+    (system && systemText(system, reply.author.name)) ||
     (reply.excerpt && readableMentions(reply.excerpt, members)) ||
     (reply.has_gif ? "GIF" : reply.has_attachment ? "Anhang" : "");
   return (
