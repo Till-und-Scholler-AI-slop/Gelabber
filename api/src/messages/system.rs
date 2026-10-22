@@ -5,7 +5,7 @@
 //! (`crate::i18n`). The author is the person the message is about, and
 //! `content` stays empty.
 //!
-//! Kinds (`system_kind`, constrained in migration 0025):
+//! Kinds (`system_kind`, constrained in migration 0026):
 //! - `live_started`: the author went live in a voice channel.
 //!   Params: `voice_channel_id`, and `voice_name` as it was then, for when the
 //!   channel is gone or renamed.
@@ -33,7 +33,7 @@ impl SystemMessage {
         }
     }
 
-    /// From the row's two columns; both are set or neither (migration 0025).
+    /// From the row's two columns; both are set or neither (migration 0026).
     pub(crate) fn from_columns(
         kind: Option<String>,
         params: Option<sqlx::types::Json<serde_json::Value>>,
