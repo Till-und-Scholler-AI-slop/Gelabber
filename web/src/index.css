@@ -828,6 +828,16 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   border-radius: 50%;
   background: var(--lr-accent);
 }
+/* News on a list already on screen (UnreadBadge): a small scale-in. */
+:is(.unread-count, .unread-dot).is-fresh {
+  animation: lr-badge-in var(--lr-dur) var(--lr-ease-enter);
+}
+@keyframes lr-badge-in {
+  from {
+    opacity: 0;
+    scale: 0.5;
+  }
+}
 .channel-row-live {
   margin-left: auto;
   flex-shrink: 0;
