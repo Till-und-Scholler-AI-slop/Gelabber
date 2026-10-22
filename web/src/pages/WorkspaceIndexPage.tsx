@@ -1,14 +1,29 @@
-// `/`: jump into the first server, or explain how to get one.
+// `/`: reopen the server or DM the user was in last (else the first
+// server), or welcome someone who has none yet.
 
-import { Redirect } from "../components/Redirect.tsx";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
+import { useUserId } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
-import { CreateServerDialog } from "../components/ServerDialogs.tsx";
+import { Redirect } from "../components/Redirect.tsx";
+import {
+  CreateServerDialog,
+  JoinServerForm,
+} from "../components/ServerDialogs.tsx";
+import { Button } from "../components/ui/Button.tsx";
+import { MainSkeleton } from "../components/ui/Skeleton.tsx";
+import { useDms } from "../dms/queries.ts";
+import { InstallDisclosure } from "../pwa/InstallApp.tsx";
+import { installHintUseful, useInstallation } from "../pwa/install.ts";
+import { startPlace, useLastPlace } from "../servers/lastPlace.ts";
 import { useServers } from "../servers/queries.ts";
+import "./welcome.css";
 
 export function WorkspaceIndexPage() {
   const user = useSession((state) => state.user);
+  const userId = useUserId();
+  const remembered = useLastPlace((state) => state.byUser[userId]);
   const {
     data: servers,
     isPending,
@@ -16,57 +31,81 @@ export function WorkspaceIndexPage() {
     isFetching,
     refetch,
   } = useServers();
+  const dms = useDms();
   const [creating, setCreating] = useState(false);
+  const installHint = useInstallation(installHintUseful);
 
-  const first = servers?.[0];
-  if (first) {
-    return <Redirect to="/s/$serverId" params={{ serverId: first.id }} />;
+  const place = startPlace(
+    remembered,
+    servers,
+    dms.data,
+    !dms.isPending || dms.isError,
+  );
+  if (place?.kind === "server") {
+    return <Redirect to="/s/$serverId" params={{ serverId: place.id }} />;
+  }
+  if (place?.kind === "dm") {
+    return <Redirect to="/d/$channelId" params={{ channelId: place.id }} />;
   }
 
-  if (isPending && !isError) {
+  if ((isPending || place === undefined) && !isError) {
     // First load only; afterwards the list is cached.
-    return null;
+    return <MainSkeleton kind="overview" />;
   }
 
   return (
-    <section className="mx-auto flex max-w-md flex-col gap-4 overflow-y-auto px-6 py-16">
-      <h1 className="text-3xl font-semibold tracking-tight">
-        {user ? `Hallo ${user.name}` : "Hallo"}
+    <section className="welcome">
+      <h1 className="welcome__title">
+        {user ? `Willkommen, ${user.name}` : "Willkommen"}
       </h1>
+      <p className="welcome__lead">Dein Platz für gemeinsame Abende.</p>
       {isError ? (
         // Its own element, mounted with the failure: a role added to an
         // existing node together with its text is not reliably announced.
-        <p
-          key="error"
-          role="alert"
-          className="text-neutral-600 dark:text-neutral-400"
-        >
-          Deine Server konnten gerade nicht geladen werden.
-        </p>
-      ) : (
-        <p key="empty" className="text-neutral-600 dark:text-neutral-400">
-          Du bist noch in keinem Server. Erstelle einen — oder öffne einen
-          Einladungslink, den dir jemand geschickt hat.
-        </p>
-      )}
-      <div className="flex flex-wrap gap-3">
-        {isError ? (
-          <button
-            type="button"
-            disabled={isFetching}
+        <div className="welcome__error">
+          <p key="error" role="alert">
+            Deine Server konnten gerade nicht geladen werden.
+          </p>
+          <Button
+            size="sm"
+            pending={isFetching}
+            pendingLabel="Wird geladen…"
             onClick={() => void refetch()}
-            className="rounded-lg border border-neutral-300 dark:border-neutral-600 px-4 py-2 text-sm font-medium transition hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-50"
           >
-            {isFetching ? "Wird geladen…" : "Erneut versuchen"}
-          </button>
+            Erneut versuchen
+          </Button>
+        </div>
+      ) : null}
+      <div className="welcome__choices">
+        <article className="welcome-card">
+          <h2>Eigenen Server erstellen</h2>
+          <p>Für deine Runde. #allgemein und ein Sprachraum sind gleich da.</p>
+          <Button
+            variant="primary"
+            size="lg"
+            className="welcome-card__action"
+            onClick={() => setCreating(true)}
+          >
+            Server erstellen
+          </Button>
+        </article>
+        <article className="welcome-card">
+          <h2>Einladung erhalten?</h2>
+          <p>Füg den Link oder Code ein, den dir jemand geschickt hat.</p>
+          <JoinServerForm inline />
+        </article>
+      </div>
+      <div className="welcome__next">
+        {user && !user.avatar_url ? (
+          <Link
+            to="/settings/$area"
+            params={{ area: "profil" }}
+            className="welcome__next-link"
+          >
+            Profilbild festlegen ›
+          </Link>
         ) : null}
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="rounded-lg bg-neutral-900 dark:bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 dark:hover:bg-neutral-600"
-        >
-          Server erstellen
-        </button>
+        {installHint ? <InstallDisclosure /> : null}
       </div>
       <CreateServerDialog open={creating} onClose={() => setCreating(false)} />
     </section>

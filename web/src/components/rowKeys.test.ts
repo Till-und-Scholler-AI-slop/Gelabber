@@ -1,7 +1,14 @@
 import type { KeyboardEvent } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import { moveWithinRow, neighbourRow, rowStep } from "./rowKeys.ts";
+import {
+  listStep,
+  listStop,
+  moveWithinList,
+  moveWithinRow,
+  neighbourRow,
+  rowStep,
+} from "./rowKeys.ts";
 
 describe("sidebar row keys", () => {
   it("moves right and left and stops at the ends", () => {
@@ -82,5 +89,69 @@ describe("focus after a removed row", () => {
     expect(neighbourRow([6, 1, 3], 4)).toBe(6);
     expect(neighbourRow([1, 3], 4)).toBe(3);
     expect(neighbourRow([], 4)).toBeNull();
+  });
+});
+
+describe("list keys", () => {
+  it("moves down and up and stops at the ends", () => {
+    expect(listStep("ArrowDown", 0, 3)).toBe(1);
+    expect(listStep("ArrowDown", 2, 3)).toBe(2);
+    expect(listStep("ArrowUp", 1, 3)).toBe(0);
+    expect(listStep("ArrowUp", 0, 3)).toBe(0);
+    expect(listStep("ArrowRight", 0, 3)).toBeNull();
+    expect(listStep("ArrowDown", -1, 3)).toBeNull();
+  });
+
+  // Rows of items; each row knows which nodes it contains.
+  function list(sizes: number[]) {
+    const rows = sizes.map((size) => {
+      const items = Array.from({ length: size }, () => ({ focus: vi.fn() }));
+      return {
+        items,
+        contains: (node: unknown) => items.includes(node as never),
+        querySelector: () => items[0] ?? null,
+      };
+    });
+    const element = { querySelectorAll: () => rows };
+    const press = (key: string, target: unknown, modifiers = {}) => {
+      const event = {
+        key,
+        target,
+        currentTarget: element,
+        preventDefault: vi.fn(),
+        ...modifiers,
+      };
+      moveWithinList(event as unknown as KeyboardEvent<HTMLElement>);
+      return event.preventDefault;
+    };
+    return { rows, press };
+  }
+
+  it("focuses the next and previous row's first item", () => {
+    const { rows, press } = list([1, 3, 1]);
+    expect(press("ArrowDown", rows[0]!.items[0])).toHaveBeenCalledOnce();
+    expect(rows[1]!.items[0]!.focus).toHaveBeenCalledOnce();
+    press("ArrowUp", rows[2]!.items[0]);
+    expect(rows[1]!.items[0]!.focus).toHaveBeenCalledTimes(2);
+    press("ArrowDown", rows[1]!.items[2]);
+    expect(rows[2]!.items[0]!.focus).toHaveBeenCalledOnce();
+  });
+
+  it("leaves the ends and modified arrows to the browser and the shell", () => {
+    const { rows, press } = list([1, 1]);
+    expect(press("ArrowUp", rows[0]!.items[0])).not.toHaveBeenCalled();
+    expect(press("ArrowDown", rows[1]!.items[0])).not.toHaveBeenCalled();
+    expect(
+      press("ArrowDown", rows[0]!.items[0], { altKey: true }),
+    ).not.toHaveBeenCalled();
+    expect(rows[1]!.items[0]!.focus).not.toHaveBeenCalled();
+  });
+
+  it("keeps one Tab stop among the mounted rows", () => {
+    expect(listStop(["a", "b", "c"], "b", "c")).toBe("b");
+    expect(listStop(["a", "b", "c"], null, "c")).toBe("c");
+    expect(listStop(["a", "b", "c"], "z", undefined)).toBe("a");
+    expect(listStop(["d", "e"], "a", "b")).toBe("d");
+    expect(listStop([], "a", "b")).toBeUndefined();
   });
 });

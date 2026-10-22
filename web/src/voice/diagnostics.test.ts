@@ -7,6 +7,9 @@ import { APP_VERSION } from "../version.ts";
 import {
   DIAGNOSTIC_LIMITS,
   applyStatsReport,
+  callQuality,
+  callQualitySummary,
+  callQualityVerdict,
   attachDiagnostics,
   buildDiagnosticExport,
   detachDiagnostics,
@@ -21,6 +24,8 @@ import {
   statsEntriesFromReport,
   useVoiceDiagnostics,
   type Caps,
+  type ConnectionSnapshot,
+  type FlowStats,
   type StatsEntry,
 } from "./diagnostics.ts";
 import { resetMediaSettingsForTests, useMediaSettings } from "./settings.ts";
@@ -842,5 +847,101 @@ describe("source-audio diagnostics", () => {
         .slice(2)
         .every((flow) => flow.configuredMaxBitrateBps === null),
     ).toBe(true);
+  });
+});
+
+describe("call quality", () => {
+  function audioFlow(partial: Partial<FlowStats>): FlowStats {
+    return {
+      direction: "recv",
+      kind: "audio",
+      source: "voice",
+      codec: "opus",
+      measuredBitrateBps: null,
+      configuredMaxBitrateBps: null,
+      configuredMaxFps: null,
+      senderPriority: null,
+      senderNetworkPriority: null,
+      packetLoss: null,
+      packetsLost: null,
+      jitterMs: null,
+      rttMs: null,
+      concealedSamples: null,
+      totalSamplesReceived: null,
+      concealedRatio: null,
+      width: null,
+      height: null,
+      fps: null,
+      qualityLimitationReason: null,
+      ...partial,
+    };
+  }
+  function snapshot(
+    rttMs: number | null,
+    loss: (number | null)[],
+    path: "direct" | "turn" | null = "direct",
+  ): ConnectionSnapshot {
+    return {
+      role: "voice",
+      transport: {
+        path,
+        rttMs,
+        availableIncomingBps: null,
+        availableOutgoingBps: null,
+      },
+      flows: [
+        ...loss.map((packetLoss) => audioFlow({ packetLoss })),
+        // Video loss is no call quality.
+        audioFlow({ kind: "video", packetLoss: 0.5 }),
+      ],
+    };
+  }
+
+  it("grades round trip and audio loss, the worse of both deciding", () => {
+    const level = (rtt: number | null, loss: number | null) =>
+      callQuality(snapshot(rtt, [loss]))?.level;
+    expect(level(38, 0)).toBe(4);
+    expect(level(149, 0.019)).toBe(4);
+    expect(level(150, 0)).toBe(3);
+    expect(level(40, 0.02)).toBe(3);
+    expect(level(300, 0)).toBe(2);
+    expect(level(40, 0.05)).toBe(2);
+    expect(level(500, 0)).toBe(1);
+    expect(level(40, 0.1)).toBe(1);
+    expect(level(400, 0.01)).toBe(2);
+    // One known figure is enough; none is no grade.
+    expect(level(null, 0)).toBe(4);
+    expect(callQuality(snapshot(null, [null]))).toBeNull();
+    expect(callQuality(null)).toBeNull();
+    // The worst audio flow counts, in either direction.
+    expect(callQuality(snapshot(20, [0, 0.06]))?.level).toBe(2);
+  });
+
+  it("falls back to the flows' round trip without a transport figure", () => {
+    const sample = snapshot(null, [0]);
+    sample.flows[0] = audioFlow({ packetLoss: 0, rttMs: 320 });
+    expect(callQuality(sample)?.rttMs).toBe(320);
+    expect(callQuality(sample)?.level).toBe(2);
+  });
+
+  it("says it in words for the tooltip and the diagnostics", () => {
+    const good = callQuality(snapshot(38, [0]))!;
+    expect(callQualitySummary(good)).toBe(
+      "Verbindung: gut · 38 ms · 0 % Verlust",
+    );
+    expect(callQualityVerdict(good)).toBe(
+      "Verbindung gut. Direkt verbunden, kaum Verlust.",
+    );
+    const lossy = callQuality(snapshot(120, [0.03], "turn"))!;
+    expect(callQualityVerdict(lossy)).toBe(
+      "Verbindung ordentlich. Über einen Relay-Server verbunden, etwas Verlust (3 %).",
+    );
+    const slow = callQuality(snapshot(612, [0.12], null))!;
+    expect(callQualityVerdict(slow)).toBe(
+      "Verbindung schlecht. Hoher Verlust (12 %), hohe Verzögerung (612 ms).",
+    );
+    expect(callQualitySummary(callQuality(snapshot(90, [null]))!)).toBe(
+      "Verbindung: gut · 90 ms",
+    );
   });
 });

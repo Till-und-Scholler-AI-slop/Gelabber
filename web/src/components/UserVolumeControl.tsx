@@ -1,6 +1,7 @@
 import { useId, type CSSProperties } from "react";
 import {
   PLAYBACK_SLIDER_MAX,
+  playbackSliderFill,
   playbackSliderPosition,
   playbackSliderVolume,
 } from "../voice/settings.ts";
@@ -51,7 +52,11 @@ export function UserVolumeView({
         max={PLAYBACK_SLIDER_MAX}
         step={1}
         value={playbackSliderPosition(level.volume)}
-        style={rangeFill(level.volume)}
+        style={
+          {
+            "--lr-range-value": playbackSliderFill(level.volume),
+          } as CSSProperties
+        }
         aria-valuetext={`${Math.round(level.volume * 100)} %`}
         disabled={level.muted}
         onChange={(event) =>
@@ -93,16 +98,8 @@ export function LocallyMutedIcon({ userId }: { userId: string }) {
 export function LocallyMutedMark() {
   return (
     <span className="user-volume-muted" title="Lokal stummgeschaltet">
-      <SpeakerOffIcon size={13} />
+      <SpeakerOffIcon size={16} />
       <span className="sr-only">Lokal stummgeschaltet</span>
     </span>
   );
-}
-
-/** Filled share of a `.lr-range` playback slider (WebKit has no progress
- * pseudo). */
-function rangeFill(value: number): CSSProperties {
-  return {
-    "--lr-range-value": `${(playbackSliderPosition(value) * 100) / PLAYBACK_SLIDER_MAX}%`,
-  } as CSSProperties;
 }

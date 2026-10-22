@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { isChromeLongPress } from "./longPress.ts";
+import {
+  isChromeLongPress,
+  LONG_PRESS_MS,
+  longPressGesture,
+} from "./longPress.ts";
 
 const list = (selectors: string) => selectors.split(",").map((s) => s.trim());
 
@@ -73,5 +77,53 @@ describe("long press on chrome", () => {
     const target = pressed("a", ".workspace-drawer");
     expect(isChromeLongPress({ target }, true)).toBe(true);
     expect(isChromeLongPress({ target: null }, true)).toBe(false);
+  });
+});
+
+describe("long press gesture", () => {
+  function setup() {
+    vi.useFakeTimers();
+    const pressed = vi.fn();
+    const gesture = longPressGesture(pressed);
+    return { pressed, gesture };
+  }
+  const finger = { pointerType: "touch", isPrimary: true, x: 10, y: 10 };
+  afterEach(() => vi.useRealTimers());
+
+  it("fires once after a finger rests", () => {
+    const { pressed, gesture } = setup();
+    gesture.down(finger);
+    vi.advanceTimersByTime(LONG_PRESS_MS - 1);
+    expect(pressed).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(pressed).toHaveBeenCalledTimes(1);
+    gesture.end();
+    vi.advanceTimersByTime(LONG_PRESS_MS);
+    expect(pressed).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a short tap alone", () => {
+    const { pressed, gesture } = setup();
+    gesture.down(finger);
+    vi.advanceTimersByTime(100);
+    gesture.end();
+    vi.advanceTimersByTime(LONG_PRESS_MS);
+    expect(pressed).not.toHaveBeenCalled();
+  });
+
+  it("is a scroll once the finger moves", () => {
+    const { pressed, gesture } = setup();
+    gesture.down(finger);
+    gesture.move({ x: 10, y: 14 });
+    gesture.move({ x: 10, y: 30 });
+    vi.advanceTimersByTime(LONG_PRESS_MS);
+    expect(pressed).not.toHaveBeenCalled();
+  });
+
+  it("ignores the mouse, which has its right click", () => {
+    const { pressed, gesture } = setup();
+    gesture.down({ ...finger, pointerType: "mouse" });
+    vi.advanceTimersByTime(LONG_PRESS_MS);
+    expect(pressed).not.toHaveBeenCalled();
   });
 });

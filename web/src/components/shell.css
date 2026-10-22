@@ -1,0 +1,182 @@
+/* Workspace menus, the quick switcher and the shortcut sheet (ChannelSidebar,
+   Picker, QuickSwitcher). Imported by the components themselves. */
+
+.shell-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--lr-space-2);
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-lg);
+  background: var(--lr-elevated);
+  color: var(--lr-text);
+  box-shadow: var(--lr-shadow-1);
+}
+.shell-row-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.shell-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: var(--lr-control-md);
+  padding: 0 10px;
+  border-radius: var(--lr-radius-sm);
+  color: var(--lr-text);
+  font: var(--lr-type-ui);
+  text-align: left;
+}
+.shell-menu-item > svg {
+  flex-shrink: 0;
+  color: var(--lr-muted);
+}
+.shell-menu-item:hover {
+  background: var(--lr-hover);
+}
+.shell-menu-item[aria-current="page"] {
+  background: var(--lr-selected);
+}
+.shell-menu-item.is-danger,
+.shell-menu-item.is-danger > svg {
+  color: var(--lr-danger);
+}
+.shell-menu-separator {
+  margin: 4px 6px;
+  border: 0;
+  border-top: 1px solid var(--lr-border);
+}
+@media (pointer: coarse) {
+  .shell-menu-item {
+    min-height: 48px;
+    font-size: 15px;
+  }
+}
+
+.shell-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-2);
+}
+.shell-picker-list {
+  max-height: min(360px, calc(var(--lr-100dvh) * 0.55));
+  margin: 0 calc(-1 * var(--lr-space-2));
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  scrollbar-width: thin;
+}
+.shell-picker-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 4px var(--lr-space-2);
+  border-radius: var(--lr-radius-sm);
+  cursor: pointer;
+}
+.shell-picker-option.is-active {
+  background: var(--lr-selected);
+}
+.shell-picker-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  color: var(--lr-muted);
+}
+.shell-picker-icon .gel-avatar {
+  --avatar-size: 28px;
+  font-size: 11px;
+}
+.shell-picker-tile {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--lr-radius-sm);
+  background: var(--server-tile, var(--lr-surface));
+  color: var(--lr-text);
+  font: 600 12px / 1 var(--lr-font);
+}
+.shell-picker-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.shell-picker-label,
+.shell-picker-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shell-picker-label {
+  font: var(--lr-type-ui);
+  font-weight: 500;
+}
+.shell-picker-detail {
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+.shell-picker-badge {
+  flex-shrink: 0;
+}
+.shell-picker-empty {
+  padding: var(--lr-space-4) 0;
+  color: var(--lr-muted);
+  font: var(--lr-type-ui);
+  text-align: center;
+}
+.shell-picker-hint {
+  margin-top: var(--lr-space-3);
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+@media (pointer: coarse) {
+  .shell-picker-hint {
+    display: none;
+  }
+}
+
+.shortcut-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+.shortcut-list > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lr-space-4);
+  padding: 10px 0;
+  border-bottom: 1px solid var(--lr-border);
+}
+.shortcut-list > div:last-child {
+  border-bottom: 0;
+}
+.shortcut-list dt {
+  display: flex;
+  flex-shrink: 0;
+  order: 2;
+  gap: 4px;
+}
+.shortcut-list dd {
+  margin: 0;
+  font: var(--lr-type-ui);
+}
+.shortcut-list kbd {
+  min-width: 26px;
+  padding: 2px 7px;
+  border: 1px solid var(--lr-border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--lr-radius-xs);
+  background: var(--lr-surface);
+  color: var(--lr-text);
+  font: 600 12px / 1.4 var(--lr-font);
+  text-align: center;
+}

@@ -17,6 +17,11 @@ import {
 } from "./notifications.ts";
 import { useInstallation } from "./install.ts";
 import { activeServiceWorker } from "./register.ts";
+import { forgetDesktopNotificationsForTests } from "../messages/desktopNotifications.ts";
+import {
+  setNativeBridgeForTests,
+  type NativeBridge,
+} from "../voice/native/bridge.ts";
 
 vi.mock("./register.ts", () => ({ activeServiceWorker: vi.fn() }));
 const registration = vi.mocked(activeServiceWorker);
@@ -619,5 +624,98 @@ describe("notification taps", () => {
     expect(
       followNotificationTaps({ user: () => "user-1", open: vi.fn() }),
     ).toBeTypeOf("function");
+  });
+});
+
+describe("in the desktop app", () => {
+  type Call = { command: string; args?: Record<string, unknown> };
+  /** The app's commands; `notify_info` answers `info`, or refuses as an
+   * older app does. */
+  function app(info: { available: boolean } | "refused" = { available: true }) {
+    const calls: Call[] = [];
+    const channels: ((message: unknown) => void)[] = [];
+    const bridge: NativeBridge = {
+      async invoke<T>(command: string, args?: Record<string, unknown>) {
+        calls.push({ command, args });
+        if (command === "notify_info") {
+          if (info === "refused") throw new Error("unknown command");
+          return info as T;
+        }
+        return undefined as T;
+      },
+      async channel<T>(onMessage: (message: T) => void) {
+        channels.push(onMessage as (message: unknown) => void);
+        return { id: channels.length };
+      },
+    };
+    setNativeBridgeForTests(bridge);
+    return { calls, channels };
+  }
+  beforeEach(() => forgetDesktopNotificationsForTests());
+  afterEach(() => {
+    setNativeBridgeForTests(undefined);
+    forgetDesktopNotificationsForTests();
+  });
+
+  it("shows the system's notification and opens the chat on a click", async () => {
+    const created = pageApi();
+    const { calls, channels } = app();
+    const onClick = vi.fn();
+    expect(await showMessageNotification(message, onClick)).toBe("app");
+    expect(calls.find((call) => call.command === "notify_show")?.args).toEqual({
+      tag: "gelabber:user-1:chan",
+      title: "Ada · #allgemein",
+      body: "Hallo",
+      events: { id: 1 },
+    });
+    expect(created).toEqual([]);
+    channels[0]!({ type: "something-else" });
+    expect(onClick).not.toHaveBeenCalled();
+    channels[0]!({ type: "click" });
+    expect(onClick).toHaveBeenCalledOnce();
+  });
+
+  it("shows nothing for a conversation that is on screen", async () => {
+    const { calls } = app();
+    const target = new EventTarget();
+    windows.push(
+      silenceWhileViewing("user-1", "chan", {
+        hidden: false,
+        addEventListener: target.addEventListener.bind(target),
+        removeEventListener: target.removeEventListener.bind(target),
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(calls.some((call) => call.command === "notify_close")).toBe(true),
+    );
+    expect(await showMessageNotification(message, vi.fn())).toBe("viewed");
+    expect(calls.some((call) => call.command === "notify_show")).toBe(false);
+  });
+
+  it("takes down a conversation's notification or all of the account's", async () => {
+    const { calls } = app();
+    await closeMessageNotifications({ user: "user-1", channelId: "chan" });
+    await closeMessageNotifications({ user: "user-1" });
+    await vi.waitFor(() =>
+      expect(
+        calls
+          .filter((call) => call.command === "notify_close")
+          .map((call) => call.args),
+      ).toEqual([
+        { tag: "gelabber:user-1:chan", prefix: false },
+        { tag: "gelabber:user-1:", prefix: true },
+      ]),
+    );
+  });
+
+  it("keeps the webview's notifications in an app without its own", async () => {
+    for (const info of ["refused", { available: false }] as const) {
+      forgetDesktopNotificationsForTests();
+      const created = pageApi();
+      const { calls } = app(info);
+      expect(await showMessageNotification(message, vi.fn())).toBe("page");
+      expect(created).toHaveLength(1);
+      expect(calls.map((call) => call.command)).toEqual(["notify_info"]);
+    }
   });
 });

@@ -166,6 +166,45 @@ describe("gateway client", () => {
     gateway.stop();
   });
 
+  it("tells subscribers where the socket stands", async () => {
+    vi.useFakeTimers();
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 5,
+      maxRetryMs: 5,
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    const seen: string[] = [];
+    const off = gateway.onStatus((status) => seen.push(status));
+
+    gateway.start();
+    sockets[0]?.emit("open");
+    expect(gateway.status).toBe("open");
+    sockets[0]?.close();
+    expect(gateway.status).toBe("reconnecting");
+    await vi.advanceTimersByTimeAsync(1);
+    sockets[1]?.emit("open");
+    gateway.stop();
+    expect(seen).toEqual([
+      "connecting",
+      "open",
+      "reconnecting",
+      "reconnecting",
+      "open",
+      "idle",
+    ]);
+
+    off();
+    gateway.start();
+    expect(seen.at(-1)).toBe("idle");
+    gateway.stop();
+  });
+
   it("jitters later reconnects between half and all of the backoff", async () => {
     vi.useFakeTimers();
     const random = vi.spyOn(Math, "random");

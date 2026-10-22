@@ -107,6 +107,8 @@ export class Gateway {
   private dmListeners = new Set<(channelId: string) => void>();
   private accountListeners = new Set<(frame: AccountFrame) => void>();
   private typingListeners = new Set<(frame: TypingFrame) => void>();
+  private statusListeners = new Set<(status: GatewayStatus) => void>();
+  private currentStatus: GatewayStatus = "idle";
 
   constructor(opts: GatewayOptions = {}) {
     this.opts = {
@@ -302,6 +304,24 @@ export class Gateway {
     this.send({ op: "y", s: serverId, c: channelId, on });
   }
 
+  /** Where the socket stands, for a notice that it dropped. */
+  get status(): GatewayStatus {
+    return this.currentStatus;
+  }
+
+  onStatus(listener: (status: GatewayStatus) => void): () => void {
+    this.statusListeners.add(listener);
+    return () => {
+      this.statusListeners.delete(listener);
+    };
+  }
+
+  private setStatus(status: GatewayStatus): void {
+    this.currentStatus = status;
+    this.opts.onStatus?.(status);
+    for (const listener of this.statusListeners) listener(status);
+  }
+
   start(): void {
     if (!this.stopped) {
       return;
@@ -317,7 +337,7 @@ export class Gateway {
     this.unbindSocket();
     this.socket = null;
     socket?.close();
-    this.opts.onStatus?.("idle");
+    this.setStatus("idle");
   }
 
   /**
@@ -368,9 +388,7 @@ export class Gateway {
   private open(): void {
     this.clearTimers();
     this.unbindSocket();
-    this.opts.onStatus?.(
-      this.retryAttempt === 0 ? "connecting" : "reconnecting",
-    );
+    this.setStatus(this.retryAttempt === 0 ? "connecting" : "reconnecting");
     const url = this.opts.url ?? gatewayUrl();
     const socket = this.opts.open ? this.opts.open(url) : new WebSocket(url);
     this.socket = socket;
@@ -386,7 +404,7 @@ export class Gateway {
       }
       this.retryAttempt = 0;
       this.lastServerAt = this.opts.now();
-      this.opts.onStatus?.("open");
+      this.setStatus("open");
       this.startHeartbeat();
       for (const [key, topic] of this.desired) {
         this.send(
@@ -594,7 +612,7 @@ export class Gateway {
   }
 
   private scheduleReconnect(): void {
-    this.opts.onStatus?.("reconnecting");
+    this.setStatus("reconnecting");
     // First drop: reconnect on the next turn so the close handler can
     // finish. After that, exponential backoff (capped) — still short —
     // jittered to 50–100 %, so clients dropped together do not retry
