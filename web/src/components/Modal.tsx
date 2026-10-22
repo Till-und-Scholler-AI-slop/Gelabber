@@ -10,8 +10,6 @@ import { CloseIcon } from "./Icons.tsx";
 import {
   closesOnBackdrop,
   focusLeftWith,
-  focusOrigin,
-  markLeaving,
   requestClose,
   restoreFocus,
 } from "./modalClose.ts";
@@ -43,8 +41,9 @@ type ModalProps = {
 /**
  * Native `<dialog>` so focus trapping, Escape and the backdrop come from the
  * browser. The title stays put while the body scrolls, and "Schließen" is
- * always there. Under 640px it is a bottom sheet. Closed, it stays modal and
- * inert for its exit, still showing its last content, then hands focus back.
+ * always there. Under 640px it is a bottom sheet. Closed, it lets go of the
+ * page and focus at once, and stays drawn, inert and showing its last
+ * content, for its exit.
  */
 export function Modal({
   open,
@@ -76,18 +75,21 @@ export function Modal({
     const dialog = ref.current;
     if (!dialog) return;
     if (open && !dialog.open) {
-      openerRef.current = focusOrigin(document.activeElement);
+      openerRef.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
       dialog.showModal();
     }
     if (!open && dialog.open) {
-      // Still leaving: a dialog opened meanwhile takes over the opener.
-      if (mounted) return markLeaving(dialog, openerRef.current);
+      // Closed right away, not after the exit: whatever the close led to
+      // can take focus on the page at once (ui.css keeps it drawn).
       dialog.close();
       if (focusLeftWith(dialog, document.activeElement))
         restoreFocus(openerRef.current);
       openerRef.current = null;
     }
-  }, [open, mounted]);
+  }, [open]);
 
   useEffect(() => {
     const dialog = ref.current;

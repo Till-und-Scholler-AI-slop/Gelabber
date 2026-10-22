@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
 
 import { pageZoom } from "../../interface/zoom.ts";
 import { dialogInitialFocus } from "../dialogFocus.ts";
-import { focusLeftWith, markLeaving, outsideBox } from "../modalClose.ts";
+import { focusLeftWith, outsideBox } from "../modalClose.ts";
 import { useMediaQuery } from "../useMediaQuery.ts";
 import {
   POPOVER_SHEET_QUERY,
@@ -230,22 +230,18 @@ function PopoverSheet({
     [onSurface],
   );
   const open = state === "open";
+  // Closed (or gone while open), it lets go of the page and focus at once,
+  // so an entry that moves focus, like "Antworten" to the composer, keeps
+  // it; ui.css keeps the sheet drawn while it slides away.
   useLayoutEffect(() => {
     const element = dialog.current;
     const opener = anchor.current;
-    if (!element) return;
-    element.showModal();
+    if (!element || !open) return;
+    if (!element.open) element.showModal();
     return () => {
       if (element.open) element.close();
       returnFocus(element, opener);
     };
-  }, [anchor]);
-  // While it slides away the page stays blocked; a dialog opened from one
-  // of its entries returns focus to where the sheet would have.
-  useLayoutEffect(() => {
-    const element = dialog.current;
-    if (open || !element) return;
-    return markLeaving(element, anchor.current);
   }, [open, anchor]);
   return createPortal(
     <dialog

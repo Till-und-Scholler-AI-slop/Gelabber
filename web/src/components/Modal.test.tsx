@@ -7,8 +7,6 @@ import {
   closesOnBackdrop,
   DISCARD_CHANGES,
   focusLeftWith,
-  focusOrigin,
-  markLeaving,
   requestClose,
   restoreFocus,
 } from "./modalClose.ts";
@@ -122,7 +120,7 @@ describe("closing a modal", () => {
   });
 });
 
-describe("focus while a surface leaves", () => {
+describe("focus when a surface closes", () => {
   const element = (name = "BUTTON") =>
     ({ nodeName: name }) as unknown as HTMLElement;
   const surface = (...inside: Element[]) => ({
@@ -135,17 +133,5 @@ describe("focus while a surface leaves", () => {
     expect(focusLeftWith(surface(), null)).toBe(true);
     expect(focusLeftWith(surface(), element("BODY"))).toBe(true);
     expect(focusLeftWith(surface(), element())).toBe(false);
-  });
-
-  it("hands a dialog that opens meanwhile the leaving one's opener", () => {
-    const opener = element();
-    const inside = element();
-    const done = markLeaving(surface(inside), opener);
-    expect(focusOrigin(inside)).toBe(opener);
-    expect(focusOrigin(element("BODY"))).toBe(opener);
-    const elsewhere = element();
-    expect(focusOrigin(elsewhere)).toBe(elsewhere);
-    done();
-    expect(focusOrigin(inside)).toBe(inside);
   });
 });

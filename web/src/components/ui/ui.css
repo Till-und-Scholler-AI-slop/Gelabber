@@ -685,6 +685,21 @@
     opacity: 0;
     transition-duration: var(--lr-dur-large-exit);
   }
+  /* Closed sheets and dialogs (Popover, Modal) are closed at once, so the
+     page takes clicks and focus again; where a closed dialog can stay in
+     the top layer for its exit, it does, placed as when it was modal.
+     Elsewhere it goes at once. */
+  @supports (overlay: auto) {
+    :is(.ui-sheet, .gel-modal)[data-state="closed"] {
+      position: fixed;
+      inset: 0;
+      transition-property: opacity, scale, translate, display, overlay;
+      transition-behavior: allow-discrete;
+    }
+    :is(.ui-sheet, .gel-modal)[data-state="closed"]::backdrop {
+      pointer-events: none;
+    }
+  }
   .ui-sheet__title {
     margin-bottom: var(--lr-space-2);
     padding-block: var(--lr-space-2);
@@ -744,7 +759,7 @@
     background: var(--lr-backdrop);
     transition: opacity var(--lr-dur-large) var(--lr-ease-standard);
   }
-  /* Leaving: Modal keeps it open and inert until this has played. */
+  /* Leaving: closed and inert, it fades out (kept drawn, see .ui-sheet). */
   .gel-modal[data-state="closed"] {
     opacity: 0;
     scale: 0.97;
