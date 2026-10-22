@@ -378,6 +378,26 @@ button.lr-reply-header:focus-visible .lr-reply-excerpt {
 .lr-message-row.is-sending .lr-message-gif {
   opacity: 0.7;
 }
+/* A message that comes in live rises into place; one's own, once saved,
+   brightens from its sending look (MessageList, arrivals.ts). */
+.lr-message-row[data-arrival="live"] {
+  animation: lr-message-in var(--lr-dur) var(--lr-ease-enter);
+}
+.lr-message-row[data-arrival="confirmed"]
+  :is(.lr-message-text, .lr-attachments, .lr-message-gif) {
+  animation: lr-message-saved var(--lr-dur) var(--lr-ease-standard);
+}
+@keyframes lr-message-in {
+  from {
+    opacity: 0;
+    translate: 0 3px;
+  }
+}
+@keyframes lr-message-saved {
+  from {
+    opacity: 0.7;
+  }
+}
 .lr-message-row.is-failed {
   background: color-mix(in srgb, var(--lr-danger-bg) 8%, var(--lr-bg));
   box-shadow: inset 3px 0 0 var(--lr-danger-bg);

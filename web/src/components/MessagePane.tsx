@@ -43,6 +43,7 @@ import {
 
 import { useSession } from "../auth/session.ts";
 import { fieldMessage } from "../auth/rules.ts";
+import { arrivals, type Arrival } from "../messages/arrivals.ts";
 import {
   arrivedSince,
   confirmedPendingIds,
@@ -122,6 +123,7 @@ import {
 import { longPressGesture, swallowNextClick } from "./longPress.ts";
 import { Button } from "./ui/Button.tsx";
 import { SkeletonRows } from "./ui/Skeleton.tsx";
+import { useAfterSkeleton } from "./ui/useAfterSkeleton.ts";
 import { copyText } from "../servers/clipboard.ts";
 import { notify, notifyError } from "./toasts.ts";
 import { AttachmentList } from "./Attachments.tsx";
@@ -766,6 +768,17 @@ function MessageList({
   const lastJump = useRef(unreadJump);
   const edit = useEditMessage(channelId);
   const remove = useDeleteMessage(channelId);
+  // Rows that just came in live fade in (arrivals.ts); each row keeps what
+  // it was told when it mounted.
+  const [shownItems, setShownItems] = useState(items);
+  const [arrived, setArrived] = useState<ReadonlyMap<string, Arrival>>(
+    () => new Map(),
+  );
+  if (shownItems !== items) {
+    setShownItems(items);
+    setArrived(arrivals(shownItems, items, meId));
+  }
+  const revealed = useAfterSkeleton(!ready);
   const opensAt = unreadAnchor(items, newAfter ?? null, hasOlder);
   const newIndex = opensAt.kind === "row" ? opensAt.index : -1;
 
@@ -1217,7 +1230,7 @@ function MessageList({
         // margin: that ResizeObserver loop (scrollbar on/off) is React #185.
         ref={contentRef}
         style={{ height: virtualizer.getTotalSize() }}
-        className="relative mt-auto w-full shrink-0"
+        className={`relative mt-auto w-full shrink-0${revealed ? " ui-reveal" : ""}`}
       >
         {virtualizer.getVirtualItems().map((row) => {
           const message = items[row.index];
@@ -1253,6 +1266,7 @@ function MessageList({
               <MessageRow
                 message={message}
                 continued={continued}
+                arrival={arrived.get(message.id)}
                 mine={message.author.id === meId}
                 canSend={canSend}
                 canDelete={message.author.id === meId || canModerate}
@@ -1295,6 +1309,7 @@ function confirmDelete(message: Message, meId: string | undefined) {
 function MessageRow({
   message,
   continued,
+  arrival,
   mine,
   canSend,
   canDelete,
@@ -1304,6 +1319,8 @@ function MessageRow({
 }: {
   message: Message;
   continued: boolean;
+  /** Just came in live: fades in once, as it mounts. */
+  arrival?: Arrival;
   mine: boolean;
   canSend: boolean;
   canDelete: boolean;
@@ -1314,6 +1331,9 @@ function MessageRow({
   onDelete: (skipConfirm: boolean) => void;
 }) {
   const pending = isPendingId(message.id);
+  // Kept from the mount: a later render, or the same row scrolled back
+  // into view, does not play it again.
+  const [arrivedAs] = useState(arrival);
   const { members, me } = useMentions();
   const mentioned = !mine && mentionsMe(message, me);
   const renderMention = useMentionRenderer(message);
@@ -1548,7 +1568,13 @@ function MessageRow({
 
   if (continued && !editing) {
     return (
-      <div ref={rowRef} tabIndex={-1} className={rowClass} {...menuHandlers}>
+      <div
+        ref={rowRef}
+        tabIndex={-1}
+        className={rowClass}
+        data-arrival={arrivedAs}
+        {...menuHandlers}
+      >
         <span className="lr-message-gutter" aria-hidden="true">
           {sendState ? null : (
             <time dateTime={message.created_at} title={fullWhen}>
@@ -1592,7 +1618,13 @@ function MessageRow({
   }
 
   return (
-    <div ref={rowRef} tabIndex={-1} className={rowClass} {...menuHandlers}>
+    <div
+      ref={rowRef}
+      tabIndex={-1}
+      className={rowClass}
+      data-arrival={arrivedAs}
+      {...menuHandlers}
+    >
       <Avatar name={message.author.name} url={message.author.avatar_url} />
       <div className="min-w-0 flex-1">
         {reply ? <ReplyHeader reply={reply} /> : null}
