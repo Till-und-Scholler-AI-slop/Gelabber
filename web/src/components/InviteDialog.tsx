@@ -24,11 +24,12 @@ import {
 } from "../servers/inviteTerms.ts";
 import { useCreateInvite, useRevokeInvite } from "../servers/queries.ts";
 import type { Invite } from "../servers/types.ts";
-import { ChevronIcon, CopyIcon, ShareIcon } from "./Icons.tsx";
+import { ChevronIcon, ShareIcon } from "./Icons.tsx";
 import { LoadError } from "./LoadError.tsx";
 import { Modal } from "./Modal.tsx";
 import { Button } from "./ui/Button.tsx";
 import { ChipGroup } from "./ui/ChipGroup.tsx";
+import { CopyButton } from "./ui/CopyButton.tsx";
 import { InlineStatus } from "./ui/InlineStatus.tsx";
 import { useInlineStatus } from "./ui/useInlineStatus.ts";
 import "./invite.css";
@@ -155,21 +156,22 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
   const link = invite ? inviteUrl(invite.code) : "";
   const summary = termsSummary(current?.terms ?? terms);
 
-  const copy = async () => {
+  const copy = async (): Promise<boolean> => {
     if (create.isPending) {
       show({ tone: "neutral", message: "Der Link wird gerade erstellt." });
-      return;
+      return false;
     }
-    if (!link) return;
+    if (!link) return false;
     if (await copyText(link)) {
       handedOut.current = true;
       show({ tone: "success", message: `Link kopiert · ${summary}` });
-    } else {
-      show({
-        tone: "error",
-        message: "Kopieren ging nicht – markiere den Link und kopiere ihn.",
-      });
+      return true;
     }
+    show({
+      tone: "error",
+      message: "Kopieren ging nicht – markiere den Link und kopiere ihn.",
+    });
+    return false;
   };
 
   if (!invite && create.isError) {
@@ -202,14 +204,15 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
           }}
           className="ui-field invite-panel__url"
         />
-        <Button
+        {/* The status line below says it, with the link's terms. */}
+        <CopyButton
           variant="primary"
-          icon={<CopyIcon size={16} />}
-          onClick={() => void copy()}
+          onCopy={copy}
+          announce={false}
           initialFocus
         >
           Link kopieren
-        </Button>
+        </CopyButton>
       </div>
       <div className="invite-panel__status">
         <InlineStatus status={status} />

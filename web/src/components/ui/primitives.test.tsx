@@ -5,6 +5,7 @@ import { Button, GhostButton } from "./Button.tsx";
 import { buttonClass } from "./buttonClass.ts";
 import { nextChipIndex } from "./chipKeys.ts";
 import { ChipGroup } from "./ChipGroup.tsx";
+import { CopyButton } from "./CopyButton.tsx";
 import { fieldDescription } from "./fieldDescription.ts";
 import { IconButton } from "./IconButton.tsx";
 import { InlineStatus } from "./InlineStatus.tsx";
@@ -206,5 +207,29 @@ describe("popover placement", () => {
     const wide = { top: 100, right: 900, bottom: 132, left: 100 };
     const position = popoverPosition(wide, size, viewport, "bottom-start");
     expect(popoverOrigin(wide, position, size)).toBe("200px 0px");
+  });
+});
+
+describe("copy button", () => {
+  const html = renderToStaticMarkup(
+    <CopyButton onCopy={async () => true}>Link kopieren</CopyButton>,
+  );
+
+  it("is named by its label, with Kopiert ready in the same spot", () => {
+    expect(html).toContain(
+      '<span class="ui-copy-label" data-copied="false"><span>Link kopieren</span><span aria-hidden="true">Kopiert</span></span>',
+    );
+    expect(html).toContain('class="ui-copy-icon" data-copied="false"');
+  });
+
+  it("has a status for screen readers, empty until it copied", () => {
+    expect(html).toContain('<span role="status" class="sr-only"></span>');
+    expect(
+      renderToStaticMarkup(
+        <CopyButton onCopy={async () => true} announce={false}>
+          Kopieren
+        </CopyButton>,
+      ),
+    ).not.toContain('role="status"');
   });
 });

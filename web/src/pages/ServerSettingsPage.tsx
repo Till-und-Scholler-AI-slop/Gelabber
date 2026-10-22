@@ -13,7 +13,6 @@ import { useFormErrors } from "../auth/useFormErrors.ts";
 import { PresenceAvatar } from "../components/PresenceAvatar.tsx";
 import { Field } from "../components/Field.tsx";
 import { confirmAction } from "../components/confirm.ts";
-import { CopyIcon } from "../components/Icons.tsx";
 import { LoadError } from "../components/LoadError.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { InviteDialog } from "../components/InviteDialog.tsx";
@@ -21,6 +20,7 @@ import { MemberActionsMenu } from "../components/MemberActions.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { Badge } from "../components/ui/Badge.tsx";
 import { Button } from "../components/ui/Button.tsx";
+import { CopyButton } from "../components/ui/CopyButton.tsx";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
 import { Switch } from "../components/ui/Switch.tsx";
 import { useInlineStatus } from "../components/ui/useInlineStatus.ts";
@@ -292,15 +292,17 @@ function InvitesSection({ server }: { server: ServerDetail }) {
   // When the page opened: "läuft in 6 Tagen ab" needs no live clock.
   const [now] = useState(Date.now);
 
-  const copy = async (invite: Invite) => {
-    status.show(
-      (await copyText(inviteUrl(invite.code)))
-        ? { tone: "success", message: "Link kopiert." }
-        : {
-            tone: "error",
-            message: `Kopieren ging nicht. Der Code ist ${invite.code}.`,
-          },
-    );
+  // The row's button says "Kopiert"; only a failure needs the line.
+  const copy = async (invite: Invite): Promise<boolean> => {
+    if (await copyText(inviteUrl(invite.code))) {
+      status.clear();
+      return true;
+    }
+    status.show({
+      tone: "error",
+      message: `Kopieren ging nicht. Der Code ist ${invite.code}.`,
+    });
+    return false;
   };
 
   return (
@@ -334,7 +336,7 @@ function InvitesSection({ server }: { server: ServerDetail }) {
               key={invite.code}
               invite={invite}
               now={now}
-              onCopy={() => void copy(invite)}
+              onCopy={() => copy(invite)}
               onRevoke={async () => {
                 if (
                   await confirmAction({
@@ -368,7 +370,7 @@ function InviteRow({
 }: {
   invite: Invite;
   now: number;
-  onCopy: () => void;
+  onCopy: () => Promise<boolean>;
   onRevoke: () => void;
 }) {
   return (
@@ -380,9 +382,9 @@ function InviteRow({
         </span>
       </div>
       <div className="server-settings-row__actions">
-        <Button size="sm" icon={<CopyIcon size={16} />} onClick={onCopy}>
+        <CopyButton size="sm" onCopy={onCopy}>
           Kopieren
-        </Button>
+        </CopyButton>
         <Button size="sm" variant="danger-outline" onClick={onRevoke}>
           Widerrufen
         </Button>

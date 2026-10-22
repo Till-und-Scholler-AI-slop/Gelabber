@@ -134,6 +134,37 @@
     cursor: not-allowed;
   }
 
+  /* Copy controls: label and icon crossfade to "Kopiert" and a check in
+     the same spot (CopyLabel). */
+  .ui-copy-icon,
+  .ui-copy-label {
+    display: inline-grid;
+  }
+  .ui-copy-icon > *,
+  .ui-copy-label > * {
+    grid-area: 1 / 1;
+    transition:
+      opacity var(--lr-dur-fast) var(--lr-ease-standard),
+      scale var(--lr-dur-fast) var(--lr-ease-enter);
+  }
+  .ui-copy-label > :last-child {
+    justify-self: center;
+  }
+  :is(.ui-copy-icon, .ui-copy-label)[data-copied="false"] > :last-child,
+  :is(.ui-copy-icon, .ui-copy-label)[data-copied="true"] > :first-child {
+    opacity: 0;
+  }
+  .ui-copy-icon[data-copied="false"] > :last-child,
+  .ui-copy-icon[data-copied="true"] > :first-child {
+    scale: 0.6;
+  }
+  .ui-copy-icon[data-copied="true"] {
+    color: var(--lr-online-text);
+  }
+  .ui-button--primary .ui-copy-icon[data-copied="true"] {
+    color: inherit;
+  }
+
   /* Form fields */
   .ui-form-field {
     display: flex;
