@@ -1,8 +1,8 @@
-import { useId } from "react";
+import { Fragment, useId } from "react";
 
 import { useConfirm, type ConfirmRequest } from "./confirm.ts";
-import { dialogInitialFocus } from "./dialogFocus.ts";
-import { GhostButton, Modal } from "./Modal.tsx";
+import { Modal } from "./Modal.tsx";
+import { Button } from "./ui/Button.tsx";
 
 export function ConfirmHost() {
   const pending = useConfirm((state) => state.pending);
@@ -18,6 +18,7 @@ export function ConfirmDialog({
   answer: (id: number, ok: boolean) => void;
 }) {
   const messageId = useId();
+  const formId = useId();
   const cancel = () => {
     if (pending) answer(pending.id, false);
   };
@@ -32,39 +33,39 @@ export function ConfirmDialog({
       title={pending?.title ?? ""}
       role="alertdialog"
       describedBy={pending?.message ? messageId : undefined}
+      footer={
+        pending ? (
+          // A replacing question remounts, so its own initial focus applies.
+          <Fragment key={pending.id}>
+            <Button variant="ghost" onClick={cancel} initialFocus={danger}>
+              Abbrechen
+            </Button>
+            <Button
+              type="submit"
+              form={formId}
+              variant={danger ? "danger" : "primary"}
+              initialFocus={!danger}
+            >
+              {pending.confirmLabel}
+            </Button>
+          </Fragment>
+        ) : null
+      }
     >
       {pending ? (
         <form
-          // A replacing question remounts, so its own initial focus applies.
           key={pending.id}
-          className="flex flex-col gap-5"
+          id={formId}
           onSubmit={(event) => {
             event.preventDefault();
             answer(pending.id, true);
           }}
         >
           {pending.message ? (
-            <p
-              id={messageId}
-              className="text-sm text-neutral-600 dark:text-neutral-400"
-            >
+            <p id={messageId} className="text-lr-muted">
               {pending.message}
             </p>
           ) : null}
-          <div className="flex justify-end gap-2">
-            <GhostButton onClick={cancel} initialFocus={danger}>
-              Abbrechen
-            </GhostButton>
-            <button
-              type="submit"
-              {...dialogInitialFocus(!danger)}
-              className={`rounded-lg px-4 py-2 text-sm font-medium transition hover:brightness-110 ${
-                danger ? "gel-confirm-danger" : "lr-submit"
-              }`}
-            >
-              {pending.confirmLabel}
-            </button>
-          </div>
         </form>
       ) : null}
     </Modal>

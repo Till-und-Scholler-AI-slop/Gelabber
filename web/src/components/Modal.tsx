@@ -1,6 +1,17 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  type ReactNode,
+} from "react";
 
-import { dialogInitialFocus } from "./dialogFocus.ts";
+import { CloseIcon } from "./Icons.tsx";
+import { closesOnBackdrop, requestClose, restoreFocus } from "./modalClose.ts";
+import { IconButton } from "./ui/IconButton.tsx";
+import "./ui/ui.css";
+
+export { GhostButton } from "./ui/Button.tsx";
 
 type ModalProps = {
   open: boolean;
@@ -12,11 +23,19 @@ type ModalProps = {
   role?: "dialog" | "alertdialog";
   /** Id of the element that explains the dialog. */
   describedBy?: string;
+  /** Actions pinned under the scrolling body, in thumb reach on phones. */
+  footer?: ReactNode;
+  /**
+   * Unsaved input: a backdrop click is ignored, and Esc or "Schließen"
+   * asks before discarding it.
+   */
+  dirty?: boolean;
 };
 
 /**
  * Native `<dialog>` so focus trapping, Escape and the backdrop come from the
- * browser. Closes on Escape and on a click outside the panel.
+ * browser. The title stays put while the body scrolls, and "Schließen" is
+ * always there. Under 640px it is a bottom sheet.
  */
 export function Modal({
   open,
@@ -26,10 +45,17 @@ export function Modal({
   wide,
   role,
   describedBy,
+  footer,
+  dirty = false,
 }: ModalProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
+  const latest = useRef({ open, onClose });
+  useLayoutEffect(() => {
+    latest.current = { open, onClose };
+  });
+  const close = () => void requestClose({ dirty, onClose });
 
   useEffect(() => {
     const dialog = ref.current;
@@ -43,9 +69,7 @@ export function Modal({
     }
     if (!open && dialog.open) {
       dialog.close();
-      const opener = openerRef.current;
-      if (opener?.isConnected && opener.getClientRects().length > 0)
-        opener.focus({ preventScroll: true });
+      restoreFocus(openerRef.current);
       openerRef.current = null;
     }
   }, [open]);
@@ -66,67 +90,45 @@ export function Modal({
       onCancel={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        onClose();
+        close();
+      }}
+      onClose={() => {
+        // A browser may close a dialog without a cancel event (Chrome does
+        // for a repeated Esc); keep the owner's state in step.
+        if (latest.current.open) latest.current.onClose();
       }}
       onClick={(event) => {
-        if (event.target !== event.currentTarget) return;
-        const bounds = event.currentTarget.getBoundingClientRect();
         if (
-          event.clientX < bounds.left ||
-          event.clientX > bounds.right ||
-          event.clientY < bounds.top ||
-          event.clientY > bounds.bottom
+          event.target === event.currentTarget &&
+          closesOnBackdrop(
+            event,
+            event.currentTarget.getBoundingClientRect(),
+            dirty,
+          )
         )
           onClose();
       }}
-      className={[
-        "gel-modal m-auto w-[calc(100%-2rem)] rounded-2xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 p-0 text-neutral-900 dark:text-neutral-100 shadow-xl backdrop:bg-neutral-900/40 dark:backdrop:bg-black/60",
-        wide ? "max-w-lg" : "max-w-md",
-      ].join(" ")}
+      className={wide ? "gel-modal gel-modal--wide" : "gel-modal"}
     >
       {open ? (
-        <div className="flex flex-col gap-5 p-6">
-          <h2 id={titleId} className="text-lg font-semibold tracking-tight">
-            {title}
-          </h2>
-          {children}
-        </div>
+        <>
+          <header className="gel-modal__header">
+            <h2 id={titleId}>{title}</h2>
+          </header>
+          <div className="gel-modal__body">{children}</div>
+          {footer ? (
+            <footer className="gel-modal__footer">{footer}</footer>
+          ) : null}
+          {/* Last in the DOM, so a dialog still opens on its first field;
+              drawn in the header's corner. */}
+          <IconButton
+            className="gel-modal__close"
+            label="Schließen"
+            icon={<CloseIcon size={18} />}
+            onClick={close}
+          />
+        </>
       ) : null}
     </dialog>
-  );
-}
-
-/** Secondary button for dialogs ("Abbrechen" and friends). */
-export function GhostButton({
-  children,
-  onClick,
-  disabled,
-  tone = "neutral",
-  type = "button",
-  initialFocus,
-}: {
-  children: ReactNode;
-  onClick?: () => void;
-  disabled?: boolean;
-  tone?: "neutral" | "danger";
-  type?: "button" | "submit";
-  /** Focus this button when its dialog opens. */
-  initialFocus?: boolean;
-}) {
-  return (
-    <button
-      type={type}
-      {...dialogInitialFocus(initialFocus)}
-      onClick={onClick}
-      disabled={disabled}
-      className={[
-        "rounded-lg px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
-        tone === "danger"
-          ? "text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950"
-          : "text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800",
-      ].join(" ")}
-    >
-      {children}
-    </button>
   );
 }

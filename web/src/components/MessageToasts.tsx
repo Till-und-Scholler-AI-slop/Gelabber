@@ -1,62 +1,69 @@
 import { useNavigate } from "@tanstack/react-router";
 
 import { useMessageToasts } from "../messages/toasts.ts";
+import { Avatar } from "./Avatar.tsx";
+import { CloseIcon } from "./Icons.tsx";
+import { IconButton } from "./ui/IconButton.tsx";
+import "./ui/ui.css";
 
 export function MessageToasts() {
   const toasts = useMessageToasts((state) => state.toasts);
   const dismiss = useMessageToasts((state) => state.dismiss);
   const navigate = useNavigate();
-  if (toasts.length === 0) return null;
 
   return (
-    <div
-      aria-live="polite"
-      className="gel-message-toasts pointer-events-none fixed z-50 flex w-[min(100%-2rem,20rem)] flex-col gap-2"
-    >
+    <div aria-live="polite" className="gel-message-toasts">
       {toasts.map((toast) => {
-        const title =
+        const where =
           toast.count > 1
             ? `${toast.channelLabel} · ${toast.count} neu`
             : toast.channelLabel;
         return (
-          <button
-            key={toast.id}
-            type="button"
-            onClick={() => {
-              dismiss(toast.id);
-              if (toast.dm) {
+          <div key={toast.id} className="ui-message-toast">
+            <Avatar
+              name={toast.author}
+              url={toast.authorAvatar ?? null}
+              decorative
+            />
+            <button
+              type="button"
+              className="ui-message-toast__open"
+              aria-label={`Öffnen: ${where}, ${toast.author}${
+                toast.mentioned ? " hat dich erwähnt" : ""
+              }: ${toast.preview}`}
+              onClick={() => {
+                dismiss(toast.id);
+                if (toast.dm) {
+                  void navigate({
+                    to: "/d/$channelId",
+                    params: { channelId: toast.channelId },
+                  });
+                  return;
+                }
                 void navigate({
-                  to: "/d/$channelId",
-                  params: { channelId: toast.channelId },
+                  to: "/s/$serverId/c/$channelId",
+                  params: {
+                    serverId: toast.serverId,
+                    channelId: toast.channelId,
+                  },
                 });
-                return;
-              }
-              void navigate({
-                to: "/s/$serverId/c/$channelId",
-                params: {
-                  serverId: toast.serverId,
-                  channelId: toast.channelId,
-                },
-              });
-            }}
-            className="pointer-events-auto rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-left shadow-lg transition hover:bg-neutral-50 dark:hover:bg-neutral-800"
-          >
-            <p className="truncate text-xs font-medium text-neutral-500 dark:text-neutral-400">
-              {title}
-            </p>
-            <p className="truncate text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-              {toast.author}
-              {toast.mentioned ? (
-                <span className="font-normal text-neutral-500 dark:text-neutral-400">
-                  {" "}
-                  hat dich erwähnt
-                </span>
-              ) : null}
-            </p>
-            <p className="truncate text-sm text-neutral-600 dark:text-neutral-400">
-              {toast.preview}
-            </p>
-          </button>
+              }}
+            >
+              <span className="ui-message-toast__where">{where}</span>
+              <span className="ui-message-toast__who">
+                {toast.author}
+                {toast.mentioned ? <small> hat dich erwähnt</small> : null}
+              </span>
+              <span className="ui-message-toast__preview">{toast.preview}</span>
+            </button>
+            <IconButton
+              size="xs"
+              label="Schließen"
+              className="ui-message-toast__close"
+              icon={<CloseIcon size={14} />}
+              onClick={() => dismiss(toast.id)}
+            />
+          </div>
         );
       })}
     </div>

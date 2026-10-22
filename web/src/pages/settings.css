@@ -55,7 +55,7 @@ body:has(.settings-page) {
 }
 .settings-navigation button[aria-current] {
   background: var(--lr-selected);
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
   font-weight: 600;
 }
 .settings-content {
@@ -120,7 +120,7 @@ body:has(.settings-page) {
   background: var(--lr-selected);
 }
 .settings-theme-option:focus-within {
-  outline: 2px solid var(--lr-accent);
+  outline: 2px solid var(--lr-focus);
   outline-offset: 3px;
 }
 .settings-preference {
@@ -172,11 +172,11 @@ body:has(.settings-page) {
   min-width: 0;
   width: 100%;
   background: var(--lr-surface);
-  border-color: var(--lr-border);
+  border-color: var(--lr-border-strong);
 }
 .settings-content .media-settings-form button {
   min-height: 36px;
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
 }
 .settings-content .media-settings-form label:has(input[type="checkbox"]) {
   min-height: 44px;
@@ -226,7 +226,7 @@ body:has(.settings-page) {
   position: relative;
   width: 38px;
   height: 22px;
-  border: 1px solid var(--lr-border);
+  border: 1px solid var(--lr-border-strong);
   border-radius: 11px;
   background: var(--lr-surface);
   cursor: pointer;
@@ -323,7 +323,7 @@ html[data-reduced-motion="true"]
   box-shadow: 0 0 0 1px var(--lr-accent);
 }
 .deco-option:has(input:focus-visible) {
-  outline: 2px solid var(--lr-accent);
+  outline: 2px solid var(--lr-focus);
   outline-offset: 2px;
 }
 .deco-option input {

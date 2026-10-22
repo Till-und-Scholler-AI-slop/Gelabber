@@ -16,6 +16,8 @@ export type MessageToast = {
   dm: boolean;
   channelLabel: string;
   author: string;
+  /** The author's picture, if they have one. */
+  authorAvatar?: string | null;
   /** The message mentions the user. */
   mentioned?: boolean;
   preview: string;
