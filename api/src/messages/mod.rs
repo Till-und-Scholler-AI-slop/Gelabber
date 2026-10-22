@@ -748,6 +748,10 @@ pub(crate) async fn post_live_hint(state: &AppState, user: &User, server_id: Uui
     }.await;
     if let Err(err) = result {
         warn!(error = err.code(), "live hint persistence failed");
+        // Nothing was posted: the next start of this Live may try again.
+        if let Err(err) = state.gateway.release_live_hint(user.id, voice_id).await {
+            warn!(error = err.code(), "live hint: release cooldown");
+        }
         return;
     }
     let _ = delivery::deliver_pending(state, 32).await;

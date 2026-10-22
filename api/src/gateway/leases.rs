@@ -302,6 +302,20 @@ impl VoiceRoster {
             .map_err(redis_err)?;
         Ok(set.is_some())
     }
+    /// Gives back a claim whose hint was never posted, so the next start
+    /// of that Live may post it.
+    async fn release_live_hint(&self, u: Uuid, c: Uuid) -> Result<(), ApiError> {
+        self.connections
+            .with_conn(|mut conn| async move {
+                redis::cmd("DEL")
+                    .arg(live_hint_key(c, u))
+                    .query_async::<i32>(&mut conn)
+                    .await
+            })
+            .await
+            .map_err(redis_err)?;
+        Ok(())
+    }
     /// The cooldown of a hint runs from the end of its Live, not its start.
     async fn hold_live_hint(&self, u: Uuid, c: Uuid) -> Result<(), ApiError> {
         self.connections
@@ -806,6 +820,9 @@ impl VoiceRoster {
 impl Gateway {
     pub async fn claim_live_hint(&self, user: Uuid, channel: Uuid) -> Result<bool, ApiError> {
         self.voice.claim_live_hint(user, channel).await
+    }
+    pub async fn release_live_hint(&self, user: Uuid, channel: Uuid) -> Result<(), ApiError> {
+        self.voice.release_live_hint(user, channel).await
     }
     pub async fn refresh_voice(&self, id: ConnId) -> Result<(), ApiError> {
         self.voice.refresh(id).await?;
@@ -1318,6 +1335,9 @@ mod tests {
         // Per person and channel.
         assert!(g.claim_live_hint(u, Uuid::new_v4()).await.unwrap());
         assert!(g.claim_live_hint(Uuid::new_v4(), c).await.unwrap());
+        // A claim given back, its hint never posted, may be taken again.
+        g.release_live_hint(u, c).await.unwrap();
+        assert!(g.claim_live_hint(u, c).await.unwrap());
 
         let (id, _rx) = socket(&g, u).await;
         g.join_voice(id, u, s, c).await.unwrap();
