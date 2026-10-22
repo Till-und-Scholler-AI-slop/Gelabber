@@ -2,7 +2,8 @@
 //! and is not behind CSRF. `/health` and `/ready` stay as they are.
 //!
 //! Counters are process-local (one API container). Cardinality is bounded:
-//! method + status, plus a small set of rate-limit bucket names.
+//! method + status, plus a small set of rate-limit bucket names and link
+//! preview outcomes.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -43,6 +44,10 @@ pub struct HttpMetrics {
     duration_ms_sum: AtomicU64,
     duration_count: AtomicU64,
     rate_limited: Mutex<BTreeMap<&'static str, u64>>,
+    /// Link previews per link, by outcome (`previews::Outcome`).
+    link_previews: Mutex<BTreeMap<&'static str, u64>>,
+    /// Their images, by outcome.
+    link_preview_images: Mutex<BTreeMap<&'static str, u64>>,
 }
 
 impl HttpMetrics {
@@ -65,6 +70,14 @@ impl HttpMetrics {
             .lock()
             .unwrap_or_else(|err| err.into_inner());
         *map.entry(bucket).or_insert(0) += 1;
+    }
+
+    pub fn link_preview(&self, outcome: &'static str) {
+        bump(&self.link_previews, outcome);
+    }
+
+    pub fn link_preview_image(&self, outcome: &'static str) {
+        bump(&self.link_preview_images, outcome);
     }
 
     pub fn render(&self) -> String {
@@ -112,7 +125,38 @@ impl HttpMetrics {
                 ));
             }
         }
+
+        out.push_str(
+            "# HELP gelabber_link_previews_total Links looked at for a preview card, by outcome.\n",
+        );
+        out.push_str("# TYPE gelabber_link_previews_total counter\n");
+        render_outcomes(
+            &mut out,
+            "gelabber_link_previews_total",
+            &self.link_previews,
+        );
+        out.push_str(
+            "# HELP gelabber_link_preview_images_total Preview card images, by outcome.\n",
+        );
+        out.push_str("# TYPE gelabber_link_preview_images_total counter\n");
+        render_outcomes(
+            &mut out,
+            "gelabber_link_preview_images_total",
+            &self.link_preview_images,
+        );
         out
+    }
+}
+
+fn bump(map: &Mutex<BTreeMap<&'static str, u64>>, key: &'static str) {
+    let mut map = map.lock().unwrap_or_else(|err| err.into_inner());
+    *map.entry(key).or_insert(0) += 1;
+}
+
+fn render_outcomes(out: &mut String, name: &str, map: &Mutex<BTreeMap<&'static str, u64>>) {
+    let map = map.lock().unwrap_or_else(|err| err.into_inner());
+    for (outcome, count) in map.iter() {
+        out.push_str(&format!("{name}{{outcome=\"{outcome}\"}} {count}\n"));
     }
 }
 
@@ -140,10 +184,15 @@ mod tests {
         let metrics = HttpMetrics::new();
         metrics.observe("GET", 200, 12);
         metrics.rate_limited("auth");
+        metrics.link_preview("timeout");
+        metrics.link_preview_image("store_failed");
         let text = metrics.render();
         assert!(text.contains("# TYPE gelabber_http_requests_total counter"));
         assert!(text.contains("method=\"GET\",status=\"200\""));
         assert!(text.contains("gelabber_rate_limited_total{bucket=\"auth\"} 1"));
         assert!(text.contains("gelabber_http_request_duration_seconds_count 1"));
+        assert!(text.contains("# TYPE gelabber_link_previews_total counter"));
+        assert!(text.contains("gelabber_link_previews_total{outcome=\"timeout\"} 1"));
+        assert!(text.contains("gelabber_link_preview_images_total{outcome=\"store_failed\"} 1"));
     }
 }
