@@ -492,6 +492,16 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   font: var(--lr-type-ui);
   translate: 12px -50%;
   pointer-events: none;
+  /* Fades in beside the tile; moving to the next tile only moves it. */
+  transition:
+    opacity var(--lr-dur-fast) var(--lr-ease-enter),
+    translate var(--lr-dur-fast) var(--lr-ease-enter);
+}
+@starting-style {
+  .server-tile-tip {
+    opacity: 0;
+    translate: 8px -50%;
+  }
 }
 .server-tile-tip strong {
   font-weight: 600;
@@ -608,6 +618,35 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   left: 0;
   z-index: 35;
   width: max(100%, 208px);
+  transform-origin: top left;
+}
+/* The two <details> menus (server, user) open like a Popover: out of their
+   button, scaling up and fading in. Where ::details-content transitions,
+   they also close that way; elsewhere they vanish at once. */
+:is(.server-sidebar-menu > .shell-menu, .user-panel-menu > nav) {
+  transition:
+    opacity var(--lr-dur-exit) var(--lr-ease-exit),
+    scale var(--lr-dur-exit) var(--lr-ease-exit);
+}
+:is(.server-sidebar-menu, .user-panel-menu):not([open])
+  > :is(.shell-menu, nav) {
+  opacity: 0;
+  scale: 0.96;
+  pointer-events: none;
+}
+:is(.server-sidebar-menu, .user-panel-menu)[open] > :is(.shell-menu, nav) {
+  transition:
+    opacity var(--lr-dur) var(--lr-ease-enter),
+    scale var(--lr-dur) var(--lr-ease-enter);
+}
+@starting-style {
+  :is(.server-sidebar-menu, .user-panel-menu)[open] > :is(.shell-menu, nav) {
+    opacity: 0;
+    scale: 0.96;
+  }
+}
+:is(.server-sidebar-menu, .user-panel-menu)::details-content {
+  transition: content-visibility var(--lr-dur-exit) allow-discrete;
 }
 .sidebar-overview {
   display: flex;
@@ -1060,6 +1099,7 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   border: 1px solid var(--lr-border);
   border-radius: var(--lr-radius);
   box-shadow: 0 8px 25px #0003;
+  transform-origin: bottom right;
 }
 .user-panel-menu > nav > :is(a, button) {
   display: block;
@@ -1458,18 +1498,41 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     padding: var(--lr-safe-top) var(--lr-safe-right) var(--lr-safe-bottom) 0;
     border-left: 1px solid var(--lr-border);
     translate: 100% 0;
+    /* Closing: out a little faster, accelerating, while the dialog stays
+       drawn (display, overlay) until it is gone. */
     transition:
-      translate var(--lr-dur) var(--lr-ease),
-      display var(--lr-dur) allow-discrete,
-      overlay var(--lr-dur) allow-discrete;
+      translate var(--lr-dur-large-exit) var(--lr-ease-exit),
+      display var(--lr-dur-large-exit) allow-discrete,
+      overlay var(--lr-dur-large-exit) allow-discrete;
   }
   .member-panel-drawer[open] {
     translate: 0 0;
+    transition:
+      translate var(--lr-dur-large) var(--lr-ease-enter),
+      display var(--lr-dur-large) allow-discrete,
+      overlay var(--lr-dur-large) allow-discrete;
   }
   @starting-style {
     .member-panel-drawer[open] {
       translate: 100% 0;
     }
+    .member-panel-drawer[open]::backdrop {
+      opacity: 0;
+    }
+  }
+  .member-panel-drawer::backdrop {
+    opacity: 0;
+    transition:
+      opacity var(--lr-dur-large-exit) var(--lr-ease-standard),
+      display var(--lr-dur-large-exit) allow-discrete,
+      overlay var(--lr-dur-large-exit) allow-discrete;
+  }
+  .member-panel-drawer[open]::backdrop {
+    opacity: 1;
+    transition:
+      opacity var(--lr-dur-large) var(--lr-ease-standard),
+      display var(--lr-dur-large) allow-discrete,
+      overlay var(--lr-dur-large) allow-discrete;
   }
   .member-panel-drawer .workspace-drawer-header {
     position: absolute;
@@ -1532,13 +1595,19 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     padding: var(--lr-safe-top) 0 0 var(--lr-safe-left);
     border-right: 1px solid var(--lr-border);
     translate: -100% 0;
+    /* Closing: out a little faster, accelerating, while the dialog stays
+       drawn (display, overlay) until it is gone. */
     transition:
-      translate var(--lr-dur) var(--lr-ease),
-      display var(--lr-dur) allow-discrete,
-      overlay var(--lr-dur) allow-discrete;
+      translate var(--lr-dur-large-exit) var(--lr-ease-exit),
+      display var(--lr-dur-large-exit) allow-discrete,
+      overlay var(--lr-dur-large-exit) allow-discrete;
   }
   .workspace-navigation[open] {
     translate: 0 0;
+    transition:
+      translate var(--lr-dur-large) var(--lr-ease-enter),
+      display var(--lr-dur-large) allow-discrete,
+      overlay var(--lr-dur-large) allow-discrete;
   }
   @starting-style {
     .workspace-navigation[open] {
@@ -1569,12 +1638,16 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
   .workspace-drawer::backdrop {
     opacity: 0;
     transition:
-      opacity var(--lr-dur) var(--lr-ease),
-      display var(--lr-dur) allow-discrete,
-      overlay var(--lr-dur) allow-discrete;
+      opacity var(--lr-dur-large-exit) var(--lr-ease-standard),
+      display var(--lr-dur-large-exit) allow-discrete,
+      overlay var(--lr-dur-large-exit) allow-discrete;
   }
   .workspace-drawer[open]::backdrop {
     opacity: 1;
+    transition:
+      opacity var(--lr-dur-large) var(--lr-ease-standard),
+      display var(--lr-dur-large) allow-discrete,
+      overlay var(--lr-dur-large) allow-discrete;
   }
   @starting-style {
     .workspace-drawer[open]::backdrop {
