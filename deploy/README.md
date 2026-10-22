@@ -60,7 +60,17 @@ If the proxy in front instead writes a port into `Host` that the browser does no
   4. Last resort, `GELABBER_TRUSTED_PROXIES=`: every client then shares one window, which one client can use up for all.
 - An empty value (`GELABBER_TRUSTED_PROXIES=`) trusts no proxy, as before v0.7.1.
 
-**Content-Security-Policy.** Since v0.7.1 the web image sends one with the app shell. It is about scripts only: `script-src 'self' 'wasm-unsafe-eval'` plus the hash of the inline theme script (`'wasm-unsafe-eval'` lets the RNNoise noise suppression compile), `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `frame-src https://www.youtube-nocookie.com` and `frame-ancestors 'none'`. It has no fetch directives (`default-src`, `connect-src`, `img-src`, `media-src`), so uploads and attachments on the MinIO host, link avatars and the desktop app's native part keep working without configuration.
+**Content-Security-Policy.** Since v0.7.1 the web image sends one with the app shell: `script-src 'self' 'wasm-unsafe-eval'` plus the hash of the inline theme script (`'wasm-unsafe-eval'` lets the RNNoise noise suppression compile), `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `frame-src https://www.youtube-nocookie.com` and `frame-ancestors 'none'`.
+
+Since v0.8 it also limits where the app may load from and connect to, once the web container knows the MinIO origin. `compose.yaml` hands it `MINIO_PUBLIC_ENDPOINT`, the same value the API signs upload and attachment links with, and the policy then adds:
+
+- `default-src 'self'`
+- `connect-src 'self' <MinIO origin> ipc: http://ipc.localhost`: the API, the gateway and media WebSockets, presigned uploads, and the desktop app's native part (`ipc:` on Linux, `http://ipc.localhost` on Windows)
+- `img-src 'self' data: blob: https: <MinIO origin>`: attachments, upload previews, and link avatars, which may sit on any https host
+- `media-src 'self' data: blob: <MinIO origin>`: video and audio attachments, call sounds, microphone test clips
+- `style-src 'self' 'unsafe-inline'`
+
+The origin is scheme, host and port of `MINIO_PUBLIC_ENDPOINT`; the web container's log names it at startup. Without the variable, with a value no policy can name (an IPv6 address, a host with `_`) or with a web container from a `compose.yaml` before v0.8 (an update of the images alone), the policy keeps these directives out, as in v0.7.1, and the log says so. Set `MINIO_PUBLIC_ENDPOINT` in `.env`, not in the `api` service: a value only the API has breaks uploads and attachments in the browser with a Content-Security-Policy error in its console. After changing it, recreate `web` together with `api` (`docker compose up -d api web`).
 
 A policy you set for the app host on your own proxy is enforced in addition to this one: a request has to pass both. If it sets `connect-src` or `default-src`, it must let the desktop app reach its native part: add `ipc:` (Linux) and `http://ipc.localhost` (Windows) to `connect-src`, for example `connect-src 'self' ipc: http://ipc.localhost`. Without `connect-src`, `default-src` applies. Without these sources the app falls back to a slow path: it keeps working, but video in its tiles stays at 320×180 with 15 frames per second, and the tile reports "Geringe Bildqualität" (low picture quality) with the Content-Security-Policy as the reason. Browsers and the installed PWA are not affected. To drop the stack's policy, remove the header on your proxy: Caddy `header -Content-Security-Policy` in the app's site block, Nginx `proxy_hide_header Content-Security-Policy;`.
 
@@ -168,10 +178,10 @@ Browsers upload and download attachments directly from MinIO through presigned U
 
 1. DNS for `minio.example.com`, and the MinIO site from `Caddyfile.homelab` in your Caddy with `minio.example.com` as its address (the default is `minio.home.arpa`; `header_up Host {hostport}`, URI unchanged).
 2. `.env`: `MINIO_PUBLIC_ENDPOINT=https://minio.example.com`, `MINIO_API_CORS_ALLOW_ORIGIN=https://example.com`. Leave `MINIO_API_BIND` and `MINIO_CONSOLE_BIND` as they are for now: open browsers cache the attachment redirect for the rest of its signing window and keep following the old `:9000` link for up to 30 minutes, so the old port must stay reachable that long.
-3. `docker compose up -d minio api`. Check from outside that `curl -I https://minio.example.com/minio/health/live` answers 200, and that an attachment link now redirects to `https://minio.example.com/…`: with `curl -I` and your session cookie, or in a private window.
+3. `docker compose up -d minio api web` (`web` allows the new origin in its Content-Security-Policy). Check from outside that `curl -I https://minio.example.com/minio/health/live` answers 200, and that an attachment link now redirects to `https://minio.example.com/…`: with `curl -I` and your session cookie, or in a private window.
 4. About 30 minutes later, set `MINIO_API_BIND=127.0.0.1` and `MINIO_CONSOLE_BIND=127.0.0.1` in `.env`, run `docker compose up -d minio`, and close 9000/9001 in the firewall. Check from outside that `curl -I https://example.com:9000/minio/health/live` fails. In the app, upload a new image and check that it loads (its redirect cannot come from a cache), then hard-reload (Ctrl+Shift+R) and check that an existing image still loads.
 
-If you cannot wait, do step 4 right after step 3: browsers that were already open may then miss some images for up to 30 minutes, until their cached redirects run out or the page is hard-reloaded.
+If you cannot wait, do step 4 right after step 3: browsers that were already open may then miss some images for up to 30 minutes, until their cached redirects run out or the page is hard-reloaded. The same holds after step 3 for a page loaded with the new policy: it no longer allows the old `:9000` origin, so a redirect a browser cached before the move shows a missing image until it runs out or the page is hard-reloaded.
 
 A path prefix (`https://example.com/s3/…`) does not work: presigns sign host and path.
 

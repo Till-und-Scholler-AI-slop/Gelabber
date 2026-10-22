@@ -27,10 +27,12 @@ It is closed again, which closes the picker. On Linux both are left out, as
 before: a screen capture would open the portal's picker.
 
 The page comes with the Content-Security-Policy the web image sends with its
-shell (web/nginx.conf), its own inline script hashed in place of the theme
-bootstrap. Without 'unsafe-eval' and 'unsafe-inline' the page's calls, the
-frames and the app's own scripts in every page (main.rs, update.rs) have to
-work in WebKitGTK and WebView2 as they will against a real server.
+shell (web/nginx.conf) once it knows the MinIO origin, its own inline script
+hashed in place of the theme bootstrap. Without 'unsafe-eval' and
+'unsafe-inline' and with connect-src limited to this origin, MinIO and the
+IPC, the page's calls, the frames and the app's own scripts in every page
+(main.rs, update.rs) have to work in WebKitGTK and WebView2 as they will
+against a real server.
 
 Usage: smoke_server.py <port> <ABI version> [<file to create after the first report>]
 """
@@ -295,13 +297,17 @@ def check_windows_screen(report, problems):
 def policy(page):
     """The web image's policy for the shell, for this page's inline script.
 
-    Script directives only, no connect-src: the IPC fetches to ipc: and
-    http://ipc.localhost stay allowed, as they are with the real server.
+    With the fetch directives of a container that knows its MinIO origin:
+    the IPC fetches to ipc: and http://ipc.localhost must pass connect-src.
     """
     script = page.split(b"<script>", 1)[1].split(b"</script>", 1)[0]
     digest = base64.b64encode(hashlib.sha256(script).digest()).decode()
+    storage = "https://minio.example.com"
     return (f"script-src 'self' 'wasm-unsafe-eval' 'sha256-{digest}'; object-src 'none'; "
-            "base-uri 'self'; frame-ancestors 'none'")
+            "base-uri 'self'; frame-ancestors 'none'; default-src 'self'; "
+            f"connect-src 'self' {storage} ipc: http://ipc.localhost; "
+            f"img-src 'self' data: blob: https: {storage}; "
+            f"media-src 'self' data: blob: {storage}; style-src 'self' 'unsafe-inline'")
 
 
 class Handler(BaseHTTPRequestHandler):
