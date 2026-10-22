@@ -19,8 +19,6 @@ import {
 // (j/l/p/u).
 // Own versioned Media WS: public mediasoup-client transport and source signaling.
 
-import { create } from "zustand";
-
 import { ApiError, type ApiErrorCode } from "../api/client.ts";
 import { errorMessage } from "../auth/rules.ts";
 import { useSession } from "../auth/store.ts";
@@ -40,6 +38,8 @@ import {
   MediaError,
 } from "./media.ts";
 import { MediaPeer, MediaRetry } from "./mediaPeer.ts";
+import { ReceivedAudio } from "./receivedAudio.ts";
+import { VideoLimits } from "./videoLimits.ts";
 import { isDesktopApp } from "./native/bridge.ts";
 import {
   captureAppAudio,
@@ -47,24 +47,9 @@ import {
   nativeGetUserMedia,
 } from "./native/capture.ts";
 import { loadNativeFeatures } from "./native/features.ts";
-import {
-  createAudioOutput,
-  createStream,
-  isNativeAudioOutput,
-} from "./native/tracks.ts";
-import {
-  boost,
-  boostOutput,
-  isBoosted,
-  releaseBoost,
-  resetPlaybackBoostForTests,
-  startBoostOutput,
-} from "./playbackBoost.ts";
-import {
-  effectiveVoiceVolume,
-  userVolumeOf,
-  useUserVolumes,
-} from "./userVolume.ts";
+import { createStream } from "./native/tracks.ts";
+import { resetPlaybackBoostForTests } from "./playbackBoost.ts";
+import { useUserVolumes } from "./userVolume.ts";
 import {
   createMediaConnection,
   preloadMediaSdk,
@@ -90,7 +75,6 @@ import {
   type MediaSettings,
   type StreamKind,
   type StreamProfileId,
-  allocateVideoBitrates,
   audioBitrate,
   sourceAudioBitrate,
   SOURCE_AUDIO_CONSTRAINTS,
@@ -108,91 +92,29 @@ import {
   onPushToTalkGate,
   pushToTalkOpen,
 } from "./pushToTalk.ts";
+import {
+  IDLE_VOICE,
+  useVoice,
+  type SourceAudioNote,
+  type SourceAudioStatus,
+  type VoiceConnection,
+  type VoiceMic,
+  type VoiceParticipant,
+  type VoiceState,
+} from "./voiceStore.ts";
 
-export type SourceAudioStatus =
-  "off" | "sharing" | "unavailable" | "ended" | "unsupported";
-/** What the status alone does not say: the desktop capture's own reason for
- * "unavailable", or the chosen application that plays nothing while
- * "sharing". */
-export type SourceAudioNote = { failed?: string; silent?: string };
-
-export type VoiceStatus = "idle" | "joined";
-/** What the call's media connection is doing, for the call bar to say.
- * Observed only: the retry logic does not read it. `failed` outlives the
- * call it reports, until the user joins again or dismisses it. */
-export type VoiceConnection =
-  "idle" | "connecting" | "connected" | "reconnecting" | "failed";
-/** Whether the own microphone reaches the call: captured and sending,
- * missing or refused (the call goes on listening), or held closed by
- * push-to-talk. */
-export type VoiceMic = "live" | "unavailable" | "denied" | "ptt-idle";
-/** The call a `failed` connection ended, to join it again. */
-export type LostCall = {
-  serverId: string;
-  channelId: string;
-  channelName: string;
-};
-
-export type VoiceParticipant = {
-  pubs: TrackKind[];
-};
-
-export type RemoteVideo = {
-  v?: MediaStream;
-  s?: MediaStream;
-  l?: MediaStream;
-};
-
-export type VoiceState = {
-  status: VoiceStatus;
-  connection: VoiceConnection;
-  mic: VoiceMic;
-  lostCall: LostCall | null;
-  serverId: string | null;
-  channelId: string | null;
-  channelName: string | null;
-  muted: boolean;
-  deafened: boolean;
-  camera: boolean;
-  /** The own Live: a screen or window. */
-  sharing: boolean;
-  sourceWatchSupported: boolean;
-  /** The own Live's sound. */
-  sourceAudio: Record<"s", SourceAudioStatus>;
-  sourceAudioNote: Record<"s", SourceAudioNote | null>;
-  /** Whose Live (a screen, or an older client's Go Live) plays here. */
-  sourceSubscriptions: Record<string, Partial<Record<"s" | "l", boolean>>>;
-  localCamera: MediaStream | null;
-  localScreen: MediaStream | null;
-  playbackBlocked: boolean;
-  remote: Record<string, RemoteVideo>;
-  participants: Record<string, VoiceParticipant>;
-};
-
-const idle: VoiceState = {
-  status: "idle",
-  connection: "idle",
-  mic: "live",
-  lostCall: null,
-  serverId: null,
-  channelId: null,
-  channelName: null,
-  muted: false,
-  deafened: false,
-  camera: false,
-  sharing: false,
-  sourceWatchSupported: false,
-  sourceAudio: { s: "off" },
-  sourceAudioNote: { s: null },
-  sourceSubscriptions: {},
-  localCamera: null,
-  localScreen: null,
-  playbackBlocked: false,
-  remote: {},
-  participants: {},
-};
-
-export const useVoice = create<VoiceState>(() => ({ ...idle }));
+export {
+  useVoice,
+  type LostCall,
+  type RemoteVideo,
+  type SourceAudioNote,
+  type SourceAudioStatus,
+  type VoiceConnection,
+  type VoiceMic,
+  type VoiceParticipant,
+  type VoiceState,
+  type VoiceStatus,
+} from "./voiceStore.ts";
 
 // Remember a deliberate mute while temporarily deafened, also across room switches.
 let preDeafenMuted = false;
@@ -232,22 +154,7 @@ let rawMicStream: MediaStream | null = null;
 let activeMicGain: MicGainInsert | null = null;
 let cameraStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
-/** One element per received microphone, so each participant keeps a
- * volume of their own. */
-type VoiceAudio = { el: HTMLAudioElement; userId: string | null };
-const voiceAudio = new Map<MediaStreamTrack, VoiceAudio>();
-const receivedAudioSources = new Map<MediaStreamTrack, AudioSource>();
-const receivedSourceAudio = new Map<
-  MediaStreamTrack,
-  { stream?: MediaStream; userId: string; kind: "s" | "l" }
->();
-const sourceAudio = new Map<
-  MediaStreamTrack,
-  { el: HTMLAudioElement; userId: string; kind: "s" | "l" }
->();
-const blockedPlayback = new Set<HTMLAudioElement>();
-/** The browser blocked the boost output: play at 100 % until a click. */
-let boostBlocked = false;
+let receivedAudio = newReceivedAudio();
 let bound = false;
 let unsubscribeUserVolumes: (() => void) | null = null;
 let unsubscribePushToTalk: (() => void) | null = null;
@@ -282,14 +189,7 @@ const LIVE_FORBIDDEN_MESSAGE = "In diesem Server darfst du nicht live gehen.";
 let awaitingScreen: { serverId: string; channelId: string } | null = null;
 let audioCommitChain: Promise<void> = Promise.resolve();
 let cameraCommitChain: Promise<void> = Promise.resolve();
-/**
- * One video-budget queue for the current peer generation. Profile changes,
- * publish, unpublish and profile changes share it. A newer request supersedes an
- * in-flight snapshot so an older pass cannot write a stale sender cap.
- */
-let videoLimitChain: Promise<void> = Promise.resolve();
-let videoLimitGeneration = 0;
-let videoLimitRevision = 0;
+const videoBudget = new VideoLimits(() => seat, profileForVideoTrack);
 /** Each browser capture lifetime has one UUID, shared with its source audio. */
 const captureEpochs = new WeakMap<MediaStream, string>();
 function captureEpoch(stream: MediaStream): string {
@@ -301,6 +201,13 @@ function captureEpoch(stream: MediaStream): string {
   return epoch;
 }
 const receivedIdentity = new WeakMap<MediaStreamTrack, ReceivedSource>();
+function newReceivedAudio(): ReceivedAudio {
+  return new ReceivedAudio({
+    identity: (track) => receivedIdentity.get(track),
+    self: currentUserId,
+    voiceAttached: applyLocalAudio,
+  });
+}
 let republishOnJoin = false;
 const announced = new Set<TrackKind>();
 const pendingMicRaw = new Set<MediaStream>();
@@ -358,94 +265,9 @@ async function defaultGetDisplayMedia(
   return navigator.mediaDevices.getDisplayMedia(constraints);
 }
 
-/** Plays a received microphone on an element of its own, kept in `held`. */
-function attachVoiceAudio(
-  held: Map<MediaStreamTrack, VoiceAudio>,
-  track: MediaStreamTrack,
-  stream?: MediaStream,
-): void {
-  if (held.has(track)) return;
-  const el = createAudioOutput();
-  if (!el) return;
-  el.autoplay = true;
-  el.setAttribute("playsinline", "true");
-  // One element per track: a MediaStream's multiple audio tracks must not
-  // compete for an HTML media element's single selected audio track.
-  el.srcObject = createStream([track]) ?? stream ?? null;
-  const userId = receivedIdentity.get(track)?.owner ?? null;
-  if (userId) el.setAttribute("data-voice", userId);
-  held.set(track, { el, userId });
-  track.addEventListener("ended", () => {
-    if (held.get(track)?.el !== el) return;
-    held.delete(track);
-    silenceAudio(el);
-    updatePlaybackBlocked();
-  });
-  if (held === voiceAudio) applyLocalAudio();
-  applyPlayback();
-  playAudio(el);
-}
-
-function dropVoiceAudio(
-  held: Map<MediaStreamTrack, VoiceAudio>,
-  track: MediaStreamTrack,
-): void {
-  const voice = held.get(track);
-  if (!voice) return;
-  silenceAudio(voice.el);
-  held.delete(track);
-}
-
-function clearVoiceAudio(held: Map<MediaStreamTrack, VoiceAudio>): void {
-  for (const { el } of held.values()) silenceAudio(el);
-  held.clear();
-}
-
-function updatePlaybackBlocked(): void {
-  useVoice.setState({ playbackBlocked: blockedPlayback.size > 0 });
-}
-
-function playAudio(el: HTMLAudioElement): void {
-  const stream = el.srcObject;
-  if (!stream) return;
-  const boosted = isBoosted(el);
-  const failed = (error: unknown) => {
-    if (
-      el.srcObject !== stream ||
-      (error as { name?: string })?.name === "AbortError"
-    )
-      return;
-    blockedPlayback.add(el);
-    if (boosted && isBoosted(el)) {
-      // The muted element would stay silent: play it at 100 % meanwhile.
-      boostBlocked = true;
-      applyPlayback();
-    }
-    updatePlaybackBlocked();
-  };
-  try {
-    const started = el.play();
-    // A boosted element is heard through the shared boost output instead.
-    void (boosted ? Promise.all([started, startBoostOutput()]) : started)
-      ?.then(() => {
-        if (el.srcObject !== stream) return;
-        blockedPlayback.delete(el);
-        updatePlaybackBlocked();
-      })
-      .catch(failed);
-  } catch (error) {
-    failed(error);
-  }
-}
-
 /** Call synchronously from a click so the browser grants playback activation. */
 export function retryPlayback(): void {
-  // The click also allows the boost again; applyPlayback restarts it.
-  boostBlocked = false;
-  applyPlayback();
-  for (const { el } of [...voiceAudio.values(), ...sourceAudio.values()]) {
-    if (el?.srcObject) playAudio(el);
-  }
+  receivedAudio.retry();
 }
 
 /**
@@ -508,7 +330,9 @@ function ensureBound(): void {
   gateway.onReady(onReady);
   onMediaSettingsChange(handleSettingsChange);
   unsubscribeUserVolumes?.();
-  unsubscribeUserVolumes = useUserVolumes.subscribe(applyUserVolumes);
+  unsubscribeUserVolumes = useUserVolumes.subscribe(() =>
+    receivedAudio.applyUserVolumes(),
+  );
   onPushToTalkGate(applyLocalAudio);
   unsubscribePushToTalk?.();
   unsubscribePushToTalk = useVoice.subscribe((next, prev) => {
@@ -769,25 +593,14 @@ function onSig(event: SigEvent): void {
           [userId]: { pubs },
         },
       });
-      if (event.t === "u" && (event.k === "sa" || event.k === "la")) {
-        const kind = event.k === "sa" ? "s" : "l";
-        clearSourcePlayback(userId, kind);
-        for (const [track, source] of receivedSourceAudio)
-          if (source.userId === userId && source.kind === kind)
-            receivedSourceAudio.delete(track);
-      }
+      if (event.t === "u" && (event.k === "sa" || event.k === "la"))
+        receivedAudio.dropSource(userId, event.k === "sa" ? "s" : "l");
       if (event.k === "v" || event.k === "s" || event.k === "l") {
         if (event.t === "u") {
           // Gateway `t:"l"` keeps a track that is still arriving. `t:"u"`
           // means that the camera or a Live actually ended.
           forgetReceived(userId, event.k);
-          if (event.k !== "v") {
-            clearSourcePlayback(userId, event.k);
-            for (const [track, source] of receivedSourceAudio) {
-              if (source.userId === userId && source.kind === event.k)
-                receivedSourceAudio.delete(track);
-            }
-          }
+          if (event.k !== "v") receivedAudio.dropSource(userId, event.k);
         } else if (userId !== currentUserId()) {
           reattachReceived(userId, event.k);
         }
@@ -812,7 +625,10 @@ function onErr(err: ErrFrame): void {
       awaitingJoin = null;
       awaitingScreen = null;
       stopPeer();
-      useVoice.setState({ ...idle, playbackBlocked: state.playbackBlocked });
+      useVoice.setState({
+        ...IDLE_VOICE,
+        playbackBlocked: state.playbackBlocked,
+      });
       const code: ApiErrorCode =
         err.e === "forbidden" ||
         err.e === "not_found" ||
@@ -905,10 +721,7 @@ function diagnosticAudioSources(): Record<string, AudioSource> {
   const sources: Record<string, AudioSource> = {};
   for (const track of screenStream?.getAudioTracks() ?? [])
     sources[track.id] = "screen-audio";
-  for (const [track, source] of receivedAudioSources)
-    sources[track.id] = source;
-  for (const [track, source] of sourceAudio)
-    sources[track.id] = source.kind === "s" ? "screen-audio" : "live-audio";
+  receivedAudio.diagnosticSources(sources);
   return sources;
 }
 
@@ -1051,18 +864,8 @@ function receiveSource(source: ReceivedSource): void {
 function closeReceivedSource(source: ReceivedSource): void {
   if (receivedIdentity.get(source.track) !== source) return;
   receivedIdentity.delete(source.track);
-  receivedAudioSources.delete(source.track);
-  receivedSourceAudio.delete(source.track);
-  if (source.kind === "audio") {
-    dropVoiceAudio(voiceAudio, source.track);
-    const held = sourceAudio.get(source.track);
-    if (held) {
-      silenceAudio(held.el);
-      sourceAudio.delete(source.track);
-    }
-    updatePlaybackBlocked();
-    return;
-  }
+  receivedAudio.close(source.track, source.kind === "audio");
+  if (source.kind === "audio") return;
   if (source.k !== "v" && source.k !== "s" && source.k !== "l") return;
   const held = receivedVideo.get(source.owner)?.[source.k];
   if (held === source.stream) {
@@ -1099,7 +902,7 @@ function makeMediaConnection(
     onRepublished: () => {
       // New senders: the upload budget and priorities go on them again.
       if (!current() || !peer.connection) return;
-      void enqueueVideoLimits(peer.connection).catch(() => {});
+      void videoBudget.enqueue(peer.connection).catch(() => {});
       void applySendBitrate().catch(() => {});
     },
   });
@@ -1182,7 +985,7 @@ function stopPeer(preserveCapture = false): void {
     if (!open.has(kind)) bumpVideoEpoch(kind);
   audioCommitChain = Promise.resolve();
   cameraCommitChain = Promise.resolve();
-  resetVideoLimitQueue();
+  videoBudget.reset();
   // The next connection announces what it publishes itself.
   announced.clear();
   for (const stream of pendingMicRaw) stopTracks(stream);
@@ -1213,14 +1016,8 @@ function stopPeer(preserveCapture = false): void {
     stopTracks(screenStream);
     screenStream = null;
   }
-  clearSourcePlayback();
-  receivedSourceAudio.clear();
-  receivedAudioSources.clear();
+  receivedAudio.clear();
   clearReceived();
-  // Paused and detached: an element left playing keeps the tab's
-  // "playing audio" indicator after the call is over.
-  clearVoiceAudio(voiceAudio);
-  updatePlaybackBlocked();
   useVoice.setState({
     localCamera: cameraStream,
     localScreen: screenStream,
@@ -1251,8 +1048,8 @@ function rollbackSeat(error?: unknown, lost = false): void {
   stopPeer();
   vacateSelf(serverId, channelId);
   useVoice.setState({
-    ...idle,
-    playbackBlocked: blockedPlayback.size > 0,
+    ...IDLE_VOICE,
+    playbackBlocked: receivedAudio.playbackBlocked,
     ...(lost && serverId && channelId
       ? {
           connection: "failed" as const,
@@ -1264,7 +1061,7 @@ function rollbackSeat(error?: unknown, lost = false): void {
         }
       : {}),
   });
-  applyPlayback();
+  receivedAudio.applyPlayback();
   if (serverId && channelId) {
     deps?.gateway.send({
       op: "sig",
@@ -1323,92 +1120,7 @@ function applyLocalAudio(): void {
       });
     }
   }
-  applyPlayback();
-}
-
-/** Each microphone at the output volume times its participant's own. */
-function applyVoiceVolumes(): void {
-  const deafened = useVoice.getState().deafened;
-  const output = useMediaSettings.getState().outputVolume;
-  const users = useUserVolumes.getState().users;
-  for (const { el, userId } of voiceAudio.values()) {
-    const user = userVolumeOf(userId, users);
-    setOutputVolume(
-      el,
-      deafened || user.muted,
-      effectiveVoiceVolume({ output, user, deafened }),
-    );
-  }
-}
-
-/** A per-user slider moves volumes only: setting the same output device
- * again is not free in every browser (a short dropout). Only a boost output
- * the slider just created still needs it. */
-function applyUserVolumes(): void {
-  const before = boostOutput();
-  applyVoiceVolumes();
-  const boosted = boostOutput();
-  if (boosted && boosted !== before) void applySink(boosted);
-}
-
-function applyPlayback(): void {
-  const deafened = useVoice.getState().deafened;
-  const settings = useMediaSettings.getState();
-  applyVoiceVolumes();
-  for (const { el } of voiceAudio.values()) void applySink(el);
-  for (const { el } of sourceAudio.values()) {
-    setOutputVolume(
-      el,
-      deafened || settings.sourceAudioMuted,
-      deafened ? 0 : settings.sourceAudioVolume,
-    );
-    void applySink(el);
-  }
-  const boosted = boostOutput();
-  if (boosted) void applySink(boosted);
-}
-
-/** Up to 100 % on the element itself, above that through the Web Audio
- * boost. Native outputs scale up to 200 % on their own. */
-function setOutputVolume(
-  el: HTMLAudioElement,
-  muted: boolean,
-  volume: number,
-): void {
-  if (!muted && volume > 1 && !boostBlocked && !isNativeAudioOutput(el)) {
-    const wasBoosted = isBoosted(el);
-    if (boost(el, volume)) {
-      // Still playing, so Chromium keeps feeding the boost; heard through it.
-      el.muted = true;
-      el.volume = 1;
-      if (!wasBoosted) playAudio(el);
-      return;
-    }
-  }
-  releaseBoost(el);
-  el.muted = muted;
-  el.volume = isNativeAudioOutput(el) ? volume : Math.min(1, volume);
-}
-
-/** Stops an element the session no longer plays. */
-function silenceAudio(el: HTMLAudioElement): void {
-  el.pause?.();
-  el.srcObject = null;
-  releaseBoost(el);
-  blockedPlayback.delete(el);
-}
-
-async function applySink(el: HTMLAudioElement): Promise<void> {
-  const id = useMediaSettings.getState().audioOutputId;
-  const sink = el as HTMLAudioElement & {
-    setSinkId?: (deviceId: string) => Promise<void>;
-  };
-  if (!sink.setSinkId) return;
-  try {
-    await sink.setSinkId(id);
-  } catch {
-    // unplugged / permission
-  }
+  receivedAudio.applyPlayback();
 }
 
 async function applySendBitrate(): Promise<void> {
@@ -1444,91 +1156,6 @@ function profileForVideoTrack(track: MediaStreamTrack): StreamProfileId {
   const camera = cameraStream?.getVideoTracks().some((item) => item === track);
   if (camera) return useMediaSettings.getState().cameraProfile;
   return useMediaSettings.getState().screenProfile;
-}
-
-function resetVideoLimitQueue(): void {
-  videoLimitRevision += 1;
-  videoLimitChain = Promise.resolve();
-  videoLimitGeneration = seat.generation;
-}
-
-function videoLimitCurrent(
-  pc: MediaConnection,
-  generation: number,
-  revision: number,
-): boolean {
-  return (
-    videoLimitRevision === revision &&
-    videoLimitGeneration === generation &&
-    seat.generation === generation &&
-    seat.connection === pc
-  );
-}
-
-/** Serialize budget writes. Profiles are read when the pass runs, not when queued. */
-function enqueueVideoLimits(pc: MediaConnection): Promise<void> {
-  const generation = seat.generation;
-  if (videoLimitGeneration !== generation) {
-    videoLimitChain = Promise.resolve();
-    videoLimitGeneration = generation;
-  }
-  const revision = ++videoLimitRevision;
-  const run = videoLimitChain.then(
-    () => applyVideoLimits(pc, generation, revision),
-    () => applyVideoLimits(pc, generation, revision),
-  );
-  videoLimitChain = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
-}
-
-async function applyVideoLimits(
-  pc: MediaConnection,
-  generation: number,
-  revision: number,
-): Promise<void> {
-  if (!videoLimitCurrent(pc, generation, revision)) return;
-  const senders = (pc.senders() ?? []).filter(
-    (s) => s.track?.kind === "video" && s.track.readyState !== "ended",
-  );
-  const profiles = senders.map((sender) =>
-    sender.track ? profileForVideoTrack(sender.track) : "balanced",
-  );
-  const shares = allocateVideoBitrates(
-    profiles,
-    useMediaSettings.getState().videoUploadLimit,
-    useMediaSettings.getState().economyMode,
-  );
-  for (let index = 0; index < senders.length; index += 1) {
-    if (!videoLimitCurrent(pc, generation, revision)) return;
-    const sender = senders[index];
-    const params = sender?.getParameters?.();
-    if (!sender || !params?.encodings.length) continue;
-    const share = shares[index] ?? null;
-    const fps = streamProfileFps(profiles[index] ?? "balanced");
-    for (let layer = 0; layer < params.encodings.length; layer += 1) {
-      const encoding = params.encodings[layer]!;
-      if (share === null) delete encoding.maxBitrate;
-      else
-        encoding.maxBitrate =
-          Math.floor(share / params.encodings.length) +
-          (layer < share % params.encodings.length ? 1 : 0);
-      encoding.maxFramerate = fps;
-    }
-    try {
-      await sender.setParameters?.(params);
-    } catch {
-      // A rejected hint leaves the last working sender settings intact.
-    }
-    await prioritizeSender(sender, "video", () =>
-      videoLimitCurrent(pc, generation, revision),
-    );
-    // This snapshot is stale. Stop before the next sender; the newer pass
-    // applies the latest budgets across every sender still sending.
-    if (!videoLimitCurrent(pc, generation, revision)) return;
-  }
 }
 
 function liveVideoTracks(kind: StreamKind): MediaStreamTrack[] {
@@ -1570,7 +1197,7 @@ async function applyStreamProfile(kind: StreamKind): Promise<void> {
   const pc = seat.connection;
   if (pc) {
     try {
-      await enqueueVideoLimits(pc);
+      await videoBudget.enqueue(pc);
     } catch {
       // sender caps are best-effort
     }
@@ -2287,7 +1914,7 @@ async function refreshCamera(): Promise<void> {
     useVoice.setState({ camera: true, localCamera: stream });
     pendingCameraStreams.delete(stream);
     stopTracks(old);
-    await enqueueVideoLimits(pc);
+    await videoBudget.enqueue(pc);
   });
 }
 
@@ -2433,7 +2060,7 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
       prev.economyMode !== next.economyMode) &&
     seat.connection
   ) {
-    void enqueueVideoLimits(seat.connection);
+    void videoBudget.enqueue(seat.connection);
   }
   if (joined && qualityChanged) {
     void applySendBitrate();
@@ -2736,7 +2363,7 @@ export function joinVoice(input: {
   // The join frame has no mute fields. Sync flags in socket order before media work.
   if (muted) sendFlag("m", input.serverId, input.channelId, true);
   if (deafened) sendFlag("d", input.serverId, input.channelId, true);
-  applyPlayback();
+  receivedAudio.applyPlayback();
   void startPeer(input.serverId, input.channelId);
 }
 
@@ -2754,10 +2381,10 @@ export function leaveVoice(): void {
   stopPeer();
   vacateSelf(serverId, channelId);
   useVoice.setState({
-    ...idle,
-    playbackBlocked: blockedPlayback.size > 0,
+    ...IDLE_VOICE,
+    playbackBlocked: receivedAudio.playbackBlocked,
   });
-  applyPlayback();
+  receivedAudio.applyPlayback();
   if (serverId && channelId) {
     deps?.gateway.send({
       op: "sig",
@@ -2874,13 +2501,10 @@ export function resetVoiceForTests(): void {
   clearSeatReconnectTimer();
   stopPeer();
   resetPlaybackBoostForTests();
-  boostBlocked = false;
-  voiceAudio.clear();
-  sourceAudio.clear();
-  blockedPlayback.clear();
+  receivedAudio = newReceivedAudio();
   seat = new MediaPeer();
-  resetVideoLimitQueue();
-  useVoice.setState({ ...idle });
+  videoBudget.reset();
+  useVoice.setState({ ...IDLE_VOICE });
   deps = null;
   bound = false;
   onMediaSettingsChange(null);
@@ -3107,7 +2731,7 @@ function stopLocalVideo(kind: LocalVideo): void {
     if (self) setPub(self, "sa", false);
     sendPub("sa", false);
   }
-  if (seat.connection) void enqueueVideoLimits(seat.connection);
+  if (seat.connection) void videoBudget.enqueue(seat.connection);
   noteStreamProfileApply(kind === "v" ? "camera" : "screen", "idle");
   noteStream(kind, false);
 }
@@ -3178,7 +2802,7 @@ async function publishLocal(
       }
     }
     if (current()) {
-      await enqueueVideoLimits(connection);
+      await videoBudget.enqueue(connection);
       await applySendBitrate();
     }
   } catch (error) {
@@ -3367,91 +2991,11 @@ export function toggleSourceWatch(userId: string, kind: "s" | "l"): void {
       .catch((error) => deps?.onError?.(error));
   if (!on) {
     dropRemote(userId, kind);
-    clearSourcePlayback(userId, kind);
+    receivedAudio.clearSourcePlayback(userId, kind);
   } else {
     reattachReceived(userId, kind);
-    for (const [track, received] of receivedSourceAudio) {
-      if (
-        received.userId === userId &&
-        received.kind === kind &&
-        track.readyState !== "ended"
-      )
-        attachSourceAudio(track, received.stream);
-    }
+    receivedAudio.resumeSource(userId, kind);
   }
-}
-
-function clearSourcePlayback(userId?: string, kind?: "s" | "l"): void {
-  for (const [track, entry] of sourceAudio) {
-    if ((userId && entry.userId !== userId) || (kind && entry.kind !== kind))
-      continue;
-    silenceAudio(entry.el);
-    sourceAudio.delete(track);
-  }
-  updatePlaybackBlocked();
-}
-
-function attachSourceAudio(
-  track: MediaStreamTrack,
-  stream: MediaStream | undefined,
-): boolean {
-  const identity = receivedIdentity.get(track);
-  const parsed = identity ? { userId: identity.owner, k: identity.k } : null;
-  if (!parsed || (parsed.k !== "sa" && parsed.k !== "la")) return false;
-  dropVoiceAudio(voiceAudio, track);
-  const state = useVoice.getState();
-  // An older client's Go Live sound (`la`) plays like a Live's.
-  const kind = parsed.k === "sa" ? "s" : "l";
-  receivedAudioSources.set(track, kind === "s" ? "screen-audio" : "live-audio");
-  receivedSourceAudio.set(track, { stream, userId: parsed.userId, kind });
-  const held = sourceAudio.get(track);
-  const sameSource =
-    held?.userId === parsed.userId &&
-    held.kind === kind &&
-    held.el.srcObject === stream;
-  if (held && !sameSource) clearSourcePlayback(held.userId, held.kind);
-  const allowed = state.sourceSubscriptions[parsed.userId]?.[kind];
-  if (
-    !allowed ||
-    parsed.userId === currentUserId() ||
-    (typeof Audio === "undefined" && !isDesktopApp())
-  )
-    return true;
-  if (sameSource) return true;
-  clearSourcePlayback(parsed.userId, kind);
-  for (const [previous, source] of receivedSourceAudio) {
-    if (
-      previous !== track &&
-      source.userId === parsed.userId &&
-      source.kind === kind
-    )
-      receivedSourceAudio.delete(previous);
-  }
-  const el = createAudioOutput();
-  if (!el) return true;
-  el.autoplay = true;
-  el.setAttribute("playsinline", "true");
-  el.srcObject = stream ?? createStream([track]);
-  el.setAttribute("data-source-audio", kind);
-  el.setAttribute("data-publisher", parsed.userId);
-  sourceAudio.set(track, { el, userId: parsed.userId, kind });
-  track.addEventListener("ended", () => {
-    if (sourceAudio.get(track)?.el !== el) return;
-    receivedSourceAudio.delete(track);
-    receivedAudioSources.delete(track);
-    sourceAudio.delete(track);
-    silenceAudio(el);
-    updatePlaybackBlocked();
-  });
-  applyPlayback();
-  playAudio(el);
-  return true;
-}
-
-function forgetSourceAudioReceiver(track: MediaStreamTrack): void {
-  const held = sourceAudio.get(track);
-  if (held) clearSourcePlayback(held.userId, held.kind);
-  receivedSourceAudio.delete(track);
 }
 
 function parseIncomingVideo(
@@ -3466,10 +3010,7 @@ function parseIncomingVideo(
 
 function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
   if (track.kind === "audio") {
-    if (attachSourceAudio(track, stream)) return;
-    forgetSourceAudioReceiver(track);
-    receivedAudioSources.set(track, "voice");
-    attachVoiceAudio(voiceAudio, track, stream);
+    receivedAudio.attachIncoming(track, stream);
     return;
   }
   const parsed = parseIncomingVideo(track);
