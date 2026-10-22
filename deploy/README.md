@@ -227,18 +227,22 @@ GIF search and trending in chat and direct messages come from [KLIPY](https://kl
 
 The API makes every KLIPY call itself and relays the GIF images from KLIPY's media hosts (`static*.klipy.com`) under `/api/gifs/media`; browsers and the desktop app talk only to Gelabber and never see the key. KLIPY sees each user only as a hash of the account ID and the key, not as a name or address. A sent GIF is an ordinary chat message that stores KLIPY's slug, size and media URLs; it does not touch voice signaling or the SFU.
 
-KLIPY's terms require their written approval for server-side requests and for proxying or caching their media (developers@klipy.com). Get it before you set the key. Testing keys are limited to 100 requests per hour, shared by every user of the instance.
+KLIPY's terms require their written approval for server-side requests and for proxying or caching their media (developers@klipy.com). Get it before you set the key.
+
+Testing keys are limited to 100 requests per hour, shared by every user of the instance. Every search page, trending page and sent GIF is one request, so a handful of people looking for GIFs uses that up within minutes, and the picker then stays empty until the hour is over. A testing key is fine for trying GIFs out; for regular use, ask KLIPY for a production key.
 
 - `KLIPY_CONTENT_FILTER`: `off`, `low`, `medium` (default) or `high`.
+- `KLIPY_CACHE_SECS`: how long a search or trending page stays in Redis (default 600, `0` turns the cache off, at most 86400). The cache is shared by all users: the same search (case and extra spaces do not count) or trending page within that time costs no request and answers without waiting for KLIPY. Trending is then the same for everyone instead of KLIPY's per-user order. Only the result lists are cached, not the images.
 - `API_RATE_GIF_PER_MIN`: search, trending and sent GIFs (each a KLIPY API request) per user per minute (default 30, `0` turns the limit off). It is per user; it does not keep the whole instance under a testing key's 100 per hour.
 - `API_RATE_GIF_MEDIA_PER_MIN`: image loads through the relay per user per minute (default 240, `0` turns the limit off). They go to KLIPY's media hosts, not its API. At most 128 relay streams run at once across all users; past that the relay answers 502.
 
-When KLIPY itself answers 429, the key's quota is used up for every user. The API logs it, counts it as `gelabber_rate_limited_total{bucket="klipy"}` and answers the client 502 `upstream_unavailable`, not as the user's own limit.
+When KLIPY itself answers 429, the key's quota is used up for every user. The API logs it once, counts it as `gelabber_rate_limited_total{bucket="klipy"}` and stops asking KLIPY for as long as its `Retry-After` says (60 s without one, at most an hour). Meanwhile search, trending and sending a GIF answer at once with 503 `upstream_quota` and a `Retry-After`, and the picker says that the server's GIF quota is used up and when to try again, instead of loading. Cached pages are still served.
+
+`/metrics` shows how long KLIPY takes (`gelabber_upstream_request_duration_seconds{upstream="klipy",operation="search|trending|items"}`, a histogram that includes failed and timed-out calls; the API gives up after 8 s) and how often the cache answers (`gelabber_cache_total{cache="gif_feed",result="hit|miss"}`).
 
 After changing these values, recreate the API: `docker compose up -d --no-deps --force-recreate api`.
 
 Migration 0012 adds the nullable `messages.gif` column. As with every migration, an older API binary does not start against the migrated database (SQLx ledger); roll back with the backed-up snapshot pair as described below.
-
 
 ## Push notifications
 
