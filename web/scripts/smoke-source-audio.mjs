@@ -404,18 +404,17 @@ const micPlayback = (sample) =>
 // The call bar at the bottom of the window.
 const dock = (actor) =>
   actor.page.getByRole("region", { name: "Aktive Medien", exact: true });
-// The screen share and Go Live sit in the call bar's "Teilen" menu.
+// "Live gehen" in the call bar opens the Live menu where a Live can carry
+// sound: "Live gehen" or "Live beenden", then the "Ton mitsenden" switch.
+const liveControl = (actor) =>
+  dock(actor).getByRole("button", { name: "Live gehen", exact: true });
 async function share(actor, name) {
-  await dock(actor)
-    .getByRole("button", { name: "Teilen", exact: true })
-    .click();
+  await liveControl(actor).click();
   await actor.page.getByRole("menuitem", { name, exact: true }).click();
 }
-const tile = (actor, kind) =>
+const tile = (actor) =>
   actor.page.locator("figure").filter({
-    has: actor.page.locator("figcaption", {
-      hasText: kind === "s" ? "— Bildschirm" : "— Live",
-    }),
+    has: actor.page.locator("figcaption", { hasText: "— Live" }),
   });
 
 async function until(probe, accept, message, timeout = 30_000) {
@@ -700,8 +699,8 @@ async function playbackControls(receiver, publisher, kind) {
 
 async function sourceScenario(receiver, kind) {
   stage = `${kind}: start`;
-  const start = kind === "s" ? "Bildschirm im Raum teilen" : "Go Live";
-  const stop = kind === "s" ? "Teilen beenden" : "Live beenden";
+  const start = "Live gehen";
+  const stop = "Live beenden";
   const audioKind = `${kind}a`;
   const capturesBefore = (await snapshot(owner)).captureCount;
   await share(owner, start);
@@ -798,9 +797,7 @@ async function sourceScenario(receiver, kind) {
       ) &&
       state.videos.some(
         (video) =>
-          video.label.includes(kind === "s" ? "— Bildschirm" : "— Live") &&
-          video.attached &&
-          video.width > 0,
+          video.label.includes("— Live") && video.attached && video.width > 0,
       ),
     "Watched source must render video and one matching audio track",
   );
@@ -876,30 +873,29 @@ try {
   }
   await progress(owner, ["a"], receiver.id);
   await progress(receiver, ["a"], owner.id);
-  await dock(owner)
-    .getByRole("button", { name: "Voice-Einstellungen", exact: true })
-    .click();
-  await owner.page.getByLabel("Ton teilen", { exact: true }).check();
+  // The sound switch sits in the Live menu, in sight before the picker.
+  await liveControl(owner).click();
+  const sound = owner.page.getByRole("menuitemcheckbox", {
+    name: "Ton mitsenden",
+    exact: true,
+  });
+  if ((await sound.getAttribute("aria-checked")) !== "true")
+    await sound.click();
   await owner.page.keyboard.press("Escape");
   await sourceScenario(receiver, "s");
-  await sourceScenario(receiver, "l");
 
-  stage = "six concurrent sources";
-  stage = "six concurrent sources: start Kamera";
+  stage = "four concurrent sources";
+  stage = "four concurrent sources: start Kamera";
   await dock(owner)
     .getByRole("button", { name: "Kamera", exact: true })
     .click();
-  for (const name of ["Bildschirm im Raum teilen", "Go Live"]) {
-    stage = `six concurrent sources: start ${name}`;
-    await share(owner, name);
-  }
-  for (const kind of ["s", "l"]) {
-    stage = `six concurrent sources: watch ${kind}`;
-    await watch(receiver, kind);
-  }
-  stage = "six concurrent sources: native RTP";
-  const allKinds = ["a", "v", "s", "l", "sa", "la"];
-  const six = await until(
+  stage = "four concurrent sources: start Live";
+  await share(owner, "Live gehen");
+  stage = "four concurrent sources: watch s";
+  await watch(receiver, "s");
+  stage = "four concurrent sources: native RTP";
+  const allKinds = ["a", "v", "s", "sa"];
+  const four = await until(
     () => snapshot(receiver),
     (state) =>
       allKinds.every((kind) =>
@@ -912,10 +908,10 @@ try {
             row.packets > 10,
         ),
       ),
-    "All six authoritative sources must carry actual native RTP concurrently",
+    "All four authoritative sources must carry actual native RTP concurrently",
   );
   for (const kind of allKinds) {
-    const before = packets(six, [kind], owner.id);
+    const before = packets(four, [kind], owner.id);
     await until(
       () => snapshot(receiver),
       (state) => packets(state, [kind], owner.id) > before + 10,
@@ -926,14 +922,14 @@ try {
     () => snapshot(receiver),
     (state) =>
       state.videos.filter((video) => video.attached && video.width > 0)
-        .length >= 3,
-    "Camera, screen and Live must all render concurrently",
+        .length >= 2,
+    "Camera and Live must both render concurrently",
   );
   noLoopback(rendered, receiver.id);
   report.checks.push(
-    "six concurrent sources: a/v/s/l/sa/la actual RTP and three rendered videos",
+    "four concurrent sources: a/v/s/sa actual RTP and two rendered videos",
   );
-  stage = "device and DSP changes with six sources";
+  stage = "device and DSP changes with four sources";
   await dock(owner)
     .getByRole("button", { name: "Voice-Einstellungen", exact: true })
     .click();
@@ -1005,7 +1001,7 @@ try {
         "Codec-relevant Original mode must confirm a different native Producer",
       );
     await progress(receiver, ["a"], owner.id);
-    for (const kind of ["v", "s", "l", "sa", "la"])
+    for (const kind of ["v", "s", "sa"])
       await progress(receiver, [kind], owner.id);
   };
   await changeMic(() => input.selectOption(device));
@@ -1020,13 +1016,12 @@ try {
   );
   await owner.page.getByRole("button", { name: "Fertig", exact: true }).click();
   report.checks.push(
-    "enumerated input-device and enhanced/Original DSP swaps: confirmed native audio with other five sources flowing",
+    "enumerated input-device and enhanced/Original DSP swaps: confirmed native audio with other three sources flowing",
   );
   await dock(owner)
     .getByRole("button", { name: "Kamera", exact: true })
     .click();
-  for (const name of ["Teilen beenden", "Live beenden"])
-    await share(owner, name);
+  await share(owner, "Live beenden");
   await until(
     () => snapshot(owner),
     (state) => state.sent.every((row) => row.kind === "mic" || !row.live),
@@ -1039,7 +1034,7 @@ try {
   await owner.page.evaluate(() => {
     window.__sourceAudioSmoke.noAudioNext = true;
   });
-  await share(owner, "Bildschirm im Raum teilen");
+  await share(owner, "Live gehen");
   await owner.page
     .getByRole("status")
     .filter({
@@ -1063,9 +1058,7 @@ try {
     (state) =>
       state.videos.some(
         (video) =>
-          video.label.includes("— Bildschirm") &&
-          video.attached &&
-          video.width > 0,
+          video.label.includes("— Live") && video.attached && video.width > 0,
       ),
     "No-audio fallback must still render video",
   );
@@ -1084,75 +1077,12 @@ try {
       );
     },
   );
-  await share(owner, "Teilen beenden");
+  await share(owner, "Live beenden");
   await stopForwarding(receiver, ["s", "sa"], owner.id);
   report.checks.push(
     "no-audio fallback: video, visible notice, no fabricated source audio",
   );
 
-  stage = "listen-only Live Watch";
-  await dock(receiver)
-    .getByRole("button", { name: "Verlassen", exact: true })
-    .click();
-  await until(
-    () => snapshot(receiver),
-    (state) => state.sent.length === 0 && state.playback.length === 0,
-    "Leaving voice must clear microphone and playback",
-  );
-  const micCalls = (await snapshot(receiver)).micCalls;
-  await share(owner, "Go Live");
-  await receiver.page
-    .locator(".voice-room-watch-actions")
-    .getByRole("button", { name: "Zuschauen", exact: true })
-    .click();
-  await progress(receiver, ["la"], owner.id);
-  const listenOnly = await until(
-    () => snapshot(receiver),
-    (state) =>
-      sourcePlayback(state, "l").some(
-        (el) => el.connection === "watch" && !el.paused,
-      ) &&
-      state.videos.some(
-        (video) =>
-          video.label.includes("— Live") && video.attached && video.width > 0,
-      ),
-    "Listen-only Watch must play selected Live video/source audio",
-  );
-  assert.equal(
-    listenOnly.micCalls,
-    micCalls,
-    "Listen-only Watch must not acquire a microphone",
-  );
-  assert.equal(
-    listenOnly.sent.length,
-    0,
-    "Listen-only Watch must not send capture",
-  );
-  assert.ok(
-    listenOnly.received.every(
-      (row) => ["l", "la", "a"].includes(row.kind) || row.packets === 0,
-    ),
-    "Watch source media must belong to the selected Live; room microphones remain available",
-  );
-  assert.ok(
-    sourcePlayback(listenOnly, "l").every(
-      (el) => el.tracks.length === 1 && el.tracks[0].kind === "la",
-    ),
-    "Watch source audio must remain separate from room microphones",
-  );
-  noLoopback(listenOnly, receiver.id);
-  await dock(receiver)
-    .getByRole("button", { name: "Nicht mehr zuschauen", exact: true })
-    .click();
-  await until(
-    () => snapshot(receiver),
-    (state) => state.received.length === 0 && state.playback.length === 0,
-    "Stop Watch must close listen-only peer and audio",
-  );
-  report.checks.push(
-    "listen-only Live Watch: selected A/V, no microphone acquisition, complete stop",
-  );
-  await share(owner, "Live beenden");
   report.status = "passed";
 } catch (error) {
   report.status = "failed";

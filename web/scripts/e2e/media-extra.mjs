@@ -13,7 +13,7 @@ import {
   until,
   observe,
 } from "./harness.mjs";
-import { activePeers, progress, watchSource } from "./media.mjs";
+import { activePeers, progress } from "./media.mjs";
 import { sampleVideoSenders, samplePublicationFlow } from "./probe.mjs";
 import { publisherEncoderProgress } from "./publisher-encoders.mjs";
 const audioPackets = (s) =>
@@ -60,75 +60,39 @@ export async function closeSessionAudioActors(
     });
 }
 
-export async function concurrentClaim(h, f, { reset, options }) {
+export async function concurrentLive(h, f, { reset, options }) {
   await reset(f);
   for (const actor of [f.owner, f.member]) {
     await click(actor, "Beitreten");
     await until(
       () => snapshot(actor),
       (s) => activePeers(s).some((p) => p.connection === "connected"),
-      "fixture-claim-voice-not-connected",
+      "fixture-live-voice-not-connected",
     );
-    await nativeEvaluate(actor, () => {
-      window.__e2e.holdLiveClaims = true;
-    });
   }
-  try {
-    // Both actual UI attempts are prepared before either native claim is transmitted.
-    await Promise.all([click(f.owner, "Go Live"), click(f.member, "Go Live")]);
-    const held = await Promise.all(
-      [f.owner, f.member].map((actor) =>
-        until(
-          () => snapshot(actor),
-          (s) => s.heldLiveClaimCount === 1,
-          "fixture-concurrent-live-claim-not-held",
-        ),
-      ),
-    );
-    await Promise.all(
-      [f.owner, f.member].map((actor) =>
-        nativeEvaluate(actor, () => {
-          const state = window.__e2e;
-          state.holdLiveClaims = false;
-          for (const send of state.heldLiveClaims.splice(0)) send();
-        }),
-      ),
-    );
-    const settled = await until(
-      async () => Promise.all([snapshot(f.owner), snapshot(f.member)]),
-      (states) =>
-        states.filter((s) => s.captures.some((c) => c.state === "live"))
-          .length === 1,
-      "concurrent-live-claim-not-exclusive",
-    );
-    const winnerIndex = settled.findIndex((s) =>
-      s.captures.some((c) => c.state === "live"),
-    );
-    const loser = [f.owner, f.member][1 - winnerIndex];
-    const loserState = await observe(3_000, () => snapshot(loser));
-    check(
-      loserState.captures.every((c) => c.state !== "live") &&
-        activePeers(loserState)
-          .flatMap((p) => p.outbound)
-          .filter((r) => r.kind === "video")
-          .every((r) => !r.frames && !r.bytes),
-      "concurrent-claim-loser-published-or-leaked",
-      { controlConfirmed: true, held, settled, loser: loserState },
-    );
-    await click(f.watcher, "Zuschauen");
-    return {
-      simultaneousPreparedClaims: 2,
-      held,
-      loser: loserState,
-      winner: await progress(f.watcher, options),
-    };
-  } finally {
-    for (const actor of [f.owner, f.member])
-      await nativeEvaluate(actor, () => {
-        window.__e2e.holdLiveClaims = false;
-        window.__e2e.heldLiveClaims.length = 0;
-      });
-  }
+  // A Live claims nothing: two started at the same moment both run.
+  await Promise.all([
+    click(f.owner, "Live gehen"),
+    click(f.member, "Live gehen"),
+  ]);
+  const settled = await until(
+    async () => Promise.all([snapshot(f.owner), snapshot(f.member)]),
+    (states) => states.every((s) => s.captures.some((c) => c.state === "live")),
+    "concurrent-live-not-both-running",
+  );
+  await click(f.watcher, "Beitreten");
+  const tiles = f.watcher.page.locator("figure").filter({ hasText: "— Live" });
+  const shown = await until(
+    () => tiles.count(),
+    (count) => count === 2,
+    "concurrent-live-tiles-missing",
+  );
+  return {
+    simultaneousLives: 2,
+    settled,
+    tiles: shown,
+    first: await progress(f.watcher, options),
+  };
 }
 
 export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
@@ -213,7 +177,6 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       });
       try {
         await click(f.owner, "Kamera");
-        await click(f.owner, "Bildschirm im Raum teilen");
         const readPublisher = (remaining) =>
           nativeEvaluate(
             f.owner,
@@ -224,23 +187,20 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         const publisherBefore = await until(
           readPublisher,
           (s) => publisherEncoderProgress(s),
-          "fixture-three-native-publisher-encoders-not-ready",
+          "fixture-two-native-publisher-encoders-not-ready",
           20_000,
         );
         const publisherReady = await until(
           readPublisher,
           (s) => publisherEncoderProgress(s, publisherBefore),
-          "fixture-three-native-publisher-encoders-not-progressing",
+          "fixture-two-native-publisher-encoders-not-progressing",
           5_000,
         );
         await click(f.member, "Beitreten");
         // Join/capture clicks precede async publication and source-Watch capability.
         // Require actual subscription controls; count=0 must not silently skip Watch.
         const sourceButtons = {};
-        for (const [kind, label] of [
-          ["live", "— Live"],
-          ["screen", "— Bildschirm"],
-        ]) {
+        for (const [kind, label] of [["live", "— Live"]]) {
           const tiles = f.member.page
             .locator("figure")
             .filter({ hasText: label });
@@ -261,8 +221,8 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         }
         const held = await until(
           () => snapshot(f.member),
-          (s) => s.heldVideoTracks === 3,
-          "fixture-three-native-video-arrivals-not-held",
+          (s) => s.heldVideoTracks === 2,
+          "fixture-two-native-video-arrivals-not-held",
           20_000,
         );
         // Reverse authoritative Consumer announcements before the SDK consumes
@@ -283,11 +243,6 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           consumerAnnouncementOrder: "reversed",
           deliveredKinds: kinds,
           live: await progress(f.member, options),
-          screen: await progress(f.member, {
-            ...options,
-            kind: "screen",
-            color: [30, 220, 30],
-          }),
           camera: await progress(f.member, {
             ...options,
             kind: "camera",
@@ -309,12 +264,11 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       await reset(f);
       await click(f.owner, "Beitreten");
       await click(f.member, "Beitreten");
-      await click(f.owner, "Bildschirm im Raum teilen");
-      await watchSource(f.member, "screen");
+      // The camera is the other source; the Live is the one whose answer fails.
       await click(f.owner, "Kamera");
       const warmupStart = Date.now();
       const cameraFixtureWarmup = { deadlineMs: 20_000, status: "FAIL" };
-      let camera, existingScreen, before;
+      let camera, before;
       try {
         const ready = await until(
           () => snapshot(f.member),
@@ -347,10 +301,6 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           (s) => audioPackets(s) > 0,
           "fixture-pre-sdp-audio-not-received",
         );
-        existingScreen = await progress(f.member, {
-          ...options,
-          kind: "screen",
-        });
         before = await snapshot(f.owner);
       } catch (error) {
         cameraFixtureWarmup.WarmupMs ??= Date.now() - warmupStart;
@@ -379,16 +329,16 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         window.__e2e.rejectNextVideoAnswer = true;
       });
       try {
-        await click(f.owner, "Go Live");
+        await click(f.owner, "Live gehen");
         const failed = await until(
           () => snapshot(f.owner),
           (s) =>
             s.rejectedSdp === 1 &&
             s.displayCalls === before.displayCalls + 1 &&
-            s.captures.filter((c) => c.kind === "display" && c.slot === 2)
+            s.captures.filter((c) => c.kind === "display" && c.slot === 1)
               .length === 1 &&
             s.captures
-              .filter((c) => c.kind === "display" && c.slot === 2)
+              .filter((c) => c.kind === "display" && c.slot === 1)
               .every((c) => c.state === "ended"),
           "rejected-sdp-ghost-live-or-fault-unexercised",
           20_000,
@@ -405,10 +355,6 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           kind: "camera",
           color: [30, 60, 220],
         });
-        const afterScreen = await progress(f.member, {
-          ...options,
-          kind: "screen",
-        });
         check(
           !afterCamera.last.videos.some(
             (v) => v.kind === "live" && v.width > 0,
@@ -416,8 +362,12 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           "rejected-sdp-ghost-live-display",
           { controlConfirmed: true, after: afterCamera.last },
         );
-        await click(f.owner, "Go Live");
-        const retry = await progress(f.member, options);
+        await click(f.owner, "Live gehen");
+        // The retry is the second display capture, drawn green.
+        const retry = await progress(f.member, {
+          ...options,
+          color: [30, 220, 30],
+        });
         return {
           injection:
             "one real native setRemoteDescription rejection of malformed answer",
@@ -427,9 +377,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           before,
           failed,
           camera,
-          existingScreen,
           afterCamera,
-          afterScreen,
           retry,
         };
       } catch (error) {
@@ -439,12 +387,12 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           faultExercised: observed?.rejectedSdp > 0,
           sdpRejectionErrors: observed?.rejectedSdpErrors ?? [],
           publisherLive: await nativeEvaluate(f.owner, samplePublicationFlow, {
-            kind: "l",
+            kind: "s",
           }),
           subscriberLive: await nativeEvaluate(
             f.member,
             samplePublicationFlow,
-            { kind: "l" },
+            { kind: "s" },
           ),
         };
         if (error instanceof CheckFailure) {
@@ -517,7 +465,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           "fixture-other-room-positive-audio-missing",
         );
         stage = "other-room-live-start";
-        await click(other, "Go Live");
+        await click(other, "Live gehen");
         await until(
           () => snapshot(other),
           (s) =>

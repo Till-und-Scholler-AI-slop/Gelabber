@@ -158,7 +158,9 @@ try {
       "fixture-duplex-not-ready",
       15000,
     );
-    await click(f.owner, "Go Live");
+    await click(f.owner, "Live gehen");
+    // A Live is watched inside its voice channel.
+    await click(f.watcher, "Beitreten");
     await until(
       () =>
         f.watcher.page
