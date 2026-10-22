@@ -209,7 +209,7 @@ pub(super) async fn after_removal(
     reason: &'static str,
 ) -> Result<(), ApiError> {
     let channel_ids = channel_ids(db, server_id).await?;
-    after_removal_with(state, server_id, user_id, &channel_ids, reason).await
+    after_removal_with(state, server_id, &[user_id], &channel_ids, reason).await
 }
 
 /// The server's channels, whose voice and subscriptions a removal revokes.
@@ -225,28 +225,30 @@ pub(super) async fn channel_ids(
     )
 }
 
-/// `after_removal` with the server's channels already loaded, so a server
-/// delete reads them once for all its members instead of once per member.
+/// `after_removal` for several users with the server's channels already
+/// loaded, so a server delete reads them once, rotates every member's media
+/// generation in one pipeline, scans the socket table once and cleans up
+/// presence once per member instead of once per socket (#294).
 pub(super) async fn after_removal_with(
     state: &AppState,
     server_id: Uuid,
-    user_id: Uuid,
+    user_ids: &[Uuid],
     channel_ids: &[Uuid],
     reason: &'static str,
 ) -> Result<(), ApiError> {
     state
         .gateway
-        .revoke_server(user_id, server_id, channel_ids, reason)
+        .revoke_server(user_ids, server_id, channel_ids, reason)
         .await?;
     if let Err(err) = state
         .gateway
-        .forget_server_presence(user_id, server_id)
+        .forget_server_presence(user_ids, server_id)
         .await
     {
         warn!(
             error = err.code(),
             %server_id,
-            %user_id,
+            users = user_ids.len(),
             reason,
             "presence cleanup after removal failed"
         );
@@ -254,21 +256,23 @@ pub(super) async fn after_removal_with(
     if !matches!(reason, "kicked" | "banned") {
         return Ok(());
     }
-    if let Err(err) = publish_server(
-        state,
-        server_id,
-        EventKind::D,
-        Some(user_id),
-        Some(serde_json::json!({ "k": if reason == "banned" { "b" } else { "k" } })),
-    )
-    .await
-    {
-        warn!(
-            error = err.code(),
-            %server_id,
-            reason,
-            "gateway publish after removal failed"
-        );
+    for user_id in user_ids {
+        if let Err(err) = publish_server(
+            state,
+            server_id,
+            EventKind::D,
+            Some(*user_id),
+            Some(serde_json::json!({ "k": if reason == "banned" { "b" } else { "k" } })),
+        )
+        .await
+        {
+            warn!(
+                error = err.code(),
+                %server_id,
+                reason,
+                "gateway publish after removal failed"
+            );
+        }
     }
     Ok(())
 }

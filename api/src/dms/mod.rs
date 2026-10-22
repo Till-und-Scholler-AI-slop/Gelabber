@@ -116,7 +116,7 @@ async fn open_dm(
 
     let (dm, created) = open_or_create(&state.db, user.id, &peer).await?;
     if created {
-        let _ = crate::gateway::delivery::deliver_pending(&state, 32).await;
+        crate::gateway::delivery::wake(&state);
         info!(
             channel_id = %dm.id,
             user_id = %user.id,

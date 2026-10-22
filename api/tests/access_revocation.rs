@@ -455,7 +455,8 @@ async fn silently_deleted_channel_rows_are_dropped_and_only_those(pool: PgPool) 
 }
 
 /// A server delete revokes every member, not only the owner, while it reads
-/// the server's channels once for all of them (#294).
+/// the server's channels once for all of them, and tells the server once per
+/// member that they went offline, however many sockets they had (#294).
 #[sqlx::test]
 async fn server_delete_revokes_every_member(pool: PgPool) {
     let (addr, state) = common::serve_ws(pool).await;
@@ -496,7 +497,20 @@ async fn server_delete_revokes_every_member(pool: PgPool) {
         assert!(present, "{uid}");
         sockets.push((uid, ws));
     }
+    // A second socket for the first member: still one offline frame for them.
+    let mut second = connect(addr, &members[0]).await;
+    subscribe(&mut second, sid, text).await;
+    until(&mut second, |f| f["op"] == "p" && f.get("snap").is_some()).await;
     assert_eq!(state.gateway.voice_snapshot(sid).await.unwrap().len(), 2);
+    let mut presence_feed = redis::Client::open(common::redis_url())
+        .unwrap()
+        .get_async_pubsub()
+        .await
+        .unwrap();
+    presence_feed
+        .subscribe(format!("gb:p:{sid}"))
+        .await
+        .unwrap();
 
     let response = owner
         .send(Method::DELETE, &format!("/api/servers/{sid}"), None)
@@ -509,6 +523,29 @@ async fn server_delete_revokes_every_member(pool: PgPool) {
             "{uid}"
         );
     }
+    let mut offline = std::collections::HashMap::<String, usize>::new();
+    while let Ok(Some(msg)) = tokio::time::timeout(
+        Duration::from_millis(300),
+        presence_feed.on_message().next(),
+    )
+    .await
+    {
+        let frame: Value = serde_json::from_str(&msg.get_payload::<String>().unwrap()).unwrap();
+        if frame["st"] == "x" {
+            *offline
+                .entry(frame["u"].as_str().unwrap().to_owned())
+                .or_default() += 1;
+        }
+    }
+    let expected: std::collections::HashMap<String, usize> = generations
+        .iter()
+        .map(|(uid, _)| (uid.to_string(), 1))
+        .collect();
+    assert_eq!(offline, expected);
+    until(&mut second, |f| {
+        f["op"] == "err" && f["e"] == "not_found" && f["s"] == sid.to_string()
+    })
+    .await;
     assert!(state.gateway.voice_snapshot(sid).await.unwrap().is_empty());
     for (uid, ws) in &mut sockets {
         until(ws, |f| {

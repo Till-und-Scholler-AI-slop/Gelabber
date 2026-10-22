@@ -322,9 +322,10 @@ async fn update_server(
         .bind(server.owner_id)
         .fetch_all(&mut *tx)
         .await?;
-        for uid in members {
-            state.gateway.revoke_voice_access(uid, server_id).await?;
-        }
+        state
+            .gateway
+            .revoke_voice_access(&members, server_id)
+            .await?;
     }
     tx.commit().await?;
     if voice_reduced {
@@ -358,9 +359,7 @@ async fn delete_server(
             .fetch_all(&mut *tx)
             .await?;
     let channel_ids = moderation::channel_ids(&mut tx, server_id).await?;
-    for uid in members {
-        moderation::after_removal_with(&state, server_id, uid, &channel_ids, "not_found").await?;
-    }
+    moderation::after_removal_with(&state, server_id, &members, &channel_ids, "not_found").await?;
     sqlx::query("DELETE FROM servers WHERE id = $1")
         .bind(server_id)
         .execute(&mut *tx)

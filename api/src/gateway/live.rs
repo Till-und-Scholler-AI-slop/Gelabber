@@ -494,36 +494,46 @@ impl Gateway {
             .await
     }
 
-    /// Kick/ban: drop this user from one server's presence set and tell
-    /// remaining members they went offline there. Other servers stay.
+    /// Kick/ban/leave or server delete: drop these users from one server's
+    /// presence set and tell remaining members they went offline there.
+    /// Other servers stay. One pipeline for all users; a retry repeats only
+    /// idempotent removals and offline frames.
     pub async fn forget_server_presence(
         &self,
-        user_id: Uuid,
+        user_ids: &[Uuid],
         server_id: Uuid,
     ) -> Result<(), ApiError> {
+        if user_ids.is_empty() {
+            return Ok(());
+        }
+        let channel = LiveTopic::Presence(server_id).redis_channel();
+        let frames = user_ids
+            .iter()
+            .map(|user_id| {
+                ServerFrame::presence(server_id, *user_id, PresenceStatus::Offline)
+                    .to_json()
+                    .map_err(|err| ApiError::Internal(format!("serialize live frame: {err}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         self.with_conn(|mut conn| {
-            let sk = server_set_key(server_id);
-            let usk = user_servers_key(user_id);
-            let uid = user_id.to_string();
-            let sid = server_id.to_string();
-            async move {
-                let _: i64 = redis::cmd("SREM")
-                    .arg(sk)
-                    .arg(uid)
-                    .query_async(&mut conn)
-                    .await?;
-                let _: i64 = redis::cmd("SREM")
-                    .arg(usk)
-                    .arg(sid)
-                    .query_async(&mut conn)
-                    .await?;
-                Ok(())
+            let mut pipe = redis::pipe();
+            pipe.cmd("SREM")
+                .arg(server_set_key(server_id))
+                .arg(user_ids.iter().map(Uuid::to_string).collect::<Vec<_>>())
+                .ignore();
+            for user_id in user_ids {
+                pipe.cmd("SREM")
+                    .arg(user_servers_key(*user_id))
+                    .arg(server_id.to_string())
+                    .ignore();
             }
+            for raw in &frames {
+                pipe.cmd("PUBLISH").arg(&channel).arg(raw).ignore();
+            }
+            async move { pipe.query_async::<()>(&mut conn).await }
         })
         .await
-        .map_err(super::hub::redis_err)?;
-        self.publish_presence(server_id, user_id, PresenceStatus::Offline)
-            .await
+        .map_err(super::hub::redis_err)
     }
 
     async fn publish_typing_stop(

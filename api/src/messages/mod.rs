@@ -356,7 +356,7 @@ async fn create_message(
     if let (Some(gif), Some(pick), Some(gifs)) = (&message.gif, &body.gif, &state.gifs) {
         gifs.shared(&gif.slug, pick.query.trim(), user.id);
     }
-    let _ = delivery::deliver_pending(&state, 32).await;
+    delivery::wake(&state);
     let server = match &access {
         MessagingChannel::Server { member, .. } => Some(member.server.id),
         MessagingChannel::Dm { .. } => None,
@@ -482,7 +482,7 @@ async fn update_message(
     )
     .await?;
     tx.commit().await?;
-    let _ = delivery::deliver_pending(&state, 32).await;
+    delivery::wake(&state);
     if !suppressed {
         previews::enqueue(
             &state,
@@ -541,7 +541,7 @@ async fn delete_message(
     )
     .await?;
     tx.commit().await?;
-    let _ = delivery::deliver_pending(&state, 32).await;
+    delivery::wake(&state);
     let server = match &access {
         MessagingChannel::Server { member, .. } => Some(member.server.id),
         MessagingChannel::Dm { .. } => None,
@@ -649,7 +649,7 @@ async fn suppress_previews(
     }
     tx.commit().await?;
     if removed {
-        let _ = delivery::deliver_pending(&state, 32).await;
+        delivery::wake(&state);
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -708,7 +708,7 @@ pub(crate) async fn attach_previews(
     message.attachments = attachments::for_message(&mut *tx, job.message_id).await?;
     persist_event(&mut tx, job.server_id, EventKind::E, &mut message).await?;
     tx.commit().await?;
-    let _ = delivery::deliver_pending(state, 32).await;
+    delivery::wake(state);
     Ok(())
 }
 
@@ -787,7 +787,7 @@ pub(crate) async fn post_live_hint(state: &AppState, user: &User, server_id: Uui
         }
         return;
     }
-    let _ = delivery::deliver_pending(state, 32).await;
+    delivery::wake(state);
 }
 
 /// Text channel (via server membership) or 1:1 DM (via channel_members).
