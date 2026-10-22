@@ -200,6 +200,8 @@ struct Engine {
     /// slot gets a new engine instead.
     lost: Arc<AtomicBool>,
     exited: Arc<Notify>,
+    /// When `engine_lost` handled this engine; it runs once per engine.
+    lost_at: StdMutex<Option<Instant>>,
     commands: Arc<Semaphore>,
     rooms: AtomicUsize,
     peers: AtomicUsize,
@@ -243,6 +245,7 @@ impl Engine {
             server,
             lost,
             exited,
+            lost_at: StdMutex::new(None),
             commands,
             rooms: AtomicUsize::new(0),
             peers: AtomicUsize::new(0),
@@ -250,6 +253,14 @@ impl Engine {
     }
     fn alive(&self) -> bool {
         !self.lost.load(Ordering::SeqCst) && !self.worker.closed() && !self.server.closed()
+    }
+    /// How long this slot has been without a live worker; zero while alive.
+    fn down_for(&self) -> Duration {
+        self.lost_at
+            .lock()
+            .unwrap()
+            .map(|at| at.elapsed())
+            .unwrap_or_default()
     }
     async fn native<R, T, E, F>(
         &self,
@@ -380,8 +391,13 @@ impl Sfu {
                     _ = engine.exited.notified() => break "mediasoup worker unexpectedly exited",
                     _ = interval.tick() => {}
                 }
-                if weak.strong_count() == 0 || engine.lost.load(Ordering::SeqCst) {
+                if weak.strong_count() == 0 {
                     return;
+                }
+                // `on_dead` sets `lost` before it notifies, so this tick can
+                // see the exit first.
+                if engine.lost.load(Ordering::SeqCst) {
+                    break "mediasoup worker unexpectedly exited";
                 }
                 if !matches!(
                     tokio::time::timeout(HEARTBEAT_TIMEOUT, engine.worker.dump()).await,
@@ -401,6 +417,13 @@ impl Sfu {
     /// the process supervisor can restart a fresh engine.
     async fn engine_lost(self: &Arc<Self>, engine: &Arc<Engine>, reason: &'static str) {
         engine.lost.store(true, Ordering::SeqCst);
+        {
+            let mut lost_at = engine.lost_at.lock().unwrap();
+            if lost_at.is_some() {
+                return;
+            }
+            *lost_at = Some(Instant::now());
+        }
         self.counters
             .worker_failures
             .fetch_add(1, Ordering::Relaxed);
@@ -465,6 +488,11 @@ impl Sfu {
             c.transports
                 .fetch_sub(p.transports.len(), Ordering::Relaxed);
         }
+        // Clients reconnect on `gone`; a Live lease they reclaim before its
+        // release below is answered `live_busy` and retried.
+        for p in &peers {
+            self.emit(&p.peer, ServerFrame::error("gone"));
+        }
         for p in &peers {
             let _lease = p.peer.lease_gate.lock().await;
             if let Some(live) = p
@@ -474,9 +502,6 @@ impl Sfu {
             {
                 crate::live::release(&self.redis, live.nonce, p.peer.id.0).await;
             }
-        }
-        for p in peers {
-            self.emit(&p.peer, ServerFrame::error("gone"));
         }
     }
     /// Replaces a lost engine in its slot, on the same UDP port. A hung worker
@@ -501,7 +526,14 @@ impl Sfu {
                         return;
                     }
                     Err(err) => {
-                        warn!(slot, error = %err, "media worker restart failed");
+                        let down_s = sfu.engines.lock().unwrap()[slot].down_for().as_secs();
+                        // A hung worker keeps its port until the process restarts.
+                        warn!(
+                            slot,
+                            down_s,
+                            error = %err,
+                            "media worker restart failed; restart the service if this persists"
+                        );
                         delay = (delay * 2).min(RESPAWN_MAX);
                     }
                 }
@@ -587,6 +619,14 @@ impl Sfu {
                 "gelabber_media_worker_rooms{{worker=\"{}\"}} {}\n",
                 engine.slot,
                 engine.rooms.load(Ordering::Relaxed)
+            ));
+        }
+        text.push_str("# HELP gelabber_media_worker_down_seconds Time since the slot lost its worker, 0 while it has a live one; a growing value means the replacement keeps failing (a hung worker holds its port until a restart).\n# TYPE gelabber_media_worker_down_seconds gauge\n");
+        for engine in &engines {
+            text.push_str(&format!(
+                "gelabber_media_worker_down_seconds{{worker=\"{}\"}} {}\n",
+                engine.slot,
+                engine.down_for().as_secs()
             ));
         }
         text.push_str("# TYPE gelabber_media_worker_peers gauge\n");
@@ -3219,6 +3259,36 @@ mod tests {
         assert_eq!(sfu.counters.worker_failures.load(Ordering::Relaxed), 1);
         assert_eq!(sfu.counters.worker_restarts.load(Ordering::Relaxed), 1);
         assert_eq!(sfu.pick_engine().unwrap().slot, 0);
+    }
+
+    #[tokio::test]
+    async fn worker_exit_seen_by_a_heartbeat_tick_first_still_closes_its_rooms() {
+        let sfu = pool(2).await;
+        let engines = sfu.engines.lock().unwrap().clone();
+        let (channel, peer, mut rx) = seat(&sfu, &engines[0]).await;
+        // `on_dead`'s order: `lost` first, the notification afterwards. A tick
+        // in between must not end the supervisor without handling the loss.
+        engines[0].lost.store(true, Ordering::SeqCst);
+        tokio::time::sleep(HEARTBEAT_INTERVAL * 2).await;
+        engines[0].exited.notify_one();
+        let frame = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("the supervisor handles the loss")
+            .unwrap();
+        assert!(
+            matches!(&frame, ServerFrame::Err { e, .. } if e == "gone"),
+            "{frame:?}"
+        );
+        assert!(!sfu.peer_present(peer.id, channel).await);
+        // Handled once although both the tick and the notification saw it.
+        tokio::time::sleep(HEARTBEAT_INTERVAL * 2).await;
+        assert_eq!(sfu.counters.worker_failures.load(Ordering::Relaxed), 1);
+        assert!(engines[0].down_for() > Duration::ZERO);
+        let metrics = sfu.metrics_text();
+        assert!(
+            metrics.contains("gelabber_media_worker_down_seconds{worker=\"1\"} 0\n"),
+            "{metrics}"
+        );
     }
 
     #[tokio::test]
