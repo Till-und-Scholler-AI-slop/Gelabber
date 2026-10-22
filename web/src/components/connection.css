@@ -1,0 +1,53 @@
+/* The connection notice: one calm pill, centred under the top bar, over the
+   page rather than in it, so nothing below moves when it comes and goes. */
+.gel-connection {
+  position: fixed;
+  top: calc(60px + var(--lr-safe-top));
+  inset-inline: calc(16px + var(--lr-safe-left))
+    calc(16px + var(--lr-safe-right));
+  z-index: 55;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.gel-connection__pill {
+  display: flex;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--lr-space-2);
+  padding: 6px 14px 6px 12px;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-full);
+  background: var(--lr-elevated);
+  color: var(--lr-text);
+  box-shadow: var(--lr-shadow-1);
+  font: var(--lr-type-ui);
+  white-space: nowrap;
+  transition:
+    opacity var(--lr-dur) var(--lr-ease-enter),
+    translate var(--lr-dur) var(--lr-ease-enter);
+}
+@starting-style {
+  .gel-connection__pill {
+    opacity: 0;
+    translate: 0 -6px;
+  }
+}
+.gel-connection__dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--lr-radius-full);
+  background: var(--lr-warning);
+}
+.gel-connection__pill--restored {
+  color: var(--lr-online-text);
+}
+.gel-connection__icon {
+  flex-shrink: 0;
+}
+@media (max-width: 480px) {
+  .gel-connection__pill {
+    white-space: normal;
+  }
+}
