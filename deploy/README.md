@@ -71,6 +71,8 @@ Since v0.8 it also limits where the app may load from and connect to, once the w
 - `media-src 'self' data: blob: <MinIO origin>`: video and audio attachments, call sounds, microphone test clips
 - `style-src 'self' 'unsafe-inline'`
 
+With `ATTACHMENT_DELIVERY=proxy` (see "Attachments through the API") the web container gets the same setting and the policy names no MinIO origin at all: `connect-src 'self' ipc: http://ipc.localhost`, `img-src 'self' data: blob: https:`, `media-src 'self' data: blob:`.
+
 The origin is scheme, host and port of `MINIO_PUBLIC_ENDPOINT`; the web container's log names it at startup. Without the variable, with a value no policy can name (an IPv6 address, a host with `_`) or with a web container from a `compose.yaml` before v0.8 (an update of the images alone), the policy keeps these directives out, as in v0.7.1, and the log says so. Set `MINIO_PUBLIC_ENDPOINT` in `.env`, not in the `api` service: a value only the API has breaks uploads and attachments in the browser with a Content-Security-Policy error in its console. After changing it, recreate `web` together with `api` (`docker compose up -d api web`).
 
 A policy you set for the app host on your own proxy is enforced in addition to this one: a request has to pass both. If it sets `connect-src` or `default-src`, it must let the desktop app reach its native part: add `ipc:` (Linux) and `http://ipc.localhost` (Windows) to `connect-src`, for example `connect-src 'self' ipc: http://ipc.localhost`. Without `connect-src`, `default-src` applies. Without these sources the app falls back to a slow path: it keeps working, but video in its tiles stays at 320×180 with 15 frames per second, and the tile reports "Geringe Bildqualität" (low picture quality) with the Content-Security-Policy as the reason. Browsers and the installed PWA are not affected. To drop the stack's policy, remove the header on your proxy: Caddy `header -Content-Security-Policy` in the app's site block, Nginx `proxy_hide_header Content-Security-Policy;`.
@@ -154,7 +156,7 @@ Media expects to run behind the reverse proxy. Its HTTP server has no read timeo
 ## Behind TLS
 
 - `API_COOKIE_SECURE=true`. The API then accepts the WebSocket (`/ws`) only from `https://` pages; `http://` stays allowed for `localhost` only.
-- `GELABBER_MINIO_DOMAIN` (Caddy host, for example `minio.example.com`) and `MINIO_PUBLIC_ENDPOINT` (full URL, for example `https://minio.example.com`) must match the active MinIO site in the **real** Caddy config (the Compose `.env` alone is not enough for an external Caddy); no path prefix, presigns sign host and path. `MINIO_API_CORS_ALLOW_ORIGIN` = the Gelabber origin
+- `GELABBER_MINIO_DOMAIN` (Caddy host, for example `minio.example.com`) and `MINIO_PUBLIC_ENDPOINT` (full URL, for example `https://minio.example.com`) must match the active MinIO site in the **real** Caddy config (the Compose `.env` alone is not enough for an external Caddy); no path prefix, presigns sign host and path. `MINIO_API_CORS_ALLOW_ORIGIN` = the Gelabber origin. Without a second domain for MinIO, set `ATTACHMENT_DELIVERY=proxy` instead (see "Attachments through the API")
 - `TURN_PUBLIC_HOST`, `TURN_EXTERNAL_IP`, `MEDIA_ADVERTISED_IP` = the address clients reach
 
 ### MinIO user
@@ -179,7 +181,7 @@ Rollback to an API before v0.7 needs the old `compose.yaml` too (it reads only `
 
 ### MinIO on 443
 
-Browsers upload and download attachments directly from MinIO through presigned URLs, so `MINIO_PUBLIC_ENDPOINT` is public by design. Put it on its own subdomain behind your TLS Caddy, not on a published port such as `https://example.com:9000`: networks that only allow 80/443 then load no images, and the S3 API (plus the console on 9001, if published) faces the internet without the proxy in front. The move fixes reachability and removes the directly published 9000/9001 (console included), but it does not shrink the S3 API's attack surface: the Caddy MinIO site forwards every path and method, so `https://minio.example.com` still serves the whole S3/admin API. Since #196 the API signs with a bucket-scoped user instead of root, so presigned links and a leaked API environment reach only the Gelabber bucket; the root password still guards the admin API, keep it private. The API logs a warning at startup when an `https://` endpoint carries a port other than 443.
+With the default `ATTACHMENT_DELIVERY=redirect`, browsers upload and download attachments directly from MinIO through presigned URLs, so `MINIO_PUBLIC_ENDPOINT` is public by design and must be reachable from every browser; otherwise images stay empty boxes and uploads fail. If you cannot give MinIO a host of its own, use "Attachments through the API" below. Put it on its own subdomain behind your TLS Caddy, not on a published port such as `https://example.com:9000`: networks that only allow 80/443 then load no images, and the S3 API (plus the console on 9001, if published) faces the internet without the proxy in front. The move fixes reachability and removes the directly published 9000/9001 (console included), but it does not shrink the S3 API's attack surface: the Caddy MinIO site forwards every path and method, so `https://minio.example.com` still serves the whole S3/admin API. Since #196 the API signs with a bucket-scoped user instead of root, so presigned links and a leaked API environment reach only the Gelabber bucket; the root password still guards the admin API, keep it private. The API logs a warning at startup when an `https://` endpoint carries a port other than 443, and, with `API_COOKIE_SECURE=true`, when the endpoint is a loopback address (`localhost`, `127.0.0.1`) or plain `http://`, which browsers on other machines cannot use.
 
 1. DNS for `minio.example.com`, and the MinIO site from `Caddyfile.homelab` in your Caddy with `minio.example.com` as its address (the default is `minio.home.arpa`; `header_up Host {hostport}`, URI unchanged).
 2. `.env`: `MINIO_PUBLIC_ENDPOINT=https://minio.example.com`, `MINIO_API_CORS_ALLOW_ORIGIN=https://example.com`. Leave `MINIO_API_BIND` and `MINIO_CONSOLE_BIND` as they are for now: open browsers cache the attachment redirect for the rest of its signing window and keep following the old `:9000` link for up to 30 minutes, so the old port must stay reachable that long.
@@ -190,7 +192,22 @@ If you cannot wait, do step 4 right after step 3: browsers that were already ope
 
 A path prefix (`https://example.com/s3/…`) does not work: presigns sign host and path.
 
+### Attachments through the API
+
+`ATTACHMENT_DELIVERY=proxy` (since v0.8, #348) keeps MinIO off the internet entirely: browsers upload to `PUT /api/attachments/{id}/upload` and load attachments from `GET /api/attachments/{id}` on the app's own origin, and the API streams both to and from MinIO over the internal endpoint. One domain is enough; no MinIO site in Caddy, no CORS setting, and `MINIO_PUBLIC_ENDPOINT` is not used. Membership, upload rules (only the uploader, ten minutes, signed type and size) and cache times stay the same as with presigned links (`api/STORAGE_LIFECYCLE.md`). Video seeking works: the API passes a single byte range on to MinIO.
+
+The cost is traffic: every attachment byte now passes through the API and your reverse proxy instead of going to MinIO directly. For a small instance that is fine; a busy one with many large videos is better off with a MinIO host of its own.
+
+1. `.env`: `ATTACHMENT_DELIVERY=proxy`. Keep `MINIO_API_BIND=127.0.0.1` (the default).
+2. `docker compose up -d api web`. Both need the setting: the API for the links, the web container for its Content-Security-Policy (its log says `uploads and attachments go through the API`). The API logs `attachments go through the API (ATTACHMENT_DELIVERY=proxy)` at startup.
+3. A proxy in front of the stack must let request bodies of 25 MiB through on `/api` (Nginx: `client_max_body_size 26m;`, its default is 1 MiB). Caddy has no limit by default.
+4. In the app, upload a new image and check that it loads, then hard-reload (Ctrl+Shift+R) and check that an older one still loads.
+
+Switching from `redirect`: pages that are already open keep their cached redirects to the old MinIO URL for up to 30 minutes; if that URL was never reachable, nothing gets worse. Once every client has reloaded, the MinIO site in your Caddy and any published 9000/9001 can go. Switching back to `redirect` needs a reachable `MINIO_PUBLIC_ENDPOINT` again, and `docker compose up -d api web`.
+
 ## Attachments
+
+How the bytes travel: see "MinIO on 443" (`ATTACHMENT_DELIVERY=redirect`, the default) and "Attachments through the API" (`proxy`). A picture that does not load shows "Bild konnte nicht geladen werden." with a retry and a download link instead of an empty box; if that happens for every picture, check the API's startup warnings about `MINIO_PUBLIC_ENDPOINT`.
 
 A message carries up to 10 files, at most 25 MiB each and 100 MiB together. Uploads count against a per-user daily quota, `API_UPLOAD_QUOTA_BYTES_PER_DAY` (default 1 GiB, `0` turns it off):
 

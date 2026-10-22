@@ -67,7 +67,20 @@ function UploadState({ attachment }: { attachment: Attachment }) {
 
 function AttachmentImage({ attachment }: { attachment: Attachment }) {
   const openImage = useContext(OpenImage);
+  const [failed, setFailed] = useState(false);
+  // A new key mounts a new <img>, which asks the API again.
+  const [attempt, setAttempt] = useState(0);
   const src = attachment.preview_url ?? attachmentUrl(attachment.id);
+  if (failed)
+    return (
+      <AttachmentImageFailed
+        attachment={attachment}
+        onRetry={() => {
+          setFailed(false);
+          setAttempt((n) => n + 1);
+        }}
+      />
+    );
   return (
     <a
       href={src}
@@ -91,13 +104,51 @@ function AttachmentImage({ attachment }: { attachment: Attachment }) {
       {/* A fixed-height box: the row has its final height before the
           picture arrives, so loading never moves the list. */}
       <img
+        key={attempt}
         src={src}
         alt={attachment.filename}
         decoding="async"
         loading="lazy"
+        // A picture that cannot load (storage unreachable, link expired,
+        // file gone) says so instead of leaving an empty box (#348).
+        onError={() => setFailed(true)}
       />
       <UploadState attachment={attachment} />
     </a>
+  );
+}
+
+/** The box of a picture that did not load: what failed, a retry, and the
+ *  file itself, which may still arrive as a download. Same height as the
+ *  picture, so the list does not move. */
+export function AttachmentImageFailed({
+  attachment,
+  onRetry,
+}: {
+  attachment: Attachment;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="lr-attachment-image is-failed" role="group">
+      <p className="lr-attachment-image-error">
+        <PaperclipIcon size={15} />
+        <span className="lr-attachment-image-name">{attachment.filename}</span>
+        <span role="status">Bild konnte nicht geladen werden.</span>
+        <span className="lr-attachment-image-actions">
+          <button type="button" onClick={onRetry}>
+            Erneut laden
+          </button>
+          {isPendingId(attachment.id) ? null : (
+            <a
+              href={attachmentDownloadUrl(attachment.id)}
+              download={attachment.filename}
+            >
+              Herunterladen
+            </a>
+          )}
+        </span>
+      </p>
+    </div>
   );
 }
 

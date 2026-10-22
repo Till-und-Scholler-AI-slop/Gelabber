@@ -1,18 +1,23 @@
 //! Object store for chat attachments (issue #7).
 //!
 //! Production talks to MinIO with path-style S3 (presign PUT for the
-//! browser, Head/Delete from the API). Tests or explicitly enabled development
-//! select an in-memory map. Missing production configuration is an error.
+//! browser, Head/Delete from the API). With `ATTACHMENT_DELIVERY=proxy` the
+//! browser never sees MinIO: the API streams uploads and downloads over the
+//! internal endpoint (#348). Tests or explicitly enabled development select
+//! an in-memory map. Missing production configuration is an error.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use axum::body::Body;
+use futures_util::StreamExt;
 use rusty_s3::actions::S3Action;
 use rusty_s3::{Bucket, Credentials, UrlStyle};
 use url::Url;
 
-use crate::config::MinioConfig;
+use crate::config::{AttachmentDelivery, MinioConfig};
 
 const REGION: &str = "us-east-1";
 pub const PUT_TTL: Duration = Duration::from_secs(600);
@@ -43,6 +48,10 @@ pub fn get_window(now: SystemTime) -> (u64, u64) {
 pub enum StoreError {
     NotFound,
     Unconfigured,
+    /// A `Range` outside the object (HTTP 416).
+    RangeNotSatisfiable,
+    /// An upload body longer or shorter than the size it was signed for.
+    SizeMismatch,
     Other(String),
 }
 
@@ -51,6 +60,8 @@ impl std::fmt::Display for StoreError {
         match self {
             Self::NotFound => write!(f, "object not found"),
             Self::Unconfigured => write!(f, "object store is not configured"),
+            Self::RangeNotSatisfiable => write!(f, "range not satisfiable"),
+            Self::SizeMismatch => write!(f, "upload size does not match"),
             Self::Other(msg) => write!(f, "{msg}"),
         }
     }
@@ -70,15 +81,33 @@ pub struct PresignedPut {
     pub headers: Vec<(String, String)>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ObjectBody {
     /// Browser follows this after the API has checked membership.
     Redirect(String),
-    /// In-memory store (tests): stream through the API.
-    Bytes {
-        content_type: String,
-        bytes: Vec<u8>,
-    },
+    /// Proxy delivery and the in-memory store: the bytes go through the API.
+    Stream(StoredObject),
+}
+
+/// An object's bytes on their way through the API (#348).
+#[derive(Debug)]
+pub struct StoredObject {
+    /// `Content-Range` of a partial answer (206); `None` for the whole object.
+    pub content_range: Option<String>,
+    pub content_length: Option<u64>,
+    /// The store answered `Range` itself, so the API may say `Accept-Ranges`.
+    pub ranges: bool,
+    pub body: Body,
+}
+
+/// One `bytes=` range as browsers send it for media (`bytes=0-`,
+/// `bytes=100-199`, `bytes=-500`); anything else is dropped and the whole
+/// object is served, which RFC 9110 allows.
+pub fn single_byte_range(raw: &str) -> Option<&str> {
+    let spec = raw.trim().strip_prefix("bytes=")?;
+    let (first, last) = spec.split_once('-')?;
+    let digits = |part: &str| part.len() <= 19 && part.bytes().all(|b| b.is_ascii_digit());
+    (digits(first) && digits(last) && !(first.is_empty() && last.is_empty())).then_some(raw.trim())
 }
 
 #[derive(Clone)]
@@ -97,6 +126,16 @@ impl ObjectStore {
         match config {
             Some(cfg) => Ok(Self::Minio(MinioStore::new(cfg)?)),
             None => Err(StoreError::Unconfigured),
+        }
+    }
+
+    /// Whether attachment bytes go through the API (`ATTACHMENT_DELIVERY=proxy`,
+    /// or the in-memory store, which has no URL of its own) instead of
+    /// between the browser and MinIO.
+    pub fn proxies(&self) -> bool {
+        match self {
+            Self::Memory(_) => true,
+            Self::Minio(store) => store.inner.delivery == AttachmentDelivery::Proxy,
         }
     }
 
@@ -126,35 +165,53 @@ impl ObjectStore {
         }
     }
 
-    /// The object for display (`<img src>`, `<video>`): one stable link per
-    /// window, the window of `now`. MinIO answers with `content_type`, the
-    /// type the API vouches for, not the one stored with the upload.
-    pub async fn get(
+    /// The object for the browser. Redirect delivery: one stable link per
+    /// window, the window of `now`, and MinIO answers with `content_type`,
+    /// the type the API vouches for, not the one stored with the upload,
+    /// and with `disposition` (`None` for display) as its
+    /// `Content-Disposition`: a browser ignores `<a download>` once the link
+    /// redirects to another origin, so the header has to come from there.
+    /// Proxy delivery and the memory store stream the bytes (one `range` of
+    /// them, where the store can), and the API sets those headers itself.
+    pub async fn serve(
         &self,
         key: &str,
         content_type: &str,
+        disposition: Option<&str>,
+        range: Option<&str>,
         now: SystemTime,
     ) -> Result<ObjectBody, StoreError> {
         match self {
             Self::Memory(store) => store.get(key),
-            Self::Minio(store) => store.get_at(key, None, Some(content_type), now),
+            Self::Minio(store) if store.inner.delivery == AttachmentDelivery::Proxy => {
+                store.stream(key, range).await.map(ObjectBody::Stream)
+            }
+            Self::Minio(store) => store.get_at(key, disposition, Some(content_type), now),
         }
     }
 
-    /// The object as a file to save. MinIO answers with `disposition` as its
-    /// `Content-Disposition`: a browser ignores `<a download>` once the link
-    /// redirects to another origin, so the header has to come from there.
-    /// The memory store streams through the API, which sets it itself.
-    pub async fn download(
+    /// Proxy delivery: the upload body, exactly `size` bytes, into the
+    /// object over the internal endpoint.
+    pub async fn upload(
         &self,
         key: &str,
-        disposition: &str,
         content_type: &str,
-        now: SystemTime,
-    ) -> Result<ObjectBody, StoreError> {
+        size: u64,
+        body: Body,
+    ) -> Result<(), StoreError> {
         match self {
-            Self::Memory(store) => store.get(key),
-            Self::Minio(store) => store.get_at(key, Some(disposition), Some(content_type), now),
+            Self::Memory(store) => {
+                let limit = usize::try_from(size).map_err(|_| StoreError::SizeMismatch)?;
+                let bytes = axum::body::to_bytes(body, limit)
+                    .await
+                    .map_err(|_| StoreError::SizeMismatch)?;
+                if bytes.len() as u64 != size {
+                    return Err(StoreError::SizeMismatch);
+                }
+                store.put(key, content_type, bytes.to_vec());
+                Ok(())
+            }
+            Self::Minio(store) => store.upload(key, content_type, size, body).await,
         }
     }
 
@@ -236,11 +293,13 @@ impl MemoryStore {
 
     fn get(&self, key: &str) -> Result<ObjectBody, StoreError> {
         let map = self.inner.lock().expect("memory store");
-        let (content_type, bytes) = map.get(key).ok_or(StoreError::NotFound)?;
-        Ok(ObjectBody::Bytes {
-            content_type: content_type.clone(),
-            bytes: bytes.clone(),
-        })
+        let (_, bytes) = map.get(key).ok_or(StoreError::NotFound)?;
+        Ok(ObjectBody::Stream(StoredObject {
+            content_range: None,
+            content_length: Some(bytes.len() as u64),
+            ranges: false,
+            body: Body::from(bytes.clone()),
+        }))
     }
 
     fn fetch(&self, key: &str) -> Result<(String, Vec<u8>), StoreError> {
@@ -270,6 +329,10 @@ struct MinioInner {
     public: Bucket,
     creds: Credentials,
     http: reqwest::Client,
+    /// Proxy delivery: no deadline for the whole transfer, which may take
+    /// minutes on a slow line, only for connecting and between reads.
+    stream_http: reqwest::Client,
+    delivery: AttachmentDelivery,
 }
 
 impl MinioStore {
@@ -297,12 +360,19 @@ impl MinioStore {
             .timeout(Duration::from_secs(10))
             .build()
             .map_err(|err| StoreError::Other(format!("http client: {err}")))?;
+        let stream_http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .read_timeout(Duration::from_secs(60))
+            .build()
+            .map_err(|err| StoreError::Other(format!("http client: {err}")))?;
         Ok(Self {
             inner: Arc::new(MinioInner {
                 internal,
                 public,
                 creds,
                 http,
+                stream_http,
+                delivery: config.delivery,
             }),
         })
     }
@@ -404,6 +474,108 @@ impl MinioStore {
             .map_err(|err| StoreError::Other(format!("signing time: {err}")))?;
         let url = action.sign_with_time(GET_TTL, &time);
         Ok(ObjectBody::Redirect(url.to_string()))
+    }
+
+    /// Proxy delivery: the object, or one `range` of it, from the internal
+    /// endpoint, passed on as it arrives.
+    async fn stream(&self, key: &str, range: Option<&str>) -> Result<StoredObject, StoreError> {
+        let action = self.inner.internal.get_object(Some(&self.inner.creds), key);
+        let url = action.sign(Duration::from_secs(60));
+        let mut request = self.inner.stream_http.get(url);
+        if let Some(range) = range.and_then(single_byte_range) {
+            request = request.header(reqwest::header::RANGE, range);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|err| StoreError::Other(format!("get object: {}", err.without_url())))?;
+        match response.status().as_u16() {
+            200 | 206 => {}
+            404 => return Err(StoreError::NotFound),
+            416 => return Err(StoreError::RangeNotSatisfiable),
+            status => return Err(StoreError::Other(format!("get object returned {status}"))),
+        }
+        let content_range = (response.status().as_u16() == 206)
+            .then(|| response.headers().get(reqwest::header::CONTENT_RANGE))
+            .flatten()
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let content_length = response.content_length();
+        let body = Body::from_stream(
+            response
+                .bytes_stream()
+                .map(|chunk| chunk.map_err(|err| std::io::Error::other(err.without_url()))),
+        );
+        Ok(StoredObject {
+            content_range,
+            content_length,
+            ranges: true,
+            body,
+        })
+    }
+
+    /// Proxy delivery: the browser's upload body into the object, signed
+    /// for exactly `size` bytes like the presigned PUT. A body that runs
+    /// past `size` stops the transfer; one that ends early fails it.
+    async fn upload(
+        &self,
+        key: &str,
+        content_type: &str,
+        size: u64,
+        body: Body,
+    ) -> Result<(), StoreError> {
+        let mut action = self.inner.internal.put_object(Some(&self.inner.creds), key);
+        action
+            .headers_mut()
+            .insert("content-type", content_type.to_owned());
+        action
+            .headers_mut()
+            .insert("content-length", size.to_string());
+        let url = action.sign(Duration::from_secs(60));
+        // Behind a real server hyper stops the body at its Content-Length,
+        // which the API checked against `size`; a body that runs past it or
+        // breaks off is the client's mistake, not the store's.
+        let seen = Arc::new(AtomicU64::new(0));
+        let client_failed = Arc::new(AtomicBool::new(false));
+        let counted = {
+            let (seen, client_failed) = (seen.clone(), client_failed.clone());
+            body.into_data_stream().map(move |chunk| {
+                let chunk = chunk.map_err(|err| {
+                    client_failed.store(true, Ordering::Relaxed);
+                    std::io::Error::other(err)
+                })?;
+                let len = chunk.len() as u64;
+                if seen.fetch_add(len, Ordering::Relaxed) + len > size {
+                    client_failed.store(true, Ordering::Relaxed);
+                    return Err(std::io::Error::other("upload longer than signed"));
+                }
+                Ok(chunk)
+            })
+        };
+        let result = self
+            .inner
+            .stream_http
+            .put(url)
+            .header(reqwest::header::CONTENT_TYPE, content_type)
+            .header(reqwest::header::CONTENT_LENGTH, size)
+            .body(reqwest::Body::wrap_stream(counted))
+            .send()
+            .await;
+        if client_failed.load(Ordering::Relaxed) {
+            return Err(StoreError::SizeMismatch);
+        }
+        let response = result
+            .map_err(|err| StoreError::Other(format!("put object: {}", err.without_url())))?;
+        if !response.status().is_success() {
+            return Err(StoreError::Other(format!(
+                "put object returned {}",
+                response.status()
+            )));
+        }
+        if seen.load(Ordering::Relaxed) != size {
+            return Err(StoreError::SizeMismatch);
+        }
+        Ok(())
     }
 
     async fn prefix(&self, key: &str, len: usize) -> Result<Vec<u8>, StoreError> {
@@ -587,6 +759,7 @@ mod tests {
             secret_key: "gelabbergelabber".into(),
             bucket: "gelabber".into(),
             root_credentials: false,
+            delivery: crate::config::AttachmentDelivery::Redirect,
         }))
         .expect("minio store");
         let signed = store
@@ -617,6 +790,7 @@ mod tests {
             secret_key: "gelabbergelabber".into(),
             bucket: "gelabber".into(),
             root_credentials: false,
+            delivery: crate::config::AttachmentDelivery::Redirect,
         })
         .expect("minio store")
     }
@@ -624,7 +798,7 @@ mod tests {
     fn link(body: Result<ObjectBody, StoreError>) -> String {
         match body.expect("get") {
             ObjectBody::Redirect(url) => url,
-            ObjectBody::Bytes { .. } => panic!("minio redirects"),
+            ObjectBody::Stream(_) => panic!("minio redirects"),
         }
     }
 
@@ -688,6 +862,191 @@ mod tests {
         assert!(query(&url, "X-Amz-Signature").is_some(), "{url}");
         // The display link of the same window stays as it was.
         assert_ne!(url, link(store.get_at("att/x", None, None, now)));
+    }
+
+    #[test]
+    fn only_a_single_byte_range_is_passed_on() {
+        assert_eq!(single_byte_range("bytes=0-"), Some("bytes=0-"));
+        assert_eq!(single_byte_range(" bytes=100-199 "), Some("bytes=100-199"));
+        assert_eq!(single_byte_range("bytes=-500"), Some("bytes=-500"));
+        for other in [
+            "bytes=-",
+            "bytes=0-1,5-6",
+            "items=0-1",
+            "bytes=a-b",
+            "bytes=0-1\r\nX: y",
+            "bytes=99999999999999999999-",
+        ] {
+            assert_eq!(single_byte_range(other), None, "{other}");
+        }
+    }
+
+    /// What a stand-in MinIO saw of one request.
+    #[derive(Debug, Default, Clone)]
+    struct Seen {
+        method: String,
+        path: String,
+        range: Option<String>,
+        content_length: Option<String>,
+        chunked: bool,
+        body: Vec<u8>,
+    }
+
+    /// A stand-in for MinIO on the internal endpoint: GET answers the
+    /// object (8 bytes) or one range of it, `/gelabber/att/gone` is 404,
+    /// `bytes=100-` is 416, and PUT takes any body.
+    async fn fake_minio() -> (MinioStore, Arc<Mutex<Vec<Seen>>>) {
+        use axum::http::{Request, StatusCode};
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let router = axum::Router::new().fallback(move |request: Request<Body>| {
+            let log = log.clone();
+            async move {
+                let (parts, body) = request.into_parts();
+                let header = |name: &str| {
+                    parts
+                        .headers
+                        .get(name)
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_owned)
+                };
+                let entry = Seen {
+                    method: parts.method.to_string(),
+                    path: parts.uri.path().to_owned(),
+                    range: header("range"),
+                    content_length: header("content-length"),
+                    chunked: header("transfer-encoding").is_some(),
+                    body: axum::body::to_bytes(body, 1 << 20).await.unwrap().to_vec(),
+                };
+                log.lock().unwrap().push(entry.clone());
+                let object = b"01234567";
+                let response = axum::http::Response::builder();
+                if entry.method == "PUT" {
+                    return response.status(200).body(Body::empty()).unwrap();
+                }
+                if entry.path.ends_with("/gone") {
+                    return response.status(404).body(Body::empty()).unwrap();
+                }
+                match entry.range.as_deref() {
+                    Some("bytes=2-4") => response
+                        .status(StatusCode::PARTIAL_CONTENT)
+                        .header("content-range", "bytes 2-4/8")
+                        .body(Body::from(&object[2..5]))
+                        .unwrap(),
+                    Some("bytes=100-") => response.status(416).body(Body::empty()).unwrap(),
+                    _ => response.status(200).body(Body::from(&object[..])).unwrap(),
+                }
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let store = MinioStore::new(&MinioConfig {
+            endpoint: format!("http://{addr}"),
+            public_endpoint: "https://unreachable.invalid:9000".into(),
+            access_key: "gelabber".into(),
+            secret_key: "gelabbergelabber".into(),
+            bucket: "gelabber".into(),
+            root_credentials: false,
+            delivery: AttachmentDelivery::Proxy,
+        })
+        .expect("minio store");
+        (store, seen)
+    }
+
+    async fn body_bytes(object: StoredObject) -> Vec<u8> {
+        axum::body::to_bytes(object.body, 1 << 20)
+            .await
+            .unwrap()
+            .to_vec()
+    }
+
+    /// #348: proxy delivery reads from the internal endpoint, never the
+    /// public one, and passes a media player's range on.
+    #[tokio::test]
+    async fn proxy_delivery_streams_the_object_and_its_ranges() {
+        let (minio, seen) = fake_minio().await;
+        let store = ObjectStore::Minio(minio);
+        assert!(store.proxies());
+        let now = SystemTime::now();
+        let stream = |body: Result<ObjectBody, StoreError>| match body.expect("serve") {
+            ObjectBody::Stream(object) => object,
+            ObjectBody::Redirect(url) => panic!("proxy delivery redirected to {url}"),
+        };
+
+        let whole = stream(store.serve("att/x", "image/png", None, None, now).await);
+        assert_eq!(whole.content_range, None);
+        assert_eq!(whole.content_length, Some(8));
+        assert!(whole.ranges);
+        assert_eq!(body_bytes(whole).await, b"01234567");
+
+        let part = stream(
+            store
+                .serve("att/x", "video/mp4", None, Some("bytes=2-4"), now)
+                .await,
+        );
+        assert_eq!(part.content_range.as_deref(), Some("bytes 2-4/8"));
+        assert_eq!(part.content_length, Some(3));
+        assert_eq!(body_bytes(part).await, b"234");
+
+        // Several ranges are not passed on: the whole object answers.
+        let many = stream(
+            store
+                .serve("att/x", "video/mp4", None, Some("bytes=0-1,4-5"), now)
+                .await,
+        );
+        assert_eq!(many.content_range, None);
+
+        assert!(matches!(
+            store
+                .serve("att/x", "video/mp4", None, Some("bytes=100-"), now)
+                .await,
+            Err(StoreError::RangeNotSatisfiable)
+        ));
+        assert!(matches!(
+            store.serve("att/gone", "image/png", None, None, now).await,
+            Err(StoreError::NotFound)
+        ));
+
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen[0].path, "/gelabber/att/x");
+        assert_eq!(seen[0].range, None);
+        assert_eq!(seen[1].range.as_deref(), Some("bytes=2-4"));
+        assert_eq!(seen[2].range, None);
+    }
+
+    /// #348: the upload goes to MinIO with the signed length, not chunked
+    /// (MinIO refuses a PUT without a length), and a body longer than
+    /// signed never completes.
+    #[tokio::test]
+    async fn proxy_upload_sends_exactly_the_signed_length() {
+        let (minio, seen) = fake_minio().await;
+        let store = ObjectStore::Minio(minio);
+        store
+            .upload("att/x", "image/png", 4, Body::from(&b"abcd"[..]))
+            .await
+            .expect("upload");
+        {
+            let seen = seen.lock().unwrap();
+            assert_eq!(seen[0].method, "PUT");
+            assert_eq!(seen[0].path, "/gelabber/att/x");
+            assert_eq!(seen[0].content_length.as_deref(), Some("4"));
+            assert!(!seen[0].chunked);
+            assert_eq!(seen[0].body, b"abcd");
+        }
+        assert!(matches!(
+            store
+                .upload("att/y", "image/png", 4, Body::from(&b"abcdef"[..]))
+                .await,
+            Err(StoreError::SizeMismatch)
+        ));
+    }
+
+    #[test]
+    fn redirect_delivery_keeps_the_browser_on_minio() {
+        let store = ObjectStore::Minio(minio());
+        assert!(!store.proxies());
+        assert!(ObjectStore::memory().proxies());
     }
 
     /// MinIO HEAD carries the object size in `Content-Length` and an empty

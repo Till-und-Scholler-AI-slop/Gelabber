@@ -61,7 +61,11 @@ export const presignAttachment = (channelId: string, body: PresignRequest) =>
 
 const UPLOAD_TIMEOUT_MS = 120_000;
 
-/** PUT the file at the presigned MinIO URL. Not same-origin — no cookies. */
+/** PUT the file at the upload link from the presign answer, with every
+ * header it lists. Usually a signed MinIO URL on another origin, so no
+ * cookies go along; with `ATTACHMENT_DELIVERY=proxy` the API's own
+ * `/api/attachments/{id}/upload`, where the same-origin session cookie and
+ * the listed CSRF header authorise the upload (#348). */
 export async function putPresigned(
   url: string,
   file: File,

@@ -31,9 +31,11 @@ services:
       tags:
         - gelabber/web:v0.7.1
     environment:
-      # The same value as the API's: the app shell's Content-Security-Policy
-      # allows uploads and attachments on this origin only (#288).
+      # The same values as the API's: the app shell's Content-Security-Policy
+      # allows uploads and attachments on this origin only (#288), or on the
+      # app's own origin with ATTACHMENT_DELIVERY=proxy (#348).
       MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}
+      ATTACHMENT_DELIVERY: ${ATTACHMENT_DELIVERY:-redirect}
     expose:
       - "80"
     restart: unless-stopped
@@ -56,6 +58,9 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_APP_USER:-gelabber-api}
       MINIO_SECRET_KEY: ${MINIO_APP_PASSWORD:?set MINIO_APP_PASSWORD in .env (see deploy/README.md)}
       MINIO_BUCKET: ${MINIO_BUCKET:-gelabber}
+      # redirect: browsers load and upload at MINIO_PUBLIC_ENDPOINT. proxy:
+      # through the API on the app's origin, MinIO stays internal (#348).
+      ATTACHMENT_DELIVERY: ${ATTACHMENT_DELIVERY:-redirect}
       API_COOKIE_SECURE: ${API_COOKIE_SECURE:-false}
       # Empty keeps the API defaults: 30 days absolute, 14 days idle.
       API_SESSION_TTL_HOURS: ${API_SESSION_TTL_HOURS:-}
