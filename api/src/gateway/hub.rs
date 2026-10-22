@@ -787,31 +787,52 @@ impl Gateway {
         Some((socket.user_id, socket.servers, socket.typing))
     }
 
-    /// Drop a user's live seats on one server after kick/ban: unsubscribe
-    /// chat topics, leave voice rooms, tell their sockets why.
+    /// Drop users' live seats on one server after kick/ban/leave or a server
+    /// delete: rotate their media generations, unsubscribe chat topics,
+    /// leave voice rooms, tell their sockets why. The rotations share one
+    /// pipeline and the socket table is scanned once for all users. Presence
+    /// is the caller's job ([`Gateway::forget_server_presence`]), once per
+    /// user rather than once per socket.
     pub async fn revoke_server(
         &self,
-        user_id: Uuid,
+        user_ids: &[Uuid],
         server_id: Uuid,
         channel_ids: &[Uuid],
         reason: &'static str,
     ) -> Result<(), ApiError> {
-        crate::media::revoke_member(&self.connections.redis, server_id, user_id).await?;
-        let conns: Vec<ConnId> = self
-            .connections
+        self.revoke_members(server_id, user_ids).await?;
+        for id in self.local_conns(user_ids).await {
+            self.drop_server_access(id, server_id, channel_ids, reason)
+                .await;
+        }
+        Ok(())
+    }
+
+    async fn revoke_members(&self, server_id: Uuid, user_ids: &[Uuid]) -> Result<(), ApiError> {
+        if user_ids.is_empty() {
+            return Ok(());
+        }
+        self.connections
+            .with_conn(|mut conn| {
+                let user_ids = user_ids.to_vec();
+                async move { crate::media::revoke_members(&mut conn, server_id, &user_ids).await }
+            })
+            .await
+            .map_err(redis_err)
+    }
+
+    /// This instance's sockets of any of `user_ids`, from one table scan.
+    async fn local_conns(&self, user_ids: &[Uuid]) -> Vec<ConnId> {
+        let users: HashSet<Uuid> = user_ids.iter().copied().collect();
+        self.connections
             .inner
             .sockets
             .read()
             .await
             .iter()
-            .filter(|(_, socket)| socket.user_id == user_id)
+            .filter(|(_, socket)| users.contains(&socket.user_id))
             .map(|(id, _)| *id)
-            .collect();
-        for id in conns {
-            self.clear_server_access(id, server_id, channel_ids, reason)
-                .await;
-        }
-        Ok(())
+            .collect()
     }
 
     async fn clear_server_access(
@@ -821,7 +842,28 @@ impl Gateway {
         channel_ids: &[Uuid],
         reason: &'static str,
     ) {
-        let Some((user_id, rooms, typing)) = ({
+        let Some(user_id) = self
+            .drop_server_access(id, server_id, channel_ids, reason)
+            .await
+        else {
+            return;
+        };
+        // The membership-revision recheck relies on this per-socket cleanup.
+        if let Err(err) = self.forget_server_presence(&[user_id], server_id).await {
+            warn!(error = err.code(), "server presence cleanup failed");
+        }
+    }
+
+    /// Everything [`Gateway::clear_server_access`] does except presence.
+    /// Returns the socket's user, or `None` when the socket is gone.
+    async fn drop_server_access(
+        &self,
+        id: ConnId,
+        server_id: Uuid,
+        channel_ids: &[Uuid],
+        reason: &'static str,
+    ) -> Option<Uuid> {
+        let (user_id, rooms, typing) = {
             let mut sockets = self.connections.inner.sockets.write().await;
             sockets.get_mut(&id).map(|socket| {
                 socket.access.remove(&server_id);
@@ -851,9 +893,7 @@ impl Gateway {
                 socket.send(ServerFrame::error(reason, Some(server_id), None));
                 (socket.user_id, rooms, typing)
             })
-        }) else {
-            return;
-        };
+        }?;
         for cid in rooms {
             if let Err(err) = self.leave_voice(id, user_id, server_id, cid).await {
                 warn!(error = err.code(), "voice cleanup failed");
@@ -864,9 +904,7 @@ impl Gateway {
                 warn!(error = err.code(), "typing cleanup failed");
             }
         }
-        if let Err(err) = self.forget_server_presence(user_id, server_id).await {
-            warn!(error = err.code(), "server presence cleanup failed");
-        }
+        Some(user_id)
     }
 
     pub async fn track_media_session(&self, key: &str) -> Option<Uuid> {
@@ -1075,23 +1113,15 @@ impl Gateway {
         Ok(())
     }
 
+    /// Cut voice for `user_ids` after a permission reduction: one rotation
+    /// pipeline and one socket table scan for all of them.
     pub async fn revoke_voice_access(
         &self,
-        user_id: Uuid,
+        user_ids: &[Uuid],
         server_id: Uuid,
     ) -> Result<(), ApiError> {
-        crate::media::revoke_member(&self.connections.redis, server_id, user_id).await?;
-        let ids: Vec<ConnId> = self
-            .connections
-            .inner
-            .sockets
-            .read()
-            .await
-            .iter()
-            .filter(|(_, socket)| socket.user_id == user_id)
-            .map(|(id, _)| *id)
-            .collect();
-        for id in ids {
+        self.revoke_members(server_id, user_ids).await?;
+        for id in self.local_conns(user_ids).await {
             self.clear_voice_access(id, server_id).await?;
         }
         Ok(())

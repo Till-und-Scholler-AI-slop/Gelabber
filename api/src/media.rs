@@ -190,12 +190,25 @@ async fn rotate(redis: &redis::Client, key: String) -> Result<(), ApiError> {
         .map_err(|err| ApiError::Internal(format!("redis: {err}")))
 }
 
-pub async fn revoke_member(
-    redis: &redis::Client,
+/// Rotate the member generations of `user_ids` on one server in a single
+/// pipeline (#294), so a server delete or a permission cut costs one round
+/// trip instead of one connection per member. Safe to repeat on retry.
+pub async fn revoke_members(
+    conn: &mut redis::aio::MultiplexedConnection,
     server_id: Uuid,
-    user_id: Uuid,
-) -> Result<(), ApiError> {
-    rotate(redis, member_authority_key(server_id, user_id)).await
+    user_ids: &[Uuid],
+) -> Result<(), redis::RedisError> {
+    if user_ids.is_empty() {
+        return Ok(());
+    }
+    let mut pipe = redis::pipe();
+    for user_id in user_ids {
+        pipe.cmd("SET")
+            .arg(member_authority_key(server_id, *user_id))
+            .arg(Uuid::new_v4().to_string())
+            .ignore();
+    }
+    pipe.query_async::<()>(conn).await
 }
 pub async fn revoke_channel(redis: &redis::Client, channel_id: Uuid) -> Result<(), ApiError> {
     rotate(redis, channel_authority_key(channel_id)).await
