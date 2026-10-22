@@ -16,10 +16,16 @@
     text-decoration: none;
     cursor: pointer;
     transition:
-      background-color var(--lr-dur-fast) var(--lr-ease),
-      border-color var(--lr-dur-fast) var(--lr-ease),
-      color var(--lr-dur-fast) var(--lr-ease),
-      filter var(--lr-dur-fast) var(--lr-ease);
+      background-color var(--lr-dur-fast) var(--lr-ease-standard),
+      border-color var(--lr-dur-fast) var(--lr-ease-standard),
+      color var(--lr-dur-fast) var(--lr-ease-standard),
+      filter var(--lr-dur-fast) var(--lr-ease-standard),
+      scale var(--lr-dur-micro) var(--lr-ease-standard);
+  }
+  /* A press gives way a little, and springs back on release. */
+  .ui-button:active:not(:disabled),
+  .ui-icon-button:active:not(:disabled) {
+    scale: var(--lr-press-scale);
   }
   .ui-button svg {
     flex-shrink: 0;
@@ -98,8 +104,9 @@
     color: var(--lr-muted);
     cursor: pointer;
     transition:
-      background-color var(--lr-dur-fast) var(--lr-ease),
-      color var(--lr-dur-fast) var(--lr-ease);
+      background-color var(--lr-dur-fast) var(--lr-ease-standard),
+      color var(--lr-dur-fast) var(--lr-ease-standard),
+      scale var(--lr-dur-micro) var(--lr-ease-standard);
   }
   .ui-icon-button--xs {
     width: var(--lr-control-xs);
@@ -247,8 +254,8 @@
     background: var(--lr-surface);
     cursor: pointer;
     transition:
-      background-color var(--lr-dur) ease,
-      border-color var(--lr-dur) ease;
+      background-color var(--lr-dur) var(--lr-ease-standard),
+      border-color var(--lr-dur) var(--lr-ease-standard);
   }
   .ui-switch::before {
     content: "";
@@ -260,8 +267,8 @@
     border-radius: 50%;
     background: var(--lr-muted);
     transition:
-      translate var(--lr-dur) var(--lr-ease),
-      background-color var(--lr-dur) ease;
+      translate var(--lr-dur) var(--lr-ease-standard),
+      background-color var(--lr-dur) var(--lr-ease-standard);
   }
   .ui-switch:checked {
     border-color: var(--lr-accent);
@@ -431,6 +438,13 @@
     color: var(--lr-text);
     font: var(--lr-type-ui);
     cursor: pointer;
+    transition:
+      background-color var(--lr-dur-fast) var(--lr-ease-standard),
+      border-color var(--lr-dur-fast) var(--lr-ease-standard),
+      scale var(--lr-dur-micro) var(--lr-ease-standard);
+  }
+  .ui-chip:active:not(:disabled) {
+    scale: var(--lr-press-scale);
   }
   .ui-chip:hover:not(:disabled) {
     background: var(--lr-hover);
