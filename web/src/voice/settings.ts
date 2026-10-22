@@ -406,6 +406,10 @@ export const useMediaSettings = create<MediaSettingsState>()(
   persist(
     (set, get) => ({
       ...DEFAULT_MEDIA_SETTINGS,
+      // The desktop app announces messages while its window is not in
+      // front from the start, as chat apps do; a browser tab waits to be
+      // asked. A choice made before stays as it is.
+      desktopNotify: isDesktopApp(),
       dialogOpen: false,
       dialogSection: null,
       cameraProfileApply: "idle",
