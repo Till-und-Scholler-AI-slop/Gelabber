@@ -261,9 +261,7 @@ try {
     .click();
   await a.page.waitForURL(/\/s\/[^/]+\/c\//);
   const textUrl = a.page.url();
-  await a.page
-    .locator('summary[aria-label="Kanal oder Kategorie erstellen"]')
-    .click();
+  await a.page.locator("summary.server-sidebar-menu-button").click();
   await a.page.getByRole("button", { name: "Kanal erstellen" }).click();
   const channelDialog = a.page.getByRole("dialog", { name: "Kanal erstellen" });
   await channelDialog.getByText("Voice", { exact: true }).click();

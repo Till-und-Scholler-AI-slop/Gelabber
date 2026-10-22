@@ -102,7 +102,9 @@ export async function chatFaultScenarios(h, f) {
         .getByRole("link", { name: "E2E Voice B", exact: true })
         .click();
       hold.release();
-      await f.owner.page.locator(`a[href="${c.path}"]`).click();
+      await f.owner.page
+        .locator(`.channel-sidebar a[href="${c.path}"]`)
+        .click();
       const failed = alert(f.owner, text);
       await failed
         .getByRole("button", { name: "Sendung wiederholen", exact: true })

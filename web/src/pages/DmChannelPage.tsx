@@ -8,12 +8,13 @@ import { useUserId } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
 import { MessagePane } from "../components/MessagePane.tsx";
 import { LoadError } from "../components/LoadError.tsx";
+import { MainSkeleton } from "../components/ui/Skeleton.tsx";
 import { PresenceAvatar } from "../components/PresenceAvatar.tsx";
 import { TypingBar } from "../components/TypingBar.tsx";
 import { UserProfileDialog } from "../components/UserProfileDialog.tsx";
 import { useLastDm } from "../dms/lastDm.ts";
 import { isGoneError } from "../dms/open.ts";
-import { forgetDm, useDm } from "../dms/queries.ts";
+import { forgetDm, useDm, useDms } from "../dms/queries.ts";
 import type { DirectMessage } from "../dms/types.ts";
 import type { Member } from "../servers/types.ts";
 import { presenceOf, usePresenceStore } from "../ws/live.ts";
@@ -24,7 +25,11 @@ export function DmChannelPage() {
   const client = useQueryClient();
   const navigate = useNavigate();
   const userId = useUserId();
-  const { data: dm, error, isPending, isFetching, refetch } = useDm(channelId);
+  const { data: dm, error, isFetching, refetch } = useDm(channelId);
+  // The list already knows the peer: the conversation opens before its own
+  // detail arrives.
+  const { data: dms } = useDms();
+  const shown = dm ?? dms?.find((row) => row.id === channelId);
   const remember = useLastDm((s) => s.remember);
   const forgetLast = useLastDm((s) => s.forget);
   const gone = isGoneError(error);
@@ -48,7 +53,7 @@ export function DmChannelPage() {
   if (gone) return null;
   if (error) {
     return (
-      <div className="flex flex-1 items-center justify-center p-8 text-center text-neutral-500 dark:text-neutral-400">
+      <div className="flex flex-1 items-center justify-center p-8 text-center text-lr-muted">
         <LoadError
           message="Diese Unterhaltung konnte gerade nicht geladen werden."
           pending={isFetching}
@@ -57,9 +62,9 @@ export function DmChannelPage() {
       </div>
     );
   }
-  if (isPending || !dm) return null;
+  if (!shown) return <MainSkeleton kind="chat" />;
 
-  return <DmChat dm={dm} />;
+  return <DmChat dm={shown} />;
 }
 
 function DmChat({ dm }: { dm: DirectMessage }) {

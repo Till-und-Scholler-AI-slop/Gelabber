@@ -22,8 +22,6 @@ const ALLOWED = new Set([
   "components/NotificationPrivacy.tsx",
   "components/NotificationSettingsDialog.tsx",
   "components/VoiceStateIcons.tsx",
-  "pages/DmChannelPage.tsx",
-  "pages/DmIndexPage.tsx",
   "pages/ProfileCardForm.tsx",
   "pages/ProfilePage.tsx",
   "pages/ServerSettingsPage.tsx",

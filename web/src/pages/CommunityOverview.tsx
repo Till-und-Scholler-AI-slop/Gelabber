@@ -1,11 +1,24 @@
 import { Link } from "@tanstack/react-router";
+import { useState } from "react";
 import { useUserId } from "../auth/scope.ts";
-import { HashIcon, SpeakerIcon } from "../components/Icons.tsx";
+import {
+  ChatIcon,
+  CopyIcon,
+  HashIcon,
+  PencilIcon,
+  SpeakerIcon,
+} from "../components/Icons.tsx";
+import { InviteDialog } from "../components/InviteDialog.tsx";
 import { MemberPanel } from "../components/MemberPanel.tsx";
+import { Button } from "../components/ui/Button.tsx";
+import { useHasDraft } from "../messages/drafts.ts";
+import type { Badge } from "../messages/notifyLevel.ts";
+import { UnreadBadge } from "../messages/UnreadBadge.tsx";
+import { useBadges } from "../messages/useBadge.ts";
 import { lastChannelsFor, useLastChannel } from "../servers/lastChannel.ts";
 import { overviewRoom, roomWelcome } from "../servers/overview.ts";
 import { can } from "../servers/permissions.ts";
-import type { ServerDetail } from "../servers/types.ts";
+import type { Channel, ServerDetail } from "../servers/types.ts";
 import { EMPTY_OCCUPANCY, useVoiceRoster } from "../voice/roster.ts";
 import { useVoice } from "../voice/session.ts";
 import { VoiceRoom } from "../voice/VoiceRoom.tsx";
@@ -31,9 +44,20 @@ export function CommunityOverview({ server }: { server: ServerDetail }) {
       channel.id !== room?.id &&
       !channel.id.startsWith("tmp:"),
   );
-  const textChannels = server.channels.filter(
-    (channel) => channel.kind === "text" && !channel.id.startsWith("tmp:"),
-  );
+  const badges = useBadges();
+  // What is new comes first; otherwise the sidebar's order.
+  const textChannels = server.channels
+    .filter(
+      (channel) => channel.kind === "text" && !channel.id.startsWith("tmp:"),
+    )
+    .map((channel, index) => ({
+      channel,
+      index,
+      rank: unreadRank(badges.get(channel.id)),
+    }))
+    .sort((a, b) => b.rank - a.rank || a.index - b.index)
+    .map(({ channel }) => channel);
+  const [inviting, setInviting] = useState(false);
 
   return (
     <div className="community-overview-layout">
@@ -41,15 +65,39 @@ export function CommunityOverview({ server }: { server: ServerDetail }) {
         className="community-overview"
         aria-label={`${server.name} Übersicht`}
       >
-        <div className="community-overview__bar">{server.name}</div>
+        <div className="community-overview__bar">
+          <ChatIcon size={18} />
+          Übersicht
+        </div>
         <header className="community-overview__welcome">
-          <h1>Dein Feierabend beginnt hier.</h1>
+          <h1>{server.name}</h1>
           <p>
+            Dein Feierabend beginnt hier.{" "}
             {room
               ? roomWelcome(server.members, roster, room, userId)
-              : "Ein Platz für deine Leute. Schön, dass du da bist."}
+              : "Schön, dass du da bist."}
           </p>
         </header>
+        {server.members.length === 1 ? (
+          <div className="community-overview__alone">
+            <p>
+              <strong>Noch allein hier</strong> – lade deine Leute ein, dann ist
+              hier bald mehr los.
+            </p>
+            <Button
+              variant="primary"
+              icon={<CopyIcon size={16} />}
+              onClick={() => setInviting(true)}
+            >
+              Link kopieren
+            </Button>
+            <InviteDialog
+              server={server}
+              open={inviting}
+              onClose={() => setInviting(false)}
+            />
+          </div>
+        ) : null}
         {room ? (
           <VoiceRoom
             server={server}
@@ -109,15 +157,11 @@ export function CommunityOverview({ server }: { server: ServerDetail }) {
                 <h2>Lieber schreiben?</h2>
                 <div className="community-overview__links">
                   {textChannels.map((channel) => (
-                    <Link
+                    <TextPlace
                       key={channel.id}
-                      to="/s/$serverId/c/$channelId"
-                      params={{ serverId: server.id, channelId: channel.id }}
-                      className="community-overview__place"
-                    >
-                      <HashIcon size={23} />
-                      <strong>{channel.name}</strong>
-                    </Link>
+                      channel={channel}
+                      badge={badges.get(channel.id)}
+                    />
                   ))}
                 </div>
               </>
@@ -125,7 +169,39 @@ export function CommunityOverview({ server }: { server: ServerDetail }) {
           </section>
         ) : null}
       </section>
-      <MemberPanel server={server} />
+      {/* The front door shows who is around, even where the list is
+          hidden next to conversations. */}
+      <MemberPanel server={server} forceVisible />
     </div>
+  );
+}
+
+const unreadRank = (badge: Badge | undefined) =>
+  !badge ? 0 : badge.count > 0 ? 2 : badge.dot ? 1 : 0;
+
+function TextPlace({
+  channel,
+  badge,
+}: {
+  channel: Channel;
+  badge: Badge | undefined;
+}) {
+  const draft = useHasDraft(useUserId(), channel.id);
+  return (
+    <Link
+      to="/s/$serverId/c/$channelId"
+      params={{ serverId: channel.server_id, channelId: channel.id }}
+      className={`community-overview__place${unreadRank(badge) > 0 ? " is-unread" : ""}`}
+    >
+      <HashIcon size={23} />
+      <strong>{channel.name}</strong>
+      {draft ? (
+        <span className="channel-row-draft" title="Entwurf">
+          <PencilIcon size={13} />
+          <span className="sr-only">Entwurf</span>
+        </span>
+      ) : null}
+      <UnreadBadge channelId={channel.id} />
+    </Link>
   );
 }

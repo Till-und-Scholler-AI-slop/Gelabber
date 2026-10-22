@@ -1,6 +1,5 @@
 // Which channel the user last had open per server, so clicking a server in
-// the rail lands where they left off (falls back to the first text channel).
-// Persisted per browser and per account.
+// the rail lands where they left off. Persisted per browser and per account.
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
@@ -54,4 +53,17 @@ export function lastChannelsFor(
 ): Record<string, string> {
   if (!userId) return EMPTY_LAST_CHANNELS;
   return byUser[userId] ?? EMPTY_LAST_CHANNELS;
+}
+
+/**
+ * The channel a server's rail tile opens, or `undefined` for its overview:
+ * the overview greets a first visit and shows who is talking while someone
+ * sits in one of its voice rooms; otherwise the user goes back to where
+ * they left off.
+ */
+export function railChannel(
+  lastChannelId: string | undefined,
+  someoneInVoice: boolean,
+): string | undefined {
+  return someoneInVoice ? undefined : lastChannelId;
 }

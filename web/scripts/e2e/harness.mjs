@@ -245,12 +245,10 @@ export async function startHarness() {
     );
     check(textChannel?.id, "fixture-text-channel-missing");
     const textPath = `/s/${serverId}/c/${textChannel.id}`;
-    await owner.page.locator(`a[href="${textPath}"]`).first().click();
+    await owner.page.locator(`a.channel-row-link[href="${textPath}"]`).click();
     await owner.page.waitForURL((url) => url.pathname === textPath);
     async function channel(name, kind = "Voice") {
-      await owner.page
-        .locator('summary[aria-label="Kanal oder Kategorie erstellen"]')
-        .click();
+      await owner.page.locator("summary.server-sidebar-menu-button").click();
       await owner.page
         .getByRole("button", { name: "Kanal erstellen", exact: true })
         .click();
@@ -273,7 +271,7 @@ export async function startHarness() {
       );
       const created = await response.json();
       const path = `/s/${serverId}/c/${created.id}`;
-      await owner.page.locator(`a[href="${path}"]`).click();
+      await owner.page.locator(`.channel-sidebar a[href="${path}"]`).click();
       return path;
     }
     const voicePath = await channel("E2E Voice A");

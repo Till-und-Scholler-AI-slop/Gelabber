@@ -86,14 +86,16 @@ describe("channel page load error", () => {
     expect(refetch).toHaveBeenCalledOnce();
   });
 
-  it("stays empty while the server is still loading", () => {
+  it("shows the chat skeleton while the server is still loading", () => {
     fixture.server = {
       data: undefined,
       error: null,
       isFetching: true,
       refetch: vi.fn(),
     };
-    expect(renderToStaticMarkup(<ChannelPage />)).toBe("");
+    expect(renderToStaticMarkup(<ChannelPage />)).toContain(
+      "ui-main-skeleton--chat",
+    );
     expect(fixture.retry).toBeUndefined();
   });
 });
