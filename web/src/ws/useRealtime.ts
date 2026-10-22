@@ -17,7 +17,7 @@ import { serverKeys } from "../servers/queries.ts";
 import { applyChannelEvent, messageQueryOptions } from "../messages/queries.ts";
 import { applyMemberRemoved, forgetServer } from "../servers/queries.ts";
 import { leaveVoice, stopWatching, useVoice } from "../voice/session.ts";
-import { getGateway, type Gateway } from "./client.ts";
+import { getGateway, type GapRecovery, type Gateway } from "./client.ts";
 import { shouldLeaveView } from "./leaveView.ts";
 
 /** Kick/ban closes both planes before the sidebar that hosts voice unmounts. */
@@ -49,6 +49,8 @@ export function attachRealtimeRecovery(
   let queued = false;
   let force = false;
   let running: Promise<void> | null = null;
+  /** The running round is still in its spread wait and has read nothing. */
+  let spreading = false;
   let attempt = 0;
   let rediscover = gateway.pendingResync !== undefined;
   let discoveryVersion = 0;
@@ -65,13 +67,24 @@ export function attachRealtimeRecovery(
       const restart = force;
       force = false;
       if (running && !restart) return;
+      // A reconnect or resync during the wait joins the waiting round, which
+      // takes its snapshot afterwards: a flapping link must not keep
+      // pushing the refetch back.
+      if (running && spreading) return;
       const version = ++attempt;
-      let gaps = gateway.gapRecoveries();
-      const discover = rediscover || pendingDms.size > 0;
-      const discovery = discoveryVersion;
-      const resync = gateway.pendingResync;
-      rediscover = false;
-      const announced = [...pendingDms];
+      let gaps: GapRecovery[] = [];
+      let discover = false;
+      let discovery = discoveryVersion;
+      let resync: number | undefined;
+      let announced: string[] = [];
+      const snapshot = () => {
+        gaps = gateway.gapRecoveries();
+        discover = rediscover || pendingDms.size > 0;
+        discovery = discoveryVersion;
+        resync = gateway.pendingResync;
+        rediscover = false;
+        announced = [...pendingDms];
+      };
       const filters = {
         queryKey: ["user", stamp.userId, stamp.generation],
         predicate: (query: { queryKey: readonly unknown[] }) =>
@@ -80,15 +93,20 @@ export function attachRealtimeRecovery(
       const request = (async () => {
         // Every client of a restarted server reconnects within about a
         // second; a random wait spreads their refetches over another one.
-        // Gap notices that answer the resume frames meanwhile join this
-        // round instead of starting a second one.
+        // Gap notices, resyncs and DM announcements that arrive meanwhile
+        // join this round instead of starting a second one.
         if (restart && readySpreadMs > 0) {
-          await new Promise((done) =>
-            setTimeout(done, Math.random() * readySpreadMs),
-          );
+          spreading = true;
+          try {
+            await new Promise((done) =>
+              setTimeout(done, Math.random() * readySpreadMs),
+            );
+          } finally {
+            spreading = false;
+          }
           if (!alive() || attempt !== version) return;
-          gaps = gateway.gapRecoveries();
         }
+        snapshot();
         // Cancel initial reads too: invalidateQueries alone shares a pending
         // request without data, which may have started before the gap.
         await client.cancelQueries(filters);
@@ -131,6 +149,8 @@ export function attachRealtimeRecovery(
         for (const query of client.getQueryCache().findAll(filters)) {
           if (skipped(query)) continue;
           // Not read in this round: an old error is not this round's outcome.
+          // It stays invalidated (patchPages keeps the flag through live
+          // events) and is read again when next opened.
           if (isHistory(query) && !query.isActive()) continue;
           if (query.state.status !== "error") continue;
           const error = query.state.error;

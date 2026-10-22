@@ -1014,6 +1014,67 @@ it("spreads the refetch after a reconnect and folds the resume gaps into it", as
   expect(ws.cursorsSnapshot.get("c:channel")).toBe(6);
 });
 
+it("a second reconnect during the spread joins the waiting round", async () => {
+  vi.useFakeTimers();
+  cleanups.push(() => vi.useRealTimers());
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const queryClient = client();
+  const { gateway: ws, socket, sockets } = gateway();
+  let reads = 0;
+  install(() => json({ messages: rows(1, ++reads), has_more: false }));
+  await login(ada.email, "password123");
+  const stamp = takeStamp()!;
+  await observe(queryClient);
+  cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+  socket.close();
+  await vi.advanceTimersByTimeAsync(0);
+  sockets[1]!.emit("open");
+  await vi.advanceTimersByTimeAsync(300);
+  sockets[1]!.close();
+  await vi.advanceTimersByTimeAsync(0);
+  sockets[2]!.emit("open");
+  // The first wait still ends on time; the second reconnect adds none.
+  await vi.advanceTimersByTimeAsync(READY_SPREAD_MS / 2 - 301);
+  expect(reads).toBe(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(reads).toBe(2);
+  await vi.advanceTimersByTimeAsync(READY_SPREAD_MS * 2);
+  expect(reads).toBe(2);
+});
+
+it("a resync during the spread joins the waiting round", async () => {
+  vi.useFakeTimers();
+  cleanups.push(() => vi.useRealTimers());
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const queryClient = client();
+  const { gateway: ws, socket, sockets } = gateway();
+  const calls = install((url) =>
+    url.pathname === "/api/dms" || url.pathname === "/api/servers"
+      ? json([])
+      : json({ messages: rows(1), has_more: false }),
+  );
+  await login(ada.email, "password123");
+  const stamp = takeStamp()!;
+  await observe(queryClient);
+  cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+  socket.close();
+  await vi.advanceTimersByTimeAsync(0);
+  sockets[1]!.emit("open");
+  await vi.advanceTimersByTimeAsync(100);
+  sockets[1]!.frame({ op: "resync" });
+  expect(ws.pendingResync).toBeDefined();
+  await vi.advanceTimersByTimeAsync(READY_SPREAD_MS / 2 - 101);
+  expect(calls.filter((path) => path.includes("/messages"))).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(1);
+  // The first wait still ends on time and the round carries the resync.
+  expect(calls.filter((path) => path.includes("/messages"))).toHaveLength(2);
+  await vi.waitFor(() => expect(ws.pendingResync).toBeUndefined());
+  await vi.advanceTimersByTimeAsync(READY_SPREAD_MS * 2);
+  expect(calls.filter((path) => path === "/api/dms")).toHaveLength(1);
+  expect(calls.filter((path) => path === "/api/servers")).toHaveLength(1);
+  expect(calls.filter((path) => path.includes("/messages"))).toHaveLength(2);
+});
+
 it("DM and topicless resync received before bridge attachment remain recoverable", async () => {
   const queryClient = client();
   const { gateway: ws, socket } = gateway();
