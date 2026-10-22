@@ -9,6 +9,7 @@ import { CopyButton } from "./CopyButton.tsx";
 import { fieldDescription } from "./fieldDescription.ts";
 import { IconButton } from "./IconButton.tsx";
 import { InlineStatus } from "./InlineStatus.tsx";
+import { Input } from "./Input.tsx";
 import { popoverOrigin, popoverPosition } from "./popoverPosition.ts";
 import { MainSkeleton, SkeletonRows } from "./Skeleton.tsx";
 import { Switch } from "./Switch.tsx";
@@ -79,6 +80,18 @@ describe("fields", () => {
       "a-hint a-caps",
     );
     expect(fieldDescription("a", {})).toBeUndefined();
+  });
+
+  it("lets an autofocused field be the one a modal dialog opens on", () => {
+    // showModal() reads the attribute; React's own autoFocus never sets it
+    // on the client, so the radios above a dialog's name field won out.
+    const field = Input({ autoFocus: true, "aria-label": "Name" });
+    const set: string[] = [];
+    (field.props.ref as (element: unknown) => void)({
+      setAttribute: (name: string) => set.push(name),
+    });
+    expect(set).toEqual(["autofocus"]);
+    expect(Input({ "aria-label": "Name" }).props.ref).toBeUndefined();
   });
 
   it("makes the whole row of a labelled switch the target", () => {
