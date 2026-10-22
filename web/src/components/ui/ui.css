@@ -16,10 +16,16 @@
     text-decoration: none;
     cursor: pointer;
     transition:
-      background-color var(--lr-dur-fast) var(--lr-ease),
-      border-color var(--lr-dur-fast) var(--lr-ease),
-      color var(--lr-dur-fast) var(--lr-ease),
-      filter var(--lr-dur-fast) var(--lr-ease);
+      background-color var(--lr-dur-fast) var(--lr-ease-standard),
+      border-color var(--lr-dur-fast) var(--lr-ease-standard),
+      color var(--lr-dur-fast) var(--lr-ease-standard),
+      filter var(--lr-dur-fast) var(--lr-ease-standard),
+      scale var(--lr-dur-micro) var(--lr-ease-standard);
+  }
+  /* A press gives way a little, and springs back on release. */
+  .ui-button:active:not(:disabled),
+  .ui-icon-button:active:not(:disabled) {
+    scale: var(--lr-press-scale);
   }
   .ui-button svg {
     flex-shrink: 0;
@@ -98,8 +104,9 @@
     color: var(--lr-muted);
     cursor: pointer;
     transition:
-      background-color var(--lr-dur-fast) var(--lr-ease),
-      color var(--lr-dur-fast) var(--lr-ease);
+      background-color var(--lr-dur-fast) var(--lr-ease-standard),
+      color var(--lr-dur-fast) var(--lr-ease-standard),
+      scale var(--lr-dur-micro) var(--lr-ease-standard);
   }
   .ui-icon-button--xs {
     width: var(--lr-control-xs);
@@ -125,6 +132,37 @@
   .ui-icon-button:disabled {
     color: var(--lr-subtle);
     cursor: not-allowed;
+  }
+
+  /* Copy controls: label and icon crossfade to "Kopiert" and a check in
+     the same spot (CopyLabel). */
+  .ui-copy-icon,
+  .ui-copy-label {
+    display: inline-grid;
+  }
+  .ui-copy-icon > *,
+  .ui-copy-label > * {
+    grid-area: 1 / 1;
+    transition:
+      opacity var(--lr-dur-fast) var(--lr-ease-standard),
+      scale var(--lr-dur-fast) var(--lr-ease-enter);
+  }
+  .ui-copy-label > :last-child {
+    justify-self: center;
+  }
+  :is(.ui-copy-icon, .ui-copy-label)[data-copied="false"] > :last-child,
+  :is(.ui-copy-icon, .ui-copy-label)[data-copied="true"] > :first-child {
+    opacity: 0;
+  }
+  .ui-copy-icon[data-copied="false"] > :last-child,
+  .ui-copy-icon[data-copied="true"] > :first-child {
+    scale: 0.6;
+  }
+  .ui-copy-icon[data-copied="true"] {
+    color: var(--lr-online-text);
+  }
+  .ui-button--primary .ui-copy-icon[data-copied="true"] {
+    color: inherit;
   }
 
   /* Form fields */
@@ -247,8 +285,8 @@
     background: var(--lr-surface);
     cursor: pointer;
     transition:
-      background-color var(--lr-dur) ease,
-      border-color var(--lr-dur) ease;
+      background-color var(--lr-dur) var(--lr-ease-standard),
+      border-color var(--lr-dur) var(--lr-ease-standard);
   }
   .ui-switch::before {
     content: "";
@@ -260,8 +298,8 @@
     border-radius: 50%;
     background: var(--lr-muted);
     transition:
-      translate var(--lr-dur) var(--lr-ease),
-      background-color var(--lr-dur) ease;
+      translate var(--lr-dur) var(--lr-ease-standard),
+      background-color var(--lr-dur) var(--lr-ease-standard);
   }
   .ui-switch:checked {
     border-color: var(--lr-accent);
@@ -431,6 +469,13 @@
     color: var(--lr-text);
     font: var(--lr-type-ui);
     cursor: pointer;
+    transition:
+      background-color var(--lr-dur-fast) var(--lr-ease-standard),
+      border-color var(--lr-dur-fast) var(--lr-ease-standard),
+      scale var(--lr-dur-micro) var(--lr-ease-standard);
+  }
+  .ui-chip:active:not(:disabled) {
+    scale: var(--lr-press-scale);
   }
   .ui-chip:hover:not(:disabled) {
     background: var(--lr-hover);
@@ -565,6 +610,15 @@
       opacity: 1;
     }
   }
+  /* What replaces a skeleton fades in over it (useAfterSkeleton). */
+  .ui-reveal {
+    animation: ui-reveal var(--lr-dur-fast) ease-out;
+  }
+  @keyframes ui-reveal {
+    from {
+      opacity: 0;
+    }
+  }
   @keyframes ui-skeleton-shimmer {
     to {
       background-position: -200% 0;
@@ -586,9 +640,17 @@
     background: var(--lr-elevated);
     color: var(--lr-text);
     box-shadow: var(--lr-shadow-1);
+    /* Grows out of its anchor (transform-origin from Popover.tsx) and
+       shrinks back into it, a little faster. */
     transition:
-      opacity var(--lr-dur) var(--lr-ease),
-      translate var(--lr-dur) var(--lr-ease);
+      opacity var(--lr-dur) var(--lr-ease-enter),
+      scale var(--lr-dur) var(--lr-ease-enter);
+  }
+  .ui-popover[data-state="closed"] {
+    opacity: 0;
+    scale: 0.96;
+    transition-duration: var(--lr-dur-exit);
+    transition-timing-function: var(--lr-ease-exit);
   }
   .ui-sheet {
     width: 100%;
@@ -605,10 +667,38 @@
     background: var(--lr-elevated);
     color: var(--lr-text);
     box-shadow: var(--lr-shadow-2);
-    transition: translate var(--lr-dur) var(--lr-ease);
+    transition:
+      translate var(--lr-dur-large) var(--lr-ease-enter),
+      opacity var(--lr-dur) var(--lr-ease-enter);
   }
   .ui-sheet::backdrop {
     background: var(--lr-backdrop);
+    transition: opacity var(--lr-dur-large) var(--lr-ease-standard);
+  }
+  .ui-sheet[data-state="closed"] {
+    translate: 0 100%;
+    opacity: 0;
+    transition-duration: var(--lr-dur-large-exit);
+    transition-timing-function: var(--lr-ease-exit);
+  }
+  .ui-sheet[data-state="closed"]::backdrop {
+    opacity: 0;
+    transition-duration: var(--lr-dur-large-exit);
+  }
+  /* Closed sheets and dialogs (Popover, Modal) are closed at once, so the
+     page takes clicks and focus again; where a closed dialog can stay in
+     the top layer for its exit, it does, placed as when it was modal.
+     Elsewhere it goes at once. */
+  @supports (overlay: auto) {
+    :is(.ui-sheet, .gel-modal)[data-state="closed"] {
+      position: fixed;
+      inset: 0;
+      transition-property: opacity, scale, translate, display, overlay;
+      transition-behavior: allow-discrete;
+    }
+    :is(.ui-sheet, .gel-modal)[data-state="closed"]::backdrop {
+      pointer-events: none;
+    }
   }
   .ui-sheet__title {
     margin-bottom: var(--lr-space-2);
@@ -626,10 +716,14 @@
   @starting-style {
     .ui-popover {
       opacity: 0;
-      translate: 0 -4px;
+      scale: 0.96;
     }
     .ui-sheet[open] {
       translate: 0 100%;
+      opacity: 0;
+    }
+    .ui-sheet[open]::backdrop {
+      opacity: 0;
     }
   }
 
@@ -651,8 +745,9 @@
     color: var(--lr-text);
     box-shadow: var(--lr-shadow-2);
     transition:
-      opacity var(--lr-dur) var(--lr-ease),
-      translate var(--lr-dur) var(--lr-ease);
+      opacity var(--lr-dur-large) var(--lr-ease-enter),
+      scale var(--lr-dur-large) var(--lr-ease-enter),
+      translate var(--lr-dur-large) var(--lr-ease-enter);
   }
   .gel-modal[open] {
     display: flex;
@@ -662,6 +757,18 @@
   }
   .gel-modal::backdrop {
     background: var(--lr-backdrop);
+    transition: opacity var(--lr-dur-large) var(--lr-ease-standard);
+  }
+  /* Leaving: closed and inert, it fades out (kept drawn, see .ui-sheet). */
+  .gel-modal[data-state="closed"] {
+    opacity: 0;
+    scale: 0.97;
+    transition-duration: var(--lr-dur-large-exit);
+    transition-timing-function: var(--lr-ease-exit);
+  }
+  .gel-modal[data-state="closed"]::backdrop {
+    opacity: 0;
+    transition-duration: var(--lr-dur-large-exit);
   }
   .gel-modal__header {
     flex-shrink: 0;
@@ -699,7 +806,10 @@
   @starting-style {
     .gel-modal[open] {
       opacity: 0;
-      translate: 0 8px;
+      scale: 0.97;
+    }
+    .gel-modal[open]::backdrop {
+      opacity: 0;
     }
   }
   @media (max-width: 639px) {
@@ -733,9 +843,16 @@
     .gel-modal__footer > .ui-button {
       flex: 1;
     }
+    /* The bottom sheet rises and sinks instead. */
+    .gel-modal[data-state="closed"] {
+      opacity: 1;
+      scale: 1;
+      translate: 0 100%;
+    }
     @starting-style {
       .gel-modal[open] {
         opacity: 1;
+        scale: 1;
         translate: 0 100%;
       }
     }
@@ -777,6 +894,33 @@
     box-shadow: var(--lr-shadow-2);
     font: var(--lr-type-body);
     pointer-events: auto;
+  }
+  /* Toasts rise into their stack and fade away, with a slight settle. */
+  .ui-toast,
+  .ui-message-toast {
+    transition:
+      opacity var(--lr-dur) var(--lr-ease-enter),
+      translate var(--lr-dur) var(--lr-ease-enter),
+      scale var(--lr-dur) var(--lr-ease-enter),
+      background-color var(--lr-dur-micro) var(--lr-ease-standard);
+  }
+  .ui-toast[data-state="closed"],
+  .ui-message-toast[data-state="closed"] {
+    opacity: 0;
+    scale: 0.98;
+    transition-duration: var(--lr-dur-exit);
+    transition-timing-function: var(--lr-ease-exit);
+  }
+  @starting-style {
+    .ui-toast {
+      opacity: 0;
+      translate: 0 8px;
+    }
+    /* New messages come in from the top edge they sit against. */
+    .ui-message-toast {
+      opacity: 0;
+      translate: 0 -8px;
+    }
   }
   .ui-toast--error {
     border-left: 3px solid var(--lr-danger);

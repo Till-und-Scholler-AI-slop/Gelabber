@@ -1,6 +1,7 @@
 import {
   MutationObserver,
   QueryClient,
+  onlineManager,
   type InfiniteData,
 } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +20,7 @@ import {
   editMessageOptions,
   messageKeys,
   messageQueryOptions,
+  OFFLINE_SEND_WAIT_MS,
   sendMessageAttempt,
 } from "./queries.ts";
 import type { Message, MessagePage } from "./types.ts";
@@ -279,6 +281,51 @@ describe("durable send attempts with controlled HTTP responses", () => {
       expect(attempts()).toEqual([]);
     },
   );
+  it("shows a send made offline at once and sends it once the device is back", async () => {
+    routes(() => json(200, row("server-o", "offline")));
+    await login(user.email, "password");
+    onlineManager.setOnline(false);
+    try {
+      const sending = sendMessageAttempt("c", author, { content: "offline" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(attempts()).toMatchObject([
+        { content: "offline", status: "sending" },
+      ]);
+      expect(
+        usePendingMessages.getState().byChannel.c?.map((m) => m.content),
+      ).toEqual(["offline"]);
+      expect(requests.filter((k) => k.includes("/messages"))).toEqual([]);
+      onlineManager.setOnline(true);
+      await sending;
+      expect(attempts()).toEqual([]);
+      expect(requests.filter((k) => k.endsWith("/messages"))).toHaveLength(1);
+    } finally {
+      onlineManager.setOnline(true);
+    }
+  });
+
+  it("tries a send anyway when the device keeps saying offline", async () => {
+    routes(() => json(200, row("server-w", "waited")));
+    await login(user.email, "password");
+    onlineManager.setOnline(false);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const sending = sendMessageAttempt("c", author, { content: "waited" });
+      await vi.advanceTimersByTimeAsync(OFFLINE_SEND_WAIT_MS - 1);
+      expect(attempts()).toMatchObject([
+        { content: "waited", status: "sending" },
+      ]);
+      expect(requests.filter((k) => k.endsWith("/messages"))).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      await sending;
+      expect(attempts()).toEqual([]);
+      expect(requests.filter((k) => k.endsWith("/messages"))).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+      onlineManager.setOnline(true);
+    }
+  });
+
   it("does not repeat a bind with unknown network outcome", async () => {
     routes(() => Promise.reject(new TypeError("network")));
     await login(user.email, "password");

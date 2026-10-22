@@ -1,4 +1,8 @@
+import { useState } from "react";
+
 import { Badge as Pill } from "../components/ui/Badge.tsx";
+import { badgeSeen } from "./badgeEntrance.ts";
+import { useReadState } from "./readState.ts";
 import { useBadge, type BadgeScope } from "./useBadge.ts";
 
 /** A red number for mentions and direct messages, a dot for other unread
@@ -17,12 +21,20 @@ export function UnreadBadge({
   className?: string;
 }) {
   const { count, dot } = useBadge(scope);
+  // A badge that appears while the list is on screen scales in once.
+  const loaded = useReadState().data !== undefined;
+  const shown = count > 0 || dot;
+  const [seen, setSeen] = useState(() => badgeSeen(null, loaded, shown));
+  if (seen.loaded !== loaded || seen.shown !== shown)
+    setSeen(badgeSeen(seen, loaded, shown));
+  const fresh = seen.fresh ? "is-fresh" : undefined;
   if (count > 0)
     return (
       <Pill
         tone="count"
         className={[
           rail ? "unread-count unread-count--rail" : "unread-count",
+          fresh,
           className,
         ]
           .filter(Boolean)
@@ -45,7 +57,7 @@ export function UnreadBadge({
     );
   return (
     <span
-      className={["unread-dot", className].filter(Boolean).join(" ")}
+      className={["unread-dot", fresh, className].filter(Boolean).join(" ")}
       id={id}
       role="img"
       aria-label="Ungelesene Nachrichten"

@@ -5,7 +5,11 @@ import { restoreFocus } from "./modalClose.ts";
 import { useToasts, type Toast } from "./toasts.ts";
 import { Button } from "./ui/Button.tsx";
 import { IconButton } from "./ui/IconButton.tsx";
+import type { PresenceState } from "./ui/presence.ts";
+import { usePresenceList } from "./ui/usePresence.ts";
 import "./ui/ui.css";
+
+const toastKey = (toast: Toast) => toast.id;
 
 /**
  * Both live regions are always in the page, empty or not: a region that
@@ -17,27 +21,40 @@ export function Toasts() {
 }
 
 export function ToastRegions({ toasts }: { toasts: Toast[] }) {
+  // A dismissed or expired toast fades out before it goes.
+  const { entries, ref } = usePresenceList(toasts, toastKey);
+  const cards = (tone: Toast["tone"]) =>
+    entries
+      .filter((entry) => entry.item.tone === tone)
+      .map((entry) => (
+        <ToastCard
+          key={entry.key}
+          toast={entry.item}
+          state={entry.state}
+          cardRef={ref(entry.key)}
+        />
+      ));
   return (
     <div className="gel-toasts">
       <div role="status" className="gel-toasts__region">
-        {toasts
-          .filter((toast) => toast.tone === "info")
-          .map((toast) => (
-            <ToastCard key={toast.id} toast={toast} />
-          ))}
+        {cards("info")}
       </div>
       <div role="alert" className="gel-toasts__region">
-        {toasts
-          .filter((toast) => toast.tone === "error")
-          .map((toast) => (
-            <ToastCard key={toast.id} toast={toast} />
-          ))}
+        {cards("error")}
       </div>
     </div>
   );
 }
 
-function ToastCard({ toast }: { toast: Toast }) {
+function ToastCard({
+  toast,
+  state,
+  cardRef,
+}: {
+  toast: Toast;
+  state: PresenceState;
+  cardRef: (element: Element | null) => void;
+}) {
   const dismiss = useToasts((state) => state.dismiss);
   const hold = useToasts((state) => state.hold);
   const release = useToasts((state) => state.release);
@@ -53,7 +70,12 @@ function ToastCard({ toast }: { toast: Toast }) {
   };
   return (
     <div
-      ref={card}
+      ref={(element) => {
+        card.current = element;
+        cardRef(element);
+      }}
+      data-state={state}
+      inert={state === "closed"}
       className={`ui-toast ui-toast--${toast.tone}`}
       onPointerEnter={() => hold(toast.id, "hover")}
       onPointerLeave={() => release(toast.id, "hover")}

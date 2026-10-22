@@ -6,6 +6,7 @@ import { Modal } from "./Modal.tsx";
 import {
   closesOnBackdrop,
   DISCARD_CHANGES,
+  focusLeftWith,
   requestClose,
   restoreFocus,
 } from "./modalClose.ts";
@@ -116,5 +117,47 @@ describe("closing a modal", () => {
     expect(restoreFocus(null)).toBe(false);
     expect(gone.focus).not.toHaveBeenCalled();
     expect(hidden.focus).not.toHaveBeenCalled();
+  });
+
+  it("hands focus to a closed menu's button when one of its items opened it", () => {
+    const summary = {
+      isConnected: true,
+      getClientRects: () => ({ length: 1 }),
+      focus: vi.fn(),
+    };
+    const asked: string[] = [];
+    const item = {
+      ...summary,
+      focus: vi.fn(),
+      closest: (selector: string) => {
+        asked.push(selector);
+        return { querySelector: () => summary };
+      },
+    };
+    expect(restoreFocus(item)).toBe(true);
+    expect(asked).toEqual(["details:not([open])"]);
+    expect(item.focus).not.toHaveBeenCalled();
+    expect(summary.focus).toHaveBeenCalledWith({ preventScroll: true });
+
+    // Still open, or no menu at all: the item itself.
+    const plain = { ...summary, focus: vi.fn(), closest: () => null };
+    expect(restoreFocus(plain)).toBe(true);
+    expect(plain.focus).toHaveBeenCalled();
+  });
+});
+
+describe("focus when a surface closes", () => {
+  const element = (name = "BUTTON") =>
+    ({ nodeName: name }) as unknown as HTMLElement;
+  const surface = (...inside: Element[]) => ({
+    contains: (node: Node | null) => inside.includes(node as Element),
+  });
+
+  it("is the closing surface's when it is inside it or nowhere", () => {
+    const button = element();
+    expect(focusLeftWith(surface(button), button)).toBe(true);
+    expect(focusLeftWith(surface(), null)).toBe(true);
+    expect(focusLeftWith(surface(), element("BODY"))).toBe(true);
+    expect(focusLeftWith(surface(), element())).toBe(false);
   });
 });

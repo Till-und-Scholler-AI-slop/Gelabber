@@ -109,7 +109,7 @@ export function reactionMutationOptions(
     },
     onError: (error: Error, intent: ReactionIntent) => {
       if (!stampHolds(intent.scope)) return;
-      notifyError(error);
+      notifyError(error, "Reaktion nicht gespeichert.");
       void client.invalidateQueries({
         queryKey: messageKeys.channel(
           intent.scope.userId,

@@ -62,12 +62,41 @@ type Focusable = {
   isConnected: boolean;
   getClientRects: () => { length: number };
   focus: (options?: FocusOptions) => void;
+  closest?: (selector: string) => {
+    querySelector: (selector: string) => unknown;
+  } | null;
 };
 
-/** Focus goes back to whatever opened the dialog, if it is still shown. */
+/**
+ * Focus goes back to whatever opened the dialog, if it is still shown. An
+ * item of a `<details>` menu that closed on the way hands it to the menu's
+ * button: the item itself can no longer take focus.
+ */
 export function restoreFocus(opener: Focusable | null): boolean {
-  if (!opener?.isConnected || opener.getClientRects().length === 0)
+  const menu = opener?.closest?.("details:not([open])");
+  const target = menu
+    ? (menu.querySelector(":scope > summary") as Focusable | null)
+    : opener;
+  if (!target?.isConnected || target.getClientRects().length === 0)
     return false;
-  opener.focus({ preventScroll: true });
+  target.focus({ preventScroll: true });
   return true;
+}
+
+type Surface = { contains: (node: Node | null) => boolean };
+
+/**
+ * Whether focus, now at `active`, is still the closing `surface`'s to hand
+ * back: it is inside, or nowhere (dropped with the surface's content).
+ * Anywhere else, something else has taken it.
+ */
+export function focusLeftWith(
+  surface: Surface | null,
+  active: Element | null,
+): boolean {
+  return (
+    active === null ||
+    active.nodeName === "BODY" ||
+    (surface?.contains(active) ?? false)
+  );
 }

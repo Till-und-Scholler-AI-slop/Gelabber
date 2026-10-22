@@ -217,13 +217,6 @@ html[data-compact-rooms="true"] .voice-room-participants {
   gap: 12px;
   margin-block: 16px;
 }
-html[data-reduced-motion="true"] *,
-html[data-reduced-motion="true"] *::before,
-html[data-reduced-motion="true"] *::after {
-  animation: none !important;
-  transition: none !important;
-  scroll-behavior: auto !important;
-}
 @media (max-width: 1200px) {
   .community-overview__welcome {
     padding-inline: 28px;

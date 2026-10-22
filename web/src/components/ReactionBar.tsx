@@ -59,7 +59,17 @@ export function ReactionBar({
   /** The row's hover toolbar; the add button renders there when given. */
   addSlot?: HTMLElement | null;
 }) {
-  const { userId, intent, busy, react, toggle, picking, setPicking } = reaction;
+  const {
+    userId,
+    intent,
+    busy,
+    react,
+    toggle,
+    picking,
+    setPicking,
+    popped,
+    popDone,
+  } = reaction;
   const { members } = useMentions();
   const addButton = useRef<HTMLButtonElement>(null);
   const reactions = displayedReactions(message.reactions, userId, intent);
@@ -101,7 +111,8 @@ export function ReactionBar({
                 fallback?.focus({ preventScroll: true });
               }
             }}
-            className={`lr-reaction${mine ? " is-mine" : ""}`}
+            className={`lr-reaction${mine ? " is-mine" : ""}${popped === emoji ? " is-popping" : ""}`}
+            onAnimationEnd={popped === emoji ? popDone : undefined}
           >
             <span aria-hidden="true">
               {emoji} {user_ids.length}

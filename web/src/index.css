@@ -88,9 +88,22 @@
   --lr-control-md: 36px;
   --lr-radius-full: 999px;
 
+  /* Motion: quiet and quick. Micro for presses and hovers, standard for
+     state changes and small surfaces, large for dialogs, sheets and
+     drawers. A surface leaves in about 70% of the time it took to come
+     in, accelerating away; nothing runs longer than 300ms. */
+  --lr-dur-micro: 100ms;
   --lr-dur-fast: 120ms;
   --lr-dur: 180ms;
+  --lr-dur-large: 240ms;
+  --lr-dur-exit: 130ms;
+  --lr-dur-large-exit: 170ms;
   --lr-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --lr-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --lr-ease-enter: var(--lr-ease);
+  --lr-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  /* How far a pressed control gives way. */
+  --lr-press-scale: 0.97;
 
   --lr-rail-width: 64px;
   --lr-sidebar-width: 224px;
@@ -111,15 +124,28 @@
     --lr-control-md: 44px;
   }
 }
+/* Less motion, from the system or Gelabber's own switch: no durations and
+   no press scale. The kill switches further down also drop every running
+   transition and animation, and usePresence() unmounts at once. */
 @media (prefers-reduced-motion: reduce) {
   :root {
+    --lr-dur-micro: 0ms;
     --lr-dur-fast: 0ms;
     --lr-dur: 0ms;
+    --lr-dur-large: 0ms;
+    --lr-dur-exit: 0ms;
+    --lr-dur-large-exit: 0ms;
+    --lr-press-scale: 1;
   }
 }
 html[data-reduced-motion="true"] {
+  --lr-dur-micro: 0ms;
   --lr-dur-fast: 0ms;
   --lr-dur: 0ms;
+  --lr-dur-large: 0ms;
+  --lr-dur-exit: 0ms;
+  --lr-dur-large-exit: 0ms;
+  --lr-press-scale: 1;
 }
 html {
   zoom: var(--lr-ui-scale);
@@ -171,6 +197,42 @@ summary {
 }
 :where(input, textarea, select) {
   accent-color: var(--lr-accent);
+}
+/* Rows, list buttons and small icon controls ease into and out of their
+   hover and selected colours. Zero specificity: a control with a
+   transition of its own keeps it. */
+:where(
+  .channel-row,
+  .dm-row,
+  .sidebar-overview,
+  .sidebar-participant,
+  .server-home-link,
+  .server-create-button,
+  .server-sidebar-menu-button,
+  .user-panel-profile,
+  .user-panel-menu > nav > :is(a, button),
+  .user-status-card__link,
+  .shell-icon-button,
+  .shell-menu-item,
+  .member-profile-button,
+  .member-drawer-trigger,
+  .workspace-navigation-trigger,
+  .dm-peer-button,
+  .lr-message-row,
+  .lr-message-action,
+  .lr-message-menu-item,
+  .lr-message-menu-emoji,
+  .lr-reaction,
+  .lr-header-icon,
+  .lr-composer-icon,
+  .lr-search-hit,
+  .lr-jump-latest,
+  .voice-menu-item
+) {
+  transition:
+    background-color var(--lr-dur-micro) var(--lr-ease-standard),
+    border-color var(--lr-dur-micro) var(--lr-ease-standard),
+    color var(--lr-dur-micro) var(--lr-ease-standard);
 }
 .app-shell {
   min-height: var(--lr-100dvh);
@@ -466,6 +528,16 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   font: var(--lr-type-ui);
   translate: 12px -50%;
   pointer-events: none;
+  /* Fades in beside the tile; moving to the next tile only moves it. */
+  transition:
+    opacity var(--lr-dur-fast) var(--lr-ease-enter),
+    translate var(--lr-dur-fast) var(--lr-ease-enter);
+}
+@starting-style {
+  .server-tile-tip {
+    opacity: 0;
+    translate: 8px -50%;
+  }
 }
 .server-tile-tip strong {
   font-weight: 600;
@@ -582,6 +654,35 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   left: 0;
   z-index: 35;
   width: max(100%, 208px);
+  transform-origin: top left;
+}
+/* The two <details> menus (server, user) open like a Popover: out of their
+   button, scaling up and fading in. Where ::details-content transitions,
+   they also close that way; elsewhere they vanish at once. */
+:is(.server-sidebar-menu > .shell-menu, .user-panel-menu > nav) {
+  transition:
+    opacity var(--lr-dur-exit) var(--lr-ease-exit),
+    scale var(--lr-dur-exit) var(--lr-ease-exit);
+}
+:is(.server-sidebar-menu, .user-panel-menu):not([open])
+  > :is(.shell-menu, nav) {
+  opacity: 0;
+  scale: 0.96;
+  pointer-events: none;
+}
+:is(.server-sidebar-menu, .user-panel-menu)[open] > :is(.shell-menu, nav) {
+  transition:
+    opacity var(--lr-dur) var(--lr-ease-enter),
+    scale var(--lr-dur) var(--lr-ease-enter);
+}
+@starting-style {
+  :is(.server-sidebar-menu, .user-panel-menu)[open] > :is(.shell-menu, nav) {
+    opacity: 0;
+    scale: 0.96;
+  }
+}
+:is(.server-sidebar-menu, .user-panel-menu)::details-content {
+  transition: content-visibility var(--lr-dur-exit) allow-discrete;
 }
 .sidebar-overview {
   display: flex;
@@ -726,6 +827,16 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   margin-left: auto;
   border-radius: 50%;
   background: var(--lr-accent);
+}
+/* News on a list already on screen (UnreadBadge): a small scale-in. */
+:is(.unread-count, .unread-dot).is-fresh {
+  animation: lr-badge-in var(--lr-dur) var(--lr-ease-enter);
+}
+@keyframes lr-badge-in {
+  from {
+    opacity: 0;
+    scale: 0.5;
+  }
 }
 .channel-row-live {
   margin-left: auto;
@@ -1034,6 +1145,7 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   border: 1px solid var(--lr-border);
   border-radius: var(--lr-radius);
   box-shadow: 0 8px 25px #0003;
+  transform-origin: bottom right;
 }
 .user-panel-menu > nav > :is(a, button) {
   display: block;
@@ -1432,18 +1544,41 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     padding: var(--lr-safe-top) var(--lr-safe-right) var(--lr-safe-bottom) 0;
     border-left: 1px solid var(--lr-border);
     translate: 100% 0;
+    /* Closing: out a little faster, accelerating, while the dialog stays
+       drawn (display, overlay) until it is gone. */
     transition:
-      translate var(--lr-dur) var(--lr-ease),
-      display var(--lr-dur) allow-discrete,
-      overlay var(--lr-dur) allow-discrete;
+      translate var(--lr-dur-large-exit) var(--lr-ease-exit),
+      display var(--lr-dur-large-exit) allow-discrete,
+      overlay var(--lr-dur-large-exit) allow-discrete;
   }
   .member-panel-drawer[open] {
     translate: 0 0;
+    transition:
+      translate var(--lr-dur-large) var(--lr-ease-enter),
+      display var(--lr-dur-large) allow-discrete,
+      overlay var(--lr-dur-large) allow-discrete;
   }
   @starting-style {
     .member-panel-drawer[open] {
       translate: 100% 0;
     }
+    .member-panel-drawer[open]::backdrop {
+      opacity: 0;
+    }
+  }
+  .member-panel-drawer::backdrop {
+    opacity: 0;
+    transition:
+      opacity var(--lr-dur-large-exit) var(--lr-ease-standard),
+      display var(--lr-dur-large-exit) allow-discrete,
+      overlay var(--lr-dur-large-exit) allow-discrete;
+  }
+  .member-panel-drawer[open]::backdrop {
+    opacity: 1;
+    transition:
+      opacity var(--lr-dur-large) var(--lr-ease-standard),
+      display var(--lr-dur-large) allow-discrete,
+      overlay var(--lr-dur-large) allow-discrete;
   }
   .member-panel-drawer .workspace-drawer-header {
     position: absolute;
@@ -1506,13 +1641,19 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     padding: var(--lr-safe-top) 0 0 var(--lr-safe-left);
     border-right: 1px solid var(--lr-border);
     translate: -100% 0;
+    /* Closing: out a little faster, accelerating, while the dialog stays
+       drawn (display, overlay) until it is gone. */
     transition:
-      translate var(--lr-dur) var(--lr-ease),
-      display var(--lr-dur) allow-discrete,
-      overlay var(--lr-dur) allow-discrete;
+      translate var(--lr-dur-large-exit) var(--lr-ease-exit),
+      display var(--lr-dur-large-exit) allow-discrete,
+      overlay var(--lr-dur-large-exit) allow-discrete;
   }
   .workspace-navigation[open] {
     translate: 0 0;
+    transition:
+      translate var(--lr-dur-large) var(--lr-ease-enter),
+      display var(--lr-dur-large) allow-discrete,
+      overlay var(--lr-dur-large) allow-discrete;
   }
   @starting-style {
     .workspace-navigation[open] {
@@ -1543,12 +1684,16 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
   .workspace-drawer::backdrop {
     opacity: 0;
     transition:
-      opacity var(--lr-dur) var(--lr-ease),
-      display var(--lr-dur) allow-discrete,
-      overlay var(--lr-dur) allow-discrete;
+      opacity var(--lr-dur-large-exit) var(--lr-ease-standard),
+      display var(--lr-dur-large-exit) allow-discrete,
+      overlay var(--lr-dur-large-exit) allow-discrete;
   }
   .workspace-drawer[open]::backdrop {
     opacity: 1;
+    transition:
+      opacity var(--lr-dur-large) var(--lr-ease-standard),
+      display var(--lr-dur-large) allow-discrete,
+      overlay var(--lr-dur-large) allow-discrete;
   }
   @starting-style {
     .workspace-drawer[open]::backdrop {
@@ -1693,6 +1838,15 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     --avatar-size: 40px;
   }
 }
+/* A theme switch crossfades the page (ThemeController), quickly. */
+::view-transition-group(root),
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--lr-dur);
+  animation-timing-function: var(--lr-ease-standard);
+}
+/* The kill switches: with less motion asked for, from the system or in the
+   app, nothing moves. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -1701,6 +1855,13 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     transition: none !important;
     scroll-behavior: auto !important;
   }
+}
+html[data-reduced-motion="true"] *,
+html[data-reduced-motion="true"] *::before,
+html[data-reduced-motion="true"] *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
 }
 
 .sidebar-action-small {
