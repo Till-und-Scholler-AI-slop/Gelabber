@@ -1,6 +1,7 @@
-// The engine's video codecs: libwebrtc's software VP8, VP9 and AV1, and
-// H264 through the system where it has an encoder or decoder (GStreamer
-// on Linux, Media Foundation on Windows). The core carries no H264 of its own.
+// The engine's video codecs: libwebrtc's software VP8, VP9 and AV1, H264
+// through the system where it has an encoder or decoder (GStreamer on
+// Linux, Media Foundation on Windows), and AV1 through the system's GPU
+// codecs in front of libaom and dav1d. The core carries no H264 of its own.
 #ifndef GELABBER_VIDEO_CODEC_FACTORY_H
 #define GELABBER_VIDEO_CODEC_FACTORY_H
 

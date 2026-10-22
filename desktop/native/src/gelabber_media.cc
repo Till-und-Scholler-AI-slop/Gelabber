@@ -48,12 +48,12 @@
 
 #if defined(WEBRTC_LINUX)
 // gm_video_codecs reports the GStreamer elements the codec factories pick.
-#  include "gst_h264_decoder.h"
-#  include "gst_h264_encoder.h"
+#  include "gst_video_decoder.h"
+#  include "gst_video_encoder.h"
 #endif
 #if defined(WEBRTC_WIN)
 // gm_video_codecs reports the Media Foundation codecs.
-#  include "mf_h264.h"
+#  include "mf_video.h"
 #  include <rtc_base/win32_socket_init.h>
 #endif
 
@@ -1146,21 +1146,34 @@ gm_source* gm_source_new_app_audio(gm_engine* engine, const char* optionsJson)
 char* gm_video_codecs(void)
 {
 	return guarded<char*>(nullptr, [&] {
-		json h264 = nullptr;
+		json out = { { "h264", nullptr }, { "av1", nullptr } };
+		const auto entry = [](const std::string& encoder,
+		                      bool hardwareEncoder,
+		                      const std::string& decoder,
+		                      bool hardwareDecoder) {
+			return json{ { "encoder", encoder.empty() ? json(nullptr) : json(encoder) },
+				         { "hardwareEncoder", hardwareEncoder },
+				         { "decoder", decoder.empty() ? json(nullptr) : json(decoder) },
+				         { "hardwareDecoder", hardwareDecoder } };
+		};
+		for (const auto codec : { gelabber::SystemCodec::kH264, gelabber::SystemCodec::kAv1 })
+		{
+			const auto key = codec == gelabber::SystemCodec::kH264 ? "h264" : "av1";
 #if defined(WEBRTC_LINUX)
-		// The same choice the engine's factories make; GStreamer loads once.
-		const auto encoder = gelabber::FindGstH264Encoder();
-		const auto decoder = gelabber::FindGstH264Decoder();
-		h264 = { { "encoder", encoder.empty() ? json(nullptr) : json(encoder) },
-			     { "hardwareEncoder", gelabber::IsHardwareH264Encoder(encoder) },
-			     { "decoder", decoder.empty() ? json(nullptr) : json(decoder) } };
+			// The same choice the engine's factories make; GStreamer loads once.
+			const auto encoder = gelabber::FindGstEncoder(codec);
+			const auto decoder = gelabber::FindGstDecoder(codec);
+			out[key]           = entry(
+			  encoder, gelabber::IsHardwareEncoder(encoder), decoder, gelabber::IsHardwareDecoder(decoder));
 #elif defined(WEBRTC_WIN)
-		const auto& codecs = gelabber::FindMfH264Codecs();
-		h264 = { { "encoder", codecs.encoder.empty() ? json(nullptr) : json(codecs.encoder) },
-			     { "hardwareEncoder", codecs.hardwareEncoder },
-			     { "decoder", codecs.decoder.empty() ? json(nullptr) : json(codecs.decoder) } };
+			const auto& codecs = gelabber::FindMfCodecs(codec);
+			out[key] = entry(codecs.encoder, codecs.hardwareEncoder, codecs.decoder, codecs.hardwareDecoder);
+#else
+			(void)key;
+			(void)entry;
 #endif
-		return dupString(json({ { "h264", h264 } }).dump());
+		}
+		return dupString(out.dump());
 	});
 }
 

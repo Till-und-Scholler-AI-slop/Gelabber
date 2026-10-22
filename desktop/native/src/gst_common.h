@@ -1,4 +1,5 @@
-// The system's GStreamer for H264 (gst_h264_encoder.cc, gst_h264_decoder.cc).
+// The system's GStreamer for H264 and AV1 (gst_video_encoder.cc,
+// gst_video_decoder.cc).
 //
 // The few entry points the codecs need are resolved at runtime with dlopen:
 // GStreamer stays an optional system dependency and its 1.x C ABI is stable.
@@ -84,6 +85,8 @@ namespace gelabber::gst
 		gsize offset[4];
 		gint stride[4];
 	};
+	// GST_BUFFER_FLAG_DELTA_UNIT: a buffer that is no key frame.
+	constexpr guint kBufferFlagDeltaUnit = 1u << 13;
 	constexpr int kMapRead            = 1;
 	constexpr int kMapWrite           = 2;
 	constexpr int kStateNull          = 1;

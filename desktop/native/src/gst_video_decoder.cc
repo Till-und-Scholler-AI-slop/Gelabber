@@ -1,4 +1,4 @@
-#include "gst_h264_decoder.h"
+#include "gst_video_decoder.h"
 
 #include "gst_common.h"
 
@@ -28,7 +28,8 @@ namespace gelabber
 
 		bool IsSoftware(const std::string& element)
 		{
-			return element == "avdec_h264" || element == "openh264dec";
+			return element == "avdec_h264" || element == "openh264dec" || element == "av1dec" ||
+			       element == "dav1ddec";
 		}
 
 		// Inputs without a decoded frame after which a decoder counts as
@@ -39,7 +40,7 @@ namespace gelabber
 		// No frame delay: a call shows each frame as soon as it is decoded.
 		void ConfigureDecoder(GstElement* decoder, const std::string& element)
 		{
-			if (element == "nvh264dec")
+			if (element == "nvh264dec" || element == "nvav1dec")
 				SetArg(decoder, "max-display-delay", "0");
 			else if (element == "vaapih264dec")
 				SetArg(decoder, "low-latency", "true");
@@ -51,18 +52,33 @@ namespace gelabber
 			}
 		}
 
+		// From the appsrc on to the decoder. H264: h264parse turns
+		// libwebrtc's access units (Annex B) into what the decoders take. AV1:
+		// libwebrtc hands over temporal units of OBUs with size fields and
+		// without a temporal delimiter, which av1parse completes.
+		const char* HeadOf(SystemCodec codec)
+		{
+			return codec == SystemCodec::kH264 ? "video/x-h264,stream-format=byte-stream,alignment=au ! h264parse"
+			                                   : "video/x-av1,stream-format=obu-stream,alignment=tu ! av1parse";
+		}
+
+		const char* ParserOf(SystemCodec codec)
+		{
+			return codec == SystemCodec::kH264 ? "h264parse" : "av1parse";
+		}
+
 		// The decoder runs in a GStreamer pipeline and hands frames back from
 		// its own thread, as asynchronous hardware decoders do; libwebrtc
 		// matches them to their input by RTP timestamp.
-		class GstH264Decoder : public webrtc::VideoDecoder
+		class GstDecoder : public webrtc::VideoDecoder
 		{
 		public:
-			GstH264Decoder(std::string element, bool behindFallback)
-			  : element(std::move(element)), behindFallback(behindFallback)
+			GstDecoder(SystemCodec codec, std::string element, bool behindFallback)
+			  : codec(codec), element(std::move(element)), behindFallback(behindFallback)
 			{
 			}
 
-			~GstH264Decoder() override
+			~GstDecoder() override
 			{
 				Release();
 			}
@@ -71,13 +87,11 @@ namespace gelabber
 			{
 				Release();
 				this->settings = settings;
-				// h264parse turns libwebrtc's access units (Annex B) into what
-				// the decoders take; videoconvert brings frames from GPU memory
-				// to I420 in system memory.
+				// videoconvert brings frames from GPU memory to I420 in system
+				// memory.
 				const std::string description =
-				  "appsrc name=src is-live=true format=time block=false max-buffers=8 "
-				  "caps=video/x-h264,stream-format=byte-stream,alignment=au ! h264parse ! " +
-				  element +
+				  "appsrc name=src is-live=true format=time block=false max-buffers=8 caps=" +
+				  std::string(HeadOf(codec)) + " ! " + element +
 				  " name=dec ! videoconvert ! video/x-raw,format=I420 ! "
 				  "appsink name=sink sync=false max-buffers=4 drop=true";
 				const auto& gst = Gst();
@@ -111,7 +125,7 @@ namespace gelabber
 				failed  = false;
 				running = true;
 				puller  = std::thread([this] { Pull(); });
-				RTC_LOG(LS_INFO) << "GStreamer H264 decoder " << element;
+				RTC_LOG(LS_INFO) << "GStreamer " << CodecName(codec) << " decoder " << element;
 				return true;
 			}
 
@@ -334,6 +348,7 @@ namespace gelabber
 				target->Decoded(frame, std::nullopt, std::nullopt);
 			}
 
+			const SystemCodec codec;
 			const std::string element;
 			const bool behindFallback;
 			std::chrono::steady_clock::time_point lastRestart{};
@@ -357,14 +372,15 @@ namespace gelabber
 
 	namespace
 	{
-		bool CanDecode()
+		bool CanDecode(SystemCodec codec)
 		{
 			if (!Gst().ok)
 				return false;
-			if (!HasElement("appsrc") || !HasElement("appsink") || !HasElement("h264parse") ||
-			    !HasElement("videoconvert"))
+			const char* parser = ParserOf(codec);
+			if (!HasElement("appsrc") || !HasElement("appsink") || !HasElement(parser) || !HasElement("videoconvert"))
 			{
-				RTC_LOG(LS_INFO) << "GStreamer lacks appsrc/appsink/h264parse/videoconvert; no H264 decoder";
+				RTC_LOG(LS_INFO) << "GStreamer lacks appsrc/appsink/" << parser << "/videoconvert; no "
+				                 << CodecName(codec) << " decoder";
 				return false;
 			}
 			return true;
@@ -377,45 +393,58 @@ namespace gelabber
 					return candidate;
 			return {};
 		}
+
+		const char* Override(SystemCodec codec)
+		{
+			return std::getenv(codec == SystemCodec::kH264 ? "GELABBER_H264_DECODER" : "GELABBER_AV1_DECODER");
+		}
 	} // namespace
 
-	std::string FindGstH264Decoder()
+	std::string FindGstDecoder(SystemCodec codec)
 	{
-		const char* forced = std::getenv("GELABBER_H264_DECODER");
+		const char* forced = Override(codec);
 		if (forced && std::strcmp(forced, "none") == 0)
 			return {};
-		if (!CanDecode())
+		if (!CanDecode(codec))
 			return {};
 		if (forced && *forced)
 		{
 			if (HasElement(forced))
 				return forced;
-			RTC_LOG(LS_WARNING) << "GELABBER_H264_DECODER=" << forced << " not found";
+			RTC_LOG(LS_WARNING) << (codec == SystemCodec::kH264 ? "GELABBER_H264_DECODER=" : "GELABBER_AV1_DECODER=")
+			                    << forced << " not found";
 			return {};
 		}
-		if (auto hardware = FirstElement({ "nvh264dec", "vah264dec", "vaapih264dec" }); !hardware.empty())
+		const auto hardware = codec == SystemCodec::kH264
+		                        ? FirstElement({ "nvh264dec", "vah264dec", "vaapih264dec" })
+		                        : FirstElement({ "nvav1dec", "vaav1dec", "vaapiav1dec" });
+		if (!hardware.empty())
 			return hardware;
-		RTC_LOG(LS_INFO) << "no hardware H264 decoder in GStreamer";
-		return FindGstH264SoftwareDecoder();
+		RTC_LOG(LS_INFO) << "no hardware " << CodecName(codec) << " decoder in GStreamer";
+		return FindGstSoftwareDecoder(codec);
 	}
 
-	std::string FindGstH264SoftwareDecoder()
+	std::string FindGstSoftwareDecoder(SystemCodec codec)
 	{
-		const char* forced = std::getenv("GELABBER_H264_DECODER");
+		// AV1 on the CPU is dav1d's.
+		if (codec != SystemCodec::kH264)
+			return {};
+		const char* forced = Override(codec);
 		if (forced && std::strcmp(forced, "none") == 0)
 			return {};
-		if (!CanDecode())
+		if (!CanDecode(codec))
 			return {};
 		return FirstElement({ "avdec_h264", "openh264dec" });
 	}
 
-	bool IsHardwareH264Decoder(const std::string& element)
+	bool IsHardwareDecoder(const std::string& element)
 	{
 		return !element.empty() && !IsSoftware(element);
 	}
 
-	std::unique_ptr<webrtc::VideoDecoder> CreateGstH264Decoder(const std::string& element, bool behindFallback)
+	std::unique_ptr<webrtc::VideoDecoder> CreateGstDecoder(
+	  SystemCodec codec, const std::string& element, bool behindFallback)
 	{
-		return std::make_unique<GstH264Decoder>(element, behindFallback);
+		return std::make_unique<GstDecoder>(codec, element, behindFallback);
 	}
 } // namespace gelabber
