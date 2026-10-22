@@ -413,6 +413,71 @@ describe("PWA push", () => {
     expect(older.showNotification.mock.calls[0][1].renotify).toBe(true);
   });
 
+  it("replaces a recalled message on screen quietly, without its text", async () => {
+    const recall = { ...message, body: "Nachricht gelöscht", recall: true };
+    const w = worker({
+      notifications: [
+        {
+          title: "Ada · #allgemein",
+          body: "@Bob schau mal",
+          tag: "gelabber:u1:c1",
+          data: { message: "m2", at: message.at },
+        },
+      ],
+    });
+    await w.push(recall);
+    expect(w.showNotification).toHaveBeenCalledExactlyOnceWith(
+      "Ada · #allgemein",
+      {
+        body: "Nachricht gelöscht",
+        tag: "gelabber:u1:c1",
+        silent: true,
+        icon: "/icons/icon-192.png",
+        data: {
+          path: "/s/s1/c/c1",
+          user: "u1",
+          message: "m2",
+          at: "2026-10-17T10:00:00.000002Z",
+        },
+      },
+    );
+    // Nothing on screen (the push service dropped the queued message for
+    // this one): still a quiet notification, never a silent push.
+    const empty = worker();
+    await empty.push(recall);
+    expect(empty.showNotification).toHaveBeenCalledOnce();
+    expect(empty.showNotification.mock.calls[0][1]).toMatchObject({
+      body: "Nachricht gelöscht",
+      silent: true,
+    });
+    expect(empty.showNotification.mock.calls[0][1].renotify).toBeUndefined();
+  });
+
+  it("leaves another message shown in the conversation as it is", async () => {
+    const data = { message: "m3", at: "2026-10-17T10:00:00.000003Z" };
+    const w = worker({
+      notifications: [
+        {
+          title: "Ada · #allgemein",
+          body: "neuer",
+          tag: "gelabber:u1:c1",
+          data,
+        },
+      ],
+    });
+    await w.push({ ...message, body: "Nachricht gelöscht", recall: true });
+    expect(w.showNotification).toHaveBeenCalledExactlyOnceWith(
+      "Ada · #allgemein",
+      {
+        body: "neuer",
+        tag: "gelabber:u1:c1",
+        silent: true,
+        icon: "/icons/icon-192.png",
+        data,
+      },
+    );
+  });
+
   it("ignores pushes that are not Gelabber messages", async () => {
     const w = worker();
     await w.push({ title: "x" });

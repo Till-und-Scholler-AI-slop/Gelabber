@@ -168,6 +168,32 @@ async function showPushed(data) {
   });
 }
 
+// A deleted message (`recall` from api/src/push): what is on screen for it
+// becomes "Nachricht gelöscht", quietly. A newer message shown in its place
+// stays. With nothing shown (the push service replaced the queued message
+// by this one, or it was swiped away) the quiet replacement shows anyway:
+// a push must show something, see above.
+async function showRecalled(data) {
+  const tag = `gelabber:${data.user}:${data.channel}`;
+  await alone(data.user, async () => {
+    const shown = await self.registration.getNotifications({ tag });
+    const other = shown.find((n) => n.data && n.data.message !== data.message);
+    const current = other ?? { title: data.title, body: data.body, data: null };
+    await self.registration.showNotification(current.title, {
+      body: current.body,
+      tag,
+      silent: true,
+      icon: "/icons/icon-192.png",
+      data: current.data ?? {
+        path: data.path,
+        user: data.user,
+        message: data.message,
+        at: data.at,
+      },
+    });
+  });
+}
+
 self.addEventListener("push", (event) => {
   let data = null;
   try {
@@ -185,5 +211,5 @@ self.addEventListener("push", (event) => {
     typeof data.at !== "string"
   )
     return;
-  event.waitUntil(showPushed(data));
+  event.waitUntil(data.recall === true ? showRecalled(data) : showPushed(data));
 });
