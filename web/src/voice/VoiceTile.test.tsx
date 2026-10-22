@@ -24,7 +24,17 @@ vi.mock("./native/videoFeed.ts", async (original) => ({
   nativeVideoLimit: () => app.limit,
 }));
 
-import { VoiceTile } from "./VoiceTile.tsx";
+// A static render shows a store's initial state; the call is read as it is
+// set here.
+vi.mock("./session.ts", async (original) => {
+  const actual = await original<typeof import("./session.ts")>();
+  const current = (select: (state: unknown) => unknown) =>
+    select(actual.useVoice.getState());
+  return { ...actual, useVoice: Object.assign(current, actual.useVoice) };
+});
+
+import { resetVoiceForTests, useVoice } from "./session.ts";
+import { StreamViewer, VoiceTile } from "./VoiceTile.tsx";
 
 const stream = (handle: { source?: number; consumer?: number }) =>
   new NativeStream([
@@ -61,6 +71,7 @@ beforeEach(() => {
 afterEach(() => {
   resetNativeViewersForTests();
   setNativeBridgeForTests(undefined);
+  resetVoiceForTests();
 });
 
 describe("video tile in a browser", () => {
@@ -80,8 +91,10 @@ describe("video tile in a browser", () => {
     expect(html).not.toContain("<canvas");
     expect(html).not.toContain("<span>Alex</span>");
     expect(html).not.toContain("Fenster");
-    expect(html).toContain("Vergrößern");
-    expect(html).toContain("Vollbild");
+    // Two actions: the spotlight and the whole screen, no third "bigger".
+    expect(html).toContain('aria-label="Vollbild"');
+    expect(html).not.toContain("Vergrößern");
+    expect(html).not.toContain("Hervorheben");
   });
 
   it("shows the name while there is no stream", () => {
@@ -126,7 +139,7 @@ describe("video tile in a desktop app up to 0.5.x", () => {
     expect(html).not.toContain("<canvas");
     expect(surface(html).classes).toContain("opacity-0");
     expect(html).toContain(
-      '<button type="button" class="rounded-md bg-white px-3 py-2 font-medium text-neutral-900">Im Fenster ansehen</button>',
+      '<button type="button" class="ui-button ui-button--primary ui-button--sm">Im Fenster ansehen</button>',
     );
     expect(html).not.toContain("Eigenes Fenster");
     expect(html).not.toContain("Keine Vorschau");
@@ -149,7 +162,7 @@ describe("video tile in a desktop app up to 0.5.x", () => {
       <VoiceTile stream={watched} label="Alex" screen />,
     );
     expect(html).toContain(
-      '<span>Alex</span><button type="button" class="rounded-md bg-white px-3 py-2 font-medium text-neutral-900">Fenster schließen</button></div>',
+      '<span>Alex</span><button type="button" class="ui-button ui-button--primary ui-button--sm">Fenster schließen</button></div>',
     );
     expect(html).not.toContain("<canvas");
     expect(html).not.toContain("Läuft im eigenen Fenster");
@@ -179,7 +192,6 @@ describe("video tile in a desktop app with in-page video", () => {
     expect(html).toContain("<span>Rafi (du)</span></div>");
     // The viewer window is for other people's streams.
     expect(html).not.toContain("Fenster");
-    expect(html).toContain("Vergrößern");
     expect(html).toContain('aria-label="Vollbild"');
   });
 
@@ -207,7 +219,7 @@ describe("video tile in a desktop app with in-page video", () => {
         stream={stream({ consumer: 42 })}
         label="Alex — Live"
         screen
-        onToggleExpand={() => undefined}
+        onTogglePin={() => undefined}
         sourceWatch={{ watching: true, toggle: () => undefined }}
       />,
     );
@@ -216,23 +228,23 @@ describe("video tile in a desktop app with in-page video", () => {
       classes: ["size-full", "object-contain", "opacity-0"],
     });
     expect(html).not.toContain("Im Fenster ansehen");
-    // The browser's controls, and the window as one more of them.
+    // Icon actions, each named; the window waits behind "…".
     const actions = /<div class="voice-video-actions">(.*?)<\/div>/.exec(
       html,
     )![1];
     expect(
-      [...actions.matchAll(/<button[^>]*>(?:<svg.*?<\/svg>)?\s*([^<]*)/g)].map(
+      [...actions.matchAll(/<button[^>]*aria-label="([^"]*)"/g)].map(
         (match) => match[1],
       ),
     ).toEqual([
       "Nicht mehr zuschauen",
-      "",
-      "Eigenes Fenster",
-      "Vergrößern",
+      "Hervorheben",
       "Vollbild",
+      "Weitere Aktionen",
     ]);
-    expect(actions).toContain('aria-label="Im Raum hervorheben"');
-    expect(actions).toContain('aria-pressed="false">Eigenes Fenster');
+    expect(actions).toMatch(/aria-label="Hervorheben" aria-pressed="false"/);
+    expect(actions).toContain('aria-haspopup="menu"');
+    expect(actions).not.toMatch(/>\s*[A-Za-zÄÖÜäöüß]/);
   });
 
   it("leaves a stream to its viewer window", async () => {
@@ -250,14 +262,12 @@ describe("video tile in a desktop app with in-page video", () => {
       classes: ["size-full", "object-contain", "opacity-0"],
     });
     expect(html).toContain(
-      '<span>Alex — Live</span><span role="status" class="text-xs">Läuft im eigenen Fenster.</span></div>',
+      '<span>Alex — Live</span><span role="status" class="text-xs">Läuft im eigenen Fenster.</span><button',
     );
-    // The switch that opened the window stays where it was.
-    expect(html).toContain('aria-pressed="true">Fenster schließen');
-    expect(html).not.toContain("Eigenes Fenster");
+    // Where the picture would be, the way to close the window.
+    expect(html).toContain(">Fenster schließen</button></div>");
     expect(html).not.toContain("Im Fenster ansehen");
     expect(html).not.toContain("Geringe Bildqualität");
-    expect(html).toContain("Vergrößern");
     // Another stream, and the own source with the consumer's number.
     expect(tile(stream({ consumer: 43 }), "Kim")).toContain("<canvas");
     const own = tile(stream({ source: 42 }), "Rafi — Live");
@@ -268,7 +278,7 @@ describe("video tile in a desktop app with in-page video", () => {
     closeNativeViewer(42);
     const closing = tile(watched, "Alex — Live");
     expect(closing).not.toContain("<canvas");
-    expect(closing).toContain('aria-pressed="false">Eigenes Fenster');
+    expect(closing).not.toContain("Fenster schließen");
     await answered();
     const back = tile(watched, "Alex — Live");
     expect(back).toContain("<canvas");
@@ -317,5 +327,78 @@ describe("video tile in a desktop app with in-page video", () => {
     expect(
       renderToStaticMarkup(<VoiceTile stream={null} label="Alex" />),
     ).not.toContain("Geringe Bildqualität");
+  });
+});
+
+describe("tile actions", () => {
+  it("pins to the spotlight with a fixed name and its state", () => {
+    const tile = (pinned: boolean) =>
+      renderToStaticMarkup(
+        <VoiceTile
+          stream={null}
+          label="Mia — Bildschirm"
+          screen
+          pinned={pinned}
+          onTogglePin={() => undefined}
+        />,
+      );
+    expect(tile(false)).toMatch(
+      /aria-label="Hervorheben" aria-pressed="false"/,
+    );
+    expect(tile(true)).toMatch(/aria-label="Hervorheben" aria-pressed="true"/);
+  });
+
+  it("names a camera in a participant's place without a second caption", () => {
+    const html = renderToStaticMarkup(
+      <VoiceTile stream={null} label="Mia" caption={false} />,
+    );
+    expect(html).toContain('<figure aria-label="Mia"');
+    expect(html).not.toContain("<figcaption");
+  });
+});
+
+describe("watching full size", () => {
+  const viewer = () =>
+    renderToStaticMarkup(
+      <StreamViewer
+        stream={null}
+        label="Mia — Live"
+        screen
+        live
+        onStopWatching={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+  it("brings its own strip, since the call bar is out of sight", () => {
+    const html = viewer();
+    expect(html).toContain('aria-label="Steuerung: Mia — Live"');
+    expect(html).toContain("<span>Vollbild beenden</span>");
+    expect(html).toContain("<span>Nicht mehr zuschauen</span>");
+    expect(html).toContain('aria-label="Stream-Ton-Lautstärke"');
+    expect(html).toContain('aria-label="Stream-Ton stummschalten"');
+    // Shown when it opens; it hides after a few idle seconds.
+    expect(html).toContain("data-awake");
+    // Not in a call: nothing to mute.
+    expect(html).not.toContain('aria-label="Stummschalten"');
+    // The tile's own buttons step aside.
+    expect(html).not.toContain('aria-label="Vollbild"');
+    expect(html).not.toContain('aria-label="Hervorheben"');
+  });
+
+  it("offers mute and deafen while in the call", () => {
+    useVoice.setState({ status: "joined" });
+    const html = viewer();
+    expect(html).toContain('aria-label="Stummschalten"');
+    expect(html).toContain('aria-label="Taubschalten"');
+  });
+
+  it("has no stream sound for a camera", () => {
+    const html = renderToStaticMarkup(
+      <StreamViewer stream={null} label="Mia" onClose={() => undefined} />,
+    );
+    expect(html).toContain("<span>Vollbild beenden</span>");
+    expect(html).not.toContain("Stream-Ton");
+    expect(html).not.toContain("Nicht mehr zuschauen");
   });
 });

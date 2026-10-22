@@ -1,5 +1,5 @@
 // `/s/$serverId/settings`: name, member permissions, invites, members,
-// leave/delete. Open to every member; the editing sections need
+// bans, leave/delete. Open to every member; the editing sections need
 // `manage_server`, deletion the owner.
 
 import { useQueryClient } from "@tanstack/react-query";
@@ -15,22 +15,27 @@ import { Field } from "../components/Field.tsx";
 import { confirmAction } from "../components/confirm.ts";
 import { LoadError } from "../components/LoadError.tsx";
 import { FormError } from "../components/FormError.tsx";
-import { GhostButton } from "../components/Modal.tsx";
+import { InviteDialog } from "../components/InviteDialog.tsx";
+import { MemberActionsMenu } from "../components/MemberActions.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
-import { notify } from "../components/toasts.ts";
+import { Badge } from "../components/ui/Badge.tsx";
+import { Button } from "../components/ui/Button.tsx";
+import { CopyButton } from "../components/ui/CopyButton.tsx";
+import { InlineStatus } from "../components/ui/InlineStatus.tsx";
+import { Switch } from "../components/ui/Switch.tsx";
+import { useInlineStatus } from "../components/ui/useInlineStatus.ts";
 import { inviteUrl } from "../servers/api.ts";
 import { copyText } from "../servers/clipboard.ts";
+import { inviteExpiry, inviteUses } from "../servers/inviteText.ts";
 import { useLastChannel } from "../servers/lastChannel.ts";
 import {
   PERMISSIONS,
   can,
   normalisePermissions,
 } from "../servers/permissions.ts";
-import { MemberActions } from "../components/MemberActions.tsx";
 import {
   readServer,
   useBans,
-  useCreateInvite,
   useDeleteServer,
   useInvites,
   useLeaveServer,
@@ -42,6 +47,12 @@ import {
 import { validateName } from "../servers/rules.ts";
 import type { Invite, Permission, ServerDetail } from "../servers/types.ts";
 import { presenceOf, usePresenceStore } from "../ws/live.ts";
+import "./settings.css";
+
+const NOT_SAVED = {
+  tone: "error",
+  message: "Nicht gespeichert – erneut versuchen",
+} as const;
 
 export function ServerSettingsPage() {
   const { serverId } = useParams({ from: "/workspace/s/$serverId/settings" });
@@ -60,46 +71,103 @@ export function ServerSettingsPage() {
   return <Settings key={server.id} server={server} />;
 }
 
+type SectionId =
+  | "allgemein"
+  | "rechte"
+  | "einladungen"
+  | "mitglieder"
+  | "sperren"
+  | "gefahrenzone";
+
+const SECTION_LABEL: Record<SectionId, string> = {
+  allgemein: "Allgemein",
+  rechte: "Rechte",
+  einladungen: "Einladungen",
+  mitglieder: "Mitglieder",
+  sperren: "Sperren",
+  gefahrenzone: "Gefahrenzone",
+};
+
+/** The sections this member sees, in page order. */
+function serverSettingsSections(manage: boolean): SectionId[] {
+  return manage
+    ? [
+        "allgemein",
+        "rechte",
+        "einladungen",
+        "mitglieder",
+        "sperren",
+        "gefahrenzone",
+      ]
+    : ["mitglieder", "gefahrenzone"];
+}
+
+const sectionId = (id: SectionId) => `server-settings-${id}`;
+
 function Settings({ server }: { server: ServerDetail }) {
   const manage = can(server, "manage_server");
+  const sections = serverSettingsSections(manage);
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4">
-        <h1 className="truncate font-semibold tracking-tight">
-          Einstellungen · {server.name}
+    <div className="settings-screen">
+      <header className="lr-channel-header settings-header">
+        <h1>
+          Servereinstellungen
+          <span className="settings-header-context"> · {server.name}</span>
         </h1>
       </header>
-      <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-10 overflow-y-auto px-6 py-8">
-        {manage ? <NameSection server={server} /> : null}
-        {manage ? <PermissionsSection server={server} /> : null}
-        {manage ? <InvitesSection server={server} /> : null}
-        <MembersSection server={server} />
-        {manage ? <BansSection server={server} /> : null}
-        <DangerSection server={server} />
+      <div className="settings-scroll">
+        <nav className="server-settings-nav" aria-label="Abschnitte">
+          {sections.map((id) => (
+            <a
+              key={id}
+              href={`#${sectionId(id)}`}
+              onClick={(event) => {
+                // Scroll inside the page; the address stays the server's.
+                event.preventDefault();
+                const heading = document.getElementById(sectionId(id));
+                heading?.scrollIntoView({ block: "start" });
+                heading?.focus({ preventScroll: true });
+              }}
+            >
+              {SECTION_LABEL[id]}
+            </a>
+          ))}
+        </nav>
+        <div className="settings-area server-settings">
+          {manage ? <NameSection server={server} /> : null}
+          {manage ? <PermissionsSection server={server} /> : null}
+          {manage ? <InvitesSection server={server} /> : null}
+          <MembersSection server={server} />
+          {manage ? <BansSection server={server} /> : null}
+          <DangerSection server={server} />
+        </div>
       </div>
     </div>
   );
 }
 
 function Section({
+  id,
   title,
   hint,
   children,
 }: {
-  title: string;
+  id: SectionId;
+  title?: string;
   hint?: string;
   children: ReactNode;
 }) {
   return (
-    <section className="flex flex-col gap-4">
-      <div>
-        <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
-        {hint ? (
-          <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-            {hint}
-          </p>
-        ) : null}
-      </div>
+    <section
+      className="server-settings-section"
+      aria-labelledby={sectionId(id)}
+    >
+      <header className="server-settings-section__heading">
+        <h2 id={sectionId(id)} tabIndex={-1}>
+          {title ?? SECTION_LABEL[id]}
+        </h2>
+        {hint ? <p>{hint}</p> : null}
+      </header>
       {children}
     </section>
   );
@@ -109,6 +177,7 @@ function NameSection({ server }: { server: ServerDetail }) {
   const [name, setName] = useState(server.name);
   const { errors, clearField, setFields, fromError } = useFormErrors();
   const update = useUpdateServer(server.id);
+  const status = useInlineStatus();
   const dirty = name.trim() !== server.name;
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -118,12 +187,20 @@ function NameSection({ server }: { server: ServerDetail }) {
       setFields({ name: fieldMessage("name", code) });
       return;
     }
-    update.mutate({ name }, { onError: fromError });
+    status.clear();
+    update.mutate(
+      { name },
+      {
+        onSuccess: () =>
+          status.show({ tone: "success", message: "Gespeichert." }),
+        onError: fromError,
+      },
+    );
   };
 
   return (
-    <Section title="Name">
-      <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
+    <Section id="allgemein">
+      <form onSubmit={onSubmit} noValidate className="settings-form">
         <Field
           id="server-name"
           label="Servername"
@@ -137,21 +214,27 @@ function NameSection({ server }: { server: ServerDetail }) {
           error={errors.fields.name}
         />
         <FormError message={errors.form} />
-        <div>
-          <SubmitButton pending={false} pendingLabel="" disabled={!dirty}>
+        <div className="settings-actions">
+          <SubmitButton
+            pending={update.isPending}
+            pendingLabel="Speichert…"
+            disabled={!dirty}
+          >
             Speichern
           </SubmitButton>
+          <InlineStatus status={status.status} />
         </div>
       </form>
     </Section>
   );
 }
 
-/** Toggling a checkbox saves immediately (optimistic, rolled back on error). */
+/** Each switch saves at once (optimistic, rolled back on error). */
 function PermissionsSection({ server }: { server: ServerDetail }) {
   const client = useQueryClient();
   const userId = useUserId();
   const update = useUpdateServer(server.id);
+  const status = useInlineStatus();
   const current = new Set<Permission>(server.member_permissions);
 
   const toggle = (permission: Permission) => {
@@ -162,39 +245,35 @@ function PermissionsSection({ server }: { server: ServerDetail }) {
     const next = new Set<Permission>(latest.member_permissions);
     if (next.has(permission)) next.delete(permission);
     else next.add(permission);
-    update.mutate({ member_permissions: normalisePermissions(next) });
+    update.mutate(
+      { member_permissions: normalisePermissions(next) },
+      {
+        onSuccess: () =>
+          status.show({ tone: "success", message: "Gespeichert." }),
+        onError: () => status.show(NOT_SAVED),
+      },
+    );
   };
 
   return (
     <Section
+      id="rechte"
       title="Rechte für Mitglieder"
       hint="Gilt für alle Mitglieder außer dem Owner, der immer alles darf. Änderungen greifen sofort."
     >
-      <ul className="divide-y divide-neutral-200 dark:divide-neutral-700 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
-        {PERMISSIONS.map((permission) => {
-          const checked = current.has(permission.id);
-          return (
-            <li key={permission.id}>
-              <label className="flex cursor-pointer items-start gap-3 px-4 py-3">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => toggle(permission.id)}
-                  className="mt-1 size-4 shrink-0 accent-neutral-900 dark:accent-neutral-100"
-                />
-                <span className="flex flex-col">
-                  <span className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                    {permission.label}
-                  </span>
-                  <span className="text-sm text-neutral-500 dark:text-neutral-400">
-                    {permission.hint}
-                  </span>
-                </span>
-              </label>
-            </li>
-          );
-        })}
-      </ul>
+      <div className="server-settings-list">
+        {PERMISSIONS.map((permission) => (
+          <Switch
+            key={permission.id}
+            className="settings-row"
+            label={permission.label}
+            description={permission.hint}
+            checked={current.has(permission.id)}
+            onChange={() => toggle(permission.id)}
+          />
+        ))}
+      </div>
+      <InlineStatus status={status.status} />
     </Section>
   );
 }
@@ -207,37 +286,41 @@ function InvitesSection({ server }: { server: ServerDetail }) {
     isFetching,
     refetch,
   } = useInvites(server.id, true);
-  const create = useCreateInvite(server.id);
   const revoke = useRevokeInvite(server.id);
+  const [inviting, setInviting] = useState(false);
+  const status = useInlineStatus();
+  // When the page opened: "läuft in 6 Tagen ab" needs no live clock.
+  const [now] = useState(Date.now);
+
+  // The row's button says "Kopiert"; only a failure needs the line.
+  const copy = async (invite: Invite): Promise<boolean> => {
+    if (await copyText(inviteUrl(invite.code))) {
+      status.clear();
+      return true;
+    }
+    status.show({
+      tone: "error",
+      message: `Kopieren ging nicht. Der Code ist ${invite.code}.`,
+    });
+    return false;
+  };
 
   return (
     <Section
-      title="Einladungen"
+      id="einladungen"
       hint="Jedes Mitglied kann Links erstellen; hier siehst und widerrufst du alle aktiven."
     >
-      <div>
-        <button
-          type="button"
-          onClick={() =>
-            create.mutate(
-              {},
-              {
-                onSuccess: async (invite) => {
-                  if (await copyText(inviteUrl(invite.code)))
-                    notify("Einladungslink kopiert.");
-                },
-              },
-            )
-          }
-          className="rounded-lg bg-neutral-900 dark:bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 dark:hover:bg-neutral-600"
-        >
-          Neuen Link erstellen
-        </button>
+      <div className="settings-actions">
+        <Button onClick={() => setInviting(true)}>Neuen Link erstellen</Button>
+        <InlineStatus status={status.status} />
       </div>
+      <InviteDialog
+        server={server}
+        open={inviting}
+        onClose={() => setInviting(false)}
+      />
       {isPending ? (
-        <p className="text-sm text-neutral-500 dark:text-neutral-400">
-          Lade Einladungen…
-        </p>
+        <p className="settings-hint">Lade Einladungen…</p>
       ) : error ? (
         <LoadError
           message="Die Einladungen konnten gerade nicht geladen werden."
@@ -245,16 +328,32 @@ function InvitesSection({ server }: { server: ServerDetail }) {
           onRetry={() => void refetch()}
         />
       ) : !invites || invites.length === 0 ? (
-        <p className="text-sm text-neutral-500 dark:text-neutral-400">
-          Keine aktiven Einladungen.
-        </p>
+        <p className="settings-hint">Keine aktiven Einladungen.</p>
       ) : (
-        <ul className="divide-y divide-neutral-200 dark:divide-neutral-700 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
+        <ul className="server-settings-list">
           {invites.map((invite) => (
             <InviteRow
               key={invite.code}
               invite={invite}
-              onRevoke={() => revoke.mutate(invite.code)}
+              now={now}
+              onCopy={() => copy(invite)}
+              onRevoke={async () => {
+                if (
+                  await confirmAction({
+                    title: "Link widerrufen?",
+                    message:
+                      "Wer ihn noch nicht benutzt hat, kommt damit nicht mehr rein. Mitglieder bleiben Mitglieder.",
+                    confirmLabel: "Widerrufen",
+                  })
+                )
+                  revoke.mutate(invite.code, {
+                    onSuccess: () =>
+                      status.show({
+                        tone: "success",
+                        message: "Link widerrufen.",
+                      }),
+                  });
+              }}
             />
           ))}
         </ul>
@@ -265,40 +364,31 @@ function InvitesSection({ server }: { server: ServerDetail }) {
 
 function InviteRow({
   invite,
+  now,
+  onCopy,
   onRevoke,
 }: {
   invite: Invite;
+  now: number;
+  onCopy: () => Promise<boolean>;
   onRevoke: () => void;
 }) {
-  const url = inviteUrl(invite.code);
-  const uses =
-    invite.max_uses === null
-      ? `${invite.uses}× genutzt`
-      : `${invite.uses}/${invite.max_uses} genutzt`;
-  const expiry = invite.expires_at
-    ? `läuft ab ${new Date(invite.expires_at).toLocaleString("de-DE", {
-        dateStyle: "medium",
-        timeStyle: "short",
-      })}`
-    : "läuft nie ab";
   return (
-    <li className="flex items-center gap-3 px-4 py-3">
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-mono text-sm">{url}</p>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400">
-          {uses} · {expiry}
-        </p>
+    <li className="server-settings-row">
+      <div className="server-settings-row__main">
+        <code className="server-settings-code">{invite.code}</code>
+        <span className="settings-hint">
+          {inviteUses(invite)} · {inviteExpiry(invite.expires_at, now)}
+        </span>
       </div>
-      <GhostButton
-        onClick={async () => {
-          if (await copyText(url)) notify("Einladungslink kopiert.");
-        }}
-      >
-        Kopieren
-      </GhostButton>
-      <GhostButton tone="danger" onClick={onRevoke}>
-        Widerrufen
-      </GhostButton>
+      <div className="server-settings-row__actions">
+        <CopyButton size="sm" onCopy={onCopy}>
+          Kopieren
+        </CopyButton>
+        <Button size="sm" variant="danger-outline" onClick={onRevoke}>
+          Widerrufen
+        </Button>
+      </div>
     </li>
   );
 }
@@ -306,38 +396,20 @@ function InviteRow({
 function MembersSection({ server }: { server: ServerDetail }) {
   const byServer = usePresenceStore((s) => s.byServer);
   return (
-    <Section title={`Mitglieder (${server.members.length})`}>
-      <ul className="divide-y divide-neutral-200 dark:divide-neutral-700 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
+    <Section id="mitglieder" title={`Mitglieder (${server.members.length})`}>
+      <ul className="server-settings-list">
         {server.members.map((member) => (
-          // On a phone the 44 px Kick/Ban buttons leave the name no room:
-          // below a name of 6rem they move to a line of their own.
-          <li
-            key={member.user_id}
-            className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5"
-          >
+          <li key={member.user_id} className="server-settings-row">
             <PresenceAvatar
               name={member.name}
               url={member.avatar_url}
               status={presenceOf(byServer, server.id, member.user_id)}
             />
-            <span className="min-w-0 flex-1 basis-24 truncate text-sm font-medium">
-              {member.name}
-            </span>
-            <span
-              className={[
-                "rounded-full px-2 py-0.5 text-xs font-medium",
-                member.role === "owner"
-                  ? "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-200"
-                  : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400",
-              ].join(" ")}
-            >
+            <span className="server-settings-row__name">{member.name}</span>
+            <Badge tone={member.role === "owner" ? "accent" : "neutral"}>
               {member.role === "owner" ? "Owner" : "Mitglied"}
-            </span>
-            <MemberActions
-              server={server}
-              member={member}
-              className="ml-auto"
-            />
+            </Badge>
+            <MemberActionsMenu server={server} member={member} />
           </li>
         ))}
       </ul>
@@ -357,13 +429,12 @@ function BansSection({ server }: { server: ServerDetail }) {
 
   return (
     <Section
+      id="sperren"
       title="Gesperrte Konten"
       hint="Gesperrte User können auch mit einem Einladungslink nicht wieder beitreten."
     >
       {isPending ? (
-        <p className="text-sm text-neutral-500 dark:text-neutral-400">
-          Lade Sperren…
-        </p>
+        <p className="settings-hint">Lade Sperren…</p>
       ) : error ? (
         <LoadError
           message="Die Sperren konnten gerade nicht geladen werden."
@@ -371,22 +442,15 @@ function BansSection({ server }: { server: ServerDetail }) {
           onRetry={() => void refetch()}
         />
       ) : !bans || bans.length === 0 ? (
-        <p className="text-sm text-neutral-500 dark:text-neutral-400">
-          Niemand ist gesperrt.
-        </p>
+        <p className="settings-hint">Niemand ist gesperrt.</p>
       ) : (
-        <ul className="divide-y divide-neutral-200 dark:divide-neutral-700 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
+        <ul className="server-settings-list">
           {bans.map((ban) => (
-            <li
-              key={ban.user_id}
-              className="flex items-center gap-3 px-4 py-2.5"
-            >
+            <li key={ban.user_id} className="server-settings-row">
               <PresenceAvatar name={ban.name} url={ban.avatar_url} status="x" />
-              <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                {ban.name}
-              </span>
-              <GhostButton
-                tone="danger"
+              <span className="server-settings-row__name">{ban.name}</span>
+              <Button
+                size="sm"
                 onClick={async () => {
                   if (
                     await confirmAction({
@@ -400,7 +464,7 @@ function BansSection({ server }: { server: ServerDetail }) {
                 }}
               >
                 Entsperren
-              </GhostButton>
+              </Button>
             </li>
           ))}
         </ul>
@@ -426,16 +490,16 @@ function DangerSection({ server }: { server: ServerDetail }) {
 
   return (
     <Section
-      title={owner ? "Server löschen" : "Server verlassen"}
+      id="gefahrenzone"
       hint={
         owner
-          ? "Löscht Kanäle, Kategorien, Einladungen und Mitgliedschaften. Es gibt kein Zurück."
+          ? "Server löschen entfernt Kanäle, Kategorien, Einladungen und Mitgliedschaften. Es gibt kein Zurück."
           : "Du kannst später mit einem neuen Einladungslink wieder beitreten."
       }
     >
-      <div>
-        <button
-          type="button"
+      <div className="settings-actions">
+        <Button
+          variant="danger-outline"
           onClick={async () => {
             if (owner) {
               if (
@@ -461,10 +525,9 @@ function DangerSection({ server }: { server: ServerDetail }) {
             // Optimistic: the server is already gone from the rail.
             go();
           }}
-          className="rounded-lg border border-red-300 dark:border-red-700 px-4 py-2 text-sm font-medium text-red-700 dark:text-red-300 transition hover:bg-red-50 dark:hover:bg-red-950"
         >
           {owner ? "Server löschen" : "Server verlassen"}
-        </button>
+        </Button>
       </div>
     </Section>
   );

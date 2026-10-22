@@ -4,8 +4,10 @@ import {
   notificationPermissionText,
   type NotificationPermissionState,
 } from "../messages/notify.ts";
+import { desktopNotifications } from "../messages/desktopNotifications.ts";
 import { useInstallation } from "../pwa/install.ts";
 import { syncPush, type PushResult } from "../pwa/push.ts";
+import { Button } from "./ui/Button.tsx";
 
 function permission(): NotificationPermissionState {
   return typeof Notification === "undefined"
@@ -13,7 +15,39 @@ function permission(): NotificationPermissionState {
     : Notification.permission;
 }
 
+/** In the desktop app the system shows the notifications, no browser
+ * permission involved; an older app keeps the webview's. */
+function useSystemNotifications(): boolean {
+  const [system, setSystem] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void desktopNotifications().then((available) => {
+      if (live) setSystem(available);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return system;
+}
+
 export function NotificationPermissionStatus() {
+  const system = useSystemNotifications();
+  if (system) {
+    return (
+      <div className="rounded-lg border border-neutral-300 p-3 text-sm dark:border-neutral-700">
+        <p role="status">
+          Gelabber zeigt Benachrichtigungen über dein System an, wie andere Apps
+          auch. Ob sie erscheinen, auf dem Sperrbildschirm oder während „Nicht
+          stören“, stellst du in den Einstellungen deines Systems ein.
+        </p>
+      </div>
+    );
+  }
+  return <BrowserNotificationPermission />;
+}
+
+function BrowserNotificationPermission() {
   const [state, setState] = useState(permission);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -55,7 +89,7 @@ export function NotificationPermissionStatus() {
     }
   };
   return (
-    <div className="rounded-lg border border-neutral-300 p-3 text-sm dark:border-neutral-700">
+    <div className="settings-note">
       <p role="status">
         {notificationPermissionText(state, {
           // The desktop app is not bound by the browser's HTTPS rule.
@@ -81,14 +115,13 @@ export function NotificationPermissionStatus() {
         )
       )}
       {state === "default" && (
-        <button
-          type="button"
-          disabled={pending}
+        <Button
+          className="mt-2"
+          pending={pending}
           onClick={() => void request()}
-          className="mt-2 rounded border px-3 py-2 font-medium disabled:opacity-50"
         >
           Benachrichtigungen erlauben
-        </button>
+        </Button>
       )}
       {failed && (
         <p role="alert">

@@ -4,7 +4,7 @@
 // synthetic I420 packets; the tiles' canvases are read back and compared.
 // No server, account or network. WebKitGTK itself is not covered here.
 // Run in web/: node scripts/smoke-native-video.mjs
-/* global process, console, window, document, URL, HTMLCanvasElement, requestAnimationFrame, getComputedStyle */
+/* global process, console, window, document, Document, URL, HTMLCanvasElement, requestAnimationFrame, getComputedStyle */
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -319,6 +319,13 @@ async function open(options, userAgent) {
     return file.startsWith(out) ? route.fulfill({ path: file }) : route.abort();
   });
   await page.addInitScript(desktopApp, options);
+  // "Vollbild" falls back to the large view where the page may not go
+  // fullscreen: that view, with a second picture of the stream, is tested.
+  await page.addInitScript(() =>
+    Object.defineProperty(Document.prototype, "fullscreenEnabled", {
+      get: () => false,
+    }),
+  );
   await page.goto(`${ORIGIN}/`);
   await page.waitForFunction(() => window.smoke);
   return { page, context, problems, warnings };
@@ -326,6 +333,11 @@ async function open(options, userAgent) {
 
 const show = (page, tiles) =>
   page.evaluate((list) => window.smoke.show(list), tiles);
+/** Opens the viewer window from the "…" menu of the tile in `scope`. */
+async function ownWindow(page, scope = page) {
+  await scope.getByRole("button", { name: "Weitere Aktionen" }).click();
+  await page.getByRole("menuitemcheckbox", { name: "Eigenes Fenster" }).click();
+}
 const push = (page, target, spec) =>
   page.evaluate(([to, what]) => window.smokeApp.push(to, what), [target, spec]);
 const named = (page, command) =>
@@ -526,7 +538,7 @@ try {
     );
     assert.equal(await page.getByText("Keine Vorschau").count(), 0);
     assert.equal(
-      await page.getByRole("button", { name: "Eigenes Fenster" }).count(),
+      await page.getByRole("button", { name: "Weitere Aktionen" }).count(),
       1,
     );
     console.log("PASS: own camera mirrored and cropped, own Live uncropped");
@@ -534,7 +546,7 @@ try {
     // The window stays an extra for other people's streams. Next to one the
     // app hands the stream's views the window's frames, so the tile leaves
     // the stream to the window: its view closes before the window opens.
-    await page.getByRole("button", { name: "Eigenes Fenster" }).click();
+    await ownWindow(page);
     await page.getByRole("button", { name: "Fenster schließen" }).waitFor();
     await page.waitForFunction(
       () => window.smokeApp.named("media_viewer_open").length === 1,
@@ -548,14 +560,14 @@ try {
       0,
     );
     await page.getByText("Läuft im eigenen Fenster.").waitFor();
-    // The switch stays where it was pressed and keeps the focus.
+    // The focus goes back to the menu the window was opened from.
     const focused = () =>
-      page.evaluate(() => document.activeElement?.textContent);
-    assert.equal(await focused(), "Fenster schließen");
-    assert.equal(
-      await page.getByRole("button", { name: "Eigenes Fenster" }).count(),
-      0,
-    );
+      page.evaluate(
+        () =>
+          document.activeElement?.getAttribute("aria-label") ??
+          document.activeElement?.textContent,
+      );
+    assert.equal(await focused(), "Weitere Aktionen");
     // The stream goes on in the window; nothing of it comes to the page.
     const asked = (await named(page, "media_view_frame")).length;
     await push(page, remote, { width: 1920, height: 1080, colours: BARS });
@@ -581,7 +593,7 @@ try {
       maxWidth: 960,
       maxHeight: 540,
     });
-    assert.equal(await focused(), "Eigenes Fenster");
+    assert.equal(await focused(), "Weitere Aktionen");
     assert.equal(await page.getByText("Läuft im eigenen Fenster.").count(), 0);
     assert.deepEqual(await page.evaluate(() => window.smokeApp.beside), []);
     console.log("PASS: a viewer window takes the stream over from the tile");
@@ -590,7 +602,7 @@ try {
     const opens = (await named(page, "media_view_open")).length;
     await page
       .locator('[data-tile="Alex"]')
-      .getByRole("button", { name: "Vergrößern" })
+      .getByRole("button", { name: "Vollbild", exact: true })
       .click();
     await page.locator("dialog canvas").waitFor();
     const large = await read(page, ids.Alex, centres(8, 640, 360), 1);
@@ -644,7 +656,7 @@ try {
     BARS.forEach((colour, bar) => same(both.pixels[bar], colour, "large view"));
     await page
       .locator("dialog")
-      .getByRole("button", { name: "Schließen" })
+      .getByRole("button", { name: "Vollbild beenden" })
       .click();
     await page.waitForFunction((view) => {
       const last = window.smokeApp
@@ -934,11 +946,11 @@ try {
     // get each as three million numbers: the page has none meanwhile, in
     // the tile or in the large view.
     const alex = page.locator('[data-tile="Alex"]');
-    await alex.getByRole("button", { name: "Eigenes Fenster" }).click();
+    await ownWindow(page, alex);
     await page.waitForFunction(
       () => window.smokeApp.named("media_viewer_open").length === 1,
     );
-    await alex.getByRole("button", { name: "Vergrößern" }).click();
+    await alex.getByRole("button", { name: "Vollbild", exact: true }).click();
     const dialog = page.locator("dialog");
     await dialog.getByRole("button", { name: "Fenster schließen" }).waitFor();
     for (const colours of [BARS, [...BARS].reverse(), BARS]) {
@@ -996,7 +1008,7 @@ try {
     const ids = await show(page, [
       { name: "Alex", consumer: 1, width: 960, screen: true },
     ]);
-    await page.getByRole("button", { name: "Eigenes Fenster" }).click();
+    await ownWindow(page);
     await page.waitForFunction(
       () => window.smokeApp.named("media_viewer_open").length === 1,
     );
@@ -1030,13 +1042,13 @@ try {
       features: ["video-frames"],
     });
     await show(page, [{ name: "Alex", consumer: 1, width: 960, screen: true }]);
-    await page.getByRole("button", { name: "Eigenes Fenster" }).click();
+    await ownWindow(page);
     await page.waitForFunction(
       () => window.smokeApp.named("media_viewer_open").length === 1,
     );
     await page
       .locator('[data-tile="Alex"]')
-      .getByRole("button", { name: "Vergrößern" })
+      .getByRole("button", { name: "Vollbild", exact: true })
       .click();
     const dialog = page.locator("dialog");
     await dialog.getByRole("button", { name: "Fenster schließen" }).click();
@@ -1050,11 +1062,13 @@ try {
       text: document.activeElement?.textContent,
       inDialog: Boolean(document.activeElement?.closest("dialog")),
     }));
-    assert.deepEqual(focus, { text: "Schließen ×", inDialog: true });
-    await dialog.getByRole("button", { name: "Schließen", exact: true }).click();
+    assert.deepEqual(focus, { text: "Vollbild beenden", inDialog: true });
+    await dialog.getByRole("button", { name: "Vollbild beenden" }).click();
     assert.equal(
-      await page.evaluate(() => document.activeElement?.textContent),
-      "Vergrößern",
+      await page.evaluate(() =>
+        document.activeElement?.getAttribute("aria-label"),
+      ),
+      "Vollbild",
     );
     assert.deepEqual(problems, []);
     console.log("PASS: closing the window from the large view keeps the focus");

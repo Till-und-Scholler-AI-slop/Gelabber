@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
-import { ChevronIcon } from "./Icons.tsx";
+import { CloseIcon } from "./Icons.tsx";
+import { IconButton } from "./ui/IconButton.tsx";
 
 /** Up to this width the workspace navigation is a closed drawer. */
 export const NAVIGATION_DRAWER_MAX_WIDTH = 800;
@@ -14,7 +15,6 @@ export function WorkspaceDrawer({
   className,
   id,
   children,
-  closeOnNavigate = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -23,7 +23,6 @@ export function WorkspaceDrawer({
   className: string;
   id: string;
   children: ReactNode;
-  closeOnNavigate?: boolean;
 }) {
   const query = `(max-width: ${breakpoint}px)`;
   const [mobile, setMobile] = useState(
@@ -109,15 +108,6 @@ export function WorkspaceDrawer({
       }}
       onClick={(event) => {
         if (!mobile) return;
-        if (
-          closeOnNavigate &&
-          event.target instanceof Element &&
-          event.target.closest("a[href]") &&
-          event.target.closest("dialog") === event.currentTarget
-        ) {
-          onClose();
-          return;
-        }
         if (event.target !== event.currentTarget) return;
         const bounds = event.currentTarget.getBoundingClientRect();
         if (
@@ -129,18 +119,19 @@ export function WorkspaceDrawer({
           onClose();
       }}
     >
+      {/* No header row of its own: the title is for screen readers, and the
+          close button sits in a corner of the drawer's first line. */}
       <header className="workspace-drawer-header">
-        <h2 id={headingId}>{title}</h2>
-        <button
+        <h2 id={headingId} className="sr-only">
+          {title}
+        </h2>
+        <IconButton
           ref={closeButtonRef}
-          type="button"
           className="workspace-drawer-close"
+          label={`${title} schließen`}
+          icon={<CloseIcon size={20} />}
           onClick={onClose}
-          aria-label={`${title} schließen`}
-        >
-          <ChevronIcon size={18} />
-          Schließen
-        </button>
+        />
       </header>
       <div className="workspace-drawer-body">{children}</div>
     </dialog>
