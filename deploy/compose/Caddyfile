@@ -21,8 +21,9 @@
 # /ws compares Origin to Host — pass Host through or the handshake is 403.
 # {hostport}, not {host}: the browser's Origin carries a non-default port
 # (GELABBER_HTTP_PORT, a proxy on :8443), and {host} would drop it.
-# The API keys its rate limits by the rightmost X-Forwarded-For entry, so
-# it gets exactly one: the client address resolved above ({client_ip}).
+# The API keys its rate limits, and media its cap on sockets that have not
+# joined a call, by the rightmost X-Forwarded-For entry, so both get exactly
+# one: the client address resolved above ({client_ip}).
 :80 {
 	# API JSON and whatever the web container did not compress itself.
 	encode zstd gzip
@@ -89,6 +90,7 @@
 	handle @media {
 		reverse_proxy media:8081 {
 			header_up Host {hostport}
+			header_up X-Forwarded-For {client_ip}
 			transport http {
 				dial_timeout 5s
 				read_timeout 0

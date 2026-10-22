@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::Config;
+use crate::limits::PendingSockets;
 use crate::sfu::Sfu;
 
 #[derive(Clone)]
@@ -9,6 +10,9 @@ pub struct AppState {
     pub redis: redis::Client,
     pub ready_timeout: Duration,
     pub join_deadline: Duration,
+    pub heartbeat: Duration,
+    pub idle_timeout: Duration,
+    pub pending: Arc<PendingSockets>,
     pub sfu: Arc<Sfu>,
 }
 
@@ -21,6 +25,9 @@ impl AppState {
             redis: redis.clone(),
             ready_timeout: config.ready_timeout,
             join_deadline: config.join_deadline,
+            heartbeat: config.heartbeat,
+            idle_timeout: config.idle_timeout,
+            pending: PendingSockets::new(config.pending_per_ip, config.pending_max),
             sfu: Sfu::with_redis(config, redis).await?,
         })
     }
