@@ -65,6 +65,9 @@ pub enum ApiError {
     /// 502: an outside service the API relays (the GIF provider) failed.
     /// The string is logged, not returned.
     Upstream(String),
+    /// 503: the GIF provider refused the instance's API key for now (its
+    /// quota is shared by every user). Not the caller's own limit.
+    UpstreamQuota { retry_after: u64 },
     /// 500: anything unexpected. The string is logged, not returned.
     Internal(String),
 }
@@ -99,6 +102,7 @@ impl ApiError {
             Self::RateLimited { .. } => "rate_limited",
             Self::QuotaExceeded => "quota_exceeded",
             Self::Upstream(_) => "upstream_unavailable",
+            Self::UpstreamQuota { .. } => "upstream_quota",
             Self::Internal(_) => "internal",
         }
     }
@@ -118,6 +122,7 @@ impl ApiError {
             Self::InviteInvalid | Self::TokenInvalid => StatusCode::GONE,
             Self::RateLimited { .. } | Self::QuotaExceeded => StatusCode::TOO_MANY_REQUESTS,
             Self::Upstream(_) => StatusCode::BAD_GATEWAY,
+            Self::UpstreamQuota { .. } => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -143,6 +148,9 @@ impl ApiError {
             Self::RateLimited { .. } => "Too many requests. Try again in a moment.",
             Self::QuotaExceeded => "Daily upload quota reached.",
             Self::Upstream(_) => "The GIF service did not answer. Try again in a moment.",
+            Self::UpstreamQuota { .. } => {
+                "This server has used up its GIF requests for now. Try again later."
+            }
             Self::Internal(_) => "Something went wrong on our side.",
         }
     }
@@ -154,7 +162,9 @@ impl ApiError {
             _ => BTreeMap::new(),
         };
         let retry_after = match self {
-            Self::RateLimited { retry_after } => Some(*retry_after),
+            Self::RateLimited { retry_after } | Self::UpstreamQuota { retry_after } => {
+                Some(*retry_after)
+            }
             _ => None,
         };
         ErrorBody {
@@ -175,7 +185,9 @@ impl IntoResponse for ApiError {
             _ => {}
         }
         let retry_after = match &self {
-            Self::RateLimited { retry_after } => Some(*retry_after),
+            Self::RateLimited { retry_after } | Self::UpstreamQuota { retry_after } => {
+                Some(*retry_after)
+            }
             _ => None,
         };
         let mut response = (self.status(), Json(self.body())).into_response();

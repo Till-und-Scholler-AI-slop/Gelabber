@@ -39,6 +39,7 @@ export type ApiErrorCode =
   | "rate_limited"
   | "quota_exceeded"
   | "upstream_unavailable"
+  | "upstream_quota"
   | "internal"
   | "network"
   | "timeout";
@@ -341,6 +342,7 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "rate_limited",
   "quota_exceeded",
   "upstream_unavailable",
+  "upstream_quota",
   "internal",
 ]);
 

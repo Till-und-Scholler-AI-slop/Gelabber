@@ -398,6 +398,8 @@ export function errorMessage(code: ApiErrorCode): string {
       return "Tageslimit für Uploads erreicht.";
     case "upstream_unavailable":
       return "Der GIF-Dienst antwortet gerade nicht. Bitte gleich noch einmal versuchen.";
+    case "upstream_quota":
+      return "Dieser Server hat sein GIF-Kontingent gerade aufgebraucht. Bitte später noch einmal versuchen.";
     case "validation_failed":
       return "Bitte die markierten Felder prüfen.";
     case "timeout":
