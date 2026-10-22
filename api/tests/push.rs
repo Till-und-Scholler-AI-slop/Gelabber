@@ -715,3 +715,115 @@ async fn a_page_in_front_holds_pushes_back(pool: PgPool) {
     drop(ws);
     focus_is(&state, b.user_id(), false).await;
 }
+
+async fn receipts(pool: &PgPool, message: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM push_receipts WHERE message_id=$1::uuid")
+        .bind(message)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// The receipts are written once the push services answered, after the
+/// pushes themselves arrived.
+async fn receipts_are(pool: &PgPool, message: &str, expected: i64) {
+    for _ in 0..100 {
+        if receipts(pool, message).await == expected {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("{expected} receipts expected for {message}");
+}
+
+#[sqlx::test]
+async fn a_deleted_message_recalls_its_push(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool.clone()).await;
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    subscribe(&mut b, &Browser::new(&service, "fail/bob")).await;
+    let message = post(&mut a, &dm, "geheim").await;
+    let id = message["id"].as_str().unwrap();
+    let topic = Uuid::parse_str(id).unwrap().simple().to_string();
+    let mut first = [next(&mut hits).await, next(&mut hits).await];
+    first.sort_by(|x, y| x.path.cmp(&y.path));
+    assert_eq!(first[1].path, "sub/bob");
+    assert_eq!(first[1].headers["topic"], topic.as_str());
+    assert_eq!(browser.open(&first[1])["body"], "geheim");
+    // Only the subscription whose service took it.
+    receipts_are(&pool, id, 1).await;
+
+    let r = a
+        .send(Method::DELETE, &format!("/api/messages/{id}"), None)
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    let hit = next(&mut hits).await;
+    assert_eq!(hit.path, "sub/bob");
+    // The same topic: a push service still holding the first replaces it.
+    assert_eq!(hit.headers["topic"], topic.as_str());
+    let payload = browser.open(&hit);
+    assert_eq!(payload["recall"], true);
+    assert_eq!(payload["body"], "Nachricht gelöscht");
+    assert_eq!(payload["title"], "Ada");
+    assert_eq!(payload["message"], id);
+    assert_eq!(payload["channel"], dm.as_str());
+    assert_eq!(payload["user"], b.user_id());
+    assert_eq!(receipts(&pool, id).await, 0);
+
+    // Past the TTL the push service holds nothing any more: no recall.
+    let old = post(&mut a, &dm, "alt").await;
+    let old = old["id"].as_str().unwrap();
+    next(&mut hits).await;
+    next(&mut hits).await;
+    receipts_are(&pool, old, 1).await;
+    sqlx::query("UPDATE push_receipts SET sent_at=now() - interval '2 hours'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let r = a
+        .send(Method::DELETE, &format!("/api/messages/{old}"), None)
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    let late = tokio::time::timeout(Duration::from_millis(300), hits.recv()).await;
+    assert!(late.is_err(), "no recall past the TTL");
+}
+
+#[sqlx::test]
+async fn a_recall_shows_who_wrote_only_where_content_is_hidden(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        server,
+        channel,
+        mut hits,
+        service,
+        ..
+    } = setup(pool.clone()).await;
+    let browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &browser).await;
+    let message = post(&mut a, &channel, &format!("<@{}> geheim", b.user_id())).await;
+    let id = message["id"].as_str().unwrap();
+    next(&mut hits).await;
+    receipts_are(&pool, id, 1).await;
+    sqlx::query("UPDATE users SET notifications_hide_content=true WHERE id=$1::uuid")
+        .bind(b.user_id())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let r = a
+        .send(Method::DELETE, &format!("/api/messages/{id}"), None)
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    let payload = browser.open(&next(&mut hits).await);
+    assert_eq!(payload["recall"], true);
+    assert_eq!(payload["title"], "Neue Nachricht von Ada");
+    assert_eq!(payload["body"], "Nachricht gelöscht");
+    assert_eq!(payload["path"], format!("/s/{server}/c/{channel}"));
+}
