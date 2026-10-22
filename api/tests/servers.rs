@@ -622,7 +622,13 @@ async fn categories_and_channels_crud_with_manage_channels(pool: PgPool) {
         .collect();
     assert_eq!(
         names,
-        ["allgemein", "Wohnzimmer", "off-topic", "Lounge Eins", "neu-hier"]
+        [
+            "allgemein",
+            "Wohnzimmer",
+            "off-topic",
+            "Lounge Eins",
+            "neu-hier"
+        ]
     );
     assert_eq!(detail.body["categories"][2]["name"], "Voice");
 
