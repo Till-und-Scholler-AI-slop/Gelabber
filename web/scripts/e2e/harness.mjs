@@ -595,7 +595,22 @@ export async function confirmDialog(actor, label) {
     .getByRole("button", { name: label, exact: true })
     .click();
 }
+// The screen share and Go Live sit in the call bar's "Teilen" menu.
+const SHARE_MENU_ENTRIES = new Set([
+  "Bildschirm im Raum teilen",
+  "Go Live",
+  "Teilen beenden",
+  "Live beenden",
+]);
 export async function click(actor, name) {
+  if (SHARE_MENU_ENTRIES.has(name)) {
+    await actor.page
+      .getByRole("button", { name: "Teilen", exact: true })
+      .first()
+      .click();
+    await actor.page.getByRole("menuitem", { name, exact: true }).click();
+    return;
+  }
   if (
     name === "Abmelden" &&
     !(await actor.page

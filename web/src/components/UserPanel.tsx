@@ -2,14 +2,13 @@ import { Link, useNavigate } from "@tanstack/react-router";
 
 import { logout, useSession } from "../auth/session.ts";
 import { invokeNative, isDesktopApp } from "../voice/native/bridge.ts";
-import { leaveVoice, stopWatching } from "../voice/session.ts";
+import { leaveVoice, stopWatching, useVoice } from "../voice/session.ts";
 import { usePresenceStore } from "../ws/live.ts";
 import { Avatar } from "./Avatar.tsx";
 import { AvatarFrame } from "./AvatarFrame.tsx";
 import { ChevronIcon, GearIcon } from "./Icons.tsx";
 import { useMenuDetails } from "./menuDetails.ts";
 import { PresenceAvatar } from "./PresenceAvatar.tsx";
-import { VoiceSessionControls } from "./VoiceSessionControls.tsx";
 
 export function UserPanel({ contextId }: { contextId?: string }) {
   const user = useSession((state) => state.user);
@@ -29,7 +28,7 @@ export function UserPanel({ contextId }: { contextId?: string }) {
 
   return (
     <div className="user-dock">
-      <VoiceSessionControls variant="card" />
+      <CallChip />
       <footer className="user-panel">
         <Link to="/profile" className="user-panel-profile" title="Dein Profil">
           {status ? (
@@ -98,5 +97,27 @@ export function UserPanel({ contextId }: { contextId?: string }) {
         </details>
       </footer>
     </div>
+  );
+}
+
+/** Where the own call is, one click from its room; the controls are in
+ * the call bar. */
+function CallChip() {
+  const joined = useVoice((state) => state.status === "joined");
+  const serverId = useVoice((state) => state.serverId);
+  const channelId = useVoice((state) => state.channelId);
+  const channelName = useVoice((state) => state.channelName);
+  if (!joined || !serverId || !channelId) return null;
+  const name = channelName ?? "Sprachkanal";
+  return (
+    <Link
+      to="/s/$serverId/c/$channelId"
+      params={{ serverId, channelId }}
+      className="user-call-chip"
+      title={`Zum Sprachkanal ${name}`}
+    >
+      <span className="user-call-chip-dot" aria-hidden="true" />
+      <span>In {name}</span>
+    </Link>
   );
 }

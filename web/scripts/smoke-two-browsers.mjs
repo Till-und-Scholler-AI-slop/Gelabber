@@ -294,7 +294,10 @@ try {
   await settings.getByLabel("Ton teilen", { exact: true }).check();
   await settings.getByRole("button", { name: "Fertig" }).click();
 
-  await a.page.getByRole("button", { name: "Kamera an" }).first().click();
+  await a.page
+    .getByRole("button", { name: "Kamera", exact: true })
+    .first()
+    .click();
   await remoteVideo(b.page, "Smoke A");
   await relaySelected(a.page);
   await relaySelected(b.page);
@@ -333,9 +336,13 @@ try {
     );
   }
 
+  // The screen share sits in the call bar's "Teilen" menu.
   await a.page
-    .getByRole("button", { name: "Bildschirm teilen" })
+    .getByRole("button", { name: "Teilen", exact: true })
     .first()
+    .click();
+  await a.page
+    .getByRole("menuitem", { name: "Bildschirm im Raum teilen", exact: true })
     .click();
   const screenTile = b.page.locator("figure").filter({ hasText: "Bildschirm" });
   await screenTile

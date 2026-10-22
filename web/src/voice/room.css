@@ -221,33 +221,12 @@
   align-items: center;
   gap: 8px;
 }
-.voice-control[aria-pressed="true"] {
-  border-color: var(--lr-accent);
-}
-.voice-control-live,
-.voice-control-live:hover {
-  color: white;
-  background: var(--lr-danger-bg);
-}
-.voice-control-leave {
-  color: var(--lr-danger);
-}
 .voice-control-compact {
   padding: 7px 9px;
 }
-.voice-playback-volume {
-  display: inline-flex;
-  align-items: center;
-  min-height: 36px;
-  padding: 0 4px;
-  color: var(--lr-muted);
-}
-.voice-volume-slider {
-  width: 64px;
-  accent-color: var(--lr-accent);
-}
-/* Active call: a fixed one-row bar on phones and pages without a sidebar,
-   a card above the user panel in the workspace sidebar on wider screens. */
+/* The call bar: one row against the bottom edge. Phones and pages without a
+   sidebar span the screen; wide workspaces start it after the sidebar, so
+   the user panel stays in view (design-qa.md). */
 .voice-session-dock {
   position: fixed;
   z-index: 40;
@@ -268,24 +247,9 @@
 }
 @media (min-width: 801px) {
   .app-shell-workspace .voice-session-dock {
-    display: none;
-  }
-}
-.voice-session-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0 8px 8px;
-  padding: 8px;
-  border: 1px solid var(--lr-border);
-  border-radius: calc(var(--lr-radius) + 3px);
-  background: var(--lr-surface);
-  color: var(--lr-text);
-  font-size: 12px;
-}
-@media (max-width: 800px) {
-  .voice-session-card {
-    display: none;
+    left: var(--lr-navigation-width);
+    padding: 8px calc(16px + var(--lr-safe-right))
+      calc(8px + var(--lr-safe-bottom)) 16px;
   }
 }
 .voice-session-call {
@@ -294,48 +258,108 @@
   gap: 6px;
   min-width: 0;
 }
-.voice-session-card .voice-session-call {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-}
 .voice-session-head,
-.voice-session-watch,
-.voice-session-row {
+.voice-session-watch {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
-.voice-session-dock .voice-session-head {
+.voice-session-head {
   flex: 1;
   min-width: 96px;
+}
+@media (min-width: 801px) {
+  /* Status left, who is in the call in the middle, controls right. */
+  .voice-session-head {
+    flex: 0 1 340px;
+  }
+  .voice-session-call > .voice-session-people {
+    margin-inline: auto;
+  }
+  .voice-session-call > .voice-controls {
+    margin-left: auto;
+  }
+  .voice-session-people + .voice-controls {
+    margin-left: 0;
+  }
+}
+/* A lost call has nothing between its status and its actions. */
+.voice-session-dock .voice-session-lost > .voice-session-head {
+  flex: 1 1 auto;
+}
+.voice-session-head > .ui-button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+/* A call that failed in its seat says so on a row of its own where the bar
+   is narrow, with room for "Erneut versuchen". */
+@media (max-width: 1023px) {
+  .voice-session-dock .voice-session-call.is-failed {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .voice-session-dock .voice-session-call.is-failed > .voice-session-head {
+    flex: 1 1 100%;
+  }
+}
+@media (max-width: 800px) {
+  .voice-session-dock .voice-session-call.is-failed > .voice-control-leave {
+    margin-left: auto;
+  }
 }
 .voice-session-signal {
   flex-shrink: 0;
   margin-left: 2px;
-  color: var(--lr-online);
+  color: var(--lr-muted);
+}
+.voice-session-head[data-connection="connecting"] .voice-session-signal {
+  animation: voice-connecting 1.2s ease-in-out infinite;
+}
+.voice-session-head[data-connection="reconnecting"] .voice-session-signal {
+  color: var(--lr-warning);
+}
+.voice-session-head[data-connection="failed"] .voice-session-signal {
+  color: var(--lr-danger);
+}
+@keyframes voice-connecting {
+  50% {
+    opacity: 0.35;
+  }
 }
 .voice-session-link {
   display: flex;
   flex: 1;
   flex-direction: column;
   min-width: 0;
-  line-height: 1.25;
+  line-height: 1.3;
 }
-.voice-session-link > strong {
-  font-size: 12px;
-  font-weight: 650;
-  color: var(--lr-online);
-}
+.voice-session-link > strong,
 .voice-session-link > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
+}
+.voice-session-link > strong {
+  font-weight: 600;
   color: var(--lr-muted);
 }
-.voice-session-link:hover > span {
+.voice-session-link > span {
+  color: var(--lr-muted);
+}
+[data-connection="connected"] .voice-session-link > strong {
+  color: var(--lr-online-text);
+}
+/* --lr-warning is drawn for icons (3:1); text takes it a step towards the
+   text colour, for 4.5:1 in light and dark. */
+[data-connection="reconnecting"] .voice-session-link > strong {
+  color: color-mix(in srgb, var(--lr-warning) 70%, var(--lr-text));
+}
+[data-connection="failed"] .voice-session-link > strong {
+  color: var(--lr-danger);
+}
+a.voice-session-link:hover > span {
   color: var(--lr-text);
   text-decoration: underline;
 }
@@ -350,64 +374,337 @@
   padding: 0 6px;
   border-radius: 9px;
   background: var(--lr-danger-bg);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
+  color: var(--lr-on-danger);
+  font: var(--lr-type-caps);
 }
-.voice-session-dock .voice-controls,
-.voice-session-card .voice-controls {
+/* Connection quality: four bars, lit up to the level. */
+.voice-quality-bars {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  width: 28px;
+  height: 28px;
+  padding: 7px 0;
+  border-radius: var(--lr-radius-sm);
+  color: var(--lr-online);
+  cursor: pointer;
+}
+.voice-quality-bars:hover {
+  background: var(--lr-hover);
+}
+.voice-quality-bars > span {
+  width: 3px;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0.28;
+}
+.voice-quality-bars > span:nth-child(1) {
+  height: 4px;
+}
+.voice-quality-bars > span:nth-child(2) {
+  height: 7px;
+}
+.voice-quality-bars > span:nth-child(3) {
+  height: 10px;
+}
+.voice-quality-bars > span:nth-child(4) {
+  height: 13px;
+}
+.voice-quality-bars[data-level="4"] > span,
+.voice-quality-bars[data-level="3"] > span:nth-child(-n + 3),
+.voice-quality-bars[data-level="2"] > span:nth-child(-n + 2),
+.voice-quality-bars[data-level="1"] > span:nth-child(1) {
+  opacity: 1;
+}
+.voice-quality-bars[data-level="2"] {
+  color: var(--lr-warning);
+}
+.voice-quality-bars[data-level="1"] {
+  color: var(--lr-danger);
+}
+.voice-quality-bars[data-level="0"] {
+  color: var(--lr-muted);
+}
+/* Controls: transparent until on. Media that is on (camera, a share) is an
+   accent pill; a closed microphone or headset is red. */
+.voice-session-dock .voice-controls {
   flex-wrap: nowrap;
-  gap: 3px;
+  gap: 4px;
 }
-.voice-session-card .voice-controls {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-}
-.voice-session-dock .voice-control-compact,
-.voice-session-card .voice-control-compact {
-  width: 36px;
-  min-height: 34px;
-  height: 34px;
-  padding: 0;
+.voice-session-dock .voice-control-compact {
+  position: relative;
+  gap: 4px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 9px;
   border-color: transparent;
   background: transparent;
   color: var(--lr-muted);
 }
-.voice-session-card .voice-controls .voice-control-compact {
-  width: auto;
-  background: var(--lr-panel);
-}
-.voice-session-dock .voice-control-compact:hover,
-.voice-session-card .voice-control-compact:hover {
+.voice-session-dock .voice-control-compact:hover {
   background: var(--lr-hover);
   color: var(--lr-text);
 }
-.voice-session-dock .voice-control-compact[aria-pressed="true"],
-.voice-session-card .voice-control-compact[aria-pressed="true"] {
-  border-color: transparent;
-  background: var(--lr-selected);
-  color: var(--lr-text);
+.voice-session-dock .voice-control-compact.is-on,
+.voice-session-dock .voice-control-compact.is-on:hover {
+  background: var(--lr-accent);
+  color: var(--lr-accent-ink);
 }
 .voice-control-compact.is-off,
 .voice-control-compact.is-off:hover {
   color: var(--lr-danger);
 }
-/* Push-to-talk: the key holds the microphone open. */
+.voice-session-dock .voice-control-compact.is-off {
+  background: color-mix(in srgb, var(--lr-danger-bg) 16%, transparent);
+}
+/* Push-to-talk: dimmed while the key holds the microphone closed, lit
+   while it opens it. */
+.voice-control-compact.is-ptt-idle > svg {
+  opacity: 0.55;
+}
 .voice-control-compact.is-talking,
 .voice-control-compact.is-talking:hover {
   color: var(--lr-speaking);
 }
-.voice-session-dock .voice-control-leave,
-.voice-session-card .voice-control-leave {
-  color: var(--lr-danger);
+.voice-control-badge {
+  font: var(--lr-type-caps);
+  letter-spacing: 0.04em;
+}
+.voice-session-dock .voice-control-mic-problem {
+  color: var(--lr-text);
+}
+.voice-control-dot {
+  position: absolute;
+  top: 6px;
+  left: 21px;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--lr-panel);
+  border-radius: 50%;
+  background: var(--lr-warning);
+}
+.voice-control-text {
+  font: var(--lr-type-ui);
+  white-space: nowrap;
+}
+.voice-control-caret {
+  rotate: 180deg;
+  opacity: 0.75;
 }
 .voice-session-dock .voice-control-live,
-.voice-session-card .voice-control-live {
+.voice-session-dock .voice-control-live:hover {
   background: var(--lr-danger-bg);
-  color: #fff;
+  color: var(--lr-on-danger);
+}
+.voice-session-dock .voice-control-leave,
+.voice-session-dock .voice-control-leave:hover {
+  margin-left: 4px;
+  padding: 0 12px;
+  background: var(--lr-danger-bg);
+  color: var(--lr-on-danger);
+}
+.voice-session-dock .voice-control-leave:hover {
+  background: color-mix(in srgb, var(--lr-danger-bg), black 12%);
+}
+/* Below a laptop's width the bar after the sidebar has no room for words:
+   "Kein Mikrofon" and "Verlassen" keep their names and tooltips only. */
+@media (max-width: 1023px) {
+  .voice-session-dock .voice-control-text {
+    display: none;
+  }
+  .voice-session-dock .voice-control-leave,
+  .voice-session-dock .voice-control-leave:hover {
+    padding: 0 9px;
+  }
+}
+/* Who is in the call, the speakers ringed; a button for everyone's volume. */
+.voice-session-people {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  min-height: 32px;
+  padding: 2px 6px;
+  border-radius: var(--lr-radius-full);
+  cursor: pointer;
+}
+.voice-session-people:hover {
+  background: var(--lr-hover);
+}
+.voice-session-people .gel-avatar {
+  --avatar-size: 24px;
+  font-size: 10px;
+  background: var(--lr-surface);
+  box-shadow: 0 0 0 2px var(--lr-panel);
+}
+.voice-session-people .gel-avatar + .gel-avatar {
+  margin-left: -5px;
+}
+.voice-session-people-more {
+  margin-left: 4px;
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+  font-weight: 600;
+}
+.voice-call-people ul {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 260px;
+  padding: 4px;
+}
+.voice-call-person {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.voice-call-person strong {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font: var(--lr-type-ui);
+  font-weight: 600;
+}
+.voice-call-person small {
+  color: var(--lr-online-text);
+  font: var(--lr-type-meta);
+}
+.voice-call-people li:only-child .voice-call-person {
+  margin-bottom: 0;
+}
+/* The Teilen menu and the missing microphone's explanation. */
+.voice-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* Anchored, the menu keeps one width; as a sheet it spans the screen. */
+.ui-popover.voice-share-menu {
+  width: 320px;
+}
+.voice-menu-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  border-radius: var(--lr-radius-sm);
+  color: var(--lr-text);
+  text-align: left;
+  cursor: pointer;
+}
+.voice-menu-item:hover:not([aria-disabled="true"]),
+.voice-menu-item:focus-visible {
+  background: var(--lr-hover);
+}
+.voice-menu-item > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--lr-muted);
+}
+.voice-menu-item > span {
+  min-width: 0;
+}
+.voice-menu-item strong {
+  display: block;
+  font: var(--lr-type-ui);
+}
+.voice-menu-item small {
+  display: block;
+  margin-top: 2px;
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+.voice-menu-item[aria-disabled="true"] {
+  cursor: default;
+}
+.voice-menu-item[aria-disabled="true"] strong,
+.voice-menu-item[aria-disabled="true"] > svg {
+  color: var(--lr-subtle);
+}
+.voice-menu-item.is-danger strong,
+.voice-menu-item.is-danger > svg {
+  color: var(--lr-danger);
+}
+.voice-menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--lr-border);
+}
+.voice-menu-switch {
+  align-items: center;
+  justify-content: space-between;
+}
+/* In line with the entries' labels, past their icons. */
+.voice-menu-switch > span:first-child {
+  padding-left: 27px;
+}
+.voice-menu-switch-track {
+  position: relative;
+  flex-shrink: 0;
+  width: 32px;
+  height: 18px;
+  border: 1px solid var(--lr-border-strong);
+  border-radius: var(--lr-radius-full);
+  background: var(--lr-surface);
+  transition: background var(--lr-dur-fast) var(--lr-ease);
+}
+.voice-menu-switch-track::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--lr-muted);
+  transition: translate var(--lr-dur-fast) var(--lr-ease);
+}
+.voice-menu-switch[aria-checked="true"] .voice-menu-switch-track {
+  border-color: var(--lr-accent);
+  background: var(--lr-accent);
+}
+.voice-menu-switch[aria-checked="true"] .voice-menu-switch-track::before {
+  translate: 14px 0;
+  background: var(--lr-accent-ink);
+}
+.voice-mic-problem {
+  max-width: 320px;
+}
+.voice-mic-problem p {
+  margin-bottom: 12px;
+  font: var(--lr-type-body);
+}
+.voice-mic-problem-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* Push-to-talk on a touch screen: held like the key. */
+.voice-hold-to-talk {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  border: 1px solid var(--lr-border-strong);
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-surface);
+  color: var(--lr-text);
+  font: var(--lr-type-ui);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.voice-hold-to-talk.is-held {
+  border-color: var(--lr-accent);
+  background: var(--lr-accent);
+  color: var(--lr-accent-ink);
 }
 /* Volumes: one grid so labels, sliders and buttons line up. */
 .voice-session-mix {
@@ -426,10 +723,12 @@
   color: var(--lr-muted);
   white-space: nowrap;
 }
-.voice-session-mix-row > .voice-control-compact {
+.voice-session-dock .voice-session-mix-row > .voice-control-compact {
   width: 30px;
+  min-width: 30px;
   height: 30px;
   min-height: 30px;
+  padding: 0;
 }
 .voice-session-playback {
   display: flex;
@@ -444,6 +743,65 @@
 .voice-session-playback > button {
   flex-shrink: 0;
   min-height: 30px;
+}
+/* One notice at a time, about the own share's sound. */
+.voice-session-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 4px;
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+.voice-session-notice > svg {
+  flex-shrink: 0;
+  color: var(--lr-warning);
+}
+.voice-session-notice > span {
+  flex: 1;
+  min-width: 0;
+}
+.voice-diagnostics-verdict {
+  color: var(--lr-text);
+  font: var(--lr-type-ui);
+  font-weight: 600;
+}
+/* Mute and deafen marks next to names in lists and rooms. */
+.voice-state-icons {
+  color: var(--lr-muted);
+}
+.voice-state-icons-speaker {
+  color: var(--lr-online);
+}
+/* The sidebar's note that a call runs, and where. */
+.user-call-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+  margin: 0 8px 6px;
+  padding: 3px 10px;
+  border-radius: var(--lr-radius-full);
+  /* Light enough for --lr-online-text to keep 4.5:1 in the light theme. */
+  background: color-mix(in srgb, var(--lr-online) 8%, var(--lr-panel));
+  color: var(--lr-online-text);
+  font: var(--lr-type-meta);
+  font-weight: 500;
+}
+.user-call-chip > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-call-chip:hover {
+  text-decoration: underline;
+}
+.user-call-chip-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--lr-online);
 }
 .voice-source-audio-notice {
   color: var(--lr-muted);
@@ -509,16 +867,25 @@
 .voice-room button:focus-visible,
 .voice-controls button:focus-visible,
 .voice-session-dock button:focus-visible,
-.voice-session-card button:focus-visible,
 .voice-microphone-test button:focus-visible {
   outline: 2px solid var(--lr-focus);
   outline-offset: 3px;
 }
 @media (prefers-reduced-motion: reduce) {
   .voice-room-button,
-  .voice-control {
+  .voice-control,
+  .voice-menu-switch-track,
+  .voice-menu-switch-track::before {
     transition: none;
   }
+  .voice-session-head[data-connection="connecting"] .voice-session-signal {
+    animation: none;
+  }
+}
+html[data-reduced-motion="true"]
+  .voice-session-head[data-connection="connecting"]
+  .voice-session-signal {
+  animation: none;
 }
 
 .voice-room-avatar:enabled,
@@ -561,8 +928,9 @@
   .voice-session-dock {
     max-height: 50dvh;
   }
-  .voice-session-dock .voice-control-compact {
-    width: 44px;
+  .voice-session-dock .voice-control-compact,
+  .voice-session-dock .voice-session-mix-row > .voice-control-compact {
+    min-width: 44px;
     min-height: 44px;
     height: 44px;
   }
@@ -570,9 +938,19 @@
     margin-left: 8px;
   }
   .voice-session-dock .voice-session-link,
-  .voice-session-dock .voice-playback-volume,
-  .voice-session-playback > button {
+  .voice-session-dock .voice-session-people,
+  .voice-session-playback > button,
+  .voice-menu-item {
     min-height: 44px;
+  }
+  .voice-quality-bars {
+    width: 44px;
+    height: 44px;
+    padding: 15px 0;
+  }
+  .voice-control-dot {
+    top: 10px;
+    left: 25px;
   }
   .voice-session-dock .voice-session-link {
     justify-content: center;
@@ -698,22 +1076,4 @@ html[data-compact-rooms="true"] .voice-room-participant {
 }
 html[data-reduced-motion="true"] .voice-video-tile.is-speaking::before {
   animation: none;
-}
-/* The call dock: who is in the call, the speakers ringed. */
-.voice-session-people {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 4px;
-  padding: 0 2px;
-}
-.voice-session-people .gel-avatar {
-  --avatar-size: 22px;
-  font-size: 9px;
-  background: var(--lr-panel);
-}
-.voice-session-people-more {
-  color: var(--lr-muted);
-  font-size: 11px;
-  font-weight: 600;
 }

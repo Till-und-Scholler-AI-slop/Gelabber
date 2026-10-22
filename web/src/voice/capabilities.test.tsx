@@ -16,6 +16,9 @@ vi.mock("./session.ts", () => ({
   toggleGoLive: vi.fn(),
   toggleMute: vi.fn(),
   toggleShare: vi.fn(),
+  retryMicrophone: vi.fn(),
+  joinVoice: vi.fn(),
+  dismissLostCall: vi.fn(),
 }));
 vi.mock("../servers/queries.ts", () => ({
   useServer: () => ({ data: { permissions: ["go_live"] } }),
@@ -24,7 +27,7 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <a>{children}</a>,
 }));
 
-import { VoiceControls } from "../components/VoiceControls.tsx";
+import { ShareMenuItems, VoiceControls } from "../components/VoiceControls.tsx";
 import { VoiceSessionControls } from "../components/VoiceSessionControls.tsx";
 import {
   canChooseSpeaker,
@@ -116,10 +119,24 @@ const answers = () => ({
 });
 const controls = (canGoLive = true) =>
   renderToStaticMarkup(<VoiceControls canGoLive={canGoLive} />);
+/** The Teilen menu's entries, as the menu shows them once opened. */
+const menu = (canGoLive = true, liveTakenBy: string | null = null) =>
+  renderToStaticMarkup(
+    <ShareMenuItems canGoLive={canGoLive} liveTakenBy={liveTakenBy} />,
+  );
 /** The opening tag of the control with this label, or null. */
 const control = (html: string, label: string) =>
   html.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0] ??
   null;
+/** The opening tag of the menu entry with this label, or null. */
+const entry = (html: string, label: string) =>
+  html
+    .match(
+      new RegExp(
+        `<button[^>]*role="menuitem"[^>]*>(?:(?!</button>).)*?<strong>${label}</strong>`,
+      ),
+    )?.[0]
+    .match(/^<button[^>]*>/)?.[0] ?? null;
 
 describe("capabilities", () => {
   it("0.5.x Linux app without a feature list: everything it always had", async () => {
@@ -164,13 +181,10 @@ describe("capabilities", () => {
 
   it("Go Live says whose Live it is when someone else is live already", async () => {
     await cases.desktopBrowser();
-    const html = renderToStaticMarkup(
-      <VoiceControls canGoLive liveTakenBy="Bob" />,
-    );
-    const goLive = control(html, "Go Live");
-    expect(goLive).toContain('aria-disabled="true"');
-    expect(goLive).toContain('title="Bob ist gerade live."');
-    expect(control(controls(), "Go Live")).not.toContain("aria-disabled");
+    const html = menu(true, "Bob");
+    expect(entry(html, "Go Live")).toContain('aria-disabled="true"');
+    expect(html).toContain("Bob ist gerade live.");
+    expect(entry(menu(), "Go Live")).not.toContain("aria-disabled");
   });
 
   it("a page without mediaDevices (insecure origin) captures nothing", () => {
@@ -203,8 +217,8 @@ describe("capabilities", () => {
       speaker: true,
     });
     const html = controls();
-    expect(html).toContain('aria-label="Mikrofon aus"');
-    for (const label of ["Kamera an", "Bildschirm teilen", "Go Live"])
+    expect(html).toContain('aria-label="Stummschalten"');
+    for (const label of ["Kamera", "Teilen"])
       expect(control(html, label)).toBeNull();
   });
 });
@@ -213,45 +227,44 @@ describe("capture controls", () => {
   it("0.5.x Linux app: camera, screen and Go Live as before", async () => {
     await cases.linuxApp05();
     const html = controls();
-    for (const label of ["Kamera an", "Bildschirm teilen", "Go Live"])
+    for (const label of ["Kamera", "Teilen"])
       expect(control(html, label)).toContain('aria-pressed="false"');
-    expect(html).not.toContain("aria-disabled");
+    for (const label of ["Bildschirm im Raum teilen", "Go Live"])
+      expect(entry(menu(), label)).not.toBeNull();
+    expect(html + menu()).not.toContain("aria-disabled");
   });
 
-  it("Windows app: share and Go Live stay visible but say why they cannot start", async () => {
+  it("Windows app: share and Go Live stay in the menu but say why they cannot start", async () => {
     await cases.windowsApp();
-    const html = controls();
-    expect(control(html, "Kamera an")).toContain('aria-pressed="false"');
-    const share = control(html, "Bildschirm teilen");
-    expect(share).toContain('aria-disabled="true"');
-    expect(share).toContain(
-      'title="Diese Desktop-App kann den Bildschirm nicht teilen."',
+    expect(control(controls(), "Kamera")).toContain('aria-pressed="false"');
+    expect(control(controls(), "Teilen")).toContain('aria-pressed="false"');
+    const html = menu();
+    expect(entry(html, "Bildschirm im Raum teilen")).toContain(
+      'aria-disabled="true"',
     );
-    expect(share).not.toContain("aria-pressed");
-    const live = control(html, "Go Live");
-    expect(live).toContain('aria-disabled="true"');
-    expect(live).toContain(
-      'title="Diese Desktop-App kann kein Go Live starten."',
+    expect(html).toContain(
+      "Diese Desktop-App kann den Bildschirm nicht teilen.",
     );
+    expect(entry(html, "Go Live")).toContain('aria-disabled="true"');
+    expect(html).toContain("Diese Desktop-App kann kein Go Live starten.");
     // Without the right to go live there is nothing to explain.
-    expect(control(controls(false), "Go Live")).toBeNull();
+    expect(entry(menu(false), "Go Live")).toBeNull();
   });
 
   it("an app without a camera says so on the camera control", async () => {
     await desktopApp({ features: ["screen"] });
-    const camera = control(controls(), "Kamera an");
+    const camera = control(controls(), "Kamera");
     expect(camera).toContain('aria-disabled="true"');
     expect(camera).toContain(
       'title="Diese Desktop-App kann keine Kamera nutzen."',
     );
   });
 
-  it("phone browser: no share and no Go Live control at all", async () => {
+  it("phone browser: no Teilen control at all", async () => {
     await cases.phoneBrowser();
     const html = controls();
-    expect(control(html, "Kamera an")).toContain('aria-pressed="false"');
-    expect(control(html, "Bildschirm teilen")).toBeNull();
-    expect(control(html, "Go Live")).toBeNull();
+    expect(control(html, "Kamera")).toContain('aria-pressed="false"');
+    expect(control(html, "Teilen")).toBeNull();
     expect(html).not.toContain("aria-disabled");
     expect(html).toContain('aria-label="Voice-Einstellungen"');
   });
@@ -259,10 +272,12 @@ describe("capture controls", () => {
   it("desktop browser: camera, screen and Go Live as before", async () => {
     await cases.desktopBrowser();
     const html = controls();
-    for (const label of ["Kamera an", "Bildschirm teilen", "Go Live"])
+    for (const label of ["Kamera", "Teilen"])
       expect(control(html, label)).toContain('aria-pressed="false"');
-    expect(html).not.toContain("aria-disabled");
-    expect(control(controls(false), "Go Live")).toBeNull();
+    for (const label of ["Bildschirm im Raum teilen", "Go Live"])
+      expect(entry(menu(), label)).not.toBeNull();
+    expect(html + menu()).not.toContain("aria-disabled");
+    expect(entry(menu(false), "Go Live")).toBeNull();
   });
 
   it("always lets a running camera, share or Live be stopped", async () => {
@@ -274,8 +289,10 @@ describe("capture controls", () => {
     ]) {
       await enter();
       const html = controls(false);
-      for (const label of ["Kamera aus", "Teilen beenden", "Live beenden"])
+      for (const label of ["Kamera", "Teilen"])
         expect(control(html, label)).toContain('aria-pressed="true"');
+      for (const label of ["Teilen beenden", "Live beenden"])
+        expect(entry(menu(false), label)).not.toContain("aria-disabled");
       expect(html).not.toContain("aria-disabled");
     }
   });

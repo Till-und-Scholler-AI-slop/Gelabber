@@ -1,6 +1,9 @@
+import { useEffect, useRef } from "react";
+
 import { useAudioProcessing } from "./audioProcessing.ts";
-// Optional voice diagnostics. Collapsed until someone opens it.
-// Figures are clues for a bad call, not a verdict about the cause.
+// Optional voice diagnostics. Collapsed until someone opens it, or the call
+// bar's quality bars open the settings here. One plain sentence sums the
+// call up; the figures below it are clues, not a verdict about the cause.
 
 import {
   audioBitrate,
@@ -12,6 +15,8 @@ import {
   PHASE_LABEL,
   SOURCE_LABEL,
   buildDiagnosticExport,
+  callQuality,
+  callQualityVerdict,
   formatBps,
   formatClock,
   formatCount,
@@ -33,13 +38,31 @@ export function VoiceDiagnostics() {
   const audioCap = audioBitrate(mediaSettings);
   const processing = useAudioProcessing();
   const measuring = polling.voice || polling.watch;
+  const quality = polling.voice ? callQuality(latest?.voice ?? null) : null;
+  const section = useMediaSettings((state) => state.dialogSection);
+  const details = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const element = details.current;
+    if (section !== "diagnostics" || !element) return;
+    element.open = true;
+    element.scrollIntoView({ block: "start" });
+    element.querySelector("summary")?.focus({ preventScroll: true });
+  }, [section]);
 
   return (
-    <details className="mt-4 w-full text-left text-sm text-neutral-700 dark:text-neutral-300">
+    <details
+      ref={details}
+      className="mt-4 w-full text-left text-sm text-neutral-700 dark:text-neutral-300"
+    >
       <summary className="cursor-pointer rounded-md bg-neutral-100 px-3 py-2 font-medium text-neutral-800 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700">
         Sprachdiagnose
       </summary>
       <div className="mt-3 flex flex-col gap-4 rounded-md border border-neutral-200 p-3 dark:border-neutral-700">
+        {quality ? (
+          <p className="voice-diagnostics-verdict">
+            {callQualityVerdict(quality)}
+          </p>
+        ) : null}
         <p className="text-xs text-neutral-500 dark:text-neutral-400">
           Messwerte sind Anhaltspunkte. Ein einzelner Wert ist keine bewiesene
           Ursache. Obergrenze meint die eingestellte Grenze, nicht die gemessene
