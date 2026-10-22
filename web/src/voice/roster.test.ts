@@ -102,6 +102,22 @@ describe("voice roster", () => {
     expect(liveIn(useVoiceRoster.getState().live, "s1", "a")).toEqual([]);
   });
 
+  it("keeps someone where they are when another channel's leave comes", () => {
+    // Live in b; a second device's seat in a leaves.
+    applyVoiceJoin("s1", "u1", "b");
+    applyLiveStart("s1", "b", "u1", "s");
+    applyLiveStart("s1", "a", "u1", "s");
+    applyVoiceSig({ op: "sig", t: "l", s: "s1", c: "a", u: "u1" });
+    const state = useVoiceRoster.getState();
+    expect(liveIn(state.live, "s1", "a")).toEqual([]);
+    expect(liveIn(state.live, "s1", "b")).toEqual(["u1"]);
+    expect(voiceOf(state.byServer, "s1", "u1")?.channelId).toBe("b");
+    // Their own channel's leave still takes them out.
+    applyVoiceSig({ op: "sig", t: "l", s: "s1", c: "b", u: "u1" });
+    expect(liveIn(useVoiceRoster.getState().live, "s1", "b")).toEqual([]);
+    expect(voiceOf(useVoiceRoster.getState().byServer, "s1", "u1")).toBeNull();
+  });
+
   it("replaces occupancy on a snapshot so reconnects drop ghosts", () => {
     applyVoiceJoin("s1", "u-old", "voice");
     applyVoiceSnap("s1", [{ u: "u2", c: "lounge", m: true }]);
@@ -156,7 +172,8 @@ describe("voice roster", () => {
   });
 
   it("empty occupancy and live fallbacks stay referentially stable", () => {
-    const occupancy = useVoiceRoster.getState().byServer.missing ?? EMPTY_OCCUPANCY;
+    const occupancy =
+      useVoiceRoster.getState().byServer.missing ?? EMPTY_OCCUPANCY;
     const live = useVoiceRoster.getState().live.missing ?? EMPTY_LIVE;
     expect(occupancy).toBe(EMPTY_OCCUPANCY);
     expect(live).toBe(EMPTY_LIVE);

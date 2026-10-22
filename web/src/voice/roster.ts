@@ -80,12 +80,25 @@ export function applyVoiceLeave(
     const current = state.byServer[serverId];
     const lives = state.live[serverId] ?? EMPTY_LIVE;
     const flags = current?.[userId];
+    // The leave of a channel they are no longer shown in (another device's
+    // seat, or a move that got here first) ends only what was there.
+    const elsewhere =
+      channelId !== undefined &&
+      flags !== undefined &&
+      flags.channelId !== channelId;
     // Nobody is live in a channel they left.
     let nextLive = lives;
-    for (const channel of new Set([channelId, flags?.channelId])) {
+    for (const channel of new Set([
+      channelId,
+      elsewhere ? undefined : flags?.channelId,
+    ])) {
       if (channel && nextLive[channel]?.[userId])
         nextLive = withoutLive(nextLive, channel, userId);
     }
+    if (elsewhere)
+      return nextLive === lives
+        ? state
+        : { live: { ...state.live, [serverId]: nextLive } };
     if ((!current || !(userId in current)) && nextLive === lives) {
       return state;
     }
