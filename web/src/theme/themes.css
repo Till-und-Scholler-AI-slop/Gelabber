@@ -1,27 +1,19 @@
 .themes-panel {
   min-width: 0;
 }
-main:has(.themes-panel) {
-  max-width: 1260px;
-}
-.themes-toolbar,
-.theme-workbench > header {
+.themes-toolbar {
   display: flex;
-  align-items: start;
+  align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 12px 16px;
 }
 .themes-toolbar p,
-.theme-preview-hint,
 .themes-footnote,
 .themes-empty {
   color: var(--lr-muted);
   font-size: 13px;
   line-height: 1.6;
-}
-.themes-toolbar p {
-  margin: 6px 0 0;
 }
 .themes-actions {
   display: flex;
@@ -29,70 +21,66 @@ main:has(.themes-panel) {
   flex-wrap: wrap;
   align-items: center;
 }
-.themes-panel button {
-  min-height: 40px;
-  border: 1px solid var(--lr-border);
-  border-radius: var(--lr-radius-small);
-  padding: 9px 13px;
-  background: var(--lr-panel);
-  color: var(--lr-text);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-.themes-panel button:hover:not(:disabled) {
-  background: var(--lr-hover);
-}
-.themes-panel button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.themes-panel .theme-primary {
-  background: var(--lr-accent);
-  color: var(--lr-accent-ink);
-  border-color: var(--lr-accent);
-  font-weight: 650;
-}
-.themes-panel .theme-primary:hover:not(:disabled) {
-  background: var(--lr-accent);
-  filter: brightness(0.95);
-}
 .theme-file {
   display: none;
 }
-.themes-filter {
+.themes-notice {
   display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin: 26px 0 16px;
 }
-.themes-filter button {
-  border-color: transparent;
-  background: transparent;
+.themes-notice:not(:empty) {
+  margin-top: 12px;
 }
-.themes-filter button[aria-pressed="true"] {
-  color: var(--lr-accent);
-  background: var(--lr-selected);
+.themes-filter {
+  margin: 20px 0 16px;
+}
+/* Gallery on the left, the large preview and the editor beside it. */
+.themes-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  align-items: start;
+  gap: 24px;
 }
 .themes-gallery {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
-.themes-panel .theme-card {
+.theme-card {
   display: flex;
   flex-direction: column;
   position: relative;
+  min-width: 0;
   padding: 0;
-  text-align: left;
   overflow: hidden;
-  border-radius: var(--lr-radius);
+  border: 1px solid var(--lr-border-strong);
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-panel);
+  color: var(--lr-text);
+  text-align: left;
+  cursor: pointer;
 }
-.themes-panel .theme-card[aria-pressed="true"] {
-  outline: 2px solid var(--lr-accent);
-  outline-offset: 2px;
+.theme-card:hover {
+  background: var(--lr-hover);
+}
+/* Selection is a border and a check; the outline stays for focus only. */
+.theme-card[aria-checked="true"] {
+  border-color: var(--lr-accent);
+  box-shadow: inset 0 0 0 1px var(--lr-accent);
+}
+.theme-check {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--lr-accent);
+  color: var(--lr-accent-ink);
 }
 .theme-card-description {
+  display: block;
   padding: 12px;
   width: 100%;
   position: relative;
@@ -101,10 +89,10 @@ main:has(.themes-panel) {
   display: block;
   font-size: 13px;
 }
-.theme-card-description > span {
+.theme-card-description > span:not(.theme-swatches) {
   display: block;
   color: var(--lr-muted);
-  font-size: 11px;
+  font-size: 12px;
   margin-top: 4px;
 }
 .theme-swatches {
@@ -122,12 +110,13 @@ main:has(.themes-panel) {
   position: absolute;
   bottom: 12px;
   right: 10px;
-  font-size: 10px;
-  color: var(--lr-accent);
+  font-size: 11px;
+  color: var(--lr-accent-text);
   font-weight: 600;
 }
-.themes-panel .theme-system {
+.theme-card.theme-system {
   justify-content: center;
+  min-height: 180px;
   padding: 18px;
   gap: 9px;
 }
@@ -137,33 +126,44 @@ main:has(.themes-panel) {
 }
 .theme-system-symbol {
   font-size: 32px;
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
 }
 .theme-workbench {
-  margin-top: 32px;
-  padding-top: 24px;
-  border-top: 1px solid var(--lr-border);
-  scroll-margin-top: 20px;
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
 }
 .theme-eyebrow {
-  font-size: 10px;
-  letter-spacing: 0.12em;
+  font: var(--lr-type-caps);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--lr-muted);
 }
 .theme-workbench h3 {
-  margin: 4px 0 18px;
-  font-size: 21px;
+  margin-top: 4px;
+  font: var(--lr-type-title-sm);
   overflow-wrap: anywhere;
 }
-.theme-preview-hint {
-  max-width: 240px;
-}
-.theme-workbench-grid {
-  display: grid;
-  gap: 20px;
-}
-.theme-workbench-grid:has(.theme-editor) {
-  grid-template-columns: minmax(0, 1fr) minmax(240px, 0.8fr);
+/* "Nord" is shown · Behalten · Zurück: stays in reach while scrolling. */
+.themes-preview-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-top: 20px;
+  padding: 12px 16px;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-lg);
+  background: var(--lr-elevated);
+  box-shadow: var(--lr-shadow-2);
+  font: var(--lr-type-ui);
 }
 .theme-large-preview {
   min-width: 0;
@@ -180,7 +180,7 @@ main:has(.themes-panel) {
   border: 1px solid var(--lr-border);
   border-radius: var(--lr-radius);
   font-family: var(--lr-font);
-  box-shadow: var(--lr-shadow);
+  box-shadow: var(--lr-shadow-card);
   text-align: left;
 }
 .theme-preview-sidebar {
@@ -203,7 +203,7 @@ main:has(.themes-panel) {
 }
 .theme-preview-sidebar > b {
   background: var(--lr-selected);
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
   border-radius: var(--lr-radius-small);
   padding: 8px 5px;
   font-size: 11px;
@@ -259,7 +259,7 @@ main:has(.themes-panel) {
   margin-top: auto;
 }
 .theme-preview-composer b {
-  color: var(--lr-accent);
+  color: var(--lr-accent-text);
 }
 .theme-preview footer {
   grid-column: 1/-1;
@@ -351,7 +351,7 @@ main:has(.themes-panel) {
   min-width: 0;
   width: 100%;
   min-height: 40px;
-  border: 1px solid var(--lr-border);
+  border: 1px solid var(--lr-border-strong);
   border-radius: var(--lr-radius-small);
   padding: 8px;
   background: var(--lr-panel);
@@ -384,7 +384,7 @@ main:has(.themes-panel) {
   height: 36px;
   padding: 2px;
   background: var(--lr-panel);
-  border: 1px solid var(--lr-border);
+  border: 1px solid var(--lr-border-strong);
   border-radius: 5px;
   flex: none;
   cursor: pointer;
@@ -394,12 +394,15 @@ main:has(.themes-panel) {
   font-size: 11px;
   padding: 5px;
 }
-.theme-preview-actions {
-  margin-top: 16px;
+@media (pointer: coarse) {
+  .theme-color-field input[type="color"] {
+    width: 44px;
+    height: 44px;
+  }
 }
 .themes-sync,
 .theme-contrast {
-  margin: 16px 0;
+  margin-top: 16px;
   padding: 12px 14px;
   background: var(--lr-panel);
   border: 1px solid var(--lr-border);
@@ -420,12 +423,13 @@ main:has(.themes-panel) {
 .themes-footnote a {
   text-decoration: underline;
 }
-@media (max-width: 1050px) {
-  .themes-gallery {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .theme-workbench-grid:has(.theme-editor) {
+/* Too narrow for two columns: the preview and editor follow the gallery. */
+@media (max-width: 1180px) {
+  .themes-layout {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .theme-workbench {
+    position: static;
   }
 }
 @media (max-width: 480px) {
@@ -441,9 +445,6 @@ main:has(.themes-panel) {
   .theme-card-description > strong {
     font-size: 12px;
   }
-  .theme-preview-hint {
-    max-width: none;
-  }
   .theme-preview-sidebar {
     padding: 12px 6px;
   }
@@ -458,13 +459,10 @@ main:has(.themes-panel) {
     right: 8px;
   }
 }
-@media (prefers-reduced-motion: no-preference) {
-  .theme-card {
-    transition: outline-color 0.15s ease;
-  }
-}
-html[data-reduced-motion="true"] .theme-card {
-  transition: none;
+.theme-card {
+  transition:
+    border-color var(--lr-dur-fast) var(--lr-ease),
+    background-color var(--lr-dur-fast) var(--lr-ease);
 }
 
 .theme-preview-sidebar > b,

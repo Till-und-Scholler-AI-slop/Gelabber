@@ -87,7 +87,7 @@ test("autoplay rejection remains armed until a trusted retry button click", () =
   assert.equal(listener, null);
 });
 
-test("concurrent claim fault holds only native Gateway publish, while SDP rejection still delegates to the browser", async () => {
+test("the probe passes signaling through and SDP rejection still delegates to the browser", async () => {
   const sent = [],
     answers = [];
   const nativeError = Object.assign(new Error("PRIVATE native SDP body"), {
@@ -130,18 +130,14 @@ test("concurrent claim fault holds only native Gateway publish, while SDP reject
     navigator: { mediaDevices: { getUserMedia: async () => {} } },
   });
   runInContext(`(${instrument.toString()})({relay:false})`, context);
-  window.__e2e.holdLiveClaims = true;
   const gateway = new window.WebSocket("ws://127.0.0.1/ws");
   const media = new window.WebSocket("ws://127.0.0.1/media/ws");
-  const publish = { op: "sig", t: "p", k: "l" };
+  const publish = { op: "sig", t: "p", k: "s" };
   gateway.send(JSON.stringify(publish));
   media.send(JSON.stringify(publish));
   gateway.send(JSON.stringify({ ...publish, t: "u" }));
-  assert.equal(window.__e2e.heldLiveClaims.length, 1);
-  assert.equal(sent.length, 2);
-  window.__e2e.holdLiveClaims = false;
-  window.__e2e.heldLiveClaims.splice(0)[0]();
-  assert.deepEqual(sent.at(-1), publish);
+  assert.equal(sent.length, 3);
+  assert.deepEqual(sent[0], publish);
   const peer = new window.RTCPeerConnection();
   window.__e2e.rejectNextVideoAnswer = true;
   await assert.rejects(
@@ -204,7 +200,7 @@ test("room source observations require positive native RTP, deduplicate callback
     pc: peer,
     track,
     publisher: track.id === "video" ? "a" : track.id,
-    sourceKind: track.kind === "video" ? "l" : "a",
+    sourceKind: track.kind === "video" ? "s" : "a",
   }));
   const state = {
     peers: [peer],
@@ -214,7 +210,6 @@ test("room source observations require positive native RTP, deduplicate callback
     expectedLivePublisher: "a",
     mediaElements: new Set(),
     heldTracks: [],
-    heldLiveClaims: [],
     voiceRoster: [],
     sockets: [],
     captures: [],
@@ -353,7 +348,7 @@ function nativeVideoInventoryFixture() {
     track,
     receiver,
     publisher: "private-publisher",
-    sourceKind: "l",
+    sourceKind: "s",
     consumerId: "private-consumer",
     producerId: "private-producer",
     epoch: "private-epoch",

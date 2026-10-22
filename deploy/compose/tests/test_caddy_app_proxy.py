@@ -12,8 +12,9 @@ therefore receive `{hostport}`.
 Both sites also compress responses: the API does not compress its JSON, and a
 phone on mobile data pays for every byte.
 
-The API keys its rate limits by the rightmost `X-Forwarded-For` entry (#287).
-Every API upstream therefore gets exactly one entry, the client Caddy
+The API keys its rate limits by the rightmost `X-Forwarded-For` entry (#287),
+and media its cap on `/ws` sockets that have not joined a call (#286). Every
+API and media upstream therefore gets exactly one entry, the client Caddy
 resolved (`{client_ip}`), and the bundled Caddy believes the proxies in
 GELABBER_TRUSTED_PROXIES (Compose default `private_ranges`, strict mode), so
 users behind a proxy in front do not all share that proxy's window.
@@ -48,6 +49,7 @@ APP_UPSTREAMS = {
     "Caddyfile.homelab": {"127.0.0.1:18080", "127.0.0.1:18081", "127.0.0.1:8088"},
 }
 API_UPSTREAMS = {"Caddyfile": "api:8080", "Caddyfile.homelab": "127.0.0.1:18080"}
+MEDIA_UPSTREAMS = {"Caddyfile": "media:8081", "Caddyfile.homelab": "127.0.0.1:18081"}
 FORWARDED_FOR = "header_up X-Forwarded-For {client_ip}"
 CLIENT_IP = "{http.vars.client_ip}"
 TRUSTED_PROXIES_ENV = "${GELABBER_TRUSTED_PROXIES-private_ranges}"
@@ -80,6 +82,10 @@ def _proxy_blocks(lines: list[str]) -> list[tuple[str, list[str]]]:
 
 def _is_api_upstream(upstream: str) -> bool:
     return upstream == "api:8080" or upstream.startswith("{$GELABBER_API_UPSTREAM")
+
+
+def _is_media_upstream(upstream: str) -> bool:
+    return upstream == "media:8081" or upstream.startswith("{$GELABBER_MEDIA_UPSTREAM")
 
 
 def _servers(adapted: dict[str, Any]) -> dict[str, Any]:
@@ -138,7 +144,20 @@ class CaddyfileTextTest(unittest.TestCase):
                         "the API reads the rightmost X-Forwarded-For entry; "
                         "without this line it is the proxy in front, not the client",
                     )
-                others = [body for upstream, body in blocks if not _is_api_upstream(upstream)]
+                media = [body for upstream, body in blocks if _is_media_upstream(upstream)]
+                self.assertEqual(len(media), 1, "/media")
+                for body in media:
+                    self.assertIn(
+                        FORWARDED_FOR,
+                        body,
+                        "media caps pending /ws sockets by the rightmost "
+                        "X-Forwarded-For entry; without this line it is the proxy in front",
+                    )
+                others = [
+                    body
+                    for upstream, body in blocks
+                    if not _is_api_upstream(upstream) and not _is_media_upstream(upstream)
+                ]
                 for body in others:
                     self.assertNotIn(FORWARDED_FOR, body)
 
@@ -212,18 +231,23 @@ class CaddyfileEffectiveConfigTest(unittest.TestCase):
                 self.assertEqual(len(encoders), 1, encoders)
                 self.assertIn("gzip", encoders[0].get("encodings", {}))
 
-    def test_api_upstreams_receive_the_resolved_client_only(self) -> None:
+    def test_api_and_media_upstreams_receive_the_resolved_client_only(self) -> None:
         for name, adapted in self.adapted.items():
             with self.subTest(name):
                 api = 0
+                media = 0
                 for proxy in _iter_handlers(adapted):
                     dials = {u.get("dial") for u in proxy.get("upstreams", [])}
                     if API_UPSTREAMS[name] in dials:
                         api += 1
                         self.assertEqual(_forwarded_for_values(proxy), [CLIENT_IP])
+                    elif MEDIA_UPSTREAMS[name] in dials:
+                        media += 1
+                        self.assertEqual(_forwarded_for_values(proxy), [CLIENT_IP])
                     else:
                         self.assertEqual(_forwarded_for_values(proxy), [], sorted(dials))
                 self.assertEqual(api, 4)
+                self.assertEqual(media, 1)
 
     def test_bundled_caddy_trusts_only_the_configured_proxies(self) -> None:
         source = (COMPOSE / "Caddyfile").read_text(encoding="utf-8")

@@ -29,7 +29,6 @@ function probe({ quality, callbacks = true, peers = [] }) {
         mediaElements: new Set(),
         incomingTracks: [],
         heldTracks: [],
-        heldLiveClaims: [],
         voiceRoster: [],
         sockets: [],
         captures: [],

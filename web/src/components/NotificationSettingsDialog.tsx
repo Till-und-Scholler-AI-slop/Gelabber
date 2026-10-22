@@ -15,6 +15,9 @@ import { isMuted, type NotifyLevel } from "../messages/notifyLevel.ts";
 import { useMarkManyRead } from "../messages/readState.ts";
 import { BellIcon, BellOffIcon } from "./Icons.tsx";
 import { GhostButton, Modal } from "./Modal.tsx";
+import { Button } from "./ui/Button.tsx";
+import { RadioCard } from "./ui/RadioCard.tsx";
+import "./notificationSettings.css";
 import {
   minutesUntil,
   openNotificationSettings,
@@ -123,30 +126,29 @@ function NotificationSettingsForm({
           Stummschalten
         </h3>
         {muted ? (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-neutral-100 px-3 py-2 text-sm dark:bg-neutral-800">
+          <div className="notify-muted">
             <span className="inline-flex items-center gap-2">
               <BellOffIcon size={16} />
               {own.muted_until
                 ? `Stumm bis ${formatUntil(own.muted_until)}`
                 : "Stumm, bis du es aufhebst"}
             </span>
-            <button
-              type="button"
+            <Button
+              size="sm"
               disabled={saving}
-              className="notify-choice"
               onClick={() => void save({ level, muted: false })}
             >
               Aufheben
-            </button>
+            </Button>
           </div>
         ) : (
-          <div className="flex flex-wrap gap-2">
+          <div className="notify-mute-grid">
             {MUTES.map((mute) => (
               <button
                 key={mute.label}
                 type="button"
                 disabled={saving}
-                className="notify-choice"
+                className="ui-chip"
                 onClick={() =>
                   void save({
                     level,
@@ -160,7 +162,7 @@ function NotificationSettingsForm({
             ))}
           </div>
         )}
-        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+        <p className="ui-hint">
           {target.dm
             ? "Stumm: kein Zähler, keine Benachrichtigung und kein Ton."
             : "Stumm: kein Punkt, keine Benachrichtigung und kein Ton. @Erwähnungen zählen weiter."}
@@ -168,7 +170,7 @@ function NotificationSettingsForm({
         </p>
       </section>
       {target.dm ? null : (
-        <fieldset className="flex flex-col gap-1" disabled={saving}>
+        <fieldset className="flex flex-col gap-2" disabled={saving}>
           <legend className="mb-1 text-sm font-semibold">
             Benachrichtigen bei
           </legend>
@@ -207,7 +209,7 @@ function NotificationSettingsForm({
         </fieldset>
       )}
       {error ? (
-        <p role="alert" className="text-sm text-red-700 dark:text-red-300">
+        <p role="alert" className="ui-field-error">
           {error}
         </p>
       ) : null}
@@ -239,10 +241,10 @@ function MarkRead({
       : "Als gelesen markieren";
   return (
     <div className="flex flex-col gap-1">
-      <button
-        type="button"
+      <Button
+        size="sm"
+        className="self-start"
         disabled={busy}
-        className="notify-choice self-start"
         onClick={() => {
           setBusy(true);
           setFailed(false);
@@ -259,9 +261,9 @@ function MarkRead({
         }}
       >
         {label}
-      </button>
+      </Button>
       {failed ? (
-        <p role="alert" className="text-sm text-red-700 dark:text-red-300">
+        <p role="alert" className="ui-field-error">
           Nicht gespeichert. Versuch es noch einmal.
         </p>
       ) : null}
@@ -283,23 +285,13 @@ function LevelOption({
   onChange: () => void;
 }) {
   return (
-    <label className="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
-      <input
-        type="radio"
-        name={`notify-level-${name}`}
-        checked={checked}
-        onChange={onChange}
-        className="mt-1"
-      />
-      <span className="flex flex-col">
-        <span className="text-sm font-medium">{label}</span>
-        {hint ? (
-          <span className="text-xs text-neutral-500 dark:text-neutral-400">
-            {hint}
-          </span>
-        ) : null}
-      </span>
-    </label>
+    <RadioCard
+      name={`notify-level-${name}`}
+      checked={checked}
+      onChange={onChange}
+      label={label}
+      description={hint}
+    />
   );
 }
 

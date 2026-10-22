@@ -1,6 +1,6 @@
 // Runs against the Compose stack from CI. Each isolated browser context has
 // its own account, WebSocket, media peer and cookie jar. Media travels through
-// the running SFU and coturn; only camera/screen capture is synthetic.
+// the running SFU and coturn; only camera and Live capture is synthetic.
 /* global process, window, navigator, document, setInterval, clearInterval, console, URL */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -243,11 +243,25 @@ try {
   const serverDialog = a.page.getByRole("dialog", { name: "Server erstellen" });
   await serverDialog.getByLabel("Name").fill(`Smoke ${suffix}`);
   await serverDialog.getByRole("button", { name: "Erstellen" }).click();
+  // A new server opens on its overview, with an invite link already made.
+  await a.page.waitForURL(/\/s\/[^/]+$/);
+  const inviteDialog = a.page.getByRole("dialog", { name: /einladen$/ });
+  await a.page.waitForFunction(() =>
+    document
+      .querySelector('input[aria-label="Einladungslink"]')
+      ?.value.includes("/invite/"),
+  );
+  const invite = await inviteDialog
+    .getByRole("textbox", { name: "Einladungslink" })
+    .inputValue();
+  await inviteDialog.getByRole("button", { name: "Schließen" }).click();
+  await a.page
+    .getByRole("link", { name: /allgemein/ })
+    .first()
+    .click();
   await a.page.waitForURL(/\/s\/[^/]+\/c\//);
   const textUrl = a.page.url();
-  await a.page
-    .locator('summary[aria-label="Kanal oder Kategorie erstellen"]')
-    .click();
+  await a.page.locator("summary.server-sidebar-menu-button").click();
   await a.page.getByRole("button", { name: "Kanal erstellen" }).click();
   const channelDialog = a.page.getByRole("dialog", { name: "Kanal erstellen" });
   await channelDialog.getByText("Voice", { exact: true }).click();
@@ -256,22 +270,14 @@ try {
   await a.page.getByRole("link", { name: "Smoke Voice" }).click();
   const voiceUrl = a.page.url();
 
-  await a.page.getByRole("button", { name: "Leute einladen" }).click();
-  const inviteDialog = a.page.getByRole("dialog", { name: /Einladen zu/ });
-  await inviteDialog.getByRole("button", { name: "Link erstellen" }).click();
-  const invite = await inviteDialog
-    .getByRole("textbox", { name: "Einladungslink" })
-    .inputValue();
-  await inviteDialog.getByRole("button", { name: "Fertig" }).click();
-
   const b = await participant("Smoke B");
   await b.page.goto(invite);
   await b.page.getByRole("button", { name: "Beitreten" }).click();
   await b.page.waitForURL(/\/s\//);
   await b.page.goto(voiceUrl);
 
-  await a.page.getByRole("button", { name: "Beitreten" }).click();
-  await b.page.getByRole("button", { name: "Beitreten" }).click();
+  await a.page.getByRole("button", { name: "Dazukommen" }).click();
+  await b.page.getByRole("button", { name: "Dazukommen" }).click();
   await a.page
     .getByRole("button", { name: "Voice-Einstellungen" })
     .first()
@@ -285,10 +291,13 @@ try {
     .locator("#screen-stream-profile-resolution")
     .selectOption("2160");
   await settings.locator("#screen-stream-profile-fps").selectOption("60");
-  await settings.getByLabel("Ton teilen", { exact: true }).check();
+  await settings.getByLabel("Ton mitsenden", { exact: true }).check();
   await settings.getByRole("button", { name: "Fertig" }).click();
 
-  await a.page.getByRole("button", { name: "Kamera an" }).first().click();
+  await a.page
+    .getByRole("button", { name: "Kamera", exact: true })
+    .first()
+    .click();
   await remoteVideo(b.page, "Smoke A");
   await relaySelected(a.page);
   await relaySelected(b.page);
@@ -327,15 +336,20 @@ try {
     );
   }
 
+  // "Live gehen" in the call bar opens the Live menu where a Live can carry
+  // sound.
   await a.page
-    .getByRole("button", { name: "Bildschirm teilen" })
+    .getByRole("button", { name: "Live gehen", exact: true })
     .first()
     .click();
-  const screenTile = b.page.locator("figure").filter({ hasText: "Bildschirm" });
-  await screenTile
+  await a.page
+    .getByRole("menuitem", { name: "Live gehen", exact: true })
+    .click();
+  const liveTile = b.page.locator("figure").filter({ hasText: "— Live" });
+  await liveTile
     .getByRole("button", { name: "Zuschauen", exact: true })
     .click();
-  await remoteVideo(b.page, "Bildschirm");
+  await remoteVideo(b.page, "— Live");
   await b.page.waitForFunction(
     async () => {
       for (const pc of window.__smokePeers ?? []) {
@@ -387,7 +401,7 @@ try {
       .count()) > 0,
   );
   console.log(
-    "Two accounts, camera + screen with stereo source audio, explicit Watch, SFU media, relay ICE and shared sender budget passed.",
+    "Two accounts, camera + Live with stereo source audio, explicit Watch, SFU media, relay ICE and shared sender budget passed.",
   );
 
   await a.page.goto(textUrl);

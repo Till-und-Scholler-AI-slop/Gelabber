@@ -10,9 +10,8 @@ function observed(layers = 1, frames = 10) {
     captures: [
       { capture: 0, kind: "display", slot: 1 },
       { capture: 1, kind: "camera", slot: 1 },
-      { capture: 2, kind: "display", slot: 2 },
     ],
-    senders: [0, 1, 2].map((capture) => ({
+    senders: [0, 1].map((capture) => ({
       peer: 0,
       sender: capture,
       capture,
@@ -27,7 +26,7 @@ function observed(layers = 1, frames = 10) {
 }
 
 for (const layers of [1, 2])
-  test(`${layers} native encodings per each of three sources require their own fresh progress`, () => {
+  test(`${layers} native encodings per each of two sources require their own fresh progress`, () => {
     const before = observed(layers);
     assert.equal(publisherEncoderProgress(before), true);
     assert.equal(publisherEncoderProgress(observed(layers, 11), before), true);
@@ -37,14 +36,14 @@ for (const layers of [1, 2])
     assert.equal(publisherEncoderProgress(partial, before), false);
   });
 
-test("six advancing encodings on one actual source cannot replace three capture tracks", () => {
+test("six advancing encodings on one actual source cannot replace two capture tracks", () => {
   const only = observed(2);
   only.captures = only.captures.slice(0, 1);
   only.senders = only.senders.slice(0, 1);
   only.senders[0].encodings = Array.from({ length: 6 }, () => ({ frames: 99 }));
   assert.equal(publisherEncoderProgress(only), false);
   const duplicate = observed(2);
-  duplicate.senders[2].capture = 0;
+  duplicate.senders[1].capture = 0;
   assert.equal(publisherEncoderProgress(duplicate), false);
 });
 

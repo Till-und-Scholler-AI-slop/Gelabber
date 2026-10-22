@@ -171,7 +171,10 @@ try {
       get: () => "hidden",
     }),
   );
-  await member.page.locator(`a[href="${path}"]`).first().click();
+  await member.page
+    .locator(`.channel-sidebar a[href="${path}"]`)
+    .first()
+    .click();
   const log = member.page.getByRole("log", { name: "Nachrichten" });
   await log.waitFor();
   await until(
@@ -442,7 +445,10 @@ try {
       const canceled = member.page.waitForEvent("requestfailed", {
         predicate: (r) => r.url().endsWith(`/${cancelTarget.id}/context`),
       });
-      await member.page.locator(`a[href="${other}"]`).first().click();
+      await member.page
+        .locator(`.channel-sidebar a[href="${other}"]`)
+        .first()
+        .click();
       await canceled;
       await release();
       assert.equal(await contextRegion().count(), 0);
@@ -452,7 +458,10 @@ try {
           .count(),
         0,
       );
-      await member.page.locator(`a[href="${path}"]`).first().click();
+      await member.page
+        .locator(`.channel-sidebar a[href="${path}"]`)
+        .first()
+        .click();
       assert.equal(await composer.inputValue(), "unsent preserved draft");
       await member.page
         .getByText("context-draft.txt", { exact: true })

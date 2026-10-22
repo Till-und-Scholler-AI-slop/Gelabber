@@ -1,6 +1,9 @@
+// Voice diagnostics, the settings dialog's "Diagnose" tab; the call bar's
+// quality bars open the dialog there. One plain sentence sums the call up;
+// the figures below it are clues, not a verdict about the cause.
+
+import { Button } from "../components/ui/Button.tsx";
 import { useAudioProcessing } from "./audioProcessing.ts";
-// Optional voice diagnostics. Collapsed until someone opens it.
-// Figures are clues for a bad call, not a verdict about the cause.
 
 import {
   audioBitrate,
@@ -12,6 +15,8 @@ import {
   PHASE_LABEL,
   SOURCE_LABEL,
   buildDiagnosticExport,
+  callQuality,
+  callQualityVerdict,
   formatBps,
   formatClock,
   formatCount,
@@ -33,19 +38,25 @@ export function VoiceDiagnostics() {
   const audioCap = audioBitrate(mediaSettings);
   const processing = useAudioProcessing();
   const measuring = polling.voice || polling.watch;
+  const quality = polling.voice ? callQuality(latest?.voice ?? null) : null;
 
   return (
-    <details className="mt-4 w-full text-left text-sm text-neutral-700 dark:text-neutral-300">
-      <summary className="cursor-pointer rounded-md bg-neutral-100 px-3 py-2 font-medium text-neutral-800 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700">
-        Sprachdiagnose
-      </summary>
-      <div className="mt-3 flex flex-col gap-4 rounded-md border border-neutral-200 p-3 dark:border-neutral-700">
-        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+    <section
+      aria-label="Sprachdiagnose"
+      className="w-full text-left text-sm text-lr-text"
+    >
+      <div className="flex flex-col gap-4">
+        {quality ? (
+          <p className="voice-diagnostics-verdict">
+            {callQualityVerdict(quality)}
+          </p>
+        ) : null}
+        <p className="text-xs text-lr-muted">
           Messwerte sind Anhaltspunkte. Ein einzelner Wert ist keine bewiesene
           Ursache. Obergrenze meint die eingestellte Grenze, nicht die gemessene
           Bitrate.
         </p>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+        <p className="text-xs text-lr-muted">
           {measuring ? "Messung läuft." : "Keine laufende Messung."} Audio:{" "}
           {audioCap === null
             ? "keine Gelabber-Bitratengrenze"
@@ -85,7 +96,7 @@ export function VoiceDiagnostics() {
           {processing.addedBufferMs ?? "unbekannt"} ms (ohne Capture, Codec und
           Netzwerk).
         </p>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+        <p className="text-xs text-lr-muted">
           Prioritätswunsch: Audio hoch, Video normal. Die effektiven
           Browserwerte stehen bei den Sendespuren. Nicht gemeldete Netzpriorität
           bleibt unbekannt; Browser und Netzwerk können diese Hinweise
@@ -119,13 +130,9 @@ export function VoiceDiagnostics() {
           filter={() => true}
         />
         <section>
-          <h3 className="font-medium text-neutral-800 dark:text-neutral-200">
-            Verlauf
-          </h3>
+          <h3 className="font-medium text-lr-text">Verlauf</h3>
           {phases.length === 0 ? (
-            <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-              noch kein Verlauf
-            </p>
+            <p className="mt-1 text-xs text-lr-muted">noch kein Verlauf</p>
           ) : (
             <ul className="mt-1 flex flex-col gap-1 text-xs">
               {phases.map((phase) => (
@@ -141,7 +148,7 @@ export function VoiceDiagnostics() {
           {samples.length > 0 ? (
             <div className="mt-2 max-h-48 overflow-auto">
               <table className="w-full text-left text-xs">
-                <thead className="text-neutral-500 dark:text-neutral-400">
+                <thead className="text-lr-muted">
                   <tr>
                     <th className="py-1 pr-2 font-medium">Zeit</th>
                     <th className="py-1 pr-2 font-medium">Phase</th>
@@ -154,7 +161,7 @@ export function VoiceDiagnostics() {
                   {samples.map((sample, index) => (
                     <tr
                       key={`${sample.at}-${index}`}
-                      className="border-t border-neutral-100 dark:border-neutral-800"
+                      className="border-t border-lr-border"
                     >
                       <td className="py-1 pr-2">{formatClock(sample.at)}</td>
                       <td className="py-1 pr-2">{PHASE_LABEL[sample.phase]}</td>
@@ -175,13 +182,9 @@ export function VoiceDiagnostics() {
           ) : null}
         </section>
         <section>
-          <h3 className="font-medium text-neutral-800 dark:text-neutral-200">
-            Ereignisse
-          </h3>
+          <h3 className="font-medium text-lr-text">Ereignisse</h3>
           {events.length === 0 ? (
-            <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-              noch keine Ereignisse
-            </p>
+            <p className="mt-1 text-xs text-lr-muted">noch keine Ereignisse</p>
           ) : (
             <ul className="mt-1 flex flex-col gap-1 text-xs">
               {events.slice(-8).map((event, index) => (
@@ -194,15 +197,11 @@ export function VoiceDiagnostics() {
             </ul>
           )}
         </section>
-        <button
-          type="button"
-          onClick={downloadDiagnostics}
-          className="self-start rounded-lg bg-neutral-200 px-3 py-2 text-sm font-medium text-neutral-800 transition hover:bg-neutral-300 dark:bg-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-600"
-        >
+        <Button size="sm" onClick={downloadDiagnostics} className="self-start">
           JSON herunterladen
-        </button>
+        </Button>
       </div>
-    </details>
+    </section>
   );
 }
 
@@ -222,12 +221,10 @@ function ConnectionBlock({
   const flows = snapshot?.flows.filter(filter) ?? [];
   return (
     <section>
-      <h3 className="font-medium text-neutral-800 dark:text-neutral-200">
-        {title}
-      </h3>
+      <h3 className="font-medium text-lr-text">{title}</h3>
       {showTransport ? (
         snapshot ? (
-          <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+          <p className="mt-1 text-xs text-lr-muted">
             Transport: {transportLabel(snapshot.transport.path)} · RTT{" "}
             {formatMs(snapshot.transport.rttMs)} · Bandbreite senden{" "}
             {formatBps(snapshot.transport.availableOutgoingBps)} · empfangen{" "}
@@ -235,13 +232,11 @@ function ConnectionBlock({
             {live ? "" : " · letzte Messung"}
           </p>
         ) : (
-          <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-            unbekannt
-          </p>
+          <p className="mt-1 text-xs text-lr-muted">unbekannt</p>
         )
       ) : null}
       {flows.length === 0 ? (
-        <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+        <p className="mt-1 text-xs text-lr-muted">
           Keine RTP-Statistik für diesen Bereich.
         </p>
       ) : (
@@ -249,7 +244,7 @@ function ConnectionBlock({
           {flows.map((flow, index) => (
             <li
               key={`${flow.direction}-${flow.kind}-${flow.source}-${index}`}
-              className="rounded-md bg-neutral-50 px-2 py-2 text-xs dark:bg-neutral-900"
+              className="rounded-md bg-lr-bg px-2 py-2 text-xs"
             >
               <FlowLine flow={flow} />
             </li>
@@ -264,7 +259,7 @@ function FlowLine({ flow }: { flow: FlowStats }) {
   const direction = flow.direction === "send" ? "Senden" : "Empfangen";
   return (
     <div className="flex flex-col gap-0.5">
-      <p className="font-medium text-neutral-800 dark:text-neutral-200">
+      <p className="font-medium text-lr-text">
         {SOURCE_LABEL[flow.source]} · {direction}
       </p>
       <p>

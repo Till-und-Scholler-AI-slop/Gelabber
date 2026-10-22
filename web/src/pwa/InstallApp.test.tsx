@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { InstallPanel } from "./InstallApp.tsx";
+import { InstallDisclosurePanel, InstallPanel } from "./InstallApp.tsx";
 import { useInstallation, type InstallState } from "./install.ts";
 
 function render(state: Partial<InstallState>) {
@@ -49,5 +49,24 @@ describe("install panel", () => {
       "Browsermenü",
     );
     expect(render({ native: true })).toBe("");
+  });
+
+  it("folds into one line on the sign-in page", () => {
+    const state = {
+      ...useInstallation.getInitialState(),
+      secure: true,
+      mobile: true,
+    };
+    const html = renderToStaticMarkup(<InstallDisclosurePanel state={state} />);
+    expect(html).toContain(
+      '<details class="pwa-install-disclosure"><summary>Gelabber als App installieren<svg',
+    );
+    expect(html).toContain('<section class="pwa-install"');
+    expect(html).not.toContain("<details open");
+    expect(
+      renderToStaticMarkup(
+        <InstallDisclosurePanel state={{ ...state, native: true }} />,
+      ),
+    ).toBe("");
   });
 });

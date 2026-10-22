@@ -1,3 +1,4 @@
+import defaults from "./defaults.json";
 import { fixContrast, type ThemeDefinition } from "./model.ts";
 
 // Omarchy palettes: see THIRD_PARTY_THEMES.md. UI contrast is adapted for Gelabber.
@@ -8,16 +9,7 @@ const palettes: ThemeDefinition[] = [
     name: "Gelabber Dunkel",
     mode: "dark",
     style: "clear",
-    colors: {
-      background: "#17191a",
-      panel: "#1d2021",
-      surface: "#272b2d",
-      rail: "#131617",
-      text: "#eef0ee",
-      muted: "#a4abb1",
-      accent: "#f3b752",
-      border: "#2c3032",
-    },
+    colors: defaults.dark,
   },
   {
     version: 1,
@@ -25,16 +17,7 @@ const palettes: ThemeDefinition[] = [
     name: "Gelabber Hell",
     mode: "light",
     style: "clear",
-    colors: {
-      background: "#f8f5f0",
-      panel: "#f4f0e9",
-      surface: "#ece7df",
-      rail: "#eee9e1",
-      text: "#252829",
-      muted: "#646d74",
-      accent: "#e8a638",
-      border: "#dcd6cc",
-    },
+    colors: defaults.light,
   },
   {
     version: 1,

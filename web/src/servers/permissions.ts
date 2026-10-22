@@ -45,8 +45,8 @@ export const PERMISSIONS: ReadonlyArray<{
   },
   {
     id: "go_live",
-    label: "Go Live starten",
-    hint: "Bildschirm oder Kamera in einen Sprachkanal streamen.",
+    label: "Live gehen",
+    hint: "Im Sprachkanal einen Bildschirm oder ein Fenster für alle dort zeigen.",
   },
 ];
 

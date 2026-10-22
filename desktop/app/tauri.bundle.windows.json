@@ -5,6 +5,7 @@
     "homepage": "https://github.com/Till-und-Scholler-AI-slop/Gelabber",
     "resources": {
       "bundle-input/gelabber_media.dll": "gelabber_media.dll",
+      "icons/icon.png": "icon.png",
       "package/README-windows.txt": "README.txt",
       "package/THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt"
     },
@@ -16,6 +17,7 @@
       "nsis": {
         "installMode": "currentUser",
         "installerIcon": "icons/icon.ico",
+        "installerHooks": "windows/hooks.nsh",
         "languages": ["English", "German"],
         "displayLanguageSelector": false
       }

@@ -85,7 +85,7 @@ by Silas) and is complete.
 
 ## Shipped line: latest published main tag
 
-The latest published release is currently `v0.7.0`. Hotfixes for the shipped
+The latest published release is currently `v0.7.1`. Hotfixes for the shipped
 minor go to `main`, followed by a sync PR to the current development branch once
 one exists; a feature-branch version is not a release.
 

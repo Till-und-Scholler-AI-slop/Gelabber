@@ -10,12 +10,13 @@ vi.mock("./session.ts", () => ({
     select ? select(fixture.voice) : fixture.voice,
   leaveVoice: vi.fn(),
   retryPlayback: vi.fn(),
-  stopWatching: vi.fn(),
   toggleCamera: vi.fn(),
   toggleDeafen: vi.fn(),
-  toggleGoLive: vi.fn(),
   toggleMute: vi.fn(),
   toggleShare: vi.fn(),
+  retryMicrophone: vi.fn(),
+  joinVoice: vi.fn(),
+  dismissLostCall: vi.fn(),
 }));
 vi.mock("../servers/queries.ts", () => ({
   useServer: () => ({ data: { permissions: ["go_live"] } }),
@@ -24,7 +25,7 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <a>{children}</a>,
 }));
 
-import { VoiceControls } from "../components/VoiceControls.tsx";
+import { LiveMenuItems, VoiceControls } from "../components/VoiceControls.tsx";
 import { VoiceSessionControls } from "../components/VoiceSessionControls.tsx";
 import {
   canChooseSpeaker,
@@ -95,11 +96,9 @@ beforeEach(() => {
     deafened: false,
     camera: false,
     sharing: false,
-    live: false,
-    sourceAudio: { s: "off", l: "off" },
-    sourceAudioNote: { s: null, l: null },
+    sourceAudio: { s: "off" },
+    sourceAudioNote: { s: null },
     sourceSubscriptions: {},
-    watching: false,
     playbackBlocked: false,
   } as unknown as VoiceState;
 });
@@ -114,12 +113,24 @@ const answers = () => ({
   camera: canUseCamera(),
   speaker: canChooseSpeaker(),
 });
-const controls = (canGoLive = true) =>
-  renderToStaticMarkup(<VoiceControls canGoLive={canGoLive} />);
+const controls = (canLive = true) =>
+  renderToStaticMarkup(<VoiceControls canLive={canLive} />);
+/** The Live menu's entries, as the menu shows them once opened. */
+const menu = (canLive = true) =>
+  renderToStaticMarkup(<LiveMenuItems canLive={canLive} />);
 /** The opening tag of the control with this label, or null. */
 const control = (html: string, label: string) =>
   html.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0] ??
   null;
+/** The opening tag of the menu entry with this label, or null. */
+const entry = (html: string, label: string) =>
+  html
+    .match(
+      new RegExp(
+        `<button[^>]*role="menuitem"[^>]*>(?:(?!</button>).)*?<strong>${label}</strong>`,
+      ),
+    )?.[0]
+    .match(/^<button[^>]*>/)?.[0] ?? null;
 
 describe("capabilities", () => {
   it("0.5.x Linux app without a feature list: everything it always had", async () => {
@@ -162,17 +173,6 @@ describe("capabilities", () => {
     });
   });
 
-  it("Go Live says whose Live it is when someone else is live already", async () => {
-    await cases.desktopBrowser();
-    const html = renderToStaticMarkup(
-      <VoiceControls canGoLive liveTakenBy="Bob" />,
-    );
-    const goLive = control(html, "Go Live");
-    expect(goLive).toContain('aria-disabled="true"');
-    expect(goLive).toContain('title="Bob ist gerade live."');
-    expect(control(controls(), "Go Live")).not.toContain("aria-disabled");
-  });
-
   it("a page without mediaDevices (insecure origin) captures nothing", () => {
     browser(undefined, true);
     expect(answers()).toEqual({
@@ -203,79 +203,101 @@ describe("capabilities", () => {
       speaker: true,
     });
     const html = controls();
-    expect(html).toContain('aria-label="Mikrofon aus"');
-    for (const label of ["Kamera an", "Bildschirm teilen", "Go Live"])
+    expect(html).toContain('aria-label="Stummschalten"');
+    for (const label of ["Kamera", "Live gehen"])
       expect(control(html, label)).toBeNull();
   });
 });
 
 describe("capture controls", () => {
-  it("0.5.x Linux app: camera, screen and Go Live as before", async () => {
+  it("0.5.x Linux app: camera and a Live menu, since a Live can carry sound", async () => {
     await cases.linuxApp05();
     const html = controls();
-    for (const label of ["Kamera an", "Bildschirm teilen", "Go Live"])
-      expect(control(html, label)).toContain('aria-pressed="false"');
-    expect(html).not.toContain("aria-disabled");
+    expect(control(html, "Kamera")).toContain('aria-pressed="false"');
+    const live = control(html, "Live gehen");
+    expect(live).toContain('aria-pressed="false"');
+    expect(live).toContain('aria-haspopup="menu"');
+    expect(entry(menu(), "Live gehen")).not.toBeNull();
+    expect(menu()).toContain("Sehen alle im Sprachkanal");
+    expect(menu()).toContain('aria-label="Ton mitsenden"');
+    expect(html + menu()).not.toContain("aria-disabled");
   });
 
-  it("Windows app: share and Go Live stay visible but say why they cannot start", async () => {
+  it("Windows app: Live stays in its place but says why it cannot start", async () => {
     await cases.windowsApp();
-    const html = controls();
-    expect(control(html, "Kamera an")).toContain('aria-pressed="false"');
-    const share = control(html, "Bildschirm teilen");
-    expect(share).toContain('aria-disabled="true"');
-    expect(share).toContain(
-      'title="Diese Desktop-App kann den Bildschirm nicht teilen."',
-    );
-    expect(share).not.toContain("aria-pressed");
-    const live = control(html, "Go Live");
+    expect(control(controls(), "Kamera")).toContain('aria-pressed="false"');
+    const live = control(controls(), "Live gehen");
     expect(live).toContain('aria-disabled="true"');
-    expect(live).toContain(
-      'title="Diese Desktop-App kann kein Go Live starten."',
-    );
-    // Without the right to go live there is nothing to explain.
-    expect(control(controls(false), "Go Live")).toBeNull();
+    expect(live).toContain('title="Diese Desktop-App kann nicht live gehen."');
+    // Nothing to pick in a menu without sound: one control, no menu.
+    expect(live).not.toContain("aria-haspopup");
   });
 
   it("an app without a camera says so on the camera control", async () => {
     await desktopApp({ features: ["screen"] });
-    const camera = control(controls(), "Kamera an");
+    const camera = control(controls(), "Kamera");
     expect(camera).toContain('aria-disabled="true"');
     expect(camera).toContain(
       'title="Diese Desktop-App kann keine Kamera nutzen."',
     );
   });
 
-  it("phone browser: no share and no Go Live control at all", async () => {
+  it("an app with screen but no sound: Live is one toggle", async () => {
+    await desktopApp({ features: ["screen", "camera"] });
+    const live = control(controls(), "Live gehen");
+    expect(live).toContain('aria-pressed="false"');
+    expect(live).not.toContain("aria-haspopup");
+    expect(live).not.toContain("aria-disabled");
+  });
+
+  it("phone browser: no Live control at all", async () => {
     await cases.phoneBrowser();
     const html = controls();
-    expect(control(html, "Kamera an")).toContain('aria-pressed="false"');
-    expect(control(html, "Bildschirm teilen")).toBeNull();
-    expect(control(html, "Go Live")).toBeNull();
+    expect(control(html, "Kamera")).toContain('aria-pressed="false"');
+    expect(control(html, "Live gehen")).toBeNull();
     expect(html).not.toContain("aria-disabled");
     expect(html).toContain('aria-label="Voice-Einstellungen"');
   });
 
-  it("desktop browser: camera, screen and Go Live as before", async () => {
+  it("desktop browser: camera and Live, no Go Live, no Teilen", async () => {
     await cases.desktopBrowser();
     const html = controls();
-    for (const label of ["Kamera an", "Bildschirm teilen", "Go Live"])
+    for (const label of ["Kamera", "Live gehen"])
       expect(control(html, label)).toContain('aria-pressed="false"');
-    expect(html).not.toContain("aria-disabled");
-    expect(control(controls(false), "Go Live")).toBeNull();
+    expect(entry(menu(), "Live gehen")).not.toContain("aria-disabled");
+    expect(html + menu()).not.toMatch(/Go Live|Teilen|teilen|Bildschirm/);
   });
 
-  it("always lets a running camera, share or Live be stopped", async () => {
-    Object.assign(fixture.voice, { camera: true, sharing: true, live: true });
+  it("without go_live the Live entry is dimmed and says why", async () => {
+    await cases.desktopBrowser();
+    const html = menu(false);
+    expect(entry(html, "Live gehen")).toContain('aria-disabled="true"');
+    expect(html).toContain("In diesem Server darfst du nicht live gehen.");
+    // The sound choice stays, for when the right comes.
+    expect(html).toContain('aria-label="Ton mitsenden"');
+    expect(control(controls(false), "Live gehen")).toContain("opacity-50");
+    // Without sound to choose, the one toggle says why.
+    await desktopApp({ features: ["screen", "camera"] });
+    const live = control(controls(false), "Live gehen");
+    expect(live).toContain('aria-disabled="true"');
+    expect(live).toContain(
+      'title="In diesem Server darfst du nicht live gehen."',
+    );
+  });
+
+  it("always lets a running camera or Live be stopped", async () => {
+    Object.assign(fixture.voice, { camera: true, sharing: true });
     for (const enter of [
       cases.windowsApp,
       cases.phoneBrowser,
       () => desktopApp({ features: [] }),
+      cases.desktopBrowser,
     ]) {
       await enter();
       const html = controls(false);
-      for (const label of ["Kamera aus", "Teilen beenden", "Live beenden"])
+      for (const label of ["Kamera", "Live gehen"])
         expect(control(html, label)).toContain('aria-pressed="true"');
+      expect(entry(menu(false), "Live beenden")).not.toContain("aria-disabled");
       expect(html).not.toContain("aria-disabled");
     }
   });
@@ -283,7 +305,7 @@ describe("capture controls", () => {
 
 describe("stream sound notice", () => {
   const notice = () => {
-    fixture.voice.sourceAudio = { s: "unavailable", l: "off" };
+    fixture.voice.sourceAudio = { s: "unavailable" };
     return renderToStaticMarkup(<VoiceSessionControls />);
   };
 
@@ -320,7 +342,10 @@ describe("settings form", () => {
     await cases.desktopBrowser();
     const html = form();
     expect(html).toContain('id="audio-output"');
-    expect(html).toContain("Browser-Default");
+    // The system's choice; it names the device once the browser lists one.
+    expect(html).toContain('selected="">Standard</option>');
+    // Asking for names waits for the first listing.
+    expect(html).not.toContain("Gerätenamen anzeigen");
     expect(html).toContain("Browserfilter");
     expect(html).toContain("Andere Werte laufen über Web Audio.");
     expect(html).toContain(
@@ -363,9 +388,6 @@ describe("settings form", () => {
         "Die Desktop-App passt die tatsächliche Bitrate an die Verbindung an.",
       );
       expect(html).toContain("Standard-Ausgabegerät des Systems");
-      expect(html).toContain(
-        "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist",
-      );
       expect(html).not.toMatch(/Browser|Web Audio|\bTab\b/);
     },
   );

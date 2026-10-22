@@ -236,9 +236,12 @@ pub struct VoiceEntry {
     pub m: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub d: bool,
-    /// Occupant holds the channel's Go Live track.
+    /// Occupant holds the channel's Go Live track (older clients).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub l: bool,
+    /// Occupant publishes a screen (`s`): Live, several per channel.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub s: bool,
 }
 
 /// Compact signaling payload. Redis Pub/Sub carries this as `{"op":"sig",…}`.
@@ -964,12 +967,14 @@ mod tests {
                 m: true,
                 d: false,
                 l: false,
+                s: true,
             }],
         )
         .to_json()
         .unwrap();
         assert!(json.starts_with(r#"{"op":"sig","t":"r""#));
         assert!(json.contains(r#""m":true"#));
+        assert!(json.contains(r#""s":true"#));
         assert!(!json.contains(r#""d""#));
         assert!(!json.contains("\"n\""));
     }

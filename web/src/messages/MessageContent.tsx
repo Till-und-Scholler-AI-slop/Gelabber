@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
+import { CopyLabel } from "../components/ui/CopyButton.tsx";
+import { COPIED_MS, useCopied } from "../components/ui/useCopied.ts";
+import { copyText } from "../servers/clipboard.ts";
 import { isDesktopApp } from "../voice/native/bridge.ts";
 import { parseMessage, type Block, type Inline } from "./markdown.ts";
 
@@ -170,12 +173,13 @@ function CodeBlock({
   text: string;
   interactive: boolean;
 }) {
-  const [copy, setCopy] = useState<"idle" | "copied" | "failed">("idle");
+  const { copied, flash } = useCopied();
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
-    if (copy === "idle") return;
-    const timer = window.setTimeout(() => setCopy("idle"), 1500);
+    if (!failed) return;
+    const timer = window.setTimeout(() => setFailed(false), COPIED_MS);
     return () => window.clearTimeout(timer);
-  }, [copy]);
+  }, [failed]);
   if (!interactive)
     return (
       <span className="lr-md-codeblock">
@@ -188,23 +192,22 @@ function CodeBlock({
         <span>{lang ?? ""}</span>
         <button
           type="button"
-          onClick={() => {
-            // Missing outside a secure context and in some web views.
-            if (!navigator.clipboard) {
-              setCopy("failed");
-              return;
-            }
-            navigator.clipboard.writeText(text).then(
-              () => setCopy("copied"),
-              () => setCopy("failed"),
-            );
-          }}
+          onClick={() =>
+            // The clipboard is missing outside a secure context and in
+            // some web views.
+            void copyText(text).then((done) => {
+              setFailed(!done);
+              if (done) flash();
+            })
+          }
         >
-          {copy === "copied"
-            ? "Kopiert"
-            : copy === "failed"
-              ? "Kopieren nicht möglich"
-              : "Kopieren"}
+          {failed ? (
+            "Kopieren nicht möglich"
+          ) : (
+            <CopyLabel copied={copied} iconSize={13}>
+              Kopieren
+            </CopyLabel>
+          )}
         </button>
       </div>
       <pre>
