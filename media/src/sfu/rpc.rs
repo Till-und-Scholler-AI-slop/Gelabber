@@ -338,7 +338,9 @@ impl Sfu {
         if peer.watch_user.is_some() || epoch.is_nil() {
             return Err(SfuError::Forbidden);
         }
-        if matches!(kind, SourceKind::Live | SourceKind::LiveAudio) && !peer.authority.claim.g {
+        // Going live (a screen or the old Go Live track, with their sound)
+        // needs the ticket's go_live bit, not only the API's publish check.
+        if !matches!(kind, SourceKind::Mic | SourceKind::Camera) && !peer.authority.claim.g {
             return Err(SfuError::Forbidden);
         }
         let mut parameters: RtpParameters =
