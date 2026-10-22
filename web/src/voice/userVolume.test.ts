@@ -41,16 +41,19 @@ describe("effectiveVoiceVolume", () => {
     ).toBe(0);
   });
 
-  it("goes above 100 % and stops at 200 %", () => {
+  it("goes above 100 % and stops at 400 %", () => {
     expect(
       effectiveVoiceVolume({ output: 1, user: user(1.5), deafened: false }),
     ).toBe(1.5);
     expect(
-      effectiveVoiceVolume({ output: 1.5, user: user(2), deafened: false }),
-    ).toBe(2);
+      effectiveVoiceVolume({ output: 1, user: user(3.5), deafened: false }),
+    ).toBe(3.5);
+    expect(
+      effectiveVoiceVolume({ output: 2, user: user(3), deafened: false }),
+    ).toBe(4);
     expect(
       effectiveVoiceVolume({ output: 9, user: user(9), deafened: false }),
-    ).toBe(2);
+    ).toBe(4);
   });
 
   it("is silent while locally muted or deafened, whatever the levels", () => {
@@ -79,9 +82,9 @@ describe("useUserVolumes", () => {
     expect(userVolumeOf(null)).toBe(DEFAULT_USER_VOLUME);
   });
 
-  it("clamps to 0–200 % and forgets a participant back at the default", () => {
+  it("clamps to 0–400 % and forgets a participant back at the default", () => {
     useUserVolumes.getState().setVolume("u-bob", 5);
-    expect(userVolumeOf("u-bob").volume).toBe(2);
+    expect(userVolumeOf("u-bob").volume).toBe(4);
     useUserVolumes.getState().setVolume("u-bob", -1);
     expect(userVolumeOf("u-bob").volume).toBe(0);
     useUserVolumes.getState().setVolume("u-bob", 1);
@@ -129,7 +132,7 @@ describe("useUserVolumes", () => {
     expect(useUserVolumes.getState().users).toEqual({
       "u-bob": { volume: 1.7, muted: false },
       "u-cara": { volume: 1, muted: true },
-      "u-emil": { volume: 2, muted: false },
+      "u-emil": { volume: 4, muted: false },
     });
   });
 

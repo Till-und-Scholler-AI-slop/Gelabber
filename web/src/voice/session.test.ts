@@ -4536,19 +4536,19 @@ describe("stream sound in the desktop app", () => {
     await vi.waitFor(() => expect(volumeOf(11)).toBe(1));
     useUserVolumes.getState().setVolume("u-bob", 1.5);
     useMediaSettings.getState().patch({ outputVolume: 0.8 });
-    // The native core scales above 100 % by itself, up to 200 %.
+    // The native core scales above 100 % by itself, up to 400 %.
     expect(volumeOf(11)).toBeCloseTo(1.2);
     expect(volumeOf(12)).toBeCloseTo(0.8);
-    useUserVolumes.getState().setVolume("u-bob", 2);
+    useUserVolumes.getState().setVolume("u-bob", 4);
     useMediaSettings.getState().patch({ outputVolume: 2 });
-    expect(volumeOf(11)).toBe(2);
+    expect(volumeOf(11)).toBe(4);
     useUserVolumes.getState().setMuted("u-cara", true);
     expect(volumeOf(12)).toBe(0);
-    expect(volumeOf(11)).toBe(2);
+    expect(volumeOf(11)).toBe(4);
     toggleDeafen();
     expect(volumeOf(11)).toBe(0);
     toggleDeafen();
-    expect(volumeOf(11)).toBe(2);
+    expect(volumeOf(11)).toBe(4);
     expect(volumeOf(12)).toBe(0);
   });
 

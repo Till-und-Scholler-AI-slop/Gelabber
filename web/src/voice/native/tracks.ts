@@ -222,9 +222,10 @@ export class NativeAudioOutput {
   get volume(): number {
     return this.level;
   }
-  /** 0–2, unlike the element's 0–1: the native core scales playout itself. */
+  /** 0–4, unlike the element's 0–1: the native core scales playout itself
+   * and limits it (the same range as `MAX_PLAYBACK_VOLUME`). */
   set volume(value: number) {
-    this.level = Math.min(2, Math.max(0, value));
+    this.level = Math.min(4, Math.max(0, value));
     this.apply();
   }
   get muted(): boolean {
