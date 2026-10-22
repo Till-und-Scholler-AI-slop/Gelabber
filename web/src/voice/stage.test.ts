@@ -9,13 +9,13 @@ import {
 } from "./stage.ts";
 
 const tile = (id: string, kind: StageKind) => ({ id, kind });
-const live = tile("mia-l", "live");
-const screen = tile("lena-s", "screen");
-const other = tile("kim-s", "screen");
+const live = tile("mia-s", "live");
+const screen = tile("lena-s", "live");
+const other = tile("kim-s", "live");
 const camera = tile("rafi-v", "camera");
 
 describe("stage", () => {
-  it("puts Live in the spotlight, other shares in the filmstrip", () => {
+  it("puts the first Live in the spotlight, the others in the filmstrip", () => {
     expect(arrangeStage([live, screen, other], [camera], null)).toEqual({
       spotlight: live,
       filmstrip: [screen, other],

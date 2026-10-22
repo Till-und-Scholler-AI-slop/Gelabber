@@ -7,7 +7,7 @@
 pkgname=gelabber-desktop
 pkgver=0.5.0dev
 pkgrel=1
-pkgdesc='Gelabber desktop app: voice, screen share and Go Live with a native media core'
+pkgdesc='Gelabber desktop app: voice and Live with a native media core'
 arch=('x86_64')
 url='https://github.com/Till-und-Scholler-AI-slop/Gelabber'
 license=('MIT' 'BSD-3-Clause')

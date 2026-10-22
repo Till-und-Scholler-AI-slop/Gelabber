@@ -595,21 +595,36 @@ export async function confirmDialog(actor, label) {
     .getByRole("button", { name: label, exact: true })
     .click();
 }
-// The screen share and Go Live sit in the call bar's "Teilen" menu.
-const SHARE_MENU_ENTRIES = new Set([
-  "Bildschirm im Raum teilen",
-  "Go Live",
-  "Teilen beenden",
-  "Live beenden",
-]);
+// "Live gehen" is the call bar's Live control: a menu where a Live can carry
+// sound, a single toggle elsewhere. "Live beenden" is its stop entry.
+const LIVE_ENTRIES = new Set(["Live gehen", "Live beenden"]);
+// Scenarios say "Beitreten" for the voice room's join control, which reads
+// "Dazukommen", or "Hierher wechseln" from another call.
+const VOICE_JOIN = /^(Dazukommen|Hierher wechseln)$/;
+async function joinVoiceRoom(actor) {
+  await actor.page.getByRole("button", { name: VOICE_JOIN }).first().click();
+}
 export async function click(actor, name) {
-  if (SHARE_MENU_ENTRIES.has(name)) {
-    await actor.page
-      .getByRole("button", { name: "Teilen", exact: true })
-      .first()
-      .click();
+  if (name === "Beitreten") {
+    await joinVoiceRoom(actor);
+    return;
+  }
+  if (LIVE_ENTRIES.has(name)) {
+    const control = actor.page
+      .getByRole("button", { name: "Live gehen", exact: true })
+      .first();
+    if ((await control.getAttribute("aria-haspopup")) !== "menu") {
+      await control.click();
+      return;
+    }
+    await control.click();
     await actor.page.getByRole("menuitem", { name, exact: true }).click();
     return;
+  }
+  if (name === "Zuschauen") {
+    // A Live is watched in its voice channel: join the call first.
+    const join = actor.page.getByRole("button", { name: VOICE_JOIN });
+    if (await join.count()) await joinVoiceRoom(actor);
   }
   if (
     name === "Abmelden" &&

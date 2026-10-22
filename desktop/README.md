@@ -7,9 +7,9 @@ with a native media core instead of the browser's WebRTC. Linux
 Status: **released** for Linux x64 since v0.5.0, as a tarball on the release
 page and as a pacman package (`packaging/arch/`). From v0.6 on a Windows x64
 installer is built, installed and smoke-tested by CI and attached to the
-release; that app has voice, camera, screen share and Go Live (through the
-system's capture picker) with application sound (WASAPI process loopback),
-and watching. What users get to read ships from `app/package/`.
+release; that app has voice, camera and Live (a screen or window, picked in
+the system's capture picker) with application sound (WASAPI process
+loopback), and watching. What users get to read ships from `app/package/`.
 
 ## Layout
 

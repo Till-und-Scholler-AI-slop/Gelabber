@@ -84,23 +84,16 @@ export function notificationTopics(
   return topics;
 }
 
-/** Keep voice / watch signaling reachable outside the workspace layout. */
+/** Keep voice signaling reachable outside the workspace layout. */
 export function mediaContextTopics(input: {
   status: string;
   serverId: string | null;
   channelId: string | null;
-  watching: boolean;
-  watchServerId: string | null;
-  watchChannelId: string | null;
 }): Topic[] {
   const topics: Topic[] = [];
   if (input.status === "joined" && input.serverId && input.channelId) {
     topics.push({ s: input.serverId });
     topics.push({ s: input.serverId, c: input.channelId });
-  }
-  if (input.watching && input.watchServerId && input.watchChannelId) {
-    topics.push({ s: input.watchServerId });
-    topics.push({ s: input.watchServerId, c: input.watchChannelId });
   }
   return mergeTopics(topics);
 }
@@ -139,9 +132,6 @@ export function useAuthenticatedSubscriptions(): void {
       status: state.status,
       serverId: state.serverId,
       channelId: state.channelId,
-      watching: state.watching,
-      watchServerId: state.watchServerId,
-      watchChannelId: state.watchChannelId,
     })),
   );
 

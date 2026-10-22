@@ -11,7 +11,7 @@ import { dropForeignUserQueries, setQueryScope } from "../queryClient.ts";
 import { stopCallSounds } from "../voice/callSounds.ts";
 import { useMediaSettings } from "../voice/settings.ts";
 import { bindUserVolumeAccount } from "../voice/userVolume.ts";
-import { leaveVoice, stopWatching } from "../voice/session.ts";
+import { leaveVoice } from "../voice/session.ts";
 import { resetVoiceRoster } from "../voice/roster.ts";
 import { getGateway } from "../ws/client.ts";
 import { resetLiveStores } from "../ws/live.ts";
@@ -31,7 +31,6 @@ export function releaseUserScope(nextUserId: string | null): void {
   // topics and resume cursors so the next account cannot resume A's seq.
   leaveVoice();
   stopCallSounds();
-  stopWatching();
   getGateway().resetSession();
   dropForeignUserQueries();
   resetPendingMessages();

@@ -16,7 +16,7 @@ import { listServers } from "../servers/api.ts";
 import { serverKeys } from "../servers/queries.ts";
 import { applyChannelEvent, messageQueryOptions } from "../messages/queries.ts";
 import { applyMemberRemoved, forgetServer } from "../servers/queries.ts";
-import { leaveVoice, stopWatching, useVoice } from "../voice/session.ts";
+import { leaveVoice, useVoice } from "../voice/session.ts";
 import { getGateway, type GapRecovery, type Gateway } from "./client.ts";
 import { shouldLeaveView } from "./leaveView.ts";
 
@@ -25,9 +25,6 @@ function dropVoice(serverId: string): void {
   const voice = useVoice.getState();
   if (voice.status === "joined" && voice.serverId === serverId) {
     leaveVoice();
-  }
-  if (voice.watching && voice.watchServerId === serverId) {
-    stopWatching();
   }
 }
 

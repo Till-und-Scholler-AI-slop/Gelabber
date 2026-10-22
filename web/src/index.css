@@ -850,14 +850,6 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   letter-spacing: 0.4px;
   text-transform: uppercase;
 }
-.channel-row-connected {
-  width: 8px;
-  height: 8px;
-  margin-left: auto;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--lr-online);
-}
 .sidebar-empty-category {
   padding: 0 8px;
   font-size: 12px;
@@ -865,6 +857,13 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
 }
 .channel-row.is-active .channel-row-icon {
   color: var(--lr-accent-text);
+}
+/* The voice channel the own call runs in, Live or not. */
+.channel-row.is-in-voice {
+  color: var(--lr-text);
+}
+.channel-row.is-in-voice .channel-row-icon {
+  color: var(--lr-online-text);
 }
 .sidebar-empty {
   flex: 1;
