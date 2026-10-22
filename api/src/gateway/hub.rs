@@ -112,6 +112,10 @@ pub(super) struct Socket {
     access: HashMap<Uuid, (chrono::DateTime<chrono::Utc>, i32)>,
     /// Servers this socket has subscribed to (channel or server topic).
     pub(super) servers: HashSet<Uuid>,
+    /// The server of each subscribed topic. When the last topic of a server
+    /// goes and no voice seat is left there, the server leaves `servers`
+    /// and `access` too, so its presence, signaling and rosters stop.
+    scopes: HashMap<Topic, Uuid>,
     /// DM ids in `servers` (a DM topic is `s == c`). They keep presence and
     /// signaling fan-out, but have no voice roster to refresh.
     pub(super) dms: HashSet<Uuid>,
@@ -121,6 +125,10 @@ pub(super) struct Socket {
     topics: HashSet<Topic>,
     epochs: HashMap<Topic, Uuid>,
     closed: tokio::sync::watch::Sender<bool>,
+    /// Wakes the socket for an immediate session and access check after a
+    /// revocation on any API process ([`Recheck`]). Carries no authority;
+    /// the check reads the DB.
+    recheck: Arc<tokio::sync::Notify>,
     /// Voice rooms this socket has joined (`op: "sig"`). Independent of
     /// chat topic subscriptions.
     pub(super) rooms: HashMap<Uuid, VoiceSeat>,
@@ -200,6 +208,12 @@ impl ConnTable {
         tokio::spawn(async move {
             this.run_subscriber().await;
         });
+        let roster = VoiceRoster {
+            connections: self.clone(),
+        };
+        tokio::spawn(async move {
+            roster.run_rosters().await;
+        });
     }
 
     pub fn is_ready(&self) -> bool {
@@ -231,12 +245,14 @@ impl ConnTable {
                 session: None,
                 access: HashMap::new(),
                 servers: HashSet::new(),
+                scopes: HashMap::new(),
                 dms: HashSet::new(),
                 voice_rosters: HashMap::new(),
                 typing: HashSet::new(),
                 topics: HashSet::new(),
                 epochs: HashMap::new(),
                 closed: tokio::sync::watch::channel(false).0,
+                recheck: Arc::new(tokio::sync::Notify::new()),
                 rooms: HashMap::new(),
                 catching_up: HashMap::new(),
                 tx,
@@ -248,6 +264,15 @@ impl ConnTable {
     pub async fn watch_server(&self, id: ConnId, server_id: Uuid) {
         if let Some(socket) = self.inner.sockets.write().await.get_mut(&id) {
             socket.servers.insert(server_id);
+        }
+    }
+
+    /// [`Self::watch_server`] for a topic the socket subscribes to, so the
+    /// server can be dropped again with its last topic.
+    pub async fn watch_topic(&self, id: ConnId, server_id: Uuid, topic: Topic) {
+        if let Some(socket) = self.inner.sockets.write().await.get_mut(&id) {
+            socket.servers.insert(server_id);
+            socket.scopes.insert(topic, server_id);
         }
     }
 
@@ -332,10 +357,51 @@ impl ConnTable {
             .unwrap_or(0)
     }
 
+    /// Drop the topic and, with the last topic of its server, the server.
+    /// A voice seat on that server keeps it: signaling and the membership
+    /// recheck still need it. Presence keys stay; the user is still online
+    /// and `clear_conn` reads the user's Redis server set on detach.
     pub async fn unsubscribe(&self, id: ConnId, topic: Topic) {
         if let Some(socket) = self.inner.sockets.write().await.get_mut(&id) {
             socket.topics.remove(&topic);
             socket.catching_up.remove(&topic);
+            if let Some(server) = socket.scopes.remove(&topic)
+                && !socket.scopes.values().any(|sid| *sid == server)
+                && !socket.rooms.values().any(|seat| seat.server_id == server)
+            {
+                socket.servers.remove(&server);
+                socket.dms.remove(&server);
+                socket.access.remove(&server);
+                socket.voice_rosters.remove(&server);
+            }
+        }
+    }
+
+    /// Wake local sockets that `target` may concern for an immediate check.
+    fn recheck_local(sockets: &HashMap<ConnId, Socket>, target: &Recheck) {
+        for socket in sockets.values() {
+            let wanted = match target {
+                Recheck::User(user_id) => socket.user_id == *user_id,
+                Recheck::Server(server_id) => {
+                    socket.access.contains_key(server_id)
+                        || socket.servers.contains(server_id)
+                        || socket
+                            .rooms
+                            .values()
+                            .any(|seat| seat.server_id == *server_id)
+                }
+                Recheck::Channel(channel_id) => {
+                    socket.topics.contains(&Topic::Channel(*channel_id))
+                        || socket.rooms.contains_key(channel_id)
+                }
+                Recheck::Session(key) => socket
+                    .session
+                    .as_ref()
+                    .is_some_and(|(session, _)| session == key),
+            };
+            if wanted {
+                socket.recheck.notify_one();
+            }
         }
     }
 
@@ -382,6 +448,9 @@ impl ConnTable {
                 "Redis PubSub subscribe",
             ))
         })??;
+        // Revocation notices published while this process was not subscribed
+        // are gone. The resync frame stands in for them: its delivery runs
+        // the session and access check like every dequeued batch.
         self.resync_sockets().await;
         self.inner.subscribed.store(true, Ordering::SeqCst);
         debug!("gateway subscribed to redis pub/sub");
@@ -408,6 +477,15 @@ impl ConnTable {
         #[derive(serde::Deserialize)]
         struct Discovery {
             c: Uuid,
+        }
+        if channel == RECHECK_CHANNEL {
+            match serde_json::from_str::<Recheck>(raw) {
+                Ok(target) => {
+                    Self::recheck_local(&*self.inner.sockets.read().await, &target);
+                }
+                Err(_) => warn!(channel, "redis payload is not a recheck notice"),
+            }
+            return;
         }
         if let Some(raw_user) = channel.strip_prefix("gb:dm:") {
             if let (Ok(user), Ok(Discovery { c })) = (
@@ -827,6 +905,8 @@ impl Gateway {
                 socket.access.remove(&server_id);
                 socket.servers.remove(&server_id);
                 socket.dms.remove(&server_id);
+                socket.scopes.retain(|_, sid| *sid != server_id);
+                socket.voice_rosters.remove(&server_id);
                 socket.topics.remove(&Topic::Server(server_id));
                 socket.catching_up.remove(&Topic::Server(server_id));
                 for channel_id in channel_ids {
@@ -917,17 +997,84 @@ impl Gateway {
         (id, receiver)
     }
 
+    /// Close this process's sockets of a session whose row is already
+    /// deleted, then tell the other API processes to check theirs.
     pub async fn revoke_session(&self, hash: &str) {
-        let mut sockets = self.connections.inner.sockets.write().await;
-        for socket in sockets.values_mut() {
-            if let Some((session, cancel)) = &socket.session
-                && session == hash
-            {
-                socket.topics.clear();
-                socket.catching_up.clear();
-                let _ = cancel.send(true);
+        {
+            let mut sockets = self.connections.inner.sockets.write().await;
+            for socket in sockets.values_mut() {
+                if let Some((session, cancel)) = &socket.session
+                    && session == hash
+                {
+                    socket.topics.clear();
+                    socket.catching_up.clear();
+                    let _ = cancel.send(true);
+                }
             }
         }
+        self.announce_recheck(Recheck::Session(hash.to_owned()))
+            .await;
+    }
+
+    /// Ask every API process to check the sockets `target` may concern now
+    /// instead of at their next periodic check. Call it after the change is
+    /// committed: the check reads the DB, and a check that runs first sees
+    /// nothing to revoke. Best effort; a lost notice leaves the periodic
+    /// check, and a Pub/Sub reconnect resyncs (and so checks) every socket.
+    pub async fn announce_recheck(&self, target: Recheck) {
+        let raw = match serde_json::to_string(&target) {
+            Ok(raw) => raw,
+            Err(err) => {
+                warn!(error = %err, "recheck notice not serialized");
+                return;
+            }
+        };
+        // Bounded like the logout cleanup: the change is committed already,
+        // and a slow Redis must not hold the response.
+        let published = tokio::time::timeout(
+            Duration::from_millis(500),
+            self.connections.with_conn(|mut conn| {
+                let raw = raw.clone();
+                async move {
+                    redis::cmd("PUBLISH")
+                        .arg(RECHECK_CHANNEL)
+                        .arg(raw)
+                        .query_async::<()>(&mut conn)
+                        .await
+                }
+            }),
+        )
+        .await;
+        match published {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                warn!(error = %err, "recheck notice not published; periodic checks remain")
+            }
+            Err(_) => warn!("recheck notice timed out; periodic checks remain"),
+        }
+    }
+
+    /// Resolves when this socket should check now. `None` once detached.
+    pub async fn recheck_signal(&self, id: ConnId) -> Option<Arc<tokio::sync::Notify>> {
+        self.connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .get(&id)
+            .map(|socket| socket.recheck.clone())
+    }
+
+    /// Whether this socket holds a voice seat, whose lease the security tick
+    /// renews every second right after its check.
+    pub async fn holds_seat(&self, id: ConnId) -> bool {
+        self.connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .get(&id)
+            .is_some_and(|socket| !socket.rooms.is_empty())
     }
 
     pub async fn wants_frame(&self, id: ConnId, frame: &ServerFrame) -> bool {
@@ -1169,6 +1316,10 @@ impl Gateway {
         self.connections.watch_server(id, server_id).await
     }
 
+    pub async fn watch_topic(&self, id: ConnId, server_id: Uuid, topic: Topic) {
+        self.connections.watch_topic(id, server_id, topic).await
+    }
+
     pub async fn mark_dm(&self, id: ConnId, dm_id: Uuid) {
         self.connections.mark_dm(id, dm_id).await
     }
@@ -1333,6 +1484,25 @@ pub(super) fn redis_err(err: redis::RedisError) -> ApiError {
 /// read positions and notification settings (`gb:u:{user}`).
 const USER_PREFIX: &str = "gb:u:";
 
+/// Revocation notices between API processes, see [`Recheck`].
+const RECHECK_CHANNEL: &str = "gb:rv";
+
+/// Which sockets a committed revocation may concern: an account (kick, ban,
+/// leave), every socket bound to a server (server delete, lost voice
+/// permissions), a channel (delete) or one session (logout, password
+/// change). Receivers only check those sockets against the DB.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Recheck {
+    #[serde(rename = "u")]
+    User(Uuid),
+    #[serde(rename = "s")]
+    Server(Uuid),
+    #[serde(rename = "c")]
+    Channel(Uuid),
+    #[serde(rename = "k")]
+    Session(String),
+}
+
 impl Gateway {
     /// Best effort: a socket that misses one catches up with the next REST
     /// snapshot (focus, poll, reconnect).
@@ -1436,6 +1606,110 @@ mod resilience_tests {
         g.detach(fast).await;
         g.detach(catching).await;
     }
+    /// Whether the socket still watches a server and holds its membership.
+    async fn watched(g: &Gateway, id: ConnId) -> (bool, bool) {
+        let sockets = g.connections.inner.sockets.read().await;
+        let socket = &sockets[&id];
+        (!socket.servers.is_empty(), !socket.access.is_empty())
+    }
+
+    #[tokio::test]
+    async fn last_unsubscribe_of_a_server_drops_it_unless_a_seat_is_there() {
+        let g = gateway();
+        g.wait_ready(Duration::from_secs(2)).await.unwrap();
+        let (u, s, text, other) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let (tx, _rx) = mpsc::channel(128);
+        let (id, _) = g.attach_session(u, "prune".into(), tx).await;
+        let g = &g;
+        let bind = |id| async move {
+            if let Some(socket) = g.connections.inner.sockets.write().await.get_mut(&id) {
+                socket.access.insert(s, (chrono::Utc::now(), 0));
+                socket.voice_rosters.insert(s, Vec::new());
+            }
+        };
+        bind(id).await;
+        for topic in [Topic::Server(s), Topic::Channel(text)] {
+            g.watch_topic(id, s, topic).await;
+            g.begin_catch_up(id, topic).await;
+            g.finish_catch_up(id, topic, 0).await;
+        }
+        g.unsubscribe(id, Topic::Channel(text)).await;
+        assert_eq!(
+            watched(g, id).await,
+            (true, true),
+            "the server topic is left"
+        );
+        g.unsubscribe(id, Topic::Server(s)).await;
+        assert_eq!(watched(g, id).await, (false, false));
+        assert!(
+            g.connections.inner.sockets.read().await[&id]
+                .voice_rosters
+                .is_empty()
+        );
+        // No presence or signaling for it any more.
+        assert!(
+            !g.wants_frame(
+                id,
+                &ServerFrame::presence(s, u, super::super::protocol::PresenceStatus::Online)
+            )
+            .await
+        );
+
+        // A seat on the server keeps it through the last unsubscribe.
+        bind(id).await;
+        g.watch_topic(id, s, Topic::Channel(text)).await;
+        g.join_voice(id, u, s, other).await.unwrap();
+        g.unsubscribe(id, Topic::Channel(text)).await;
+        assert_eq!(watched(g, id).await, (true, true));
+        g.detach(id).await;
+    }
+
+    #[tokio::test]
+    async fn recheck_notice_wakes_only_the_sockets_it_names_on_every_process() {
+        let (a, b) = (gateway(), gateway());
+        a.wait_ready(Duration::from_secs(2)).await.unwrap();
+        b.wait_ready(Duration::from_secs(2)).await.unwrap();
+        let (u, other, s, c) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let (tx, _rx) = mpsc::channel(128);
+        let (mine, _) = b.attach_session(u, "mine".into(), tx).await;
+        let (tx, _rx2) = mpsc::channel(128);
+        let (theirs, _) = b.attach_session(other, "theirs".into(), tx).await;
+        b.watch_topic(theirs, s, Topic::Channel(c)).await;
+        b.begin_catch_up(theirs, Topic::Channel(c)).await;
+        let mine_signal = b.recheck_signal(mine).await.unwrap();
+        let theirs_signal = b.recheck_signal(theirs).await.unwrap();
+        let woke = |signal: Arc<tokio::sync::Notify>| async move {
+            tokio::time::timeout(Duration::from_millis(500), signal.notified())
+                .await
+                .is_ok()
+        };
+
+        // Published on process `a`, delivered to the sockets of `b`.
+        a.announce_recheck(Recheck::User(u)).await;
+        assert!(woke(mine_signal.clone()).await);
+        assert!(!woke(theirs_signal.clone()).await);
+        a.announce_recheck(Recheck::Channel(c)).await;
+        assert!(woke(theirs_signal.clone()).await);
+        assert!(!woke(mine_signal.clone()).await);
+        a.announce_recheck(Recheck::Server(s)).await;
+        assert!(woke(theirs_signal.clone()).await);
+        a.announce_recheck(Recheck::Session("mine".into())).await;
+        assert!(woke(mine_signal.clone()).await);
+        assert!(!woke(theirs_signal).await);
+        b.detach(mine).await;
+        b.detach(theirs).await;
+    }
+
     #[tokio::test]
     async fn seq_epoch_and_log_snapshot_are_atomic_under_concurrent_publish() {
         let g = gateway();

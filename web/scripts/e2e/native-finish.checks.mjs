@@ -40,6 +40,7 @@ async function finishProbe(
       const page = {
         goto: async () => {},
         waitForURL: async () => {},
+        waitForFunction: async () => {},
         url: () => "http://127.0.0.1:5174/s/server-control/c/text-control",
         setDefaultTimeout() {},
         isClosed: () => pageClosed,

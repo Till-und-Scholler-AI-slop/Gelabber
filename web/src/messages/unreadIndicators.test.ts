@@ -35,6 +35,10 @@ describe("unread indicators", () => {
     };
     expect(unreadMark([muted], null, 0)).toEqual({ count: 0, any: false });
     expect(unreadMark([muted], null, 120_000)).toEqual({ count: 4, any: true });
+    // A muted channel adds no dot either.
+    expect(
+      unreadMark([{ ...row("quiet", "s", 3), muted: true }], null, 0),
+    ).toEqual({ count: 0, any: false });
     expect(unreadMark([], null, 0)).toEqual({ count: 0, any: false });
   });
 

@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { ScreenIcon } from "../components/Icons.tsx";
+import { CheckIcon, ScreenIcon } from "../components/Icons.tsx";
 import { useBlocker } from "@tanstack/react-router";
 import { confirmAction } from "../components/confirm.ts";
+import { Button } from "../components/ui/Button.tsx";
+import { InlineStatus } from "../components/ui/InlineStatus.tsx";
+import type { InlineStatusValue } from "../components/ui/useInlineStatus.ts";
+import { ChipGroup } from "../components/ui/ChipGroup.tsx";
+import { nextChipIndex } from "../components/ui/chipKeys.ts";
 import { randomUuid } from "../lib/uuid.ts";
 import { blockThemeLeave, confirmDiscardThemeDraft } from "./discardDraft.ts";
 import { BUILTIN_THEMES, builtinTheme } from "./presets.ts";
@@ -21,6 +26,12 @@ import {
   syncThemes,
   useAccountThemes,
 } from "./account.ts";
+import {
+  endThemePreview,
+  escapeEndsPreview,
+  galleryPreview,
+  previewTheme,
+} from "./preview.ts";
 import { ThemePreview } from "./ThemePreview.tsx";
 import "./themes.css";
 
@@ -35,6 +46,14 @@ const labels = {
   border: "Rahmen",
 };
 const styles = { clear: "Klar", soft: "Weich", terminal: "Terminal" } as const;
+const FILTERS = [
+  { value: "all", label: "Alle" },
+  { value: "light", label: "Hell" },
+  { value: "dark", label: "Dunkel" },
+  { value: "own", label: "Eigene" },
+] as const;
+type Filter = (typeof FILTERS)[number]["value"];
+const systemDark = () => matchMedia("(prefers-color-scheme: dark)").matches;
 function copyTheme(theme: ThemeDefinition): ThemeDefinition {
   return {
     ...theme,
@@ -96,29 +115,32 @@ function ColorField({
   );
 }
 
-export function ThemesPanel({
-  onDirtyChange,
-}: {
-  onDirtyChange: (dirty: boolean) => void;
-}) {
+export function ThemesPanel() {
   const state = useAccountThemes();
-  const [filter, setFilter] = useState("all");
-  const [selected, setSelected] = useState(state.doc.active);
+  const [filter, setFilter] = useState<Filter>("all");
+  // The card tried on, or null for the account's theme, which then follows
+  // a sync or another device without turning into a preview of the old one.
+  const [picked, setPicked] = useState<string | null>(null);
   const [draft, setDraft] = useState<ThemeDefinition | null>(null);
   const [baseline, setBaseline] = useState("");
-  const [notice, setNotice] = useState("");
-  const editor = useRef<HTMLDivElement>(null);
+  const [notice, setNotice] = useState<InlineStatusValue>(null);
   const file = useRef<HTMLInputElement>(null);
-  const gallery = useRef<HTMLDivElement>(null);
+  const cards = useRef<(HTMLButtonElement | null)[]>([]);
   const all = [...BUILTIN_THEMES, ...state.doc.customThemes];
+  const active = state.doc.active;
+  const selected = picked ?? active;
+  const themeName = (id: string) =>
+    id === "system"
+      ? "System"
+      : (all.find((t) => t.id === id)?.name ?? builtinTheme("dark").name);
   const chosen =
     selected === "system"
-      ? builtinTheme(
-          matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
-        )
+      ? builtinTheme(systemDark() ? "dark" : "light")
       : (all.find((t) => t.id === selected) ?? builtinTheme("dark"));
   const shown = draft ?? chosen;
   const dirty = draft !== null && JSON.stringify(draft) !== baseline;
+  const preview = galleryPreview(picked, active, draft !== null);
+  const previewing = preview !== null;
   const blocked =
     state.status === "saving" ||
     state.status === "loading" ||
@@ -126,58 +148,93 @@ export function ThemesPanel({
     !!state.pending;
   const issues = contrastIssues(shown);
   const canCreate = state.doc.customThemes.length < MAX_THEMES;
+  const options: { id: string; theme: ThemeDefinition | null }[] = [
+    ...(filter === "all" ? [{ id: "system", theme: null }] : []),
+    ...all
+      .filter(
+        (t) =>
+          filter === "all" ||
+          (filter === "own" ? t.id.startsWith("custom-") : t.mode === filter),
+      )
+      .map((theme) => ({ id: theme.id, theme })),
+  ];
+  const checkedIndex = options.findIndex((option) => option.id === selected);
   useBlocker({
     shouldBlockFn: () => blockThemeLeave(dirty),
     enableBeforeUnload: dirty,
   });
   useEffect(() => {
-    onDirtyChange(dirty);
-    return () => onDirtyChange(false);
-  }, [dirty, onDirtyChange]);
-  useEffect(() => {
     void syncThemes();
   }, []);
+  // The gallery tries a theme on across the whole app. Leaving settings or
+  // this area puts the account's theme back.
+  useEffect(() => {
+    if (preview) previewTheme(preview);
+    else endThemePreview();
+  }, [preview]);
+  useEffect(() => endThemePreview, []);
+  const revert = () => {
+    setPicked(null);
+    setNotice(null);
+  };
+  useEffect(() => {
+    if (!previewing) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!escapeEndsPreview(event)) return;
+      event.preventDefault();
+      setPicked(null);
+      setNotice(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [previewing]);
   const abandon = async () => !dirty || (await confirmDiscardThemeDraft());
   const open = async (theme: ThemeDefinition, isNew: boolean) => {
     if (!(await abandon())) return;
     setDraft(theme);
     setBaseline(isNew ? "" : JSON.stringify(theme));
-    setNotice("");
-    requestAnimationFrame(() => {
-      editor.current?.scrollIntoView({ block: "start", behavior: "instant" });
-      editor.current?.querySelector<HTMLInputElement>("input")?.focus();
-    });
+    setNotice(null);
   };
+  // Choosing only previews: no scrolling, and focus stays on the card.
   const choose = async (id: string) => {
     if (!(await abandon())) return;
     setDraft(null);
-    setSelected(id);
-    setNotice("");
-    requestAnimationFrame(() => {
-      editor.current?.scrollIntoView({ block: "start", behavior: "instant" });
-      editor.current?.focus();
-    });
+    setPicked(id === active ? null : id);
+    setNotice(null);
+  };
+  const keep = async () => {
+    const name = themeName(selected);
+    if (await changeTheme({ kind: "apply", id: selected })) {
+      setPicked(null);
+      setNotice({
+        tone: "success",
+        message: `„${name}“ ist jetzt dein Theme.`,
+      });
+    } else
+      setNotice({
+        tone: "error",
+        message: "Nicht gespeichert – erneut versuchen",
+      });
   };
   return (
     <div className="themes-panel">
       <div className="themes-toolbar">
-        <div>
-          <strong>Dein Look. Dein Gelabber.</strong>
-          <p>Wähle eine Farbwelt oder gestalte deine eigene.</p>
-        </div>
+        <p>Wähle eine Farbwelt oder gestalte deine eigene.</p>
         <div className="themes-actions">
-          <button
+          <Button
+            size="sm"
             disabled={!canCreate || blocked}
             onClick={() => open(copyTheme(chosen), true)}
           >
             + Eigenes Theme
-          </button>
-          <button
+          </Button>
+          <Button
+            size="sm"
             disabled={!canCreate || blocked}
             onClick={() => file.current?.click()}
           >
             Importieren
-          </button>
+          </Button>
         </div>
       </div>
       <input
@@ -191,16 +248,23 @@ export function ThemesPanel({
           e.target.value = "";
           if (!selectedFile) return;
           if (selectedFile.size > MAX_IMPORT_BYTES) {
-            setNotice("Die Datei darf höchstens 64 KiB groß sein.");
+            setNotice({
+              tone: "error",
+              message: "Die Datei darf höchstens 64 KiB groß sein.",
+            });
             return;
           }
           try {
             const theme = importTheme(await selectedFile.text());
             void open(theme, true);
           } catch (error) {
-            setNotice(
-              error instanceof Error ? error.message : "Import fehlgeschlagen.",
-            );
+            setNotice({
+              tone: "error",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Import fehlgeschlagen.",
+            });
           }
         }}
       />
@@ -213,11 +277,12 @@ export function ThemesPanel({
           </span>
           {state.status !== "saving" && (
             <div className="themes-actions">
-              <button onClick={() => void retryThemes()}>
+              <Button size="sm" onClick={() => void retryThemes()}>
                 {state.pending ? "Erneut anwenden" : "Erneut versuchen"}
-              </button>
+              </Button>
               {state.pending && (
-                <button
+                <Button
+                  size="sm"
                   onClick={async () => {
                     if (
                       await confirmAction({
@@ -231,114 +296,99 @@ export function ThemesPanel({
                   }}
                 >
                   Account-Stand laden
-                </button>
+                </Button>
               )}
             </div>
           )}
         </div>
       )}
-      {notice && (
-        <p className="themes-sync" role="status">
-          {notice}
-        </p>
-      )}
-      <div className="themes-filter" role="group" aria-label="Themes filtern">
-        {[
-          ["all", "Alle"],
-          ["light", "Hell"],
-          ["dark", "Dunkel"],
-          ["own", "Eigene"],
-        ].map(([id, label]) => (
-          <button
-            key={id}
-            aria-pressed={filter === id}
-            onClick={() => setFilter(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      <div ref={gallery} className="themes-gallery" aria-label="Theme-Galerie">
-        {filter === "all" && (
-          <button
-            className="theme-card theme-system"
-            aria-pressed={selected === "system"}
-            onClick={() => choose("system")}
-          >
-            <span className="theme-system-symbol">
-              <ScreenIcon size={32} />
-            </span>
-            <strong>System</strong>
-            <span>Gelabber Hell oder Dunkel · wie dein Gerät</span>
-            {state.doc.active === "system" && (
-              <b className="theme-active">Aktiv</b>
-            )}
-          </button>
-        )}
-        {all
-          .filter(
-            (t) =>
-              filter === "all" ||
-              (filter === "own"
-                ? t.id.startsWith("custom-")
-                : t.mode === filter),
-          )
-          .map((theme) => (
-            <button
-              key={theme.id}
-              className="theme-card"
-              aria-pressed={selected === theme.id}
-              onClick={() => choose(theme.id)}
-            >
-              <ThemePreview theme={theme} small />
-              <div className="theme-card-description">
-                <strong>{theme.name}</strong>
-                <span>
-                  {theme.mode === "dark" ? "Dunkel" : "Hell"} ·{" "}
-                  {styles[theme.style]}
-                </span>
-                <div className="theme-swatches">
-                  {[
-                    theme.colors.background,
-                    theme.colors.surface,
-                    theme.colors.text,
-                    theme.colors.accent,
-                  ].map((color, i) => (
-                    <i key={i} style={{ background: color }} />
-                  ))}
-                </div>
-                {state.doc.active === theme.id && (
-                  <b className="theme-active">Aktiv</b>
+      <InlineStatus className="themes-notice" status={notice} />
+      <ChipGroup
+        className="themes-filter"
+        label="Themes filtern"
+        options={FILTERS}
+        value={filter}
+        onChange={setFilter}
+      />
+      <div className="themes-layout">
+        <div>
+          <div className="themes-gallery" role="radiogroup" aria-label="Themes">
+            {options.map(({ id, theme }, index) => (
+              <button
+                key={id}
+                ref={(element) => {
+                  cards.current[index] = element;
+                }}
+                type="button"
+                role="radio"
+                aria-checked={selected === id}
+                tabIndex={
+                  index === (checkedIndex >= 0 ? checkedIndex : 0) ? 0 : -1
+                }
+                className={theme ? "theme-card" : "theme-card theme-system"}
+                onClick={() => void choose(id)}
+                onKeyDown={(event) => {
+                  const next = nextChipIndex(
+                    event.key,
+                    index,
+                    options.map(() => false),
+                  );
+                  if (next === null) return;
+                  event.preventDefault();
+                  cards.current[next]?.focus();
+                  void choose(options[next].id);
+                }}
+              >
+                {theme ? (
+                  <>
+                    <ThemePreview theme={theme} small />
+                    <span className="theme-card-description">
+                      <strong>{theme.name}</strong>
+                      <span>
+                        {theme.mode === "dark" ? "Dunkel" : "Hell"} ·{" "}
+                        {styles[theme.style]}
+                      </span>
+                      <span className="theme-swatches" aria-hidden="true">
+                        {[
+                          theme.colors.background,
+                          theme.colors.surface,
+                          theme.colors.text,
+                          theme.colors.accent,
+                        ].map((color, i) => (
+                          <i key={i} style={{ background: color }} />
+                        ))}
+                      </span>
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="theme-system-symbol">
+                      <ScreenIcon size={32} />
+                    </span>
+                    <strong>System</strong>
+                    <span>Gelabber Hell oder Dunkel · wie dein Gerät</span>
+                  </>
                 )}
-              </div>
-            </button>
-          ))}
-      </div>
-      {filter === "own" && state.doc.customThemes.length === 0 && (
-        <p className="themes-empty">
-          Hier ist Platz für deinen Stil. Starte mit einer Vorlage oder
-          importiere ein Theme.
-        </p>
-      )}
-      <div ref={editor} tabIndex={-1} className="theme-workbench">
-        <header>
-          <button
-            type="button"
-            onClick={() => {
-              gallery.current?.scrollIntoView({
-                block: "start",
-                behavior: "instant",
-              });
-              gallery.current
-                ?.querySelector<HTMLButtonElement>('[aria-pressed="true"]')
-                ?.focus();
-            }}
-          >
-            Zur Galerie
-          </button>
-          <div>
+                {active === id && <b className="theme-active">Aktiv</b>}
+                {selected === id && (
+                  <span className="theme-check" aria-hidden="true">
+                    <CheckIcon size={14} />
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+          {filter === "own" && state.doc.customThemes.length === 0 && (
+            <p className="themes-empty">
+              Hier ist Platz für deinen Stil. Starte mit einer Vorlage oder
+              importiere ein Theme.
+            </p>
+          )}
+        </div>
+        <div className="theme-workbench">
+          <header>
             <span className="theme-eyebrow">
-              {draft ? "DEIN ENTWURF" : "VORSCHAU"}
+              {draft ? "Dein Entwurf" : "Vorschau"}
             </span>
             <h3>
               {draft
@@ -347,23 +397,12 @@ export function ThemesPanel({
                   ? "Wie dein Gerät"
                   : chosen.name}
             </h3>
-          </div>
-          {!draft && (
-            <span className="theme-preview-hint">
-              Dein aktives Theme bleibt bis zum Anwenden erhalten.
-            </span>
-          )}
-        </header>
-        <div className="theme-workbench-grid">
+          </header>
           <div className="theme-large-preview">
             <ThemePreview
               theme={
                 selected === "system" && !draft
-                  ? builtinTheme(
-                      matchMedia("(prefers-color-scheme: dark)").matches
-                        ? "dark"
-                        : "light",
-                    )
+                  ? builtinTheme(systemDark() ? "dark" : "light")
                   : shown
               }
             />
@@ -374,14 +413,17 @@ export function ThemesPanel({
                   <p key={issue}>{issue}</p>
                 ))}
                 {draft && (
-                  <button onClick={() => setDraft(fixContrast(draft))}>
+                  <Button
+                    size="sm"
+                    onClick={() => setDraft(fixContrast(draft))}
+                  >
                     Kontraste verbessern
-                  </button>
+                  </Button>
                 )}
               </div>
             )}
           </div>
-          {draft && (
+          {draft ? (
             <form
               className="theme-editor"
               onSubmit={async (e) => {
@@ -392,9 +434,12 @@ export function ThemesPanel({
                     theme: { ...draft, name: draft.name.trim() },
                   })
                 ) {
-                  setSelected(draft.id);
+                  setPicked(null);
                   setDraft(null);
-                  setNotice("Theme gespeichert und angewendet.");
+                  setNotice({
+                    tone: "success",
+                    message: "Theme gespeichert und angewendet.",
+                  });
                 }
               }}
             >
@@ -461,76 +506,89 @@ export function ThemesPanel({
                 </div>
               </fieldset>
               <div className="themes-actions">
-                <button
-                  className="theme-primary"
+                <Button
+                  variant="primary"
                   type="submit"
                   disabled={blocked || !draft.name.trim()}
                 >
                   Speichern und anwenden
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="ghost"
                   onClick={async () => {
                     if (await abandon()) setDraft(null);
                   }}
                 >
                   Abbrechen
-                </button>
+                </Button>
               </div>
             </form>
+          ) : (
+            <div className="themes-actions">
+              <Button
+                size="sm"
+                disabled={!canCreate || blocked}
+                onClick={() => open(copyTheme(chosen), true)}
+              >
+                Als Vorlage verwenden
+              </Button>
+              {chosen.id.startsWith("custom-") && selected !== "system" && (
+                <>
+                  <Button
+                    size="sm"
+                    disabled={blocked}
+                    onClick={() =>
+                      open({ ...chosen, colors: { ...chosen.colors } }, false)
+                    }
+                  >
+                    Bearbeiten
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="danger-outline"
+                    disabled={blocked}
+                    onClick={async () => {
+                      if (
+                        (await confirmAction({
+                          title: `Theme „${chosen.name}“ löschen?`,
+                          confirmLabel: "Löschen",
+                        })) &&
+                        (await changeTheme({ kind: "delete", id: chosen.id }))
+                      ) {
+                        setPicked(null);
+                        setNotice({
+                          tone: "success",
+                          message: "Theme gelöscht.",
+                        });
+                      }
+                    }}
+                  >
+                    Löschen
+                  </Button>
+                </>
+              )}
+              <Button size="sm" onClick={() => exportTheme(chosen)}>
+                Exportieren
+              </Button>
+            </div>
           )}
         </div>
-        {!draft && (
-          <div className="themes-actions theme-preview-actions">
-            <button
-              className="theme-primary"
-              disabled={blocked || selected === state.doc.active}
-              onClick={async () => {
-                if (await changeTheme({ kind: "apply", id: selected }))
-                  setNotice("Theme angewendet.");
-              }}
-            >
-              {selected === state.doc.active ? "Aktives Theme" : "Anwenden"}
-            </button>
-            <button
-              disabled={!canCreate || blocked}
-              onClick={() => open(copyTheme(chosen), true)}
-            >
-              Als Vorlage verwenden
-            </button>
-            {chosen.id.startsWith("custom-") && selected !== "system" && (
-              <>
-                <button
-                  disabled={blocked}
-                  onClick={() =>
-                    open({ ...chosen, colors: { ...chosen.colors } }, false)
-                  }
-                >
-                  Bearbeiten
-                </button>
-                <button
-                  disabled={blocked}
-                  onClick={async () => {
-                    if (
-                      (await confirmAction({
-                        title: `Theme „${chosen.name}“ löschen?`,
-                        confirmLabel: "Löschen",
-                      })) &&
-                      (await changeTheme({ kind: "delete", id: chosen.id }))
-                    ) {
-                      setSelected("dark");
-                      setNotice("Theme gelöscht.");
-                    }
-                  }}
-                >
-                  Löschen
-                </button>
-              </>
-            )}
-            <button onClick={() => exportTheme(chosen)}>Exportieren</button>
-          </div>
-        )}
       </div>
+      {previewing ? (
+        <div className="themes-preview-bar" role="region" aria-label="Vorschau">
+          <span>
+            <strong>„{themeName(selected)}“</strong> wird angezeigt
+          </span>
+          <div className="themes-actions">
+            <Button variant="primary" disabled={blocked} onClick={keep}>
+              Behalten
+            </Button>
+            <Button variant="ghost" onClick={revert}>
+              Zurück zu {themeName(active)}
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <p className="themes-footnote">
         {state.status === "ready"
           ? "Mit deinem Account synchronisiert."

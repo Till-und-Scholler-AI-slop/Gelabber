@@ -12,6 +12,8 @@ import {
   requestPasswordReset,
   resetPassword,
   resetSessionForTests,
+  retrySession,
+  sessionRetryDelay,
   updateProfile,
   uploadAvatar,
   useProfileWrites,
@@ -89,6 +91,86 @@ describe("session store", () => {
     await ensureSession();
     expect(useSession.getState().status).toBe("authenticated");
     expect(useSessionProblems.getState().bootstrap).toBeNull();
+  });
+
+  it("keeps reporting the failure while a retry runs", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))),
+    );
+    await ensureSession();
+    const problem = useSessionProblems.getState().bootstrap;
+    expect(problem).not.toBeNull();
+    expect(useSessionProblems.getState().retryAt).not.toBeNull();
+
+    let answer: (response: Response) => void = () => {};
+    const fetch = vi.fn(
+      () => new Promise<Response>((resolve) => (answer = resolve)),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const retry = retrySession();
+    expect(useSessionProblems.getState()).toMatchObject({
+      bootstrap: problem,
+      checking: true,
+      retryAt: null,
+    });
+    // The request goes out once the auth cookie lock is held.
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    answer(json(200, { user: ada, csrf_token: "back" }));
+    await retry;
+    expect(useSessionProblems.getState()).toMatchObject({
+      bootstrap: null,
+      checking: false,
+      retryAt: null,
+    });
+    expect(useSession.getState().status).toBe("authenticated");
+  });
+
+  it("retries by itself, backing off to 30 s", async () => {
+    expect([1, 2, 3, 4, 5, 9].map(sessionRetryDelay)).toEqual([
+      2_000, 5_000, 15_000, 30_000, 30_000, 30_000,
+    ]);
+    vi.useFakeTimers();
+    try {
+      const fetch = vi.fn(() => Promise.reject(new TypeError("offline")));
+      vi.stubGlobal("fetch", fetch);
+      await ensureSession();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(fetch).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(14_999);
+      expect(fetch).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries at once when the browser is back online", async () => {
+    // The browser's global events, without a `window` the client would use.
+    const page = new EventTarget();
+    vi.stubGlobal("addEventListener", page.addEventListener.bind(page));
+    vi.stubGlobal("removeEventListener", page.removeEventListener.bind(page));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))),
+    );
+    await ensureSession();
+    expect(useSession.getState().status).toBe("unknown");
+
+    const calls = fakeApi({
+      "GET /api/auth/session": () =>
+        json(200, { user: ada, csrf_token: "online" }),
+    });
+    page.dispatchEvent(new Event("online"));
+    await vi.waitFor(() =>
+      expect(useSession.getState().status).toBe("authenticated"),
+    );
+    expect(calls).toEqual(["GET /api/auth/session"]);
+    expect(useSessionProblems.getState().retryAt).toBeNull();
   });
 
   it("login flips the store before the caller continues", async () => {

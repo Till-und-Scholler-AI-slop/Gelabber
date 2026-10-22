@@ -1,4 +1,4 @@
-/* global process, console, window, fetch, URL */
+/* global process, console, window, document, fetch, URL */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -220,10 +220,23 @@ export async function startHarness() {
     await dialog
       .getByRole("button", { name: "Erstellen", exact: true })
       .click();
-    // Creating a community now opens its overview. Select the actual text
-    // channel through the UI before continuing the message scenarios.
+    // Creating a community opens its overview with an invite link already
+    // made. Keep the link, then select the actual text channel through the
+    // UI before continuing the message scenarios.
     await owner.page.waitForURL(/\/s\/[^/]+(?:\/c\/[^/]+)?$/);
     const serverId = new URL(owner.page.url()).pathname.split("/")[2];
+    dialog = owner.page.getByRole("dialog", { name: /einladen$/ });
+    await owner.page.waitForFunction(() =>
+      document
+        .querySelector('input[aria-label="Einladungslink"]')
+        ?.value.includes("/invite/"),
+    );
+    const invite = await dialog
+      .getByRole("textbox", { name: "Einladungslink" })
+      .inputValue();
+    await dialog
+      .getByRole("button", { name: "Schließen", exact: true })
+      .click();
     servers.push({ owner, id: serverId });
     const detail = await api(owner, `/servers/${serverId}`);
     check(detail.status === 200, "fixture-server-detail-missing");
@@ -232,12 +245,10 @@ export async function startHarness() {
     );
     check(textChannel?.id, "fixture-text-channel-missing");
     const textPath = `/s/${serverId}/c/${textChannel.id}`;
-    await owner.page.locator(`a[href="${textPath}"]`).first().click();
+    await owner.page.locator(`a.channel-row-link[href="${textPath}"]`).click();
     await owner.page.waitForURL((url) => url.pathname === textPath);
     async function channel(name, kind = "Voice") {
-      await owner.page
-        .locator('summary[aria-label="Kanal oder Kategorie erstellen"]')
-        .click();
+      await owner.page.locator("summary.server-sidebar-menu-button").click();
       await owner.page
         .getByRole("button", { name: "Kanal erstellen", exact: true })
         .click();
@@ -260,22 +271,11 @@ export async function startHarness() {
       );
       const created = await response.json();
       const path = `/s/${serverId}/c/${created.id}`;
-      await owner.page.locator(`a[href="${path}"]`).click();
+      await owner.page.locator(`.channel-sidebar a[href="${path}"]`).click();
       return path;
     }
     const voicePath = await channel("E2E Voice A");
     const otherPath = await channel("E2E Voice B");
-    await owner.page
-      .getByRole("button", { name: "Leute einladen", exact: true })
-      .click();
-    dialog = owner.page.getByRole("dialog", { name: /Einladen zu/ });
-    await dialog
-      .getByRole("button", { name: "Link erstellen", exact: true })
-      .click();
-    const invite = await dialog
-      .getByRole("textbox", { name: "Einladungslink" })
-      .inputValue();
-    await dialog.getByRole("button", { name: "Fertig", exact: true }).click();
     async function join(who) {
       await who.page.goto(invite);
       await who.page
@@ -595,7 +595,22 @@ export async function confirmDialog(actor, label) {
     .getByRole("button", { name: label, exact: true })
     .click();
 }
+// The screen share and Go Live sit in the call bar's "Teilen" menu.
+const SHARE_MENU_ENTRIES = new Set([
+  "Bildschirm im Raum teilen",
+  "Go Live",
+  "Teilen beenden",
+  "Live beenden",
+]);
 export async function click(actor, name) {
+  if (SHARE_MENU_ENTRIES.has(name)) {
+    await actor.page
+      .getByRole("button", { name: "Teilen", exact: true })
+      .first()
+      .click();
+    await actor.page.getByRole("menuitem", { name, exact: true }).click();
+    return;
+  }
   if (
     name === "Abmelden" &&
     !(await actor.page

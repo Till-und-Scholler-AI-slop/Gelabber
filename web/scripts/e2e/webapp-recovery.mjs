@@ -229,9 +229,11 @@ try {
       };
       await member.page.route("**/api/auth/session", handler);
       await member.page.goto(`${base}${path}`);
-      await member.page
-        .getByRole("button", { name: "Sitzung erneut prüfen", exact: true })
-        .waitFor();
+      const retry = member.page.getByRole("button", {
+        name: "Jetzt erneut versuchen",
+        exact: true,
+      });
+      await retry.waitFor();
       assert.equal(
         new URL(member.page.url()).pathname,
         path,
@@ -251,9 +253,8 @@ try {
         (row) =>
           row.url().endsWith("/api/auth/session") && row.status() === 200,
       );
-      await member.page
-        .getByRole("button", { name: "Sitzung erneut prüfen", exact: true })
-        .click();
+      // The card also retries by itself; whichever comes first.
+      await retry.click({ timeout: 5_000 }).catch(() => {});
       await response;
       await member.page.getByRole("log", { name: "Nachrichten" }).waitFor();
       assert.equal(
@@ -261,13 +262,7 @@ try {
         path,
         "retry-restores-same-target",
       );
-      assert.equal(
-        await member.page
-          .getByRole("button", { name: "Sitzung erneut prüfen", exact: true })
-          .count(),
-        0,
-        "bootstrap-warning-cleared",
-      );
+      assert.equal(await retry.count(), 0, "bootstrap-warning-cleared");
       await liveTopic(member, channel);
       await liveTopic(member, second);
     },

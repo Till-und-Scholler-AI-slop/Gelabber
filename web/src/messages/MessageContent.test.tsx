@@ -41,7 +41,7 @@ describe("message content", () => {
     expect(out).toContain(
       '<code data-lang="js">**x** https://a.example</code>',
     );
-    expect(out).toContain(">Kopieren</button>");
+    expect(out).toMatch(/<button[^>]*>.*<span>Kopieren<\/span>.*<\/button>/);
     expect(out).not.toContain("<a ");
   });
 

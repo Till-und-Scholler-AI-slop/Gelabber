@@ -1,39 +1,37 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ReactNode } from "react";
+
+import { Button, type ButtonProps } from "./ui/Button.tsx";
 
 type SubmitButtonProps = Omit<
-  ButtonHTMLAttributes<HTMLButtonElement>,
-  "type"
+  ButtonProps,
+  "type" | "pending" | "pendingLabel" | "variant"
 > & {
   pending: boolean;
   pendingLabel: string;
+  /** Seconds the server asked to wait; the button counts them down. */
+  cooldown?: number;
   children: ReactNode;
 };
 
 /**
- * Pending state is a label swap, not a spinner: the request has a hard
- * timeout, so the label always flips back — to success or to an inline error.
+ * The form's primary action. Pending state is a label swap, not a spinner:
+ * the request has a hard timeout, so the label always flips back — to
+ * success or to an inline error.
  */
 export function SubmitButton({
-  pending,
-  pendingLabel,
-  children,
+  cooldown = 0,
   disabled,
-  className,
-  ...rest
+  children,
+  ...props
 }: SubmitButtonProps) {
   return (
-    <button
+    <Button
       type="submit"
-      disabled={pending || disabled}
-      aria-busy={pending || undefined}
-      className={[
-        "lr-submit rounded-lg bg-neutral-900 dark:bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition",
-        "hover:bg-neutral-700 dark:hover:bg-neutral-600 disabled:cursor-not-allowed disabled:opacity-60",
-        className ?? "",
-      ].join(" ")}
-      {...rest}
+      variant="primary"
+      disabled={disabled || cooldown > 0}
+      {...props}
     >
-      {pending ? pendingLabel : children}
-    </button>
+      {cooldown > 0 ? `Erneut versuchen in ${cooldown} s` : children}
+    </Button>
   );
 }

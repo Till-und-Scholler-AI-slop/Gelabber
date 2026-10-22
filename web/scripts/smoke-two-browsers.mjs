@@ -243,11 +243,25 @@ try {
   const serverDialog = a.page.getByRole("dialog", { name: "Server erstellen" });
   await serverDialog.getByLabel("Name").fill(`Smoke ${suffix}`);
   await serverDialog.getByRole("button", { name: "Erstellen" }).click();
+  // A new server opens on its overview, with an invite link already made.
+  await a.page.waitForURL(/\/s\/[^/]+$/);
+  const inviteDialog = a.page.getByRole("dialog", { name: /einladen$/ });
+  await a.page.waitForFunction(() =>
+    document
+      .querySelector('input[aria-label="Einladungslink"]')
+      ?.value.includes("/invite/"),
+  );
+  const invite = await inviteDialog
+    .getByRole("textbox", { name: "Einladungslink" })
+    .inputValue();
+  await inviteDialog.getByRole("button", { name: "Schließen" }).click();
+  await a.page
+    .getByRole("link", { name: /allgemein/ })
+    .first()
+    .click();
   await a.page.waitForURL(/\/s\/[^/]+\/c\//);
   const textUrl = a.page.url();
-  await a.page
-    .locator('summary[aria-label="Kanal oder Kategorie erstellen"]')
-    .click();
+  await a.page.locator("summary.server-sidebar-menu-button").click();
   await a.page.getByRole("button", { name: "Kanal erstellen" }).click();
   const channelDialog = a.page.getByRole("dialog", { name: "Kanal erstellen" });
   await channelDialog.getByText("Voice", { exact: true }).click();
@@ -255,14 +269,6 @@ try {
   await channelDialog.getByRole("button", { name: "Erstellen" }).click();
   await a.page.getByRole("link", { name: "Smoke Voice" }).click();
   const voiceUrl = a.page.url();
-
-  await a.page.getByRole("button", { name: "Leute einladen" }).click();
-  const inviteDialog = a.page.getByRole("dialog", { name: /Einladen zu/ });
-  await inviteDialog.getByRole("button", { name: "Link erstellen" }).click();
-  const invite = await inviteDialog
-    .getByRole("textbox", { name: "Einladungslink" })
-    .inputValue();
-  await inviteDialog.getByRole("button", { name: "Fertig" }).click();
 
   const b = await participant("Smoke B");
   await b.page.goto(invite);
@@ -288,7 +294,10 @@ try {
   await settings.getByLabel("Ton teilen", { exact: true }).check();
   await settings.getByRole("button", { name: "Fertig" }).click();
 
-  await a.page.getByRole("button", { name: "Kamera an" }).first().click();
+  await a.page
+    .getByRole("button", { name: "Kamera", exact: true })
+    .first()
+    .click();
   await remoteVideo(b.page, "Smoke A");
   await relaySelected(a.page);
   await relaySelected(b.page);
@@ -327,9 +336,13 @@ try {
     );
   }
 
+  // The screen share sits in the call bar's "Teilen" menu.
   await a.page
-    .getByRole("button", { name: "Bildschirm teilen" })
+    .getByRole("button", { name: "Teilen", exact: true })
     .first()
+    .click();
+  await a.page
+    .getByRole("menuitem", { name: "Bildschirm im Raum teilen", exact: true })
     .click();
   const screenTile = b.page.locator("figure").filter({ hasText: "Bildschirm" });
   await screenTile

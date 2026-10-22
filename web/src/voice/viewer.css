@@ -1,36 +1,125 @@
-.voice-video-actions {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 6px;
-  max-width: calc(100% - 16px);
+/* A video tile: the picture, its caption and badges, and icon actions that
+   show on hover or focus (on a tap under a finger) over a scrim. */
+.voice-video-tile {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--lr-radius-lg);
+  background: #0b0d0e;
+  color: #fff;
 }
-.voice-video-actions button,
-.stream-viewer-header button,
-.voice-fullscreen-error button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 36px;
-  padding: 6px 10px;
-  border: 1px solid #ffffff30;
-  border-radius: 7px;
-  color: white;
-  background: #151819e8;
-  font-size: 12px;
+.voice-video-tile.is-selectable {
   cursor: pointer;
 }
-.voice-video-actions button:hover,
-.stream-viewer-header button:hover {
-  background: #343a3e;
+.voice-video-caption {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  overflow: hidden;
+  padding: 4px 8px;
+  background: rgb(0 0 0 / 0.5);
+  font: var(--lr-type-meta);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.voice-video-actions button:focus-visible,
-.stream-viewer-header button:focus-visible {
-  outline: 2px solid var(--lr-accent);
+.voice-video-live {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 2px 6px;
+  border-radius: var(--lr-radius-xs);
+  background: var(--lr-danger-bg);
+  color: var(--lr-on-danger);
+  font: var(--lr-type-caps);
+}
+.voice-video-limit {
+  padding: 2px 6px;
+  border-radius: var(--lr-radius-xs);
+  background: rgb(0 0 0 / 0.6);
+  font: var(--lr-type-caps);
+  text-transform: none;
+}
+.voice-video-placeholder,
+.voice-video-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  text-align: center;
+  font: var(--lr-type-ui);
+}
+.voice-video-placeholder {
+  color: rgb(255 255 255 / 0.72);
+}
+.voice-video-overlay {
+  background: rgb(0 0 0 / 0.65);
+}
+.voice-video-wait {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.voice-video-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgb(255 255 255 / 0.25);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: voice-video-spin 0.9s linear infinite;
+}
+@keyframes voice-video-spin {
+  to {
+    rotate: 1turn;
+  }
+}
+.voice-video-scrim {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 56px;
+  background: linear-gradient(rgb(0 0 0 / 0.55), transparent);
+  pointer-events: none;
+}
+.voice-video-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 2px;
+}
+.voice-video-scrim,
+.voice-video-actions {
+  opacity: 0;
+  transition: opacity var(--lr-dur-fast) var(--lr-ease);
+}
+.voice-video-tile:hover > .voice-video-scrim,
+.voice-video-tile:hover > .voice-video-actions,
+.voice-video-tile:focus-within > .voice-video-scrim,
+.voice-video-tile:focus-within > .voice-video-actions,
+.voice-video-tile[data-awake] > .voice-video-scrim,
+.voice-video-tile[data-awake] > .voice-video-actions {
+  opacity: 1;
+}
+.voice-video-tile .voice-video-action {
+  color: #fff;
+}
+.voice-video-tile .voice-video-action:hover:not(:disabled),
+.voice-video-tile .voice-video-action[aria-pressed="true"] {
+  background: rgb(255 255 255 / 0.18);
+  color: #fff;
+}
+.voice-video-tile .voice-video-action[aria-pressed="true"] {
+  color: var(--lr-accent);
+}
+.voice-video-tile button:focus-visible,
+.voice-watch-strip button:focus-visible,
+.voice-watch-strip input:focus-visible {
+  outline: 2px solid var(--lr-focus);
   outline-offset: 2px;
 }
 .stream-viewer {
@@ -42,8 +131,8 @@
   position: fixed;
   inset: var(--viewer-top) var(--viewer-right) var(--viewer-bottom)
     var(--viewer-left);
-  width: calc(100vw - var(--viewer-left) - var(--viewer-right));
-  height: calc(100dvh - var(--viewer-top) - var(--viewer-bottom));
+  width: calc(var(--lr-100vw) - var(--viewer-left) - var(--viewer-right));
+  height: calc(var(--lr-100dvh) - var(--viewer-top) - var(--viewer-bottom));
   max-width: none;
   max-height: none;
   margin: auto;
@@ -61,20 +150,6 @@
 .stream-viewer::backdrop {
   background: #000b;
 }
-.stream-viewer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
-  flex-shrink: 0;
-}
-.stream-viewer-header strong {
-  font-size: 14px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .voice-video-viewer {
   flex: 1;
   min-height: 0;
@@ -83,8 +158,8 @@
   background: #000;
 }
 .voice-video-tile:fullscreen {
-  width: 100vw;
-  height: 100dvh;
+  width: var(--lr-100vw);
+  height: var(--lr-100dvh);
   aspect-ratio: auto;
   border-radius: 0;
   background: #000;
@@ -95,34 +170,162 @@
   height: 100%;
   object-fit: contain;
 }
+/* Fullscreen and the large view: the strip the call bar cannot be. It
+   hides after a few idle seconds, the pointer with it, and stays while the
+   pointer or focus is on it. */
+.voice-watch-strip {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: max(16px, var(--lr-safe-bottom));
+  translate: -50% 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 24px);
+  padding: 6px 8px 6px 14px;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: var(--lr-radius-lg);
+  background: rgb(18 20 21 / 0.92);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 0.5);
+  color: #fff;
+  transition: opacity var(--lr-dur) var(--lr-ease);
+}
+.voice-video-tile:is(.voice-video-viewer, :fullscreen):not([data-awake])
+  .voice-watch-strip:not(:hover, :focus-within) {
+  opacity: 0;
+  pointer-events: none;
+}
+.voice-video-tile:is(.voice-video-viewer, :fullscreen):not([data-awake]):not(
+    :has(.voice-watch-strip:hover, .voice-watch-strip:focus-within)
+  ) {
+  cursor: none;
+}
+.voice-watch-strip-label {
+  min-width: 0;
+  overflow: hidden;
+  margin-right: 4px;
+  font: var(--lr-type-ui);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.voice-watch-strip-group {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  padding-left: 8px;
+  border-left: 1px solid rgb(255 255 255 / 0.14);
+}
+.voice-watch-volume .lr-range {
+  width: 112px;
+}
+.voice-watch-strip .voice-control-compact {
+  position: relative;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 9px;
+  border-color: transparent;
+  background: transparent;
+  color: #fff;
+}
+.voice-watch-strip .voice-control-compact:hover {
+  background: rgb(255 255 255 / 0.14);
+}
+.voice-watch-strip .voice-control-compact.is-off {
+  background: color-mix(in srgb, var(--lr-danger-bg) 45%, transparent);
+  color: #fff;
+}
+.voice-watch-strip .voice-control-dot {
+  border-color: #121415;
+}
+.voice-watch-button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: var(--lr-radius-sm);
+  background: rgb(255 255 255 / 0.12);
+  color: #fff;
+  font: var(--lr-type-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.voice-watch-button:hover {
+  background: rgb(255 255 255 / 0.2);
+}
 .voice-fullscreen-error {
   position: absolute;
   bottom: 28px;
   inset-inline: 12px;
   padding: 10px;
-  border-radius: 6px;
+  border-radius: var(--lr-radius-sm);
   background: #16191bf2;
   color: #fff;
-  font-size: 13px;
-}
-.voice-fullscreen-error button {
-  margin: 6px;
+  font: var(--lr-type-ui);
 }
 @media (max-width: 640px) {
   .stream-viewer {
     inset: 0;
-    width: 100vw;
-    height: 100dvh;
+    width: var(--lr-100vw);
+    height: var(--lr-100dvh);
     /* Edge to edge, with only the content clear of the cut-outs. */
     padding: var(--lr-safe-top) var(--lr-safe-right) var(--lr-safe-bottom)
       var(--lr-safe-left);
     border: 0;
     border-radius: 0;
   }
-  .voice-video-actions button,
-  .stream-viewer-header button {
-    min-height: 40px;
+  /* A phone keeps the controls and drops the words. */
+  .voice-watch-strip {
+    gap: 4px;
+    padding-left: 8px;
   }
+  .voice-watch-strip-label {
+    display: none;
+  }
+  /* Out of sight, but still the button's name. */
+  .voice-watch-button > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .voice-watch-strip-label + .voice-watch-strip-group {
+    padding-left: 0;
+    border-left: 0;
+  }
+  .voice-watch-button {
+    padding: 0 10px;
+  }
+  .voice-watch-volume .lr-range {
+    width: 72px;
+  }
+}
+@media (pointer: coarse) {
+  .voice-video-tile .voice-video-action,
+  .voice-watch-strip .voice-control-compact,
+  .voice-watch-button {
+    min-width: 44px;
+    min-height: 44px;
+    height: 44px;
+  }
+  .voice-watch-button {
+    justify-content: center;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-video-spinner {
+    animation: none;
+  }
+}
+html[data-reduced-motion="true"] .voice-video-spinner {
+  animation: none;
 }
 
 .voice-source-watch-overlay {
@@ -135,9 +338,11 @@
 }
 .voice-source-watch-overlay button {
   padding: 9px 14px;
-  border-radius: 7px;
+  border-radius: var(--lr-radius-sm);
   background: var(--lr-accent);
-  color: white;
+  color: var(--lr-accent-ink);
+  font: var(--lr-type-ui);
+  font-weight: 600;
   cursor: pointer;
 }
 .voice-source-audio-tile {

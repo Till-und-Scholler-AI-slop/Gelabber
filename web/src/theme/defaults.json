@@ -1,0 +1,22 @@
+{
+  "dark": {
+    "background": "#17191a",
+    "panel": "#1d2021",
+    "surface": "#272b2d",
+    "rail": "#131617",
+    "text": "#eef0ee",
+    "muted": "#a4abb1",
+    "accent": "#f3b752",
+    "border": "#2c3032"
+  },
+  "light": {
+    "background": "#f8f5f0",
+    "panel": "#f4f0e9",
+    "surface": "#ece7df",
+    "rail": "#eee9e1",
+    "text": "#252829",
+    "muted": "#5c646b",
+    "accent": "#e8a638",
+    "border": "#dcd6cc"
+  }
+}

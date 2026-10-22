@@ -1,12 +1,12 @@
 """Stand-in Gelabber origin for the desktop app's smoke test.
 
 Serves a page that calls the media commands through Tauri's IPC the way the
-web client will, the update state, and two commands reserved for the bundled
-setup page, and checks the report the page posts back. Exits 0 when the server
-origin reaches the media core and the update state and nothing else, and video
-frames reach the page: views of a
-test pattern (the app runs with GELABBER_VIDEO_TEST_PATTERN) deliver packets
-with the right header and pixels.
+web client will, the update state, the notification commands, and two
+commands reserved for the bundled setup page, and checks the report the page
+posts back. Exits 0 when the server origin reaches the media core, the update
+state and the notifications and nothing else, and video frames reach the
+page: views of a test pattern (the app runs with GELABBER_VIDEO_TEST_PATTERN)
+deliver packets with the right header and pixels.
 
 With a third argument, a file name (smoke.sh): the page's first report is not
 the end. The page leaves a view open, this server creates the file, and the
@@ -78,6 +78,8 @@ const LEAVE = __LEAVE__, LEFT = __LEFT__, WINDOWS = __WINDOWS__;
     await call("levels", "media_audio_levels");
     await call("setServer", "set_server", { server: "https://elsewhere.invalid" });
     await call("updateState", "update_state");
+    await call("notify", "notify_info");
+    await call("notifyClose", "notify_close", { tag: "gelabber:smoke:", prefix: true });
     await call("updateAutoCheck", "update_set_auto_check", { enabled: false });
     if (WINDOWS) {
       await call("audioApps", "media_audio_apps");
@@ -358,6 +360,13 @@ class Handler(BaseHTTPRequestHandler):
         update = report.get("updateState", {}).get("ok", {})
         if not isinstance(update.get("supported"), bool) or (update["supported"] and not WINDOWS):
             problems.append(f"update_state: {report.get('updateState')}")
+        # The system's notifications: on Windows always, on Linux where the
+        # runner's session has a notification service.
+        notify = report.get("notify", {}).get("ok", {})
+        if not isinstance(notify.get("available"), bool) or (WINDOWS and not notify["available"]):
+            problems.append(f"notify_info: {report.get('notify')}")
+        if "ok" not in report.get("notifyClose", {}):
+            problems.append(f"notify_close: {report.get('notifyClose')}")
         if "ok" in report.get("updateAutoCheck", {}):
             problems.append("the server origin may switch the automatic update check")
         if WINDOWS:

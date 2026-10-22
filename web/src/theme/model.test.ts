@@ -4,6 +4,7 @@ import {
   COLOR_KEYS,
   contrast,
   contrastIssues,
+  derivedColors,
   fixContrast,
   importTheme,
   isThemeDocument,
@@ -107,11 +108,81 @@ describe("theme catalogue and files", () => {
         ...original.colors,
         text: original.colors.background,
         muted: original.colors.background,
-        accent: original.colors.background,
+        // Mid grey: neither dark nor light ink reaches 4.5:1 on it.
+        accent: "#7a7a7a",
       },
     };
     expect(contrastIssues(broken)).toHaveLength(3);
     expect(contrastIssues(fixContrast(broken))).toEqual([]);
     expect(broken.colors.text).toBe(original.colors.background);
+  });
+});
+
+describe("derived interface colours", () => {
+  const surfaces = (theme: (typeof BUILTIN_THEMES)[number]) => {
+    const d = derivedColors(theme);
+    return { c: theme.colors, d };
+  };
+
+  it.each(BUILTIN_THEMES.map((theme) => [theme.name, theme] as const))(
+    "%s meets the contrast targets of every role",
+    (_, theme) => {
+      const { c, d } = surfaces(theme);
+      const atLeast = (fg: string, bgs: string[], ratio: number) => {
+        for (const bg of bgs)
+          expect(contrast(fg, bg), `${fg} on ${bg}`).toBeGreaterThanOrEqual(
+            ratio,
+          );
+      };
+      atLeast(d.accentInk, [c.accent], 4.5);
+      atLeast(
+        d.accentText,
+        [c.background, c.panel, c.surface, d.selected],
+        4.5,
+      );
+      atLeast(
+        d.borderStrong,
+        [c.background, c.panel, c.surface, d.elevated],
+        3,
+      );
+      atLeast(d.onlineText, [c.panel, c.surface], 4.5);
+      atLeast(d.muted, [c.panel, c.surface, d.hover], 4.5);
+      atLeast(d.subtle, [c.panel, d.elevated], 4.5);
+      atLeast(d.danger, [c.background, c.panel, c.surface], 4.5);
+      atLeast("#ffffff", [d.dangerBg], 4.5);
+      for (const tile of d.tiles) atLeast(c.text, [tile], 4.5);
+    },
+  );
+
+  it("keeps the accent fill as designed, light amber included", () => {
+    const light = BUILTIN_THEMES.find((theme) => theme.id === "light")!;
+    expect(light.colors.accent).toBe("#e8a638");
+    const variables = themeVariables(light);
+    expect(variables["--lr-accent"]).toBe("#e8a638");
+    expect(variables["--lr-accent-text"]).not.toBe("#e8a638");
+    expect(variables["--lr-focus"]).toBe(variables["--lr-accent-text"]);
+    for (const theme of BUILTIN_THEMES)
+      expect(fixContrast(theme).colors.accent).toBe(theme.colors.accent);
+  });
+
+  it("emits one radius scale per style and maps Tailwind onto it", () => {
+    const radius = (style: "clear" | "soft" | "terminal") =>
+      themeVariables({ ...BUILTIN_THEMES[0], style });
+    expect(radius("clear")["--lr-radius-md"]).toBe("7px");
+    expect(radius("soft")["--lr-radius-xl"]).toBe("20px");
+    expect(radius("terminal")["--lr-radius-lg"]).toBe("2px");
+    expect(radius("clear")["--radius-2xl"]).toBe("var(--lr-radius-xl)");
+    expect(radius("clear")["--radius-xl"]).toBe("var(--lr-radius-md)");
+    expect(radius("clear")["--radius-lg"]).toBe("var(--lr-radius-sm)");
+  });
+
+  it("gives every tile token and the backdrop per mode", () => {
+    const dark = themeVariables(BUILTIN_THEMES[0]);
+    const light = themeVariables(BUILTIN_THEMES[1]);
+    for (let i = 1; i <= 8; i++) {
+      expect(dark[`--lr-tile-${i}`]).toMatch(/^#[\da-f]{6}$/);
+      expect(light[`--lr-tile-${i}`]).toMatch(/^#[\da-f]{6}$/);
+    }
+    expect(dark["--lr-backdrop"]).not.toBe(light["--lr-backdrop"]);
   });
 });
