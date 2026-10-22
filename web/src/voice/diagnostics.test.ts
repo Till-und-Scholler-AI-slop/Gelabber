@@ -796,7 +796,7 @@ describe("source-audio diagnostics", () => {
       ["low", "low"],
     ]);
   });
-  it("separates microphone and music send caps and reports received screen/Live audio", () => {
+  it("separates microphone and music send caps and reports received Live audio", () => {
     const result = reduceConnection({
       role: "voice",
       previous: new Map(),
@@ -825,20 +825,12 @@ describe("source-audio diagnostics", () => {
           trackIdentifier: "u-bob:sa-123",
           packetsReceived: 30,
         },
-        {
-          id: "live",
-          type: "inbound-rtp",
-          kind: "audio",
-          trackIdentifier: "u-cara:la-456",
-          packetsReceived: 40,
-        },
       ],
     });
     expect(result.snapshot.flows.map((flow) => flow.source)).toEqual([
       "voice",
       "screen-audio",
       "screen-audio",
-      "live-audio",
     ]);
     expect(result.snapshot.flows[0]?.configuredMaxBitrateBps).toBeNull();
     expect(result.snapshot.flows[1]?.configuredMaxBitrateBps).toBeNull();

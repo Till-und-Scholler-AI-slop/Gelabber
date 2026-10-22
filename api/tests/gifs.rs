@@ -169,6 +169,19 @@ async fn klipy() -> Klipy {
 }
 
 fn app_state(pool: PgPool, klipy: Option<&Klipy>, extra: &[(&str, &str)]) -> AppState {
+    app_state_with_cache(pool, klipy, extra, KEY, Duration::ZERO)
+}
+
+/// The feed cache lives in the Redis every test shares and is keyed by
+/// Klipy's base URL and key, and stand-in ports get reused: a test that
+/// turns it on brings a key of its own.
+fn app_state_with_cache(
+    pool: PgPool,
+    klipy: Option<&Klipy>,
+    extra: &[(&str, &str)],
+    key: &str,
+    cache_ttl: Duration,
+) -> AppState {
     let extra: Vec<(String, String)> = extra
         .iter()
         .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
@@ -186,10 +199,11 @@ fn app_state(pool: PgPool, klipy: Option<&Klipy>, extra: &[(&str, &str)]) -> App
     })
     .expect("test config");
     config.gifs = klipy.map(|klipy| GifConfig {
-        api_key: KEY.to_owned(),
+        api_key: key.to_owned(),
         api_base: klipy.origin.clone(),
         media_origins: vec![klipy.origin.clone()],
         content_filter: "medium".to_owned(),
+        cache_ttl,
     });
     AppState::with_pool(&config, pool).expect("state")
 }
@@ -341,6 +355,59 @@ async fn trending_and_search_are_relayed_without_exposing_the_key(pool: PgPool) 
         .await;
     assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(klipy.seen().len(), 2, "invalid requests stay local");
+}
+
+#[sqlx::test]
+async fn search_and_trending_pages_are_shared_through_the_cache(pool: PgPool) {
+    let klipy = klipy().await;
+    let key = format!("cache-{}", uuid::Uuid::new_v4().simple());
+    let state = app_state_with_cache(pool, Some(&klipy), &[], &key, Duration::from_secs(600));
+    let mut ada = user(&state, "ada@example.com", "Ada").await;
+    let mut bob = user(&state, "bob@example.com", "Bob").await;
+
+    for client in [&mut ada, &mut bob] {
+        let res = client.send(Method::GET, "/api/gifs/trending", None).await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+        assert_eq!(res.body["gifs"][0]["slug"], "hello-hi-662");
+        assert_eq!(res.body["next_page"], 2);
+    }
+    assert_eq!(api_count(&klipy), 1, "Bob got Ada's trending page");
+
+    let res = ada
+        .send(Method::GET, "/api/gifs/search?q=Hallo%20%20Welt", None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let res = bob
+        .send(Method::GET, "/api/gifs/search?q=hallo%20welt", None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["gifs"][0]["title"], "hallo welt");
+    assert_eq!(api_count(&klipy), 2, "one spelling per search");
+    assert!(
+        klipy.seen()[1].contains("q=hallo welt"),
+        "{:?}",
+        klipy.seen()
+    );
+
+    let res = bob
+        .send(Method::GET, "/api/gifs/search?q=hallo%20welt&page=2", None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["next_page"], 3);
+    assert_eq!(api_count(&klipy), 3, "another page is another question");
+
+    let metrics = state.metrics.render();
+    assert!(
+        metrics.contains("gelabber_cache_total{cache=\"gif_feed\",result=\"hit\"} 2"),
+        "{metrics}"
+    );
+    assert!(metrics.contains("gelabber_cache_total{cache=\"gif_feed\",result=\"miss\"} 3"));
+    assert!(metrics.contains(
+        "gelabber_upstream_request_duration_seconds_count{upstream=\"klipy\",operation=\"search\"} 2"
+    ));
+    assert!(metrics.contains(
+        "gelabber_upstream_request_duration_seconds_count{upstream=\"klipy\",operation=\"trending\"} 1"
+    ));
 }
 
 #[sqlx::test]
@@ -595,7 +662,7 @@ async fn provider_failures_are_upstream_errors_not_the_users_limit(pool: PgPool)
     let klipy = klipy().await;
     let state = app_state(pool, Some(&klipy), &[]);
     let mut ada = user(&state, "ada@example.com", "Ada").await;
-    for q in ["boom", "busy", "refused", "flood"] {
+    for q in ["boom", "refused", "flood"] {
         let res = ada
             .send(Method::GET, &format!("/api/gifs/search?q={q}"), None)
             .await;
@@ -603,7 +670,48 @@ async fn provider_failures_are_upstream_errors_not_the_users_limit(pool: PgPool)
         assert_eq!(res.body["error"], "upstream_unavailable", "{q}");
         assert!(!res.body.to_string().contains(KEY), "{q}");
     }
-    assert_eq!(api_count(&klipy), 4);
+    assert_eq!(api_count(&klipy), 3);
+    assert!(
+        state.metrics.render().contains(
+            "gelabber_upstream_request_duration_seconds_count{upstream=\"klipy\",operation=\"search\"} 3"
+        ),
+        "failed calls are timed too"
+    );
+}
+
+#[sqlx::test]
+async fn klipys_429_pauses_every_klipy_call_and_says_so(pool: PgPool) {
+    let klipy = klipy().await;
+    let state = app_state(pool, Some(&klipy), &[]);
+    let mut ada = user(&state, "ada@example.com", "Ada").await;
+    let res = ada.send(Method::GET, "/api/gifs/search?q=busy", None).await;
+    assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE, "{}", res.body);
+    assert_eq!(res.body["error"], "upstream_quota");
+    assert_eq!(res.body["retry_after"], 60);
+    assert_eq!(res.headers["retry-after"], "60");
+    assert!(!res.body.to_string().contains(KEY));
+    assert_eq!(api_count(&klipy), 1);
+
+    // The quota is the instance's: every user and every call waits it out
+    // without Klipy being asked again.
+    let mut bob = user(&state, "bob@example.com", "Bob").await;
+    for path in ["/api/gifs/trending", "/api/gifs/search?q=hi"] {
+        let res = bob.send(Method::GET, path, None).await;
+        assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+        assert_eq!(res.body["error"], "upstream_quota", "{path}");
+        let retry_after = res.body["retry_after"].as_u64().unwrap();
+        assert!((1..=60).contains(&retry_after), "{path}: {retry_after}");
+    }
+    let channel = text_channel(&mut bob).await;
+    let res = bob
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel}/messages"),
+            Some(json!({ "gif": { "slug": "hello-hi-662" } })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE, "{}", res.body);
+    assert_eq!(api_count(&klipy), 1, "{:?}", klipy.seen());
     assert!(
         state
             .metrics

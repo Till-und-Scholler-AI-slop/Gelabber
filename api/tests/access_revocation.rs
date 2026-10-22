@@ -319,7 +319,7 @@ async fn voice_followups_cannot_forge_server_channel_pair(pool: PgPool) {
     let mut ws = connect(addr, &owner).await;
     voice_join(&mut ws, sid, voice).await;
     for frame in [
-        json!({"t":"p", "k":"l"}),
+        json!({"t":"p", "k":"s"}),
         json!({"t":"u", "k":"v"}),
         json!({"t":"m", "on":true}),
         json!({"t":"d", "on":true}),
@@ -333,7 +333,7 @@ async fn voice_followups_cannot_forge_server_channel_pair(pool: PgPool) {
         until(&mut ws, |f| f["op"] == "err" && f["s"] == wrong.to_string()).await;
         let actual = state.gateway.voice_snapshot(sid).await.unwrap();
         assert_eq!(actual.len(), 1);
-        assert!(!actual[0].m && !actual[0].d && !actual[0].l);
+        assert!(!actual[0].m && !actual[0].d && !actual[0].s);
         assert!(
             state
                 .gateway
@@ -380,7 +380,7 @@ async fn deletion(pool: PgPool, whole_server: bool) {
     assert_ne!(redis_get(key).await.as_deref(), old_revision.as_str());
     send(
         &mut ws,
-        json!({"op":"sig", "t":"p", "s":sid, "c":voice, "k":"l"}),
+        json!({"op":"sig", "t":"p", "s":sid, "c":voice, "k":"s"}),
     )
     .await;
     until(&mut ws, |f| f["op"] == "err" && f["e"] == "not_found").await;
@@ -889,11 +889,11 @@ async fn go_live_with_one_pool_connection_keeps_bootstrap_responsive_and_persist
     voice_join(&mut ws, sid, voice).await;
     send(
         &mut ws,
-        json!({"op":"sig", "t":"p", "s":sid, "c":voice, "k":"l"}),
+        json!({"op":"sig", "t":"p", "s":sid, "c":voice, "k":"s"}),
     )
     .await;
     until(&mut ws, |f| {
-        f["op"] == "sig" && f["t"] == "p" && f["k"] == "l"
+        f["op"] == "sig" && f["t"] == "p" && f["k"] == "s"
     })
     .await;
     let bootstrap = tokio::time::timeout(Duration::from_millis(250), owner.bootstrap())

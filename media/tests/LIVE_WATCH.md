@@ -1,5 +1,9 @@
 # Live claim / Watch integration (08b)
 
+> Historical. The single Live claim (`l`/`la`, `gb:live:*`, `lc`) and the
+> watch-only join were removed in #353; a screen (`s`/`sa`) is the only Live.
+> See `SOURCE_AUDIO.md` for the current model.
+
 > **Historical** (before v4/mediasoup, webrtc-rs engine). The
 > `media/tests/browser-lifecycle.mjs` runner was removed in v0.7.1. The current
 > acceptance runner is [`web/scripts/e2e`](../../web/scripts/e2e/README.md).

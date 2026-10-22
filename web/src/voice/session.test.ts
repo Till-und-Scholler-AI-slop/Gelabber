@@ -118,7 +118,6 @@ class FakeConnection implements MediaConnection {
         epoch: input.epoch,
         rtp: { codecs: [], encodings: [{}] },
         parent: input.parent,
-        lc: input.lc,
         paused: input.paused,
         expectedOldProducerId: existing?.producerId,
       },
@@ -183,12 +182,7 @@ class FakeConnection implements MediaConnection {
       k: kind,
       epoch: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       generation,
-      parent:
-        kind === "sa"
-          ? `producer-${owner}-s`
-          : kind === "la"
-            ? `producer-${owner}-l`
-            : undefined,
+      parent: kind === "sa" ? `producer-${owner}-s` : undefined,
       kind: track.kind,
       rtpParameters: { codecs: [], encodings: [{ ssrc: 17 }] },
       paused: false,
@@ -3726,35 +3720,6 @@ describe("authoritative mediasoup session lifecycle", () => {
       elements.filter((candidate) => candidate.srcObject === audio.stream),
     ).toHaveLength(1);
   });
-  it("receives an older client's Go Live like a Live, once watched", async () => {
-    const elements = playback();
-    const env = await joined();
-    const seat = env.peers[0]!;
-    const audio = seat.receive("u-bob", "la", fakeStream("old-live-sound"));
-    const video = seat.receive("u-bob", "l", fakeVideoStream("old-live"));
-    expect(useVoice.getState().remote["u-bob"]?.l).toBeUndefined();
-    toggleSourceWatch("u-bob", "l");
-    expect(useVoice.getState().remote["u-bob"]?.l).toBe(video.stream);
-    const el = elements.find(
-      (candidate) => candidate.attributes["data-source-audio"] === "l",
-    )!;
-    expect(el.srcObject).toBe(audio.stream);
-    // Its end is the old client's "u l".
-    env.emitSig({
-      op: "sig",
-      t: "u",
-      s: "srv",
-      c: "voice",
-      u: "u-bob",
-      k: "l",
-    });
-    expect(useVoice.getState().remote["u-bob"]?.l).toBeUndefined();
-    expect(el.srcObject).toBeNull();
-    // Nothing of it is ever sent from here.
-    expect(
-      env.sent.some((frame) => frame.op === "sig" && frame.k === "l"),
-    ).toBe(false);
-  });
   it("plays each participant at their own volume, mutes locally and lets Deafen win", async () => {
     const elements = playback();
     const env = await joined();
@@ -4546,7 +4511,7 @@ describe("stream sound in the desktop app", () => {
     return { env, app };
   }
 
-  const soundOf = (kind: "s" | "l") => (kind === "s" ? "sa" : "la");
+  const soundOf = (kind: "s") => `${kind}a` as const;
   const produced = (env: ReturnType<typeof install>, kind: TrackKind) =>
     env.mediaSent.filter((frame) => frame.op === "produce" && frame.k === kind);
 

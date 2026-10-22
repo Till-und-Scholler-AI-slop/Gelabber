@@ -172,7 +172,7 @@ async fn the_join_deadline_gives_the_slot_back() {
 async fn a_joined_socket_gives_its_slot_back() {
     let (addr, redis) = serve(&[("MEDIA_PENDING_PER_IP", "1")]).await;
     let (code, _lease) = ticket(&redis).await;
-    let mut peer = Peer::join(addr, &code, None).await;
+    let mut peer = Peer::join(addr, &code).await;
     let _pending = open(addr, None)
         .await
         .expect("the joined socket no longer counts");
@@ -183,7 +183,7 @@ async fn a_joined_socket_gives_its_slot_back() {
 async fn a_socket_that_leaves_needs_a_slot_again() {
     let (addr, redis) = serve(&[("MEDIA_PENDING_PER_IP", "1")]).await;
     let (code, _lease) = ticket(&redis).await;
-    let mut peer = Peer::join(addr, &code, None).await;
+    let mut peer = Peer::join(addr, &code).await;
     // Takes the address's only slot while the peer is joined.
     let _pending = open(addr, None).await.expect("pending");
     let left = peer.rpc(json!({"op":"l"})).await;
@@ -199,7 +199,7 @@ async fn a_peer_that_answers_pings_stays() {
     ])
     .await;
     let (code, _lease) = ticket(&redis).await;
-    let mut peer = Peer::join(addr, &code, None).await;
+    let mut peer = Peer::join(addr, &code).await;
     let mut pings = 0;
     // Reading answers each Ping (tungstenite queues the Pong on its own).
     let ended = tokio::time::timeout(Duration::from_millis(1000), async {
@@ -231,7 +231,7 @@ async fn a_silent_peer_is_closed_after_the_idle_timeout() {
     ])
     .await;
     let (code, _lease) = ticket(&redis).await;
-    let mut peer = Peer::join(addr, &code, None).await;
+    let mut peer = Peer::join(addr, &code).await;
     // Not reading means no Pong goes out: a half-open peer as the SFU sees it.
     tokio::time::sleep(Duration::from_millis(1000)).await;
     closes_within(&mut peer.socket, Duration::from_secs(1)).await;

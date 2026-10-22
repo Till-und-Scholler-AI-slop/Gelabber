@@ -53,9 +53,6 @@ impl Sfu {
             }
             ClientFrame::CreateTransport { direction, .. } => {
                 let send = direction == TransportDirection::Send;
-                if send && peer.watch_user.is_some() {
-                    return Err(SfuError::Forbidden);
-                }
                 if room
                     .data
                     .lock()
@@ -143,7 +140,6 @@ impl Sfu {
                 rtp,
                 epoch,
                 parent,
-                lc,
                 expected_old_producer_id,
                 height,
                 paused,
@@ -156,7 +152,6 @@ impl Sfu {
                     rtp,
                     epoch,
                     parent,
-                    lc,
                     expected_old_producer_id,
                     height,
                     paused,
@@ -203,7 +198,7 @@ impl Sfu {
                     return Ok(json!({}));
                 }
                 let p = self.own_publication(&room, id, &producer_id).await?;
-                self.remove_publication(&room, &p, true).await;
+                self.retire_publication(&room, &p).await;
                 Ok(json!({}))
             }
             ClientFrame::ConsumerReady {
@@ -330,16 +325,15 @@ impl Sfu {
         rtp: Value,
         epoch: Uuid,
         parent_id: Option<String>,
-        nonce: Option<Uuid>,
         expected_old: Option<String>,
         height: u16,
         paused: bool,
     ) -> Result<Value, SfuError> {
-        if peer.watch_user.is_some() || epoch.is_nil() {
+        if epoch.is_nil() {
             return Err(SfuError::Forbidden);
         }
-        // Going live (a screen or the old Go Live track, with their sound)
-        // needs the ticket's go_live bit, not only the API's publish check.
+        // Going live (a screen and its sound) needs the ticket's go_live
+        // bit, not only the API's publish check.
         if !matches!(kind, SourceKind::Mic | SourceKind::Camera) && !peer.authority.claim.g {
             return Err(SfuError::Forbidden);
         }
@@ -353,11 +347,6 @@ impl Sfu {
             parameters.rtcp.cname = None;
         }
         validate_parameters(kind, &parameters)?;
-        let _lease = if kind == SourceKind::Live {
-            Some(peer.lease_gate.lock().await)
-        } else {
-            None
-        };
         let (transport, old, parent) = {
             let data = room.data.lock().await;
             let p = data.peers.get(&peer.id).ok_or(SfuError::Revoked)?;
@@ -374,9 +363,6 @@ impl Sfu {
                     })
                     .ok_or(SfuError::Forbidden)?
                     .clone();
-                if kind == SourceKind::LiveAudio && parent.live.as_ref().map(|l| l.nonce) != nonce {
-                    return Err(SfuError::Forbidden);
-                }
                 Some(parent)
             } else {
                 if parent_id.is_some() {
@@ -384,12 +370,6 @@ impl Sfu {
                 }
                 None
             };
-            if !matches!(kind, SourceKind::Live | SourceKind::LiveAudio) && nonce.is_some() {
-                return Err(SfuError::BadAnnounce);
-            }
-            if nonce.is_some_and(|n| p.withdrawn_live.contains(&n)) {
-                return Err(SfuError::Forbidden);
-            }
             (
                 p.transports
                     .get(&true)
@@ -398,30 +378,6 @@ impl Sfu {
                 old,
                 parent,
             )
-        };
-        let live = if kind == SourceKind::Live {
-            let nonce = nonce.ok_or(SfuError::Forbidden)?;
-            let checked = Instant::now();
-            let ttl = match crate::live::try_acquire(&self.redis, &peer.authority, nonce, peer.id.0)
-                .await
-                .unwrap_or(crate::live::LiveAcquireOutcome::Denied)
-            {
-                crate::live::LiveAcquireOutcome::Acquired(ttl) => ttl,
-                crate::live::LiveAcquireOutcome::Busy => return Err(SfuError::LiveBusy),
-                crate::live::LiveAcquireOutcome::Denied => return Err(SfuError::Forbidden),
-            };
-            let deadline = checked + ttl;
-            if Instant::now() + LIVE_STOP_MARGIN >= deadline {
-                self.release_unpublished_live(room, peer, nonce).await;
-                return Err(SfuError::LiveBusy);
-            }
-            Some(Arc::new(LiveBinding {
-                nonce,
-                deadline: StdMutex::new(deadline),
-                changed: Notify::new(),
-            }))
-        } else {
-            parent.as_ref().and_then(|p| p.live.clone())
         };
         let result = async {
             let layers = parameters.encodings.len().max(1) as u8;
@@ -450,7 +406,6 @@ impl Sfu {
                 kind,
                 epoch,
                 parent,
-                live,
                 grant: Grant::new(),
                 gate: Mutex::new(()),
                 height,
@@ -509,12 +464,6 @@ impl Sfu {
                 stop_producer(&pubn.producer).await;
                 return Err(SfuError::Revoked);
             }
-            if let Some(old) = old.as_ref().filter(|o| o.kind == SourceKind::Live)
-                && let Some(live) = &old.live
-                && pubn.live.as_ref().is_none_or(|l| l.nonce != live.nonce)
-            {
-                crate::live::release(&self.redis, live.nonce, peer.id.0).await;
-            }
             if !paused {
                 let _gate = pubn.gate.lock().await;
                 if !pubn.valid() {
@@ -536,13 +485,6 @@ impl Sfu {
                 }
             }
             self.observe_producer(room, &pubn);
-            if kind == SourceKind::Live {
-                Self::watch_live(
-                    Arc::downgrade(self),
-                    Arc::downgrade(room),
-                    Arc::downgrade(&pubn),
-                );
-            }
             self.schedule_room_attach(peer.authority.claim.c).await;
             Ok(json!({"producerId":pubn.producer.id(),"epoch":epoch}))
         }
@@ -559,12 +501,6 @@ impl Sfu {
                 .cloned();
             if let Some(failed) = failed {
                 self.retire_publication(room, &failed).await;
-            }
-            if kind == SourceKind::Live
-                && let Some(nonce) = nonce
-            {
-                // The lease gate is already held by this Produce operation.
-                self.release_unpublished_live(room, peer, nonce).await;
             }
         }
         result
@@ -621,8 +557,7 @@ impl Sfu {
         self.confirmed_stop_resources(&publications, &consumers)
             .await;
         for publication in publications {
-            // Compaction retires the native resource, not the API's Live claim.
-            self.remove_publication(room, &publication, false).await;
+            self.retire_publication(room, &publication).await;
         }
         for consumer in consumers {
             self.forget_consumer(room, &consumer).await;

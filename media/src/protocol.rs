@@ -16,12 +16,8 @@ pub enum SourceKind {
     Camera,
     #[serde(rename = "s")]
     Screen,
-    #[serde(rename = "l")]
-    Live,
     #[serde(rename = "sa")]
     ScreenAudio,
-    #[serde(rename = "la")]
-    LiveAudio,
 }
 impl SourceKind {
     pub fn as_str(self) -> &'static str {
@@ -29,18 +25,15 @@ impl SourceKind {
             Self::Mic => "a",
             Self::Camera => "v",
             Self::Screen => "s",
-            Self::Live => "l",
             Self::ScreenAudio => "sa",
-            Self::LiveAudio => "la",
         }
     }
     pub fn is_video(self) -> bool {
-        matches!(self, Self::Camera | Self::Screen | Self::Live)
+        matches!(self, Self::Camera | Self::Screen)
     }
     pub fn parent(self) -> Option<Self> {
         match self {
             Self::ScreenAudio => Some(Self::Screen),
-            Self::LiveAudio => Some(Self::Live),
             _ => None,
         }
     }
@@ -50,14 +43,11 @@ impl SourceKind {
 pub enum WatchKind {
     #[serde(rename = "s")]
     Screen,
-    #[serde(rename = "l")]
-    Live,
 }
 impl WatchKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Screen => "s",
-            Self::Live => "l",
         }
     }
 }
@@ -77,8 +67,6 @@ pub enum ClientFrame {
         id: u32,
         #[serde(default)]
         tk: String,
-        #[serde(default)]
-        w: Option<Uuid>,
         #[serde(default)]
         v: u8,
     },
@@ -116,8 +104,6 @@ pub enum ClientFrame {
         epoch: Uuid,
         #[serde(default)]
         parent: Option<String>,
-        #[serde(default)]
-        lc: Option<Uuid>,
         #[serde(default, rename = "expectedOldProducerId")]
         expected_old_producer_id: Option<String>,
         #[serde(default)]
@@ -208,8 +194,6 @@ pub enum ServerFrame {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<u32>,
         e: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        lc: Option<Uuid>,
     },
     #[serde(rename = "consumer")]
     Consumer {
@@ -269,21 +253,12 @@ impl ServerFrame {
         Self::Err {
             id: None,
             e: code.into(),
-            lc: None,
         }
     }
     pub fn request_error(id: u32, code: &'static str) -> Self {
         Self::Err {
             id: Some(id),
             e: code.into(),
-            lc: None,
-        }
-    }
-    pub fn live_withdrawn(nonce: Uuid) -> Self {
-        Self::Err {
-            id: None,
-            e: "forbidden".into(),
-            lc: Some(nonce),
         }
     }
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
@@ -328,13 +303,22 @@ mod tests {
         assert_eq!(MEDIA_PROTOCOL_VERSION, 4);
     }
     #[test]
-    fn errors_correlate_request_or_retired_live_claim() {
-        let nonce = Uuid::new_v4();
-        let error = serde_json::to_value(ServerFrame::live_withdrawn(nonce)).unwrap();
-        assert_eq!(error["lc"], nonce.to_string());
+    fn errors_correlate_with_their_request() {
+        let error = serde_json::to_value(ServerFrame::error("gone")).unwrap();
         assert!(error.get("id").is_none());
         let error = serde_json::to_value(ServerFrame::request_error(7, "forbidden")).unwrap();
         assert_eq!(error["id"], 7);
-        assert!(error.get("lc").is_none());
+    }
+    #[test]
+    fn the_old_go_live_and_watch_only_join_are_gone() {
+        let epoch = Uuid::new_v4();
+        for k in ["l", "la"] {
+            let raw = serde_json::json!({"op":"produce","id":3,"k":k,"rtp":{},"epoch":epoch});
+            assert!(serde_json::from_value::<ClientFrame>(raw).is_err(), "{k}");
+        }
+        let watch = serde_json::json!({"op":"w","id":4,"u":epoch,"k":"l","on":true});
+        assert!(serde_json::from_value::<ClientFrame>(watch).is_err());
+        let join = serde_json::json!({"op":"j","id":1,"tk":"abcdefghjkmn","w":epoch,"v":4});
+        assert!(serde_json::from_value::<ClientFrame>(join).is_err());
     }
 }

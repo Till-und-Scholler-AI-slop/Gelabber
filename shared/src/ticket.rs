@@ -14,8 +14,7 @@ pub struct TicketClaim {
     pub u: Uuid,
     pub s: Uuid,
     pub c: Uuid,
-    /// Caller may go live: screen (`s`/`sa`) and the old Go Live track
-    /// (`l`/`la`). Absent means no.
+    /// Caller may go live: a screen (`s`) and its sound (`sa`). Absent means no.
     #[serde(default)]
     pub g: bool,
 }
@@ -123,7 +122,6 @@ pub const CHANNEL_AUTHORITY_PREFIX: &str = "gb:auth:channel:";
 pub const SESSION_AUTHORITY_PREFIX: &str = "gb:auth:session:";
 pub const MEDIA_DEMAND_PREFIX: &str = "gb:auth:demand:";
 pub const SESSION_OWNER_PREFIX: &str = "gb:auth:owner:";
-pub const LIVE_CLAIM_PREFIX: &str = "gb:live:";
 
 pub fn member_authority_key(server: Uuid, user: Uuid) -> String {
     format!("{MEMBER_AUTHORITY_PREFIX}{server}:{user}")
@@ -144,11 +142,6 @@ pub fn media_demand_key(session: &str) -> String {
 /// refresh and cleanup. Media never reads it.
 pub fn session_owner_key(session: &str) -> String {
     format!("{SESSION_OWNER_PREFIX}{session}")
-}
-/// A channel's Go Live owner: the API writes it, media checks it before a
-/// peer may publish. Distinct from media's own `gb:live:peer:{nonce}` lease.
-pub fn live_claim_key(channel: Uuid) -> String {
-    format!("{LIVE_CLAIM_PREFIX}{channel}")
 }
 
 #[cfg(test)]
@@ -193,9 +186,8 @@ mod authorization_tests {
 
     // API and media production code build these keys from the helpers or the
     // prefix constants above (media's CONSUME Lua takes the prefixes as ARGV).
-    // web/scripts/e2e/*.mjs, api/tests/voice_aggregate.rs and
-    // media/tests/live_claim.rs hard-code the same strings, so a format change
-    // has to update them as well.
+    // web/scripts/e2e/*.mjs hard-code the same strings, so a format change has
+    // to update them as well.
     #[test]
     fn authority_key_formats_are_pinned() {
         let server = Uuid::from_u128(1);
@@ -221,10 +213,6 @@ mod authorization_tests {
         assert_eq!(
             session_owner_key(&session),
             "gb:auth:owner:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-        );
-        assert_eq!(
-            live_claim_key(channel),
-            "gb:live:00000000-0000-0000-0000-000000000003"
         );
     }
 }

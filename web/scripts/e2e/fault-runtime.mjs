@@ -9,7 +9,7 @@ import { parseEnv, promisify } from "node:util";
 import { setTimeout as pause } from "node:timers/promises";
 import { objectStatus } from "./s3-object.mjs";
 import { tcpFaultProxy, storageFaultProxy } from "./faults.mjs";
-import { deleteTopicKeys, ownedLiveExists } from "./redis-command.mjs";
+import { deleteTopicKeys } from "./redis-command.mjs";
 import {
   closeOwnedApi,
   terminateOwnedChild,
@@ -176,18 +176,6 @@ export async function startFaultApi({
         if (!paused) return;
         assert.ok(child.kill("SIGCONT"), "Owned API resume failed");
         paused = false;
-      },
-      async liveExists(channel, owner) {
-        assert.match(channel, uuid);
-        assert.match(owner, uuid);
-        assert.equal(
-          await sql(
-            `SELECT count(*) FROM channels c JOIN servers s ON s.id=c.server_id WHERE c.id='${channel}'::uuid AND s.owner_id='${owner}'::uuid`,
-          ),
-          "1",
-          "Only owned voice fixtures may be inspected",
-        );
-        return ownedLiveExists(redisTarget.href, channel);
       },
       async lockOwnedServer(server, owner) {
         assert.match(server, uuid);

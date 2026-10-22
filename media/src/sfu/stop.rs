@@ -175,47 +175,6 @@ impl Sfu {
             );
         }
     }
-    pub(super) async fn remove_publication(
-        self: &Arc<Self>,
-        room: &Arc<Room>,
-        pubn: &Arc<Publication>,
-        withdraw: bool,
-    ) {
-        // Pause before acquiring the lease gate: a native creation holding that
-        // gate must never delay the existing producer beyond its lease deadline.
-        self.retire_publication(room, pubn).await;
-        if pubn.kind == SourceKind::Live
-            && let Some(live) = &pubn.live
-        {
-            let _lease = pubn.peer.lease_gate.lock().await;
-            let release = {
-                let mut data = room.data.lock().await;
-                match data.peers.get_mut(&pubn.peer.id) {
-                    Some(p) => {
-                        let same = p
-                            .publications
-                            .get(&SourceKind::Live)
-                            .and_then(|p| p.live.as_ref())
-                            .is_some_and(|l| l.nonce == live.nonce);
-                        if withdraw && !same && !p.withdrawn_live.contains(&live.nonce) {
-                            if p.withdrawn_live.len() == 64 {
-                                p.withdrawn_live.pop_front();
-                            }
-                            p.withdrawn_live.push_back(live.nonce);
-                        }
-                        !same
-                    }
-                    None => true,
-                }
-            };
-            if release {
-                crate::live::release(&self.redis, live.nonce, pubn.peer.id.0).await;
-                if withdraw {
-                    self.emit(&pubn.peer, ServerFrame::live_withdrawn(live.nonce));
-                }
-            }
-        }
-    }
 }
 
 pub(super) fn remember_retired(ids: &mut VecDeque<String>, id: String) {
