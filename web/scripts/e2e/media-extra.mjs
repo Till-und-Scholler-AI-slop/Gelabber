@@ -212,8 +212,8 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         window.__e2e.holdTracks = true;
       });
       try {
-        await click(f.owner, "Kamera an");
-        await click(f.owner, "Bildschirm teilen");
+        await click(f.owner, "Kamera");
+        await click(f.owner, "Bildschirm im Raum teilen");
         const readPublisher = (remaining) =>
           nativeEvaluate(
             f.owner,
@@ -309,9 +309,9 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       await reset(f);
       await click(f.owner, "Beitreten");
       await click(f.member, "Beitreten");
-      await click(f.owner, "Bildschirm teilen");
+      await click(f.owner, "Bildschirm im Raum teilen");
       await watchSource(f.member, "screen");
-      await click(f.owner, "Kamera an");
+      await click(f.owner, "Kamera");
       const warmupStart = Date.now();
       const cameraFixtureWarmup = { deadlineMs: 20_000, status: "FAIL" };
       let camera, existingScreen, before;
@@ -504,7 +504,9 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
       await f.join(other);
       let stage = "other-voice-room-navigation";
       try {
-        await other.page.locator(`a[href="${f.otherPath}"]`).click();
+        await other.page
+          .locator(`.channel-sidebar a[href="${f.otherPath}"]`)
+          .click();
         await click(other, "Beitreten");
         await until(
           () => snapshot(other),
@@ -537,7 +539,9 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         );
         // Active Live adds status text to the accessible channel name. The
         // fixture's exact channel href still targets the actual SPA link.
-        await f.watcher.page.locator(`a[href="${f.otherPath}"]`).click();
+        await f.watcher.page
+          .locator(`.channel-sidebar a[href="${f.otherPath}"]`)
+          .click();
         await nativeEvaluate(f.watcher, () => {
           window.__e2e.rejectPlayback = true;
         });
@@ -691,7 +695,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           return { ...observed, sessionMicrophone };
         };
         stage = "session-mic-mute";
-        await click(f.watcher, "Mikrofon aus");
+        await click(f.watcher, "Stummschalten");
         const muted = await until(
           microphoneSnapshot,
           (s) =>
@@ -702,8 +706,8 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           "session-mute-did-not-disable-mic",
         );
         stage = "session-deafen";
-        await click(f.watcher, "Mikrofon an");
-        await click(f.watcher, "Taub stellen");
+        await click(f.watcher, "Stummschalten");
+        await click(f.watcher, "Taubschalten");
         const deafened = await until(
           microphoneSnapshot,
           (s) =>
@@ -716,7 +720,7 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
           "session-deafen-did-not-mute-every-path",
         );
         stage = "session-undeafen";
-        await click(f.watcher, "Hören");
+        await click(f.watcher, "Taubschalten");
         const hearing = await until(
           microphoneSnapshot,
           (s) =>

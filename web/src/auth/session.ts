@@ -34,13 +34,92 @@ export { useSession, type SessionState, type SessionStatus } from "./store.ts";
 export const useSessionProblems = create<{
   bootstrap: string | null;
   logout: string | null;
-}>(() => ({ bootstrap: null, logout: null }));
+  /** A session check is running; a failed one stays reported meanwhile. */
+  checking: boolean;
+  /** When the next automatic check starts (epoch ms), while one is due. */
+  retryAt: number | null;
+}>(() => ({ bootstrap: null, logout: null, checking: false, retryAt: null }));
+
+/** Waits between automatic session checks: quick at first, then calm. */
+export const SESSION_RETRY_MS = [2_000, 5_000, 15_000, 30_000] as const;
+
+export function sessionRetryDelay(failures: number): number {
+  return SESSION_RETRY_MS[
+    Math.min(Math.max(failures, 1), SESSION_RETRY_MS.length) - 1
+  ];
+}
+
+let failedChecks = 0;
+let retryTimer: ReturnType<typeof setTimeout> | undefined;
+let watchingConnection = false;
+
+function onConnectionHint(event: Event): void {
+  if (
+    event.type === "visibilitychange" &&
+    document.visibilityState !== "visible"
+  )
+    return;
+  void retrySession();
+}
+
+function watchConnection(watch: boolean): void {
+  if (watch === watchingConnection) return;
+  watchingConnection = watch;
+  const method = watch ? "addEventListener" : "removeEventListener";
+  // `globalThis` is the window in a browser and has no events elsewhere.
+  if (typeof globalThis.addEventListener === "function")
+    globalThis[method]("online", onConnectionHint);
+  if (typeof document !== "undefined")
+    document[method]("visibilitychange", onConnectionHint);
+}
+
+/** Ends the automatic retries: the session is known again. */
+function stopSessionRetry(): void {
+  clearTimeout(retryTimer);
+  retryTimer = undefined;
+  failedChecks = 0;
+  watchConnection(false);
+  useSessionProblems.setState({ retryAt: null });
+}
+
+/**
+ * After a failed check, tries again by itself: on a timer that backs off
+ * to 30 s, and at once when the browser is back online or the app is
+ * looked at again. A down server sees at most one request per 30 s.
+ */
+function scheduleSessionRetry(): void {
+  failedChecks += 1;
+  const delay = sessionRetryDelay(failedChecks);
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(() => void retrySession(), delay);
+  watchConnection(true);
+  useSessionProblems.setState({ retryAt: Date.now() + delay });
+}
+
+/** Checks the session now, instead of waiting for the next retry. */
+export function retrySession(): Promise<void> {
+  clearTimeout(retryTimer);
+  retryTimer = undefined;
+  useSessionProblems.setState({ retryAt: null });
+  return ensureSession();
+}
 
 let failedLogoutUserId: string | null = null;
+let loggedOutHere = false;
+
+/**
+ * Whether this tab's own logout ended the last session, as opposed to an
+ * expired cookie or a logout elsewhere.
+ */
+export function loggedOutOnPurpose(): boolean {
+  return loggedOutHere;
+}
 
 function applySession(user: User | null, force = false): void {
   const previousId = useSession.getState().user?.id ?? null;
   const nextId = user?.id ?? null;
+  if (user) loggedOutHere = false;
+  stopSessionRetry();
   useSessionProblems.setState({ bootstrap: null });
   if (user && failedLogoutUserId !== null && user.id !== failedLogoutUserId) {
     failedLogoutUserId = null;
@@ -115,7 +194,9 @@ export function ensureSession(): Promise<void> {
     return Promise.resolve();
   }
   const stamp = takeSessionStamp();
-  useSessionProblems.setState({ bootstrap: null });
+  // A reported failure stays until an attempt succeeds, so the notice does
+  // not vanish and come back with every retry.
+  useSessionProblems.setState({ checking: true });
   const canFallback = () => {
     const current = takeSessionStamp();
     // Initial pageshow may adopt shared metadata while this bootstrap loads.
@@ -139,10 +220,13 @@ export function ensureSession(): Promise<void> {
           bootstrap:
             "Deine Sitzung konnte nicht geprüft werden. Prüfe deine Verbindung und versuche es erneut.",
         });
+        scheduleSessionRetry();
       }
     })
     .finally(() => {
       if (bootstrap === request) bootstrap = null;
+      // A sign-in may have dropped this request; a newer check still runs.
+      if (bootstrap === null) useSessionProblems.setState({ checking: false });
     });
   bootstrap = request;
   return bootstrap;
@@ -245,6 +329,7 @@ async function endSession(
   const logoutUserId = useSession.getState().user?.id ?? failedLogoutUserId;
   const intent = startAuthIntent();
   useSessionProblems.setState({ logout: null });
+  loggedOutHere = true;
   applySession(null);
   try {
     await api<LogoutResponse>(path, {
@@ -389,7 +474,14 @@ export function resetSessionForTests(): void {
   authIntent += 1;
   activeAuthIntent = null;
   failedLogoutUserId = null;
-  useSessionProblems.setState({ bootstrap: null, logout: null });
+  loggedOutHere = false;
+  stopSessionRetry();
+  useSessionProblems.setState({
+    bootstrap: null,
+    logout: null,
+    checking: false,
+    retryAt: null,
+  });
   setCsrfToken(null);
   setSessionSink(receiveSession);
   setSessionScope(takeSessionStamp);

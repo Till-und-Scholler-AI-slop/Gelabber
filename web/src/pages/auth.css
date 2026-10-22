@@ -1,0 +1,245 @@
+/* Sign-in, register, mail links and the invite landing (AuthLayout). */
+.auth-layout {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  place-items: center;
+  min-height: calc(var(--lr-100dvh) - var(--lr-safe-top));
+  padding: var(--lr-space-8) var(--lr-space-4);
+}
+@media (min-width: 800px) {
+  /* The approved Living Room artwork, dimmed and fading into the page. */
+  .auth-layout::before,
+  .auth-layout::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+  }
+  .auth-layout::before {
+    background: url("/images/living-room/community-banner.png") center / cover
+      no-repeat;
+    opacity: 0.18;
+  }
+  .auth-layout::after {
+    background: radial-gradient(
+      ellipse at center,
+      transparent 30%,
+      var(--lr-bg) 95%
+    );
+  }
+}
+.auth-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-6);
+  width: min(100%, 24rem);
+}
+.auth-brand {
+  display: inline-flex;
+  align-self: center;
+  align-items: center;
+  gap: 10px;
+  color: var(--lr-text);
+  font: 700 20px / 1.2 var(--lr-font);
+  letter-spacing: -0.02em;
+  text-decoration: none;
+}
+.auth-brand img {
+  border-radius: var(--lr-radius-md);
+}
+
+.lr-auth-card {
+  display: flex;
+  flex-direction: column;
+  padding: var(--lr-space-8);
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-lg);
+  background: var(--lr-panel);
+  color: var(--lr-text);
+}
+.lr-auth-card h1 {
+  font: var(--lr-type-page);
+  letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+}
+.lr-auth-card h1:focus {
+  outline: none;
+}
+@media (max-width: 480px) {
+  .lr-auth-card {
+    padding: var(--lr-space-6) var(--lr-space-5);
+  }
+}
+.auth-lead {
+  margin-top: var(--lr-space-1);
+  color: var(--lr-muted);
+  font: var(--lr-type-body);
+}
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-5);
+  margin-top: var(--lr-space-6);
+}
+.auth-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-3);
+  margin-top: var(--lr-space-5);
+  font: var(--lr-type-body);
+}
+.auth-result .auth-quiet,
+.auth-quiet {
+  color: var(--lr-muted);
+}
+.auth-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-2);
+  margin-top: var(--lr-space-6);
+}
+.auth-footer {
+  margin-top: var(--lr-space-6);
+  font: var(--lr-type-body);
+}
+
+.auth-link {
+  color: var(--lr-accent-text);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.auth-link:disabled {
+  color: var(--lr-subtle);
+  cursor: default;
+  text-decoration: none;
+}
+/* The recovery line keeps its height whether it holds the link or the hint,
+   so the form does not jump when /auth/mail answers. */
+.auth-recovery {
+  min-height: 20px;
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+  font-size: 13px;
+}
+
+.auth-banner {
+  margin-bottom: var(--lr-space-4);
+  padding: 10px var(--lr-space-3);
+  border-left: 3px solid var(--lr-border-strong);
+  border-radius: var(--lr-radius-sm);
+  background: var(--lr-surface);
+  color: var(--lr-text);
+  font: var(--lr-type-ui);
+}
+.auth-banner--invite {
+  border-left-color: var(--lr-accent);
+  background: color-mix(in srgb, var(--lr-accent) 14%, var(--lr-panel));
+}
+
+@media (pointer: coarse) {
+  /* 44px hit areas for text links, without loosening the layout. */
+  .auth-link {
+    display: inline-block;
+    padding-block: 12px;
+    margin-block: -12px;
+  }
+  .auth-recovery {
+    min-height: 20px;
+  }
+}
+
+/* Invite landing */
+.invite-server {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--lr-space-2);
+  text-align: center;
+}
+.invite-tile {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: var(--lr-space-2);
+  border-radius: var(--lr-radius-lg);
+  background: var(--lr-tile, var(--lr-surface));
+  color: var(--lr-text);
+  font: 600 20px / 1 var(--lr-font);
+  letter-spacing: 0.02em;
+}
+.invite-server p {
+  color: var(--lr-muted);
+  font: var(--lr-type-ui);
+}
+
+/* Session check failed, or still running on a slow start. */
+.app-placeholder {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  min-height: calc(var(--lr-100dvh) - var(--lr-safe-top));
+  animation: app-placeholder-in 240ms ease-out 300ms both;
+}
+.app-placeholder--immediate {
+  animation: none;
+}
+.app-placeholder img {
+  border-radius: 12px;
+}
+.app-placeholder strong {
+  font: 700 20px / 1.2 var(--lr-font);
+  letter-spacing: -0.02em;
+}
+.app-placeholder span {
+  color: var(--lr-muted);
+  font: var(--lr-type-ui);
+  animation: app-placeholder-in 240ms ease-out 600ms both;
+}
+@keyframes app-placeholder-in {
+  from {
+    opacity: 0;
+  }
+}
+html[data-reduced-motion="true"] .app-placeholder,
+html[data-reduced-motion="true"] .app-placeholder span {
+  animation: none;
+}
+
+.session-recovery__status {
+  min-height: 20px;
+  margin-top: var(--lr-space-3);
+  color: var(--lr-muted);
+  font: var(--lr-type-ui);
+}
+.session-logout-failed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-3);
+  margin: var(--lr-space-3) var(--lr-space-4);
+  padding: var(--lr-space-3) var(--lr-space-4);
+  border: 1px solid var(--lr-border);
+  border-left: 3px solid var(--lr-warning);
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-elevated);
+  color: var(--lr-text);
+  font: var(--lr-type-ui);
+}
+.session-logout-failed p {
+  flex: 1 1 16rem;
+}
+/* Roughly the invite card's size, so the page does not jump when it loads. */
+.invite-skeleton .ui-skeleton-card {
+  justify-content: center;
+  min-height: 300px;
+  padding: var(--lr-space-8);
+}

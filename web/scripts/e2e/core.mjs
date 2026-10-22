@@ -108,7 +108,17 @@ export async function coreScenarios(h, f) {
       await click(f.owner, "Speichern");
       await visible(f.member, edited);
       await contentInRest(f.member, chat, edited);
-      await click(f.owner, "Nachricht löschen");
+      const own = f.owner.page
+        .getByRole("log", { name: "Nachrichten" })
+        .locator(".lr-message-row")
+        .filter({ hasText: edited });
+      await own.hover();
+      await own
+        .getByRole("button", { name: "Weitere Aktionen", exact: true })
+        .click();
+      await f.owner.page
+        .getByRole("menuitem", { name: "Löschen", exact: true })
+        .click();
       await confirmDialog(f.owner, "Löschen");
       await f.member.page
         .getByRole("log", { name: "Nachrichten" })
@@ -150,7 +160,9 @@ export async function coreScenarios(h, f) {
       f.dmPath = new URL(f.owner.page.url()).pathname;
       await send(f.owner, "E2E synthetic DM first message");
       // No reload, navigation, hover-prefetch or manual list fetch on the receiver.
-      const link = f.member.page.locator(`a[href="${f.dmPath}"]`);
+      const link = f.member.page.locator(
+        `.channel-sidebar a[href="${f.dmPath}"]`,
+      );
       let liveDiscovery = true;
       try {
         await link.waitFor({ state: "visible", timeout: 8_000 });
@@ -309,7 +321,9 @@ export async function coreScenarios(h, f) {
         );
       }
       // SPA channel open uses the background cache and exposes incomplete-cache regressions.
-      await f.watcher.page.locator(`a[href="${path}"]`).click();
+      await f.watcher.page
+        .locator(`.channel-sidebar a[href="${path}"]`)
+        .click();
       await visible(f.watcher, "E2E history 54");
       const pane = f.watcher.page.getByRole("log", { name: "Nachrichten" });
       const olderRequests = [];
@@ -438,12 +452,15 @@ export async function coreScenarios(h, f) {
         .getByRole("link", { name: "E2E Voice B", exact: true })
         .click();
       // Navigate by observed href without a reload (draft must survive unmount).
-      await f.owner.page.locator(`a[href="${f.textPath}"]`).click();
+      await f.owner.page
+        .locator(`.channel-sidebar a[href="${f.textPath}"]`)
+        .click();
       const retained = f.owner.page
-        .getByRole("alert")
+        .getByRole("log", { name: "Nachrichten" })
+        .locator(".lr-message-row.is-failed")
         .filter({ hasText: "E2E recoverable send attempt" });
       const retry = retained.getByRole("button", {
-        name: "Sendung wiederholen",
+        name: "Erneut senden",
         exact: true,
       });
       await retry.waitFor();

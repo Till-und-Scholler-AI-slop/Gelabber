@@ -53,7 +53,7 @@ describe("confirm dialog markup", () => {
     expect(button(html, "Abbrechen")).toContain("autofocus");
     expect(button(html, "Löschen")).not.toContain("autofocus");
     expect(button(html, "Löschen")).toContain('type="submit"');
-    expect(button(html, "Löschen")).toContain("gel-confirm-danger");
+    expect(button(html, "Löschen")).toContain("ui-button--danger");
   });
 
   it("opens a neutral question on its confirm button", () => {
@@ -63,7 +63,7 @@ describe("confirm dialog markup", () => {
       tone: "neutral",
     });
     expect(button(html, "Entsperren")).toContain("autofocus");
-    expect(button(html, "Entsperren")).toContain("lr-submit");
+    expect(button(html, "Entsperren")).toContain("ui-button--primary");
     expect(button(html, "Abbrechen")).not.toContain("autofocus");
   });
 });

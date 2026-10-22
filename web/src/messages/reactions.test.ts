@@ -7,7 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { login, resetSessionForTests } from "../auth/session.ts";
 import { takeStamp } from "../auth/scope.ts";
 import { applyChannelEvent, messageQueryOptions } from "./queries.ts";
-import { displayedReactions, reactionMutationOptions } from "./reactions.ts";
+import {
+  displayedReactions,
+  reactionMutationOptions,
+  reactorNames,
+} from "./reactions.ts";
 import type { Message, MessagePage } from "./types.ts";
 
 const user = {
@@ -257,5 +261,28 @@ describe("separate reaction intent overlay", () => {
       }),
     ).rejects.toHaveProperty("name", "AbortError");
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("reactor names", () => {
+  const names: Record<string, string> = { r: "Rafi", l: "Lena", m: "Mia" };
+  const nameOf = (id: string) => names[id];
+
+  it("lists up to three people and counts the rest", () => {
+    expect(reactorNames(["r"], nameOf, "me")).toBe("Rafi");
+    expect(reactorNames(["r", "m"], nameOf, "me")).toBe("Rafi und Mia");
+    expect(reactorNames(["r", "l", "m"], nameOf, "me")).toBe(
+      "Rafi, Lena und Mia",
+    );
+    expect(reactorNames(["r", "l", "m", "x", "y"], nameOf, "me")).toBe(
+      "Rafi, Lena, Mia und 2 weitere",
+    );
+  });
+
+  it("names the viewer as du and counts people no longer listed", () => {
+    expect(reactorNames(["me", "r"], nameOf, "me")).toBe("du und Rafi");
+    expect(reactorNames(["r", "gone"], nameOf, "me")).toBe(
+      "Rafi und 1 weitere",
+    );
   });
 });
