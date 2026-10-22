@@ -33,7 +33,7 @@ export function ThemeController() {
     if (sessionStatus === "unknown" || owner !== user) return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const shown = displayedThemeId(doc.active, preview);
-    const apply = () => {
+    const apply = (fromSystem = false) => {
       const id =
         shown === "system" ? (media.matches ? "dark" : "light") : shown;
       const put = () =>
@@ -44,17 +44,21 @@ export function ThemeController() {
         );
       // A different theme (picked, tried on, the system's turn) crossfades
       // the page where the browser can; the first paint and edits to the
-      // theme shown apply at once.
+      // theme shown apply at once. The system's turn does not hold up an
+      // open dialog: the page takes no clicks while it crossfades.
       const switched = appliedId.current !== null && appliedId.current !== id;
       appliedId.current = id;
-      if (switched && !reduced && document.startViewTransition)
+      const busy =
+        fromSystem && document.querySelector("dialog[open]") !== null;
+      if (switched && !reduced && !busy && document.startViewTransition)
         document.startViewTransition(put);
       else put();
     };
     apply();
     if (shown !== "system") return;
-    media.addEventListener("change", apply);
-    return () => media.removeEventListener("change", apply);
+    const onSystem = () => apply(true);
+    media.addEventListener("change", onSystem);
+    return () => media.removeEventListener("change", onSystem);
   }, [doc, preview, owner, user, sessionStatus, reduced]);
   return null;
 }
