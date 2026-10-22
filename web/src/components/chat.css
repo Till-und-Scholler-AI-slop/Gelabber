@@ -1039,6 +1039,26 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   align-items: center;
   justify-content: center;
 }
+/* Opens like a dialog: the dimmed page and the picture fade in, the
+   picture settling to its size. */
+.lr-lightbox {
+  transition: opacity var(--lr-dur-large) var(--lr-ease-enter);
+}
+.lr-lightbox::backdrop {
+  transition: opacity var(--lr-dur-large) var(--lr-ease-standard);
+}
+.lr-lightbox > img {
+  transition: scale var(--lr-dur-large) var(--lr-ease-enter);
+}
+@starting-style {
+  .lr-lightbox[open],
+  .lr-lightbox[open]::backdrop {
+    opacity: 0;
+  }
+  .lr-lightbox[open] > img {
+    scale: 0.97;
+  }
+}
 .lr-lightbox > img {
   max-width: 100%;
   max-height: 100%;
