@@ -215,7 +215,9 @@ async fn session_expiry_closes_open_socket_without_client_action(pool: PgPool) {
     let (addr, state) = common::serve_ws(pool.clone()).await;
     let mut owner = register(&state, "owner").await;
     let (sid, text, _, _) = server(&mut owner, "Expiry").await;
-    sqlx::query("UPDATE sessions SET expires_at = now() + interval '400 milliseconds' WHERE token_hash = $1")
+    // At its absolute end (TTL 2 h in the test config), so neither the
+    // upgrade nor the subscribe frame can slide the expiry (#195).
+    sqlx::query("UPDATE sessions SET created_at = now() - interval '2 hours' + interval '400 milliseconds', expires_at = now() + interval '400 milliseconds' WHERE token_hash = $1")
         .bind(gelabber_api::token::hash(&owner.jar[SESSION])).execute(&pool).await.unwrap();
     let mut ws = connect(addr, &owner).await;
     subscribe(&mut ws, sid, text).await;

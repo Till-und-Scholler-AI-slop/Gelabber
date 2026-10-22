@@ -55,10 +55,11 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
     };
     // The upgrade itself just checked the session.
     let mut checked = Instant::now();
-    let expiry = (session.expires_at - chrono::Utc::now())
-        .to_std()
-        .unwrap_or_default();
-    let expired = tokio::time::sleep(expiry);
+    // Fast path for the session's end; `lock_live` enforces it as well. The
+    // expiry slides (#195): activity on this socket renews it below, and
+    // requests or other sockets may have renewed it when the timer fires.
+    let mut expires_at = session.expires_at;
+    let expired = tokio::time::sleep_until(until(expires_at));
     tokio::pin!(expired);
     debug!(user_id = %user.id, "ws connected");
 
@@ -89,7 +90,15 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
         tokio::select! {
             biased;
             _ = revoked.changed() => break,
-            _ = &mut expired => break,
+            _ = &mut expired => {
+                match current_expiry(&state, &session).await {
+                    Some(at) if at > chrono::Utc::now() => {
+                        expires_at = at;
+                        expired.as_mut().reset(until(at));
+                    }
+                    _ => break,
+                }
+            }
             _ = recheck.notified() => {
                 if !security_tick(&state, &session, conn, &mut checked, true).await { break; }
             }
@@ -98,6 +107,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
             }
             incoming = stream.next() => {
                 let mut live_hint = None;
+                let mut active = false;
                 let Ok(Ok(Some(mut session_guard))) = tokio::time::timeout(std::time::Duration::from_secs(1), session.lock_live(&state.db)).await else { break; };
                 if state.gateway.reconcile_access(conn, &mut session_guard).await.is_err() { break; }
                 checked = Instant::now();
@@ -113,6 +123,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                                 let _ = state.gateway.touch_presence(conn).await;
                             }
                             Ok(FrameEffect::Activity) => {
+                                active = true;
                                 last_activity = Instant::now();
                                 if idle {
                                     idle = false;
@@ -121,6 +132,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                             }
                             Ok(FrameEffect::LiveStarted { server_id, channel_id }) => {
                                 live_hint = Some((server_id, channel_id));
+                                active = true;
                                 last_activity = Instant::now();
                                 if idle {
                                     idle = false;
@@ -134,6 +146,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                             Ok(FrameEffect::Focus(on)) => {
                                 focused = on;
                                 if on {
+                                    active = true;
                                     last_activity = Instant::now();
                                 }
                                 if let Err(err) = state.gateway.set_focus(user.id, conn, on, focus_ttl).await {
@@ -161,6 +174,10 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                 // Return the only pool connection before the hint helper acquires
                 // one. The signaling action itself already passed authorization.
                 if session_guard.commit().await.is_err() { break; }
+                if active && let Some(at) = renew(&state, &session, expires_at).await {
+                    expires_at = at;
+                    expired.as_mut().reset(until(at));
+                }
                 if let Some((server_id, channel_id)) = live_hint {
                     crate::messages::post_live_hint(&state, user, server_id, channel_id).await;
                 }
@@ -217,6 +234,57 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
             .await;
     }
     debug!(user_id = %user.id, "ws disconnected");
+}
+
+fn until(at: chrono::DateTime<chrono::Utc>) -> tokio::time::Instant {
+    tokio::time::Instant::now() + (at - chrono::Utc::now()).to_std().unwrap_or_default()
+}
+
+/// The session row's expiry now, or `None` once it is gone or unreadable.
+async fn current_expiry(
+    state: &AppState,
+    session: &CurrentSession,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        sqlx::query_scalar(
+            "SELECT expires_at FROM sessions WHERE token_hash = $1 AND user_id = $2",
+        )
+        .bind(&session.hash)
+        .bind(session.user.id)
+        .fetch_optional(&state.db),
+    )
+    .await
+    .ok()?
+    .ok()?
+}
+
+/// User activity on the socket counts as a use of the session, heartbeats
+/// do not: a forgotten tab still ends after the idle timeout. Runs after the
+/// frame's transaction committed, because the `UPDATE` would wait for the
+/// `FOR SHARE` lock other sockets of this session hold. Throttled like HTTP
+/// renewals, so most frames never reach the database. A failure only skips
+/// the renewal; `None` keeps the current expiry.
+async fn renew(
+    state: &AppState,
+    session: &CurrentSession,
+    expires_at: chrono::DateTime<chrono::Utc>,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    if !crate::auth::session::needs_renewal(
+        session.created_at,
+        expires_at,
+        state.session_idle,
+        state.session_ttl,
+    ) {
+        return None;
+    }
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        crate::auth::session::touch(state, &session.hash, session.created_at, expires_at),
+    )
+    .await
+    .ok()?
+    .ok()?
 }
 
 /// Recheck the session and every subscription, then renew voice leases.
@@ -715,6 +783,72 @@ mod tests {
         assert_eq!(runs, expected);
     }
 
+    /// Socket activity renews a session that is due, through the frame's
+    /// stale copy of the expiry, and leaves a fresh one alone.
+    #[sqlx::test]
+    async fn activity_renews_a_due_session_only(pool: sqlx::PgPool) {
+        use std::time::Duration;
+        let config = crate::Config::from_source(|key| match key {
+            "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
+            "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".into()),
+            "REDIS_URL" => Some(std::env::var("REDIS_URL").unwrap()),
+            "API_SESSION_TTL_HOURS" => Some("4".to_owned()),
+            "API_SESSION_IDLE_HOURS" => Some("1".to_owned()),
+            _ => None,
+        })
+        .unwrap();
+        let state = AppState::with_pool(&config, pool.clone()).unwrap();
+        let user = crate::auth::user::insert(&pool, "renew@example.test", "renew", "unused")
+            .await
+            .unwrap();
+        let raw = crate::auth::session::create(&pool, user.id, Duration::from_secs(120))
+            .await
+            .unwrap();
+        let hash = crate::token::hash(&raw);
+        let (created_at, expires_at): (
+            chrono::DateTime<chrono::Utc>,
+            chrono::DateTime<chrono::Utc>,
+        ) = sqlx::query_as("SELECT created_at, expires_at FROM sessions WHERE token_hash = $1")
+            .bind(&hash)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let session = CurrentSession {
+            user,
+            hash: hash.clone(),
+            created_at,
+            expires_at,
+        };
+
+        let renewed = renew(&state, &session, expires_at).await.expect("renewed");
+        assert!(
+            renewed - expires_at > chrono::Duration::minutes(55),
+            "{renewed}"
+        );
+        let stored: chrono::DateTime<chrono::Utc> =
+            sqlx::query_scalar("SELECT expires_at FROM sessions WHERE token_hash = $1")
+                .bind(&hash)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stored, renewed);
+        assert_eq!(
+            renew(&state, &session, renewed).await,
+            None,
+            "fresh: no write"
+        );
+
+        sqlx::query("DELETE FROM sessions")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            renew(&state, &session, expires_at).await,
+            None,
+            "gone: no revival"
+        );
+    }
+
     /// The tick waits on `voice_ops` while another voice operation holds it.
     /// On a one-connection pool, that wait must not keep the only connection.
     #[sqlx::test]
@@ -741,8 +875,8 @@ mod tests {
             .await
             .unwrap();
         let hash = crate::token::hash(&raw);
-        let expires_at =
-            sqlx::query_scalar("SELECT expires_at FROM sessions WHERE token_hash = $1")
+        let (created_at, expires_at) =
+            sqlx::query_as("SELECT created_at, expires_at FROM sessions WHERE token_hash = $1")
                 .bind(&hash)
                 .fetch_one(&pool)
                 .await
@@ -750,6 +884,7 @@ mod tests {
         let session = CurrentSession {
             user,
             hash,
+            created_at,
             expires_at,
         };
         let server: Uuid = sqlx::query_scalar(
