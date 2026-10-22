@@ -1,12 +1,13 @@
-// One source capture object can have several native RID encodings.
+// One source capture object can have several native RID encodings. A client
+// publishes at most two pictures: its camera and its Live.
 export function publisherEncoderProgress(observed, before) {
   const captures = observed.captures;
   if (
-    captures.length !== 3 ||
-    new Set(captures.map((capture) => capture.capture)).size !== 3 ||
+    captures.length !== 2 ||
+    new Set(captures.map((capture) => capture.capture)).size !== 2 ||
     captures.filter((capture) => capture.kind === "camera").length !== 1 ||
-    captures.filter((capture) => capture.kind === "display").length !== 2 ||
-    observed.senders.length !== 3
+    captures.filter((capture) => capture.kind === "display").length !== 1 ||
+    observed.senders.length !== 2
   )
     return false;
   return captures.every(({ capture }) => {

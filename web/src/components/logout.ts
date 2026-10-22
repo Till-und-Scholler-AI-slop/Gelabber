@@ -1,13 +1,10 @@
 import { logout } from "../auth/session.ts";
-import { leaveVoice, stopWatching, useVoice } from "../voice/session.ts";
+import { leaveVoice, useVoice } from "../voice/session.ts";
 import { confirmAction } from "./confirm.ts";
 
-/** Whether signing out would end a call or a stream being watched. */
-export function logoutEndsCall(voice: {
-  status: string;
-  watching: boolean;
-}): boolean {
-  return voice.status === "joined" || voice.watching;
+/** Whether signing out would end a call. */
+export function logoutEndsCall(voice: { status: string }): boolean {
+  return voice.status === "joined";
 }
 
 /**
@@ -27,7 +24,6 @@ export async function logOut(): Promise<boolean> {
   // Store flips first, so the shell and guards react before the request
   // even leaves.
   leaveVoice();
-  stopWatching();
   void logout();
   return true;
 }

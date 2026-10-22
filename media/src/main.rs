@@ -46,14 +46,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     );
 
     let engine = state.sfu.clone();
-    axum::serve(listener, app(state.clone()))
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            // Stop native forwarding and close signaling before Axum waits for
-            // WebSocket connections, otherwise active calls prevent shutdown.
-            engine.shutdown().await;
-        })
-        .await?;
+    // The peer address keys the pending-socket cap when no proxy wrote
+    // `X-Forwarded-For` (`ws::client_key`).
+    axum::serve(
+        listener,
+        app(state.clone()).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        // Stop native forwarding and close signaling before Axum waits for
+        // WebSocket connections, otherwise active calls prevent shutdown.
+        engine.shutdown().await;
+    })
+    .await?;
 
     state.sfu.shutdown().await;
     info!("gelabber-media stopped");

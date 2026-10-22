@@ -1,10 +1,18 @@
 // The gear's quick settings: devices, the two volumes and how the
 // microphone opens, one tap away in a call and before it. Everything else
-// stays in the full dialog, linked at the bottom.
+// stays in the full dialog, linked at the bottom. While a Live plays, the
+// call bar adds a speaker with just the volumes.
 
-import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 
-import { GearIcon } from "../components/Icons.tsx";
+import { GearIcon, SpeakerIcon, SpeakerOffIcon } from "../components/Icons.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { ChipGroup } from "../components/ui/ChipGroup.tsx";
 import { IconButton } from "../components/ui/IconButton.tsx";
@@ -56,6 +64,83 @@ export function QuickCallSettingsButton({
         <QuickCallSettings onMore={() => setOpen(false)} />
       </Popover>
     </>
+  );
+}
+
+/** The speaker in the call bar while someone's Live plays here: both
+ * volumes and the stream's mute, without the rest of the settings. */
+export function CallSoundButton({ className }: { className?: string }) {
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLButtonElement>(null);
+  const muted = useMediaSettings((s) => s.sourceAudioMuted);
+  return (
+    <>
+      <IconButton
+        ref={anchor}
+        label="Lautstärke"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        icon={muted ? <SpeakerOffIcon size={17} /> : <SpeakerIcon size={17} />}
+        onClick={() => setOpen((value) => !value)}
+        className={`${className ?? ""}${muted ? " is-off" : ""}`}
+      />
+      <Popover
+        open={open}
+        onClose={() => setOpen(false)}
+        anchor={anchor}
+        label="Lautstärke"
+        placement="top-end"
+        className="voice-quick-settings voice-quick-sound"
+      >
+        <CallSound />
+      </Popover>
+    </>
+  );
+}
+
+export function CallSound() {
+  const ids = useId();
+  const settings = useMediaSettings();
+  const deafened = useVoice((s) => s.deafened);
+  const muted = settings.sourceAudioMuted;
+  return (
+    <div className="voice-quick">
+      <Volume
+        id={`${ids}-voices`}
+        label="Gespräche"
+        value={settings.outputVolume}
+        disabled={deafened}
+        onChange={(outputVolume) => settings.patch({ outputVolume })}
+      />
+      <Volume
+        id={`${ids}-stream`}
+        label="Stream-Ton"
+        value={settings.sourceAudioVolume}
+        disabled={deafened || muted}
+        onChange={(sourceAudioVolume) => settings.patch({ sourceAudioVolume })}
+        action={
+          <button
+            type="button"
+            aria-pressed={muted}
+            aria-label="Stream-Ton stummschalten"
+            title={
+              muted
+                ? "Stream-Ton wieder einschalten"
+                : "Stream-Ton stummschalten"
+            }
+            className={`voice-control voice-control-compact${muted ? " is-off" : ""}`}
+            onClick={() => settings.patch({ sourceAudioMuted: !muted })}
+          >
+            {muted ? <SpeakerOffIcon size={16} /> : <SpeakerIcon size={16} />}
+          </button>
+        }
+      />
+      {deafened ? (
+        <p className="voice-quick-note">
+          Taubgeschaltet: Du hörst gerade niemanden.
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -202,18 +287,22 @@ function Volume({
   value,
   disabled = false,
   onChange,
+  action,
 }: {
   id: string;
   label: string;
   value: number;
   disabled?: boolean;
   onChange: (value: number) => void;
+  /** A button after the percentage, such as the volume's mute. */
+  action?: ReactNode;
 }) {
   const percent = Math.round(value * 100);
   return (
-    <div className="voice-quick-volume">
+    <div className={`voice-quick-volume${action ? " has-action" : ""}`}>
       <label htmlFor={id}>{label}</label>
       <output htmlFor={id}>{percent} %</output>
+      {action}
       <input
         id={id}
         type="range"

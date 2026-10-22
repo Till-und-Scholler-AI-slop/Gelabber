@@ -75,10 +75,9 @@ impl FromRequestParts<AppState> for MaybeUser {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
-        let Some(raw) = cookies::get(&parts.headers, SESSION_COOKIE) else {
-            return Ok(Self(None));
-        };
-        Ok(Self(resolve(&state.db, &raw).await?))
+        Ok(Self(
+            session_of(parts, state).await?.map(|session| session.user),
+        ))
     }
 }
 
@@ -134,25 +133,52 @@ impl FromRequestParts<AppState> for CurrentSession {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
-        let raw = cookies::get(&parts.headers, SESSION_COOKIE)
-            .filter(|raw| token::is_valid(raw))
-            .ok_or(ApiError::Unauthenticated)?;
-        let hash = token::hash(&raw);
-        #[derive(sqlx::FromRow)]
-        struct Row {
-            #[sqlx(flatten)]
-            user: User,
-            expires_at: chrono::DateTime<Utc>,
-        }
-        let row = sqlx::query_as::<_, Row>(
-            "SELECT u.id, u.email, u.name, u.avatar_url, u.created_at, u.bio, u.pronouns, u.status_text, u.accent_color, u.banner_color, u.banner_url, u.avatar_decoration, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1 AND s.expires_at > now()",
-        ).bind(&hash).fetch_optional(&state.db).await?.ok_or(ApiError::Unauthenticated)?;
-        let Row { user, expires_at } = row;
-        Ok(Self {
-            user,
-            hash,
-            expires_at,
-        })
+        session_of(parts, state)
+            .await?
+            .ok_or(ApiError::Unauthenticated)
+    }
+}
+
+/// The live session behind a raw cookie token, or `None`. Expired rows are
+/// treated as absent, like in [`resolve`]; a cookie no token can have costs
+/// no query.
+pub async fn lookup(db: &PgPool, raw: &str) -> Result<Option<CurrentSession>, ApiError> {
+    if !token::is_valid(raw) {
+        return Ok(None);
+    }
+    let hash = token::hash(raw);
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        #[sqlx(flatten)]
+        user: User,
+        expires_at: chrono::DateTime<Utc>,
+    }
+    let row = sqlx::query_as::<_, Row>(
+        "SELECT u.id, u.email, u.name, u.avatar_url, u.created_at, u.bio, u.pronouns, u.status_text, u.accent_color, u.banner_color, u.banner_url, u.avatar_decoration, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1 AND s.expires_at > now()",
+    ).bind(&hash).fetch_optional(db).await?;
+    Ok(row.map(|Row { user, expires_at }| CurrentSession {
+        user,
+        hash,
+        expires_at,
+    }))
+}
+
+/// The session `limits::gate` looked up for this request, `None` when the
+/// cookie matches no live one. Mutations under `/api` carry it, so their
+/// extractors do not query the session a second time.
+#[derive(Debug, Clone)]
+pub struct Resolved(pub Option<CurrentSession>);
+
+/// The request's session: the one the gate resolved, else a lookup of the
+/// cookie (GETs, `/ws`, and the sign-in routes, which the gate keys by
+/// address alone).
+async fn session_of(parts: &Parts, state: &AppState) -> Result<Option<CurrentSession>, ApiError> {
+    if let Some(Resolved(session)) = parts.extensions.get::<Resolved>() {
+        return Ok(session.clone());
+    }
+    match cookies::get(&parts.headers, SESSION_COOKIE) {
+        Some(raw) => lookup(&state.db, &raw).await,
+        None => Ok(None),
     }
 }
 

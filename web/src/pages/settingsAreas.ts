@@ -60,7 +60,7 @@ export const SETTINGS_AREAS = [
     scope: "device",
     group: "app",
     label: "Video",
-    description: "Kamera, Bildschirmfreigabe und Liveübertragungen.",
+    description: "Kamera, Live gehen und die Stream-Qualität.",
   },
   {
     id: "benachrichtigungen",

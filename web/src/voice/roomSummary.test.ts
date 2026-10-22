@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { nameList, roomSummary } from "./roomSummary.ts";
+import { liveSentence, nameList, roomSummary } from "./roomSummary.ts";
 
 describe("room summary", () => {
   it("invites the first one in, where they may join", () => {
@@ -21,6 +21,26 @@ describe("room summary", () => {
     );
   });
 
+  it("says who is live outside, where watching takes coming along", () => {
+    expect(
+      roomSummary(["Mia", "Lena"], {
+        here: false,
+        canJoin: true,
+        live: ["Mia"],
+      }),
+    ).toBe("Mia und Lena sind da. Mia ist live – komm dazu, um zuzusehen.");
+    expect(
+      roomSummary(["Mia", "Lena"], {
+        here: false,
+        canJoin: false,
+        live: ["Mia", "Lena"],
+      }),
+    ).toBe("Mia und Lena sind da. Mia und Lena sind live.");
+    expect(
+      roomSummary(["Mia"], { here: true, canJoin: true, live: ["Mia"] }),
+    ).toBe("Du bist hier mit Mia.");
+  });
+
   it("speaks to someone inside", () => {
     expect(roomSummary(["Mia"], { here: true, canJoin: true })).toBe(
       "Du bist hier mit Mia.",
@@ -32,5 +52,12 @@ describe("room summary", () => {
 
   it("lists three by name", () => {
     expect(nameList(["Mia", "Lena", "Kim"])).toBe("Mia, Lena und Kim");
+  });
+
+  it("says who is live, the viewer first", () => {
+    expect(liveSentence(["Mia"], false)).toBe("Mia ist live");
+    expect(liveSentence(["Mia", "Lena"], false)).toBe("Mia und Lena sind live");
+    expect(liveSentence(["Du"], true)).toBe("Du bist live");
+    expect(liveSentence(["Du", "Mia"], true)).toBe("Du und Mia seid live");
   });
 });

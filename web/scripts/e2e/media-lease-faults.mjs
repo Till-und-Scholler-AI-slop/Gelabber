@@ -61,7 +61,7 @@ export async function leaseFaultScenarios(h, options) {
           channel,
         );
         await click(f.owner, "Beitreten");
-        await click(f.owner, "Go Live");
+        await click(f.owner, "Live gehen");
         await click(f.watcher, "Zuschauen");
         const initial = await progress(f.watcher, options);
         check(
@@ -117,7 +117,7 @@ export async function leaseFaultScenarios(h, options) {
         // Explicit fresh voice join / Live start by B proves the expired slot can
         // be occupied by a different owner; A's old claim cannot block or renew it.
         await click(f.member, "Beitreten");
-        await click(f.member, "Go Live");
+        await click(f.member, "Live gehen");
         await navigate(f.watcher, f.voicePath, f.base);
         await click(f.watcher, "Zuschauen");
         const resumed = await progress(f.watcher, {

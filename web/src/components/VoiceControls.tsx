@@ -1,12 +1,12 @@
-// The call's controls: microphone, headset, camera, the "Teilen" menu and
-// the settings, as icon buttons. Each toggle keeps one name and says its
-// state through aria-pressed; the icon shows the state, and media that is
-// on (camera, a share) sits on an accent pill. The click flips local state
-// first. Leaving is the session's own button.
+// The call's controls: microphone, headset, camera, "Live gehen", the
+// volumes while a Live plays and the settings, as icon buttons. Each toggle keeps one name and says its state
+// through aria-pressed; the icon shows the state, and media that is on
+// sits on a pill: the camera accent, a Live red. The click flips local
+// state first. Leaving is the session's own button.
 //
-// Camera, screen and Go Live start only where this client can capture
-// (voice/capabilities.ts). Stopping is always offered. Whether a share
-// carries sound is decided in the Teilen menu, next to the shares.
+// Camera and Live start only where this client can capture
+// (voice/capabilities.ts), Live only with the server's go_live. Stopping is
+// always offered. Whether a Live carries sound is decided in its menu.
 
 import {
   useId,
@@ -26,7 +26,6 @@ import {
   LiveIcon,
   MicIcon,
   MicOffIcon,
-  ScreenIcon,
 } from "./Icons.tsx";
 import { Button } from "./ui/Button.tsx";
 import { Popover } from "./ui/Popover.tsx";
@@ -34,13 +33,15 @@ import {
   retryMicrophone,
   toggleCamera,
   toggleDeafen,
-  toggleGoLive,
   toggleMute,
   toggleShare,
   useVoice,
 } from "../voice/session.ts";
-import { useCapabilities } from "../voice/capabilities.ts";
-import { QuickCallSettingsButton } from "../voice/QuickCallSettings.tsx";
+import { useCapabilities, type Capabilities } from "../voice/capabilities.ts";
+import {
+  CallSoundButton,
+  QuickCallSettingsButton,
+} from "../voice/QuickCallSettings.tsx";
 import { isDesktopApp } from "../voice/native/bridge.ts";
 import {
   callShortcutKeys,
@@ -210,16 +211,18 @@ function Unavailable({
   );
 }
 
-type ShareProps = {
-  canGoLive?: boolean;
-  /** Who is live in this channel already, when it is someone else. */
-  liveTakenBy?: string | null;
+type LiveProps = {
+  /** This server lets the user go live (`go_live`). */
+  canLive?: boolean;
 };
 
 export function VoiceControls({
-  canGoLive = false,
-  liveTakenBy = null,
-}: ShareProps) {
+  canLive = false,
+  streamSound = false,
+}: LiveProps & {
+  /** Someone's Live plays here, so its sound gets a control of its own. */
+  streamSound?: boolean;
+}) {
   const camera = useVoice((s) => s.camera);
   const capable = useCapabilities();
 
@@ -246,60 +249,91 @@ export function VoiceControls({
           <CameraOffIcon size={17} />
         </Unavailable>
       ) : null}
-      <ShareMenu canGoLive={canGoLive} liveTakenBy={liveTakenBy} />
+      <LiveControl canLive={canLive} />
+      {streamSound ? <CallSoundButton className={BUTTON} /> : null}
       <QuickCallSettingsButton className={BUTTON} />
     </div>
   );
 }
 
-/** One "Teilen" button for the screen share, Go Live and their sound: what
- * each one does is said in the menu, not left to three icons. */
-function ShareMenu({ canGoLive, liveTakenBy }: ShareProps) {
-  const sharing = useVoice((s) => s.sharing);
-  const live = useVoice((s) => s.live);
+const LIVE_HINT = "Sehen alle im Sprachkanal";
+
+/** Why going live is not on offer here, if it is not. */
+function liveUnavailable(
+  canLive: boolean,
+  capable: Capabilities,
+): string | null {
+  if (!capable.screen) return "Diese Desktop-App kann nicht live gehen.";
+  if (!canLive) return "In diesem Server darfst du nicht live gehen.";
+  return null;
+}
+
+/** "Live gehen": a screen or window, seen by everyone in the voice channel,
+ * several people at once. Where a Live can carry sound it is a menu, so
+ * that choice is in sight before the picker opens; otherwise one toggle.
+ * Ending a Live is always offered. */
+function LiveControl({ canLive = false }: LiveProps) {
+  const live = useVoice((s) => s.sharing);
   const capable = useCapabilities();
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
   // A phone browser cannot capture a screen: nothing to offer, nothing to
   // explain. The desktop app explains what it lacks.
-  if (!sharing && !live && !capable.screen && !capable.desktop) return null;
-  const on = sharing || live;
+  if (!live && !capable.screen && !capable.desktop) return null;
+  const reason = live ? null : liveUnavailable(canLive, capable);
+  const className = `${BUTTON}${live ? " voice-control-live" : ""}`;
+  const face = (
+    <>
+      <LiveIcon size={17} />
+      <span className="voice-control-text">Live</span>
+    </>
+  );
+  if (!capable.appAudio) {
+    if (reason)
+      return (
+        <Unavailable label="Live gehen" reason={reason} className={BUTTON}>
+          {face}
+        </Unavailable>
+      );
+    return (
+      <button
+        type="button"
+        aria-pressed={live}
+        aria-label="Live gehen"
+        title={live ? "Live beenden" : "Live gehen – sehen alle im Sprachkanal"}
+        onClick={() => toggleShare()}
+        className={className}
+      >
+        {face}
+      </button>
+    );
+  }
   return (
     <>
       <button
         ref={anchor}
         type="button"
-        aria-pressed={on}
-        aria-label="Teilen"
+        aria-pressed={live}
+        aria-label="Live gehen"
         aria-haspopup="menu"
         aria-expanded={open}
-        title={
-          live
-            ? "Teilen – du bist live"
-            : sharing
-              ? "Teilen – du teilst"
-              : "Teilen"
-        }
+        title={live ? "Du bist live" : "Live gehen"}
         onClick={() => setOpen((value) => !value)}
-        className={`${BUTTON}${live ? " voice-control-live" : on ? " is-on" : ""}`}
+        className={`${className}${reason ? " opacity-50" : ""}`}
       >
-        {live ? <LiveIcon size={17} /> : <ScreenIcon size={17} />}
+        {face}
         <ChevronIcon size={12} className="voice-control-caret" />
       </button>
       <Popover
         open={open}
         onClose={() => setOpen(false)}
         anchor={anchor}
-        label="Teilen"
+        label="Live gehen"
         role="menu"
         placement="top-end"
         className="voice-share-menu"
       >
-        <ShareMenuItems
-          canGoLive={canGoLive}
-          liveTakenBy={liveTakenBy}
-          onDone={() => setOpen(false)}
-        />
+        <LiveMenuItems canLive={canLive} onDone={() => setOpen(false)} />
       </Popover>
     </>
   );
@@ -361,17 +395,14 @@ function MenuEntry({
   );
 }
 
-/** The entries of the Teilen menu: a running share first, to end it, then
- * what can be started, then whether a share carries sound. */
-export function ShareMenuItems({
-  canGoLive = false,
-  liveTakenBy = null,
+/** The entries of the Live menu: going live or ending it, then whether a
+ * Live carries sound. */
+export function LiveMenuItems({
+  canLive = false,
   onDone = () => {},
-}: ShareProps & { onDone?: () => void }) {
-  const sharing = useVoice((s) => s.sharing);
-  const live = useVoice((s) => s.live);
+}: LiveProps & { onDone?: () => void }) {
+  const live = useVoice((s) => s.sharing);
   const localScreen = useVoice((s) => s.localScreen);
-  const localLive = useVoice((s) => s.localLive);
   const sourceAudio = useVoice((s) => s.sourceAudio);
   const sourceAudioShare = useMediaSettings((s) => s.sourceAudioShare);
   const sourceAudioApp = useMediaSettings((s) => s.sourceAudioApp);
@@ -381,21 +412,16 @@ export function ShareMenuItems({
   const soundHintId = useId();
   const desktop = isDesktopApp();
   const sound = sharesSourceAudio({ sourceAudioShare });
-  const takenReason =
-    !live && liveTakenBy ? `${liveTakenBy} ist gerade live.` : null;
+  const reason = liveUnavailable(canLive, capable);
   // A browser hands sound over in its picker only: switched on during a
-  // share, it comes with the next one.
-  const nextShare =
-    sound &&
-    !desktop &&
-    ((localScreen && sourceAudio.s === "off") ||
-      (localLive && sourceAudio.l === "off"));
+  // Live, it comes with the next one.
+  const nextLive = sound && !desktop && localScreen && sourceAudio.s === "off";
   // The desktop app captures the sound without a picker, so the entry says
-  // whose it is, before a share and while one runs.
+  // whose it is, before a Live and while one runs.
   const soundHint = [
     sourceAudioScope({ sourceAudioApp }) ??
       "Wähle den Ton im Freigabedialog des Browsers aus.",
-    nextShare ? "Kommt mit der nächsten Freigabe dazu." : null,
+    nextLive ? "Kommt mit deinem nächsten Live dazu." : null,
     sourceAudioCarriesCall({ sourceAudioShare, sourceAudioApp })
       ? SOURCE_AUDIO_CARRIES_CALL
       : null,
@@ -409,48 +435,22 @@ export function ShareMenuItems({
 
   return (
     <div role="none" className="voice-menu" onKeyDown={walkMenu}>
-      {sharing ? (
-        <MenuEntry
-          icon={<ScreenIcon size={17} />}
-          label="Teilen beenden"
-          hint="Dein Bildschirm im Raum"
-          onSelect={done(toggleShare)}
-        />
-      ) : null}
       {live ? (
         <MenuEntry
           icon={<LiveIcon size={17} />}
           label="Live beenden"
           danger
-          onSelect={done(toggleGoLive)}
-        />
-      ) : null}
-      {!sharing && (capable.screen || capable.desktop) ? (
-        <MenuEntry
-          icon={<ScreenIcon size={17} />}
-          label="Bildschirm im Raum teilen"
-          hint={
-            capable.screen
-              ? "Sehen alle im Sprachkanal"
-              : "Diese Desktop-App kann den Bildschirm nicht teilen."
-          }
-          disabled={!capable.screen}
           onSelect={done(toggleShare)}
         />
-      ) : null}
-      {!live && canGoLive && (capable.screen || capable.desktop) ? (
+      ) : (
         <MenuEntry
           icon={<LiveIcon size={17} />}
-          label="Go Live"
-          hint={
-            !capable.screen
-              ? "Diese Desktop-App kann kein Go Live starten."
-              : (takenReason ?? "Auch für Zuschauer ohne Beitritt")
-          }
-          disabled={!capable.screen || takenReason !== null}
-          onSelect={done(toggleGoLive)}
+          label="Live gehen"
+          hint={reason ?? LIVE_HINT}
+          disabled={reason !== null}
+          onSelect={done(toggleShare)}
         />
-      ) : null}
+      )}
       {capable.appAudio ? (
         <>
           <div role="separator" className="voice-menu-separator" />

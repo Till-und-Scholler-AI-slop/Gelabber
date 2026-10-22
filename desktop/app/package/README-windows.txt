@@ -19,7 +19,7 @@ Voraussetzungen
   - Ein Gelabber-Server, empfohlen ab Version 0.6. Mit einem älteren
     Server kann ein abgebrochenes oder fehlgeschlagenes "Go Live" (etwa
     die Auswahl geschlossen) den Kanal für Go Live belegt lassen.
-  - Für "Bildschirm teilen" und "Go Live": Windows 10 ab Version 1903.
+  - Für "Live gehen": Windows 10 ab Version 1903.
   - Für den Anwendungston: Windows 10 ab Version 2004.
 
 Starten
@@ -28,12 +28,13 @@ Starten
     "%LOCALAPPDATA%\Gelabber\gelabber-desktop.exe" --server https://dein-gelabber-server
   Strg+Umschalt+S führt zurück zur Serverauswahl, F5 lädt die Seite neu.
 
-Bildschirm teilen und Go Live
-  Beide öffnen die Auswahl von Windows: Dort einen Bildschirm oder ein
-  Fenster wählen. Erst danach nimmt die App etwas auf; wer die Auswahl
-  schließt, teilt nichts. Solange aufgenommen wird, rahmt Windows das
-  Geteilte gelb ein. Wird ein geteiltes Fenster geschlossen, endet die
-  Freigabe.
+Live gehen
+  Öffnet die Auswahl von Windows: Dort einen Bildschirm oder ein Fenster
+  wählen. Erst danach nimmt die App etwas auf; wer die Auswahl schließt,
+  geht nicht live. Alle im Sprachkanal sehen das Live, und mehrere können
+  gleichzeitig live sein. Solange aufgenommen wird, rahmt Windows das
+  Gezeigte gelb ein. Wird das gezeigte Fenster geschlossen, endet das
+  Live.
 
 Video auf der Grafikkarte
   Die App kodiert und dekodiert H264 über Media Foundation von Windows: mit
@@ -43,12 +44,12 @@ Video auf der Grafikkarte
   Komponenten (Windows N ohne Media Feature Pack) bleibt es bei VP8.
 
 Anwendungston
-  Beim Teilen und bei Go Live kann der Ton anderer Programme mitgehen:
+  Bei einem Live kann der Ton anderer Programme mitgehen:
   entweder der Ton aller Programme oder der eines gewählten Programms. Zur
   Wahl stehen die Programme, die gerade Ton abspielen; ein Programm, das
   erst später zu spielen beginnt, wird innerhalb einer Sekunde
   aufgenommen. Gelabber selbst, also der Ton des Gesprächs, wird nie
-  mitgeschickt. Unter Windows vor Version 2004 geht die Freigabe ohne Ton
+  mitgeschickt. Unter Windows vor Version 2004 geht das Live ohne Ton
   hinaus.
 
 Push-to-Talk

@@ -9,6 +9,10 @@ pub const MEDIA_ADDR: &str = "MEDIA_ADDR";
 pub const REDIS_URL: &str = "REDIS_URL";
 pub const MEDIA_READY_TIMEOUT_MS: &str = "MEDIA_READY_TIMEOUT_MS";
 pub const MEDIA_JOIN_DEADLINE_MS: &str = "MEDIA_JOIN_DEADLINE_MS";
+pub const MEDIA_PENDING_PER_IP: &str = "MEDIA_PENDING_PER_IP";
+pub const MEDIA_PENDING_MAX: &str = "MEDIA_PENDING_MAX";
+pub const MEDIA_HEARTBEAT_MS: &str = "MEDIA_HEARTBEAT_MS";
+pub const MEDIA_IDLE_TIMEOUT_MS: &str = "MEDIA_IDLE_TIMEOUT_MS";
 pub const MEDIA_ICE_BIND: &str = "MEDIA_ICE_BIND";
 pub const MEDIA_ICE_PORT_MAX: &str = "MEDIA_ICE_PORT_MAX";
 pub const MEDIA_ADVERTISED_IP: &str = "MEDIA_ADVERTISED_IP";
@@ -18,6 +22,10 @@ pub const RUST_LOG: &str = "RUST_LOG";
 const DEFAULT_MEDIA_ADDR: &str = "0.0.0.0:8081";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
 const DEFAULT_JOIN_DEADLINE_MS: u64 = 10_000;
+const DEFAULT_PENDING_PER_IP: usize = 16;
+const DEFAULT_PENDING_MAX: usize = 1024;
+const DEFAULT_HEARTBEAT_MS: u64 = 20_000;
+const DEFAULT_IDLE_TIMEOUT_MS: u64 = 60_000;
 const DEFAULT_ICE_BIND: &str = "0.0.0.0:10000";
 /// Each worker is one native thread with its own UDP port.
 const MAX_WORKERS: usize = 64;
@@ -30,6 +38,16 @@ pub struct Config {
     /// How long a `/ws` socket may stay open without a joined room, both
     /// after the upgrade and after a leave.
     pub join_deadline: Duration,
+    /// Sockets without a joined room one client address may hold.
+    pub pending_per_ip: usize,
+    /// Sockets without a joined room the whole SFU holds: a safety valve,
+    /// far above what one address may hold.
+    pub pending_max: usize,
+    /// How often a joined socket is pinged.
+    pub heartbeat: Duration,
+    /// A joined socket from which nothing arrived for this long, Pongs
+    /// included, is closed at the next heartbeat. Longer than `heartbeat`.
+    pub idle_timeout: Duration,
     /// Native UDP listener of the first worker (`ip:port`). Worker `i` binds
     /// port + i. Test port `0` lets every worker select one port from the
     /// explicit 20000..=30000 range. Production defaults to UDP 10000.
@@ -90,6 +108,34 @@ impl Config {
             Some(raw) => parse_positive::<u64>(MEDIA_JOIN_DEADLINE_MS, &raw)?,
             None => DEFAULT_JOIN_DEADLINE_MS,
         };
+
+        let pending_per_ip = match get(MEDIA_PENDING_PER_IP) {
+            Some(raw) => parse_positive::<usize>(MEDIA_PENDING_PER_IP, &raw)?,
+            None => DEFAULT_PENDING_PER_IP,
+        };
+
+        let pending_max = match get(MEDIA_PENDING_MAX) {
+            Some(raw) => parse_positive::<usize>(MEDIA_PENDING_MAX, &raw)?,
+            None => DEFAULT_PENDING_MAX,
+        };
+
+        let heartbeat_ms = match get(MEDIA_HEARTBEAT_MS) {
+            Some(raw) => parse_positive::<u64>(MEDIA_HEARTBEAT_MS, &raw)?,
+            None => DEFAULT_HEARTBEAT_MS,
+        };
+
+        let idle_timeout_raw = get(MEDIA_IDLE_TIMEOUT_MS);
+        let idle_timeout_ms = match &idle_timeout_raw {
+            Some(raw) => parse_positive::<u64>(MEDIA_IDLE_TIMEOUT_MS, raw)?,
+            None => DEFAULT_IDLE_TIMEOUT_MS,
+        };
+        if idle_timeout_ms <= heartbeat_ms {
+            return Err(invalid(
+                MEDIA_IDLE_TIMEOUT_MS,
+                &idle_timeout_raw.unwrap_or_else(|| idle_timeout_ms.to_string()),
+                "must be greater than MEDIA_HEARTBEAT_MS",
+            ));
+        }
 
         let ice_bind = get(MEDIA_ICE_BIND).unwrap_or_else(|| DEFAULT_ICE_BIND.to_owned());
         let ice_addr = ice_bind.parse::<SocketAddr>().map_err(|_| {
@@ -171,6 +217,10 @@ impl Config {
             redis_url,
             ready_timeout: Duration::from_millis(ready_timeout_ms),
             join_deadline: Duration::from_millis(join_deadline_ms),
+            pending_per_ip,
+            pending_max,
+            heartbeat: Duration::from_millis(heartbeat_ms),
+            idle_timeout: Duration::from_millis(idle_timeout_ms),
             ice_bind,
             ice_port_max,
             workers,
@@ -236,6 +286,60 @@ mod tests {
         assert_eq!(config.join_deadline, Duration::from_secs(10));
         assert_eq!(config.workers, 1);
         assert_eq!(config.ice_ports(), Some(10000..=10000));
+        assert_eq!(config.pending_per_ip, 16);
+        assert_eq!(config.pending_max, 1024);
+        assert_eq!(config.heartbeat, Duration::from_secs(20));
+        assert_eq!(config.idle_timeout, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn parses_socket_limits() {
+        let config = Config::from_source(source(&[
+            (REDIS_URL, "redis://localhost"),
+            (MEDIA_PENDING_PER_IP, "4"),
+            (MEDIA_PENDING_MAX, "64"),
+            (MEDIA_HEARTBEAT_MS, "100"),
+            (MEDIA_IDLE_TIMEOUT_MS, "300"),
+        ]))
+        .expect("valid");
+        assert_eq!(config.pending_per_ip, 4);
+        assert_eq!(config.pending_max, 64);
+        assert_eq!(config.heartbeat, Duration::from_millis(100));
+        assert_eq!(config.idle_timeout, Duration::from_millis(300));
+    }
+
+    #[test]
+    fn rejects_zero_socket_limits() {
+        for key in [
+            MEDIA_PENDING_PER_IP,
+            MEDIA_PENDING_MAX,
+            MEDIA_HEARTBEAT_MS,
+            MEDIA_IDLE_TIMEOUT_MS,
+        ] {
+            let err = Config::from_source(source(&[(REDIS_URL, "redis://localhost"), (key, "0")]))
+                .unwrap_err();
+            assert!(
+                matches!(&err, ConfigError::Invalid { key: bad, .. } if *bad == key),
+                "{key}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn idle_timeout_must_outlast_the_heartbeat() {
+        for pairs in [
+            &[(MEDIA_HEARTBEAT_MS, "500"), (MEDIA_IDLE_TIMEOUT_MS, "500")][..],
+            // A longer heartbeat alone must not pass the default timeout by.
+            &[(MEDIA_HEARTBEAT_MS, "60000")][..],
+        ] {
+            let mut all = vec![(REDIS_URL, "redis://localhost")];
+            all.extend_from_slice(pairs);
+            let err = Config::from_source(source(&all)).unwrap_err();
+            assert!(
+                matches!(&err, ConfigError::Invalid { key, .. } if *key == MEDIA_IDLE_TIMEOUT_MS),
+                "{pairs:?}: {err}"
+            );
+        }
     }
 
     #[test]
