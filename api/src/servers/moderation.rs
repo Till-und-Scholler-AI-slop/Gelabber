@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::auth::session::CurrentUser;
 use crate::error::{ApiError, FieldErrors};
-use crate::gateway::{EventKind, publish_server};
+use crate::gateway::{EventKind, Recheck, publish_server};
 use crate::json::Body;
 use crate::path::{Id, Ids};
 use crate::servers::membership::{self, Membership};
@@ -82,6 +82,10 @@ async fn kick_member(
     info!(server_id = %server_id, user_id = %target_id, "member kicked");
     after_removal(&state, &mut tx, server_id, target_id, "kicked").await?;
     tx.commit().await?;
+    state
+        .gateway
+        .announce_recheck(Recheck::User(target_id))
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -115,6 +119,10 @@ async fn ban_member(
     info!(server_id = %server_id, user_id = %target_id, "member banned");
     after_removal(&state, &mut tx, server_id, target_id, "banned").await?;
     tx.commit().await?;
+    state
+        .gateway
+        .announce_recheck(Recheck::User(target_id))
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
