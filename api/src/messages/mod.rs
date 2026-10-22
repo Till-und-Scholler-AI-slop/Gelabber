@@ -542,6 +542,11 @@ async fn delete_message(
     .await?;
     tx.commit().await?;
     let _ = delivery::deliver_pending(&state, 32).await;
+    let server = match &access {
+        MessagingChannel::Server { member, .. } => Some(member.server.id),
+        MessagingChannel::Dm { .. } => None,
+    };
+    crate::push::recall(&state, &current, server);
     Ok(StatusCode::NO_CONTENT)
 }
 

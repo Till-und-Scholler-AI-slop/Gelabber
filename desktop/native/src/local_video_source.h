@@ -24,7 +24,7 @@ namespace gelabber
 		// is the largest factor the web client asks for
 		// (web/src/voice/mediasoupConnection.ts), so its layers fit from the
 		// first frame on. Other factors reach the source as an encoder's
-		// wants a frame later (SimulcastAlignedEncoder in gelabber_media.cc).
+		// wants a frame later (SimulcastAlignedEncoder in video_codec_factory.cc).
 		static constexpr int kResolutionAlignment = 4;
 
 		LocalVideoSource() : webrtc::AdaptedVideoTrackSource(kResolutionAlignment)

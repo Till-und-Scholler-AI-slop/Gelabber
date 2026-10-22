@@ -237,6 +237,7 @@ export function useMessageToastsBridge(): void {
           dm,
           channelLabel: label,
           author: message.author.name,
+          authorAvatar: message.author.avatar_url ?? null,
           mentioned,
           preview,
         });
@@ -287,7 +288,7 @@ export function useMessageToastsBridge(): void {
           // desktop it is silent; this window showed it, so it plays the
           // cue, once for a burst and never into a deafened call.
           if (
-            (shown === "worker" || shown === "page") &&
+            (shown === "worker" || shown === "page" || shown === "app") &&
             !useInstallation.getState().mobile &&
             !useVoice.getState().deafened &&
             stampHolds({ userId, generation }) &&

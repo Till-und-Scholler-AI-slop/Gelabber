@@ -81,8 +81,16 @@ export function resetThemeForTests(): void {
   useTheme.setState({ preference: "system" });
 }
 
-/** Shared by the app and startup paint cache; only validated theme tokens enter CSS. */
-export function applyDefinition(theme: ThemeDefinition, system = false): void {
+/**
+ * Shared by the app and startup paint cache; only validated theme tokens
+ * enter CSS. A theme tried on in the gallery passes `remember: false`, so a
+ * reload never opens with it.
+ */
+export function applyDefinition(
+  theme: ThemeDefinition,
+  system = false,
+  { remember = true }: { remember?: boolean } = {},
+): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   root.classList.toggle("dark", theme.mode === "dark");
@@ -95,6 +103,7 @@ export function applyDefinition(theme: ThemeDefinition, system = false): void {
   document
     .querySelector('meta[name="theme-color"]')
     ?.setAttribute("content", theme.colors.background);
+  if (!remember) return;
   try {
     localStorage.setItem(
       "gelabber.theme.paint",

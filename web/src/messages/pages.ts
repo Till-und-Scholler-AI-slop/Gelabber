@@ -206,6 +206,69 @@ export function confirmedPendingIds(
   return pending.filter((m) => seen.has(m.id)).map((m) => m.id);
 }
 
+/** Messages from others below `id`, the newest row when the reader
+ *  scrolled away from the end. */
+export function arrivedSince(
+  items: readonly Pick<Message, "id" | "author">[],
+  id: string,
+  me: string | undefined,
+): number {
+  const at = items.findIndex((message) => message.id === id);
+  if (at < 0) return 0;
+  return items
+    .slice(at + 1)
+    .filter(
+      (message) => message.author.id !== me && !message.id.startsWith("tmp:"),
+    ).length;
+}
+
+/** Older pages a conversation fetches to open at its first unread row;
+ *  past that it opens at the oldest one fetched. */
+export const UNREAD_SEEK_PAGES = 10;
+
+export type UnreadAnchor =
+  /** Nothing unread follows a loaded row: open at the newest message. */
+  | { kind: "end" }
+  /** The first unread row. */
+  | { kind: "row"; index: number }
+  /** The last read message is not loaded yet, and older history exists. */
+  | { kind: "older" };
+
+/** The last message read: its id, and its server order (`read_order`). */
+export type ReadMark = { id: string; order?: number | null };
+
+/** Where a conversation opens when `read` was the last message read. The
+ *  read message may have been deleted since: then the first loaded row
+ *  after its order is the first unread one. An own message still being
+ *  sent is not unread. */
+export function unreadAnchor(
+  items: readonly Pick<Message, "id" | "created_order">[],
+  read: ReadMark | null,
+  hasOlder: boolean,
+): UnreadAnchor {
+  if (!read) return { kind: "end" };
+  let index = items.findIndex((message) => message.id === read.id) + 1;
+  if (index === 0) {
+    const order = read.order;
+    const after = (message: Pick<Message, "created_order">) =>
+      order != null &&
+      message.created_order !== undefined &&
+      message.created_order > order;
+    const reached =
+      order != null &&
+      items.some(
+        (message) =>
+          message.created_order !== undefined && message.created_order <= order,
+      );
+    if (!reached && hasOlder) return { kind: "older" };
+    index = items.findIndex(after);
+    if (index < 0) return { kind: "end" };
+  }
+  const first = items[index];
+  if (!first || first.id.startsWith("tmp:")) return { kind: "end" };
+  return { kind: "row", index };
+}
+
 /** Same author, same 5-minute window — compact row, no repeated avatar. */
 export function isContinued(
   previous: Message | undefined,

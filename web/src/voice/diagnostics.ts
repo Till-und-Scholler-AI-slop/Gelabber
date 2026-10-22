@@ -1214,3 +1214,108 @@ export function formatClock(iso: string): string {
     second: "2-digit",
   });
 }
+
+/** Where the call bar's quality bars and the diagnostics verdict draw the
+ * line: up to the first value good, then one step worse per value. */
+export const CALL_QUALITY_LIMITS = {
+  rttMs: [150, 300, 500],
+  loss: [0.02, 0.05, 0.1],
+} as const;
+
+export type CallQualityLevel = 1 | 2 | 3 | 4;
+
+export type CallQuality = {
+  /** 4 is good, 1 is bad. */
+  level: CallQualityLevel;
+  label: string;
+  rttMs: number | null;
+  /** The worst audio loss in either direction, 0–1. */
+  loss: number | null;
+  path: TransportSnapshot["path"];
+};
+
+const QUALITY_LABEL: Record<CallQualityLevel, string> = {
+  4: "gut",
+  3: "ordentlich",
+  2: "schwach",
+  1: "schlecht",
+};
+
+function steps(value: number | null, limits: readonly number[]): number {
+  if (value === null) return 0;
+  const over = limits.findIndex((limit) => value < limit);
+  return over === -1 ? limits.length : over;
+}
+
+function worst(values: (number | null)[]): number | null {
+  const known = values.filter(
+    (value): value is number => value !== null && Number.isFinite(value),
+  );
+  return known.length > 0 ? Math.max(...known) : null;
+}
+
+/** How the call's own connection is doing, from its latest sample: round
+ * trip and audio loss. Null until something was measured. */
+export function callQuality(
+  snapshot: ConnectionSnapshot | null,
+): CallQuality | null {
+  if (!snapshot) return null;
+  const audio = snapshot.flows.filter((flow) => flow.kind === "audio");
+  const rttMs =
+    snapshot.transport.rttMs ?? worst(audio.map((flow) => flow.rttMs));
+  const loss = worst(audio.map((flow) => flow.packetLoss));
+  if (rttMs === null && loss === null) return null;
+  const level = (4 -
+    Math.max(
+      steps(rttMs, CALL_QUALITY_LIMITS.rttMs),
+      steps(loss, CALL_QUALITY_LIMITS.loss),
+    )) as CallQualityLevel;
+  return {
+    level,
+    label: QUALITY_LABEL[level],
+    rttMs,
+    loss,
+    path: snapshot.transport.path,
+  };
+}
+
+function percent(ratio: number): string {
+  return `${Math.round(ratio * 100).toLocaleString("de-DE")} %`;
+}
+
+/** The tooltip line: "Verbindung: gut · 38 ms · 0 % Verlust". */
+export function callQualitySummary(quality: CallQuality): string {
+  return [
+    `Verbindung: ${quality.label}`,
+    quality.rttMs === null ? null : `${Math.round(quality.rttMs)} ms`,
+    quality.loss === null ? null : `${percent(quality.loss)} Verlust`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** One plain sentence above the raw figures: "Verbindung gut. Direkt
+ * verbunden, kaum Verlust." */
+export function callQualityVerdict(quality: CallQuality): string {
+  const details = [
+    quality.path === "direct"
+      ? "Direkt verbunden"
+      : quality.path === "turn"
+        ? "Über einen Relay-Server verbunden"
+        : null,
+    quality.loss === null
+      ? null
+      : quality.loss < CALL_QUALITY_LIMITS.loss[0]
+        ? "kaum Verlust"
+        : quality.loss < CALL_QUALITY_LIMITS.loss[1]
+          ? `etwas Verlust (${percent(quality.loss)})`
+          : `hoher Verlust (${percent(quality.loss)})`,
+    quality.rttMs !== null && quality.rttMs >= CALL_QUALITY_LIMITS.rttMs[1]
+      ? `hohe Verzögerung (${Math.round(quality.rttMs)} ms)`
+      : null,
+  ].filter(Boolean);
+  const head = `Verbindung ${quality.label}.`;
+  if (details.length === 0) return head;
+  const sentence = details.join(", ");
+  return `${head} ${sentence[0]!.toUpperCase()}${sentence.slice(1)}.`;
+}

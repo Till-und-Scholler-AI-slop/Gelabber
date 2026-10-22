@@ -4,7 +4,8 @@
 //! recipient's [`Locale`].
 //!
 //! The pages carry the same German words (`web/src/messages/system.ts`,
-//! `web/src/messages/notificationPrivacy.ts`, `web/src/messages/mentions.ts`).
+//! `web/src/messages/notificationPrivacy.ts`, `web/src/messages/mentions.ts`,
+//! `web/public/sw.js`).
 
 use crate::messages::system::{self, SystemMessage};
 
@@ -28,6 +29,13 @@ impl Locale {
 pub fn new_message_from(locale: Locale, author: &str) -> String {
     match locale {
         Locale::De => format!("Neue Nachricht von {author}"),
+    }
+}
+
+/// What a recalled push says instead of the deleted message (#277).
+pub fn message_deleted(locale: Locale) -> &'static str {
+    match locale {
+        Locale::De => "Nachricht gelöscht",
     }
 }
 

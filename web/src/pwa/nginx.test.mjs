@@ -8,6 +8,8 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+import { fillThemeColours } from "../theme/themeHtml.ts";
+
 const web = new URL("../../", import.meta.url);
 const source = readFileSync(new URL("nginx.conf", web), "utf8");
 
@@ -258,7 +260,10 @@ describe("production nginx config", () => {
   });
 
   it("lets the shell's inline script run, and no other", () => {
-    const html = readFileSync(new URL("index.html", web), "utf8");
+    // As built: the theme colours are filled in at build time.
+    const html = fillThemeColours(
+      readFileSync(new URL("index.html", web), "utf8"),
+    );
     const inline = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)]
       .filter(([, attributes]) => !/\ssrc=/.test(attributes))
       .map(([, , body]) => body);

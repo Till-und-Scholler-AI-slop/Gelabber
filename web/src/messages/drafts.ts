@@ -1,4 +1,6 @@
-import { useCallback, useState } from "react";
+// Unsent messages per account and conversation. The text survives a restart
+// of the app for a week; attached files only live in this tab.
+import { useCallback, useState, useSyncExternalStore } from "react";
 import { inferContentType, isImageType } from "./rules.ts";
 import { scopeGeneration, stampHolds } from "../auth/scope.ts";
 
@@ -8,16 +10,44 @@ const memory = new Map<string, Draft>();
 const previews = new Map<string, Map<File, string>>();
 const none: ReadonlyMap<File, string> = new Map();
 const prefix = "gelabber:chat-draft:";
+/** A stored text older than this is dropped instead of restored. */
+export const DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 let account: string | null = null;
+const listeners = new Set<() => void>();
 const key = (userId: string, channelId: string) =>
   `${prefix}${encodeURIComponent(userId)}:${encodeURIComponent(channelId)}`;
 
 function storage(): Storage | undefined {
   try {
-    return globalThis.sessionStorage;
+    return globalThis.localStorage;
   } catch {
     return undefined;
   }
+}
+
+function changed(): void {
+  for (const listener of listeners) listener();
+}
+
+/** The stored text, or "" when there is none, it expired or is unreadable. */
+function storedText(value: string | null, now: number): string {
+  if (!value) return "";
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "text" in parsed &&
+      "at" in parsed &&
+      typeof parsed.text === "string" &&
+      typeof parsed.at === "number" &&
+      now - parsed.at < DRAFT_MAX_AGE_MS
+    )
+      return parsed.text;
+  } catch {
+    /* Not ours, or damaged: no draft. */
+  }
+  return "";
 }
 
 export function loadDraft(userId: string, channelId: string): Draft {
@@ -26,13 +56,36 @@ export function loadDraft(userId: string, channelId: string): Draft {
   if (cached) return cached;
   let text = "";
   try {
-    text = storage()?.getItem(id) ?? "";
+    const value = storage()?.getItem(id) ?? null;
+    text = storedText(value, Date.now());
+    if (value !== null && !text) storage()?.removeItem(id);
   } catch {
     /* Storage quota/privacy. */
   }
   const draft: Draft = { text, files: [] };
   memory.set(id, draft);
   return draft;
+}
+
+/** Whether the conversation has an unsent text or file. */
+export function hasDraft(userId: string, channelId: string): boolean {
+  if (!userId) return false;
+  const draft = loadDraft(userId, channelId);
+  return draft.text.trim().length > 0 || draft.files.length > 0;
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+/** `hasDraft`, kept current while the user types elsewhere. */
+export function useHasDraft(userId: string, channelId: string): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => hasDraft(userId, channelId),
+    () => false,
+  );
 }
 
 export function saveDraft(
@@ -56,14 +109,20 @@ export function saveDraft(
   if (!draft.text && draft.files.length === 0) memory.delete(id);
   else memory.set(id, draft);
   try {
-    if (draft.text) storage()?.setItem(id, draft.text);
+    if (draft.text)
+      storage()?.setItem(
+        id,
+        JSON.stringify({ text: draft.text, at: Date.now() }),
+      );
     else storage()?.removeItem(id);
   } catch {
     /* The in-memory draft remains available. */
   }
+  changed();
 }
 
-/** Initial session bootstrap preserves reload drafts; logout/account change releases them. */
+/** Initial session bootstrap preserves stored drafts; logout/account change
+ * releases them. Expired ones go at the same time. */
 export function bindDraftAccount(next: string | null): void {
   const target = storage();
   const retain = next === account ? next : account === null ? next : null;
@@ -78,11 +137,14 @@ export function bindDraftAccount(next: string | null): void {
       previews.delete(id);
     }
   }
+  const now = Date.now();
   try {
     for (const id of Object.keys(target ?? {})) {
+      if (!id.startsWith(prefix)) continue;
       if (
-        id.startsWith(prefix) &&
-        (!retainedPrefix || !id.startsWith(retainedPrefix))
+        !retainedPrefix ||
+        !id.startsWith(retainedPrefix) ||
+        !storedText(target?.getItem(id) ?? null, now)
       )
         target?.removeItem(id);
     }
@@ -90,6 +152,7 @@ export function bindDraftAccount(next: string | null): void {
     /* Storage may be disabled. */
   }
   account = next;
+  changed();
 }
 
 export function useChatDraft(userId: string, channelId: string) {
