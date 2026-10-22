@@ -1,13 +1,9 @@
 import { useEffect, useRef, useState, type ComponentType } from "react";
 import { createPortal } from "react-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { stampHolds, takeStamp } from "../auth/scope.ts";
-import { useSession } from "../auth/session.ts";
-import {
-  displayedReactions,
-  reactionMutationOptions,
-} from "../messages/reactions.ts";
-import { asReactionList, type Message } from "../messages/types.ts";
+import { displayedReactions, reactorNames } from "../messages/reactions.ts";
+import { useMentions } from "./mentionContext.ts";
+import type { Reacting } from "./useReaction.ts";
+import type { Message } from "../messages/types.ts";
 import { SmileIcon } from "./Icons.tsx";
 import { Modal } from "./Modal.tsx";
 
@@ -54,40 +50,27 @@ export function EmojiPickerLoader({
 export function ReactionBar({
   message,
   canSend,
+  reaction,
   addSlot,
 }: {
   message: Message;
   canSend: boolean;
+  reaction: Reacting;
   /** The row's hover toolbar; the add button renders there when given. */
   addSlot?: HTMLElement | null;
 }) {
-  const client = useQueryClient();
-  const userId = useSession((state) => state.user?.id ?? "");
-  const [open, setOpen] = useState(false);
+  const { userId, intent, busy, react, toggle, picking, setPicking } = reaction;
+  const { members } = useMentions();
   const addButton = useRef<HTMLButtonElement>(null);
-  const mutation = useMutation(
-    reactionMutationOptions(client, message.channel_id, message.id),
-  );
-  const intent =
-    mutation.isPending &&
-    mutation.variables &&
-    stampHolds(mutation.variables.scope)
-      ? mutation.variables
-      : undefined;
   const reactions = displayedReactions(message.reactions, userId, intent);
-  const busy = Boolean(intent);
   if (
     !userId ||
     message.id.startsWith("tmp:") ||
     (!canSend && reactions.length === 0)
   )
     return null;
-  const react = (emoji: string, add: boolean) => {
-    const scope = takeStamp();
-    if (!scope || scope.userId !== userId || busy || (add && !canSend)) return;
-    mutation.mutate({ emoji, add, scope });
-    return scope;
-  };
+  const nameOf = (id: string) =>
+    members.find((member) => member.id === id)?.name;
   return (
     <div
       className={`lr-reactions${reactions.length === 0 ? " is-empty" : ""}`}
@@ -95,12 +78,15 @@ export function ReactionBar({
     >
       {reactions.map(({ emoji, user_ids }) => {
         const mine = user_ids.includes(userId);
+        // As the tooltip, also the chip's description for screen readers.
+        const who = reactorNames(user_ids, nameOf, userId);
         return (
           <button
             key={emoji}
             type="button"
             aria-pressed={mine}
-            aria-label={`${emoji}: ${user_ids.length} Reaktionen${mine ? ", du hast reagiert" : ""}`}
+            aria-label={`${emoji}: ${user_ids.length} ${user_ids.length === 1 ? "Reaktion" : "Reaktionen"}${mine ? ", du hast reagiert" : ""}`}
+            title={who ? who[0]!.toUpperCase() + who.slice(1) : undefined}
             disabled={!mine && !canSend}
             aria-disabled={busy || undefined}
             onClick={(event) => {
@@ -134,7 +120,7 @@ export function ReactionBar({
                 // Transient API work must not make the modal's opener unfocusable.
                 aria-disabled={busy || undefined}
                 onClick={() => {
-                  if (!busy) setOpen(true);
+                  if (!busy) setPicking(true);
                 }}
                 className={addSlot ? "lr-message-action" : "lr-reaction"}
               >
@@ -145,20 +131,16 @@ export function ReactionBar({
           })()
         : null}
       <Modal
-        open={open}
-        onClose={() => setOpen(false)}
+        open={picking}
+        onClose={() => setPicking(false)}
         title="Reaktion auswählen"
         wide
       >
-        {open && (
+        {picking && (
           <EmojiPickerLoader
             onSelect={(emoji) => {
-              const mine =
-                asReactionList(message.reactions)
-                  .find((reaction) => reaction.emoji === emoji)
-                  ?.user_ids.includes(userId) ?? false;
-              react(emoji, !mine);
-              setOpen(false);
+              toggle(emoji);
+              setPicking(false);
             }}
           />
         )}

@@ -11,12 +11,15 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type FormEvent,
   type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent,
   type ReactNode,
   type Ref,
 } from "react";
@@ -41,9 +44,13 @@ import {
 import { useSession } from "../auth/session.ts";
 import { fieldMessage } from "../auth/rules.ts";
 import {
+  arrivedSince,
   confirmedPendingIds,
   isContinued,
+  UNREAD_SEEK_PAGES,
+  unreadAnchor,
   visibleMessages,
+  type ReadMark,
 } from "../messages/pages.ts";
 import {
   nonePending,
@@ -77,14 +84,20 @@ import {
   validateContent,
 } from "../messages/rules.ts";
 import type { Gif, Message, Reply } from "../messages/types.ts";
-import { asAttachmentList, asGif, asReply } from "../messages/types.ts";
-import { gifBox, gifLabel, type GifPick } from "../gifs/api.ts";
+import {
+  asAttachmentList,
+  asGif,
+  asReactionList,
+  asReply,
+} from "../messages/types.ts";
+import { gifBox, type GifPick } from "../gifs/api.ts";
 import { useGifStatus } from "../gifs/queries.ts";
 import { useReducedMotion } from "../interface/useReducedMotion.ts";
 import GifPicker, { GifMessageButton } from "./GifPicker.tsx";
 import { Avatar } from "./Avatar.tsx";
 import { sizeByDraft, type DraftHeight } from "./composerHeight.ts";
 import { EmojiPickerLoader, ReactionBar } from "./ReactionBar.tsx";
+import { useReaction } from "./useReaction.ts";
 import { confirmAction } from "./confirm.ts";
 import { Modal } from "./Modal.tsx";
 import { ImageLightbox, type LightboxImage } from "./ImageLightbox.tsx";
@@ -92,17 +105,27 @@ import { LinkPreviews } from "./LinkPreviews.tsx";
 import {
   ArrowDownIcon,
   CloseIcon,
+  HashIcon,
+  MoreIcon,
   PaperclipIcon,
   PencilIcon,
   ReplyIcon,
   SearchIcon,
   SendIcon,
   SmileIcon,
-  TrashIcon,
+  WarningIcon,
 } from "./Icons.tsx";
+import {
+  MessageActionSheet,
+  type MessageActions,
+} from "./MessageActionSheet.tsx";
+import { longPressGesture, swallowNextClick } from "./longPress.ts";
+import { Button } from "./ui/Button.tsx";
+import { SkeletonRows } from "./ui/Skeleton.tsx";
+import { copyText } from "../servers/clipboard.ts";
+import { notify, notifyError } from "./toasts.ts";
 import { AttachmentList } from "./Attachments.tsx";
 import { OpenImage } from "./openImage.ts";
-import { MessageText } from "./MessageMentions.tsx";
 import { useMentionRenderer } from "./mentionRenderer.tsx";
 import { MentionContext, useMentions } from "./mentionContext.ts";
 import { useMentionSuggestions } from "./useMentionSuggestions.tsx";
@@ -125,6 +148,17 @@ import "./chat.css";
 const JumpTo = createContext<(id: string) => void>(() => {});
 const NO_MEMBERS: readonly MentionMember[] = [];
 
+/** What a row that was not sent offers besides "Verwerfen". */
+type AttemptActions = {
+  retry: (attempt: SendAttempt) => void;
+  /** Back into the composer, to change it before sending again. */
+  edit: (attempt: SendAttempt) => void;
+  canSendFiles: boolean;
+};
+const AttemptActionsContext = createContext<AttemptActions | null>(null);
+
+type ComposerHandle = { takeBack: (attempt: SendAttempt) => void };
+
 export function MessagePane({
   title,
   notice,
@@ -138,6 +172,7 @@ export function MessagePane({
   mention = "#",
   members = NO_MEMBERS,
   notify,
+  peer,
   footer,
   onDraftChange,
   onDraftStop,
@@ -161,6 +196,8 @@ export function MessagePane({
   members?: readonly MentionMember[];
   /** The bell in the header: notification settings of this conversation. */
   notify?: NotificationTarget;
+  /** A DM's other person, shown where its history begins. */
+  peer?: { name: string; avatar_url: string | null };
   footer?: ReactNode;
   onDraftChange?: (value: string) => void;
   onDraftStop?: () => void;
@@ -234,12 +271,13 @@ export function MessagePane({
   // Only an Esc nothing else used: a dialog, a menu, the search, an edit
   // or the mention list closing takes it first.
   const markManyRead = useMarkManyRead();
-  const markByKey = useEffectEvent((server: boolean) => {
+  const markReadNow = (server = false) => {
     const serverId = notify?.serverId;
     void markManyRead(
       server && serverId ? { server: serverId } : { channel: channelId },
     ).catch(() => {});
-  });
+  };
+  const markByKey = useEffectEvent((server: boolean) => markReadNow(server));
   useEffect(() => {
     if (searching) return;
     const onKey = (event: globalThis.KeyboardEvent) => {
@@ -260,18 +298,31 @@ export function MessagePane({
   }, [searching]);
   // Where "Neu" goes: the read position when the channel was opened, kept
   // while reading so the divider does not jump.
-  const { data: readRows } = useReadState();
-  const [newAfter, setNewAfter] = useState<string | null | undefined>(
+  const { data: readRows, isError: readStateFailed } = useReadState();
+  const readRow = readRows?.find((row) => row.channel_id === channelId);
+  const [newAfter, setNewAfter] = useState<ReadMark | null | undefined>(
     undefined,
   );
-  if (newAfter === undefined && readRows) {
-    const row = readRows.find((entry) => entry.channel_id === channelId);
-    setNewAfter(row && row.unread_count > 0 ? row.read_message_id : null);
+  // How many were unread then, for the bar; null once they are read.
+  const [unreadCount, setUnreadCount] = useState<number | null>(null);
+  if (newAfter === undefined && (readRows || readStateFailed)) {
+    const id =
+      readRow && readRow.unread_count > 0 ? readRow.read_message_id : null;
+    setNewAfter(id ? { id, order: readRow?.read_order } : null);
+    setUnreadCount(id ? (readRow?.unread_count ?? null) : null);
   }
+  if (unreadCount !== null && readRow?.unread_count === 0) setUnreadCount(null);
+  // Whether the list opened at the first unread row rather than the end.
+  const [openedAtUnread, setOpenedAtUnread] = useState(false);
+  const [unreadJump, setUnreadJump] = useState(0);
   const contextEdit = useEditMessage(channelId);
   const contextRemove = useDeleteMessage(channelId);
   const [atLatest, setAtLatest] = useState(false);
   const [latestRequest, setLatestRequest] = useState(0);
+  const toLatest = useCallback(
+    () => setLatestRequest((value) => value + 1),
+    [],
+  );
   const attempts = usePendingMessages((s) => s.attempts);
   const channelAttempts = useMemo(
     () =>
@@ -279,6 +330,31 @@ export function MessagePane({
         (attempt) => attempt.channelId === channelId,
       ),
     [attempts, channelId],
+  );
+  const attemptsById = useMemo(
+    () => new Map(channelAttempts.map((attempt) => [attempt.id, attempt])),
+    [channelAttempts],
+  );
+  const author = useMemo(
+    () =>
+      user
+        ? { id: user.id, name: user.name, avatar_url: user.avatar_url }
+        : null,
+    [user],
+  );
+  const resend = useSendMessage(
+    channelId,
+    author ?? { id: "", name: "", avatar_url: null },
+  ).mutate;
+  const composer = useRef<ComposerHandle>(null);
+  const attemptActions = useMemo<AttemptActions>(
+    () => ({
+      retry: (attempt) =>
+        resend({ content: attempt.content, attemptId: attempt.id }),
+      edit: (attempt) => composer.current?.takeBack(attempt),
+      canSendFiles,
+    }),
+    [resend, canSendFiles],
   );
   const pending = usePendingMessages(
     (s) => s.byChannel[channelId] ?? nonePending,
@@ -298,6 +374,38 @@ export function MessagePane({
     [items, searchScope],
   );
   const overlay = searching || showingContext;
+  // "Anzeigen" under the composer: to the row that was not sent, and onto
+  // its first action once the list rendered it there.
+  const showAttempt = useCallback(
+    (id: string) => {
+      jumpTo(id);
+      const index = items.findIndex((message) => message.id === id);
+      let frames = 10;
+      const focusAction = () => {
+        const action = panesRef.current?.querySelector<HTMLElement>(
+          `[role="log"] [data-index="${index}"] .lr-message-failure button:not(:disabled)`,
+        );
+        if (action) action.focus({ preventScroll: true });
+        else if (--frames > 0) requestAnimationFrame(focusAction);
+      };
+      if (index >= 0) requestAnimationFrame(focusAction);
+    },
+    [jumpTo, items],
+  );
+
+  // The newest row when the reader left the end: what others wrote since
+  // is counted on the way back.
+  const [awayFrom, setAwayFrom] = useState<string | null>(null);
+  const newestId = items.at(-1)?.id;
+  if (atLatest && awayFrom !== null) setAwayFrom(null);
+  else if (!atLatest && awayFrom === null && newestId) setAwayFrom(newestId);
+  const arrived = awayFrom ? arrivedSince(items, awayFrom, user?.id) : 0;
+  const opensAt = unreadAnchor(
+    items,
+    newAfter ?? null,
+    Boolean(query.hasNextPage),
+  );
+  const firstUnread = opensAt.kind === "row" ? items[opensAt.index] : undefined;
 
   // Close the picture with its message when that is deleted. A result of
   // the search may not be in the loaded list: only "was there, now gone".
@@ -339,10 +447,7 @@ export function MessagePane({
     query.isFetchNextPageError,
   ]);
   const muteNow = useMuteClock();
-  const muted = isMuted(
-    readRows?.find((row) => row.channel_id === channelId),
-    muteNow,
-  );
+  const muted = isMuted(readRow, muteNow);
   const mentions = useMemo(
     () => ({
       members,
@@ -384,111 +489,172 @@ export function MessagePane({
         ) : null}
         <OpenImage.Provider value={openImage}>
           <JumpTo.Provider value={jumpTo}>
-            <div
-              ref={panesRef}
-              className="relative flex min-h-0 flex-1 flex-col"
-            >
+            <AttemptActionsContext.Provider value={attemptActions}>
               <div
-                className={`flex min-h-0 flex-1 flex-col ${overlay ? "invisible" : ""}`}
-                inert={overlay}
-                aria-hidden={overlay || undefined}
+                ref={panesRef}
+                className="relative flex min-h-0 flex-1 flex-col"
               >
-                <MessageList
-                  key={searchScope}
-                  active={!overlay}
-                  focusRequest={focusRequest}
-                  channelId={channelId}
-                  items={items}
-                  onAtLatest={setAtLatest}
-                  latestRequest={latestRequest}
-                  meId={user?.id}
-                  newAfter={newAfter ?? null}
-                  canModerate={canModerate}
-                  canSend={canSend}
-                  hasOlder={Boolean(hasNextPage)}
-                  loadingOlder={isFetchingNextPage}
-                  onLoadOlder={onLoadOlder}
-                  ready={!query.isPending}
-                  loadError={
-                    query.error
-                      ? query.isFetchNextPageError
-                        ? "paging"
-                        : "history"
-                      : null
-                  }
-                  onRetry={() => {
-                    if (query.isFetchNextPageError) void fetchNextPage();
-                    else void query.refetch();
-                  }}
-                />
-              </div>
-              {searching ? (
-                <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
-                  <MessageSearch
-                    key={searchScope}
-                    channelId={channelId}
-                    onClose={closeSearch}
-                    renderMessage={(message) => (
-                      <MessageRow
-                        message={message}
-                        continued={false}
-                        canSend={canSend}
-                        mine={message.author.id === user?.id}
-                        canDelete={
-                          message.author.id === user?.id || canModerate
-                        }
-                        onEdit={(content) =>
-                          contextEdit.mutate({ id: message.id, content })
-                        }
-                        onDelete={async () => {
-                          if (await confirmDelete(message, user?.id))
-                            contextRemove.mutate(message.id);
-                        }}
-                      />
-                    )}
-                  />
-                </div>
-              ) : null}
-              {showingContext && !searching ? (
-                <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
-                  <MessageContextView
-                    key={contextTarget.id}
-                    channelId={channelId}
-                    messageId={contextTarget.id}
-                    closeLabel="Zurück zum Chat"
-                    onClose={() => setContextTarget(null)}
-                    renderMessage={(message) => (
-                      <MessageRow
-                        message={message}
-                        continued={false}
-                        canSend={canSend}
-                        mine={message.author.id === user?.id}
-                        canDelete={
-                          message.author.id === user?.id || canModerate
-                        }
-                        onEdit={(content) =>
-                          contextEdit.mutate({ id: message.id, content })
-                        }
-                        onDelete={async () => {
-                          if (await confirmDelete(message, user?.id))
-                            contextRemove.mutate(message.id);
-                        }}
-                      />
-                    )}
-                  />
-                </div>
-              ) : null}
-              {!overlay && !atLatest && items.length > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setLatestRequest((value) => value + 1)}
-                  className="lr-jump-latest"
+                {unreadCount !== null && openedAtUnread && !overlay ? (
+                  <section
+                    className="lr-unread-bar"
+                    aria-label="Ungelesene Nachrichten"
+                  >
+                    <p>
+                      <strong>
+                        {unreadCount === 1
+                          ? "1 neue Nachricht"
+                          : // The server counts up to 100.
+                            `${unreadCount > 99 ? "99+" : unreadCount} neue Nachrichten`}
+                      </strong>
+                      {firstUnread
+                        ? ` seit ${formatWhen(firstUnread.created_at)}`
+                        : null}
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => setUnreadJump((value) => value + 1)}
+                    >
+                      Springen
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-keyshortcuts="Escape"
+                      onClick={() => {
+                        markReadNow();
+                        // The bar goes with the unread messages: stay in the
+                        // list rather than on <body>.
+                        focusList();
+                      }}
+                    >
+                      Als gelesen markieren
+                      <kbd aria-hidden="true">Esc</kbd>
+                    </Button>
+                  </section>
+                ) : null}
+                <div
+                  className={`flex min-h-0 flex-1 flex-col ${overlay ? "invisible" : ""}`}
+                  inert={overlay}
+                  aria-hidden={overlay || undefined}
                 >
-                  <ArrowDownIcon size={15} />
-                  Zu den neuesten Nachrichten
-                </button>
-              ) : null}
-            </div>
+                  <MessageList
+                    key={searchScope}
+                    active={!overlay}
+                    focusRequest={focusRequest}
+                    channelId={channelId}
+                    items={items}
+                    onAtLatest={setAtLatest}
+                    latestRequest={latestRequest}
+                    meId={user?.id}
+                    newAfter={newAfter}
+                    unreadJump={unreadJump}
+                    onOpened={setOpenedAtUnread}
+                    attempts={attemptsById}
+                    historyStart={
+                      <HistoryStart
+                        mention={mention}
+                        channelName={channelName}
+                        peer={peer}
+                      />
+                    }
+                    canModerate={canModerate}
+                    canSend={canSend}
+                    hasOlder={Boolean(hasNextPage)}
+                    loadingOlder={isFetchingNextPage}
+                    onLoadOlder={onLoadOlder}
+                    ready={!query.isPending}
+                    loadError={
+                      query.error
+                        ? query.isFetchNextPageError
+                          ? "paging"
+                          : "history"
+                        : null
+                    }
+                    onRetry={() => {
+                      if (query.isFetchNextPageError) void fetchNextPage();
+                      else void query.refetch();
+                    }}
+                  />
+                </div>
+                {searching ? (
+                  <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
+                    <MessageSearch
+                      key={searchScope}
+                      channelId={channelId}
+                      onClose={closeSearch}
+                      renderMessage={(message) => (
+                        <MessageRow
+                          message={message}
+                          continued={false}
+                          canSend={canSend}
+                          mine={message.author.id === user?.id}
+                          canDelete={
+                            message.author.id === user?.id || canModerate
+                          }
+                          onEdit={(content) =>
+                            contextEdit.mutate({ id: message.id, content })
+                          }
+                          onDelete={async (skipConfirm) => {
+                            if (
+                              skipConfirm ||
+                              (await confirmDelete(message, user?.id))
+                            )
+                              contextRemove.mutate(message.id);
+                          }}
+                        />
+                      )}
+                    />
+                  </div>
+                ) : null}
+                {showingContext && !searching ? (
+                  <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
+                    <MessageContextView
+                      key={contextTarget.id}
+                      channelId={channelId}
+                      messageId={contextTarget.id}
+                      closeLabel="Zurück zum Chat"
+                      onClose={() => setContextTarget(null)}
+                      renderMessage={(message) => (
+                        <MessageRow
+                          message={message}
+                          continued={false}
+                          canSend={canSend}
+                          mine={message.author.id === user?.id}
+                          canDelete={
+                            message.author.id === user?.id || canModerate
+                          }
+                          onEdit={(content) =>
+                            contextEdit.mutate({ id: message.id, content })
+                          }
+                          onDelete={async (skipConfirm) => {
+                            if (
+                              skipConfirm ||
+                              (await confirmDelete(message, user?.id))
+                            )
+                              contextRemove.mutate(message.id);
+                          }}
+                        />
+                      )}
+                    />
+                  </div>
+                ) : null}
+                {!overlay && !atLatest && items.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={toLatest}
+                    className={`lr-jump-latest${arrived > 0 ? " has-news" : ""}`}
+                  >
+                    <ArrowDownIcon size={15} />
+                    {arrived === 0
+                      ? "Zu den neuesten Nachrichten"
+                      : arrived === 1
+                        ? "1 neue Nachricht"
+                        : `${arrived} neue Nachrichten`}
+                  </button>
+                ) : null}
+              </div>
+            </AttemptActionsContext.Provider>
           </JumpTo.Provider>
         </OpenImage.Provider>
         {lightbox?.scope === searchScope ? (
@@ -502,17 +668,16 @@ export function MessagePane({
         {footer}
         <Composer
           key={user?.id ?? "anonymous"}
+          handle={composer}
           channelId={channelId}
           channelName={channelName}
           canSend={canSend}
           canSendFiles={canSendFiles}
           mention={mention}
-          author={
-            user
-              ? { id: user.id, name: user.name, avatar_url: user.avatar_url }
-              : null
-          }
+          author={author}
           attempts={channelAttempts}
+          onSent={toLatest}
+          onShowAttempt={showAttempt}
           onDraftChange={onDraftChange}
           onDraftStop={onDraftStop}
         />
@@ -538,13 +703,18 @@ function MessageList({
   onAtLatest,
   latestRequest,
   focusRequest,
+  unreadJump,
+  onOpened,
+  attempts,
+  historyStart,
 }: {
   active: boolean;
   channelId: string;
   items: Message[];
   meId: string | undefined;
-  /** Last read message when the channel opened; "Neu" goes after it. */
-  newAfter: string | null;
+  /** Last read message when the channel opened; "Neu" goes after it.
+   *  `undefined` while the read state is not known yet. */
+  newAfter: ReadMark | null | undefined;
   canModerate: boolean;
   canSend: boolean;
   hasOlder: boolean;
@@ -557,6 +727,14 @@ function MessageList({
   latestRequest: number;
   /** Scroll to this loaded row and highlight it (a reply's original). */
   focusRequest: { id: string; n: number } | null;
+  /** Bumped by "Springen": back to the first unread row. */
+  unreadJump: number;
+  /** Whether the list opened at the first unread row, once it decided. */
+  onOpened: (atUnread: boolean) => void;
+  /** Send attempts by the `tmp:` id of their row. */
+  attempts: ReadonlyMap<string, SendAttempt>;
+  /** Above the oldest message once there is nothing older. */
+  historyStart: ReactNode;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -579,13 +757,17 @@ function MessageList({
   const heldTop = useRef<number | null>(null);
   // Whether the browser put the list exactly at the held position.
   const heldLanded = useRef(false);
+  // With unread messages the list opens at the first of them, which may
+  // take older pages first. Until it settled it is not at the newest, so
+  // nothing is marked read. `pending` waits for the read state.
+  const opening = useRef<"pending" | "seek" | "done">("pending");
+  const seekPages = useRef(0);
+  const seekBudget = useRef(UNREAD_SEEK_PAGES);
+  const lastJump = useRef(unreadJump);
   const edit = useEditMessage(channelId);
   const remove = useDeleteMessage(channelId);
-  const readIndex = newAfter
-    ? items.findIndex((message) => message.id === newAfter)
-    : -1;
-  const newIndex =
-    readIndex >= 0 && readIndex + 1 < items.length ? readIndex + 1 : -1;
+  const opensAt = unreadAnchor(items, newAfter ?? null, hasOlder);
+  const newIndex = opensAt.kind === "row" ? opensAt.index : -1;
 
   // Not on the React Compiler; the warning is about memoising its return value.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -611,6 +793,7 @@ function MessageList({
         0,
       );
       const breaks =
+        (index === 0 && !hasOlder ? 120 : 0) +
         (dayBreak(items[index - 1], message) ? 40 : 0) +
         (index === newIndex ? 28 : 0) +
         extra +
@@ -665,6 +848,7 @@ function MessageList({
         pin.current = { id: firstId, offset: first.start - element.scrollTop };
       onAtLatest(
         active &&
+          opening.current === "done" &&
           stickToBottom.current &&
           position.viewport > 16 &&
           endDistance(position) <= 16,
@@ -714,6 +898,7 @@ function MessageList({
   const release = () => {
     hold.current = null;
     heldTop.current = null;
+    opening.current = "done";
   };
   // Any difference from where the hold put the list, unless the browser
   // clamped that position: the rows above were not laid out yet, and the
@@ -724,6 +909,51 @@ function MessageList({
     if (latestRequest !== lastRequest.current) {
       stickToBottom.current = true;
       lastRequest.current = latestRequest;
+      opening.current = "done";
+    }
+    if (unreadJump !== lastJump.current) {
+      lastJump.current = unreadJump;
+      if (newAfter) {
+        opening.current = "seek";
+        seekBudget.current = seekPages.current + UNREAD_SEEK_PAGES;
+      }
+    }
+    if (opening.current === "pending" && ready && newAfter !== undefined)
+      opening.current = newAfter ? "seek" : "done";
+    if (opening.current === "seek" && loadError) opening.current = "done";
+    // Where the first unread row goes, once it is loaded (or the pages to
+    // look for it are used up: then the oldest loaded one).
+    let unreadTop: { id: string; offset: number } | null = null;
+    if (opening.current === "seek") {
+      const anchor = unreadAnchor(items, newAfter ?? null, hasOlder);
+      const settled =
+        anchor.kind !== "older" || seekPages.current >= seekBudget.current;
+      if (settled) {
+        opening.current = "done";
+        const index =
+          anchor.kind === "row"
+            ? anchor.index
+            : anchor.kind === "older"
+              ? 0
+              : -1;
+        const start = index >= 0 ? startOf(index) : undefined;
+        const viewport = scrollRef.current?.clientHeight ?? 0;
+        // Unread rows that fit below the top third stay at the end, where
+        // they are all in view and get marked read.
+        if (
+          start !== undefined &&
+          virtualizer.getTotalSize() - start > (viewport * 2) / 3
+        ) {
+          stickToBottom.current = false;
+          // Row offsets count from the rows' box, below the paging line.
+          const above = contentRef.current?.offsetTop ?? 0;
+          unreadTop = {
+            id: items[index]!.id,
+            offset: Math.round(viewport / 3) - above,
+          };
+        }
+        onOpened(unreadTop !== null);
+      }
     }
     // The reader moved the list since the hold was applied, possibly before
     // the scroll event fired: even one pixel is theirs.
@@ -752,6 +982,7 @@ function MessageList({
       // does not jump.
       hold.current = pin.current;
     }
+    if (unreadTop) hold.current = unreadTop;
     if (hold.current && scrollRef.current) {
       const top = anchoredScrollTop(items, hold.current, startOf);
       if (top === undefined) {
@@ -770,7 +1001,46 @@ function MessageList({
     lastFirst.current = items[0]?.id;
     // `updateLatest()` pinned the row at scrollTop. Not the first rendered
     // row: that can be an overscan row far above the viewport.
-  }, [items, virtualizer, startOf, updateLatest, totalSize, latestRequest]);
+  }, [
+    items,
+    virtualizer,
+    startOf,
+    updateLatest,
+    totalSize,
+    latestRequest,
+    unreadJump,
+    newAfter,
+    ready,
+    hasOlder,
+    loadError,
+    onOpened,
+  ]);
+
+  // Older pages until the last read message is loaded, also when
+  // "Springen" adds pages to look through.
+  useEffect(() => {
+    if (
+      opening.current !== "seek" ||
+      !ready ||
+      !hasOlder ||
+      loadingOlder ||
+      loadError ||
+      seekPages.current >= seekBudget.current ||
+      unreadAnchor(items, newAfter ?? null, hasOlder).kind !== "older"
+    )
+      return;
+    seekPages.current += 1;
+    onLoadOlder();
+  }, [
+    items,
+    newAfter,
+    hasOlder,
+    loadingOlder,
+    loadError,
+    ready,
+    onLoadOlder,
+    unreadJump,
+  ]);
 
   const [highlighted, setHighlighted] = useState<string | null>(null);
   const handledFocus = useRef(focusRequest?.n);
@@ -785,6 +1055,7 @@ function MessageList({
     stickToBottom.current = false;
     hold.current = null;
     heldTop.current = null;
+    opening.current = "done";
     virtualizer.scrollToIndex(index, { align: "center" });
     setHighlighted(focusRequest.id);
     const done = window.setTimeout(() => setHighlighted(null), 2000);
@@ -915,7 +1186,7 @@ function MessageList({
         updateLatest(false);
       }}
       style={{ overflowAnchor: "none", overscrollBehavior: "contain" }}
-      className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+      className="relative flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
       {loadError ? (
         <div role="alert" className="lr-list-state">
@@ -932,11 +1203,6 @@ function MessageList({
           >
             Erneut laden
           </button>
-        </div>
-      ) : null}
-      {ready && !loadError && items.length === 0 ? (
-        <div className="lr-list-empty">
-          Noch keine Nachrichten. Schreib die erste.
         </div>
       ) : null}
       {items.length > 0 || hasOlder || loadingOlder ? (
@@ -969,6 +1235,7 @@ function MessageList({
               className={`absolute inset-x-0${message.id === highlighted ? " lr-message-highlight" : ""}`}
               style={{ top: row.start }}
             >
+              {row.index === 0 && !hasOlder ? historyStart : null}
               {newDay ? (
                 <div className="lr-day-divider" role="separator">
                   <span>{dayLabel(message.created_at)}</span>
@@ -989,9 +1256,10 @@ function MessageList({
                 mine={message.author.id === meId}
                 canSend={canSend}
                 canDelete={message.author.id === meId || canModerate}
+                attempt={attempts.get(message.id)}
                 onEdit={(content) => edit.mutate({ id: message.id, content })}
-                onDelete={async () => {
-                  if (await confirmDelete(message, meId))
+                onDelete={async (skipConfirm) => {
+                  if (skipConfirm || (await confirmDelete(message, meId)))
                     remove.mutate(message.id);
                 }}
               />
@@ -999,6 +1267,16 @@ function MessageList({
           );
         })}
       </div>
+      {/* Below the empty rows box, which pins them to the bottom. */}
+      {!ready && !loadError ? (
+        <SkeletonRows count={6} avatars className="lr-list-skeleton" />
+      ) : null}
+      {ready && !loadError && items.length === 0 ? (
+        <div className="lr-list-empty">
+          {historyStart}
+          <p>Noch keine Nachrichten. Schreib die erste.</p>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1020,6 +1298,7 @@ function MessageRow({
   mine,
   canSend,
   canDelete,
+  attempt,
   onEdit,
   onDelete,
 }: {
@@ -1028,8 +1307,11 @@ function MessageRow({
   mine: boolean;
   canSend: boolean;
   canDelete: boolean;
+  /** The send attempt of a `tmp:` row. */
+  attempt?: SendAttempt;
   onEdit: (content: string) => void;
-  onDelete: () => void;
+  /** `skipConfirm` with Shift held. */
+  onDelete: (skipConfirm: boolean) => void;
 }) {
   const pending = isPendingId(message.id);
   const { members, me } = useMentions();
@@ -1053,12 +1335,16 @@ function MessageRow({
     members,
     new Map([...sentNames, ...editSuggestions.picked]),
   );
-  const editButton = useRef<HTMLButtonElement>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
+  const editOpener = useRef<HTMLElement | null>(null);
   const restoreEditFocus = useRef(false);
   useLayoutEffect(() => {
     if (!editing && restoreEditFocus.current) {
       restoreEditFocus.current = false;
-      editButton.current?.focus({ preventScroll: true });
+      const opener = editOpener.current;
+      (opener?.isConnected ? opener : rowRef.current)?.focus({
+        preventScroll: true,
+      });
     }
   }, [editing]);
   const finishEditing = () => {
@@ -1068,6 +1354,13 @@ function MessageRow({
 
   const startEdit = () => {
     restoreEditFocus.current = false;
+    // Back to the edit button afterwards, or to the row when the edit came
+    // from the action sheet.
+    const active = document.activeElement;
+    editOpener.current =
+      active instanceof HTMLElement && rowRef.current?.contains(active)
+        ? active
+        : rowRef.current;
     setDraft(fromWire(message.content, members));
     setEditing(true);
   };
@@ -1076,7 +1369,20 @@ function MessageRow({
     setDraft(fromWire(message.content, members));
   };
 
+  const moreButton = useRef<HTMLButtonElement>(null);
+  // The actions menu, at the "Mehr" button or for the whole row (sheet).
+  const [menu, setMenu] = useState<"more" | "row" | null>(null);
+  const [gesture] = useState(() =>
+    longPressGesture(() => {
+      navigator.vibrate?.(10);
+      swallowNextClick();
+      setMenu("row");
+    }),
+  );
+  const reaction = useReaction(message, canSend);
+
   const when = formatWhen(message.created_at);
+  const fullWhen = formatFull(message.created_at);
   const error = editing
     ? draft.length === 0
       ? message.attachments.length > 0
@@ -1084,6 +1390,8 @@ function MessageRow({
         : validateContent(wireDraft)
       : validateContent(wireDraft)
     : null;
+  // A `tmp:` row is being sent until its attempt says otherwise.
+  const sendState = pending ? (attempt?.status ?? "sending") : null;
   const showDelete = canDelete && !pending && !editing;
   const gif = asGif(message.gif);
   const showEdit = mine && canSend && !pending && !editing && !gif;
@@ -1094,56 +1402,171 @@ function MessageRow({
     null,
   );
 
-  const actions =
-    showEdit || showDelete || canReact ? (
-      <span className="lr-message-actions">
-        <span ref={setReactionSlot} className="lr-message-reaction-slot" />
-        {canReply ? (
-          <IconButton
-            label="Antworten"
-            onClick={() => setReplyTarget(message.channel_id, message)}
-          >
-            <ReplyIcon size={14} />
-          </IconButton>
-        ) : null}
-        {showEdit ? (
-          <IconButton
-            buttonRef={editButton}
-            label="Nachricht bearbeiten"
-            onClick={startEdit}
-          >
-            <PencilIcon size={14} />
-          </IconButton>
-        ) : null}
-        {showDelete ? (
-          <IconButton label="Nachricht löschen" onClick={onDelete} danger>
-            <TrashIcon size={14} />
-          </IconButton>
-        ) : null}
-      </span>
+  const copy = async () => {
+    if (await copyText(fromWire(message.content, members)))
+      notify("Text kopiert.");
+    else notifyError(new Error("Der Text konnte nicht kopiert werden."));
+  };
+  const menuActions: MessageActions =
+    pending || editing
+      ? {}
+      : {
+          react: canReact ? reaction.toggle : undefined,
+          moreReactions: canReact ? () => reaction.setPicking(true) : undefined,
+          reply: canReply
+            ? () => setReplyTarget(message.channel_id, message)
+            : undefined,
+          edit: showEdit ? startEdit : undefined,
+          copy: message.content ? () => void copy() : undefined,
+          remove: showDelete ? onDelete : undefined,
+        };
+  const hasMenu =
+    !pending &&
+    !editing &&
+    (canReact ||
+      canReply ||
+      showEdit ||
+      showDelete ||
+      Boolean(message.content));
+  const myReactions = asReactionList(message.reactions)
+    .filter((entry) => entry.user_ids.includes(reaction.userId))
+    .map((entry) => entry.emoji);
+
+  // A finger held on the row opens the sheet; a right click the menu,
+  // except on a link, a picture or selected text, which keep the browser's.
+  // Not in what the row opens over the page (the menu, the emoji picker's
+  // dialog): React passes their events up to the row too.
+  const ownTarget = (event: { currentTarget: Element; target: EventTarget }) =>
+    event.target instanceof Element &&
+    event.currentTarget.contains(event.target) &&
+    event.target.closest("dialog") === event.currentTarget.closest("dialog");
+  const menuHandlers = hasMenu
+    ? {
+        onPointerDown: (event: PointerEvent<HTMLDivElement>) => {
+          if (
+            !ownTarget(event) ||
+            (event.target as Element).closest("textarea, input")
+          )
+            return;
+          gesture.down({
+            pointerType: event.pointerType,
+            isPrimary: event.isPrimary,
+            x: event.clientX,
+            y: event.clientY,
+          });
+        },
+        onPointerMove: (event: PointerEvent<HTMLDivElement>) =>
+          gesture.move({ x: event.clientX, y: event.clientY }),
+        onPointerUp: gesture.end,
+        onPointerCancel: gesture.end,
+        onPointerLeave: gesture.end,
+        onContextMenu: (event: MouseEvent<HTMLDivElement>) => {
+          if (!ownTarget(event)) return;
+          // Already open, e.g. by the long press before a browser's own
+          // contextmenu for the same finger.
+          if (menu !== null) {
+            event.preventDefault();
+            return;
+          }
+          const pointer = (
+            event.nativeEvent as Partial<globalThis.PointerEvent>
+          ).pointerType;
+          // Android's own long press: the gesture above answers it.
+          if (pointer === "touch" || pointer === "pen") {
+            event.preventDefault();
+            return;
+          }
+          if (
+            (event.target as Element).closest(
+              "a, img, video, audio, input, textarea",
+            ) ||
+            String(window.getSelection() ?? "").trim()
+          )
+            return;
+          event.preventDefault();
+          setMenu("more");
+        },
+      }
+    : {};
+
+  const actions = hasMenu ? (
+    <span className="lr-message-actions">
+      <span ref={setReactionSlot} className="lr-message-reaction-slot" />
+      {canReply ? (
+        <IconButton
+          label="Antworten"
+          onClick={() => setReplyTarget(message.channel_id, message)}
+        >
+          <ReplyIcon size={14} />
+        </IconButton>
+      ) : null}
+      {showEdit ? (
+        <IconButton label="Nachricht bearbeiten" onClick={startEdit}>
+          <PencilIcon size={14} />
+        </IconButton>
+      ) : null}
+      <IconButton
+        buttonRef={moreButton}
+        label="Weitere Aktionen"
+        menu={menu === "more"}
+        onClick={() => setMenu(menu === "more" ? null : "more")}
+      >
+        <MoreIcon size={14} />
+      </IconButton>
+    </span>
+  ) : null;
+  const sheet = hasMenu ? (
+    <MessageActionSheet
+      open={menu !== null}
+      onClose={() => setMenu(null)}
+      anchor={menu === "row" ? rowRef : moreButton}
+      author={message.author.name}
+      actions={menuActions}
+      mine={myReactions}
+    />
+  ) : null;
+  const status = sendState ? <SendStatus state={sendState} /> : null;
+  const failure =
+    attempt && attempt.status !== "sending" ? (
+      <SendFailure attempt={attempt} />
     ) : null;
+  const edited = message.edited_at ? (
+    <span
+      className="lr-message-edited"
+      title={`Bearbeitet am ${formatFull(message.edited_at)}`}
+    >
+      (bearbeitet)
+    </span>
+  ) : null;
+  const rowClass = [
+    "lr-message-row group flex items-start gap-3",
+    continued ? "lr-message-continued" : "",
+    sendState === "sending" ? "is-sending" : "",
+    sendState === "failed" || sendState === "uncertain" ? "is-failed" : "",
+    mentioned ? "is-mentioned" : "",
+  ].join(" ");
 
   if (continued && !editing) {
     return (
-      <div
-        tabIndex={-1}
-        className={[
-          "lr-message-row lr-message-continued group flex items-start gap-3",
-          pending ? "opacity-60" : "",
-          mentioned ? "is-mentioned" : "",
-        ].join(" ")}
-      >
-        <span className="w-8 shrink-0" aria-hidden />
+      <div ref={rowRef} tabIndex={-1} className={rowClass} {...menuHandlers}>
+        <span className="lr-message-gutter" aria-hidden="true">
+          {sendState ? null : (
+            <time dateTime={message.created_at} title={fullWhen}>
+              {formatClock(message.created_at)}
+            </time>
+          )}
+        </span>
         <div className="min-w-0 flex-1">
+          <span className="sr-only">
+            {message.author.name}, {when}
+          </span>
           {message.content ? (
             <div className="lr-message-text">
               <MessageContent
                 content={message.content}
                 renderMention={renderMention}
               />
-              {message.edited_at ? (
-                <span className="lr-message-edited">(bearbeitet)</span>
-              ) : null}
+              {edited}
             </div>
           ) : null}
           {gif ? <GifMessage gif={gif} /> : null}
@@ -1156,31 +1579,34 @@ function MessageRow({
           <ReactionBar
             message={message}
             canSend={canSend}
+            reaction={reaction}
             addSlot={reactionSlot}
           />
+          {status ? <p className="lr-message-status-line">{status}</p> : null}
+          {failure}
         </div>
         {actions}
+        {sheet}
       </div>
     );
   }
 
   return (
-    <div
-      tabIndex={-1}
-      className={[
-        "lr-message-row group flex items-start gap-3",
-        pending ? "opacity-60" : "",
-        mentioned ? "is-mentioned" : "",
-      ].join(" ")}
-    >
+    <div ref={rowRef} tabIndex={-1} className={rowClass} {...menuHandlers}>
       <Avatar name={message.author.name} url={message.author.avatar_url} />
       <div className="min-w-0 flex-1">
         {reply ? <ReplyHeader reply={reply} /> : null}
         <div className="flex flex-wrap items-baseline gap-2">
           <span className="lr-message-author">{message.author.name}</span>
-          <time dateTime={message.created_at} className="lr-message-time">
-            {when}
-          </time>
+          {status ?? (
+            <time
+              dateTime={message.created_at}
+              title={fullWhen}
+              className="lr-message-time"
+            >
+              {when}
+            </time>
+          )}
         </div>
         {editing ? (
           <form
@@ -1242,9 +1668,7 @@ function MessageRow({
               content={message.content}
               renderMention={renderMention}
             />
-            {message.edited_at ? (
-              <span className="lr-message-edited">(bearbeitet)</span>
-            ) : null}
+            {edited}
           </div>
         ) : null}
         {!editing && gif ? <GifMessage gif={gif} /> : null}
@@ -1262,16 +1686,80 @@ function MessageRow({
           <ReactionBar
             message={message}
             canSend={canSend}
+            reaction={reaction}
             addSlot={reactionSlot}
           />
         )}
+        {failure}
       </div>
       {actions}
+      {sheet}
+    </div>
+  );
+}
+
+/** In place of the time while a message is on its way or did not arrive. */
+function SendStatus({ state }: { state: SendAttempt["status"] }) {
+  if (state === "sending")
+    return (
+      <span className="lr-message-status is-sending">
+        <span className="lr-message-spinner" aria-hidden="true" />
+        Wird gesendet…
+      </span>
+    );
+  return (
+    <span className="lr-message-status is-failed">
+      <WarningIcon size={13} />
+      {state === "failed" ? "Nicht gesendet" : "Status unklar – Verlauf prüfen"}
+    </span>
+  );
+}
+
+/** Why a message was not sent, and what to do about it, on its row. */
+function SendFailure({ attempt }: { attempt: SendAttempt }) {
+  const actions = useContext(AttemptActionsContext);
+  return (
+    <div className="lr-message-failure">
+      <p>
+        {attempt.error}
+        {attempt.status === "uncertain"
+          ? " Die Nachricht kann bereits gespeichert sein. Prüfe den Verlauf, bevor du sie erneut sendest."
+          : null}
+      </p>
+      <div className="lr-message-failure-actions">
+        {attempt.status === "failed" && actions ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={attempt.files.length > 0 && !actions.canSendFiles}
+            onClick={() => actions.retry(attempt)}
+          >
+            Erneut senden
+          </Button>
+        ) : null}
+        {attempt.gif || !actions ? null : (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => actions.edit(attempt)}
+          >
+            Bearbeiten
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => discardAttempt(attempt.id)}
+        >
+          Verwerfen
+        </Button>
+      </div>
     </div>
   );
 }
 
 function Composer({
+  handle,
   channelId,
   channelName,
   canSend,
@@ -1279,9 +1767,12 @@ function Composer({
   mention,
   author,
   attempts,
+  onSent,
+  onShowAttempt,
   onDraftChange,
   onDraftStop,
 }: {
+  handle: Ref<ComposerHandle>;
   channelId: string;
   channelName: string;
   canSend: boolean;
@@ -1289,6 +1780,10 @@ function Composer({
   mention: "#" | "@";
   author: { id: string; name: string; avatar_url: string | null } | null;
   attempts: SendAttempt[];
+  /** A message left: the list shows the end, where it appears. */
+  onSent: () => void;
+  /** Scrolls to the row of a send that did not go through. */
+  onShowAttempt: (id: string) => void;
   onDraftChange?: (value: string) => void;
   onDraftStop?: () => void;
 }) {
@@ -1476,6 +1971,7 @@ function Composer({
     if (disabled) return;
     const text = wire;
     send.mutate({ content: text, files, replyTo: replyTarget });
+    onSent();
     setReplyTarget(channelId, null);
     updateDraft({ text: "", files: [] });
     setFileError(null);
@@ -1488,9 +1984,22 @@ function Composer({
     setGifOpen(false);
     if (!canSend || !author) return;
     send.mutate({ content: "", gif: pick, replyTo: replyTarget });
+    onSent();
     setReplyTarget(channelId, null);
     composerInput.current?.focus();
   };
+  // "Bearbeiten" on a row that was not sent: its text and files come back
+  // here, after anything written since, which must not be lost.
+  useImperativeHandle(handle, () => ({
+    takeBack: (attempt) => {
+      const text = fromWire(attempt.content, members);
+      setDraft(draft.trim() ? `${draft}\n${text}` : text);
+      addFiles(attempt.files);
+      discardAttempt(attempt.id);
+      composerInput.current?.focus();
+    },
+  }));
+  const unsent = attempts.filter((attempt) => attempt.status !== "sending");
 
   const insertText = (text: string) => {
     const input = composerInput.current;
@@ -1537,62 +2046,19 @@ function Composer({
       onSubmit={submit}
       className="lr-composer"
     >
-      {attempts
-        .filter((attempt) => attempt.status !== "sending")
-        .map((attempt) => (
-          <div key={attempt.id} role="alert" className="lr-send-failure">
-            <p>
-              {attempt.error}{" "}
-              {attempt.status === "uncertain"
-                ? "Die Nachricht kann bereits gespeichert sein. Prüfe den Verlauf vor erneutem Senden."
-                : "Text und Datei bleiben für dich erhalten."}
-            </p>
-            <p className="lr-send-failure-content">
-              {attempt.gif ? (
-                gifLabel(attempt.gif.gif)
-              ) : (
-                <MessageText content={attempt.content} />
-              )}
-            </p>
-            {attempt.files.length > 0 ? (
-              <p>{attempt.files.map((file) => file.name).join(", ")}</p>
-            ) : null}
-            <div className="lr-send-failure-actions">
-              {attempt.status === "failed" ? (
-                <button
-                  type="button"
-                  disabled={attempt.files.length > 0 && !canSendFiles}
-                  onClick={() =>
-                    send.mutate({
-                      content: attempt.content,
-                      attemptId: attempt.id,
-                    })
-                  }
-                >
-                  Sendung wiederholen
-                </button>
-              ) : null}
-              {attempt.gif ? null : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDraft(fromWire(attempt.content, members));
-                    // Replaces what the composer holds: `files` here is
-                    // still this render's list.
-                    addFiles(attempt.files, []);
-                    discardAttempt(attempt.id);
-                    composerInput.current?.focus();
-                  }}
-                >
-                  Entwurf übernehmen
-                </button>
-              )}
-              <button type="button" onClick={() => discardAttempt(attempt.id)}>
-                Verwerfen
-              </button>
-            </div>
-          </div>
-        ))}
+      {unsent.length > 0 ? (
+        <div role="alert" className="lr-send-summary">
+          <WarningIcon size={14} />
+          <span>
+            {unsent.length === 1
+              ? "1 Nachricht nicht gesendet"
+              : `${unsent.length} Nachrichten nicht gesendet`}
+          </span>
+          <button type="button" onClick={() => onShowAttempt(unsent[0]!.id)}>
+            Anzeigen
+          </button>
+        </div>
+      ) : null}
       <label className="sr-only" htmlFor={`compose-${channelId}`}>
         Nachricht in {mention}
         {channelName}
@@ -1767,24 +2233,61 @@ function Composer({
           {gifOpen ? <GifPicker onSelect={sendGif} /> : null}
         </Modal>
       ) : null}
-      {remaining < 200 || error || fileError ? (
-        <div className="lr-composer-status">
-          {remaining < 200 ? (
-            <span className={remaining < 0 ? "lr-field-error" : undefined}>
-              {remaining}
-            </span>
-          ) : null}
-          {error ? (
-            <span className="lr-field-error">
-              {fieldMessage("content", error)}
-            </span>
-          ) : null}
-          {fileError ? (
-            <span className="lr-field-error">{fileError}</span>
-          ) : null}
-        </div>
+      <div className="lr-composer-status" role="status">
+        {remaining < 200 ? (
+          <span
+            className={remaining < 0 ? "lr-field-error" : undefined}
+            // Read out only near the limit, not with every letter.
+            aria-live={remaining < 20 ? "polite" : "off"}
+          >
+            {remaining < 0
+              ? `${-remaining} Zeichen zu viel`
+              : `${remaining} Zeichen übrig`}
+          </span>
+        ) : null}
+        {error ? (
+          <span className="lr-field-error">
+            {fieldMessage("content", error)}
+          </span>
+        ) : null}
+      </div>
+      {fileError ? (
+        <p role="alert" className="lr-composer-file-error lr-field-error">
+          {fileError}
+        </p>
       ) : null}
     </form>
+  );
+}
+
+/** Above the oldest message: the conversation has nothing older. */
+function HistoryStart({
+  mention,
+  channelName,
+  peer,
+}: {
+  mention: "#" | "@";
+  channelName: string;
+  peer?: { name: string; avatar_url: string | null };
+}) {
+  if (mention === "@")
+    return (
+      <div className="lr-history-start">
+        {peer ? (
+          <Avatar name={peer.name} url={peer.avatar_url} size="lg" decorative />
+        ) : null}
+        <h2>{peer?.name ?? channelName}</h2>
+        <p>Das ist der Anfang eurer Unterhaltung.</p>
+      </div>
+    );
+  return (
+    <div className="lr-history-start">
+      <h2>
+        <HashIcon size={20} />
+        {channelName}
+      </h2>
+      <p>Das ist der Anfang dieses Kanals.</p>
+    </div>
   );
 }
 
@@ -1870,18 +2373,39 @@ function formatWhen(iso: string): string {
   }).format(date);
 }
 
+/** "Dienstag, 21. Oktober 2026 um 14:02", for a time's tooltip. */
+function formatFull(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("de-DE", {
+    dateStyle: "full",
+    timeStyle: "short",
+  }).format(date);
+}
+
+/** "14:02", beside a grouped message. */
+function formatClock(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("de-DE", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function IconButton({
   buttonRef,
   label,
   onClick,
   children,
-  danger = false,
+  menu,
 }: {
   buttonRef?: Ref<HTMLButtonElement>;
   label: string;
   onClick: () => void;
   children: ReactNode;
-  danger?: boolean;
+  /** Opens a menu: whether it is open. */
+  menu?: boolean;
 }) {
   return (
     <button
@@ -1889,8 +2413,10 @@ function IconButton({
       type="button"
       title={label}
       aria-label={label}
+      aria-haspopup={menu === undefined ? undefined : "menu"}
+      aria-expanded={menu}
       onClick={onClick}
-      className={`lr-message-action${danger ? " is-danger" : ""}`}
+      className="lr-message-action"
     >
       {children}
     </button>

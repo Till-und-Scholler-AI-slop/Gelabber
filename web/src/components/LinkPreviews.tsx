@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
 
 import { removePreviews } from "../messages/api.ts";
 import { asPreviewList, type LinkPreview } from "../messages/types.ts";
 import { CloseIcon } from "./Icons.tsx";
+import { OpenImage } from "./openImage.ts";
 import { notifyError } from "./toasts.ts";
 
-/** Below this width the image is a thumbnail beside the text. */
+/** Below this width the image is a thumbnail beside the text; on phones
+ *  every image is (chat.css). */
 const LARGE_IMAGE_MIN_WIDTH = 400;
 
 /**
@@ -59,14 +61,17 @@ function PreviewCard({
   preview: LinkPreview;
   onRemove: (() => void) | null;
 }) {
+  const openImage = useContext(OpenImage);
+  const video = preview.youtube_id !== undefined;
   const large =
-    preview.youtube_id !== undefined ||
+    video ||
     (preview.image !== undefined &&
       preview.image.width >= LARGE_IMAGE_MIN_WIDTH);
+  const name = preview.title ?? hostOf(preview.url);
   return (
     <article
-      className={`lr-preview${large ? " is-large" : ""}`}
-      aria-label={`Vorschau: ${preview.title ?? hostOf(preview.url)}`}
+      className={`lr-preview${large ? " is-large" : ""}${video ? " is-video" : ""}`}
+      aria-label={`Vorschau: ${name}`}
     >
       <div className="lr-preview-text">
         <span className="lr-preview-site">
@@ -93,15 +98,28 @@ function PreviewCard({
           image={preview.image?.url}
         />
       ) : preview.image ? (
-        <img
+        <button
+          type="button"
           className="lr-preview-image"
-          src={preview.image.url}
-          width={preview.image.width}
-          height={preview.image.height}
-          alt=""
-          loading="lazy"
-          decoding="async"
-        />
+          aria-label={`Bild vergrößern: ${name}`}
+          onClick={() =>
+            preview.image &&
+            openImage({
+              id: `preview:${preview.url}`,
+              src: preview.image.url,
+              filename: name,
+            })
+          }
+        >
+          <img
+            src={preview.image.url}
+            width={preview.image.width}
+            height={preview.image.height}
+            alt=""
+            loading="lazy"
+            decoding="async"
+          />
+        </button>
       ) : null}
       {onRemove ? (
         <button
