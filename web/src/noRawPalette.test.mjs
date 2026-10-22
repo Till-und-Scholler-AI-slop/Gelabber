@@ -24,10 +24,6 @@ const ALLOWED = new Set([
   "pages/ProfileCardForm.tsx",
   "pages/ProfilePage.tsx",
   "pages/ServerSettingsPage.tsx",
-  "voice/PushToTalkSettings.tsx",
-  "voice/VoiceDiagnostics.tsx",
-  "voice/VoiceSettings.tsx",
-  "voice/VoiceTile.tsx",
 ]);
 
 /** Component files by path under src, with the raw palette classes in each. */

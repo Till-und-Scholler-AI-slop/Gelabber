@@ -40,6 +40,7 @@ import {
   useVoice,
 } from "../voice/session.ts";
 import { useCapabilities } from "../voice/capabilities.ts";
+import { QuickCallSettingsButton } from "../voice/QuickCallSettings.tsx";
 import { isDesktopApp } from "../voice/native/bridge.ts";
 import {
   callShortcutKeys,
@@ -220,7 +221,6 @@ export function VoiceControls({
   liveTakenBy = null,
 }: ShareProps) {
   const camera = useVoice((s) => s.camera);
-  const openSettings = useMediaSettings((s) => s.openDialog);
   const capable = useCapabilities();
 
   return (
@@ -247,15 +247,7 @@ export function VoiceControls({
         </Unavailable>
       ) : null}
       <ShareMenu canGoLive={canGoLive} liveTakenBy={liveTakenBy} />
-      <button
-        type="button"
-        aria-label="Voice-Einstellungen"
-        title="Voice-Einstellungen"
-        onClick={() => openSettings()}
-        className={BUTTON}
-      >
-        <GearIcon size={17} />
-      </button>
+      <QuickCallSettingsButton className={BUTTON} />
     </div>
   );
 }

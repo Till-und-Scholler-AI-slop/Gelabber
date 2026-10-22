@@ -229,8 +229,8 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   pttReleaseDelay: PTT_RELEASE_DELAY_DEFAULT,
 };
 
-/** A part of the settings dialog it opens at, scrolled into view. */
-export type MediaDialogSection = "diagnostics";
+/** The settings dialog's tab it opens on. */
+export type MediaDialogSection = "audio" | "video" | "diagnostics";
 
 type MediaSettingsState = MediaSettings & {
   dialogOpen: boolean;
