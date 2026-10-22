@@ -26,7 +26,9 @@ import { createNativeDevice } from "./native/device.ts";
 import { createStream } from "./native/tracks.ts";
 import {
   chooseVideoCodec,
+  hardwareAv1Decoding,
   hardwareVideo,
+  receivableCapabilities,
   SOFTWARE_VIDEO,
   type HardwareVideo,
 } from "./videoCodec.ts";
@@ -85,6 +87,8 @@ export type MediaConnectionOptions = {
   deviceFactory?: () => Promise<Device>;
   /** Test injection; production asks the browser or the desktop app. */
   hardwareVideo?: () => Promise<HardwareVideo>;
+  /** Test injection; production asks the browser or the desktop app. */
+  hardwareAv1Decoding?: () => Promise<boolean>;
   /** Test injection; production SDK operations are bounded to ten seconds. */
   sdkTimeoutMs?: number;
   /** Test injection; production waits SDK_LOAD_TIMEOUT_MS for the chunk. */
@@ -328,8 +332,14 @@ export class MediasoupConnection implements MediaConnection {
       throw error;
     }
     this.device = device;
+    // AV1 comes as one stream: only a device that decodes it in hardware
+    // offers to receive it (issue #318).
+    const av1Decoding = await (
+      this.options.hardwareAv1Decoding ?? hardwareAv1Decoding
+    )();
+    this.live();
     const announced = await this.options.request("capabilities", {
-      rtp: device.recvRtpCapabilities,
+      rtp: receivableCapabilities(device.recvRtpCapabilities, av1Decoding),
     });
     this.live();
     if (isVideoCodecs(announced?.codecs))

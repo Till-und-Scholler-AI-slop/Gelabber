@@ -2379,10 +2379,14 @@ char* gm_video_codecs(void)
 {
 	return guarded<char*>(nullptr, [&] {
 		json out = { { "h264", nullptr }, { "av1", nullptr } };
-		const auto entry = [](const std::string& encoder, bool hardware, const std::string& decoder) {
+		const auto entry = [](const std::string& encoder,
+		                      bool hardwareEncoder,
+		                      const std::string& decoder,
+		                      bool hardwareDecoder) {
 			return json{ { "encoder", encoder.empty() ? json(nullptr) : json(encoder) },
-				         { "hardwareEncoder", hardware },
-				         { "decoder", decoder.empty() ? json(nullptr) : json(decoder) } };
+				         { "hardwareEncoder", hardwareEncoder },
+				         { "decoder", decoder.empty() ? json(nullptr) : json(decoder) },
+				         { "hardwareDecoder", hardwareDecoder } };
 		};
 		for (const auto codec : { gelabber::SystemCodec::kH264, gelabber::SystemCodec::kAv1 })
 		{
@@ -2390,10 +2394,12 @@ char* gm_video_codecs(void)
 #if defined(WEBRTC_LINUX)
 			// The same choice the engine's factories make; GStreamer loads once.
 			const auto encoder = gelabber::FindGstEncoder(codec);
-			out[key] = entry(encoder, gelabber::IsHardwareEncoder(encoder), gelabber::FindGstDecoder(codec));
+			const auto decoder = gelabber::FindGstDecoder(codec);
+			out[key]           = entry(
+			  encoder, gelabber::IsHardwareEncoder(encoder), decoder, gelabber::IsHardwareDecoder(decoder));
 #elif defined(WEBRTC_WIN)
 			const auto& codecs = gelabber::FindMfCodecs(codec);
-			out[key]           = entry(codecs.encoder, codecs.hardwareEncoder, codecs.decoder);
+			out[key] = entry(codecs.encoder, codecs.hardwareEncoder, codecs.decoder, codecs.hardwareDecoder);
 #else
 			(void)key;
 			(void)entry;

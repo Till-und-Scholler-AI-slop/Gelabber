@@ -23,6 +23,8 @@ export type NativeFeature =
   | "h264-hardware"
   /** The core encodes AV1 in hardware (see `hardwareVideo`). */
   | "av1-hardware"
+  /** The core decodes AV1 in hardware (see `hardwareAv1Decoding`). */
+  | "av1-hardware-decode"
   /** The core tells a picker the user closed ("cancelled") from a capture
    * that failed. No app sends it yet: at the pinned libwebrtc a portal that
    * answers a cancel with a non-zero response (xdg-desktop-portal-hyprland)

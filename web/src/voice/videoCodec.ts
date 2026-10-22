@@ -7,8 +7,17 @@
 // hardware, which costs the least CPU; otherwise VP8, which every WebRTC
 // stack encodes and decodes. AV1 on the CPU costs far more than VP8 and
 // comes last.
+//
+// AV1 goes out as one stream, never in simulcast layers, so every receiver
+// decodes the whole picture. A device that does not decode AV1 in hardware
+// leaves AV1 out of the codecs it tells the server it receives
+// (`receivableCapabilities`): the room then has no AV1, and senders stay on
+// H.264 or VP8 with layers.
 
-import type { RtpCodecCapability } from "mediasoup-client/types";
+import type {
+  RtpCapabilities,
+  RtpCodecCapability,
+} from "mediasoup-client/types";
 import { isDesktopApp } from "./native/bridge.ts";
 import { loadNativeFeatures, type NativeFeature } from "./native/features.ts";
 
@@ -69,42 +78,85 @@ export function chooseVideoCodec(
   return undefined;
 }
 
-/** The desktop app's features when its core encodes in hardware. */
+/** The device's codecs to receive with, as the server is told them: without
+ * AV1 (and its RTX) unless `av1Decoding`, the device decoding AV1 in
+ * hardware. */
+export function receivableCapabilities(
+  capabilities: RtpCapabilities,
+  av1Decoding: boolean,
+): RtpCapabilities {
+  if (av1Decoding || !capabilities.codecs) return capabilities;
+  const av1 = new Set(
+    capabilities.codecs
+      .filter((c) => c.mimeType.toLowerCase() === AV1)
+      .map((c) => c.preferredPayloadType),
+  );
+  const codecs = capabilities.codecs.filter(
+    (c) =>
+      c.mimeType.toLowerCase() !== AV1 &&
+      !(
+        c.mimeType.toLowerCase() === "video/rtx" &&
+        av1.has(Number((c.parameters as { apt?: unknown } | undefined)?.apt))
+      ),
+  );
+  return { ...capabilities, codecs };
+}
+
+/** The desktop app's features when its core encodes, or decodes, in
+ * hardware. */
 export const H264_HARDWARE_FEATURE: NativeFeature = "h264-hardware";
 export const AV1_HARDWARE_FEATURE: NativeFeature = "av1-hardware";
+export const AV1_HARDWARE_DECODE_FEATURE: NativeFeature = "av1-hardware-decode";
 
 /** How long the browser may take to say; past it, software is assumed. */
 const PROBE_TIMEOUT_MS = 1000;
 
-let probed: Promise<HardwareVideo> | null = null;
+type Probed = HardwareVideo & { av1Decoding: boolean };
 
-/** Which codecs this device encodes in hardware, asked once per page. A
- * browser says so as `powerEfficient`. */
-export function hardwareVideo(): Promise<HardwareVideo> {
-  probed ??= probe().catch(() => SOFTWARE_VIDEO);
+let probed: Promise<Probed> | null = null;
+
+function probeOnce(): Promise<Probed> {
+  probed ??= probe().catch(() => ({ ...SOFTWARE_VIDEO, av1Decoding: false }));
   return probed;
 }
 
-async function probe(): Promise<HardwareVideo> {
+/** Which codecs this device encodes in hardware, asked once per page. A
+ * browser says so as `powerEfficient`. */
+export async function hardwareVideo(): Promise<HardwareVideo> {
+  const { av1, h264 } = await probeOnce();
+  return { av1, h264 };
+}
+
+/** Whether this device decodes AV1 in hardware, asked with the encoders. */
+export async function hardwareAv1Decoding(): Promise<boolean> {
+  return (await probeOnce()).av1Decoding;
+}
+
+async function probe(): Promise<Probed> {
   if (isDesktopApp()) {
     const features = await withTimeout(loadNativeFeatures(), new Set<string>());
     return {
       av1: features.has(AV1_HARDWARE_FEATURE),
       h264: features.has(H264_HARDWARE_FEATURE),
+      av1Decoding: features.has(AV1_HARDWARE_DECODE_FEATURE),
     };
   }
-  const [av1, h264] = await Promise.all([
-    withTimeout(powerEfficient("video/AV1"), false),
-    withTimeout(powerEfficient("video/H264"), false),
+  const [av1, h264, av1Decoding] = await Promise.all([
+    withTimeout(powerEfficient("encodingInfo", "video/AV1"), false),
+    withTimeout(powerEfficient("encodingInfo", "video/H264"), false),
+    withTimeout(powerEfficient("decodingInfo", "video/AV1"), false),
   ]);
-  return { av1, h264 };
+  return { av1, h264, av1Decoding };
 }
 
-async function powerEfficient(contentType: string): Promise<boolean> {
+async function powerEfficient(
+  question: "encodingInfo" | "decodingInfo",
+  contentType: string,
+): Promise<boolean> {
   const capabilities =
     typeof navigator === "undefined" ? undefined : navigator.mediaCapabilities;
-  if (!capabilities?.encodingInfo) return false;
-  const info = await capabilities.encodingInfo({
+  if (!capabilities?.[question]) return false;
+  const info = await capabilities[question]({
     type: "webrtc",
     video: {
       contentType,

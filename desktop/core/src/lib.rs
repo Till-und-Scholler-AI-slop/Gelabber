@@ -99,9 +99,11 @@ pub fn set_log_level(level: LogLevel) {
 }
 
 /// The system's video codecs beside libwebrtc's own, as an engine uses them:
-/// `{"h264":{"encoder","hardwareEncoder","decoder"},"av1":{...}}`, encoder
-/// and decoder being GStreamer elements (Linux), Media Foundation MFTs
-/// (Windows) or null; a codec is null where the core has no such codecs.
+/// `{"h264":{"encoder","hardwareEncoder","decoder","hardwareDecoder"},
+/// "av1":{...}}`, encoder and decoder being GStreamer elements (Linux),
+/// Media Foundation MFTs (Windows) or null; a codec is null where the core
+/// has no such codecs. `hardwareDecoder`: the decoder runs on the GPU
+/// (Windows: the GPU has the DXVA profile).
 /// AV1 lists only codecs in front of libaom and dav1d, which the core always
 /// has: an encoder or decoder of null means AV1 on the CPU. Blocks while
 /// GStreamer scans its plugins the first time.

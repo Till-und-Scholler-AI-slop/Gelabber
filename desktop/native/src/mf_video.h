@@ -31,6 +31,8 @@ namespace gelabber
 		bool hardwareEncoder{ false };
 		// Friendly name of the decoder MFT, "" when there is none.
 		std::string decoder;
+		// Whether the GPU decodes the codec, through DXVA.
+		bool hardwareDecoder{ false };
 	};
 
 	// What the system has, looked up once.

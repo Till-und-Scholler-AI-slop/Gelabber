@@ -2017,6 +2017,37 @@ describe("video codec negotiation", () => {
     expect(f.onError).not.toHaveBeenCalled();
   });
 
+  it("offers to receive AV1 only where it is decoded in hardware", async () => {
+    const av1Rtx = {
+      kind: "video" as const,
+      mimeType: "video/rtx",
+      preferredPayloadType: 46,
+      clockRate: 90000,
+      parameters: { apt: 45 },
+    };
+    const receivable: RtpCapabilities = {
+      codecs: [...withH264.codecs!, av1Rtx],
+    };
+    const announced = async (decoding: boolean) => {
+      const f = fixture("voice", undefined, {
+        hardwareAv1Decoding: async () => decoding,
+      });
+      f.device.recvRtpCapabilities = receivable;
+      await f.start();
+      const call = f.requests.find((r) => r.method === "capabilities");
+      return (call?.data as { rtp: RtpCapabilities }).rtp.codecs!.map(
+        (c) => c.mimeType,
+      );
+    };
+    expect(await announced(true)).toContain("video/AV1");
+    const software = await announced(false);
+    expect(software).not.toContain("video/AV1");
+    expect(software).toContain("video/H264");
+    expect(software.filter((m) => m === "video/rtx")).toHaveLength(
+      receivable.codecs!.filter((c) => c.mimeType === "video/rtx").length - 1,
+    );
+  });
+
   it("sends a screen and its sound again when the room's codecs change", async () => {
     const f = negotiating(true, ["video/vp8", "video/h264"]);
     await f.start();

@@ -2123,6 +2123,11 @@ fn validate_parameters(kind: SourceKind, rtp: &RtpParameters) -> Result<(), SfuE
         // mediasoup forwards VP9 and AV1 as one stream or SVC, never as
         // simulcast layers; its worker would refuse the producer later.
         if matches!(mime.as_str(), "video/vp9" | "video/av1") && rtp.encodings.len() > 1 {
+            warn!(
+                codec = mime.as_str(),
+                encodings = rtp.encodings.len(),
+                "refused a producer: this codec comes as one stream"
+            );
             return Err(SfuError::UnsupportedCodec);
         }
     } else if mime != "audio/opus" || rtp.encodings.len() > 1 {

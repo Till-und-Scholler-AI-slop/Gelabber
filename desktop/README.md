@@ -340,10 +340,15 @@ separate decision.
   encodes that in hardware, else VP8; AV1 on the CPU never comes before VP8
   (issue #318). The core produces what it is asked for, and a caller that
   names no codec gets H264 before VP8. `media_info` reports the features
-  `h264-hardware` and `av1-hardware` and, under `videoCodecs`, what
-  `gm_video_codecs` found. mediasoup forwards AV1 (like VP9) as one stream
-  or SVC, never in simulcast layers, so AV1 goes out as one stream and the
-  server refuses AV1 or VP9 producers with more than one encoding.
+  `h264-hardware`, `av1-hardware` and `av1-hardware-decode` and, under
+  `videoCodecs`, what `gm_video_codecs` found. mediasoup forwards AV1 (like
+  VP9) as one stream or SVC, never in simulcast layers, so AV1 goes out as
+  one stream and the server refuses AV1 or VP9 producers with more than one
+  encoding. Every receiver then decodes the whole picture, so a device that
+  does not decode AV1 in hardware (`av1-hardware-decode`; in a browser
+  `decodingInfo`'s `powerEfficient`) leaves AV1 out of the codecs it tells
+  the server it receives: one such receiver keeps the room on H264 or VP8
+  with layers.
   - Neither libwebrtc build carries H264 (`rtc_use_h264=false`, no OpenH264
     or FFmpeg) and the core is compiled without `WEBRTC_USE_H264`: H264 is
     the system's alone, so the packages ship no H264 codec. A system

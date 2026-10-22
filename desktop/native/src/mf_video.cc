@@ -1422,6 +1422,48 @@ namespace gelabber
 			std::deque<Pending> pending;
 		};
 
+		// DXVA decoder profiles (dxva.h), here so that an older SDK builds.
+		constexpr GUID kH264DecodeProfile = {
+			0x1b81be68, 0xa0c7, 0x11d3, { 0xb9, 0x84, 0x00, 0xc0, 0x4f, 0x2e, 0x73, 0xc5 }
+		};
+		constexpr GUID kAv1DecodeProfile = {
+			0xb8be4ccb, 0xcf53, 0x46ba, { 0x8d, 0x59, 0xd6, 0xb8, 0xa6, 0xda, 0x5d, 0x2a }
+		};
+
+		// Whether the GPU decodes `codec` (8-bit 4:2:0), which is what the
+		// decoder MFT uses through DXVA.
+		bool GpuDecodes(SystemCodec codec)
+		{
+			winrt::com_ptr<ID3D11Device> device;
+			if (FAILED(D3D11CreateDevice(
+			      nullptr,
+			      D3D_DRIVER_TYPE_HARDWARE,
+			      nullptr,
+			      D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+			      nullptr,
+			      0,
+			      D3D11_SDK_VERSION,
+			      device.put(),
+			      nullptr,
+			      nullptr)))
+				return false;
+			const auto video = device.try_as<ID3D11VideoDevice>();
+			if (!video)
+				return false;
+			const GUID& wanted = codec == SystemCodec::kH264 ? kH264DecodeProfile : kAv1DecodeProfile;
+			for (UINT index = 0, count = video->GetVideoDecoderProfileCount(); index < count; ++index)
+			{
+				GUID profile{};
+				if (SUCCEEDED(video->GetVideoDecoderProfile(index, &profile)) && profile == wanted)
+				{
+					BOOL supported = FALSE;
+					return SUCCEEDED(video->CheckVideoDecoderFormat(&profile, DXGI_FORMAT_NV12, &supported)) &&
+					       supported;
+				}
+			}
+			return false;
+		}
+
 		// What the system has, in the order the encoder picks.
 		MfCodecs Look(SystemCodec codec)
 		{
@@ -1434,10 +1476,13 @@ namespace gelabber
 			else if (auto software = SoftwareEncoders(codec); !software.empty())
 				found.encoder = Name(software.front().get(), codec);
 			if (auto decoders = Decoders(codec); !decoders.empty())
-				found.decoder = Name(decoders.front().get(), codec);
+			{
+				found.decoder         = Name(decoders.front().get(), codec);
+				found.hardwareDecoder = GpuDecodes(codec);
+			}
 			RTC_LOG(LS_INFO) << "Media Foundation " << CodecName(codec) << ": encoder \"" << found.encoder << "\""
 			                 << (found.hardwareEncoder ? " (hardware)" : "") << ", decoder \"" << found.decoder
-			                 << "\"";
+			                 << "\"" << (found.hardwareDecoder ? " (hardware)" : "");
 			return found;
 		}
 

@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RtpCodecCapability } from "mediasoup-client/types";
+import type {
+  RtpCapabilities,
+  RtpCodecCapability,
+} from "mediasoup-client/types";
 import {
   chooseVideoCodec,
+  hardwareAv1Decoding,
   hardwareVideo,
   publishableH264,
+  receivableCapabilities,
   resetHardwareVideoForTests,
 } from "./videoCodec.ts";
 import { setNativeBridgeForTests, type NativeBridge } from "./native/bridge.ts";
@@ -179,6 +184,62 @@ describe("hardware video", () => {
       channel: async () => null,
     } as unknown as NativeBridge);
     expect(await hardwareVideo()).toEqual(av1Only);
+    expect(await hardwareAv1Decoding()).toBe(false);
     expect(encodingInfo).not.toHaveBeenCalled();
+    resetHardwareVideoForTests();
+    setNativeBridgeForTests({
+      invoke: async (command: string) =>
+        command === "media_info"
+          ? { features: ["av1-hardware-decode"] }
+          : Promise.reject(new Error(command)),
+      channel: async () => null,
+    } as unknown as NativeBridge);
+    expect(await hardwareAv1Decoding()).toBe(true);
+    expect(await hardwareVideo()).toEqual(none);
+  });
+
+  it("decodes AV1 in hardware where the browser says so", async () => {
+    const decodingInfo = vi.fn(answer({ "video/AV1": true }));
+    vi.stubGlobal("navigator", {
+      mediaCapabilities: { encodingInfo: answer({}), decodingInfo },
+    });
+    expect(await hardwareAv1Decoding()).toBe(true);
+    expect(await hardwareVideo()).toEqual(none);
+    expect(decodingInfo).toHaveBeenCalledOnce();
+    expect(decodingInfo.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        type: "webrtc",
+        video: expect.objectContaining({ contentType: "video/AV1" }),
+      }),
+    );
+    resetHardwareVideoForTests();
+    vi.stubGlobal("navigator", {
+      mediaCapabilities: { encodingInfo: answer({ "video/AV1": true }) },
+    });
+    expect(await hardwareAv1Decoding()).toBe(false);
+  });
+});
+
+describe("receivable capabilities", () => {
+  const rtx = (apt: number): RtpCodecCapability => ({
+    ...codec("video/rtx", { apt }),
+    preferredPayloadType: apt + 1,
+  });
+  const av1At45 = { ...av1, preferredPayloadType: 45 };
+  const vp8At96 = { ...vp8, preferredPayloadType: 96 };
+  const device: RtpCapabilities = {
+    codecs: [vp8At96, rtx(96), av1At45, rtx(45)],
+    headerExtensions: [],
+  };
+
+  it("leaves out AV1 and its RTX without a hardware decoder", () => {
+    expect(receivableCapabilities(device, false)).toEqual({
+      codecs: [vp8At96, rtx(96)],
+      headerExtensions: [],
+    });
+  });
+
+  it("keeps everything with one", () => {
+    expect(receivableCapabilities(device, true)).toBe(device);
   });
 });

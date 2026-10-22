@@ -517,6 +517,9 @@ async fn off_runtime(job: impl FnOnce() + Send + 'static) -> Result<()> {
 ///   `media_info` when the system has such an encoder.
 /// - "av1-hardware": the same for AV1, which the web client prefers even to
 ///   H264 (issue #318).
+/// - "av1-hardware-decode": the core decodes AV1 on the GPU. Without it the
+///   web client does not offer to receive AV1, which comes as one stream, so
+///   that the room stays on H264 or VP8 with layers.
 ///
 /// The only place that decides the list. An app before v0.6 reports none.
 const FEATURES: &[&str] = if cfg!(any(target_os = "linux", windows)) {
@@ -545,6 +548,9 @@ pub async fn media_info() -> Value {
     }
     if codecs["av1"]["hardwareEncoder"] == true {
         features.push("av1-hardware");
+    }
+    if codecs["av1"]["hardwareDecoder"] == true {
+        features.push("av1-hardware-decode");
     }
     json!({
         "abi": gelabber_media_core::ABI_VERSION,
@@ -1181,6 +1187,7 @@ mod tests {
         "video-frames",
         "h264-hardware",
         "av1-hardware",
+        "av1-hardware-decode",
     ];
 
     /// What the web client reads: the fields of v0.5 stay, and `features` is
@@ -1204,11 +1211,15 @@ mod tests {
         } else {
             &[]
         };
-        // The hardware encoders depend on the machine, not on the build;
-        // they come last, H264 before AV1.
+        // The hardware codecs depend on the machine, not on the build; they
+        // come last: H264's encoder, AV1's encoder, AV1's decoder.
         let mut features: Vec<Value> = info["features"].as_array().unwrap().clone();
-        for (codec, feature) in [("av1", "av1-hardware"), ("h264", "h264-hardware")] {
-            let hardware = info["videoCodecs"][codec]["hardwareEncoder"] == true;
+        for (codec, side, feature) in [
+            ("av1", "hardwareDecoder", "av1-hardware-decode"),
+            ("av1", "hardwareEncoder", "av1-hardware"),
+            ("h264", "hardwareEncoder", "h264-hardware"),
+        ] {
+            let hardware = info["videoCodecs"][codec][side] == true;
             assert_eq!(features.last() == Some(&json!(feature)), hardware, "{info}");
             if hardware {
                 features.pop();
