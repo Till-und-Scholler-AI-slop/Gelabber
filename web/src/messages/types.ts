@@ -47,6 +47,9 @@ export type Message = {
   /** Written by the server, not typed (#314): the text comes from
    *  `systemText` and `content` is empty. */
   system?: SystemMessage | null;
+  /** The sender's attempt id, echoed by the create response and its live
+   *  event only (#355): the uuid of the `tmp:` row the message replaces. */
+  nonce?: string;
 };
 
 /** Preview of an answered message. A deleted original is only
