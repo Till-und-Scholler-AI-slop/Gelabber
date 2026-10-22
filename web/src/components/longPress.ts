@@ -18,3 +18,65 @@ export function isChromeLongPress(
   const owner = target?.closest?.(`${CONTENT}, ${CHROME}`);
   return owner?.matches(CHROME) ?? false;
 }
+
+/**
+ * After a long press opened something, the finger's lift may still click
+ * whatever is under it now, such as a sheet's backdrop. Swallows that one
+ * click; a browser that sends none drops the guard at the next touch.
+ */
+export function swallowNextClick(): void {
+  const swallow = (event: Event) => {
+    event.stopPropagation();
+    event.preventDefault();
+    stop();
+  };
+  const stop = () => {
+    window.removeEventListener("click", swallow, true);
+    window.removeEventListener("pointerdown", stop, true);
+  };
+  window.addEventListener("click", swallow, true);
+  window.addEventListener("pointerdown", stop, true);
+}
+
+/** How long a finger rests on a message before its actions open. */
+export const LONG_PRESS_MS = 450;
+/** How far it may drift meanwhile (px): further is a scroll. */
+const LONG_PRESS_SLOP = 10;
+
+type Point = { x: number; y: number };
+
+/**
+ * A long press from pointer events, which iOS Safari also sends (it has no
+ * contextmenu event for a held finger). Touch and pen only: a mouse has its
+ * right click.
+ */
+export function longPressGesture(onLongPress: () => void) {
+  let start: Point | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const stop = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    start = null;
+  };
+  return {
+    down(event: { pointerType: string; isPrimary: boolean } & Point) {
+      stop();
+      if (event.pointerType === "mouse" || !event.isPrimary) return;
+      start = { x: event.x, y: event.y };
+      timer = setTimeout(() => {
+        timer = null;
+        start = null;
+        onLongPress();
+      }, LONG_PRESS_MS);
+    },
+    move(event: Point) {
+      if (
+        start &&
+        Math.hypot(event.x - start.x, event.y - start.y) > LONG_PRESS_SLOP
+      )
+        stop();
+    },
+    /** Lifted, cancelled (the browser took over to scroll) or left. */
+    end: stop,
+  };
+}

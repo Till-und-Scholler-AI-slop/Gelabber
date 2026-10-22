@@ -401,10 +401,16 @@ const sourcePlayback = (sample, kind) =>
   sample.playback.filter((el) => el.source === kind);
 const micPlayback = (sample) =>
   sample.playback.filter((el) => !el.source && el.tracks.length > 0);
-// The bottom bar on narrow windows, the sidebar card on wide ones; the
-// hidden one is excluded from the accessibility tree.
+// The call bar at the bottom of the window.
 const dock = (actor) =>
   actor.page.getByRole("region", { name: "Aktive Medien", exact: true });
+// The screen share and Go Live sit in the call bar's "Teilen" menu.
+async function share(actor, name) {
+  await dock(actor)
+    .getByRole("button", { name: "Teilen", exact: true })
+    .click();
+  await actor.page.getByRole("menuitem", { name, exact: true }).click();
+}
 const tile = (actor, kind) =>
   actor.page.locator("figure").filter({
     has: actor.page.locator("figcaption", {
@@ -641,7 +647,7 @@ async function playbackControls(receiver, publisher, kind) {
     "Independent voice/source volume",
   );
   await dock(receiver)
-    .getByRole("button", { name: "Stream-Ton aus", exact: true })
+    .getByRole("button", { name: "Stream-Ton stummschalten", exact: true })
     .click();
   await until(
     () => snapshot(receiver),
@@ -650,11 +656,11 @@ async function playbackControls(receiver, publisher, kind) {
   );
   await progress(receiver, [audioKind], publisher.id);
   await dock(receiver)
-    .getByRole("button", { name: "Stream-Ton an", exact: true })
+    .getByRole("button", { name: "Stream-Ton stummschalten", exact: true })
     .click();
   await until(() => snapshot(receiver), expected, "Source unmute");
   await dock(publisher)
-    .getByRole("button", { name: "Mikrofon aus", exact: true })
+    .getByRole("button", { name: "Stummschalten", exact: true })
     .click();
   await until(
     () => snapshot(publisher),
@@ -665,10 +671,10 @@ async function playbackControls(receiver, publisher, kind) {
   );
   await progress(receiver, [audioKind], publisher.id);
   await dock(publisher)
-    .getByRole("button", { name: "Mikrofon an", exact: true })
+    .getByRole("button", { name: "Stummschalten", exact: true })
     .click();
   await dock(receiver)
-    .getByRole("button", { name: "Taub stellen", exact: true })
+    .getByRole("button", { name: "Taubschalten", exact: true })
     .click();
   await until(
     () => snapshot(receiver),
@@ -678,7 +684,7 @@ async function playbackControls(receiver, publisher, kind) {
     "Deafen must mute every audio path and microphone",
   );
   await dock(receiver)
-    .getByRole("button", { name: "Hören", exact: true })
+    .getByRole("button", { name: "Taubschalten", exact: true })
     .click();
   await until(
     () => snapshot(receiver),
@@ -694,11 +700,11 @@ async function playbackControls(receiver, publisher, kind) {
 
 async function sourceScenario(receiver, kind) {
   stage = `${kind}: start`;
-  const start = kind === "s" ? "Bildschirm teilen" : "Go Live";
+  const start = kind === "s" ? "Bildschirm im Raum teilen" : "Go Live";
   const stop = kind === "s" ? "Teilen beenden" : "Live beenden";
   const audioKind = `${kind}a`;
   const capturesBefore = (await snapshot(owner)).captureCount;
-  await dock(owner).getByRole("button", { name: start, exact: true }).click();
+  await share(owner, start);
   const publisher = await until(
     () => snapshot(owner),
     (state) =>
@@ -809,7 +815,7 @@ async function sourceScenario(receiver, kind) {
   stage = `${kind}: re-Watch and parent stop`;
   await watch(receiver, kind);
   await progress(receiver, [audioKind], owner.id);
-  await dock(owner).getByRole("button", { name: stop, exact: true }).click();
+  await share(owner, stop);
   await until(
     () => snapshot(owner),
     (state) =>
@@ -879,9 +885,13 @@ try {
   await sourceScenario(receiver, "l");
 
   stage = "six concurrent sources";
-  for (const name of ["Kamera an", "Bildschirm teilen", "Go Live"]) {
+  stage = "six concurrent sources: start Kamera";
+  await dock(owner)
+    .getByRole("button", { name: "Kamera", exact: true })
+    .click();
+  for (const name of ["Bildschirm im Raum teilen", "Go Live"]) {
     stage = `six concurrent sources: start ${name}`;
-    await dock(owner).getByRole("button", { name, exact: true }).click();
+    await share(owner, name);
   }
   for (const kind of ["s", "l"]) {
     stage = `six concurrent sources: watch ${kind}`;
@@ -1012,8 +1022,11 @@ try {
   report.checks.push(
     "enumerated input-device and enhanced/Original DSP swaps: confirmed native audio with other five sources flowing",
   );
-  for (const name of ["Kamera aus", "Teilen beenden", "Live beenden"])
-    await dock(owner).getByRole("button", { name, exact: true }).click();
+  await dock(owner)
+    .getByRole("button", { name: "Kamera", exact: true })
+    .click();
+  for (const name of ["Teilen beenden", "Live beenden"])
+    await share(owner, name);
   await until(
     () => snapshot(owner),
     (state) => state.sent.every((row) => row.kind === "mic" || !row.live),
@@ -1026,9 +1039,7 @@ try {
   await owner.page.evaluate(() => {
     window.__sourceAudioSmoke.noAudioNext = true;
   });
-  await dock(owner)
-    .getByRole("button", { name: "Bildschirm teilen", exact: true })
-    .click();
+  await share(owner, "Bildschirm im Raum teilen");
   await owner.page
     .getByRole("status")
     .filter({
@@ -1073,9 +1084,7 @@ try {
       );
     },
   );
-  await dock(owner)
-    .getByRole("button", { name: "Teilen beenden", exact: true })
-    .click();
+  await share(owner, "Teilen beenden");
   await stopForwarding(receiver, ["s", "sa"], owner.id);
   report.checks.push(
     "no-audio fallback: video, visible notice, no fabricated source audio",
@@ -1091,9 +1100,7 @@ try {
     "Leaving voice must clear microphone and playback",
   );
   const micCalls = (await snapshot(receiver)).micCalls;
-  await dock(owner)
-    .getByRole("button", { name: "Go Live", exact: true })
-    .click();
+  await share(owner, "Go Live");
   await receiver.page
     .locator(".voice-room-watch-actions")
     .getByRole("button", { name: "Zuschauen", exact: true })
@@ -1145,9 +1152,7 @@ try {
   report.checks.push(
     "listen-only Live Watch: selected A/V, no microphone acquisition, complete stop",
   );
-  await dock(owner)
-    .getByRole("button", { name: "Live beenden", exact: true })
-    .click();
+  await share(owner, "Live beenden");
   report.status = "passed";
 } catch (error) {
   report.status = "failed";

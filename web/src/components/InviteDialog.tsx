@@ -1,156 +1,268 @@
-// "Leute einladen": creates a link and puts it on the clipboard. Any member
-// may do this; limits are optional.
+// "Leute einladen": opens straight onto a working link, one click from the
+// clipboard or the share sheet. Any member may invite; expiry and use limits
+// sit behind a disclosure.
 
-import { useState, type FormEvent } from "react";
+import { useRouterState } from "@tanstack/react-router";
+import { useEffect, useRef, useState } from "react";
 
-import { fieldMessage } from "../auth/rules.ts";
-import { useFormErrors } from "../auth/useFormErrors.ts";
+import { ApiError } from "../api/client.ts";
+import { useUserId } from "../auth/scope.ts";
+import { errorMessage } from "../auth/rules.ts";
 import { inviteUrl } from "../servers/api.ts";
-import { copyText } from "../servers/clipboard.ts";
-import { useCreateInvite } from "../servers/queries.ts";
-import { validateExpiresInHours, validateMaxUses } from "../servers/rules.ts";
-import type { Server } from "../servers/types.ts";
-import { Field } from "./Field.tsx";
-import { FormError } from "./FormError.tsx";
-import { GhostButton, Modal } from "./Modal.tsx";
-import { SubmitButton } from "./SubmitButton.tsx";
-import { notify } from "./toasts.ts";
+import { canShare, copyText, share } from "../servers/clipboard.ts";
+import {
+  dismissInvitePrompt,
+  useInvitePrompt,
+} from "../servers/invitePrompt.ts";
+import {
+  DEFAULT_INVITE_TERMS,
+  EXPIRY_OPTIONS,
+  USES_OPTIONS,
+  inviteInput,
+  termsSummary,
+  type InviteTerms,
+} from "../servers/inviteTerms.ts";
+import { useCreateInvite, useRevokeInvite } from "../servers/queries.ts";
+import type { Invite } from "../servers/types.ts";
+import { ChevronIcon, ShareIcon } from "./Icons.tsx";
+import { LoadError } from "./LoadError.tsx";
+import { Modal } from "./Modal.tsx";
+import { Button } from "./ui/Button.tsx";
+import { ChipGroup } from "./ui/ChipGroup.tsx";
+import { CopyButton } from "./ui/CopyButton.tsx";
+import { InlineStatus } from "./ui/InlineStatus.tsx";
+import { useInlineStatus } from "./ui/useInlineStatus.ts";
+import "./invite.css";
+
+type InviteServer = { id: string; name: string };
 
 export function InviteDialog({
   server,
   open,
   onClose,
 }: {
-  server: Server;
+  server: InviteServer;
   open: boolean;
   onClose: () => void;
 }) {
   return (
-    <Modal open={open} onClose={onClose} title={`Einladen zu ${server.name}`}>
-      {open ? <InviteForm server={server} onClose={onClose} /> : null}
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`Leute zu ${server.name} einladen`}
+    >
+      {open ? <InviteLinkPanel server={server} /> : null}
     </Modal>
   );
 }
 
-function InviteForm({
-  server,
-  onClose,
-}: {
-  server: Server;
-  onClose: () => void;
-}) {
-  const [maxUses, setMaxUses] = useState("");
-  const [expiresIn, setExpiresIn] = useState("");
-  const [link, setLink] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const { errors, clearField, setFields, fromError } = useFormErrors();
-  const create = useCreateInvite(server.id);
+/**
+ * The invite dialog a new server opens with (`promptInvite`). It waits until
+ * the server's page has rendered: a drawer that page opens after the dialog
+ * would take Esc away from it (Chrome).
+ */
+export function InvitePromptHost() {
+  const userId = useUserId();
+  const prompt = useInvitePrompt((state) => state.prompt);
+  const id = prompt && prompt.userId === userId ? prompt.id : null;
+  const landed = useRouterState({
+    select: (state) =>
+      id !== null &&
+      state.status === "idle" &&
+      (state.location.pathname === `/s/${id}` ||
+        state.location.pathname.startsWith(`/s/${id}/`)),
+  });
+  const [shown, setShown] = useState<string | null>(null);
+  useEffect(() => {
+    if (!landed || id === null) return;
+    const frame = requestAnimationFrame(() => setShown(id));
+    return () => cancelAnimationFrame(frame);
+  }, [landed, id]);
+  if (!prompt || id === null || shown !== id) return null;
+  const close = () => {
+    dismissInvitePrompt();
+    // What created the server is gone; carry on in the server's page.
+    requestAnimationFrame(() => {
+      if (document.activeElement === document.body)
+        document
+          .getElementById("workspace-content")
+          ?.focus({ preventScroll: true });
+    });
+  };
+  return <InviteDialog key={prompt.id} server={prompt} open onClose={close} />;
+}
 
-  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const fields: Record<string, string> = {};
-    const usesCode = validateMaxUses(maxUses);
-    if (usesCode) fields.max_uses = fieldMessage("max_uses", usesCode);
-    const hoursCode = validateExpiresInHours(expiresIn);
-    if (hoursCode)
-      fields.expires_in_hours = fieldMessage("expires_in_hours", hoursCode);
-    if (Object.keys(fields).length > 0) {
-      setFields(fields);
-      return;
-    }
-    create.mutate(
-      {
-        ...(maxUses.trim() ? { max_uses: Number(maxUses) } : {}),
-        ...(expiresIn.trim() ? { expires_in_hours: Number(expiresIn) } : {}),
-      },
-      {
-        onSuccess: async (invite) => {
-          const url = inviteUrl(invite.code);
-          setLink(url);
-          const ok = await copyText(url);
-          setCopied(ok);
-          if (ok) notify("Einladungslink kopiert.");
-        },
-        onError: fromError,
-      },
-    );
+/**
+ * Creates a link as it mounts and shows it ready to copy. Changing the
+ * terms makes a new link; the previous one is revoked unless it was
+ * already copied or shared, since someone may be holding it.
+ */
+export function InviteLinkPanel({ server }: { server: InviteServer }) {
+  const create = useCreateInvite(server.id);
+  const revoke = useRevokeInvite(server.id);
+  // `terms` is what the chips ask for; `current` the link on screen and the
+  // terms it was made with, which differ while a new link is on its way.
+  const [terms, setTerms] = useState<InviteTerms>(DEFAULT_INVITE_TERMS);
+  const [current, setCurrent] = useState<{
+    invite: Invite;
+    terms: InviteTerms;
+  } | null>(null);
+  const invite = current?.invite ?? null;
+  const handedOut = useRef(false);
+  const started = useRef(false);
+  const latest = useRef(0);
+  const { status, show } = useInlineStatus();
+
+  const makeLink = (next: InviteTerms, previous: Invite | null) => {
+    const request = ++latest.current;
+    const previousTerms = current?.terms ?? DEFAULT_INVITE_TERMS;
+    create
+      .mutateAsync(inviteInput(next))
+      .then((created) => {
+        // Terms changed again while this one was made: nobody saw it.
+        if (request !== latest.current) {
+          revoke.mutate(created.code);
+          return;
+        }
+        setCurrent({ invite: created, terms: next });
+        if (previous) {
+          if (!handedOut.current) revoke.mutate(previous.code);
+          show({
+            tone: "neutral",
+            message: `Neuer Link · ${termsSummary(next)}`,
+          });
+        }
+        handedOut.current = false;
+      })
+      .catch(() => {
+        // Shown from `create.error`; the chips go back to the link shown.
+        if (request === latest.current && previous) setTerms(previousTerms);
+      });
   };
 
-  if (link) {
+  // One link per opening; the ref also covers StrictMode's second mount.
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    makeLink(DEFAULT_INVITE_TERMS, null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const changeTerms = (next: InviteTerms) => {
+    setTerms(next);
+    makeLink(next, invite);
+  };
+
+  const link = invite ? inviteUrl(invite.code) : "";
+  const summary = termsSummary(current?.terms ?? terms);
+
+  const copy = async (): Promise<boolean> => {
+    if (create.isPending) {
+      show({ tone: "neutral", message: "Der Link wird gerade erstellt." });
+      return false;
+    }
+    if (!link) return false;
+    if (await copyText(link)) {
+      handedOut.current = true;
+      show({ tone: "success", message: `Link kopiert · ${summary}` });
+      return true;
+    }
+    show({
+      tone: "error",
+      message: "Kopieren ging nicht – markiere den Link und kopiere ihn.",
+    });
+    return false;
+  };
+
+  if (!invite && create.isError) {
     return (
-      <div className="flex flex-col gap-4">
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Wer den Link öffnet und angemeldet ist, landet in{" "}
-          <span className="font-medium text-neutral-900 dark:text-neutral-100">
-            {server.name}
-          </span>
-          .
-        </p>
-        <div className="flex gap-2">
-          <input
-            readOnly
-            value={link}
-            onFocus={(event) => event.currentTarget.select()}
-            aria-label="Einladungslink"
-            className="min-w-0 flex-1 rounded-lg border border-neutral-300 dark:border-neutral-600 bg-neutral-50 dark:bg-neutral-950 px-3 py-2 font-mono text-sm"
-          />
-          <button
-            type="button"
-            onClick={async () => {
-              const ok = await copyText(link);
-              setCopied(ok);
-            }}
-            className="rounded-lg bg-neutral-900 dark:bg-neutral-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 dark:hover:bg-neutral-600"
-          >
-            {copied ? "Kopiert" : "Kopieren"}
-          </button>
-        </div>
-        <div className="flex justify-end">
-          <GhostButton onClick={onClose}>Fertig</GhostButton>
-        </div>
-      </div>
+      <LoadError
+        message={`Der Einladungslink konnte nicht erstellt werden. ${errorMessage(
+          create.error instanceof ApiError ? create.error.code : "internal",
+        )}`}
+        pending={create.isPending}
+        onRetry={() => makeLink(terms, null)}
+      />
     );
   }
 
   return (
-    <form onSubmit={onSubmit} noValidate className="flex flex-col gap-5">
-      <div className="grid grid-cols-2 gap-4">
-        <Field
-          id="invite-max-uses"
-          label="Max. Nutzungen"
-          type="number"
-          inputMode="numeric"
-          min={1}
-          placeholder="unbegrenzt"
-          value={maxUses}
-          onChange={(event) => {
-            setMaxUses(event.target.value);
-            clearField("max_uses");
+    <div className="invite-panel">
+      <p className="invite-panel__lead">
+        Schick den Link an deine Leute. Wer ihn öffnet, legt ein Konto an oder
+        meldet sich an und landet direkt in {server.name}.
+      </p>
+      <div className="invite-panel__link">
+        <input
+          readOnly
+          value={create.isPending ? "Link wird erstellt…" : link}
+          aria-label="Einladungslink"
+          aria-busy={create.isPending || undefined}
+          onFocus={(event) => event.currentTarget.select()}
+          onCopy={() => {
+            handedOut.current = true;
           }}
-          error={errors.fields.max_uses}
+          className="ui-field invite-panel__url"
         />
-        <Field
-          id="invite-expires"
-          label="Gültig (Stunden)"
-          type="number"
-          inputMode="numeric"
-          min={1}
-          placeholder="unbegrenzt"
-          value={expiresIn}
-          onChange={(event) => {
-            setExpiresIn(event.target.value);
-            clearField("expires_in_hours");
-          }}
-          error={errors.fields.expires_in_hours}
-        />
+        {/* The status line below says it, with the link's terms. */}
+        <CopyButton
+          variant="primary"
+          onCopy={copy}
+          announce={false}
+          initialFocus
+        >
+          Link kopieren
+        </CopyButton>
       </div>
-      <FormError message={errors.form} />
-      <div className="flex justify-end gap-2">
-        <GhostButton onClick={onClose}>Abbrechen</GhostButton>
-        <SubmitButton pending={create.isPending} pendingLabel="Erstellen…">
-          Link erstellen
-        </SubmitButton>
+      <div className="invite-panel__status">
+        <InlineStatus status={status} />
+        {status ? null : <span className="invite-panel__terms">{summary}</span>}
       </div>
-    </form>
+      {canShare() ? (
+        <Button
+          icon={<ShareIcon size={16} />}
+          onClick={() =>
+            link &&
+            !create.isPending &&
+            void share({
+              title: `Einladung zu ${server.name}`,
+              text: `Komm zu ${server.name} auf Gelabber:`,
+              url: link,
+            }).then((shared) => {
+              if (shared) handedOut.current = true;
+            })
+          }
+        >
+          Teilen…
+        </Button>
+      ) : null}
+      {create.isError && invite ? (
+        <p role="alert" className="ui-field-error">
+          Der neue Link konnte nicht erstellt werden. Der bisherige gilt weiter.
+        </p>
+      ) : null}
+      <details className="invite-panel__terms-editor">
+        <summary>
+          Ablauf &amp; Limit ändern
+          <ChevronIcon size={14} />
+        </summary>
+        <div className="invite-panel__chips">
+          <span className="invite-panel__caps">Läuft ab nach</span>
+          <ChipGroup
+            label="Läuft ab nach"
+            options={EXPIRY_OPTIONS}
+            value={terms.expiry}
+            onChange={(expiry) => changeTerms({ ...terms, expiry })}
+          />
+          <span className="invite-panel__caps">Wie oft nutzbar</span>
+          <ChipGroup
+            label="Wie oft nutzbar"
+            options={USES_OPTIONS}
+            value={terms.uses}
+            onChange={(uses) => changeTerms({ ...terms, uses })}
+          />
+        </div>
+      </details>
+    </div>
   );
 }

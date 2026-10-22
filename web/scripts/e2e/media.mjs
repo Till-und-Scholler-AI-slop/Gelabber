@@ -354,14 +354,14 @@ export async function mediaScenarios(h, f) {
       await f.owner.page
         .getByRole("link", { name: "E2E Voice B", exact: true })
         .click();
-      for (const name of ["Mikrofon aus", "Live beenden", "Verlassen"])
+      for (const name of ["Stummschalten", "Teilen", "Verlassen"])
         check(
           (await f.owner.page
             .getByRole("button", { name, exact: true })
             .count()) > 0,
           "global-voice-control-unavailable",
         );
-      await click(f.owner, "Mikrofon aus");
+      await click(f.owner, "Stummschalten");
       await click(f.owner, "Live beenden");
       await click(f.owner, "Verlassen");
       return {
@@ -528,7 +528,11 @@ export async function mediaScenarios(h, f) {
       check(
         result.captures.every((c) => c.state !== "live") &&
           (await f.owner.page
-            .getByRole("button", { name: "Go Live", exact: true })
+            .getByRole("button", {
+              name: "Teilen",
+              exact: true,
+              pressed: false,
+            })
             .count()) > 0,
         "cancelled-picker-ghost-live",
         result,
@@ -545,8 +549,8 @@ export async function mediaScenarios(h, f) {
   await h.run("camera-screen-live-source-identity", ["01", "08b"], async () => {
     await begin(f);
     await click(f.member, "Beitreten");
-    await click(f.owner, "Kamera an");
-    await click(f.owner, "Bildschirm teilen");
+    await click(f.owner, "Kamera");
+    await click(f.owner, "Bildschirm im Raum teilen");
     await watchSource(f.member, "live");
     await watchSource(f.member, "screen");
     const live = await progress(f.member, options);
@@ -609,11 +613,14 @@ export async function mediaScenarios(h, f) {
       await page.getByRole("region", { name: "Aktive Medien" }).waitFor();
       check(
         (await page
-          .getByRole("button", { name: "Mikrofon aus", exact: true })
+          .getByRole("button", { name: "Stummschalten", exact: true })
           .count()) === 1,
         "duplicate-in-room-call-controls",
       );
-      await page.locator(`a[href="${f.textPath}"]`).first().click();
+      await page
+        .locator(`.channel-sidebar a[href="${f.textPath}"]`)
+        .first()
+        .click();
       await page.locator("textarea").waitFor();
       for (const viewport of [
         { width: 1487, height: 1058 },
@@ -634,12 +641,8 @@ export async function mediaScenarios(h, f) {
                 rect.x + rect.width / 2,
                 rect.y + rect.height / 2,
               );
-              // Bottom bar up to 800 px, sidebar card above.
-              const dock = [
-                ...document.querySelectorAll(
-                  ".voice-session-dock, .voice-session-card",
-                ),
-              ].find((element) => element.getClientRects().length > 0);
+              // The call bar sits at the bottom at every width.
+              const dock = document.querySelector(".voice-session-dock");
               const dockBounds = dock.getBoundingClientRect();
               const callControlsUncovered = [
                 ...dock.querySelectorAll("button"),
@@ -655,7 +658,6 @@ export async function mediaScenarios(h, f) {
                 sendUncovered: hit === send || send.contains(hit),
                 callControlsUncovered,
                 dockAtBottom:
-                  dock.classList.contains("voice-session-card") ||
                   Math.abs(dockBounds.bottom - window.innerHeight) <= 1,
                 overflow: document.documentElement.scrollWidth > innerWidth,
                 channelsHeight: document
@@ -671,30 +673,30 @@ export async function mediaScenarios(h, f) {
           "call-dock-covers-chat-controls",
         );
         if (viewport.width <= 800) {
-          await page.getByRole("button", { name: "Navigation öffnen" }).click();
+          await page
+            .getByRole("button", { name: /^Navigation öffnen/ })
+            .click();
         } else {
           check(metrics.channelsHeight >= 156, "channel-navigation-collapsed");
         }
         // Scroll to the owner's controls, including on short landscape drawers.
-        await page
-          .locator('summary[aria-label="Kanal oder Kategorie erstellen"]')
-          .click();
+        await page.locator("summary.server-sidebar-menu-button").click();
         await page
           .getByRole("button", { name: "Kanal erstellen", exact: true })
           .click();
         await page
           .getByRole("dialog", { name: "Kanal erstellen", exact: true })
           .waitFor();
-        await page.keyboard.press("Escape");
+        // The drawer makes way for a dialog opened from it.
         if (viewport.width <= 800) {
           check(
-            await page
+            !(await page
               .getByRole("dialog", { name: "Navigation", exact: true })
-              .isVisible(),
-            "nested-escape-closed-navigation",
+              .isVisible()),
+            "navigation-stacked-under-dialog",
           );
-          await page.keyboard.press("Escape");
         }
+        await page.keyboard.press("Escape");
         results.push({ viewport, ...metrics });
       }
       return { viewports: results };

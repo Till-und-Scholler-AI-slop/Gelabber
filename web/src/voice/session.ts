@@ -124,6 +124,21 @@ export type SourceAudioStatus =
 export type SourceAudioNote = { failed?: string; silent?: string };
 
 export type VoiceStatus = "idle" | "joined";
+/** What the call's media connection is doing, for the call bar to say.
+ * Observed only: the retry logic does not read it. `failed` outlives the
+ * call it reports, until the user joins again or dismisses it. */
+export type VoiceConnection =
+  "idle" | "connecting" | "connected" | "reconnecting" | "failed";
+/** Whether the own microphone reaches the call: captured and sending,
+ * missing or refused (the call goes on listening), or held closed by
+ * push-to-talk. */
+export type VoiceMic = "live" | "unavailable" | "denied" | "ptt-idle";
+/** The call a `failed` connection ended, to join it again. */
+export type LostCall = {
+  serverId: string;
+  channelId: string;
+  channelName: string;
+};
 
 export type VoiceParticipant = {
   pubs: TrackKind[];
@@ -137,6 +152,9 @@ export type RemoteVideo = {
 
 export type VoiceState = {
   status: VoiceStatus;
+  connection: VoiceConnection;
+  mic: VoiceMic;
+  lostCall: LostCall | null;
   serverId: string | null;
   channelId: string | null;
   channelName: string | null;
@@ -165,6 +183,9 @@ export type VoiceState = {
 
 const idle: VoiceState = {
   status: "idle",
+  connection: "idle",
+  mic: "live",
+  lostCall: null,
   serverId: null,
   channelId: null,
   channelName: null,
@@ -269,6 +290,14 @@ let micOvertaken = false;
  * join (another channel, or leaving and joining again) moves it on, so an
  * answer from an earlier join never takes over the current one's capture. */
 let micJoin = 0;
+/** Why the call has no microphone, until one is captured again. */
+let micFailure: "unavailable" | "denied" | null = null;
+/** The chosen microphone went away and the default one stands in: it comes
+ * back when the chosen one does. */
+let micFellBack = false;
+/** Captures whose loss has been handled already: unplugging fires both the
+ * track's `ended` and the device list's `devicechange`. */
+const micLossHandled = new WeakSet<MediaStream>();
 /** One stream toast per join. Further failures stay in the console. */
 let streamReported = false;
 let watchReported = false;
@@ -587,13 +616,68 @@ function ensureBound(): void {
   onPushToTalkGate(applyLocalAudio);
   unsubscribePushToTalk?.();
   unsubscribePushToTalk = useVoice.subscribe((next, prev) => {
-    if (next.status !== prev.status) syncPushToTalk();
+    if (next.status !== prev.status) {
+      syncPushToTalk();
+      bindMediaSession(next.status === "joined");
+    }
+    if (
+      next.status !== prev.status ||
+      next.muted !== prev.muted ||
+      next.deafened !== prev.deafened
+    )
+      syncMicrophoneActive(next);
   });
   syncPushToTalk();
   // Re-adding the same listener after a rebind is a no-op.
   if (typeof document !== "undefined")
     document.addEventListener("visibilitychange", resumePlayback);
+  if (typeof navigator !== "undefined")
+    navigator.mediaDevices?.addEventListener?.("devicechange", onDeviceChange);
   bound = true;
+}
+
+type CallMediaSession = MediaSession & {
+  setMicrophoneActive?: (active: boolean) => Promise<void> | void;
+};
+
+function callMediaSession(): CallMediaSession | null {
+  return typeof navigator !== "undefined" && navigator.mediaSession
+    ? navigator.mediaSession
+    : null;
+}
+
+/** Headset buttons and the system's call controls: mute and hang up while
+ * in a call. */
+function bindMediaSession(joined: boolean): void {
+  const session = callMediaSession();
+  if (!session) return;
+  const handlers = [
+    ["togglemicrophone", () => toggleMute()],
+    ["hangup", () => leaveVoice()],
+  ] as const;
+  for (const [action, handler] of handlers) {
+    try {
+      // Not in the DOM typings yet; Chromium has them for calls.
+      session.setActionHandler(
+        action as MediaSessionAction,
+        joined ? handler : null,
+      );
+    } catch {
+      // Browsers without call actions throw for them.
+    }
+  }
+}
+
+function syncMicrophoneActive(state: VoiceState): void {
+  const session = callMediaSession();
+  if (!session?.setMicrophoneActive || state.status !== "joined") return;
+  try {
+    void Promise.resolve(
+      session.setMicrophoneActive(!(state.muted || state.deafened)),
+    ).catch(() => undefined);
+  } catch {
+    // Best effort, like the actions.
+  }
 }
 
 function upsert(
@@ -1253,8 +1337,24 @@ function hasLiveTrack(
   );
 }
 
+/** Reports the connection; observed only, the retries do not read it. */
+function setConnection(connection: VoiceConnection): void {
+  if (useVoice.getState().connection !== connection)
+    useVoice.setState({ connection });
+}
+
+/** The microphone state the call bar shows. */
+function syncMicState(): void {
+  const mic: VoiceMic = micFailure ?? (pushToTalkOpen() ? "live" : "ptt-idle");
+  if (useVoice.getState().mic !== mic) useVoice.setState({ mic });
+}
+
 function stopPeer(preserveCapture = false): void {
   if (!preserveCapture) micForceBrowser = false;
+  if (!preserveCapture) {
+    micFailure = null;
+    micFellBack = false;
+  }
   if (!preserveCapture) {
     micOvertaken = false;
     micJoin += 1;
@@ -1362,7 +1462,9 @@ function stopPeer(preserveCapture = false): void {
   });
 }
 
-function rollbackSeat(error?: unknown): void {
+/** Leaves the seat after a failure. `lost` keeps the call to offer joining
+ * it again, for a connection that failed rather than a refusal. */
+function rollbackSeat(error?: unknown, lost = false): void {
   const state = useVoice.getState();
   const serverId = state.serverId;
   const channelId = state.channelId;
@@ -1383,6 +1485,16 @@ function rollbackSeat(error?: unknown): void {
     watchPublisherId: state.watchPublisherId,
     watchStream: state.watchStream,
     playbackBlocked: blockedPlayback.size > 0,
+    ...(lost && serverId && channelId
+      ? {
+          connection: "failed" as const,
+          lostCall: {
+            serverId,
+            channelId,
+            channelName: state.channelName ?? "Sprachkanal",
+          },
+        }
+      : {}),
   });
   applyPlayback();
   if (serverId && channelId) {
@@ -1419,6 +1531,7 @@ function applyLocalAudio(): void {
   // Push-to-talk with its key up silences the track only: the producer
   // stays resumed, so pressing the key needs no round trip to the server.
   const silent = micOff || !pushToTalkOpen();
+  syncMicState();
   localStream?.getAudioTracks().forEach((track) => {
     track.enabled = !silent;
   });
@@ -1909,24 +2022,42 @@ function failedMicProcessor(owner: MicProcessor): void {
   const sender = audioSender(),
     generation = seat.generation,
     failedTrack = owner.stream.getAudioTracks()[0];
-  micForceBrowser = true;
+  // A capture that ended under the processor is the device gone (unplugged,
+  // taken away), not the processor: the next capture keeps its filters.
+  const lost =
+    rawMicStream !== null && !hasLiveTrack(rawMicStream, "audio")
+      ? rawMicStream
+      : null;
+  if (!lost) micForceBrowser = true;
   disableAudio(owner.stream);
   rawMicStream?.getTracks().forEach((track) => track.stop());
   owner.dispose();
   activeMicGain = null;
   localStream = null;
   rawMicStream = null;
-  noteAudioProcessing({
-    ...owner.info,
-    actual: null,
-    message: "Audioprozessor ausgefallen; Ersatzmikrofon wird aktiviert",
-    contextState: "closed",
-  });
-  deps?.onError?.(
-    new Error(
-      "Audioprozessor ausgefallen; lokale Aufnahme beendet, Browser-Ersatz wird aktiviert",
-    ),
-  );
+  if (lost) {
+    micFailure = "unavailable";
+    syncMicState();
+    noteAudioProcessing({
+      ...owner.info,
+      actual: null,
+      message: "Mikrofon getrennt; Standardgerät wird aktiviert",
+      contextState: "closed",
+    });
+    noteMicLost(lost);
+  } else {
+    noteAudioProcessing({
+      ...owner.info,
+      actual: null,
+      message: "Audioprozessor ausgefallen; Ersatzmikrofon wird aktiviert",
+      contextState: "closed",
+    });
+    deps?.onError?.(
+      new Error(
+        "Audioprozessor ausgefallen; lokale Aufnahme beendet, Browser-Ersatz wird aktiviert",
+      ),
+    );
+  }
   void enqueueAudioCommit(async () => {
     if (seat.generation === generation && sender?.track === failedTrack)
       await replaceSenderTrack(sender, null).catch(() => undefined);
@@ -2053,6 +2184,8 @@ function logMicFailure(error: unknown): void {
 /** A join that goes on without a microphone. */
 function reportJoinMicFailure(error: unknown): void {
   logMicFailure(error);
+  micFailure = micRefused(error) ? "denied" : "unavailable";
+  syncMicState();
   deps?.onError?.(microphoneFailure(error));
   noteAudioProcessing(null);
   const info = useAudioProcessing.getState();
@@ -2094,6 +2227,94 @@ function announceMicrophone(): void {
   if (self) setPub(self, "a", true);
   announced.add("a");
   deps?.gateway.send({ op: "sig", t: "p", s: serverId, c: channelId, k: "a" });
+}
+
+/** A capture that now sends: the call has its microphone again, and watches
+ * for losing it. */
+function noteMicLive(raw: MediaStream): void {
+  micFailure = null;
+  syncMicState();
+  for (const track of raw.getAudioTracks())
+    track.addEventListener("ended", () => onMicEnded(raw));
+}
+
+/** The microphone was unplugged or failed mid-call, where no processor
+ * watches the capture: capture again, which takes the system default while
+ * the chosen device is gone. */
+function onMicEnded(raw: MediaStream): void {
+  if (rawMicStream !== raw || useVoice.getState().status !== "joined") return;
+  micFailure = "unavailable";
+  syncMicState();
+  fallBackToDefaultMic(raw);
+}
+
+function fallBackToDefaultMic(raw: MediaStream): void {
+  if (micLossHandled.has(raw)) return;
+  noteMicLost(raw);
+  void refreshMic();
+}
+
+/** Says once per capture that it is gone, and remembers to switch back. */
+function noteMicLost(raw: MediaStream): void {
+  if (micLossHandled.has(raw)) return;
+  micLossHandled.add(raw);
+  logVoice("warn", "microphone-lost");
+  noteDiagnosticEvent({
+    kind: "device-change",
+    connection: "voice",
+    detail: "audio-input-lost",
+  });
+  micFellBack = useMediaSettings.getState().audioInputId !== "";
+  deps?.onError?.(
+    new Error("Mikrofon getrennt – Standardgerät wird verwendet"),
+  );
+}
+
+/** A device came or went. The chosen microphone gone: fall back as if it
+ * had ended (some browsers keep the track). There (again, or for the first
+ * time since joining without it): use it. */
+async function onDeviceChange(): Promise<void> {
+  const chosen = useMediaSettings.getState().audioInputId;
+  if (useVoice.getState().status !== "joined" || !chosen || !rawMicStream)
+    return;
+  const raw = rawMicStream;
+  let inputs: string[];
+  try {
+    inputs = (await navigator.mediaDevices.enumerateDevices())
+      .filter((device) => device.kind === "audioinput")
+      .map((device) => device.deviceId);
+  } catch {
+    return;
+  }
+  // Without permission the list has no ids and says nothing about the chosen one.
+  if (
+    inputs.every((id) => id === "") ||
+    rawMicStream !== raw ||
+    useMediaSettings.getState().audioInputId !== chosen
+  )
+    return;
+  const present = inputs.includes(chosen);
+  // The capture names its device where the browser says: a chosen one that
+  // was missing at joining is no loss when another device comes or goes.
+  const using = raw.getAudioTracks()[0]?.getSettings?.().deviceId;
+  const onChosen = using ? using === chosen : !micFellBack;
+  if (!present && onChosen) fallBackToDefaultMic(raw);
+  else if (present && !onChosen) {
+    micFellBack = false;
+    void refreshMic();
+  }
+}
+
+/** Puts away the note of a call whose connection was lost. */
+export function dismissLostCall(): void {
+  if (useVoice.getState().status === "joined") return;
+  useVoice.setState({ connection: "idle", lostCall: null });
+}
+
+/** The user asks for the microphone again after it was missing or refused. */
+export function retryMicrophone(): void {
+  if (useVoice.getState().status !== "joined") return;
+  void refreshMic();
 }
 
 async function refreshMic(): Promise<void> {
@@ -2197,6 +2418,7 @@ async function refreshMic(): Promise<void> {
     rawMicStream = raw;
     localStream = send;
     activeMicGain = insert;
+    noteMicLive(raw);
     noteAudioProcessing(insert.info);
     pendingMicRaw.delete(raw);
     applyLocalAudio();
@@ -2405,6 +2627,7 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
     prev.autoGainControl !== next.autoGainControl ||
     prev.processingMode !== next.processingMode;
   if (recaptureMic) micForceBrowser = false;
+  if (prev.audioInputId !== next.audioInputId) micFellBack = false;
   const camChanged = prev.videoInputId !== next.videoInputId;
   const qualityChanged =
     prev.quality !== next.quality ||
@@ -2598,6 +2821,7 @@ function onTransportState(
     if (timer) clearTimeout(timer);
     slot.delete(direction);
     (role === "voice" ? seatRetry : watchRetry).cancel();
+    if (role === "voice" && slot.size === 0) setConnection("connected");
     noteDiagnosticEvent({
       kind: "recovery",
       connection: role,
@@ -2611,6 +2835,7 @@ function onTransportState(
     connection: role,
     detail: `${direction}:${state}`,
   });
+  if (role === "voice") setConnection("reconnecting");
   if (slot.has(direction)) return;
   const rebuild = () => {
     if (peer.generation !== mine) return;
@@ -2676,6 +2901,7 @@ function onMediaFrame(frame: MediaServerFrame): void {
     deps?.onError?.(new Error("Kein freier Sprachplatz."));
     retractAnnouncedMedia();
     stopPeer();
+    setConnection("failed");
     return;
   }
   if (frame.e === "forbidden") {
@@ -2750,6 +2976,8 @@ export function joinVoice(input: {
   const self = userId;
   useVoice.setState({
     status: "joined",
+    connection: "connecting",
+    lostCall: null,
     serverId: input.serverId,
     channelId: input.channelId,
     channelName: input.channelName,
@@ -2766,6 +2994,7 @@ export function joinVoice(input: {
     remote: {},
     participants: { [self]: { pubs: [] } },
   });
+  syncMicState();
   applyVoiceJoin(input.serverId, self, input.channelId, {
     muted,
     deafened,
@@ -3839,6 +4068,7 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
 function scheduleSeatRebuild(): void {
   const state = useVoice.getState();
   if (state.status !== "joined" || !state.serverId || !state.channelId) return;
+  setConnection("reconnecting");
   const mine = seat.generation;
   seatRetry.schedule(
     () => {
@@ -3857,6 +4087,7 @@ function scheduleSeatRebuild(): void {
         new Error(
           "Die Sprachverbindung konnte nicht wiederhergestellt werden. Bitte erneut beitreten.",
         ),
+        true,
       ),
   );
 }
@@ -3934,6 +4165,7 @@ async function startPeer(
     await pc.start(joined.routerRtpCapabilities);
     if (seat.generation !== mine || seat.connection !== pc) return;
     startedConnections.add(pc);
+    setConnection("connected");
     useVoice.setState({ sourceWatchSupported: true });
     for (const [userId, subscriptions] of Object.entries(
       useVoice.getState().sourceSubscriptions,
@@ -3962,7 +4194,7 @@ async function startPeer(
       scheduleSeatRebuild();
       return;
     }
-    rollbackSeat(error);
+    rollbackSeat(error, retryableTicketError(error));
     return;
   }
 
@@ -4035,6 +4267,7 @@ async function startPeer(
           rawMicStream = stream;
           localStream = send;
           activeMicGain = insert;
+          noteMicLive(stream);
           noteAudioProcessing(insert.info);
           pendingMicRaw.delete(stream);
           send
