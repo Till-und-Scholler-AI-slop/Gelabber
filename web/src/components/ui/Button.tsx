@@ -1,4 +1,10 @@
-import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
+import {
+  useEffect,
+  useState,
+  type ButtonHTMLAttributes,
+  type ReactNode,
+  type Ref,
+} from "react";
 
 import { dialogInitialFocus } from "../dialogFocus.ts";
 import {
@@ -6,6 +12,7 @@ import {
   type ButtonSize,
   type ButtonVariant,
 } from "./buttonClass.ts";
+import { pendingFocus } from "./pendingFocus.ts";
 import "./ui.css";
 
 export type { ButtonSize, ButtonVariant };
@@ -44,6 +51,10 @@ export function Button({
   ...rest
 }: ButtonProps) {
   const focus = dialogInitialFocus(initialFocus);
+  const [focusMemory] = useState(pendingFocus);
+  useEffect(() => {
+    if (!pending) focusMemory.settled();
+  }, [pending, focusMemory]);
   return (
     <button
       type={type}
@@ -58,6 +69,14 @@ export function Button({
             }
           : (focus.ref ?? ref)
       }
+      onFocus={(event) => {
+        focusMemory.focused(event.currentTarget);
+        rest.onFocus?.(event);
+      }}
+      onBlur={(event) => {
+        focusMemory.blurred(event.currentTarget);
+        rest.onBlur?.(event);
+      }}
       disabled={pending || disabled}
       aria-busy={pending || undefined}
       className={buttonClass({ variant, size, className })}
