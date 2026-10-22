@@ -124,6 +124,12 @@ html[data-reduced-motion="true"] {
 html {
   zoom: var(--lr-ui-scale);
 }
+:root {
+  /* The viewport as seen inside the zoomed page. A plain 100dvh or 100vw
+     grows with the Textgröße and would reach past the screen edge. */
+  --lr-100dvh: calc(100dvh / var(--lr-ui-scale));
+  --lr-100vw: calc(100vw / var(--lr-ui-scale));
+}
 html,
 body,
 #root {
@@ -167,7 +173,7 @@ summary {
   accent-color: var(--lr-accent);
 }
 .app-shell {
-  min-height: 100dvh;
+  min-height: var(--lr-100dvh);
   /* The bottom inset is added where content ends, so the call dock and the
      drawers still reach the screen edge. */
   padding: var(--lr-safe-top) var(--lr-safe-right) 0 var(--lr-safe-left);
@@ -183,7 +189,7 @@ summary {
   min-height: 56px;
 }
 .app-shell-workspace {
-  height: 100dvh;
+  height: var(--lr-100dvh);
   overflow: hidden;
 }
 .app-shell-workspace > #app-content {
@@ -901,7 +907,14 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   gap: 9px;
   min-width: 0;
   flex: 1;
+  padding: 2px 4px 2px 2px;
   border-radius: var(--lr-radius);
+  text-align: left;
+  cursor: pointer;
+}
+.user-panel-profile:hover,
+.user-panel-profile[aria-expanded="true"] {
+  background: var(--lr-hover);
 }
 .user-panel-profile > span:last-child {
   min-width: 0;
@@ -937,6 +950,63 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
 .shell-icon-button:hover {
   background: var(--lr-hover);
   color: var(--lr-text);
+}
+/* Your status, from the name in the user panel. */
+.ui-popover.user-status-popover {
+  width: 320px;
+}
+.user-status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px;
+}
+.user-status-card__who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.user-status-card__who > span {
+  min-width: 0;
+}
+.user-status-card__who strong {
+  display: block;
+  overflow: hidden;
+  font: var(--lr-type-title-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-status-card__who small {
+  font: var(--lr-type-meta);
+  color: var(--lr-muted);
+}
+.user-status-card__form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.user-status-card__row {
+  display: flex;
+  gap: 8px;
+}
+.user-status-card__row .ui-field {
+  flex: 1;
+  min-width: 0;
+}
+.user-status-card__link {
+  display: flex;
+  align-items: center;
+  min-height: var(--lr-control-md);
+  margin: 0 -4px -4px;
+  padding: 0 8px;
+  border-top: 1px solid var(--lr-border);
+  border-radius: 0 0 var(--lr-radius-sm) var(--lr-radius-sm);
+  font: var(--lr-type-ui);
+  color: var(--lr-text);
+}
+.user-status-card__link:hover {
+  background: var(--lr-hover);
 }
 .user-panel-menu {
   position: relative;
@@ -1357,8 +1427,8 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     bottom: auto;
     left: auto;
     width: calc(var(--lr-members-width) + var(--lr-safe-right));
-    max-width: calc(100vw - 28px);
-    height: 100dvh;
+    max-width: calc(var(--lr-100vw) - 28px);
+    height: var(--lr-100dvh);
     padding: var(--lr-safe-top) var(--lr-safe-right) var(--lr-safe-bottom) 0;
     border-left: 1px solid var(--lr-border);
     translate: 100% 0;
@@ -1431,8 +1501,8 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     position: fixed;
     inset: 0 auto auto 0;
     width: calc(var(--lr-navigation-width) + var(--lr-safe-left));
-    max-width: calc(100vw - 28px);
-    height: 100dvh;
+    max-width: calc(var(--lr-100vw) - 28px);
+    height: var(--lr-100dvh);
     padding: var(--lr-safe-top) 0 0 var(--lr-safe-left);
     border-right: 1px solid var(--lr-border);
     translate: -100% 0;

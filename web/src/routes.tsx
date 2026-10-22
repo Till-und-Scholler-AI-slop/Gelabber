@@ -1,8 +1,8 @@
 import {
-  Outlet,
   createRootRoute,
   createRoute,
   createRouter,
+  notFound,
   redirect,
 } from "@tanstack/react-router";
 
@@ -23,12 +23,19 @@ import { ForgotPasswordPage } from "./pages/ForgotPasswordPage.tsx";
 import { InvitePage } from "./pages/InvitePage.tsx";
 import { LoginPage } from "./pages/LoginPage.tsx";
 import { NotFoundCard, NotFoundPage } from "./pages/NotFoundPage.tsx";
-import { ProfilePage } from "./pages/ProfilePage.tsx";
 import { RegisterPage } from "./pages/RegisterPage.tsx";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage.tsx";
 import { ServerPage } from "./pages/ServerPage.tsx";
 import { ServerSettingsPage } from "./pages/ServerSettingsPage.tsx";
-import { UserSettingsPage } from "./pages/UserSettingsPage.tsx";
+import {
+  DEFAULT_SETTINGS_AREA,
+  isSettingsArea,
+  settingsListFirst,
+} from "./pages/settingsAreas.ts";
+import {
+  SettingsListPage,
+  UserSettingsPage,
+} from "./pages/UserSettingsPage.tsx";
 import { VerifyEmailPage } from "./pages/VerifyEmailPage.tsx";
 import { WorkspaceIndexPage } from "./pages/WorkspaceIndexPage.tsx";
 import { WorkspaceLayout } from "./pages/WorkspaceLayout.tsx";
@@ -88,40 +95,18 @@ async function requireAnonymous({ search }: { search: AuthSearch }) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Centered account pages under the app header: profile and settings.
-
-const centeredLayout = createRoute({
-  getParentRoute: () => rootRoute,
-  id: "centered",
-  component: () => (
-    <main className="mx-auto max-w-3xl px-6 py-10">
-      <Outlet />
-    </main>
-  ),
-  notFoundComponent: NotFoundCard,
-});
-
+// The profile became the first settings area; old links and bookmarks land
+// there (the workspace guard sends signed-out visitors to the login first).
 const profileRoute = createRoute({
-  getParentRoute: () => centeredLayout,
+  getParentRoute: () => rootRoute,
   path: "/profile",
-  beforeLoad: requireUser(),
-  component: () => (
-    <RequireUser>
-      <ProfilePage />
-    </RequireUser>
-  ),
-});
-
-const userSettingsRoute = createRoute({
-  getParentRoute: () => centeredLayout,
-  path: "/settings",
-  beforeLoad: requireUser(),
-  component: () => (
-    <RequireUser>
-      <UserSettingsPage />
-    </RequireUser>
-  ),
+  beforeLoad: () => {
+    throw redirect({
+      to: "/settings/$area",
+      params: { area: "profil" },
+      replace: true,
+    });
+  },
 });
 
 // ---------------------------------------------------------------------------
@@ -196,7 +181,7 @@ const workspaceLayout = createRoute({
   id: "workspace",
   beforeLoad: requireUser(),
   component: WorkspaceLayout,
-  // The workspace <main> has no padding of its own (the centered one does).
+  // The workspace <main> has no padding of its own.
   notFoundComponent: () => (
     <div className="px-6 py-10">
       <NotFoundCard />
@@ -228,6 +213,32 @@ const serverSettingsRoute = createRoute({
   component: ServerSettingsPage,
 });
 
+// Personal settings live in the workspace too: the rail stays, and the
+// sidebar becomes the list of settings areas.
+const userSettingsRoute = createRoute({
+  getParentRoute: () => workspaceLayout,
+  path: "/settings",
+  beforeLoad: () => {
+    // Phones get the list of areas; wider screens show it in the sidebar.
+    if (!settingsListFirst())
+      throw redirect({
+        to: "/settings/$area",
+        params: { area: DEFAULT_SETTINGS_AREA },
+        replace: true,
+      });
+  },
+  component: SettingsListPage,
+});
+
+const userSettingsAreaRoute = createRoute({
+  getParentRoute: () => workspaceLayout,
+  path: "/settings/$area",
+  beforeLoad: ({ params }) => {
+    if (!isSettingsArea(params.area)) throw notFound();
+  },
+  component: UserSettingsPage,
+});
+
 const dmIndexRoute = createRoute({
   getParentRoute: () => workspaceLayout,
   path: "/d",
@@ -241,7 +252,7 @@ const dmRoute = createRoute({
 });
 
 const routeTree = rootRoute.addChildren([
-  centeredLayout.addChildren([profileRoute, userSettingsRoute]),
+  profileRoute,
   authLayout.addChildren([
     loginRoute,
     registerRoute,
@@ -255,6 +266,8 @@ const routeTree = rootRoute.addChildren([
     serverRoute,
     channelRoute,
     serverSettingsRoute,
+    userSettingsRoute,
+    userSettingsAreaRoute,
     dmIndexRoute,
     dmRoute,
   ]),

@@ -836,7 +836,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 .lr-message-edit textarea {
   width: 100%;
   min-height: 3.5em;
-  max-height: 50vh;
+  max-height: calc(var(--lr-100dvh) * 0.5);
   field-sizing: content;
   resize: none;
   padding: 8px 10px;
@@ -950,7 +950,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
-  max-height: 50dvh;
+  max-height: calc(var(--lr-100dvh) * 0.5);
   overflow-y: auto;
 }
 @media (min-width: 480px) {
@@ -984,10 +984,10 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   letter-spacing: 0.04em;
 }
 .lr-lightbox {
-  width: 100vw;
-  max-width: 100vw;
-  height: 100dvh;
-  max-height: 100dvh;
+  width: var(--lr-100vw);
+  max-width: var(--lr-100vw);
+  height: var(--lr-100dvh);
+  max-height: var(--lr-100dvh);
   margin: 0;
   padding: 56px 16px 16px;
   border: 0;
@@ -1945,17 +1945,5 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   opacity: 0.5;
 }
 .server-tile.is-muted {
-  opacity: 0.6;
-}
-.notify-choice {
-  padding: 6px 10px;
-  border: 1px solid var(--lr-border);
-  border-radius: var(--lr-radius-small);
-  font-size: 13px;
-}
-.notify-choice:hover:not(:disabled) {
-  background: var(--lr-hover);
-}
-.notify-choice:disabled {
   opacity: 0.6;
 }

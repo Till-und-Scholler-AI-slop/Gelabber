@@ -97,7 +97,11 @@ export function WorkspaceIndexPage() {
       </div>
       <div className="welcome__next">
         {user && !user.avatar_url ? (
-          <Link to="/profile" className="welcome__next-link">
+          <Link
+            to="/settings/$area"
+            params={{ area: "profil" }}
+            className="welcome__next-link"
+          >
             Profilbild festlegen ›
           </Link>
         ) : null}

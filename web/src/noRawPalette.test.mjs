@@ -13,17 +13,8 @@ const src = fileURLToPath(new URL(".", import.meta.url));
 const RAW = /\b(?:bg-white|(?:neutral|red|emerald|amber)-\d{2,3})\b/g;
 
 const ALLOWED = new Set([
-  "components/AppShell.tsx",
-  "components/CloseToTray.tsx",
   "components/EmojiPicker.tsx",
   "components/GifPicker.tsx",
-  "components/MemberActions.tsx",
-  "components/NotificationPermission.tsx",
-  "components/NotificationPrivacy.tsx",
-  "components/NotificationSettingsDialog.tsx",
-  "pages/ProfileCardForm.tsx",
-  "pages/ProfilePage.tsx",
-  "pages/ServerSettingsPage.tsx",
 ]);
 
 /** Component files by path under src, with the raw palette classes in each. */

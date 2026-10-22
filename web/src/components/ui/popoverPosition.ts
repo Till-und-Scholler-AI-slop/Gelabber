@@ -13,13 +13,28 @@ const MARGIN = 8;
  * Where an anchored popover goes: on the preferred side of its anchor when
  * it fits, flipped to the other side when only that fits, and always kept
  * `MARGIN` inside the viewport.
+ *
+ * `anchor` and `viewport` are screen pixels, as `getBoundingClientRect` and
+ * `innerWidth` measure them; `size` and the result are the page's own CSS
+ * pixels. They differ by `zoom`, the Textgröße set on the page.
  */
 export function popoverPosition(
-  anchor: Box,
+  screenAnchor: Box,
   size: { width: number; height: number },
-  viewport: { width: number; height: number },
+  screenViewport: { width: number; height: number },
   placement: PopoverPlacement,
+  zoom = 1,
 ): { top: number; left: number } {
+  const anchor = {
+    top: screenAnchor.top / zoom,
+    right: screenAnchor.right / zoom,
+    bottom: screenAnchor.bottom / zoom,
+    left: screenAnchor.left / zoom,
+  };
+  const viewport = {
+    width: screenViewport.width / zoom,
+    height: screenViewport.height / zoom,
+  };
   const below = anchor.bottom + GAP;
   const above = anchor.top - GAP - size.height;
   const fitsBelow = below + size.height <= viewport.height - MARGIN;

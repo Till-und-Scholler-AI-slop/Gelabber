@@ -576,8 +576,8 @@
     position: fixed;
     z-index: 60;
     min-width: 180px;
-    max-width: min(360px, calc(100vw - 16px));
-    max-height: calc(100dvh - 16px);
+    max-width: min(360px, calc(var(--lr-100vw) - 16px));
+    max-height: calc(var(--lr-100dvh) - 16px);
     margin: 0;
     padding: var(--lr-space-2);
     overflow: auto;
@@ -593,7 +593,7 @@
   .ui-sheet {
     width: 100%;
     max-width: none;
-    max-height: 90dvh;
+    max-height: calc(var(--lr-100dvh) * 0.9);
     margin: auto 0 0;
     padding: var(--lr-space-2) var(--lr-space-4)
       calc(var(--lr-space-4) + var(--lr-safe-bottom));
@@ -639,7 +639,8 @@
     width: calc(100% - 2rem);
     max-width: 28rem;
     max-height: calc(
-      100dvh - 32px - 2 * max(var(--lr-safe-top), var(--lr-safe-bottom))
+      var(--lr-100dvh) - 32px - 2 *
+        max(var(--lr-safe-top), var(--lr-safe-bottom))
     );
     margin: auto;
     padding: 0;
@@ -706,7 +707,7 @@
     .gel-modal--wide {
       width: 100%;
       max-width: none;
-      max-height: 90dvh;
+      max-height: calc(var(--lr-100dvh) * 0.9);
       margin: auto 0 0;
       border-width: 1px 0 0;
       border-radius: var(--lr-radius-xl) var(--lr-radius-xl) 0 0;
@@ -752,7 +753,7 @@
     flex-direction: column;
     align-items: flex-end;
     gap: var(--lr-space-2);
-    width: min(380px, calc(100vw - 32px));
+    width: min(380px, calc(var(--lr-100vw) - 32px));
     pointer-events: none;
   }
   .gel-toasts__region {
@@ -810,7 +811,7 @@
     display: flex;
     flex-direction: column;
     gap: var(--lr-space-2);
-    width: min(calc(100vw - 32px), 22rem);
+    width: min(calc(var(--lr-100vw) - 32px), 22rem);
     pointer-events: none;
   }
   .ui-message-toast {

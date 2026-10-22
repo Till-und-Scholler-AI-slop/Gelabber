@@ -178,4 +178,18 @@ describe("popover placement", () => {
       792,
     );
   });
+
+  it("places in the page's pixels when the Textgröße zooms it", () => {
+    // At 1.25 the 800px window is 640 page pixels tall, and an anchor at
+    // 750–790 screen pixels sits at 600–632.
+    const low = { top: 750, right: 340, bottom: 790, left: 300 };
+    expect(popoverPosition(low, size, viewport, "top-start", 1.25)).toEqual({
+      top: 600 - 6 - 150,
+      left: 240,
+    });
+    expect(popoverPosition(low, size, viewport, "bottom-start", 1.25)).toEqual({
+      top: 600 - 6 - 150,
+      left: 240,
+    });
+  });
 });

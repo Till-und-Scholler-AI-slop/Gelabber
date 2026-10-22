@@ -639,6 +639,9 @@ fn main() {
                 .min_inner_size(480.0, 360.0)
                 .initialization_script(SHORTCUTS)
                 .initialization_script(update::BANNER)
+                // Ctrl/Cmd + plus, minus and 0 zoom like in a browser, on
+                // top of the in-app Textgröße.
+                .zoom_hotkeys_enabled(true)
                 // Only WebView2 takes them; ignored on the other platforms.
                 .additional_browser_args(WEBVIEW2_ARGS)
                 // Tauri's native handler swallows file drops; the chat

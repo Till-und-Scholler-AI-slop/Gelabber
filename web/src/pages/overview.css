@@ -149,10 +149,6 @@
 .lr-channel-content {
   background: var(--lr-bg);
 }
-.lr-account-page h1 {
-  font-size: 30px;
-  margin-bottom: 8px;
-}
 .member-profile {
   display: flex;
   flex-direction: column;
