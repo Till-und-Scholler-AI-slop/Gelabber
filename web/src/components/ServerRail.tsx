@@ -176,9 +176,12 @@ function ServerList({
   };
   const hideTip = (at: "once" | "soon") => {
     window.clearTimeout(tipTimer.current);
+    // Only one that was up warms the next: a pointer that merely crossed
+    // the rail still waits on its next hover.
+    const shown = tip !== null;
     const hide = () => {
       setTip(null);
-      tipWarmUntil.current = Date.now() + TIP_WARM_MS;
+      if (shown) tipWarmUntil.current = Date.now() + TIP_WARM_MS;
     };
     if (at === "once") hide();
     else tipTimer.current = window.setTimeout(hide, TIP_GRACE_MS);
