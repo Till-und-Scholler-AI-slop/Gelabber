@@ -16,7 +16,7 @@ import {
 import { encodeCursor, flattenPages } from "../messages/pages.ts";
 import type { Message, MessagePage } from "../messages/types.ts";
 import { Gateway, type SocketLike } from "./client.ts";
-import { attachRealtimeRecovery } from "./useRealtime.ts";
+import { READY_SPREAD_MS, attachRealtimeRecovery } from "./useRealtime.ts";
 
 class Socket implements SocketLike {
   sent: string[] = [];
@@ -132,6 +132,16 @@ function options(queryClient: QueryClient) {
     retry: false as const,
   };
 }
+/** Load the history and keep it on screen, as an open channel does. */
+async function observe(queryClient: QueryClient) {
+  await queryClient.fetchInfiniteQuery(options(queryClient));
+  const observer = new InfiniteQueryObserver(queryClient, options(queryClient));
+  const off = observer.subscribe(() => undefined);
+  cleanups.push(() => {
+    off();
+    observer.destroy();
+  });
+}
 function cache(queryClient: QueryClient) {
   const stamp = takeStamp()!;
   return queryClient.getQueryData<InfiniteData<MessagePage>>(
@@ -225,7 +235,9 @@ describe("gap recovery on the existing gateway protocol", () => {
       }),
       queryClient.fetchQuery({ queryKey: dmKey, queryFn: () => api("/dms") }),
     ]);
-    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    cleanups.push(
+      attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+    );
     cleanups.push(
       ws.onEvent((event) =>
         applyChannelEvent(queryClient, stamp.userId, stamp.generation, event),
@@ -305,7 +317,9 @@ describe("gap recovery on the existing gateway protocol", () => {
       off();
       observer.destroy();
     });
-    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    cleanups.push(
+      attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+    );
     socket.frame({ op: "gap", s: "server", c: "channel" });
     socket.frame({ op: "ok", s: "server", c: "channel", n: 5 });
     await vi.waitFor(() => expect(ws.gapRecoveries()).toEqual([]));
@@ -331,8 +345,10 @@ describe("gap recovery on the existing gateway protocol", () => {
     });
     await login(ada.email, "password123");
     const stamp = takeStamp()!;
-    await queryClient.fetchInfiniteQuery(options(queryClient));
-    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    await observe(queryClient);
+    cleanups.push(
+      attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+    );
     socket.frame({ op: "ok", s: "server", c: "channel", n: 1 });
     failing = true;
     socket.frame({ op: "gap", s: "server", c: "channel" });
@@ -367,8 +383,10 @@ describe("gap recovery on the existing gateway protocol", () => {
     });
     await login(ada.email, "password123");
     const stamp = takeStamp()!;
-    await queryClient.fetchInfiniteQuery(options(queryClient));
-    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    await observe(queryClient);
+    cleanups.push(
+      attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+    );
     socket.frame({ op: "gap", s: "server" });
     socket.frame({ op: "gap", s: "server", c: "channel" });
     socket.frame({ op: "gap", s: "server", c: "channel" });
@@ -389,8 +407,10 @@ describe("gap recovery on the existing gateway protocol", () => {
     });
     await login(ada.email, "password123");
     const stamp = takeStamp()!;
-    await queryClient.fetchInfiniteQuery(options(queryClient));
-    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    await observe(queryClient);
+    cleanups.push(
+      attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+    );
     socket.frame({ op: "ok", s: "server", c: "channel", n: 3 });
     socket.close();
     history = [
@@ -418,11 +438,13 @@ describe("gap recovery on the existing gateway protocol", () => {
     install(() => json({ messages: rows(1, ++reads), has_more: false }));
     await login(ada.email, "password123");
     const stamp = takeStamp()!;
-    await queryClient.fetchInfiniteQuery(options(queryClient));
+    await observe(queryClient);
     socket.frame({ op: "ok", s: "server", c: "channel", n: 1 });
     socket.frame({ op: "gap", s: "server", c: "channel" });
     socket.frame({ op: "ok", s: "server", c: "channel", n: 8 });
-    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    cleanups.push(
+      attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+    );
     await vi.waitFor(() => expect(ws.gapRecoveries()).toEqual([]), {
       timeout: 1000,
     });
@@ -446,8 +468,10 @@ describe("gap recovery on the existing gateway protocol", () => {
     });
     await login(ada.email, "password123");
     const stamp = takeStamp()!;
-    await queryClient.fetchInfiniteQuery(options(queryClient));
-    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    await observe(queryClient);
+    cleanups.push(
+      attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+    );
     socket.frame({ op: "ok", s: "server", c: "channel", n: 1 });
     socket.frame({ op: "gap", s: "server", c: "channel" });
     socket.frame({ op: "ok", s: "server", c: "channel", n: 8 });
@@ -477,8 +501,10 @@ describe("gap recovery on the existing gateway protocol", () => {
     });
     await login(ada.email, "password123");
     const stamp = takeStamp()!;
-    await queryClient.fetchInfiniteQuery(options(queryClient));
-    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    await observe(queryClient);
+    cleanups.push(
+      attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+    );
     socket.frame({ op: "ok", s: "server", c: "channel", n: 1 });
     socket.frame({ op: "gap", s: "server", c: "channel" });
     socket.frame({ op: "ok", s: "server", c: "channel", n: 8 });
@@ -509,13 +535,17 @@ describe("gap recovery on the existing gateway protocol", () => {
     });
     await login(ada.email, "password123");
     const stamp = takeStamp()!;
-    await queryClient.fetchInfiniteQuery(options(queryClient));
-    const off = attachRealtimeRecovery(queryClient, stamp, ws);
+    await observe(queryClient);
+    const off = attachRealtimeRecovery(queryClient, stamp, ws, {
+      readySpreadMs: 0,
+    });
     socket.frame({ op: "gap", s: "server", c: "channel" });
     off();
     await Promise.resolve();
     expect(reads).toBe(1);
-    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    cleanups.push(
+      attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+    );
     socket.frame({ op: "gap", s: "server", c: "channel" });
     await logout();
     expect(reads).toBe(1);
@@ -539,7 +569,9 @@ describe("private DM discovery and topicless resync", () => {
     });
     await login(ada.email, "password123");
     const stamp = takeStamp()!;
-    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    cleanups.push(
+      attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+    );
     socket.frame({ op: "resync" });
     await vi.waitFor(() =>
       expect(calls).toContain("/api/channels/first-dm/messages"),
@@ -609,7 +641,9 @@ describe("private DM discovery and topicless resync", () => {
     });
     await login(ada.email, "password123");
     const stamp = takeStamp()!;
-    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    cleanups.push(
+      attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+    );
     const offEvent = ws.onEvent((event) =>
       applyChannelEvent(queryClient, stamp.userId, stamp.generation, event),
     );
@@ -714,7 +748,9 @@ describe("private DM discovery and topicless resync", () => {
       { s: "dm-a", c: "dm-a" },
       { s: "dm-b", c: "dm-b" },
     ]);
-    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    cleanups.push(
+      attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+    );
     socket.frame({ op: "resync" });
     // The resync itself re-sends the resume frames of the known topics.
     const sentBefore = socket.sent.length;
@@ -763,12 +799,14 @@ describe("private DM discovery and topicless resync", () => {
     );
     expect(reads).toBe(1);
     ws.setTopics([{ s: "dm-a", c: "dm-a" }]);
-    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    cleanups.push(
+      attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+    );
     socket.frame({ op: "dm", c: "dm-a" });
     expect(ws.dmDiscoveries()).toEqual(["dm-a"]);
     await vi.waitFor(() => expect(ws.dmDiscoveries()).toEqual([]));
-    // One canonical refetch of the cached history, then the announced read.
-    expect(reads).toBe(3);
+    // The cached history is off screen, so only the announced read runs.
+    expect(reads).toBe(2);
   });
   it("a DM announcement reads only the announced history, not every listed DM", async () => {
     const queryClient = client();
@@ -791,7 +829,9 @@ describe("private DM discovery and topicless resync", () => {
       { s: "dm-a", c: "dm-a" },
       { s: "dm-x", c: "dm-x" },
     ]);
-    cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+    cleanups.push(
+      attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+    );
     const sentBefore = socket.sent.length;
     socket.frame({ op: "dm", c: "dm-b" });
     await vi.waitFor(() => expect(ws.dmDiscoveries()).toEqual([]));
@@ -819,7 +859,9 @@ it("a second private DM announcement during a held list gets another authoritati
   });
   await login(ada.email, "password123");
   const stamp = takeStamp()!;
-  cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+  cleanups.push(
+    attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+  );
   socket.frame({ op: "dm", c: "first" });
   await vi.waitFor(() => expect(reads).toBe(1));
   socket.frame({ op: "dm", c: "second" });
@@ -842,7 +884,7 @@ it("a second private DM announcement during a held list gets another authoritati
   ).toEqual([{ id: "first" }, { id: "second" }]);
 });
 
-it("a canonical 404 for an inactive deleted history does not block recovery of surviving topics", async () => {
+it("a canonical 404 for an open deleted history does not block recovery of surviving topics", async () => {
   const queryClient = client();
   const { gateway: ws, socket } = gateway();
   let removed = false;
@@ -862,23 +904,114 @@ it("a canonical 404 for an inactive deleted history does not block recovery of s
     "deleted",
   );
   await queryClient.fetchInfiniteQuery(gone);
+  const observer = new InfiniteQueryObserver(queryClient, gone);
+  const off = observer.subscribe(() => undefined);
+  cleanups.push(() => {
+    off();
+    observer.destroy();
+  });
   await queryClient.fetchInfiniteQuery(options(queryClient));
   ws.setTopics([
     { s: "server", c: "deleted" },
     { s: "server", c: "channel" },
   ]);
-  cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+  cleanups.push(
+    attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+  );
   removed = true;
   socket.frame({ op: "gap", s: "server", c: "channel", ep: "epoch" });
   socket.frame({ op: "ok", s: "server", c: "channel", ep: "epoch", n: 2 });
   await vi.waitFor(() => expect(ws.cursorsSnapshot.get("c:channel")).toBe(2));
   expect(queryClient.getQueryData(gone.queryKey)).toBeUndefined();
+  expect(queryClient.getQueryState(gone.queryKey)?.error).toMatchObject({
+    code: "not_found",
+  });
   expect(ws.gapRecoveries()).toEqual([]);
   expect(socket.sent.map((s) => JSON.parse(s))).toContainEqual({
     op: "u",
     s: "server",
     c: "deleted",
   });
+});
+
+it("an off-screen history is only invalidated and reads its canonical snapshot when opened", async () => {
+  const queryClient = client();
+  const { gateway: ws, socket } = gateway();
+  let history = rows(2);
+  const calls = install(() => json({ messages: history, has_more: false }));
+  await login(ada.email, "password123");
+  const stamp = takeStamp()!;
+  await queryClient.fetchInfiniteQuery(options(queryClient));
+  cleanups.push(
+    attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+  );
+  cleanups.push(
+    ws.onEvent((event) =>
+      applyChannelEvent(queryClient, stamp.userId, stamp.generation, event),
+    ),
+  );
+  socket.frame({ op: "ok", s: "server", c: "channel", n: 2 });
+  // A message lands in the gap and is never delivered live.
+  history = [...history, ...rows(1, 3)];
+  socket.frame({ op: "gap", s: "server", c: "channel" });
+  socket.frame({ op: "ok", s: "server", c: "channel", n: 3 });
+  await vi.waitFor(() => expect(ws.gapRecoveries()).toEqual([]));
+  expect(calls.filter((path) => path.includes("/messages"))).toHaveLength(1);
+  expect(ws.cursorsSnapshot.get("c:channel")).toBe(3);
+  const key = options(queryClient).queryKey;
+  expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
+  // A live event patches the hole-y cache but keeps it invalidated.
+  const live = rows(1, 4)[0]!;
+  history = [...history, live];
+  socket.frame({
+    op: "e",
+    t: "c",
+    s: "server",
+    c: "channel",
+    n: 4,
+    i: live.id,
+    d: live,
+  });
+  expect(flattenPages(cache(queryClient).pages).map((row) => row.id)).toEqual([
+    "m001",
+    "m002",
+    "m004",
+  ]);
+  expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
+  await observe(queryClient);
+  await vi.waitFor(() =>
+    expect(flattenPages(cache(queryClient).pages)).toEqual(history),
+  );
+  expect(calls.filter((path) => path.includes("/messages"))).toHaveLength(2);
+});
+
+it("spreads the refetch after a reconnect and folds the resume gaps into it", async () => {
+  vi.useFakeTimers();
+  cleanups.push(() => vi.useRealTimers());
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  const queryClient = client();
+  const { gateway: ws, socket, sockets } = gateway();
+  let reads = 0;
+  install(() => json({ messages: rows(1, ++reads), has_more: false }));
+  await login(ada.email, "password123");
+  const stamp = takeStamp()!;
+  await observe(queryClient);
+  cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+  socket.frame({ op: "ok", s: "server", c: "channel", n: 1 });
+  socket.close();
+  await vi.advanceTimersByTimeAsync(0);
+  sockets[1]!.emit("open");
+  // The answers to the resume frames arrive in later tasks.
+  await vi.advanceTimersByTimeAsync(0);
+  sockets[1]!.frame({ op: "gap", s: "server", c: "channel" });
+  sockets[1]!.frame({ op: "ok", s: "server", c: "channel", n: 6 });
+  await vi.advanceTimersByTimeAsync(READY_SPREAD_MS / 2 - 1);
+  expect(reads).toBe(1);
+  await vi.advanceTimersByTimeAsync(1);
+  await vi.waitFor(() => expect(ws.gapRecoveries()).toEqual([]));
+  // One refetch covers the reconnect and the gap it reported.
+  expect(reads).toBe(2);
+  expect(ws.cursorsSnapshot.get("c:channel")).toBe(6);
 });
 
 it("DM and topicless resync received before bridge attachment remain recoverable", async () => {
@@ -897,7 +1030,9 @@ it("DM and topicless resync received before bridge attachment remain recoverable
   socket.frame({ op: "dm", c: "first-dm" });
   expect(ws.pendingResync).toBeDefined();
   expect(ws.dmDiscoveries()).toEqual(["first-dm"]);
-  cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+  cleanups.push(
+    attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+  );
   await vi.waitFor(() => expect(ws.dmDiscoveries()).toEqual([]));
   expect(ws.pendingResync).toBeUndefined();
   expect(
@@ -923,11 +1058,15 @@ it("navigation replacing a bridge while discovery is held retains its pending DM
   );
   await login(ada.email, "password123");
   const stamp = takeStamp()!;
-  const oldBridge = attachRealtimeRecovery(queryClient, stamp, ws);
+  const oldBridge = attachRealtimeRecovery(queryClient, stamp, ws, {
+    readySpreadMs: 0,
+  });
   socket.frame({ op: "dm", c: "first-dm" });
   await vi.waitFor(() => expect(reads).toBe(1));
   oldBridge();
-  cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
+  cleanups.push(
+    attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+  );
   await vi.waitFor(() => expect(ws.dmDiscoveries()).toEqual([]));
   oldResponse.resolve(json([]));
   await new Promise((r) => setTimeout(r, 20));

@@ -31,12 +31,19 @@ function dropVoice(serverId: string): void {
   }
 }
 
+/** Upper bound of the random wait before a reconnect refetches. */
+export const READY_SPREAD_MS = 1_000;
+
+const isHistory = (query: { queryKey: readonly unknown[] }) =>
+  query.queryKey[3] === "messages";
+
 /** Reconcile cached history and workspace lists after gaps and every reconnect.
  * Coalesce a burst, retain visible data, and leave failed recovery invalidated. */
 export function attachRealtimeRecovery(
   client: QueryClient,
   stamp: ScopeStamp,
   gateway: Gateway,
+  { readySpreadMs = READY_SPREAD_MS }: { readySpreadMs?: number } = {},
 ): () => void {
   let active = true;
   let queued = false;
@@ -59,7 +66,7 @@ export function attachRealtimeRecovery(
       force = false;
       if (running && !restart) return;
       const version = ++attempt;
-      const gaps = gateway.gapRecoveries();
+      let gaps = gateway.gapRecoveries();
       const discover = rediscover || pendingDms.size > 0;
       const discovery = discoveryVersion;
       const resync = gateway.pendingResync;
@@ -71,36 +78,60 @@ export function attachRealtimeRecovery(
           ["messages", "servers", "dms"].includes(String(query.queryKey[3])),
       };
       const request = (async () => {
+        // Every client of a restarted server reconnects within about a
+        // second; a random wait spreads their refetches over another one.
+        // Gap notices that answer the resume frames meanwhile join this
+        // round instead of starting a second one.
+        if (restart && readySpreadMs > 0) {
+          await new Promise((done) =>
+            setTimeout(done, Math.random() * readySpreadMs),
+          );
+          if (!alive() || attempt !== version) return;
+          gaps = gateway.gapRecoveries();
+        }
         // Cancel initial reads too: invalidateQueries alone shares a pending
         // request without data, which may have started before the gap.
         await client.cancelQueries(filters);
         if (!alive() || attempt !== version) return;
-        // Cached inactive histories also need a canonical snapshot before a
-        // resume head can advance. Unopened channels still have no cache.
-        await client.invalidateQueries(
-          {
-            ...filters,
-            predicate: (query) =>
-              filters.predicate(query) &&
-              !(
-                discover &&
-                ["servers", "dms"].includes(String(query.queryKey[3])) &&
-                query.queryKey[4] === "list"
-              ),
-            refetchType: "all",
-          },
-          { cancelRefetch: true, throwOnError: false },
-        );
+        const skipped = (query: { queryKey: readonly unknown[] }) =>
+          discover &&
+          ["servers", "dms"].includes(String(query.queryKey[3])) &&
+          query.queryKey[4] === "list";
+        const options = { cancelRefetch: true, throwOnError: false };
+        // Only histories on screen are read again. An inactive one stays
+        // invalidated (live patches keep that flag), so it refetches when it
+        // is next opened and never shows a hole behind an advanced cursor.
+        // Workspace lists and details are small and always read again: their
+        // live patches do not keep the flag.
+        await Promise.all([
+          client.invalidateQueries(
+            {
+              ...filters,
+              predicate: (query) =>
+                filters.predicate(query) && isHistory(query),
+              refetchType: "active",
+            },
+            options,
+          ),
+          client.invalidateQueries(
+            {
+              ...filters,
+              predicate: (query) =>
+                filters.predicate(query) &&
+                !isHistory(query) &&
+                !skipped(query),
+              refetchType: "all",
+            },
+            options,
+          ),
+        ]);
         if (!alive() || attempt !== version) return;
         // Removed channels/DMs are authoritative absence, not an outage that
         // should prevent every remaining topic from recovering forever.
         for (const query of client.getQueryCache().findAll(filters)) {
-          if (
-            discover &&
-            ["servers", "dms"].includes(String(query.queryKey[3])) &&
-            query.queryKey[4] === "list"
-          )
-            continue;
+          if (skipped(query)) continue;
+          // Not read in this round: an old error is not this round's outcome.
+          if (isHistory(query) && !query.isActive()) continue;
           if (query.state.status !== "error") continue;
           const error = query.state.error;
           if (
@@ -151,9 +182,10 @@ export function attachRealtimeRecovery(
         const requested = new Set(announced);
         // Resync discovers DMs missed before notification delivery resumed.
         // A DM that was already listed is subscribed through the notification
-        // topics: its cached history was reconciled by the invalidation above,
-        // an uncached one loads when opened, and unread state comes from read
-        // state. Only announced and newly listed DMs need a first history.
+        // topics: its cached history was invalidated above and is read again
+        // once on screen, an uncached one loads when opened, and unread state
+        // comes from read state. Only announced and newly listed DMs need a
+        // first history.
         const known = Array.isArray(dms) ? dms : [];
         for (const dm of known) {
           if (typeof dm.id !== "string" || !dm.id) continue;
