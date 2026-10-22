@@ -223,7 +223,9 @@ jobs:
           fail-on-cache-miss: true
 
       # WebKitGTK for the Tauri app; Xvfb for its smoke test.
+      # A stalled Ubuntu mirror fails the step fast instead of the whole job.
       - name: Build tools
+        timeout-minutes: 15
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build python3-venv \
@@ -256,6 +258,7 @@ jobs:
       # VA-API/NVENC/NVDEC, which runners lack, to test the GStreamer encoder
       # and decoder paths themselves.
       - name: Test packages
+        timeout-minutes: 15
         run: |
           sudo apt-get install -y --no-install-recommends pipewire wireplumber pipewire-pulse \
             pulseaudio-utils xdg-desktop-portal \

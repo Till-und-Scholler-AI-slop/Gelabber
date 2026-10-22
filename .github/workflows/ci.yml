@@ -149,6 +149,9 @@ jobs:
           # Pushes save, pull requests only read: per-PR copies (~900 MB)
           # blew the cache quota.
           save-if: ${{ github.event_name == 'push' }}
+          # The build runs in the Debian image (shared-key), so the runner's
+          # own Rust versions must not change the key and drop the cache.
+          add-rust-environment-hash-key: false
           shared-key: native-debian-${{ hashFiles('media/Dockerfile', 'docker/mediasoup-*', 'docker/install-mediasoup-debian-build-tools.sh') }}
           workspaces: . -> target/native-debian
 
