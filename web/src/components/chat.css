@@ -193,6 +193,20 @@
   background: var(--lr-accent);
   filter: brightness(1.08);
 }
+/* Rises into view when the reader leaves the end of the conversation. */
+.lr-jump-latest {
+  transition:
+    opacity var(--lr-dur) var(--lr-ease-enter),
+    translate var(--lr-dur) var(--lr-ease-enter),
+    background-color var(--lr-dur-micro) var(--lr-ease-standard),
+    color var(--lr-dur-micro) var(--lr-ease-standard);
+}
+@starting-style {
+  .lr-jump-latest {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
 
 /* Opened with unread messages: how many, back to the first, or done. */
 .lr-unread-bar {
@@ -1289,8 +1303,12 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   background: var(--lr-accent);
   color: var(--lr-accent-ink);
   transition:
-    background 0.12s,
-    color 0.12s;
+    background-color var(--lr-dur-fast) var(--lr-ease-standard),
+    color var(--lr-dur-fast) var(--lr-ease-standard),
+    scale var(--lr-dur-micro) var(--lr-ease-standard);
+}
+.lr-composer-send:active:not(:disabled) {
+  scale: var(--lr-press-scale);
 }
 .lr-composer-send:hover:not(:disabled) {
   filter: brightness(1.08);

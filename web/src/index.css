@@ -198,6 +198,42 @@ summary {
 :where(input, textarea, select) {
   accent-color: var(--lr-accent);
 }
+/* Rows, list buttons and small icon controls ease into and out of their
+   hover and selected colours. Zero specificity: a control with a
+   transition of its own keeps it. */
+:where(
+  .channel-row,
+  .dm-row,
+  .sidebar-overview,
+  .sidebar-participant,
+  .server-home-link,
+  .server-create-button,
+  .server-sidebar-menu-button,
+  .user-panel-profile,
+  .user-panel-menu > nav > :is(a, button),
+  .user-status-card__link,
+  .shell-icon-button,
+  .shell-menu-item,
+  .member-profile-button,
+  .member-drawer-trigger,
+  .workspace-navigation-trigger,
+  .dm-peer-button,
+  .lr-message-row,
+  .lr-message-action,
+  .lr-message-menu-item,
+  .lr-message-menu-emoji,
+  .lr-reaction,
+  .lr-header-icon,
+  .lr-composer-icon,
+  .lr-search-hit,
+  .lr-jump-latest,
+  .voice-menu-item
+) {
+  transition:
+    background-color var(--lr-dur-micro) var(--lr-ease-standard),
+    border-color var(--lr-dur-micro) var(--lr-ease-standard),
+    color var(--lr-dur-micro) var(--lr-ease-standard);
+}
 .app-shell {
   min-height: var(--lr-100dvh);
   /* The bottom inset is added where content ends, so the call dock and the
