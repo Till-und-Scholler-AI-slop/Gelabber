@@ -44,7 +44,6 @@ export function AppShell() {
   const activeMedia = useVoice(
     (state) =>
       state.status === "joined" ||
-      state.watching ||
       state.playbackBlocked ||
       state.lostCall !== null,
   );
@@ -53,9 +52,7 @@ export function AppShell() {
   useFocusReport(user?.id ?? null);
   usePushSubscription(user?.id ?? null);
   useMessageToastsBridge();
-  useCallWakeLock(
-    useVoice((state) => state.status === "joined" || state.watching),
-  );
+  useCallWakeLock(useVoice((state) => state.status === "joined"));
 
   return (
     <div

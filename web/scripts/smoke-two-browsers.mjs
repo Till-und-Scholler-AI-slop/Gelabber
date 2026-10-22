@@ -1,6 +1,6 @@
 // Runs against the Compose stack from CI. Each isolated browser context has
 // its own account, WebSocket, media peer and cookie jar. Media travels through
-// the running SFU and coturn; only camera/screen capture is synthetic.
+// the running SFU and coturn; only camera and Live capture is synthetic.
 /* global process, window, navigator, document, setInterval, clearInterval, console, URL */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -276,8 +276,8 @@ try {
   await b.page.waitForURL(/\/s\//);
   await b.page.goto(voiceUrl);
 
-  await a.page.getByRole("button", { name: "Beitreten" }).click();
-  await b.page.getByRole("button", { name: "Beitreten" }).click();
+  await a.page.getByRole("button", { name: "Dazukommen" }).click();
+  await b.page.getByRole("button", { name: "Dazukommen" }).click();
   await a.page
     .getByRole("button", { name: "Voice-Einstellungen" })
     .first()
@@ -291,7 +291,7 @@ try {
     .locator("#screen-stream-profile-resolution")
     .selectOption("2160");
   await settings.locator("#screen-stream-profile-fps").selectOption("60");
-  await settings.getByLabel("Ton teilen", { exact: true }).check();
+  await settings.getByLabel("Ton mitsenden", { exact: true }).check();
   await settings.getByRole("button", { name: "Fertig" }).click();
 
   await a.page
@@ -336,19 +336,20 @@ try {
     );
   }
 
-  // The screen share sits in the call bar's "Teilen" menu.
+  // "Live gehen" in the call bar opens the Live menu where a Live can carry
+  // sound.
   await a.page
-    .getByRole("button", { name: "Teilen", exact: true })
+    .getByRole("button", { name: "Live gehen", exact: true })
     .first()
     .click();
   await a.page
-    .getByRole("menuitem", { name: "Bildschirm im Raum teilen", exact: true })
+    .getByRole("menuitem", { name: "Live gehen", exact: true })
     .click();
-  const screenTile = b.page.locator("figure").filter({ hasText: "Bildschirm" });
-  await screenTile
+  const liveTile = b.page.locator("figure").filter({ hasText: "— Live" });
+  await liveTile
     .getByRole("button", { name: "Zuschauen", exact: true })
     .click();
-  await remoteVideo(b.page, "Bildschirm");
+  await remoteVideo(b.page, "— Live");
   await b.page.waitForFunction(
     async () => {
       for (const pc of window.__smokePeers ?? []) {
@@ -400,7 +401,7 @@ try {
       .count()) > 0,
   );
   console.log(
-    "Two accounts, camera + screen with stereo source audio, explicit Watch, SFU media, relay ICE and shared sender budget passed.",
+    "Two accounts, camera + Live with stereo source audio, explicit Watch, SFU media, relay ICE and shared sender budget passed.",
   );
 
   await a.page.goto(textUrl);

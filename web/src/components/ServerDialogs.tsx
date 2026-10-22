@@ -432,7 +432,7 @@ function ChannelForm({
             {(
               [
                 ["text", "Text", "Nachrichten, Dateien"],
-                ["voice", "Voice", "Sprache, Go Live"],
+                ["voice", "Voice", "Sprache, Live"],
               ] as const
             ).map(([value, label, hint]) => (
               <RadioCard
