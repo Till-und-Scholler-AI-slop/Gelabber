@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fixture = vi.hoisted(() => ({ params: { area: "darstellung" } }));
 vi.mock("@tanstack/react-router", () => ({
@@ -28,11 +28,14 @@ vi.mock("../messages/notificationPrivacy.ts", () => ({
   useChangeNotificationPrivacy: () => vi.fn(),
 }));
 
+import { SettingsAreaPart } from "./settingsAreaPart.ts";
 import { SettingsSidebar, UserSettingsPage } from "./UserSettingsPage.tsx";
 
 const page = () => renderToStaticMarkup(<UserSettingsPage />);
 
 describe("user settings page", () => {
+  // The area forms are a chunk of their own; loaded, they render at once.
+  beforeAll(() => SettingsAreaPart.preload());
   beforeEach(() => {
     fixture.params = { area: "darstellung" };
   });

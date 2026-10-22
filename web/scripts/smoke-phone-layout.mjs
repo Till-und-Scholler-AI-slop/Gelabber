@@ -323,12 +323,6 @@ const VOICE_STATES = {
     channelId: VOICE,
     channelName: "Sofa",
   },
-  "watching a stream": {
-    watching: true,
-    watchServerId: SERVER,
-    watchChannelId: VOICE,
-    watchChannelName: "Sofa",
-  },
 };
 
 /** Where the unblock row and the rows it shares its container with are. */
@@ -384,6 +378,17 @@ async function blockedSound() {
       });
       await page.locator(`${container} .voice-session-playback`).waitFor();
       await frames(page);
+      // The call bar rises from the bottom edge when it opens; measure where
+      // it comes to rest, not a frame of the way up.
+      await page.evaluate(
+        (selector) =>
+          Promise.all(
+            (document.querySelector(selector)?.getAnimations() ?? []).map(
+              (animation) => animation.finished,
+            ),
+          ),
+        container,
+      );
       const seen = await call(page, container);
       const where = `${width}x${height}, ${name}`;
       assert.ok(

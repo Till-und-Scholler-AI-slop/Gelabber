@@ -158,6 +158,46 @@ namespace
 		Expect(limiter.Levels().reduction == 1.0f, "gain 2, quiet: the limiter did nothing");
 	}
 
+	// The highest gain (400 %): a loud mix and full-scale noise still end
+	// below the ceiling, and a quiet voice plays at four times its level.
+	void HighestGain()
+	{
+		{
+			PlayoutLimiter limiter;
+			limiter.SetGain(PlayoutLimiter::kMaxGain);
+			int loudest = 0;
+			for (int16_t sample : Play(limiter, Sine(0.9, 440.0, kRate)))
+				loudest = std::max(loudest, std::abs(static_cast<int>(sample)));
+			Expect(loudest <= kCeilingSample, "gain 4: loudest sample " + std::to_string(loudest));
+		}
+		{
+			PlayoutLimiter limiter;
+			limiter.SetGain(PlayoutLimiter::kMaxGain);
+			std::vector<int16_t> in(kRate * kChannels);
+			Random random(5);
+			for (auto& sample : in)
+				sample = random.Sample();
+			int loudest = 0;
+			for (int16_t sample : Play(limiter, in))
+				loudest = std::max(loudest, std::abs(static_cast<int>(sample)));
+			Expect(loudest <= kCeilingSample, "gain 4, noise: loudest sample " + std::to_string(loudest));
+		}
+		{
+			PlayoutLimiter limiter;
+			limiter.SetGain(PlayoutLimiter::kMaxGain);
+			// A fifth of full scale: four times that is still below the
+			// ceiling.
+			const auto in      = Sine(0.2, 440.0, kRate);
+			const auto out     = Play(limiter, in);
+			const size_t delay = limiter.DelayFrames();
+			int worst          = 0;
+			for (size_t i = delay * kChannels; i < out.size(); ++i)
+				worst = std::max(worst, std::abs(out[i] - 4 * in[i - delay * kChannels]));
+			Expect(worst <= 1, "gain 4, quiet: off by " + std::to_string(worst));
+			Expect(limiter.Levels().reduction == 1.0f, "gain 4, quiet: the limiter did nothing");
+		}
+	}
+
 	// Two streams, A at 200 % and B at 100 %, then A back to 100 %. The
 	// mix carries each at its volume over the master gain (B at 1/2, then
 	// at 1); the streams' new volumes and the new gain take effect in the
@@ -213,8 +253,8 @@ namespace
 	void GainIsClamped()
 	{
 		PlayoutLimiter limiter;
-		limiter.SetGain(5.0);
-		Expect(limiter.Gain() == 2.0f, "gain clamped to 2");
+		limiter.SetGain(9.0);
+		Expect(limiter.Gain() == 4.0f, "gain clamped to 4");
 		limiter.SetGain(0.5);
 		Expect(limiter.Gain() == 1.0f, "gain clamped to 1");
 	}
@@ -264,6 +304,7 @@ int main()
 	LoudMixStaysBelowTheCeiling();
 	LoudNoiseStaysBelowTheCeiling();
 	QuietMixPlaysAtTheGain();
+	HighestGain();
 	VolumeChangeLeavesTheOtherStreamAlone();
 	BackToUnity();
 	GainIsClamped();

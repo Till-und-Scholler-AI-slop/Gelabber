@@ -11,6 +11,7 @@ use sqlx::{FromRow, PgExecutor};
 use uuid::Uuid;
 
 use super::Message;
+use super::system::SystemMessage;
 use crate::error::ApiError;
 
 /// Characters of the original shown above the reply.
@@ -36,6 +37,10 @@ pub struct Reply {
     pub has_attachment: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub has_gif: bool,
+    /// The original is a system message (#314); the client renders the
+    /// excerpt from it, `excerpt` is then empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<SystemMessage>,
 }
 
 #[derive(Debug, FromRow)]
@@ -48,6 +53,8 @@ struct ReplyRow {
     content: Option<String>,
     has_attachment: bool,
     has_gif: bool,
+    system_kind: Option<String>,
+    system_params: Option<sqlx::types::Json<serde_json::Value>>,
 }
 
 impl From<ReplyRow> for Reply {
@@ -64,6 +71,7 @@ impl From<ReplyRow> for Reply {
             excerpt: Some(excerpt(&content)),
             has_attachment: row.has_attachment,
             has_gif: row.has_gif,
+            system: SystemMessage::from_columns(row.system_kind, row.system_params),
         }
     }
 }
@@ -77,6 +85,7 @@ impl Reply {
             excerpt: None,
             has_attachment: false,
             has_gif: false,
+            system: None,
         }
     }
 }
@@ -122,7 +131,7 @@ fn mask_spoilers(line: &str) -> String {
 const REPLIES_SQL: &str = "SELECT m.id AS message_id, m.reply_to, o.id AS original_id, \
         o.author_id, u.name AS author_name, o.content, \
         EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = o.id) AS has_attachment, \
-        o.gif IS NOT NULL AS has_gif \
+        o.gif IS NOT NULL AS has_gif, o.system_kind, o.system_params \
      FROM messages m \
      LEFT JOIN messages o ON o.id = m.reply_to AND o.channel_id = m.channel_id \
      LEFT JOIN users u ON u.id = o.author_id \

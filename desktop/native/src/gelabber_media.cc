@@ -528,7 +528,7 @@ struct gm_consumer
 	std::unique_ptr<FrameCounter> counter;
 	std::unique_ptr<AudioLevelSink> audio;
 	std::string id;
-	// Audio: the volume asked for (0..2), and the one its receive stream
+	// Audio: the volume asked for (0..4), and the one its receive stream
 	// plays at (libwebrtc starts it at 1). Under the engine's playbackMutex.
 	double volume{ 1.0 };
 	double streamVolume{ 1.0 };
@@ -1638,7 +1638,7 @@ int gm_consumer_set_volume(gm_consumer* consumer, double volume)
 		if (!std::isfinite(volume))
 			throw std::invalid_argument("volume must be a number");
 		std::lock_guard lock(consumer->engine->playbackMutex);
-		consumer->volume = std::clamp(volume, 0.0, 2.0);
+		consumer->volume = std::clamp(volume, 0.0, gelabber::PlayoutLimiter::kMaxGain);
 		ApplyPlaybackVolumes(*consumer->engine);
 		return 0;
 	});

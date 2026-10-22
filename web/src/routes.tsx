@@ -14,7 +14,9 @@ import {
   useSessionProblems,
 } from "./auth/session.ts";
 import { AppShell } from "./components/AppShell.tsx";
+import { lazyPart } from "./components/lazyPart.tsx";
 import { RequireUser } from "./components/RequireUser.tsx";
+import { MainSkeleton } from "./components/ui/Skeleton.tsx";
 import { ChannelPage } from "./pages/ChannelPage.tsx";
 import { DmChannelPage } from "./pages/DmChannelPage.tsx";
 import { DmIndexPage } from "./pages/DmIndexPage.tsx";
@@ -26,7 +28,6 @@ import { NotFoundCard, NotFoundPage } from "./pages/NotFoundPage.tsx";
 import { RegisterPage } from "./pages/RegisterPage.tsx";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage.tsx";
 import { ServerPage } from "./pages/ServerPage.tsx";
-import { ServerSettingsPage } from "./pages/ServerSettingsPage.tsx";
 import {
   DEFAULT_SETTINGS_AREA,
   isSettingsArea,
@@ -40,6 +41,16 @@ import { VerifyEmailPage } from "./pages/VerifyEmailPage.tsx";
 import { WorkspaceIndexPage } from "./pages/WorkspaceIndexPage.tsx";
 import { WorkspaceLayout } from "./pages/WorkspaceLayout.tsx";
 import { placeFromPath, useLastPlace } from "./servers/lastPlace.ts";
+
+// Server settings are a chunk of their own. Not `lazyRouteComponent`: it
+// reloads the page when a deploy removed the chunk, which ends a call.
+const ServerSettings = lazyPart(
+  () =>
+    import("./pages/ServerSettingsPage.tsx").then(
+      (module) => module.ServerSettingsPage,
+    ),
+  "Die Servereinstellungen konnten nicht geladen werden.",
+);
 
 const rootRoute = createRootRoute({
   component: AppShell,
@@ -210,7 +221,9 @@ const channelRoute = createRoute({
 const serverSettingsRoute = createRoute({
   getParentRoute: () => workspaceLayout,
   path: "/s/$serverId/settings",
-  component: ServerSettingsPage,
+  component: () => (
+    <ServerSettings.Component fallback={<MainSkeleton kind="list" />} />
+  ),
 });
 
 // Personal settings live in the workspace too: the rail stays, and the
