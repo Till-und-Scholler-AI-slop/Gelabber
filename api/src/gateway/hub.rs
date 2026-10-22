@@ -882,7 +882,7 @@ impl Gateway {
     ) -> Result<(), ApiError> {
         self.revoke_members(server_id, user_ids).await?;
         for id in self.local_conns(user_ids).await {
-            self.drop_server_access(id, server_id, channel_ids, reason)
+            self.drop_server_access(id, server_id, channel_ids, reason, false)
                 .await;
         }
         Ok(())
@@ -922,8 +922,11 @@ impl Gateway {
         channel_ids: &[Uuid],
         reason: &'static str,
     ) {
+        // A removal on this process may have cleared the server since the
+        // caller read the socket's access; it already sent the error frame
+        // and cleaned presence, so do not repeat either.
         let Some(user_id) = self
-            .drop_server_access(id, server_id, channel_ids, reason)
+            .drop_server_access(id, server_id, channel_ids, reason, true)
             .await
         else {
             return;
@@ -935,47 +938,51 @@ impl Gateway {
     }
 
     /// Everything [`Gateway::clear_server_access`] does except presence.
-    /// Returns the socket's user, or `None` when the socket is gone.
+    /// Returns the socket's user, or `None` when the socket is gone or, with
+    /// `only_if_held`, no longer holds access to the server.
     async fn drop_server_access(
         &self,
         id: ConnId,
         server_id: Uuid,
         channel_ids: &[Uuid],
         reason: &'static str,
+        only_if_held: bool,
     ) -> Option<Uuid> {
         let (user_id, rooms, typing) = {
             let mut sockets = self.connections.inner.sockets.write().await;
-            sockets.get_mut(&id).map(|socket| {
-                socket.access.remove(&server_id);
-                socket.servers.remove(&server_id);
-                socket.dms.remove(&server_id);
-                socket.scopes.retain(|_, sid| *sid != server_id);
-                socket.voice_rosters.remove(&server_id);
-                socket.topics.remove(&Topic::Server(server_id));
-                socket.catching_up.remove(&Topic::Server(server_id));
-                for channel_id in channel_ids {
-                    socket.topics.remove(&Topic::Channel(*channel_id));
-                    socket.catching_up.remove(&Topic::Channel(*channel_id));
-                }
-                let rooms: Vec<Uuid> = socket
-                    .rooms
-                    .iter()
-                    .filter(|(_, seat)| seat.server_id == server_id)
-                    .map(|(cid, _)| *cid)
-                    .collect();
-                let typing: Vec<(Uuid, Uuid)> = socket
-                    .typing
-                    .iter()
-                    .filter(|(sid, _)| *sid == server_id)
-                    .copied()
-                    .collect();
-                for pair in &typing {
-                    socket.typing.remove(pair);
-                }
-                socket.send(ServerFrame::error(reason, Some(server_id), None));
-                (socket.user_id, rooms, typing)
-            })
-        }?;
+            let socket = sockets.get_mut(&id)?;
+            if only_if_held && !socket.access.contains_key(&server_id) {
+                return None;
+            }
+            socket.access.remove(&server_id);
+            socket.servers.remove(&server_id);
+            socket.dms.remove(&server_id);
+            socket.scopes.retain(|_, sid| *sid != server_id);
+            socket.voice_rosters.remove(&server_id);
+            socket.topics.remove(&Topic::Server(server_id));
+            socket.catching_up.remove(&Topic::Server(server_id));
+            for channel_id in channel_ids {
+                socket.topics.remove(&Topic::Channel(*channel_id));
+                socket.catching_up.remove(&Topic::Channel(*channel_id));
+            }
+            let rooms: Vec<Uuid> = socket
+                .rooms
+                .iter()
+                .filter(|(_, seat)| seat.server_id == server_id)
+                .map(|(cid, _)| *cid)
+                .collect();
+            let typing: Vec<(Uuid, Uuid)> = socket
+                .typing
+                .iter()
+                .filter(|(sid, _)| *sid == server_id)
+                .copied()
+                .collect();
+            for pair in &typing {
+                socket.typing.remove(pair);
+            }
+            socket.send(ServerFrame::error(reason, Some(server_id), None));
+            (socket.user_id, rooms, typing)
+        };
         for cid in rooms {
             if let Err(err) = self.leave_voice(id, user_id, server_id, cid).await {
                 warn!(error = err.code(), "voice cleanup failed");
@@ -1236,8 +1243,18 @@ impl Gateway {
                 if revision.1 & !current.1 & 48 != 0 {
                     self.clear_voice_access(id, sid).await?;
                 }
-                if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
-                    socket.access.insert(sid, current);
+                // Refresh only: a removal that cleared the server after the
+                // snapshot above must not get its access back from this check.
+                if let Some(held) = self
+                    .connections
+                    .inner
+                    .sockets
+                    .write()
+                    .await
+                    .get_mut(&id)
+                    .and_then(|socket| socket.access.get_mut(&sid))
+                {
+                    *held = current;
                 }
             }
         }
