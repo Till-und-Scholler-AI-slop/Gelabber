@@ -1,8 +1,7 @@
 // Server-wide voice occupancy for the member list (issue 12).
 // Join/leave/mute/deafen live on `op: "sig"` — not chat events, no SDK.
 // Who is live (`live`): several people per voice channel, each with a
-// screen (`s`), or with an older client's Go Live (`l`), which this one
-// shows the same way.
+// screen (`s`).
 
 import { create } from "zustand";
 
@@ -14,7 +13,7 @@ export type VoiceFlags = {
   deafened: boolean;
 };
 
-export type LiveKind = "s" | "l";
+export type LiveKind = "s";
 /** What one person is live with. */
 export type LiveKinds = Partial<Record<LiveKind, true>>;
 /** userId → what they are live with, in the order they went live. */
@@ -124,7 +123,7 @@ function withoutLive(
   const rest: LiveKinds = { ...kinds };
   if (kind) delete rest[kind];
   const nextPeople = { ...people };
-  if (!kind || (!rest.s && !rest.l)) delete nextPeople[userId];
+  if (!kind || !rest.s) delete nextPeople[userId];
   else nextPeople[userId] = rest;
   const next = { ...live };
   if (Object.keys(nextPeople).length === 0) delete next[channelId];
@@ -225,15 +224,7 @@ export function applyVoiceSnap(serverId: string, entries: VoiceEntry[]): void {
       muted: entry.m === true,
       deafened: entry.d === true,
     };
-    if (entry.s || entry.l) {
-      live[entry.c] = {
-        ...live[entry.c],
-        [entry.u]: {
-          ...(entry.s ? { s: true } : {}),
-          ...(entry.l ? { l: true } : {}),
-        },
-      };
-    }
+    if (entry.s) live[entry.c] = { ...live[entry.c], [entry.u]: { s: true } };
   }
   useVoiceRoster.setState((state) => ({
     byServer: { ...state.byServer, [serverId]: next },
@@ -266,12 +257,10 @@ export function applyVoiceSig(event: SigEvent): void {
       applyVoiceDeafen(event.s, userId, event.on === true);
       return;
     case "p":
-      if (event.k === "s" || event.k === "l")
-        applyLiveStart(event.s, channelId, userId, event.k);
+      if (event.k === "s") applyLiveStart(event.s, channelId, userId, event.k);
       return;
     case "u":
-      if (event.k === "s" || event.k === "l")
-        applyLiveEnd(event.s, channelId, userId, event.k);
+      if (event.k === "s") applyLiveEnd(event.s, channelId, userId, event.k);
       return;
     default:
       return;

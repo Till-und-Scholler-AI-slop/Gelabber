@@ -108,9 +108,7 @@ export function VoiceSessionControls() {
   // Stream sound only matters while someone's Live is playing here.
   const streamSound =
     joined !== null &&
-    Object.values(voice.sourceSubscriptions).some(
-      (source) => source.s || source.l,
-    );
+    Object.values(voice.sourceSubscriptions).some((source) => source.s);
   const notice = notices.find((candidate) => !dismissed.has(candidate.key));
 
   return (

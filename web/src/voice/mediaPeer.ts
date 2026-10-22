@@ -161,8 +161,7 @@ export class MediaPeer {
           this.pending.delete(frame.id!);
           if (Date.now() >= request.deadline)
             request.reject(new MediaError("request_timeout"));
-          else if (frame.op === "err")
-            request.reject(new MediaError(frame.e, frame.lc));
+          else if (frame.op === "err") request.reject(new MediaError(frame.e));
           else request.resolve(frame.data);
         }
         // The requesting operation owns its rejection and source cleanup.
