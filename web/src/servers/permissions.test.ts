@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { ALL_PERMISSIONS, can, normalisePermissions } from "./permissions.ts";
+import {
+  ALL_PERMISSIONS,
+  PERMISSIONS,
+  can,
+  normalisePermissions,
+} from "./permissions.ts";
 
 describe("permissions", () => {
   it("owner can do everything regardless of the member mask", () => {
@@ -24,5 +29,14 @@ describe("permissions", () => {
     expect(normalisePermissions(ALL_PERMISSIONS)).toEqual(ALL_PERMISSIONS);
     expect(ALL_PERMISSIONS).toHaveLength(8);
     expect(ALL_PERMISSIONS).toContain("manage_messages");
+  });
+
+  it("keeps the go_live id and calls it Live gehen", () => {
+    const live = PERMISSIONS.find((p) => p.id === "go_live");
+    expect(live?.label).toBe("Live gehen");
+    expect(live?.hint).toContain("Sprachkanal");
+    expect(
+      PERMISSIONS.map((p) => `${p.label} ${p.hint}`).join(" "),
+    ).not.toMatch(/Go Live|Bildschirm teilen/);
   });
 });

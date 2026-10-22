@@ -204,7 +204,7 @@ export function MediaSettingsForm({
               onChange={(value) =>
                 settings.patch({ sourceAudioVolume: value / 100 })
               }
-              hint="Bildschirm- und Live-Ton haben eine eigene Lautstärke. Taub schaltet auch diesen Ton aus."
+              hint="Der Ton von Lives hat eine eigene Lautstärke. Taub schaltet auch diesen Ton aus."
             />
             <Toggle
               id="source-audio-muted"
@@ -343,21 +343,21 @@ export function MediaSettingsForm({
           <StreamProfilePicker
             kind="screen"
             name="screen-stream-profile"
-            legend="Bildschirmfreigabe und Go Live"
+            legend="Live"
             value={settings.screenProfile}
             apply={settings.screenProfileApply}
             onChange={(screenProfile) => settings.patch({ screenProfile })}
           />
-          {/* Only where a share can carry sound; the same switch sits next
-              to the share button in the call controls. */}
+          {/* Only where a Live can carry sound; the same switch sits in
+              the Live menu of the call controls. */}
           {capable.appAudio && (
             <section
               className="stream-source-audio"
-              aria-label="Ton der Bildschirmfreigabe"
+              aria-label="Ton beim Live gehen"
             >
               <Toggle
                 id="share-source-audio"
-                label="Ton teilen"
+                label="Ton mitsenden"
                 checked={sharesSourceAudio(settings)}
                 onChange={(on) =>
                   settings.patch({ sourceAudioShare: sourceAudioChoice(on) })
@@ -381,10 +381,10 @@ export function MediaSettingsForm({
               )}
               <p className="text-xs text-lr-muted">
                 {!desktop
-                  ? "Gilt für die nächste Bildschirmfreigabe und Go Live; Ausschalten wirkt sofort. Wähle den Ton im Browserdialog aus; je nach Browser und Quelle ist nur Video verfügbar."
+                  ? "Gilt ab dem nächsten Live gehen; Ausschalten wirkt sofort. Wähle den Ton im Browserdialog aus; je nach Browser und Quelle ist nur Video verfügbar."
                   : hasNativeFeature("app-audio-excludes-self")
-                    ? "Gilt für Bildschirmfreigabe und Go Live, auch während sie laufen. Geteilt wird der Ton anderer Anwendungen, nie dein Mikrofon oder der Ton des Anrufs."
-                    : "Gilt für Bildschirmfreigabe und Go Live, auch während sie laufen. Geteilt wird der Ton der gewählten Anwendung, nie dein Mikrofon."}{" "}
+                    ? "Gilt auch während du live bist. Mitgesendet wird der Ton anderer Anwendungen, nie dein Mikrofon oder der Ton des Anrufs."
+                    : "Gilt auch während du live bist. Mitgesendet wird der Ton der gewählten Anwendung, nie dein Mikrofon."}{" "}
                 Der Stream-Ton wird als Stereo-Musik übertragen, ohne
                 Mikrofonfilter.
               </p>

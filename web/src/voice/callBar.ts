@@ -1,5 +1,5 @@
 // What the call bar says beyond its controls: the one notice it shows about
-// the own share's sound, and what a screen reader hears when the call
+// the own Live's sound, and what a screen reader hears when the call
 // changes.
 
 import type { VoiceState } from "./session.ts";
@@ -14,8 +14,8 @@ export type NoticeContext = {
   sourceAudioApp: string;
 };
 
-/** What the dock may have to say about the own share's sound, most
- * important first. It shows one at a time; each is about a share that
+/** What the dock may have to say about the own Live's sound, most
+ * important first. It shows one at a time; each is about a Live that
  * runs, never a warning ahead of one. */
 export function dockNotices(
   voice: Pick<
@@ -81,7 +81,7 @@ export function dockNotices(
           : null,
     },
     {
-      // A browser hands sound over in its picker only: a share that started
+      // A browser hands sound over in its picker only: a Live that started
       // without it stays without it.
       id: "next-share",
       text:
@@ -89,7 +89,7 @@ export function dockNotices(
         !context.desktop &&
         ((voice.localScreen && sourceAudio.s === "off") ||
           (voice.localLive && sourceAudio.l === "off"))
-          ? "Der Stream-Ton kommt mit der nächsten Freigabe dazu."
+          ? "Der Stream-Ton kommt beim nächsten Live gehen dazu."
           : null,
     },
   ];

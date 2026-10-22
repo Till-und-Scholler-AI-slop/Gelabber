@@ -1,6 +1,8 @@
 // Server-wide voice occupancy for the member list (issue 12).
 // Join/leave/mute/deafen live on `op: "sig"` — not chat events, no SDK.
-// Go Live holders (`live`) are one user per voice channel (issue 14).
+// Who is live (`live`): several people per voice channel, each with a
+// screen (`s`), or with an older client's Go Live (`l`), which this one
+// shows the same way.
 
 import { create } from "zustand";
 
@@ -12,12 +14,18 @@ export type VoiceFlags = {
   deafened: boolean;
 };
 
-/** channelId → userId. At most one live track per voice channel. */
-export type LiveMap = Record<string, string>;
+export type LiveKind = "s" | "l";
+/** What one person is live with. */
+export type LiveKinds = Partial<Record<LiveKind, true>>;
+/** userId → what they are live with, in the order they went live. */
+export type LivePeople = Record<string, LiveKinds>;
+/** channelId → who is live there. */
+export type LiveMap = Record<string, LivePeople>;
 
 /** Stable empties for Zustand selectors. A fresh `{}` each call is React 19 #185. */
 export const EMPTY_OCCUPANCY: Record<string, VoiceFlags> = Object.freeze({});
 export const EMPTY_LIVE: LiveMap = Object.freeze({});
+export const EMPTY_LIVE_PEOPLE: LivePeople = Object.freeze({});
 
 export const VOICE_ICON_SLOT_PX = 32;
 
@@ -63,15 +71,20 @@ export function applyVoiceJoin(
   });
 }
 
-export function applyVoiceLeave(serverId: string, userId: string): void {
+export function applyVoiceLeave(
+  serverId: string,
+  userId: string,
+  channelId?: string,
+): void {
   useVoiceRoster.setState((state) => {
     const current = state.byServer[serverId];
-    const lives = state.live[serverId] ?? {};
+    const lives = state.live[serverId] ?? EMPTY_LIVE;
     const flags = current?.[userId];
+    // Nobody is live in a channel they left.
     let nextLive = lives;
-    if (flags && lives[flags.channelId] === userId) {
-      nextLive = { ...lives };
-      delete nextLive[flags.channelId];
+    for (const channel of new Set([channelId, flags?.channelId])) {
+      if (channel && nextLive[channel]?.[userId])
+        nextLive = withoutLive(nextLive, channel, userId);
     }
     if ((!current || !(userId in current)) && nextLive === lives) {
       return state;
@@ -83,6 +96,27 @@ export function applyVoiceLeave(serverId: string, userId: string): void {
       live: { ...state.live, [serverId]: nextLive },
     };
   });
+}
+
+/** `live` without `userId` in `channelId`, or only without its `kind`. */
+function withoutLive(
+  live: LiveMap,
+  channelId: string,
+  userId: string,
+  kind?: LiveKind,
+): LiveMap {
+  const people = live[channelId];
+  const kinds = people?.[userId];
+  if (!kinds || (kind && !kinds[kind])) return live;
+  const rest: LiveKinds = { ...kinds };
+  if (kind) delete rest[kind];
+  const nextPeople = { ...people };
+  if (!kind || (!rest.s && !rest.l)) delete nextPeople[userId];
+  else nextPeople[userId] = rest;
+  const next = { ...live };
+  if (Object.keys(nextPeople).length === 0) delete next[channelId];
+  else next[channelId] = nextPeople;
+  return next;
 }
 
 export function applyVoiceMute(
@@ -108,31 +142,40 @@ export function applyLiveStart(
   serverId: string,
   channelId: string,
   userId: string,
+  kind: LiveKind,
 ): void {
   useVoiceRoster.setState((state) => {
-    const current = state.live[serverId] ?? {};
-    if (current[channelId] === userId) return state;
+    const current = state.live[serverId] ?? EMPTY_LIVE;
+    const people = current[channelId] ?? EMPTY_LIVE_PEOPLE;
+    if (people[userId]?.[kind]) return state;
     return {
       ...state,
       live: {
         ...state.live,
-        [serverId]: { ...current, [channelId]: userId },
+        [serverId]: {
+          ...current,
+          [channelId]: {
+            ...people,
+            [userId]: { ...people[userId], [kind]: true },
+          },
+        },
       },
     };
   });
 }
 
+/** `userId` stops being live in `channelId`: with `kind`, or at all. */
 export function applyLiveEnd(
   serverId: string,
   channelId: string,
-  userId?: string,
+  userId: string,
+  kind?: LiveKind,
 ): void {
   useVoiceRoster.setState((state) => {
     const current = state.live[serverId];
-    if (!current || !(channelId in current)) return state;
-    if (userId && current[channelId] !== userId) return state;
-    const next = { ...current };
-    delete next[channelId];
+    if (!current) return state;
+    const next = withoutLive(current, channelId, userId, kind);
+    if (next === current) return state;
     return { ...state, live: { ...state.live, [serverId]: next } };
   });
 }
@@ -162,15 +205,21 @@ function patchFlags(
 
 export function applyVoiceSnap(serverId: string, entries: VoiceEntry[]): void {
   const next: Record<string, VoiceFlags> = {};
-  const live: LiveMap = {};
+  const live: Record<string, LivePeople> = {};
   for (const entry of entries) {
     next[entry.u] = {
       channelId: entry.c,
       muted: entry.m === true,
       deafened: entry.d === true,
     };
-    if (entry.l) {
-      live[entry.c] = entry.u;
+    if (entry.s || entry.l) {
+      live[entry.c] = {
+        ...live[entry.c],
+        [entry.u]: {
+          ...(entry.s ? { s: true } : {}),
+          ...(entry.l ? { l: true } : {}),
+        },
+      };
     }
   }
   useVoiceRoster.setState((state) => ({
@@ -195,7 +244,7 @@ export function applyVoiceSig(event: SigEvent): void {
       });
       return;
     case "l":
-      applyVoiceLeave(event.s, userId);
+      applyVoiceLeave(event.s, userId, channelId);
       return;
     case "m":
       applyVoiceMute(event.s, userId, event.on === true);
@@ -204,10 +253,12 @@ export function applyVoiceSig(event: SigEvent): void {
       applyVoiceDeafen(event.s, userId, event.on === true);
       return;
     case "p":
-      if (event.k === "l") applyLiveStart(event.s, channelId, userId);
+      if (event.k === "s" || event.k === "l")
+        applyLiveStart(event.s, channelId, userId, event.k);
       return;
     case "u":
-      if (event.k === "l") applyLiveEnd(event.s, channelId, userId);
+      if (event.k === "s" || event.k === "l")
+        applyLiveEnd(event.s, channelId, userId, event.k);
       return;
     default:
       return;
@@ -222,12 +273,18 @@ export function voiceOf(
   return byServer[serverId]?.[userId] ?? null;
 }
 
-export function liveOf(
+/** Who is live in `channelId`, in the order they went live. */
+export function liveIn(
   live: Record<string, LiveMap>,
   serverId: string,
   channelId: string,
-): string | null {
-  return live[serverId]?.[channelId] ?? null;
+): string[] {
+  return Object.keys(live[serverId]?.[channelId] ?? EMPTY_LIVE_PEOPLE);
+}
+
+/** Whether `userId` is live anywhere in `serverId`. */
+export function isLiveIn(live: LiveMap, userId: string): boolean {
+  return Object.values(live).some((people) => Boolean(people[userId]));
 }
 
 export function resetVoiceRoster(): void {

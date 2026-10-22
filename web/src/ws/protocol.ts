@@ -18,7 +18,10 @@ export type VoiceEntry = {
   c: string;
   m?: boolean;
   d?: boolean;
+  /** Holds the channel's Go Live track (older clients). */
   l?: boolean;
+  /** Publishes a screen: Live. Not the server, unlike a frame's `s`. */
+  s?: boolean;
 };
 
 export type SigClientFrame = {

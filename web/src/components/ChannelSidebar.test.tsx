@@ -114,14 +114,24 @@ function list() {
   );
 }
 
-function row({ coarse, manage = true }: { coarse: boolean; manage?: boolean }) {
+function row({
+  coarse,
+  manage = true,
+  voice = false,
+  live = [],
+}: {
+  coarse: boolean;
+  manage?: boolean;
+  voice?: boolean;
+  live?: string[];
+}) {
   const noop = () => {};
   return wrap(
     <ChannelRow
-      channel={channel("termine", "cat")}
+      channel={channel("termine", "cat", voice ? "voice" : "text")}
       active={false}
       inVoice={false}
-      live={false}
+      live={live}
       manage={manage}
       coarse={coarse}
       stop
@@ -167,6 +177,18 @@ describe("channel row", () => {
     const html = row({ coarse: false });
     expect(html).toContain("channel-row is-unread");
     expect(html).toContain('<span class="sr-only">Entwurf</span>');
+  });
+
+  it("says who is live in a voice channel", () => {
+    const html = row({ coarse: false, voice: true, live: ["Mia", "Lena"] });
+    expect(html).toContain('title="Mia und Lena sind live"');
+    expect(html).toContain(
+      '<span class="sr-only">Mia und Lena sind live</span>',
+    );
+    expect(row({ coarse: false, voice: true, live: ["Mia"] })).toContain(
+      "Mia ist live",
+    );
+    expect(row({ coarse: false, voice: true })).not.toContain("live");
   });
 
   it("keeps read channels plain", () => {

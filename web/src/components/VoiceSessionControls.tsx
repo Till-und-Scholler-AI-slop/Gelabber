@@ -36,7 +36,7 @@ import {
   useVoiceDiagnostics,
 } from "../voice/diagnostics.ts";
 import { usePushToTalk } from "../voice/pushToTalk.ts";
-import { EMPTY_OCCUPANCY, liveOf, useVoiceRoster } from "../voice/roster.ts";
+import { EMPTY_OCCUPANCY, useVoiceRoster } from "../voice/roster.ts";
 import { useSpeakingUsers } from "../voice/speaking.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import { Avatar } from "./Avatar.tsx";
@@ -73,21 +73,8 @@ export function VoiceSessionControls() {
   const pushToTalk = usePushToTalk((s) => s.active);
   const touch = useMediaQuery("(pointer: coarse)");
   const { data: server } = useServer(voice.serverId ?? undefined);
-  const self = useUserId();
-  const liveHolder = useVoiceRoster((s) =>
-    voice.serverId && voice.channelId
-      ? liveOf(s.live, voice.serverId, voice.channelId)
-      : null,
-  );
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
   useCallShortcuts(voice.status === "joined");
-  // Someone else's Live in this channel: Go Live says whose instead of
-  // doing nothing.
-  const liveTakenBy =
-    liveHolder && liveHolder !== self && !voice.live
-      ? (server?.members.find((member) => member.user_id === liveHolder)
-          ?.name ?? "Jemand")
-      : null;
   const lost = voice.status !== "joined" ? voice.lostCall : null;
   const visible =
     voice.status === "joined" ||
@@ -131,7 +118,7 @@ export function VoiceSessionControls() {
   const announcement = <CallAnnouncement voice={voice} />;
   if (!visible) return announcement;
 
-  // Stream sound only matters while someone's screen or Live is playing here.
+  // Stream sound only matters while someone's Live is playing here.
   const streamAudio =
     voice.watching ||
     Object.values(voice.sourceSubscriptions).some(
@@ -160,10 +147,7 @@ export function VoiceSessionControls() {
               serverId={joined.serverId}
               channelId={joined.channelId}
             />
-            <VoiceControls
-              canGoLive={can(server, "go_live")}
-              liveTakenBy={liveTakenBy}
-            />
+            <VoiceControls canLive={can(server, "go_live")} />
             <LeaveButton />
           </div>
         ) : null}

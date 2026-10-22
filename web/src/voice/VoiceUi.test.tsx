@@ -11,7 +11,10 @@ const fixture = vi.hoisted(() => ({
   server: undefined as ServerDetail | undefined,
   requestedServer: undefined as string | undefined,
   roster: {} as Record<string, Record<string, VoiceFlags>>,
-  live: {} as Record<string, Record<string, string>>,
+  live: {} as Record<
+    string,
+    Record<string, Record<string, Partial<Record<"s" | "l", true>>>>
+  >,
   speaking: { call: null as string | null, users: {} as Record<string, true> },
 }));
 vi.mock("./session.ts", () => ({
@@ -24,7 +27,6 @@ vi.mock("./session.ts", () => ({
   leaveVoice: vi.fn(),
   toggleCamera: vi.fn(),
   toggleDeafen: vi.fn(),
-  toggleGoLive: vi.fn(),
   toggleMute: vi.fn(),
   toggleShare: vi.fn(),
   toggleSourceWatch: vi.fn(),
@@ -52,10 +54,9 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 vi.mock("./roster.ts", () => ({
   EMPTY_OCCUPANCY: {},
+  EMPTY_LIVE_PEOPLE: {},
   useVoiceRoster: (select: (state: unknown) => unknown) =>
     select({ byServer: fixture.roster, live: fixture.live }),
-  liveOf: (live: typeof fixture.live, server: string, channel: string) =>
-    live[server]?.[channel] ?? null,
 }));
 vi.mock("./speaking.ts", () => ({
   useSpeakingUsers: (serverId: string, channelId: string) =>
@@ -102,7 +103,7 @@ vi.mock("./userVolume.ts", async (original) => {
 });
 
 import { VoiceRoom } from "./VoiceRoom.tsx";
-import { ShareMenuItems, VoiceControls } from "../components/VoiceControls.tsx";
+import { LiveMenuItems, VoiceControls } from "../components/VoiceControls.tsx";
 import { VoiceSessionControls } from "../components/VoiceSessionControls.tsx";
 import { callAnnouncement } from "./callBar.ts";
 import { resetPushToTalkForTests, usePushToTalk } from "./pushToTalk.ts";
@@ -122,7 +123,7 @@ function control(html: string, label: string): string | null {
     null
   );
 }
-/** The Teilen menu's entry with this label, through its hint, or null. */
+/** The Live menu's entry with this label, through its hint, or null. */
 function entry(html: string, label: string): string | null {
   return (
     html.match(
@@ -165,7 +166,10 @@ beforeEach(() => {
     playbackBlocked: false,
   };
   fixture.roster = {};
-  fixture.live = { a: { stage: "alice" }, b: { stage: "bob" } };
+  fixture.live = {
+    a: { stage: { alice: { l: true } } },
+    b: { stage: { bob: { s: true } } },
+  };
   fixture.server = undefined;
   fixture.requestedServer = undefined;
   // A desktop browser: the capture controls depend on what the client can do.
@@ -179,21 +183,38 @@ afterEach(() => {
 });
 
 describe("active media UI", () => {
-  it("renders only the Watch session's exact server, channel and publisher", () => {
-    const render = (id: string, channel = "stage") =>
-      renderToStaticMarkup(
-        <VoiceRoom
-          server={{ ...server, id }}
-          channelId={channel}
-          channelName="Stage"
-        />,
-      );
-    expect(render("a")).toContain('data-source="source-from-a"');
-    expect(render("b")).not.toContain('data-source="source-from-a"');
-    fixture.live.a!.other = "alice";
-    expect(render("a", "other")).not.toContain('data-source="source-from-a"');
-    fixture.live.a!.stage = "bob";
-    expect(render("a")).not.toContain('data-source="source-from-a"');
+  it("says who is live outside the room, with no pictures and no watching from outside", () => {
+    fixture.voice.watching = false;
+    fixture.roster = {
+      a: { alice: { channelId: "stage", muted: false, deafened: false } },
+    };
+    const html = renderToStaticMarkup(
+      <VoiceRoom
+        server={{
+          ...server,
+          members: [
+            {
+              user_id: "alice",
+              name: "Alice",
+              avatar_url: null,
+              joined_at: "",
+              role: "member",
+            },
+          ],
+        }}
+        channelId="stage"
+        channelName="Stage"
+      />,
+    );
+    expect(html).toContain(
+      "Alice ist da. Alice ist live – komm dazu, um zuzusehen.",
+    );
+    expect(html).toContain("Im Raum · Live");
+    // Watching takes coming along: the way in is the only action.
+    expect(html).toContain("Dazukommen</button>");
+    expect(html).not.toContain("Zuschauen");
+    expect(html).not.toContain('aria-label="Übertragungen"');
+    expect(html).not.toContain("data-source=");
   });
   it("does not render Voice remote media outside its active room", () => {
     Object.assign(fixture.voice, {
@@ -215,8 +236,8 @@ describe("active media UI", () => {
     expect(html).toContain("Hierher wechseln</button>");
     expect(html).not.toContain('aria-label="Beitreten"');
   });
-  it("binds Live to the current publisher even if an old publication remains in the seat", () => {
-    fixture.live = { a: { stage: "bob" } };
+  it("puts every Live in the room on the stage, an older app's Go Live as one of them", () => {
+    fixture.live = { a: { stage: { bob: { l: true }, alice: { s: true } } } };
     fixture.roster = {
       a: {
         alice: { channelId: "stage", muted: false, deafened: false },
@@ -228,14 +249,20 @@ describe("active media UI", () => {
       serverId: "a",
       channelId: "stage",
       watching: false,
-      participants: { alice: { pubs: ["l"] }, bob: { pubs: ["l"] } },
-      remote: { alice: { l: stream }, bob: { l: { id: "current-publisher" } } },
+      participants: { alice: { pubs: ["s"] }, bob: { pubs: ["l"] } },
+      remote: { alice: { s: stream }, bob: { l: { id: "older-app" } } },
     });
     const html = renderToStaticMarkup(
       <VoiceRoom server={server} channelId="stage" channelName="Stage" />,
     );
-    expect(html).not.toContain('data-source="source-from-a"');
-    expect(html).toContain('data-source="current-publisher"');
+    expect(html).toContain('data-source="source-from-a"');
+    expect(html).toContain('data-source="older-app"');
+    expect(html.match(/— Live</g)).toHaveLength(2);
+    // Whoever went live first holds the spotlight.
+    expect(html).toMatch(
+      /<div class="voice-room-spotlight"><span data-source="older-app"/,
+    );
+    expect(html.match(/· Live</g)).toHaveLength(2);
   });
 
   it("shows real avatars and disconnected self, without fictional activity or capture", () => {
@@ -353,7 +380,8 @@ describe("active media UI", () => {
     expect(html).toMatch(
       /<li class="voice-room-participant has-video"(?:(?!<\/li>).)*data-source="source-from-a"/,
     );
-    expect(html).toContain("Teilt den Bildschirm");
+    expect(html).toContain("Im Raum · Live");
+    expect(html).not.toContain("Bildschirm");
     expect(html).not.toContain("Raster");
     expect(render("b")).not.toContain('data-source="source-from-a"');
     expect(render("a", "other")).not.toContain('data-source="source-from-a"');
@@ -392,36 +420,35 @@ describe("active media UI", () => {
       serverId: "a",
       channelId: "stage",
       channelName: "Voice A",
-      live: true,
+      sharing: true,
     });
     fixture.server = { ...server, permissions: [] };
     const html = renderToStaticMarkup(<VoiceSessionControls />);
     expect(fixture.requestedServer).toBe("a");
     expect(html).toContain("Voice A");
-    expect(control(html, "Teilen")).toContain('aria-pressed="true"');
-    expect(control(html, "Teilen")).toContain("voice-control-live");
+    expect(control(html, "Live gehen")).toContain('aria-pressed="true"');
+    expect(control(html, "Live gehen")).toContain("voice-control-live");
+    expect(control(html, "Live gehen")).not.toContain("opacity-50");
     expect(html).toContain("Verlassen");
-    const menu = (liveTakenBy: string | null = null) =>
+    const menu = () =>
       renderToStaticMarkup(
-        <ShareMenuItems
-          canGoLive={fixture.server!.permissions.includes("go_live")}
-          liveTakenBy={liveTakenBy}
+        <LiveMenuItems
+          canLive={fixture.server!.permissions.includes("go_live")}
         />,
       );
-    expect(entry(menu(), "Live beenden")).not.toBeNull();
-    expect(entry(menu(), "Go Live")).toBeNull();
-    fixture.voice.live = false;
-    expect(entry(menu(), "Go Live")).toBeNull();
+    expect(entry(menu(), "Live beenden")).not.toContain("aria-disabled");
+    expect(entry(menu(), "Live gehen")).toBeNull();
+    fixture.voice.sharing = false;
+    // Without go_live the way in stays in sight and says why it is shut.
+    const denied = entry(menu(), "Live gehen");
+    expect(denied).toContain('aria-disabled="true"');
+    expect(denied).toContain("In diesem Server darfst du nicht live gehen.");
+    expect(
+      control(renderToStaticMarkup(<VoiceSessionControls />), "Live gehen"),
+    ).toContain("opacity-50");
     fixture.server.permissions = ["go_live"];
-    // alice is live in this channel and the members list does not name her.
-    const taken = entry(menu("Jemand"), "Go Live");
-    expect(taken).toContain('aria-disabled="true"');
-    expect(taken).toContain("Jemand ist gerade live.");
-    expect(entry(menu(), "Go Live")).not.toContain("aria-disabled");
-    fixture.voice.live = true;
-    expect(entry(menu("Jemand"), "Live beenden")).not.toContain(
-      "aria-disabled",
-    );
+    expect(entry(menu(), "Live gehen")).not.toContain("aria-disabled");
+    expect(entry(menu(), "Live gehen")).toContain("Sehen alle im Sprachkanal");
   });
   it("keeps one name per toggle and says its state with aria-pressed", () => {
     Object.assign(fixture.voice, {
@@ -431,8 +458,8 @@ describe("active media UI", () => {
       watching: false,
     });
     const tags = () => {
-      const html = renderToStaticMarkup(<VoiceControls canGoLive />);
-      return ["Stummschalten", "Taubschalten", "Kamera", "Teilen"].map(
+      const html = renderToStaticMarkup(<VoiceControls canLive />);
+      return ["Stummschalten", "Taubschalten", "Kamera", "Live gehen"].map(
         (label) => control(html, label),
       );
     };
@@ -444,43 +471,40 @@ describe("active media UI", () => {
       sharing: true,
     });
     for (const tag of tags()) expect(tag).toContain('aria-pressed="true"');
-    const [mic, deafen, camera, share] = tags();
+    const [mic, deafen, camera, live] = tags();
     // What a press does stays in the tooltip, with its shortcut.
     expect(mic).toContain("Stummschaltung aufheben (Strg+Umschalt+M)");
     expect(deafen).toContain("Taubschaltung aufheben (Strg+Umschalt+D)");
     expect(mic).toContain('aria-keyshortcuts="Control+Shift+M"');
     expect(deafen).toContain('aria-keyshortcuts="Control+Shift+D"');
     expect(camera).toContain('title="Kamera ausschalten"');
-    // Media that is on wears the accent pill.
+    // A camera that is on wears the accent pill, a Live the red one.
     expect(camera).toContain("is-on");
-    expect(share).toContain("is-on");
-    expect(share).toContain('aria-haspopup="menu"');
+    expect(live).toContain("voice-control-live");
+    expect(live).toContain('title="Du bist live"');
+    expect(live).toContain('aria-haspopup="menu"');
   });
-  it("lists the three ways to share in the Teilen menu", () => {
+  it("offers going live and its sound in the Live menu", () => {
     Object.assign(fixture.voice, {
       status: "joined",
       serverId: "a",
       channelId: "stage",
       watching: false,
     });
-    const html = renderToStaticMarkup(<ShareMenuItems canGoLive />);
-    expect(html.match(/role="menuitem"/g)).toHaveLength(2);
-    expect(entry(html, "Bildschirm im Raum teilen")).toContain(
-      "Sehen alle im Sprachkanal",
-    );
-    expect(entry(html, "Go Live")).toContain(
-      "Auch für Zuschauer ohne Beitritt",
-    );
+    const html = renderToStaticMarkup(<LiveMenuItems canLive />);
+    expect(html.match(/role="menuitem"/g)).toHaveLength(1);
+    expect(entry(html, "Live gehen")).toContain("Sehen alle im Sprachkanal");
     expect(html).toMatch(
       /role="menuitemcheckbox" aria-label="Ton mitsenden" aria-checked="false"/,
     );
-    // While sharing, ending it comes first.
+    expect(html).not.toMatch(/Go Live|Bildschirm teilen|Teilen/);
+    // While live, ending it takes the first place.
     fixture.voice.sharing = true;
-    const sharing = renderToStaticMarkup(<ShareMenuItems canGoLive />);
-    expect(sharing.indexOf("<strong>Teilen beenden</strong>")).toBe(
-      sharing.indexOf("<strong>"),
+    const live = renderToStaticMarkup(<LiveMenuItems canLive />);
+    expect(live.indexOf("<strong>Live beenden</strong>")).toBe(
+      live.indexOf("<strong>"),
     );
-    expect(entry(sharing, "Bildschirm im Raum teilen")).toBeNull();
+    expect(entry(live, "Live gehen")).toBeNull();
   });
   it("tells a missing or held-back microphone from a working one", () => {
     Object.assign(fixture.voice, {

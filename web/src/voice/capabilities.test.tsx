@@ -27,7 +27,7 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <a>{children}</a>,
 }));
 
-import { ShareMenuItems, VoiceControls } from "../components/VoiceControls.tsx";
+import { LiveMenuItems, VoiceControls } from "../components/VoiceControls.tsx";
 import { VoiceSessionControls } from "../components/VoiceSessionControls.tsx";
 import {
   canChooseSpeaker,
@@ -98,7 +98,6 @@ beforeEach(() => {
     deafened: false,
     camera: false,
     sharing: false,
-    live: false,
     sourceAudio: { s: "off", l: "off" },
     sourceAudioNote: { s: null, l: null },
     sourceSubscriptions: {},
@@ -117,13 +116,11 @@ const answers = () => ({
   camera: canUseCamera(),
   speaker: canChooseSpeaker(),
 });
-const controls = (canGoLive = true) =>
-  renderToStaticMarkup(<VoiceControls canGoLive={canGoLive} />);
-/** The Teilen menu's entries, as the menu shows them once opened. */
-const menu = (canGoLive = true, liveTakenBy: string | null = null) =>
-  renderToStaticMarkup(
-    <ShareMenuItems canGoLive={canGoLive} liveTakenBy={liveTakenBy} />,
-  );
+const controls = (canLive = true) =>
+  renderToStaticMarkup(<VoiceControls canLive={canLive} />);
+/** The Live menu's entries, as the menu shows them once opened. */
+const menu = (canLive = true) =>
+  renderToStaticMarkup(<LiveMenuItems canLive={canLive} />);
 /** The opening tag of the control with this label, or null. */
 const control = (html: string, label: string) =>
   html.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0] ??
@@ -179,14 +176,6 @@ describe("capabilities", () => {
     });
   });
 
-  it("Go Live says whose Live it is when someone else is live already", async () => {
-    await cases.desktopBrowser();
-    const html = menu(true, "Bob");
-    expect(entry(html, "Go Live")).toContain('aria-disabled="true"');
-    expect(html).toContain("Bob ist gerade live.");
-    expect(entry(menu(), "Go Live")).not.toContain("aria-disabled");
-  });
-
   it("a page without mediaDevices (insecure origin) captures nothing", () => {
     browser(undefined, true);
     expect(answers()).toEqual({
@@ -218,37 +207,33 @@ describe("capabilities", () => {
     });
     const html = controls();
     expect(html).toContain('aria-label="Stummschalten"');
-    for (const label of ["Kamera", "Teilen"])
+    for (const label of ["Kamera", "Live gehen"])
       expect(control(html, label)).toBeNull();
   });
 });
 
 describe("capture controls", () => {
-  it("0.5.x Linux app: camera, screen and Go Live as before", async () => {
+  it("0.5.x Linux app: camera and a Live menu, since a Live can carry sound", async () => {
     await cases.linuxApp05();
     const html = controls();
-    for (const label of ["Kamera", "Teilen"])
-      expect(control(html, label)).toContain('aria-pressed="false"');
-    for (const label of ["Bildschirm im Raum teilen", "Go Live"])
-      expect(entry(menu(), label)).not.toBeNull();
+    expect(control(html, "Kamera")).toContain('aria-pressed="false"');
+    const live = control(html, "Live gehen");
+    expect(live).toContain('aria-pressed="false"');
+    expect(live).toContain('aria-haspopup="menu"');
+    expect(entry(menu(), "Live gehen")).not.toBeNull();
+    expect(menu()).toContain("Sehen alle im Sprachkanal");
+    expect(menu()).toContain('aria-label="Ton mitsenden"');
     expect(html + menu()).not.toContain("aria-disabled");
   });
 
-  it("Windows app: share and Go Live stay in the menu but say why they cannot start", async () => {
+  it("Windows app: Live stays in its place but says why it cannot start", async () => {
     await cases.windowsApp();
     expect(control(controls(), "Kamera")).toContain('aria-pressed="false"');
-    expect(control(controls(), "Teilen")).toContain('aria-pressed="false"');
-    const html = menu();
-    expect(entry(html, "Bildschirm im Raum teilen")).toContain(
-      'aria-disabled="true"',
-    );
-    expect(html).toContain(
-      "Diese Desktop-App kann den Bildschirm nicht teilen.",
-    );
-    expect(entry(html, "Go Live")).toContain('aria-disabled="true"');
-    expect(html).toContain("Diese Desktop-App kann kein Go Live starten.");
-    // Without the right to go live there is nothing to explain.
-    expect(entry(menu(false), "Go Live")).toBeNull();
+    const live = control(controls(), "Live gehen");
+    expect(live).toContain('aria-disabled="true"');
+    expect(live).toContain('title="Diese Desktop-App kann nicht live gehen."');
+    // Nothing to pick in a menu without sound: one control, no menu.
+    expect(live).not.toContain("aria-haspopup");
   });
 
   it("an app without a camera says so on the camera control", async () => {
@@ -260,39 +245,62 @@ describe("capture controls", () => {
     );
   });
 
-  it("phone browser: no Teilen control at all", async () => {
+  it("an app with screen but no sound: Live is one toggle", async () => {
+    await desktopApp({ features: ["screen", "camera"] });
+    const live = control(controls(), "Live gehen");
+    expect(live).toContain('aria-pressed="false"');
+    expect(live).not.toContain("aria-haspopup");
+    expect(live).not.toContain("aria-disabled");
+  });
+
+  it("phone browser: no Live control at all", async () => {
     await cases.phoneBrowser();
     const html = controls();
     expect(control(html, "Kamera")).toContain('aria-pressed="false"');
-    expect(control(html, "Teilen")).toBeNull();
+    expect(control(html, "Live gehen")).toBeNull();
     expect(html).not.toContain("aria-disabled");
     expect(html).toContain('aria-label="Voice-Einstellungen"');
   });
 
-  it("desktop browser: camera, screen and Go Live as before", async () => {
+  it("desktop browser: camera and Live, no Go Live, no Teilen", async () => {
     await cases.desktopBrowser();
     const html = controls();
-    for (const label of ["Kamera", "Teilen"])
+    for (const label of ["Kamera", "Live gehen"])
       expect(control(html, label)).toContain('aria-pressed="false"');
-    for (const label of ["Bildschirm im Raum teilen", "Go Live"])
-      expect(entry(menu(), label)).not.toBeNull();
-    expect(html + menu()).not.toContain("aria-disabled");
-    expect(entry(menu(false), "Go Live")).toBeNull();
+    expect(entry(menu(), "Live gehen")).not.toContain("aria-disabled");
+    expect(html + menu()).not.toMatch(/Go Live|Teilen|teilen|Bildschirm/);
   });
 
-  it("always lets a running camera, share or Live be stopped", async () => {
-    Object.assign(fixture.voice, { camera: true, sharing: true, live: true });
+  it("without go_live the Live entry is dimmed and says why", async () => {
+    await cases.desktopBrowser();
+    const html = menu(false);
+    expect(entry(html, "Live gehen")).toContain('aria-disabled="true"');
+    expect(html).toContain("In diesem Server darfst du nicht live gehen.");
+    // The sound choice stays, for when the right comes.
+    expect(html).toContain('aria-label="Ton mitsenden"');
+    expect(control(controls(false), "Live gehen")).toContain("opacity-50");
+    // Without sound to choose, the one toggle says why.
+    await desktopApp({ features: ["screen", "camera"] });
+    const live = control(controls(false), "Live gehen");
+    expect(live).toContain('aria-disabled="true"');
+    expect(live).toContain(
+      'title="In diesem Server darfst du nicht live gehen."',
+    );
+  });
+
+  it("always lets a running camera or Live be stopped", async () => {
+    Object.assign(fixture.voice, { camera: true, sharing: true });
     for (const enter of [
       cases.windowsApp,
       cases.phoneBrowser,
       () => desktopApp({ features: [] }),
+      cases.desktopBrowser,
     ]) {
       await enter();
       const html = controls(false);
-      for (const label of ["Kamera", "Teilen"])
+      for (const label of ["Kamera", "Live gehen"])
         expect(control(html, label)).toContain('aria-pressed="true"');
-      for (const label of ["Teilen beenden", "Live beenden"])
-        expect(entry(menu(false), label)).not.toContain("aria-disabled");
+      expect(entry(menu(false), "Live beenden")).not.toContain("aria-disabled");
       expect(html).not.toContain("aria-disabled");
     }
   });

@@ -434,8 +434,11 @@ function install(opts?: {
   useVoiceRoster.setState({
     live: {
       ...useVoiceRoster.getState().live,
-      srv: { ...useVoiceRoster.getState().live.srv, stage: "u-bob" },
-      "srv-a": { stage: "u-bob" },
+      srv: {
+        ...useVoiceRoster.getState().live.srv,
+        stage: { "u-bob": { l: true } },
+      },
+      "srv-a": { stage: { "u-bob": { l: true } } },
     },
   });
   const sent: ClientFrame[] = [];
@@ -1294,7 +1297,7 @@ describe("voice session", () => {
       ).toBe(true),
     );
     expect(useVoice.getState().live).toBe(true);
-    expect(useVoiceRoster.getState().live.srv?.voice).toBe("u-self");
+    expect(useVoiceRoster.getState().live.srv?.voice).toHaveProperty("u-self");
     const before = sent.length;
     emitMedia({ op: "err", e: "unavailable" });
     expect(useVoice.getState().status).toBe("joined");
@@ -1896,6 +1899,62 @@ describe("voice session", () => {
     expect(audioSenders).toHaveLength(1);
   });
 
+  it("ends a Live the server refuses and says why", async () => {
+    const { emitErr, emitSig, errors, peers, sent } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(
+        sent.some(
+          (frame) => frame.op === "sig" && frame.t === "p" && frame.k === "s",
+        ),
+      ).toBe(true),
+    );
+    const stream = useVoice.getState().localScreen;
+    expect(stream).toBeTruthy();
+    // Without go_live the gateway answers the screen and its sound alike.
+    emitErr({ op: "err", e: "forbidden", s: "srv", c: "voice" });
+    emitErr({ op: "err", e: "forbidden", s: "srv", c: "voice" });
+    expect(useVoice.getState().sharing).toBe(false);
+    expect(useVoice.getState().localScreen).toBeNull();
+    expect(streamStopped(stream)).toBe(true);
+    expect(sent).toContainEqual({
+      op: "sig",
+      t: "u",
+      s: "srv",
+      c: "voice",
+      k: "s",
+    });
+    expect(messages(errors)).toEqual([
+      "In diesem Server darfst du nicht live gehen.",
+    ]);
+    // The seat stays.
+    expect(useVoice.getState().status).toBe("joined");
+  });
+
+  it("keeps a Live the server has accepted when a later refusal comes", async () => {
+    const { emitErr, emitSig, errors, peers, sent } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(
+        sent.some(
+          (frame) => frame.op === "sig" && frame.t === "p" && frame.k === "s",
+        ),
+      ).toBe(true),
+    );
+    emitSig({ op: "sig", t: "p", s: "srv", c: "voice", u: "u-self", k: "s" });
+    emitErr({ op: "err", e: "forbidden", s: "srv", c: "voice" });
+    expect(useVoice.getState().sharing).toBe(true);
+    expect(messages(errors)).not.toContain(
+      "In diesem Server darfst du nicht live gehen.",
+    );
+  });
+
   it("stops camera locally first, then unpubs", async () => {
     const { sent, peers } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
@@ -1943,7 +2002,7 @@ describe("voice session", () => {
     toggleGoLive();
     expect(useVoice.getState().live).toBe(true);
     expect(useVoice.getState().localLive).toBeNull();
-    expect(useVoiceRoster.getState().live.srv?.voice).toBe("u-self");
+    expect(useVoiceRoster.getState().live.srv?.voice).toHaveProperty("u-self");
     await vi.waitFor(() => expect(useVoice.getState().localLive).toBeTruthy());
     expect(sent.some((frame) => "sdp" in frame && frame.sdp)).toBe(false);
     expect(
@@ -2143,7 +2202,7 @@ describe("voice session", () => {
     expect(useVoice.getState().live).toBe(true);
     expect(useVoice.getState().localLive).toBe(stream);
     expect(streamStopped(stream)).toBe(false);
-    expect(useVoiceRoster.getState().live.srv?.voice).toBe("u-self");
+    expect(useVoiceRoster.getState().live.srv?.voice).toHaveProperty("u-self");
     expect(env.peers[0]!.sender("l")?.track).toBe(stream.getVideoTracks()[0]);
     expect(env.errors).toHaveLength(0);
   });
@@ -2283,7 +2342,7 @@ describe("voice session", () => {
     expect(env.peers[0]!.sender("l")?.track).toBe(stream.getVideoTracks()[0]);
     expect(env.getDisplayMediaCalls()).toBe(1);
     expect(liveClaimFrames(env.sent)).toEqual(["p"]);
-    expect(useVoiceRoster.getState().live.srv?.voice).toBe("u-self");
+    expect(useVoiceRoster.getState().live.srv?.voice).toHaveProperty("u-self");
     expect(env.errors).toHaveLength(0);
   });
 
@@ -3495,7 +3554,7 @@ describe("source and transport continuity", () => {
     await vi.waitFor(() => expect(env.peers[1]?.audio).toBeTruthy());
     // The picker is still open: the button stays pressed, the claim stands.
     expect(useVoice.getState().live).toBe(true);
-    expect(useVoiceRoster.getState().live.srv?.voice).toBe("u-self");
+    expect(useVoiceRoster.getState().live.srv?.voice).toHaveProperty("u-self");
     expect(liveClaimFrames(env.sent)).toEqual(["p"]);
     expect(env.peers[1]!.sender("l")).toBeUndefined();
 

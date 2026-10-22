@@ -32,7 +32,6 @@ import {
   applyLiveStart,
   applyVoiceJoin,
   applyVoiceLeave,
-  liveOf,
   useVoiceRoster,
 } from "./roster.ts";
 import {
@@ -314,6 +313,11 @@ let awaitingLive: {
   fresh: boolean;
 } | null = null;
 const LIVE_TAKEN_MESSAGE = "In diesem Kanal ist schon jemand live.";
+const LIVE_FORBIDDEN_MESSAGE = "In diesem Server darfst du nicht live gehen.";
+/** A Live (screen) the gateway has not confirmed yet: going live needs
+ * `go_live`, and a refusal has to end the capture, not leave it running
+ * for nobody. */
+let awaitingScreen: { serverId: string; channelId: string } | null = null;
 let liveClaimNonce: string | null = null;
 let liveClaimTimer: ReturnType<typeof setTimeout> | null = null;
 let withdrawnLiveNonce: string | null = null;
@@ -884,6 +888,8 @@ function onSig(event: SigEvent & { lc?: string }): void {
     case "p":
     case "u": {
       if (!event.k) return;
+      if (event.t === "p" && event.k === "s" && userId === currentUserId())
+        awaitingScreen = null;
       if (event.t === "p" && event.k === "l" && userId === currentUserId()) {
         if (state.live && isLiveNonce(event.lc)) {
           if (event.lc === withdrawnLiveNonce) {
@@ -957,6 +963,7 @@ function onErr(err: ErrFrame): void {
     if (state.channelId === pending.channelId) {
       awaitingJoin = null;
       awaitingLive = null;
+      awaitingScreen = null;
       stopPeer();
       useVoice.setState({
         ...idle,
@@ -976,6 +983,19 @@ function onErr(err: ErrFrame): void {
           : "bad_request";
       deps?.onError?.(new ApiError(code, 0, errorMessage(code)));
     }
+    return;
+  }
+  if (
+    awaitingScreen &&
+    !awaitingJoin &&
+    err.s === awaitingScreen.serverId &&
+    err.c === awaitingScreen.channelId &&
+    err.e === "forbidden"
+  ) {
+    // Refused to go live: the seat stays, the screen capture ends.
+    awaitingScreen = null;
+    if (useVoice.getState().sharing) stopLocalVideo("s");
+    deps?.onError?.(new Error(LIVE_FORBIDDEN_MESSAGE));
     return;
   }
   if (
@@ -1359,7 +1379,10 @@ function stopPeer(preserveCapture = false): void {
     micOvertaken = false;
     micJoin += 1;
   }
-  if (!preserveCapture) clearLiveClaim();
+  if (!preserveCapture) {
+    clearLiveClaim();
+    awaitingScreen = null;
+  }
   seatRetry.cancel(!preserveCapture);
   // A rebuild keeps what is captured, and with it a picker or camera prompt
   // that is still open: what the user answers there goes to the next
@@ -1471,8 +1494,9 @@ function rollbackSeat(error?: unknown, lost = false): void {
   awaitingJoin = null;
   awaitingLive = null;
   republishOnJoin = false;
-  if (state.live && serverId && channelId) {
-    applyLiveEnd(serverId, channelId, currentUserId() ?? undefined);
+  const liveSelf = currentUserId();
+  if (state.live && serverId && channelId && liveSelf) {
+    applyLiveEnd(serverId, channelId, liveSelf, "l");
   }
   stopPeer();
   vacateSelf(serverId, channelId);
@@ -2738,6 +2762,10 @@ function sendPub(kind: TrackKind, on: boolean): void {
   if (!state.serverId || !state.channelId) return;
   if (on) announced.add(kind);
   else announced.delete(kind);
+  if (kind === "s")
+    awaitingScreen = on
+      ? { serverId: state.serverId, channelId: state.channelId }
+      : null;
   deps?.gateway.send({
     op: "sig",
     t: on ? "p" : "u",
@@ -2768,8 +2796,8 @@ function retractAnnouncedMedia(): void {
     });
   }
   awaitingLive = null;
-  if (state.live && state.serverId && state.channelId) {
-    applyLiveEnd(state.serverId, state.channelId, self ?? undefined);
+  if (state.live && state.serverId && state.channelId && self) {
+    applyLiveEnd(state.serverId, state.channelId, self, "l");
   }
   useVoice.setState({ camera: false, sharing: false, live: false });
 }
@@ -2794,7 +2822,7 @@ function reannounceActive(): void {
   if (!state.live) return;
   const self = currentUserId();
   if (self) {
-    applyLiveStart(state.serverId, state.channelId, self);
+    applyLiveStart(state.serverId, state.channelId, self, "l");
   }
   requestLiveClaim();
 }
@@ -3025,8 +3053,9 @@ export function leaveVoice(): void {
   awaitingJoin = null;
   awaitingLive = null;
   republishOnJoin = false;
-  if (state.live && serverId && channelId) {
-    applyLiveEnd(serverId, channelId, currentUserId() ?? undefined);
+  const liveSelf = currentUserId();
+  if (state.live && serverId && channelId && liveSelf) {
+    applyLiveEnd(serverId, channelId, liveSelf, "l");
   }
   stopPeer();
   vacateSelf(serverId, channelId);
@@ -3142,6 +3171,12 @@ export function toggleShare(): void {
   void startLocalVideo("s");
 }
 
+/** Who holds the channel's one Go Live track. */
+function goLiveHolder(serverId: string, channelId: string): string | null {
+  const people = useVoiceRoster.getState().live[serverId]?.[channelId] ?? {};
+  return Object.keys(people).find((id) => people[id]?.l) ?? null;
+}
+
 /**
  * Go Live badge flips immediately; display capture and SFU publish follow.
  * One live track per voice channel. Needs `go_live` on the server.
@@ -3159,11 +3194,7 @@ export function toggleGoLive(): void {
   }
   const self = currentUserId();
   if (!self) return;
-  const holder = liveOf(
-    useVoiceRoster.getState().live,
-    state.serverId,
-    state.channelId,
-  );
+  const holder = goLiveHolder(state.serverId, state.channelId);
   if (holder && holder !== self) {
     // The controls say whose Live it is; this is the backstop for a roster
     // that changed under the click.
@@ -3171,7 +3202,7 @@ export function toggleGoLive(): void {
     return;
   }
   useVoice.setState({ live: true });
-  applyLiveStart(state.serverId, state.channelId, self);
+  applyLiveStart(state.serverId, state.channelId, self, "l");
   void startLocalVideo("l");
   requestLiveClaim(true);
 }
@@ -3201,11 +3232,7 @@ export function watchLive(input: {
   ) {
     return;
   }
-  const publisher = liveOf(
-    useVoiceRoster.getState().live,
-    input.serverId,
-    input.channelId,
-  );
+  const publisher = goLiveHolder(input.serverId, input.channelId);
   if (!publisher) {
     deps?.onError?.(new Error("Dieser Stream ist nicht mehr verfügbar."));
     return;
@@ -3246,6 +3273,7 @@ export function resetVoiceForTests(): void {
   watchReported = false;
   awaitingJoin = null;
   awaitingLive = null;
+  awaitingScreen = null;
   republishOnJoin = false;
   audioCommitChain = Promise.resolve();
   cameraCommitChain = Promise.resolve();
@@ -3379,7 +3407,7 @@ async function startLocalVideo(kind: "v" | "s" | "l"): Promise<void> {
         new Error(
           kind === "v"
             ? "Die Kamera unterstützt das Streamprofil nicht."
-            : "Die Bildschirmfreigabe unterstützt das Streamprofil nicht.",
+            : "Die Bildschirmaufnahme unterstützt das Streamprofil nicht.",
         ),
       );
     } else if (kind === "v" && cameraUnavailable(error) && newest()) {
@@ -3479,8 +3507,8 @@ function releaseUnstartedLive(): void {
   clearLiveClaim();
   awaitingLive = null;
   useVoice.setState({ live: false, localLive: null });
-  if (state.serverId && state.channelId)
-    applyLiveEnd(state.serverId, state.channelId, self ?? undefined);
+  if (state.serverId && state.channelId && self)
+    applyLiveEnd(state.serverId, state.channelId, self, "l");
   if (self) setPub(self, "l", false);
   sendPub("l", false);
 }
@@ -3518,11 +3546,7 @@ function stopLocalVideo(kind: "v" | "s" | "l"): void {
     liveStream = null;
     useVoice.setState({ live: false, localLive: null });
     if (state.serverId && state.channelId)
-      applyLiveEnd(
-        state.serverId,
-        state.channelId,
-        currentUserId() ?? undefined,
-      );
+      applyLiveEnd(state.serverId, state.channelId, currentUserId() ?? "", "l");
   }
   const self = currentUserId();
   if (self) setPub(self, kind, false);

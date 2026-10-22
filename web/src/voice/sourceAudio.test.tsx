@@ -1,6 +1,6 @@
-// The sound of the own screen share or Go Live as the user meets it: the
-// switch in the Teilen menu, the same switch in the settings, and what the
-// call bar and the own tile say when sound is missing.
+// The sound of the own Live as the user meets it: the switch in the Live
+// menu, the same switch in the settings, and what the call bar and the own
+// tile say when sound is missing.
 
 import { createElement, isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -39,9 +39,9 @@ vi.mock("../auth/session.ts", () => signedIn);
 vi.mock("../auth/store.ts", () => signedIn);
 vi.mock("./roster.ts", () => ({
   EMPTY_OCCUPANCY: {},
+  EMPTY_LIVE_PEOPLE: {},
   useVoiceRoster: (select: (state: unknown) => unknown) =>
     select({ byServer: {}, live: {} }),
-  liveOf: () => null,
 }));
 // A tile as its label and what it says about the sound.
 vi.mock("./VoiceTile.tsx", () => ({
@@ -70,7 +70,7 @@ vi.mock("./settings.ts", async (original) => {
   };
 });
 
-import { ShareMenuItems } from "../components/VoiceControls.tsx";
+import { LiveMenuItems } from "../components/VoiceControls.tsx";
 import { VoiceSessionControls } from "../components/VoiceSessionControls.tsx";
 import { dockNotices } from "./callBar.ts";
 import { setNativeBridgeForTests, type NativeBridge } from "./native/bridge.ts";
@@ -156,10 +156,10 @@ afterEach(() => {
 
 const choose = (settings: Partial<MediaSettings>) =>
   useMediaSettings.getState().patch(settings);
-const menu = () => renderToStaticMarkup(<ShareMenuItems canGoLive />);
+const menu = () => renderToStaticMarkup(<LiveMenuItems canLive />);
 const session = () => renderToStaticMarkup(<VoiceSessionControls />);
 const form = () => renderToStaticMarkup(<MediaSettingsForm />);
-/** The "Ton mitsenden" entry of the Teilen menu, or null. */
+/** The "Ton mitsenden" entry of the Live menu, or null. */
 const soundEntry = (html: string) =>
   html.match(
     /<button[^>]*role="menuitemcheckbox"[^>]*>(?:(?!<\/button>).)*<\/button>/,
@@ -170,7 +170,7 @@ function soundControlHint(): string | null {
   expect(entry).toContain("<strong>Ton mitsenden</strong>");
   return entry?.match(/<small[^>]*>([^<]*)<\/small>/)?.[1] ?? null;
 }
-/** The stream-sound switch in the Teilen menu: on, off or absent. */
+/** The stream-sound switch in the Live menu: on, off or absent. */
 function soundControl(): "on" | "off" | null {
   const entry = soundEntry(menu());
   if (!entry) return null;
@@ -212,10 +212,10 @@ function propsOf(node: ReactNode, wanted: (props: Props) => boolean): Props {
   if (!found) throw new Error("no such element");
   return found;
 }
-/** Presses the switch in the Teilen menu. */
+/** Presses the switch in the Live menu. */
 function pressSoundControl(): void {
   const button = propsOf(
-    elements(() => ShareMenuItems({ canGoLive: true })),
+    elements(() => LiveMenuItems({ canLive: true })),
     (props) => props.role === "menuitemcheckbox",
   );
   (button.onClick as () => void)();
@@ -237,7 +237,7 @@ describe("stream sound switch", () => {
     // The only client that keeps the call out of it shares sound unasked.
     ["linuxApp06", "on"],
   ] as const)(
-    "%s: in the Teilen menu and in the settings, %s by default",
+    "%s: in the Live menu and in the settings, %s by default",
     async (name: Case, byDefault) => {
       await cases[name]();
       expect(soundControl()).toBe(byDefault);
@@ -306,7 +306,7 @@ describe("stream sound switch", () => {
     "windowsApp",
     "screenWithoutSound",
   ] as const)(
-    "%s: no switch where a share cannot carry sound",
+    "%s: no switch where a Live cannot carry sound",
     async (name: Case) => {
       await cases[name]();
       // Not even for someone who switched it on elsewhere.
@@ -314,7 +314,7 @@ describe("stream sound switch", () => {
         choose({ sourceAudioShare });
         expect(soundControl()).toBeNull();
         expect(soundSetting()).toBeNull();
-        expect(form()).not.toContain("Ton der Bildschirmfreigabe");
+        expect(form()).not.toContain("Ton beim Live gehen");
         expect(form()).not.toContain('id="source-audio-app"');
       }
       // Listening to someone else's stream sound is another matter.
@@ -331,17 +331,16 @@ describe("stream sound switch", () => {
     expect(soundSetting()).toBeNull();
   });
 
-  it("follows the shares in the Teilen menu", async () => {
+  it("follows Live gehen in the Live menu", async () => {
     await cases.desktopBrowser();
     const html = menu();
     const at = (label: string) => html.indexOf(`<strong>${label}</strong>`);
-    expect(at("Bildschirm im Raum teilen")).toBeGreaterThan(-1);
-    expect(at("Go Live")).toBeGreaterThan(at("Bildschirm im Raum teilen"));
-    expect(at("Ton mitsenden")).toBeGreaterThan(at("Go Live"));
-    // Stopping stays possible, and the switch stays, while a share runs.
-    Object.assign(fixture.voice, { sharing: true, live: true });
+    expect(at("Live gehen")).toBe(html.indexOf("<strong>"));
+    expect(at("Ton mitsenden")).toBeGreaterThan(at("Live gehen"));
+    // Stopping stays possible, and the switch stays, while a Live runs.
+    Object.assign(fixture.voice, { sharing: true });
     expect(soundControl()).toBe("off");
-    expect(menu().indexOf("<strong>Teilen beenden</strong>")).toBe(
+    expect(menu().indexOf("<strong>Live beenden</strong>")).toBe(
       menu().indexOf("<strong>"),
     );
   });
@@ -383,7 +382,7 @@ describe("stream sound switch", () => {
     expect(html).toContain('id="source-audio-app"');
     expect(html).toContain("Alle Anwendungen außer Gelabber");
     expect(html).toContain("nie dein Mikrofon oder der Ton des Anrufs");
-    expect(html).toContain("auch während sie laufen");
+    expect(html).toContain("auch während du live bist");
     expect(html).not.toMatch(/Browser/);
   });
 });
@@ -543,6 +542,24 @@ describe("why a share has no sound", () => {
       "Der Stream-Ton wurde beendet. Das Video läuft weiter.",
       "Von „spotify“ kommt gerade kein Ton.",
     ]);
+    // The call bar speaks of Live, never of a share.
+    expect(
+      dockNotices(
+        {
+          sourceAudio: { s: "off", l: "off" },
+          sourceAudioNote: { s: null, l: null },
+          localScreen: { id: "screen" } as MediaStream,
+          localLive: null,
+        },
+        {
+          desktop: false,
+          appAudio: true,
+          sharesSound: true,
+          carriesCall: false,
+          sourceAudioApp: "",
+        },
+      ).map((notice) => notice.text),
+    ).toEqual(["Der Stream-Ton kommt beim nächsten Live gehen dazu."]);
   });
 
   it("gives the desktop app's own reason", async () => {
@@ -575,8 +592,8 @@ describe("why a share has no sound", () => {
     expect(html).not.toContain("Dein Stream sendet");
   });
 
-  it("browser: sound switched on during a share comes with the next one", async () => {
-    const note = "Der Stream-Ton kommt mit der nächsten Freigabe dazu.";
+  it("browser: sound switched on during a Live comes with the next one", async () => {
+    const note = "Der Stream-Ton kommt beim nächsten Live gehen dazu.";
     await cases.desktopBrowser();
     const running = { id: "screen" } as MediaStream;
     Object.assign(fixture.voice, { sharing: true, localScreen: running });
@@ -596,18 +613,18 @@ describe("why a share has no sound", () => {
     expect(session()).toContain(note);
   });
 
-  it("desktop app: nothing waits for the next share", async () => {
+  it("desktop app: nothing waits for the next Live", async () => {
     await cases.linuxApp06();
     Object.assign(fixture.voice, {
       sharing: true,
       localScreen: { id: "screen" } as MediaStream,
     });
-    expect(session()).not.toContain("nächsten Freigabe");
-    expect(form()).not.toContain("nächste Bildschirmfreigabe");
+    expect(session()).not.toContain("nächsten Live");
+    expect(form()).not.toContain("nächsten Live");
   });
 });
 
-describe("the own share's tile", () => {
+describe("the own Live's tile", () => {
   const server = {
     id: "a",
     role: "member",
@@ -624,61 +641,40 @@ describe("the own share's tile", () => {
       null
     );
   }
-  const SCREEN = "Rafi \\(du\\) — Bildschirm";
   const LIVE = "Rafi \\(du\\) — Live";
   const running = { id: "capture" } as MediaStream;
 
   it("browser: a picker gave no sound", async () => {
     await cases.desktopBrowser();
     Object.assign(fixture.voice, { sharing: true, localScreen: running });
-    expect(tile(SCREEN)).toBe("");
+    expect(tile(LIVE)).toBe("");
     fixture.voice.sourceAudio = { s: "sharing", l: "off" };
-    expect(tile(SCREEN)).toBe("Ton wird geteilt");
+    expect(tile(LIVE)).toBe("Ton wird mitgesendet");
     fixture.voice.sourceAudio = { s: "unavailable", l: "off" };
-    expect(tile(SCREEN)).toBe(
-      "Kein Stream-Ton freigegeben · Video läuft weiter",
-    );
+    expect(tile(LIVE)).toBe("Kein Stream-Ton freigegeben · Video läuft weiter");
   });
 
   it("desktop app: blames no picker for sound the app could not capture", async () => {
     await cases.linuxApp06();
-    Object.assign(fixture.voice, {
-      sharing: true,
-      localScreen: running,
-      live: true,
-      localLive: running,
-    });
-    fixture.voice.sourceAudio = { s: "unavailable", l: "unavailable" };
+    Object.assign(fixture.voice, { sharing: true, localScreen: running });
+    fixture.voice.sourceAudio = { s: "unavailable", l: "off" };
     fixture.voice.sourceAudioNote = {
       s: { failed: "cannot connect to PipeWire" },
-      l: { failed: "cannot connect to PipeWire" },
+      l: null,
     };
-    for (const label of [SCREEN, LIVE]) {
-      expect(tile(label)).toBe(
-        "Stream-Ton nicht aufgenommen · Video läuft weiter",
-      );
-      expect(tile(label)).not.toContain("freigegeben");
-    }
+    expect(tile(LIVE)).toBe(
+      "Stream-Ton nicht aufgenommen · Video läuft weiter",
+    );
     // The reason itself stands next to the controls.
     expect(session()).toContain("(cannot connect to PipeWire)");
   });
 
-  it("claims no shared sound while the chosen application is silent", async () => {
+  it("claims no sound while the chosen application is silent", async () => {
     await cases.linuxApp06();
-    Object.assign(fixture.voice, {
-      sharing: true,
-      localScreen: running,
-      live: true,
-      localLive: running,
-    });
-    fixture.voice.sourceAudio = { s: "sharing", l: "sharing" };
-    expect(tile(SCREEN)).toBe("Ton wird geteilt");
+    Object.assign(fixture.voice, { sharing: true, localScreen: running });
+    fixture.voice.sourceAudio = { s: "sharing", l: "off" };
+    expect(tile(LIVE)).toBe("Ton wird mitgesendet");
     fixture.voice.sourceAudioNote = { s: { silent: "spotify" }, l: null };
-    expect(tile(SCREEN)).toBe("Kein Ton von „spotify“");
-    // Go Live has its own sound, and its own tile.
-    expect(tile(LIVE)).toBe("Ton wird geteilt");
-    fixture.voice.sourceAudioNote = { s: null, l: { silent: "spotify" } };
-    expect(tile(SCREEN)).toBe("Ton wird geteilt");
     expect(tile(LIVE)).toBe("Kein Ton von „spotify“");
   });
 });

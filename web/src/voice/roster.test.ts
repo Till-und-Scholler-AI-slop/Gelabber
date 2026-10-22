@@ -4,6 +4,7 @@ import {
   EMPTY_LIVE,
   EMPTY_OCCUPANCY,
   VOICE_ICON_SLOT_PX,
+  applyLiveEnd,
   applyLiveStart,
   applyVoiceJoin,
   applyVoiceLeave,
@@ -11,7 +12,8 @@ import {
   applyVoiceDeafen,
   applyVoiceSig,
   applyVoiceSnap,
-  liveOf,
+  isLiveIn,
+  liveIn,
   resetVoiceRoster,
   useVoiceRoster,
   voiceOf,
@@ -44,38 +46,60 @@ describe("voice roster", () => {
     expect(VOICE_ICON_SLOT_PX).toBe(32);
   });
 
-  it("tracks one live holder per voice channel immediately", () => {
-    applyLiveStart("s1", "voice", "u1");
-    expect(liveOf(useVoiceRoster.getState().live, "s1", "voice")).toBe("u1");
-    applyVoiceSig({
-      op: "sig",
-      t: "p",
-      s: "s1",
-      c: "voice",
-      u: "u1",
-      k: "l",
-    });
-    expect(liveOf(useVoiceRoster.getState().live, "s1", "voice")).toBe("u1");
-    applyVoiceSig({
-      op: "sig",
-      t: "u",
-      s: "s1",
-      c: "voice",
-      u: "u1",
-      k: "l",
-    });
-    expect(liveOf(useVoiceRoster.getState().live, "s1", "voice")).toBeNull();
+  it("tracks several people live in one channel, in the order they started", () => {
+    const people = () => liveIn(useVoiceRoster.getState().live, "s1", "voice");
+    const sig = (t: "p" | "u", u: string, k: "s" | "l" | "sa" | "v") =>
+      applyVoiceSig({ op: "sig", t, s: "s1", c: "voice", u, k });
+    sig("p", "u1", "s");
+    sig("p", "u2", "s");
+    // An older client's Go Live counts as live too.
+    sig("p", "u3", "l");
+    // Neither its sound nor a camera is a Live of its own.
+    sig("p", "u4", "sa");
+    sig("p", "u4", "v");
+    expect(people()).toEqual(["u1", "u2", "u3"]);
+    sig("u", "u1", "s");
+    expect(people()).toEqual(["u2", "u3"]);
+    sig("u", "u3", "l");
+    expect(people()).toEqual(["u2"]);
+    expect(isLiveIn(useVoiceRoster.getState().live.s1!, "u2")).toBe(true);
+    expect(isLiveIn(useVoiceRoster.getState().live.s1!, "u1")).toBe(false);
+  });
+
+  it("keeps someone live while one of their two Lives runs", () => {
+    applyLiveStart("s1", "voice", "u1", "s");
+    applyLiveStart("s1", "voice", "u1", "l");
+    applyLiveEnd("s1", "voice", "u1", "l");
+    expect(liveIn(useVoiceRoster.getState().live, "s1", "voice")).toEqual([
+      "u1",
+    ]);
+    applyLiveEnd("s1", "voice", "u1", "s");
+    expect(useVoiceRoster.getState().live.s1).toEqual({});
   });
 
   it("clears live when the streamer leaves and restores it from a snap", () => {
     applyVoiceJoin("s1", "u1", "voice");
-    applyLiveStart("s1", "voice", "u1");
+    applyLiveStart("s1", "voice", "u1", "s");
     applyVoiceLeave("s1", "u1");
-    expect(liveOf(useVoiceRoster.getState().live, "s1", "voice")).toBeNull();
+    expect(liveIn(useVoiceRoster.getState().live, "s1", "voice")).toEqual([]);
     applyVoiceSnap("s1", [
       { u: "u2", c: "lounge", l: true },
+      { u: "u3", c: "lounge", s: true },
+      { u: "u4", c: "lounge" },
     ]);
-    expect(liveOf(useVoiceRoster.getState().live, "s1", "lounge")).toBe("u2");
+    expect(liveIn(useVoiceRoster.getState().live, "s1", "lounge")).toEqual([
+      "u2",
+      "u3",
+    ]);
+  });
+
+  it("ends a Live in the channel a leave names", () => {
+    applyVoiceJoin("s1", "u1", "a");
+    applyLiveStart("s1", "a", "u1", "s");
+    // Already seen in the next channel when the leave of the first arrives.
+    applyVoiceJoin("s1", "u1", "b");
+    applyVoiceSig({ op: "sig", t: "l", s: "s1", c: "a", u: "u1" });
+    expect(liveIn(useVoiceRoster.getState().live, "s1", "a")).toEqual([]);
   });
 
   it("replaces occupancy on a snapshot so reconnects drop ghosts", () => {

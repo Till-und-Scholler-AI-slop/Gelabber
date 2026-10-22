@@ -179,7 +179,7 @@ export type MediaSettings = {
   economyMode: boolean;
   /** Camera capture + that sender's share of the video budget. */
   cameraProfile: StreamProfileId;
-  /** Screen share and Go Live. Both are display captures. */
+  /** Live (a display capture); older clients used it for Go Live too. */
   screenProfile: StreamProfileId;
   /** 0 = no custom limit; otherwise explicit shared video payload cap in bit/s. */
   videoUploadLimit: number;
@@ -595,7 +595,7 @@ export function sourceAudioBitrate(
   return settings.economyMode ? 128_000 : null;
 }
 
-/** Whether screen share and Go Live carry sound. Without a choice of his own
+/** Whether a Live carries sound. Without a choice of his own
  * the user gets it where the call stays out of it: in a desktop app whose
  * "every application" leaves out Gelabber itself. A browser captures whatever
  * its picker hands over, the call included, so there it stays off. */
