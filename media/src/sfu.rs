@@ -1289,19 +1289,28 @@ impl Sfu {
         let Some(peer) = reserved.first().map(|p| p.peer.clone()) else {
             return results;
         };
-        let authorized = !reserved.iter().any(|p| p.created.is_ok())
-            || crate::ticket::validate_authority(&self.redis, &peer.authority)
-                .await
-                .unwrap_or(false);
+        let check = if reserved.iter().any(|p| p.created.is_ok()) {
+            crate::ticket::validate_authority(&self.redis, &peer.authority).await
+        } else {
+            Ok(true)
+        };
+        // A Redis failure denies the pass like a revocation but is retried,
+        // since it fails every consumer of the join at once.
+        let redis_failed = check.is_err();
+        let authorized = check.unwrap_or(false);
         for p in &mut reserved {
             if let Ok(sub) = &p.created
                 && (!authorized || !sub.valid())
             {
                 stop_consumer(&sub.consumer, &self.dead).await;
-                p.created = Err(SfuError::Revoked);
+                p.created = Err(if redis_failed {
+                    SfuError::Unavailable
+                } else {
+                    SfuError::Revoked
+                });
             }
         }
-        let (mut recreated, mut retry_native) = (false, false);
+        let (mut recreated, mut retry_native) = (false, redis_failed);
         for p in reserved {
             let result = match p.created {
                 Ok(sub) => self.commit_consumer(room, id, &p.transport, sub).await,
