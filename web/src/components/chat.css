@@ -1168,6 +1168,58 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   font-size: 11px;
   color: var(--lr-muted);
 }
+/* A picture that did not load (#348): the same box, saying so. */
+.lr-attachment-image.is-failed {
+  width: 240px;
+  cursor: default;
+}
+.lr-attachment-grid .lr-attachment-image.is-failed {
+  width: auto;
+  min-width: 0;
+}
+.lr-attachment-image-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 12px;
+  border: 1px dashed var(--lr-border);
+  border-radius: var(--lr-radius);
+  background: var(--lr-panel);
+  font-size: 12px;
+  color: var(--lr-muted);
+}
+.lr-attachment-image-error > svg {
+  color: var(--lr-accent-text);
+}
+.lr-attachment-image-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--lr-text);
+}
+.lr-attachment-image-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.lr-attachment-image-actions > button,
+.lr-attachment-image-actions > a {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--lr-accent-text);
+  cursor: pointer;
+  text-decoration: underline;
+}
 .lr-attachment-image .lr-attachment-upload {
   position: absolute;
   left: 6px;

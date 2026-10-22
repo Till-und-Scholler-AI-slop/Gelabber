@@ -304,6 +304,7 @@ async fn a_card_keeps_its_text_when_the_image_cannot_be_stored(pool: PgPool) {
         secret_key: "gelabber-secret".into(),
         bucket: "gelabber".into(),
         root_credentials: false,
+        delivery: gelabber_api::config::AttachmentDelivery::Redirect,
     }))
     .unwrap();
     let (mut client, channel) = signed_in_with(state).await;

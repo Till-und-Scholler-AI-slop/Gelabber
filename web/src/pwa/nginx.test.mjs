@@ -133,12 +133,13 @@ function shellPolicy(storage = "") {
 
 /** What the entrypoint script writes for this MINIO_PUBLIC_ENDPOINT, and
  *  what it logs. `null`: no file, so no fetch directives. */
-function storageFile(endpoint) {
+function storageFile(endpoint, delivery) {
   const dir = mkdtempSync(join(tmpdir(), "gelabber-storage-"));
   const file = join(dir, "gelabber", "storage-origin.map");
   try {
     const env = { PATH: process.env.PATH, GELABBER_STORAGE_MAP: file };
     if (endpoint !== undefined) env.MINIO_PUBLIC_ENDPOINT = endpoint;
+    if (delivery !== undefined) env.ATTACHMENT_DELIVERY = delivery;
     const log = execFileSync("sh", [entrypoint], { env, encoding: "utf8" });
     return {
       written: existsSync(file) ? readFileSync(file, "utf8") : null,
@@ -354,6 +355,49 @@ describe("production nginx config", () => {
       expect(sources, name).not.toContain("*");
     }
   });
+
+  it("names no storage host when attachments go through the API (#348)", () => {
+    const policy = shellPolicy("'self'");
+    for (const [name, sources] of shellPolicy())
+      expect(policy.get(name), name).toEqual(sources);
+    expect(policy.get("default-src")).toEqual(["'self'"]);
+    expect(policy.get("connect-src")).toEqual([
+      "'self'",
+      "ipc:",
+      "http://ipc.localhost",
+    ]);
+    expect(policy.get("img-src")).toEqual([
+      "'self'",
+      "data:",
+      "blob:",
+      "https:",
+    ]);
+    expect(policy.get("media-src")).toEqual(["'self'", "data:", "blob:"]);
+    expect(policy.get("style-src")).toEqual(["'self'", "'unsafe-inline'"]);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "hands nginx 'self' with ATTACHMENT_DELIVERY=proxy, whatever the endpoint",
+    () => {
+      for (const endpoint of [
+        undefined,
+        "https://sscholler.de:9000",
+        "http://localhost:9000",
+      ]) {
+        for (const delivery of ["proxy", "PROXY", " proxy "]) {
+          const { written, log } = storageFile(endpoint, delivery);
+          expect(written, `${endpoint} ${delivery}`).toBe(`"" "'self'";\n`);
+          expect(log).toContain("go through the API");
+        }
+      }
+      // Any other value is redirect delivery: MinIO's origin as before.
+      for (const delivery of ["", "redirect", "stream"])
+        expect(
+          storageFile("https://minio.example.com", delivery).written,
+          delivery,
+        ).toBe('"" "https://minio.example.com";\n');
+    },
+  );
 
   it("takes the MinIO origin from the entrypoint's file only", () => {
     // Mounted on its own, the file matches nothing and the origin is empty.

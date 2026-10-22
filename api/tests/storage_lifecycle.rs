@@ -467,6 +467,7 @@ fn minio_config(endpoint: &str) -> gelabber_api::config::MinioConfig {
         secret_key: std::env::var("MINIO_ROOT_PASSWORD").expect("local test password"),
         bucket: format!("gb-test-{}", Uuid::new_v4().simple()),
         root_credentials: true,
+        delivery: gelabber_api::config::AttachmentDelivery::Redirect,
     }
 }
 
@@ -687,6 +688,76 @@ async fn real_minio_download_links_serve_the_object(pool: PgPool) {
     state.store.delete(&key).await.unwrap();
 }
 
+/// #348 against real MinIO: with `ATTACHMENT_DELIVERY=proxy` and a public
+/// endpoint nobody can reach, the browser's upload and download both go
+/// through the API, a media player's range included.
+#[sqlx::test]
+async fn real_minio_proxy_delivery_never_needs_the_public_endpoint(pool: PgPool) {
+    use axum::http::header::{ACCEPT_RANGES, CONTENT_RANGE, RANGE};
+    let endpoint = std::env::var("MINIO_ENDPOINT").expect("source local minio-test.env");
+    let mut config = minio_config(&endpoint);
+    config.public_endpoint = "https://unreachable.invalid:9000".into();
+    config.delivery = gelabber_api::config::AttachmentDelivery::Proxy;
+    let mut state = state(pool, 0);
+    state.store = ObjectStore::from_minio(Some(&config)).unwrap();
+    state.store.ensure_ready().await.unwrap();
+    let (mut client, _, channel) = owner(&state).await;
+    let signed = presign_png(&mut client, &channel, "x.png").await;
+    let id = signed["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        signed["upload_url"],
+        format!("/api/attachments/{id}/upload")
+    );
+
+    let (status, body) = client.put_upload(&signed, PNG.to_vec(), |_| {}).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(
+        state.store.head(&format!("att/{id}")).await.unwrap().size,
+        PNG.len() as i64
+    );
+    message(&mut client, &channel, &id).await;
+
+    let (status, headers, bytes) = client
+        .send_raw(Method::GET, &format!("/api/attachments/{id}"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bytes, PNG);
+    assert_eq!(headers["content-type"], "image/png");
+    assert_eq!(headers[ACCEPT_RANGES], "bytes");
+
+    let ranged = |range: &'static str| {
+        move |b: &mut axum::http::request::Builder| {
+            b.headers_mut()
+                .unwrap()
+                .insert(RANGE, range.parse().unwrap());
+        }
+    };
+    let (status, headers, bytes) = client
+        .send_raw_with(
+            Method::GET,
+            &format!("/api/attachments/{id}"),
+            None,
+            ranged("bytes=1-3"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(headers[CONTENT_RANGE], format!("bytes 1-3/{}", PNG.len()));
+    assert_eq!(headers["content-length"], "3");
+    assert_eq!(bytes, &PNG[1..4]);
+
+    let (status, headers, _) = client
+        .send_raw_with(
+            Method::GET,
+            &format!("/api/attachments/{id}"),
+            None,
+            ranged("bytes=500-"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(headers[CONTENT_RANGE], format!("bytes */{}", PNG.len()));
+    state.store.delete(&format!("att/{id}")).await.unwrap();
+}
+
 #[tokio::test]
 async fn missing_production_storage_is_rejected_and_memory_requires_explicit_opt_in() {
     let config = Config::from_source(|key| match key {
@@ -744,6 +815,7 @@ async fn stale_cleanup_ack_cannot_remove_a_new_claim_and_s3_does_not_hold_pool_c
         secret_key: "test".into(),
         bucket: "test".into(),
         root_credentials: true,
+        delivery: gelabber_api::config::AttachmentDelivery::Redirect,
     }))
     .unwrap();
     let key = format!("att/{}", Uuid::new_v4());
@@ -1042,6 +1114,7 @@ async fn pending_upload_expiring_during_storage_head_cannot_bind(pool: PgPool) {
         secret_key: "test".into(),
         bucket: "test".into(),
         root_credentials: true,
+        delivery: gelabber_api::config::AttachmentDelivery::Redirect,
     }))
     .unwrap();
     let (mut client, _, channel) = owner(&state).await;

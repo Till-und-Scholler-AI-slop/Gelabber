@@ -236,7 +236,11 @@ async fn message_carries_attachment_after_upload(pool: PgPool) {
         png.len() as i64,
     )
     .await;
-    assert!(signed["upload_url"].as_str().unwrap().contains("gelabber/"));
+    // The memory store has no URL of its own: uploads go through the API.
+    assert_eq!(
+        signed["upload_url"],
+        format!("/api/attachments/{}/upload", signed["id"].as_str().unwrap())
+    );
     assert_eq!(signed["headers"]["Content-Type"], "image/png");
     assert_eq!(signed["headers"]["Content-Length"], png.len().to_string());
     assert_eq!(signed["attachment"]["filename"], "cat.png");
@@ -816,4 +820,162 @@ async fn pending_upload_outlives_its_upload_link(pool: PgPool) {
     .await
     .unwrap();
     assert!(left > 3000.0 && left <= 3600.0, "{left}");
+}
+
+/// #348: with uploads through the API, the presign answer names the API's
+/// own link and every header the client must send, CSRF included, so a
+/// client that only replays those headers (as `putPresigned` always did)
+/// uploads, binds and downloads without ever seeing MinIO.
+#[sqlx::test]
+async fn proxied_upload_and_download_stay_on_the_app_origin(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let channel_id = text_channel_id(&server);
+    let signed = presign_ok(
+        &mut owner,
+        &channel_id,
+        "Bär.png",
+        "image/png",
+        PNG.len() as i64,
+    )
+    .await;
+    let id = signed["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        signed["upload_url"],
+        format!("/api/attachments/{id}/upload")
+    );
+    assert_eq!(
+        signed["headers"]["X-CSRF-Token"].as_str(),
+        owner.csrf.as_deref()
+    );
+
+    let (status, body) = owner.put_upload(&signed, PNG.to_vec(), |_| {}).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let (status, body) = post_files(&mut owner, &channel_id, std::slice::from_ref(&id)).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+
+    let (status, headers, bytes) = member
+        .send_raw(Method::GET, &format!("/api/attachments/{id}"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bytes, PNG);
+    assert_eq!(headers["content-type"], "image/png");
+    assert_eq!(headers["content-length"], PNG.len().to_string());
+    assert_eq!(headers["cache-control"], "private, max-age=3600");
+    assert_eq!(headers["vary"], "Cookie");
+    assert_eq!(headers["x-content-type-options"], "nosniff");
+    assert_eq!(headers["content-security-policy"], "sandbox");
+    assert_eq!(
+        headers["content-disposition"],
+        "inline; filename=\"B_r.png\"; filename*=UTF-8''B%C3%A4r.png"
+    );
+
+    let (status, headers, bytes) = member
+        .send_raw(
+            Method::GET,
+            &format!("/api/attachments/{id}?download=1"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bytes, PNG);
+    assert_eq!(headers["cache-control"], "private, no-store");
+    assert!(
+        headers["content-disposition"]
+            .to_str()
+            .unwrap()
+            .starts_with("attachment; ")
+    );
+
+    // Bound now: the link is spent, as MinIO's would be for the bind check.
+    let (status, _) = owner.put_upload(&signed, PNG.to_vec(), |_| {}).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// #348: the API's upload link keeps the rules of MinIO's signed one: only
+/// the uploader, with the CSRF header, the signed type and the signed size.
+#[sqlx::test]
+async fn proxied_upload_keeps_the_rules_of_a_signed_link(pool: PgPool) {
+    use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
+    let (mut owner, mut member) = two_users(pool).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let channel_id = text_channel_id(&server);
+    let signed = presign_ok(
+        &mut owner,
+        &channel_id,
+        "a.png",
+        "image/png",
+        PNG.len() as i64,
+    )
+    .await;
+    let id = signed["id"].as_str().unwrap().to_owned();
+    let stored = |client: &Client| {
+        let store = client.store.clone();
+        let key = format!("att/{id}");
+        async move { store.head(&key).await.is_ok() }
+    };
+
+    // Another member, with their own valid CSRF pair: not their upload.
+    let mut foreign = signed.clone();
+    foreign["headers"]["X-CSRF-Token"] = json!(member.csrf.clone().unwrap());
+    let (status, _) = member.put_upload(&foreign, PNG.to_vec(), |_| {}).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, _) = owner
+        .put_upload(&signed, PNG.to_vec(), |headers| {
+            headers.remove("x-csrf-token");
+        })
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, body) = owner
+        .put_upload(&signed, PNG.to_vec(), |headers| {
+            headers.insert(CONTENT_TYPE, "text/html".parse().unwrap());
+        })
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["fields"]["content_type"], "invalid");
+
+    let mut longer = PNG.to_vec();
+    longer.push(0);
+    let (status, body) = owner.put_upload(&signed, longer, |_| {}).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["fields"]["size"], "invalid");
+
+    // A Content-Length that lies about the body is caught by the store.
+    let (status, body) = owner
+        .put_upload(&signed, PNG[..4].to_vec(), |headers| {
+            headers.insert(CONTENT_LENGTH, PNG.len().into());
+        })
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["fields"]["size"], "invalid");
+    assert!(!stored(&owner).await, "nothing was stored yet");
+
+    let (status, _) = owner.put_upload(&signed, PNG.to_vec(), |_| {}).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(stored(&owner).await);
+}
+
+/// #348: past its ten minutes the API's upload link is gone like MinIO's.
+#[sqlx::test]
+async fn proxied_upload_link_expires_with_put_ttl(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Team").await;
+    let channel_id = text_channel_id(&server);
+    let signed = presign_ok(
+        &mut owner,
+        &channel_id,
+        "a.png",
+        "image/png",
+        PNG.len() as i64,
+    )
+    .await;
+    sqlx::query("UPDATE attachments SET created_at = now() - interval '11 minutes' WHERE id = $1")
+        .bind(uuid::Uuid::parse_str(signed["id"].as_str().unwrap()).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _) = owner.put_upload(&signed, PNG.to_vec(), |_| {}).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

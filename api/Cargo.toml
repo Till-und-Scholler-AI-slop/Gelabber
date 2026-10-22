@@ -29,7 +29,7 @@ subtle = "2.6.1"
 rusty-s3 = "0.10.2"
 # rusty-s3's own clock type, for download links signed per window (issue #201).
 jiff = { version = "0.2.37", default-features = false, features = ["std"] }
-reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "stream"] }
 url = "2.5.8"
 # Web Push (issue #243): VAPID (ES256) and aes128gcm payloads (RFC 8291/8292).
 p256 = { version = "0.14.0", default-features = false, features = ["ecdh", "ecdsa", "std"] }

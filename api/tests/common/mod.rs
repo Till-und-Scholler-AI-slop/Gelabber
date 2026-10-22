@@ -191,6 +191,17 @@ impl Client {
         path: &str,
         body: Option<Value>,
     ) -> (StatusCode, HeaderMap, Vec<u8>) {
+        self.send_raw_with(method, path, body, |_| {}).await
+    }
+
+    /// [`send_raw`] with a hook on the request (a `Range` header, say).
+    pub async fn send_raw_with(
+        &mut self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        tweak: impl FnOnce(&mut axum::http::request::Builder),
+    ) -> (StatusCode, HeaderMap, Vec<u8>) {
         let mut builder = Request::builder().method(method.clone()).uri(path);
         if !self.jar.is_empty() {
             let cookie = self
@@ -206,6 +217,7 @@ impl Client {
         {
             builder = builder.header("x-csrf-token", token);
         }
+        tweak(&mut builder);
         let request = match body {
             Some(json) => builder
                 .header(CONTENT_TYPE, "application/json")
@@ -245,6 +257,49 @@ impl Client {
             builder = builder.header("x-csrf-token", token);
         }
         let request = builder.body(Body::from(bytes)).unwrap();
+        let response = self.app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// The browser's PUT to a proxied upload link (#348), as `putPresigned`
+    /// sends it: cookies, every header the presign answer lists except
+    /// `Content-Length`, which comes from the body, and nothing else (no
+    /// CSRF header of its own). `tweak` changes the request before it goes.
+    pub async fn put_upload(
+        &self,
+        signed: &Value,
+        bytes: Vec<u8>,
+        tweak: impl FnOnce(&mut HeaderMap),
+    ) -> (StatusCode, Value) {
+        let mut headers = HeaderMap::new();
+        for (name, value) in signed["headers"].as_object().expect("headers") {
+            if !name.eq_ignore_ascii_case("content-length") {
+                headers.insert(
+                    axum::http::HeaderName::try_from(name.as_str()).unwrap(),
+                    value.as_str().unwrap().parse().unwrap(),
+                );
+            }
+        }
+        headers.insert(axum::http::header::CONTENT_LENGTH, bytes.len().into());
+        let cookie = self
+            .jar
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        headers.insert(COOKIE, cookie.parse().unwrap());
+        tweak(&mut headers);
+        let mut request = Request::builder()
+            .method(Method::PUT)
+            .uri(signed["upload_url"].as_str().expect("upload_url"))
+            .body(Body::from(bytes))
+            .unwrap();
+        *request.headers_mut() = headers;
         let response = self.app.clone().oneshot(request).await.unwrap();
         let status = response.status();
         let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
