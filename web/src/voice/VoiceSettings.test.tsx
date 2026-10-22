@@ -17,14 +17,16 @@ vi.mock("./devices.ts", async (original) => {
 
 import { VoiceSettingsTabs } from "../components/VoiceSettingsDialog.tsx";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
-import { QuickCallSettings } from "./QuickCallSettings.tsx";
+import { CallSound, QuickCallSettings } from "./QuickCallSettings.tsx";
 import { MediaSettingsForm } from "./VoiceSettings.tsx";
 
 describe("stream settings form", () => {
   it("shows camera and screen profiles with resolution, fps, and budget", () => {
     const html = renderToStaticMarkup(<MediaSettingsForm />);
     expect(html).toContain("Stream-Qualität");
-    expect(html).toContain("Bildschirmfreigabe und Go Live");
+    // One set for the screen: Live is the only screen there is.
+    expect(html).toContain("<h3>Live</h3>");
+    expect(html).not.toMatch(/Go Live|Bildschirmfreigabe/);
     for (const resolution of ["480p", "720p", "1080p", "1440p", "4K · 2160p"])
       expect(html).toContain(resolution);
     for (const fps of [15, 24, 30, 45, 60])
@@ -55,7 +57,8 @@ describe("source-audio form", () => {
     });
     const html = renderToStaticMarkup(<MediaSettingsForm />);
     expect(html).toContain('id="share-source-audio"');
-    expect(html).toContain("Ton teilen");
+    expect(html).toContain("Ton mitsenden");
+    expect(html).toContain('aria-label="Ton im Live"');
     expect(html).toContain("im Browserdialog aus");
     expect(html).toContain('id="source-audio-volume"');
     expect(html).toContain("Gespräche");
@@ -111,6 +114,19 @@ describe("quick call settings", () => {
     expect(html).toContain("Gerätenamen anzeigen");
     // No meter outside a call: there is nothing being sent.
     expect(html).not.toContain("<meter");
+  });
+});
+
+describe("call sound", () => {
+  it("holds both volumes and the stream's mute", () => {
+    const html = renderToStaticMarkup(<CallSound />);
+    expect(html).toContain(">Gespräche</label>");
+    expect(html).toContain(">Stream-Ton</label>");
+    expect(html).toMatch(
+      /<button[^>]*aria-pressed="false"[^>]*aria-label="Stream-Ton stummschalten"/,
+    );
+    expect(html).not.toContain("disabled");
+    expect(html).not.toContain("Taubgeschaltet");
   });
 });
 

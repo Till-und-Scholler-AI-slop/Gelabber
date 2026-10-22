@@ -1,5 +1,5 @@
 pkgbase = gelabber-desktop
-	pkgdesc = Gelabber desktop app: voice, screen share and Go Live with a native media core
+	pkgdesc = Gelabber desktop app: voice and Live with a native media core
 	pkgver = 0.5.0dev
 	pkgrel = 1
 	url = https://github.com/Till-und-Scholler-AI-slop/Gelabber

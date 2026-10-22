@@ -379,7 +379,7 @@ async fn offer_before_join_is_rejected_and_disconnect_leaves(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn camera_and_screen_pub_in_voice_without_go_live(pool: PgPool) {
+async fn camera_without_go_live_but_live_needs_it(pool: PgPool) {
     let (mut owner, mut member) = two_users(pool.clone()).await;
     let server = create_server(&mut owner, "Live").await;
     let (server_id, _) = ids(&server);
@@ -411,16 +411,195 @@ async fn camera_and_screen_pub_in_voice_without_go_live(pool: PgPool) {
     let camera = recv_until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "p").await;
     assert_eq!(camera["k"], "v");
 
+    // Live is the screen: it and its sound need `go_live` to start.
+    for kind in ["s", "sa"] {
+        send_json(
+            &mut member_ws,
+            json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": kind }),
+        )
+        .await;
+        let denied = recv_until(&mut member_ws, |f| f["op"] == "err").await;
+        assert_eq!(denied["e"], "forbidden", "{kind}");
+        assert_eq!(denied["c"], voice_id.to_string());
+    }
+    // Stopping needs nothing.
+    send_json(
+        &mut member_ws,
+        json!({ "op": "sig", "t": "u", "s": server_id, "c": voice_id, "k": "s" }),
+    )
+    .await;
+    let stopped = recv_until(&mut member_ws, |f| {
+        f["op"] == "err" || (f["op"] == "sig" && f["t"] == "u")
+    })
+    .await;
+    assert_eq!(stopped["op"], "sig", "{stopped}");
+
+    let res = owner
+        .send(
+            Method::PATCH,
+            &format!("/api/servers/{server_id}"),
+            Some(json!({
+                "member_permissions": ["join_voice", "send_messages", "go_live"]
+            })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     send_json(
         &mut member_ws,
         json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "s" }),
     )
     .await;
     let screen = recv_until(&mut member_ws, |f| {
+        f["op"] == "err" || (f["op"] == "sig" && f["t"] == "p" && f["k"] == "s")
+    })
+    .await;
+    assert_eq!(screen["op"], "sig", "{screen}");
+}
+
+/// Messages in `text_id` that say someone is live.
+async fn live_hints(client: &mut Client, text_id: Uuid) -> usize {
+    let res = client
+        .send(
+            Method::GET,
+            &format!("/api/channels/{text_id}/messages"),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    res.body["messages"]
+        .as_array()
+        .expect("messages")
+        .iter()
+        .filter(|row| row["system"]["kind"] == "live_started")
+        .count()
+}
+
+/// The socket handles frames in order and posts a hint before it reads the
+/// next one: once a mute is echoed, every hint before it is written.
+async fn settle(ws: &mut Ws, server_id: Uuid, voice_id: Uuid, on: bool) {
+    send_json(
+        ws,
+        json!({ "op": "sig", "t": "m", "s": server_id, "c": voice_id, "on": on }),
+    )
+    .await;
+    recv_until(ws, |f| f["op"] == "sig" && f["t"] == "m" && f["on"] == on).await;
+}
+
+#[sqlx::test]
+async fn going_live_posts_one_hint_per_cooldown(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Hints").await;
+    let (server_id, text_id) = ids(&server);
+    join_member(&mut owner, &mut member, &server_id.to_string()).await;
+    let voice_id = create_voice(&mut owner, server_id).await;
+
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut owner_ws = connect(addr, &session_cookie(&owner)).await;
+    send_json(
+        &mut owner_ws,
+        json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
+    )
+    .await;
+    recv_until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+    let screen = |t: &str| json!({ "op": "sig", "t": t, "s": server_id, "c": voice_id, "k": "s" });
+    send_json(&mut owner_ws, screen("p")).await;
+    recv_until(&mut owner_ws, |f| {
         f["op"] == "sig" && f["t"] == "p" && f["k"] == "s"
     })
     .await;
-    assert_eq!(screen["k"], "s");
+    settle(&mut owner_ws, server_id, voice_id, true).await;
+    assert_eq!(live_hints(&mut owner, text_id).await, 1);
+    let hint = owner
+        .send(
+            Method::GET,
+            &format!("/api/channels/{text_id}/messages"),
+            None,
+        )
+        .await;
+    assert!(
+        hint.body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["system"]["params"]["voice_name"] == "Lounge"),
+        "{}",
+        hint.body
+    );
+
+    // Off and on again, a re-announcement, then Go Live of an older client:
+    // all within the cooldown, so nothing new in the chat.
+    send_json(&mut owner_ws, screen("u")).await;
+    send_json(&mut owner_ws, screen("p")).await;
+    send_json(&mut owner_ws, screen("p")).await;
+    send_json(
+        &mut owner_ws,
+        json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "l" }),
+    )
+    .await;
+    recv_until(&mut owner_ws, |f| {
+        f["op"] == "sig" && f["t"] == "p" && f["k"] == "l"
+    })
+    .await;
+    settle(&mut owner_ws, server_id, voice_id, false).await;
+    assert_eq!(live_hints(&mut owner, text_id).await, 1);
+
+    // Someone else going live gets a hint of their own.
+    let mut member_ws = connect(addr, &session_cookie(&member)).await;
+    send_json(
+        &mut member_ws,
+        json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
+    )
+    .await;
+    recv_until(&mut member_ws, |f| {
+        f["op"] == "sig" && f["t"] == "j" && f["u"] != owner_id(&server).to_string()
+    })
+    .await;
+    send_json(&mut member_ws, screen("p")).await;
+    settle(&mut member_ws, server_id, voice_id, true).await;
+    assert_eq!(live_hints(&mut owner, text_id).await, 2);
+}
+
+#[sqlx::test]
+async fn screen_live_shows_in_occupancy_snapshot(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Badge").await;
+    let (server_id, text_id) = ids(&server);
+    join_member(&mut owner, &mut member, &server_id.to_string()).await;
+    let voice_id = create_voice(&mut owner, server_id).await;
+    let ada = owner_id(&server);
+
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut owner_ws = connect(addr, &session_cookie(&owner)).await;
+    send_json(
+        &mut owner_ws,
+        json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
+    )
+    .await;
+    recv_until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+    send_json(
+        &mut owner_ws,
+        json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "s" }),
+    )
+    .await;
+    recv_until(&mut owner_ws, |f| {
+        f["op"] == "sig" && f["t"] == "p" && f["k"] == "s"
+    })
+    .await;
+
+    // Someone outside the room sees who is live from the snapshot alone.
+    let mut watcher = connect(addr, &session_cookie(&member)).await;
+    send_json(
+        &mut watcher,
+        json!({ "op": "s", "s": server_id, "c": text_id }),
+    )
+    .await;
+    recv_until(&mut watcher, |f| f["op"] == "ok").await;
+    let roster = recv_until(&mut watcher, |f| f["op"] == "sig" && f["t"] == "r").await;
+    let snap = roster["snap"].as_array().expect("snap");
+    assert_eq!(snap.len(), 1, "{roster}");
+    assert_eq!(snap[0]["u"], ada.to_string());
+    assert_eq!(snap[0]["s"], true);
+    assert!(snap[0].get("l").is_none(), "{roster}");
 }
 
 #[sqlx::test]

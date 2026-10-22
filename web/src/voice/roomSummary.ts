@@ -6,11 +6,30 @@ export function nameList(names: readonly string[]): string {
   return `${names[0]}, ${names[1]} und ${names.length - 2} weitere`;
 }
 
+/** "Mia ist live", "Mia und Lena sind live", "Du bist live", "Du und Mia
+ * seid live". */
+export function liveSentence(names: readonly string[], self: boolean): string {
+  const verb = self
+    ? names.length === 1
+      ? "bist"
+      : "seid"
+    : names.length === 1
+      ? "ist"
+      : "sind";
+  return `${nameList(names)} ${verb} live`;
+}
+
 /** The room's one line about who is there: occupancy, never a claim that
- * anyone is talking. `others` leaves the viewer out. */
+ * anyone is talking. `others` leaves the viewer out, and so does `live`,
+ * who of them is live: outside, the room says so, since a Live is
+ * watched inside. */
 export function roomSummary(
   others: readonly string[],
-  { here, canJoin }: { here: boolean; canJoin: boolean },
+  {
+    here,
+    canJoin,
+    live = [],
+  }: { here: boolean; canJoin: boolean; live?: readonly string[] },
 ): string {
   if (here)
     return others.length === 0
@@ -20,5 +39,7 @@ export function roomSummary(
     return canJoin
       ? "Noch niemand da – komm als Erste:r dazu."
       : "Gerade ist niemand da.";
-  return `${nameList(others)} ${others.length === 1 ? "ist" : "sind"} da.`;
+  const there = `${nameList(others)} ${others.length === 1 ? "ist" : "sind"} da.`;
+  if (live.length === 0) return there;
+  return `${there} ${nameList(live)} ${live.length === 1 ? "ist" : "sind"} live${canJoin ? " – komm dazu, um zuzusehen." : "."}`;
 }

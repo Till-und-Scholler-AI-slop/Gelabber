@@ -44,16 +44,15 @@ function sourceMatches(video, color) {
     video.pixels.source.every((v, i) => Math.abs(v - color[i]) < 45)
   );
 }
-/** Render assertions select their source through the real Watch action. */
+/** Render assertions select their source through the real Watch action. A
+ * Live (`s`) is watched inside its voice channel. */
 export async function watchSource(
   actor,
   kind,
   { deadlineEpochMs = Date.now() + 5_000 } = {},
 ) {
-  if (kind !== "live" && kind !== "screen") return;
-  const tiles = actor.page
-    .locator("figure")
-    .filter({ hasText: kind === "live" ? "— Live" : "— Bildschirm" });
+  if (kind !== "live") return;
+  const tiles = actor.page.locator("figure").filter({ hasText: "— Live" });
   const start = tiles.getByRole("button", { name: "Zuschauen", exact: true });
   const stop = tiles.getByRole("button", {
     name: "Nicht mehr zuschauen",
@@ -74,7 +73,7 @@ export async function watchSource(
               source.receiver.track === source.track &&
               source.pc.getReceivers().includes(source.receiver),
           ),
-        kind === "live" ? "l" : "s",
+        "s",
       ),
     }),
     (state) =>
@@ -150,7 +149,7 @@ async function reset(f) {
 async function begin(f) {
   await reset(f);
   await click(f.owner, "Beitreten");
-  await click(f.owner, "Go Live");
+  await click(f.owner, "Live gehen");
   f.liveStartedAt = Date.now();
   await until(
     () => snapshot(f.owner),
@@ -181,22 +180,21 @@ export async function mediaScenarios(h, f) {
   async function initialWatch() {
     await begin(f);
     const frames = await progress(f.watcher, options);
+    // The watcher is in the call: a microphone, but no picture of its own.
     check(
-      frames.last.micCalls === 0 &&
-        frames.last.cameraCalls === 0 &&
-        frames.last.displayCalls === 0,
+      frames.last.cameraCalls === 0 && frames.last.displayCalls === 0,
       "watch-requested-capture",
       frames.last,
     );
     check(
-      activePeers(frames.last).every((p) => p.senders === 0),
+      activePeers(frames.last).every((p) => p.senders <= 1),
       "watch-published-media",
       frames.last,
     );
     return frames;
   }
   let first = await h.run(
-    "live-watch-default-autoplay-no-mic",
+    "live-watch-in-room-default-autoplay",
     ["01", "08b"],
     initialWatch,
   );
@@ -229,7 +227,6 @@ export async function mediaScenarios(h, f) {
       }
       await click(late, "Zuschauen");
       const frames = await progress(late, options);
-      check(frames.last.micCalls === 0, "late-watch-requested-mic");
       const after = await snapshot(f.owner);
       check(
         after.displayCalls === baseline.displayCalls &&
@@ -342,19 +339,20 @@ export async function mediaScenarios(h, f) {
         "old-channel-live-rendered-under-new-channel",
         foreign,
       );
-      const stop = f.watcher.page.getByRole("button", {
-        name: "Nicht mehr zuschauen",
+      // The watcher is in the call, so the call bar stays with it.
+      const leave = f.watcher.page.getByRole("button", {
+        name: "Verlassen",
         exact: true,
       });
-      check((await stop.count()) > 0, "global-watch-stop-unavailable", {
+      check((await leave.count()) > 0, "global-call-leave-unavailable", {
         controlConfirmed: true,
         watcherAfterNavigation: foreign,
       });
-      await stop.first().click();
+      await leave.first().click();
       await f.owner.page
         .getByRole("link", { name: "E2E Voice B", exact: true })
         .click();
-      for (const name of ["Stummschalten", "Teilen", "Verlassen"])
+      for (const name of ["Stummschalten", "Live gehen", "Verlassen"])
         check(
           (await f.owner.page
             .getByRole("button", { name, exact: true })
@@ -371,11 +369,11 @@ export async function mediaScenarios(h, f) {
     },
   );
   await h.run(
-    "live-claim-exclusive-and-loser-not-published",
+    "several-live-at-once-in-room",
     ["05b", "03b", "08b"],
     async () => {
-      const { concurrentClaim } = await import("./media-extra.mjs");
-      return concurrentClaim(h, f, { reset, options });
+      const { concurrentLive } = await import("./media-extra.mjs");
+      return concurrentLive(h, f, { reset, options });
     },
   );
   await h.run(
@@ -386,7 +384,7 @@ export async function mediaScenarios(h, f) {
       await click(f.owner, "Beitreten");
       const cycles = [];
       for (let i = 0; i < 20; i++) {
-        await click(f.owner, "Go Live");
+        await click(f.owner, "Live gehen");
         await click(f.watcher, "Zuschauen");
         const frames = await progress(f.watcher, {
           ...options,
@@ -416,7 +414,7 @@ export async function mediaScenarios(h, f) {
                 p.connection === "connected" &&
                 p.transceivers <= 4 &&
                 p.receivers <= 3 &&
-                p.senders === 0 &&
+                p.senders <= 1 &&
                 p.localSdpBytes <= 32_000,
             ) &&
             activePeers(beforeStopOwner).length <= 2 &&
@@ -460,7 +458,7 @@ export async function mediaScenarios(h, f) {
         });
         if (await stop.count()) await stop.first().click();
       }
-      await click(f.owner, "Go Live");
+      await click(f.owner, "Live gehen");
       const late = await h.actor("CycleWatch");
       await f.join(late);
       await click(late, "Zuschauen");
@@ -523,13 +521,13 @@ export async function mediaScenarios(h, f) {
       await nativeEvaluate(f.owner, () => {
         window.__e2e.cancelNextCapture = true;
       });
-      await click(f.owner, "Go Live");
+      await click(f.owner, "Live gehen");
       const result = await observe(2_000, () => snapshot(f.owner));
       check(
         result.captures.every((c) => c.state !== "live") &&
           (await f.owner.page
             .getByRole("button", {
-              name: "Teilen",
+              name: "Live gehen",
               exact: true,
               pressed: false,
             })
@@ -546,19 +544,12 @@ export async function mediaScenarios(h, f) {
       return result;
     },
   );
-  await h.run("camera-screen-live-source-identity", ["01", "08b"], async () => {
+  await h.run("camera-live-source-identity", ["01", "08b"], async () => {
     await begin(f);
     await click(f.member, "Beitreten");
     await click(f.owner, "Kamera");
-    await click(f.owner, "Bildschirm im Raum teilen");
     await watchSource(f.member, "live");
-    await watchSource(f.member, "screen");
     const live = await progress(f.member, options);
-    const screen = await progress(f.member, {
-      ...options,
-      kind: "screen",
-      color: [30, 220, 30],
-    });
     const camera = await progress(f.member, {
       ...options,
       kind: "camera",
@@ -566,7 +557,6 @@ export async function mediaScenarios(h, f) {
     });
     return {
       live,
-      screen,
       camera,
       limitation: "arrival reorder not forced; natural native negotiation only",
     };
@@ -574,7 +564,7 @@ export async function mediaScenarios(h, f) {
   await h.run("autoplay-rejection-visible-click-retry", ["08a"], async () => {
     await reset(f);
     await click(f.owner, "Beitreten");
-    await click(f.owner, "Go Live");
+    await click(f.owner, "Live gehen");
     await nativeEvaluate(f.watcher, () => {
       window.__e2e.rejectPlayback = true;
     });

@@ -1185,10 +1185,10 @@ export const PHASE_LABEL: Record<Phase, string> = {
 export const SOURCE_LABEL: Record<FlowSource, string> = {
   voice: "Sprache",
   camera: "Kamera",
-  screen: "Bildschirm",
-  "screen-audio": "Bildschirmton",
-  "live-audio": "Live-Ton",
-  live: "Live",
+  screen: "Live",
+  "screen-audio": "Live-Ton",
+  "live-audio": "Live-Ton (ältere App)",
+  live: "Live (ältere App)",
   video: "Video",
   watch: "Watch",
 };

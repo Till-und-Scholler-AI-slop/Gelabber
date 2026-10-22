@@ -114,14 +114,26 @@ function list() {
   );
 }
 
-function row({ coarse, manage = true }: { coarse: boolean; manage?: boolean }) {
+function row({
+  coarse,
+  manage = true,
+  voice = false,
+  live = [],
+  inVoice = false,
+}: {
+  coarse: boolean;
+  manage?: boolean;
+  voice?: boolean;
+  live?: string[];
+  inVoice?: boolean;
+}) {
   const noop = () => {};
   return wrap(
     <ChannelRow
-      channel={channel("termine", "cat")}
+      channel={channel("termine", "cat", voice ? "voice" : "text")}
       active={false}
-      inVoice={false}
-      live={false}
+      inVoice={inVoice}
+      live={live}
       manage={manage}
       coarse={coarse}
       stop
@@ -167,6 +179,34 @@ describe("channel row", () => {
     const html = row({ coarse: false });
     expect(html).toContain("channel-row is-unread");
     expect(html).toContain('<span class="sr-only">Entwurf</span>');
+  });
+
+  it("says who is live in a voice channel", () => {
+    const html = row({ coarse: false, voice: true, live: ["Mia", "Lena"] });
+    expect(html).toContain('title="Mia und Lena sind live"');
+    expect(html).toContain(
+      '<span class="sr-only">Mia und Lena sind live</span>',
+    );
+    expect(row({ coarse: false, voice: true, live: ["Mia"] })).toContain(
+      "Mia ist live",
+    );
+    expect(row({ coarse: false, voice: true })).not.toContain("live");
+  });
+
+  it("marks the own call's channel, Live or not", () => {
+    const quiet = row({ coarse: false, voice: true, inVoice: true });
+    expect(quiet).toContain("channel-row is-in-voice");
+    expect(quiet).toContain('title="termine · verbunden"');
+    // A Live there keeps both: the badge and the green speaker.
+    const live = row({
+      coarse: false,
+      voice: true,
+      inVoice: true,
+      live: ["Mia"],
+    });
+    expect(live).toContain("is-in-voice");
+    expect(live).toContain("Mia ist live");
+    expect(row({ coarse: false, voice: true })).not.toContain("is-in-voice");
   });
 
   it("keeps read channels plain", () => {

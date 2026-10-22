@@ -87,38 +87,16 @@ describe("notification and media topic union", () => {
     ]);
   });
 
-  it("adds voice and watch context topics", () => {
+  it("adds the call's context topics", () => {
     expect(
       mediaContextTopics({
         status: "joined",
         serverId: "srv",
         channelId: "voice-1",
-        watching: true,
-        watchServerId: "srv",
-        watchChannelId: "stage",
       }),
-    ).toEqual([
-      { s: "srv" },
-      { s: "srv", c: "voice-1" },
-      { s: "srv", c: "stage" },
-    ]);
-  });
-
-  it("uses the actual watch server independently of the voice server", () => {
+    ).toEqual([{ s: "srv" }, { s: "srv", c: "voice-1" }]);
     expect(
-      mediaContextTopics({
-        status: "joined",
-        serverId: "voice-server",
-        channelId: "voice-room",
-        watching: true,
-        watchServerId: "watch-server",
-        watchChannelId: "stage",
-      }),
-    ).toEqual([
-      { s: "voice-server" },
-      { s: "voice-server", c: "voice-room" },
-      { s: "watch-server" },
-      { s: "watch-server", c: "stage" },
-    ]);
+      mediaContextTopics({ status: "idle", serverId: null, channelId: null }),
+    ).toEqual([]);
   });
 });
