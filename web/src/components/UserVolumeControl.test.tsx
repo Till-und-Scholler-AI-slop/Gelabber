@@ -23,6 +23,7 @@ describe("per-user volume control", () => {
     expect(html).toContain('aria-valuetext="100 %"');
     expect(html).toContain("nicht für Stream-Ton");
     expect(html).toContain('max="200"');
+    // 100 % sits in the middle; the right half goes on to 400 %.
     expect(html).toContain('value="100"');
     expect(html).toContain("100 %");
     expect(html).toMatch(/<button[^>]*disabled[^>]*>Zurücksetzen/);
@@ -38,7 +39,8 @@ describe("per-user volume control", () => {
         level={{ volume: 1.4, muted: true }}
       />,
     );
-    expect(html).toContain('value="140"');
+    // 140 % lies on the slider's right half, between its 3 % steps.
+    expect(html).toContain('value="113"');
     expect(html).toContain('aria-valuetext="140 %"');
     expect(html).toContain("140 %");
     expect(html).toMatch(/type="checkbox"[^>]*checked/);

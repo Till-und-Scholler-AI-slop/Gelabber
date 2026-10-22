@@ -13,6 +13,8 @@ const KNOWN_FEATURES: &[&str] = &[
     "app-audio-excludes-self",
     "video-frames",
     "h264-hardware",
+    "av1-hardware",
+    "av1-hardware-decode",
 ];
 
 /// What the web client reads: the fields of v0.5 stay, and `features` is
@@ -36,25 +38,30 @@ fn media_info_reports_the_platform_features() {
     } else {
         &[]
     };
-    // The hardware encoder depends on the machine, not on the build.
-    let hardware = info["videoCodecs"]["h264"]["hardwareEncoder"] == true;
+    // The hardware codecs depend on the machine, not on the build; they
+    // come last: H264's encoder, AV1's encoder, AV1's decoder.
     let mut features: Vec<Value> = info["features"].as_array().unwrap().clone();
-    assert_eq!(
-        features.last() == Some(&json!("h264-hardware")),
-        hardware,
-        "{info}"
-    );
-    if hardware {
-        features.pop();
+    for (codec, side, feature) in [
+        ("av1", "hardwareDecoder", "av1-hardware-decode"),
+        ("av1", "hardwareEncoder", "av1-hardware"),
+        ("h264", "hardwareEncoder", "h264-hardware"),
+    ] {
+        let hardware = info["videoCodecs"][codec][side] == true;
+        assert_eq!(features.last() == Some(&json!(feature)), hardware, "{info}");
+        if hardware {
+            features.pop();
+        }
     }
     assert_eq!(
         features,
         serde_json::json!(today).as_array().unwrap().clone()
     );
-    if cfg!(any(target_os = "linux", windows)) {
-        assert!(info["videoCodecs"]["h264"].is_object(), "{info}");
-    } else {
-        assert!(info["videoCodecs"]["h264"].is_null(), "{info}");
+    for codec in ["h264", "av1"] {
+        if cfg!(any(target_os = "linux", windows)) {
+            assert!(info["videoCodecs"][codec].is_object(), "{info}");
+        } else {
+            assert!(info["videoCodecs"][codec].is_null(), "{info}");
+        }
     }
     for feature in FEATURES {
         assert!(

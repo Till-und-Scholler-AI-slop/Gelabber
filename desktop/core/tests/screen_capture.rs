@@ -148,7 +148,7 @@ async fn share_a_screen(server: &Server) {
         "decoded screen frames"
     );
     assert!(stats["width"].as_u64().unwrap_or(0) >= 320);
-    check_encoder("screen", &sender);
+    check_encoder("screen", &sender, "GELABBER_EXPECT_ENCODER");
     drop(consumer);
     drop(producer);
 

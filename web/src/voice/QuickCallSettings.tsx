@@ -28,7 +28,13 @@ import { createMicrophoneSession } from "./microphone.ts";
 import { isDesktopApp } from "./native/bridge.ts";
 import type { VoiceInputMode } from "./pushToTalk.ts";
 import { useVoice, voiceMicrophones } from "./session.ts";
-import { MAX_PLAYBACK_VOLUME, useMediaSettings } from "./settings.ts";
+import {
+  PLAYBACK_SLIDER_MAX,
+  playbackSliderFill,
+  playbackSliderPosition,
+  playbackSliderVolume,
+  useMediaSettings,
+} from "./settings.ts";
 import "./room.css";
 
 /** The gear that opens the quick settings. */
@@ -307,16 +313,18 @@ function Volume({
         id={id}
         type="range"
         min={0}
-        max={MAX_PLAYBACK_VOLUME * 100}
-        value={percent}
+        max={PLAYBACK_SLIDER_MAX}
+        value={playbackSliderPosition(value)}
         aria-valuetext={`${percent} %`}
         disabled={disabled}
         style={
           {
-            "--lr-range-value": `${Math.round((value / MAX_PLAYBACK_VOLUME) * 100)}%`,
+            "--lr-range-value": playbackSliderFill(value),
           } as CSSProperties
         }
-        onChange={(event) => onChange(Number(event.target.value) / 100)}
+        onChange={(event) =>
+          onChange(playbackSliderVolume(Number(event.target.value)))
+        }
         className="lr-range"
       />
     </div>

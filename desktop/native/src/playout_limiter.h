@@ -48,6 +48,9 @@ namespace gelabber
 		static constexpr float kCeiling         = 0.966f;
 		static constexpr double kLookAheadSeconds = 0.0015;
 		static constexpr double kReleaseSeconds   = 0.1;
+		// The highest master gain: 400 %, the web client's
+		// MAX_PLAYBACK_VOLUME. Quiet speakers need that much.
+		static constexpr double kMaxGain = 4.0;
 		// The largest layout the state is reserved for when it is made, so
 		// a format change on the render thread allocates nothing. Beyond it
 		// the state grows there once.
@@ -63,13 +66,13 @@ namespace gelabber
 			smoothed.reserve(frames);
 		}
 
-		// Any thread. Clamped to 1..2. Takes effect in one step at the next
+		// Any thread. Clamped to 1..kMaxGain. Takes effect in one step at the next
 		// block, like the streams' new volumes over it, which are set
 		// before it: a ramp here would let the other streams swell or dip
 		// while it runs.
 		void SetGain(double gain)
 		{
-			target.store(static_cast<float>(std::clamp(gain, 1.0, 2.0)));
+			target.store(static_cast<float>(std::clamp(gain, 1.0, kMaxGain)));
 		}
 
 		float Gain() const

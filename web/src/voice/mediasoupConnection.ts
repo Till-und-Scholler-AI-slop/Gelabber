@@ -24,7 +24,14 @@ import { ViewerLayerController } from "./viewerLayers.ts";
 import { isDesktopApp } from "./native/bridge.ts";
 import { createNativeDevice } from "./native/device.ts";
 import { createStream } from "./native/tracks.ts";
-import { chooseVideoCodec, hardwareH264 } from "./videoCodec.ts";
+import {
+  chooseVideoCodec,
+  hardwareAv1Decoding,
+  hardwareVideo,
+  receivableCapabilities,
+  SOFTWARE_VIDEO,
+  type HardwareVideo,
+} from "./videoCodec.ts";
 
 export type RtpSenderParameters = {
   encodings: Array<{
@@ -79,7 +86,9 @@ export type MediaConnectionOptions = {
   onRepublished?(): void;
   deviceFactory?: () => Promise<Device>;
   /** Test injection; production asks the browser or the desktop app. */
-  hardwareH264?: () => Promise<boolean>;
+  hardwareVideo?: () => Promise<HardwareVideo>;
+  /** Test injection; production asks the browser or the desktop app. */
+  hardwareAv1Decoding?: () => Promise<boolean>;
   /** Test injection; production SDK operations are bounded to ten seconds. */
   sdkTimeoutMs?: number;
   /** Test injection; production waits SDK_LOAD_TIMEOUT_MS for the chunk. */
@@ -323,8 +332,14 @@ export class MediasoupConnection implements MediaConnection {
       throw error;
     }
     this.device = device;
+    // AV1 comes as one stream: only a device that decodes it in hardware
+    // offers to receive it (issue #318).
+    const av1Decoding = await (
+      this.options.hardwareAv1Decoding ?? hardwareAv1Decoding
+    )();
+    this.live();
     const announced = await this.options.request("capabilities", {
-      rtp: device.recvRtpCapabilities,
+      rtp: receivableCapabilities(device.recvRtpCapabilities, av1Decoding),
     });
     this.live();
     if (isVideoCodecs(announced?.codecs))
@@ -576,6 +591,7 @@ export class MediasoupConnection implements MediaConnection {
     const transport = await this.sendTransport();
     this.checkPublication(input);
     // Two simulcast layers where browsers and the native core encode them.
+    // mediasoup takes VP9 and AV1 as one stream or SVC only, not simulcast.
     const layered = mime === "video/vp8" || mime === "video/h264";
     const base = {
       track: input.track,
@@ -728,9 +744,11 @@ export class MediasoupConnection implements MediaConnection {
 
   private async videoCodec(device: Device) {
     const allowed = this.videoCodecs?.video ?? null;
+    // Asked only where it can change the choice.
     const hardware =
-      allowed?.includes("video/h264") === true &&
-      (await (this.options.hardwareH264 ?? hardwareH264)());
+      allowed?.includes("video/h264") || allowed?.includes("video/av1")
+        ? await (this.options.hardwareVideo ?? hardwareVideo)()
+        : SOFTWARE_VIDEO;
     return chooseVideoCodec(
       device.sendRtpCapabilities.codecs ?? [],
       allowed,
