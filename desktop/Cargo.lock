@@ -1789,11 +1789,12 @@ dependencies = [
 
 [[package]]
 name = "gelabber-desktop"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "base64 0.22.1",
  "gelabber-media-core",
  "gio",
+ "gtk",
  "libloading 0.8.9",
  "minisign-verify",
  "pollster",
@@ -1806,13 +1807,14 @@ dependencies = [
  "url",
  "webkit2gtk",
  "wgpu",
+ "windows",
  "windows-sys 0.61.2",
  "winit",
 ]
 
 [[package]]
 name = "gelabber-media-core"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "cmake",
  "mediasoup",

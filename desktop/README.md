@@ -197,10 +197,34 @@ library the app starts without a tray, and plain GNOME shows none without an
 extension. With a tray, "Fenster schließen minimiert in den Infobereich"
 (settings, off by default, stored as `close_to_tray` in `desktop.json`) hides
 the window on close, and a call goes on; "Beenden" in the tray ends the app.
-The page's system notifications are web notifications: the app allows them
-for the server origin when the page asks (WebKitGTK refuses them otherwise),
-and on Linux it starts every web process with that origin allowed, since
-WebKitGTK does not keep the answer. WebView2 keeps it in its profile. WebKitGTK needs `libwebkit2gtk-4.1`.
+Message notifications are the system's own (`app/src/notify.rs`, the
+`notify_*` commands): Windows toasts, and on Linux the desktop's notification
+service on the session bus (`org.freedesktop.Notifications`: mako on
+Omarchy/Hyprland, KDE, GNOME, dunst, swaync). The web client still decides
+what is announced and how it reads (level and mute of the conversation, the
+window not in front, "Nachrichteninhalt verbergen" from #268) and hands over
+a tag, a title and a text; one notification per conversation, a newer
+message replaces the older, and a conversation that is being read takes its
+notification down. They stay silent, the page plays its own cue. A click
+brings the window to the front (on Wayland with the activation token the
+service sends along, which Hyprland, KDE and GNOME need for that) and opens
+the conversation. On Linux the notification names the app through
+`desktop-entry=gelabber-desktop` and shows the icon of the pacman package
+(or the archive's `icon.png`). On Windows the app writes its name and icon
+(`icon.png` next to the binary) under
+`HKCU\Software\Classes\AppUserModelId\io.github.till-und-scholler-ai-slop.gelabber`
+at every start, which an unpackaged app needs for toasts; "Gelabber" then
+appears in the system's notification settings. A click reaches the app only
+while it runs, so the app takes its notifications down when it ends (and on
+Windows also when it starts, after a crash). With the desktop app the
+"window not in front" notifications are on by default.
+
+Without a notification service (`notify_info` answers `available: false`)
+and in an app older than this, the page falls back to web notifications: the
+app allows them for the server origin when the page asks (WebKitGTK refuses
+them otherwise), and on Linux it starts every web process with that origin
+allowed, since WebKitGTK does not keep the answer. WebView2 keeps it in its
+profile. WebKitGTK needs `libwebkit2gtk-4.1`.
 On the NVIDIA driver the app sets `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1`
 before GTK starts: WebKitGTK's DMA-BUF renderer otherwise fails under Wayland
 with "Error 71 (Protocol error) dispatching to Wayland display". Handing its

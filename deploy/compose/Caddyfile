@@ -1,12 +1,16 @@
 {
 	auto_https off
-	# This Caddy's peer is always the Docker gateway or the operator's proxy
-	# in front. Peers in GELABBER_TRUSTED_PROXIES (Compose default
-	# private_ranges, empty trusts none) may report the client in
-	# X-Forwarded-For; strict mode reads it right to left and skips trusted
-	# hops, so an entry the client wrote itself never wins unless the
-	# client's own address is trusted too (a LAN client under
-	# private_ranges, see deploy/README.md, "Client addresses").
+	# This Caddy's peer is the operator's proxy in front, the Docker gateway
+	# (on Docker Desktop an address of its internal network) or, with a
+	# widened GELABBER_HTTP_BIND, the client itself. Peers in
+	# GELABBER_TRUSTED_PROXIES (Compose default private_ranges, empty trusts
+	# none) may report the client in X-Forwarded-For; strict mode reads it
+	# right to left and skips trusted hops, so an entry the client wrote
+	# itself never wins unless the client's own address is trusted too: a
+	# LAN client under private_ranges, or any client where Docker hands
+	# connections over from one private address (rootless Docker, Docker
+	# Desktop, IPv6 to an IPv4-only network); see deploy/README.md, "Client
+	# addresses".
 	servers {
 		trusted_proxies static {$GELABBER_TRUSTED_PROXIES}
 		trusted_proxies_strict

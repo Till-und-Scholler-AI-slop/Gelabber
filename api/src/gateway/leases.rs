@@ -817,6 +817,73 @@ impl VoiceRoster {
         Ok(())
     }
 }
+impl VoiceRoster {
+    /// One roster pass a second for the whole process, not one per socket.
+    pub(super) async fn run_rosters(&self) {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            self.refresh_rosters().await;
+        }
+    }
+
+    /// Read each watched server's roster once and queue it to every local
+    /// socket on that server whose last roster differs. A DM has no roster;
+    /// its subscribe already sent the empty one. Frames are authorized again
+    /// at dequeue like every other scoped frame. A server whose read fails
+    /// keeps its last roster until the next pass.
+    pub async fn refresh_rosters(&self) {
+        use futures_util::StreamExt;
+        let servers: HashSet<Uuid> = self
+            .connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .values()
+            .flat_map(|socket| socket.servers.difference(&socket.dms).copied())
+            .collect();
+        if servers.is_empty() {
+            return;
+        }
+        let snapshots: Vec<(Uuid, Vec<VoiceEntry>)> = futures_util::stream::iter(servers)
+            .map(|server| async move {
+                let snapshot = tokio::time::timeout(
+                    std::time::Duration::from_secs(1),
+                    self.voice_snapshot(server),
+                )
+                .await;
+                match snapshot {
+                    Ok(Ok(snapshot)) => Some((server, snapshot)),
+                    Ok(Err(err)) => {
+                        tracing::debug!(error = err.code(), %server, "voice roster not read");
+                        None
+                    }
+                    Err(_) => {
+                        tracing::debug!(%server, "voice roster read timed out");
+                        None
+                    }
+                }
+            })
+            .buffer_unordered(16)
+            .filter_map(std::future::ready)
+            .collect()
+            .await;
+        let mut sockets = self.connections.inner.sockets.write().await;
+        for socket in sockets.values_mut() {
+            for (server, snapshot) in &snapshots {
+                if socket.servers.contains(server)
+                    && !socket.dms.contains(server)
+                    && socket.voice_rosters.get(server) != Some(snapshot)
+                {
+                    socket.voice_rosters.insert(*server, snapshot.clone());
+                    socket.send(ServerFrame::voice_snap(*server, snapshot.clone()));
+                }
+            }
+        }
+    }
+}
 impl Gateway {
     pub async fn claim_live_hint(&self, user: Uuid, channel: Uuid) -> Result<bool, ApiError> {
         self.voice.claim_live_hint(user, channel).await
@@ -824,28 +891,14 @@ impl Gateway {
     pub async fn release_live_hint(&self, user: Uuid, channel: Uuid) -> Result<(), ApiError> {
         self.voice.release_live_hint(user, channel).await
     }
+    /// Renew this socket's voice seats. Rosters go out from the process-wide
+    /// pass ([`VoiceRoster::refresh_rosters`]).
     pub async fn refresh_voice(&self, id: ConnId) -> Result<(), ApiError> {
-        self.voice.refresh(id).await?;
-        // A DM has no voice roster; its subscribe already sent the empty one.
-        let servers: Vec<Uuid> = self
-            .connections
-            .inner
-            .sockets
-            .read()
-            .await
-            .get(&id)
-            .map(|socket| socket.servers.difference(&socket.dms).copied().collect())
-            .unwrap_or_default();
-        for server in servers {
-            let snapshot = self.voice.voice_snapshot(server).await?;
-            if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id)
-                && socket.voice_rosters.get(&server) != Some(&snapshot)
-            {
-                socket.voice_rosters.insert(server, snapshot.clone());
-                socket.send(ServerFrame::voice_snap(server, snapshot));
-            }
-        }
-        Ok(())
+        self.voice.refresh(id).await
+    }
+
+    pub async fn refresh_rosters(&self) {
+        self.voice.refresh_rosters().await
     }
 }
 
@@ -1141,12 +1194,12 @@ mod tests {
         a.join_voice(id, u, s, c).await.unwrap();
         let (watcher, mut rx) = socket(&b, Uuid::new_v4()).await;
         b.watch_server(watcher, s).await;
-        b.refresh_voice(watcher).await.unwrap();
+        b.refresh_rosters().await;
         assert!(
             matches!(rx.recv().await,Some(ServerFrame::Sig { snap: Some(rows), .. }) if rows.len()==1)
         );
         tokio::time::sleep(Duration::from_millis(5200)).await;
-        b.refresh_voice(watcher).await.unwrap();
+        b.refresh_rosters().await;
         assert!(
             matches!(rx.recv().await,Some(ServerFrame::Sig { snap: Some(rows), .. }) if rows.is_empty())
         );
@@ -1165,7 +1218,13 @@ mod tests {
             tokio::time::timeout(Duration::from_millis(200), g.refresh_voice(id)).await,
             Ok(Ok(()))
         ));
-        // The roster snapshot still runs for a socket without a seat.
+        // The roster pass does not wait on it either, and still reaches a
+        // socket without a seat.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), g.refresh_rosters())
+                .await
+                .is_ok()
+        );
         assert!(
             matches!(rx.try_recv(), Ok(ServerFrame::Sig { s: got, snap: Some(rows), .. }) if got == s && rows.is_empty())
         );
@@ -1204,7 +1263,7 @@ mod tests {
         g.mark_dm(watcher, dm).await;
         g.watch_server(watcher, dm).await;
         g.watch_server(watcher, s).await;
-        g.refresh_voice(watcher).await.unwrap();
+        g.refresh_rosters().await;
         let mut snaps = HashMap::new();
         while let Ok(frame) = rx.try_recv() {
             // Pub/Sub join and publish frames carry no snapshot.
@@ -1221,6 +1280,48 @@ mod tests {
         let live: HashMap<Uuid, bool> = snaps[&s].iter().map(|row| (row.u, row.l)).collect();
         assert_eq!(live, HashMap::from([(a, true), (b, false)]));
         for id in [sa, sb, sd, watcher] {
+            g.detach(id).await;
+        }
+    }
+
+    /// One pass reads the roster once for every socket on the server and
+    /// sends each socket only what changed for it.
+    #[tokio::test]
+    async fn roster_pass_reaches_every_watcher_once_per_change() {
+        let g = gateway();
+        let (s, c) = (Uuid::new_v4(), Uuid::new_v4());
+        let (first, mut rx1) = socket(&g, Uuid::new_v4()).await;
+        let (second, mut rx2) = socket(&g, Uuid::new_v4()).await;
+        for id in [first, second] {
+            g.watch_server(id, s).await;
+        }
+        let snaps = |rx: &mut mpsc::Receiver<ServerFrame>| {
+            let mut rows = Vec::new();
+            while let Ok(frame) = rx.try_recv() {
+                if let ServerFrame::Sig {
+                    s: got,
+                    snap: Some(snap),
+                    ..
+                } = frame
+                {
+                    assert_eq!(got, s);
+                    rows.push(snap.len());
+                }
+            }
+            rows
+        };
+        g.refresh_rosters().await;
+        g.refresh_rosters().await;
+        assert_eq!(snaps(&mut rx1), vec![0]);
+        assert_eq!(snaps(&mut rx2), vec![0]);
+        let u = Uuid::new_v4();
+        let (member, _rx) = socket(&g, u).await;
+        g.join_voice(member, u, s, c).await.unwrap();
+        g.refresh_rosters().await;
+        g.refresh_rosters().await;
+        assert_eq!(snaps(&mut rx1), vec![1]);
+        assert_eq!(snaps(&mut rx2), vec![1]);
+        for id in [first, second, member] {
             g.detach(id).await;
         }
     }
