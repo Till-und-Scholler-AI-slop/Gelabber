@@ -43,7 +43,7 @@ import { Button } from "../components/ui/Button.tsx";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
 import { PasswordField } from "../components/ui/PasswordField.tsx";
 import { useDebouncedValue } from "../components/useDebouncedValue.ts";
-import { leaveVoice, stopWatching } from "../voice/session.ts";
+import { leaveVoice } from "../voice/session.ts";
 import { ProfileCardForm } from "./ProfileCardForm.tsx";
 import "./settings.css";
 
@@ -340,7 +340,6 @@ function AccountSecurity({ email }: { email: string }) {
     )
       return;
     leaveVoice();
-    stopWatching();
     void logoutEverywhere();
     void navigate({ to: "/login" });
   };

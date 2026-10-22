@@ -21,8 +21,6 @@ vi.mock("./session.ts", () => ({
   useVoice: (select?: (state: VoiceState) => unknown) =>
     select ? select(fixture.voice) : fixture.voice,
   joinVoice: vi.fn(),
-  stopWatching: vi.fn(),
-  watchLive: vi.fn(),
   retryPlayback: vi.fn(),
   leaveVoice: vi.fn(),
   toggleCamera: vi.fn(),
@@ -147,22 +145,14 @@ beforeEach(() => {
     deafened: false,
     camera: false,
     sharing: false,
-    live: false,
     sourceWatchSupported: true,
-    sourceAudio: { s: "off", l: "off" },
-    sourceAudioNote: { s: null, l: null },
+    sourceAudio: { s: "off" },
+    sourceAudioNote: { s: null },
     sourceSubscriptions: {},
     localCamera: null,
     localScreen: null,
-    localLive: null,
     remote: {},
     participants: {},
-    watching: true,
-    watchServerId: "a",
-    watchChannelId: "stage",
-    watchChannelName: "Stage A",
-    watchPublisherId: "alice",
-    watchStream: stream,
     playbackBlocked: false,
   };
   fixture.roster = {};
@@ -184,7 +174,6 @@ afterEach(() => {
 
 describe("active media UI", () => {
   it("says who is live outside the room, with no pictures and no watching from outside", () => {
-    fixture.voice.watching = false;
     fixture.roster = {
       a: { alice: { channelId: "stage", muted: false, deafened: false } },
     };
@@ -221,7 +210,6 @@ describe("active media UI", () => {
       status: "joined",
       serverId: "a",
       channelId: "stage",
-      watching: false,
       remote: { bob: { l: stream } },
     });
     const html = renderToStaticMarkup(
@@ -248,7 +236,6 @@ describe("active media UI", () => {
       status: "joined",
       serverId: "a",
       channelId: "stage",
-      watching: false,
       participants: { alice: { pubs: ["s"] }, bob: { pubs: ["l"] } },
       remote: { alice: { s: stream }, bob: { l: { id: "older-app" } } },
     });
@@ -267,7 +254,6 @@ describe("active media UI", () => {
 
   it("shows real avatars and disconnected self, without fictional activity or capture", () => {
     fixture.live = {};
-    fixture.voice.watching = false;
     fixture.roster = {
       a: {
         alice: { channelId: "stage", muted: true, deafened: false },
@@ -330,7 +316,6 @@ describe("active media UI", () => {
       channelId: "stage",
       muted: true,
       deafened: true,
-      watching: false,
     });
     const html = renderToStaticMarkup(
       <VoiceRoom server={server} channelId="stage" channelName="Wohnzimmer" />,
@@ -358,7 +343,6 @@ describe("active media UI", () => {
       channelId: "stage",
       participants: { alice: { pubs: ["v", "s"] } },
       remote: { alice: { v: stream, s: stream } },
-      watching: false,
     });
     const render = (id: string, channelId = "stage") =>
       renderToStaticMarkup(
@@ -387,7 +371,7 @@ describe("active media UI", () => {
     expect(render("a", "other")).not.toContain('data-source="source-from-a"');
   });
 
-  it("respects join rights and keeps the Watch stop action in the persistent bar", () => {
+  it("respects join rights, and offers no watching from outside", () => {
     const html = renderToStaticMarkup(
       <VoiceRoom
         server={{ ...server, permissions: [] }}
@@ -397,22 +381,15 @@ describe("active media UI", () => {
     );
     expect(html).not.toContain('aria-label="Beitreten"');
     expect(html).toContain("kein Recht");
-    expect(html).not.toContain("Nicht mehr zuschauen");
-    expect(renderToStaticMarkup(<VoiceSessionControls />)).toContain(
-      "Nicht mehr zuschauen",
-    );
+    expect(html).not.toMatch(/zuschauen|Zuschauen/);
     expect(html).toContain("Mikrofon testen");
   });
 
-  it("keeps global Watch stop and the original channel name outside a room", () => {
+  it("shows no bar outside a call", () => {
     const html = renderToStaticMarkup(<VoiceSessionControls />);
     expect(html).toContain('role="status" class="sr-only"');
-    expect(html).toContain('aria-label="Aktive Medien"');
-    expect(html).toContain("Stage A");
-    expect(html).toContain("Nicht mehr zuschauen");
-    expect(html).not.toContain("Verlassen");
-    expect(html).toContain('aria-label="Wiedergabe-Lautstärke"');
-    expect(html).toContain('aria-label="Voice-Einstellungen"');
+    expect(html).not.toContain('aria-label="Aktive Medien"');
+    expect(html).not.toMatch(/zuschauen|Zuschauen/);
   });
   it("uses active Voice server rights and always exposes Live stop and Leave", () => {
     Object.assign(fixture.voice, {
@@ -455,7 +432,6 @@ describe("active media UI", () => {
       status: "joined",
       serverId: "a",
       channelId: "stage",
-      watching: false,
     });
     const tags = () => {
       const html = renderToStaticMarkup(<VoiceControls canLive />);
@@ -489,7 +465,6 @@ describe("active media UI", () => {
       status: "joined",
       serverId: "a",
       channelId: "stage",
-      watching: false,
     });
     const html = renderToStaticMarkup(<LiveMenuItems canLive />);
     expect(html.match(/role="menuitem"/g)).toHaveLength(1);
@@ -511,7 +486,6 @@ describe("active media UI", () => {
       status: "joined",
       serverId: "a",
       channelId: "stage",
-      watching: false,
       mic: "denied",
     });
     const render = () => renderToStaticMarkup(<VoiceControls />);
@@ -541,7 +515,6 @@ describe("active media UI", () => {
       serverId: "a",
       channelId: "stage",
       channelName: "Zocken",
-      watching: false,
       connection: "connecting",
     });
     fixture.server = { ...server, name: "Spieleabend" } as ServerDetail;
@@ -563,7 +536,6 @@ describe("active media UI", () => {
   it("offers a lost call again after the session left it", () => {
     Object.assign(fixture.voice, {
       status: "idle",
-      watching: false,
       connection: "failed",
       lostCall: { serverId: "a", channelId: "stage", channelName: "Zocken" },
     });
@@ -633,7 +605,6 @@ describe("active media UI", () => {
       status: "joined",
       serverId: "a",
       channelId: "stage",
-      watching: false,
       muted: true,
       participants: { alice: { pubs: ["v"] } },
       remote: { alice: { v: stream } },
@@ -689,7 +660,6 @@ describe("active media UI", () => {
 
   it("seats the first one in, and keeps everyone's volume one press away", () => {
     fixture.live = {};
-    fixture.voice.watching = false;
     const members = ["alice", "bob"].map((id) => ({
       user_id: id,
       name: id[0]!.toUpperCase() + id.slice(1),

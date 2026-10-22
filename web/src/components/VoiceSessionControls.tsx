@@ -9,14 +9,12 @@ import {
   joinVoice,
   leaveVoice,
   retryPlayback,
-  stopWatching,
   useVoice,
   type VoiceState,
 } from "../voice/session.ts";
 import { HoldToTalk, VoiceControls } from "./VoiceControls.tsx";
 import {
   CloseIcon,
-  GearIcon,
   HangUpIcon,
   SignalIcon,
   SpeakerIcon,
@@ -68,7 +66,6 @@ export function VoiceSessionControls() {
   const sourceAudioShare = useMediaSettings((s) => s.sourceAudioShare);
   const sourceAudioApp = useMediaSettings((s) => s.sourceAudioApp);
   const patch = useMediaSettings((s) => s.patch);
-  const openSettings = useMediaSettings((s) => s.openDialog);
   const capable = useCapabilities();
   const pushToTalk = usePushToTalk((s) => s.active);
   const touch = useMediaQuery("(pointer: coarse)");
@@ -77,10 +74,7 @@ export function VoiceSessionControls() {
   useCallShortcuts(voice.status === "joined");
   const lost = voice.status !== "joined" ? voice.lostCall : null;
   const visible =
-    voice.status === "joined" ||
-    voice.watching ||
-    voice.playbackBlocked ||
-    lost !== null;
+    voice.status === "joined" || voice.playbackBlocked || lost !== null;
   useEffect(() => {
     const dock = dockRef.current;
     if (!visible || !dock) return;
@@ -119,14 +113,11 @@ export function VoiceSessionControls() {
   if (!visible) return announcement;
 
   // Stream sound only matters while someone's Live is playing here.
-  const streamAudio =
-    voice.watching ||
+  const showMix =
+    joined !== null &&
     Object.values(voice.sourceSubscriptions).some(
       (source) => source.s || source.l,
     );
-  const showMix = joined
-    ? streamAudio
-    : voice.watching || voice.playbackBlocked;
   const notice = notices.find((candidate) => !dismissed.has(candidate.key));
 
   return (
@@ -181,38 +172,10 @@ export function VoiceSessionControls() {
           </div>
         ) : null}
         {joined && pushToTalk && touch ? <HoldToTalk /> : null}
-        {voice.watching && voice.watchServerId && voice.watchChannelId ? (
-          <div className="voice-session-watch">
-            <span className="voice-session-live">Live</span>
-            <Link
-              to="/s/$serverId/c/$channelId"
-              params={{
-                serverId: voice.watchServerId,
-                channelId: voice.watchChannelId,
-              }}
-              className="voice-session-link"
-              aria-label={`Zuschauen: ${voice.watchChannelName ?? "Live"}`}
-            >
-              <strong>Du schaust zu</strong>
-              <span>{voice.watchChannelName ?? "Live"}</span>
-            </Link>
-            <button
-              type="button"
-              onClick={() => stopWatching()}
-              aria-label="Nicht mehr zuschauen"
-              title="Nicht mehr zuschauen"
-              className="voice-control voice-control-compact"
-            >
-              <CloseIcon size={17} />
-            </button>
-          </div>
-        ) : null}
         {showMix ? (
           <div className="voice-session-mix">
             <div className="voice-session-mix-row">
-              <label htmlFor={`${ids}-voices`}>
-                {joined ? "Stimmen" : "Lautstärke"}
-              </label>
+              <label htmlFor={`${ids}-voices`}>Stimmen</label>
               <input
                 id={`${ids}-voices`}
                 type="range"
@@ -227,59 +190,45 @@ export function VoiceSessionControls() {
                 }
                 className="lr-range"
               />
-              {joined ? (
-                <span aria-hidden="true" />
-              ) : (
-                <button
-                  type="button"
-                  aria-label="Voice-Einstellungen"
-                  title="Voice-Einstellungen"
-                  onClick={() => openSettings()}
-                  className="voice-control voice-control-compact"
-                >
-                  <GearIcon size={16} />
-                </button>
-              )}
+              <span aria-hidden="true" />
             </div>
-            {streamAudio ? (
-              <div className="voice-session-mix-row" aria-label="Stream-Ton">
-                <label htmlFor={`${ids}-stream`}>Stream-Ton</label>
-                <input
-                  id={`${ids}-stream`}
-                  type="range"
-                  min={0}
-                  max={MAX_PLAYBACK_VOLUME * 100}
-                  value={Math.round(sourceVolume * 100)}
-                  style={rangeFill(sourceVolume)}
-                  aria-label="Stream-Ton-Lautstärke"
-                  disabled={voice.deafened}
-                  onChange={(event) =>
-                    patch({
-                      sourceAudioVolume: Number(event.target.value) / 100,
-                    })
-                  }
-                  className="lr-range"
-                />
-                <button
-                  type="button"
-                  className={`voice-control voice-control-compact${sourceMuted ? " is-off" : ""}`}
-                  aria-pressed={sourceMuted}
-                  aria-label="Stream-Ton stummschalten"
-                  title={
-                    sourceMuted
-                      ? "Stream-Ton wieder einschalten"
-                      : "Stream-Ton stummschalten"
-                  }
-                  onClick={() => patch({ sourceAudioMuted: !sourceMuted })}
-                >
-                  {sourceMuted ? (
-                    <SpeakerOffIcon size={16} />
-                  ) : (
-                    <SpeakerIcon size={16} />
-                  )}
-                </button>
-              </div>
-            ) : null}
+            <div className="voice-session-mix-row" aria-label="Stream-Ton">
+              <label htmlFor={`${ids}-stream`}>Stream-Ton</label>
+              <input
+                id={`${ids}-stream`}
+                type="range"
+                min={0}
+                max={MAX_PLAYBACK_VOLUME * 100}
+                value={Math.round(sourceVolume * 100)}
+                style={rangeFill(sourceVolume)}
+                aria-label="Stream-Ton-Lautstärke"
+                disabled={voice.deafened}
+                onChange={(event) =>
+                  patch({
+                    sourceAudioVolume: Number(event.target.value) / 100,
+                  })
+                }
+                className="lr-range"
+              />
+              <button
+                type="button"
+                className={`voice-control voice-control-compact${sourceMuted ? " is-off" : ""}`}
+                aria-pressed={sourceMuted}
+                aria-label="Stream-Ton stummschalten"
+                title={
+                  sourceMuted
+                    ? "Stream-Ton wieder einschalten"
+                    : "Stream-Ton stummschalten"
+                }
+                onClick={() => patch({ sourceAudioMuted: !sourceMuted })}
+              >
+                {sourceMuted ? (
+                  <SpeakerOffIcon size={16} />
+                ) : (
+                  <SpeakerIcon size={16} />
+                )}
+              </button>
+            </div>
           </div>
         ) : null}
         {voice.playbackBlocked && !voice.deafened ? (

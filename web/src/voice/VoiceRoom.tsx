@@ -134,10 +134,10 @@ export function VoiceRoom({
     const cameraOn = self ? voice.camera : pubs.includes("v");
     const screen = self ? voice.sharing : pubs.includes("s");
     // An older client's Go Live shows like any other Live.
-    const goLive = self ? voice.live : pubs.includes("l");
+    const goLive = !self && pubs.includes("l");
     for (const [source, on, stream] of [
       ["s", screen, self ? voice.localScreen : voice.remote[id]?.s],
-      ["l", goLive, self ? voice.localLive : voice.remote[id]?.l],
+      ["l", goLive, voice.remote[id]?.l],
     ] as const) {
       if (!on) continue;
       shares.push({
@@ -171,16 +171,16 @@ export function VoiceRoom({
   const isLive = (id: string) =>
     Boolean(livePeople[id]) ||
     shares.some((tile) => tile.userId === id) ||
-    (id === me && here && (voice.sharing || voice.live));
+    (id === me && here && voice.sharing);
 
   const sourceProps = (tile: StageTile) => {
     if (!tile.source) return {};
     const kind = tile.source;
     if (tile.userId === me && here) {
-      const status = voice.sourceAudio[kind];
+      const status = voice.sourceAudio.s;
       // The reason stands next to the call controls. A picker withholds
       // sound in a browser only; the desktop app captures it by itself.
-      const silent = voice.sourceAudioNote[kind]?.silent;
+      const silent = voice.sourceAudioNote.s?.silent;
       return {
         sourceAudioNotice:
           status === "unavailable"

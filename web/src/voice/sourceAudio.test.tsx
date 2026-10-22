@@ -14,14 +14,11 @@ vi.mock("./session.ts", () => ({
     select ? select(fixture.voice) : fixture.voice,
   leaveVoice: vi.fn(),
   retryPlayback: vi.fn(),
-  stopWatching: vi.fn(),
   toggleCamera: vi.fn(),
   toggleDeafen: vi.fn(),
-  toggleGoLive: vi.fn(),
   toggleMute: vi.fn(),
   toggleShare: vi.fn(),
   joinVoice: vi.fn(),
-  watchLive: vi.fn(),
   toggleSourceWatch: vi.fn(),
   retryMicrophone: vi.fn(),
   dismissLostCall: vi.fn(),
@@ -137,14 +134,12 @@ beforeEach(() => {
     camera: false,
     sharing: false,
     live: false,
-    sourceAudio: { s: "off", l: "off" },
-    sourceAudioNote: { s: null, l: null },
+    sourceAudio: { s: "off" },
+    sourceAudioNote: { s: null },
     sourceSubscriptions: {},
     localScreen: null,
-    localLive: null,
     participants: {},
     remote: {},
-    watching: false,
     playbackBlocked: false,
   } as unknown as VoiceState;
 });
@@ -421,7 +416,7 @@ describe("stream sound that also carries the call", () => {
       localScreen: { id: "capture" } as MediaStream,
     });
     expect(session()).not.toContain(SOURCE_AUDIO_CARRIES_CALL);
-    fixture.voice.sourceAudio = { s: "sharing", l: "off" };
+    fixture.voice.sourceAudio = { s: "sharing" };
     expect(session()).toContain(SOURCE_AUDIO_CARRIES_CALL);
   });
 
@@ -451,7 +446,7 @@ describe("stream sound that also carries the call", () => {
   it("is no topic outside a call", async () => {
     await cases.linuxApp05();
     choose({ sourceAudioShare: "on" });
-    Object.assign(fixture.voice, { status: "idle", watching: true });
+    Object.assign(fixture.voice, { status: "idle" });
     expect(session()).not.toContain(SOURCE_AUDIO_CARRIES_CALL);
   });
 });
@@ -466,20 +461,15 @@ describe("whose sound a running share sends", () => {
     expect(session()).not.toContain("Dein Stream sendet");
     Object.assign(fixture.voice, { sharing: true, localScreen: running });
     expect(session()).not.toContain("Dein Stream sendet");
-    fixture.voice.sourceAudio = { s: "sharing", l: "off" };
+    fixture.voice.sourceAudio = { s: "sharing" };
     expect(session()).toContain(EVERY);
     // Chosen or not: it is the same sound.
     choose({ sourceAudioShare: "on" });
     expect(session()).toContain(EVERY);
-    // Go Live alike.
-    fixture.voice.sourceAudio = { s: "off", l: "sharing" };
-    Object.assign(fixture.voice, { sharing: false, localScreen: null });
-    Object.assign(fixture.voice, { live: true, localLive: running });
-    expect(session()).toContain(EVERY);
     // Gone with the sound.
-    fixture.voice.sourceAudio = { s: "off", l: "off" };
+    fixture.voice.sourceAudio = { s: "off" };
     expect(session()).not.toContain("Dein Stream sendet");
-    fixture.voice.sourceAudio = { s: "off", l: "unavailable" };
+    fixture.voice.sourceAudio = { s: "unavailable" };
     expect(session()).not.toContain("Dein Stream sendet");
   });
 
@@ -487,7 +477,7 @@ describe("whose sound a running share sends", () => {
     await cases.linuxApp06();
     choose({ sourceAudioApp: "spotify" });
     Object.assign(fixture.voice, { sharing: true, localScreen: running });
-    fixture.voice.sourceAudio = { s: "sharing", l: "off" };
+    fixture.voice.sourceAudio = { s: "sharing" };
     expect(session()).not.toContain("Dein Stream sendet");
   });
 
@@ -497,7 +487,7 @@ describe("whose sound a running share sends", () => {
       await cases[name]();
       choose({ sourceAudioShare: "on" });
       Object.assign(fixture.voice, { sharing: true, localScreen: running });
-      fixture.voice.sourceAudio = { s: "sharing", l: "off" };
+      fixture.voice.sourceAudio = { s: "sharing" };
       const html = session();
       expect(html).toContain("Dein Stream sendet den Ton aller Anwendungen.");
       expect(html).toContain(SOURCE_AUDIO_CARRIES_CALL);
@@ -508,7 +498,7 @@ describe("whose sound a running share sends", () => {
     await cases.desktopBrowser();
     choose({ sourceAudioShare: "on" });
     Object.assign(fixture.voice, { sharing: true, localScreen: running });
-    fixture.voice.sourceAudio = { s: "sharing", l: "off" };
+    fixture.voice.sourceAudio = { s: "sharing" };
     expect(session()).not.toContain("Dein Stream sendet");
   });
 });
@@ -516,19 +506,17 @@ describe("whose sound a running share sends", () => {
 describe("why a share has no sound", () => {
   it("says one thing at a time, the most important first", async () => {
     await cases.desktopBrowser();
-    fixture.voice.sourceAudio = { s: "unavailable", l: "ended" };
+    fixture.voice.sourceAudio = { s: "unavailable" };
     const html = session();
     expect(html).toContain("Der Browser hat keinen Stream-Ton freigegeben.");
-    expect(html).not.toContain("Der Stream-Ton wurde beendet.");
     expect(html.match(/voice-session-notice/g)).toHaveLength(1);
     // Sound that is missing for a reason outranks a hint about scope.
     expect(
       dockNotices(
         {
-          sourceAudio: { s: "ended", l: "sharing" },
-          sourceAudioNote: { s: null, l: { silent: "spotify" } },
+          sourceAudio: { s: "ended" },
+          sourceAudioNote: { s: { silent: "spotify" } },
           localScreen: null,
-          localLive: null,
         },
         {
           desktop: true,
@@ -546,10 +534,9 @@ describe("why a share has no sound", () => {
     expect(
       dockNotices(
         {
-          sourceAudio: { s: "off", l: "off" },
-          sourceAudioNote: { s: null, l: null },
+          sourceAudio: { s: "off" },
+          sourceAudioNote: { s: null },
           localScreen: { id: "screen" } as MediaStream,
-          localLive: null,
         },
         {
           desktop: false,
@@ -564,28 +551,23 @@ describe("why a share has no sound", () => {
 
   it("gives the desktop app's own reason", async () => {
     await cases.linuxApp06();
-    fixture.voice.sourceAudio = { s: "unavailable", l: "off" };
+    fixture.voice.sourceAudio = { s: "unavailable" };
     fixture.voice.sourceAudioNote = {
       s: { failed: "cannot connect to PipeWire" },
-      l: null,
     };
     const html = session();
     expect(html).toContain(
       "Der Stream-Ton konnte nicht aufgenommen werden (cannot connect to PipeWire). Das Video läuft weiter.",
     );
     expect(html).not.toContain("Browser");
-    // Go Live reports the same way.
-    fixture.voice.sourceAudio = { s: "off", l: "unavailable" };
-    fixture.voice.sourceAudioNote = { s: null, l: { failed: "no sound" } };
-    expect(session()).toContain("aufgenommen werden (no sound).");
   });
 
   it("names the chosen application that plays nothing", async () => {
     await cases.linuxApp06();
     choose({ sourceAudioApp: "spotify" });
-    fixture.voice.sourceAudio = { s: "sharing", l: "off" };
+    fixture.voice.sourceAudio = { s: "sharing" };
     expect(session()).not.toContain("kommt gerade kein Ton");
-    fixture.voice.sourceAudioNote = { s: { silent: "spotify" }, l: null };
+    fixture.voice.sourceAudioNote = { s: { silent: "spotify" } };
     const html = session();
     expect(html).toContain("Von „spotify“ kommt gerade kein Ton.");
     expect(html).not.toContain("Das Video läuft weiter");
@@ -601,16 +583,14 @@ describe("why a share has no sound", () => {
     choose({ sourceAudioShare: "on" });
     expect(session()).toContain(note);
     // A share that has its sound, or lost it, says that instead.
-    fixture.voice.sourceAudio = { s: "sharing", l: "off" };
+    fixture.voice.sourceAudio = { s: "sharing" };
     expect(session()).not.toContain(note);
-    fixture.voice.sourceAudio = { s: "unavailable", l: "off" };
+    fixture.voice.sourceAudio = { s: "unavailable" };
     expect(session()).not.toContain(note);
-    // Go Live alike; a picker that is still open is no running share.
-    fixture.voice.sourceAudio = { s: "off", l: "off" };
-    Object.assign(fixture.voice, { localScreen: null, live: true });
+    // A picker that is still open is no running Live.
+    fixture.voice.sourceAudio = { s: "off" };
+    Object.assign(fixture.voice, { localScreen: null });
     expect(session()).not.toContain(note);
-    Object.assign(fixture.voice, { localLive: running });
-    expect(session()).toContain(note);
   });
 
   it("desktop app: nothing waits for the next Live", async () => {
@@ -648,19 +628,18 @@ describe("the own Live's tile", () => {
     await cases.desktopBrowser();
     Object.assign(fixture.voice, { sharing: true, localScreen: running });
     expect(tile(LIVE)).toBe("");
-    fixture.voice.sourceAudio = { s: "sharing", l: "off" };
+    fixture.voice.sourceAudio = { s: "sharing" };
     expect(tile(LIVE)).toBe("Ton wird mitgesendet");
-    fixture.voice.sourceAudio = { s: "unavailable", l: "off" };
+    fixture.voice.sourceAudio = { s: "unavailable" };
     expect(tile(LIVE)).toBe("Kein Stream-Ton freigegeben · Video läuft weiter");
   });
 
   it("desktop app: blames no picker for sound the app could not capture", async () => {
     await cases.linuxApp06();
     Object.assign(fixture.voice, { sharing: true, localScreen: running });
-    fixture.voice.sourceAudio = { s: "unavailable", l: "off" };
+    fixture.voice.sourceAudio = { s: "unavailable" };
     fixture.voice.sourceAudioNote = {
       s: { failed: "cannot connect to PipeWire" },
-      l: null,
     };
     expect(tile(LIVE)).toBe(
       "Stream-Ton nicht aufgenommen · Video läuft weiter",
@@ -672,9 +651,9 @@ describe("the own Live's tile", () => {
   it("claims no sound while the chosen application is silent", async () => {
     await cases.linuxApp06();
     Object.assign(fixture.voice, { sharing: true, localScreen: running });
-    fixture.voice.sourceAudio = { s: "sharing", l: "off" };
+    fixture.voice.sourceAudio = { s: "sharing" };
     expect(tile(LIVE)).toBe("Ton wird mitgesendet");
-    fixture.voice.sourceAudioNote = { s: { silent: "spotify" }, l: null };
+    fixture.voice.sourceAudioNote = { s: { silent: "spotify" } };
     expect(tile(LIVE)).toBe("Kein Ton von „spotify“");
   });
 });

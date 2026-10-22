@@ -458,15 +458,11 @@ html[data-compact-rooms="true"] .voice-room-seat {
   gap: 6px;
   min-width: 0;
 }
-.voice-session-head,
-.voice-session-watch {
+.voice-session-head {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 8px;
-  min-width: 0;
-}
-.voice-session-head {
-  flex: 1;
   min-width: 96px;
 }
 @media (min-width: 801px) {
@@ -562,20 +558,6 @@ html[data-compact-rooms="true"] .voice-room-seat {
 a.voice-session-link:hover > span {
   color: var(--lr-text);
   text-decoration: underline;
-}
-.voice-session-watch .voice-session-link > strong {
-  color: var(--lr-text);
-}
-.voice-session-live {
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 9px;
-  background: var(--lr-danger-bg);
-  color: var(--lr-on-danger);
-  font: var(--lr-type-caps);
 }
 /* Connection quality: four bars, lit up to the level. */
 .voice-quality-bars {
@@ -1134,9 +1116,6 @@ a.voice-session-link:hover > span {
   }
   .voice-session-dock .voice-controls {
     gap: 4px;
-  }
-  .voice-session-watch {
-    flex-wrap: wrap;
   }
 }
 .voice-room button:focus-visible,

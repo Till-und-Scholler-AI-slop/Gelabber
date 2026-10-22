@@ -10,10 +10,8 @@ vi.mock("./session.ts", () => ({
     select ? select(fixture.voice) : fixture.voice,
   leaveVoice: vi.fn(),
   retryPlayback: vi.fn(),
-  stopWatching: vi.fn(),
   toggleCamera: vi.fn(),
   toggleDeafen: vi.fn(),
-  toggleGoLive: vi.fn(),
   toggleMute: vi.fn(),
   toggleShare: vi.fn(),
   retryMicrophone: vi.fn(),
@@ -98,10 +96,9 @@ beforeEach(() => {
     deafened: false,
     camera: false,
     sharing: false,
-    sourceAudio: { s: "off", l: "off" },
-    sourceAudioNote: { s: null, l: null },
+    sourceAudio: { s: "off" },
+    sourceAudioNote: { s: null },
     sourceSubscriptions: {},
-    watching: false,
     playbackBlocked: false,
   } as unknown as VoiceState;
 });
@@ -308,7 +305,7 @@ describe("capture controls", () => {
 
 describe("stream sound notice", () => {
   const notice = () => {
-    fixture.voice.sourceAudio = { s: "unavailable", l: "off" };
+    fixture.voice.sourceAudio = { s: "unavailable" };
     return renderToStaticMarkup(<VoiceSessionControls />);
   };
 
