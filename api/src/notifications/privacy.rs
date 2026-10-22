@@ -1,6 +1,6 @@
 //! `GET` and `PUT /api/notification-privacy` (issue #268): whether the
 //! account's notifications carry the message. With `hide_content` a push says
-//! only who wrote (`push::hidden_title`), and the pages show the same text.
+//! only who wrote (`i18n::new_message_from`), and the pages show the same text.
 //! A change goes to the account's other sockets (`ns`), which fetch again.
 
 use axum::{Router, extract::State, response::Json, routing::get};

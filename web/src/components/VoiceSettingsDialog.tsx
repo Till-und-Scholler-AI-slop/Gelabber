@@ -1,13 +1,13 @@
 import { useId, useRef, useState } from "react";
 
-import { MediaSettingsForm } from "../voice/VoiceSettings.tsx";
-import { VoiceDiagnostics } from "../voice/VoiceDiagnostics.tsx";
 import {
   useMediaSettings,
   type MediaDialogSection,
 } from "../voice/settings.ts";
+import { VoiceSettingsPanelPart } from "../voice/voiceSettingsPanelPart.ts";
 import { GhostButton, Modal } from "./Modal.tsx";
 import { nextChipIndex } from "./ui/chipKeys.ts";
+import { SkeletonRows } from "./ui/Skeleton.tsx";
 
 const TABS: readonly { id: MediaDialogSection; label: string }[] = [
   { id: "audio", label: "Audio" },
@@ -88,11 +88,10 @@ export function VoiceSettingsTabs({
         aria-labelledby={`${ids}-${tab}-tab`}
         className="voice-settings-panel"
       >
-        {tab === "diagnostics" ? (
-          <VoiceDiagnostics />
-        ) : (
-          <MediaSettingsForm section={tab} />
-        )}
+        <VoiceSettingsPanelPart.Component
+          tab={tab}
+          fallback={<SkeletonRows count={4} />}
+        />
       </div>
     </div>
   );

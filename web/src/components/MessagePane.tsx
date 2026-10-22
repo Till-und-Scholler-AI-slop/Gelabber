@@ -718,6 +718,7 @@ function MessageList({
           (index === newIndex ? 28 : 0) +
           extra +
           (message.reply ? 22 : 0);
+        if (message.system) return breaks + 32;
         const gif = asGif(message.gif);
         if (gif)
           return (

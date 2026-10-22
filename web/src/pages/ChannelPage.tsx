@@ -12,8 +12,8 @@ import { MessagePane } from "../components/MessagePane.tsx";
 import "../components/chat.css";
 import { Redirect } from "../components/Redirect.tsx";
 import { TypingBar } from "../components/TypingBar.tsx";
-import { MainSkeleton } from "../components/ui/Skeleton.tsx";
-import { VoiceRoom } from "../voice/VoiceRoom.tsx";
+import { MainSkeleton, SkeletonRows } from "../components/ui/Skeleton.tsx";
+import { VoiceRoomPart } from "../voice/voiceRoomPart.ts";
 import { LiveHint } from "../voice/LiveHint.tsx";
 import { useLastChannel } from "../servers/lastChannel.ts";
 import { can } from "../servers/permissions.ts";
@@ -76,10 +76,11 @@ export function ChannelPage() {
               <MemberPanelToggle />
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <VoiceRoom
+              <VoiceRoomPart.Component
                 server={server}
                 channelId={channel.id}
                 channelName={channel.name}
+                fallback={<SkeletonRows count={3} avatars />}
               />
             </div>
           </>

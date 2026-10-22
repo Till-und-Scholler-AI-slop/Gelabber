@@ -54,7 +54,13 @@ import {
   subscribeNativeViewers,
 } from "./native/viewer.ts";
 import { toggleMute, useVoice } from "./session.ts";
-import { MAX_PLAYBACK_VOLUME, useMediaSettings } from "./settings.ts";
+import {
+  PLAYBACK_SLIDER_MAX,
+  playbackSliderFill,
+  playbackSliderPosition,
+  playbackSliderVolume,
+  useMediaSettings,
+} from "./settings.ts";
 import {
   CONTROLS_IDLE_MS,
   FRAME_LOADING_MS,
@@ -782,18 +788,20 @@ function StreamVolume() {
       <input
         type="range"
         min={0}
-        max={MAX_PLAYBACK_VOLUME * 100}
-        value={Math.round(volume * 100)}
+        max={PLAYBACK_SLIDER_MAX}
+        value={playbackSliderPosition(volume)}
         style={
           {
-            "--lr-range-value": `${Math.round((volume / MAX_PLAYBACK_VOLUME) * 100)}%`,
+            "--lr-range-value": playbackSliderFill(volume),
           } as CSSProperties
         }
         aria-label="Stream-Ton-Lautstärke"
         aria-valuetext={`${Math.round(volume * 100)} %`}
         disabled={muted || deafened}
         onChange={(event) =>
-          patch({ sourceAudioVolume: Number(event.target.value) / 100 })
+          patch({
+            sourceAudioVolume: playbackSliderVolume(Number(event.target.value)),
+          })
         }
         className="lr-range"
       />

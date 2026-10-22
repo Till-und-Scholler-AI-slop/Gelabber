@@ -371,6 +371,22 @@ button.lr-reply-header:focus-visible .lr-reply-excerpt {
   font-size: 11px;
   color: var(--lr-muted);
 }
+/* System messages (#314): one muted line in the text column, the icon where
+   the avatar would be. */
+.lr-message-system-icon {
+  display: flex;
+  justify-content: center;
+  width: 36px;
+  flex-shrink: 0;
+  padding-top: 3px;
+  color: var(--lr-muted);
+}
+.lr-message-system-text {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--lr-muted);
+  overflow-wrap: anywhere;
+}
 
 /* Own messages on their way, and those that did not arrive. */
 .lr-message-row.is-sending .lr-message-text,

@@ -934,7 +934,7 @@ impl Consumer {
         check(unsafe { ffi::gm_consumer_pause(self.ptr.as_ptr(), paused as i32) })
     }
 
-    /// Playback volume of an audio consumer, 0..2. Above 1 the boost applies
+    /// Playback volume of an audio consumer, 0..4. Above 1 the boost applies
     /// after the mix, through the playout limiter.
     pub fn set_volume(&self, volume: f64) -> Result<()> {
         // SAFETY: live consumer.
