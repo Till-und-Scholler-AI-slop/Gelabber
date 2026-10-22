@@ -594,8 +594,11 @@ export function MessagePane({
                           canDelete={
                             message.author.id === user?.id || canModerate
                           }
-                          onEdit={(content) =>
-                            contextEdit.mutate({ id: message.id, content })
+                          onEdit={(content, failed) =>
+                            contextEdit.mutate(
+                              { id: message.id, content },
+                              { onError: failed },
+                            )
                           }
                           onDelete={async (skipConfirm) => {
                             if (
@@ -626,8 +629,11 @@ export function MessagePane({
                           canDelete={
                             message.author.id === user?.id || canModerate
                           }
-                          onEdit={(content) =>
-                            contextEdit.mutate({ id: message.id, content })
+                          onEdit={(content, failed) =>
+                            contextEdit.mutate(
+                              { id: message.id, content },
+                              { onError: failed },
+                            )
                           }
                           onDelete={async (skipConfirm) => {
                             if (
@@ -1271,7 +1277,9 @@ function MessageList({
                 canSend={canSend}
                 canDelete={message.author.id === meId || canModerate}
                 attempt={attempts.get(message.id)}
-                onEdit={(content) => edit.mutate({ id: message.id, content })}
+                onEdit={(content, failed) =>
+                  edit.mutate({ id: message.id, content }, { onError: failed })
+                }
                 onDelete={async (skipConfirm) => {
                   if (skipConfirm || (await confirmDelete(message, meId)))
                     remove.mutate(message.id);
@@ -1326,7 +1334,8 @@ function MessageRow({
   canDelete: boolean;
   /** The send attempt of a `tmp:` row. */
   attempt?: SendAttempt;
-  onEdit: (content: string) => void;
+  /** `failed` runs if the server turns the change down. */
+  onEdit: (content: string, failed: () => void) => void;
   /** `skipConfirm` with Shift held. */
   onDelete: (skipConfirm: boolean) => void;
 }) {
@@ -1339,6 +1348,8 @@ function MessageRow({
   const renderMention = useMentionRenderer(message);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
+  /** Whether the editor takes focus when it opens. */
+  const [editFocus, setEditFocus] = useState(true);
   const editInput = useRef<HTMLTextAreaElement>(null);
   const editSuggestions = useMentionSuggestions(draft, (text, caret) => {
     setDraft(text);
@@ -1382,11 +1393,30 @@ function MessageRow({
         ? active
         : rowRef.current;
     setDraft(fromWire(message.content, members));
+    setEditFocus(true);
     setEditing(true);
   };
   const cancelEdit = () => {
     finishEditing();
     setDraft(fromWire(message.content, members));
+  };
+  const saveEdit = () => {
+    // The row shows the change at once. Turned down, it rolls back, and the
+    // editor opens again with what was typed instead of losing it; focus
+    // comes along only if the reader is not busy elsewhere by then.
+    const typed = draft;
+    onEdit(wireDraft, () => {
+      const active = document.activeElement;
+      setEditFocus(
+        !active ||
+          active === document.body ||
+          Boolean(rowRef.current?.contains(active)),
+      );
+      restoreEditFocus.current = false;
+      setDraft(typed);
+      setEditing(true);
+    });
+    finishEditing();
   };
 
   const moreButton = useRef<HTMLButtonElement>(null);
@@ -1646,8 +1676,7 @@ function MessageRow({
             onSubmit={(event) => {
               event.preventDefault();
               if (error) return;
-              onEdit(wireDraft);
-              finishEditing();
+              saveEdit();
             }}
           >
             {editSuggestions.list}
@@ -1671,15 +1700,12 @@ function MessageRow({
                   !event.nativeEvent.isComposing
                 ) {
                   event.preventDefault();
-                  if (!error) {
-                    onEdit(wireDraft);
-                    finishEditing();
-                  }
+                  if (!error) saveEdit();
                 }
               }}
               rows={2}
               aria-label="Nachricht bearbeiten"
-              autoFocus
+              autoFocus={editFocus}
             />
             {error ? (
               <p className="lr-field-error">{fieldMessage("content", error)}</p>
