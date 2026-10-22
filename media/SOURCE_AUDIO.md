@@ -105,7 +105,7 @@ contract:
 - `media/tests/live_claim.rs` covers exclusive peer binding, stale release,
   expiry/renewal and exact Live-audio parent/claim ownership.
 - `media/tests/access_revocation.rs` covers session/channel authority loss and
-  redis failure. The stop-batch unit tests in `media/src/sfu.rs` cover concurrent
+  redis failure. The stop-batch unit tests in `media/src/sfu/tests.rs` cover concurrent
   acknowledgements and an aggregate timeout while resources remain queued.
 - `api/tests/signal.rs` covers same-Gateway-socket pairing and parent cleanup.
 
