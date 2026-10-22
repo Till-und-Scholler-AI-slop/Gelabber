@@ -1230,7 +1230,7 @@ function MessageList({
         // margin: that ResizeObserver loop (scrollbar on/off) is React #185.
         ref={contentRef}
         style={{ height: virtualizer.getTotalSize() }}
-        className={`relative mt-auto w-full shrink-0${revealed ? " ui-reveal" : ""}`}
+        className={`relative mt-auto w-full shrink-0 ${revealed ? "ui-reveal" : ""}`}
       >
         {virtualizer.getVirtualItems().map((row) => {
           const message = items[row.index];
@@ -1245,7 +1245,7 @@ function MessageList({
               key={row.key}
               data-index={row.index}
               ref={virtualizer.measureElement}
-              className={`absolute inset-x-0${message.id === highlighted ? " lr-message-highlight" : ""}`}
+              className={`absolute inset-x-0 ${message.id === highlighted ? "lr-message-highlight" : ""}`}
               style={{ top: row.start }}
             >
               {row.index === 0 && !hasOlder ? historyStart : null}
