@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useLayoutEffect, useRef, type RefObject } from "react";
 
 import { CloseIcon, WarningIcon } from "./Icons.tsx";
 import { restoreFocus } from "./modalClose.ts";
@@ -34,8 +34,10 @@ export function ToastRegions({ toasts }: { toasts: Toast[] }) {
           cardRef={ref(entry.key)}
         />
       ));
+  const stack = useRef<HTMLDivElement>(null);
+  useToastSpace(stack);
   return (
-    <div className="gel-toasts">
+    <div ref={stack} className="gel-toasts">
       <div role="status" className="gel-toasts__region">
         {cards("info")}
       </div>
@@ -44,6 +46,42 @@ export function ToastRegions({ toasts }: { toasts: Toast[] }) {
       </div>
     </div>
   );
+}
+
+/**
+ * How tall the stack of toasts is, as `--lr-toast-space` on the page, 0 with
+ * none. In a conversation the stack sits above the composer, and the message
+ * list makes this much room for it: otherwise a toast covers the newest
+ * message and its actions (#354). A leaving toast keeps its room until it
+ * has faded out.
+ */
+function useToastSpace(stack: RefObject<HTMLDivElement | null>) {
+  useLayoutEffect(() => {
+    const element = stack.current;
+    if (!element) return;
+    const update = () => {
+      let top = Infinity;
+      let bottom = -Infinity;
+      // Layout boxes: a card's rise and fade (translate, scale) do not count.
+      for (const card of element.querySelectorAll<HTMLElement>(".ui-toast")) {
+        top = Math.min(top, card.offsetTop);
+        bottom = Math.max(bottom, card.offsetTop + card.offsetHeight);
+      }
+      const height = bottom > top ? bottom - top : 0;
+      document.documentElement.style.setProperty(
+        "--lr-toast-space",
+        `${Math.ceil(height)}px`,
+      );
+    };
+    // A toast that comes or goes, a message that wraps to another line, or
+    // another text size: each changes the stack's own height.
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.removeProperty("--lr-toast-space");
+    };
+  }, [stack]);
 }
 
 function ToastCard({

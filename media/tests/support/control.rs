@@ -33,7 +33,7 @@ pub struct Peer {
     pub events: VecDeque<Value>,
 }
 impl Peer {
-    pub async fn join(addr: std::net::SocketAddr, code: &str, watch: Option<Uuid>) -> Self {
+    pub async fn join(addr: std::net::SocketAddr, code: &str) -> Self {
         let (socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/media/ws"))
             .await
             .unwrap();
@@ -43,7 +43,7 @@ impl Peer {
             capabilities: Value::Null,
             events: VecDeque::new(),
         };
-        let response = peer.rpc(json!({"op":"j","v":4,"tk":code,"w":watch})).await;
+        let response = peer.rpc(json!({"op":"j","v":4,"tk":code})).await;
         assert_eq!(response["op"], "result", "join: {response}");
         assert_eq!(response["data"]["v"], 4);
         peer.capabilities = response["data"]["routerRtpCapabilities"].clone();
@@ -135,7 +135,7 @@ impl Peer {
     }
 }
 pub fn rtp(kind: &str) -> Value {
-    let audio = matches!(kind, "a" | "sa" | "la");
+    let audio = matches!(kind, "a" | "sa");
     let ssrc = Uuid::new_v4().as_u128() as u32 | 1;
     json!({"mid":Uuid::new_v4().simple().to_string(),
         "codecs":[if audio {
@@ -143,6 +143,6 @@ pub fn rtp(kind: &str) -> Value {
         }else {json!({"mimeType":"video/VP8","payloadType":96,"clockRate":90000,"parameters":{},"rtcpFeedback":[{"type":"nack"},{"type":"nack","parameter":"pli"}]})}],
         "headerExtensions":[],"encodings":[{"ssrc":ssrc}],"rtcp":{"cname":Uuid::new_v4().to_string(),"reducedSize":true}})
 }
-pub fn produce(kind: &str, epoch: Uuid, parent: Option<&str>, nonce: Option<Uuid>) -> Value {
-    json!({"op":"produce","k":kind,"epoch":epoch,"rtp":rtp(kind),"parent":parent,"lc":nonce,"height":360})
+pub fn produce(kind: &str, epoch: Uuid, parent: Option<&str>) -> Value {
+    json!({"op":"produce","k":kind,"epoch":epoch,"rtp":rtp(kind),"parent":parent,"height":360})
 }

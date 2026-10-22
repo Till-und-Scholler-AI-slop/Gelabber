@@ -40,10 +40,13 @@ import {
 } from "./pages.ts";
 import {
   addPending,
+  attemptNonce,
+  confirmEcho,
   confirmPending,
   markUpload,
   forgetAttempt,
   saveAttempt,
+  takeEcho,
   type SendAttempt,
   usePendingMessages,
 } from "./pending.ts";
@@ -551,14 +554,25 @@ export async function sendMessageAttempt(
       attempt.uploadedIds,
       attempt.gif,
       attempt.reply?.id,
+      attemptNonce(attempt.id),
     );
     requireAttempt(attempt);
     // Bound now; attaching the same file again needs a new upload.
     for (const file of attempt.files) arrived.delete(file);
+    // A no-op when the live event took over the row already (#355).
     confirmPending(channelId, attempt.id, message);
+    takeEcho(attempt.id);
     forgetAttempt(attempt.id);
     return message;
   } catch (error) {
+    // The live event showed it saved: only the answer did not come back.
+    const echo = stampHolds(attempt.stamp) ? takeEcho(attempt.id) : undefined;
+    if (echo) {
+      for (const file of attempt.files) arrived.delete(file);
+      forgetAttempt(attempt.id);
+      return echo;
+    }
+    takeEcho(attempt.id);
     if (stampHolds(attempt.stamp)) {
       // No idempotency key exists yet. A missing bind response cannot safely
       // authorize another POST; retain the draft and require history inspection.
@@ -986,9 +1000,10 @@ export function applyChannelEvent(
         ? {}
         : { previews: asPreviewList(event.d.previews) }),
     };
-    if (event.t === "c")
+    if (event.t === "c") {
       applyMessageCreated(client, userId, generation, channelId, message);
-    else applyMessageEdited(client, userId, generation, channelId, message);
+      confirmEcho(channelId, userId, message);
+    } else applyMessageEdited(client, userId, generation, channelId, message);
   }
 }
 

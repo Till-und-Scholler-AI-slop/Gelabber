@@ -139,7 +139,6 @@ function instrument() {
             on: frame.on,
             track: !!frame.t,
             parent: !!frame.parent,
-            claim: !!frame.lc,
             version: frame.v,
           });
       }
@@ -299,7 +298,7 @@ async function sample() {
           ? "mic"
           : identity.kind === "v"
             ? "camera-video"
-            : ["sa", "la"].includes(identity.kind)
+            : identity.kind === "sa"
               ? "source-audio"
               : "source-video";
       if (kind === "camera-video" && !state.cameras.has(track))

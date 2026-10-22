@@ -1030,7 +1030,8 @@
     }
   }
   /* In a conversation they sit above the composer and end where it ends,
-     clear of the member list beside it. */
+     clear of the member list beside it. The message list makes room for
+     them there (.lr-toast-space in chat.css). */
   .app-shell-workspace .gel-toasts {
     /* One composer line, for browsers without anchor positioning. */
     bottom: calc(74px + var(--lr-toast-floor));

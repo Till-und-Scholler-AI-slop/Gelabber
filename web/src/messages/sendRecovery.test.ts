@@ -13,7 +13,9 @@ import {
   resetPendingMessages,
   usePendingMessages,
   discardAttempt,
+  displayPending,
 } from "./pending.ts";
+import { visibleMessages } from "./pages.ts";
 import {
   applyChannelEvent,
   deleteMessageOptions,
@@ -562,5 +564,124 @@ describe("per-row rollback using real mutation observers", () => {
     );
     await done;
     expect(cached()[0]?.content).toBe("newer REST");
+  });
+});
+
+describe("own live event before the POST answer (#355)", () => {
+  let client: QueryClient;
+  beforeEach(() => {
+    client = new QueryClient();
+  });
+  afterEach(() => client.clear());
+  function seed() {
+    const stamp = takeStamp()!;
+    client.setQueryData(
+      messageKeys.channel(stamp.userId, stamp.generation, "c"),
+      {
+        pages: [{ messages: [row("old")], has_more: false }],
+        pageParams: [undefined],
+      },
+    );
+  }
+  function shown() {
+    const stamp = takeStamp()!;
+    const data = client.getQueryData<InfiniteData<MessagePage>>(
+      messageKeys.channel(stamp.userId, stamp.generation, "c"),
+    )!;
+    return visibleMessages(
+      data.pages,
+      usePendingMessages.getState().byChannel.c ?? [],
+    ).map((m) => m.id);
+  }
+  function echo(nonce: string, id = "server-1") {
+    const stamp = takeStamp()!;
+    applyChannelEvent(client, stamp.userId, stamp.generation, {
+      t: "c",
+      c: "c",
+      i: id,
+      d: { ...row(id, "hallo"), nonce },
+    });
+  }
+  async function posted(): Promise<string> {
+    await vi.waitFor(() =>
+      expect(requests).toContain("POST /api/channels/c/messages"),
+    );
+    const body = (vi.mocked(fetch).mock.calls.at(-1)![1] as RequestInit).body;
+    return JSON.parse(String(body)).nonce as string;
+  }
+
+  it("swaps the pending row for the event's row at once", async () => {
+    const answer = held();
+    routes(() => answer.promise);
+    await login(user.email, "password");
+    seed();
+    const release = displayPending("c");
+    const send = sendMessageAttempt("c", author, { content: "hallo" });
+    const nonce = await posted();
+    expect(attempts()[0]!.id).toBe(`tmp:${nonce}`);
+    expect(shown()).toEqual(["old", `tmp:${nonce}`]);
+
+    echo(nonce);
+    expect(shown()).toEqual(["old", "server-1"]);
+
+    answer.resolve(json(201, { ...row("server-1", "hallo"), nonce }));
+    await expect(send).resolves.toMatchObject({ id: "server-1" });
+    expect(shown()).toEqual(["old", "server-1"]);
+    expect(attempts()).toEqual([]);
+    release();
+  });
+
+  it("counts a send as saved when the event came and the answer got lost", async () => {
+    const answer = held();
+    routes(() => answer.promise);
+    await login(user.email, "password");
+    seed();
+    const send = sendMessageAttempt("c", author, { content: "hallo" });
+    echo(await posted());
+    answer.resolve(json(502, { error: "upstream_failure" }));
+    await expect(send).resolves.toMatchObject({ id: "server-1" });
+    expect(attempts()).toEqual([]);
+    expect(shown()).toEqual(["old", "server-1"]);
+  });
+
+  it("settles an uncertain send once its event arrives", async () => {
+    routes(() => Promise.reject(new TypeError("network")));
+    await login(user.email, "password");
+    seed();
+    const release = displayPending("c");
+    await sendMessageAttempt("c", author, { content: "hallo" }).catch(
+      () => undefined,
+    );
+    const attempt = attempts()[0]!;
+    expect(attempt.status).toBe("uncertain");
+    echo(attempt.id.slice("tmp:".length));
+    expect(attempts()).toEqual([]);
+    expect(shown()).toEqual(["old", "server-1"]);
+    release();
+  });
+
+  it("leaves rows alone for a nonce of another user or channel", async () => {
+    const answer = held();
+    routes(() => answer.promise);
+    await login(user.email, "password");
+    seed();
+    const release = displayPending("c");
+    const send = sendMessageAttempt("c", author, { content: "hallo" });
+    const nonce = await posted();
+    const stamp = takeStamp()!;
+    applyChannelEvent(client, stamp.userId, stamp.generation, {
+      t: "c",
+      c: "c",
+      i: "other",
+      d: {
+        ...row("other", "hallo"),
+        author: { id: "b", name: "Bob", avatar_url: null },
+        nonce,
+      },
+    });
+    expect(shown()).toEqual(["old", "other", `tmp:${nonce}`]);
+    answer.resolve(json(201, { ...row("server-1", "hallo"), nonce }));
+    await send;
+    release();
   });
 });

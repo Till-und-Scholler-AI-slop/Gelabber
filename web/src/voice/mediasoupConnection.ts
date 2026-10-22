@@ -57,7 +57,6 @@ export type MediaPublication = {
   track: MediaStreamTrack;
   streamId: string;
   epoch: string;
-  lc?: string;
   parent?: string;
   paused?: boolean;
   /** Transient local operation controls; never part of the product wire. */
@@ -162,9 +161,9 @@ type Publication = {
   mime: string;
   paused: boolean;
 };
-const VIDEO_KINDS: readonly TrackKind[] = ["v", "s", "l"];
+const VIDEO_KINDS: readonly TrackKind[] = ["v", "s"];
 /** The sound sent with a video source; the server ends it with its parent. */
-const CHILD: Partial<Record<TrackKind, TrackKind>> = { s: "sa", l: "la" };
+const CHILD: Partial<Record<TrackKind, TrackKind>> = { s: "sa" };
 function emitMediaHook(name: string, detail: unknown): void {
   if (typeof window !== "undefined" && typeof CustomEvent !== "undefined")
     window.dispatchEvent(new CustomEvent(name, { detail }));
@@ -410,7 +409,6 @@ export class MediasoupConnection implements MediaConnection {
               rtp: rtpParameters,
               epoch: publication.epoch,
               ...(publication.parent ? { parent: publication.parent } : {}),
-              ...(publication.lc ? { lc: publication.lc } : {}),
               ...(old ? { expectedOldProducerId: old } : {}),
               ...(publication.track.kind === "video"
                 ? {
@@ -521,7 +519,7 @@ export class MediasoupConnection implements MediaConnection {
     const device = this.device;
     if (!device || !device.canProduce(input.track.kind as "audio" | "video"))
       throw new MediaError("unsupported_codec");
-    if ((input.kind === "sa" || input.kind === "la") && !input.parent)
+    if (input.kind === "sa" && !input.parent)
       throw new MediaError("missing_parent");
     const codec =
       input.track.kind === "video"
@@ -546,7 +544,6 @@ export class MediasoupConnection implements MediaConnection {
       previous &&
       previous.codec === signature &&
       previous.input.epoch === input.epoch &&
-      previous.input.lc === input.lc &&
       previous.input.parent === input.parent
     ) {
       if (previous.producer.track !== input.track)
@@ -582,8 +579,8 @@ export class MediasoupConnection implements MediaConnection {
       await this.compactSend();
       previous = this.publications.get(input.kind);
     }
-    if (input.kind === "sa" || input.kind === "la") {
-      const parent = this.publications.get(input.kind === "sa" ? "s" : "l");
+    if (input.kind === "sa") {
+      const parent = this.publications.get("s");
       if (!parent || parent.input.epoch !== input.epoch)
         throw new MediaError("missing_parent");
       input = { ...input, parent: parent.producer.id };
@@ -814,11 +811,7 @@ export class MediasoupConnection implements MediaConnection {
       .flatMap((p) =>
         p.producer.track ? [{ ...p.input, track: p.producer.track }] : [],
       )
-      .sort(
-        (a, b) =>
-          Number(a.kind === "sa" || a.kind === "la") -
-          Number(b.kind === "sa" || b.kind === "la"),
-      );
+      .sort((a, b) => Number(a.kind === "sa") - Number(b.kind === "sa"));
     this.compactingSend = true;
     this.publications.clear();
     this.send = null;

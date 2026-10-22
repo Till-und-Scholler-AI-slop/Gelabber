@@ -192,6 +192,78 @@ async fn content_is_validated(pool: PgPool) {
     assert_eq!(too_long.body["fields"]["content"], "too_long");
 }
 
+/// #355: the sender's attempt id comes back on the response and the live
+/// event, so the client swaps its pending row whichever arrives first.
+/// History and later events do not carry it.
+#[sqlx::test]
+async fn send_echoes_its_nonce_on_response_and_event(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Team").await;
+    let channel_id = text_channel_id(&server);
+    let nonce = Uuid::new_v4().to_string();
+
+    let sent = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel_id}/messages"),
+            Some(json!({ "content": "hallo", "nonce": nonce })),
+        )
+        .await;
+    assert_eq!(sent.status, StatusCode::CREATED, "{}", sent.body);
+    assert_eq!(sent.body["nonce"], nonce);
+    let plain = post_message(&mut owner, &channel_id, "ohne").await;
+    assert!(plain.get("nonce").is_none(), "{plain}");
+
+    let id: Uuid = sent.body["id"].as_str().unwrap().parse().unwrap();
+    let server_id: Uuid = server["id"].as_str().unwrap().parse().unwrap();
+    let channel: Uuid = channel_id.parse().unwrap();
+    let state = common::state(pool.clone());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let _ = delivery::deliver_pending(&state, 32).await;
+            let queued: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM gateway_outbox WHERE channel_id = $1")
+                    .bind(channel)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            if queued == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("outbox delivered");
+    let created = state
+        .gateway
+        .load_log(Topic::of(server_id, Some(channel)))
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|event| event.t == EventKind::C && event.i == Some(id))
+        .expect("create event");
+    assert_eq!(created.d.unwrap()["nonce"], nonce);
+
+    let history = owner
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel_id}/messages"),
+            None,
+        )
+        .await;
+    assert_eq!(history.status, StatusCode::OK, "{}", history.body);
+    assert!(
+        history.body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row.get("nonce").is_none()),
+        "{}",
+        history.body
+    );
+}
+
 #[sqlx::test]
 async fn send_messages_is_required_to_post_and_edit(pool: PgPool) {
     let (mut owner, mut member) = two_users(pool).await;

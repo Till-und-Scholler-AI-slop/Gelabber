@@ -11,15 +11,13 @@ export type Topic = {
 
 /** Presence plane. SDP and ICE are not gateway ops. */
 export type SigType = "j" | "l" | "p" | "u" | "m" | "d" | "r";
-export type TrackKind = "a" | "v" | "s" | "l" | "sa" | "la";
+export type TrackKind = "a" | "v" | "s" | "sa";
 
 export type VoiceEntry = {
   u: string;
   c: string;
   m?: boolean;
   d?: boolean;
-  /** Holds the channel's Go Live track (older clients). */
-  l?: boolean;
   /** Publishes a screen: Live. Not the server, unlike a frame's `s`. */
   s?: boolean;
 };
