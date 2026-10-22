@@ -55,3 +55,20 @@ export function popoverPosition(
     left: clamp(left, viewport.width - size.width),
   };
 }
+
+/**
+ * Where an anchored popover grows from, as a CSS `transform-origin`: the
+ * point on its edge facing the anchor, across from the anchor's middle.
+ * Arguments as for `popoverPosition`, plus the position it returned.
+ */
+export function popoverOrigin(
+  screenAnchor: Box,
+  position: { top: number; left: number },
+  size: { width: number; height: number },
+  zoom = 1,
+): string {
+  const middle = (screenAnchor.left + screenAnchor.right) / 2 / zoom;
+  const x = Math.max(0, Math.min(size.width, middle - position.left));
+  const below = position.top >= screenAnchor.bottom / zoom;
+  return `${Math.round(x)}px ${below ? 0 : size.height}px`;
+}

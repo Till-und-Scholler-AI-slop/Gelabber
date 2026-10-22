@@ -7,8 +7,16 @@ import {
 } from "react";
 
 import { CloseIcon } from "./Icons.tsx";
-import { closesOnBackdrop, requestClose, restoreFocus } from "./modalClose.ts";
+import {
+  closesOnBackdrop,
+  focusLeftWith,
+  focusOrigin,
+  markLeaving,
+  requestClose,
+  restoreFocus,
+} from "./modalClose.ts";
 import { IconButton } from "./ui/IconButton.tsx";
+import { useLastOpen, usePresence } from "./ui/usePresence.ts";
 import "./ui/ui.css";
 
 export { GhostButton } from "./ui/Button.tsx";
@@ -35,7 +43,8 @@ type ModalProps = {
 /**
  * Native `<dialog>` so focus trapping, Escape and the backdrop come from the
  * browser. The title stays put while the body scrolls, and "Schließen" is
- * always there. Under 640px it is a bottom sheet.
+ * always there. Under 640px it is a bottom sheet. Closed, it stays modal and
+ * inert for its exit, still showing its last content, then hands focus back.
  */
 export function Modal({
   open,
@@ -56,23 +65,29 @@ export function Modal({
     latest.current = { open, onClose };
   });
   const close = () => void requestClose({ dirty, onClose });
+  const { mounted, state } = usePresence(open, ref);
+  const [shownTitle, shownChildren, shownFooter] = useLastOpen(open, [
+    title,
+    children,
+    footer,
+  ] as const);
 
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
     if (open && !dialog.open) {
-      openerRef.current =
-        document.activeElement instanceof HTMLElement
-          ? document.activeElement
-          : null;
+      openerRef.current = focusOrigin(document.activeElement);
       dialog.showModal();
     }
     if (!open && dialog.open) {
+      // Still leaving: a dialog opened meanwhile takes over the opener.
+      if (mounted) return markLeaving(dialog, openerRef.current);
       dialog.close();
-      restoreFocus(openerRef.current);
+      if (focusLeftWith(dialog, document.activeElement))
+        restoreFocus(openerRef.current);
       openerRef.current = null;
     }
-  }, [open]);
+  }, [open, mounted]);
 
   useEffect(() => {
     const dialog = ref.current;
@@ -87,10 +102,12 @@ export function Modal({
       role={role === "alertdialog" ? role : undefined}
       aria-labelledby={titleId}
       aria-describedby={describedBy}
+      data-state={state}
+      inert={!open && mounted}
       onCancel={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        close();
+        if (open) close();
       }}
       onClose={(event) => {
         // A browser may close a dialog without a cancel event (Chrome does
@@ -103,6 +120,7 @@ export function Modal({
       }}
       onClick={(event) => {
         if (
+          open &&
           event.target === event.currentTarget &&
           closesOnBackdrop(
             event,
@@ -114,14 +132,14 @@ export function Modal({
       }}
       className={wide ? "gel-modal gel-modal--wide" : "gel-modal"}
     >
-      {open ? (
+      {mounted ? (
         <>
           <header className="gel-modal__header">
-            <h2 id={titleId}>{title}</h2>
+            <h2 id={titleId}>{shownTitle}</h2>
           </header>
-          <div className="gel-modal__body">{children}</div>
-          {footer ? (
-            <footer className="gel-modal__footer">{footer}</footer>
+          <div className="gel-modal__body">{shownChildren}</div>
+          {shownFooter ? (
+            <footer className="gel-modal__footer">{shownFooter}</footer>
           ) : null}
           {/* Last in the DOM, so a dialog still opens on its first field;
               drawn in the header's corner. */}

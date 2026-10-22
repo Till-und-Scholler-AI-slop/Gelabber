@@ -586,9 +586,17 @@
     background: var(--lr-elevated);
     color: var(--lr-text);
     box-shadow: var(--lr-shadow-1);
+    /* Grows out of its anchor (transform-origin from Popover.tsx) and
+       shrinks back into it, a little faster. */
     transition:
-      opacity var(--lr-dur) var(--lr-ease),
-      translate var(--lr-dur) var(--lr-ease);
+      opacity var(--lr-dur) var(--lr-ease-enter),
+      scale var(--lr-dur) var(--lr-ease-enter);
+  }
+  .ui-popover[data-state="closed"] {
+    opacity: 0;
+    scale: 0.96;
+    transition-duration: var(--lr-dur-exit);
+    transition-timing-function: var(--lr-ease-exit);
   }
   .ui-sheet {
     width: 100%;
@@ -605,10 +613,23 @@
     background: var(--lr-elevated);
     color: var(--lr-text);
     box-shadow: var(--lr-shadow-2);
-    transition: translate var(--lr-dur) var(--lr-ease);
+    transition:
+      translate var(--lr-dur-large) var(--lr-ease-enter),
+      opacity var(--lr-dur) var(--lr-ease-enter);
   }
   .ui-sheet::backdrop {
     background: var(--lr-backdrop);
+    transition: opacity var(--lr-dur-large) var(--lr-ease-standard);
+  }
+  .ui-sheet[data-state="closed"] {
+    translate: 0 100%;
+    opacity: 0;
+    transition-duration: var(--lr-dur-large-exit);
+    transition-timing-function: var(--lr-ease-exit);
+  }
+  .ui-sheet[data-state="closed"]::backdrop {
+    opacity: 0;
+    transition-duration: var(--lr-dur-large-exit);
   }
   .ui-sheet__title {
     margin-bottom: var(--lr-space-2);
@@ -626,10 +647,14 @@
   @starting-style {
     .ui-popover {
       opacity: 0;
-      translate: 0 -4px;
+      scale: 0.96;
     }
     .ui-sheet[open] {
       translate: 0 100%;
+      opacity: 0;
+    }
+    .ui-sheet[open]::backdrop {
+      opacity: 0;
     }
   }
 
@@ -651,8 +676,9 @@
     color: var(--lr-text);
     box-shadow: var(--lr-shadow-2);
     transition:
-      opacity var(--lr-dur) var(--lr-ease),
-      translate var(--lr-dur) var(--lr-ease);
+      opacity var(--lr-dur-large) var(--lr-ease-enter),
+      scale var(--lr-dur-large) var(--lr-ease-enter),
+      translate var(--lr-dur-large) var(--lr-ease-enter);
   }
   .gel-modal[open] {
     display: flex;
@@ -662,6 +688,18 @@
   }
   .gel-modal::backdrop {
     background: var(--lr-backdrop);
+    transition: opacity var(--lr-dur-large) var(--lr-ease-standard);
+  }
+  /* Leaving: Modal keeps it open and inert until this has played. */
+  .gel-modal[data-state="closed"] {
+    opacity: 0;
+    scale: 0.97;
+    transition-duration: var(--lr-dur-large-exit);
+    transition-timing-function: var(--lr-ease-exit);
+  }
+  .gel-modal[data-state="closed"]::backdrop {
+    opacity: 0;
+    transition-duration: var(--lr-dur-large-exit);
   }
   .gel-modal__header {
     flex-shrink: 0;
@@ -699,7 +737,10 @@
   @starting-style {
     .gel-modal[open] {
       opacity: 0;
-      translate: 0 8px;
+      scale: 0.97;
+    }
+    .gel-modal[open]::backdrop {
+      opacity: 0;
     }
   }
   @media (max-width: 639px) {
@@ -733,9 +774,16 @@
     .gel-modal__footer > .ui-button {
       flex: 1;
     }
+    /* The bottom sheet rises and sinks instead. */
+    .gel-modal[data-state="closed"] {
+      opacity: 1;
+      scale: 1;
+      translate: 0 100%;
+    }
     @starting-style {
       .gel-modal[open] {
         opacity: 1;
+        scale: 1;
         translate: 0 100%;
       }
     }

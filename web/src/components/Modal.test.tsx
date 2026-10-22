@@ -6,6 +6,9 @@ import { Modal } from "./Modal.tsx";
 import {
   closesOnBackdrop,
   DISCARD_CHANGES,
+  focusLeftWith,
+  focusOrigin,
+  markLeaving,
   requestClose,
   restoreFocus,
 } from "./modalClose.ts";
@@ -116,5 +119,33 @@ describe("closing a modal", () => {
     expect(restoreFocus(null)).toBe(false);
     expect(gone.focus).not.toHaveBeenCalled();
     expect(hidden.focus).not.toHaveBeenCalled();
+  });
+});
+
+describe("focus while a surface leaves", () => {
+  const element = (name = "BUTTON") =>
+    ({ nodeName: name }) as unknown as HTMLElement;
+  const surface = (...inside: Element[]) => ({
+    contains: (node: Node | null) => inside.includes(node as Element),
+  });
+
+  it("is the closing surface's when it is inside it or nowhere", () => {
+    const button = element();
+    expect(focusLeftWith(surface(button), button)).toBe(true);
+    expect(focusLeftWith(surface(), null)).toBe(true);
+    expect(focusLeftWith(surface(), element("BODY"))).toBe(true);
+    expect(focusLeftWith(surface(), element())).toBe(false);
+  });
+
+  it("hands a dialog that opens meanwhile the leaving one's opener", () => {
+    const opener = element();
+    const inside = element();
+    const done = markLeaving(surface(inside), opener);
+    expect(focusOrigin(inside)).toBe(opener);
+    expect(focusOrigin(element("BODY"))).toBe(opener);
+    const elsewhere = element();
+    expect(focusOrigin(elsewhere)).toBe(elsewhere);
+    done();
+    expect(focusOrigin(inside)).toBe(inside);
   });
 });
