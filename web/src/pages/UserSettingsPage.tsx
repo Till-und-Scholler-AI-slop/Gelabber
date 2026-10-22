@@ -14,19 +14,12 @@ import {
 import { useEffect, useRef } from "react";
 
 import { ChevronIcon } from "../components/Icons.tsx";
-import { MessageAlertSettings } from "../components/MessageAlertSettings.tsx";
-import { NotificationPermissionStatus } from "../components/NotificationPermission.tsx";
-import { NotificationPrivacySetting } from "../components/NotificationPrivacy.tsx";
 import { ScopeTag } from "../components/SettingsGroup.tsx";
 import { IconButton } from "../components/ui/IconButton.tsx";
+import { SkeletonRows } from "../components/ui/Skeleton.tsx";
 import { useMediaQuery } from "../components/useMediaQuery.ts";
 import { UserPanel } from "../components/UserPanel.tsx";
-import { InstallApp } from "../pwa/InstallApp.tsx";
 import { useInstallation } from "../pwa/install.ts";
-import { ThemesPanel } from "../theme/ThemesPanel.tsx";
-import { MediaSettingsForm } from "../voice/VoiceSettings.tsx";
-import { AppearanceSettings } from "./AppearanceSettings.tsx";
-import { ProfileArea, ProfileCardArea, SecurityArea } from "./ProfilePage.tsx";
 import {
   DEFAULT_SETTINGS_AREA,
   isSettingsArea,
@@ -36,6 +29,7 @@ import {
   visibleSettingsAreas,
   type SettingsArea,
 } from "./settingsAreas.ts";
+import { SettingsAreaPart } from "./settingsAreaPart.ts";
 import "./settings.css";
 
 function useInstallable() {
@@ -180,37 +174,12 @@ export function UserSettingsPage() {
             </div>
             <p>{info.description}</p>
           </header>
-          <SettingsAreaContent area={current} />
+          <SettingsAreaPart.Component
+            area={current}
+            fallback={<SkeletonRows count={4} />}
+          />
         </section>
       </div>
     </div>
   );
-}
-
-function SettingsAreaContent({ area }: { area: SettingsArea }) {
-  switch (area) {
-    case "profil":
-      return <ProfileArea />;
-    case "profilkarte":
-      return <ProfileCardArea />;
-    case "konto":
-      return <SecurityArea />;
-    case "darstellung":
-      return <AppearanceSettings />;
-    case "themes":
-      return <ThemesPanel />;
-    case "audio":
-    case "video":
-      return <MediaSettingsForm key={area} section={area} />;
-    case "benachrichtigungen":
-      return (
-        <>
-          <MessageAlertSettings />
-          <NotificationPrivacySetting />
-          <NotificationPermissionStatus />
-        </>
-      );
-    case "app":
-      return <InstallApp />;
-  }
 }

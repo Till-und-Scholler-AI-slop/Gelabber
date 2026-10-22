@@ -4,6 +4,7 @@
 pub mod config;
 pub mod error;
 pub mod health;
+pub mod limits;
 pub mod live;
 pub mod metrics;
 mod native_command;

@@ -27,6 +27,9 @@ import {
   videoConstraintsFor,
   isOverconstrainedError,
   MAX_PLAYBACK_VOLUME,
+  PLAYBACK_SLIDER_MAX,
+  playbackSliderPosition,
+  playbackSliderVolume,
   type SourceAudioShare,
 } from "./settings.ts";
 afterEach(resetMediaSettingsForTests);
@@ -253,7 +256,7 @@ describe("capture and explicit bandwidth preferences", () => {
     expect(useMediaSettings.getState().sourceAudioVolume).toBe(0);
     expect(useMediaSettings.getState().outputVolume).toBe(0.8);
   });
-  it("allows playback up to 200 % and clamps stored values", async () => {
+  it("allows playback up to 400 % and clamps stored values", async () => {
     useMediaSettings
       .getState()
       .patch({ outputVolume: 1.6, sourceAudioVolume: 9 });
@@ -265,13 +268,31 @@ describe("capture and explicit bandwidth preferences", () => {
     expect(useMediaSettings.getState().callSoundVolume).toBe(1);
     const storage = useMediaSettings.persist.getOptions().storage!;
     await storage.setItem("gelabber.media", {
-      state: { outputVolume: 7, sourceAudioVolume: 1.5 } as never,
+      state: { outputVolume: 7, sourceAudioVolume: 3.5 } as never,
     });
     await useMediaSettings.persist.rehydrate();
     expect(useMediaSettings.getState()).toMatchObject({
-      outputVolume: 2,
-      sourceAudioVolume: 1.5,
+      outputVolume: 4,
+      sourceAudioVolume: 3.5,
     });
+  });
+
+  it("keeps 100 % in the middle of a playback slider", () => {
+    expect(PLAYBACK_SLIDER_MAX).toBe(200);
+    expect(playbackSliderPosition(0)).toBe(0);
+    expect(playbackSliderPosition(0.5)).toBe(50);
+    expect(playbackSliderPosition(1)).toBe(100);
+    expect(playbackSliderPosition(2.5)).toBe(150);
+    expect(playbackSliderPosition(MAX_PLAYBACK_VOLUME)).toBe(200);
+    expect(playbackSliderPosition(9)).toBe(200);
+    expect(playbackSliderVolume(0)).toBe(0);
+    expect(playbackSliderVolume(73)).toBe(0.73);
+    expect(playbackSliderVolume(100)).toBe(1);
+    expect(playbackSliderVolume(150)).toBe(2.5);
+    expect(playbackSliderVolume(200)).toBe(MAX_PLAYBACK_VOLUME);
+    // Every step lands back on itself.
+    for (let step = 0; step <= PLAYBACK_SLIDER_MAX; step++)
+      expect(playbackSliderPosition(playbackSliderVolume(step))).toBe(step);
   });
 });
 
