@@ -21,7 +21,8 @@ import { can } from "../servers/permissions.ts";
 import type { Channel, ServerDetail } from "../servers/types.ts";
 import { EMPTY_OCCUPANCY, useVoiceRoster } from "../voice/roster.ts";
 import { useVoice } from "../voice/session.ts";
-import { VoiceRoom } from "../voice/VoiceRoom.tsx";
+import { SkeletonRows } from "../components/ui/Skeleton.tsx";
+import { VoiceRoomPart } from "../voice/voiceRoomPart.ts";
 import "./overview.css";
 
 /** The front door uses the same live room and session as channel pages. */
@@ -99,11 +100,12 @@ export function CommunityOverview({ server }: { server: ServerDetail }) {
           </div>
         ) : null}
         {room ? (
-          <VoiceRoom
+          <VoiceRoomPart.Component
             server={server}
             channelId={room.id}
             channelName={room.name}
             named
+            fallback={<SkeletonRows count={3} avatars />}
           />
         ) : (
           <div className="community-overview__empty">
