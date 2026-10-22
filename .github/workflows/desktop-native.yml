@@ -729,7 +729,7 @@ jobs:
             throw 'the setup did not finish within 15 minutes'
           }
           if ($setup.ExitCode -ne 0) { throw "the setup ended with exit code $($setup.ExitCode)" }
-          foreach ($file in 'gelabber-desktop.exe', 'gelabber_media.dll', 'README.txt', 'THIRD-PARTY-NOTICES.txt', 'uninstall.exe') {
+          foreach ($file in 'gelabber-desktop.exe', 'gelabber_media.dll', 'icon.png', 'README.txt', 'THIRD-PARTY-NOTICES.txt', 'uninstall.exe') {
             if (-not (Test-Path (Join-Path $install $file))) { throw "missing after the install: $file" }
           }
           # The core that was built here, not another copy.
