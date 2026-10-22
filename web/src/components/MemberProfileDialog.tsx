@@ -7,6 +7,7 @@ import { findCachedDm, useOpenDm } from "../dms/queries.ts";
 import { useUserProfile } from "../profile/queries.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import { useVoiceRoster, voiceOf } from "../voice/roster.ts";
+import { useVoice } from "../voice/session.ts";
 import { presenceOf, usePresenceStore } from "../ws/live.ts";
 import { ChatIcon, SpeakerIcon } from "./Icons.tsx";
 import { MemberActions } from "./MemberActions.tsx";
@@ -31,6 +32,10 @@ export function MemberProfileDialog({
   );
   const room = useVoiceRoster((s) =>
     voiceOf(s.byServer, server.id, memberId ?? ""),
+  );
+  // Whose volume you can set: someone you are in a voice room with.
+  const myRoom = useVoice((s) =>
+    s.status === "joined" && s.serverId === server.id ? s.channelId : null,
   );
   const client = useQueryClient();
   const navigate = useNavigate();
@@ -113,12 +118,17 @@ export function MemberProfileDialog({
               In {channel.name}
             </Link>
           ) : null}
-          {self ? null : (
+          {!self && room && room.channelId === myRoom ? (
             <UserVolumeControl userId={member.user_id} name={member.name} />
-          )}
+          ) : null}
           <div className="member-profile__actions">
             {self ? (
-              <Link className="lr-primary" to="/profile" onClick={close}>
+              <Link
+                className="lr-primary"
+                to="/settings/$area"
+                params={{ area: "profil" }}
+                onClick={close}
+              >
                 Profil bearbeiten
               </Link>
             ) : (

@@ -765,7 +765,7 @@ export async function accessScenarios(h, f) {
           await f.join(victim);
           await navigate(f.owner, f.voicePath, f.base);
           await click(f.owner, "Beitreten");
-          await click(f.owner, "Go Live");
+          await click(f.owner, "Live gehen");
           await click(victim, "Zuschauen");
           await progress(victim, {
             relay: h.relay,
@@ -951,7 +951,7 @@ export async function accessScenarios(h, f) {
         const chatId = owned.textPath.split("/").at(-1);
         try {
           await click(owned.owner, "Beitreten");
-          await click(owned.owner, "Go Live");
+          await click(owned.owner, "Live gehen");
           await click(victim, "Zuschauen");
           await progress(victim, {
             relay: h.relay,

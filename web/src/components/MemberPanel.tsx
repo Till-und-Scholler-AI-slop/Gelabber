@@ -4,10 +4,16 @@ import { useShallow } from "zustand/react/shallow";
 
 import { useSession } from "../auth/session.ts";
 import type { ServerDetail } from "../servers/types.ts";
-import { useVoiceRoster, voiceOf, type VoiceFlags } from "../voice/roster.ts";
+import {
+  EMPTY_LIVE,
+  isLiveIn,
+  useVoiceRoster,
+  voiceOf,
+  type VoiceFlags,
+} from "../voice/roster.ts";
 import { useVoice } from "../voice/session.ts";
 import { groupMembers, presenceOf, usePresenceStore } from "../ws/live.ts";
-import { ScreenIcon, UsersIcon } from "./Icons.tsx";
+import { LiveIcon, UsersIcon } from "./Icons.tsx";
 import { toggleMemberPanel, useMemberPanelHidden } from "./memberPanelState.ts";
 import { MemberProfileDialog } from "./MemberProfileDialog.tsx";
 import { PresenceAvatar } from "./PresenceAvatar.tsx";
@@ -33,8 +39,16 @@ export function MemberPanelToggle() {
   );
 }
 
-export function MemberPanel({ server }: { server: ServerDetail }) {
-  const hidden = useMemberPanelHidden();
+export function MemberPanel({
+  server,
+  forceVisible = false,
+}: {
+  server: ServerDetail;
+  /** Shown on wide screens even when the user hid the list next to
+   * conversations. */
+  forceVisible?: boolean;
+}) {
+  const hidden = useMemberPanelHidden() && !forceVisible;
   const serverId = server.id;
   const members = server.members;
   const meUser = useSession((state) => state.user);
@@ -71,11 +85,14 @@ export function MemberPanel({ server }: { server: ServerDetail }) {
       <button
         type="button"
         className="member-drawer-trigger"
+        aria-label={`Mitglieder (${members.length})`}
         aria-expanded={drawerOpen}
         aria-controls={drawerId}
         onClick={() => setDrawerOpen(true)}
       >
-        Mitglieder<span>{members.length}</span>
+        <UsersIcon size={18} />
+        <span className="member-drawer-trigger-label">Mitglieder</span>
+        <span className="member-drawer-trigger-count">{members.length}</span>
       </button>
       <WorkspaceDrawer
         id={drawerId}
@@ -87,18 +104,15 @@ export function MemberPanel({ server }: { server: ServerDetail }) {
       >
         <aside className="member-panel" aria-label="Mitglieder">
           <header className="member-panel-heading">
-            <h2>Gerade da</h2>
-            <p>
-              {members.length}{" "}
-              {members.length === 1 ? "Mitglied" : "Mitglieder"}
-            </p>
+            <h2>Mitglieder</h2>
+            <p>{members.length}</p>
           </header>
           <ul className="member-panel-list">
             {groups.map((group) => (
               <li key={group.group} className="member-group">
-                <p className="member-group-heading">
-                  {group.label} <span>{group.members.length}</span>
-                </p>
+                <h3 className="member-group-heading">
+                  {group.label} — {group.members.length}
+                </h3>
                 <ul>
                   {group.members.map((listed) => {
                     const self = listed.user_id === me;
@@ -121,7 +135,8 @@ export function MemberPanel({ server }: { server: ServerDetail }) {
                       me,
                       session,
                     );
-                    const isLive = Object.values(live[serverId] ?? {}).includes(
+                    const isLive = isLiveIn(
+                      live[serverId] ?? EMPTY_LIVE,
                       member.user_id,
                     );
                     return (
@@ -165,7 +180,12 @@ export function MemberPanel({ server }: { server: ServerDetail }) {
                               <span>{group.label}</span>
                             )}
                             {isLive ? (
-                              <small>Teilt live seinen Bildschirm</small>
+                              <small>
+                                Live
+                                {flags
+                                  ? ` in ${names.get(flags.channelId) ?? "einem Sprachkanal"}`
+                                  : ""}
+                              </small>
                             ) : flags ? (
                               <small>
                                 {names.get(flags.channelId) ?? "Im Sprachraum"}
@@ -182,9 +202,9 @@ export function MemberPanel({ server }: { server: ServerDetail }) {
                               }
                             />
                             {isLive && (
-                              <ScreenIcon
+                              <LiveIcon
                                 size={20}
-                                aria-label="Live-Bildschirmübertragung"
+                                aria-label="Live"
                                 aria-hidden={false}
                               />
                             )}

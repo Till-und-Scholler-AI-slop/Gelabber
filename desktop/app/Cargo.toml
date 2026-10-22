@@ -29,7 +29,12 @@ tauri-plugin-updater = { version = "2.14.0", default-features = false, features 
 # The question before an update restarts the app (src/update.rs `confirm`):
 # the version and features the updater plugin already uses; the
 # push-to-talk hook (src/ptt/hook.rs) adds module handle and thread id.
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+# The registry entry that names the app's toasts (src/notify/toast.rs) adds
+# the registry.
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+# Toast notifications (src/notify/toast.rs): the WinRT API, in the version
+# Tauri's WebView2 bindings already bring.
+windows = { version = "0.62.2", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications"] }
 
 # WebKitGTK's own API for the web process (main.rs `end_web_process`). The
 # crate and version Tauri brings; the feature is the API level of the call.
@@ -37,8 +42,12 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Syste
 webkit2gtk = { version = "2.0", features = ["v2_34"] }
 # Whether a tray host library exists before tray-icon loads it (src/shell.rs).
 libloading = "0.8"
-# Whether a StatusNotifier host runs (src/shell.rs); the version GTK brings.
+# Whether a StatusNotifier host runs (src/shell.rs), and the notification
+# service (src/notify/dbus.rs); the version GTK brings.
 gio = "0.18"
+# The window to the front with a notification's activation token
+# (src/notify/dbus.rs); the version Tauri brings.
+gtk = "0.18"
 
 # Signatures checked as the updater checks them (src/update.rs tests).
 [dev-dependencies]

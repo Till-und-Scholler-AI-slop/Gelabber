@@ -1,0 +1,10 @@
+# The system's notifications (src/commands.rs NOTIFY_COMMANDS). Granted at
+# runtime to the configured server origin with the `media` set.
+[[set]]
+identifier = "notify"
+description = "Show and take down system notifications for the Gelabber server's web client."
+permissions = [
+  "allow-notify-info",
+  "allow-notify-show",
+  "allow-notify-close",
+]

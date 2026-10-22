@@ -127,7 +127,7 @@ export function useOpenDm() {
     onSuccess: (dm, _userId, stamp) => cacheOpenedDm(client, stamp, dm),
     onError: (error, _userId, stamp) => {
       if (!stampHolds(stamp)) return;
-      notifyError(error);
+      notifyError(error, "Unterhaltung nicht geöffnet.");
     },
   });
 }

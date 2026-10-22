@@ -179,7 +179,7 @@ export type MediaSettings = {
   economyMode: boolean;
   /** Camera capture + that sender's share of the video budget. */
   cameraProfile: StreamProfileId;
-  /** Screen share and Go Live. Both are display captures. */
+  /** Live (a display capture); older clients used it for Go Live too. */
   screenProfile: StreamProfileId;
   /** 0 = no custom limit; otherwise explicit shared video payload cap in bit/s. */
   videoUploadLimit: number;
@@ -229,13 +229,17 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   pttReleaseDelay: PTT_RELEASE_DELAY_DEFAULT,
 };
 
+/** The settings dialog's tab it opens on. */
+export type MediaDialogSection = "audio" | "video" | "diagnostics";
+
 type MediaSettingsState = MediaSettings & {
   dialogOpen: boolean;
+  dialogSection: MediaDialogSection | null;
   /** Not persisted. Set by the live session after a profile change. */
   cameraProfileApply: StreamApply;
   screenProfileApply: StreamApply;
   patch: (partial: Partial<MediaSettings>) => void;
-  openDialog: () => void;
+  openDialog: (section?: MediaDialogSection) => void;
   closeDialog: () => void;
 };
 
@@ -402,7 +406,12 @@ export const useMediaSettings = create<MediaSettingsState>()(
   persist(
     (set, get) => ({
       ...DEFAULT_MEDIA_SETTINGS,
+      // The desktop app announces messages while its window is not in
+      // front from the start, as chat apps do; a browser tab waits to be
+      // asked. A choice made before stays as it is.
+      desktopNotify: isDesktopApp(),
       dialogOpen: false,
+      dialogSection: null,
       cameraProfileApply: "idle",
       screenProfileApply: "idle",
       patch: (partial) => {
@@ -498,8 +507,9 @@ export const useMediaSettings = create<MediaSettingsState>()(
         });
         listener?.(prev, snapshot(get()));
       },
-      openDialog: () => set({ dialogOpen: true }),
-      closeDialog: () => set({ dialogOpen: false }),
+      openDialog: (section) =>
+        set({ dialogOpen: true, dialogSection: section ?? null }),
+      closeDialog: () => set({ dialogOpen: false, dialogSection: null }),
     }),
     {
       name: SETTINGS_KEY,
@@ -568,6 +578,7 @@ export const useMediaSettings = create<MediaSettingsState>()(
           cameraProfileApply: current.cameraProfileApply,
           screenProfileApply: current.screenProfileApply,
           dialogOpen: current.dialogOpen,
+          dialogSection: current.dialogSection,
         };
       },
     },
@@ -588,7 +599,7 @@ export function sourceAudioBitrate(
   return settings.economyMode ? 128_000 : null;
 }
 
-/** Whether screen share and Go Live carry sound. Without a choice of his own
+/** Whether a Live carries sound. Without a choice of his own
  * the user gets it where the call stays out of it: in a desktop app whose
  * "every application" leaves out Gelabber itself. A browser captures whatever
  * its picker hands over, the call included, so there it stays off. */
@@ -648,6 +659,7 @@ export function resetMediaSettingsForTests(): void {
   useMediaSettings.setState({
     ...DEFAULT_MEDIA_SETTINGS,
     dialogOpen: false,
+    dialogSection: null,
     cameraProfileApply: "idle",
     screenProfileApply: "idle",
   });

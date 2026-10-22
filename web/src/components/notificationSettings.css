@@ -1,0 +1,26 @@
+.notify-muted {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-surface);
+  font: var(--lr-type-ui);
+}
+/* Two columns of equal chips: easy to hit with a thumb, none crowded. */
+.notify-mute-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.notify-mute-grid .ui-chip {
+  justify-content: center;
+  min-height: var(--lr-control-md);
+  border-radius: var(--lr-radius-sm);
+  text-align: center;
+}
+.notify-mute-grid .ui-chip:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}

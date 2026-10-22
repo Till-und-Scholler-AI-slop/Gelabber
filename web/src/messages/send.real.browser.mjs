@@ -147,12 +147,12 @@ try {
   release();
   await navigate(owner.page, path);
   await owner.page
-    .getByRole("button", { name: "Sendung wiederholen", exact: true })
+    .getByRole("button", { name: "Erneut senden", exact: true })
     .waitFor();
   assert.equal(posts, 2);
   await owner.page.unroute(messageRoute);
   await owner.page
-    .getByRole("button", { name: "Sendung wiederholen", exact: true })
+    .getByRole("button", { name: "Erneut senden", exact: true })
     .click();
   await guest.page
     .getByRole("log")
@@ -190,7 +190,7 @@ try {
     .waitFor();
   assert.equal(
     await owner.page
-      .getByRole("button", { name: "Sendung wiederholen", exact: true })
+      .getByRole("button", { name: "Erneut senden", exact: true })
       .count(),
     0,
   );

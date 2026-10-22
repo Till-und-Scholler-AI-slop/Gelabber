@@ -1,5 +1,13 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { bindDraftAccount, loadDraft, saveDraft } from "./drafts.ts";
+import {
+  bindDraftAccount,
+  DRAFT_MAX_AGE_MS,
+  hasDraft,
+  loadDraft,
+  saveDraft,
+} from "./drafts.ts";
+
+const stamped = (text: string, at = Date.now()) => JSON.stringify({ text, at });
 
 let stored: Record<string, string>;
 beforeEach(() => {
@@ -22,7 +30,7 @@ beforeEach(() => {
       }),
     },
   );
-  vi.stubGlobal("sessionStorage", storage);
+  vi.stubGlobal("localStorage", storage);
   bindDraftAccount(null);
 });
 afterEach(() => {
@@ -40,11 +48,15 @@ describe("account and chat scoped drafts", () => {
     saveDraft("a", "two", { text: "another", files: [] });
     expect(loadDraft("a", "one")).toEqual({ text: "draft", files: [file] });
     expect(loadDraft("a", "two").text).toBe("another");
-    expect(Object.values(stored).sort()).toEqual(["another", "draft"]);
+    expect(
+      Object.values(stored)
+        .map((value) => JSON.parse(value).text)
+        .sort(),
+    ).toEqual(["another", "draft"]);
   });
-  it("restores a reload text draft only for the session's account", () => {
-    stored["gelabber:chat-draft:a:reload"] = "restored";
-    stored["gelabber:chat-draft:b:reload"] = "foreign";
+  it("restores a stored text draft only for the session's account", () => {
+    stored["gelabber:chat-draft:a:reload"] = stamped("restored");
+    stored["gelabber:chat-draft:b:reload"] = stamped("foreign");
     bindDraftAccount("a");
     expect(loadDraft("a", "reload")).toEqual({ text: "restored", files: [] });
     expect(loadDraft("b", "reload").text).toBe("");
@@ -95,7 +107,7 @@ describe("account and chat scoped drafts", () => {
     expect(loadDraft("a", "two").text).toBe("keep");
   });
   it("preserves memory drafts when browser storage is unavailable", () => {
-    vi.stubGlobal("sessionStorage", {
+    vi.stubGlobal("localStorage", {
       getItem: () => {
         throw new Error("disabled");
       },
@@ -108,5 +120,29 @@ describe("account and chat scoped drafts", () => {
     });
     saveDraft("a", "one", { text: "still here", files: [] });
     expect(loadDraft("a", "one").text).toBe("still here");
+  });
+  it("drops stored drafts after a week", () => {
+    const old = Date.now() - DRAFT_MAX_AGE_MS - 1000;
+    stored["gelabber:chat-draft:a:old"] = stamped("stale", old);
+    stored["gelabber:chat-draft:a:young"] = stamped("fresh", Date.now() - 1000);
+    stored["gelabber:chat-draft:a:broken"] = "{not json";
+    bindDraftAccount("a");
+    expect(Object.keys(stored)).toEqual(["gelabber:chat-draft:a:young"]);
+    stored["gelabber:chat-draft:a:later"] = stamped("stale", old);
+    expect(loadDraft("a", "later").text).toBe("");
+    expect(stored["gelabber:chat-draft:a:later"]).toBeUndefined();
+  });
+  it("says which conversations have a draft", () => {
+    bindDraftAccount("a");
+    stored["gelabber:chat-draft:a:stored"] = stamped("from yesterday");
+    saveDraft("a", "typed", { text: "hallo", files: [] });
+    saveDraft("a", "file", { text: "", files: [new File(["x"], "x.txt")] });
+    saveDraft("a", "blank", { text: "   ", files: [] });
+    expect(hasDraft("a", "stored")).toBe(true);
+    expect(hasDraft("a", "typed")).toBe(true);
+    expect(hasDraft("a", "file")).toBe(true);
+    expect(hasDraft("a", "blank")).toBe(false);
+    expect(hasDraft("a", "none")).toBe(false);
+    expect(hasDraft("", "typed")).toBe(false);
   });
 });

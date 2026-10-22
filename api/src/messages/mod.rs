@@ -524,6 +524,11 @@ async fn delete_message(
     .await?;
     tx.commit().await?;
     delivery::wake(&state);
+    let server = match &access {
+        MessagingChannel::Server { member, .. } => Some(member.server.id),
+        MessagingChannel::Dm { .. } => None,
+    };
+    crate::push::recall(&state, &current, server);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -689,8 +694,10 @@ pub(crate) async fn attach_previews(
     Ok(())
 }
 
-/// Best-effort notice in the server's oldest text channel when Go Live starts.
-/// The badge is already local; this must not fail the signaling frame.
+/// Best-effort notice in the server's oldest text channel when someone goes
+/// live (a screen, or Go Live of an older client). The badge is already
+/// local; this must not fail the signaling frame. Once per person and voice
+/// channel until they have been off Live there for ten minutes.
 pub(crate) async fn post_live_hint(state: &AppState, user: &User, server_id: Uuid, voice_id: Uuid) {
     let voice_name = match sqlx::query_scalar::<_, String>(
         "SELECT name FROM channels WHERE id = $1 AND server_id = $2 AND kind = 'voice'",
@@ -726,6 +733,14 @@ pub(crate) async fn post_live_hint(state: &AppState, user: &User, server_id: Uui
     let Some(text_id) = text_id else {
         return;
     };
+    match state.gateway.claim_live_hint(user.id, voice_id).await {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(err) => {
+            warn!(error = err.code(), "live hint: cooldown");
+            return;
+        }
+    }
     let content = format!("{} ist live in {voice_name}.", user.name);
     let result: Result<(),ApiError> = async {
         let mut tx=state.db.begin().await?;
@@ -738,6 +753,10 @@ pub(crate) async fn post_live_hint(state: &AppState, user: &User, server_id: Uui
     }.await;
     if let Err(err) = result {
         warn!(error = err.code(), "live hint persistence failed");
+        // Nothing was posted: the next start of this Live may try again.
+        if let Err(err) = state.gateway.release_live_hint(user.id, voice_id).await {
+            warn!(error = err.code(), "live hint: release cooldown");
+        }
         return;
     }
     delivery::wake(state);

@@ -2,9 +2,12 @@
 <html lang="de">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" content="#17191a" />
+    <meta name="theme-color" content="%theme.dark.background%" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Gelabber" />
@@ -41,9 +44,10 @@
         document.documentElement.classList.toggle("dark", dark);
         document.documentElement.dataset.theme = dark ? "dark" : "light";
         document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        // Filled in from src/theme/defaults.json at build time (vite.config.ts).
         setInitialColours(
-          dark ? "#17191a" : "#f8f5f0",
-          dark ? "#eef0ee" : "#252829",
+          dark ? "%theme.dark.background%" : "%theme.light.background%",
+          dark ? "%theme.dark.text%" : "%theme.light.text%",
         );
       };
       try {
@@ -80,14 +84,61 @@
     </script>
     <style>
       html {
-        background: var(--lr-bg, #17191a);
-        color: var(--lr-text, #eef0ee);
+        background: var(--lr-bg, %theme.dark.background%);
+        color: var(--lr-text, %theme.dark.text%);
+      }
+      /* Shown until React's first render replaces it. */
+      .boot-splash {
+        display: grid;
+        place-content: center;
+        justify-items: center;
+        gap: 12px;
+        min-height: 100dvh;
+        background: var(--lr-bg);
+        color: var(--lr-text);
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+      .boot-splash img {
+        border-radius: 12px;
+      }
+      .boot-splash strong {
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .boot-splash span {
+        color: color-mix(in srgb, var(--lr-text) 68%, var(--lr-bg));
+        font-size: 13px;
+        opacity: 0;
+        animation: boot-splash-in 240ms ease-out 600ms forwards;
+      }
+      @keyframes boot-splash-in {
+        to {
+          opacity: 1;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-splash span {
+          opacity: 1;
+          animation: none;
+        }
       }
     </style>
     <title>Gelabber</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot-splash">
+        <img src="/icons/icon-192.png" width="48" height="48" alt="" />
+        <strong>Gelabber</strong>
+        <span>Verbinde…</span>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
