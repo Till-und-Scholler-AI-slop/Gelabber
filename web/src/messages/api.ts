@@ -32,6 +32,7 @@ export const createMessage = (
   attachmentIds: string[] = [],
   gif?: GifPick,
   replyTo?: string,
+  nonce?: string,
 ) =>
   api<Message>(`/channels/${channelId}/messages`, {
     method: "POST",
@@ -40,6 +41,7 @@ export const createMessage = (
         ? { content: "", gif: { slug: gif.slug, query: gif.query } }
         : { content, attachment_ids: attachmentIds }),
       ...(replyTo ? { reply_to: replyTo } : {}),
+      ...(nonce ? { nonce } : {}),
     },
   });
 

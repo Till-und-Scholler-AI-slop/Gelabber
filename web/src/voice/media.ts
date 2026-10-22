@@ -17,7 +17,7 @@ export type MediaTicket = {
   ice_servers: IceServer[];
 };
 export type MediaRequests = {
-  j: { tk: string; w?: string; v: typeof MEDIA_VERSION };
+  j: { tk: string; v: typeof MEDIA_VERSION };
   capabilities: { rtp: RtpCapabilities };
   transport: { direction: "send" | "recv" };
   connect: { transportId: string; dtls: DtlsParameters };
@@ -28,7 +28,6 @@ export type MediaRequests = {
     rtp: RtpParameters;
     epoch: string;
     parent?: string;
-    lc?: string;
     expectedOldProducerId?: string;
     height?: number;
     paused?: boolean;
@@ -38,7 +37,7 @@ export type MediaRequests = {
   closeProducer: { producerId: string };
   consumerReady: { consumerId: string; generation: string };
   consumerFailed: { consumerId: string; generation: string };
-  w: { u: string; k: "s" | "l"; on: boolean };
+  w: { u: string; k: "s"; on: boolean };
   q: { consumerId: string; generation: string; h: number; congested: boolean };
   l: Record<string, never>;
 };
@@ -108,7 +107,7 @@ export type MediaEvent =
     };
 export type MediaServerFrame =
   | { op: "result"; id: number; data: unknown }
-  | { op: "err"; id?: number; e: string; lc?: string }
+  | { op: "err"; id?: number; e: string }
   | MediaEvent;
 export type MediaSocket = {
   send(frame: MediaClientFrame): void;
@@ -124,16 +123,13 @@ export type MediaRequest = <K extends MediaMethod>(
   deadlineEpochMs?: number,
 ) => Promise<MediaResults[K]>;
 export class MediaError extends Error {
-  constructor(
-    readonly code: string,
-    readonly lc?: string,
-  ) {
+  constructor(readonly code: string) {
     super(code);
     this.name = "MediaError";
   }
 }
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
-const trackKinds = new Set(["a", "v", "s", "l", "sa", "la"]);
+const trackKinds = new Set(["a", "v", "s", "sa"]);
 const record = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
 const id = (v: unknown): v is string =>
@@ -163,9 +159,7 @@ export function decodeMediaFrame(raw: unknown): MediaServerFrame | null {
       ? (raw as MediaServerFrame)
       : null;
   if (raw.op === "err")
-    return id(raw.e) &&
-      (raw.id === undefined || requestId(raw.id)) &&
-      (raw.lc === undefined || uuid(raw.lc))
+    return id(raw.e) && (raw.id === undefined || requestId(raw.id))
       ? (raw as MediaServerFrame)
       : null;
   if (raw.op === "producerClosed")
@@ -190,9 +184,9 @@ export function decodeMediaFrame(raw: unknown): MediaServerFrame | null {
     !record(raw.rtpParameters)
   )
     return null;
-  const audio = raw.k === "a" || raw.k === "sa" || raw.k === "la";
+  const audio = raw.k === "a" || raw.k === "sa";
   if (raw.kind !== (audio ? "audio" : "video")) return null;
-  if ((raw.k === "sa" || raw.k === "la") && !id(raw.parent)) return null;
+  if (raw.k === "sa" && !id(raw.parent)) return null;
   if (raw.parent !== undefined && !id(raw.parent)) return null;
   return raw as ConsumerAnnouncement;
 }

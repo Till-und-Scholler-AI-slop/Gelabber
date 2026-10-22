@@ -100,6 +100,11 @@ pub struct Message {
     /// from kind and params, and `content` is empty (`system.rs`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system: Option<SystemMessage>,
+    /// The sender's send attempt (#355), echoed on the create response and
+    /// its event only: the sending client swaps its pending row for this
+    /// message in one render, whichever of the two arrives first.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -155,6 +160,7 @@ impl From<MessageRow> for Message {
             reply: None,
             previews: Vec::new(),
             system: SystemMessage::from_columns(row.system_kind, row.system_params),
+            nonce: None,
         }
     }
 }
@@ -198,6 +204,7 @@ impl MessageInsert {
             reply: None,
             previews: Vec::new(),
             system: SystemMessage::from_columns(self.system_kind, self.system_params),
+            nonce: None,
         }
     }
 }
@@ -214,6 +221,9 @@ pub struct CreateBody {
     /// Answer this message of the same channel.
     #[serde(default)]
     pub reply_to: Option<Uuid>,
+    /// The client's id for this send attempt, echoed back as `nonce`.
+    #[serde(default)]
+    pub nonce: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -344,6 +354,7 @@ async fn create_message(
     };
     let mut message = row.into_message(&user);
     message.attachments = bound;
+    message.nonce = body.nonce;
     persist_event(
         &mut tx,
         access.event_server_id(),
@@ -713,9 +724,9 @@ pub(crate) async fn attach_previews(
 }
 
 /// Best-effort notice in the server's oldest text channel when someone goes
-/// live (a screen, or Go Live of an older client). The badge is already
-/// local; this must not fail the signaling frame. Once per person and voice
-/// channel until they have been off Live there for ten minutes.
+/// live (shares a screen). The badge is already local; this must not fail
+/// the signaling frame. Once per person and voice channel until they have
+/// been off Live there for ten minutes.
 pub(crate) async fn post_live_hint(state: &AppState, user: &User, server_id: Uuid, voice_id: Uuid) {
     let voice_name = match sqlx::query_scalar::<_, String>(
         "SELECT name FROM channels WHERE id = $1 AND server_id = $2 AND kind = 'voice'",

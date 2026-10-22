@@ -225,8 +225,8 @@ describe("active media UI", () => {
     expect(html).toContain("Hierher wechseln</button>");
     expect(html).not.toContain('aria-label="Beitreten"');
   });
-  it("puts every Live in the room on the stage, an older app's Go Live as one of them", () => {
-    fixture.live = { a: { stage: { bob: { l: true }, alice: { s: true } } } };
+  it("puts every Live in the room on the stage", () => {
+    fixture.live = { a: { stage: { bob: { s: true }, alice: { s: true } } } };
     fixture.roster = {
       a: {
         alice: { channelId: "stage", muted: false, deafened: false },
@@ -237,18 +237,18 @@ describe("active media UI", () => {
       status: "joined",
       serverId: "a",
       channelId: "stage",
-      participants: { alice: { pubs: ["s"] }, bob: { pubs: ["l"] } },
-      remote: { alice: { s: stream }, bob: { l: { id: "older-app" } } },
+      participants: { alice: { pubs: ["s"] }, bob: { pubs: ["s"] } },
+      remote: { alice: { s: stream }, bob: { s: { id: "bob-screen" } } },
     });
     const html = renderToStaticMarkup(
       <VoiceRoom server={server} channelId="stage" channelName="Stage" />,
     );
     expect(html).toContain('data-source="source-from-a"');
-    expect(html).toContain('data-source="older-app"');
+    expect(html).toContain('data-source="bob-screen"');
     expect(html.match(/— Live</g)).toHaveLength(2);
     // Whoever went live first holds the spotlight.
     expect(html).toMatch(
-      /<div class="voice-room-spotlight"><span data-source="older-app"/,
+      /<div class="voice-room-spotlight"><span data-source="bob-screen"/,
     );
     expect(html.match(/· Live</g)).toHaveLength(2);
   });

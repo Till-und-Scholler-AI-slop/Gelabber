@@ -15,6 +15,24 @@ async fn member(
     server: Uuid,
     channel: Uuid,
 ) -> (String, authority::TestAuthority) {
+    ticketed(state, user, server, channel, false).await
+}
+/// A member whose ticket carries `go_live`, so it may share a screen.
+async fn streamer(
+    state: &gelabber_media::AppState,
+    user: Uuid,
+    server: Uuid,
+    channel: Uuid,
+) -> (String, authority::TestAuthority) {
+    ticketed(state, user, server, channel, true).await
+}
+async fn ticketed(
+    state: &gelabber_media::AppState,
+    user: Uuid,
+    server: Uuid,
+    channel: Uuid,
+    go_live: bool,
+) -> (String, authority::TestAuthority) {
     let code = ticket::generate();
     let lease = authority::mint(
         &state.redis,
@@ -23,7 +41,7 @@ async fn member(
             u: user,
             s: server,
             c: channel,
-            g: false,
+            g: go_live,
         },
     )
     .await;
@@ -41,10 +59,10 @@ async fn sdk_empty_video_cname_does_not_poison_transport_for_later_audio() {
     let server = Uuid::new_v4();
     let channel = Uuid::new_v4();
     let owner = Uuid::new_v4();
-    let (a, _la) = member(&state, owner, server, channel).await;
+    let (a, _la) = streamer(&state, owner, server, channel).await;
     let (b, _lb) = member(&state, Uuid::new_v4(), server, channel).await;
-    let mut publisher = Peer::join(addr, &a, None).await;
-    let mut viewer = Peer::join(addr, &b, None).await;
+    let mut publisher = Peer::join(addr, &a).await;
+    let mut viewer = Peer::join(addr, &b).await;
     publisher.transport("send").await;
     viewer.receive().await;
     viewer
@@ -52,14 +70,14 @@ async fn sdk_empty_video_cname_does_not_poison_transport_for_later_audio() {
         .await;
     // Chrome's public SDK can supply an empty CNAME for RID-only simulcast.
     // Rust's public transport API generates a transport CNAME when it is absent.
-    let mut screen = produce("s", Uuid::new_v4(), None, None);
+    let mut screen = produce("s", Uuid::new_v4(), None);
     screen["rtp"]["rtcp"]["cname"] = json!("");
     publisher.ok(screen).await;
     let video = viewer.event("consumer").await;
     assert_eq!(video["k"], "s");
     let cname = video["rtpParameters"]["rtcp"]["cname"].as_str().unwrap();
     assert!(!cname.is_empty());
-    publisher.ok(produce("a", Uuid::new_v4(), None, None)).await;
+    publisher.ok(produce("a", Uuid::new_v4(), None)).await;
     let audio = viewer.event("consumer").await;
     assert_eq!(audio["k"], "a");
     assert!(
@@ -78,8 +96,8 @@ async fn native_transport_ids_and_directions_are_peer_scoped() {
     let channel = Uuid::new_v4();
     let (a, _la) = member(&state, Uuid::new_v4(), server, channel).await;
     let (b, _lb) = member(&state, Uuid::new_v4(), server, channel).await;
-    let mut a = Peer::join(addr, &a, None).await;
-    let mut b = Peer::join(addr, &b, None).await;
+    let mut a = Peer::join(addr, &a).await;
+    let mut b = Peer::join(addr, &b).await;
     let transport = a.transport("send").await;
     denied(
         &b.rpc(json!({"op":"restartIce","transportId":transport}))
@@ -105,12 +123,12 @@ async fn native_transport_ids_and_directions_are_peer_scoped() {
 async fn publication_identity_survives_replacement_and_late_old_cleanup() {
     let (addr, state) = serve().await;
     let (code, _lease) = member(&state, Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()).await;
-    let mut peer = Peer::join(addr, &code, None).await;
+    let mut peer = Peer::join(addr, &code).await;
     peer.transport("send").await;
     let epoch = Uuid::new_v4();
-    let first = peer.ok(produce("a", epoch, None, None)).await;
+    let first = peer.ok(produce("a", epoch, None)).await;
     let old = first["producerId"].as_str().unwrap();
-    let mut replacement = produce("a", epoch, None, None);
+    let mut replacement = produce("a", epoch, None);
     replacement["expectedOldProducerId"] = json!(old);
     let next = peer.ok(replacement).await;
     assert_ne!(first["producerId"], next["producerId"]);
@@ -120,33 +138,42 @@ async fn publication_identity_survives_replacement_and_late_old_cleanup() {
         .await;
     peer.ok(json!({"op":"resumeProducer","producerId":next["producerId"]}))
         .await;
-    denied(&peer.rpc(produce("a", Uuid::new_v4(), None, None)).await);
+    denied(&peer.rpc(produce("a", Uuid::new_v4(), None)).await);
+    peer.close().await;
+}
+#[tokio::test]
+async fn screen_and_its_sound_need_the_go_live_grant() {
+    let (addr, state) = serve().await;
+    let (code, _lease) = member(&state, Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()).await;
+    let mut peer = Peer::join(addr, &code).await;
+    peer.transport("send").await;
+    let epoch = Uuid::new_v4();
+    let refused = peer.rpc(produce("s", epoch, None)).await;
+    denied(&refused);
+    assert_eq!(refused["e"], "forbidden", "{refused}");
+    let refused = peer.rpc(produce("sa", epoch, Some("any-parent"))).await;
+    assert_eq!(refused["e"], "forbidden", "{refused}");
+    // Microphone and camera stay open to every member in the room.
+    peer.ok(produce("a", Uuid::new_v4(), None)).await;
+    peer.ok(produce("v", Uuid::new_v4(), None)).await;
     peer.close().await;
 }
 #[tokio::test]
 async fn source_audio_requires_exact_live_parent_and_capture_epoch() {
     let (addr, state) = serve().await;
-    let (code, _lease) = member(&state, Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()).await;
-    let mut peer = Peer::join(addr, &code, None).await;
+    let (code, _lease) = streamer(&state, Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()).await;
+    let mut peer = Peer::join(addr, &code).await;
     peer.transport("send").await;
     let epoch = Uuid::new_v4();
-    denied(&peer.rpc(produce("sa", epoch, None, None)).await);
-    let screen = peer.ok(produce("s", epoch, None, None)).await;
+    denied(&peer.rpc(produce("sa", epoch, None)).await);
+    let screen = peer.ok(produce("s", epoch, None)).await;
     let parent = screen["producerId"].as_str().unwrap();
-    denied(
-        &peer
-            .rpc(produce("sa", Uuid::new_v4(), Some(parent), None))
-            .await,
-    );
-    denied(
-        &peer
-            .rpc(produce("sa", epoch, Some("foreign-parent"), None))
-            .await,
-    );
-    let audio = peer.ok(produce("sa", epoch, Some(parent), None)).await;
+    denied(&peer.rpc(produce("sa", Uuid::new_v4(), Some(parent))).await);
+    denied(&peer.rpc(produce("sa", epoch, Some("foreign-parent"))).await);
+    let audio = peer.ok(produce("sa", epoch, Some(parent))).await;
     peer.ok(json!({"op":"closeProducer","producerId":parent}))
         .await;
-    denied(&peer.rpc(produce("sa", epoch, Some(parent), None)).await);
+    denied(&peer.rpc(produce("sa", epoch, Some(parent))).await);
     peer.ok(json!({"op":"closeProducer","producerId":audio["producerId"]}))
         .await;
     peer.close().await;
@@ -157,17 +184,17 @@ async fn consumer_is_paused_until_exact_generation_ready_and_watch_off_stops_nat
     let server = Uuid::new_v4();
     let channel = Uuid::new_v4();
     let owner = Uuid::new_v4();
-    let (a, _la) = member(&state, owner, server, channel).await;
+    let (a, _la) = streamer(&state, owner, server, channel).await;
     let (b, _lb) = member(&state, Uuid::new_v4(), server, channel).await;
-    let mut publisher = Peer::join(addr, &a, None).await;
-    let mut viewer = Peer::join(addr, &b, None).await;
+    let mut publisher = Peer::join(addr, &a).await;
+    let mut viewer = Peer::join(addr, &b).await;
     publisher.transport("send").await;
     viewer.receive().await;
     viewer
         .ok(json!({"op":"w","u":owner,"k":"s","on":true}))
         .await;
     let epoch = Uuid::new_v4();
-    publisher.ok(produce("s", epoch, None, None)).await;
+    publisher.ok(produce("s", epoch, None)).await;
     let event = viewer.event("consumer").await;
     assert_eq!(event["owner"], owner.to_string());
     assert_eq!(event["k"], "s");
@@ -197,23 +224,23 @@ async fn audio_and_camera_automatic_consumers_remain_distinct_and_audio_parent_w
     let server = Uuid::new_v4();
     let channel = Uuid::new_v4();
     let owner = Uuid::new_v4();
-    let (a, _la) = member(&state, owner, server, channel).await;
+    let (a, _la) = streamer(&state, owner, server, channel).await;
     let (b, _lb) = member(&state, Uuid::new_v4(), server, channel).await;
-    let mut publisher = Peer::join(addr, &a, None).await;
-    let mut viewer = Peer::join(addr, &b, None).await;
+    let mut publisher = Peer::join(addr, &a).await;
+    let mut viewer = Peer::join(addr, &b).await;
     publisher.transport("send").await;
     viewer.receive().await;
-    let mic = publisher.ok(produce("a", Uuid::new_v4(), None, None)).await;
-    let camera = publisher.ok(produce("v", Uuid::new_v4(), None, None)).await;
+    let mic = publisher.ok(produce("a", Uuid::new_v4(), None)).await;
+    let camera = publisher.ok(produce("v", Uuid::new_v4(), None)).await;
     let a = viewer.event("consumer").await;
     let v = viewer.event("consumer").await;
     assert_ne!(a["consumerId"], v["consumerId"]);
     assert!([a["producerId"].clone(), v["producerId"].clone()].contains(&mic["producerId"]));
     assert!([a["producerId"].clone(), v["producerId"].clone()].contains(&camera["producerId"]));
     let epoch = Uuid::new_v4();
-    let screen = publisher.ok(produce("s", epoch, None, None)).await;
+    let screen = publisher.ok(produce("s", epoch, None)).await;
     let audio = publisher
-        .ok(produce("sa", epoch, screen["producerId"].as_str(), None))
+        .ok(produce("sa", epoch, screen["producerId"].as_str()))
         .await;
     viewer
         .ok(json!({"op":"w","u":owner,"k":"s","on":true}))
@@ -239,29 +266,15 @@ async fn audio_and_camera_automatic_consumers_remain_distinct_and_audio_parent_w
     publisher.close().await;
 }
 #[tokio::test]
-async fn watch_only_cannot_create_send_transport_or_publish_even_microphone() {
-    let (addr, state) = serve().await;
-    let (code, _lease) = member(&state, Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()).await;
-    let mut viewer = Peer::join(addr, &code, Some(Uuid::new_v4())).await;
-    denied(
-        &viewer
-            .rpc(json!({"op":"transport","direction":"send"}))
-            .await,
-    );
-    denied(&viewer.rpc(produce("a", Uuid::new_v4(), None, None)).await);
-    viewer.receive().await;
-    viewer.close().await;
-}
-#[tokio::test]
 async fn malformed_rtp_cannot_reserve_a_source_or_hide_later_success() {
     let (addr, state) = serve().await;
     let (code, _lease) = member(&state, Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()).await;
-    let mut peer = Peer::join(addr, &code, None).await;
+    let mut peer = Peer::join(addr, &code).await;
     peer.transport("send").await;
-    let mut bad = produce("v", Uuid::new_v4(), None, None);
+    let mut bad = produce("v", Uuid::new_v4(), None);
     bad["rtp"] = json!({});
     denied(&peer.rpc(bad).await);
-    peer.ok(produce("v", Uuid::new_v4(), None, None)).await;
+    peer.ok(produce("v", Uuid::new_v4(), None)).await;
     peer.close().await;
     tokio::time::timeout(Duration::from_secs(1), async {
         while state.sfu.room_count() != 0 {
@@ -281,11 +294,11 @@ async fn failed_consumer_reannounces_without_an_unrelated_publication() {
     let channel = Uuid::new_v4();
     let (a, _la) = member(&state, Uuid::new_v4(), server, channel).await;
     let (b, _lb) = member(&state, Uuid::new_v4(), server, channel).await;
-    let mut publisher = Peer::join(addr, &a, None).await;
-    let mut viewer = Peer::join(addr, &b, None).await;
+    let mut publisher = Peer::join(addr, &a).await;
+    let mut viewer = Peer::join(addr, &b).await;
     publisher.transport("send").await;
     viewer.receive().await;
-    publisher.ok(produce("a", Uuid::new_v4(), None, None)).await;
+    publisher.ok(produce("a", Uuid::new_v4(), None)).await;
     let old = viewer.event("consumer").await;
     viewer.ok(json!({"op":"consumerFailed","consumerId":old["consumerId"],"generation":old["generation"]})).await;
     let next = viewer.event("consumer").await;
@@ -308,10 +321,10 @@ async fn large_room_announcements_and_camera_churn_preserve_microphones() {
     for _ in 0..34 {
         let (code, lease) = member(&state, Uuid::new_v4(), server, channel).await;
         leases.push(lease);
-        let mut peer = Peer::join(addr, &code, None).await;
+        let mut peer = Peer::join(addr, &code).await;
         peer.transport("send").await;
-        let mic = peer.ok(produce("a", Uuid::new_v4(), None, None)).await;
-        let camera = peer.ok(produce("v", Uuid::new_v4(), None, None)).await;
+        let mic = peer.ok(produce("a", Uuid::new_v4(), None)).await;
+        let camera = peer.ok(produce("v", Uuid::new_v4(), None)).await;
         publishers.push((
             peer,
             mic["producerId"].clone(),
@@ -320,7 +333,7 @@ async fn large_room_announcements_and_camera_churn_preserve_microphones() {
     }
     let (code, lease) = member(&state, Uuid::new_v4(), server, channel).await;
     leases.push(lease);
-    let mut viewer = Peer::join(addr, &code, None).await;
+    let mut viewer = Peer::join(addr, &code).await;
     viewer.receive().await;
     let mut received = std::collections::HashSet::new();
     for _ in 0..68 {
@@ -331,7 +344,7 @@ async fn large_room_announcements_and_camera_churn_preserve_microphones() {
     for (peer, mic, camera) in publishers.iter_mut().take(8) {
         peer.ok(json!({"op":"closeProducer","producerId":camera}))
             .await;
-        peer.ok(produce("v", Uuid::new_v4(), None, None)).await;
+        peer.ok(produce("v", Uuid::new_v4(), None)).await;
         let closed = viewer.event("consumerClosed").await;
         assert!(closed["consumerId"].is_string());
         let opened = viewer.event("consumer").await;

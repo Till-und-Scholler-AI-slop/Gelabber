@@ -4,7 +4,6 @@ import {
   EMPTY_LIVE,
   EMPTY_OCCUPANCY,
   VOICE_ICON_SLOT_PX,
-  applyLiveEnd,
   applyLiveStart,
   applyVoiceJoin,
   applyVoiceLeave,
@@ -48,33 +47,21 @@ describe("voice roster", () => {
 
   it("tracks several people live in one channel, in the order they started", () => {
     const people = () => liveIn(useVoiceRoster.getState().live, "s1", "voice");
-    const sig = (t: "p" | "u", u: string, k: "s" | "l" | "sa" | "v") =>
+    const sig = (t: "p" | "u", u: string, k: "s" | "sa" | "v") =>
       applyVoiceSig({ op: "sig", t, s: "s1", c: "voice", u, k });
     sig("p", "u1", "s");
     sig("p", "u2", "s");
-    // An older client's Go Live counts as live too.
-    sig("p", "u3", "l");
+    sig("p", "u3", "s");
     // Neither its sound nor a camera is a Live of its own.
     sig("p", "u4", "sa");
     sig("p", "u4", "v");
     expect(people()).toEqual(["u1", "u2", "u3"]);
     sig("u", "u1", "s");
     expect(people()).toEqual(["u2", "u3"]);
-    sig("u", "u3", "l");
+    sig("u", "u3", "s");
     expect(people()).toEqual(["u2"]);
     expect(isLiveIn(useVoiceRoster.getState().live.s1!, "u2")).toBe(true);
     expect(isLiveIn(useVoiceRoster.getState().live.s1!, "u1")).toBe(false);
-  });
-
-  it("keeps someone live while one of their two Lives runs", () => {
-    applyLiveStart("s1", "voice", "u1", "s");
-    applyLiveStart("s1", "voice", "u1", "l");
-    applyLiveEnd("s1", "voice", "u1", "l");
-    expect(liveIn(useVoiceRoster.getState().live, "s1", "voice")).toEqual([
-      "u1",
-    ]);
-    applyLiveEnd("s1", "voice", "u1", "s");
-    expect(useVoiceRoster.getState().live.s1).toEqual({});
   });
 
   it("clears live when the streamer leaves and restores it from a snap", () => {
@@ -83,7 +70,7 @@ describe("voice roster", () => {
     applyVoiceLeave("s1", "u1");
     expect(liveIn(useVoiceRoster.getState().live, "s1", "voice")).toEqual([]);
     applyVoiceSnap("s1", [
-      { u: "u2", c: "lounge", l: true },
+      { u: "u2", c: "lounge", s: true },
       { u: "u3", c: "lounge", s: true },
       { u: "u4", c: "lounge" },
     ]);

@@ -526,20 +526,11 @@ async fn going_live_posts_one_hint_per_cooldown(pool: PgPool) {
         hint.body
     );
 
-    // Off and on again, a re-announcement, then Go Live of an older client:
-    // all within the cooldown, so nothing new in the chat.
+    // Off and on again, then a re-announcement: all within the cooldown,
+    // so nothing new in the chat.
     send_json(&mut owner_ws, screen("u")).await;
     send_json(&mut owner_ws, screen("p")).await;
     send_json(&mut owner_ws, screen("p")).await;
-    send_json(
-        &mut owner_ws,
-        json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "l" }),
-    )
-    .await;
-    recv_until(&mut owner_ws, |f| {
-        f["op"] == "sig" && f["t"] == "p" && f["k"] == "l"
-    })
-    .await;
     settle(&mut owner_ws, server_id, voice_id, false).await;
     assert_eq!(live_hints(&mut owner, text_id).await, 1);
 
@@ -776,7 +767,7 @@ async fn subscribe_replaces_voice_occupancy_and_mute_needs_a_seat(pool: PgPool) 
 }
 
 #[sqlx::test]
-async fn go_live_needs_permission_and_is_one_per_channel(pool: PgPool) {
+async fn live_needs_permission_is_several_per_channel_and_posts_a_system_hint(pool: PgPool) {
     let (mut owner, mut member) = two_users(pool.clone()).await;
     let server = create_server(&mut owner, "Stream").await;
     let (server_id, text_id) = ids(&server);
@@ -803,7 +794,7 @@ async fn go_live_needs_permission_and_is_one_per_channel(pool: PgPool) {
     recv_until(&mut member_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
     send_json(
         &mut member_ws,
-        json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "l" }),
+        json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "s" }),
     )
     .await;
     let denied = recv_until(&mut member_ws, |f| f["op"] == "err").await;
@@ -811,7 +802,7 @@ async fn go_live_needs_permission_and_is_one_per_channel(pool: PgPool) {
 
     send_json(
         &mut member_ws,
-        json!({"op":"sig","t":"p","s":server_id,"c":voice_id,"k":"la"}),
+        json!({"op":"sig","t":"p","s":server_id,"c":voice_id,"k":"sa"}),
     )
     .await;
     assert_eq!(
@@ -839,28 +830,27 @@ async fn go_live_needs_permission_and_is_one_per_channel(pool: PgPool) {
     recv_until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
     send_json(
         &mut owner_ws,
-        json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "l" }),
+        json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "s" }),
     )
     .await;
     let live = recv_until(&mut owner_ws, |f| {
-        f["op"] == "sig" && f["t"] == "p" && f["k"] == "l"
+        f["op"] == "sig" && f["t"] == "p" && f["k"] == "s"
     })
     .await;
     assert_eq!(live["u"], ada.to_string());
-    let nonce: Uuid = live["lc"]
-        .as_str()
-        .expect("gateway-issued live claim")
-        .parse()
-        .unwrap();
+    assert!(live.get("lc").is_none(), "{live}");
     assert!(!live.to_string().contains("livekit"));
 
-    send_json(
-        &mut member_ws,
-        json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "l" }),
-    )
-    .await;
-    let taken = recv_until(&mut member_ws, |f| f["op"] == "err").await;
-    assert_eq!(taken["e"], "bad_request");
+    // The old Go Live of clients before v0.8 is gone (#353).
+    for kind in ["l", "la"] {
+        send_json(
+            &mut owner_ws,
+            json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": kind }),
+        )
+        .await;
+        let refused = recv_until(&mut owner_ws, |f| f["op"] == "err").await;
+        assert_eq!(refused["e"], "bad_request");
+    }
 
     // The hint is a system message (#314): kind and params, no sentence.
     let mut found = None;
@@ -915,71 +905,18 @@ async fn go_live_needs_permission_and_is_one_per_channel(pool: PgPool) {
     assert_eq!(answer.body["reply"]["excerpt"], "");
     assert_eq!(answer.body["reply"]["system"], hint["system"]);
 
-    send_json(
-        &mut owner_ws,
-        json!({ "op": "sig", "t": "u", "s": server_id, "c": voice_id, "k": "l" }),
-    )
-    .await;
-    recv_until(&mut member_ws, |f| {
-        f["op"] == "sig" && f["t"] == "u" && f["k"] == "l"
-    })
-    .await;
-
+    // Several can be live in one channel.
     send_json(
         &mut member_ws,
-        json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "l" }),
+        json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "s" }),
     )
     .await;
     let second = recv_until(&mut member_ws, |f| {
-        f["op"] == "sig" && f["t"] == "p" && f["k"] == "l"
+        f["op"] == "err"
+            || (f["op"] == "sig" && f["t"] == "p" && f["k"] == "s" && f["u"] != ada.to_string())
     })
     .await;
-    assert_eq!(second["k"], "l");
-    assert_ne!(
-        second["lc"].as_str().unwrap().parse::<Uuid>().unwrap(),
-        nonce
-    );
-}
-
-#[sqlx::test]
-async fn go_live_shows_in_occupancy_snapshot(pool: PgPool) {
-    let (mut owner, mut member) = two_users(pool.clone()).await;
-    let server = create_server(&mut owner, "Badge").await;
-    let (server_id, text_id) = ids(&server);
-    join_member(&mut owner, &mut member, &server_id.to_string()).await;
-    let voice_id = create_voice(&mut owner, server_id).await;
-    let ada = owner_id(&server);
-
-    let (addr, _) = common::serve_ws(pool).await;
-    let mut owner_ws = connect(addr, &session_cookie(&owner)).await;
-    send_json(
-        &mut owner_ws,
-        json!({ "op": "sig", "t": "j", "s": server_id, "c": voice_id }),
-    )
-    .await;
-    recv_until(&mut owner_ws, |f| f["op"] == "sig" && f["t"] == "j").await;
-    send_json(
-        &mut owner_ws,
-        json!({ "op": "sig", "t": "p", "s": server_id, "c": voice_id, "k": "l" }),
-    )
-    .await;
-    recv_until(&mut owner_ws, |f| {
-        f["op"] == "sig" && f["t"] == "p" && f["k"] == "l"
-    })
-    .await;
-
-    let mut watcher = connect(addr, &session_cookie(&member)).await;
-    send_json(
-        &mut watcher,
-        json!({ "op": "s", "s": server_id, "c": text_id }),
-    )
-    .await;
-    recv_until(&mut watcher, |f| f["op"] == "ok").await;
-    let roster = recv_until(&mut watcher, |f| f["op"] == "sig" && f["t"] == "r").await;
-    let snap = roster["snap"].as_array().expect("snap");
-    assert_eq!(snap.len(), 1, "{roster}");
-    assert_eq!(snap[0]["u"], ada.to_string());
-    assert_eq!(snap[0]["l"], true);
+    assert_eq!(second["op"], "sig", "{second}");
 }
 
 #[sqlx::test]

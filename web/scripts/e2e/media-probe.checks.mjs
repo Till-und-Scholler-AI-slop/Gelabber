@@ -521,34 +521,33 @@ test("publication diagnostics correlate only actual RPC outcomes and retain no p
     JSON.stringify({
       op: "produce",
       id: 1,
-      k: "l",
+      k: "s",
       rtp: "PRIVATE",
-      lc: "PRIVATE",
     }),
   );
   media.message({ op: "err", id: 1, e: "forbidden" });
   media.send(
-    JSON.stringify({ op: "w", id: 2, k: "l", on: true, u: "PRIVATE" }),
+    JSON.stringify({ op: "w", id: 2, k: "s", on: true, u: "PRIVATE" }),
   );
   media.message({ op: "result", id: 2, data: { producerId: "PRIVATE" } });
   const flow = await runInContext(
-    `(${samplePublicationFlow.toString()})({kind:"l"})`,
+    `(${samplePublicationFlow.toString()})({kind:"s"})`,
     createContext({ window }),
   );
   assert.equal(flow.producer.present, false);
   assert.deepEqual(JSON.parse(JSON.stringify(flow.rpc)), [
     {
       method: "produce",
-      kind: "l",
+      kind: "s",
       on: null,
       status: "FAIL",
       error: "forbidden",
     },
-    { method: "w", kind: "l", on: true, status: "PASS", error: null },
+    { method: "w", kind: "s", on: true, status: "PASS", error: null },
   ]);
   assert.ok(!JSON.stringify(flow).includes("PRIVATE"));
   for (let id = 3; id < 200; id++)
-    media.send(JSON.stringify({ op: "produce", id, k: "l", rtp: "PRIVATE" }));
+    media.send(JSON.stringify({ op: "produce", id, k: "s", rtp: "PRIVATE" }));
   assert.equal(window.__e2e.sockets[0].mediaRpc.length, 128);
   assert.equal(window.__e2e.sockets[0].pendingMedia.size, 64);
 });

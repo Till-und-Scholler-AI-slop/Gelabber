@@ -44,8 +44,8 @@ import "./room.css";
 type StageTile = {
   id: string;
   kind: StageKind;
-  /** The track of a Live: a screen, or an older client's Go Live. */
-  source?: "s" | "l";
+  /** The track of a Live: a screen. */
+  source?: "s";
   userId: string;
   stream: MediaStream | null;
   name: string;
@@ -133,17 +133,12 @@ export function VoiceRoom({
     const name = nameOf(id);
     const cameraOn = self ? voice.camera : pubs.includes("v");
     const screen = self ? voice.sharing : pubs.includes("s");
-    // An older client's Go Live shows like any other Live.
-    const goLive = !self && pubs.includes("l");
-    for (const [source, on, stream] of [
-      ["s", screen, self ? voice.localScreen : voice.remote[id]?.s],
-      ["l", goLive, voice.remote[id]?.l],
-    ] as const) {
-      if (!on) continue;
+    if (screen) {
+      const stream = self ? voice.localScreen : voice.remote[id]?.s;
       shares.push({
-        id: `${id}-${source}`,
+        id: `${id}-s`,
         kind: "live",
-        source,
+        source: "s",
         userId: id,
         stream: stream ?? null,
         name: `${name} — Live`,

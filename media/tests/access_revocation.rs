@@ -173,20 +173,11 @@ impl Authority {
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 async fn join(addr: std::net::SocketAddr, code: &str) -> (Socket, serde_json::Value) {
-    join_with_watch(addr, code, None).await
-}
-async fn join_with_watch(
-    addr: std::net::SocketAddr,
-    code: &str,
-    watch: Option<Uuid>,
-) -> (Socket, serde_json::Value) {
     let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/media/ws"))
         .await
         .unwrap();
     ws.send(tokio_tungstenite::tungstenite::Message::Text(
-        json!({"op":"j","id":1,"v":4,"tk":code,"w":watch})
-            .to_string()
-            .into(),
+        json!({"op":"j","id":1,"v":4,"tk":code}).to_string().into(),
     ))
     .await
     .unwrap();
@@ -352,13 +343,12 @@ async fn authority_lease_expiry_closes_open_peer_within_three_seconds_plus_check
 }
 
 #[tokio::test]
-async fn watch_only_peer_refreshes_demand_without_renewing_session_and_keeps_other_tab_demand() {
+async fn peer_refreshes_demand_without_renewing_session_and_keeps_other_tab_demand() {
     let (addr, redis, _) = serve().await;
     let authority = Authority::new(&redis).await;
-    let watch = Some(Uuid::new_v4());
-    let (mut a, value) = join_with_watch(addr, &authority.mint().await, watch).await;
+    let (mut a, value) = join(addr, &authority.mint().await).await;
     assert_eq!(value["op"], "result");
-    let (mut b, value) = join_with_watch(addr, &authority.mint().await, watch).await;
+    let (mut b, value) = join(addr, &authority.mint().await).await;
     assert_eq!(value["op"], "result");
     let keys = authority.keys();
     let mut conn = redis.get_multiplexed_async_connection().await.unwrap();
@@ -455,8 +445,7 @@ async fn consumed_grant_is_rechecked_before_sfu_attach() {
         .await;
     let (out, _) = tokio::sync::mpsc::channel(64);
     assert!(matches!(
-        sfu.join_authorized_watch_version(consumed, None, 4, out)
-            .await,
+        sfu.join_authorized_version(consumed, 4, out).await,
         Err(gelabber_media::error::SfuError::Revoked)
     ));
     assert_eq!(sfu.room_count(), 0);

@@ -409,7 +409,6 @@ test("exact startFaultApi.close releases remaining proxies/log and stops the own
       "./s3-object.mjs": { objectStatus: async () => 404 },
       "./redis-command.mjs": {
         deleteTopicKeys: async () => 4,
-        ownedLiveExists: async () => 0,
       },
     },
     { process: { env: {} }, URL, fetch: async () => ({ ok: true }) },

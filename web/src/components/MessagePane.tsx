@@ -590,6 +590,7 @@ export function MessagePane({
           />
         ) : null}
         {footer}
+        <div className="lr-toast-space" />
         <Composer
           key={user?.id ?? "anonymous"}
           handle={composer}
