@@ -15,6 +15,24 @@ async fn member(
     server: Uuid,
     channel: Uuid,
 ) -> (String, authority::TestAuthority) {
+    ticketed(state, user, server, channel, false).await
+}
+/// A member whose ticket carries `go_live`, so it may share a screen.
+async fn streamer(
+    state: &gelabber_media::AppState,
+    user: Uuid,
+    server: Uuid,
+    channel: Uuid,
+) -> (String, authority::TestAuthority) {
+    ticketed(state, user, server, channel, true).await
+}
+async fn ticketed(
+    state: &gelabber_media::AppState,
+    user: Uuid,
+    server: Uuid,
+    channel: Uuid,
+    go_live: bool,
+) -> (String, authority::TestAuthority) {
     let code = ticket::generate();
     let lease = authority::mint(
         &state.redis,
@@ -23,7 +41,7 @@ async fn member(
             u: user,
             s: server,
             c: channel,
-            g: false,
+            g: go_live,
         },
     )
     .await;
@@ -41,7 +59,7 @@ async fn sdk_empty_video_cname_does_not_poison_transport_for_later_audio() {
     let server = Uuid::new_v4();
     let channel = Uuid::new_v4();
     let owner = Uuid::new_v4();
-    let (a, _la) = member(&state, owner, server, channel).await;
+    let (a, _la) = streamer(&state, owner, server, channel).await;
     let (b, _lb) = member(&state, Uuid::new_v4(), server, channel).await;
     let mut publisher = Peer::join(addr, &a, None).await;
     let mut viewer = Peer::join(addr, &b, None).await;
@@ -124,9 +142,28 @@ async fn publication_identity_survives_replacement_and_late_old_cleanup() {
     peer.close().await;
 }
 #[tokio::test]
-async fn source_audio_requires_exact_live_parent_and_capture_epoch() {
+async fn screen_and_its_sound_need_the_go_live_grant() {
     let (addr, state) = serve().await;
     let (code, _lease) = member(&state, Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()).await;
+    let mut peer = Peer::join(addr, &code, None).await;
+    peer.transport("send").await;
+    let epoch = Uuid::new_v4();
+    let refused = peer.rpc(produce("s", epoch, None, None)).await;
+    denied(&refused);
+    assert_eq!(refused["e"], "forbidden", "{refused}");
+    let refused = peer
+        .rpc(produce("sa", epoch, Some("any-parent"), None))
+        .await;
+    assert_eq!(refused["e"], "forbidden", "{refused}");
+    // Microphone and camera stay open to every member in the room.
+    peer.ok(produce("a", Uuid::new_v4(), None, None)).await;
+    peer.ok(produce("v", Uuid::new_v4(), None, None)).await;
+    peer.close().await;
+}
+#[tokio::test]
+async fn source_audio_requires_exact_live_parent_and_capture_epoch() {
+    let (addr, state) = serve().await;
+    let (code, _lease) = streamer(&state, Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()).await;
     let mut peer = Peer::join(addr, &code, None).await;
     peer.transport("send").await;
     let epoch = Uuid::new_v4();
@@ -157,7 +194,7 @@ async fn consumer_is_paused_until_exact_generation_ready_and_watch_off_stops_nat
     let server = Uuid::new_v4();
     let channel = Uuid::new_v4();
     let owner = Uuid::new_v4();
-    let (a, _la) = member(&state, owner, server, channel).await;
+    let (a, _la) = streamer(&state, owner, server, channel).await;
     let (b, _lb) = member(&state, Uuid::new_v4(), server, channel).await;
     let mut publisher = Peer::join(addr, &a, None).await;
     let mut viewer = Peer::join(addr, &b, None).await;
@@ -197,7 +234,7 @@ async fn audio_and_camera_automatic_consumers_remain_distinct_and_audio_parent_w
     let server = Uuid::new_v4();
     let channel = Uuid::new_v4();
     let owner = Uuid::new_v4();
-    let (a, _la) = member(&state, owner, server, channel).await;
+    let (a, _la) = streamer(&state, owner, server, channel).await;
     let (b, _lb) = member(&state, Uuid::new_v4(), server, channel).await;
     let mut publisher = Peer::join(addr, &a, None).await;
     let mut viewer = Peer::join(addr, &b, None).await;

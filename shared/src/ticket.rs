@@ -14,7 +14,8 @@ pub struct TicketClaim {
     pub u: Uuid,
     pub s: Uuid,
     pub c: Uuid,
-    /// Caller may announce a Go Live track (`l`). Absent means no.
+    /// Caller may go live: screen (`s`/`sa`) and the old Go Live track
+    /// (`l`/`la`). Absent means no.
     #[serde(default)]
     pub g: bool,
 }

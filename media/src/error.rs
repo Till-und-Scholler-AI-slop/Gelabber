@@ -7,7 +7,7 @@ use std::fmt;
 pub enum SfuError {
     NotInRoom,
     BadAnnounce,
-    /// Go Live announced without the ticket bit.
+    /// Screen or Go Live source announced without the ticket's go_live bit.
     Forbidden,
     /// Valid Live authority is temporarily unable to publish within its lease fence.
     LiveBusy,
