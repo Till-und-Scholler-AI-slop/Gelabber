@@ -1,5 +1,5 @@
 //! Shared by the integration tests: a mediasoup 0.29 router configured like
-//! the media gateway (media/src/sfu.rs) and the event loop that answers native
+//! the media gateway (media/src/sfu/) and the event loop that answers native
 //! transport events the way the gateway does.
 #![allow(dead_code)]
 
@@ -21,7 +21,7 @@ use std::{
 };
 use tokio::runtime::Handle;
 
-/// Copy of `router_codecs` in media/src/sfu.rs (v0.4.0).
+/// Copy of `router_codecs` in media/src/sfu/codecs.rs (v0.4.0).
 pub fn router_codecs() -> Vec<RtpCodecCapability> {
     let feedback = json!([{"type":"nack"},{"type":"nack","parameter":"pli"},{"type":"ccm","parameter":"fir"},{"type":"goog-remb"},{"type":"transport-cc"}]);
     let mut codecs = vec![
@@ -44,7 +44,7 @@ pub fn router_codecs() -> Vec<RtpCodecCapability> {
     serde_json::from_value(Value::Array(codecs)).unwrap()
 }
 
-/// Same checks as `validate_parameters` in media/src/sfu.rs.
+/// Same checks as `validate_parameters` in media/src/sfu/codecs.rs.
 pub fn validate_like_server(kind: &str, rtp: &RtpParameters) {
     assert!(
         !rtp.codecs.is_empty() && rtp.codecs.len() <= 16,
@@ -157,7 +157,7 @@ impl Server {
         }
     }
 
-    /// Mirrors `ClientFrame::CreateTransport` in media/src/sfu.rs.
+    /// Mirrors `ClientFrame::CreateTransport` in media/src/sfu/rpc.rs.
     pub async fn transport(&self) -> (WebRtcTransport, Value) {
         let mut options = WebRtcTransportOptions::new_with_server(self.webrtc.clone());
         options.enable_tcp = false;
@@ -277,7 +277,7 @@ fn answer(
             ..
         } => {
             let mut rtp: RtpParameters = serde_json::from_value(rtp_parameters).unwrap();
-            // As media/src/sfu.rs: a RID-only offer (simulcast without an
+            // As media/src/sfu/rpc.rs: a RID-only offer (simulcast without an
             // audio or single-layer section before it) carries no CNAME, and
             // the worker refuses Some("") but picks one for None.
             if rtp.rtcp.cname.as_deref() == Some("") {
