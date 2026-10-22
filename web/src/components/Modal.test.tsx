@@ -118,6 +118,32 @@ describe("closing a modal", () => {
     expect(gone.focus).not.toHaveBeenCalled();
     expect(hidden.focus).not.toHaveBeenCalled();
   });
+
+  it("hands focus to a closed menu's button when one of its items opened it", () => {
+    const summary = {
+      isConnected: true,
+      getClientRects: () => ({ length: 1 }),
+      focus: vi.fn(),
+    };
+    const asked: string[] = [];
+    const item = {
+      ...summary,
+      focus: vi.fn(),
+      closest: (selector: string) => {
+        asked.push(selector);
+        return { querySelector: () => summary };
+      },
+    };
+    expect(restoreFocus(item)).toBe(true);
+    expect(asked).toEqual(["details:not([open])"]);
+    expect(item.focus).not.toHaveBeenCalled();
+    expect(summary.focus).toHaveBeenCalledWith({ preventScroll: true });
+
+    // Still open, or no menu at all: the item itself.
+    const plain = { ...summary, focus: vi.fn(), closest: () => null };
+    expect(restoreFocus(plain)).toBe(true);
+    expect(plain.focus).toHaveBeenCalled();
+  });
 });
 
 describe("focus when a surface closes", () => {

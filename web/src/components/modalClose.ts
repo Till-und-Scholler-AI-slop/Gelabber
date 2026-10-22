@@ -62,13 +62,24 @@ type Focusable = {
   isConnected: boolean;
   getClientRects: () => { length: number };
   focus: (options?: FocusOptions) => void;
+  closest?: (selector: string) => {
+    querySelector: (selector: string) => unknown;
+  } | null;
 };
 
-/** Focus goes back to whatever opened the dialog, if it is still shown. */
+/**
+ * Focus goes back to whatever opened the dialog, if it is still shown. An
+ * item of a `<details>` menu that closed on the way hands it to the menu's
+ * button: the item itself can no longer take focus.
+ */
 export function restoreFocus(opener: Focusable | null): boolean {
-  if (!opener?.isConnected || opener.getClientRects().length === 0)
+  const menu = opener?.closest?.("details:not([open])");
+  const target = menu
+    ? (menu.querySelector(":scope > summary") as Focusable | null)
+    : opener;
+  if (!target?.isConnected || target.getClientRects().length === 0)
     return false;
-  opener.focus({ preventScroll: true });
+  target.focus({ preventScroll: true });
   return true;
 }
 
