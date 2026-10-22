@@ -1,5 +1,9 @@
 import { useId, type CSSProperties } from "react";
-import { MAX_PLAYBACK_VOLUME } from "../voice/settings.ts";
+import {
+  PLAYBACK_SLIDER_MAX,
+  playbackSliderPosition,
+  playbackSliderVolume,
+} from "../voice/settings.ts";
 import {
   userVolumeOf,
   useUserVolumes,
@@ -44,14 +48,14 @@ export function UserVolumeView({
         id={`${id}-volume`}
         type="range"
         min={0}
-        max={MAX_PLAYBACK_VOLUME * 100}
+        max={PLAYBACK_SLIDER_MAX}
         step={1}
-        value={Math.round(level.volume * 100)}
+        value={playbackSliderPosition(level.volume)}
         style={rangeFill(level.volume)}
         aria-valuetext={`${Math.round(level.volume * 100)} %`}
         disabled={level.muted}
         onChange={(event) =>
-          setVolume(userId, Number(event.target.value) / 100)
+          setVolume(userId, playbackSliderVolume(Number(event.target.value)))
         }
         className="lr-range"
       />
@@ -95,10 +99,10 @@ export function LocallyMutedMark() {
   );
 }
 
-/** Filled share of a 0–200 % `.lr-range` slider (WebKit has no progress
+/** Filled share of a `.lr-range` playback slider (WebKit has no progress
  * pseudo). */
 function rangeFill(value: number): CSSProperties {
   return {
-    "--lr-range-value": `${Math.round((value / MAX_PLAYBACK_VOLUME) * 100)}%`,
+    "--lr-range-value": `${(playbackSliderPosition(value) * 100) / PLAYBACK_SLIDER_MAX}%`,
   } as CSSProperties;
 }

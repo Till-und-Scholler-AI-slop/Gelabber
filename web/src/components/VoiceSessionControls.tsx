@@ -26,7 +26,9 @@ import { Avatar } from "./Avatar.tsx";
 import { useUserId } from "../auth/scope.ts";
 import { isDesktopApp } from "../voice/native/bridge.ts";
 import {
-  MAX_PLAYBACK_VOLUME,
+  PLAYBACK_SLIDER_MAX,
+  playbackSliderPosition,
+  playbackSliderVolume,
   SOURCE_AUDIO_CARRIES_CALL,
   sharesSourceAudio,
   sourceAudioCarriesCall,
@@ -195,13 +197,18 @@ export function VoiceSessionControls({
               id={`${ids}-voices`}
               type="range"
               min={0}
-              max={MAX_PLAYBACK_VOLUME * 100}
-              value={Math.round(volume * 100)}
+              max={PLAYBACK_SLIDER_MAX}
+              value={playbackSliderPosition(volume)}
               style={rangeFill(volume)}
               aria-label="Wiedergabe-Lautstärke"
+              aria-valuetext={`${Math.round(volume * 100)} %`}
               disabled={voice.deafened}
               onChange={(event) =>
-                patch({ outputVolume: Number(event.target.value) / 100 })
+                patch({
+                  outputVolume: playbackSliderVolume(
+                    Number(event.target.value),
+                  ),
+                })
               }
               className="lr-range"
             />
@@ -226,13 +233,18 @@ export function VoiceSessionControls({
                 id={`${ids}-stream`}
                 type="range"
                 min={0}
-                max={MAX_PLAYBACK_VOLUME * 100}
-                value={Math.round(sourceVolume * 100)}
+                max={PLAYBACK_SLIDER_MAX}
+                value={playbackSliderPosition(sourceVolume)}
                 style={rangeFill(sourceVolume)}
                 aria-label="Stream-Ton-Lautstärke"
+                aria-valuetext={`${Math.round(sourceVolume * 100)} %`}
                 disabled={voice.deafened}
                 onChange={(event) =>
-                  patch({ sourceAudioVolume: Number(event.target.value) / 100 })
+                  patch({
+                    sourceAudioVolume: playbackSliderVolume(
+                      Number(event.target.value),
+                    ),
+                  })
                 }
                 className="lr-range"
               />
@@ -382,11 +394,11 @@ function CallPeople({
   );
 }
 
-/** Filled share of a 0–200 % `.lr-range` playback slider (WebKit has no
- * progress pseudo). */
+/** Filled share of a `.lr-range` playback slider (WebKit has no progress
+ * pseudo). */
 function rangeFill(value: number): CSSProperties {
   return {
-    "--lr-range-value": `${Math.round((value / MAX_PLAYBACK_VOLUME) * 100)}%`,
+    "--lr-range-value": `${(playbackSliderPosition(value) * 100) / PLAYBACK_SLIDER_MAX}%`,
   } as CSSProperties;
 }
 

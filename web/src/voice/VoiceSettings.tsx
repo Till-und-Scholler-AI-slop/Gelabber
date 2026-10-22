@@ -30,6 +30,9 @@ import {
   formatVideoBitrate,
   listMediaDevices,
   MAX_PLAYBACK_VOLUME,
+  PLAYBACK_SLIDER_MAX,
+  playbackSliderPosition,
+  playbackSliderVolume,
   sharesSourceAudio,
   SOURCE_AUDIO_CARRIES_CALL,
   sourceAudioCarriesCall,
@@ -37,6 +40,13 @@ import {
   useMediaSettings,
   videoSendBudget,
 } from "./settings.ts";
+
+/** 100 % sits in the middle of a playback slider. */
+const PLAYBACK_SCALE = [
+  "0 %",
+  "100 %",
+  `${MAX_PLAYBACK_VOLUME * 100} %`,
+] as const;
 
 const emptyDevices: DeviceList = {
   audioinput: [],
@@ -190,11 +200,12 @@ export function MediaSettingsForm({
               id="output-volume"
               label="Gespräche"
               min={0}
-              max={MAX_PLAYBACK_VOLUME * 100}
-              value={Math.round(settings.outputVolume * 100)}
+              max={PLAYBACK_SLIDER_MAX}
+              value={playbackSliderPosition(settings.outputVolume)}
               suffix={`${Math.round(settings.outputVolume * 100)} %`}
+              scale={PLAYBACK_SCALE}
               onChange={(value) =>
-                settings.patch({ outputVolume: value / 100 })
+                settings.patch({ outputVolume: playbackSliderVolume(value) })
               }
               hint={
                 desktop
@@ -206,11 +217,14 @@ export function MediaSettingsForm({
               id="source-audio-volume"
               label="Stream-Ton"
               min={0}
-              max={MAX_PLAYBACK_VOLUME * 100}
-              value={Math.round(settings.sourceAudioVolume * 100)}
+              max={PLAYBACK_SLIDER_MAX}
+              value={playbackSliderPosition(settings.sourceAudioVolume)}
               suffix={`${Math.round(settings.sourceAudioVolume * 100)} %`}
+              scale={PLAYBACK_SCALE}
               onChange={(value) =>
-                settings.patch({ sourceAudioVolume: value / 100 })
+                settings.patch({
+                  sourceAudioVolume: playbackSliderVolume(value),
+                })
               }
               hint="Bildschirm- und Live-Ton haben eine eigene Lautstärke. Taub schaltet auch diesen Ton aus."
             />
