@@ -1,5 +1,8 @@
 use super::*;
-use super::{rpc::note_consumer_failure, stop::stop_batch};
+use super::{
+    rpc::{gateway_transport_options, note_consumer_failure},
+    stop::stop_batch,
+};
 use gelabber_shared::ticket::{TicketAuthorization, TicketClaim};
 use std::sync::{
     Arc,
@@ -37,6 +40,11 @@ fn av1_and_vp9_come_as_one_stream() {
     }
     for mime in ["video/VP8", "video/H264"] {
         assert!(validate_parameters(SourceKind::Camera, &sent(mime, 2)).is_ok());
+        assert!(validate_parameters(SourceKind::Camera, &sent(mime, 3)).is_ok());
+        assert!(matches!(
+            validate_parameters(SourceKind::Camera, &sent(mime, 4)),
+            Err(SfuError::BadAnnounce)
+        ));
     }
 }
 
@@ -226,8 +234,6 @@ async fn stopping_fixture() -> (
         parent: None,
         grant: Grant::new(),
         gate: Mutex::new(()),
-        height: 0,
-        layers: 1,
         packet_samples: StdMutex::new(HashMap::new()),
     });
     let data = RoomData {
@@ -381,8 +387,6 @@ async fn publish_many(owner: &Arc<Peer>, room: &Room, count: u32) -> Vec<Arc<Pub
             parent: None,
             grant: Grant::new(),
             gate: Mutex::new(()),
-            height: 0,
-            layers: 1,
             packet_samples: StdMutex::new(HashMap::new()),
         }));
     }
@@ -941,4 +945,75 @@ fn fail_closed_terminates_child_process_with_exit_one() {
         .status()
         .unwrap();
     assert_eq!(status.code(), Some(1));
+}
+
+/// Without a `q` frame or any tile size, a viewer gets the top simulcast layer
+/// and mediasoup's bandwidth estimate steps down from there.
+#[tokio::test]
+async fn video_consumers_start_on_the_highest_layer() {
+    let (sfu, owner, _publication, _owner_events) = stopping_fixture().await;
+    let channel = owner.authority.claim.c;
+    let room = sfu.room(channel).await.unwrap();
+    let transport = room.data.lock().await.peers[&owner.id].transports[&true].clone();
+    let rtp = serde_json::from_value(json!({
+        "codecs":[{"mimeType":"video/VP8","payloadType":96,"clockRate":90000,
+            "parameters":{},"rtcpFeedback":[]}],
+        "headerExtensions":[],
+        "encodings":[{"ssrc":20_000,"rid":"r0"},{"ssrc":20_001,"rid":"r1"},{"ssrc":20_002,"rid":"r2"}],
+        "rtcp":{"cname":"three-layers","reducedSize":true}
+    }))
+    .unwrap();
+    let producer = room
+        .engine
+        .native(transport.clone(), move |transport| async move {
+            transport
+                .produce(ProducerOptions::new(MediaKind::Video, rtp))
+                .await
+        })
+        .await
+        .unwrap();
+    let publication = Arc::new(Publication {
+        producer: NativeProducer::new(producer, transport.clone(), room.engine.lost.clone()),
+        peer: owner.clone(),
+        kind: SourceKind::Camera,
+        epoch: Uuid::new_v4(),
+        parent: None,
+        grant: Grant::new(),
+        gate: Mutex::new(()),
+        packet_samples: StdMutex::new(HashMap::new()),
+    });
+    room.data
+        .lock()
+        .await
+        .publications
+        .insert(publication.id(), publication.clone());
+    let viewer = Viewer::join(&sfu, &owner, &room, 64).await;
+    sfu.attach_existing(channel, viewer.id).await;
+    let subscription = {
+        let data = room.data.lock().await;
+        data.peers[&viewer.id]
+            .consumers
+            .values()
+            .find(|s| Arc::ptr_eq(&s.publication, &publication))
+            .cloned()
+            .expect("the video publication is consumed")
+    };
+    let layers = subscription
+        .consumer
+        .resource
+        .with(|c| c.preferred_layers())
+        .flatten()
+        .expect("a simulcast consumer has preferred layers");
+    assert_eq!(layers.spatial_layer, 2);
+    sfu.leave(viewer.id, channel).await;
+    viewer.revoke(&sfu).await;
+}
+
+#[tokio::test]
+async fn gateway_transports_start_with_a_high_outgoing_estimate() {
+    let (sfu, _owner, _publication, _owner_events) = stopping_fixture().await;
+    let options = gateway_transport_options(first_engine(&sfu).server.clone());
+    assert_eq!(options.initial_available_outgoing_bitrate, 8_000_000);
+    assert!(!options.enable_tcp);
+    assert!(options.prefer_udp);
 }
