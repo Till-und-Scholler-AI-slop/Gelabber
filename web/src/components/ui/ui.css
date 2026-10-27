@@ -1,5 +1,12 @@
 /* Shared primitives (components/ui) plus Modal and the toasts. A cascade
    layer, so a Tailwind utility on a primitive still wins over its default. */
+
+/* The first stylesheet that names a layer fixes the layer order. The build
+   can link this sheet's chunk before index.css, and then `components` ranks
+   below Tailwind's `base` (preflight), which resets every button and field
+   to transparent and borderless (#375). So Tailwind's order, stated here. */
+@layer properties, theme, base, components, utilities;
+
 @layer components {
   /* Buttons */
   .ui-button {
