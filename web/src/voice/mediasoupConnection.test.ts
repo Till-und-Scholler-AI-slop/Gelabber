@@ -2025,7 +2025,7 @@ describe("video codec negotiation", () => {
     };
     const announced = async (decoding: boolean) => {
       const f = fixture("voice", undefined, {
-        hardwareAv1Decoding: async () => decoding,
+        decodesAv1: async () => decoding,
       });
       f.device.recvRtpCapabilities = receivable;
       await f.start();

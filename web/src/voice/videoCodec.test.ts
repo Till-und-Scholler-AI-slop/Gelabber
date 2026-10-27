@@ -5,7 +5,7 @@ import type {
 } from "mediasoup-client/types";
 import {
   chooseVideoCodec,
-  hardwareAv1Decoding,
+  decodesAv1,
   hardwareVideo,
   publishableH264,
   receivableCapabilities,
@@ -184,7 +184,7 @@ describe("hardware video", () => {
       channel: async () => null,
     } as unknown as NativeBridge);
     expect(await hardwareVideo()).toEqual(av1Only);
-    expect(await hardwareAv1Decoding()).toBe(false);
+    expect(await decodesAv1()).toBe(false);
     expect(encodingInfo).not.toHaveBeenCalled();
     resetHardwareVideoForTests();
     setNativeBridgeForTests({
@@ -194,29 +194,85 @@ describe("hardware video", () => {
           : Promise.reject(new Error(command)),
       channel: async () => null,
     } as unknown as NativeBridge);
-    expect(await hardwareAv1Decoding()).toBe(true);
+    expect(await decodesAv1()).toBe(true);
     expect(await hardwareVideo()).toEqual(none);
   });
 
-  it("decodes AV1 in hardware where the browser says so", async () => {
-    const decodingInfo = vi.fn(answer({ "video/AV1": true }));
+  it("receives AV1 where the browser decodes 4K smoothly, in hardware or not", async () => {
+    const decodingInfo = vi.fn<(query: unknown) => Promise<object>>(async () => ({
+      supported: true,
+      smooth: true,
+      powerEfficient: false,
+    }));
     vi.stubGlobal("navigator", {
       mediaCapabilities: { encodingInfo: answer({}), decodingInfo },
     });
-    expect(await hardwareAv1Decoding()).toBe(true);
+    expect(await decodesAv1()).toBe(true);
     expect(await hardwareVideo()).toEqual(none);
     expect(decodingInfo).toHaveBeenCalledOnce();
-    expect(decodingInfo.mock.calls[0][0]).toEqual(
-      expect.objectContaining({
-        type: "webrtc",
-        video: expect.objectContaining({ contentType: "video/AV1" }),
+    expect(decodingInfo.mock.calls[0][0]).toEqual({
+      type: "webrtc",
+      video: expect.objectContaining({
+        contentType: "video/AV1",
+        width: 3840,
+        height: 2160,
       }),
-    );
+    });
+    resetHardwareVideoForTests();
+    vi.stubGlobal("navigator", {
+      mediaCapabilities: {
+        encodingInfo: answer({}),
+        decodingInfo: async () => ({
+          supported: true,
+          smooth: false,
+          powerEfficient: true,
+        }),
+      },
+    });
+    expect(await decodesAv1()).toBe(false);
     resetHardwareVideoForTests();
     vi.stubGlobal("navigator", {
       mediaCapabilities: { encodingInfo: answer({ "video/AV1": true }) },
     });
-    expect(await hardwareAv1Decoding()).toBe(false);
+    expect(await decodesAv1()).toBe(false);
+  });
+
+  describe("with a slow desktop app", () => {
+    const slowApp = (delayMs: number, features: string[]) => {
+      const invoke = vi.fn(
+        (command: string) =>
+          new Promise((resolve, reject) => {
+            if (command !== "media_info") return reject(new Error(command));
+            setTimeout(() => resolve({ features }), delayMs);
+          }),
+      );
+      setNativeBridgeForTests({
+        invoke,
+        channel: async () => null,
+      } as unknown as NativeBridge);
+      return invoke;
+    };
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("waits for it and does not keep a timed-out answer", async () => {
+      vi.useFakeTimers();
+      slowApp(3000, ["h264-hardware"]);
+      const early = hardwareVideo();
+      await vi.advanceTimersByTimeAsync(3000);
+      expect((await early).h264).toBe(true);
+
+      resetHardwareVideoForTests();
+      slowApp(11_000, ["h264-hardware"]);
+      const first = hardwareVideo();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await first).toEqual(none);
+      // The app answers late; the timed-out answer was not kept.
+      await vi.advanceTimersByTimeAsync(1000);
+      expect((await hardwareVideo()).h264).toBe(true);
+    });
   });
 });
 

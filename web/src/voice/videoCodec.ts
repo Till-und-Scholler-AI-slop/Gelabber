@@ -9,10 +9,11 @@
 // comes last.
 //
 // AV1 goes out as one stream, never in simulcast layers, so every receiver
-// decodes the whole picture. A device that does not decode AV1 in hardware
+// decodes the whole picture. A device that cannot decode 4K AV1 smoothly
+// (hardware or not; the desktop app says so with `av1-hardware-decode`)
 // leaves AV1 out of the codecs it tells the server it receives
 // (`receivableCapabilities`): the room then has no AV1, and senders stay on
-// H.264 or VP8 with layers.
+// H.264 or VP8 with layers. Sending AV1 still needs a hardware encoder.
 
 import type {
   RtpCapabilities,
@@ -79,8 +80,8 @@ export function chooseVideoCodec(
 }
 
 /** The device's codecs to receive with, as the server is told them: without
- * AV1 (and its RTX) unless `av1Decoding`, the device decoding AV1 in
- * hardware. */
+ * AV1 (and its RTX) unless `av1Decoding`, the device decoding AV1
+ * smoothly at 4K. */
 export function receivableCapabilities(
   capabilities: RtpCapabilities,
   av1Decoding: boolean,
@@ -111,12 +112,28 @@ export const AV1_HARDWARE_DECODE_FEATURE: NativeFeature = "av1-hardware-decode";
 /** How long the browser may take to say; past it, software is assumed. */
 const PROBE_TIMEOUT_MS = 1000;
 
+/** The desktop app may be busy starting its media core. */
+const DESKTOP_PROBE_TIMEOUT_MS = 10_000;
+
 type Probed = HardwareVideo & { av1Decoding: boolean };
 
 let probed: Promise<Probed> | null = null;
 
 function probeOnce(): Promise<Probed> {
-  probed ??= probe().catch(() => ({ ...SOFTWARE_VIDEO, av1Decoding: false }));
+  if (!probed) {
+    const mine = probe()
+      .catch(() => ({
+        ...SOFTWARE_VIDEO,
+        av1Decoding: false,
+        timedOut: false,
+      }))
+      .then(({ timedOut, ...result }) => {
+        // A guess made for lack of an answer is not kept: ask again later.
+        if (timedOut && probed === mine) probed = null;
+        return result;
+      });
+    probed = mine;
+  }
   return probed;
 }
 
@@ -127,26 +144,32 @@ export async function hardwareVideo(): Promise<HardwareVideo> {
   return { av1, h264 };
 }
 
-/** Whether this device decodes AV1 in hardware, asked with the encoders. */
-export async function hardwareAv1Decoding(): Promise<boolean> {
+/** Whether this device decodes AV1 smoothly at 4K, in hardware or not,
+ * asked with the encoders. */
+export async function decodesAv1(): Promise<boolean> {
   return (await probeOnce()).av1Decoding;
 }
 
-async function probe(): Promise<Probed> {
+async function probe(): Promise<Probed & { timedOut: boolean }> {
   if (isDesktopApp()) {
-    const features = await withTimeout(loadNativeFeatures(), new Set<string>());
+    const [features, timedOut] = await withTimeout(
+      loadNativeFeatures(),
+      new Set<string>(),
+      DESKTOP_PROBE_TIMEOUT_MS,
+    );
     return {
       av1: features.has(AV1_HARDWARE_FEATURE),
       h264: features.has(H264_HARDWARE_FEATURE),
       av1Decoding: features.has(AV1_HARDWARE_DECODE_FEATURE),
+      timedOut,
     };
   }
-  const [av1, h264, av1Decoding] = await Promise.all([
+  const [[av1, t1], [h264, t2], [av1Decoding, t3]] = await Promise.all([
     withTimeout(powerEfficient("encodingInfo", "video/AV1"), false),
     withTimeout(powerEfficient("encodingInfo", "video/H264"), false),
-    withTimeout(powerEfficient("decodingInfo", "video/AV1"), false),
+    withTimeout(smoothDecoding("video/AV1"), false),
   ]);
-  return { av1, h264, av1Decoding };
+  return { av1, h264, av1Decoding, timedOut: t1 || t2 || t3 };
 }
 
 async function powerEfficient(
@@ -169,13 +192,42 @@ async function powerEfficient(
   return info.supported && info.powerEfficient;
 }
 
-function withTimeout<T>(answer: Promise<T>, fallback: T): Promise<T> {
+/** Whether the browser decodes `contentType` at 4K without dropping frames;
+ * a CPU decoder that keeps up is as good as a hardware one. */
+async function smoothDecoding(contentType: string): Promise<boolean> {
+  const capabilities =
+    typeof navigator === "undefined" ? undefined : navigator.mediaCapabilities;
+  if (!capabilities?.decodingInfo) return false;
+  const info = await capabilities.decodingInfo({
+    type: "webrtc",
+    video: {
+      contentType,
+      width: 3840,
+      height: 2160,
+      bitrate: 20_000_000,
+      framerate: 30,
+    },
+  });
+  return info.supported && info.smooth;
+}
+
+/** The answer, or `fallback` after `ms` or a failure; the flag says the time
+ * ran out. */
+function withTimeout<T>(
+  answer: Promise<T>,
+  fallback: T,
+  ms = PROBE_TIMEOUT_MS,
+): Promise<[T, boolean]> {
+  let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
-    answer.catch(() => fallback),
-    new Promise<T>((resolve) =>
-      setTimeout(() => resolve(fallback), PROBE_TIMEOUT_MS),
+    answer.then(
+      (value): [T, boolean] => [value, false],
+      (): [T, boolean] => [fallback, false],
     ),
-  ]);
+    new Promise<[T, boolean]>((resolve) => {
+      timer = setTimeout(() => resolve([fallback, true]), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 /** Tests: asks again on the next call. */
