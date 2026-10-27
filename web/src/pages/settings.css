@@ -247,6 +247,13 @@
   background: transparent;
   cursor: pointer;
 }
+/* Unset, the swatch shows what the card uses instead (ProfileCardForm). */
+.settings-color-swatch.is-unset::-webkit-color-swatch {
+  background: var(--settings-swatch) !important;
+}
+.settings-color-swatch.is-unset::-moz-color-swatch {
+  background: var(--settings-swatch) !important;
+}
 @media (pointer: coarse) {
   .settings-color-swatch {
     height: 44px;
