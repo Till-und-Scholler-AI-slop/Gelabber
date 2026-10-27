@@ -19,7 +19,6 @@ import {
   useState,
   useSyncExternalStore,
   type MouseEvent,
-  type PointerEvent,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -40,7 +39,7 @@ import {
 } from "../voice/roster.ts";
 import { liveSentence } from "../voice/roomSummary.ts";
 import { can } from "../servers/permissions.ts";
-import { longPressGesture, swallowNextClick } from "./longPress.ts";
+import { useHoldMenu } from "./useHoldMenu.ts";
 import { useMenuDetails } from "./menuDetails.ts";
 import { useNavigationDrawer } from "./navigationDrawer.ts";
 import {
@@ -1014,49 +1013,6 @@ export function ChannelRow({
 // under the list says; the "…" button stays for screen readers and shows
 // once a keyboard reaches it.
 const TOUCH_ACTIONS = "sr-only focus-within:not-sr-only";
-
-/**
- * A finger held on a row does what a right click does. iOS sends no
- * contextmenu event for it; on Android this and the browser's own event
- * open the same menu, whichever comes first.
- */
-function useHoldMenu(open: ((anchor: HTMLElement) => void) | undefined) {
-  const latest = useRef(open);
-  useEffect(() => {
-    latest.current = open;
-  });
-  // One gesture per touch, made when the finger lands on the row.
-  const press = useRef<ReturnType<typeof longPressGesture> | null>(null);
-  // A row that leaves the list mid-press opens nothing.
-  useEffect(() => {
-    const gesture = press;
-    return () => gesture.current?.end();
-  }, []);
-  if (!open) return {};
-  const end = () => press.current?.end();
-  return {
-    onPointerDown: (event: PointerEvent<HTMLElement>) => {
-      const anchor = event.currentTarget;
-      press.current?.end();
-      press.current = longPressGesture(() => {
-        navigator.vibrate?.(10);
-        swallowNextClick();
-        latest.current?.(anchor);
-      });
-      press.current.down({
-        pointerType: event.pointerType,
-        isPrimary: event.isPrimary,
-        x: event.clientX,
-        y: event.clientY,
-      });
-    },
-    onPointerMove: (event: PointerEvent<HTMLElement>) =>
-      press.current?.move({ x: event.clientX, y: event.clientY }),
-    onPointerUp: end,
-    onPointerCancel: end,
-    onPointerLeave: end,
-  };
-}
 
 function IconButton({
   label,
