@@ -1225,7 +1225,9 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   max-width: 100%;
   overflow: hidden;
   border-radius: 50%;
-  background: var(--lr-surface);
+  /* Initials get the person's tile tint (Avatar.tsx); the theme keeps
+     --lr-text readable on every tint. */
+  background: var(--avatar-tint, var(--lr-surface));
   color: var(--lr-text);
   font-weight: 600;
   font-size: 12px;
