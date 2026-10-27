@@ -157,12 +157,8 @@ try {
     "search shows scoped results and stays outside read tracking",
     async () => {
       await member.page
-        .getByRole("button", { name: "Nachrichten suchen", exact: true })
-        .click();
-      await member.page.getByRole("searchbox").fill("searchneedle");
-      await member.page
-        .getByRole("button", { name: "Suchen", exact: true })
-        .click();
+        .getByRole("searchbox", { name: "In dieser Unterhaltung suchen" })
+        .fill("searchneedle");
       const results = member.page.getByRole("region", {
         name: "Nachrichten suchen",
       });
@@ -305,12 +301,8 @@ try {
       "dm draft",
     );
     await member.page
-      .getByRole("button", { name: "Nachrichten suchen", exact: true })
-      .click();
-    await member.page.getByRole("searchbox").fill("searchneedle");
-    await member.page
-      .getByRole("button", { name: "Suchen", exact: true })
-      .click();
+      .getByRole("searchbox", { name: "In dieser Unterhaltung suchen" })
+      .fill("searchneedle");
     await member.page
       .getByRole("region", { name: "Nachrichten suchen" })
       .getByText("dm searchneedle", { exact: true })

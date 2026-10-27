@@ -227,13 +227,10 @@ try {
   const beforeScroll = await log.evaluate((el) => el.scrollTop);
   const beforeUnread = (await channelState(member, channel)).unread_count;
   const search = async (value) => {
+    // Typing filters in place (#377); there is no submit button.
     await member.page
-      .getByRole("button", { name: "Nachrichten suchen", exact: true })
-      .click();
-    await member.page.getByRole("searchbox").fill(value);
-    await member.page
-      .getByRole("button", { name: "Suchen", exact: true })
-      .click();
+      .getByRole("searchbox", { name: "In dieser Unterhaltung suchen" })
+      .fill(value);
   };
   const contextRegion = () =>
     member.page.getByRole("region", { name: "Nachrichtenkontext" });

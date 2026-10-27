@@ -31,11 +31,11 @@ function modalOpen(): boolean {
 }
 
 /**
- * A shortcut runs only when nothing else used its keys first: a page's own
- * Strg+K (message search) or a field that handles Alt+↑ itself. Such a
- * listener may have been added after this one, so the decision waits until
- * the key has passed every listener: one more listener, added while the
- * event is on its way down, runs last on its way back up.
+ * A shortcut runs only when nothing else used its keys first, such as a
+ * field that handles Alt+↑ itself. Such a listener may have been added
+ * after this one, so the decision waits until the key has passed every
+ * listener: one more listener, added while the event is on its way down,
+ * runs last on its way back up.
  */
 function listenLast(
   onShortcut: (shortcut: ShellShortcut, event: KeyboardEvent) => void,
