@@ -370,7 +370,7 @@ export function themeVariables(theme: ThemeDefinition): Record<string, string> {
     "--lr-font":
       theme.style === "terminal"
         ? 'ui-monospace, "Cascadia Code", monospace'
-        : 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        : '"Gelabber Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     "--lr-radius-xs": xs,
     "--lr-radius-sm": sm,
     "--lr-radius-md": md,
