@@ -404,9 +404,10 @@ export function MediaSettingsForm({
           <section className="stream-upload" aria-label="Video-Upload">
             <div className="stream-quality-heading">
               <h3>Video-Upload</h3>
-              <span>
-                {videoLimit ? formatVideoBitrate(videoLimit) : "Ohne Limit"}
-              </span>
+              {/* Without a limit the choice below already says so (#375). */}
+              {videoLimit ? (
+                <span>{formatVideoBitrate(videoLimit)}</span>
+              ) : null}
             </div>
             <div className="stream-upload-mode">
               <label>

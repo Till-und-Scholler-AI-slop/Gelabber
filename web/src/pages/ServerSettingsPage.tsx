@@ -4,14 +4,29 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { useState, type FormEvent, type ReactNode } from "react";
+import {
+  useRef,
+  useState,
+  type ChangeEvent,
+  type CSSProperties,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 
 import { useUserId } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
-import { fieldMessage } from "../auth/rules.ts";
+import { ApiError } from "../api/client.ts";
+import {
+  AvatarImageError,
+  avatarImageMessage,
+  prepareAvatar,
+} from "../auth/avatarImage.ts";
+import { errorMessage, fieldMessage } from "../auth/rules.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
 import { PresenceAvatar } from "../components/PresenceAvatar.tsx";
 import { Field } from "../components/Field.tsx";
+import { ServerIconFace } from "../components/ServerIcon.tsx";
+import { tileInitials, tileTint } from "../components/initials.ts";
 import { confirmAction } from "../components/confirm.ts";
 import { LoadError } from "../components/LoadError.tsx";
 import { FormError } from "../components/FormError.tsx";
@@ -41,6 +56,7 @@ import {
   useLeaveServer,
   useRevokeInvite,
   useServer,
+  useServerIcon,
   useUnbanMember,
   useUpdateServer,
 } from "../servers/queries.ts";
@@ -200,6 +216,7 @@ function NameSection({ server }: { server: ServerDetail }) {
 
   return (
     <Section id="allgemein">
+      <IconRow server={server} />
       <form onSubmit={onSubmit} noValidate className="settings-form">
         <Field
           id="server-name"
@@ -226,6 +243,96 @@ function NameSection({ server }: { server: ServerDetail }) {
         </div>
       </form>
     </Section>
+  );
+}
+
+/** Upload and removal apply at once, like the profile avatar. */
+function IconRow({ server }: { server: ServerDetail }) {
+  const picker = useRef<HTMLInputElement>(null);
+  const icon = useServerIcon(server.id);
+  const status = useInlineStatus();
+  const [removing, setRemoving] = useState(false);
+  const save = (image: Blob | null) => {
+    status.clear();
+    setRemoving(image === null);
+    icon.mutate(image, {
+      onSuccess: () =>
+        status.show({ tone: "success", message: "Gespeichert." }),
+      onError: (error) =>
+        status.show({
+          tone: "error",
+          message:
+            error instanceof AvatarImageError
+              ? avatarImageMessage(error)
+              : error instanceof ApiError
+                ? errorMessage(error.code)
+                : NOT_SAVED.message,
+        }),
+    });
+  };
+  const onPick = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || icon.isPending) return;
+    try {
+      save(await prepareAvatar(file));
+    } catch (error) {
+      if (error instanceof AvatarImageError)
+        status.show({ tone: "error", message: avatarImageMessage(error) });
+      else throw error;
+    }
+  };
+  return (
+    <div className="settings-avatar-row">
+      <span
+        className="server-tile server-settings-icon"
+        style={{ "--server-tile": tileTint(server.id) } as CSSProperties}
+        aria-hidden="true"
+      >
+        <ServerIconFace
+          url={server.icon_url}
+          fallback={tileInitials(server.name)}
+        />
+      </span>
+      <div className="settings-avatar-actions">
+        <p className="settings-hint">
+          Das Bild steht in der Serverleiste. Ohne Bild zeigen wir die Initialen
+          des Servernamens.
+        </p>
+        <div className="settings-actions">
+          <Button
+            size="sm"
+            onClick={() => picker.current?.click()}
+            disabled={icon.isPending}
+            pending={icon.isPending && !removing}
+            pendingLabel="Lädt hoch…"
+          >
+            Bild hochladen
+          </Button>
+          {server.icon_url ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => save(null)}
+              disabled={icon.isPending}
+              pending={icon.isPending && removing}
+              pendingLabel="Entfernt…"
+            >
+              Entfernen
+            </Button>
+          ) : null}
+          <InlineStatus status={status.status} />
+        </div>
+        <input
+          ref={picker}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          hidden
+          aria-label="Serverbild auswählen"
+          onChange={(event) => void onPick(event)}
+        />
+      </div>
+    </div>
   );
 }
 

@@ -11,6 +11,7 @@ import { scopeGeneration, useUserId } from "../auth/scope.ts";
 import { errorMessage } from "../auth/rules.ts";
 import { FormError } from "../components/FormError.tsx";
 import { initials, tileTone } from "../components/initials.ts";
+import { ServerIconFace } from "../components/ServerIcon.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { buttonClass } from "../components/ui/buttonClass.ts";
@@ -146,7 +147,10 @@ function InviteServer({ preview }: { preview: InvitePreview }) {
           } as CSSProperties
         }
       >
-        {initials(server.name)}
+        <ServerIconFace
+          url={server.icon_url}
+          fallback={initials(server.name)}
+        />
       </span>
       <p>
         {member ? "Du bist schon Mitglied von" : "Du wurdest eingeladen zu"}

@@ -31,6 +31,7 @@ import {
 } from "../components/WorkspaceNavigation.tsx";
 import { useEdgeSwipe } from "../components/edgeSwipe.ts";
 import { tileInitials, tileTint } from "../components/initials.ts";
+import { ServerIconFace } from "../components/ServerIcon.tsx";
 import { useNavigationDrawer } from "../components/navigationDrawer.ts";
 import { notify } from "../components/toasts.ts";
 import { useMediaQuery } from "../components/useMediaQuery.ts";
@@ -91,7 +92,7 @@ function Workspace() {
 
 /** What the phone's top bar names: a server (its tile leads the drawer
  * button) or a plain label. */
-type Place = string | { id: string; name: string };
+type Place = string | { id: string; name: string; icon_url?: string | null };
 
 function WorkspaceFrame({
   sidebar,
@@ -168,7 +169,10 @@ function WorkspaceFrame({
                 style={{ "--server-tile": tileTint(place.id) } as CSSProperties}
                 aria-hidden="true"
               >
-                {tileInitials(place.name)}
+                <ServerIconFace
+                  url={place.icon_url}
+                  fallback={tileInitials(place.name)}
+                />
               </span>
             )}
             {mark.count > 0 ? (

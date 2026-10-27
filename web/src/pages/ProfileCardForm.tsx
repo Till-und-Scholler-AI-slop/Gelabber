@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type CSSProperties,
   type FormEvent,
 } from "react";
 
@@ -271,6 +272,11 @@ export function ProfileCardForm({ user }: { user: User }) {
             label="Bannerfarbe"
             value={form.banner_color}
             fallback={form.accent_color}
+            // As ProfileCard draws a banner without its own color.
+            unsetSwatch={
+              form.accent_color ||
+              "color-mix(in srgb, var(--lr-accent) 65%, var(--lr-panel))"
+            }
             onChange={(value) => edit("banner_color", value)}
             error={errors.fields.banner_color}
           />
@@ -278,6 +284,7 @@ export function ProfileCardForm({ user }: { user: User }) {
             id="accent_color"
             label="Akzentfarbe"
             value={form.accent_color}
+            unsetSwatch="var(--lr-accent)"
             onChange={(value) => edit("accent_color", value)}
             error={errors.fields.accent_color}
           />
@@ -416,14 +423,18 @@ function ColorField({
   label,
   value,
   fallback,
+  unsetSwatch,
   onChange,
   error,
 }: {
   id: string;
   label: string;
   value: string;
-  /** What the card shows while this color is unset. */
+  /** Where the picker starts while this color is unset. */
   fallback?: string | undefined;
+  /** The CSS color the card shows while this color is unset. The swatch
+   *  shows it too, not the picker's start value (#375). */
+  unsetSwatch: string;
   onChange: (value: string) => void;
   error?: string | undefined;
 }) {
@@ -440,7 +451,12 @@ function ColorField({
           onChange={(event) => onChange(event.target.value)}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? `${id}-error` : `${id}-value`}
-          className="settings-color-swatch"
+          className={`settings-color-swatch${value ? "" : " is-unset"}`}
+          style={
+            value
+              ? undefined
+              : ({ "--settings-swatch": unsetSwatch } as CSSProperties)
+          }
         />
         <span id={`${id}-value`} className="settings-hint">
           {value ? value.toLowerCase() : "Standard"}

@@ -221,6 +221,11 @@
   align-items: center;
   gap: 16px;
 }
+.server-settings-icon {
+  width: 64px;
+  height: 64px;
+  font-size: 20px;
+}
 .settings-avatar-actions {
   display: flex;
   flex-direction: column;
@@ -241,6 +246,13 @@
   border-radius: var(--lr-radius-sm);
   background: transparent;
   cursor: pointer;
+}
+/* Unset, the swatch shows what the card uses instead (ProfileCardForm). */
+.settings-color-swatch.is-unset::-webkit-color-swatch {
+  background: var(--settings-swatch) !important;
+}
+.settings-color-swatch.is-unset::-moz-color-swatch {
+  background: var(--settings-swatch) !important;
 }
 @media (pointer: coarse) {
   .settings-color-swatch {

@@ -103,6 +103,7 @@ pub struct InvitePreview {
 pub struct InviteServer {
     pub id: Uuid,
     pub name: String,
+    pub icon_url: Option<String>,
     pub member_count: i64,
 }
 
@@ -296,7 +297,7 @@ async fn by_code(db: &PgPool, code: &str) -> Result<Invite, ApiError> {
 
 async fn server_summary(db: &PgPool, server_id: Uuid) -> Result<InviteServer, ApiError> {
     sqlx::query_as::<_, InviteServer>(
-        "SELECT s.id, s.name, \
+        "SELECT s.id, s.name, s.icon_url, \
                 (SELECT count(*) FROM server_members m WHERE m.server_id = s.id) AS member_count \
          FROM servers s WHERE s.id = $1",
     )
