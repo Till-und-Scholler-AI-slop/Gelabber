@@ -140,7 +140,10 @@ export function MemberPanel({
                       member.user_id,
                     );
                     return (
-                      <li key={member.user_id} className="member-row">
+                      <li
+                        key={member.user_id}
+                        className={`member-row${group.group === "x" ? " is-offline" : ""}`}
+                      >
                         <button
                           type="button"
                           title={`Profil von ${member.name}`}
