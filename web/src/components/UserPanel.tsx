@@ -91,6 +91,12 @@ export function UserPanel({ contextId }: { contextId?: string }) {
             <ChevronIcon size={18} />
           </summary>
           <nav aria-label="Benutzerkonto">
+            <Link to="/settings/$area" params={{ area: "profil" }}>
+              Profil bearbeiten
+            </Link>
+            <Link to="/settings/$area" params={{ area: "darstellung" }}>
+              Einstellungen
+            </Link>
             {isDesktopApp() ? (
               <button
                 type="button"
