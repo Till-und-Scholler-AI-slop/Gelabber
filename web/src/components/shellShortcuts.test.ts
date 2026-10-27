@@ -81,4 +81,12 @@ describe("shell shortcuts", () => {
     expect(shortcutList(false)[0]?.keys).toEqual(["Strg", "K"]);
     expect(shortcutList(true)[0]?.keys).toEqual(["⌘", "K"]);
   });
+
+  it("lists Strg+F for the conversation search, not Strg+K (#377)", () => {
+    const search = shortcutList(false).find(
+      (entry) => entry.label === "In der Unterhaltung suchen",
+    );
+    expect(search?.keys).toEqual(["Strg", "F"]);
+    expect(shellShortcut(keys("f", { ctrlKey: true }))).toBeNull();
+  });
 });

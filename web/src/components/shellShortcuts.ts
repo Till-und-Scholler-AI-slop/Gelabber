@@ -88,6 +88,7 @@ export function shortcutList(
   const { mod, alt, shift } = keyNames(mac);
   return [
     { keys: [mod, "K"], label: "Server, Kanal oder Unterhaltung öffnen" },
+    { keys: [mod, "F"], label: "In der Unterhaltung suchen" },
     { keys: [alt, "↑ / ↓"], label: "Vorheriger oder nächster Kanal" },
     {
       keys: [alt, shift, "↑ / ↓"],

@@ -370,16 +370,14 @@ try {
   await check(
     "search opens context by keyboard and closing restores its trigger",
     async () => {
-      const trigger = page.getByRole("button", {
-        name: "Nachrichten suchen",
+      // Strg+F focuses the header field; typing filters in place (#377).
+      const trigger = page.getByRole("searchbox", {
+        name: "In dieser Unterhaltung suchen",
         exact: true,
       });
-      await trigger.focus();
-      await page.keyboard.press("Enter");
-      const search = page.getByRole("searchbox");
-      assert.ok(await focused(search));
+      await page.keyboard.press("Control+f");
+      assert.ok(await focused(trigger));
       await page.keyboard.type(needle);
-      await page.keyboard.press("Enter");
       const hit = page.getByRole("button", {
         name: `Zur Nachricht von A11y owner: ${needle}`,
         exact: true,
@@ -629,15 +627,12 @@ try {
         "clipped-message-viewport-remains-unread",
       );
       await composer.fill("unsent short-height draft");
-      const searchTrigger = page.getByRole("button", {
-        name: "Nachrichten suchen",
+      const searchInput = page.getByRole("searchbox", {
+        name: "In dieser Unterhaltung suchen",
         exact: true,
       });
-      await searchTrigger.focus();
-      await page.keyboard.press("Enter");
-      const searchInput = page.getByRole("searchbox");
+      await searchInput.focus();
       await searchInput.fill("Call dock keyboard send");
-      await page.keyboard.press("Enter");
       const hit = page.getByRole("button", {
         name: "Zur Nachricht von A11y member: Call dock keyboard send",
         exact: true,
@@ -664,7 +659,7 @@ try {
         .getByRole("button", { name: "Zurück zum Chat", exact: true })
         .focus();
       await page.keyboard.press("Enter");
-      assert.ok(await focused(searchTrigger));
+      assert.ok(await focused(searchInput));
       assert.equal(await composer.inputValue(), "unsent short-height draft");
       assert.equal(
         (await api(member, "/messages/unread")).body.find(

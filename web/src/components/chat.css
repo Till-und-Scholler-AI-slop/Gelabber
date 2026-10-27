@@ -40,12 +40,14 @@
 .dm-peer-button:hover {
   background: var(--lr-hover);
 }
+/* The conversation search field (#377): typing filters the history in
+   place, Strg/⌘+F focuses it. */
 .lr-header-search {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
-  width: 180px;
+  width: 200px;
   height: 30px;
   margin-left: auto;
   padding: 0 10px;
@@ -54,15 +56,38 @@
   background: var(--lr-panel);
   color: var(--lr-muted);
   font-size: 13px;
-  cursor: pointer;
+  cursor: text;
+  transition: width var(--lr-dur-micro) var(--lr-ease-standard);
+}
+.lr-header-search > svg {
+  flex-shrink: 0;
+}
+.lr-header-search > input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--lr-text);
+  font: inherit;
+}
+.lr-header-search > input::placeholder {
+  color: var(--lr-muted);
 }
 .lr-header-search:hover,
-.lr-header-search[aria-expanded="true"] {
+.lr-header-search:focus-within,
+.lr-header-search[data-active] {
   color: var(--lr-text);
   border-color: color-mix(in srgb, var(--lr-border), var(--lr-text) 18%);
 }
-.lr-header-search[aria-expanded="true"] {
-  background: var(--lr-selected);
+.lr-header-search:focus-within,
+.lr-header-search[data-active] {
+  width: 260px;
+}
+.lr-header-search:focus-within {
+  border-color: color-mix(in srgb, var(--lr-accent) 70%, var(--lr-border));
 }
 
 .lr-message-pane {
@@ -1663,12 +1688,15 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   .lr-channel-header {
     padding-left: 16px;
   }
+  /* An icon until it is used, then wide enough to type into. */
   .lr-header-search {
     width: 34px;
-    justify-content: center;
-    padding: 0;
+    padding: 0 8px;
   }
-  .lr-header-search > span,
+  .lr-header-search:focus-within,
+  .lr-header-search[data-active] {
+    width: min(55vw, 240px);
+  }
   .lr-header-search > kbd {
     display: none;
   }
@@ -1688,8 +1716,9 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 @media (max-height: 500px) {
   /* Keep the draft mounted while search uses the space normally occupied by
      the composer and typing strip on a reduced-height viewport. */
-  .lr-message-pane:has(.lr-search-overlay) > .lr-composer,
-  .lr-message-pane:has(.lr-search-overlay) > [data-testid="typing-bar"] {
+  .lr-message-pane:has(.lr-search-overlay, .lr-search-pane) > .lr-composer,
+  .lr-message-pane:has(.lr-search-overlay, .lr-search-pane)
+    > [data-testid="typing-bar"] {
     display: none;
   }
 }
@@ -1806,54 +1835,22 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   min-height: 0;
   background: var(--lr-bg);
 }
-.lr-search-form {
+/* One quiet line above the hits, no second search field (#377). */
+.lr-search-summary {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--lr-border);
-}
-.lr-search-form input {
-  flex: 1;
-  min-width: 0;
-  height: 36px;
-  padding: 0 12px;
-  border: 1px solid var(--lr-border);
-  border-radius: var(--lr-radius);
-  outline: none;
-  background: var(--lr-panel);
-  color: var(--lr-text);
-  font-size: 14px;
-}
-.lr-search-form input:focus {
-  border-color: color-mix(in srgb, var(--lr-accent) 70%, var(--lr-border));
-}
-.lr-search-submit,
-.lr-search-close {
-  height: 36px;
-  padding: 0 14px;
-  border-radius: var(--lr-radius);
-  font-size: 13px;
-  font-weight: 600;
-}
-/* Beside both buttons a phone leaves the field a few letters wide. */
-@media (max-width: 520px) {
-  .lr-search-form input {
-    flex-basis: 100%;
-  }
-  .lr-search-submit {
-    flex: 1;
-  }
-}
-.lr-search-submit {
-  background: var(--lr-accent);
-  color: var(--lr-accent-ink);
-}
-.lr-search-submit:disabled {
-  opacity: 0.5;
-}
-.lr-search-close {
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px 0;
   color: var(--lr-muted);
+  font-size: 12px;
+}
+.lr-search-close {
+  margin-left: auto;
+  padding: 4px 8px;
+  border-radius: var(--lr-radius);
+  color: var(--lr-muted);
+  font-size: 12px;
+  font-weight: 600;
 }
 .lr-search-close:hover {
   background: var(--lr-hover);
@@ -1870,9 +1867,6 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 .lr-search-results > [role="alert"] {
   padding: 6px 8px;
   color: var(--lr-muted);
-}
-.lr-search-hint {
-  font-size: 13px;
 }
 .lr-search-hit {
   display: block;
