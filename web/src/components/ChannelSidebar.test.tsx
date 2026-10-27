@@ -162,6 +162,10 @@ describe("channel list", () => {
     expect(html).toContain('<h3 class="sidebar-category-name">Planung</h3>');
   });
 
+  it("leaves the long-press hint to touch screens", () => {
+    expect(list()).not.toContain("Gedrückt halten");
+  });
+
   it("gives the list one Tab stop, on the open channel", () => {
     const links = list().match(/<a [^>]*>/g) ?? [];
     expect(links).toHaveLength(3);
@@ -222,11 +226,14 @@ describe("channel row", () => {
     expect(html).not.toContain("Aktionen für");
   });
 
-  it("puts the actions behind one button on a touch screen", () => {
+  it("opens the actions by a long press on a touch screen", () => {
     const html = row({ coarse: true });
-    expect(html).toContain('aria-label="Aktionen für #termine"');
     expect(html).not.toContain('aria-label="Kanal bearbeiten"');
     expect(html).not.toContain('aria-label="Kanal löschen"');
+    // One button stays for screen readers, shown once a keyboard reaches it.
+    expect(html).toMatch(
+      /<span class="sr-only focus-within:not-sr-only"><button [^>]*aria-label="Aktionen für #termine"/,
+    );
   });
 
   it("has no actions for members who cannot manage channels", () => {
