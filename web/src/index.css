@@ -1447,6 +1447,14 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
 .member-row {
   margin-bottom: 2px;
 }
+/* Offline people step back: a faded picture and a muted name, so who is
+   around reads at a glance. The name keeps its 4.5:1 (--lr-muted). */
+.member-row.is-offline .gel-avatar {
+  opacity: 0.55;
+}
+.member-row.is-offline .member-description strong {
+  color: var(--lr-muted);
+}
 .member-profile-button {
   display: flex;
   align-items: center;
@@ -1930,6 +1938,20 @@ html[data-reduced-motion="true"] *::after {
 @media (hover: none) {
   .sidebar-row-actions {
     opacity: 1;
+  }
+}
+/* With a mouse a channel's edit and delete buttons lie over the row's end
+   while they show, and take no room otherwise: two invisible buttons cut a
+   name with an unread count short ("allgem…"). */
+@media (hover: hover) {
+  .channel-row > .sidebar-row-actions {
+    position: absolute;
+    top: 50%;
+    right: 3px;
+    translate: 0 -50%;
+    padding-left: 6px;
+    border-radius: var(--lr-radius);
+    background: inherit;
   }
 }
 @media (pointer: coarse) {
