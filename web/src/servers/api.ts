@@ -27,6 +27,13 @@ export const createServer = (name: string) =>
 export const updateServer = (id: string, patch: UpdateServerInput) =>
   api<Server>(`/servers/${id}`, { method: "PATCH", body: patch });
 
+/** A square image prepared by `prepareAvatar`; needs `manage_server`. */
+export const uploadServerIcon = (id: string, image: Blob) =>
+  api<Server>(`/servers/${id}/icon`, { method: "PUT", body: image });
+
+export const removeServerIcon = (id: string) =>
+  api<Server>(`/servers/${id}/icon`, { method: "DELETE" });
+
 export const deleteServer = (id: string) =>
   api<null>(`/servers/${id}`, { method: "DELETE" });
 

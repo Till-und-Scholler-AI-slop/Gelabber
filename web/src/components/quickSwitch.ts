@@ -19,7 +19,7 @@ export type SwitchEntry = {
   detail: string | null;
   target: SwitchTarget;
   badge: Badge;
-  /** A direct message's picture. */
+  /** A direct message's picture or a server's icon. */
   avatar?: string | null;
 };
 
@@ -81,6 +81,7 @@ export function switchEntries({
       detail: "Server",
       target: { kind: "server", serverId: server.id },
       badge: { count, dot },
+      avatar: server.icon_url ?? null,
     });
   }
   return entries;

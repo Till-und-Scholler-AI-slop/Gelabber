@@ -329,7 +329,8 @@ pub async fn gate(
     } else {
         let upload = (request.method() == Method::POST && path.ends_with("/attachments"))
             || (request.method() == Method::PUT
-                && matches!(path, "/api/me/avatar" | "/api/me/banner"));
+                && (matches!(path, "/api/me/avatar" | "/api/me/banner")
+                    || (path.starts_with("/api/servers/") && path.ends_with("/icon"))));
         let message = request.method() == Method::POST && path.ends_with("/messages");
         let raw = cookies::get(request.headers(), SESSION_COOKIE)
             .filter(|raw| crate::token::is_valid(raw));

@@ -493,6 +493,14 @@ summary {
     0 0 0 2px var(--lr-rail),
     0 0 0 4px var(--lr-accent);
 }
+/* An uploaded icon fills the tile and follows its rounding. */
+.server-icon-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
 .server-tile-placeholder {
   background: var(--lr-surface);
   animation: lr-placeholder-pulse 1.4s ease-in-out infinite alternate;

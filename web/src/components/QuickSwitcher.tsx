@@ -27,6 +27,7 @@ import {
 } from "./quickSwitch.ts";
 import { isMac, shortcutList } from "./shellShortcuts.ts";
 import { tileInitials, tileTint } from "./initials.ts";
+import { ServerIconFace } from "./ServerIcon.tsx";
 import "./shell.css";
 
 export function QuickSwitcher({
@@ -141,7 +142,10 @@ function EntryIcon({ entry }: { entry: SwitchEntry }) {
           { "--server-tile": tileTint(entry.target.serverId) } as CSSProperties
         }
       >
-        {tileInitials(entry.label)}
+        <ServerIconFace
+          url={entry.avatar}
+          fallback={tileInitials(entry.label)}
+        />
       </span>
     );
   return entry.kind === "voice" ? (

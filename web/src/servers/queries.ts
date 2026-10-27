@@ -162,6 +162,7 @@ function toListItem(detail: ServerDetail): Server {
     id,
     name,
     owner_id,
+    icon_url,
     created_at,
     role,
     permissions,
@@ -171,6 +172,7 @@ function toListItem(detail: ServerDetail): Server {
     id,
     name,
     owner_id,
+    icon_url,
     created_at,
     role,
     permissions,
@@ -391,6 +393,28 @@ export function useUpdateServer(serverId: string) {
       void client.invalidateQueries({
         queryKey: serverKeys.list(ctx.userId, ctx.generation),
       });
+    },
+  });
+}
+
+/**
+ * Sets (`Blob`, prepared by `prepareAvatar`) or removes (`null`) the
+ * server icon. Not optimistic: the new URL only exists once the server
+ * stored the file.
+ */
+export function useServerIcon(serverId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (image: Blob | null) => {
+      const stamp = takeStamp();
+      const server = image
+        ? await remote.uploadServerIcon(serverId, image)
+        : await remote.removeServerIcon(serverId);
+      return { server, stamp };
+    },
+    onSuccess: ({ server, stamp }) => {
+      if (stamp && stampHolds(stamp))
+        mergeServer(client, stamp.userId, stamp.generation, server);
     },
   });
 }
