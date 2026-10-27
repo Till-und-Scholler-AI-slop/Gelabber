@@ -21,6 +21,9 @@ export type Server = {
   id: string;
   name: string;
   owner_id: string;
+  /** Uploaded icon (`/api/server-icons/…`); without one the initials show.
+   * Optional: lists cached before the field existed lack it. */
+  icon_url?: string | null;
   created_at: string;
   role: Role;
   /** The caller's effective flags (everything for the owner). */
@@ -74,7 +77,12 @@ export type Invite = {
 
 export type InvitePreview = {
   code: string;
-  server: { id: string; name: string; member_count: number };
+  server: {
+    id: string;
+    name: string;
+    icon_url?: string | null;
+    member_count: number;
+  };
   expires_at: string | null;
   /** The caller is already in this server. */
   member: boolean;

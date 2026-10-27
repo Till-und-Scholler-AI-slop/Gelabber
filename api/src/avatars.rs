@@ -209,7 +209,7 @@ async fn upload(
 
 /// How long an upload may take from its PUT to the profile update before
 /// the cleanup worker treats it as abandoned.
-const PENDING_SECS: f64 = 600.0;
+pub(crate) const PENDING_SECS: f64 = 600.0;
 
 /// Updates the profile and deletes the upload that this update really
 /// replaced (as returned by the locked `UPDATE`, not as read at request
@@ -292,7 +292,7 @@ pub async fn save_profile(
 
 /// Best-effort immediate delete; the `storage_cleanup` row recorded
 /// before stays until the object is gone, so the worker retries failures.
-async fn discard(state: &AppState, key: &str) {
+pub(crate) async fn discard(state: &AppState, key: &str) {
     match state.store.delete(key).await {
         Ok(()) => {
             if let Err(err) =
@@ -363,7 +363,7 @@ async fn download(
         .into_response())
 }
 
-fn store_internal(err: StoreError) -> ApiError {
+pub(crate) fn store_internal(err: StoreError) -> ApiError {
     match err {
         StoreError::Unconfigured => ApiError::Internal("object store is not configured".into()),
         other => ApiError::Internal(format!("object store: {other}")),

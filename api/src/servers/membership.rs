@@ -88,7 +88,7 @@ pub async fn load<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     user_id: Uuid,
 ) -> Result<Membership, ApiError> {
     let server = sqlx::query_as::<_, ServerRow>(
-        "SELECT s.id, s.name, s.owner_id, s.member_permissions, s.created_at \
+        "SELECT s.id, s.name, s.owner_id, s.member_permissions, s.icon_url, s.created_at \
          FROM servers s \
          JOIN server_members m ON m.server_id = s.id AND m.user_id = $2 \
          WHERE s.id = $1",
@@ -172,6 +172,7 @@ mod tests {
                 name: "Test".into(),
                 owner_id: owner,
                 member_permissions,
+                icon_url: None,
                 created_at: Utc::now(),
             },
             user_id: user,
