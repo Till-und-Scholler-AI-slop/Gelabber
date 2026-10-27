@@ -423,8 +423,9 @@ summary {
   background: var(--lr-hover);
   color: var(--lr-accent-text);
 }
-/* The marker at the rail's edge: a short pill for something unread, a tall
-   one for where you are. */
+/* The marker at the rail's edge: a short accent pill for something unread,
+   a tall pill in the text colour for where you are (the v0.8 design). The
+   tile itself keeps no ring, and a mention keeps its red count. */
 :is(.server-tile, .server-home-link)::before {
   content: "";
   position: absolute;
@@ -435,7 +436,9 @@ summary {
   border-radius: 0 4px 4px 0;
   background: var(--lr-accent);
   translate: 0 -50%;
-  transition: height var(--lr-dur-fast) var(--lr-ease);
+  transition:
+    height var(--lr-dur-fast) var(--lr-ease),
+    background-color var(--lr-dur-fast) var(--lr-ease);
 }
 :is(.server-tile, .server-home-link).is-unread::before {
   height: 8px;
@@ -443,8 +446,12 @@ summary {
 :is(.server-tile, .server-home-link):hover:not(.is-active)::before {
   height: 16px;
 }
+:is(.server-tile, .server-home-link):hover:not(.is-active, .is-unread)::before {
+  background: var(--lr-muted);
+}
 :is(.server-tile, .server-home-link).is-active::before {
   height: 28px;
+  background: var(--lr-text);
 }
 .server-rail-scroll {
   flex: 0 1 auto;
@@ -468,7 +475,8 @@ summary {
   height: 60px;
 }
 /* Each server keeps its own theme tint (--lr-tile-1…8) until it has a
-   picture; the letters read on every tint. */
+   picture; the letters read on every tint. Round at rest, the theme's
+   corner where you are or point (a square-ish theme stays square-ish). */
 .server-tile {
   display: inline-flex;
   align-items: center;
@@ -476,7 +484,7 @@ summary {
   width: 44px;
   height: 44px;
   position: relative;
-  border-radius: var(--lr-radius-lg);
+  border-radius: calc(var(--lr-radius-lg) * 2.2);
   color: var(--lr-text);
   background: var(--server-tile, var(--lr-surface));
   font: 600 15px / 1 var(--lr-font);
@@ -486,12 +494,7 @@ summary {
 }
 .server-tile:hover,
 .server-tile.is-active {
-  border-radius: var(--lr-radius-md);
-}
-.server-tile.is-active {
-  box-shadow:
-    0 0 0 2px var(--lr-rail),
-    0 0 0 4px var(--lr-accent);
+  border-radius: var(--lr-radius-lg);
 }
 /* An uploaded icon fills the tile and follows its rounding. */
 .server-icon-img {
@@ -562,18 +565,20 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   flex-shrink: 0;
   padding: 5px 0 max(16px, var(--lr-safe-bottom));
 }
+/* An empty place for one more server: dashed, with the green of "online". */
 .server-create-button {
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
+  border: 1px dashed var(--lr-border-strong);
   border-radius: 50%;
-  background: var(--lr-surface);
-  color: var(--lr-muted);
+  background: transparent;
+  color: var(--lr-online-text);
 }
 .server-create-button:hover {
-  background: var(--lr-selected);
-  color: var(--lr-accent-text);
+  border-style: solid;
+  background: var(--lr-hover);
 }
 
 .channel-sidebar {
