@@ -620,6 +620,22 @@ describe("voice diagnostics", () => {
     expect(exported.note).toContain("keine bewiesene");
   });
 
+  it("exports the codec decision the latest sample carried", () => {
+    expect(buildDiagnosticExport().video).toBeNull();
+    const video = {
+      roomCodecs: ["video/av1", "video/vp8"],
+      encoders: { av1: true, h264: false },
+      decodesAv1: true,
+      desktopApp: "0.7.0",
+    };
+    applyStatsReport("voice", [], {
+      streaming: false,
+      caps: { ...caps, video },
+      videoSources: {},
+    });
+    expect(buildDiagnosticExport().video).toEqual(video);
+  });
+
   it("records voice-only, stream on, and stream off in order", () => {
     attachDiagnostics({
       role: "voice",

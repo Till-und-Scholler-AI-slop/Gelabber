@@ -49,9 +49,15 @@ function read(info: unknown): NativeFeatures {
   );
 }
 
+function readVersion(info: unknown): string | null {
+  const version = (info as { version?: unknown } | null | undefined)?.version;
+  return typeof version === "string" && version ? version : null;
+}
+
 type Asked = {
   bridge: NativeBridge;
   features: NativeFeatures | null;
+  version: string | null;
   answered: Promise<NativeFeatures>;
 };
 
@@ -67,9 +73,13 @@ function ask(): Asked | null {
   const mine: Asked = {
     bridge,
     features: null,
+    version: null,
     answered: Promise.resolve()
       .then(() => bridge.invoke<unknown>("media_info"))
-      .then(read)
+      .then((info) => {
+        mine.version = readVersion(info);
+        return read(info);
+      })
       // An app that cannot answer is no newer than those without a list.
       .catch(() => LEGACY)
       .then((features) => {
@@ -86,6 +96,12 @@ function ask(): Asked | null {
 export function nativeFeatures(): NativeFeatures | null {
   const current = ask();
   return current ? current.features : NONE;
+}
+
+/** The app's version once it has answered; `null` in a browser, before the
+ * answer, and for an app that sends none. */
+export function nativeAppVersion(): string | null {
+  return ask()?.version ?? null;
 }
 
 /** The same once the app has answered; at once in a browser. */

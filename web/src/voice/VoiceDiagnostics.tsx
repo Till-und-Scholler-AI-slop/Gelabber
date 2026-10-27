@@ -26,7 +26,29 @@ import {
   useVoiceDiagnostics,
   type ConnectionSnapshot,
   type FlowStats,
+  type VideoChoice,
 } from "./diagnostics.ts";
+
+const yesNo = (value: boolean | null | undefined) =>
+  value === null || value === undefined ? "unbekannt" : value ? "ja" : "nein";
+
+function VideoChoiceLine({ video }: { video: VideoChoice | undefined }) {
+  if (!video) return null;
+  const encoders = video.encoders;
+  return (
+    <p className="text-xs">
+      Video: Raum-Codecs{" "}
+      {video.roomCodecs
+        ? video.roomCodecs
+            .map((codec) => codec.replace("video/", ""))
+            .join(", ")
+        : "unbekannt"}
+      ; dieses Gerät sendet AV1 in Hardware: {yesNo(encoders?.av1)}, H.264 in
+      Hardware: {yesNo(encoders?.h264)}; empfängt AV1: {yesNo(video.decodesAv1)}
+      {video.desktopApp ? `; Desktop-App v${video.desktopApp}` : ""}
+    </p>
+  );
+}
 
 export function VoiceDiagnostics() {
   const latest = useVoiceDiagnostics((state) => state.latest);
@@ -89,6 +111,7 @@ export function VoiceDiagnostics() {
               ? "an"
               : "aus"}
         </p>
+        <VideoChoiceLine video={latest?.caps.video} />
         <p className="text-xs">
           Effektiver Mic-Gain: {Math.round(processing.inputGain * 100)} % ·
           Verarbeitungszustand: {processing.contextState ?? "ohne Graph"} ·

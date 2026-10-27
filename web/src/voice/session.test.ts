@@ -164,6 +164,9 @@ class FakeConnection implements MediaConnection {
   senders(): MutableSender[] {
     return this.senderRows;
   }
+  videoChoice() {
+    return { roomCodecs: null, encoders: null, decodesAv1: null };
+  }
   consumers(): ReceivedSource[] {
     return [...this.receivedRows.values()];
   }

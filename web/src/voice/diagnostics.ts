@@ -140,6 +140,16 @@ export type ConnectionSnapshot = {
   flows: FlowStats[];
 };
 
+/** The codec decision of the media connection (see `videoChoice`); `null`
+ * where nothing is known yet. */
+export type VideoChoice = {
+  roomCodecs: string[] | null;
+  encoders: { av1: boolean; h264: boolean } | null;
+  decodesAv1: boolean | null;
+  /** The desktop app's version; `null` in a browser. */
+  desktopApp?: string | null;
+};
+
 export type Caps = {
   /** Browser readback; null means unsupported/unknown, not the requested policy. */
   senderPriorities?: Partial<Record<FlowSource, SenderPriority>>;
@@ -153,6 +163,7 @@ export type Caps = {
   videoLimits?: Partial<
     Record<VideoSource, { maxBitrate: number | null; maxFps: number }>
   >;
+  video?: VideoChoice;
 };
 
 export type DiagnosticSample = {
@@ -207,6 +218,8 @@ export type DiagnosticExport = {
   appVersion: string;
   browser: { userAgent: string; platform: string; language: string };
   settings: RelevantSettings;
+  /** From the latest sample; null before the first one. */
+  video: VideoChoice | null;
   note: string;
   phases: PhaseMark[];
   events: DiagnosticEvent[];
@@ -1135,6 +1148,7 @@ export function buildDiagnosticExport(now = new Date()): DiagnosticExport {
     appVersion: APP_VERSION,
     browser: browserInfo(),
     settings: relevantSettings(),
+    video: state.latest?.caps.video ?? null,
     note: "Messwerte sind Anhaltspunkte und keine bewiesene Fehlerursache.",
     phases: state.phases,
     events: state.events,

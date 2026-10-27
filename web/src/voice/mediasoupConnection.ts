@@ -101,6 +101,12 @@ export interface MediaConnection {
   sender(kind: TrackKind): MediaSender | undefined;
   senders(): MediaSender[];
   consumers(): ReceivedSource[];
+  /** What the last codec choice rested on, for diagnostics. */
+  videoChoice(): {
+    roomCodecs: string[] | null;
+    encoders: HardwareVideo | null;
+    decodesAv1: boolean | null;
+  };
   transportState(direction: "send" | "recv"): string;
   restartIce(direction: "send" | "recv"): Promise<void>;
   getStats(): Promise<StatsEntry[]>;
@@ -207,6 +213,9 @@ export class MediasoupConnection implements MediaConnection {
   private sendDeadlineEpochMs: number | undefined;
   /** What every receiver decodes; null until a server says. */
   private videoCodecs: VideoCodecs | null = null;
+  /** The last probes that ran, for `videoChoice`. */
+  private probedEncoders: HardwareVideo | null = null;
+  private probedDecodesAv1: boolean | null = null;
   constructor(private readonly options: MediaConnectionOptions) {}
 
   private live(): void {
@@ -333,9 +342,8 @@ export class MediasoupConnection implements MediaConnection {
     this.device = device;
     // AV1 comes as one stream: only a device that decodes it smoothly
     // offers to receive it (issue #318).
-    const av1Decoding = await (
-      this.options.decodesAv1 ?? decodesAv1
-    )();
+    const av1Decoding = await (this.options.decodesAv1 ?? decodesAv1)();
+    this.probedDecodesAv1 = av1Decoding;
     this.live();
     const announced = await this.options.request("capabilities", {
       rtp: receivableCapabilities(device.recvRtpCapabilities, av1Decoding),
@@ -742,10 +750,12 @@ export class MediasoupConnection implements MediaConnection {
   private async videoCodec(device: Device) {
     const allowed = this.videoCodecs?.video ?? null;
     // Asked only where it can change the choice.
-    const hardware =
-      allowed?.includes("video/h264") || allowed?.includes("video/av1")
-        ? await (this.options.hardwareVideo ?? hardwareVideo)()
-        : SOFTWARE_VIDEO;
+    const asked =
+      allowed?.includes("video/h264") || allowed?.includes("video/av1");
+    const hardware = asked
+      ? await (this.options.hardwareVideo ?? hardwareVideo)()
+      : SOFTWARE_VIDEO;
+    if (asked) this.probedEncoders = hardware;
     return chooseVideoCodec(
       device.sendRtpCapabilities.codecs ?? [],
       allowed,
@@ -904,6 +914,13 @@ export class MediasoupConnection implements MediaConnection {
   }
   consumers(): ReceivedSource[] {
     return [...this.received.values()];
+  }
+  videoChoice() {
+    return {
+      roomCodecs: this.videoCodecs ? [...this.videoCodecs.video] : null,
+      encoders: this.probedEncoders,
+      decodesAv1: this.probedDecodesAv1,
+    };
   }
   transportState(direction: "send" | "recv"): string {
     return (
