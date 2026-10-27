@@ -1,7 +1,9 @@
 import { useId, useMemo, useState } from "react";
 import data from "../messages/emoji-data.json";
+import { useMissingEmoji } from "./emojiSupport.ts";
 
 const groups = [...new Set(data.emoji.map((entry) => entry.group))];
+const allEmoji = data.emoji.map((entry) => entry.emoji);
 export default function EmojiPicker({
   onSelect,
 }: {
@@ -11,6 +13,8 @@ export default function EmojiPicker({
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState("");
   const [limit, setLimit] = useState(80);
+  // Emoji newer than this device's emoji font would show as empty boxes.
+  const missing = useMissingEmoji(allEmoji, data.version);
   const matches = useMemo(() => {
     const terms = query
       .trim()
@@ -19,6 +23,7 @@ export default function EmojiPicker({
       .filter(Boolean);
     return data.emoji.filter(
       (entry) =>
+        !missing.has(entry.emoji) &&
         (!group || entry.group === group) &&
         terms.every((term) =>
           `${entry.emoji} ${entry.label} ${entry.keywords.join(" ")}`
@@ -26,7 +31,7 @@ export default function EmojiPicker({
             .includes(term),
         ),
     );
-  }, [query, group]);
+  }, [query, group, missing]);
   return (
     <div className="flex flex-col gap-3">
       <label htmlFor={`${id}-search`} className="text-sm font-medium">
