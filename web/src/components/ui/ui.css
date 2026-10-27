@@ -880,6 +880,10 @@
     width: min(380px, calc(var(--lr-100vw) - 32px));
     pointer-events: none;
   }
+  /* The bottom edge belongs to the call dock at every width (#375). */
+  .has-active-media .gel-toasts {
+    --lr-toast-floor: max(var(--lr-media-space), var(--lr-safe-bottom));
+  }
   .gel-toasts__region {
     display: flex;
     flex-direction: column;
@@ -1056,10 +1060,6 @@
       width: auto;
       max-width: 420px;
       margin-inline: auto;
-    }
-    /* On phones the bottom edge belongs to the call dock. */
-    .has-active-media .gel-toasts {
-      --lr-toast-floor: max(var(--lr-media-space), var(--lr-safe-bottom));
     }
     @supports (anchor-name: --lr-composer) {
       /* Centred over the content column, clear of a sidebar beside it. */
