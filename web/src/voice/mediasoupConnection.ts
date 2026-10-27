@@ -38,6 +38,7 @@ export type RtpSenderParameters = {
     maxBitrate?: number;
     maxFramerate?: number;
     priority?: MediaPriority;
+    scaleResolutionDownBy?: number;
     networkPriority?: MediaPriority;
   }>;
   transactionId?: string;
