@@ -863,6 +863,13 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   font-size: 12px;
   color: var(--lr-muted);
 }
+/* Under the channel list on a touch screen: what a held finger opens. */
+.sidebar-hold-hint {
+  margin: 14px 10px 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--lr-muted);
+}
 .channel-row.is-active .channel-row-icon {
   color: var(--lr-accent-text);
 }
@@ -1902,6 +1909,10 @@ html[data-reduced-motion="true"] *::after {
   summary {
     -webkit-touch-callout: none;
     user-select: none;
+  }
+  /* Held, a channel opens its menu; iOS would lift the link to drag it. */
+  .channel-row-link {
+    -webkit-user-drag: none;
   }
   .gel-modal {
     -webkit-touch-callout: default;
