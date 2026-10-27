@@ -45,8 +45,10 @@
   flex: 1 0 100%;
   min-width: 0;
 }
+/* At most half the window: the first row of people stays above the call
+   dock at 1440x900 (#375). Fullscreen is there for the big picture. */
 .voice-room-spotlight .voice-video-tile {
-  max-height: min(calc(var(--lr-100dvh) * 0.62), 640px);
+  max-height: min(calc(var(--lr-100dvh) * 0.5), 520px);
 }
 .voice-room-filmstrip-tile {
   flex: 0 0 auto;
