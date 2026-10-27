@@ -1910,8 +1910,11 @@ html[data-reduced-motion="true"] *::after {
     -webkit-touch-callout: none;
     user-select: none;
   }
-  /* Held, a channel opens its menu; iOS would lift the link to drag it. */
-  .channel-row-link {
+  /* Held, these open a menu; iOS would lift the link to drag it. */
+  .channel-row-link,
+  .server-tile,
+  .server-home-link,
+  .dm-row {
     -webkit-user-drag: none;
   }
   .gel-modal {

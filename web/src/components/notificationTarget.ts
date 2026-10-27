@@ -2,6 +2,7 @@
 import { create } from "zustand";
 
 import type { NotificationScope } from "../messages/notificationSettings.ts";
+import { useHoldMenu } from "./useHoldMenu.ts";
 
 export type NotificationTarget = {
   scope: NotificationScope;
@@ -25,11 +26,19 @@ export function openNotificationSettings(target: NotificationTarget): void {
   useNotificationTarget.setState({ target });
 }
 
-/** onContextMenu for an entry: the dialog instead of the browser's menu. */
-export function notificationMenu(target: NotificationTarget) {
-  return (event: { preventDefault: () => void }) => {
-    event.preventDefault();
-    openNotificationSettings(target);
+/**
+ * A right click or a held finger on an entry: the dialog instead of the
+ * browser's menu.
+ */
+export function useNotificationMenu(target: NotificationTarget) {
+  const open = () => openNotificationSettings(target);
+  const hold = useHoldMenu(open);
+  return {
+    onContextMenu: (event: { preventDefault: () => void }) => {
+      event.preventDefault();
+      open();
+    },
+    ...hold,
   };
 }
 
