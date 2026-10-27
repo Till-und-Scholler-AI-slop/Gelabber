@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 
-import { initials } from "./initials.ts";
+import { initials, personTint } from "./initials.ts";
 
 export type AvatarSize = "sm" | "md" | "lg" | "hero" | "room";
 
@@ -14,7 +14,10 @@ type AvatarProps = {
   decorative?: boolean;
 };
 
-/** Image when there is a working URL, initials otherwise — never a broken image icon. */
+/** Image when there is a working URL, initials otherwise — never a broken image icon.
+ *  Initials sit on one of the theme's tile tints, picked by the name, so a
+ *  person keeps one colour on every screen, also where only the name is
+ *  known. */
 export function Avatar({
   name,
   url,
@@ -28,6 +31,11 @@ export function Avatar({
   return (
     <span
       className={`gel-avatar gel-avatar-${size} ${className}`}
+      style={
+        showImage
+          ? undefined
+          : ({ "--avatar-tint": personTint(name) } as CSSProperties)
+      }
       aria-hidden={showImage && !decorative ? undefined : true}
     >
       {showImage ? (

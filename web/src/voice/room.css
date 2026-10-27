@@ -100,7 +100,7 @@ html[data-compact-rooms="true"] .voice-room-seat {
 .voice-room-avatar > .gel-avatar {
   width: 100%;
   height: 100%;
-  background: var(--lr-panel);
+  background: var(--avatar-tint, var(--lr-panel));
   color: var(--lr-text);
   font-size: 20px;
 }
@@ -751,7 +751,7 @@ a.voice-session-link:hover > span {
 .voice-session-people .gel-avatar {
   --avatar-size: 24px;
   font-size: 10px;
-  background: var(--lr-surface);
+  background: var(--avatar-tint, var(--lr-surface));
   box-shadow: 0 0 0 2px var(--lr-panel);
 }
 .voice-session-people .gel-avatar + .gel-avatar {
