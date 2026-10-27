@@ -9,9 +9,12 @@ Chat, Sprache und Live-Screenshare für eine Community auf dem eigenen Server.
 Wer live geht, zeigt allen im Sprachkanal einen Bildschirm oder ein Fenster — auch mehrere gleichzeitig.
 Eigene WebSocket-Signalisierung, selbst gehostetes mediasoup mit offiziellem Rust- und Browser-SDK.
 
-<!-- Hero-Screenshot hier einfügen wenn vorhanden:
 ![Gelabber Übersicht](docs/assets/readme-hero.png)
--->
+
+<p align="center">
+  <img src="docs/assets/readme-chat.png" width="48%" alt="Textkanal" />
+  <img src="docs/assets/readme-voice.png" width="48%" alt="Sprachraum" />
+</p>
 
 ## Start
 
