@@ -7,7 +7,6 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -74,8 +73,11 @@ import {
 } from "./messagePaneContext.ts";
 import { dayBreak, dayLabel, formatWhen } from "./messageTime.ts";
 import { useMessageScroll } from "./useMessageScroll.ts";
+import { useDebouncedValue } from "./useDebouncedValue.ts";
+import { isMac, keyNames } from "./shellShortcuts.ts";
 
 const NO_MEMBERS: readonly MentionMember[] = [];
+const searchKeys = keyNames(isMac());
 
 export function MessagePane({
   title,
@@ -123,8 +125,21 @@ export function MessagePane({
   const user = useSession((s) => s.user);
   const query = useMessages(channelId, true);
   const searchScope = `${user?.id ?? "anonymous"}:${channelId}`;
-  const [searchingScope, setSearchingScope] = useState<string | null>(null);
-  const searching = searchingScope === searchScope;
+  // What the header's search field holds, per channel and account; the
+  // list shows its hits as soon as typing pauses (#377).
+  const [search, setSearch] = useState<{ scope: string; text: string }>({
+    scope: searchScope,
+    text: "",
+  });
+  const searchText = search.scope === searchScope ? search.text : "";
+  const setSearchText = useCallback(
+    (text: string) => setSearch({ scope: searchScope, text }),
+    [searchScope],
+  );
+  const typed = useDebouncedValue(search, 250);
+  const searchQuery =
+    searchText.trim() && typed.scope === searchScope ? typed.text.trim() : "";
+  const searching = searchQuery !== "";
   // Per channel and account, like the search: a switch closes it.
   const [lightbox, setLightbox] = useState<{
     scope: string;
@@ -158,33 +173,30 @@ export function MessagePane({
     id: string;
   } | null>(null);
   const showingContext = contextTarget?.scope === searchScope;
-  const searchButton = useRef<HTMLButtonElement>(null);
-  const restoreSearchFocus = useRef(false);
+  const searchField = useRef<HTMLInputElement>(null);
   const closeSearch = useCallback(() => {
-    restoreSearchFocus.current = true;
-    setSearchingScope(null);
-  }, []);
-  useLayoutEffect(() => {
-    if (!searching && restoreSearchFocus.current) {
-      restoreSearchFocus.current = false;
-      searchButton.current?.focus({ preventScroll: true });
-    }
-  }, [searching]);
+    setSearchText("");
+    searchField.current?.focus({ preventScroll: true });
+  }, [setSearchText]);
+  // Strg/⌘+F searches this conversation instead of the page; Strg+K stays
+  // the quick switcher (#324).
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (
         (event.ctrlKey || event.metaKey) &&
         !event.shiftKey &&
         !event.altKey &&
-        event.key.toLowerCase() === "k"
+        event.key.toLowerCase() === "f" &&
+        !document.querySelector("dialog[open]")
       ) {
         event.preventDefault();
-        setSearchingScope(searchScope);
+        searchField.current?.focus();
+        searchField.current?.select();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [searchScope]);
+  }, []);
   // Esc marks this conversation read, Shift+Esc its whole server (#245).
   // Only an Esc nothing else used: a dialog, a menu, the search, an edit
   // or the mention list closing takes it first.
@@ -283,13 +295,13 @@ export function MessagePane({
   );
   const jumpTo = useCallback(
     (id: string) => {
-      setSearchingScope(null);
+      setSearchText("");
       if (items.some((message) => message.id === id)) {
         setContextTarget(null);
         setFocusRequest((previous) => ({ id, n: (previous?.n ?? 0) + 1 }));
       } else setContextTarget({ scope: searchScope, id });
     },
-    [items, searchScope],
+    [items, searchScope, setSearchText],
   );
   const overlay = searching || showingContext;
   // "Anzeigen" under the composer: to the row that was not sent, and onto
@@ -380,19 +392,34 @@ export function MessagePane({
       <div className="lr-message-pane flex min-h-0 flex-1 flex-col">
         <header className="lr-channel-header">
           {title}
-          <button
-            ref={searchButton}
-            type="button"
-            onClick={() => setSearchingScope(searching ? null : searchScope)}
+          <label
             className="lr-header-search"
-            aria-expanded={searching}
-            aria-label="Nachrichten suchen"
-            title="Nachrichten suchen"
+            data-active={searchText ? "" : undefined}
+            title="Wörter oder eine Phrase in Anführungszeichen"
           >
             <SearchIcon size={16} />
-            <span>Suchen</span>
-            <kbd>Strg K</kbd>
-          </button>
+            <input
+              ref={searchField}
+              type="search"
+              value={searchText}
+              maxLength={200}
+              onChange={(event) => setSearchText(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape" || event.nativeEvent.isComposing)
+                  return;
+                // Not also "mark as read" (#245).
+                event.preventDefault();
+                if (searchText) setSearchText("");
+                else event.currentTarget.blur();
+              }}
+              placeholder="Suchen"
+              aria-label="In dieser Unterhaltung suchen"
+              aria-keyshortcuts="Control+F Meta+F"
+            />
+            {searchText ? null : (
+              <kbd aria-hidden="true">{searchKeys.mod} F</kbd>
+            )}
+          </label>
           {notify ? <NotificationBell target={notify} muted={muted} /> : null}
           {actions}
         </header>
@@ -496,10 +523,11 @@ export function MessagePane({
                   />
                 </div>
                 {searching ? (
-                  <div className="lr-search-overlay absolute inset-0 flex min-h-0 flex-col">
+                  <div className="lr-search-pane absolute inset-0 flex min-h-0 flex-col">
                     <MessageSearch
                       key={searchScope}
                       channelId={channelId}
+                      q={searchQuery}
                       onClose={closeSearch}
                       renderMessage={(message) => (
                         <MessageRow

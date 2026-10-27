@@ -1,11 +1,5 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
-import {
-  useLayoutEffect,
-  useRef,
-  useState,
-  type FormEvent,
-  type ReactNode,
-} from "react";
+import { keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { searchMessages } from "./search.ts";
 import { scopeGeneration, useUserId } from "../auth/scope.ts";
 import type { Message } from "./types.ts";
@@ -18,21 +12,27 @@ import {
 } from "../components/mentionRenderer.tsx";
 import { useMentions } from "../components/mentionContext.ts";
 
+/**
+ * The hits for `q` in one conversation, shown where its history was. The
+ * query is typed into the header's search field (#377); this only lists.
+ */
 export function MessageSearch({
   channelId,
+  q,
   onClose,
   renderMessage,
 }: {
   channelId: string;
+  q: string;
   onClose: () => void;
   renderMessage: (message: Message) => ReactNode;
 }) {
   const userId = useUserId();
   const { members, me } = useMentions();
   const generation = scopeGeneration();
-  const [input, setInput] = useState("");
-  const [q, setQ] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
+  // The hit opened in its context, until the query changes underneath it.
+  const [opened, setOpened] = useState<{ q: string; id: string } | null>(null);
+  const selected = opened?.q === q ? opened.id : null;
   const resultButtons = useRef(new Map<string, HTMLButtonElement>());
   const lastSelected = useRef<string | null>(null);
   useLayoutEffect(() => {
@@ -54,13 +54,9 @@ export function MessageSearch({
     enabled: Boolean(userId && q),
     retry: false,
     staleTime: 0,
+    // Typing on keeps the last hits instead of flashing "Suche läuft…".
+    placeholderData: keepPreviousData,
   });
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    const next = input.trim();
-    if (q === next) void query.refetch();
-    else setQ(next);
-  };
   const rows =
     query.data?.pages.flatMap((page) => [...page.messages].reverse()) ?? [];
   if (selected)
@@ -69,48 +65,25 @@ export function MessageSearch({
         key={selected}
         channelId={channelId}
         messageId={selected}
-        onBack={() => setSelected(null)}
+        onBack={() => setOpened(null)}
         onClose={onClose}
         renderMessage={renderMessage}
       />
     );
   return (
     <section className="lr-search" aria-label="Nachrichten suchen">
-      <form onSubmit={submit} className="lr-search-form">
-        <label className="sr-only" htmlFor={`search-${channelId}`}>
-          In dieser Unterhaltung suchen
-        </label>
-        <input
-          id={`search-${channelId}`}
-          autoFocus
-          type="search"
-          value={input}
-          maxLength={200}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder="In dieser Unterhaltung suchen"
-        />
-        <button
-          type="submit"
-          disabled={!input.trim()}
-          className="lr-search-submit"
-        >
-          Suchen
-        </button>
+      <p className="lr-search-summary">
+        <span>Treffer in dieser Unterhaltung</span>
         <button type="button" onClick={onClose} className="lr-search-close">
           Zurück zum Chat
         </button>
-      </form>
+      </p>
       <div
         className="lr-search-results"
         aria-live="polite"
         aria-busy={query.isFetching || undefined}
       >
-        {!q ? (
-          <p className="lr-search-hint">
-            Suche nach Wörtern oder einer Phrase in Anführungszeichen.
-          </p>
-        ) : null}
-        {q && query.isPending ? <p>Suche läuft…</p> : null}
+        {query.isPending ? <p>Suche läuft…</p> : null}
         {query.error ? (
           <div role="alert">
             <p>Die Suche konnte nicht geladen werden.</p>
@@ -126,7 +99,7 @@ export function MessageSearch({
             </button>
           </div>
         ) : null}
-        {q && query.isSuccess && rows.length === 0 ? (
+        {query.isSuccess && rows.length === 0 ? (
           <p>Keine Nachrichten gefunden.</p>
         ) : null}
         {rows.map((message) => (
@@ -137,7 +110,7 @@ export function MessageSearch({
                 if (node) resultButtons.current.set(message.id, node);
                 else resultButtons.current.delete(message.id);
               }}
-              onClick={() => setSelected(message.id)}
+              onClick={() => setOpened({ q, id: message.id })}
               aria-label={`Zur Nachricht von ${message.author.name}: ${readableMentions(message.content, members) || "Datei"}`}
               className="lr-search-hit"
             >

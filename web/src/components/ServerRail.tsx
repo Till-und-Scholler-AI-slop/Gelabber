@@ -21,6 +21,7 @@ import type { Server } from "../servers/types.ts";
 import { useVoiceRoster } from "../voice/roster.ts";
 import { ChatIcon, PlusIcon } from "./Icons.tsx";
 import { AddServerDialog } from "./ServerDialogs.tsx";
+import { ServerIconFace } from "./ServerIcon.tsx";
 import { tileInitials, tileTint } from "./initials.ts";
 import { useNavigationDrawer } from "./navigationDrawer.ts";
 import { LIST_ROW, ROW_ITEM, listStop, moveWithinList } from "./rowKeys.ts";
@@ -327,7 +328,10 @@ function ServerTile({
       })}
       {...ROW_ITEM}
     >
-      {tileInitials(server.name)}
+      <ServerIconFace
+        url={server.icon_url}
+        fallback={tileInitials(server.name)}
+      />
       <UnreadBadge id={unreadId} serverId={server.id} rail showDot={false} />
     </Link>
   );

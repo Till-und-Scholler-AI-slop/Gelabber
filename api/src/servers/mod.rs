@@ -8,6 +8,7 @@
 //! No per-channel overwrites, no further roles in v1.
 
 pub mod channel;
+pub mod icon;
 pub mod invite;
 pub mod membership;
 pub mod moderation;
@@ -45,6 +46,7 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/servers/{id}/leave", post(leave_server))
         .merge(channel::router())
+        .merge(icon::router())
         .merge(invite::router())
         .merge(moderation::router())
 }
@@ -57,6 +59,8 @@ pub struct ServerRow {
     pub owner_id: Uuid,
     #[sqlx(try_from = "i32")]
     pub member_permissions: Permissions,
+    /// Uploaded icon (`/api/server-icons/{server}/{file}`), see `icon`.
+    pub icon_url: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -67,6 +71,7 @@ pub struct ServerView {
     pub id: Uuid,
     pub name: String,
     pub owner_id: Uuid,
+    pub icon_url: Option<String>,
     pub created_at: DateTime<Utc>,
     pub role: Role,
     /// The caller's effective flags.
@@ -83,6 +88,7 @@ impl From<Membership> for ServerView {
             id: m.server.id,
             name: m.server.name,
             owner_id: m.server.owner_id,
+            icon_url: m.server.icon_url,
             created_at: m.server.created_at,
             role,
             permissions,
@@ -140,7 +146,7 @@ async fn list_servers(
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<Vec<ServerView>>, ApiError> {
     let rows = sqlx::query_as::<_, ServerRow>(
-        "SELECT s.id, s.name, s.owner_id, s.member_permissions, s.created_at \
+        "SELECT s.id, s.name, s.owner_id, s.member_permissions, s.icon_url, s.created_at \
          FROM server_members m JOIN servers s ON s.id = m.server_id \
          WHERE m.user_id = $1 \
          ORDER BY m.joined_at, s.id",
@@ -178,7 +184,7 @@ async fn create_server(
     let mut tx = state.db.begin().await?;
     let server = sqlx::query_as::<_, ServerRow>(
         "INSERT INTO servers (name, owner_id, member_permissions) VALUES ($1, $2, $3) \
-         RETURNING id, name, owner_id, member_permissions, created_at",
+         RETURNING id, name, owner_id, member_permissions, icon_url, created_at",
     )
     .bind(&name)
     .bind(user.id)
@@ -297,7 +303,7 @@ async fn update_server(
              member_permissions = COALESCE($3, member_permissions), \
              updated_at = now() \
          WHERE id = $1 \
-         RETURNING id, name, owner_id, member_permissions, created_at",
+         RETURNING id, name, owner_id, member_permissions, icon_url, created_at",
     )
     .bind(server_id)
     .bind(name.as_deref())
@@ -360,11 +366,16 @@ async fn delete_server(
             .await?;
     let channel_ids = moderation::channel_ids(&mut tx, server_id).await?;
     moderation::after_removal_with(&state, server_id, &members, &channel_ids, "not_found").await?;
+    let icon =
+        icon::schedule_removal(&mut tx, server_id, member.server.icon_url.as_deref()).await?;
     sqlx::query("DELETE FROM servers WHERE id = $1")
         .bind(server_id)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    if let Some(key) = icon {
+        crate::avatars::discard(&state, &key).await;
+    }
     state
         .gateway
         .announce_recheck(Recheck::Server(server_id))
