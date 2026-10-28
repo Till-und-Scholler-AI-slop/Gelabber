@@ -23,7 +23,7 @@ loopback), and watching. What users get to read ships from `app/package/`.
 | `native/tests/playout_limiter_test.cc` | The playout limiter for volumes above 100 % on generated mixes; plain C++, built and run by `core/tests/voice.rs` like the mix test |
 | `native/tests/audio_device_switch_test.cc` | Switching the microphone or speakers against a fake device module that refuses devices: restart, and rollback to the previous device; plain C++, built and run by `core/tests/voice.rs` like the mix test |
 | `core/` | Rust crate `gelabber-media-core`: safe API over the C ABI |
-| `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.29 with the server's router codecs; on Windows also application sound through process loopback |
+| `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.29 with the server's router codecs (VP8 and H264 in three layers, VP9 as SVC, AV1 as one stream); on Windows also application sound through process loopback |
 | `core/tests/source_preview.rs` | Video sinks for views in the app: a local source without a producer, scaling and rate limits, sinks going away mid-frame |
 | `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode, and the screen as the web client shares it: VP8 in two simulcast layers (`GELABBER_TEST_SCREEN=1`); on Windows the primary monitor through Windows.Graphics.Capture as VP8 in two layers (`GELABBER_TEST_SCREEN_MONITOR=1`) |
 | `app/` | Tauri 2 app `gelabber-desktop`: window on the server origin, bundled setup page, media commands (`src/media.rs`), global push-to-talk (`src/ptt.rs`: low-level hook on Windows, GlobalShortcuts portal on Linux), updates of the Windows app (`src/update.rs`, `updater.pub`) |
@@ -361,16 +361,18 @@ separate decision.
   (`chooseVideoCodec` in `web/src/voice/videoCodec.ts`) among those every
   receiver in the room decodes, which the media server announces. It takes
   AV1 where the device encodes it in hardware, then H264 where the device
-  encodes that in hardware, else VP8; AV1 on the CPU never comes before VP8
-  (issue #318). The core produces what it is asked for, and a caller that
+  encodes that in hardware, then VP9 in three spatial layers (`L3T3_KEY`;
+  where the browser is Chromium or the app reports `vp9-svc`), else VP8; AV1
+  on the CPU never comes before VP8 (issue #318). The core produces what it is asked for, and a caller that
   names no codec gets H264 before VP8. `media_info` reports the features
-  `h264-hardware`, `av1-hardware` and `av1-hardware-decode` and, under
+  `h264-hardware`, `av1-hardware`, `av1-hardware-decode` and `vp9-svc` (on
+  Linux and Windows alike: VP9 is libvpx in software) and, under
   `videoCodecs`, what `gm_video_codecs` found. mediasoup forwards AV1 (like
   VP9) as one stream or SVC, never in simulcast layers, so AV1 goes out as
   one stream and the server refuses AV1 or VP9 producers with more than one
   encoding. Every receiver then decodes the whole picture, so a device that
-  does not decode AV1 in hardware (`av1-hardware-decode`; in a browser
-  `decodingInfo`'s `powerEfficient`) leaves AV1 out of the codecs it tells
+  does not decode AV1 at 4K smoothly (`av1-hardware-decode`; in a browser
+  `decodingInfo`'s `smooth` at 3840x2160) leaves AV1 out of the codecs it tells
   the server it receives: one such receiver keeps the room on H264 or VP8
   with layers.
   - Neither libwebrtc build carries H264 (`rtc_use_h264=false`, no OpenH264
@@ -421,8 +423,8 @@ separate decision.
 - Simulcast: libvpx encodes a producer's layers in one encoder, and only
   when every layer has exactly the top layer's aspect. A layer is the
   picture divided by its `scaleResolutionDownBy`, so a 1366x768 screen
-  over the web client's 4 and 1 would be 342x192 below 1366x768: refused,
-  and nothing is sent. Local video sources therefore crop to multiples of 4
+  in the web client's ladder of 4, 2 and 1 would be 342x192 for the layer
+  at 4 (the quarter) below 1366x768: refused, and nothing is sent. Local video sources therefore crop to multiples of 4
   (1364x768), and the software encoders tell libwebrtc that their alignment
   holds for every layer, which makes it ask the source for what other
   factors need. libwebrtc's own answer, `SimulcastEncoderAdapter` with an
