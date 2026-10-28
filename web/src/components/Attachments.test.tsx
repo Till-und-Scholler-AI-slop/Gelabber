@@ -2,7 +2,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Attachment } from "../messages/types.ts";
-import { AttachmentImageFailed, AttachmentList } from "./Attachments.tsx";
+import {
+  AttachmentImageFailed,
+  AttachmentList,
+  DownloadLink,
+} from "./Attachments.tsx";
 import { reloadMedia } from "./mediaReload.ts";
 
 const file = (
@@ -55,6 +59,19 @@ describe("attachment list (#255)", () => {
 
   it("renders nothing without attachments", () => {
     expect(renderToStaticMarkup(<AttachmentList attachments={[]} />)).toBe("");
+  });
+});
+
+// Markup only, before any click; scripts/smoke-chat-scroll.mjs clicks.
+describe("download link (#391)", () => {
+  it("saves the file and takes clicks until one started it", () => {
+    expect(
+      renderToStaticMarkup(
+        <DownloadLink href="/api/attachments/d?download=1" filename="a.pdf" />,
+      ),
+    ).toBe(
+      '<a href="/api/attachments/d?download=1" download="a.pdf">Herunterladen</a>',
+    );
   });
 });
 

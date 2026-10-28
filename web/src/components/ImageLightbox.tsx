@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 
+import { DownloadLink } from "./Attachments.tsx";
 import { CloseIcon } from "./Icons.tsx";
 
 export type LightboxImage = {
@@ -70,9 +71,7 @@ export function ImageLightbox({
             (from MinIO after its redirect too), so the file is saved and the
             app, with a running call, stays where it is. */}
         {image.download ? (
-          <a href={image.download} download={image.filename}>
-            Herunterladen
-          </a>
+          <DownloadLink href={image.download} filename={image.filename} />
         ) : null}
         <button
           ref={close}

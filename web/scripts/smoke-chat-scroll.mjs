@@ -11,12 +11,14 @@
 // Afterwards the reader must still be able to scroll away. A picture's
 // lightbox closes when its message is deleted. With unread messages the
 // list opens at the first of them, after fetching the page it is on, and
-// marks nothing read until asked to. A toast above the composer leaves the
-// newest message and its actions uncovered (#354).
+// marks nothing read until asked to. A file says that its download started
+// and repeated clicks save it once (#391). A toast above the composer leaves
+// the newest message and its actions uncovered (#354).
 // Run in web/: node scripts/smoke-chat-scroll.mjs
 // GELABBER_CHAT_BROWSER_EXECUTABLE names a Chromium other than Playwright's.
 /* global process, console, window, document, getComputedStyle, URL, requestAnimationFrame, setTimeout */
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,6 +31,11 @@ const web = fileURLToPath(new URL("..", import.meta.url));
 const ORIGIN = "https://chat.test";
 /** How long the older page is held back after it was asked for. */
 const HOLD_MS = 400;
+/** A 1×1 PNG for every chat picture. */
+const PIXEL = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+  "base64",
+);
 
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const ME = id(6);
@@ -209,6 +216,17 @@ async function open({ unread, shown = "Nachricht 99." } = {}) {
     }
     if (url.pathname.endsWith("/read") && request.method() === "PUT")
       marks.push(request.postData());
+    // A picture that loads, or the app shows its error card instead (#348).
+    if (url.pathname.startsWith("/api/attachments/"))
+      return route.fulfill(
+        url.searchParams.has("download")
+          ? {
+              contentType: "application/pdf",
+              headers: { "content-disposition": "attachment" },
+              body: "%PDF-1.4\n",
+            }
+          : { contentType: "image/png", body: PIXEL },
+      );
     if (url.pathname.startsWith("/api/"))
       return route.fulfill({
         contentType: "application/json",
@@ -612,6 +630,61 @@ try {
     );
     console.log(
       `PASS: ${label}: Esc returns focus to the picture; deleting its message closes it and focus stays in the list`,
+    );
+    await opened.close();
+  }
+
+  {
+    // A file says that its download started, and the clicks of someone who
+    // did not believe it start no further copies (#391).
+    const label = "download";
+    const opened = await open();
+    const { page, send } = opened;
+    const downloads = [];
+    page.on("download", (download) =>
+      downloads.push(download.suggestedFilename()),
+    );
+    send({
+      t: "c",
+      d: {
+        ...message(100),
+        content: "Nachricht 100. Ein Dokument.",
+        attachments: [
+          {
+            id: id(5001),
+            filename: "vertrag.pdf",
+            content_type: "application/pdf",
+            size: 48 * 1024,
+          },
+        ],
+      },
+    });
+    const row = page.locator(".lr-attachment-file", { hasText: "vertrag.pdf" });
+    const started = row.getByRole("status");
+    await row.click();
+    await started.filter({ hasText: "Download gestartet" }).waitFor();
+    // Plain clicks: Playwright's own would wait for the link to be enabled.
+    const box = await row.boundingBox();
+    for (let n = 0; n < 4; n++)
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    assert.deepEqual(
+      downloads,
+      ["vertrag.pdf"],
+      `${label}: five clicks started ${downloads.length} downloads`,
+    );
+    await started.waitFor({ state: "detached", timeout: 8000 });
+    await row.getByText("48 KB").waitFor();
+    await row.click();
+    await started.waitFor();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    assert.equal(
+      downloads.length,
+      2,
+      `${label}: a click after the notice did not download again`,
+    );
+    console.log(
+      `PASS: ${label}: five clicks save one copy and say so; once the notice is gone, a click saves the file again`,
     );
     await opened.close();
   }
