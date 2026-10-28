@@ -555,6 +555,10 @@ describe("active media UI", () => {
     expect(render()).toContain(
       'aria-label="Verbindung: wird gemessen … – Details anzeigen"',
     );
+    // The bars open the connection at a glance, not the dialog.
+    expect(render()).toMatch(
+      /class="voice-quality-bars"[^>]*aria-haspopup="dialog" aria-expanded="false"/,
+    );
     fixture.voice.connection = "failed";
     expect(render()).toContain("Verbindung verloren");
     expect(render()).toContain("Erneut versuchen");

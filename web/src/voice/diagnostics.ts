@@ -1309,6 +1309,14 @@ export function callQualitySummary(quality: CallQuality): string {
 /** One plain sentence above the raw figures: "Verbindung gut. Direkt
  * verbunden, kaum Verlust." */
 export function callQualityVerdict(quality: CallQuality): string {
+  const head = `Verbindung ${quality.label}.`;
+  const detail = callQualityDetail(quality);
+  return detail ? `${head} ${detail}` : head;
+}
+
+/** What the verdict says after its first sentence: "Direkt verbunden,
+ * kaum Verlust." Null when there is nothing to add. */
+export function callQualityDetail(quality: CallQuality): string | null {
   const details = [
     quality.path === "direct"
       ? "Direkt verbunden"
@@ -1326,8 +1334,7 @@ export function callQualityVerdict(quality: CallQuality): string {
       ? `hohe Verzögerung (${Math.round(quality.rttMs)} ms)`
       : null,
   ].filter(Boolean);
-  const head = `Verbindung ${quality.label}.`;
-  if (details.length === 0) return head;
+  if (details.length === 0) return null;
   const sentence = details.join(", ");
-  return `${head} ${sentence[0]!.toUpperCase()}${sentence.slice(1)}.`;
+  return `${sentence[0]!.toUpperCase()}${sentence.slice(1)}.`;
 }

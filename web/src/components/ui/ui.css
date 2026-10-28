@@ -762,6 +762,9 @@
   .gel-modal--wide {
     max-width: 32rem;
   }
+  .gel-modal--large {
+    max-width: 40rem;
+  }
   .gel-modal::backdrop {
     background: var(--lr-backdrop);
     transition: opacity var(--lr-dur-large) var(--lr-ease-standard);
@@ -821,7 +824,8 @@
   }
   @media (max-width: 639px) {
     .gel-modal,
-    .gel-modal--wide {
+    .gel-modal--wide,
+    .gel-modal--large {
       width: 100%;
       max-width: none;
       max-height: calc(var(--lr-100dvh) * 0.9);

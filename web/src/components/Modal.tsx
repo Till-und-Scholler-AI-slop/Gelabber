@@ -25,6 +25,8 @@ type ModalProps = {
   title: string;
   children: ReactNode;
   wide?: boolean;
+  /** Wider still, for tables and forms with a label column. */
+  large?: boolean;
   /** `alertdialog` for questions that interrupt, like a confirm. */
   role?: "dialog" | "alertdialog";
   /** Id of the element that explains the dialog. */
@@ -51,6 +53,7 @@ export function Modal({
   title,
   children,
   wide,
+  large,
   role,
   describedBy,
   footer,
@@ -132,7 +135,13 @@ export function Modal({
         )
           onClose();
       }}
-      className={wide ? "gel-modal gel-modal--wide" : "gel-modal"}
+      className={[
+        "gel-modal",
+        wide ? "gel-modal--wide" : null,
+        large ? "gel-modal--large" : null,
+      ]
+        .filter(Boolean)
+        .join(" ")}
     >
       {mounted ? (
         <>
