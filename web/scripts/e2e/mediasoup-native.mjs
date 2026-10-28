@@ -182,12 +182,6 @@ function installReceiverProbe({ proxyPort, mediaPort }) {
           state.nativeProducerParameters.set(frame.k, frame.rtp);
         }
         const deliver = () => {
-          if (media && frame.op === "q") {
-            state.layerPreferences ??= [];
-            state.layerPreferences.push({ ...frame });
-            if (state.layerPreferences.length > 32)
-              state.layerPreferences.shift();
-          }
           return send(data);
         };
         if (heldReady) {
@@ -271,13 +265,6 @@ async function sourceState(actor, owner) {
         throw new Error("NATIVE_VIDEO_NOT_RENDERING");
       const videoStats = await inbound(live, "video"),
         audioStats = await inbound(mic, "audio");
-      const preferred = [...(state.layerPreferences ?? [])]
-        .reverse()
-        .find(
-          (p) =>
-            p.consumerId === live.consumerId &&
-            p.generation === live.generation,
-        );
       const layers = state.layers?.get(live.consumerId);
       const frames = video.getVideoPlaybackQuality?.().totalVideoFrames;
       if (!Number.isFinite(frames) || frames <= 0)
@@ -290,9 +277,6 @@ async function sourceState(actor, owner) {
         lost: videoStats.packetsLost,
         audioPackets: audioStats.packetsReceived,
         audioBytes: audioStats.bytesReceived,
-        preferred: preferred
-          ? { h: preferred.h, congested: preferred.congested }
-          : null,
         spatial:
           layers?.generation === live.generation ? layers.spatialLayer : null,
         temporal:
@@ -305,11 +289,6 @@ async function sourceState(actor, owner) {
         connectedPeers: state.peers.filter(
           (p) => p.connectionState === "connected",
         ).length,
-        qReplies: state.sockets
-          .filter((s) => s.plane === "media")
-          .flatMap((s) => s.mediaRpc ?? [])
-          .filter((r) => r.method === "q")
-          .slice(-3),
       };
     },
     owner,
@@ -373,20 +352,6 @@ async function publisherState(actor) {
         })),
     };
   });
-}
-async function renderSize(actor, height) {
-  await nativeEvaluate(
-    actor,
-    (height) => {
-      for (const video of document.querySelectorAll("figure video")) {
-        video.style.setProperty("height", `${height}px`, "important");
-        video.style.setProperty("width", `${(height * 16) / 9}px`, "important");
-        video.style.setProperty("max-height", "none", "important");
-        video.style.setProperty("max-width", "none", "important");
-      }
-    },
-    height,
-  );
 }
 const runtime = await ownMediaRuntime();
 let h;
@@ -582,32 +547,36 @@ try {
       };
     });
     await h.run("independent-viewer-layers-with-receive-loss", [], async () => {
-      await renderSize(f.member, 70);
-      await renderSize(f.watcher, 300);
-      const small = await until(
-        () => sourceState(f.member, f.owner.id),
-        (s) => s.width === 160 && s.spatial === 0 && s.preferred?.h <= 90,
-        "small-render-layer-not-confirmed",
-        15000,
+      // No viewer hints: every viewer starts on the top layer and mediasoup's
+      // own estimate steps one viewer down under receive loss.
+      const publisher = await publisherState(f.owner);
+      check(
+        publisher.encodings.length === 3,
+        "publisher-not-sending-three-layers",
+        publisher.encodings,
       );
+      const top = publisher.encodings.length - 1;
+      const topLayer = (s) => s.spatial === top && s.width === publisher.width;
       const full = await until(
         async () => ({
           ...(await sourceState(f.watcher, f.owner.id)),
           publisher: await publisherState(f.owner),
         }),
-        (s) =>
-          s.width === 640 &&
-          s.spatial === 1 &&
-          s.preferred?.h > 90 &&
-          !s.preferred.congested,
-        "full-render-layer-not-confirmed",
+        topLayer,
+        "watcher-not-on-top-layer",
+        15000,
+      );
+      const other = await until(
+        () => sourceState(f.member, f.owner.id),
+        topLayer,
+        "other-viewer-not-on-top-layer",
         15000,
       );
       check(
-        small.captureCalls === 0 &&
-          full.captureCalls === 0 &&
-          small.connectedPeers <= 2 &&
-          full.connectedPeers <= 2,
+        full.captureCalls === 0 &&
+          other.captureCalls === 0 &&
+          full.connectedPeers <= 2 &&
+          other.connectedPeers <= 2,
         "watcher-captured-or-created-send-peer",
       );
       const proxy = proxies[0];
@@ -616,13 +585,13 @@ try {
       const degraded = await until(
         () => sourceState(f.watcher, f.owner.id),
         (s) =>
-          s.preferred?.congested === true &&
-          s.spatial === 0 &&
-          s.width === 160 &&
+          s.spatial !== null &&
+          s.spatial < top &&
+          s.width < publisher.width &&
           s.frames > full.frames &&
           s.audioPackets > full.audioPackets &&
           proxy.snapshot().dropped > 20,
-        "actual-receiver-loss-did-not-select-low-layer",
+        "actual-receiver-loss-did-not-select-lower-layer",
         20000,
       );
       const unaffected = await sourceState(f.member, f.owner.id);
@@ -637,38 +606,31 @@ try {
         "native-receiver-loss-counter-not-advanced",
       );
       check(
-        unaffected.spatial === 0 &&
-          unaffected.frames > small.frames &&
-          unaffected.audioPackets > small.audioPackets &&
-          !unaffected.preferred.congested,
-        "other-viewer-interrupted-or-congested",
+        topLayer(unaffected) &&
+          unaffected.frames > other.frames &&
+          unaffected.audioPackets > other.audioPackets,
+        "other-viewer-interrupted-or-stepped-down",
       );
       proxy.setLoss(false);
       const recovered = await until(
         () => sourceState(f.watcher, f.owner.id),
         (s) =>
-          !s.preferred?.congested &&
-          s.spatial === 1 &&
-          s.width === 640 &&
+          topLayer(s) &&
           s.frames > degraded.frames &&
           s.audioPackets > degraded.audioPackets,
-        "receiver-layer-did-not-recover-after-healthy-hysteresis",
+        "receiver-layer-did-not-recover-after-loss-ends",
         20000,
       );
-      await renderSize(f.member, 300);
-      const independent = await until(
-        () => sourceState(f.member, f.owner.id),
-        (s) => s.spatial === 1 && s.width === 640,
-        "other-viewer-could-not-independently-change-layer",
-        15000,
-      );
+      const stayed = await sourceState(f.member, f.owner.id);
+      check(topLayer(stayed), "other-viewer-left-top-layer");
       return {
-        small,
+        publisher: publisher.encodings,
         full,
+        other,
         degraded,
         unaffected,
         recovered,
-        independent,
+        stayed,
         loss,
         limitation:
           "owned loopback UDP adapter drops one viewer video RTP; no load or WAN claim",
