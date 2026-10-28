@@ -1,6 +1,6 @@
 //! Screen capture through xdg-desktop-portal and PipeWire, encoded as H264,
 //! sent through mediasoup 0.29 and decoded by a native consumer; then shared
-//! the way the web client does it, as VP8 in two simulcast layers.
+//! as VP8 in two simulcast layers, the sizes the web client's ladder needs.
 //!
 //! Needs a Wayland session with PipeWire and a portal that answers without a
 //! dialog; CI runs it in desktop/native/scripts/fake-desktop-session.sh (real

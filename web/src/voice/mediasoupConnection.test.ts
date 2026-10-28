@@ -787,6 +787,24 @@ describe("public mediasoup connection lifecycle", () => {
     expect(consumer.paused).toBe(false);
   });
 
+  it("sends no viewer layer hints", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    await f.start();
+    const consumer = Object.assign(new NativeConsumer("consumer-1"), {
+      rtpParameters: rtp,
+    });
+    f.device.transports[0].consumeGate = deferred<NativeConsumer>();
+    f.device.transports[0].consumeGate.resolve(consumer);
+    f.connection.handleEvent(
+      announcement({ kind: "video", k: "s", paused: false }),
+    );
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(f.calls("consumerReady")).toHaveLength(1);
+    // The server picks the layer from the bandwidth estimate alone.
+    expect(f.requests.filter((r) => (r.method as string) === "q")).toEqual([]);
+  });
+
   it("uses the server subscription generation and ignores stale state/closed tombstones", async () => {
     const f = fixture();
     await f.start();
@@ -1212,7 +1230,7 @@ describe("public mediasoup connection lifecycle", () => {
       name: "OperationError",
     });
     expect(old.produce).toHaveBeenCalledTimes(3);
-    expect(old.produce.mock.calls[1][0].encodings).toHaveLength(2);
+    expect(old.produce.mock.calls[1][0].encodings).toHaveLength(3);
     expect(old.produce.mock.calls[2][0]).not.toHaveProperty("encodings");
     expect(old.nativeSendTainted).toBe(true);
     expect(old.closed).toBe(true);
@@ -1320,7 +1338,7 @@ describe("public mediasoup connection lifecycle", () => {
     expect(mic.stop).not.toHaveBeenCalled();
   });
 
-  it("sets only a video startup hint for VP8 scale 4/1 and its single-layer fallback, preserving Opus options", async () => {
+  it("sets only a video startup hint for VP8 scale 4/2/1 and its single-layer fallback, preserving Opus options", async () => {
     const f = fixture();
     await f.start();
     await f.connection.publish(publication("a", new Capture("mic", "audio")));
@@ -1347,12 +1365,13 @@ describe("public mediasoup connection lifecycle", () => {
     expect(videoAttempts).toHaveLength(3);
     expect(videoAttempts[0].encodings).toEqual([
       { scaleResolutionDownBy: 4 },
+      { scaleResolutionDownBy: 2 },
       { scaleResolutionDownBy: 1 },
     ]);
     expect(videoAttempts[1].encodings).toEqual(videoAttempts[0].encodings);
     expect(videoAttempts[2]).not.toHaveProperty("encodings");
     for (const attempt of videoAttempts) {
-      expect(attempt.codecOptions).toEqual({ videoGoogleStartBitrate: 1000 });
+      expect(attempt.codecOptions).toEqual({ videoGoogleStartBitrate: 5000 });
       for (const encoding of attempt.encodings ?? []) {
         expect(encoding).not.toHaveProperty("maxBitrate");
         expect(encoding).not.toHaveProperty("minBitrate");
@@ -1377,7 +1396,7 @@ describe("public mediasoup connection lifecycle", () => {
     const attempts = send.produce.mock.calls
       .slice(-2)
       .map(([options]) => options);
-    expect(attempts[0].encodings).toHaveLength(2);
+    expect(attempts[0].encodings).toHaveLength(3);
     expect(attempts[1]).not.toHaveProperty("encodings");
     for (const attempt of attempts)
       expect(attempt).toMatchObject({
@@ -1922,14 +1941,14 @@ describe("video codec negotiation", () => {
     codecs: [...capabilities.codecs!, h264("42001f"), h264("42e01f"), av1],
   };
   function negotiating(
-    hardware: boolean | { av1: boolean; h264: boolean },
+    hardware: boolean | { av1: boolean; h264: boolean; vp9Svc: boolean },
     video: string[],
   ) {
     const onRepublished = vi.fn();
     const f = fixture("voice", undefined, {
       hardwareVideo: async () =>
         typeof hardware === "boolean"
-          ? { av1: false, h264: hardware }
+          ? { av1: false, h264: hardware, vp9Svc: false }
           : hardware,
       onRepublished,
     });
@@ -1948,7 +1967,7 @@ describe("video codec negotiation", () => {
 
   it("keeps VP8 when the server does not name codecs", async () => {
     const f = fixture("voice", undefined, {
-      hardwareVideo: async () => ({ av1: true, h264: true }),
+      hardwareVideo: async () => ({ av1: true, h264: true, vp9Svc: false }),
     });
     f.device.sendRtpCapabilities = withH264;
     await f.start();
@@ -1956,13 +1975,14 @@ describe("video codec negotiation", () => {
     expect(sent(f)[0].codec?.mimeType).toBe("video/VP8");
   });
 
-  it("sends Constrained Baseline H.264 in two layers with hardware, else VP8", async () => {
+  it("sends Constrained Baseline H.264 in three layers with hardware, else VP8", async () => {
     const hw = negotiating(true, ["video/vp8", "video/h264"]);
     await hw.start();
     await hw.connection.publish(publication("v", new Capture("cam", "video")));
     expect(sent(hw)[0].codec).toEqual(h264("42e01f"));
     expect(sent(hw)[0].encodings).toEqual([
       { scaleResolutionDownBy: 4 },
+      { scaleResolutionDownBy: 2 },
       { scaleResolutionDownBy: 1 },
     ]);
     const sw = negotiating(false, ["video/vp8", "video/h264"]);
@@ -1971,29 +1991,108 @@ describe("video codec negotiation", () => {
     expect(sent(sw)[0].codec?.mimeType).toBe("video/VP8");
   });
 
+  const vp9 = {
+    kind: "video" as const,
+    mimeType: "video/VP9",
+    preferredPayloadType: 98,
+    clockRate: 90000,
+    parameters: { "profile-id": 0 },
+  };
+  const vp9Room = (handlerName: string) => {
+    // VP8 comes first (libwebrtc caps VP9 SVC layers), so only a room
+    // without VP8 and H.264 sends VP9.
+    const f = negotiating({ av1: false, h264: false, vp9Svc: true }, [
+      "video/vp9",
+    ]);
+    f.device.sendRtpCapabilities = {
+      codecs: [...capabilities.codecs!, vp9],
+    };
+    f.device.handlerName = handlerName;
+    return f;
+  };
+  it("sends VP9 as one stream in L3T3_KEY on a Chromium handler", async () => {
+    const chrome = vp9Room("Chrome111");
+    await chrome.start();
+    await chrome.connection.publish(
+      publication("v", new Capture("cam", "video")),
+    );
+    expect(sent(chrome)[0].codec?.mimeType).toBe("video/VP9");
+    expect(sent(chrome)[0].encodings).toEqual([
+      { scalabilityMode: "L3T3_KEY" },
+    ]);
+    // Firefox accepts the mode and sends one layer, so VP9 goes out plain.
+    const firefox = vp9Room("Firefox120");
+    await firefox.start();
+    await firefox.connection.publish(
+      publication("v", new Capture("cam", "video")),
+    );
+    expect(sent(firefox)[0].codec?.mimeType).toBe("video/VP9");
+    expect(sent(firefox)[0].encodings).toBeUndefined();
+  });
+
+  it("falls back to plain VP9 for good when the SDK refuses VP9 SVC", async () => {
+    const f = vp9Room("Chrome111");
+    await f.start();
+    await f.connection.publish(publication("a", new Capture("mic", "audio")));
+    f.device.transports[1].productionErrors.push(
+      Object.assign(new Error("no svc"), { name: "UnsupportedError" }),
+    );
+    await f.connection.publish(publication("v", new Capture("cam", "video")));
+    const video = sent(f).slice(1);
+    expect(video).toHaveLength(2);
+    expect(video[0].codec?.mimeType).toBe("video/VP9");
+    // The room has no VP8 or H.264: VP9 again, without the SVC mode.
+    expect(video[1].codec?.mimeType).toBe("video/VP9");
+    expect(video[1].encodings).toBeUndefined();
+    await f.connection.publish(
+      publication("s", new Capture("screen", "video")),
+    );
+    const next = sent(f).at(-1)!;
+    expect(next.codec?.mimeType).toBe("video/VP9");
+    expect(next.encodings).toBeUndefined();
+    expect(f.onError).not.toHaveBeenCalled();
+  });
+
+  it("falls back to plain VP9 when the SDK refuses VP9 SVC with OperationError", async () => {
+    const f = vp9Room("Chrome111");
+    await f.start();
+    await f.connection.publish(publication("a", new Capture("mic", "audio")));
+    f.device.transports[1].productionErrors.push(
+      Object.assign(new Error("unsupported mode"), { name: "OperationError" }),
+    );
+    await f.connection.publish(publication("v", new Capture("cam", "video")));
+    const video = sent(f).slice(1);
+    expect(video.at(-1)?.codec?.mimeType).toBe("video/VP9");
+    expect(video.at(-1)?.encodings).toBeUndefined();
+    expect(f.onError).not.toHaveBeenCalled();
+  });
+
   it("sends AV1 as one stream where it is encoded in hardware", async () => {
     const all = ["video/vp8", "video/h264", "video/av1"];
-    const hw = negotiating({ av1: true, h264: true }, all);
+    const hw = negotiating({ av1: true, h264: true, vp9Svc: false }, all);
     await hw.start();
     await hw.connection.publish(publication("v", new Capture("cam", "video")));
     expect(sent(hw)[0].codec).toEqual(av1);
     // mediasoup forwards AV1 as one stream or SVC, never simulcast.
     expect(sent(hw)[0].encodings).toBeUndefined();
     // AV1 on the CPU: H.264 in hardware, else VP8.
-    const h264Only = negotiating({ av1: false, h264: true }, all);
+    const h264Only = negotiating(
+      { av1: false, h264: true, vp9Svc: false },
+      all,
+    );
     await h264Only.start();
     await h264Only.connection.publish(
       publication("v", new Capture("cam", "video")),
     );
     expect(sent(h264Only)[0].codec).toEqual(h264("42e01f"));
-    const sw = negotiating({ av1: false, h264: false }, all);
+    const sw = negotiating({ av1: false, h264: false, vp9Svc: false }, all);
     await sw.start();
     await sw.connection.publish(publication("v", new Capture("cam", "video")));
     expect(sent(sw)[0].codec?.mimeType).toBe("video/VP8");
   });
 
   it("leaves AV1 when someone joins who cannot decode it", async () => {
-    const f = negotiating({ av1: true, h264: true }, [
+    const f = negotiating({ av1: true, h264: true, vp9Svc: false }, [
       "video/vp8",
       "video/h264",
       "video/av1",
@@ -2008,7 +2107,7 @@ describe("video codec negotiation", () => {
     });
     await vi.waitFor(() => expect(f.onRepublished).toHaveBeenCalledTimes(1));
     expect(sent(f).at(-1)!.codec).toEqual(h264("42e01f"));
-    expect(sent(f).at(-1)!.encodings).toHaveLength(2);
+    expect(sent(f).at(-1)!.encodings).toHaveLength(3);
     expect(f.onError).not.toHaveBeenCalled();
   });
 
@@ -2025,7 +2124,7 @@ describe("video codec negotiation", () => {
     };
     const announced = async (decoding: boolean) => {
       const f = fixture("voice", undefined, {
-        hardwareAv1Decoding: async () => decoding,
+        decodesAv1: async () => decoding,
       });
       f.device.recvRtpCapabilities = receivable;
       await f.start();

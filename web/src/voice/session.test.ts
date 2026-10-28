@@ -50,11 +50,11 @@ import receivedAudioSource from "./receivedAudio.ts?raw";
 import sessionSource from "./session.ts?raw";
 import sessionStateSource from "./sessionState.ts?raw";
 import videoLimitsSource from "./videoLimits.ts?raw";
+import { videoBitrateCeiling } from "./videoLimits.ts";
 import { NativeStream, NativeTrack } from "./native/tracks.ts";
 import { resetUserVolumesForTests, useUserVolumes } from "./userVolume.ts";
 import { resetVoiceRoster, useVoiceRoster, voiceOf } from "./roster.ts";
 import {
-  allocateVideoBitrates,
   resetMediaSettingsForTests,
   sourceAudioChoice,
   useMediaSettings,
@@ -163,6 +163,9 @@ class FakeConnection implements MediaConnection {
   }
   senders(): MutableSender[] {
     return this.senderRows;
+  }
+  videoChoice() {
+    return { roomCodecs: null, encoders: null, decodesAv1: null };
   }
   consumers(): ReceivedSource[] {
     return [...this.receivedRows.values()];
@@ -367,6 +370,8 @@ function messages(errors: unknown[]): string[] {
 
 /** A Live whose capture could not start. */
 const CAPTURE_FAILED = "Die Bildschirmaufnahme konnte nicht gestartet werden.";
+const BALANCED_CEILING = videoBitrateCeiling(1280, 720, 30);
+const ECONOMY_CEILING = videoBitrateCeiling(854, 480, 15);
 
 function install(opts?: {
   media?: boolean;
@@ -2974,7 +2979,7 @@ describe("source and transport continuity", () => {
     await vi.waitFor(() =>
       expect(
         video.map((s) => s.getParameters!().encodings[0]?.maxBitrate),
-      ).toEqual([undefined, undefined]),
+      ).toEqual([BALANCED_CEILING, BALANCED_CEILING]),
     );
     expect(
       video.map((s) => s.getParameters!().encodings[0]?.maxFramerate),
@@ -2985,9 +2990,9 @@ describe("source and transport continuity", () => {
     expect(audio.getParameters!().encodings[0]?.maxBitrate).toBeUndefined();
     toggleShare();
     await vi.waitFor(() =>
-      expect(
-        video[0]!.getParameters!().encodings[0]?.maxBitrate,
-      ).toBeUndefined(),
+      expect(video[0]!.getParameters!().encodings[0]?.maxBitrate).toBe(
+        BALANCED_CEILING,
+      ),
     );
   });
 
@@ -3029,7 +3034,10 @@ describe("source and transport continuity", () => {
     await vi.waitFor(() =>
       expect(
         video.map((s) => s.getParameters!().encodings[0]?.maxBitrate),
-      ).toEqual([undefined, undefined]),
+      ).toEqual([
+        videoBitrateCeiling(854, 480, 15),
+        videoBitrateCeiling(1920, 1080, 30),
+      ]),
     );
     expect(
       video.map((s) => s.getParameters!().encodings[0]?.maxFramerate),
@@ -3054,13 +3062,15 @@ describe("source and transport continuity", () => {
     const exported = buildDiagnosticExport();
     const flows = exported.samples.at(-1)!.voice!.flows;
     expect(flows.map((flow) => flow.source)).toEqual(["camera", "screen"]);
-    expect(flows.map((flow) => flow.configuredMaxBitrateBps)).toEqual(
-      video.map(
-        (sender) => sender.getParameters!().encodings[0]!.maxBitrate ?? null,
-      ),
-    );
+    expect(flows.map((flow) => flow.configuredMaxBitrateBps)).toEqual([
+      2 * videoBitrateCeiling(854, 480, 15),
+      2 * videoBitrateCeiling(1920, 1080, 30),
+    ]);
     expect(flows.map((flow) => flow.configuredMaxFps)).toEqual([15, 30]);
-    expect(exported.samples.at(-1)?.caps.videoSendBudget).toBeNull();
+    expect(exported.samples.at(-1)?.caps.videoSendBudget).toBe(
+      2 * videoBitrateCeiling(854, 480, 15) +
+        2 * videoBitrateCeiling(1920, 1080, 30),
+    );
     expect(exported.settings.cameraProfile).toBe("economy");
     expect(exported.settings.screenProfile).toBe("detail");
   });
@@ -3093,7 +3103,13 @@ describe("source and transport continuity", () => {
     await vi.waitFor(() =>
       expect(
         video().map((sender) => sender.getParameters!().encodings[0]),
-      ).toEqual(Array(2).fill({ maxFramerate: 60, priority: "low" })),
+      ).toEqual(
+        Array(2).fill({
+          maxBitrate: videoBitrateCeiling(3840, 2160, 60),
+          maxFramerate: 60,
+          priority: "low",
+        }),
+      ),
     );
     useMediaSettings.getState().patch({ videoUploadLimit: 9_000_000 });
     await vi.waitFor(() =>
@@ -3135,6 +3151,31 @@ describe("source and transport continuity", () => {
     expect(useVoice.getState().status).toBe("joined");
   });
 
+  it("re-applies the ceilings once a native capture reports its size", async () => {
+    const track = new NativeTrack("video", "Bildschirm");
+    const env = await connected({
+      displayStreamFor: () =>
+        new NativeStream([
+          track as unknown as MediaStreamTrack,
+        ]) as unknown as MediaStream,
+    });
+    toggleShare();
+    const sender = () =>
+      env.peers[0]!.senderRows.find((row) => row.track === (track as unknown));
+    await vi.waitFor(() => expect(sender()).toBeTruthy());
+    const nominal = () => sender()!.getParameters!().encodings[0]!.maxBitrate;
+    await vi.waitFor(() => expect(nominal()).toBeGreaterThan(0));
+    const before = nominal()!;
+    const set = vi.spyOn(sender()!, "setParameters");
+    track.updateSettings({ width: 3840, height: 2160 });
+    await vi.waitFor(() => expect(nominal()).toBeGreaterThan(before));
+    // The same size again changes nothing and queues nothing.
+    const calls = set.mock.calls.length;
+    track.updateSettings({ width: 3840, height: 2160 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(set.mock.calls.length).toBe(calls);
+  });
+
   it("uses the screen profile for a Live", async () => {
     useMediaSettings.getState().patch({ screenProfile: "economy" });
     const env = await connected();
@@ -3150,7 +3191,9 @@ describe("source and transport continuity", () => {
       (s) => s.track?.kind === "video",
     );
     await vi.waitFor(() =>
-      expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBeUndefined(),
+      expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBe(
+        ECONOMY_CEILING,
+      ),
     );
     expect(video?.getParameters?.().encodings[0]?.maxFramerate).toBe(15);
   });
@@ -3178,7 +3221,9 @@ describe("source and transport continuity", () => {
     const video = env.peers[0]!.senderRows.find(
       (s) => s.track?.kind === "video",
     );
-    expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBeUndefined();
+    expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBe(
+      videoBitrateCeiling(1920, 1080, 30),
+    );
     expect(video?.getParameters?.().encodings[0]?.maxFramerate).toBe(30);
     const audio = env.peers[0]!.senderRows.find(
       (s) => s.track?.kind === "audio",
@@ -3215,7 +3260,9 @@ describe("source and transport continuity", () => {
     const video = env.peers[0]!.senderRows.find(
       (s) => s.track?.kind === "video",
     );
-    expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBeUndefined();
+    expect(video?.getParameters?.().encodings[0]?.maxBitrate).toBe(
+      ECONOMY_CEILING,
+    );
     expect(video?.getParameters?.().encodings[0]?.maxFramerate).toBe(15);
     const audio = env.peers[0]!.senderRows.find(
       (s) => s.track?.kind === "audio",
@@ -3241,7 +3288,7 @@ describe("source and transport continuity", () => {
     useMediaSettings.getState().patch({ cameraProfile: "economy" });
     await vi.waitFor(() =>
       expect(video.getParameters!().encodings.map((e) => e.maxBitrate)).toEqual(
-        [undefined, undefined],
+        [ECONOMY_CEILING, ECONOMY_CEILING],
       ),
     );
     expect(video.getParameters!().encodings.map((e) => e.maxFramerate)).toEqual(
@@ -3287,9 +3334,8 @@ describe("source and transport continuity", () => {
     // Detail then Sparsam, screen stays Ausgewogen. The stale screen share
     // from the Detail pass is 1_538_461.
     await vi.waitFor(() =>
-      expect(videoBitrates(env.peers[0])).toEqual(
-        allocateVideoBitrates(["economy", "balanced"], 2_500_000),
-      ),
+      // The shares of allocateVideoBitrates, each floored per encoding.
+      expect(videoBitrates(env.peers[0])).toEqual([454_834, 2_045_164]),
     );
     expect(
       env.peers[0]!.senderRows.filter(

@@ -7,7 +7,6 @@ import {
   type ReceivedSource,
 } from "../mediasoupConnection.ts";
 import { listMediaDevices, useMediaSettings } from "../settings.ts";
-import { renderedVideoHeight } from "../viewerLayers.ts";
 import { setNativeBridgeForTests, type NativeBridge } from "./bridge.ts";
 import {
   captureAppAudio,
@@ -17,18 +16,12 @@ import {
 import { loadNativeFeatures, SCREEN_CANCEL_FEATURE } from "./features.ts";
 import { createNativeMicrophoneTest } from "./microphoneTest.ts";
 import {
-  attachNativeVideo,
-  nativeCanvasHeight,
-  resetNativeVideoForTests,
-  type NativeVideoHost,
-} from "./videoFeed.ts";
-import {
   nativeVideoTrack,
-  nativeViewerHeight,
   nativeViewerOpen,
   openNativeViewer,
   resetNativeViewersForTests,
 } from "./viewer.ts";
+import { NativeDevice } from "./device.ts";
 import {
   NativeAudioOutput,
   NativeStream,
@@ -281,6 +274,29 @@ describe("desktop app media", () => {
     setNativeBridgeForTests(core);
     expect(createStream()).toBeInstanceOf(NativeStream);
     expect(createAudioOutput()).toBeInstanceOf(NativeAudioOutput);
+  });
+
+  it("hands a scalability mode to the native core unchanged", async () => {
+    const device = new NativeDevice();
+    await device.load({ routerRtpCapabilities: capabilities });
+    const transport = device.createSendTransport({
+      id: "server-transport-1",
+      iceParameters: { usernameFragment: "u", password: "p" },
+      iceCandidates: [],
+      dtlsParameters: { fingerprints: [] },
+    } as never);
+    transport.on("connect", (_parameters: unknown, done: () => void) => done());
+    transport.on("produce", (_parameters: unknown, done: (r: object) => void) =>
+      done({ id: "p1" }),
+    );
+    const { processor } = await microphone();
+    await transport.produce({
+      track: processor.stream.getAudioTracks()[0],
+      encodings: [{ scalabilityMode: "L3T3_KEY" }],
+    });
+    expect(core.calledWith("media_produce")[0]).toMatchObject({
+      options: { encodings: [{ scalabilityMode: "L3T3_KEY" }] },
+    });
   });
 
   it("publishes the native microphone through the server's signaling", async () => {
@@ -649,85 +665,16 @@ describe("desktop app media", () => {
     const [opened] = core.calledWith("media_viewer_open");
     expect(opened).toMatchObject({ consumer: 42, title: "Alex – Gelabber" });
     const events = opened.events as { onMessage: (event: unknown) => void };
-    // Layer choice follows the window's shown height.
-    expect(renderedVideoHeight(track.id)).toBe(0);
+    // The window's height reports no longer matter.
     events.onMessage({ type: "height", height: 1080 });
-    expect(nativeViewerHeight(track.id)).toBe(1080);
-    expect(renderedVideoHeight(track.id)).toBe(1080);
+    expect(nativeViewerOpen(42)).toBe(true);
     // The person closes the window.
     events.onMessage({ type: "closed" });
-    expect(renderedVideoHeight(track.id)).toBe(0);
     expect(nativeViewerOpen(42)).toBe(false);
     await tick();
     expect(core.calledWith("media_viewer_close")).toEqual([{ consumer: 42 }]);
     track.end();
     expect(nativeVideoTrack(stream)).toBeNull();
-  });
-
-  it("chooses layers by the canvas in the page or by the viewer window", async () => {
-    resetNativeViewersForTests();
-    const boxes = new Map<unknown, { width: number; height: number }>();
-    resetNativeVideoForTests({
-      painter: () => ({
-        painter: { load: () => true, show: () => undefined, dispose() {} },
-        software: false,
-      }),
-      requestFrame: () => 0,
-      cancelFrame: () => undefined,
-      hidden: () => false,
-      watch: () => () => undefined,
-      box: (canvas) => boxes.get(canvas) ?? null,
-      covers: () => false,
-      observe: () => () => undefined,
-      pixelRatio: () => 1.6,
-    } satisfies NativeVideoHost);
-    try {
-      const track = new NativeTrack("video", "Bildschirm", { consumer: 42 });
-      // Nothing shows the stream: the server sends the low layer.
-      expect(renderedVideoHeight(track.id)).toBe(0);
-      // A tile that holds a 16:9 picture letterboxed in a 4:3 box.
-      const tile = { width: 1280, height: 720 } as HTMLCanvasElement;
-      boxes.set(tile, { width: 480, height: 360 });
-      const leave = attachNativeVideo(track, tile);
-      await tick();
-      // The page's first view starts small; the layer does not wait for it.
-      expect(core.calledWith("media_view_open")).toEqual([
-        { consumer: 42, maxWidth: 320, maxHeight: 180 },
-      ]);
-      // 480 * 9 / 16 lines at a device pixel ratio of 1.6.
-      expect(renderedVideoHeight(track.id)).toBe(432);
-
-      // A viewer window takes the stream over from the tile. Until it says
-      // how large it shows the stream, the layer the tile had asked for
-      // stays: no drop to the low one while the window opens.
-      const opening = openNativeViewer(track, "Alex – Gelabber");
-      expect(nativeCanvasHeight(track.id)).toBe(0);
-      expect(renderedVideoHeight(track.id)).toBe(432);
-      await opening;
-      expect(core.calledWith("media_view_close")).toEqual([{ view: 1 }]);
-      const [opened] = core.calledWith("media_viewer_open");
-      const events = opened.events as { onMessage: (event: unknown) => void };
-      expect(renderedVideoHeight(track.id)).toBe(432);
-      // From then on the window alone decides, also when it is small.
-      events.onMessage({ type: "height", height: 1080 });
-      expect(renderedVideoHeight(track.id)).toBe(1080);
-      events.onMessage({ type: "height", height: 200 });
-      expect(renderedVideoHeight(track.id)).toBe(200);
-      events.onMessage({ type: "closed" });
-      expect(renderedVideoHeight(track.id)).toBe(0);
-      leave();
-
-      // The tile draws the stream again, grows to the large view and goes.
-      await tick();
-      const again = attachNativeVideo(track, tile);
-      expect(renderedVideoHeight(track.id)).toBe(432);
-      boxes.set(tile, { width: 1600, height: 900 });
-      expect(renderedVideoHeight(track.id)).toBe(1440);
-      again();
-      expect(renderedVideoHeight(track.id)).toBe(0);
-    } finally {
-      resetNativeVideoForTests();
-    }
   });
 
   it("captures a camera natively", async () => {

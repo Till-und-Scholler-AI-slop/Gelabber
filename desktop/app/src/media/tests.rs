@@ -12,6 +12,7 @@ const KNOWN_FEATURES: &[&str] = &[
     "app-audio",
     "app-audio-excludes-self",
     "video-frames",
+    "vp9-svc",
     "h264-hardware",
     "av1-hardware",
     "av1-hardware-decode",
@@ -34,6 +35,7 @@ fn media_info_reports_the_platform_features() {
             "app-audio",
             "app-audio-excludes-self",
             "video-frames",
+            "vp9-svc",
         ]
     } else {
         &[]

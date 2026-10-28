@@ -20,24 +20,30 @@ import {
 } from "./media.ts";
 import { statsEntriesFromReport, type StatsEntry } from "./diagnostics.ts";
 import type { MediaPriority } from "./mediaPriority.ts";
-import { ViewerLayerController } from "./viewerLayers.ts";
 import { isDesktopApp } from "./native/bridge.ts";
 import { createNativeDevice } from "./native/device.ts";
 import { createStream } from "./native/tracks.ts";
 import {
   chooseVideoCodec,
-  hardwareAv1Decoding,
+  decodesAv1,
   hardwareVideo,
   receivableCapabilities,
   SOFTWARE_VIDEO,
+  VP9_SVC_MODE,
   type HardwareVideo,
 } from "./videoCodec.ts";
+
+/** The libwebrtc start estimate in kbit/s, so a high resolution is not held
+ * at the low layers while the estimate climbs from the default 300. */
+const VIDEO_START_BITRATE_KBPS = 5000;
 
 export type RtpSenderParameters = {
   encodings: Array<{
     maxBitrate?: number;
     maxFramerate?: number;
     priority?: MediaPriority;
+    scaleResolutionDownBy?: number;
+    scalabilityMode?: string;
     networkPriority?: MediaPriority;
   }>;
   transactionId?: string;
@@ -87,7 +93,7 @@ export type MediaConnectionOptions = {
   /** Test injection; production asks the browser or the desktop app. */
   hardwareVideo?: () => Promise<HardwareVideo>;
   /** Test injection; production asks the browser or the desktop app. */
-  hardwareAv1Decoding?: () => Promise<boolean>;
+  decodesAv1?: () => Promise<boolean>;
   /** Test injection; production SDK operations are bounded to ten seconds. */
   sdkTimeoutMs?: number;
   /** Test injection; production waits SDK_LOAD_TIMEOUT_MS for the chunk. */
@@ -101,6 +107,12 @@ export interface MediaConnection {
   sender(kind: TrackKind): MediaSender | undefined;
   senders(): MediaSender[];
   consumers(): ReceivedSource[];
+  /** What the last codec choice rested on, for diagnostics. */
+  videoChoice(): {
+    roomCodecs: string[] | null;
+    encoders: HardwareVideo | null;
+    decodesAv1: boolean | null;
+  };
   transportState(direction: "send" | "recv"): string;
   restartIce(direction: "send" | "recv"): Promise<void>;
   getStats(): Promise<StatsEntry[]>;
@@ -195,18 +207,19 @@ export class MediasoupConnection implements MediaConnection {
   private sendChain: Promise<unknown> = Promise.resolve();
   private sendPending = 0;
   private consumePending = new Set<string>();
-  private layerCursor = 0;
   private sendUses = 0;
   private recvUses = 0;
   private compactingSend = false;
   private consumeChain: Promise<void> = Promise.resolve();
-  private layerTimer: ReturnType<typeof setInterval> | null = null;
-  private layers = new ViewerLayerController();
-  private samplingLayers = false;
   private sdkWaits = new Set<() => void>();
   private sendDeadlineEpochMs: number | undefined;
   /** What every receiver decodes; null until a server says. */
   private videoCodecs: VideoCodecs | null = null;
+  /** The last probes that ran, for `videoChoice`. */
+  private probedEncoders: HardwareVideo | null = null;
+  /** The SDK refused VP9 SVC once; VP9 goes out without layers from then on. */
+  private vp9SvcRefused = false;
+  private probedDecodesAv1: boolean | null = null;
   constructor(private readonly options: MediaConnectionOptions) {}
 
   private live(): void {
@@ -331,11 +344,10 @@ export class MediasoupConnection implements MediaConnection {
       throw error;
     }
     this.device = device;
-    // AV1 comes as one stream: only a device that decodes it in hardware
+    // AV1 comes as one stream: only a device that decodes it smoothly
     // offers to receive it (issue #318).
-    const av1Decoding = await (
-      this.options.hardwareAv1Decoding ?? hardwareAv1Decoding
-    )();
+    const av1Decoding = await (this.options.decodesAv1 ?? decodesAv1)();
+    this.probedDecodesAv1 = av1Decoding;
     this.live();
     const announced = await this.options.request("capabilities", {
       rtp: receivableCapabilities(device.recvRtpCapabilities, av1Decoding),
@@ -346,9 +358,6 @@ export class MediasoupConnection implements MediaConnection {
     this.recv = await this.makeTransport("recv");
     this.live();
     for (const event of this.queued.splice(0)) this.handleEvent(event);
-    this.layerTimer = setInterval(() => {
-      void this.sampleLayers();
-    }, 2000);
   }
 
   private async makeTransport(direction: "send" | "recv"): Promise<Transport> {
@@ -521,12 +530,13 @@ export class MediasoupConnection implements MediaConnection {
       throw new MediaError("unsupported_codec");
     if (input.kind === "sa" && !input.parent)
       throw new MediaError("missing_parent");
-    const codec =
-      input.track.kind === "video"
-        ? await this.videoCodec(device)
-        : device.sendRtpCapabilities.codecs?.find(
-            (c) => c.mimeType.toLowerCase() === "audio/opus",
-          );
+    const chosen =
+      input.track.kind === "video" ? await this.videoCodec(device) : null;
+    const codec = chosen
+      ? chosen.codec
+      : device.sendRtpCapabilities.codecs?.find(
+          (c) => c.mimeType.toLowerCase() === "audio/opus",
+        );
     this.checkPublication(input);
     if (!codec) throw new MediaError("unsupported_codec");
     const mime = codec.mimeType.toLowerCase();
@@ -535,7 +545,7 @@ export class MediasoupConnection implements MediaConnection {
       // Public SDK hint for the initial libwebrtc video bandwidth estimate.
       // It sets no minimum/maximum bitrate or per-encoding upload limit.
       ...(input.track.kind === "video"
-        ? { videoGoogleStartBitrate: 1000 }
+        ? { videoGoogleStartBitrate: VIDEO_START_BITRATE_KBPS }
         : {}),
     };
     const signature = JSON.stringify([mime, codecOptions]);
@@ -587,9 +597,11 @@ export class MediasoupConnection implements MediaConnection {
     }
     const transport = await this.sendTransport();
     this.checkPublication(input);
-    // Two simulcast layers where browsers and the native core encode them.
-    // mediasoup takes VP9 and AV1 as one stream or SVC only, not simulcast.
+    // Three simulcast layers where browsers and the native core encode them.
+    // mediasoup takes VP9 and AV1 as one stream or SVC only, not simulcast:
+    // VP9 carries its three layers inside one stream.
     const layered = mime === "video/vp8" || mime === "video/h264";
+    const svc = mime === "video/vp9" && chosen?.vp9Svc === true;
     const base = {
       track: input.track,
       streamId: input.streamId,
@@ -651,19 +663,32 @@ export class MediasoupConnection implements MediaConnection {
           ? {
               encodings: [
                 { scaleResolutionDownBy: 4 },
+                { scaleResolutionDownBy: 2 },
                 { scaleResolutionDownBy: 1 },
               ],
             }
-          : {}),
+          : svc
+            ? { encodings: [{ scalabilityMode: VP9_SVC_MODE }] }
+            : {}),
       });
     } catch (error) {
       const name = sdkErrorName(error);
-      if (
-        !layered ||
-        (name !== "UnsupportedError" && name !== "NotSupportedError")
-      )
-        throw error;
+      // libwebrtc may report an unsupported scalability mode as an
+      // OperationError; produce() has compacted the send transport by now.
+      // Any OperationError then counts as a refusal: VP9 SVC is only tried
+      // in a room without VP8 or H.264, where plain VP9 is the way out.
+      const refused =
+        name === "UnsupportedError" ||
+        name === "NotSupportedError" ||
+        (svc && name === "OperationError");
+      if (!(layered || svc) || !refused) throw error;
       this.live();
+      if (svc) {
+        // The codec choice runs again without SVC: plain VP9 in a room
+        // without VP8 or H.264.
+        this.vp9SvcRefused = true;
+        return this.publishNow(input);
+      }
       this.sendUses += 1;
       producer = await produce(base);
     }
@@ -742,15 +767,28 @@ export class MediasoupConnection implements MediaConnection {
   private async videoCodec(device: Device) {
     const allowed = this.videoCodecs?.video ?? null;
     // Asked only where it can change the choice.
-    const hardware =
-      allowed?.includes("video/h264") || allowed?.includes("video/av1")
-        ? await (this.options.hardwareVideo ?? hardwareVideo)()
-        : SOFTWARE_VIDEO;
-    return chooseVideoCodec(
-      device.sendRtpCapabilities.codecs ?? [],
-      allowed,
-      hardware,
-    );
+    const asked =
+      allowed?.includes("video/h264") ||
+      allowed?.includes("video/av1") ||
+      allowed?.includes("video/vp9");
+    const hardware = asked
+      ? await (this.options.hardwareVideo ?? hardwareVideo)()
+      : SOFTWARE_VIDEO;
+    // Firefox accepts the mode and silently sends one layer.
+    const vp9Svc =
+      hardware.vp9Svc &&
+      !this.vp9SvcRefused &&
+      (isDesktopApp() || device.handlerName?.startsWith("Chrome") === true);
+    const gated = { ...hardware, vp9Svc };
+    if (asked) this.probedEncoders = gated;
+    return {
+      codec: chooseVideoCodec(
+        device.sendRtpCapabilities.codecs ?? [],
+        allowed,
+        gated,
+      ),
+      vp9Svc,
+    };
   }
   private noteVideoCodecs(next: VideoCodecs): void {
     // The event can overtake the `capabilities` result, and the other way.
@@ -768,7 +806,7 @@ export class MediasoupConnection implements MediaConnection {
   private async recodeVideo(): Promise<void> {
     const device = this.device;
     if (!device || this.closed) return;
-    const codec = await this.videoCodec(device);
+    const { codec } = await this.videoCodec(device);
     this.live();
     if (!codec) return;
     let republished = false;
@@ -904,6 +942,13 @@ export class MediasoupConnection implements MediaConnection {
   }
   consumers(): ReceivedSource[] {
     return [...this.received.values()];
+  }
+  videoChoice() {
+    return {
+      roomCodecs: this.videoCodecs ? [...this.videoCodecs.video] : null,
+      encoders: this.probedEncoders,
+      decodesAv1: this.probedDecodesAv1,
+    };
   }
   transportState(direction: "send" | "recv"): string {
     return (
@@ -1224,51 +1269,11 @@ export class MediasoupConnection implements MediaConnection {
       }
     return [...qualified.values()];
   }
-  private async sampleLayers(): Promise<void> {
-    if (this.closed || this.samplingLayers) return;
-    this.samplingLayers = true;
-    try {
-      const sources = this.consumers().filter((s) => s.kind === "video");
-      const ordered = sources
-        .slice(this.layerCursor)
-        .concat(sources.slice(0, this.layerCursor));
-      const sampled = ordered.slice(0, 32);
-      this.layerCursor = sources.length
-        ? (this.layerCursor + 32) % sources.length
-        : 0;
-      const rows = (
-        await Promise.all(
-          sampled.map(async (s) =>
-            statsEntriesFromReport(
-              await this.sdk(() => s.consumer.getStats(), "recv", false),
-            ),
-          ),
-        )
-      ).flat();
-      if (this.closed) return;
-      await this.layers.update(
-        rows,
-        sources.map((s) => ({
-          consumerId: s.consumerId,
-          generation: s.generation,
-          trackId: s.track.id,
-          ssrc: s.consumer.rtpParameters.encodings?.[0]?.ssrc,
-        })),
-        (data) => this.options.request("q", data),
-      );
-    } catch {
-      /* Missing browser stats do not invent congestion. */
-    } finally {
-      this.samplingLayers = false;
-    }
-  }
   close(): void {
     if (this.closed) return;
     this.closed = true;
     for (const cancel of [...this.sdkWaits]) cancel();
     this.sdkWaits.clear();
-    if (this.layerTimer) clearInterval(this.layerTimer);
-    this.layerTimer = null;
     for (const held of this.publications.values()) held.producer.close();
     this.publications.clear();
     for (const id of [...this.received.keys()]) this.removeConsumer(id);

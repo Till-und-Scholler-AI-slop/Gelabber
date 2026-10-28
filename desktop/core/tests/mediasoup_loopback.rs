@@ -23,6 +23,7 @@ use common::{
 };
 use gelabber_media_core::{Audio, Device, Direction, Engine, Source, Transport, VideoFrame};
 use mediasoup::prelude::*;
+use mediasoup::producer::ProducerType;
 // Trait methods (id, produce, consume); the name is taken by the native transport.
 use mediasoup::prelude::Transport as _;
 use serde_json::{Value, json};
@@ -118,23 +119,35 @@ async fn round_trip(server: &Server) {
         .await
         .unwrap()
     };
-    // Two simulcast layers like the web client (scaleResolutionDownBy 4 and 1).
-    let layers = json!([{ "scaleResolutionDownBy": 4 }, { "scaleResolutionDownBy": 1 }]);
+    // Three simulcast layers like the web client (scaleResolutionDownBy 4, 2
+    // and 1).
+    let layers = json!([
+        { "scaleResolutionDownBy": 4 },
+        { "scaleResolutionDownBy": 2 },
+        { "scaleResolutionDownBy": 1 },
+    ]);
     // Per codec: its name, the producer's options and the test pattern's
     // size. AV1 like the web client sends it: one stream, at a size libaom
     // keeps up with on a runner, and capped so that it leaves the bandwidth
-    // estimate room for the 720p layers of the others.
+    // estimate room for the 720p layers of the others (VP9 included).
     let mut codecs = Vec::new();
     if with_h264 {
         codecs.push((
             "H264",
-            json!({"codec": "video/H264", "encodings": layers, "codecOptions": {"videoGoogleStartBitrate": 1000}}),
+            json!({"codec": "video/H264", "encodings": layers, "codecOptions": {"videoGoogleStartBitrate": 5000}}),
             (1280, 720),
         ));
     }
     codecs.push((
         "VP8",
         json!({"codec": "video/VP8", "encodings": layers}),
+        (1280, 720),
+    ));
+    // VP9 like the web client sends it: one encoding whose three spatial
+    // layers are inside one stream, so the server sees an SVC producer.
+    codecs.push((
+        "VP9",
+        json!({"codec": "video/VP9", "encodings": [{ "scalabilityMode": "L3T3_KEY" }]}),
         (1280, 720),
     ));
     codecs.push((
@@ -191,12 +204,18 @@ async fn round_trip(server: &Server) {
         )
         .await;
     }
-    // Both simulcast layers must come up (AV1: its one stream). The 720p
-    // layer only starts once libwebrtc's bandwidth estimate and CPU budget
+    // The VP9 producer is SVC, not simulcast.
+    for (name, producer, _) in &video {
+        if *name == "VP9" {
+            assert_eq!(producer.r#type(), ProducerType::Svc, "{name} is SVC");
+        }
+    }
+    // All simulcast layers must come up (AV1 and VP9: their one stream). The
+    // 720p layer only starts once libwebrtc's bandwidth estimate and CPU budget
     // allow it, so poll; on failure print the sender's own per-layer view
     // (qualityLimitationReason, frameWidth, active) next to the server's.
     for (name, producer, native) in &video {
-        let expected = if *name == "AV1" { 1 } else { 2 };
+        let expected = if matches!(*name, "AV1" | "VP9") { 1 } else { 3 };
         let start = Instant::now();
         let mut live = 0;
         while start.elapsed() < Duration::from_secs(20) {
@@ -381,20 +400,22 @@ async fn round_trip(server: &Server) {
     let params = vp8.parameters().unwrap();
     assert_eq!(
         params["encodings"].as_array().map(Vec::len),
-        Some(2),
+        Some(3),
         "{params}"
     );
     vp8.set_parameters(&json!({"encodings": [
         {"maxBitrate": 150_000},
+        {"maxBitrate": 500_000},
         {"maxBitrate": 1_200_000, "maxFramerate": 15, "priority": "high", "networkPriority": "high"},
     ]}))
     .unwrap();
     let params = vp8.parameters().unwrap();
     eprintln!("VP8 sender parameters: {params}");
     assert_eq!(params["encodings"][0]["maxBitrate"], 150_000);
-    assert_eq!(params["encodings"][1]["maxBitrate"], 1_200_000);
-    assert_eq!(params["encodings"][1]["priority"], "high");
-    assert_eq!(params["encodings"][1]["networkPriority"], "high");
+    assert_eq!(params["encodings"][1]["maxBitrate"], 500_000);
+    assert_eq!(params["encodings"][2]["maxBitrate"], 1_200_000);
+    assert_eq!(params["encodings"][2]["priority"], "high");
+    assert_eq!(params["encodings"][2]["networkPriority"], "high");
     assert!(
         vp8.set_parameters(&json!({"encodings": [{"priority": "urgent"}]}))
             .is_err()
@@ -415,7 +436,7 @@ async fn round_trip(server: &Server) {
 
 /// Simulcast from pictures whose sides do not divide by the layers' scale
 /// factors: a 1366x768 screen, a window, a camera picture libwebrtc stepped
-/// down, with the web client's layers (a quarter and the whole). libvpx
+/// down, with two of the web client's layers (a quarter and the whole). libvpx
 /// encodes the layers only when each has exactly the picture's aspect and
 /// sends nothing otherwise, so the picture loses the columns and rows that
 /// do not divide. Layers at an eighth, which no source is prepared for, get

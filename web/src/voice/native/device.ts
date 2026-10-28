@@ -224,6 +224,9 @@ export class NativeConsumer {
   }
 }
 
+/** `scalabilityMode` is missing from the DOM typings of some TypeScript releases. */
+type NativeEncoding = RTCRtpEncodingParameters & { scalabilityMode?: string };
+
 export class NativeTransport extends Emitter {
   readonly id: string;
   closed = false;
@@ -333,7 +336,7 @@ export class NativeTransport extends Emitter {
 
   async produce(options: {
     track?: MediaStreamTrack | null;
-    encodings?: RTCRtpEncodingParameters[];
+    encodings?: NativeEncoding[];
     codecOptions?: Record<string, unknown>;
     codec?: RtpCodecCapability;
     appData?: Record<string, unknown>;
@@ -349,7 +352,7 @@ export class NativeTransport extends Emitter {
 
   private async produceNow(options: {
     track?: MediaStreamTrack | null;
-    encodings?: RTCRtpEncodingParameters[];
+    encodings?: NativeEncoding[];
     codecOptions?: Record<string, unknown>;
     codec?: RtpCodecCapability;
     appData?: Record<string, unknown>;
@@ -379,6 +382,9 @@ export class NativeTransport extends Emitter {
                 encodings: options.encodings.map((encoding) => ({
                   ...(encoding.scaleResolutionDownBy !== undefined
                     ? { scaleResolutionDownBy: encoding.scaleResolutionDownBy }
+                    : {}),
+                  ...(encoding.scalabilityMode !== undefined
+                    ? { scalabilityMode: encoding.scalabilityMode }
                     : {}),
                   ...(encoding.maxBitrate !== undefined
                     ? { maxBitrate: encoding.maxBitrate }

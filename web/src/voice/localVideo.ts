@@ -4,6 +4,7 @@
 import type { TrackKind } from "../ws/protocol.ts";
 import { isDesktopApp } from "./native/bridge.ts";
 import { loadNativeFeatures } from "./native/features.ts";
+import { isNativeTrack } from "./native/tracks.ts";
 import type { MediaConnection } from "./mediasoupConnection.ts";
 import { MediaError } from "./media.ts";
 import { noteDiagnosticEvent } from "./diagnostics.ts";
@@ -342,6 +343,14 @@ function bindEnded(stream: MediaStream, kind: LocalVideo): void {
   const onEnded = endedListener(kind);
   for (const track of stream.getVideoTracks()) {
     track.addEventListener("ended", onEnded);
+    // A native capture learns its size after the first frame; the ceilings
+    // were set from the profile's nominal size until then.
+    if (isNativeTrack(track))
+      track.addEventListener("settingschange", () => {
+        const connection = voice.seat.connection;
+        if (connection && track.readyState === "live")
+          void voice.videoBudget.enqueue(connection).catch(() => {});
+      });
   }
 }
 
