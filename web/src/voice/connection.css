@@ -1,0 +1,473 @@
+/* The connection views: the status block shared by the call bar's popover
+   and the diagnostics tab, and the tab's tables. */
+.connection-status {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 20px 16px;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-panel);
+}
+.connection-status-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+.connection-status-verdict {
+  flex: 1;
+  min-width: 0;
+}
+.connection-status-verdict h3 {
+  font: var(--lr-type-title-sm);
+  color: var(--lr-text);
+}
+.connection-status-verdict p {
+  margin-top: 2px;
+  color: var(--lr-muted);
+  font: var(--lr-type-body);
+}
+.connection-status-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding-top: 3px;
+  color: var(--lr-subtle);
+  font: var(--lr-type-meta);
+  white-space: nowrap;
+}
+.connection-status-meta.is-live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: var(--lr-radius-full);
+  background: var(--lr-online);
+}
+
+/* The call bar's bars at twice the size, in the same colours. */
+.connection-signal {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: flex-end;
+  gap: 3px;
+  height: 27px;
+  margin-top: 1px;
+  color: var(--lr-online);
+}
+.connection-signal > span {
+  width: 5px;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0.28;
+}
+.connection-signal > span:nth-child(1) {
+  height: 8px;
+}
+.connection-signal > span:nth-child(2) {
+  height: 14px;
+}
+.connection-signal > span:nth-child(3) {
+  height: 20px;
+}
+.connection-signal > span:nth-child(4) {
+  height: 27px;
+}
+.connection-signal[data-level="4"] > span,
+.connection-signal[data-level="3"] > span:nth-child(-n + 3),
+.connection-signal[data-level="2"] > span:nth-child(-n + 2),
+.connection-signal[data-level="1"] > span:nth-child(1) {
+  opacity: 1;
+}
+.connection-signal[data-level="2"] {
+  color: var(--lr-warning);
+}
+.connection-signal[data-level="1"] {
+  color: var(--lr-danger);
+}
+.connection-signal[data-level="0"] {
+  color: var(--lr-muted);
+}
+
+.connection-figures {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--lr-border);
+}
+.connection-figures dt {
+  color: var(--lr-subtle);
+  font: var(--lr-type-meta);
+}
+.connection-figures dd {
+  margin-top: 2px;
+  color: var(--lr-text);
+  font: 600 22px / 1.25 var(--lr-font);
+  font-variant-numeric: tabular-nums;
+}
+.connection-figures dd small {
+  color: var(--lr-subtle);
+  font: var(--lr-type-ui);
+}
+/* --lr-warning is drawn for icons (3:1); text takes it a step towards the
+   text colour, for 4.5:1. */
+.connection-figures [data-tone="weak"] dd {
+  color: color-mix(in srgb, var(--lr-warning) 70%, var(--lr-text));
+}
+.connection-figures [data-tone="bad"] dd {
+  color: var(--lr-danger);
+}
+
+.connection-trace-caption,
+.connection-trace-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--lr-subtle);
+  font: var(--lr-type-meta);
+  font-variant-numeric: tabular-nums;
+}
+.connection-trace-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 46px;
+  margin: 8px 0 5px;
+  border-bottom: 1px solid var(--lr-border);
+}
+.connection-trace-bars > span {
+  flex: 1;
+  min-width: 0;
+  border-radius: 1px 1px 0 0;
+  background: var(--lr-online);
+  opacity: 0.7;
+}
+.connection-trace-bars > [data-tone="weak"] {
+  background: var(--lr-warning);
+  opacity: 0.9;
+}
+.connection-trace-bars > [data-tone="bad"] {
+  background: var(--lr-danger);
+  opacity: 1;
+}
+
+.connection-tip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px 10px 14px;
+  border-radius: var(--lr-radius-md);
+  background: color-mix(in srgb, var(--lr-warning) 12%, transparent);
+}
+.connection-tip p {
+  flex: 1 1 220px;
+}
+
+/* In the call bar's popover: two figures and a shorter trace. */
+.connection-status.is-compact {
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.connection-status.is-compact .connection-status-head {
+  align-items: center;
+  gap: 12px;
+}
+.connection-status.is-compact .connection-signal {
+  gap: 2px;
+  height: 20px;
+  margin-top: 0;
+}
+.connection-status.is-compact .connection-signal > span {
+  width: 4px;
+}
+.connection-status.is-compact .connection-signal > span:nth-child(1) {
+  height: 6px;
+}
+.connection-status.is-compact .connection-signal > span:nth-child(2) {
+  height: 10px;
+}
+.connection-status.is-compact .connection-signal > span:nth-child(3) {
+  height: 15px;
+}
+.connection-status.is-compact .connection-signal > span:nth-child(4) {
+  height: 20px;
+}
+.connection-status.is-compact h3 {
+  font: var(--lr-type-ui);
+  font-weight: 600;
+}
+.connection-status.is-compact .connection-status-meta {
+  padding-top: 0;
+}
+.connection-status.is-compact .connection-figures {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding-top: 0;
+  border-top: 0;
+}
+.connection-status.is-compact .connection-figures dd {
+  font-size: 20px;
+}
+.connection-status.is-compact .connection-trace-caption {
+  display: none;
+}
+.connection-status.is-compact .connection-trace-bars {
+  gap: 2px;
+  height: 32px;
+  margin-top: 0;
+}
+
+.ui-popover.voice-connection-popover {
+  width: 340px;
+}
+.voice-connection-popover > .connection-io {
+  margin-top: 12px;
+}
+.connection-io {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--lr-border);
+}
+.connection-io > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--lr-border);
+}
+.connection-io dt {
+  color: var(--lr-subtle);
+}
+.connection-io dd {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.connection-dir {
+  display: inline-block;
+  width: 1ch;
+  margin-right: 8px;
+  color: var(--lr-accent-text);
+}
+.connection-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+/* The diagnostics tab. */
+.voice-diagnostics {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  color: var(--lr-text);
+  font: var(--lr-type-body);
+}
+.connection-block-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.connection-block-head h3 {
+  font: var(--lr-type-ui);
+  font-weight: 600;
+}
+.connection-block-head span,
+.connection-note {
+  color: var(--lr-subtle);
+  font: var(--lr-type-meta);
+}
+.connection-note {
+  margin-top: 10px;
+}
+.connection-flows-box {
+  overflow-x: auto;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-md);
+}
+.connection-flows {
+  width: 100%;
+  border-collapse: collapse;
+}
+.connection-flows th,
+.connection-flows td {
+  padding: 10px 14px;
+  text-align: left;
+  vertical-align: baseline;
+  font-weight: 400;
+}
+.connection-flows thead th {
+  padding-block: 7px;
+  background: var(--lr-panel);
+  color: var(--lr-subtle);
+  font: var(--lr-type-meta);
+  white-space: nowrap;
+}
+.connection-flows tbody tr + tr > * {
+  border-top: 1px solid var(--lr-border);
+}
+.connection-flows .is-number {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.connection-flows tbody th {
+  font-weight: 600;
+}
+.connection-flows tbody th small {
+  color: var(--lr-subtle);
+  font: var(--lr-type-meta);
+}
+.connection-flow-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 3px;
+  padding-left: calc(1ch + 8px);
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+.connection-chip {
+  padding: 1px 7px;
+  border-radius: var(--lr-radius-sm);
+  background: color-mix(in srgb, var(--lr-warning) 15%, transparent);
+  color: color-mix(in srgb, var(--lr-warning) 70%, var(--lr-text));
+}
+.connection-flows [data-tone="weak"] {
+  color: color-mix(in srgb, var(--lr-warning) 70%, var(--lr-text));
+}
+.connection-flows [data-tone="bad"] {
+  color: var(--lr-danger);
+}
+.connection-empty {
+  padding: 14px;
+  border: 1px dashed var(--lr-border);
+  border-radius: var(--lr-radius-md);
+  color: var(--lr-muted);
+}
+
+/* Label left, value right, two to a row. */
+.connection-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 28px;
+}
+.connection-facts > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--lr-border);
+}
+.connection-facts > .is-wide {
+  grid-column: 1 / -1;
+}
+.connection-facts dt {
+  color: var(--lr-subtle);
+}
+.connection-facts dd {
+  min-width: 0;
+  font-weight: 500;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.connection-debug {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 16px 14px 6px;
+  font: var(--lr-type-meta);
+}
+.connection-debug h4 {
+  margin-bottom: 6px;
+  color: var(--lr-subtle);
+  font-weight: 600;
+}
+.connection-debug .connection-facts {
+  font: var(--lr-type-meta);
+}
+.connection-debug .connection-facts > div {
+  padding-block: 6px;
+}
+.connection-debug-hint {
+  margin-top: 6px;
+  color: var(--lr-muted);
+}
+.connection-log > li {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--lr-border);
+}
+.connection-log > li > :first-child {
+  color: var(--lr-subtle);
+}
+.connection-flow-lines > li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--lr-border);
+}
+.connection-flow-lines strong {
+  font-weight: 600;
+}
+.connection-samples {
+  max-height: 12rem;
+  margin-top: 8px;
+  overflow: auto;
+}
+.connection-samples table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.connection-samples th {
+  color: var(--lr-subtle);
+  font-weight: 500;
+}
+.connection-samples th,
+.connection-samples td {
+  padding: 4px 8px 4px 0;
+}
+.connection-samples tbody tr {
+  border-top: 1px solid var(--lr-border);
+}
+.connection-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  color: var(--lr-subtle);
+  font: var(--lr-type-meta);
+}
+.connection-footer p {
+  flex: 1 1 260px;
+}
+
+@media (max-width: 520px) {
+  .connection-figures dd {
+    font-size: 18px;
+  }
+  .connection-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .connection-flows th,
+  .connection-flows td {
+    padding-inline: 10px;
+  }
+  /* The codec stays in the per-flow lines under "Für die Fehlersuche". */
+  .connection-flows .is-codec {
+    display: none;
+  }
+}

@@ -1,10 +1,14 @@
 // Voice diagnostics, the settings dialog's "Diagnose" tab; the call bar's
-// quality bars open the dialog there. One plain sentence sums the call up;
-// the figures below it are clues, not a verdict about the cause.
+// connection popover links here. The status on top answers whether the
+// call is fine; the table shows what is being sent and received; the raw
+// figures wait under "Für die Fehlersuche". They are clues, not a verdict
+// about the cause.
 
 import { Button } from "../components/ui/Button.tsx";
 import { useAudioProcessing } from "./audioProcessing.ts";
-
+import { ConnectionStatus } from "./ConnectionStatus.tsx";
+import { flowGroups, lossTone, type FlowGroup } from "./connectionSummary.ts";
+import { isDesktopApp } from "./native/bridge.ts";
 import {
   audioBitrate,
   VIDEO_MAX_FPS,
@@ -12,11 +16,11 @@ import {
   useMediaSettings,
 } from "./settings.ts";
 import {
+  CALL_QUALITY_LIMITS,
   PHASE_LABEL,
   SOURCE_LABEL,
   buildDiagnosticExport,
   callQuality,
-  callQualityVerdict,
   formatBps,
   formatClock,
   formatCount,
@@ -28,176 +32,355 @@ import {
   type FlowStats,
   type VideoChoice,
 } from "./diagnostics.ts";
+import "./connection.css";
+import "./quality.css";
+
+const onOff = (value: boolean | null | undefined) =>
+  value === null || value === undefined ? "–" : value ? "an" : "aus";
 
 const yesNo = (value: boolean | null | undefined) =>
-  value === null || value === undefined ? "unbekannt" : value ? "ja" : "nein";
+  value === null || value === undefined ? "–" : value ? "ja" : "nein";
 
-function VideoChoiceLine({ video }: { video: VideoChoice | undefined }) {
-  if (!video) return null;
-  const encoders = video.encoders;
+/** A figure the browser did not report reads as a dash, not "unbekannt". */
+const known = (text: string) => (text === "unbekannt" ? "–" : text);
+
+export function VoiceDiagnostics() {
   return (
-    <p className="text-xs">
-      Video: Raum-Codecs{" "}
-      {video.roomCodecs
-        ? video.roomCodecs
-            .map((codec) => codec.replace("video/", ""))
-            .join(", ")
-        : "unbekannt"}
-      ; dieses Gerät sendet AV1 in Hardware: {yesNo(encoders?.av1)}, H.264 in
-      Hardware: {yesNo(encoders?.h264)}, VP9 in Schichten:{" "}
-      {yesNo(encoders?.vp9Svc)}; empfängt AV1: {yesNo(video.decodesAv1)}
-      {video.desktopApp ? `; Desktop-App v${video.desktopApp}` : ""}
-    </p>
+    <section aria-label="Sprachdiagnose" className="voice-diagnostics">
+      <ConnectionStatus>
+        <UploadTip />
+      </ConnectionStatus>
+      <Flows />
+      <Microphone />
+      <Debug />
+      <footer className="connection-footer">
+        <p>
+          Messwerte sind Anhaltspunkte. Ein einzelner Wert ist keine bewiesene
+          Ursache.
+        </p>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={downloadDiagnostics}
+          title="Speichert die Messwerte als JSON-Datei, etwa für einen Fehlerbericht."
+        >
+          Diagnose herunterladen
+        </Button>
+      </footer>
+    </section>
   );
 }
 
-export function VoiceDiagnostics() {
+/** Loss on the way out of a weak call: the economy mode is the setting
+ * that helps, and it sits on the video tab. */
+function UploadTip() {
+  const voice = useVoiceDiagnostics((state) => state.latest?.voice ?? null);
+  const measuring = useVoiceDiagnostics((state) => state.polling.voice);
+  const economy = useMediaSettings((s) => s.economyMode);
+  const openDialog = useMediaSettings((s) => s.openDialog);
+  const quality = measuring ? callQuality(voice) : null;
+  const sendLoss = Math.max(
+    0,
+    ...(voice?.flows ?? [])
+      .filter((flow) => flow.direction === "send")
+      .map((flow) => flow.packetLoss ?? 0),
+  );
+  if (
+    economy ||
+    !quality ||
+    quality.level > 2 ||
+    sendLoss < CALL_QUALITY_LIMITS.loss[0]
+  )
+    return null;
+  return (
+    <div className="connection-tip">
+      <p>Viel Verlust beim Senden? Der Sparmodus begrenzt deinen Upload.</p>
+      <Button size="sm" onClick={() => openDialog("video")}>
+        Zum Sparmodus
+      </Button>
+    </div>
+  );
+}
+
+function Flows() {
+  const latest = useVoiceDiagnostics((state) => state.latest);
+  const polling = useVoiceDiagnostics((state) => state.polling);
+  const mediaSettings = useMediaSettings();
+  const audioCap = audioBitrate(mediaSettings);
+  const videoCap = videoSendBudget(mediaSettings);
+  const groups = [
+    ...flowGroups(latest?.voice ?? null, "voice"),
+    ...flowGroups(latest?.watch ?? null, "watch"),
+  ];
+  const measuring = polling.voice || polling.watch;
+  const limits = [
+    audioCap === null ? null : `Sprache ${formatBps(audioCap)}`,
+    videoCap === null ? null : `Video ${formatBps(videoCap)}`,
+  ].filter(Boolean);
+  return (
+    <section aria-labelledby="connection-flows-title">
+      <div className="connection-block-head">
+        <h3 id="connection-flows-title">Übertragung</h3>
+        {groups.length > 0 && !measuring ? <span>letzte Messung</span> : null}
+      </div>
+      {groups.length === 0 ? (
+        <p className="connection-empty">
+          {measuring
+            ? "Noch nichts gemessen. Die ersten Werte kommen nach zwei Sekunden."
+            : "Keine laufende Messung. Werte gibt es, sobald du in einem Anruf bist."}
+        </p>
+      ) : (
+        <div className="connection-flows-box">
+          <table className="connection-flows">
+            <thead>
+              <tr>
+                <th scope="col">Spur</th>
+                <th scope="col" className="is-codec">
+                  Codec
+                </th>
+                <th scope="col" className="is-number">
+                  Bitrate
+                </th>
+                <th scope="col" className="is-number">
+                  Verlust
+                </th>
+                <th scope="col" className="is-number">
+                  Jitter
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map((group) => (
+                <FlowRow key={group.key} group={group} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="connection-note">
+        {limits.length === 0
+          ? "Gelabber setzt keine Bitratengrenze."
+          : `Obergrenze${limits.length > 1 ? "n" : ""}: ${limits.join(", ")}.`}{" "}
+        Video höchstens {VIDEO_MAX_FPS} FPS.
+      </p>
+    </section>
+  );
+}
+
+function FlowRow({ group }: { group: FlowGroup }) {
+  const send = group.direction === "send";
+  const count =
+    group.count < 2
+      ? null
+      : send && group.kind === "video"
+        ? `${group.count} Schichten`
+        : `×${group.count}`;
+  const picture =
+    group.kind === "video"
+      ? [
+          group.width !== null && group.height !== null
+            ? `${group.width}×${group.height}`
+            : null,
+          group.fps !== null ? `${formatCount(group.fps)} FPS` : null,
+        ].filter(Boolean)
+      : [];
+  return (
+    <tr>
+      <th scope="row">
+        <span className="connection-dir" aria-hidden="true">
+          {send ? "↑" : "↓"}
+        </span>
+        <span className="sr-only">{send ? "Senden: " : "Empfangen: "}</span>
+        {group.name}
+        {count ? <small> {count}</small> : null}
+        {picture.length > 0 || group.limitedBy ? (
+          <span className="connection-flow-sub">
+            {picture.length > 0 ? <span>{picture.join(" · ")}</span> : null}
+            {group.limitedBy ? (
+              <span className="connection-chip">
+                gebremst durch {formatQualityLimit(group.limitedBy)}
+              </span>
+            ) : null}
+          </span>
+        ) : null}
+      </th>
+      <td className="is-codec">{group.codec ?? "–"}</td>
+      <td className="is-number">{known(formatBps(group.bitrateBps))}</td>
+      <td
+        className="is-number"
+        data-tone={group.loss === null ? undefined : lossTone(group.loss)}
+      >
+        {known(formatRatio(group.loss))}
+      </td>
+      <td className="is-number">{known(formatMs(group.jitterMs))}</td>
+    </tr>
+  );
+}
+
+function Microphone() {
+  const processing = useAudioProcessing();
+  const desktop = isDesktopApp();
+  const format = [
+    processing.sampleRate === null
+      ? null
+      : `${(processing.sampleRate / 1000).toLocaleString("de-DE")} kHz`,
+    processing.channels === null
+      ? null
+      : processing.channels === 1
+        ? "Mono"
+        : processing.channels === 2
+          ? "Stereo"
+          : `${processing.channels} Kanäle`,
+  ].filter(Boolean);
+  return (
+    <section aria-labelledby="connection-mic-title">
+      <div className="connection-block-head">
+        <h3 id="connection-mic-title">Mikrofon</h3>
+      </div>
+      <dl className="connection-facts">
+        <div className="is-wide">
+          <dt>Verarbeitung</dt>
+          <dd>{processing.message}</dd>
+        </div>
+        <div>
+          <dt>Format</dt>
+          <dd>{format.length > 0 ? format.join(", ") : "–"}</dd>
+        </div>
+        <div>
+          <dt>Echo-Unterdrückung</dt>
+          <dd>{onOff(processing.echoCancellation)}</dd>
+        </div>
+        <div>
+          <dt>
+            {desktop ? "Rauschfilter (WebRTC)" : "Rauschfilter (Browser)"}
+          </dt>
+          <dd>{onOff(processing.noiseSuppression)}</dd>
+        </div>
+        <div>
+          <dt>{desktop ? "Auto-Gain (WebRTC)" : "Auto-Gain (Browser)"}</dt>
+          <dd>{onOff(processing.autoGainControl)}</dd>
+        </div>
+        <div>
+          <dt>Mic-Gain</dt>
+          <dd>{Math.round(processing.inputGain * 100)} %</dd>
+        </div>
+        <div>
+          <dt>Filter-Puffer</dt>
+          <dd>
+            {processing.addedBufferMs === null
+              ? "–"
+              : `${processing.addedBufferMs} ms`}
+          </dd>
+        </div>
+      </dl>
+    </section>
+  );
+}
+
+function Debug() {
   const latest = useVoiceDiagnostics((state) => state.latest);
   const samples = useVoiceDiagnostics((state) => state.samples);
   const phases = useVoiceDiagnostics((state) => state.phases);
   const events = useVoiceDiagnostics((state) => state.events);
   const polling = useVoiceDiagnostics((state) => state.polling);
-  const mediaSettings = useMediaSettings();
-  const audioCap = audioBitrate(mediaSettings);
   const processing = useAudioProcessing();
-  const measuring = polling.voice || polling.watch;
-  const quality = polling.voice ? callQuality(latest?.voice ?? null) : null;
-
+  const flows = [
+    ...(latest?.voice?.flows ?? []).map((flow) => ({ flow, watch: false })),
+    ...(latest?.watch?.flows ?? []).map((flow) => ({ flow, watch: true })),
+  ];
   return (
-    <section
-      aria-label="Sprachdiagnose"
-      className="w-full text-left text-sm text-lr-text"
-    >
-      <div className="flex flex-col gap-4">
-        {quality ? (
-          <p className="voice-diagnostics-verdict">
-            {callQualityVerdict(quality)}
-          </p>
+    <details className="media-disclosure">
+      <summary>
+        Für die Fehlersuche
+        <small>Codecs, Prioritäten, Verlauf, Ereignisse</small>
+      </summary>
+      <div className="connection-debug">
+        {latest?.caps.video ? (
+          <section>
+            <h4>Video auf diesem Gerät</h4>
+            <VideoFacts video={latest.caps.video} />
+          </section>
         ) : null}
-        <p className="text-xs text-lr-muted">
-          Messwerte sind Anhaltspunkte. Ein einzelner Wert ist keine bewiesene
-          Ursache. Obergrenze meint die eingestellte Grenze, nicht die gemessene
-          Bitrate.
-        </p>
-        <p className="text-xs text-lr-muted">
-          {measuring ? "Messung läuft." : "Keine laufende Messung."} Audio:{" "}
-          {audioCap === null
-            ? "keine Gelabber-Bitratengrenze"
-            : formatBps(audioCap)}
-          . Video:{" "}
-          {videoSendBudget(mediaSettings) === null
-            ? "keine Gelabber-Bitratengrenze"
-            : formatBps(videoSendBudget(mediaSettings))}
-          , höchstens {VIDEO_MAX_FPS} FPS.
-        </p>
-        <p className="text-xs">
-          Mikrofon: {processing.message} · Abtastrate:{" "}
-          {processing.sampleRate ?? "unbekannt"} Hz · Kanäle:{" "}
-          {processing.channels ?? "unbekannt"} · AEC:{" "}
-          {processing.echoCancellation === null
-            ? "unbekannt"
-            : processing.echoCancellation
-              ? "an"
-              : "aus"}{" "}
-          · Browser-NS:{" "}
-          {processing.noiseSuppression === null
-            ? "unbekannt"
-            : processing.noiseSuppression
-              ? "an"
-              : "aus"}{" "}
-          · Browser-AGC:{" "}
-          {processing.autoGainControl === null
-            ? "unbekannt"
-            : processing.autoGainControl
-              ? "an"
-              : "aus"}
-        </p>
-        <VideoChoiceLine video={latest?.caps.video} />
-        <p className="text-xs">
-          Effektiver Mic-Gain: {Math.round(processing.inputGain * 100)} % ·
-          Verarbeitungszustand: {processing.contextState ?? "ohne Graph"} ·
-          Zusätzliches Filter-Buffering:{" "}
-          {processing.addedBufferMs ?? "unbekannt"} ms (ohne Capture, Codec und
-          Netzwerk).
-        </p>
-        <p className="text-xs text-lr-muted">
-          Prioritätswunsch: Audio hoch, Video normal. Die effektiven
-          Browserwerte stehen bei den Sendespuren. Nicht gemeldete Netzpriorität
-          bleibt unbekannt; Browser und Netzwerk können diese Hinweise
-          ignorieren. Das garantiert keine Priorisierung auf dem SFU oder im
-          Internet und setzt keine Bitratengrenze.
-        </p>
-        <ConnectionBlock
-          title="Sprache"
-          snapshot={latest?.voice ?? null}
-          live={polling.voice}
-          showTransport
-          filter={(flow) => flow.kind === "audio"}
-        />
-        <ConnectionBlock
-          title="Eigene Videoquellen"
-          snapshot={latest?.voice ?? null}
-          live={polling.voice}
-          filter={(flow) => flow.kind === "video" && flow.direction === "send"}
-        />
-        <ConnectionBlock
-          title="Eingehendes Video (Sprachverbindung)"
-          snapshot={latest?.voice ?? null}
-          live={polling.voice}
-          filter={(flow) => flow.kind === "video" && flow.direction === "recv"}
-        />
-        <ConnectionBlock
-          title="Watch"
-          snapshot={latest?.watch ?? null}
-          live={polling.watch}
-          showTransport
-          filter={() => true}
-        />
         <section>
-          <h3 className="font-medium text-lr-text">Verlauf</h3>
-          {phases.length === 0 ? (
-            <p className="mt-1 text-xs text-lr-muted">noch kein Verlauf</p>
+          <h4>Verbindungen</h4>
+          <dl className="connection-facts">
+            <Transport
+              title="Sprache"
+              snapshot={latest?.voice ?? null}
+              live={polling.voice}
+            />
+            <Transport
+              title="Watch"
+              snapshot={latest?.watch ?? null}
+              live={polling.watch}
+            />
+            <div className="is-wide">
+              <dt>Audio-Graph</dt>
+              <dd>{processing.contextState ?? "ohne Graph"}</dd>
+            </div>
+          </dl>
+        </section>
+        <section>
+          <h4>Spuren einzeln</h4>
+          {flows.length === 0 ? (
+            <p>Keine RTP-Statistik.</p>
           ) : (
-            <ul className="mt-1 flex flex-col gap-1 text-xs">
+            <ul className="connection-flow-lines">
+              {flows.map(({ flow, watch }, index) => (
+                <li
+                  key={`${watch}-${flow.direction}-${flow.kind}-${flow.source}-${index}`}
+                >
+                  <FlowLine flow={flow} watch={watch} />
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="connection-debug-hint">
+            Obergrenze meint die eingestellte Grenze, nicht die gemessene
+            Bitrate. Prioritätswunsch: Audio hoch, Video normal. Browser und
+            Netzwerk können diese Hinweise ignorieren; das garantiert keine
+            Priorisierung auf dem SFU oder im Internet.
+          </p>
+        </section>
+        <section>
+          <h4>Verlauf</h4>
+          {phases.length === 0 ? (
+            <p>noch kein Verlauf</p>
+          ) : (
+            <ul className="connection-log">
               {phases.map((phase) => (
                 <li key={`${phase.at}-${phase.phase}`}>
-                  {formatClock(phase.at)} · {PHASE_LABEL[phase.phase]} · Senden{" "}
-                  {formatBps(phase.audioSendBps)} · Empfang{" "}
-                  {formatBps(phase.audioRecvBps)} · Video{" "}
-                  {formatBps(phase.videoSendBps)}
+                  <span>{formatClock(phase.at)}</span>
+                  <span>
+                    {PHASE_LABEL[phase.phase]} · Senden{" "}
+                    {formatBps(phase.audioSendBps)} · Empfang{" "}
+                    {formatBps(phase.audioRecvBps)} · Video{" "}
+                    {formatBps(phase.videoSendBps)}
+                  </span>
                 </li>
               ))}
             </ul>
           )}
           {samples.length > 0 ? (
-            <div className="mt-2 max-h-48 overflow-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="text-lr-muted">
+            <div className="connection-samples">
+              <table>
+                <thead>
                   <tr>
-                    <th className="py-1 pr-2 font-medium">Zeit</th>
-                    <th className="py-1 pr-2 font-medium">Phase</th>
-                    <th className="py-1 pr-2 font-medium">Sprache senden</th>
-                    <th className="py-1 pr-2 font-medium">Sprache empfangen</th>
-                    <th className="py-1 font-medium">Eigenes Video</th>
+                    <th scope="col">Zeit</th>
+                    <th scope="col">Phase</th>
+                    <th scope="col">Sprache senden</th>
+                    <th scope="col">Sprache empfangen</th>
+                    <th scope="col">Eigenes Video</th>
                   </tr>
                 </thead>
                 <tbody>
                   {samples.map((sample, index) => (
-                    <tr
-                      key={`${sample.at}-${index}`}
-                      className="border-t border-lr-border"
-                    >
-                      <td className="py-1 pr-2">{formatClock(sample.at)}</td>
-                      <td className="py-1 pr-2">{PHASE_LABEL[sample.phase]}</td>
-                      <td className="py-1 pr-2">
-                        {formatBps(sum(sample.voice, "audio", "send"))}
-                      </td>
-                      <td className="py-1 pr-2">
-                        {formatBps(sum(sample.voice, "audio", "recv"))}
-                      </td>
-                      <td className="py-1">
-                        {formatBps(sum(sample.voice, "video", "send"))}
-                      </td>
+                    <tr key={`${sample.at}-${index}`}>
+                      <td>{formatClock(sample.at)}</td>
+                      <td>{PHASE_LABEL[sample.phase]}</td>
+                      <td>{formatBps(sum(sample.voice, "audio", "send"))}</td>
+                      <td>{formatBps(sum(sample.voice, "audio", "recv"))}</td>
+                      <td>{formatBps(sum(sample.voice, "video", "send"))}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -206,87 +389,104 @@ export function VoiceDiagnostics() {
           ) : null}
         </section>
         <section>
-          <h3 className="font-medium text-lr-text">Ereignisse</h3>
+          <h4>Ereignisse</h4>
           {events.length === 0 ? (
-            <p className="mt-1 text-xs text-lr-muted">noch keine Ereignisse</p>
+            <p>noch keine Ereignisse</p>
           ) : (
-            <ul className="mt-1 flex flex-col gap-1 text-xs">
+            <ul className="connection-log">
               {events.slice(-8).map((event, index) => (
                 <li key={`${event.at}-${event.kind}-${event.detail}-${index}`}>
-                  {formatClock(event.at)} · {eventLabel(event.kind)} ·{" "}
-                  {event.connection === "voice" ? "Sprache" : "Watch"} ·{" "}
-                  {event.detail}
+                  <span>{formatClock(event.at)}</span>
+                  <span>
+                    {eventLabel(event.kind)} ·{" "}
+                    {event.connection === "voice" ? "Sprache" : "Watch"} ·{" "}
+                    {event.detail}
+                  </span>
                 </li>
               ))}
             </ul>
           )}
         </section>
-        <Button size="sm" onClick={downloadDiagnostics} className="self-start">
-          JSON herunterladen
-        </Button>
       </div>
-    </section>
+    </details>
   );
 }
 
-function ConnectionBlock({
+function VideoFacts({ video }: { video: VideoChoice }) {
+  const encoders = video.encoders;
+  return (
+    <dl className="connection-facts">
+      <div className="is-wide">
+        <dt>Raum-Codecs</dt>
+        <dd>
+          {video.roomCodecs
+            ? video.roomCodecs
+                .map((codec) => codec.replace("video/", ""))
+                .join(", ")
+            : "–"}
+        </dd>
+      </div>
+      <div>
+        <dt>AV1 in Hardware</dt>
+        <dd>{yesNo(encoders?.av1)}</dd>
+      </div>
+      <div>
+        <dt>H.264 in Hardware</dt>
+        <dd>{yesNo(encoders?.h264)}</dd>
+      </div>
+      <div>
+        <dt>VP9 in Schichten</dt>
+        <dd>{yesNo(encoders?.vp9Svc)}</dd>
+      </div>
+      <div>
+        <dt>AV1 empfangen</dt>
+        <dd>{yesNo(video.decodesAv1)}</dd>
+      </div>
+      {video.desktopApp ? (
+        <div>
+          <dt>Desktop-App</dt>
+          <dd>v{video.desktopApp}</dd>
+        </div>
+      ) : null}
+    </dl>
+  );
+}
+
+function Transport({
   title,
   snapshot,
   live,
-  filter,
-  showTransport = false,
 }: {
   title: string;
   snapshot: ConnectionSnapshot | null;
   live: boolean;
-  filter: (flow: FlowStats) => boolean;
-  showTransport?: boolean;
 }) {
-  const flows = snapshot?.flows.filter(filter) ?? [];
+  if (!snapshot) return null;
+  const { path, rttMs, availableOutgoingBps, availableIncomingBps } =
+    snapshot.transport;
   return (
-    <section>
-      <h3 className="font-medium text-lr-text">{title}</h3>
-      {showTransport ? (
-        snapshot ? (
-          <p className="mt-1 text-xs text-lr-muted">
-            Transport: {transportLabel(snapshot.transport.path)} · RTT{" "}
-            {formatMs(snapshot.transport.rttMs)} · Bandbreite senden{" "}
-            {formatBps(snapshot.transport.availableOutgoingBps)} · empfangen{" "}
-            {formatBps(snapshot.transport.availableIncomingBps)}
-            {live ? "" : " · letzte Messung"}
-          </p>
-        ) : (
-          <p className="mt-1 text-xs text-lr-muted">unbekannt</p>
-        )
-      ) : null}
-      {flows.length === 0 ? (
-        <p className="mt-1 text-xs text-lr-muted">
-          Keine RTP-Statistik für diesen Bereich.
-        </p>
-      ) : (
-        <ul className="mt-2 flex flex-col gap-2">
-          {flows.map((flow, index) => (
-            <li
-              key={`${flow.direction}-${flow.kind}-${flow.source}-${index}`}
-              className="rounded-md bg-lr-bg px-2 py-2 text-xs"
-            >
-              <FlowLine flow={flow} />
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+    <div className="is-wide">
+      <dt>{title}</dt>
+      <dd>
+        {path === "direct" ? "direkt" : path === "turn" ? "TURN" : "–"} · RTT{" "}
+        {known(formatMs(rttMs))} · Bandbreite senden{" "}
+        {known(formatBps(availableOutgoingBps))}, empfangen{" "}
+        {known(formatBps(availableIncomingBps))}
+        {live ? "" : " · letzte Messung"}
+      </dd>
+    </div>
   );
 }
 
-function FlowLine({ flow }: { flow: FlowStats }) {
+function FlowLine({ flow, watch }: { flow: FlowStats; watch: boolean }) {
   const direction = flow.direction === "send" ? "Senden" : "Empfangen";
   return (
-    <div className="flex flex-col gap-0.5">
-      <p className="font-medium text-lr-text">
-        {SOURCE_LABEL[flow.source]} · {direction}
-      </p>
-      <p>
+    <>
+      <strong>
+        {watch ? "Watch" : SOURCE_LABEL[flow.source]}
+        {flow.kind === "video" && !watch ? " (Video)" : ""} · {direction}
+      </strong>
+      <span>
         Codec: {flow.codec ?? "unbekannt"} · Bitrate:{" "}
         {formatBps(flow.measuredBitrateBps)}
         {flow.configuredMaxBitrateBps !== null
@@ -294,32 +494,32 @@ function FlowLine({ flow }: { flow: FlowStats }) {
           : flow.direction === "send"
             ? " · keine Gelabber-Bitratengrenze"
             : ""}
-      </p>
-      <p>
+      </span>
+      <span>
         Paketverlust: {formatRatio(flow.packetLoss)}
         {flow.packetsLost !== null
           ? ` (${formatCount(flow.packetsLost)} Pakete)`
           : ""}{" "}
         · Jitter: {formatMs(flow.jitterMs)} · RTT: {formatMs(flow.rttMs)}
-      </p>
-      {flow.direction === "send" && (
-        <p>
+      </span>
+      {flow.direction === "send" ? (
+        <span>
           Senderpriorität: {flow.senderPriority ?? "nicht gemeldet"} ·
           Netzpriorität: {flow.senderNetworkPriority ?? "nicht gemeldet"}
-        </p>
-      )}
+        </span>
+      ) : null}
       {flow.kind === "audio" && flow.direction === "recv" ? (
-        <p>
+        <span>
           Ersetzte Samples:{" "}
           {flow.concealedRatio === null ||
           flow.concealedSamples === null ||
           flow.totalSamplesReceived === null
             ? "unbekannt"
             : `${formatRatio(flow.concealedRatio)} (${formatCount(flow.concealedSamples)} / ${formatCount(flow.totalSamplesReceived)})`}
-        </p>
+        </span>
       ) : null}
       {flow.kind === "video" ? (
-        <p>
+        <span>
           {flow.width !== null && flow.height !== null
             ? `${flow.width}×${flow.height}`
             : "Auflösung unbekannt"}{" "}
@@ -329,9 +529,9 @@ function FlowLine({ flow }: { flow: FlowStats }) {
             ? ` · FPS-Obergrenze: ${flow.configuredMaxFps}`
             : ""}{" "}
           · Qualitätslimit: {formatQualityLimit(flow.qualityLimitationReason)}
-        </p>
+        </span>
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -350,12 +550,6 @@ function sum(
     (total, flow) => total + (flow.measuredBitrateBps ?? 0),
     0,
   );
-}
-
-function transportLabel(path: "direct" | "turn" | null): string {
-  if (path === "direct") return "direkt";
-  if (path === "turn") return "TURN";
-  return "unbekannt";
 }
 
 function eventLabel(kind: string): string {
