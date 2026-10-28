@@ -20,7 +20,6 @@ import {
 } from "./media.ts";
 import { statsEntriesFromReport, type StatsEntry } from "./diagnostics.ts";
 import type { MediaPriority } from "./mediaPriority.ts";
-import { ViewerLayerController } from "./viewerLayers.ts";
 import { isDesktopApp } from "./native/bridge.ts";
 import { createNativeDevice } from "./native/device.ts";
 import { createStream } from "./native/tracks.ts";
@@ -208,14 +207,10 @@ export class MediasoupConnection implements MediaConnection {
   private sendChain: Promise<unknown> = Promise.resolve();
   private sendPending = 0;
   private consumePending = new Set<string>();
-  private layerCursor = 0;
   private sendUses = 0;
   private recvUses = 0;
   private compactingSend = false;
   private consumeChain: Promise<void> = Promise.resolve();
-  private layerTimer: ReturnType<typeof setInterval> | null = null;
-  private layers = new ViewerLayerController();
-  private samplingLayers = false;
   private sdkWaits = new Set<() => void>();
   private sendDeadlineEpochMs: number | undefined;
   /** What every receiver decodes; null until a server says. */
@@ -363,9 +358,6 @@ export class MediasoupConnection implements MediaConnection {
     this.recv = await this.makeTransport("recv");
     this.live();
     for (const event of this.queued.splice(0)) this.handleEvent(event);
-    this.layerTimer = setInterval(() => {
-      void this.sampleLayers();
-    }, 2000);
   }
 
   private async makeTransport(direction: "send" | "recv"): Promise<Transport> {
@@ -781,7 +773,7 @@ export class MediasoupConnection implements MediaConnection {
     const vp9Svc =
       hardware.vp9Svc &&
       !this.vp9SvcRefused &&
-      (isDesktopApp() || device.handlerName.startsWith("Chrome"));
+      (isDesktopApp() || device.handlerName?.startsWith("Chrome") === true);
     const gated = { ...hardware, vp9Svc };
     if (asked) this.probedEncoders = gated;
     return {
@@ -1272,51 +1264,11 @@ export class MediasoupConnection implements MediaConnection {
       }
     return [...qualified.values()];
   }
-  private async sampleLayers(): Promise<void> {
-    if (this.closed || this.samplingLayers) return;
-    this.samplingLayers = true;
-    try {
-      const sources = this.consumers().filter((s) => s.kind === "video");
-      const ordered = sources
-        .slice(this.layerCursor)
-        .concat(sources.slice(0, this.layerCursor));
-      const sampled = ordered.slice(0, 32);
-      this.layerCursor = sources.length
-        ? (this.layerCursor + 32) % sources.length
-        : 0;
-      const rows = (
-        await Promise.all(
-          sampled.map(async (s) =>
-            statsEntriesFromReport(
-              await this.sdk(() => s.consumer.getStats(), "recv", false),
-            ),
-          ),
-        )
-      ).flat();
-      if (this.closed) return;
-      await this.layers.update(
-        rows,
-        sources.map((s) => ({
-          consumerId: s.consumerId,
-          generation: s.generation,
-          trackId: s.track.id,
-          ssrc: s.consumer.rtpParameters.encodings?.[0]?.ssrc,
-        })),
-        (data) => this.options.request("q", data),
-      );
-    } catch {
-      /* Missing browser stats do not invent congestion. */
-    } finally {
-      this.samplingLayers = false;
-    }
-  }
   close(): void {
     if (this.closed) return;
     this.closed = true;
     for (const cancel of [...this.sdkWaits]) cancel();
     this.sdkWaits.clear();
-    if (this.layerTimer) clearInterval(this.layerTimer);
-    this.layerTimer = null;
     for (const held of this.publications.values()) held.producer.close();
     this.publications.clear();
     for (const id of [...this.received.keys()]) this.removeConsumer(id);

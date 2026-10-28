@@ -13,7 +13,6 @@ import type { Frame } from "./frames.ts";
 import { NativeStream, NativeTrack } from "./tracks.ts";
 import {
   attachNativeVideo,
-  nativeCanvasHeight,
   nativeDisplayTrack,
   nativeVideoLimit,
   nativeVideoSuspended,
@@ -612,7 +611,6 @@ describe("native video feed", () => {
     await settled();
     expect(app.named("media_view_frame")).toHaveLength(2);
     expect(app.named("media_view_close")).toEqual([{ view: 1 }]);
-    expect(nativeCanvasHeight(track.id)).toBe(0);
     expect(page.disposed).toBe(1);
     expect(warn).not.toHaveBeenCalled();
     // The tile lets go afterwards, as React gets to it.
@@ -740,28 +738,6 @@ describe("native video feed", () => {
     expect(await deliver(3, [1, 4])).toEqual(["640x360", "320x180"]);
     expect(page.shows.slice(-2)).toEqual(["tile 3:3", "tile 0:3"]);
   });
-
-  it("measures the picture's height for the layer choice", async () => {
-    const track = remote();
-    // A 4:3 box.
-    const tile = page.canvas("tile", 480, 360);
-    attachNativeVideo(track, tile);
-    await settled();
-    // Before the first picture the box counts.
-    expect(nativeCanvasHeight(track.id)).toBe(720);
-    app.deliver(1, packet(1, 1280, 720));
-    await settled();
-    page.frame();
-    // 16:9 letterboxed in it: 480 * 9 / 16 lines, times the pixel ratio.
-    expect(nativeCanvasHeight(track.id)).toBe(540);
-    // The largest canvas decides; one without layout does not count.
-    const large = page.canvas("large", 1600, 900);
-    attachNativeVideo(track, large);
-    expect(nativeCanvasHeight(track.id)).toBe(1800);
-    attachNativeVideo(track, { name: "x", width: 0, height: 0 } as FakeCanvas);
-    expect(nativeCanvasHeight(track.id)).toBe(1800);
-    expect(nativeCanvasHeight("other")).toBe(0);
-  });
 });
 
 describe("video of a consumer that is suspended", () => {
@@ -793,7 +769,6 @@ describe("video of a consumer that is suspended", () => {
     expect(nativeVideoSuspended(42)).toBe(true);
     expect(nativeVideoSuspended(43)).toBe(false);
     expect(changed).toHaveBeenCalledTimes(1);
-    expect(nativeCanvasHeight(track.id)).toBe(0);
     await settled();
     expect(done).toHaveBeenCalledTimes(1);
     // The request that waited went with the view.
@@ -806,7 +781,6 @@ describe("video of a consumer that is suspended", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(app.named("media_view_open")).toHaveLength(3);
     expect(app.named("media_view_close")).toHaveLength(1);
-    expect(nativeCanvasHeight(track.id)).toBe(0);
     leaveLate();
 
     // The source and the other consumer go on.
@@ -925,8 +899,6 @@ describe("in-page video on a page that has had no frame yet", () => {
       { consumer: 42, maxWidth: 320, maxHeight: 180 },
       { source: 7, maxWidth: 200, maxHeight: 100 },
     ]);
-    // The server is asked for the layer the tile will show all the same.
-    expect(nativeCanvasHeight(track.id)).toBe(900);
     await vi.advanceTimersByTimeAsync(1_000);
     expect(app.named("media_view_configure")).toEqual([]);
 
@@ -1006,8 +978,6 @@ describe("in-page video on a page that has had no frame yet", () => {
     page.frame();
     expect(page.shows).toEqual(["tile:1"]);
     expect(painted).toHaveBeenCalledTimes(1);
-    // The server is asked for the low layer.
-    expect(nativeCanvasHeight(track.id)).toBe(180);
 
     app.deliver(1, Array.from(new Uint8Array(packet(2, 320, 180))));
     await settled();

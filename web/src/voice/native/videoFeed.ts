@@ -525,25 +525,6 @@ class Feed {
     void tell("media_view_configure", { view: this.view, ...request });
   }
 
-  /** Height of the picture the page shows, in physical pixels: the measure
-   * `renderedVideoHeight` takes of a <video>. */
-  shownHeight(): number {
-    let height = 0;
-    for (const { canvas } of this.canvases) {
-      const box = host.box(canvas);
-      if (!box) continue;
-      // The canvas's bitmap is the picture; before the first one the box
-      // counts.
-      const picture =
-        canvas.width > 0 && canvas.height > 0
-          ? Math.min(box.height, (box.width * canvas.height) / canvas.width)
-          : box.height;
-      height = Math.max(height, picture * host.pixelRatio());
-    }
-    // A limited view shows no more than this, whatever the canvas.
-    return limit === null ? height : Math.min(height, LIMITED.maxHeight);
-  }
-
   /** Ends the feed. Resolves once the app has closed its view, also one it
    * was still opening: the app makes no frame for this feed after that. */
   close(): Promise<void> {
@@ -598,12 +579,6 @@ export function attachNativeVideo(
   const attached = feed;
   attached.attach(canvas, onFrame);
   return () => attached.detach(canvas);
-}
-
-/** Height the page shows a native track at, in physical pixels; 0 when no
- * canvas shows it. */
-export function nativeCanvasHeight(trackId: string): number {
-  return feeds.get(trackId)?.shownHeight() ?? 0;
 }
 
 function suspensionsChanged(): void {

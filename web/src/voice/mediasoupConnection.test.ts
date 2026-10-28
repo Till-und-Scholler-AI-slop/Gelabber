@@ -787,6 +787,24 @@ describe("public mediasoup connection lifecycle", () => {
     expect(consumer.paused).toBe(false);
   });
 
+  it("sends no viewer layer hints", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    await f.start();
+    const consumer = Object.assign(new NativeConsumer("consumer-1"), {
+      rtpParameters: rtp,
+    });
+    f.device.transports[0].consumeGate = deferred<NativeConsumer>();
+    f.device.transports[0].consumeGate.resolve(consumer);
+    f.connection.handleEvent(
+      announcement({ kind: "video", k: "s", paused: false }),
+    );
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(f.calls("consumerReady")).toHaveLength(1);
+    // The server picks the layer from the bandwidth estimate alone.
+    expect(f.requests.filter((r) => (r.method as string) === "q")).toEqual([]);
+  });
+
   it("uses the server subscription generation and ignores stale state/closed tombstones", async () => {
     const f = fixture();
     await f.start();
