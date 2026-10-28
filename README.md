@@ -1,6 +1,20 @@
 # Gelabber
 
-Chat, Voice und Live für eine Community auf einem Rechner: Wer live geht, zeigt allen im Sprachkanal einen Bildschirm oder ein Fenster, auch mehrere gleichzeitig. Eigenes WebSocket und eigene Signalisierung; selbst gehostetes mediasoup mit offiziellem Rust- und Browser-SDK.
+**Selbst hosten, frei reden.**
+
+[![CI](https://github.com/Till-und-Scholler-AI-slop/Gelabber/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Till-und-Scholler-AI-slop/Gelabber/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Till-und-Scholler-AI-slop/Gelabber)](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/latest)
+
+Chat, Sprache und Live-Screenshare für eine Community auf dem eigenen Server.
+Wer live geht, zeigt allen im Sprachkanal einen Bildschirm oder ein Fenster — auch mehrere gleichzeitig.
+Eigene WebSocket-Signalisierung, selbst gehostetes mediasoup mit offiziellem Rust- und Browser-SDK.
+
+![Gelabber Übersicht](docs/assets/readme-hero.png)
+
+<p align="center">
+  <img src="docs/assets/readme-chat.png" width="48%" alt="Textkanal" />
+  <img src="docs/assets/readme-voice.png" width="48%" alt="Sprachraum" />
+</p>
 
 ## Start
 
@@ -16,7 +30,7 @@ Postgres, Redis und MinIO-Konsole hängen nur an Loopback. UDP für Voice (cotur
 
 Operator-Doku (bestehendes Caddy, TURN-Port, TLS, Backup, Grafana): [deploy/README.md](deploy/README.md).
 
-Für v0.6 vorbereitet: [Gelabber auf dem Handy als PWA installieren](docs/v0.6-pwa.md).
+PWA auf dem Handy: [Gelabber als PWA installieren](docs/v0.6-pwa.md).
 
 ## Layout
 
@@ -43,11 +57,4 @@ cd web && npm run dev
 
 ## Call-Sounds
 
-Kurze Signaltöne melden Beitritt und Verlassen im eigenen Call sowie das eigene
-Stummschalten und Taubstellen. Unter **Einstellungen → Audio** lassen sie sich
-abschalten, in der Lautstärke anpassen und vorhören. Die Auswahl gilt pro
-Browser. Teilnehmer-Töne bleiben beim Taubstellen stumm; Wiederholungen beim Verbinden lösen keine Beitrittstöne aus.
-
-Lokale Browserprüfung ohne API oder Testkonten: Vite starten und im `web`-Ordner
-`npm run test:call-sounds-smoke` ausführen. Prüft native Wiedergabe in Chromium und
-Firefox ohne Autoplay-Ausnahme. Für Brave optional `BRAVE_PATH=/pfad/zu/brave` setzen.
+Kurze Töne für Beitritt, Verlassen, Stummschalten und Taubstellen. Unter **Einstellungen → Audio** lassen sie sich abschalten, anpassen und vorhören. Browserprüfung ohne laufende API: `cd web && npm run test:call-sounds-smoke`.
