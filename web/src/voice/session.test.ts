@@ -3151,6 +3151,31 @@ describe("source and transport continuity", () => {
     expect(useVoice.getState().status).toBe("joined");
   });
 
+  it("re-applies the ceilings once a native capture reports its size", async () => {
+    const track = new NativeTrack("video", "Bildschirm");
+    const env = await connected({
+      displayStreamFor: () =>
+        new NativeStream([
+          track as unknown as MediaStreamTrack,
+        ]) as unknown as MediaStream,
+    });
+    toggleShare();
+    const sender = () =>
+      env.peers[0]!.senderRows.find((row) => row.track === (track as unknown));
+    await vi.waitFor(() => expect(sender()).toBeTruthy());
+    const nominal = () => sender()!.getParameters!().encodings[0]!.maxBitrate;
+    await vi.waitFor(() => expect(nominal()).toBeGreaterThan(0));
+    const before = nominal()!;
+    const set = vi.spyOn(sender()!, "setParameters");
+    track.updateSettings({ width: 3840, height: 2160 });
+    await vi.waitFor(() => expect(nominal()).toBeGreaterThan(before));
+    // The same size again changes nothing and queues nothing.
+    const calls = set.mock.calls.length;
+    track.updateSettings({ width: 3840, height: 2160 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(set.mock.calls.length).toBe(calls);
+  });
+
   it("uses the screen profile for a Live", async () => {
     useMediaSettings.getState().patch({ screenProfile: "economy" });
     const env = await connected();

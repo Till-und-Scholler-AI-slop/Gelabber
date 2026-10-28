@@ -64,8 +64,12 @@ export class NativeTrack extends EventTarget {
   getSettings(): MediaTrackSettings {
     return { ...this.settings };
   }
+  /** Fires `settingschange` only when the picture size changed. */
   updateSettings(next: MediaTrackSettings): void {
+    const { width, height } = this.settings;
     this.settings = { ...this.settings, ...next };
+    if (this.settings.width !== width || this.settings.height !== height)
+      this.dispatchEvent(new Event("settingschange"));
   }
   getConstraints(): MediaTrackConstraints {
     return {};
