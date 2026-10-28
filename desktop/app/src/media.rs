@@ -523,7 +523,9 @@ async fn off_runtime(job: impl FnOnce() + Send + 'static) -> Result<()> {
 /// - "vp9-svc": the core sends VP9 in three spatial layers
 ///   (`scalabilityMode` "L3T3_KEY", one encoding). VP9 is libvpx in
 ///   software inside libwebrtc, so Linux and Windows both report it. The web
-///   client then prefers VP9 over VP8 where the room decodes it.
+///   client sends VP8 in layers first, because libwebrtc caps each VP9
+///   spatial layer at about 1.6 x pixels + 50 kbit/s, and uses VP9 in layers
+///   where the room has no VP8 or H264.
 ///
 /// The only place that decides the list. An app before v0.6 reports none.
 const FEATURES: &[&str] = if cfg!(any(target_os = "linux", windows)) {

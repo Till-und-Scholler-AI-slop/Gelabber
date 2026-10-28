@@ -361,9 +361,11 @@ separate decision.
   (`chooseVideoCodec` in `web/src/voice/videoCodec.ts`) among those every
   receiver in the room decodes, which the media server announces. It takes
   AV1 where the device encodes it in hardware, then H264 where the device
-  encodes that in hardware, then VP9 in three spatial layers (`L3T3_KEY`;
-  where the browser is Chromium or the app reports `vp9-svc`), else VP8; AV1
-  on the CPU never comes before VP8 (issue #318). The core produces what it
+  encodes that in hardware, else VP8 in three layers; AV1 on the CPU never
+  comes before VP8 (issue #318). VP9 in three spatial layers (`L3T3_KEY`;
+  where the browser is Chromium or the app reports `vp9-svc`) is for a room
+  that has no VP8 or H264: libwebrtc caps each VP9 spatial layer at about
+  1.6 x pixels + 50 kbit/s, far below what VP8 layers may use. The core produces what it
   is asked for, and a caller that names no codec gets H264 before VP8.
   `media_info` reports the features
   `h264-hardware`, `av1-hardware`, `av1-hardware-decode` and `vp9-svc` (on

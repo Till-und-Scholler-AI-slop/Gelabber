@@ -1999,8 +1999,9 @@ describe("video codec negotiation", () => {
     parameters: { "profile-id": 0 },
   };
   const vp9Room = (handlerName: string) => {
+    // VP8 comes first (libwebrtc caps VP9 SVC layers), so only a room
+    // without VP8 and H.264 sends VP9.
     const f = negotiating({ av1: false, h264: false, vp9Svc: true }, [
-      "video/vp8",
       "video/vp9",
     ]);
     f.device.sendRtpCapabilities = {
@@ -2009,12 +2010,6 @@ describe("video codec negotiation", () => {
     f.device.handlerName = handlerName;
     return f;
   };
-  const vp8Layers = [
-    { scaleResolutionDownBy: 4 },
-    { scaleResolutionDownBy: 2 },
-    { scaleResolutionDownBy: 1 },
-  ];
-
   it("sends VP9 as one stream in L3T3_KEY on a Chromium handler", async () => {
     const chrome = vp9Room("Chrome111");
     await chrome.start();
@@ -2025,17 +2020,17 @@ describe("video codec negotiation", () => {
     expect(sent(chrome)[0].encodings).toEqual([
       { scalabilityMode: "L3T3_KEY" },
     ]);
-    // Firefox accepts the mode and sends one layer, so it sends VP8 layers.
+    // Firefox accepts the mode and sends one layer, so VP9 goes out plain.
     const firefox = vp9Room("Firefox120");
     await firefox.start();
     await firefox.connection.publish(
       publication("v", new Capture("cam", "video")),
     );
-    expect(sent(firefox)[0].codec?.mimeType).toBe("video/VP8");
-    expect(sent(firefox)[0].encodings).toEqual(vp8Layers);
+    expect(sent(firefox)[0].codec?.mimeType).toBe("video/VP9");
+    expect(sent(firefox)[0].encodings).toBeUndefined();
   });
 
-  it("falls back to VP8 layers for good when the SDK refuses VP9 SVC", async () => {
+  it("falls back to plain VP9 for good when the SDK refuses VP9 SVC", async () => {
     const f = vp9Room("Chrome111");
     await f.start();
     await f.connection.publish(publication("a", new Capture("mic", "audio")));
@@ -2046,18 +2041,19 @@ describe("video codec negotiation", () => {
     const video = sent(f).slice(1);
     expect(video).toHaveLength(2);
     expect(video[0].codec?.mimeType).toBe("video/VP9");
-    expect(video[1].codec?.mimeType).toBe("video/VP8");
-    expect(video[1].encodings).toEqual(vp8Layers);
+    // The room has no VP8 or H.264: VP9 again, without the SVC mode.
+    expect(video[1].codec?.mimeType).toBe("video/VP9");
+    expect(video[1].encodings).toBeUndefined();
     await f.connection.publish(
       publication("s", new Capture("screen", "video")),
     );
     const next = sent(f).at(-1)!;
-    expect(next.codec?.mimeType).toBe("video/VP8");
-    expect(next.encodings).toEqual(vp8Layers);
+    expect(next.codec?.mimeType).toBe("video/VP9");
+    expect(next.encodings).toBeUndefined();
     expect(f.onError).not.toHaveBeenCalled();
   });
 
-  it("falls back to VP8 layers when the SDK refuses VP9 SVC with OperationError", async () => {
+  it("falls back to plain VP9 when the SDK refuses VP9 SVC with OperationError", async () => {
     const f = vp9Room("Chrome111");
     await f.start();
     await f.connection.publish(publication("a", new Capture("mic", "audio")));
@@ -2066,8 +2062,8 @@ describe("video codec negotiation", () => {
     );
     await f.connection.publish(publication("v", new Capture("cam", "video")));
     const video = sent(f).slice(1);
-    expect(video.at(-1)?.codec?.mimeType).toBe("video/VP8");
-    expect(video.at(-1)?.encodings).toEqual(vp8Layers);
+    expect(video.at(-1)?.codec?.mimeType).toBe("video/VP9");
+    expect(video.at(-1)?.encodings).toBeUndefined();
     expect(f.onError).not.toHaveBeenCalled();
   });
 

@@ -4,11 +4,13 @@
 // (`MediaResults["capabilities"]`, the `codecs` event). Among those, AV1
 // wins where this device encodes it in hardware: the same picture for less
 // bitrate at little CPU (issue #318). Then H.264 where it is encoded in
-// hardware, which costs the least CPU. Then VP9 in three spatial layers
-// (SVC) where this device encodes it: one stream gives the server three
-// resolutions at better quality per bit than VP8 simulcast. Otherwise VP8,
-// which every WebRTC stack encodes and decodes. AV1 on the CPU costs far
-// more than VP8 and comes last.
+// hardware, which costs the least CPU. Otherwise VP8 in three simulcast
+// layers, which every WebRTC stack encodes and decodes. VP9 SVC does not
+// come before it: libwebrtc caps each VP9 spatial layer at about
+// 1.6 x pixels + 50 kbit/s whatever the frame rate, far below the ceilings
+// VP8 layers get. VP9 follows H.264 and goes out in three layers
+// (`VP9_SVC_MODE`) where it is the best codec the room has and this device
+// can send SVC. AV1 on the CPU costs far more than VP8 and comes last.
 //
 // AV1 goes out as one stream, never in simulcast layers, so every receiver
 // decodes the whole picture. A device that cannot decode 4K AV1 smoothly
@@ -84,7 +86,6 @@ export function chooseVideoCodec(
     const order = [
       ...(hardware.av1 ? [AV1] : []),
       ...(hardware.h264 ? [H264] : []),
-      ...(hardware.vp9Svc ? [VP9] : []),
       VP8,
       H264,
       VP9,

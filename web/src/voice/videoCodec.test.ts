@@ -98,15 +98,14 @@ describe("video codec choice", () => {
     );
   });
 
-  it("prefers VP9 in three spatial layers over VP8 where the device encodes it", () => {
+  it("sends VP8 before VP9 SVC, and VP9 only where the room has nothing else", () => {
     const allowed = ["video/vp8", "video/vp9", "video/h264", "video/av1"];
-    expect(chooseVideoCodec(device, allowed, vp9Only)).toBe(vp9);
+    // libwebrtc caps VP9 SVC layers far below VP8's ceilings.
+    expect(chooseVideoCodec(device, allowed, vp9Only)).toBe(vp8);
     expect(chooseVideoCodec(device, allowed, { ...vp9Only, h264: true })).toBe(
       constrained,
     );
-    expect(chooseVideoCodec(device, ["video/vp8", "video/h264"], vp9Only)).toBe(
-      vp8,
-    );
+    expect(chooseVideoCodec(device, ["video/vp9"], vp9Only)).toBe(vp9);
   });
 
   it("sends VP9 only in profile 0", () => {
