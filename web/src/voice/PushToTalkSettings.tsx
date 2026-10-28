@@ -1,6 +1,9 @@
 // Voice activity or push-to-talk, the key and its release delay (pushToTalk.ts).
 
 import { useEffect, useState } from "react";
+
+import { Button } from "../components/ui/Button.tsx";
+import { ChipGroup } from "../components/ui/ChipGroup.tsx";
 import { isDesktopApp } from "./native/bridge.ts";
 import {
   globalKeyNote,
@@ -13,6 +16,7 @@ import {
   type VoiceInputMode,
 } from "./pushToTalk.ts";
 import { useMediaSettings } from "./settings.ts";
+import { SettingRow, Slider } from "./settingsLayout.tsx";
 
 const MODES: Record<VoiceInputMode, { label: string; hint: string }> = {
   activity: {
@@ -71,86 +75,57 @@ export function PushToTalkSettings() {
   }, [recording, patch]);
 
   return (
-    <fieldset className="flex flex-col gap-3">
-      <legend className="text-sm font-semibold text-lr-text">
-        Sprachübertragung
-      </legend>
-      {(Object.keys(MODES) as VoiceInputMode[]).map((mode) => (
-        <label key={mode} className="flex items-start gap-2 text-sm">
-          <input
-            type="radio"
-            className="ui-check"
-            name="voice-input"
-            checked={voiceInput === mode}
-            onChange={() => patch({ voiceInput: mode })}
-          />
-          <span>
-            {MODES[mode].label}
-            <small className="block text-lr-muted">{MODES[mode].hint}</small>
-          </span>
-        </label>
-      ))}
+    <>
+      <SettingRow label="Senden">
+        <ChipGroup<VoiceInputMode>
+          label="Sprachübertragung"
+          options={(Object.keys(MODES) as VoiceInputMode[]).map((mode) => ({
+            value: mode,
+            label: MODES[mode].label,
+          }))}
+          value={voiceInput}
+          onChange={(mode) => patch({ voiceInput: mode })}
+        />
+        <p className="media-hint">{MODES[voiceInput].hint}</p>
+      </SettingRow>
       {voiceInput === "ptt" && (
-        <>
-          <div className="flex items-center gap-2 text-sm">
-            <span className="font-medium text-lr-text">Taste</span>
-            <button
-              type="button"
-              id="ptt-key"
-              aria-live="polite"
-              className="rounded border px-3 py-1.5 text-sm"
-              onClick={() => setRecording((on) => !on)}
-            >
-              {recording
-                ? "Taste oder Maustaste drücken … (Esc bricht ab)"
-                : pttKey
-                  ? pttKeyLabel || pushToTalkKeyLabel(pttKey)
-                  : "Taste festlegen"}
-            </button>
-          </div>
-          {!pttKey && (
-            <p role="status" className="text-xs text-lr-muted">
-              Ohne Taste bleibt dein Mikrofon im Gespräch stumm.
-            </p>
-          )}
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center justify-between gap-2 text-sm">
-              <label
-                htmlFor="ptt-release-delay"
-                className="font-medium text-lr-text"
-              >
-                Nachlaufzeit
-              </label>
-              <span className="tabular-nums text-lr-muted">
-                {releaseDelay} ms
-              </span>
-            </div>
-            <input
-              id="ptt-release-delay"
-              type="range"
-              min={0}
-              max={PTT_RELEASE_DELAY_MAX}
-              step={50}
-              value={releaseDelay}
-              onChange={(event) =>
-                patch({ pttReleaseDelay: Number(event.target.value) })
-              }
-              className="w-full"
-            />
-            <p className="text-xs text-lr-muted">
-              So lange sendet das Mikrofon nach dem Loslassen weiter, damit das
-              letzte Wort nicht abreißt.
-            </p>
-          </div>
-          {pttKey && (
-            <p role="status" className="text-xs text-lr-muted">
-              {desktop
+        <SettingRow label="Taste" htmlFor="ptt-key">
+          <Button
+            id="ptt-key"
+            size="sm"
+            className="self-start"
+            aria-live="polite"
+            onClick={() => setRecording((on) => !on)}
+          >
+            {recording
+              ? "Taste oder Maustaste drücken … (Esc bricht ab)"
+              : pttKey
+                ? pttKeyLabel || pushToTalkKeyLabel(pttKey)
+                : "Taste festlegen"}
+          </Button>
+          <p role="status" className="media-hint">
+            {!pttKey
+              ? "Ohne Taste bleibt dein Mikrofon im Gespräch stumm."
+              : desktop
                 ? globalKeyNote(global, onWindows())
                 : "Im Browser wirkt die Taste nur, solange Gelabber im Vordergrund ist. Die Desktop-App hört sie auch im Hintergrund."}
-            </p>
-          )}
-        </>
+          </p>
+        </SettingRow>
       )}
-    </fieldset>
+      {voiceInput === "ptt" && (
+        <SettingRow label="Nachlaufzeit" htmlFor="ptt-release-delay">
+          <Slider
+            id="ptt-release-delay"
+            min={0}
+            max={PTT_RELEASE_DELAY_MAX}
+            step={50}
+            value={releaseDelay}
+            suffix={`${releaseDelay} ms`}
+            onChange={(value) => patch({ pttReleaseDelay: value })}
+            hint="So lange sendet das Mikrofon nach dem Loslassen weiter, damit das letzte Wort nicht abreißt."
+          />
+        </SettingRow>
+      )}
+    </>
   );
 }

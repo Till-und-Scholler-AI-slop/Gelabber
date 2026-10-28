@@ -12,17 +12,25 @@ import {
 } from "./devices.ts";
 // Shared Voice/Video form. Used on /settings and in-call.
 
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "../components/ui/Button.tsx";
 import { Input } from "../components/ui/Input.tsx";
+import { RadioCard } from "../components/ui/RadioCard.tsx";
 import { Select as UiSelect } from "../components/ui/Select.tsx";
 import { Switch } from "../components/ui/Switch.tsx";
 import "./quality.css";
 import { playCallSound } from "./callSounds.ts";
+import {
+  SettingRow,
+  SettingsGroup,
+  Slider,
+  SwitchLine,
+} from "./settingsLayout.tsx";
 
 import {
   AUDIO_PROCESSING,
   AUDIO_PROCESSING_DESKTOP,
+  AUDIO_QUALITY,
   audioBitrate,
   type AudioProcessingMode,
   type DeviceOption,
@@ -32,6 +40,7 @@ import {
   STREAM_PROFILES,
   VIDEO_RESOLUTIONS,
   VIDEO_FRAME_RATES,
+  VIDEO_SEND_BUDGET,
   explicitStreamProfile,
   type VideoResolution,
   type VideoFrameRate,
@@ -79,7 +88,7 @@ export function MediaSettingsForm({
   const processingModes = desktop ? AUDIO_PROCESSING_DESKTOP : AUDIO_PROCESSING;
 
   return (
-    <div className="media-settings-form flex flex-col gap-6 text-left">
+    <div className="media-settings-form text-left">
       {section === "all" && (
         <p className="text-sm text-lr-muted">
           Passe Mikrofon, Lautsprecher und Kamera an. Die Übertragung hat
@@ -87,37 +96,16 @@ export function MediaSettingsForm({
         </p>
       )}
 
-      {(showAudio || showVideo) && (
-        <fieldset className="flex flex-col gap-3">
-          <legend className="text-sm font-semibold text-lr-text">Geräte</legend>
-          {showAudio && (
+      {showAudio && (
+        <SettingsGroup title="Eingabe">
+          <SettingRow label="Mikrofon" htmlFor="audio-input">
             <DeviceSelect
               id="audio-input"
-              label="Mikrofon"
               devices={devices.audioinput}
               value={settings.audioInputId}
               onChange={(value) => settings.patch({ audioInputId: value })}
             />
-          )}
-          {showAudio && chooseSpeaker && (
-            <DeviceSelect
-              id="audio-output"
-              label="Lautsprecher"
-              devices={devices.audiooutput}
-              value={settings.audioOutputId}
-              onChange={(value) => settings.patch({ audioOutputId: value })}
-            />
-          )}
-          {showAudio && !chooseSpeaker && (
-            <p className="text-xs text-lr-muted">
-              Dieser Browser kann den Lautsprecher nicht wählen. Der Ton folgt
-              der Ausgabe deines Geräts.
-            </p>
-          )}
-          {showAudio &&
-            loaded &&
-            !desktop &&
-            needsDeviceLabels(devices.audioinput) && (
+            {loaded && !desktop && needsDeviceLabels(devices.audioinput) && (
               <div className="media-settings-reveal">
                 <p className="text-xs text-lr-muted">
                   {revealFailed
@@ -134,63 +122,76 @@ export function MediaSettingsForm({
                 </Button>
               </div>
             )}
-          {showVideo && (
-            <DeviceSelect
-              id="video-input"
-              label="Kamera"
-              devices={devices.videoinput}
-              value={settings.videoInputId}
-              onChange={(value) => settings.patch({ videoInputId: value })}
+          </SettingRow>
+          <SettingRow label="Mic-Gain" htmlFor="input-gain">
+            <Slider
+              id="input-gain"
+              min={0}
+              max={200}
+              value={Math.round(settings.inputGain * 100)}
+              suffix={`${Math.round(settings.inputGain * 100)} %`}
+              scale={["0 %", "100 %", "200 %"]}
+              onChange={(value) => settings.patch({ inputGain: value / 100 })}
+              hint={
+                desktop
+                  ? "100 % fügt keine Verstärkung hinzu."
+                  : "100 % fügt keine Verstärkung hinzu. Andere Werte laufen über Web Audio."
+              }
             />
-          )}
-          {showVideo &&
-            loaded &&
-            !desktop &&
-            needsDeviceLabels(devices.videoinput) && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="self-start"
-                onClick={() => void reveal("video")}
-              >
-                Kameranamen anzeigen
+          </SettingRow>
+          <PushToTalkSettings />
+          <SettingRow label="Filter">
+            <div className="media-cards">
+              {(Object.keys(processingModes) as AudioProcessingMode[]).map(
+                (mode) => (
+                  <RadioCard
+                    key={mode}
+                    name="audio-processing"
+                    label={processingModes[mode].label}
+                    description={processingModes[mode].hint}
+                    checked={settings.processingMode === mode}
+                    onChange={() => settings.patch({ processingMode: mode })}
+                  />
+                ),
+              )}
+            </div>
+            <div className="media-actions">
+              <p role="status" className="media-hint">
+                {processing.message}
+              </p>
+              {/* The desktop app's test shows the native core's meters; the
+                  A/B recording needs Web Audio. */}
+              <Button size="sm" onClick={() => setMicrophoneTest(true)}>
+                {desktop
+                  ? "Mikrofon testen"
+                  : "Mikrofon testen und vergleichen"}
               </Button>
-            )}
-        </fieldset>
-      )}
-      {(showAudio || showVideo) && (
-        <fieldset className="flex flex-col gap-2">
-          <legend className="text-sm font-semibold text-lr-text">
-            Bandbreite
-          </legend>
-          <Toggle
-            id="economy-mode"
-            label="Sparmodus für wenig Upload"
-            checked={settings.economyMode}
-            onChange={(economyMode) =>
-              settings.patch({ economyMode, quality: "normal" })
-            }
-          />
-          <p className="text-xs text-lr-muted">
-            {settings.economyMode
-              ? `Ausdrückliche Obergrenzen: Sprache ${audioLimit! / 1000} kbit/s, Stream-Ton 128 kbit/s, Video gemeinsam ${formatVideoBitrate(videoLimit!)}.`
-              : videoLimit
-                ? `Audio ohne Bitratengrenze durch Gelabber; Video mit deinem gemeinsamen Limit von ${formatVideoBitrate(videoLimit)}.`
-                : desktop
-                  ? "Keine Bitratengrenze durch Gelabber. Codec und Verbindung bestimmen die tatsächliche Datenrate."
-                  : "Keine Bitratengrenze durch Gelabber. Browser, Codec und Verbindung bestimmen die tatsächliche Datenrate."}
-          </p>
-        </fieldset>
+            </div>
+          </SettingRow>
+        </SettingsGroup>
       )}
       {showAudio && (
-        <>
-          <fieldset className="flex flex-col gap-3">
-            <legend className="text-sm font-semibold text-lr-text">
-              Lautstärke
-            </legend>
+        <SettingsGroup title="Ausgabe">
+          {chooseSpeaker ? (
+            <SettingRow label="Lautsprecher" htmlFor="audio-output">
+              <DeviceSelect
+                id="audio-output"
+                devices={devices.audiooutput}
+                value={settings.audioOutputId}
+                onChange={(value) => settings.patch({ audioOutputId: value })}
+              />
+            </SettingRow>
+          ) : (
+            <SettingRow label="Lautsprecher">
+              <p className="media-hint media-row-text">
+                Dieser Browser kann den Lautsprecher nicht wählen. Der Ton folgt
+                der Ausgabe deines Geräts.
+              </p>
+            </SettingRow>
+          )}
+          <SettingRow label="Gespräche" htmlFor="output-volume">
             <Slider
               id="output-volume"
-              label="Gespräche"
               min={0}
               max={PLAYBACK_SLIDER_MAX}
               value={playbackSliderPosition(settings.outputVolume)}
@@ -205,14 +206,16 @@ export function MediaSettingsForm({
                   : "Über 100 % wird der Ton digital verstärkt. Nutze dafür Kopfhörer: Über Lautsprecher können die anderen sonst ihr eigenes Echo hören."
               }
             />
+          </SettingRow>
+          <SettingRow label="Stream-Ton" htmlFor="source-audio-volume">
             <Slider
               id="source-audio-volume"
-              label="Stream-Ton"
               min={0}
               max={PLAYBACK_SLIDER_MAX}
               value={playbackSliderPosition(settings.sourceAudioVolume)}
               suffix={`${Math.round(settings.sourceAudioVolume * 100)} %`}
               scale={PLAYBACK_SCALE}
+              disabled={settings.sourceAudioMuted}
               onChange={(value) =>
                 settings.patch({
                   sourceAudioVolume: playbackSliderVolume(value),
@@ -228,187 +231,219 @@ export function MediaSettingsForm({
                 settings.patch({ sourceAudioMuted })
               }
             />
-            <Slider
-              id="input-gain"
-              label="Mic-Gain"
-              min={0}
-              max={200}
-              value={Math.round(settings.inputGain * 100)}
-              suffix={`${Math.round(settings.inputGain * 100)} %`}
-              scale={["0 %", "100 %", "200 %"]}
-              onChange={(value) => settings.patch({ inputGain: value / 100 })}
-              hint={
-                desktop
-                  ? "100 % fügt keine Verstärkung hinzu."
-                  : "100 % fügt keine Verstärkung hinzu. Andere Werte laufen über Web Audio."
-              }
-            />
-          </fieldset>
-          <PushToTalkSettings />
-          <fieldset className="flex flex-col gap-3">
-            <legend className="text-sm font-semibold">
-              Mikrofonverarbeitung
-            </legend>
-            {(Object.keys(processingModes) as AudioProcessingMode[]).map(
-              (mode) => (
-                <label key={mode} className="flex items-start gap-2 text-sm">
-                  <input
-                    type="radio"
-                    className="ui-check"
-                    name="audio-processing"
-                    checked={settings.processingMode === mode}
-                    onChange={() => settings.patch({ processingMode: mode })}
-                  />
-                  <span>
-                    {processingModes[mode].label}
-                    <small className="block text-lr-muted">
-                      {processingModes[mode].hint}
-                    </small>
-                  </span>
-                </label>
-              ),
-            )}
-            <p role="status" className="text-xs text-lr-muted">
-              {processing.message}
-            </p>
-            {/* The desktop app's test shows the native core's meters; the
-                A/B recording needs Web Audio. */}
+          </SettingRow>
+          <SettingRow label="Signaltöne" htmlFor="call-sounds">
+            <SwitchLine
+              id="call-sounds"
+              checked={settings.callSounds}
+              onChange={(callSounds) => settings.patch({ callSounds })}
+            >
+              Kurze Töne beim Beitreten und Verlassen sowie für dein Mikrofon
+              und Taubstellen. Wenn du taubgestellt bist, bleiben
+              Teilnehmer-Töne stumm.
+            </SwitchLine>
+            <div className="media-field">
+              <label htmlFor="call-sound-volume">
+                Lautstärke der Signaltöne
+              </label>
+              <Slider
+                id="call-sound-volume"
+                min={0}
+                max={1}
+                step={0.05}
+                value={settings.callSoundVolume}
+                suffix={`${Math.round(settings.callSoundVolume * 100)} %`}
+                disabled={!settings.callSounds}
+                onChange={(callSoundVolume) =>
+                  settings.patch({ callSoundVolume })
+                }
+                hint={
+                  desktop
+                    ? "Nutzt die Wiedergabelautstärke. Signaltöne spielen auf dem Standard-Ausgabegerät des Systems."
+                    : chooseSpeaker
+                      ? "Nutzt deinen gewählten Lautsprecher und die Wiedergabelautstärke."
+                      : "Nutzt die Wiedergabelautstärke."
+                }
+              />
+            </div>
             <Button
               size="sm"
               className="self-start"
-              onClick={() => setMicrophoneTest(true)}
+              disabled={
+                !settings.callSounds ||
+                settings.callSoundVolume === 0 ||
+                settings.outputVolume === 0
+              }
+              onClick={() => playCallSound("join")}
             >
-              {desktop ? "Mikrofon testen" : "Mikrofon testen und vergleichen"}
+              Testton abspielen
             </Button>
-          </fieldset>
-          <AdvancedAudio expanded={section === "all"}>
-            <fieldset className="flex flex-col gap-2">
-              <legend className="text-sm font-semibold">
-                {desktop ? "Echo und WebRTC-Filter" : "Echo und Browserfilter"}
-              </legend>
-              <Toggle
-                id="aec"
-                label="Echo-Unterdrückung (AEC)"
-                checked={settings.echoCancellation}
-                onChange={(echoCancellation) =>
-                  settings.patch({ echoCancellation })
+          </SettingRow>
+        </SettingsGroup>
+      )}
+      {showAudio && (
+        <AdvancedAudio
+          expanded={section === "all"}
+          title={desktop ? "Echo und WebRTC-Filter" : "Echo und Browserfilter"}
+        >
+          <SettingRow label="Echo" htmlFor="aec">
+            <SwitchLine
+              id="aec"
+              checked={settings.echoCancellation}
+              onChange={(echoCancellation) =>
+                settings.patch({ echoCancellation })
+              }
+            >
+              Echo-Unterdrückung (AEC). Bei Lautsprechern empfohlen. Für Musik
+              mit Kopfhörern kannst du sie ausschalten.
+            </SwitchLine>
+          </SettingRow>
+          {settings.processingMode === "browser" && (
+            <SettingRow label="Rauschfilter" htmlFor="ns">
+              <SwitchLine
+                id="ns"
+                checked={settings.noiseSuppression}
+                onChange={(noiseSuppression) =>
+                  settings.patch({ noiseSuppression })
                 }
-              />
-              <p className="text-xs text-lr-muted">
-                Bei Lautsprechern empfohlen. Für Musik mit Kopfhörern kannst du
-                sie ausschalten.
-              </p>
-              {settings.processingMode === "browser" && (
-                <Toggle
-                  id="ns"
-                  label={
-                    desktop
-                      ? "Rauschunterdrückung von WebRTC"
-                      : "Rauschunterdrückung des Browsers"
-                  }
-                  checked={settings.noiseSuppression}
-                  onChange={(noiseSuppression) =>
-                    settings.patch({ noiseSuppression })
-                  }
-                />
-              )}
-              {settings.processingMode !== "original" && (
-                <>
-                  <Toggle
-                    id="agc"
-                    label={
-                      desktop
-                        ? "Auto-Gain von WebRTC"
-                        : "Auto-Gain des Browsers"
-                    }
-                    checked={settings.autoGainControl}
-                    onChange={(autoGainControl) =>
-                      settings.patch({ autoGainControl })
-                    }
-                  />
-                  <p className="text-xs text-lr-muted">
-                    Gleicht leise und laute Mikrofone auf einen hörbaren Pegel
-                    an.
-                  </p>
-                </>
-              )}
-            </fieldset>
-          </AdvancedAudio>
-        </>
+              >
+                {desktop
+                  ? "Rauschunterdrückung von WebRTC."
+                  : "Rauschunterdrückung des Browsers."}
+              </SwitchLine>
+            </SettingRow>
+          )}
+          {settings.processingMode !== "original" && (
+            <SettingRow label="Auto-Gain" htmlFor="agc">
+              <SwitchLine
+                id="agc"
+                checked={settings.autoGainControl}
+                onChange={(autoGainControl) =>
+                  settings.patch({ autoGainControl })
+                }
+              >
+                {desktop ? "Auto-Gain von WebRTC." : "Auto-Gain des Browsers."}{" "}
+                Gleicht leise und laute Mikrofone auf einen hörbaren Pegel an.
+              </SwitchLine>
+            </SettingRow>
+          )}
+        </AdvancedAudio>
+      )}
+
+      {showVideo && (
+        <SettingsGroup
+          title="Kamera"
+          badge={profileSummary(settings.cameraProfile)}
+        >
+          <SettingRow label="Gerät" htmlFor="video-input">
+            <DeviceSelect
+              id="video-input"
+              devices={devices.videoinput}
+              value={settings.videoInputId}
+              onChange={(value) => settings.patch({ videoInputId: value })}
+            />
+            {loaded && !desktop && needsDeviceLabels(devices.videoinput) && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="self-start"
+                onClick={() => void reveal("video")}
+              >
+                Kameranamen anzeigen
+              </Button>
+            )}
+          </SettingRow>
+          <SettingRow label="Qualität">
+            <StreamProfileFields
+              kind="camera"
+              name="camera-stream-profile"
+              value={settings.cameraProfile}
+              apply={settings.cameraProfileApply}
+              onChange={(cameraProfile) => settings.patch({ cameraProfile })}
+            />
+          </SettingRow>
+        </SettingsGroup>
       )}
       {showVideo && (
-        <fieldset className="flex flex-col gap-4">
-          <legend className="text-sm font-semibold text-lr-text">
-            Stream-Qualität
-          </legend>
-          <p className="text-xs text-lr-muted">
-            Wähle Auflösung und Bildrate für deine Übertragung. Höhere Werte
-            brauchen mehr Rechenleistung und Upload. Die erreichbare Qualität
-            hängt von Quelle, Gerät und Verbindung ab.
-          </p>
-          <StreamProfilePicker
-            kind="camera"
-            name="camera-stream-profile"
-            legend="Kamera"
-            value={settings.cameraProfile}
-            apply={settings.cameraProfileApply}
-            onChange={(cameraProfile) => settings.patch({ cameraProfile })}
-          />
-          <StreamProfilePicker
-            kind="screen"
-            name="screen-stream-profile"
-            legend="Live"
-            value={settings.screenProfile}
-            apply={settings.screenProfileApply}
-            onChange={(screenProfile) => settings.patch({ screenProfile })}
-          />
+        <SettingsGroup
+          title="Live"
+          badge={profileSummary(settings.screenProfile)}
+        >
+          <SettingRow label="Qualität">
+            <StreamProfileFields
+              kind="screen"
+              name="screen-stream-profile"
+              value={settings.screenProfile}
+              apply={settings.screenProfileApply}
+              onChange={(screenProfile) => settings.patch({ screenProfile })}
+            />
+            <p className="media-hint">
+              Höhere Werte brauchen mehr Rechenleistung und Upload. Die
+              erreichbare Qualität hängt von Quelle, Gerät und Verbindung ab.
+            </p>
+          </SettingRow>
           {/* Only where a Live can carry sound; the same switch sits in
               the Live menu of the call controls. */}
           {capable.appAudio && (
             <section className="stream-source-audio" aria-label="Ton im Live">
-              <Toggle
-                id="share-source-audio"
-                label="Ton mitsenden"
-                checked={sharesSourceAudio(settings)}
-                onChange={(on) =>
-                  settings.patch({ sourceAudioShare: sourceAudioChoice(on) })
-                }
-              />
-              {desktop && (
-                <SourceAudioApp
-                  value={settings.sourceAudioApp}
-                  onChange={(sourceAudioApp) =>
-                    settings.patch({ sourceAudioApp })
+              <SettingRow label="Ton mitsenden" htmlFor="share-source-audio">
+                <SwitchLine
+                  id="share-source-audio"
+                  checked={sharesSourceAudio(settings)}
+                  onChange={(on) =>
+                    settings.patch({ sourceAudioShare: sourceAudioChoice(on) })
                   }
-                />
-              )}
-              {sourceAudioCarriesCall(settings) && (
-                <p
-                  role="status"
-                  className="stream-source-audio-warning text-xs"
                 >
-                  {SOURCE_AUDIO_CARRIES_CALL}
-                </p>
+                  {!desktop
+                    ? "Gilt ab deinem nächsten Live; Ausschalten wirkt sofort. Wähle den Ton im Browserdialog aus; je nach Browser und Quelle ist nur Video verfügbar."
+                    : hasNativeFeature("app-audio-excludes-self")
+                      ? "Gilt auch während du live bist. Mitgesendet wird der Ton anderer Anwendungen, nie dein Mikrofon oder der Ton des Anrufs."
+                      : "Gilt auch während du live bist. Mitgesendet wird der Ton der gewählten Anwendung, nie dein Mikrofon."}{" "}
+                  Der Stream-Ton wird als Stereo-Musik übertragen, ohne
+                  Mikrofonfilter.
+                </SwitchLine>
+                {sourceAudioCarriesCall(settings) && (
+                  <p
+                    role="status"
+                    className="stream-source-audio-warning text-xs"
+                  >
+                    {SOURCE_AUDIO_CARRIES_CALL}
+                  </p>
+                )}
+              </SettingRow>
+              {desktop && (
+                <SettingRow label="Ton von" htmlFor="source-audio-app">
+                  <SourceAudioApp
+                    value={settings.sourceAudioApp}
+                    onChange={(sourceAudioApp) =>
+                      settings.patch({ sourceAudioApp })
+                    }
+                  />
+                </SettingRow>
               )}
-              <p className="text-xs text-lr-muted">
-                {!desktop
-                  ? "Gilt ab deinem nächsten Live; Ausschalten wirkt sofort. Wähle den Ton im Browserdialog aus; je nach Browser und Quelle ist nur Video verfügbar."
-                  : hasNativeFeature("app-audio-excludes-self")
-                    ? "Gilt auch während du live bist. Mitgesendet wird der Ton anderer Anwendungen, nie dein Mikrofon oder der Ton des Anrufs."
-                    : "Gilt auch während du live bist. Mitgesendet wird der Ton der gewählten Anwendung, nie dein Mikrofon."}{" "}
-                Der Stream-Ton wird als Stereo-Musik übertragen, ohne
-                Mikrofonfilter.
-              </p>
             </section>
           )}
-          <section className="stream-upload" aria-label="Video-Upload">
-            <div className="stream-quality-heading">
-              <h3>Video-Upload</h3>
-              {/* Without a limit the choice below already says so (#375). */}
-              {videoLimit ? (
-                <span>{formatVideoBitrate(videoLimit)}</span>
-              ) : null}
-            </div>
+        </SettingsGroup>
+      )}
+      {showVideo && (
+        <SettingsGroup
+          title="Upload"
+          badge={videoLimit ? formatVideoBitrate(videoLimit) : "ohne Limit"}
+        >
+          <SettingRow label="Sparmodus" htmlFor="economy-mode">
+            <SwitchLine
+              id="economy-mode"
+              checked={settings.economyMode}
+              onChange={(economyMode) =>
+                settings.patch({ economyMode, quality: "normal" })
+              }
+            >
+              {settings.economyMode
+                ? `Ausdrückliche Obergrenzen: Sprache ${audioLimit! / 1000} kbit/s, Stream-Ton 128 kbit/s, Video gemeinsam ${formatVideoBitrate(videoLimit!)}.`
+                : `Für wenig Upload: Sprache ${AUDIO_QUALITY.normal.bitrate / 1000} kbit/s, Stream-Ton 128 kbit/s, Video gemeinsam ${formatVideoBitrate(VIDEO_SEND_BUDGET)}.`}
+            </SwitchLine>
+          </SettingRow>
+          <SettingRow label="Video-Limit">
             <div className="stream-upload-mode">
               <label>
                 <input
@@ -434,16 +469,14 @@ export function MediaSettingsForm({
               </label>
             </div>
             {settings.videoUploadLimit > 0 && (
-              <div className="flex flex-col gap-2">
-                <label htmlFor="video-upload-limit">
-                  Eigenes gemeinsames Video-Limit (Mbit/s)
-                </label>
+              <div className="stream-upload-limit">
                 <Input
                   id="video-upload-limit"
                   type="number"
                   min="0.001"
                   max="4294.967"
                   step="any"
+                  aria-label="Eigenes gemeinsames Video-Limit (Mbit/s)"
                   value={settings.videoUploadLimit / 1_000_000}
                   onChange={(event) =>
                     settings.patch({
@@ -451,66 +484,22 @@ export function MediaSettingsForm({
                     })
                   }
                 />
+                <span>Mbit/s für alle Videos zusammen</span>
               </div>
             )}
-            <p className="stream-quality-budget">
+            <p className="media-hint">
               {desktop ? "Die Desktop-App" : "Der Browser"} passt die
               tatsächliche Bitrate an die Verbindung an. Das Limit ist eine
               Obergrenze, keine feste Datenrate.
             </p>
-          </section>
-          <p className="stream-quality-budget">
-            Änderungen gelten beim nächsten Start und werden, soweit
-            unterstützt, auch auf laufende Streams angewendet.
-          </p>
-        </fieldset>
+          </SettingRow>
+        </SettingsGroup>
       )}
-      {showAudio && (
-        <fieldset className="flex flex-col gap-2">
-          <legend className="text-sm font-semibold text-lr-text">
-            Call-Sounds
-          </legend>
-          <Toggle
-            id="call-sounds"
-            label="Signaltöne im Call"
-            checked={settings.callSounds}
-            onChange={(callSounds) => settings.patch({ callSounds })}
-          />
-          <p className="text-sm text-lr-muted">
-            Kurze Töne beim Beitreten und Verlassen sowie für dein Mikrofon und
-            Taubstellen. Wenn du taubgestellt bist, bleiben Teilnehmer-Töne
-            stumm.
-          </p>
-          <Slider
-            id="call-sound-volume"
-            label="Lautstärke der Signaltöne"
-            min={0}
-            max={1}
-            step={0.05}
-            value={settings.callSoundVolume}
-            suffix={`${Math.round(settings.callSoundVolume * 100)} %`}
-            onChange={(callSoundVolume) => settings.patch({ callSoundVolume })}
-            hint={
-              desktop
-                ? "Nutzt die Wiedergabelautstärke. Signaltöne spielen auf dem Standard-Ausgabegerät des Systems."
-                : chooseSpeaker
-                  ? "Nutzt deinen gewählten Lautsprecher und die Wiedergabelautstärke."
-                  : "Nutzt die Wiedergabelautstärke."
-            }
-          />
-          <Button
-            size="sm"
-            className="self-start"
-            disabled={
-              !settings.callSounds ||
-              settings.callSoundVolume === 0 ||
-              settings.outputVolume === 0
-            }
-            onClick={() => playCallSound("join")}
-          >
-            Testton abspielen
-          </Button>
-        </fieldset>
+      {showVideo && (
+        <p className="stream-quality-budget">
+          Änderungen gelten beim nächsten Start und werden, soweit unterstützt,
+          auch auf laufende Streams angewendet.
+        </p>
       )}
       {microphoneTest && (
         <MicrophoneTest onClose={() => setMicrophoneTest(false)} />
@@ -521,31 +510,46 @@ export function MediaSettingsForm({
 
 function AdvancedAudio({
   expanded,
+  title,
   children,
 }: {
   expanded: boolean;
+  title: string;
   children: ReactNode;
 }) {
-  if (expanded) return <>{children}</>;
+  if (expanded)
+    return (
+      <SettingsGroup title={title}>
+        <div>{children}</div>
+      </SettingsGroup>
+    );
   return (
-    <details className="settings-advanced">
-      <summary>Erweiterte Audio-Einstellungen</summary>
-      <div className="flex flex-col gap-6">{children}</div>
+    <details className="media-disclosure">
+      <summary>
+        {title}
+        <small>Für Musik oder Lautsprecher</small>
+      </summary>
+      <div className="media-disclosure-body">{children}</div>
     </details>
   );
 }
 
-function StreamProfilePicker({
+/** "Automatisch" or "1080p · 60 FPS", for a group's heading. */
+function profileSummary(value: StreamProfileId): string {
+  if (value === "balanced") return "Automatisch";
+  const { height, fps } = STREAM_PROFILES[value];
+  return `${height === 2160 ? "4K" : `${height}p`} · ${fps} FPS`;
+}
+
+function StreamProfileFields({
   kind,
   name,
-  legend,
   value,
   apply,
   onChange,
 }: {
   kind: StreamKind;
   name: string;
-  legend: string;
   value: StreamProfileId;
   apply: StreamApply;
   onChange: (value: StreamProfileId) => void;
@@ -557,15 +561,7 @@ function StreamProfilePicker({
   ) as VideoResolution;
   const fps = profile.fps as VideoFrameRate;
   return (
-    <section className="stream-quality-picker" aria-label={legend}>
-      <header className="stream-quality-heading">
-        <h3>{legend}</h3>
-        <span>
-          {automatic
-            ? "Automatisch"
-            : `${height === 2160 ? "4K" : `${height}p`} · ${fps} FPS`}
-        </span>
-      </header>
+    <>
       <div className="stream-quality-fields">
         <Select
           id={`${name}-resolution`}
@@ -579,7 +575,7 @@ function StreamProfilePicker({
             )
           }
           options={[
-            { id: "auto", label: "Automatisch (bis 1080p)" },
+            { id: "auto", label: "Auto (bis 1080p)" },
             ...VIDEO_RESOLUTIONS.map((resolution) => ({
               id: String(resolution),
               label: resolution === 2160 ? "4K · 2160p" : `${resolution}p`,
@@ -598,9 +594,7 @@ function StreamProfilePicker({
             )
           }
           options={[
-            ...(automatic
-              ? [{ id: "auto", label: "Automatisch (bis 30 FPS)" }]
-              : []),
+            ...(automatic ? [{ id: "auto", label: "Auto (bis 30 FPS)" }] : []),
             ...VIDEO_FRAME_RATES.map((rate) => ({
               id: String(rate),
               label: `${rate} FPS`,
@@ -609,21 +603,17 @@ function StreamProfilePicker({
         />
       </div>
       <ApplyNote apply={apply} />
-    </section>
+    </>
   );
 }
 
 function ApplyNote({ apply }: { apply: StreamApply }) {
   if (apply === "live") {
-    return (
-      <p className="text-xs text-lr-muted">
-        Auf den laufenden Stream angewendet.
-      </p>
-    );
+    return <p className="media-hint">Auf den laufenden Stream angewendet.</p>;
   }
   if (apply === "next") {
     return (
-      <p className="text-xs text-lr-muted">
+      <p className="media-hint">
         Bitrate und FPS-Limit gelten sofort. Die Auflösung gilt ab dem nächsten
         Stream.
       </p>
@@ -658,7 +648,6 @@ function SourceAudioApp({
     <div onFocus={load}>
       <Select
         id="source-audio-app"
-        label="Ton von"
         value={chosen}
         onChange={onChange}
         options={
@@ -678,16 +667,14 @@ function SourceAudioApp({
 }
 
 /** A device field: the system's choice, then the devices the browser or
- * app lists (devices.ts). */
+ * app lists (devices.ts). Its row names it. */
 function DeviceSelect({
   id,
-  label,
   devices,
   value,
   onChange,
 }: {
   id: string;
-  label: string;
   devices: DeviceOption[];
   value: string;
   onChange: (value: string) => void;
@@ -696,7 +683,6 @@ function DeviceSelect({
   return (
     <Select
       id={id}
-      label={label}
       value={choices.value}
       onChange={onChange}
       options={choices.options}
@@ -713,30 +699,33 @@ function Select({
   defaultLabel = null,
 }: {
   id: string;
-  label: string;
+  /** A small label above the field; without it, the row names the field. */
+  label?: string;
   value: string;
   onChange: (value: string) => void;
   options: { id: string; label: string }[];
   /** An empty first entry, for "none chosen". */
   defaultLabel?: string | null;
 }) {
+  const field = (
+    <UiSelect
+      id={id}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    >
+      {defaultLabel !== null && <option value="">{defaultLabel}</option>}
+      {options.map((option) => (
+        <option key={option.id} value={option.id}>
+          {option.label}
+        </option>
+      ))}
+    </UiSelect>
+  );
+  if (!label) return field;
   return (
-    <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-sm font-medium text-lr-text">
-        {label}
-      </label>
-      <UiSelect
-        id={id}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {defaultLabel !== null && <option value="">{defaultLabel}</option>}
-        {options.map((option) => (
-          <option key={option.id} value={option.id}>
-            {option.label}
-          </option>
-        ))}
-      </UiSelect>
+    <div className="media-field">
+      <label htmlFor={id}>{label}</label>
+      {field}
     </div>
   );
 }
@@ -762,67 +751,5 @@ function Toggle({
       disabled={disabled}
       onChange={(event) => onChange(event.target.checked)}
     />
-  );
-}
-
-function Slider({
-  id,
-  label,
-  min,
-  max,
-  value,
-  suffix,
-  step,
-  onChange,
-  hint,
-  scale,
-}: {
-  id: string;
-  label: string;
-  min: number;
-  max: number;
-  value: number;
-  suffix: string;
-  step?: number;
-  onChange: (value: number) => void;
-  hint?: string;
-  /** Labels under the start, middle and end of the track. */
-  scale?: readonly [string, string, string];
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center justify-between gap-2 text-sm">
-        <label htmlFor={id} className="font-medium text-lr-text">
-          {label}
-        </label>
-        <span className="tabular-nums text-lr-muted">{suffix}</span>
-      </div>
-      <input
-        id={id}
-        type="range"
-        step={step}
-        min={min}
-        max={max}
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-        style={
-          {
-            "--lr-range-value": `${Math.round(((value - min) / (max - min)) * 100)}%`,
-          } as CSSProperties
-        }
-        className="lr-range"
-      />
-      {scale ? (
-        <div
-          aria-hidden="true"
-          className="flex justify-between text-xs tabular-nums text-lr-muted"
-        >
-          {scale.map((mark) => (
-            <span key={mark}>{mark}</span>
-          ))}
-        </div>
-      ) : null}
-      {hint ? <p className="text-xs text-lr-muted">{hint}</p> : null}
-    </div>
   );
 }

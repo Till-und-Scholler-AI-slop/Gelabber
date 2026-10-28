@@ -24,9 +24,9 @@ import { VoiceSettingsPanelPart } from "./voiceSettingsPanelPart.ts";
 describe("stream settings form", () => {
   it("shows camera and screen profiles with resolution, fps, and budget", () => {
     const html = renderToStaticMarkup(<MediaSettingsForm />);
-    expect(html).toContain("Stream-Qualität");
+    expect(html).toMatch(/<h3[^>]*>Kamera<\/h3>/);
     // One set for the screen: Live is the only screen there is.
-    expect(html).toContain("<h3>Live</h3>");
+    expect(html).toMatch(/<h3[^>]*>Live<\/h3>/);
     expect(html).not.toMatch(/Go Live|Bildschirmfreigabe/);
     for (const resolution of ["480p", "720p", "1080p", "1440p", "4K · 2160p"])
       expect(html).toContain(resolution);
@@ -36,6 +36,27 @@ describe("stream settings form", () => {
     expect(html).toContain('id="screen-stream-profile-fps"');
     expect(html).toContain("Eigenes Limit");
     expect(html).toContain("Änderungen gelten beim nächsten Start");
+  });
+
+  it("names each setting once, in the row it heads", () => {
+    const html = renderToStaticMarkup(<MediaSettingsForm section="audio" />);
+    for (const [id, name] of [
+      ["audio-input", "Mikrofon"],
+      ["input-gain", "Mic-Gain"],
+      ["output-volume", "Gespräche"],
+      ["source-audio-volume", "Stream-Ton"],
+      ["call-sounds", "Signaltöne"],
+    ])
+      expect(html).toContain(
+        `<label for="${id}" class="media-row-label">${name}</label>`,
+      );
+    // The economy mode limits uploads; it sits with the video upload only.
+    expect(html).not.toContain('id="economy-mode"');
+    expect(
+      renderToStaticMarkup(<MediaSettingsForm section="video" />),
+    ).toContain(
+      '<label for="economy-mode" class="media-row-label">Sparmodus</label>',
+    );
   });
 });
 
@@ -82,12 +103,15 @@ describe("settings dialog", () => {
     const video = tabs("video");
     expect(video).toMatch(/aria-selected="true"[^>]*>Video &amp; Stream</);
     expect(video).toContain('id="video-input"');
-    expect(video).toContain("Stream-Qualität");
+    expect(video).toContain('id="economy-mode"');
     expect(video).not.toContain('id="audio-input"');
     // The call bar's quality bars open the diagnostics.
     const diagnostics = tabs("diagnostics");
     expect(diagnostics).toMatch(/aria-selected="true"[^>]*>Diagnose</);
     expect(diagnostics).toContain('aria-label="Sprachdiagnose"');
+    // The dialog's focus starts on the tab it opened, not the first one.
+    expect(diagnostics.match(/autofocus=""/g)).toHaveLength(1);
+    expect(diagnostics).toMatch(/autofocus=""[^>]*aria-selected="true"/);
   });
 });
 

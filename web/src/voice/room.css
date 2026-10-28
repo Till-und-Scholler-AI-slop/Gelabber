@@ -1051,11 +1051,6 @@ a.voice-session-link:hover > span {
   flex: 1;
   min-width: 0;
 }
-.voice-diagnostics-verdict {
-  color: var(--lr-text);
-  font: var(--lr-type-ui);
-  font-weight: 600;
-}
 /* Mute and deafen marks next to names in lists and rooms. */
 .voice-state-icons {
   color: var(--lr-muted);

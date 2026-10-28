@@ -22,9 +22,12 @@ import { useMediaQuery } from "./useMediaQuery.ts";
 import { UserVolumeControl } from "./UserVolumeControl.tsx";
 import { useCapabilities } from "../voice/capabilities.ts";
 import { useCallShortcuts } from "../voice/callShortcuts.ts";
+import { ConnectionStatus } from "../voice/ConnectionStatus.tsx";
+import { directionTotal } from "../voice/connectionSummary.ts";
 import {
   callQuality,
   callQualitySummary,
+  formatBps,
   useVoiceDiagnostics,
 } from "../voice/diagnostics.ts";
 import { usePushToTalk } from "../voice/pushToTalk.ts";
@@ -276,28 +279,81 @@ function CallStatus({
   );
 }
 
-/** One to four bars from the latest measurement; pressing them opens the
- * diagnostics. */
+/** One to four bars from the latest measurement; pressing them shows the
+ * connection at a glance, with the way to the full diagnostics. */
 function QualityBars() {
   const sample = useVoiceDiagnostics((state) => state.latest?.voice ?? null);
+  const watch = useVoiceDiagnostics((state) => state.latest?.watch ?? null);
   const openSettings = useMediaSettings((s) => s.openDialog);
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLButtonElement>(null);
   const quality = callQuality(sample);
   const label = quality
     ? callQualitySummary(quality)
     : "Verbindung: wird gemessen …";
+  const sent = directionTotal([sample], "send");
+  const received = directionTotal([sample, watch], "recv");
+  const show = (section: "audio" | "diagnostics") => {
+    setOpen(false);
+    openSettings(section);
+  };
   return (
-    <button
-      type="button"
-      className="voice-quality-bars"
-      data-level={quality?.level ?? 0}
-      aria-label={`${label} – Details anzeigen`}
-      title={label}
-      onClick={() => openSettings("diagnostics")}
-    >
-      {[1, 2, 3, 4].map((bar) => (
-        <span key={bar} aria-hidden="true" />
-      ))}
-    </button>
+    <>
+      <button
+        ref={anchor}
+        type="button"
+        className="voice-quality-bars"
+        data-level={quality?.level ?? 0}
+        aria-label={`${label} – Details anzeigen`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title={label}
+        onClick={() => setOpen((value) => !value)}
+      >
+        {[1, 2, 3, 4].map((bar) => (
+          <span key={bar} aria-hidden="true" />
+        ))}
+      </button>
+      <Popover
+        open={open}
+        onClose={() => setOpen(false)}
+        anchor={anchor}
+        label="Verbindung"
+        placement="top-start"
+        className="voice-connection-popover"
+      >
+        <ConnectionStatus compact />
+        <dl className="connection-io">
+          <div>
+            <dt>
+              <span className="connection-dir" aria-hidden="true">
+                ↑
+              </span>
+              Du sendest
+            </dt>
+            <dd>{sent === null ? "–" : formatBps(sent)}</dd>
+          </div>
+          <div>
+            <dt>
+              <span className="connection-dir" aria-hidden="true">
+                ↓
+              </span>
+              Du empfängst
+            </dt>
+            <dd>{received === null ? "–" : formatBps(received)}</dd>
+          </div>
+        </dl>
+        <div className="connection-actions">
+          <Button size="sm" variant="ghost" onClick={() => show("audio")}>
+            Einstellungen
+          </Button>
+          {/* Focus starts on the way to the details (Popover.tsx). */}
+          <Button size="sm" autoFocus onClick={() => show("diagnostics")}>
+            Alle Details
+          </Button>
+        </div>
+      </Popover>
+    </>
   );
 }
 
