@@ -2057,6 +2057,20 @@ describe("video codec negotiation", () => {
     expect(f.onError).not.toHaveBeenCalled();
   });
 
+  it("falls back to VP8 layers when the SDK refuses VP9 SVC with OperationError", async () => {
+    const f = vp9Room("Chrome111");
+    await f.start();
+    await f.connection.publish(publication("a", new Capture("mic", "audio")));
+    f.device.transports[1].productionErrors.push(
+      Object.assign(new Error("unsupported mode"), { name: "OperationError" }),
+    );
+    await f.connection.publish(publication("v", new Capture("cam", "video")));
+    const video = sent(f).slice(1);
+    expect(video.at(-1)?.codec?.mimeType).toBe("video/VP8");
+    expect(video.at(-1)?.encodings).toEqual(vp8Layers);
+    expect(f.onError).not.toHaveBeenCalled();
+  });
+
   it("sends AV1 as one stream where it is encoded in hardware", async () => {
     const all = ["video/vp8", "video/h264", "video/av1"];
     const hw = negotiating({ av1: true, h264: true, vp9Svc: false }, all);

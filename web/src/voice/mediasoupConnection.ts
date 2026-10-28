@@ -673,11 +673,13 @@ export class MediasoupConnection implements MediaConnection {
       });
     } catch (error) {
       const name = sdkErrorName(error);
-      if (
-        !(layered || svc) ||
-        (name !== "UnsupportedError" && name !== "NotSupportedError")
-      )
-        throw error;
+      // libwebrtc may report an unsupported scalability mode as an
+      // OperationError; produce() has compacted the send transport by now.
+      const refused =
+        name === "UnsupportedError" ||
+        name === "NotSupportedError" ||
+        (svc && name === "OperationError");
+      if (!(layered || svc) || !refused) throw error;
       this.live();
       if (svc) {
         // The codec choice runs again without SVC and picks VP8 layers.
