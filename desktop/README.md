@@ -363,8 +363,9 @@ separate decision.
   AV1 where the device encodes it in hardware, then H264 where the device
   encodes that in hardware, then VP9 in three spatial layers (`L3T3_KEY`;
   where the browser is Chromium or the app reports `vp9-svc`), else VP8; AV1
-  on the CPU never comes before VP8 (issue #318). The core produces what it is asked for, and a caller that
-  names no codec gets H264 before VP8. `media_info` reports the features
+  on the CPU never comes before VP8 (issue #318). The core produces what it
+  is asked for, and a caller that names no codec gets H264 before VP8.
+  `media_info` reports the features
   `h264-hardware`, `av1-hardware`, `av1-hardware-decode` and `vp9-svc` (on
   Linux and Windows alike: VP9 is libvpx in software) and, under
   `videoCodecs`, what `gm_video_codecs` found. mediasoup forwards AV1 (like
@@ -372,9 +373,9 @@ separate decision.
   one stream and the server refuses AV1 or VP9 producers with more than one
   encoding. Every receiver then decodes the whole picture, so a device that
   does not decode AV1 at 4K smoothly (`av1-hardware-decode`; in a browser
-  `decodingInfo`'s `smooth` at 3840x2160) leaves AV1 out of the codecs it tells
-  the server it receives: one such receiver keeps the room on H264 or VP8
-  with layers.
+  `decodingInfo`'s `smooth` at 3840x2160) leaves AV1 out of the codecs it
+  tells the server it receives: one such receiver keeps the room on H264 or
+  VP8 with layers.
   - Neither libwebrtc build carries H264 (`rtc_use_h264=false`, no OpenH264
     or FFmpeg) and the core is compiled without `WEBRTC_USE_H264`: H264 is
     the system's alone, so the packages ship no H264 codec. A system
@@ -424,7 +425,8 @@ separate decision.
   when every layer has exactly the top layer's aspect. A layer is the
   picture divided by its `scaleResolutionDownBy`, so a 1366x768 screen
   in the web client's ladder of 4, 2 and 1 would be 342x192 for the layer
-  at 4 (the quarter) below 1366x768: refused, and nothing is sent. Local video sources therefore crop to multiples of 4
+  at 4 (the quarter) below 1366x768: refused, and nothing is sent. Local
+  video sources therefore crop to multiples of 4
   (1364x768), and the software encoders tell libwebrtc that their alignment
   holds for every layer, which makes it ask the source for what other
   factors need. libwebrtc's own answer, `SimulcastEncoderAdapter` with an

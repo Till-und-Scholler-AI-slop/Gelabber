@@ -23,6 +23,7 @@ use common::{
 };
 use gelabber_media_core::{Audio, Device, Direction, Engine, Source, Transport, VideoFrame};
 use mediasoup::prelude::*;
+use mediasoup::producer::ProducerType;
 // Trait methods (id, produce, consume); the name is taken by the native transport.
 use mediasoup::prelude::Transport as _;
 use serde_json::{Value, json};
@@ -209,8 +210,8 @@ async fn round_trip(server: &Server) {
             assert_eq!(producer.r#type(), ProducerType::Svc, "{name} is SVC");
         }
     }
-    // All simulcast layers must come up (AV1 and VP9: their one stream). The 720p
-    // layer only starts once libwebrtc's bandwidth estimate and CPU budget
+    // All simulcast layers must come up (AV1 and VP9: their one stream). The
+    // 720p layer only starts once libwebrtc's bandwidth estimate and CPU budget
     // allow it, so poll; on failure print the sender's own per-layer view
     // (qualityLimitationReason, frameWidth, active) next to the server's.
     for (name, producer, native) in &video {
