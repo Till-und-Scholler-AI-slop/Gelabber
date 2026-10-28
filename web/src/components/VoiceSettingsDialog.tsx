@@ -24,7 +24,7 @@ export function VoiceSettingsDialog() {
       open={open}
       onClose={close}
       title="Voice & Video"
-      wide
+      large
       footer={<GhostButton onClick={close}>Fertig</GhostButton>}
     >
       {/* Opened again on another tab, it starts there. */}
@@ -58,7 +58,11 @@ export function VoiceSettingsTabs({
             key={entry.id}
             ref={(element) => {
               tabs.current[index] = element;
+              // The dialog opens on the chosen tab, not the first one
+              // (see dialogFocus.ts).
+              element?.toggleAttribute("autofocus", tab === entry.id);
             }}
+            autoFocus={tab === entry.id}
             type="button"
             role="tab"
             id={`${ids}-${entry.id}-tab`}
