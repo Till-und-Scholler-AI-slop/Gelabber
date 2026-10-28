@@ -4,9 +4,11 @@
 // (`MediaResults["capabilities"]`, the `codecs` event). Among those, AV1
 // wins where this device encodes it in hardware: the same picture for less
 // bitrate at little CPU (issue #318). Then H.264 where it is encoded in
-// hardware, which costs the least CPU; otherwise VP8, which every WebRTC
-// stack encodes and decodes. AV1 on the CPU costs far more than VP8 and
-// comes last.
+// hardware, which costs the least CPU. Then VP9 in three spatial layers
+// (SVC) where this device encodes it: one stream gives the server three
+// resolutions at better quality per bit than VP8 simulcast. Otherwise VP8,
+// which every WebRTC stack encodes and decodes. AV1 on the CPU costs far
+// more than VP8 and comes last.
 //
 // AV1 goes out as one stream, never in simulcast layers, so every receiver
 // decodes the whole picture. A device that cannot decode 4K AV1 smoothly
@@ -27,10 +29,31 @@ const AV1 = "video/av1";
 const VP8 = "video/vp8";
 const VP9 = "video/vp9";
 
-/** Which codecs this device encodes in hardware. */
-export type HardwareVideo = { av1: boolean; h264: boolean };
+/** Which codecs this device encodes in hardware, and whether it encodes VP9
+ * in three spatial layers (in software, which is fine). */
+export type HardwareVideo = {
+  av1: boolean;
+  h264: boolean;
+  vp9Svc: boolean;
+};
 
-export const SOFTWARE_VIDEO: HardwareVideo = { av1: false, h264: false };
+export const SOFTWARE_VIDEO: HardwareVideo = {
+  av1: false,
+  h264: false,
+  vp9Svc: false,
+};
+
+/** The scalability mode VP9 is sent in: three spatial and three temporal
+ * layers, with inter-layer prediction on key frames only. */
+export const VP9_SVC_MODE = "L3T3_KEY";
+
+/** The VP9 every receiver decodes: profile 0 (8-bit 4:2:0). Profile 2
+ * (10-bit) is not decodable everywhere. */
+export function publishableVp9(codec: RtpCodecCapability): boolean {
+  if (codec.mimeType.toLowerCase() !== VP9) return false;
+  const parameters = (codec.parameters ?? {}) as Record<string, unknown>;
+  return Number(parameters["profile-id"] ?? 0) === 0;
+}
 
 /** The H.264 every decoder in a WebRTC stack has and the server counts:
  * packetization mode 1, Constrained Baseline (profile 0x42 with
@@ -61,6 +84,7 @@ export function chooseVideoCodec(
     const order = [
       ...(hardware.av1 ? [AV1] : []),
       ...(hardware.h264 ? [H264] : []),
+      ...(hardware.vp9Svc ? [VP9] : []),
       VP8,
       H264,
       VP9,
@@ -68,7 +92,12 @@ export function chooseVideoCodec(
     ];
     for (const mime of order) {
       if (!allowed.includes(mime)) continue;
-      const codec = find(mime, (c) => mime !== H264 || publishableH264(c));
+      const codec = find(
+        mime,
+        (c) =>
+          (mime !== H264 || publishableH264(c)) &&
+          (mime !== VP9 || publishableVp9(c)),
+      );
       if (codec) return codec;
     }
   }
@@ -108,6 +137,8 @@ export function receivableCapabilities(
 export const H264_HARDWARE_FEATURE: NativeFeature = "h264-hardware";
 export const AV1_HARDWARE_FEATURE: NativeFeature = "av1-hardware";
 export const AV1_HARDWARE_DECODE_FEATURE: NativeFeature = "av1-hardware-decode";
+/** The desktop app's feature when its core encodes VP9 in spatial layers. */
+export const VP9_SVC_FEATURE: NativeFeature = "vp9-svc";
 
 /** How long the browser may take to say; past it, software is assumed. */
 const PROBE_TIMEOUT_MS = 1000;
@@ -140,8 +171,8 @@ function probeOnce(): Promise<Probed> {
 /** Which codecs this device encodes in hardware, asked once per page. A
  * browser says so as `powerEfficient`. */
 export async function hardwareVideo(): Promise<HardwareVideo> {
-  const { av1, h264 } = await probeOnce();
-  return { av1, h264 };
+  const { av1, h264, vp9Svc } = await probeOnce();
+  return { av1, h264, vp9Svc };
 }
 
 /** Whether this device decodes AV1 smoothly at 4K, in hardware or not,
@@ -160,26 +191,32 @@ async function probe(): Promise<Probed & { timedOut: boolean }> {
     return {
       av1: features.has(AV1_HARDWARE_FEATURE),
       h264: features.has(H264_HARDWARE_FEATURE),
+      vp9Svc: features.has(VP9_SVC_FEATURE),
       av1Decoding: features.has(AV1_HARDWARE_DECODE_FEATURE),
       timedOut,
     };
   }
-  const [[av1, t1], [h264, t2], [av1Decoding, t3]] = await Promise.all([
-    withTimeout(powerEfficient("encodingInfo", "video/AV1"), false),
-    withTimeout(powerEfficient("encodingInfo", "video/H264"), false),
+  const answers = await Promise.all([
+    withTimeout(powerEfficient("video/AV1"), false),
+    withTimeout(powerEfficient("video/H264"), false),
+    withTimeout(layeredVp9(), false),
     withTimeout(smoothDecoding("video/AV1"), false),
   ]);
-  return { av1, h264, av1Decoding, timedOut: t1 || t2 || t3 };
+  const [av1, h264, vp9Svc, av1Decoding] = answers.map(([answer]) => answer);
+  return {
+    av1,
+    h264,
+    vp9Svc,
+    av1Decoding,
+    timedOut: answers.some(([, timedOut]) => timedOut),
+  };
 }
 
-async function powerEfficient(
-  question: "encodingInfo" | "decodingInfo",
-  contentType: string,
-): Promise<boolean> {
+async function powerEfficient(contentType: string): Promise<boolean> {
   const capabilities =
     typeof navigator === "undefined" ? undefined : navigator.mediaCapabilities;
-  if (!capabilities?.[question]) return false;
-  const info = await capabilities[question]({
+  if (!capabilities?.encodingInfo) return false;
+  const info = await capabilities.encodingInfo({
     type: "webrtc",
     video: {
       contentType,
@@ -190,6 +227,26 @@ async function powerEfficient(
     },
   });
   return info.supported && info.powerEfficient;
+}
+
+/** Whether the browser encodes VP9 in `VP9_SVC_MODE`. Chromium does so on
+ * the CPU, so `powerEfficient` is not asked. */
+async function layeredVp9(): Promise<boolean> {
+  const capabilities =
+    typeof navigator === "undefined" ? undefined : navigator.mediaCapabilities;
+  if (!capabilities?.encodingInfo) return false;
+  const info = await capabilities.encodingInfo({
+    type: "webrtc",
+    video: {
+      contentType: "video/VP9",
+      width: 1920,
+      height: 1080,
+      bitrate: 4_000_000,
+      framerate: 30,
+      scalabilityMode: VP9_SVC_MODE,
+    },
+  });
+  return info.supported;
 }
 
 /** Whether the browser decodes `contentType` at 4K without dropping frames;

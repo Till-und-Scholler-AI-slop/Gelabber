@@ -8,6 +8,7 @@ import {
   decodesAv1,
   hardwareVideo,
   publishableH264,
+  publishableVp9,
   receivableCapabilities,
   resetHardwareVideoForTests,
 } from "./videoCodec.ts";
@@ -43,10 +44,11 @@ const high = codec("video/H264", {
   "profile-level-id": "640032",
 });
 const device = [baseline, vp8, modeZero, constrained, high, vp9, av1];
-const none = { av1: false, h264: false };
-const h264Only = { av1: false, h264: true };
-const av1Only = { av1: true, h264: false };
-const both = { av1: true, h264: true };
+const none = { av1: false, h264: false, vp9Svc: false };
+const h264Only = { av1: false, h264: true, vp9Svc: false };
+const av1Only = { av1: true, h264: false, vp9Svc: false };
+const both = { av1: true, h264: true, vp9Svc: false };
+const vp9Only = { av1: false, h264: false, vp9Svc: true };
 
 afterEach(() => {
   resetHardwareVideoForTests();
@@ -96,6 +98,30 @@ describe("video codec choice", () => {
     );
   });
 
+  it("prefers VP9 in three spatial layers over VP8 where the device encodes it", () => {
+    const allowed = ["video/vp8", "video/vp9", "video/h264", "video/av1"];
+    expect(chooseVideoCodec(device, allowed, vp9Only)).toBe(vp9);
+    expect(chooseVideoCodec(device, allowed, { ...vp9Only, h264: true })).toBe(
+      constrained,
+    );
+    expect(chooseVideoCodec(device, ["video/vp8", "video/h264"], vp9Only)).toBe(
+      vp8,
+    );
+  });
+
+  it("sends VP9 only in profile 0", () => {
+    const profile2 = codec("video/VP9", { "profile-id": 2 });
+    expect(publishableVp9(vp9)).toBe(true);
+    expect(publishableVp9(codec("video/VP9"))).toBe(true);
+    expect(publishableVp9(codec("video/VP9", { "profile-id": "0" }))).toBe(
+      true,
+    );
+    expect(publishableVp9(profile2)).toBe(false);
+    expect(publishableVp9(vp8)).toBe(false);
+    const allowed = ["video/vp8", "video/vp9"];
+    expect(chooseVideoCodec([profile2, vp8], allowed, vp9Only)).toBe(vp8);
+  });
+
   it("keeps the old order when the server does not name codecs", () => {
     expect(chooseVideoCodec(device, null, both)).toBe(vp8);
     expect(chooseVideoCodec([baseline, av1], null, both)).toBe(baseline);
@@ -106,9 +132,13 @@ describe("video codec choice", () => {
 
 describe("hardware video", () => {
   const answer =
-    (efficient: Record<string, boolean>) =>
-    async ({ video }: { video: { contentType: string } }) => ({
-      supported: true,
+    (efficient: Record<string, boolean>, layered = false) =>
+    async ({
+      video,
+    }: {
+      video: { contentType: string; scalabilityMode?: string };
+    }) => ({
+      supported: video.scalabilityMode ? layered : true,
       smooth: true,
       powerEfficient: efficient[video.contentType] ?? false,
     });
@@ -120,7 +150,7 @@ describe("hardware video", () => {
     vi.stubGlobal("navigator", { mediaCapabilities: { encodingInfo } });
     expect(await hardwareVideo()).toEqual(h264Only);
     expect(await hardwareVideo()).toEqual(h264Only);
-    expect(encodingInfo).toHaveBeenCalledTimes(2);
+    expect(encodingInfo).toHaveBeenCalledTimes(3);
     expect(encodingInfo.mock.calls.map(([query]) => query)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -154,10 +184,18 @@ describe("hardware video", () => {
     // A browser that knows H.264 but not the AV1 question.
     vi.stubGlobal("navigator", {
       mediaCapabilities: {
-        encodingInfo: async ({ video }: { video: { contentType: string } }) => {
+        encodingInfo: async ({
+          video,
+        }: {
+          video: { contentType: string; scalabilityMode?: string };
+        }) => {
           if (video.contentType === "video/AV1")
             throw new TypeError("codec unknown");
-          return { supported: true, smooth: true, powerEfficient: true };
+          return {
+            supported: !video.scalabilityMode,
+            smooth: true,
+            powerEfficient: true,
+          };
         },
       },
     });
@@ -171,6 +209,42 @@ describe("hardware video", () => {
       },
     });
     expect(await hardwareVideo()).toEqual(none);
+  });
+
+  it("encodes VP9 in layers where the browser supports L3T3_KEY", async () => {
+    const encodingInfo = vi.fn(answer({}, true));
+    vi.stubGlobal("navigator", { mediaCapabilities: { encodingInfo } });
+    expect(await hardwareVideo()).toEqual(vp9Only);
+    expect(encodingInfo).toHaveBeenCalledWith({
+      type: "webrtc",
+      video: expect.objectContaining({
+        contentType: "video/VP9",
+        scalabilityMode: "L3T3_KEY",
+      }),
+    });
+    resetHardwareVideoForTests();
+    vi.stubGlobal("navigator", {
+      mediaCapabilities: {
+        encodingInfo: async ({
+          video,
+        }: {
+          video: { scalabilityMode?: string };
+        }) => {
+          if (video.scalabilityMode) throw new TypeError("mode unknown");
+          return { supported: true, smooth: true, powerEfficient: false };
+        },
+      },
+    });
+    expect(await hardwareVideo()).toEqual(none);
+    resetHardwareVideoForTests();
+    setNativeBridgeForTests({
+      invoke: async (command: string) =>
+        command === "media_info"
+          ? { features: ["vp9-svc"] }
+          : Promise.reject(new Error(command)),
+      channel: async () => null,
+    } as unknown as NativeBridge);
+    expect(await hardwareVideo()).toEqual(vp9Only);
   });
 
   it("is what the desktop app's features say", async () => {
@@ -199,11 +273,13 @@ describe("hardware video", () => {
   });
 
   it("receives AV1 where the browser decodes 4K smoothly, in hardware or not", async () => {
-    const decodingInfo = vi.fn<(query: unknown) => Promise<object>>(async () => ({
-      supported: true,
-      smooth: true,
-      powerEfficient: false,
-    }));
+    const decodingInfo = vi.fn<(query: unknown) => Promise<object>>(
+      async () => ({
+        supported: true,
+        smooth: true,
+        powerEfficient: false,
+      }),
+    );
     vi.stubGlobal("navigator", {
       mediaCapabilities: { encodingInfo: answer({}), decodingInfo },
     });

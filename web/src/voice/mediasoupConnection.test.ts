@@ -1922,14 +1922,14 @@ describe("video codec negotiation", () => {
     codecs: [...capabilities.codecs!, h264("42001f"), h264("42e01f"), av1],
   };
   function negotiating(
-    hardware: boolean | { av1: boolean; h264: boolean },
+    hardware: boolean | { av1: boolean; h264: boolean; vp9Svc: boolean },
     video: string[],
   ) {
     const onRepublished = vi.fn();
     const f = fixture("voice", undefined, {
       hardwareVideo: async () =>
         typeof hardware === "boolean"
-          ? { av1: false, h264: hardware }
+          ? { av1: false, h264: hardware, vp9Svc: false }
           : hardware,
       onRepublished,
     });
@@ -1948,7 +1948,7 @@ describe("video codec negotiation", () => {
 
   it("keeps VP8 when the server does not name codecs", async () => {
     const f = fixture("voice", undefined, {
-      hardwareVideo: async () => ({ av1: true, h264: true }),
+      hardwareVideo: async () => ({ av1: true, h264: true, vp9Svc: false }),
     });
     f.device.sendRtpCapabilities = withH264;
     await f.start();
@@ -1973,27 +1973,30 @@ describe("video codec negotiation", () => {
 
   it("sends AV1 as one stream where it is encoded in hardware", async () => {
     const all = ["video/vp8", "video/h264", "video/av1"];
-    const hw = negotiating({ av1: true, h264: true }, all);
+    const hw = negotiating({ av1: true, h264: true, vp9Svc: false }, all);
     await hw.start();
     await hw.connection.publish(publication("v", new Capture("cam", "video")));
     expect(sent(hw)[0].codec).toEqual(av1);
     // mediasoup forwards AV1 as one stream or SVC, never simulcast.
     expect(sent(hw)[0].encodings).toBeUndefined();
     // AV1 on the CPU: H.264 in hardware, else VP8.
-    const h264Only = negotiating({ av1: false, h264: true }, all);
+    const h264Only = negotiating(
+      { av1: false, h264: true, vp9Svc: false },
+      all,
+    );
     await h264Only.start();
     await h264Only.connection.publish(
       publication("v", new Capture("cam", "video")),
     );
     expect(sent(h264Only)[0].codec).toEqual(h264("42e01f"));
-    const sw = negotiating({ av1: false, h264: false }, all);
+    const sw = negotiating({ av1: false, h264: false, vp9Svc: false }, all);
     await sw.start();
     await sw.connection.publish(publication("v", new Capture("cam", "video")));
     expect(sent(sw)[0].codec?.mimeType).toBe("video/VP8");
   });
 
   it("leaves AV1 when someone joins who cannot decode it", async () => {
-    const f = negotiating({ av1: true, h264: true }, [
+    const f = negotiating({ av1: true, h264: true, vp9Svc: false }, [
       "video/vp8",
       "video/h264",
       "video/av1",
