@@ -39,9 +39,47 @@
   --color-lr-danger-bg: var(--lr-danger-bg);
 }
 
+/* Inter 4.1, served by Gelabber itself (src/fonts/INTER-PROVENANCE.json,
+   OFL in /inter-license.txt). Its own family name, so an older Inter
+   installed on the device never stands in. The extended Latin part loads
+   only for text that needs it; italic outside Latin falls back. */
+@font-face {
+  font-family: "Gelabber Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/InterVariable-latin.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Gelabber Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/InterVariable-latin-ext.woff2") format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+    U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Gelabber Inter";
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/InterVariable-Italic-latin.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
   font-family:
-    Inter,
+    "Gelabber Inter",
     ui-sans-serif,
     -apple-system,
     BlinkMacSystemFont,
@@ -423,8 +461,9 @@ summary {
   background: var(--lr-hover);
   color: var(--lr-accent-text);
 }
-/* The marker at the rail's edge: a short pill for something unread, a tall
-   one for where you are. */
+/* The marker at the rail's edge: a short accent pill for something unread,
+   a tall pill in the text colour for where you are (the v0.8 design). The
+   tile itself keeps no ring, and a mention keeps its red count. */
 :is(.server-tile, .server-home-link)::before {
   content: "";
   position: absolute;
@@ -435,7 +474,9 @@ summary {
   border-radius: 0 4px 4px 0;
   background: var(--lr-accent);
   translate: 0 -50%;
-  transition: height var(--lr-dur-fast) var(--lr-ease);
+  transition:
+    height var(--lr-dur-fast) var(--lr-ease),
+    background-color var(--lr-dur-fast) var(--lr-ease);
 }
 :is(.server-tile, .server-home-link).is-unread::before {
   height: 8px;
@@ -443,8 +484,12 @@ summary {
 :is(.server-tile, .server-home-link):hover:not(.is-active)::before {
   height: 16px;
 }
+:is(.server-tile, .server-home-link):hover:not(.is-active, .is-unread)::before {
+  background: var(--lr-muted);
+}
 :is(.server-tile, .server-home-link).is-active::before {
   height: 28px;
+  background: var(--lr-text);
 }
 .server-rail-scroll {
   flex: 0 1 auto;
@@ -468,7 +513,8 @@ summary {
   height: 60px;
 }
 /* Each server keeps its own theme tint (--lr-tile-1…8) until it has a
-   picture; the letters read on every tint. */
+   picture; the letters read on every tint. Round at rest, the theme's
+   corner where you are or point (a square-ish theme stays square-ish). */
 .server-tile {
   display: inline-flex;
   align-items: center;
@@ -476,7 +522,7 @@ summary {
   width: 44px;
   height: 44px;
   position: relative;
-  border-radius: var(--lr-radius-lg);
+  border-radius: calc(var(--lr-radius-lg) * 2.2);
   color: var(--lr-text);
   background: var(--server-tile, var(--lr-surface));
   font: 600 15px / 1 var(--lr-font);
@@ -486,12 +532,7 @@ summary {
 }
 .server-tile:hover,
 .server-tile.is-active {
-  border-radius: var(--lr-radius-md);
-}
-.server-tile.is-active {
-  box-shadow:
-    0 0 0 2px var(--lr-rail),
-    0 0 0 4px var(--lr-accent);
+  border-radius: var(--lr-radius-lg);
 }
 /* An uploaded icon fills the tile and follows its rounding. */
 .server-icon-img {
@@ -562,18 +603,20 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   flex-shrink: 0;
   padding: 5px 0 max(16px, var(--lr-safe-bottom));
 }
+/* An empty place for one more server: dashed, with the green of "online". */
 .server-create-button {
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
+  border: 1px dashed var(--lr-border-strong);
   border-radius: 50%;
-  background: var(--lr-surface);
-  color: var(--lr-muted);
+  background: transparent;
+  color: var(--lr-online-text);
 }
 .server-create-button:hover {
-  background: var(--lr-selected);
-  color: var(--lr-accent-text);
+  border-style: solid;
+  background: var(--lr-hover);
 }
 
 .channel-sidebar {
@@ -861,6 +904,13 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
 .sidebar-empty-category {
   padding: 0 8px;
   font-size: 12px;
+  color: var(--lr-muted);
+}
+/* Under the channel list on a touch screen: what a held finger opens. */
+.sidebar-hold-hint {
+  margin: 14px 10px 0;
+  font-size: 12px;
+  line-height: 1.45;
   color: var(--lr-muted);
 }
 .channel-row.is-active .channel-row-icon {
@@ -1175,7 +1225,9 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   max-width: 100%;
   overflow: hidden;
   border-radius: 50%;
-  background: var(--lr-surface);
+  /* Initials get the person's tile tint (Avatar.tsx); the theme keeps
+     --lr-text readable on every tint. */
+  background: var(--avatar-tint, var(--lr-surface));
   color: var(--lr-text);
   font-weight: 600;
   font-size: 12px;
@@ -1394,6 +1446,14 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
 }
 .member-row {
   margin-bottom: 2px;
+}
+/* Offline people step back: a faded picture and a muted name, so who is
+   around reads at a glance. The name keeps its 4.5:1 (--lr-muted). */
+.member-row.is-offline .gel-avatar {
+  opacity: 0.55;
+}
+.member-row.is-offline .member-description strong {
+  color: var(--lr-muted);
 }
 .member-profile-button {
   display: flex;
@@ -1880,6 +1940,20 @@ html[data-reduced-motion="true"] *::after {
     opacity: 1;
   }
 }
+/* With a mouse a channel's edit and delete buttons lie over the row's end
+   while they show, and take no room otherwise: two invisible buttons cut a
+   name with an unread count short ("allgem…"). */
+@media (hover: hover) {
+  .channel-row > .sidebar-row-actions {
+    position: absolute;
+    top: 50%;
+    right: 3px;
+    translate: 0 -50%;
+    padding-left: 6px;
+    border-radius: var(--lr-radius);
+    background: inherit;
+  }
+}
 @media (pointer: coarse) {
   :root {
     /* Room for finger-sized actions next to a server or channel name. */
@@ -1902,6 +1976,13 @@ html[data-reduced-motion="true"] *::after {
   summary {
     -webkit-touch-callout: none;
     user-select: none;
+  }
+  /* Held, these open a menu; iOS would lift the link to drag it. */
+  .channel-row-link,
+  .server-tile,
+  .server-home-link,
+  .dm-row {
+    -webkit-user-drag: none;
   }
   .gel-modal {
     -webkit-touch-callout: default;

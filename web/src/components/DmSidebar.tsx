@@ -1,6 +1,6 @@
 import { UnreadBadge } from "../messages/UnreadBadge.tsx";
 import { useBadge } from "../messages/useBadge.ts";
-import { notificationMenu } from "./notificationTarget.ts";
+import { useNotificationMenu } from "./notificationTarget.ts";
 import { useChannelMuted } from "../messages/notificationSettings.ts";
 import { Link } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -152,6 +152,12 @@ export function DmRow({
   const badge = useBadge({ channelId: dm.id });
   // The open conversation shows its draft in the composer already.
   const draft = useHasDraft(useUserId(), dm.id) && !active;
+  const menu = useNotificationMenu({
+    scope: "channel",
+    id: dm.id,
+    name: dm.peer.name,
+    dm: true,
+  });
   return (
     <Link
       to="/d/$channelId"
@@ -164,12 +170,7 @@ export function DmRow({
         muted ? "is-muted" : "",
         badge.count > 0 || badge.dot ? "is-unread" : "",
       ].join(" ")}
-      onContextMenu={notificationMenu({
-        scope: "channel",
-        id: dm.id,
-        name: dm.peer.name,
-        dm: true,
-      })}
+      {...menu}
       {...ROW_ITEM}
     >
       <PresenceAvatar

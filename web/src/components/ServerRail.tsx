@@ -1,6 +1,6 @@
 import { UnreadBadge } from "../messages/UnreadBadge.tsx";
 import { useBadge } from "../messages/useBadge.ts";
-import { notificationMenu } from "./notificationTarget.ts";
+import { useNotificationMenu } from "./notificationTarget.ts";
 import { useServerMuted } from "../messages/notificationSettings.ts";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -85,6 +85,12 @@ function HomeTile({ active }: { active: boolean }) {
   const openId = lastDmStillListed(remembered, dms) ? remembered : null;
   const badge = useBadge({ dms: true });
   const drawer = useNavigationDrawer();
+  const menu = useNotificationMenu({
+    scope: "channel",
+    id: "dms",
+    name: "Direktnachrichten",
+    allDms: true,
+  });
   return (
     <div className="server-home-tile">
       <Link
@@ -107,12 +113,7 @@ function HomeTile({ active }: { active: boolean }) {
           active ? "is-active" : "",
           badge.count > 0 || badge.dot ? "is-unread" : "",
         ].join(" ")}
-        onContextMenu={notificationMenu({
-          scope: "channel",
-          id: "dms",
-          name: "Direktnachrichten",
-          allDms: true,
-        })}
+        {...menu}
       >
         <ChatIcon size={27} />
         <UnreadBadge id={unreadId} dms rail showDot={false} />
@@ -288,6 +289,12 @@ function ServerTile({
         : muted
           ? "Stummgeschaltet"
           : null;
+  // The tooltip also ends when the finger leaves.
+  const { onPointerLeave: endHold, ...menu } = useNotificationMenu({
+    scope: "server",
+    id: server.id,
+    name: server.name,
+  });
   return (
     <Link
       to={channelId ? "/s/$serverId/c/$channelId" : "/s/$serverId"}
@@ -307,7 +314,10 @@ function ServerTile({
           onTip(event.currentTarget, server.name, summary, false);
         if (userId) prefetchServer(client, userId, server.id);
       }}
-      onPointerLeave={onTipEnd}
+      onPointerLeave={() => {
+        onTipEnd();
+        endHold?.();
+      }}
       onFocus={(event) => {
         if (event.currentTarget.matches(":focus-visible"))
           onTip(event.currentTarget, server.name, summary, true);
@@ -321,11 +331,7 @@ function ServerTile({
         badge.count > 0 || badge.dot ? "is-unread" : "",
       ].join(" ")}
       style={{ "--server-tile": tileTint(server.id) } as CSSProperties}
-      onContextMenu={notificationMenu({
-        scope: "server",
-        id: server.id,
-        name: server.name,
-      })}
+      {...menu}
       {...ROW_ITEM}
     >
       <ServerIconFace

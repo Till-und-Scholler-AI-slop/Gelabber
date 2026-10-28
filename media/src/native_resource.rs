@@ -255,11 +255,6 @@ impl NativeConsumer {
     pub async fn resume(&self) -> Result<(), SfuError> {
         self.resource.run(|c| async move { c.resume().await }).await
     }
-    pub async fn set_preferred_layers(&self, layers: ConsumerLayers) -> Result<(), SfuError> {
-        self.resource
-            .run(|c| async move { c.set_preferred_layers(layers).await })
-            .await
-    }
     pub async fn confirm_closed(&self) {
         self.resource.close();
         let (id, transport, lost) = (self.id, &self.transport, &self.worker_lost);

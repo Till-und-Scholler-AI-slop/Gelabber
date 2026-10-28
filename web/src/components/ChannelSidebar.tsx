@@ -1,9 +1,6 @@
 import { UnreadBadge } from "../messages/UnreadBadge.tsx";
 import { useBadge } from "../messages/useBadge.ts";
-import {
-  notificationMenu,
-  openNotificationSettings,
-} from "./notificationTarget.ts";
+import { openNotificationSettings } from "./notificationTarget.ts";
 import {
   useChannelMuted,
   useServerMuted,
@@ -42,6 +39,7 @@ import {
 } from "../voice/roster.ts";
 import { liveSentence } from "../voice/roomSummary.ts";
 import { can } from "../servers/permissions.ts";
+import { useHoldMenu } from "./useHoldMenu.ts";
 import { useMenuDetails } from "./menuDetails.ts";
 import { useNavigationDrawer } from "./navigationDrawer.ts";
 import {
@@ -425,6 +423,13 @@ export function ChannelList({
     menuAnchor.current = anchor;
     setMenu(next);
   };
+  // What a held finger opens: the row menu, or for members a text
+  // channel's notifications.
+  const holdHint = manageChannels
+    ? "Gedrückt halten für Bearbeiten, Benachrichtigungen oder Löschen."
+    : rows.some((row) => row.kind === "channel" && row.channel.kind === "text")
+      ? "Gedrückt halten für Benachrichtigungen."
+      : null;
   // The key hint is read once, on the list's first row, not on every Tab
   // stop.
   const hintKey = rows.find((row) => navigable(row, manageChannels))?.key;
@@ -580,6 +585,12 @@ export function ChannelList({
           );
         })}
       </div>
+      {touch && holdHint ? (
+        // Screen readers have each row's actions button instead.
+        <p className="sidebar-hold-hint" aria-hidden="true">
+          {holdHint}
+        </p>
+      ) : null}
       <RowMenuPopover
         menu={menu}
         anchor={menuAnchor}
@@ -596,8 +607,8 @@ export function ChannelList({
 }
 
 /**
- * A row's actions in one place: on touch screens from its "…" button or a
- * long press, with a mouse from a right click. Deleting comes last.
+ * A row's actions in one place: on touch screens from a long press, with a
+ * mouse from a right click. Deleting comes last.
  */
 function RowMenuPopover({
   menu,
@@ -789,6 +800,7 @@ function CategoryRow({
   const pending = isPendingId(category.id);
   const actions = manage && !pending;
   const roving = useRovingRow(actions, stop);
+  const hold = useHoldMenu(actions ? onMenu : undefined);
   return (
     <div
       className={[
@@ -803,19 +815,22 @@ function CategoryRow({
             }
           : undefined
       }
+      {...hold}
       {...roving.keys}
     >
       <h3 className="sidebar-category-name">{category.name}</h3>
       {!actions ? null : coarse ? (
-        <IconButton
-          label={`Aktionen für Kategorie ${category.name}`}
-          onClick={(event) => onMenu(event.currentTarget)}
-          small
-          describedBy={hintId}
-          tabIndex={roving.tabIndex(0)}
-        >
-          <MoreIcon size={18} />
-        </IconButton>
+        <span className={TOUCH_ACTIONS}>
+          <IconButton
+            label={`Aktionen für Kategorie ${category.name}`}
+            onClick={(event) => onMenu(event.currentTarget)}
+            small
+            describedBy={hintId}
+            tabIndex={roving.tabIndex(0)}
+          >
+            <MoreIcon size={18} />
+          </IconButton>
+        </span>
       ) : (
         <span className="sidebar-row-actions flex shrink-0 items-center opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100">
           <IconButton
@@ -868,7 +883,7 @@ export function ChannelRow({
   /** Who is live in this voice channel. */
   live: readonly string[];
   manage: boolean;
-  /** A touch screen: one "…" button instead of the hover actions. */
+  /** A touch screen: a long press instead of the hover actions. */
   coarse: boolean;
   /** Whether this row holds the list's Tab stop. */
   stop: boolean;
@@ -917,6 +932,20 @@ export function ChannelRow({
   const actions = manage && !pending;
   const roving = useRovingRow(actions, stop);
   const label = text ? `#${channel.name}` : channel.name;
+  // A right click or a held finger: the row's actions, or for members a
+  // text channel's notifications.
+  const menuAt = actions
+    ? onMenu
+    : text
+      ? () =>
+          openNotificationSettings({
+            scope: "channel",
+            id: channel.id,
+            name: label,
+            serverId: channel.server_id,
+          })
+      : undefined;
+  const hold = useHoldMenu(menuAt);
 
   return (
     <div className={rowClass} {...roving.keys}>
@@ -932,34 +961,30 @@ export function ChannelRow({
           tabIndex={roving.tabIndex(0)}
           className="channel-row-link"
           onContextMenu={
-            actions
+            menuAt
               ? (event) => {
                   event.preventDefault();
-                  onMenu(event.currentTarget);
+                  menuAt(event.currentTarget);
                 }
-              : text
-                ? notificationMenu({
-                    scope: "channel",
-                    id: channel.id,
-                    name: label,
-                    serverId: channel.server_id,
-                  })
-                : undefined
+              : undefined
           }
+          {...hold}
           {...ROW_ITEM}
         >
           {body}
         </Link>
       )}
       {!actions ? null : coarse ? (
-        <IconButton
-          label={`Aktionen für ${label}`}
-          onClick={(event) => onMenu(event.currentTarget)}
-          small
-          tabIndex={roving.tabIndex(1)}
-        >
-          <MoreIcon size={18} />
-        </IconButton>
+        <span className={TOUCH_ACTIONS}>
+          <IconButton
+            label={`Aktionen für ${label}`}
+            onClick={(event) => onMenu(event.currentTarget)}
+            small
+            tabIndex={roving.tabIndex(1)}
+          >
+            <MoreIcon size={18} />
+          </IconButton>
+        </span>
       ) : (
         <span className="sidebar-row-actions flex shrink-0 items-center opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100">
           <IconButton
@@ -983,6 +1008,11 @@ export function ChannelRow({
     </div>
   );
 }
+
+// On a touch screen a row's actions open with a long press, as the hint
+// under the list says; the "…" button stays for screen readers and shows
+// once a keyboard reaches it.
+const TOUCH_ACTIONS = "sr-only focus-within:not-sr-only";
 
 function IconButton({
   label,

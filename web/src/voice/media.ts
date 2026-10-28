@@ -38,7 +38,6 @@ export type MediaRequests = {
   consumerReady: { consumerId: string; generation: string };
   consumerFailed: { consumerId: string; generation: string };
   w: { u: string; k: "s"; on: boolean };
-  q: { consumerId: string; generation: string; h: number; congested: boolean };
   l: Record<string, never>;
 };
 export type MediaResults = {
@@ -62,7 +61,6 @@ export type MediaResults = {
   consumerReady: Record<string, never>;
   consumerFailed: Record<string, never>;
   w: Record<string, never>;
-  q: Record<string, never>;
   l: Record<string, never>;
 };
 export type MediaMethod = keyof MediaRequests;

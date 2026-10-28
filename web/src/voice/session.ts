@@ -31,6 +31,7 @@ import {
   MediaError,
 } from "./media.ts";
 import { MediaPeer } from "./mediaPeer.ts";
+import { nativeAppVersion } from "./native/features.ts";
 import { createStream } from "./native/tracks.ts";
 import { resetPlaybackBoostForTests } from "./playbackBoost.ts";
 import { useUserVolumes } from "./userVolume.ts";
@@ -656,6 +657,13 @@ function voiceCaps(): Caps {
       ? Math.max(...active.map((cap) => cap.maxFps))
       : base.videoMaxFps,
     videoLimits,
+    video: {
+      roomCodecs: null,
+      encoders: null,
+      decodesAv1: null,
+      ...voice.seat.connection?.videoChoice(),
+      desktopApp: nativeAppVersion(),
+    },
   };
 }
 

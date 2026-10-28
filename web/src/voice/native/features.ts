@@ -23,8 +23,10 @@ export type NativeFeature =
   | "h264-hardware"
   /** The core encodes AV1 in hardware (see `hardwareVideo`). */
   | "av1-hardware"
-  /** The core decodes AV1 in hardware (see `hardwareAv1Decoding`). */
+  /** The core decodes AV1 in hardware (see `decodesAv1`). */
   | "av1-hardware-decode"
+  /** The core encodes VP9 in three spatial layers (see `hardwareVideo`). */
+  | "vp9-svc"
   /** The core tells a picker the user closed ("cancelled") from a capture
    * that failed. No app sends it yet: at the pinned libwebrtc a portal that
    * answers a cancel with a non-zero response (xdg-desktop-portal-hyprland)
@@ -49,9 +51,15 @@ function read(info: unknown): NativeFeatures {
   );
 }
 
+function readVersion(info: unknown): string | null {
+  const version = (info as { version?: unknown } | null | undefined)?.version;
+  return typeof version === "string" && version ? version : null;
+}
+
 type Asked = {
   bridge: NativeBridge;
   features: NativeFeatures | null;
+  version: string | null;
   answered: Promise<NativeFeatures>;
 };
 
@@ -67,9 +75,13 @@ function ask(): Asked | null {
   const mine: Asked = {
     bridge,
     features: null,
+    version: null,
     answered: Promise.resolve()
       .then(() => bridge.invoke<unknown>("media_info"))
-      .then(read)
+      .then((info) => {
+        mine.version = readVersion(info);
+        return read(info);
+      })
       // An app that cannot answer is no newer than those without a list.
       .catch(() => LEGACY)
       .then((features) => {
@@ -86,6 +98,12 @@ function ask(): Asked | null {
 export function nativeFeatures(): NativeFeatures | null {
   const current = ask();
   return current ? current.features : NONE;
+}
+
+/** The app's version once it has answered; `null` in a browser, before the
+ * answer, and for an app that sends none. */
+export function nativeAppVersion(): string | null {
+  return ask()?.version ?? null;
 }
 
 /** The same once the app has answered; at once in a browser. */

@@ -65,12 +65,7 @@ impl Sfu {
                 {
                     return Err(SfuError::BadAnnounce);
                 }
-                let mut opts = WebRtcTransportOptions::new_with_server(room.engine.server.clone());
-                opts.enable_tcp = false;
-                opts.prefer_udp = true;
-                // Last sample belongs to the native transport lifetime, keeping
-                // historical totals without retaining an unbounded ID cache.
-                opts.app_data = AppData::new(AtomicU64::new(0));
+                let opts = gateway_transport_options(room.engine.server.clone());
                 let transport = room
                     .engine
                     .native(
@@ -141,7 +136,6 @@ impl Sfu {
                 epoch,
                 parent,
                 expected_old_producer_id,
-                height,
                 paused,
                 ..
             } => {
@@ -153,7 +147,6 @@ impl Sfu {
                     epoch,
                     parent,
                     expected_old_producer_id,
-                    height,
                     paused,
                 )
                 .await
@@ -276,39 +269,9 @@ impl Sfu {
                 self.set_watch(channel, &room, &peer, u, k, on).await?;
                 Ok(json!({}))
             }
-            ClientFrame::ViewerLayer {
-                consumer_id,
-                generation,
-                h,
-                congested,
-                ..
-            } => {
-                let s = self
-                    .own_consumer(&room, id, &consumer_id, generation)
-                    .await?;
-                let _gate = s.gate.lock().await;
-                if !s.valid() || !s.publication.kind.is_video() {
-                    return Err(SfuError::Forbidden);
-                }
-                if s.publication.layers > 1 {
-                    room.engine
-                        .native(s.clone(), move |s| async move {
-                            s.consumer
-                                .set_preferred_layers(ConsumerLayers {
-                                    spatial_layer: preferred_layer(
-                                        h,
-                                        congested,
-                                        s.publication.height,
-                                        s.publication.layers,
-                                    ),
-                                    temporal_layer: None,
-                                })
-                                .await
-                        })
-                        .await?
-                }
-                Ok(json!({}))
-            }
+            // Older clients still send tile sizes; consumers start on the top
+            // layer and mediasoup's estimate steps down, so they are ignored.
+            ClientFrame::ViewerLayer { .. } => Ok(json!({})),
             ClientFrame::Leave { .. } => {
                 self.leave(id, channel).await;
                 Ok(json!({}))
@@ -326,7 +289,6 @@ impl Sfu {
         epoch: Uuid,
         parent_id: Option<String>,
         expected_old: Option<String>,
-        height: u16,
         paused: bool,
     ) -> Result<Value, SfuError> {
         if epoch.is_nil() {
@@ -380,7 +342,6 @@ impl Sfu {
             )
         };
         let result = async {
-            let layers = parameters.encodings.len().max(1) as u8;
             let mut options = ProducerOptions::new(
                 if kind.is_video() {
                     MediaKind::Video
@@ -408,8 +369,6 @@ impl Sfu {
                 parent,
                 grant: Grant::new(),
                 gate: Mutex::new(()),
-                height,
-                layers,
                 packet_samples: StdMutex::new(HashMap::new()),
             });
             if !crate::ticket::validate_authority(&self.redis, &peer.authority)
@@ -621,10 +580,17 @@ pub(super) fn note_consumer_failure(
     *failures = failures.saturating_add(1);
     *failures < CONSUMER_FAILURE_LIMIT
 }
-pub(super) fn preferred_layer(h: u16, congested: bool, height: u16, layers: u8) -> u8 {
-    if layers <= 1 || congested || h == 0 || h <= height.saturating_div(4).max(1) {
-        0
-    } else {
-        layers - 1
-    }
+
+/// Options for every WebRTC transport the gateway creates.
+pub(super) fn gateway_transport_options(server: WebRtcServer) -> WebRtcTransportOptions {
+    let mut opts = WebRtcTransportOptions::new_with_server(server);
+    opts.enable_tcp = false;
+    opts.prefer_udp = true;
+    // mediasoup's 600 kbit/s default starts every video consumer on a low
+    // layer; its estimate climbs from here instead.
+    opts.initial_available_outgoing_bitrate = 8_000_000;
+    // Last sample belongs to the native transport lifetime, keeping
+    // historical totals without retaining an unbounded ID cache.
+    opts.app_data = AppData::new(AtomicU64::new(0));
+    opts
 }

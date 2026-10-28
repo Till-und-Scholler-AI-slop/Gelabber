@@ -7,14 +7,11 @@
 // is shared by every tile showing the same stream.
 import { invokeNative, nativeBridge } from "./bridge.ts";
 import { isNativeTrack, type NativeTrack } from "./tracks.ts";
-import {
-  nativeCanvasHeight,
-  resumeNativeVideo,
-  suspendNativeVideo,
-} from "./videoFeed.ts";
+import { resumeNativeVideo, suspendNativeVideo } from "./videoFeed.ts";
 
-/** Open windows by consumer: the track they show and the shown height. */
-const open = new Map<number, { trackId: string; height: number }>();
+/** Open windows by consumer; each entry's identity tells a window from a
+ * later one of the same consumer. */
+const open = new Map<number, object>();
 const listeners = new Set<() => void>();
 let version = 0;
 /** The app's answer to the last window command of a consumer. */
@@ -63,16 +60,6 @@ export function nativeVideoTrack(
     : null;
 }
 
-/** Height a viewer window shows the track at, in physical pixels; 0 when
- * no window shows it (the server then sends the low layer). A window that
- * has not said yet counts with the height the page showed the track at. */
-export function nativeViewerHeight(trackId: string): number {
-  let height = 0;
-  for (const view of open.values())
-    if (view.trackId === trackId) height = Math.max(height, view.height);
-  return height;
-}
-
 export function nativeViewerOpen(consumer: number): boolean {
   return open.has(consumer);
 }
@@ -83,9 +70,7 @@ export async function openNativeViewer(
 ): Promise<void> {
   const consumer = track.handle.consumer;
   if (consumer === undefined || open.has(consumer)) return;
-  // The layer the page's canvases asked for stays until the window reports
-  // its own height: the stream does not drop to the low layer in between.
-  const view = { trackId: track.id, height: nativeCanvasHeight(track.id) };
+  const view = {};
   open.set(consumer, view);
   const suspended = suspendNativeVideo(consumer);
   changed();
@@ -94,14 +79,9 @@ export async function openNativeViewer(
       // Not before the app has closed the page's views of the stream: one
       // that is still open, or waits for its next frame, gets the window's.
       await suspended;
-      const events = await nativeBridge().channel<{
-        type: string;
-        height?: number;
-      }>((event) => {
-        if (event.type === "closed") {
-          if (open.get(consumer) === view) closeNativeViewer(consumer);
-        } else if (event.type === "height" && typeof event.height === "number")
-          view.height = event.height;
+      const events = await nativeBridge().channel<{ type: string }>((event) => {
+        if (event.type === "closed" && open.get(consumer) === view)
+          closeNativeViewer(consumer);
       });
       // Closed again in the meantime: there is nothing to open any more.
       if (open.get(consumer) !== view) return;

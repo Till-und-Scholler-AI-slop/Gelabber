@@ -34,3 +34,20 @@ export function tileTone(id: string): number {
 export function tileTint(id: string): string {
   return `var(--lr-tile-${tileTone(id)})`;
 }
+
+/**
+ * The tile tint for a person's initials, picked by the name. A mixing hash
+ * (FNV-1a with a final scramble): the server hash above leaves short names
+ * bunched on a few tints. Servers keep theirs so their colours stay put.
+ */
+export function personTint(name: string): string {
+  let hash = 0x811c9dc5;
+  for (const char of name) {
+    hash ^= char.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x45d9f3b);
+  hash ^= hash >>> 16;
+  return `var(--lr-tile-${((hash >>> 0) % 8) + 1})`;
+}

@@ -244,12 +244,8 @@ impl Sfu {
             }
             let mut options = ConsumerOptions::new(pubn.producer.id(), capabilities);
             options.paused = true;
-            if pubn.kind.is_video() && pubn.layers > 1 {
-                options.preferred_layers = Some(ConsumerLayers {
-                    spatial_layer: 0,
-                    temporal_layer: None,
-                });
-            }
+            // No preferred layers: mediasoup starts on the highest one and its
+            // bandwidth estimate steps down, whatever size the tile is.
             let consumer = {
                 let _slot = room
                     .engine

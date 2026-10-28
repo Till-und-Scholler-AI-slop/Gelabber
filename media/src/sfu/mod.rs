@@ -111,8 +111,6 @@ struct Publication {
     parent: Option<Arc<Publication>>,
     grant: Arc<Grant>,
     gate: Mutex<()>,
-    height: u16,
-    layers: u8,
     packet_samples: StdMutex<HashMap<u32, u64>>,
 }
 impl Publication {

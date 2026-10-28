@@ -19,7 +19,7 @@ impl Sfu {
 pub(super) fn validate_parameters(kind: SourceKind, rtp: &RtpParameters) -> Result<(), SfuError> {
     if rtp.codecs.is_empty()
         || rtp.codecs.len() > 16
-        || rtp.encodings.len() > 2
+        || rtp.encodings.len() > 3
         || rtp.header_extensions.len() > 32
     {
         return Err(SfuError::BadAnnounce);
