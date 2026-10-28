@@ -365,11 +365,11 @@ separate decision.
   comes before VP8 (issue #318). VP9 in three spatial layers (`L3T3_KEY`;
   where the browser is Chromium or the app reports `vp9-svc`) is for a room
   that has no VP8 or H264: libwebrtc caps each VP9 spatial layer at about
-  1.6 x pixels + 50 kbit/s, far below what VP8 layers may use. The core produces what it
-  is asked for, and a caller that names no codec gets H264 before VP8.
-  `media_info` reports the features
-  `h264-hardware`, `av1-hardware`, `av1-hardware-decode` and `vp9-svc` (on
-  Linux and Windows alike: VP9 is libvpx in software) and, under
+  1.6 x pixels + 50 kbit/s, far below what VP8 layers may use. The core
+  produces what it is asked for, and a caller that names no codec gets H264
+  before VP8. `media_info` reports the features `h264-hardware`,
+  `av1-hardware`, `av1-hardware-decode` and `vp9-svc` (on Linux and Windows
+  alike: VP9 is libvpx in software) and, under
   `videoCodecs`, what `gm_video_codecs` found. mediasoup forwards AV1 (like
   VP9) as one stream or SVC, never in simulcast layers, so AV1 goes out as
   one stream and the server refuses AV1 or VP9 producers with more than one

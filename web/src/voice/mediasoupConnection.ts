@@ -217,7 +217,7 @@ export class MediasoupConnection implements MediaConnection {
   private videoCodecs: VideoCodecs | null = null;
   /** The last probes that ran, for `videoChoice`. */
   private probedEncoders: HardwareVideo | null = null;
-  /** The SDK refused VP9 SVC once; VP8 layers are sent from then on. */
+  /** The SDK refused VP9 SVC once; VP9 goes out without layers from then on. */
   private vp9SvcRefused = false;
   private probedDecodesAv1: boolean | null = null;
   constructor(private readonly options: MediaConnectionOptions) {}
@@ -675,6 +675,8 @@ export class MediasoupConnection implements MediaConnection {
       const name = sdkErrorName(error);
       // libwebrtc may report an unsupported scalability mode as an
       // OperationError; produce() has compacted the send transport by now.
+      // Any OperationError then counts as a refusal: VP9 SVC is only tried
+      // in a room without VP8 or H.264, where plain VP9 is the way out.
       const refused =
         name === "UnsupportedError" ||
         name === "NotSupportedError" ||
@@ -682,7 +684,8 @@ export class MediasoupConnection implements MediaConnection {
       if (!(layered || svc) || !refused) throw error;
       this.live();
       if (svc) {
-        // The codec choice runs again without SVC and picks VP8 layers.
+        // The codec choice runs again without SVC: plain VP9 in a room
+        // without VP8 or H.264.
         this.vp9SvcRefused = true;
         return this.publishNow(input);
       }
