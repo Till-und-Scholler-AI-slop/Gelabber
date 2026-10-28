@@ -1152,6 +1152,11 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 .lr-attachment-file:hover {
   background: var(--lr-hover);
 }
+/* A download that just started takes no second click (#391). */
+.lr-attachments a[aria-disabled="true"],
+.lr-lightbox-bar a[aria-disabled="true"] {
+  cursor: default;
+}
 .lr-attachment-file > svg {
   flex-shrink: 0;
   color: var(--lr-accent-text);

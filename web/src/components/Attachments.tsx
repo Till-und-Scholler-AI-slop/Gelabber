@@ -23,7 +23,8 @@ import {
 } from "../messages/rules.ts";
 import type { Attachment } from "../messages/types.ts";
 import { asAttachmentList } from "../messages/types.ts";
-import { PaperclipIcon } from "./Icons.tsx";
+import { DOWNLOAD_STARTED, useDownload } from "./download.ts";
+import { CheckIcon, PaperclipIcon } from "./Icons.tsx";
 import { reloadMedia } from "./mediaReload.ts";
 import { OpenImage } from "./openImage.ts";
 import { isPlainClick } from "./plainClick.ts";
@@ -53,6 +54,26 @@ export function AttachmentList({ attachments }: { attachments: Attachment[] }) {
         return <AttachmentFile key={attachment.id} attachment={attachment} />;
       })}
     </div>
+  );
+}
+
+/** "Herunterladen", which says so once the download started (#391). */
+export function DownloadLink({
+  href,
+  filename,
+}: {
+  href: string;
+  filename: string;
+}) {
+  const { started, link } = useDownload();
+  return (
+    <a href={href} download={filename} {...link}>
+      {started ? (
+        <span role="status">{DOWNLOAD_STARTED}</span>
+      ) : (
+        "Herunterladen"
+      )}
+    </a>
   );
 }
 
@@ -139,12 +160,10 @@ export function AttachmentImageFailed({
             Erneut laden
           </button>
           {isPendingId(attachment.id) ? null : (
-            <a
+            <DownloadLink
               href={attachmentDownloadUrl(attachment.id)}
-              download={attachment.filename}
-            >
-              Herunterladen
-            </a>
+              filename={attachment.filename}
+            />
           )}
         </span>
       </p>
@@ -168,6 +187,7 @@ function AttachmentMedia({ attachment }: { attachment: Attachment }) {
     () => !playable(kind, attachment.content_type),
   );
   const lastReload = useRef(-Infinity);
+  const download = useDownload();
   const onError = (event: SyntheticEvent<HTMLMediaElement>) => {
     const now = Date.now();
     if (reloadMedia(event.currentTarget, lastReload.current, now))
@@ -202,10 +222,15 @@ function AttachmentMedia({ attachment }: { attachment: Attachment }) {
         <a
           href={attachmentDownloadUrl(attachment.id)}
           download={attachment.filename}
+          {...download.link}
         >
           {attachment.filename}
         </a>
-        <span>{formatSize(attachment.size)}</span>
+        {download.started ? (
+          <span role="status">{DOWNLOAD_STARTED}</span>
+        ) : (
+          <span>{formatSize(attachment.size)}</span>
+        )}
       </figcaption>
     </figure>
   );
@@ -249,12 +274,10 @@ function AttachmentText({ attachment }: { attachment: Attachment }) {
       {error ? (
         <p className="lr-attachment-text-state">
           Vorschau nicht verfügbar.{" "}
-          <a
+          <DownloadLink
             href={attachmentDownloadUrl(attachment.id)}
-            download={attachment.filename}
-          >
-            Herunterladen
-          </a>
+            filename={attachment.filename}
+          />
         </p>
       ) : text === null ? (
         <p className="lr-attachment-text-state">Vorschau wird geladen…</p>
@@ -263,12 +286,10 @@ function AttachmentText({ attachment }: { attachment: Attachment }) {
           <pre>
             <code>{text}</code>
           </pre>
-          <a
+          <DownloadLink
             href={attachmentDownloadUrl(attachment.id)}
-            download={attachment.filename}
-          >
-            Herunterladen
-          </a>
+            filename={attachment.filename}
+          />
         </>
       )}
     </details>
@@ -276,6 +297,7 @@ function AttachmentText({ attachment }: { attachment: Attachment }) {
 }
 
 function AttachmentFile({ attachment }: { attachment: Attachment }) {
+  const { started, link } = useDownload();
   return (
     <a
       // Saved, never opened: an installed app has no back button to
@@ -284,10 +306,15 @@ function AttachmentFile({ attachment }: { attachment: Attachment }) {
       href={attachmentDownloadUrl(attachment.id)}
       download={attachment.filename}
       className="lr-attachment-file"
+      {...link}
     >
-      <PaperclipIcon size={15} />
+      {started ? <CheckIcon size={15} /> : <PaperclipIcon size={15} />}
       <span>{attachment.filename}</span>
-      <span>{formatSize(attachment.size)}</span>
+      {started ? (
+        <span role="status">{DOWNLOAD_STARTED}</span>
+      ) : (
+        <span>{formatSize(attachment.size)}</span>
+      )}
       <UploadState attachment={attachment} />
     </a>
   );
