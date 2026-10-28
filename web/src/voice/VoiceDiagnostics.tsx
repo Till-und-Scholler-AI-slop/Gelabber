@@ -44,7 +44,8 @@ function VideoChoiceLine({ video }: { video: VideoChoice | undefined }) {
             .join(", ")
         : "unbekannt"}
       ; dieses Gerät sendet AV1 in Hardware: {yesNo(encoders?.av1)}, H.264 in
-      Hardware: {yesNo(encoders?.h264)}; empfängt AV1: {yesNo(video.decodesAv1)}
+      Hardware: {yesNo(encoders?.h264)}, VP9 in Schichten:{" "}
+      {yesNo(encoders?.vp9Svc)}; empfängt AV1: {yesNo(video.decodesAv1)}
       {video.desktopApp ? `; Desktop-App v${video.desktopApp}` : ""}
     </p>
   );

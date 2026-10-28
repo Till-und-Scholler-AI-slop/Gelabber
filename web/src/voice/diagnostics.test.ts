@@ -624,7 +624,7 @@ describe("voice diagnostics", () => {
     expect(buildDiagnosticExport().video).toBeNull();
     const video = {
       roomCodecs: ["video/av1", "video/vp8"],
-      encoders: { av1: true, h264: false },
+      encoders: { av1: true, h264: false, vp9Svc: true },
       decodesAv1: true,
       desktopApp: "0.7.0",
     };

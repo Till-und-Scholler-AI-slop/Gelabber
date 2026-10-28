@@ -29,6 +29,7 @@ import {
   openNativeViewer,
   resetNativeViewersForTests,
 } from "./viewer.ts";
+import { NativeDevice } from "./device.ts";
 import {
   NativeAudioOutput,
   NativeStream,
@@ -281,6 +282,29 @@ describe("desktop app media", () => {
     setNativeBridgeForTests(core);
     expect(createStream()).toBeInstanceOf(NativeStream);
     expect(createAudioOutput()).toBeInstanceOf(NativeAudioOutput);
+  });
+
+  it("hands a scalability mode to the native core unchanged", async () => {
+    const device = new NativeDevice();
+    await device.load({ routerRtpCapabilities: capabilities });
+    const transport = device.createSendTransport({
+      id: "server-transport-1",
+      iceParameters: { usernameFragment: "u", password: "p" },
+      iceCandidates: [],
+      dtlsParameters: { fingerprints: [] },
+    } as never);
+    transport.on("connect", (_parameters: unknown, done: () => void) => done());
+    transport.on("produce", (_parameters: unknown, done: (r: object) => void) =>
+      done({ id: "p1" }),
+    );
+    const { processor } = await microphone();
+    await transport.produce({
+      track: processor.stream.getAudioTracks()[0],
+      encodings: [{ scalabilityMode: "L3T3_KEY" }],
+    });
+    expect(core.calledWith("media_produce")[0]).toMatchObject({
+      options: { encodings: [{ scalabilityMode: "L3T3_KEY" }] },
+    });
   });
 
   it("publishes the native microphone through the server's signaling", async () => {

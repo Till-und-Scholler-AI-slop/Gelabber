@@ -1,5 +1,6 @@
 import { useAudioProcessing, type ProcessingInfo } from "./audioProcessing.ts";
 import type { SenderPriority, MediaPriority } from "./mediaPriority.ts";
+import type { HardwareVideo } from "./videoCodec.ts";
 // Voice diagnostics (issue 86). Numeric getStats() only — no A/V recording.
 // Rates come from per-interval counter deltas. A missing browser field stays
 // unknown (null), and a counter that goes backwards is a reset, not a loss.
@@ -144,7 +145,7 @@ export type ConnectionSnapshot = {
  * where nothing is known yet. */
 export type VideoChoice = {
   roomCodecs: string[] | null;
-  encoders: { av1: boolean; h264: boolean } | null;
+  encoders: HardwareVideo | null;
   decodesAv1: boolean | null;
   /** The desktop app's version; `null` in a browser. */
   desktopApp?: string | null;

@@ -1212,7 +1212,7 @@ describe("public mediasoup connection lifecycle", () => {
       name: "OperationError",
     });
     expect(old.produce).toHaveBeenCalledTimes(3);
-    expect(old.produce.mock.calls[1][0].encodings).toHaveLength(2);
+    expect(old.produce.mock.calls[1][0].encodings).toHaveLength(3);
     expect(old.produce.mock.calls[2][0]).not.toHaveProperty("encodings");
     expect(old.nativeSendTainted).toBe(true);
     expect(old.closed).toBe(true);
@@ -1320,7 +1320,7 @@ describe("public mediasoup connection lifecycle", () => {
     expect(mic.stop).not.toHaveBeenCalled();
   });
 
-  it("sets only a video startup hint for VP8 scale 4/1 and its single-layer fallback, preserving Opus options", async () => {
+  it("sets only a video startup hint for VP8 scale 4/2/1 and its single-layer fallback, preserving Opus options", async () => {
     const f = fixture();
     await f.start();
     await f.connection.publish(publication("a", new Capture("mic", "audio")));
@@ -1347,12 +1347,13 @@ describe("public mediasoup connection lifecycle", () => {
     expect(videoAttempts).toHaveLength(3);
     expect(videoAttempts[0].encodings).toEqual([
       { scaleResolutionDownBy: 4 },
+      { scaleResolutionDownBy: 2 },
       { scaleResolutionDownBy: 1 },
     ]);
     expect(videoAttempts[1].encodings).toEqual(videoAttempts[0].encodings);
     expect(videoAttempts[2]).not.toHaveProperty("encodings");
     for (const attempt of videoAttempts) {
-      expect(attempt.codecOptions).toEqual({ videoGoogleStartBitrate: 1000 });
+      expect(attempt.codecOptions).toEqual({ videoGoogleStartBitrate: 5000 });
       for (const encoding of attempt.encodings ?? []) {
         expect(encoding).not.toHaveProperty("maxBitrate");
         expect(encoding).not.toHaveProperty("minBitrate");
@@ -1377,7 +1378,7 @@ describe("public mediasoup connection lifecycle", () => {
     const attempts = send.produce.mock.calls
       .slice(-2)
       .map(([options]) => options);
-    expect(attempts[0].encodings).toHaveLength(2);
+    expect(attempts[0].encodings).toHaveLength(3);
     expect(attempts[1]).not.toHaveProperty("encodings");
     for (const attempt of attempts)
       expect(attempt).toMatchObject({
@@ -1956,19 +1957,86 @@ describe("video codec negotiation", () => {
     expect(sent(f)[0].codec?.mimeType).toBe("video/VP8");
   });
 
-  it("sends Constrained Baseline H.264 in two layers with hardware, else VP8", async () => {
+  it("sends Constrained Baseline H.264 in three layers with hardware, else VP8", async () => {
     const hw = negotiating(true, ["video/vp8", "video/h264"]);
     await hw.start();
     await hw.connection.publish(publication("v", new Capture("cam", "video")));
     expect(sent(hw)[0].codec).toEqual(h264("42e01f"));
     expect(sent(hw)[0].encodings).toEqual([
       { scaleResolutionDownBy: 4 },
+      { scaleResolutionDownBy: 2 },
       { scaleResolutionDownBy: 1 },
     ]);
     const sw = negotiating(false, ["video/vp8", "video/h264"]);
     await sw.start();
     await sw.connection.publish(publication("v", new Capture("cam", "video")));
     expect(sent(sw)[0].codec?.mimeType).toBe("video/VP8");
+  });
+
+  const vp9 = {
+    kind: "video" as const,
+    mimeType: "video/VP9",
+    preferredPayloadType: 98,
+    clockRate: 90000,
+    parameters: { "profile-id": 0 },
+  };
+  const vp9Room = (handlerName: string) => {
+    const f = negotiating({ av1: false, h264: false, vp9Svc: true }, [
+      "video/vp8",
+      "video/vp9",
+    ]);
+    f.device.sendRtpCapabilities = {
+      codecs: [...capabilities.codecs!, vp9],
+    };
+    f.device.handlerName = handlerName;
+    return f;
+  };
+  const vp8Layers = [
+    { scaleResolutionDownBy: 4 },
+    { scaleResolutionDownBy: 2 },
+    { scaleResolutionDownBy: 1 },
+  ];
+
+  it("sends VP9 as one stream in L3T3_KEY on a Chromium handler", async () => {
+    const chrome = vp9Room("Chrome111");
+    await chrome.start();
+    await chrome.connection.publish(
+      publication("v", new Capture("cam", "video")),
+    );
+    expect(sent(chrome)[0].codec?.mimeType).toBe("video/VP9");
+    expect(sent(chrome)[0].encodings).toEqual([
+      { scalabilityMode: "L3T3_KEY" },
+    ]);
+    // Firefox accepts the mode and sends one layer, so it sends VP8 layers.
+    const firefox = vp9Room("Firefox120");
+    await firefox.start();
+    await firefox.connection.publish(
+      publication("v", new Capture("cam", "video")),
+    );
+    expect(sent(firefox)[0].codec?.mimeType).toBe("video/VP8");
+    expect(sent(firefox)[0].encodings).toEqual(vp8Layers);
+  });
+
+  it("falls back to VP8 layers for good when the SDK refuses VP9 SVC", async () => {
+    const f = vp9Room("Chrome111");
+    await f.start();
+    await f.connection.publish(publication("a", new Capture("mic", "audio")));
+    f.device.transports[1].productionErrors.push(
+      Object.assign(new Error("no svc"), { name: "UnsupportedError" }),
+    );
+    await f.connection.publish(publication("v", new Capture("cam", "video")));
+    const video = sent(f).slice(1);
+    expect(video).toHaveLength(2);
+    expect(video[0].codec?.mimeType).toBe("video/VP9");
+    expect(video[1].codec?.mimeType).toBe("video/VP8");
+    expect(video[1].encodings).toEqual(vp8Layers);
+    await f.connection.publish(
+      publication("s", new Capture("screen", "video")),
+    );
+    const next = sent(f).at(-1)!;
+    expect(next.codec?.mimeType).toBe("video/VP8");
+    expect(next.encodings).toEqual(vp8Layers);
+    expect(f.onError).not.toHaveBeenCalled();
   });
 
   it("sends AV1 as one stream where it is encoded in hardware", async () => {
@@ -2011,7 +2079,7 @@ describe("video codec negotiation", () => {
     });
     await vi.waitFor(() => expect(f.onRepublished).toHaveBeenCalledTimes(1));
     expect(sent(f).at(-1)!.codec).toEqual(h264("42e01f"));
-    expect(sent(f).at(-1)!.encodings).toHaveLength(2);
+    expect(sent(f).at(-1)!.encodings).toHaveLength(3);
     expect(f.onError).not.toHaveBeenCalled();
   });
 
