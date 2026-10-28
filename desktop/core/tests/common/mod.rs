@@ -50,7 +50,7 @@ pub fn validate_like_server(kind: &str, rtp: &RtpParameters) {
         !rtp.codecs.is_empty() && rtp.codecs.len() <= 16,
         "codec count"
     );
-    assert!(rtp.encodings.len() <= 2, "at most two encodings");
+    assert!(rtp.encodings.len() <= 3, "at most three encodings");
     assert!(rtp.header_extensions.len() <= 32, "header extension count");
     let first = serde_json::to_value(&rtp.codecs[0]).unwrap();
     let mime = first["mimeType"].as_str().unwrap().to_ascii_lowercase();
@@ -62,6 +62,10 @@ pub fn validate_like_server(kind: &str, rtp: &RtpParameters) {
             ),
             "video codec {mime}"
         );
+        // VP9 and AV1 come as one stream or SVC, never as simulcast layers.
+        if matches!(mime.as_str(), "video/vp9" | "video/av1") {
+            assert!(rtp.encodings.len() <= 1, "{mime} takes one encoding");
+        }
     } else {
         assert_eq!(mime, "audio/opus");
         assert!(rtp.encodings.len() <= 1);
@@ -162,6 +166,7 @@ impl Server {
         let mut options = WebRtcTransportOptions::new_with_server(self.webrtc.clone());
         options.enable_tcp = false;
         options.prefer_udp = true;
+        options.initial_available_outgoing_bitrate = 8_000_000;
         let transport = self.router.create_webrtc_transport(options).await.unwrap();
         let params = json!({
             "id": transport.id(),
