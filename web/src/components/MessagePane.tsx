@@ -51,6 +51,7 @@ import { gifBox } from "../gifs/api.ts";
 import { Avatar } from "./Avatar.tsx";
 import { confirmAction } from "./confirm.ts";
 import { ImageLightbox, type LightboxImage } from "./ImageLightbox.tsx";
+import { imageBoxHeight } from "./imageBox.ts";
 import { ArrowDownIcon, HashIcon, SearchIcon } from "./Icons.tsx";
 import { Button } from "./ui/Button.tsx";
 import { SkeletonRows } from "./ui/Skeleton.tsx";
@@ -726,7 +727,8 @@ function MessageList({
       estimateSize: (index) => {
         const message = items[index]!;
         const files = asAttachmentList(message.attachments);
-        const images = files.filter((a) => isImageType(a.content_type)).length;
+        const pictures = files.filter((a) => isImageType(a.content_type));
+        const images = pictures.length;
         const image = images > 0;
         // Players and file rows below the pictures.
         const extra = files.reduce(
@@ -755,10 +757,13 @@ function MessageList({
             gifBox(gif).height +
             (isContinued(items[index - 1], message) ? 16 : 60)
           );
-        // The image box is a fixed 240 px (chat.css), several pictures a grid
-        // of 160 px rows, plus header and gaps.
+        // One picture's box is at most 240 px (imageBox.ts), several
+        // pictures a grid of 160 px rows, plus header and gaps.
         if (image) {
-          const box = images > 1 ? Math.ceil(images / 2) * 164 : 240;
+          const box =
+            images > 1
+              ? Math.ceil(images / 2) * 164
+              : imageBoxHeight(pictures[0]!);
           return (
             breaks + box + (isContinued(items[index - 1], message) ? 16 : 60)
           );

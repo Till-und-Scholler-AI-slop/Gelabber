@@ -9,7 +9,9 @@
 // an edit arrives while that page is on its way, and for a reader who sits
 // scrolled up while rows below are deleted and rows above grow (#215).
 // Afterwards the reader must still be able to scroll away. A picture's
-// lightbox closes when its message is deleted. With unread messages the
+// lightbox closes when its message is deleted. A picture's box has the
+// picture's own shape, at most its own size, and the list stays at its end
+// as it shrinks to it. With unread messages the
 // list opens at the first of them, after fetching the page it is on, and
 // marks nothing read until asked to. A file says that its download started
 // and repeated clicks save it once (#391). A toast above the composer leaves
@@ -23,6 +25,7 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { crc32, deflateSync } from "node:zlib";
 import { chromium } from "playwright";
 import { build } from "vite";
 
@@ -37,7 +40,39 @@ const PIXEL = Buffer.from(
   "base64",
 );
 
+/** A grey PNG of `width` × `height`: a screenshot of that shape. */
+function png(width, height) {
+  const chunk = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([length, body, crc]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8; // 8-bit grey
+  // Every row: filter "none", then its pixels.
+  const row = Buffer.alloc(width + 1, 0x80);
+  row[0] = 0;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", header),
+    chunk("IDAT", deflateSync(Buffer.concat(Array(height).fill(row)))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+/** Pictures of their own size, by attachment id; any other is PIXEL. */
+const pictures = new Map([
+  // The wide screenshot of a single chat line, larger than the box.
+  [id(5100), png(972, 114)],
+  // Smaller than the box: shown at its own size.
+  [id(5101), png(120, 40)],
+]);
 const ME = id(6);
 const JONAS = id(7);
 const SERVER = id(101);
@@ -225,7 +260,10 @@ async function open({ unread, shown = "Nachricht 99." } = {}) {
               headers: { "content-disposition": "attachment" },
               body: "%PDF-1.4\n",
             }
-          : { contentType: "image/png", body: PIXEL },
+          : {
+              contentType: "image/png",
+              body: pictures.get(url.pathname.split("/")[3]) ?? PIXEL,
+            },
       );
     if (url.pathname.startsWith("/api/"))
       return route.fulfill({
@@ -630,6 +668,83 @@ try {
     );
     console.log(
       `PASS: ${label}: Esc returns focus to the picture; deleting its message closes it and focus stays in the list`,
+    );
+    await opened.close();
+  }
+
+  {
+    // A picture's box is the picture: a small, wide screenshot got the
+    // 240 px box of a picture still loading, the rest of it empty.
+    const label = "picture size";
+    const opened = await open();
+    const { page, send } = opened;
+    const shots = [
+      [id(5100), "zeile.png", 101],
+      [id(5101), "klein.png", 102],
+    ];
+    for (const [attachment, filename, n] of shots)
+      send({
+        t: "c",
+        d: {
+          ...message(n),
+          content: `Nachricht ${n}. Ein Screenshot.`,
+          attachments: [
+            {
+              id: attachment,
+              filename,
+              content_type: "image/png",
+              size: pictures.get(attachment).length,
+            },
+          ],
+        },
+      });
+    await page.waitForFunction(() => {
+      const shown = document.querySelectorAll(".lr-attachment-image img");
+      return (
+        shown.length === 2 &&
+        [...shown].every((img) => img.complete && img.naturalWidth > 1)
+      );
+    });
+    await frames(page, 8);
+    const placed = await page.evaluate(() => {
+      const log = document.querySelector('[role="log"]');
+      return {
+        atEnd: log.scrollHeight - log.scrollTop - log.clientHeight <= 2,
+        boxes: [...log.querySelectorAll(".lr-attachment-image")].map((box) => {
+          const img = box.querySelector("img");
+          const outer = box.getBoundingClientRect();
+          const drawn = img.getBoundingClientRect();
+          return {
+            name: img.alt,
+            box: [outer.width, outer.height],
+            // Without its 1 px border.
+            drawn: [drawn.width - 2, drawn.height - 2],
+            natural: [img.naturalWidth, img.naturalHeight],
+          };
+        }),
+      };
+    });
+    const wanted = { "zeile.png": [358, 42], "klein.png": [120, 40] };
+    for (const { name, box, drawn, natural } of placed.boxes) {
+      const size = (pair) => pair.map((v) => Math.round(v)).join("×");
+      assert.equal(
+        size(drawn),
+        size(wanted[name]),
+        `${label}: ${name} (${size(natural)}) is drawn at ${size(drawn)}`,
+      );
+      assert.ok(
+        Math.abs(box[0] - drawn[0] - 2) < 1 &&
+          Math.abs(box[1] - drawn[1] - 2) < 1,
+        `${label}: ${name} is drawn at ${size(drawn)} in a box of ${size(box)}`,
+      );
+    }
+    assert.equal(placed.boxes.length, 2);
+    assert.ok(
+      placed.atEnd,
+      `${label}: the list left its end as the pictures loaded`,
+    );
+    console.log(
+      `PASS: ${label}: ${placed.boxes.map(({ name, natural, box }) => `${name} ${natural.join("×")} in a box of ${box.map(Math.round).join("×")}`).join(", ")}; the list stays at its end`,
     );
     await opened.close();
   }

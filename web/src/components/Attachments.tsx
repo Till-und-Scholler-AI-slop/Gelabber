@@ -25,6 +25,7 @@ import type { Attachment } from "../messages/types.ts";
 import { asAttachmentList } from "../messages/types.ts";
 import { DOWNLOAD_STARTED, useDownload } from "./download.ts";
 import { CheckIcon, PaperclipIcon } from "./Icons.tsx";
+import { imageFit, knownImageSize, rememberImageSize } from "./imageBox.ts";
 import { reloadMedia } from "./mediaReload.ts";
 import { OpenImage } from "./openImage.ts";
 import { isPlainClick } from "./plainClick.ts";
@@ -39,7 +40,11 @@ export function AttachmentList({ attachments }: { attachments: Attachment[] }) {
       {images.length > 0 ? (
         <div className={images.length > 1 ? "lr-attachment-grid" : undefined}>
           {images.map((attachment) => (
-            <AttachmentImage key={attachment.id} attachment={attachment} />
+            <AttachmentImage
+              key={attachment.id}
+              attachment={attachment}
+              fit={images.length === 1}
+            />
           ))}
         </div>
       ) : null}
@@ -86,11 +91,29 @@ function UploadState({ attachment }: { attachment: Attachment }) {
   );
 }
 
-function AttachmentImage({ attachment }: { attachment: Attachment }) {
+/** One picture; `fit`: its box is the picture's own size (imageBox.ts),
+ *  not a grid cell. */
+function AttachmentImage({
+  attachment,
+  fit,
+}: {
+  attachment: Attachment;
+  fit: boolean;
+}) {
   const openImage = useContext(OpenImage);
   const [failed, setFailed] = useState(false);
   // A new key mounts a new <img>, which asks the API again.
   const [attempt, setAttempt] = useState(0);
+  const [natural, setNatural] = useState(() => knownImageSize(attachment));
+  // Size known: the picture's own box, reserved before it arrives, so
+  // loading does not move the list.
+  const sized =
+    fit && natural
+      ? {
+          width: imageFit(natural).width,
+          aspectRatio: `${natural.width} / ${natural.height}`,
+        }
+      : undefined;
   const src = attachment.preview_url ?? attachmentUrl(attachment.id);
   if (failed)
     return (
@@ -120,16 +143,26 @@ function AttachmentImage({ attachment }: { attachment: Attachment }) {
         });
       }}
       aria-label={`${attachment.filename} vergrößern`}
-      className="lr-attachment-image"
+      className={sized ? "lr-attachment-image is-sized" : "lr-attachment-image"}
     >
-      {/* A fixed-height box: the row has its final height before the
-          picture arrives, so loading never moves the list. */}
       <img
         key={attempt}
         src={src}
         alt={attachment.filename}
+        style={sized}
         decoding="async"
         loading="lazy"
+        onLoad={(event) => {
+          const { naturalWidth: width, naturalHeight: height } =
+            event.currentTarget;
+          if (width <= 0 || height <= 0) return;
+          rememberImageSize(attachment, { width, height });
+          setNatural((size) =>
+            size?.width === width && size.height === height
+              ? size
+              : { width, height },
+          );
+        }}
         // A picture that cannot load (storage unreachable, link expired,
         // file gone) says so instead of leaving an empty box (#348).
         onError={() => setFailed(true)}
@@ -140,8 +173,8 @@ function AttachmentImage({ attachment }: { attachment: Attachment }) {
 }
 
 /** The box of a picture that did not load: what failed, a retry, and the
- *  file itself, which may still arrive as a download. Same height as the
- *  picture, so the list does not move. */
+ *  file itself, which may still arrive as a download. Same height as a
+ *  picture still loading, so the list does not move. */
 export function AttachmentImageFailed({
   attachment,
   onRetry,

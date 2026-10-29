@@ -966,8 +966,8 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   gap: 6px;
   margin-top: 6px;
 }
-/* A fixed-height box: a row has its final height before the picture loads
-   (the API does not know image sizes), so nothing in the list moves. */
+/* A picture whose size is not known yet (the API does not store image
+   sizes) has the full height until it loads; its row then only shrinks. */
 .lr-attachment-image {
   display: flex;
   align-items: flex-start;
@@ -981,6 +981,21 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   border: 1px solid var(--lr-border);
   border-radius: var(--lr-radius);
   object-fit: contain;
+}
+/* Size known: the box is the picture, drawn at the size imageBox.ts gives
+   it (never enlarged); a narrow column scales it down in shape. */
+.lr-attachment-image.is-sized {
+  align-items: center;
+  justify-content: center;
+  height: auto;
+  min-width: 24px;
+  min-height: 24px;
+}
+.lr-attachment-image.is-sized img {
+  box-sizing: content-box;
+  max-width: calc(100% - 2px);
+  max-height: none;
+  height: auto;
 }
 .lr-message-gif {
   position: relative;
