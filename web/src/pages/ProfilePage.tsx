@@ -330,7 +330,8 @@ function AccountSecurity({ email }: { email: string }) {
     if (
       !(await confirmAction({
         title: "Auf allen Geräten abmelden?",
-        message: "Gilt auch für dieses Gerät.",
+        message:
+          "Auch dieses Gerät. Danach musst du dich überall neu anmelden.",
         confirmLabel: "Überall abmelden",
       }))
     )
