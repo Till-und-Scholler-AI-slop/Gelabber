@@ -688,7 +688,12 @@ describe("private DM discovery and topicless resync", () => {
       return json({ messages: [], has_more: false });
     });
     await login(ada.email, "password123");
-    cleanups.push(attachRealtimeRecovery(queryClient, takeStamp()!, ws));
+    // No random wait after the reconnect: it may outlast `waitFor`.
+    cleanups.push(
+      attachRealtimeRecovery(queryClient, takeStamp()!, ws, {
+        readySpreadMs: 0,
+      }),
+    );
     socket.frame({ op: "dm", c: "first-dm" });
     await vi.waitFor(() => expect(lists).toBe(1));
     await new Promise((r) => setTimeout(r, 30));
