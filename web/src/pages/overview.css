@@ -13,10 +13,10 @@
 }
 .community-overview__bar {
   height: var(--lr-header-height);
-  padding: 0 28px;
+  padding: 0 24px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   border-bottom: 1px solid var(--lr-border);
   color: var(--lr-text);
   font: var(--lr-type-title-sm);
@@ -25,126 +25,223 @@
 .community-overview__bar svg {
   color: var(--lr-muted);
 }
-.community-overview__welcome {
-  padding: 20px 28px 0;
+/* One column: the server, its voice channel, what is unread. */
+.community-overview__body {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  width: 100%;
+  max-width: 760px;
+  padding: 32px;
 }
-.community-overview__welcome h1 {
-  font-size: clamp(28px, 2.5vw, 36px);
-  line-height: 1.16;
-  letter-spacing: -0.035em;
-  font-weight: 720;
-  text-wrap: balance;
+.community-overview__head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.community-overview__head h1 {
+  font: var(--lr-type-page);
+  letter-spacing: -0.01em;
   overflow-wrap: anywhere;
 }
-.community-overview__welcome > p {
-  margin-top: 8px;
+.community-overview__head p,
+.community-overview__alone p,
+.community-overview__no-room p {
   color: var(--lr-muted);
-  font-size: 17px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
+  font: 400 13px / 1.4 var(--lr-font);
 }
 .community-overview__alone {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px 20px;
-  margin: 20px 28px 0;
-  padding: 16px 18px;
-  border: 1px solid var(--lr-border);
-  border-left: 3px solid var(--lr-accent);
-  border-radius: var(--lr-radius-md);
-  background: var(--lr-panel);
-  font-size: 15px;
-  line-height: 1.45;
+  gap: 8px 16px;
+  margin-top: 10px;
 }
-.community-overview__alone p {
-  flex: 1 1 260px;
-  color: var(--lr-muted);
-}
-.community-overview__alone strong {
-  color: var(--lr-text);
-}
-.community-overview__empty {
+.community-overview__no-room {
   display: flex;
-  flex: 1;
   flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 16px;
-  padding: 28px;
-  color: var(--lr-muted);
+  gap: 6px;
 }
-.community-overview__empty svg {
-  color: var(--lr-accent-text);
-}
-.community-overview__empty h2 {
-  font-size: 24px;
-  color: var(--lr-text);
-}
-.community-overview__empty button {
-  color: var(--lr-text);
-  text-decoration: underline;
-  text-underline-offset: 4px;
-  cursor: pointer;
-}
-.community-overview__places {
-  margin: 0 28px 28px;
-  padding-top: 20px;
-  border-top: 1px solid var(--lr-border);
-}
-.community-overview__places h2 {
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 12px;
-}
-.community-overview__places h2:not(:first-child) {
-  margin-top: 28px;
-}
-.community-overview__links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-.community-overview__place {
+.community-overview__no-room h2 {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-width: 0;
-  max-width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--lr-border);
-  border-radius: 8px;
-  color: var(--lr-text);
-  background: var(--lr-panel);
+  min-height: 28px;
+  font: var(--lr-type-title-sm);
 }
-.community-overview__place:hover {
-  background: var(--lr-hover);
-  border-color: var(--lr-accent);
-}
-.community-overview__place svg {
-  color: var(--lr-muted);
+.community-overview__no-room svg {
   flex-shrink: 0;
+  color: var(--lr-muted);
 }
-.community-overview__place strong {
-  font-size: 13px;
-  font-weight: 600;
-  overflow-wrap: anywhere;
+/* The voice room as a part of the column: its name, then its people as
+   tiles of one size. The channel's own page keeps the room as it is. */
+.community-overview .voice-room {
+  padding: 0;
 }
-.community-overview__place span {
+.community-overview .voice-room-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+}
+.community-overview .voice-room-heading > svg {
+  flex-shrink: 0;
+  color: var(--lr-muted);
+}
+.community-overview .voice-room[data-joined] .voice-room-heading > svg {
+  color: var(--lr-online);
+}
+.community-overview .voice-room-name {
   min-width: 0;
 }
-.community-overview__place.is-unread {
-  border-color: var(--lr-border-strong);
+.voice-room-connected {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--lr-radius-full);
+  background: color-mix(in srgb, var(--lr-online) 14%, transparent);
+  color: var(--lr-online-text);
+  font: var(--lr-type-meta);
+  font-weight: 500;
+  white-space: nowrap;
 }
-.community-overview__place.is-unread strong {
-  font-weight: 700;
+.voice-room-connected::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
 }
-.community-overview__place small {
-  display: block;
-  margin-top: 3px;
+.community-overview .voice-room .voice-room-participants {
+  margin: 12px 0 0;
+}
+.community-overview .voice-room .voice-room-self {
   color: var(--lr-muted);
+  font-weight: 400;
+}
+.community-overview .voice-room .voice-room-actions {
+  margin-top: 16px;
+}
+@media (min-width: 641px) {
+  .community-overview .voice-room .voice-room-participants {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .community-overview .voice-room .voice-room-participant {
+    width: 168px;
+    height: 136px;
+    aspect-ratio: auto;
+    padding: 12px;
+  }
+  .community-overview .voice-room .voice-room-avatar {
+    width: 56px;
+    height: 56px;
+  }
+  .community-overview .voice-room .voice-room-participant-text {
+    margin-top: 8px;
+  }
+  /* Who is muted is the corner's icons, who speaks the ring: the line
+     under a name is left for a camera or a Live. Everyone here is
+     connected, so neither the dot nor the speaker says anything. */
+  .community-overview
+    .voice-room
+    .voice-room-participant-status:not([data-media]),
+  .community-overview .voice-room .voice-room-connection,
+  .community-overview .voice-room .voice-state-icons-speaker {
+    display: none;
+  }
+}
+/* Unread text channels: one bordered list, the names in one column so the
+   previews start in line. */
+.overview-unread {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.overview-unread__title {
+  color: var(--lr-muted);
+  font: var(--lr-type-caps);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.overview-unread__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-lg);
+  background: var(--lr-surface);
+  overflow: hidden;
+}
+.overview-unread__list > li + li {
+  border-top: 1px solid var(--lr-border);
+}
+.overview-unread__row {
+  display: grid;
+  grid-template-columns: 18px 120px minmax(0, 1fr) auto minmax(18px, auto);
+  grid-template-areas: "icon name preview time badge";
+  align-items: center;
+  column-gap: 12px;
+  min-height: 52px;
+  padding: 0 14px;
+  color: var(--lr-text);
+}
+.overview-unread__row:hover {
+  background: var(--lr-hover);
+}
+.overview-unread__row:focus-visible {
+  outline: 2px solid var(--lr-focus);
+  outline-offset: -2px;
+}
+.overview-unread__row > svg {
+  grid-area: icon;
+  color: var(--lr-muted);
+}
+.overview-unread__name {
+  grid-area: name;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.overview-unread__name > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-unread__preview {
+  grid-area: preview;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--lr-muted);
+  font-size: 13px;
+}
+.overview-unread__author {
+  color: var(--lr-text);
+}
+.overview-unread__time {
+  grid-area: time;
+  color: var(--lr-subtle);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.overview-unread__badge {
+  grid-area: badge;
+  display: flex;
+  justify-content: flex-end;
+}
+.overview-unread__badge > * {
+  margin-left: 0;
 }
 .lr-channel-content {
   background: var(--lr-bg);
@@ -206,7 +303,7 @@
   opacity: 0.55;
   cursor: wait;
 }
-html[data-compact-rooms="true"] .voice-room {
+html[data-compact-rooms="true"] .voice-room[data-page] {
   padding-block: 16px;
 }
 html[data-compact-rooms="true"] .voice-room-avatar {
@@ -217,37 +314,24 @@ html[data-compact-rooms="true"] .voice-room-participants {
   gap: 12px;
   margin-block: 16px;
 }
-@media (max-width: 1200px) {
-  .community-overview__welcome {
-    padding-inline: 28px;
-  }
-  .community-overview__places {
-    margin-inline: 28px;
-  }
-}
 @media (max-width: 800px) {
   /* The phone's top bar already names the place. */
   .community-overview__bar {
     display: none;
   }
-  .community-overview__alone {
-    margin-inline: 24px;
+  .community-overview__body {
+    gap: 28px;
+    padding: 20px 24px 28px;
   }
-  .community-overview__welcome {
-    padding: 20px 24px 0;
-  }
-  .community-overview__welcome h1 {
-    font-size: 28px;
-    line-height: 1.16;
-    text-wrap: initial;
-  }
-  .community-overview__welcome > p {
-    font-size: 16px;
-  }
-  .community-overview__places {
-    margin-inline: 24px;
-  }
-  .community-overview__empty {
-    padding: 28px 24px;
+}
+/* A phone: the preview takes a line of its own under the name. */
+@media (max-width: 640px) {
+  .overview-unread__row {
+    grid-template-columns: 18px minmax(0, 1fr) auto minmax(18px, auto);
+    grid-template-areas:
+      "icon name time badge"
+      ". preview preview preview";
+    row-gap: 2px;
+    padding-block: 10px;
   }
 }

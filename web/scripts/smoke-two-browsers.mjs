@@ -276,8 +276,14 @@ try {
   await b.page.waitForURL(/\/s\//);
   await b.page.goto(voiceUrl);
 
-  await a.page.getByRole("button", { name: "Dazukommen" }).click();
-  await b.page.getByRole("button", { name: "Dazukommen" }).click();
+  await a.page
+    .locator(".voice-room")
+    .getByRole("button", { name: "Beitreten", exact: true })
+    .click();
+  await b.page
+    .locator(".voice-room")
+    .getByRole("button", { name: "Beitreten", exact: true })
+    .click();
   await a.page
     .getByRole("button", { name: "Voice-Einstellungen" })
     .first()

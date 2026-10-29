@@ -60,13 +60,15 @@ export function VoiceRoom({
   server,
   channelId,
   channelName,
-  named = false,
+  overview = false,
 }: {
   server: ServerDetail;
   channelId: string;
   channelName: string;
-  /** Show the room's name: where no page heading names it already. */
-  named?: boolean;
+  /** The overview's room: its name heads it, with "Verbunden" while in the
+   * call, and the people are all it shows; no line about them, no free
+   * seats. The channel's page names the room itself. */
+  overview?: boolean;
 }) {
   const allowed = can(server, "join_voice");
   const voice = useVoice();
@@ -218,24 +220,33 @@ export function VoiceRoom({
     .map(([id]) => members.get(id)?.name ?? "Jemand");
   const elsewhere = voice.status === "joined" && !here;
   const freeSeats =
-    here || !allowed ? 0 : occupants.length === 0 ? FREE_SEATS_EMPTY : 1;
+    here || !allowed || overview
+      ? 0
+      : occupants.length === 0
+        ? FREE_SEATS_EMPTY
+        : 1;
 
   return (
     <section
       className="voice-room"
       aria-label={channelName}
       data-joined={here || undefined}
-      data-page={!named || undefined}
+      data-page={!overview || undefined}
     >
-      {named ? (
-        <h2 className="voice-room-name">
-          {channelName}
+      {overview ? (
+        <div className="voice-room-heading">
+          <SpeakerIcon size={18} />
+          <h2 className="voice-room-name">{channelName}</h2>
+          {here ? (
+            <span className="voice-room-connected">Verbunden</span>
+          ) : null}
           {liveOn ? <span className="voice-room-live-badge">Live</span> : null}
-        </h2>
-      ) : null}
-      <p className="voice-room-summary">
-        {roomSummary(others, { here, canJoin: allowed, live: othersLive })}
-      </p>
+        </div>
+      ) : (
+        <p className="voice-room-summary">
+          {roomSummary(others, { here, live: othersLive })}
+        </p>
+      )}
       {stageTiles.length > 0 ? (
         <div
           className="voice-room-stage"
@@ -277,43 +288,44 @@ export function VoiceRoom({
             })}
         </div>
       ) : null}
-      <ul
-        className="voice-room-participants"
-        aria-label="Teilnehmer im Sprachkanal"
-      >
-        {occupants.map(([id, flags]) => {
-          const camera = cameras.get(id);
-          return (
-            <Participant
-              key={id}
-              id={id}
-              member={members.get(id)}
-              self={id === me}
-              fallbackName={user?.name ?? "Du"}
-              fallbackAvatar={id === me ? (user?.avatar_url ?? null) : null}
-              muted={id === me && here ? voice.muted : flags.muted}
-              deafened={id === me && here ? voice.deafened : flags.deafened}
-              speaking={speaks(id, flags)}
-              media={isLive(id) ? "Live" : camera ? "Kamera an" : null}
-              camera={camera && camera !== spotlight ? camera : null}
-              pinned={pinned}
-              onTogglePin={togglePin}
-              channelName={channelName}
-              onProfile={openProfile}
-            />
-          );
-        })}
-        {Array.from({ length: freeSeats }, (_, seat) => (
-          <li key={`seat-${seat}`} className="voice-room-seat" aria-hidden>
-            <span className="voice-room-seat-circle" />
-            <span>Platz frei</span>
-          </li>
-        ))}
-      </ul>
+      {occupants.length > 0 || freeSeats > 0 ? (
+        <ul
+          className="voice-room-participants"
+          aria-label="Teilnehmer im Sprachkanal"
+        >
+          {occupants.map(([id, flags]) => {
+            const camera = cameras.get(id);
+            return (
+              <Participant
+                key={id}
+                id={id}
+                member={members.get(id)}
+                self={id === me}
+                fallbackName={user?.name ?? "Du"}
+                fallbackAvatar={id === me ? (user?.avatar_url ?? null) : null}
+                muted={id === me && here ? voice.muted : flags.muted}
+                deafened={id === me && here ? voice.deafened : flags.deafened}
+                speaking={speaks(id, flags)}
+                media={isLive(id) ? "Live" : camera ? "Kamera an" : null}
+                camera={camera && camera !== spotlight ? camera : null}
+                pinned={pinned}
+                onTogglePin={togglePin}
+                channelName={channelName}
+                onProfile={openProfile}
+              />
+            );
+          })}
+          {Array.from({ length: freeSeats }, (_, seat) => (
+            <li key={`seat-${seat}`} className="voice-room-seat" aria-hidden>
+              <span className="voice-room-seat-circle" />
+              <span>Platz frei</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {!here && allowed && elsewhere ? (
         <p className="voice-room-muted voice-room-switch-note">
-          Du wechselst aus {voice.channelName ?? "deinem Sprachkanal"}. Stumm
-          und Taub bleiben erhalten.
+          Du verlässt dabei {voice.channelName ?? "deinen Sprachkanal"}.
         </p>
       ) : null}
       {!here ? (
@@ -326,11 +338,11 @@ export function VoiceRoom({
               onClick={onJoin}
               className="voice-room-join"
             >
-              {elsewhere ? "Hierher wechseln" : "Dazukommen"}
+              {elsewhere ? "Hierher wechseln" : "Beitreten"}
             </Button>
           ) : (
             <p className="voice-room-muted voice-room-denied">
-              Du hast in diesem Server kein Recht, Voice beizutreten.
+              Keine Berechtigung für Sprachkanäle.
             </p>
           )}
           <IconButton
@@ -475,10 +487,15 @@ function Participant({
             onClick={profile}
           >
             {name}
-            {self ? " (du)" : ""}
+            {self ? <span className="voice-room-self"> (du)</span> : null}
           </button>
         </strong>
-        <span className="voice-room-participant-status">
+        {/* `data-media`: the overview shows this line only for a camera or
+            a Live; the state is the corner's icons and the speaking ring. */}
+        <span
+          className="voice-room-participant-status"
+          data-media={media ? "" : undefined}
+        >
           {status}
           {media ? ` · ${media}` : ""}
         </span>
@@ -569,7 +586,7 @@ function VolumeChip({ userId }: { userId: string }) {
   const level = useUserVolumes((s) => userVolumeOf(userId, s.users));
   if (level.muted || level.volume === 1) return null;
   return (
-    <span className="voice-room-volume-chip" title="Lautstärke nur für dich">
+    <span className="voice-room-volume-chip" title="Lokale Lautstärke">
       <span className="sr-only">Lautstärke </span>
       {Math.round(level.volume * 100)} %
     </span>

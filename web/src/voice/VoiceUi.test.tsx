@@ -196,12 +196,10 @@ describe("active media UI", () => {
         channelName="Stage"
       />,
     );
-    expect(html).toContain(
-      "Alice ist da. Alice ist live – komm dazu, um zuzusehen.",
-    );
+    expect(html).toContain("Alice ist da. Alice ist live.");
     expect(html).toContain("Im Raum · Live");
     // Watching takes coming along: the way in is the only action.
-    expect(html).toContain("Dazukommen</button>");
+    expect(html).toContain("Beitreten</button>");
     expect(html).not.toContain("Zuschauen");
     expect(html).not.toContain('aria-label="Übertragungen"');
     expect(html).not.toContain("data-source=");
@@ -292,14 +290,12 @@ describe("active media UI", () => {
     expect(html).toContain("Stumm");
     // One line on who is there, and a free seat instead of a card for self.
     expect(html).toContain("Alice ist da.");
-    expect(html).not.toContain("Rafi (du)");
+    expect(html).not.toContain("(du)");
     expect(html).not.toContain("noch nicht verbunden");
     expect(html.match(/<li class="voice-room-seat"/g)).toHaveLength(1);
     expect(html).toContain("Platz frei");
     // The visible text is the button's name.
-    expect(html).toMatch(
-      /<button[^>]*>(?:<svg.*?<\/svg>)?Dazukommen<\/button>/,
-    );
+    expect(html).toMatch(/<button[^>]*>(?:<svg.*?<\/svg>)?Beitreten<\/button>/);
     expect(html).not.toContain('aria-label="Beitreten"');
     expect(html).toContain('aria-label="Mikrofon testen"');
     expect(html).toContain('aria-label="Voice-Einstellungen"');
@@ -321,10 +317,12 @@ describe("active media UI", () => {
     const html = renderToStaticMarkup(
       <VoiceRoom server={server} channelId="stage" channelName="Wohnzimmer" />,
     );
-    expect(html.match(/Rafi \(du\)/g)).toHaveLength(1);
+    expect(
+      html.match(/Rafi<span class="voice-room-self"> \(du\)<\/span>/g),
+    ).toHaveLength(1);
     expect(html).toContain("Taub");
     expect(html).not.toContain("Du bist noch nicht verbunden");
-    expect(html).not.toContain("Dazukommen");
+    expect(html).not.toContain("Beitreten");
     expect(html).not.toContain('aria-label="Stummschalten"');
     expect(html).not.toContain("Verlassen");
     const controls = renderToStaticMarkup(<VoiceSessionControls />);
@@ -381,7 +379,7 @@ describe("active media UI", () => {
       />,
     );
     expect(html).not.toContain('aria-label="Beitreten"');
-    expect(html).toContain("kein Recht");
+    expect(html).toContain("Keine Berechtigung für Sprachkanäle.");
     expect(html).not.toMatch(/zuschauen|Zuschauen/);
     expect(html).toContain("Mikrofon testen");
   });
@@ -688,7 +686,7 @@ describe("active media UI", () => {
     expect(dock.match(/is-speaking/g)).toHaveLength(1);
   });
 
-  it("seats the first one in, and keeps everyone's volume one press away", () => {
+  it("shows the overview's room as its people, and keeps everyone's volume one press away", () => {
     fixture.live = {};
     const members = ["alice", "bob"].map((id) => ({
       user_id: id,
@@ -703,13 +701,18 @@ describe("active media UI", () => {
           server={{ ...server, members } as unknown as ServerDetail}
           channelId="stage"
           channelName="Stage"
-          named
+          overview
         />,
       );
     const empty = room();
     expect(empty).toContain('<h2 class="voice-room-name">Stage</h2>');
-    expect(empty).toContain("Noch niemand da – komm als Erste:r dazu.");
-    expect(empty.match(/<li class="voice-room-seat"/g)).toHaveLength(3);
+    // No line about who is there and no free seats: an empty room is its
+    // name and the way in.
+    expect(empty).not.toContain("voice-room-summary");
+    expect(empty).not.toContain("voice-room-seat");
+    expect(empty).not.toContain("voice-room-participants");
+    expect(empty).not.toContain("Verbunden");
+    expect(empty).toContain("Beitreten</button>");
 
     fixture.roster = {
       a: {
@@ -720,7 +723,8 @@ describe("active media UI", () => {
     useUserVolumes.getState().setVolume("bob", 0.7);
     try {
       const html = room();
-      expect(html).toContain("Alice und Bob sind da.");
+      expect(html).not.toContain("Alice und Bob sind da.");
+      expect(html.match(/<li class="voice-room-participant"/g)).toHaveLength(2);
       expect(html).toContain('aria-label="Optionen für Alice"');
       expect(html).toContain('aria-label="Optionen für Bob"');
       // Bob is quieter here: the card says so.
@@ -728,6 +732,20 @@ describe("active media UI", () => {
         /class="voice-room-volume-chip"[^>]*><span class="sr-only">Lautstärke <\/span>70 %/,
       );
       expect(html.match(/voice-room-volume-chip/g)).toHaveLength(1);
+      expect(html).toContain('title="Lokale Lautstärke"');
+
+      // In the call: the heading says so, and the way in is gone.
+      Object.assign(fixture.voice, {
+        status: "joined",
+        serverId: "a",
+        channelId: "stage",
+      });
+      const inside = room();
+      expect(inside).toContain(
+        '<span class="voice-room-connected">Verbunden</span>',
+      );
+      expect(inside).not.toContain("Beitreten");
+      expect(inside).not.toContain("voice-room-seat");
     } finally {
       resetUserVolumesForTests();
     }
