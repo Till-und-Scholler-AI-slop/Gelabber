@@ -94,7 +94,7 @@ describe("video tile in a browser", () => {
     // Two actions: the spotlight and the whole screen, no third "bigger".
     expect(html).toContain('aria-label="Vollbild"');
     expect(html).not.toContain("Vergrößern");
-    expect(html).not.toContain("Hervorheben");
+    expect(html).not.toContain("Anheften");
   });
 
   it("shows the name while there is no stream", () => {
@@ -238,11 +238,11 @@ describe("video tile in a desktop app with in-page video", () => {
       ),
     ).toEqual([
       "Nicht mehr zuschauen",
-      "Hervorheben",
+      "Anheften",
       "Vollbild",
       "Weitere Aktionen",
     ]);
-    expect(actions).toMatch(/aria-label="Hervorheben" aria-pressed="false"/);
+    expect(actions).toMatch(/aria-label="Anheften" aria-pressed="false"/);
     expect(actions).toContain('aria-haspopup="menu"');
     expect(actions).not.toMatch(/>\s*[A-Za-zÄÖÜäöüß]/);
   });
@@ -342,10 +342,8 @@ describe("tile actions", () => {
           onTogglePin={() => undefined}
         />,
       );
-    expect(tile(false)).toMatch(
-      /aria-label="Hervorheben" aria-pressed="false"/,
-    );
-    expect(tile(true)).toMatch(/aria-label="Hervorheben" aria-pressed="true"/);
+    expect(tile(false)).toMatch(/aria-label="Anheften" aria-pressed="false"/);
+    expect(tile(true)).toMatch(/aria-label="Anheften" aria-pressed="true"/);
   });
 
   it("names a camera in a participant's place without a second caption", () => {
@@ -383,7 +381,7 @@ describe("watching full size", () => {
     expect(html).not.toContain('aria-label="Stummschalten"');
     // The tile's own buttons step aside.
     expect(html).not.toContain('aria-label="Vollbild"');
-    expect(html).not.toContain('aria-label="Hervorheben"');
+    expect(html).not.toContain('aria-label="Anheften"');
   });
 
   it("offers mute and deafen while in the call", () => {

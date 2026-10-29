@@ -1,5 +1,7 @@
-// How a room's pictures are laid out: one spotlight, a filmstrip of the
-// other Lives, and cameras in their owners' places among the participants.
+// How a room's pictures are laid out. The channel's page gives every
+// picture a tile of its own, sized to fill the stage (fitGrid). The
+// overview keeps one spotlight, a filmstrip of the other Lives, and
+// cameras in their owners' places among the participants.
 
 export type StageKind = "live" | "camera";
 
@@ -19,6 +21,100 @@ export function arrangeStage<T extends { id: string; kind: StageKind }>(
     spotlight,
     filmstrip: shares.filter((tile) => tile !== spotlight),
   };
+}
+
+/** The stage's pictures in their order: a pinned one first, then the
+ * Lives, then the cameras. */
+export function rasterOrder<T extends { id: string }>(
+  shares: readonly T[],
+  cameras: readonly T[],
+  pinned: string | null,
+): T[] {
+  const all = [...shares, ...cameras];
+  const first = all.find((tile) => tile.id === pinned);
+  return first ? [first, ...all.filter((tile) => tile !== first)] : all;
+}
+
+/** Tiles in rows and columns, each `width` × `height` pixels. */
+export type GridFit = {
+  columns: number;
+  rows: number;
+  width: number;
+  height: number;
+};
+
+/** A camera is cut to fit its tile, but never narrower than square nor
+ * wider than 16:9. */
+export const TILE_ASPECT = { min: 1, max: 16 / 9 } as const;
+
+/** How `count` tiles fill a `width` × `height` stage with `gap` between
+ * them: of every number of columns, the one whose tiles come out largest.
+ * A tile keeps its width to height between `aspect.min` and `aspect.max`,
+ * so a lone camera on a tall stage is not a sliver. Null while there is
+ * no room to measure. */
+export function fitGrid(
+  count: number,
+  width: number,
+  height: number,
+  gap: number,
+  aspect: { min: number; max: number } = TILE_ASPECT,
+): GridFit | null {
+  if (count < 1 || !(width > 0) || !(height > 0)) return null;
+  let best: GridFit | null = null;
+  let bestArea = 0;
+  for (let columns = 1; columns <= count; columns++) {
+    const rows = Math.ceil(count / columns);
+    const cellWidth = (width - gap * (columns - 1)) / columns;
+    const cellHeight = (height - gap * (rows - 1)) / rows;
+    if (cellWidth <= 0 || cellHeight <= 0) continue;
+    const tileWidth = Math.min(cellWidth, cellHeight * aspect.max);
+    const tileHeight = Math.min(cellHeight, tileWidth / aspect.min);
+    const area = tileWidth * tileHeight;
+    // Ties keep the fewer columns.
+    if (area > bestArea + 0.5) {
+      bestArea = area;
+      best = {
+        columns,
+        rows,
+        width: Math.floor(tileWidth),
+        height: Math.floor(tileHeight),
+      };
+    }
+  }
+  return best;
+}
+
+/** A tile's place on the stage, in CSS pixels from its top left corner. */
+export type Rect = { x: number; y: number; width: number; height: number };
+
+/** The space between tiles on the stage. */
+export const STAGE_GAP = 12;
+
+/** Every picture as a tile of fitGrid's size, the grid centred on the
+ * stage and a short last row centred under the others. In the order of
+ * the pictures; empty while the stage has no size. */
+export function rasterRects(
+  count: number,
+  width: number,
+  height: number,
+  gap = STAGE_GAP,
+): Rect[] {
+  const fit = fitGrid(count, width, height, gap);
+  if (!fit) return [];
+  const span = (n: number, size: number) => n * size + (n - 1) * gap;
+  const top = Math.round((height - span(fit.rows, fit.height)) / 2);
+  return Array.from({ length: count }, (_, index) => {
+    const row = Math.floor(index / fit.columns);
+    const column = index - row * fit.columns;
+    const inRow = Math.min(fit.columns, count - row * fit.columns);
+    const left = Math.round((width - span(inRow, fit.width)) / 2);
+    return {
+      x: left + column * (fit.width + gap),
+      y: top + row * (fit.height + gap),
+      width: fit.width,
+      height: fit.height,
+    };
+  });
 }
 
 /** How a tile gets the whole screen: the element itself where the page may

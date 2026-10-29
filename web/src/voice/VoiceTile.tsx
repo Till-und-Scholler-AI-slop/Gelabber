@@ -1,7 +1,7 @@
 // Local or remote video tile. srcObject is set in an effect so the
 // preview can appear in the same frame as the stream, without SDP.
 //
-// Two actions per tile: "Hervorheben" pins it to the room's spotlight,
+// Two actions per tile: "Anheften" pins it to the front of the stage,
 // "Vollbild" gives it the screen (the element where the page may go
 // fullscreen, the video's own player on an iPhone, the large view
 // otherwise). Fullscreen and the large view hide the call bar, so they
@@ -79,7 +79,7 @@ type VoiceTileProps = {
   speaking?: boolean;
   /** Large, in the room's spotlight. */
   spotlight?: boolean;
-  /** "Hervorheben": whether the picture is pinned to the spotlight. */
+  /** "Anheften": whether the picture is pinned to the front. */
   pinned?: boolean;
   onTogglePin?: () => void;
   /** A press on the picture: the filmstrip swaps it into the spotlight. */
@@ -642,7 +642,7 @@ function VideoSurface({
             {onTogglePin ? (
               <IconButton
                 size="sm"
-                label="Hervorheben"
+                label="Anheften"
                 pressed={pinned}
                 icon={<PinIcon size={16} />}
                 onClick={onTogglePin}
