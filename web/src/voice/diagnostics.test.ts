@@ -515,6 +515,50 @@ describe("voice diagnostics", () => {
     ).toBe("camera");
   });
 
+  it("keeps libwebrtc's codec ids, which carry the fmtp line", () => {
+    // RTCCodecStatsIDFromTransportAndCodecParameters: C, direction,
+    // transport, payload type, then the codec's fmtp parameters.
+    const av1 = "COT01_45_level-idx=5;profile=0;tier=0";
+    const opus = "CIT01_111_minptime=10;useinbandfec=1";
+    const report = new Map<string, Record<string, unknown>>([
+      [av1, { id: av1, type: "codec", mimeType: "video/AV1" }],
+      [opus, { id: opus, type: "codec", mimeType: "audio/opus" }],
+      [
+        "OT01V1",
+        {
+          id: "OT01V1",
+          type: "outbound-rtp",
+          kind: "video",
+          codecId: av1,
+          timestamp: 2_000,
+          bytesSent: 80_000,
+        },
+      ],
+      [
+        "IT01A2",
+        {
+          id: "IT01A2",
+          type: "inbound-rtp",
+          kind: "audio",
+          codecId: opus,
+          timestamp: 2_000,
+          bytesReceived: 8_000,
+        },
+      ],
+    ]);
+    const { flows } = reduceConnection({
+      role: "voice",
+      caps,
+      videoSources: {},
+      previous: new Map(),
+      entries: statsEntriesFromReport(report),
+    }).snapshot;
+    expect(flows.map((flow) => [flow.direction, flow.codec])).toEqual([
+      ["send", "AV1"],
+      ["recv", "opus"],
+    ]);
+  });
+
   it("exports context without secrets and keeps history bounded", () => {
     useMediaSettings.getState().patch({
       audioInputId: "secret-device-id-xyz",
