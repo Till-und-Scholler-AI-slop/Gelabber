@@ -906,7 +906,7 @@ function HistoryStart({
           <Avatar name={peer.name} url={peer.avatar_url} size="lg" decorative />
         ) : null}
         <h2>{peer?.name ?? channelName}</h2>
-        <p>Das ist der Anfang eurer Unterhaltung.</p>
+        <p>Anfang der Unterhaltung.</p>
       </div>
     );
   return (
@@ -915,7 +915,7 @@ function HistoryStart({
         <HashIcon size={20} />
         {channelName}
       </h2>
-      <p>Das ist der Anfang dieses Kanals.</p>
+      <p>Anfang des Kanals.</p>
     </div>
   );
 }

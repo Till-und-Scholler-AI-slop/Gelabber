@@ -58,7 +58,7 @@ export function DmIndexPage() {
     return (
       <div className="p-6">
         <LoadError
-          message="Deine Direktnachrichten konnten gerade nicht geladen werden."
+          message="Die Direktnachrichten konnten nicht geladen werden."
           pending={isFetching}
           onRetry={() => void refetch()}
         />
@@ -93,7 +93,7 @@ export function DmIndexPage() {
           </nav>
         ) : (
           <div className="dm-index-hint">
-            <p>Wähle eine Unterhaltung oder fang eine neue an.</p>
+            <p>Wähle eine Unterhaltung.</p>
             {start}
           </div>
         )}
@@ -103,8 +103,7 @@ export function DmIndexPage() {
   return (
     <div className="dm-index">
       <div className="dm-index-hint">
-        <h1>Noch keine Unterhaltungen</h1>
-        <p>Schreib jemandem aus deinen Servern – nur ihr zwei lest mit.</p>
+        <h1>Keine Unterhaltungen</h1>
         {start}
       </div>
     </div>

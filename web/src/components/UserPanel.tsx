@@ -197,7 +197,6 @@ function StatusCard({
             id="user-status-text"
             value={text}
             maxLength={STATUS_TEXT_MAX}
-            placeholder="Was machst du gerade?"
             invalid={Boolean(error)}
             aria-describedby={error ? "user-status-text-error" : undefined}
             onChange={(event) => {
