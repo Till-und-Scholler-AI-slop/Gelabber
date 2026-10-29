@@ -211,6 +211,9 @@ useMediaSettings.subscribe((next, prev) => {
     messagePlayer.stop();
 });
 export const playMessageSound = (): void => messagePlayer.play("message");
+/** Someone went live elsewhere (liveNotices.ts). The message cue and its
+ * switch for now, until a Live gets a cue of its own. */
+export const playLiveSound = (): void => messagePlayer.play("message");
 export const unlockCallSounds = (): void => player.unlock();
 export const stopCallSounds = (): void => player.stop();
 export const setCallSoundsDeafened = (value: boolean): void =>
