@@ -74,7 +74,7 @@ function SessionCheckFailed() {
         </h1>
         <p className="auth-lead">
           {online
-            ? "Gelabber ist gerade nicht erreichbar, vielleicht startet der Server neu. Wir versuchen es weiter."
+            ? "Gelabber ist nicht erreichbar. Möglicherweise startet der Server neu."
             : "Dein Gerät ist offline. Sobald es wieder verbunden ist, geht es weiter."}
         </p>
         <p className="session-recovery__status">

@@ -45,7 +45,7 @@ function render(page: ReactNode): string {
   );
 }
 
-const INVITE_BANNER = "Du wurdest zu einem Gelabber-Server eingeladen.";
+const INVITE_BANNER = "Einladung erhalten.";
 
 beforeEach(() => {
   fixture.search = {};
@@ -76,7 +76,7 @@ describe("login page", () => {
     fixture.search = { reason: "expired", redirect: "/s/1" };
     const html = render(<LoginPage />);
     expect(html).toContain(
-      '<p role="status" class="auth-banner">Du wurdest abgemeldet. Melde dich erneut an, um weiterzumachen.</p>',
+      '<p role="status" class="auth-banner">Sitzung abgelaufen. Melde dich erneut an.</p>',
     );
     expect(html).not.toContain(INVITE_BANNER);
   });
@@ -129,9 +129,7 @@ describe("mail sent", () => {
       <MailSent {...props} redirect="/invite/k7xm2pqrstuv" />,
     );
     expect(html).toContain('<h1 tabindex="-1">Postfach prüfen</h1>');
-    expect(html).toContain(
-      "Nach der Bestätigung geht es direkt weiter zur Einladung.",
-    );
+    expect(html).toContain("Danach geht es weiter zur Einladung.");
     expect(render(<MailSent {...props} redirect={undefined} />)).not.toContain(
       "zur Einladung",
     );

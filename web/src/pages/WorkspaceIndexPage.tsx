@@ -58,13 +58,12 @@ export function WorkspaceIndexPage() {
       <h1 className="welcome__title">
         {user ? `Willkommen, ${user.name}` : "Willkommen"}
       </h1>
-      <p className="welcome__lead">Dein Platz für gemeinsame Abende.</p>
       {isError ? (
         // Its own element, mounted with the failure: a role added to an
         // existing node together with its text is not reliably announced.
         <div className="welcome__error">
           <p key="error" role="alert">
-            Deine Server konnten gerade nicht geladen werden.
+            Die Server konnten nicht geladen werden.
           </p>
           <Button
             size="sm"
@@ -79,7 +78,7 @@ export function WorkspaceIndexPage() {
       <div className="welcome__choices">
         <article className="welcome-card">
           <h2>Eigenen Server erstellen</h2>
-          <p>Für deine Runde. #allgemein und ein Sprachraum sind gleich da.</p>
+          <p>Mit #allgemein und einem Sprachkanal.</p>
           <Button
             variant="primary"
             size="lg"
@@ -90,8 +89,7 @@ export function WorkspaceIndexPage() {
           </Button>
         </article>
         <article className="welcome-card">
-          <h2>Einladung erhalten?</h2>
-          <p>Füg den Link oder Code ein, den dir jemand geschickt hat.</p>
+          <h2>Server beitreten</h2>
           <JoinServerForm inline />
         </article>
       </div>

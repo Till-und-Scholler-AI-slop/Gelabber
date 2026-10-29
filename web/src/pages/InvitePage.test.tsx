@@ -67,7 +67,7 @@ describe("invite page", () => {
     expect(html).toContain('<h1 id="invite-server-name">Spieleabend</h1>');
     expect(html).toContain("<p>3 Mitglieder</p>");
     expect(html).toMatch(/ui-button--primary[^>]*>Beitreten<\/button>/);
-    expect(html).toContain('<a href="/">Nicht jetzt</a>');
+    expect(html).toContain('<a href="/">Abbrechen</a>');
   });
 
   it("says when the link runs out", () => {
@@ -105,9 +105,7 @@ describe("invite page", () => {
       fixture.preview = failed(code);
       const html = renderToStaticMarkup(<InvitePage />);
       expect(html).toContain("Einladung nicht nutzbar");
-      expect(html).toContain(
-        "Bitte die Person, die dich eingeladen hat, um einen neuen Link.",
-      );
+      expect(html).toContain("Frag nach einem neuen Link.");
       expect(html).not.toContain("Erneut versuchen");
     }
     fixture.preview = failed("banned");

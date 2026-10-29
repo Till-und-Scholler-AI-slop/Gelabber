@@ -220,7 +220,7 @@ export function ChannelSidebar({
           <nav aria-label={`Menü für ${server.name}`} className="shell-menu">
             <button type="button" className="shell-menu-item" onClick={invite}>
               <LinkIcon size={16} />
-              Leute einladen
+              Einladen
             </button>
             <button
               type="button"
@@ -277,7 +277,7 @@ export function ChannelSidebar({
             </Link>
           </nav>
         </details>
-        <IconButton label="Leute einladen" onClick={invite}>
+        <IconButton label="Einladen" onClick={invite}>
           <LinkIcon />
         </IconButton>
       </header>

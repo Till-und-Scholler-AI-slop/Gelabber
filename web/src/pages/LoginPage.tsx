@@ -70,7 +70,7 @@ export function LoginPage() {
       {invited ? <InviteContextBanner /> : null}
       {reason === "expired" ? (
         <p role="status" className="auth-banner">
-          Du wurdest abgemeldet. Melde dich erneut an, um weiterzumachen.
+          Sitzung abgelaufen. Melde dich erneut an.
         </p>
       ) : null}
       <h1>Anmelden</h1>

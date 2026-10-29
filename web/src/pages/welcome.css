@@ -12,12 +12,6 @@
   text-wrap: balance;
   overflow-wrap: anywhere;
 }
-.welcome__lead {
-  margin-top: var(--lr-space-2);
-  color: var(--lr-muted);
-  font-size: 16px;
-  line-height: 1.45;
-}
 .welcome__error {
   display: flex;
   flex-wrap: wrap;
