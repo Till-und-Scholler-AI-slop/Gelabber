@@ -16,7 +16,7 @@ import { BUILTIN_THEMES, builtinTheme } from "../theme/presets.ts";
 const MODES = [
   { id: "light", label: "Hell", hint: "Gelabber Hell" },
   { id: "dark", label: "Dunkel", hint: "Gelabber Dunkel" },
-  { id: "system", label: "System", hint: "Hell oder Dunkel wie dein Gerät" },
+  { id: "system", label: "System", hint: "Folgt dem Gerät" },
 ] as const;
 
 const SCALES: { value: UiScale; label: string }[] = [
@@ -117,14 +117,11 @@ export function AppearanceSettings() {
         <InlineStatus status={status.status} />
       </SettingsGroup>
 
-      <SettingsGroup title="Dein Wohnzimmer" scope="device">
+      <SettingsGroup title="Ansicht" scope="device">
         <div className="settings-row settings-row--stacked">
           <span className="ui-choice-text">
             Textgröße
-            <small>
-              Vergrößert die ganze Oberfläche. Kompakt passt am meisten auf den
-              Bildschirm.
-            </small>
+            <small>Gilt für die ganze Oberfläche.</small>
           </span>
           <ChipGroup
             label="Textgröße"
@@ -135,7 +132,7 @@ export function AppearanceSettings() {
         </div>
         <Switch
           className="settings-row"
-          label="Kompakte Raumansicht"
+          label="Kompakte Sprachkanäle"
           description="Kleinere Avatare und weniger Abstand."
           checked={preferences.compactRooms}
           onChange={(event) =>

@@ -446,13 +446,10 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px 16px;
   color: var(--lr-subtle);
   font: var(--lr-type-meta);
-}
-.connection-footer p {
-  flex: 1 1 260px;
 }
 
 @media (max-width: 520px) {

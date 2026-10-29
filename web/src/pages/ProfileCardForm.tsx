@@ -260,8 +260,7 @@ export function ProfileCardForm({ user }: { user: User }) {
             </p>
           ) : (
             <p className="ui-hint">
-              Breites Bild, wird auf 3 : 1 zugeschnitten und sofort gespeichert.
-              Ohne Bild zeigen wir die Bannerfarbe.
+              Wird auf 3 : 1 zugeschnitten und sofort gespeichert.
             </p>
           )}
         </div>
@@ -344,7 +343,6 @@ export function ProfileCardForm({ user }: { user: User }) {
           label="Status"
           type="text"
           maxLength={STATUS_TEXT_MAX}
-          placeholder="Was machst du gerade?"
           value={form.status_text}
           onChange={(event) => edit("status_text", event.target.value)}
           error={errors.fields.status_text}

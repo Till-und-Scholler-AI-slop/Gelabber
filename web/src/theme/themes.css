@@ -8,7 +8,6 @@
   flex-wrap: wrap;
   gap: 12px 16px;
 }
-.themes-toolbar p,
 .themes-footnote,
 .themes-empty {
   color: var(--lr-muted);
@@ -437,9 +436,6 @@
 @media (max-width: 480px) {
   .themes-toolbar {
     display: block;
-  }
-  .themes-toolbar > .themes-actions {
-    margin-top: 12px;
   }
   .themes-gallery {
     gap: 10px;

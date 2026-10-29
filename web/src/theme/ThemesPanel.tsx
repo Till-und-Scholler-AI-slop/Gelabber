@@ -39,7 +39,7 @@ const labels = {
   background: "Hintergrund",
   panel: "Seitenleiste",
   surface: "Flächen",
-  rail: "Community-Leiste",
+  rail: "Serverleiste",
   text: "Text",
   muted: "Sekundärtext",
   accent: "Akzent",
@@ -208,7 +208,7 @@ export function ThemesPanel() {
       setPicked(null);
       setNotice({
         tone: "success",
-        message: `„${name}“ ist jetzt dein Theme.`,
+        message: `„${name}“ angewendet.`,
       });
     } else
       setNotice({
@@ -219,7 +219,6 @@ export function ThemesPanel() {
   return (
     <div className="themes-panel">
       <div className="themes-toolbar">
-        <p>Wähle eine Farbwelt oder gestalte deine eigene.</p>
         <div className="themes-actions">
           <Button
             size="sm"
@@ -366,7 +365,7 @@ export function ThemesPanel() {
                       <ScreenIcon size={32} />
                     </span>
                     <strong>System</strong>
-                    <span>Gelabber Hell oder Dunkel · wie dein Gerät</span>
+                    <span>Folgt dem Gerät</span>
                   </>
                 )}
                 {active === id && <b className="theme-active">Aktiv</b>}
@@ -379,10 +378,7 @@ export function ThemesPanel() {
             ))}
           </div>
           {filter === "own" && state.doc.customThemes.length === 0 && (
-            <p className="themes-empty">
-              Hier ist Platz für deinen Stil. Starte mit einer Vorlage oder
-              importiere ein Theme.
-            </p>
+            <p className="themes-empty">Keine eigenen Themes.</p>
           )}
         </div>
         <div className="theme-workbench">

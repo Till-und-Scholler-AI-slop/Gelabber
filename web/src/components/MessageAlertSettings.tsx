@@ -41,7 +41,7 @@ export function MessageAlertSettings() {
         id="message-sound"
         className="settings-row"
         label="Ton bei Benachrichtigungen am Computer"
-        description="Höchstens ein Ton für mehrere Nachrichten kurz hintereinander, keiner während du taub geschaltet bist, so laut wie die Töne für Gespräche. Auf dem Handy klingt die Benachrichtigung so, wie das Gerät eingestellt ist."
+        description="Ein Ton für mehrere Nachrichten kurz hintereinander, keiner, während du taubgeschaltet bist. Auf dem Handy gilt die Geräteeinstellung."
         checked={settings.messageSound}
         disabled={!settings.desktopNotify}
         onChange={(event) =>

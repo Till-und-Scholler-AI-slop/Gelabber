@@ -24,7 +24,7 @@ export function outsideBox(
 
 export const DISCARD_CHANGES: ConfirmRequest = {
   title: "Änderungen verwerfen?",
-  message: "Was du hier eingegeben hast, geht verloren.",
+  message: "Deine Eingaben gehen verloren.",
   confirmLabel: "Verwerfen",
 };
 

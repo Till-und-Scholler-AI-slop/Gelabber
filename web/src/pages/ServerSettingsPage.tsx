@@ -77,7 +77,7 @@ export function ServerSettingsPage() {
     return (
       <div className="p-6">
         <LoadError
-          message="Die Servereinstellungen konnten gerade nicht geladen werden."
+          message="Die Servereinstellungen konnten nicht geladen werden."
           pending={isFetching}
           onRetry={() => void refetch()}
         />
@@ -295,10 +295,6 @@ function IconRow({ server }: { server: ServerDetail }) {
         />
       </span>
       <div className="settings-avatar-actions">
-        <p className="settings-hint">
-          Das Bild steht in der Serverleiste. Ohne Bild zeigen wir die Initialen
-          des Servernamens.
-        </p>
         <div className="settings-actions">
           <Button
             size="sm"
@@ -366,7 +362,7 @@ function PermissionsSection({ server }: { server: ServerDetail }) {
     <Section
       id="rechte"
       title="Rechte für Mitglieder"
-      hint="Gilt für alle Mitglieder außer dem Owner, der immer alles darf. Änderungen greifen sofort."
+      hint="Gilt für alle Mitglieder außer dem Inhaber. Änderungen wirken sofort."
     >
       <div className="server-settings-list">
         {PERMISSIONS.map((permission) => (
@@ -415,7 +411,7 @@ function InvitesSection({ server }: { server: ServerDetail }) {
   return (
     <Section
       id="einladungen"
-      hint="Jedes Mitglied kann Links erstellen; hier siehst und widerrufst du alle aktiven."
+      hint="Alle aktiven Links. Jedes Mitglied kann Links erstellen."
     >
       <div className="settings-actions">
         <Button onClick={() => setInviting(true)}>Neuen Link erstellen</Button>
@@ -430,7 +426,7 @@ function InvitesSection({ server }: { server: ServerDetail }) {
         <p className="settings-hint">Lade Einladungen…</p>
       ) : error ? (
         <LoadError
-          message="Die Einladungen konnten gerade nicht geladen werden."
+          message="Die Einladungen konnten nicht geladen werden."
           pending={isFetching}
           onRetry={() => void refetch()}
         />
@@ -449,7 +445,7 @@ function InvitesSection({ server }: { server: ServerDetail }) {
                   await confirmAction({
                     title: "Link widerrufen?",
                     message:
-                      "Wer ihn noch nicht benutzt hat, kommt damit nicht mehr rein. Mitglieder bleiben Mitglieder.",
+                      "Der Link funktioniert danach nicht mehr. Bestehende Mitglieder bleiben.",
                     confirmLabel: "Widerrufen",
                   })
                 )
@@ -514,7 +510,7 @@ function MembersSection({ server }: { server: ServerDetail }) {
             />
             <span className="server-settings-row__name">{member.name}</span>
             <Badge tone={member.role === "owner" ? "accent" : "neutral"}>
-              {member.role === "owner" ? "Owner" : "Mitglied"}
+              {member.role === "owner" ? "Inhaber" : "Mitglied"}
             </Badge>
             <MemberActionsMenu server={server} member={member} />
           </li>
@@ -544,7 +540,7 @@ function BansSection({ server }: { server: ServerDetail }) {
         <p className="settings-hint">Lade Sperren…</p>
       ) : error ? (
         <LoadError
-          message="Die Sperren konnten gerade nicht geladen werden."
+          message="Die Sperren konnten nicht geladen werden."
           pending={isFetching}
           onRetry={() => void refetch()}
         />
@@ -562,7 +558,8 @@ function BansSection({ server }: { server: ServerDetail }) {
                   if (
                     await confirmAction({
                       title: `${ban.name} wieder zulassen?`,
-                      message: "Mit einem Einladungslink geht es dann wieder.",
+                      message:
+                        "Ein Beitritt per Einladungslink ist dann wieder möglich.",
                       confirmLabel: "Entsperren",
                       tone: "neutral",
                     })
@@ -600,8 +597,8 @@ function DangerSection({ server }: { server: ServerDetail }) {
       id="gefahrenzone"
       hint={
         owner
-          ? "Server löschen entfernt Kanäle, Kategorien, Einladungen und Mitgliedschaften. Es gibt kein Zurück."
-          : "Du kannst später mit einem neuen Einladungslink wieder beitreten."
+          ? "Löscht Kanäle, Kategorien, Nachrichten, Einladungen und Mitgliedschaften endgültig."
+          : "Wieder beitreten kannst du nur mit einem neuen Einladungslink."
       }
     >
       <div className="settings-actions">
@@ -613,7 +610,7 @@ function DangerSection({ server }: { server: ServerDetail }) {
                 !(await confirmAction({
                   title: `Server „${server.name}“ endgültig löschen?`,
                   message:
-                    "Kanäle, Nachrichten, Einladungen und Mitgliedschaften sind danach weg.",
+                    "Kanäle, Nachrichten, Einladungen und Mitgliedschaften werden gelöscht.",
                   confirmLabel: "Server löschen",
                 }))
               )

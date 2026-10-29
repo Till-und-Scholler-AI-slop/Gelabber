@@ -37,9 +37,8 @@ export function NotificationPermissionStatus() {
     return (
       <div className="settings-note">
         <p role="status">
-          Gelabber zeigt Benachrichtigungen über dein System an, wie andere Apps
-          auch. Ob sie erscheinen, auf dem Sperrbildschirm oder während „Nicht
-          stören“, stellst du in den Einstellungen deines Systems ein.
+          Benachrichtigungen laufen über dein System. Sperrbildschirm und „Nicht
+          stören“ stellst du dort ein.
         </p>
       </div>
     );
@@ -109,8 +108,8 @@ function BrowserNotificationPermission() {
         (state === "default" || push !== null) && (
           <p className="mt-2">
             {state === "default"
-              ? "Nach der Erlaubnis kommen Direktnachrichten und @Erwähnungen auch an, wenn Gelabber geschlossen ist, sofern der Server das anbietet."
-              : "Auf diesem Gerät kommen Benachrichtigungen nur an, solange Gelabber im Hintergrund noch läuft, zum Beispiel während eines Gesprächs. Ist die App geschlossen, kommt nichts an."}
+              ? "Danach kommen Direktnachrichten und @Erwähnungen auch bei geschlossener App an, sofern der Server das unterstützt."
+              : "Auf diesem Gerät kommen Benachrichtigungen nur an, solange Gelabber im Hintergrund läuft."}
           </p>
         )
       )}
