@@ -1044,7 +1044,7 @@ impl Gateway {
         channel_id: Uuid,
         kind: TrackKind,
         on: bool,
-    ) -> Result<Option<bool>, ApiError> {
+    ) -> Result<bool, ApiError> {
         self.voice
             .set_voice_pub(id, user_id, server_id, channel_id, kind, on)
             .await

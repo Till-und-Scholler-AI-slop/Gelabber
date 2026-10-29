@@ -35,8 +35,6 @@ enum FrameEffect {
     Liveness,
     /// User is active on this client.
     Activity,
-    /// An authorized live claim needs its best-effort text hint after DB unlock.
-    LiveStarted { server_id: Uuid, channel_id: Uuid },
     /// This client is going idle (explicit `st:i`).
     Idle,
     /// The page came to the front or left it.
@@ -106,7 +104,6 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                 if !security_tick(&state, &session, conn, &mut checked, false).await { break; }
             }
             incoming = stream.next() => {
-                let mut live_hint = None;
                 let mut active = false;
                 let Ok(Ok(Some(mut session_guard))) = tokio::time::timeout(std::time::Duration::from_secs(1), session.lock_live(&state.db)).await else { break; };
                 if state.gateway.reconcile_access(conn, &mut session_guard).await.is_err() { break; }
@@ -123,15 +120,6 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                                 let _ = state.gateway.touch_presence(conn).await;
                             }
                             Ok(FrameEffect::Activity) => {
-                                active = true;
-                                last_activity = Instant::now();
-                                if idle {
-                                    idle = false;
-                                    let _ = state.gateway.set_conn_status(conn, PresenceStatus::Online).await;
-                                }
-                            }
-                            Ok(FrameEffect::LiveStarted { server_id, channel_id }) => {
-                                live_hint = Some((server_id, channel_id));
                                 active = true;
                                 last_activity = Instant::now();
                                 if idle {
@@ -171,15 +159,12 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                     Some(Ok(Message::Close(_))) | None => break,
                     Some(Err(_)) => break,
                 }
-                // Return the only pool connection before the hint helper acquires
-                // one. The signaling action itself already passed authorization.
+                // Return the only pool connection before the renewal below
+                // acquires one.
                 if session_guard.commit().await.is_err() { break; }
                 if active && let Some(at) = renew(&state, &session, expires_at).await {
                     expires_at = at;
                     expired.as_mut().reset(until(at));
-                }
-                if let Some((server_id, channel_id)) = live_hint {
-                    crate::messages::post_live_hint(&state, user, server_id, channel_id).await;
                 }
             }
             _ = beat.tick() => {
@@ -369,15 +354,10 @@ async fn handle_text(
             state.gateway.unsubscribe(conn, Topic::of(s, c)).await;
             Ok(FrameEffect::Activity)
         }
-        ClientFrame::Sig { .. } => Ok(
-            match super::signal::handle(state, db, user, conn, frame, sink).await? {
-                Some((server_id, channel_id)) => FrameEffect::LiveStarted {
-                    server_id,
-                    channel_id,
-                },
-                None => FrameEffect::Activity,
-            },
-        ),
+        ClientFrame::Sig { .. } => {
+            super::signal::handle(state, db, user, conn, frame, sink).await?;
+            Ok(FrameEffect::Activity)
+        }
         ClientFrame::Focus { on } => Ok(FrameEffect::Focus(on)),
         ClientFrame::Presence { st } => Ok(match st {
             Some(PresenceStatus::Idle) => FrameEffect::Idle,

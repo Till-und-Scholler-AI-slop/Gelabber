@@ -164,6 +164,76 @@ async fn member_can_post_read_edit_and_delete_own_message(pool: PgPool) {
     assert_eq!(empty.body["messages"], json!([]));
 }
 
+/// Going live no longer posts a notice, but notices stored before (#314)
+/// still read as system messages, stay read-only, and carry into replies.
+#[sqlx::test]
+async fn stored_live_notice_still_reads_and_cannot_be_edited(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let channel_id = text_channel_id(&server);
+    let voice_id = Uuid::new_v4();
+    let params = json!({ "voice_channel_id": voice_id, "voice_name": "Lounge" });
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO messages (channel_id, author_id, content, system_kind, system_params) \
+         VALUES ($1, $2, '', 'live_started', $3) RETURNING id",
+    )
+    .bind(channel_id.parse::<Uuid>().unwrap())
+    .bind(
+        server["owner_id"]
+            .as_str()
+            .unwrap()
+            .parse::<Uuid>()
+            .unwrap(),
+    )
+    .bind(sqlx::types::Json(&params))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let page = member
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel_id}/messages"),
+            None,
+        )
+        .await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    let notice = &page.body["messages"][0];
+    assert_eq!(notice["id"], id.to_string());
+    assert_eq!(notice["content"], "");
+    assert_eq!(notice["author"]["name"], "Ada");
+    assert_eq!(
+        notice["system"],
+        json!({ "kind": "live_started", "params": params })
+    );
+
+    let edit = owner
+        .send(
+            Method::PATCH,
+            &format!("/api/messages/{id}"),
+            Some(json!({ "content": "selbst geschrieben" })),
+        )
+        .await;
+    assert_eq!(
+        edit.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        edit.body
+    );
+    assert_eq!(edit.body["fields"]["system"], "not_editable");
+
+    let answer = member
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel_id}/messages"),
+            Some(json!({ "content": "viel Spaß", "reply_to": id })),
+        )
+        .await;
+    assert_eq!(answer.status, StatusCode::CREATED, "{}", answer.body);
+    assert_eq!(answer.body["reply"]["excerpt"], "");
+    assert_eq!(answer.body["reply"]["system"], notice["system"]);
+}
+
 #[sqlx::test]
 async fn content_is_validated(pool: PgPool) {
     let (mut owner, _) = two_users(pool).await;

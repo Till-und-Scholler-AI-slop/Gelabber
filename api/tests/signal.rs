@@ -456,26 +456,8 @@ async fn camera_without_go_live_but_live_needs_it(pool: PgPool) {
     assert_eq!(screen["op"], "sig", "{screen}");
 }
 
-/// Messages in `text_id` that say someone is live.
-async fn live_hints(client: &mut Client, text_id: Uuid) -> usize {
-    let res = client
-        .send(
-            Method::GET,
-            &format!("/api/channels/{text_id}/messages"),
-            None,
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    res.body["messages"]
-        .as_array()
-        .expect("messages")
-        .iter()
-        .filter(|row| row["system"]["kind"] == "live_started")
-        .count()
-}
-
-/// The socket handles frames in order and posts a hint before it reads the
-/// next one: once a mute is echoed, every hint before it is written.
+/// The socket handles frames in order and finishes each before it reads the
+/// next one: once a mute is echoed, every frame before it is done.
 async fn settle(ws: &mut Ws, server_id: Uuid, voice_id: Uuid, on: bool) {
     send_json(
         ws,
@@ -485,15 +467,16 @@ async fn settle(ws: &mut Ws, server_id: Uuid, voice_id: Uuid, on: bool) {
     recv_until(ws, |f| f["op"] == "sig" && f["t"] == "m" && f["on"] == on).await;
 }
 
+/// Going live shows in the voice room and roster only: nothing in the chat.
 #[sqlx::test]
-async fn going_live_posts_one_hint_per_cooldown(pool: PgPool) {
+async fn going_live_posts_nothing_in_the_chat(pool: PgPool) {
     let (mut owner, mut member) = two_users(pool.clone()).await;
-    let server = create_server(&mut owner, "Hints").await;
-    let (server_id, text_id) = ids(&server);
+    let server = create_server(&mut owner, "Quiet").await;
+    let (server_id, _) = ids(&server);
     join_member(&mut owner, &mut member, &server_id.to_string()).await;
     let voice_id = create_voice(&mut owner, server_id).await;
 
-    let (addr, _) = common::serve_ws(pool).await;
+    let (addr, _) = common::serve_ws(pool.clone()).await;
     let mut owner_ws = connect(addr, &session_cookie(&owner)).await;
     send_json(
         &mut owner_ws,
@@ -507,34 +490,12 @@ async fn going_live_posts_one_hint_per_cooldown(pool: PgPool) {
         f["op"] == "sig" && f["t"] == "p" && f["k"] == "s"
     })
     .await;
-    settle(&mut owner_ws, server_id, voice_id, true).await;
-    assert_eq!(live_hints(&mut owner, text_id).await, 1);
-    let hint = owner
-        .send(
-            Method::GET,
-            &format!("/api/channels/{text_id}/messages"),
-            None,
-        )
-        .await;
-    assert!(
-        hint.body["messages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|row| row["system"]["params"]["voice_name"] == "Lounge"),
-        "{}",
-        hint.body
-    );
-
-    // Off and on again, then a re-announcement: all within the cooldown,
-    // so nothing new in the chat.
+    // Off and on again, then a re-announcement.
     send_json(&mut owner_ws, screen("u")).await;
     send_json(&mut owner_ws, screen("p")).await;
     send_json(&mut owner_ws, screen("p")).await;
-    settle(&mut owner_ws, server_id, voice_id, false).await;
-    assert_eq!(live_hints(&mut owner, text_id).await, 1);
+    settle(&mut owner_ws, server_id, voice_id, true).await;
 
-    // Someone else going live gets a hint of their own.
     let mut member_ws = connect(addr, &session_cookie(&member)).await;
     send_json(
         &mut member_ws,
@@ -547,7 +508,12 @@ async fn going_live_posts_one_hint_per_cooldown(pool: PgPool) {
     .await;
     send_json(&mut member_ws, screen("p")).await;
     settle(&mut member_ws, server_id, voice_id, true).await;
-    assert_eq!(live_hints(&mut owner, text_id).await, 2);
+
+    let messages: i64 = sqlx::query_scalar("SELECT count(*) FROM messages")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(messages, 0, "no message in any channel");
 }
 
 #[sqlx::test]
@@ -767,10 +733,10 @@ async fn subscribe_replaces_voice_occupancy_and_mute_needs_a_seat(pool: PgPool) 
 }
 
 #[sqlx::test]
-async fn live_needs_permission_is_several_per_channel_and_posts_a_system_hint(pool: PgPool) {
+async fn live_needs_permission_and_is_several_per_channel(pool: PgPool) {
     let (mut owner, mut member) = two_users(pool.clone()).await;
     let server = create_server(&mut owner, "Stream").await;
-    let (server_id, text_id) = ids(&server);
+    let (server_id, _) = ids(&server);
     join_member(&mut owner, &mut member, &server_id.to_string()).await;
     let voice_id = create_voice(&mut owner, server_id).await;
     let ada = owner_id(&server);
@@ -851,59 +817,6 @@ async fn live_needs_permission_is_several_per_channel_and_posts_a_system_hint(po
         let refused = recv_until(&mut owner_ws, |f| f["op"] == "err").await;
         assert_eq!(refused["e"], "bad_request");
     }
-
-    // The hint is a system message (#314): kind and params, no sentence.
-    let mut found = None;
-    for _ in 0..20 {
-        let hint = owner
-            .send(
-                Method::GET,
-                &format!("/api/channels/{text_id}/messages"),
-                None,
-            )
-            .await;
-        assert_eq!(hint.status, StatusCode::OK, "{}", hint.body);
-        let messages = hint.body["messages"].as_array().expect("messages");
-        found = messages
-            .iter()
-            .find(|row| row["system"]["kind"] == "live_started")
-            .cloned();
-        if found.is_some() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    let hint = found.expect("text channel should get a live hint");
-    assert_eq!(hint["content"], "");
-    assert_eq!(hint["author"]["id"], ada.to_string());
-    assert_eq!(
-        hint["system"]["params"],
-        json!({ "voice_channel_id": voice_id, "voice_name": "Lounge" })
-    );
-    let edit = owner
-        .send(
-            Method::PATCH,
-            &format!("/api/messages/{}", hint["id"].as_str().unwrap()),
-            Some(json!({ "content": "selbst geschrieben" })),
-        )
-        .await;
-    assert_eq!(
-        edit.status,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "{}",
-        edit.body
-    );
-    assert_eq!(edit.body["fields"]["system"], "not_editable");
-    let answer = owner
-        .send(
-            Method::POST,
-            &format!("/api/channels/{text_id}/messages"),
-            Some(json!({ "content": "viel Spaß", "reply_to": hint["id"] })),
-        )
-        .await;
-    assert_eq!(answer.status, StatusCode::CREATED, "{}", answer.body);
-    assert_eq!(answer.body["reply"]["excerpt"], "");
-    assert_eq!(answer.body["reply"]["system"], hint["system"]);
 
     // Several can be live in one channel.
     send_json(

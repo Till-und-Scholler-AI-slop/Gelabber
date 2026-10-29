@@ -8,11 +8,11 @@
 //! Kinds (`system_kind`, constrained in migration 0026):
 //! - `live_started`: the author went live in a voice channel.
 //!   Params: `voice_channel_id`, and `voice_name` as it was then, for when the
-//!   channel is gone or renamed.
+//!   channel is gone or renamed. No longer written: going live posts nothing
+//!   in the chat. Rows from before still read and render.
 
 use serde::Serialize;
 use serde_json::json;
-use uuid::Uuid;
 
 pub const LIVE_STARTED: &str = "live_started";
 
@@ -23,16 +23,6 @@ pub struct SystemMessage {
 }
 
 impl SystemMessage {
-    pub fn live_started(voice_channel_id: Uuid, voice_name: &str) -> Self {
-        Self {
-            kind: LIVE_STARTED.into(),
-            params: json!({
-                "voice_channel_id": voice_channel_id,
-                "voice_name": voice_name,
-            }),
-        }
-    }
-
     /// From the row's two columns; both are set or neither (migration 0026).
     pub(crate) fn from_columns(
         kind: Option<String>,
@@ -58,9 +48,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn live_started_names_the_voice_channel() {
-        let id = Uuid::new_v4();
-        let system = SystemMessage::live_started(id, "Lounge");
+    fn stored_live_started_names_the_voice_channel() {
+        let id = uuid::Uuid::new_v4();
+        let params = json!({ "voice_channel_id": id, "voice_name": "Lounge" });
+        let system =
+            SystemMessage::from_columns(Some(LIVE_STARTED.into()), Some(sqlx::types::Json(params)))
+                .unwrap();
         assert_eq!(
             serde_json::to_value(&system).unwrap(),
             json!({
