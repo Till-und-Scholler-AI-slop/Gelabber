@@ -335,12 +335,22 @@ function finiteNumber(value: unknown): number | undefined {
     : undefined;
 }
 
-function shortToken(value: unknown, max = 32): string | undefined {
+const TOKEN_CHARS = /^[A-Za-z0-9_.:/+-]+$/;
+/** Ids also take `=` and `;`: libwebrtc ends a codec's id with its fmtp line
+ * (`CIT01_111_minptime=10;useinbandfec=1`), and without that id the flows
+ * that point to the codec lose their codec. */
+const ID_CHARS = /^[A-Za-z0-9_.:/+=;-]+$/;
+
+function shortToken(
+  value: unknown,
+  max = 32,
+  chars = TOKEN_CHARS,
+): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > max) return undefined;
   // Length is the `max` check above. The pattern is only the allowed charset.
-  if (!/^[A-Za-z0-9_.:/+-]+$/.test(trimmed)) return undefined;
+  if (!chars.test(trimmed)) return undefined;
   return trimmed;
 }
 
@@ -379,7 +389,9 @@ function sanitizeEntry(
 ): StatsEntry | null {
   if (!value || typeof value !== "object") return null;
   const source = value as Record<string, unknown>;
-  const id = shortToken(source.id, 256) ?? (mapKey && shortToken(mapKey, 256));
+  const id =
+    shortToken(source.id, 256, ID_CHARS) ??
+    (mapKey && shortToken(mapKey, 256, ID_CHARS));
   const type = shortToken(source.type, 40);
   if (!id || !type) return null;
   const entry: StatsEntry = { id, type };
@@ -389,9 +401,11 @@ function sanitizeEntry(
   }
   for (const field of STRING_FIELDS) {
     if (field === "id" || field === "type") continue;
+    const isId = field.endsWith("Id");
     const token = shortToken(
       source[field],
-      field === "mimeType" ? 40 : field.endsWith("Id") ? 256 : 64,
+      field === "mimeType" ? 40 : isId ? 256 : 64,
+      isId ? ID_CHARS : TOKEN_CHARS,
     );
     if (token !== undefined) entry[field] = token;
   }
