@@ -210,7 +210,8 @@ export type LiveNoticeMemory = ReturnType<typeof createLiveNoticeMemory>;
 
 export type LiveNoticeDeps = {
   me: string;
-  /** Local clock, for the cooldown and the cue's pacing. */
+  /** Local clock, for the cooldown, the cue's pacing and the notification's
+   * id. */
   now: () => number;
   /** Server clock, for mutes and the notification's time. */
   serverNow: () => number;
@@ -245,7 +246,9 @@ export function createLiveNotices(
   deps: LiveNoticeDeps,
   memory: LiveNoticeMemory = createLiveNoticeMemory(),
 ): (event: SigEvent) => void {
-  const announce = async (start: LiveStart) => {
+  /** `heard` and `at`: when the frame came, by the local and the server
+   * clock. */
+  const announce = async (start: LiveStart, heard: number, at: number) => {
     const server = await deps.server(start.serverId).catch(() => undefined);
     if (!server || !deps.holds()) return;
     const device = deps.device();
@@ -259,9 +262,10 @@ export function createLiveNotices(
       device,
     });
     if (!decision.toast && !decision.desktop) return;
+    const voice = server.channels.find((c) => c.id === start.channelId);
+    if (!voice) return;
     const member = server.members.find((m) => m.user_id === start.userId);
     const author = member?.name ?? "Jemand";
-    const voice = server.channels.find((c) => c.id === start.channelId)!;
     const text = liveText(author, voice.name);
     if (decision.toast)
       deps.toast({
@@ -275,7 +279,6 @@ export function createLiveNotices(
         preview: text,
       });
     if (!decision.desktop) return;
-    const at = deps.serverNow();
     const shown = await deps.notify(
       {
         ...liveNotificationText(device.hideContent, {
@@ -285,10 +288,16 @@ export function createLiveNotices(
         }),
         // One per voice channel, as one per conversation for messages.
         channelId: start.channelId,
-        // Every window hears the start, and only one may announce it. The
-        // windows agree on the cooldown window, not on the moment; two
-        // notices of one person there are a cooldown apart, never in one.
-        messageId: `live:${start.userId}:${Math.floor(at / LIVE_NOTICE_COOLDOWN_MS)}`,
+        // Every window hears the start, and only one may announce it. A
+        // voice frame carries no id or time to agree on (it is not
+        // sequenced), so the windows agree on the cooldown window it came
+        // in; two notices of one person there are a cooldown apart, never in
+        // one. Taken by the local clock as the frame comes: the windows that
+        // share notifications share that clock, while each guesses the
+        // server's to the second and may have to fetch the server's detail
+        // first. Only frames a moment apart across the edge of that window
+        // still get two ids.
+        messageId: `live:${start.userId}:${Math.floor(heard / LIVE_NOTICE_COOLDOWN_MS)}`,
         createdAt: new Date(at).toISOString(),
         path: conversationPath(false, start.serverId, start.channelId),
         user: deps.me,
@@ -318,8 +327,13 @@ export function createLiveNotices(
     }
     // A replay describes who is there already; it starts nothing.
     if (event.t !== "p" || event.k !== "s" || event.replay) return;
-    if (!memory.starts.start(event.s, channelId, userId, deps.now())) return;
+    const heard = deps.now();
+    if (!memory.starts.start(event.s, channelId, userId, heard)) return;
     if (deps.here(event.s, channelId)) return;
-    void announce({ serverId: event.s, channelId, userId });
+    void announce(
+      { serverId: event.s, channelId, userId },
+      heard,
+      deps.serverNow(),
+    );
   };
 }
