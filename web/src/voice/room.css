@@ -481,10 +481,20 @@ html[data-compact-rooms="true"] .voice-room-seat {
   }
 }
 @media (min-width: 801px) {
+  /* One strip with the user panel (index.css): its height and line, the
+     rows centred in it. Auto margins, unlike centring, give way when a
+     short window makes the bar scroll. */
   .app-shell-workspace .voice-session-dock {
     left: var(--lr-navigation-width);
+    min-height: calc(var(--lr-dock-height) + var(--lr-safe-bottom));
     padding: 8px calc(16px + var(--lr-safe-right))
       calc(8px + var(--lr-safe-bottom)) 16px;
+  }
+  .app-shell-workspace .voice-session-dock > :first-child {
+    margin-top: auto;
+  }
+  .app-shell-workspace .voice-session-dock > :last-child {
+    margin-bottom: auto;
   }
 }
 .voice-session-call {
@@ -522,6 +532,10 @@ html[data-compact-rooms="true"] .voice-room-seat {
 .voice-session-head > .ui-button {
   flex-shrink: 0;
   white-space: nowrap;
+}
+/* Buttons of a failed or lost call take the bar's corner too. */
+.voice-session-dock :is(.ui-button, .ui-icon-button) {
+  border-radius: var(--lr-radius);
 }
 /* A call that failed in its seat says so on a row of its own where the bar
    is narrow, with room for "Erneut versuchen". */
@@ -601,10 +615,10 @@ a.voice-session-link:hover > span {
   align-items: flex-end;
   justify-content: center;
   gap: 2px;
-  width: 28px;
-  height: 28px;
-  padding: 7px 0;
-  border-radius: var(--lr-radius-sm);
+  width: var(--lr-control-md);
+  height: var(--lr-control-md);
+  padding: calc((var(--lr-control-md) - 14px) / 2) 0;
+  border-radius: var(--lr-radius);
   color: var(--lr-online);
   cursor: pointer;
 }
@@ -644,8 +658,9 @@ a.voice-session-link:hover > span {
 .voice-quality-bars[data-level="0"] {
   color: var(--lr-muted);
 }
-/* Controls: transparent until on. Media that is on (camera, a share) is an
-   accent pill; a closed microphone or headset is red. */
+/* Controls: transparent until on, one height and corner. A camera that is
+   on gets an accent tint, a Live red; a closed microphone or headset is
+   red. Being on changes colours only, never the size. */
 .voice-session-dock .voice-controls {
   flex-wrap: nowrap;
   gap: 4px;
@@ -653,10 +668,10 @@ a.voice-session-link:hover > span {
 .voice-session-dock .voice-control-compact {
   position: relative;
   gap: 4px;
-  min-width: 36px;
-  height: 36px;
-  min-height: 36px;
-  padding: 0 9px;
+  min-width: var(--lr-control-md);
+  height: var(--lr-control-md);
+  min-height: var(--lr-control-md);
+  padding: 0 8px;
   border-color: transparent;
   background: transparent;
   color: var(--lr-muted);
@@ -667,8 +682,8 @@ a.voice-session-link:hover > span {
 }
 .voice-session-dock .voice-control-compact.is-on,
 .voice-session-dock .voice-control-compact.is-on:hover {
-  background: var(--lr-accent);
-  color: var(--lr-accent-ink);
+  background: var(--lr-selected);
+  color: var(--lr-accent-text);
 }
 .voice-control-compact.is-off,
 .voice-control-compact.is-off:hover {
@@ -696,7 +711,7 @@ a.voice-session-link:hover > span {
 .voice-control-dot {
   position: absolute;
   top: 6px;
-  left: 21px;
+  left: 20px;
   width: 8px;
   height: 8px;
   border: 1.5px solid var(--lr-panel);
@@ -734,7 +749,7 @@ a.voice-session-link:hover > span {
   }
   .voice-session-dock .voice-control-leave,
   .voice-session-dock .voice-control-leave:hover {
-    padding: 0 9px;
+    padding: 0 8px;
   }
 }
 /* Who is in the call, the speakers ringed; a button for everyone's volume. */
@@ -742,9 +757,9 @@ a.voice-session-link:hover > span {
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
-  min-height: 32px;
+  min-height: var(--lr-control-md);
   padding: 2px 6px;
-  border-radius: var(--lr-radius-full);
+  border-radius: var(--lr-radius);
   cursor: pointer;
 }
 .voice-session-people:hover {
@@ -1155,15 +1170,11 @@ html[data-reduced-motion="true"]
   }
 }
 @media (pointer: coarse) {
-  /* Finger-sized dock controls, with leaving kept apart from the toggles.
-     The taller rows need the full height limit to keep "Ton starten" in view. */
+  /* Finger-sized dock controls (--lr-control-md), with leaving kept apart
+     from the toggles. The taller rows need the full height limit to keep
+     "Ton starten" in view. */
   .voice-session-dock {
     max-height: calc(var(--lr-100dvh) * 0.5);
-  }
-  .voice-session-dock .voice-control-compact {
-    min-width: 44px;
-    min-height: 44px;
-    height: 44px;
   }
   .voice-quick-volume > .voice-control-compact {
     width: 44px;
@@ -1176,15 +1187,9 @@ html[data-reduced-motion="true"]
     margin-left: 8px;
   }
   .voice-session-dock .voice-session-link,
-  .voice-session-dock .voice-session-people,
   .voice-session-playback > button,
   .voice-menu-item {
     min-height: 44px;
-  }
-  .voice-quality-bars {
-    width: 44px;
-    height: 44px;
-    padding: 15px 0;
   }
   .voice-control-dot {
     top: 10px;
