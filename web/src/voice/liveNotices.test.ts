@@ -485,4 +485,24 @@ describe("live notices from voice frames", () => {
     expect(first.notify).toHaveBeenCalledTimes(2);
     expect(id(first, 1)).not.toBe(id(first));
   });
+
+  it("asks the window which channel it shows when it announces", async () => {
+    // The window moves on while the server's detail comes.
+    let moveTo: string | undefined;
+    const h = harness({
+      server: async () => {
+        h.device.viewingChannelId = moveTo;
+        return server;
+      },
+    });
+    h.device.hidden = false;
+    h.device.focused = true;
+    h.device.viewingChannelId = "chat";
+    moveTo = "lounge";
+    await h.send(start("ada", "lounge"));
+    expect(h.toast).not.toHaveBeenCalled();
+    moveTo = "chat";
+    await h.send(start("bob", "lounge"));
+    expect(h.toast).toHaveBeenCalledTimes(1);
+  });
 });

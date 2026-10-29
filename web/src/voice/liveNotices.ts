@@ -262,9 +262,10 @@ export function createLiveNotices(
       device,
     });
     if (!decision.toast && !decision.desktop) return;
+    const voice = server.channels.find((c) => c.id === start.channelId);
+    if (!voice) return;
     const member = server.members.find((m) => m.user_id === start.userId);
     const author = member?.name ?? "Jemand";
-    const voice = server.channels.find((c) => c.id === start.channelId)!;
     const text = liveText(author, voice.name);
     if (decision.toast)
       deps.toast({

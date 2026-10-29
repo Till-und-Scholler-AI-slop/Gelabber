@@ -4,7 +4,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 
 import { serverNow } from "../api/client.ts";
 import { scopeGeneration, stampHolds } from "../auth/scope.ts";
@@ -45,6 +45,12 @@ export function useLiveNotices(): void {
   const navigate = useNavigate();
   const me = useSession((s) => s.user?.id);
   const viewingChannelId = useParams({ strict: false }).channelId;
+  // Asked when a Live is announced: moving to another channel needs no new
+  // listener.
+  const viewing = useRef(viewingChannelId);
+  useLayoutEffect(() => {
+    viewing.current = viewingChannelId;
+  }, [viewingChannelId]);
   const memory = useRef<{
     userId: string;
     generation: number;
@@ -96,7 +102,7 @@ export function useLiveNotices(): void {
             desktop: settings.desktopNotify,
             hidden: typeof document !== "undefined" && document.hidden,
             focused: typeof document === "undefined" || document.hasFocus(),
-            viewingChannelId,
+            viewingChannelId: viewing.current,
             mobile: useInstallation.getState().mobile,
             deafened: useVoice.getState().deafened,
             hideContent: hidesContent(
@@ -122,5 +128,5 @@ export function useLiveNotices(): void {
     return getGateway().onSig((event) => {
       if (holds()) handle(event);
     });
-  }, [client, me, navigate, viewingChannelId]);
+  }, [client, me, navigate]);
 }
