@@ -73,8 +73,10 @@
   color: var(--lr-text);
   font: inherit;
 }
+/* A hint must not read as typed text: --lr-muted is close to --lr-text in
+   several themes. --lr-subtle (4.5:1) mixed 20% into the panel keeps ~3:1. */
 .lr-header-search > input::placeholder {
-  color: var(--lr-muted);
+  color: color-mix(in srgb, var(--lr-subtle) 80%, var(--lr-panel));
 }
 .lr-header-search:hover,
 .lr-header-search:focus-within,
@@ -1418,8 +1420,9 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   font-size: 14.5px;
   line-height: 22px;
 }
+/* Fainter than the draft, like the header search's hint. */
 .lr-composer-row textarea::placeholder {
-  color: var(--lr-muted);
+  color: color-mix(in srgb, var(--lr-subtle) 80%, var(--lr-panel));
 }
 .lr-composer-row textarea:focus-visible {
   /* The field around it shows focus. */
