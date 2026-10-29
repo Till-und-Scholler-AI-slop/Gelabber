@@ -5,6 +5,7 @@ import { useUnreadIndicators } from "../messages/unreadIndicators.ts";
 import { useNotificationSettingsBridge } from "../messages/notificationSettings.ts";
 import { useSession } from "../auth/session.ts";
 import { useVoice } from "../voice/session.ts";
+import { useLiveNotices } from "../voice/useLiveNotices.ts";
 import { useCallWakeLock } from "../voice/wakeLock.ts";
 import {
   useAuthenticatedSubscriptions,
@@ -52,6 +53,7 @@ export function AppShell() {
   useFocusReport(user?.id ?? null);
   usePushSubscription(user?.id ?? null);
   useMessageToastsBridge();
+  useLiveNotices();
   useCallWakeLock(useVoice((state) => state.status === "joined"));
 
   return (
