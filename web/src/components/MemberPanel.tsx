@@ -169,19 +169,16 @@ export function MemberPanel({
                               {member.name}
                               {self && <small> · Du</small>}
                             </strong>
+                            {/* The group's heading says who is online; a
+                                row repeats only what is its own. */}
                             {member.status_text ? (
                               <span
                                 className="member-status-text"
                                 title={member.status_text}
                               >
-                                {/* The status text takes the line; screen
-                                    readers still hear the presence. */}
-                                <span className="sr-only">{group.label}: </span>
                                 {member.status_text}
                               </span>
-                            ) : (
-                              <span>{group.label}</span>
-                            )}
+                            ) : null}
                             {isLive ? (
                               <small>
                                 Live
@@ -191,7 +188,7 @@ export function MemberPanel({
                               </small>
                             ) : flags ? (
                               <small>
-                                {names.get(flags.channelId) ?? "Im Sprachraum"}
+                                {names.get(flags.channelId) ?? "Im Sprachkanal"}
                               </small>
                             ) : null}
                           </span>

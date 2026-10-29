@@ -157,7 +157,7 @@ describe("channel list", () => {
   it("marks categories and the voice group up as headings", () => {
     const html = list();
     expect(html).toContain(
-      '<h3 class="sidebar-section-heading">Sprachräume</h3>',
+      '<h3 class="sidebar-section-heading">Sprachkanäle</h3>',
     );
     expect(html).toContain('<h3 class="sidebar-category-name">Planung</h3>');
   });

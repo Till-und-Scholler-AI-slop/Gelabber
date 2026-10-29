@@ -92,14 +92,12 @@ export function InstallPanel({ state }: { state: InstallState }) {
             </p>
           ) : offered ? null : (
             <p>
-              Wenn dein Browser Web-Apps unterstützt, findest du die
-              Installation in der Adressleiste oder im Browsermenü, zum Beispiel
-              in Chrome oder Edge.
+              Die Installation findest du in der Adressleiste oder im
+              Browsermenü, z. B. in Chrome oder Edge.
             </p>
           )}
           <p className="pwa-install-note">
-            Für Chat und Gespräche brauchst du weiterhin eine
-            Internetverbindung.
+            Die App braucht weiterhin eine Internetverbindung.
           </p>
         </>
       )}

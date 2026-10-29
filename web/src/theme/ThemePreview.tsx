@@ -16,7 +16,7 @@ export function ThemePreview({
     >
       <aside className="theme-preview-sidebar">
         <strong>Gelabber</strong>
-        <span>DEIN WOHNZIMMER</span>
+        <span>KANÄLE</span>
         <b>
           <ChatIcon size={12} /> Übersicht
         </b>
@@ -32,7 +32,7 @@ export function ThemePreview({
           <strong>
             <HashIcon size={12} /> allgemein
           </strong>
-          <span>Ein guter Platz zum Ankommen.</span>
+          <span>Allgemeiner Chat</span>
         </header>
         <div className="theme-preview-message">
           <i>MA</i>
@@ -49,11 +49,11 @@ export function ThemePreview({
             <strong>
               Du <small>18:43</small>
             </strong>
-            <p>Ich bin im Wohnzimmer. Komm dazu!</p>
+            <p>Bin im Wohnzimmer.</p>
           </div>
         </div>
         <div className="theme-preview-composer">
-          Nachricht schreiben …<b>Senden</b>
+          Nachricht an #allgemein<b>Senden</b>
         </div>
       </div>
       <footer>

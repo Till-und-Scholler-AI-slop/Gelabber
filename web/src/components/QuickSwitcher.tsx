@@ -117,7 +117,7 @@ function SwitcherBody({
     <>
       <Picker
         label="Server, Kanal oder Unterhaltung"
-        placeholder="Wohin möchtest du?"
+        placeholder="Server, Kanal oder Unterhaltung suchen"
         query={query}
         onQuery={setQuery}
         options={options}

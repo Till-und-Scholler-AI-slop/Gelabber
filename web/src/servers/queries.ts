@@ -132,6 +132,20 @@ export function prefetchServer(
   });
 }
 
+/** A server's detail from the cache, else fetched: a Live notice can be
+ * about a server whose page was not open yet (voice/liveNotices.ts). */
+export function ensureServer(
+  client: QueryClient,
+  stamp: { userId: string; generation: number },
+  id: string,
+): Promise<ServerDetail> {
+  return client.ensureQueryData({
+    queryKey: serverKeys.detail(stamp.userId, stamp.generation, id),
+    queryFn: ({ signal }) => remote.getServer(id, signal),
+    staleTime: STALE_MS,
+  });
+}
+
 export function useInvites(serverId: string, enabled: boolean) {
   const userId = useUserId();
   const generation = scopeGeneration();

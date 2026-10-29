@@ -151,7 +151,6 @@ export function VoiceSessionControls() {
               </span>
             </div>
             <Button
-              size="sm"
               onClick={() =>
                 joinVoice({
                   serverId: lost.serverId,
@@ -164,7 +163,6 @@ export function VoiceSessionControls() {
             </Button>
             <IconButton
               label="Schließen"
-              size="sm"
               icon={<CloseIcon size={16} />}
               onClick={() => dismissLostCall()}
             />
@@ -263,7 +261,6 @@ function CallStatus({
       </Link>
       {voice.connection === "failed" ? (
         <Button
-          size="sm"
           onClick={() =>
             joinVoice({
               serverId: joined.serverId,

@@ -22,24 +22,17 @@ export function liveSentence(names: readonly string[], self: boolean): string {
 /** The room's one line about who is there: occupancy, never a claim that
  * anyone is talking. `others` leaves the viewer out, and so does `live`,
  * who of them is live: outside, the room says so, since a Live is
- * watched inside. */
+ * watched inside. The way in is the button under it, not this line. */
 export function roomSummary(
   others: readonly string[],
-  {
-    here,
-    canJoin,
-    live = [],
-  }: { here: boolean; canJoin: boolean; live?: readonly string[] },
+  { here, live = [] }: { here: boolean; live?: readonly string[] },
 ): string {
   if (here)
     return others.length === 0
-      ? "Du bist da. Sobald jemand dazukommt, hört ihr euch."
+      ? "Nur du bist im Kanal."
       : `Du bist hier mit ${nameList(others)}.`;
-  if (others.length === 0)
-    return canJoin
-      ? "Noch niemand da – komm als Erste:r dazu."
-      : "Gerade ist niemand da.";
+  if (others.length === 0) return "Niemand im Kanal.";
   const there = `${nameList(others)} ${others.length === 1 ? "ist" : "sind"} da.`;
   if (live.length === 0) return there;
-  return `${there} ${nameList(live)} ${live.length === 1 ? "ist" : "sind"} live${canJoin ? " – komm dazu, um zuzusehen." : "."}`;
+  return `${there} ${nameList(live)} ${live.length === 1 ? "ist" : "sind"} live.`;
 }

@@ -379,6 +379,15 @@ function dropRemote(userId: string, kind?: "v" | "s"): void {
   useVoice.setState({ remote: next });
 }
 
+/** A peer's flags, and a Live their reconnect announces again, follow their
+ * join within moments: until then they say how they arrive, not a change. */
+const PEER_SETTLE_MS = 2000;
+
+function settled(userId: string): boolean {
+  const peer = voice.peers.get(userId);
+  return peer !== undefined && Date.now() - peer.since >= PEER_SETTLE_MS;
+}
+
 function onSig(event: SigEvent): void {
   const state = useVoice.getState();
   const inRoom =
@@ -392,12 +401,10 @@ function onSig(event: SigEvent): void {
   if (!userId) return;
   switch (event.t) {
     case "j":
-      if (
-        userId !== currentUserId() &&
-        !event.replay &&
-        !state.participants[userId]
-      ) {
-        playCallSound("join");
+      if (userId !== currentUserId()) {
+        if (!event.replay && !state.participants[userId])
+          playCallSound("joinOther");
+        voice.peers.set(userId, { since: Date.now(), muted: event.m === true });
       }
       if (
         userId === currentUserId() &&
@@ -407,7 +414,7 @@ function onSig(event: SigEvent): void {
         voice.awaitingJoin = null;
         if (voice.soundOnJoin) {
           voice.soundOnJoin = false;
-          playCallSound("join");
+          playCallSound("joinSelf");
         }
         if (voice.republishOnJoin) {
           voice.republishOnJoin = false;
@@ -423,7 +430,8 @@ function onSig(event: SigEvent): void {
         return;
       }
       {
-        if (state.participants[userId]) playCallSound("leave");
+        if (state.participants[userId]) playCallSound("leaveOther");
+        voice.peers.delete(userId);
         const next = { ...state.participants };
         delete next[userId];
         useVoice.setState({ participants: next });
@@ -431,12 +439,30 @@ function onSig(event: SigEvent): void {
         // stays until the receiver track or this peer connection ends.
       }
       return;
+    case "m": {
+      // A change sounds, a repeat does not: the gateway sends the aggregate
+      // of all of a peer's seats, also after a deafen or a seat leaving.
+      if (userId === currentUserId()) return;
+      const muted = event.on === true;
+      const peer = voice.peers.get(userId);
+      if (peer?.muted !== muted && settled(userId))
+        playCallSound(muted ? "muteOther" : "unmuteOther");
+      voice.peers.set(userId, { since: peer?.since ?? Date.now(), muted });
+      return;
+    }
     case "p":
     case "u": {
       if (!event.k) return;
       if (event.t === "p" && event.k === "s" && userId === currentUserId())
         voice.awaitingScreen = null;
       const current = state.participants[userId] ?? { pubs: [] };
+      // My own Live sounds where it starts and stops (localVideo.ts).
+      if (event.k === "s" && userId !== currentUserId()) {
+        const live = current.pubs.includes("s");
+        if (event.t === "p" && !live && settled(userId))
+          playCallSound("liveStart", { remote: true });
+        if (event.t === "u" && live) playCallSound("liveEnd", { remote: true });
+      }
       const pubs =
         event.t === "p"
           ? current.pubs.includes(event.k)
@@ -518,6 +544,7 @@ function onReady(): void {
   }
   const self = currentUserId();
   const keepMedia = voice.seat.isOpen();
+  voice.peers.clear();
   useVoice.setState({
     participants: self
       ? { [self]: state.participants[self] ?? { pubs: [] } }
@@ -862,6 +889,7 @@ function rollbackSeat(error?: unknown, lost = false): void {
   const channelId = state.channelId;
   voice.awaitingJoin = null;
   voice.republishOnJoin = false;
+  voice.peers.clear();
   stopPeer();
   vacateSelf(serverId, channelId);
   useVoice.setState({
@@ -1211,6 +1239,7 @@ export function joinVoice(input: {
   }
   stopPeer();
   const self = userId;
+  voice.peers.clear();
   useVoice.setState({
     status: "joined",
     connection: "connecting",
@@ -1253,12 +1282,13 @@ export function leaveVoice(): void {
   const hadJoined = !voice.awaitingJoin && state.status === "joined";
   voice.soundOnJoin = false;
   stopCallSounds();
-  if (hadJoined && !state.deafened) playCallSound("leave");
+  if (hadJoined && !state.deafened) playCallSound("leaveSelf");
   setCallSoundsDeafened(false);
   const serverId = state.serverId;
   const channelId = state.channelId;
   voice.awaitingJoin = null;
   voice.republishOnJoin = false;
+  voice.peers.clear();
   stopPeer();
   vacateSelf(serverId, channelId);
   useVoice.setState({
@@ -1293,7 +1323,7 @@ export function toggleMute(): void {
   if (!deafened) voice.preDeafenMuted = muted;
   useVoice.setState({ muted, deafened });
   setCallSoundsDeafened(deafened);
-  playCallSound(muted ? "mute" : "unmute");
+  playCallSound(muted ? "muteSelf" : "unmuteSelf");
   applyLocalAudio();
   occupySelf({ ...state, muted, deafened });
   if (muted !== prevMuted) {

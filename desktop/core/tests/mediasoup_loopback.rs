@@ -211,11 +211,19 @@ async fn round_trip(server: &Server) {
         }
     }
     // All simulcast layers must come up (AV1 and VP9: their one stream). The
-    // 720p layer only starts once libwebrtc's bandwidth estimate and CPU budget
-    // allow it, so poll; on failure print the sender's own per-layer view
-    // (qualityLimitationReason, frameWidth, active) next to the server's.
+    // upper layers only start once libwebrtc's bandwidth estimate and CPU
+    // budget allow them, so poll. All producers share the send transport's
+    // estimate. On a busy runner it can fall to some 250 kbit/s in the first
+    // seconds and then climbs 8 % a second, too slowly for every layer to
+    // start in this wait. libwebrtc then holds layers back and says so, which
+    // `check_held_back_layers` accepts.
     for (name, producer, native) in &video {
         let expected = if matches!(*name, "AV1" | "VP9") { 1 } else { 3 };
+        assert_eq!(
+            producer.rtp_parameters().encodings.len(),
+            expected,
+            "{name}'s encodings at the server"
+        );
         let start = Instant::now();
         let mut live = 0;
         while start.elapsed() < Duration::from_secs(20) {
@@ -226,19 +234,27 @@ async fn round_trip(server: &Server) {
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
+        // Per stream: ssrc, rid, bytes, bit/s, score and packets lost (loss
+        // is one of the signals that make the estimate fall).
         let stats = producer.get_stats().await.unwrap();
         eprintln!(
             "{name}: {live} live layer(s) after {:?}: {:?}",
             start.elapsed(),
             stats
                 .iter()
-                .map(|s| (s.ssrc, s.rid.clone(), s.byte_count, s.bitrate, s.score))
+                .map(|s| (
+                    s.ssrc,
+                    s.rid.clone(),
+                    s.byte_count,
+                    s.bitrate,
+                    s.score,
+                    s.packets_lost
+                ))
                 .collect::<Vec<_>>()
         );
         if live != expected {
-            eprintln!("{name} native outbound-rtp: {}", outbound_rtp(native));
+            check_held_back_layers(name, producer, native).await;
         }
-        assert_eq!(live, expected, "{name} sends all its layers");
     }
     for (name, _, native) in &video {
         match *name {
@@ -432,6 +448,109 @@ async fn round_trip(server: &Server) {
     drop(consumers);
     drop((audio, video));
     drop((send, recv));
+}
+
+/// For a producer whose layers did not all reach the server. A layer may be
+/// missing only if the sender held it back: it sent no byte of it, and a
+/// layer's qualityLimitationReason names the bandwidth estimate or the CPU.
+/// One layer at least must arrive. Every layer the sender did send must be at
+/// the server under its rid; losing one between the native client and the
+/// server is what the layer check is for.
+async fn check_held_back_layers(
+    name: &str,
+    producer: &Producer,
+    native: &gelabber_media_core::Producer,
+) {
+    let sender = outbound_rtp(native);
+    eprintln!("{name} native outbound-rtp: {sender}");
+    eprintln!(
+        "{name} send bandwidth estimate (bit/s): {}",
+        available_outgoing_bitrate(native)
+    );
+    let layers = sender.as_array().cloned().unwrap_or_default();
+    let bytes_sent = |rid: &Option<String>| {
+        layers
+            .iter()
+            .find(|layer| layer["rid"].as_str() == rid.as_deref())
+            .and_then(|layer| layer["bytesSent"].as_u64())
+            .unwrap_or(0)
+    };
+    let rids: Vec<Option<String>> = producer
+        .rtp_parameters()
+        .encodings
+        .iter()
+        .map(|encoding| encoding.rid.clone())
+        .collect();
+    // Packets sent just before the snapshot above may still be on their way.
+    let start = Instant::now();
+    let mut at_server = live_rids(producer).await;
+    while start.elapsed() < Duration::from_secs(2)
+        && rids
+            .iter()
+            .any(|rid| bytes_sent(rid) > 0 && !at_server.contains(rid))
+    {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        at_server = live_rids(producer).await;
+    }
+    // libwebrtc names the limitation per stream: the lowest layer may say
+    // `none` while an upper one is held back for the estimate.
+    let reasons: Vec<(Option<&str>, &str)> = layers
+        .iter()
+        .map(|layer| {
+            let reason = layer["qualityLimitationReason"].as_str();
+            (layer["rid"].as_str(), reason.unwrap_or("unknown"))
+        })
+        .collect();
+    let limited = reasons
+        .iter()
+        .any(|(_, reason)| matches!(*reason, "bandwidth" | "cpu"));
+    let missing: Vec<_> = rids.iter().filter(|rid| !at_server.contains(rid)).collect();
+    for rid in &missing {
+        let sent = bytes_sent(rid);
+        assert_eq!(
+            sent, 0,
+            "{name} layer {rid:?}: the sender sent {sent} bytes of it, the server got none"
+        );
+    }
+    assert!(
+        missing.len() < rids.len(),
+        "{name} sends at least one of its layers: it held back all of {rids:?} \
+         (qualityLimitationReason by rid: {reasons:?})"
+    );
+    assert!(
+        missing.is_empty() || limited,
+        "{name} sends all its layers: {missing:?} sent nothing, and no layer is limited \
+         (qualityLimitationReason by rid: {reasons:?})"
+    );
+    eprintln!(
+        "{name}: the sender holds back {missing:?} (qualityLimitationReason by rid: \
+         {reasons:?}); every layer it sent reached the server"
+    );
+}
+
+/// The rids of a server producer's streams that received RTP.
+async fn live_rids(producer: &Producer) -> Vec<Option<String>> {
+    producer
+        .get_stats()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|stream| stream.byte_count > 0)
+        .map(|stream| stream.rid)
+        .collect()
+}
+
+/// libwebrtc's send-side bandwidth estimate, from the candidate pair in the
+/// producer's stats (`availableOutgoingBitrate`), or null.
+fn available_outgoing_bitrate(native: &gelabber_media_core::Producer) -> Value {
+    let stats = native.stats().unwrap_or_default();
+    stats
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|s| s["type"] == "candidate-pair" && !s["availableOutgoingBitrate"].is_null())
+        .map(|s| s["availableOutgoingBitrate"].clone())
+        .unwrap_or(Value::Null)
 }
 
 /// Simulcast from pictures whose sides do not divide by the layers' scale

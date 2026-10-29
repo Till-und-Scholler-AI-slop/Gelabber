@@ -122,7 +122,7 @@ export function PushToTalkSettings() {
             value={releaseDelay}
             suffix={`${releaseDelay} ms`}
             onChange={(value) => patch({ pttReleaseDelay: value })}
-            hint="So lange sendet das Mikrofon nach dem Loslassen weiter, damit das letzte Wort nicht abreißt."
+            hint="So lange sendet das Mikrofon nach dem Loslassen weiter."
           />
         </SettingRow>
       )}

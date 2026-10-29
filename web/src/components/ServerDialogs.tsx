@@ -122,8 +122,7 @@ export function CreateServerDialog({
   );
 }
 
-const CREATE_HINT =
-  "Du verwaltest den Server. #allgemein und ein Sprachraum sind gleich da.";
+const CREATE_HINT = "Mit #allgemein und einem Sprachkanal.";
 
 /**
  * Creates the server, opens its overview and offers an invite link right

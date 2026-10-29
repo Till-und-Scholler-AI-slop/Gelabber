@@ -77,25 +77,33 @@ for (const engine of [chromium, firefox]) {
     await page.click("#join");
     await page.waitForFunction(() => window.probe.ended === 1);
     // Outside the click: models the later gateway join acknowledgement.
-    await page.evaluate(() => window.sounds.playCallSound("join"));
+    await page.evaluate(() => window.sounds.playCallSound("joinSelf"));
     await page.waitForFunction(() => window.probe.ended === 2);
     let probe = await page.evaluate(() => window.probe);
     assert.equal(probe.plays[1].ok, true);
     assert.equal(probe.plays[1].volume, 0.35);
-    assert.ok(Math.abs(probe.plays[1].duration - 0.24) < 0.01);
+    // The browser decodes the whole rendered cue (1.6 s with its reverb).
+    assert.ok(Math.abs(probe.plays[1].duration - 1.6) < 0.01);
+    // The camera's shutter is the one cue rendered at 48 kHz.
+    await page.evaluate(() => window.sounds.playCallSound("cameraOn"));
+    await page.waitForFunction(() => window.probe.ended === 3);
+    probe = await page.evaluate(() => window.probe);
+    assert.ok(Math.abs(probe.plays[2].duration - 10459 / 48000) < 0.01);
     await page.evaluate(() => {
       window.sounds.setCallSoundsDeafened(true);
-      window.sounds.playCallSound("join");
-      window.sounds.playCallSound("leave");
-    });
-    assert.equal(await page.evaluate(() => window.probe.plays.length), 2);
-    await page.evaluate(() => window.sounds.playCallSound("deafen"));
-    await page.waitForFunction(() => window.probe.ended === 3);
-    await page.evaluate(() => {
-      window.settings.getState().patch({ callSounds: false });
-      window.sounds.playCallSound("unmute");
+      window.sounds.playCallSound("joinOther");
+      window.sounds.playCallSound("leaveOther");
+      window.sounds.playCallSound("muteOther");
+      window.sounds.playCallSound("liveStart", { remote: true });
     });
     assert.equal(await page.evaluate(() => window.probe.plays.length), 3);
+    await page.evaluate(() => window.sounds.playCallSound("deafen"));
+    await page.waitForFunction(() => window.probe.ended === 4);
+    await page.evaluate(() => {
+      window.settings.getState().patch({ callSounds: false });
+      window.sounds.playCallSound("unmuteSelf");
+    });
+    assert.equal(await page.evaluate(() => window.probe.plays.length), 4);
     await page.reload();
     await page.waitForFunction(() => window.ready);
     assert.equal(
@@ -109,20 +117,28 @@ for (const engine of [chromium, firefox]) {
     });
     await page.click("#join");
     await page.waitForFunction(() => window.probe.ended === 1);
-    await page.evaluate(() => window.sounds.playCallSound("leave"));
+    await page.evaluate(() => window.sounds.playCallSound("leaveOther"));
     await page.waitForFunction(() => window.probe.ended === 2);
     probe = await page.evaluate(() => window.probe);
     assert.equal(probe.plays[1].volume, 0.1);
     assert.deepEqual(probe.errors, []);
     await page.getByRole("button", { name: "Testton abspielen" }).click();
     await page.waitForFunction(() => window.probe.ended === 3);
-    await page.getByLabel("Signaltöne im Call", { exact: true }).uncheck();
+    const others = page.getByLabel("Töne, wenn andere sich stumm schalten");
+    await others.uncheck();
+    assert.equal(
+      await page.evaluate(() => window.settings.getState().otherMuteSounds),
+      false,
+    );
+    await others.check();
+    await page.getByLabel("Signaltöne", { exact: true }).uncheck();
     assert.equal(
       await page
         .getByRole("button", { name: "Testton abspielen" })
         .isDisabled(),
       true,
     );
+    assert.equal(await others.isDisabled(), true);
     if (process.env.GELABBER_CALL_SOUNDS_SCREENSHOT)
       await page.screenshot({
         path: `${process.env.GELABBER_CALL_SOUNDS_SCREENSHOT}-${engine.name()}.png`,
@@ -141,6 +157,7 @@ for (const engine of [chromium, firefox]) {
         "persistence",
         "combined volume",
         "mobile settings and preview",
+        "others' mute switch",
       ],
     });
   } finally {

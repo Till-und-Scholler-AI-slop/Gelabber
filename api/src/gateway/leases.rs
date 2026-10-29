@@ -7,9 +7,6 @@ use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub const VOICE_LEASE_MS: u64 = 5000;
-/// The text hint of a Live goes out once per person and voice channel, and
-/// again only after this long without being live there.
-pub const LIVE_HINT_COOLDOWN_MS: u64 = 10 * 60 * 1000;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct SeatRecord {
@@ -110,9 +107,6 @@ fn room_key(c: Uuid) -> String {
 fn server_key(s: Uuid) -> String {
     format!("gb:voice:server:{s}")
 }
-fn live_hint_key(c: Uuid, u: Uuid) -> String {
-    format!("gb:voice:live-hint:{c}:{u}")
-}
 fn encode<T: Serialize>(value: &T) -> Result<String, ApiError> {
     serde_json::to_string(value).map_err(|err| ApiError::Internal(format!("voice state: {err}")))
 }
@@ -181,54 +175,6 @@ impl VoiceRoster {
                     .map_err(|err| ApiError::Internal(format!("voice lease: {err}")))
             })
             .collect()
-    }
-    /// Whether `u` going live in `c` may post the text hint now; claims the
-    /// cooldown when it may. A Live switched off and on again, or announced
-    /// again after a reconnect, has nothing new to say.
-    async fn claim_live_hint(&self, u: Uuid, c: Uuid) -> Result<bool, ApiError> {
-        let set: Option<String> = self
-            .connections
-            .with_conn(|mut conn| async move {
-                redis::cmd("SET")
-                    .arg(live_hint_key(c, u))
-                    .arg(1)
-                    .arg("NX")
-                    .arg("PX")
-                    .arg(LIVE_HINT_COOLDOWN_MS)
-                    .query_async(&mut conn)
-                    .await
-            })
-            .await
-            .map_err(redis_err)?;
-        Ok(set.is_some())
-    }
-    /// Gives back a claim whose hint was never posted, so the next start
-    /// of that Live may post it.
-    async fn release_live_hint(&self, u: Uuid, c: Uuid) -> Result<(), ApiError> {
-        self.connections
-            .with_conn(|mut conn| async move {
-                redis::cmd("DEL")
-                    .arg(live_hint_key(c, u))
-                    .query_async::<i32>(&mut conn)
-                    .await
-            })
-            .await
-            .map_err(redis_err)?;
-        Ok(())
-    }
-    /// The cooldown of a hint runs from the end of its Live, not its start.
-    async fn hold_live_hint(&self, u: Uuid, c: Uuid) -> Result<(), ApiError> {
-        self.connections
-            .with_conn(|mut conn| async move {
-                redis::cmd("PEXPIRE")
-                    .arg(live_hint_key(c, u))
-                    .arg(LIVE_HINT_COOLDOWN_MS)
-                    .query_async::<i32>(&mut conn)
-                    .await
-            })
-            .await
-            .map_err(redis_err)?;
-        Ok(())
     }
     async fn aggregate_signal(
         &self,
@@ -453,8 +399,7 @@ impl VoiceRoster {
         .await?;
         Ok(true)
     }
-    /// `None` when the seat may not change this publication. Otherwise
-    /// whether it starts a Live: a screen this seat did not publish before.
+    /// `false` when the seat may not change this publication.
     pub async fn set_voice_pub(
         &self,
         id: ConnId,
@@ -463,7 +408,7 @@ impl VoiceRoster {
         c: Uuid,
         kind: TrackKind,
         on: bool,
-    ) -> Result<Option<bool>, ApiError> {
+    ) -> Result<bool, ApiError> {
         let _guard = self.connections.inner.voice_ops.lock().await;
         let mut seat = {
             let sockets = self.connections.inner.sockets.read().await;
@@ -472,7 +417,7 @@ impl VoiceRoster {
                 .and_then(|socket| socket.rooms.get(&c))
                 .filter(|seat| seat.server_id == s)
             else {
-                return Ok(None);
+                return Ok(false);
             };
             seat.clone()
         };
@@ -481,7 +426,7 @@ impl VoiceRoster {
             && let Some(parent) = kind.source_parent()
             && !seat.pubs.contains(&parent)
         {
-            return Ok(None);
+            return Ok(false);
         }
         if on {
             seat.pubs.insert(kind);
@@ -515,9 +460,7 @@ impl VoiceRoster {
             }
             self.aggregate_signal(u, s, c, "u", &removed).await?;
         }
-        Ok(Some(
-            on && kind == TrackKind::S && !previous.pubs.contains(&kind),
-        ))
+        Ok(true)
     }
     pub async fn voice_snapshot(&self, s: Uuid) -> Result<Vec<VoiceEntry>, ApiError> {
         let rows = self.records(server_key(s)).await?;
@@ -584,9 +527,6 @@ impl VoiceRoster {
             return Ok(());
         };
         for (c, seat) in rooms {
-            if seat.pubs.contains(&TrackKind::S) {
-                self.hold_live_hint(u, c).await?;
-            }
             self.write_seat(id, u, c, &seat).await?;
             if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
                 socket.rooms.insert(c, seat);
@@ -663,12 +603,6 @@ impl VoiceRoster {
     }
 }
 impl Gateway {
-    pub async fn claim_live_hint(&self, user: Uuid, channel: Uuid) -> Result<bool, ApiError> {
-        self.voice.claim_live_hint(user, channel).await
-    }
-    pub async fn release_live_hint(&self, user: Uuid, channel: Uuid) -> Result<(), ApiError> {
-        self.voice.release_live_hint(user, channel).await
-    }
     /// Renew this socket's voice seats. Rosters go out from the process-wide
     /// pass ([`VoiceRoster::refresh_rosters`]).
     pub async fn refresh_voice(&self, id: ConnId) -> Result<(), ApiError> {
@@ -776,11 +710,10 @@ mod tests {
             .await
             .unwrap();
         assert!(!g.voice_snapshot(s).await.unwrap()[0].s);
-        assert_eq!(
+        assert!(
             g.set_voice_pub(id, u, s, c, TrackKind::S, true)
                 .await
-                .unwrap(),
-            Some(true)
+                .unwrap()
         );
         g.detach(id).await;
     }
@@ -869,11 +802,10 @@ mod tests {
         let (sb, _rb) = socket(&g, b).await;
         g.join_voice(sa, a, s, c1).await.unwrap();
         g.join_voice(sb, b, s, c2).await.unwrap();
-        assert_eq!(
+        assert!(
             g.set_voice_pub(sa, a, s, c1, TrackKind::S, true)
                 .await
-                .unwrap(),
-            Some(true)
+                .unwrap()
         );
         // A seat under the DM id's server key: without the skip, the watcher
         // would get a roster for the DM.
@@ -958,36 +890,20 @@ mod tests {
         for id in [owner, other_tab] {
             g.join_voice(id, u, s, c).await.unwrap();
         }
-        assert_eq!(
-            g.set_voice_pub(owner, u, s, c, TrackKind::A, true)
-                .await
-                .unwrap(),
-            Some(false)
-        );
-        assert_eq!(
-            g.set_voice_pub(owner, u, s, c, TrackKind::S, true)
-                .await
-                .unwrap(),
-            Some(true)
-        );
-        assert_eq!(
-            g.set_voice_pub(other_tab, u, s, c, TrackKind::Sa, true)
-                .await
-                .unwrap(),
-            None
-        );
-        assert_eq!(
-            g.set_voice_pub(owner, u, s, c, TrackKind::Sa, true)
-                .await
-                .unwrap(),
-            Some(false)
-        );
-        assert_eq!(
-            g.set_voice_pub(owner, u, s, c, TrackKind::S, false)
-                .await
-                .unwrap(),
-            Some(false)
-        );
+        for (id, kind, on, ok) in [
+            (owner, TrackKind::A, true, true),
+            (owner, TrackKind::S, true, true),
+            // Screen sound belongs to the seat that shares the screen.
+            (other_tab, TrackKind::Sa, true, false),
+            (owner, TrackKind::Sa, true, true),
+            (owner, TrackKind::S, false, true),
+        ] {
+            assert_eq!(
+                g.set_voice_pub(id, u, s, c, kind, on).await.unwrap(),
+                ok,
+                "{kind:?} {on}"
+            );
+        }
         let seat = g.connections.inner.sockets.read().await[&owner].rooms[&c].clone();
         assert_eq!(seat.pubs, HashSet::from([TrackKind::A]));
         g.detach(owner).await;
@@ -1035,64 +951,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn screen_starts_a_live_once_per_seat_and_shows_in_the_snapshot() {
+    async fn screen_shows_in_the_snapshot_while_it_is_shared() {
         let g = gateway();
         let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         let (id, _rx) = socket(&g, u).await;
         g.join_voice(id, u, s, c).await.unwrap();
-        let started = g.set_voice_pub(id, u, s, c, TrackKind::S, true).await;
-        assert_eq!(started.unwrap(), Some(true));
-        // A re-announcement of the same screen is no new Live.
-        let again = g.set_voice_pub(id, u, s, c, TrackKind::S, true).await;
-        assert_eq!(again.unwrap(), Some(false));
-        let sound = g.set_voice_pub(id, u, s, c, TrackKind::Sa, true).await;
-        assert_eq!(sound.unwrap(), Some(false));
-        let snapshot = g.voice_snapshot(s).await.unwrap();
-        assert!(snapshot[0].s);
-        let stopped = g.set_voice_pub(id, u, s, c, TrackKind::S, false).await;
-        assert_eq!(stopped.unwrap(), Some(false));
+        for kind in [TrackKind::S, TrackKind::S, TrackKind::Sa] {
+            assert!(g.set_voice_pub(id, u, s, c, kind, true).await.unwrap());
+        }
+        assert!(g.voice_snapshot(s).await.unwrap()[0].s);
+        assert!(
+            g.set_voice_pub(id, u, s, c, TrackKind::S, false)
+                .await
+                .unwrap()
+        );
         assert!(!g.voice_snapshot(s).await.unwrap()[0].s);
-        let restarted = g.set_voice_pub(id, u, s, c, TrackKind::S, true).await;
-        assert_eq!(restarted.unwrap(), Some(true));
-        g.detach(id).await;
-    }
-
-    async fn hint_ttl(c: Uuid, u: Uuid) -> i64 {
-        redis::cmd("PTTL")
-            .arg(live_hint_key(c, u))
-            .query_async(&mut redis().await)
-            .await
-            .unwrap()
-    }
-
-    #[tokio::test]
-    async fn live_hint_cooldown_holds_while_live() {
-        let g = gateway();
-        let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
-        assert!(g.claim_live_hint(u, c).await.unwrap());
-        assert!(!g.claim_live_hint(u, c).await.unwrap());
-        // Per person and channel.
-        assert!(g.claim_live_hint(u, Uuid::new_v4()).await.unwrap());
-        assert!(g.claim_live_hint(Uuid::new_v4(), c).await.unwrap());
-        // A claim given back, its hint never posted, may be taken again.
-        g.release_live_hint(u, c).await.unwrap();
-        assert!(g.claim_live_hint(u, c).await.unwrap());
-
-        let (id, _rx) = socket(&g, u).await;
-        g.join_voice(id, u, s, c).await.unwrap();
-        redis::cmd("PEXPIRE")
-            .arg(live_hint_key(c, u))
-            .arg(1000)
-            .query_async::<i32>(&mut redis().await)
-            .await
-            .unwrap();
-        g.refresh_voice(id).await.unwrap();
-        assert!(hint_ttl(c, u).await <= 1000, "not live: it runs down");
-        g.set_voice_pub(id, u, s, c, TrackKind::S, true)
-            .await
-            .unwrap();
-        g.refresh_voice(id).await.unwrap();
-        assert!(hint_ttl(c, u).await > 1000, "live: it starts again");
+        assert!(
+            g.set_voice_pub(id, u, s, c, TrackKind::S, true)
+                .await
+                .unwrap()
+        );
+        assert!(g.voice_snapshot(s).await.unwrap()[0].s);
         g.detach(id).await;
     }
 }

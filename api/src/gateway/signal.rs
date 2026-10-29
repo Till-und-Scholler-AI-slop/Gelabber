@@ -29,7 +29,6 @@ struct Call<'a> {
     track: Option<TrackKind>,
     on: Option<bool>,
     sink: &'a mut Sink,
-    live_started: bool,
 }
 
 pub async fn handle(
@@ -39,14 +38,12 @@ pub async fn handle(
     conn: ConnId,
     frame: ClientFrame,
     sink: &mut Sink,
-) -> Result<Option<(Uuid, Uuid)>, ApiError> {
+) -> Result<(), ApiError> {
     let ClientFrame::Sig { s, c, t, k, on } = frame else {
-        send_err(sink, "bad_request", None, None).await?;
-        return Ok(None);
+        return send_err(sink, "bad_request", None, None).await;
     };
     let (Some(server_id), Some(channel_id), Some(kind)) = (s, c, t) else {
-        send_err(sink, "bad_request", s, c).await?;
-        return Ok(None);
+        return send_err(sink, "bad_request", s, c).await;
     };
 
     let mut call = Call {
@@ -60,10 +57,9 @@ pub async fn handle(
         track: k,
         on,
         sink,
-        live_started: false,
     };
     if let Err(err) = membership::lock_server_conn(call.db, server_id, false).await {
-        return reject(&mut call, err).await.map(|_| None);
+        return reject(&mut call, err).await;
     }
     match kind {
         SigKind::J => join(&mut call).await,
@@ -71,8 +67,7 @@ pub async fn handle(
         SigKind::P | SigKind::U => publish(&mut call).await,
         SigKind::M | SigKind::D => mute_deafen(&mut call).await,
         SigKind::R => bad(&mut call).await,
-    }?;
-    Ok(call.live_started.then_some((server_id, channel_id)))
+    }
 }
 
 async fn join(call: &mut Call<'_>) -> Result<(), ApiError> {
@@ -148,7 +143,7 @@ async fn publish(call: &mut Call<'_>) -> Result<(), ApiError> {
             Err(err) => return reject(call, err).await,
         }
     }
-    let started = call
+    let ok = call
         .state
         .gateway
         .set_voice_pub(
@@ -160,10 +155,9 @@ async fn publish(call: &mut Call<'_>) -> Result<(), ApiError> {
             call.kind == SigKind::P,
         )
         .await?;
-    let Some(live_started) = started else {
+    if !ok {
         return bad(call).await;
-    };
-    call.live_started = track == TrackKind::S && call.kind == SigKind::P && live_started;
+    }
     Ok(())
 }
 

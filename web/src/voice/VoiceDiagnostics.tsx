@@ -54,10 +54,6 @@ export function VoiceDiagnostics() {
       <Microphone />
       <Debug />
       <footer className="connection-footer">
-        <p>
-          Messwerte sind Anhaltspunkte. Ein einzelner Wert ist keine bewiesene
-          Ursache.
-        </p>
         <Button
           size="sm"
           variant="ghost"

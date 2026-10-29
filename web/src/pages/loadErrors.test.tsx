@@ -80,7 +80,7 @@ describe("channel page load error", () => {
     };
     const html = renderToStaticMarkup(<ChannelPage />);
     expect(html).toContain(
-      '<div role="alert">Dieser Kanal konnte gerade nicht geladen werden.</div>',
+      '<div role="alert">Dieser Kanal konnte nicht geladen werden.</div>',
     );
     fixture.retry?.();
     expect(refetch).toHaveBeenCalledOnce();
@@ -113,7 +113,7 @@ describe("workspace start page load error", () => {
     fixture.servers = { ...base, isPending: true, isError: true };
     const html = renderToStaticMarkup(<WorkspaceIndexPage />);
     expect(html).toMatch(
-      /<p role="alert"[^>]*>Deine Server konnten gerade nicht geladen werden\.<\/p>/,
+      /<p role="alert"[^>]*>Die Server konnten nicht geladen werden\.<\/p>/,
     );
     expect(html).toContain('<button type="button" class=');
     expect(html).toContain(">Erneut versuchen</button>");
@@ -133,7 +133,7 @@ describe("workspace start page load error", () => {
     expect(html).toContain("Willkommen, Rafi");
     expect(html).toContain("<h2>Eigenen Server erstellen</h2>");
     expect(html).toMatch(/ui-button--primary[^>]*>Server erstellen<\/button>/);
-    expect(html).toContain("<h2>Einladung erhalten?</h2>");
+    expect(html).toContain("<h2>Server beitreten</h2>");
     expect(html).toContain('<form aria-label="Einladung">');
     expect(html).not.toContain('role="alert"');
     expect(html).not.toContain("Erneut versuchen");

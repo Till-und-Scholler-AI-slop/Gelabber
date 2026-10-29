@@ -21,7 +21,7 @@ describe("per-user volume control", () => {
     expect(html).toContain('aria-label="Lautstärke von Bob"');
     // The visible label names the slider; the screen reader hears percent.
     expect(html).toContain('aria-valuetext="100 %"');
-    expect(html).toContain("nicht für Stream-Ton");
+    expect(html).toContain("Stream-Ton bleibt unverändert");
     expect(html).toContain('max="200"');
     // 100 % sits in the middle; the right half goes on to 400 %.
     expect(html).toContain('value="100"');

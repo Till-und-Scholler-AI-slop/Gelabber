@@ -89,7 +89,7 @@ export function MemberProfileDialog({
           <ProfileCardView person={person} presence={presence} />
           <dl className="member-profile__details">
             <div>
-              <dt>Community</dt>
+              <dt>Server</dt>
               <dd>{server.name}</dd>
             </div>
             <div>

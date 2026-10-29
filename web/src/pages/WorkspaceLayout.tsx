@@ -76,13 +76,13 @@ function Workspace() {
       sidebar={
         <aside className="channel-sidebar" aria-label="Navigation">
           <div className="sidebar-brand">Gelabber</div>
-          <div className="sidebar-empty">
-            Dein Platz für gemeinsame Abende.
-            {/* Only once the list says so: never flash it at members. */}
-            {servers?.length === 0
-              ? " Erstelle einen Server mit dem Plus in der Serverleiste oder öffne einen Einladungslink."
-              : null}
-          </div>
+          {/* Only once the list says so: never flash it at members. */}
+          {servers?.length === 0 ? (
+            <div className="sidebar-empty">
+              Keine Server. Erstelle einen über + in der Serverleiste oder öffne
+              einen Einladungslink.
+            </div>
+          ) : null}
           <UserPanel />
         </aside>
       }
@@ -247,7 +247,7 @@ function SelectedServer({
             failure={
               error
                 ? {
-                    message: "Die Kanäle konnten gerade nicht geladen werden.",
+                    message: "Die Kanäle konnten nicht geladen werden.",
                     pending: isFetching,
                     onRetry: () => void refetch(),
                   }
@@ -274,8 +274,7 @@ function SelectedDms({ channelId }: { channelId: string | undefined }) {
             failure={
               error
                 ? {
-                    message:
-                      "Deine Unterhaltungen konnten gerade nicht geladen werden.",
+                    message: "Die Unterhaltungen konnten nicht geladen werden.",
                     pending: isFetching,
                     onRetry: () => void refetch(),
                   }

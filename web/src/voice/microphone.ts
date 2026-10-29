@@ -117,8 +117,7 @@ export function createMicrophoneSession(
       const values = new Uint8Array(meter.fftSize);
       onState({
         phase: "active",
-        message:
-          "Sprich ein paar Worte. Der Pegel zeigt, ob dein Mikrofon dich hört.",
+        message: "Sprich, um den Pegel zu prüfen.",
       });
       function measure(time: number) {
         if (disposed) return;

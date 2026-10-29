@@ -48,7 +48,7 @@ export type SectionRow = { kind: "section"; key: string; label: string };
 
 /**
  * The sidebar's order: uncategorised text channels, the uncategorised voice
- * rooms under a "Sprachräume" heading of their own, then the categories.
+ * rooms under a "Sprachkanäle" heading of their own, then the categories.
  */
 export function sidebarRows(server: ServerDetail): (Row | SectionRow)[] {
   const base = buildRows(server);
@@ -67,7 +67,7 @@ export function sidebarRows(server: ServerDetail): (Row | SectionRow)[] {
           {
             kind: "section" as const,
             key: "voice-heading",
-            label: "Sprachräume",
+            label: "Sprachkanäle",
           },
           ...voice,
         ]

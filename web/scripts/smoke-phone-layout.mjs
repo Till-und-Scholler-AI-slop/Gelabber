@@ -7,7 +7,9 @@
 //    is sent, and the field is as tall as the stylesheet makes it, also
 //    after the phone was turned;
 //  - a phone on its side in a call whose sound the browser blocks: "Ton
-//    starten" is on screen in the call bar.
+//    starten" is on screen in the call bar;
+//  - on a desktop, the user panel and the call bar form one strip, and the
+//    bar's controls keep one height whether they are on or off.
 // WebKit itself is not covered here; real phones remain device checks.
 // Run in web/: node scripts/smoke-phone-layout.mjs
 // GELABBER_PHONE_BROWSER_EXECUTABLE names a Chromium other than Playwright's.
@@ -144,11 +146,10 @@ const UPRIGHT = { width: 390, height: 664 };
 const SIDEWAYS = { width: 844, height: 390 };
 const problems = [];
 
-/** A signed-in phone on the text channel. `init` runs before the app. */
-async function phone(viewport, init) {
+/** A signed-in browser on the text channel. `inits` run before the app. */
+async function browse(options, ...inits) {
   const context = await browser.newContext({
-    ...devices["iPhone 13"],
-    viewport,
+    ...options,
     locale: "de-DE",
     serviceWorkers: "block",
   });
@@ -176,15 +177,13 @@ async function phone(viewport, init) {
     });
   });
   await context.addInitScript(() => {
-    // A phone's browser shares no screen; the call controls follow that.
-    delete MediaDevices.prototype.getDisplayMedia;
     // A ResizeObserver loop is reported to the window, not thrown.
     window.smokeErrors = [];
     window.addEventListener("error", (event) =>
       window.smokeErrors.push(event.message),
     );
   });
-  if (init) await context.addInitScript(init);
+  for (const init of inits) if (init) await context.addInitScript(init);
   const page = await context.newPage();
   page.setDefaultTimeout(15_000);
   page.on("pageerror", (error) => problems.push(error.message));
@@ -192,6 +191,20 @@ async function phone(viewport, init) {
   await page.locator(".lr-composer textarea").waitFor();
   await page.getByText(history.at(-1).content).waitFor();
   await frames(page);
+  return { context, page };
+}
+
+/** A signed-in phone on the text channel. `init` runs before the app. */
+async function phone(viewport, init) {
+  const device = await browse(
+    { ...devices["iPhone 13"], viewport },
+    () => {
+      // A phone's browser shares no screen; the call controls follow that.
+      delete MediaDevices.prototype.getDisplayMedia;
+    },
+    init,
+  );
+  const { page } = device;
   assert.ok(
     await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches),
     "the emulated phone has no touch pointer",
@@ -203,7 +216,7 @@ async function phone(viewport, init) {
     "none",
     "pulling down could reload the app and drop a call",
   );
-  return { context, page };
+  return device;
 }
 
 /** Lets layout, observers and the frames they ask for run. */
@@ -405,6 +418,109 @@ async function blockedSound() {
   }
 }
 
+const IN_A_CALL = VOICE_STATES["in a call"];
+const DESK_STATES = {
+  "in a call": IN_A_CALL,
+  "with camera and Live on, muted": {
+    ...IN_A_CALL,
+    camera: true,
+    sharing: true,
+    muted: true,
+  },
+  "after the connection failed": { ...IN_A_CALL, connection: "failed" },
+};
+
+/** Where an element starts and ends on the page. */
+const span = (page, selector) =>
+  page.evaluate((target) => {
+    const rect = document.querySelector(target).getBoundingClientRect();
+    return [rect.top, rect.bottom];
+  }, selector);
+
+/** The call bar's colour next to the user panel's, and its controls. */
+const callBar = (page) =>
+  page.evaluate(() => {
+    const dock = document.querySelector(".voice-session-dock");
+    return {
+      colours: [document.querySelector(".user-panel"), dock].map(
+        (element) => getComputedStyle(element).backgroundColor,
+      ),
+      controls: [...dock.querySelectorAll("button")].map((button) => [
+        button.getAttribute("aria-label") ?? button.textContent,
+        button.getBoundingClientRect().height,
+        getComputedStyle(button).borderRadius,
+      ]),
+    };
+  });
+
+/** On a desktop the user panel and the call bar beside it are one strip:
+ * one top line, height and colour, with the chat and the member list
+ * ending on that line. The panel has that height before the call, so
+ * nothing moves when it starts. Every control in the bar is as tall and as
+ * round as the others, whichever state it is in. */
+async function deskStrip() {
+  const device = await browse({ viewport: { width: 1440, height: 900 } });
+  const { page } = device;
+  const panel = await span(page, ".user-panel");
+  await page.addScriptTag({ type: "module", url: callState });
+  await page.waitForFunction(() => window.smokeCall);
+  const heights = new Set();
+  for (const [name, state] of Object.entries(DESK_STATES)) {
+    await page.evaluate((next) => window.smokeCall(next), state);
+    await page.locator(".voice-session-dock .voice-control-leave").waitFor();
+    await frames(page);
+    // Measure where the bar comes to rest, not a frame of its way up.
+    await page.evaluate(() =>
+      Promise.all(
+        document
+          .querySelector(".voice-session-dock")
+          .getAnimations()
+          .map((animation) => animation.finished),
+      ),
+    );
+    const dock = await span(page, ".voice-session-dock");
+    assert.deepEqual(
+      await span(page, ".user-panel"),
+      panel,
+      `${name}: the user panel moved`,
+    );
+    assert.deepEqual(
+      dock,
+      panel,
+      `${name}: the call bar spans ${dock}, the user panel ${panel}`,
+    );
+    for (const above of [".lr-composer", ".member-panel"]) {
+      const [, bottom] = await span(page, above);
+      assert.equal(
+        bottom,
+        dock[0],
+        `${name}: ${above} ends at ${bottom}, the strip starts at ${dock[0]}`,
+      );
+    }
+    const bar = await callBar(page);
+    assert.equal(
+      bar.colours[0],
+      bar.colours[1],
+      `${name}: the user panel and the call bar differ in colour`,
+    );
+    const [, , round] = bar.controls[0];
+    for (const [label, height, radius] of bar.controls) {
+      heights.add(height);
+      assert.equal(
+        radius,
+        round,
+        `${name}: "${label}" has corners of ${radius}, the others ${round}`,
+      );
+    }
+    assert.equal(
+      heights.size,
+      1,
+      `${name}: the call bar's controls are ${[...heights].join("px, ")}px high`,
+    );
+  }
+  await done(device);
+}
+
 try {
   // The app as it ships, and PAGE in the same build so both share modules.
   await build({
@@ -448,6 +564,10 @@ try {
   await blockedSound();
   console.log(
     'PASS: "Ton starten" is on screen on a phone on its side, in the call bar',
+  );
+  await deskStrip();
+  console.log(
+    "PASS: on a desktop the user panel and the call bar form one strip, its controls equally high",
   );
   assert.deepEqual(problems, [], "the page reported errors");
   console.log(
