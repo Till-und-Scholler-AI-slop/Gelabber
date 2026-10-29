@@ -449,7 +449,7 @@ describe("active media UI", () => {
     fixture.voice.deafened = true;
     const html = renderToStaticMarkup(<CallSound />);
     expect(html.match(/<input[^>]*disabled=""/g)).toHaveLength(2);
-    expect(html).toContain("Taubgeschaltet: Du hörst gerade niemanden.");
+    expect(html).toContain("Taubgeschaltet.");
     // The stream's mute stays in reach for after.
     expect(control(html, "Stream-Ton stummschalten")).not.toContain("disabled");
   });

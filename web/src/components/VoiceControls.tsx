@@ -134,7 +134,7 @@ function MicProblem({
         aria-label="Kein Mikrofon"
         aria-haspopup="dialog"
         aria-expanded={open}
-        title="Kein Mikrofon – du hörst nur zu"
+        title="Kein Mikrofon"
         onClick={() => setOpen((value) => !value)}
         className={`${className} voice-control-mic-problem`}
       >
@@ -152,11 +152,10 @@ function MicProblem({
       >
         <p>
           {!denied
-            ? "Es wurde kein Mikrofon gefunden, oder es ist gerade belegt."
+            ? "Mikrofon nicht gefunden oder belegt."
             : isDesktopApp()
-              ? "Gelabber darf das Mikrofon nicht nutzen. Erlaube den Zugriff in den Systemeinstellungen und versuch es dann erneut."
-              : "Der Browser erlaubt den Mikrofonzugriff nicht. Erlaube ihn in den Website-Einstellungen und versuch es dann erneut."}{" "}
-          Du hörst weiter zu.
+              ? "Kein Zugriff auf das Mikrofon. Erlaube ihn in den Systemeinstellungen."
+              : "Der Browser blockiert das Mikrofon. Erlaube den Zugriff in den Website-Einstellungen."}
         </p>
         <div className="voice-mic-problem-actions">
           <Button
@@ -421,7 +420,7 @@ export function LiveMenuItems({
   const soundHint = [
     sourceAudioScope({ sourceAudioApp }) ??
       "Wähle den Ton im Freigabedialog des Browsers aus.",
-    nextLive ? "Kommt mit deinem nächsten Live dazu." : null,
+    nextLive ? "Ab dem nächsten Live." : null,
     sourceAudioCarriesCall({ sourceAudioShare, sourceAudioApp })
       ? SOURCE_AUDIO_CARRIES_CALL
       : null,

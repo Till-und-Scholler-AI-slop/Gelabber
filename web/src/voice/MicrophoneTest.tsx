@@ -67,11 +67,10 @@ export function MicrophoneTest({ onClose }: { onClose: () => void }) {
     <Modal open onClose={close} title="Mikrofon testen">
       <div className="voice-microphone-test">
         <MicIcon size={36} />
-        <p>Nur du und dein Mikrofon.</p>
         <p className="voice-room-muted">
           {isDesktopApp()
-            ? "Der Test bleibt lokal. Es wird nichts aufgenommen oder übertragen."
-            : "Der Test bleibt lokal. Eine Aufnahme startet erst mit deinem Klick, dauert höchstens acht Sekunden und wird beim Löschen oder Schließen entfernt. Es wird nichts übertragen."}
+            ? "Der Test läuft lokal, ohne Aufnahme oder Übertragung."
+            : "Der Test läuft lokal, ohne Übertragung. Aufnahmen dauern höchstens acht Sekunden und werden beim Schließen gelöscht."}
         </p>
         <label htmlFor={`${id}-before`}>Eingangspegel</label>
         <meter id={`${id}-before`} min={0} max={100} value={levels.before}>
@@ -155,11 +154,12 @@ export function MicrophoneTest({ onClose }: { onClose: () => void }) {
             </Button>
           </section>
         )}
-        <p className="voice-room-muted">
-          {isDesktopApp()
-            ? "Wechselst du die Verarbeitung, misst der Test gleich mit ihr weiter."
-            : "Vorhandene Browserfilter wirken bereits auf den Eingang. Wechselst du die Verarbeitung, startet der Vergleich gleich mit ihr neu; Aufnahmen werden dabei gelöscht."}
-        </p>
+        {isDesktopApp() ? null : (
+          <p className="voice-room-muted">
+            Ein Wechsel der Verarbeitung startet den Test neu und löscht die
+            Aufnahmen.
+          </p>
+        )}
       </div>
     </Modal>
   );

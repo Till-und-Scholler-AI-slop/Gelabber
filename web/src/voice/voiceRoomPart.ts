@@ -5,5 +5,5 @@ import { lazyPart } from "../components/lazyPart.tsx";
 
 export const VoiceRoomPart = lazyPart(
   () => import("./VoiceRoom.tsx").then((module) => module.VoiceRoom),
-  "Der Sprachraum konnte nicht geladen werden.",
+  "Der Sprachkanal konnte nicht geladen werden.",
 );

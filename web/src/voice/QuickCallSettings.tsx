@@ -141,11 +141,7 @@ export function CallSound() {
           </button>
         }
       />
-      {deafened ? (
-        <p className="voice-quick-note">
-          Taubgeschaltet: Du hörst gerade niemanden.
-        </p>
-      ) : null}
+      {deafened ? <p className="voice-quick-note">Taubgeschaltet.</p> : null}
     </div>
   );
 }
@@ -269,7 +265,7 @@ export function QuickCallSettings({ onMore }: { onMore: () => void }) {
       />
       {settings.voiceInput === "ptt" && !settings.pttKey ? (
         <p className="voice-quick-note">
-          Noch keine Taste festgelegt: Ohne sie bleibt dein Mikrofon stumm.
+          Keine Taste festgelegt. Das Mikrofon bleibt stumm.
         </p>
       ) : null}
       <Button

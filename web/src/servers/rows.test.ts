@@ -98,7 +98,7 @@ describe("sidebar order", () => {
       ),
     ).toEqual([
       "loose",
-      "section:Sprachräume",
+      "section:Sprachkanäle",
       "zocken",
       "cat-text",
       "allgemein",

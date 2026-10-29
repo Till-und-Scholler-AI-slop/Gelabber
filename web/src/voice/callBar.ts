@@ -57,7 +57,7 @@ export function dockNotices(
     },
     {
       id: "silent",
-      text: silent ? `Von „${silent}“ kommt gerade kein Ton.` : null,
+      text: silent ? `Kein Ton von „${silent}“.` : null,
     },
     {
       // Without a chosen application the desktop app sends the sound of all
@@ -86,7 +86,7 @@ export function dockNotices(
         !context.desktop &&
         voice.localScreen &&
         sound === "off"
-          ? "Der Stream-Ton kommt mit deinem nächsten Live dazu."
+          ? "Stream-Ton ab dem nächsten Live."
           : null,
     },
   ];
