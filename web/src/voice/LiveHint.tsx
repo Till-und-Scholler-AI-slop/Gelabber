@@ -65,7 +65,7 @@ export function LiveHint({
   const action = (entry: (typeof entries)[number]) =>
     !entry.here && allowed && entry.others ? (
       <button type="button" onClick={() => come(entry.channelId, entry.name)}>
-        {call === null ? "Dazukommen" : "Zum Kanal"}
+        {call === null ? "Beitreten" : "Zum Kanal"}
       </button>
     ) : null;
 

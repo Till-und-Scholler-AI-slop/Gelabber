@@ -3,17 +3,12 @@ import { describe, expect, it } from "vitest";
 import { liveSentence, nameList, roomSummary } from "./roomSummary.ts";
 
 describe("room summary", () => {
-  it("invites the first one in, where they may join", () => {
-    expect(roomSummary([], { here: false, canJoin: true })).toBe(
-      "Noch niemand da – komm als Erste:r dazu.",
-    );
-    expect(roomSummary([], { here: false, canJoin: false })).toBe(
-      "Gerade ist niemand da.",
-    );
+  it("says plainly that nobody is there", () => {
+    expect(roomSummary([], { here: false })).toBe("Niemand im Kanal.");
   });
 
   it("names who is there", () => {
-    const outside = { here: false, canJoin: true };
+    const outside = { here: false };
     expect(roomSummary(["Mia"], outside)).toBe("Mia ist da.");
     expect(roomSummary(["Mia", "Lena"], outside)).toBe("Mia und Lena sind da.");
     expect(roomSummary(["Mia", "Lena", "Kim", "Jo"], outside)).toBe(
@@ -21,33 +16,27 @@ describe("room summary", () => {
     );
   });
 
-  it("says who is live outside, where watching takes coming along", () => {
+  it("says who is live outside, without asking to come along", () => {
     expect(
       roomSummary(["Mia", "Lena"], {
         here: false,
-        canJoin: true,
         live: ["Mia"],
       }),
-    ).toBe("Mia und Lena sind da. Mia ist live – komm dazu, um zuzusehen.");
+    ).toBe("Mia und Lena sind da. Mia ist live.");
     expect(
       roomSummary(["Mia", "Lena"], {
         here: false,
-        canJoin: false,
         live: ["Mia", "Lena"],
       }),
     ).toBe("Mia und Lena sind da. Mia und Lena sind live.");
-    expect(
-      roomSummary(["Mia"], { here: true, canJoin: true, live: ["Mia"] }),
-    ).toBe("Du bist hier mit Mia.");
+    expect(roomSummary(["Mia"], { here: true, live: ["Mia"] })).toBe(
+      "Du bist hier mit Mia.",
+    );
   });
 
   it("speaks to someone inside", () => {
-    expect(roomSummary(["Mia"], { here: true, canJoin: true })).toBe(
-      "Du bist hier mit Mia.",
-    );
-    expect(roomSummary([], { here: true, canJoin: true })).toContain(
-      "Du bist da.",
-    );
+    expect(roomSummary(["Mia"], { here: true })).toBe("Du bist hier mit Mia.");
+    expect(roomSummary([], { here: true })).toBe("Nur du bist im Kanal.");
   });
 
   it("lists three by name", () => {
