@@ -144,6 +144,8 @@ describe("capture and explicit bandwidth preferences", () => {
       economyMode: false,
       cameraProfile: "2160p60",
       screenProfile: "detail",
+      // Saved before it existed: the others' mute cues are on.
+      otherMuteSounds: true,
     });
     expect(audioBitrate()).toBeNull();
     expect(videoSendBudget(useMediaSettings.getState())).toBeNull();
@@ -174,6 +176,7 @@ describe("capture and explicit bandwidth preferences", () => {
       sourceAudioVolume: 0.35,
       callSounds: false,
       callSoundVolume: 2,
+      otherMuteSounds: false,
     });
     const storage = useMediaSettings.persist.getOptions().storage!;
     const saved = await storage.getItem("gelabber.media");
@@ -187,6 +190,7 @@ describe("capture and explicit bandwidth preferences", () => {
       sourceAudioVolume: 0.35,
       callSounds: false,
       callSoundVolume: 1,
+      otherMuteSounds: false,
     });
     expect(DEFAULT_MEDIA_SETTINGS.outputVolume).toBe(1);
     expect(clampGain(5)).toBe(2);

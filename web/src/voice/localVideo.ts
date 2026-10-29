@@ -2,6 +2,7 @@
 // the local preview, publishing on the seat's connection, and stopping.
 
 import type { TrackKind } from "../ws/protocol.ts";
+import { playCallSound } from "./callSounds.ts";
 import { isDesktopApp } from "./native/bridge.ts";
 import { loadNativeFeatures } from "./native/features.ts";
 import { isNativeTrack } from "./native/tracks.ts";
@@ -468,6 +469,10 @@ export async function startLocalVideo(kind: LocalVideo): Promise<void> {
     for (const track of stream.getAudioTracks()) bindSourceAudio(stream, track);
   }
   bindEnded(stream, kind);
+  // On air from here: the picker or prompt has answered with a live capture.
+  const before = useVoice.getState();
+  if (!(kind === "v" ? before.localCamera : before.localScreen))
+    playCallSound(kind === "v" ? "cameraOn" : "liveStart");
   if (kind === "v") {
     stopTracks(voice.cameraStream);
     voice.cameraStream = stream;
@@ -502,6 +507,9 @@ export function stopLocalVideo(kind: LocalVideo): void {
     voice.pendingCameraStreams.clear();
   } else voice.screenEpoch += 1;
   const stream = kind === "v" ? voice.cameraStream : voice.screenStream;
+  // Only what was on air goes off: not a prompt or picker called off.
+  if (kind === "v" ? state.localCamera : state.localScreen)
+    playCallSound(kind === "v" ? "cameraOff" : "liveEnd");
   if (kind === "v") {
     voice.cameraStream = null;
     useVoice.setState({ camera: false, localCamera: null });

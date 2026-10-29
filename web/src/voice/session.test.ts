@@ -665,7 +665,7 @@ describe("voice session", () => {
     emitSig({ ...event, replay: true });
     emitSig({ ...event, u: "u-self" });
     emitSig({ ...event, u: "u-self" });
-    expect(sound.mock.calls).toEqual([["join"]]);
+    expect(sound.mock.calls).toEqual([["joinSelf"]]);
     sound.mockClear();
     emitSig(event); // already present
     emitSig({ ...event, c: "other", u: "other" });
@@ -676,7 +676,7 @@ describe("voice session", () => {
     emitSig({ ...event, u: "new" });
     emitSig({ ...event, t: "l", u: "new" });
     emitSig({ ...event, t: "l", u: "new" });
-    expect(sound.mock.calls).toEqual([["join"], ["leave"]]);
+    expect(sound.mock.calls).toEqual([["joinOther"], ["leaveOther"]]);
     sound.mockClear();
     emitReady();
     emitSig({ ...event, u: "u-self" });
@@ -695,13 +695,160 @@ describe("voice session", () => {
     toggleDeafen();
     toggleDeafen();
     expect(sound.mock.calls).toEqual([
-      ["mute"],
-      ["unmute"],
+      ["muteSelf"],
+      ["unmuteSelf"],
       ["deafen"],
       ["undeafen"],
     ]);
     sound.mockClear();
     leaveVoice();
+    expect(sound).not.toHaveBeenCalled();
+  });
+
+  it("sounds my own leave once the join was acknowledged", () => {
+    const { emitSig } = install();
+    const sound = vi
+      .spyOn(callSounds, "playCallSound")
+      .mockImplementation(() => {});
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    leaveVoice();
+    expect(sound.mock.calls).toEqual([["joinSelf"], ["leaveSelf"]]);
+  });
+
+  it("sounds when someone else in the call mutes, but not how they arrive", () => {
+    const { emitSig, emitReady } = install();
+    let clock = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const sound = vi
+      .spyOn(callSounds, "playCallSound")
+      .mockImplementation(() => {});
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    const base = { op: "sig" as const, s: "srv", c: "voice" };
+    emitSig({ ...base, t: "j", u: "u-self" });
+    // Already there, muted or not.
+    emitSig({ ...base, t: "j", u: "ada", m: true, replay: true });
+    emitSig({ ...base, t: "j", u: "bob", replay: true });
+    // A seat that arrives muted: the flag follows its join.
+    emitSig({ ...base, t: "j", u: "cleo" });
+    emitSig({ ...base, t: "m", u: "cleo", on: true });
+    sound.mockClear();
+    clock += 2500;
+    emitSig({ ...base, t: "m", u: "ada", on: true }); // no change
+    emitSig({ ...base, t: "m", u: "u-self", on: true }); // mine
+    emitSig({ ...base, t: "m", u: "dan", on: true }); // not here
+    emitSig({ ...base, c: "other", t: "m", u: "bob", on: true });
+    expect(sound).not.toHaveBeenCalled();
+    emitSig({ ...base, t: "m", u: "bob", on: true });
+    emitSig({ ...base, t: "d", u: "bob", on: true });
+    emitSig({ ...base, t: "m", u: "bob", on: true }); // the deafen's repeat
+    emitSig({ ...base, t: "m", u: "ada", on: false });
+    emitSig({ ...base, t: "m", u: "cleo", on: false });
+    expect(sound.mock.calls).toEqual([
+      ["muteOther"],
+      ["unmuteOther"],
+      ["unmuteOther"],
+    ]);
+    sound.mockClear();
+    // A reconnect replays the call: nobody changed.
+    emitReady();
+    emitSig({ ...base, t: "j", u: "u-self" });
+    emitSig({ ...base, t: "j", u: "ada", replay: true });
+    emitSig({ ...base, t: "m", u: "ada", on: true });
+    expect(sound).not.toHaveBeenCalled();
+    // Someone who left and comes back arrives anew.
+    clock += 2500;
+    emitSig({ ...base, t: "l", u: "ada" });
+    emitSig({ ...base, t: "j", u: "ada" });
+    emitSig({ ...base, t: "m", u: "ada", on: true });
+    expect(sound.mock.calls).toEqual([["leaveOther"], ["joinOther"]]);
+  });
+
+  it("sounds the others' Live starting and ending, not one the call replays", () => {
+    const { emitSig, emitReady } = install();
+    let clock = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const sound = vi
+      .spyOn(callSounds, "playCallSound")
+      .mockImplementation(() => {});
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    const base = { op: "sig" as const, s: "srv", c: "voice" };
+    emitSig({ ...base, t: "j", u: "u-self" });
+    // Live already: the occupant replay is a join and its publications.
+    emitSig({ ...base, t: "j", u: "ada", replay: true });
+    emitSig({ ...base, t: "p", u: "ada", k: "s" });
+    emitSig({ ...base, t: "p", u: "ada", k: "sa" });
+    emitSig({ ...base, t: "j", u: "bob", replay: true });
+    sound.mockClear();
+    clock += 2500;
+    emitSig({ ...base, t: "p", u: "ada", k: "s" }); // still the same Live
+    emitSig({ ...base, t: "p", u: "bob", k: "v" }); // a camera
+    emitSig({ ...base, t: "p", u: "u-self", k: "s" }); // mine
+    emitSig({ ...base, c: "other", t: "p", u: "dan", k: "s" });
+    emitSig({ ...base, t: "u", u: "bob", k: "s" }); // never live
+    expect(sound).not.toHaveBeenCalled();
+    emitSig({ ...base, t: "p", u: "bob", k: "s" });
+    emitSig({ ...base, t: "u", u: "ada", k: "sa" });
+    emitSig({ ...base, t: "u", u: "ada", k: "s" });
+    expect(sound.mock.calls).toEqual([
+      ["liveStart", { remote: true }],
+      ["liveEnd", { remote: true }],
+    ]);
+    sound.mockClear();
+    // Bob's Live after my reconnect is the one he had.
+    emitReady();
+    emitSig({ ...base, t: "j", u: "u-self" });
+    emitSig({ ...base, t: "j", u: "bob", replay: true });
+    emitSig({ ...base, t: "p", u: "bob", k: "s" });
+    // And after his: his seat comes back and announces it again.
+    clock += 2500;
+    emitSig({ ...base, t: "l", u: "bob" });
+    emitSig({ ...base, t: "j", u: "bob" });
+    emitSig({ ...base, t: "p", u: "bob", k: "s" });
+    expect(sound.mock.calls).toEqual([["leaveOther"], ["joinOther"]]);
+  });
+
+  it("sounds my own camera and Live when they go on and off air", async () => {
+    const { peers } = install();
+    const sound = vi
+      .spyOn(callSounds, "playCallSound")
+      .mockImplementation(() => {});
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    toggleCamera();
+    // The prompt is still open: nothing is on air yet.
+    expect(sound).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localCamera).toBeTruthy(),
+    );
+    toggleShare();
+    await vi.waitFor(() =>
+      expect(useVoice.getState().localScreen).toBeTruthy(),
+    );
+    toggleCamera();
+    toggleShare();
+    expect(sound.mock.calls).toEqual([
+      ["cameraOn"],
+      ["liveStart"],
+      ["cameraOff"],
+      ["liveEnd"],
+    ]);
+  });
+
+  it("says nothing for a Live called off in the picker", async () => {
+    const picker = deferred();
+    const { peers } = install({ gateDisplay: () => picker.promise });
+    const sound = vi
+      .spyOn(callSounds, "playCallSound")
+      .mockImplementation(() => {});
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(peers.length).toBe(1));
+    toggleShare();
+    toggleShare();
+    picker.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(useVoice.getState().sharing).toBe(false);
     expect(sound).not.toHaveBeenCalled();
   });
 

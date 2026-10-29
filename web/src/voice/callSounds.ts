@@ -1,28 +1,40 @@
+import { renderCue, type CueName } from "./callSoundSynth.ts";
 import { isDesktopApp } from "./native/bridge.ts";
 import { useMediaSettings, type MediaSettings } from "./settings.ts";
 
-export type CallSound =
-  "join" | "leave" | "mute" | "unmute" | "deafen" | "undeafen";
-/** A message notification on a desktop (issue #247). */
-type Cue = CallSound | "message";
-const notes: Record<Cue, readonly number[]> = {
-  join: [523.25, 783.99],
-  leave: [783.99, 523.25],
-  mute: [392],
-  unmute: [659.25],
-  deafen: [440, 349.23],
-  undeafen: [349.23, 440],
-  message: [880, 1174.66],
-};
+/** A call cue: every call event has its own (callSoundSynth.ts). */
+export type CallSound = Exclude<CueName, "message">;
+/** Plus a message notification on a desktop (issue #247). */
+type Cue = CueName;
 
-/** Original, short sine chimes. PCM WAV keeps playback on the selected speaker,
- * including browsers without AudioContext.setSinkId. No microphone/media graph. */
+/** Arriving, leaving and what the others do are the call's events, also
+ * your own arrival: a deafened call hears none of them. Your own controls
+ * (microphone, deafen, camera, Live) stay audible. */
+const REMOTE_CUES: ReadonlySet<Cue> = new Set<Cue>([
+  "joinSelf",
+  "joinOther",
+  "leaveSelf",
+  "leaveOther",
+  "muteOther",
+  "unmuteOther",
+  "viewerJoin",
+  "viewerLeave",
+]);
+
+/** The tones sit below 3.5 kHz and come out of 24 kHz unchanged, at half the
+ * work. The camera's shutter is filtered noise and keeps its top at 48 kHz. */
+function rateOf(kind: Cue): number {
+  return kind === "cameraOn" || kind === "cameraOff" ? 48000 : 24000;
+}
+
+/** 16-bit mono PCM WAV. A WAV keeps playback on the selected speaker,
+ * including browsers without AudioContext.setSinkId. No microphone/media
+ * graph. "silent" is 120 ms of nothing, to unlock playback. */
 export function callSoundWave(kind: Cue | "silent"): Uint8Array {
-  const frequencies = kind === "silent" ? [0] : notes[kind];
-  const rate = 24000;
-  const noteSamples = 2880; // 120 ms with silence between notes
-  const count = noteSamples * frequencies.length;
-  const bytes = new Uint8Array(44 + count * 2);
+  const rate = kind === "silent" ? 24000 : rateOf(kind);
+  const samples =
+    kind === "silent" ? new Float32Array(2880) : renderCue(kind, rate);
+  const bytes = new Uint8Array(44 + samples.length * 2);
   const view = new DataView(bytes.buffer);
   const label = (offset: number, text: string) =>
     [...text].forEach((char, index) =>
@@ -39,32 +51,44 @@ export function callSoundWave(kind: Cue | "silent"): Uint8Array {
   view.setUint16(32, 2, true);
   view.setUint16(34, 16, true);
   label(36, "data");
-  view.setUint32(40, count * 2, true);
-  for (let i = 0; i < count; i++) {
-    const n = i % noteSamples;
-    const t = n / rate;
-    // Smooth attack and release avoid clicks; last 20 ms are silent.
-    const envelope = Math.max(0, Math.min(t / 0.012, (0.1 - t) / 0.04, 1));
-    const sample = Math.sin(
-      2 * Math.PI * frequencies[Math.floor(i / noteSamples)] * t,
-    );
+  view.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++)
     view.setInt16(
       44 + i * 2,
-      Math.round(sample * envelope * 0.3 * 32767),
+      Math.round(Math.max(-1, Math.min(1, samples[i])) * 32767),
       true,
     );
-  }
   return bytes;
 }
 
+/** A WAV as a `data:` URI. In chunks: Safari takes at most 65536 arguments
+ * to one call, and a cue has more bytes than that. */
+export function callSoundSource(bytes: Uint8Array): string {
+  let text = "";
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return `data:audio/wav;base64,${btoa(text)}`;
+}
+
+// Rendered on first use (a few milliseconds each), then kept.
 const sources = new Map<string, string>();
 function source(kind: Cue | "silent"): string {
   let value = sources.get(kind);
   if (!value) {
-    value = `data:audio/wav;base64,${btoa(String.fromCharCode(...callSoundWave(kind)))}`;
+    value = callSoundSource(callSoundWave(kind));
     sources.set(kind, value);
   }
   return value;
+}
+
+function wanted(settings: MediaSettings, kind: Cue): boolean {
+  return (
+    settings.callSounds &&
+    settings.callSoundVolume > 0 &&
+    settings.outputVolume > 0 &&
+    (settings.otherMuteSounds ||
+      (kind !== "muteOther" && kind !== "unmuteOther"))
+  );
 }
 
 type SoundAudio = Pick<
@@ -128,17 +152,12 @@ export class CallSoundPlayer {
     this.start(this.audio, source("silent"), 0);
   }
 
-  play(kind: Cue): void {
+  /** `remote`: an event of the call, not your own control; by default
+   * as REMOTE_CUES says. A cue that does not play leaves the current one. */
+  play(kind: Cue, { remote = REMOTE_CUES.has(kind) } = {}): void {
+    if (!wanted(this.settings(), kind) || (this.deafened && remote)) return;
     this.stop();
     const settings = this.settings();
-    if (
-      !settings.callSounds ||
-      !settings.callSoundVolume ||
-      !settings.outputVolume
-    )
-      return;
-    // Explicit mute/deafen button feedback remains audible; remote events do not.
-    if (this.deafened && (kind === "join" || kind === "leave")) return;
     this.audio ??= this.createAudio();
     const audio = this.audio;
     if (!audio) return;
@@ -146,8 +165,7 @@ export class CallSoundPlayer {
     const play = () => {
       if (generation !== this.generation) return;
       const latest = this.settings();
-      if (!latest.callSounds || !latest.callSoundVolume || !latest.outputVolume)
-        return;
+      if (!wanted(latest, kind)) return;
       this.start(
         audio,
         source(kind),
@@ -190,7 +208,10 @@ useMediaSettings.subscribe((next, prev) => {
   )
     player.stop();
 });
-export const playCallSound = (kind: CallSound): void => player.play(kind);
+export const playCallSound = (
+  kind: CallSound,
+  options?: { remote?: boolean },
+): void => player.play(kind, options);
 
 // Its own element and switch: a message cue neither cuts off a call cue nor
 // plays when only call sounds are on. Same volume as the call cues.
@@ -211,9 +232,9 @@ useMediaSettings.subscribe((next, prev) => {
     messagePlayer.stop();
 });
 export const playMessageSound = (): void => messagePlayer.play("message");
-/** Someone went live elsewhere (liveNotices.ts). The message cue and its
- * switch for now, until a Live gets a cue of its own. */
-export const playLiveSound = (): void => messagePlayer.play("message");
+/** Someone went live elsewhere (liveNotices.ts): the Live cue, under the
+ * message cue's switch. */
+export const playLiveSound = (): void => messagePlayer.play("liveStart");
 export const unlockCallSounds = (): void => player.unlock();
 export const stopCallSounds = (): void => player.stop();
 export const setCallSoundsDeafened = (value: boolean): void =>

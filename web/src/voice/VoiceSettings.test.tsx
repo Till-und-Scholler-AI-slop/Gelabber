@@ -50,6 +50,10 @@ describe("stream settings form", () => {
       expect(html).toContain(
         `<label for="${id}" class="media-row-label">${name}</label>`,
       );
+    // The others' mute cues have a switch beside the call sounds'.
+    expect(html).toMatch(
+      /id="call-sounds"[\s\S]*Töne, wenn andere sich stumm schalten[\s\S]*id="other-mute-sounds"[\s\S]*id="call-sound-volume"/,
+    );
     // The economy mode limits uploads; it sits with the video upload only.
     expect(html).not.toContain('id="economy-mode"');
     expect(
