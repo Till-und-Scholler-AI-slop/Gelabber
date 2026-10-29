@@ -4,10 +4,6 @@
   flex-direction: column;
   gap: var(--lr-space-3);
 }
-.invite-panel__lead {
-  color: var(--lr-muted);
-  font: var(--lr-type-body);
-}
 .invite-panel__link {
   display: flex;
   gap: var(--lr-space-2);

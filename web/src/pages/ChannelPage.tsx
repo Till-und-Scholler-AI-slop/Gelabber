@@ -38,7 +38,7 @@ export function ChannelPage() {
     return (
       <div className="p-6">
         <LoadError
-          message="Dieser Kanal konnte gerade nicht geladen werden."
+          message="Dieser Kanal konnte nicht geladen werden."
           pending={isFetching}
           onRetry={() => void refetch()}
         />

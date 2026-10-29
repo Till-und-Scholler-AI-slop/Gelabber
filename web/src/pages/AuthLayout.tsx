@@ -33,8 +33,7 @@ export function AuthFrame({ children }: { children: ReactNode }) {
 export function InviteContextBanner() {
   return (
     <p className="auth-banner auth-banner--invite">
-      Du wurdest zu einem Gelabber-Server eingeladen. Leg ein Konto an oder
-      melde dich an, um beizutreten.
+      Einladung erhalten. Melde dich an oder registriere dich, um beizutreten.
     </p>
   );
 }

@@ -528,7 +528,7 @@ describe("why a share has no sound", () => {
       ).map((notice) => notice.text),
     ).toEqual([
       "Der Stream-Ton wurde beendet. Das Video läuft weiter.",
-      "Von „spotify“ kommt gerade kein Ton.",
+      "Kein Ton von „spotify“.",
     ]);
     // The call bar speaks of Live, never of a share.
     expect(
@@ -546,7 +546,7 @@ describe("why a share has no sound", () => {
           sourceAudioApp: "",
         },
       ).map((notice) => notice.text),
-    ).toEqual(["Der Stream-Ton kommt mit deinem nächsten Live dazu."]);
+    ).toEqual(["Stream-Ton ab dem nächsten Live."]);
   });
 
   it("gives the desktop app's own reason", async () => {
@@ -566,16 +566,16 @@ describe("why a share has no sound", () => {
     await cases.linuxApp06();
     choose({ sourceAudioApp: "spotify" });
     fixture.voice.sourceAudio = { s: "sharing" };
-    expect(session()).not.toContain("kommt gerade kein Ton");
+    expect(session()).not.toContain("Kein Ton von");
     fixture.voice.sourceAudioNote = { s: { silent: "spotify" } };
     const html = session();
-    expect(html).toContain("Von „spotify“ kommt gerade kein Ton.");
+    expect(html).toContain("Kein Ton von „spotify“.");
     expect(html).not.toContain("Das Video läuft weiter");
     expect(html).not.toContain("Dein Stream sendet");
   });
 
   it("browser: sound switched on during a Live comes with the next one", async () => {
-    const note = "Der Stream-Ton kommt mit deinem nächsten Live dazu.";
+    const note = "Stream-Ton ab dem nächsten Live.";
     await cases.desktopBrowser();
     const running = { id: "screen" } as MediaStream;
     Object.assign(fixture.voice, { sharing: true, localScreen: running });

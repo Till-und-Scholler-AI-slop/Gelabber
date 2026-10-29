@@ -35,7 +35,7 @@ describe("sidebar placeholder", () => {
     const html = renderToStaticMarkup(
       <SidebarPlaceholder
         failure={{
-          message: "Die Kanäle konnten gerade nicht geladen werden.",
+          message: "Die Kanäle konnten nicht geladen werden.",
           pending: false,
           onRetry: () => {},
         }}
@@ -43,7 +43,7 @@ describe("sidebar placeholder", () => {
     );
     expect(html).toContain('aria-label="Navigation"');
     expect(html).toMatch(
-      /<div role="status"[^>]*><p>Die Kanäle konnten gerade nicht geladen werden\.<\/p><button type="button">Erneut versuchen<\/button>/,
+      /<div role="status"[^>]*><p>Die Kanäle konnten nicht geladen werden\.<\/p><button type="button">Erneut versuchen<\/button>/,
     );
     expect(html).not.toContain("sidebar-skeleton");
   });

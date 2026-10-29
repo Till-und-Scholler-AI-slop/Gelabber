@@ -88,7 +88,7 @@ function NewMessageBody({ onClose }: { onClose: () => void }) {
         loading
           ? "Wird geladen…"
           : people.length === 0
-            ? "Noch niemand da. Lade Leute in einen Server ein, dann kannst du ihnen hier schreiben."
+            ? "Keine Personen. Direktnachrichten gehen an Mitglieder deiner Server."
             : `Niemand gefunden für „${query.trim()}“.`
       }
     />

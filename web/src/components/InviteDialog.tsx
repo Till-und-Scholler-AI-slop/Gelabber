@@ -1,4 +1,4 @@
-// "Leute einladen": opens straight onto a working link, one click from the
+// "Einladen": opens straight onto a working link, one click from the
 // clipboard or the share sheet. Any member may invite; expiry and use limits
 // sit behind a disclosure.
 
@@ -46,11 +46,7 @@ export function InviteDialog({
   onClose: () => void;
 }) {
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={`Leute zu ${server.name} einladen`}
-    >
+    <Modal open={open} onClose={onClose} title={`Zu ${server.name} einladen`}>
       {open ? <InviteLinkPanel server={server} /> : null}
     </Modal>
   );
@@ -158,7 +154,7 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
 
   const copy = async (): Promise<boolean> => {
     if (create.isPending) {
-      show({ tone: "neutral", message: "Der Link wird gerade erstellt." });
+      show({ tone: "neutral", message: "Link wird erstellt…" });
       return false;
     }
     if (!link) return false;
@@ -169,7 +165,7 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
     }
     show({
       tone: "error",
-      message: "Kopieren ging nicht – markiere den Link und kopiere ihn.",
+      message: "Kopieren fehlgeschlagen. Kopiere den Link manuell.",
     });
     return false;
   };
@@ -188,10 +184,6 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
 
   return (
     <div className="invite-panel">
-      <p className="invite-panel__lead">
-        Schick den Link an deine Leute. Wer ihn öffnet, legt ein Konto an oder
-        meldet sich an und landet direkt in {server.name}.
-      </p>
       <div className="invite-panel__link">
         <input
           readOnly
@@ -226,7 +218,7 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
             !create.isPending &&
             void share({
               title: `Einladung zu ${server.name}`,
-              text: `Komm zu ${server.name} auf Gelabber:`,
+              text: `Tritt ${server.name} auf Gelabber bei:`,
               url: link,
             }).then((shared) => {
               if (shared) handedOut.current = true;

@@ -37,7 +37,8 @@ function useModeration({ server, member }: ModerationProps) {
       if (
         await confirmAction({
           title: `${member.name} vom Server entfernen?`,
-          message: "Mit einem neuen Link können sie wieder beitreten.",
+          message:
+            "Mit einem neuen Einladungslink ist ein erneuter Beitritt möglich.",
           confirmLabel: "Entfernen",
         })
       )

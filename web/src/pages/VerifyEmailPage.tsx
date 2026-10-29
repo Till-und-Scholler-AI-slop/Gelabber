@@ -32,7 +32,7 @@ export function VerifyEmailPage() {
   const mutation = useMutation({
     mutationFn: () => verifyEmail(token, password),
     onSuccess: () => {
-      notify("E-Mail bestätigt – willkommen bei Gelabber!");
+      notify("E-Mail-Adresse bestätigt.");
       void navigate({ href: takePendingRedirect() ?? "/", replace: true });
     },
     onError: (error) => {
@@ -58,10 +58,7 @@ export function VerifyEmailPage() {
   return (
     <section className="lr-auth-card">
       <h1>E-Mail-Adresse bestätigen</h1>
-      <p className="auth-lead">
-        Gib das Passwort ein, das du bei der Registrierung gewählt hast. Dann
-        ist dein Konto bereit und du bist angemeldet.
-      </p>
+      <p className="auth-lead">Gib zur Bestätigung dein Passwort ein.</p>
       <form ref={form} onSubmit={onSubmit} noValidate className="auth-form">
         <PasswordField
           id="password"
@@ -103,9 +100,7 @@ function DeadVerifyLink() {
       </h1>
       <div className="auth-result">
         <p>Dieser Link ist abgelaufen oder wurde schon benutzt.</p>
-        <p className="auth-quiet">
-          Melde dich an, dann schicken wir dir einen neuen.
-        </p>
+        <p className="auth-quiet">Melde dich an, um einen neuen zu erhalten.</p>
       </div>
       <div className="auth-actions">
         <Link to="/login" className="auth-link self-start">

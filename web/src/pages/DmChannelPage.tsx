@@ -55,7 +55,7 @@ export function DmChannelPage() {
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-center text-lr-muted">
         <LoadError
-          message="Diese Unterhaltung konnte gerade nicht geladen werden."
+          message="Diese Unterhaltung konnte nicht geladen werden."
           pending={isFetching}
           onRetry={() => void refetch()}
         />

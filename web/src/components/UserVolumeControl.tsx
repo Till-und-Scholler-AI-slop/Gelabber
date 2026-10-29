@@ -83,7 +83,7 @@ export function UserVolumeView({
         </button>
       </div>
       <p className="user-volume__hint">
-        Gilt für die Stimme, nicht für Stream-Ton. Nur du hörst den Unterschied.
+        Nur für dich hörbar. Stream-Ton bleibt unverändert.
       </p>
     </section>
   );

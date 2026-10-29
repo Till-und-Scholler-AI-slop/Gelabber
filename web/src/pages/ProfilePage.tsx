@@ -197,10 +197,6 @@ function ProfileForm({ user }: { user: User }) {
       <div className="settings-avatar-row">
         <Avatar name={name || user.name} url={previewUrl || null} size="lg" />
         <div className="settings-avatar-actions">
-          <p className="settings-hint">
-            Dein Bild begleitet dich in Chats und Sprachräumen. Ohne Bild zeigen
-            wir deine Initialen.
-          </p>
           <div className="settings-actions">
             <Button
               size="sm"
@@ -266,8 +262,8 @@ function ProfileForm({ user }: { user: User }) {
           uploaded
             ? "Eine URL hier ersetzt das hochgeladene Bild."
             : removalUnsaved
-              ? "Noch nicht gespeichert: Speichern entfernt das Bild."
-              : "Lieber hochladen: Links laden das Bild bei jedem Aufruf von der fremden Seite."
+              ? "Wird beim Speichern entfernt."
+              : "Wird bei jedem Aufruf von der fremden Seite geladen."
         }
       />
       <FormError message={errors.form} />
@@ -282,7 +278,7 @@ function ProfileForm({ user }: { user: User }) {
         </SubmitButton>
         {unchanged ? (
           <span id={unchangedId} className="settings-hint">
-            Noch nichts geändert.
+            Keine Änderungen.
           </span>
         ) : null}
         <InlineStatus
@@ -334,7 +330,7 @@ function AccountSecurity({ email }: { email: string }) {
     if (
       !(await confirmAction({
         title: "Auf allen Geräten abmelden?",
-        message: "Auch hier. Du musst dich danach überall neu anmelden.",
+        message: "Gilt auch für dieses Gerät.",
         confirmLabel: "Überall abmelden",
       }))
     )
@@ -400,9 +396,6 @@ function AccountSecurity({ email }: { email: string }) {
         <h3 id="logout-everywhere-heading" className="settings-group-title">
           Überall abmelden
         </h3>
-        <p className="settings-hint">
-          Ein Gerät verloren oder irgendwo angemeldet geblieben?
-        </p>
         <div className="settings-actions">
           <Button variant="danger-outline" onClick={onLogoutEverywhere}>
             Auf allen Geräten abmelden

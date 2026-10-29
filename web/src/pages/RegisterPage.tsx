@@ -120,7 +120,7 @@ export function RegisterPage() {
             clearField("name");
           }}
           error={errors.fields.name}
-          hint="So sehen dich andere im Chat."
+          hint="Für andere sichtbar."
         />
         <Field
           id="email"
@@ -194,7 +194,7 @@ export function MailSent({
     onError: (error) => {
       if (error instanceof ApiError && error.code === "email_unverified") {
         start(RESEND_COOLDOWN_S);
-        show({ tone: "success", message: "Neuer Link ist unterwegs." });
+        show({ tone: "success", message: "Neuer Link gesendet." });
         return;
       }
       if (
@@ -219,15 +219,14 @@ export function MailSent({
       </h1>
       <div className="auth-result">
         <p>
-          Wir haben eine Mail an <strong>{email}</strong> geschickt. Öffne den
-          Link darin, um dein Konto zu bestätigen. Er gilt 24 Stunden.
+          Bestätigungslink an <strong>{email}</strong> gesendet. Er gilt 24
+          Stunden.
         </p>
         {isInviteRedirect(redirect) ? (
-          <p>Nach der Bestätigung geht es direkt weiter zur Einladung.</p>
+          <p>Danach geht es weiter zur Einladung.</p>
         ) : null}
         <p className="auth-quiet">
-          Nichts angekommen? Schau im Spam-Ordner nach oder lass dir den Link
-          noch einmal schicken.
+          Keine Mail erhalten? Prüfe den Spam-Ordner oder sende den Link erneut.
         </p>
       </div>
       <div className="auth-actions">

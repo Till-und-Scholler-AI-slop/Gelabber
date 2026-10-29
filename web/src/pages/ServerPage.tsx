@@ -11,7 +11,7 @@ export function ServerPage() {
     return error ? (
       <div className="p-6">
         <LoadError
-          message="Deine Community konnte gerade nicht geladen werden."
+          message="Der Server konnte nicht geladen werden."
           pending={isFetching}
           onRetry={() => void refetch()}
         />

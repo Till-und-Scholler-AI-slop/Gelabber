@@ -16,7 +16,7 @@ export async function logOut(): Promise<boolean> {
     logoutEndsCall(useVoice.getState()) &&
     !(await confirmAction({
       title: "Abmelden und Anruf beenden?",
-      message: "Du verlässt dabei den Sprachraum, in dem du gerade bist.",
+      message: "Du verlässt dabei den Sprachkanal.",
       confirmLabel: "Abmelden",
     }))
   )

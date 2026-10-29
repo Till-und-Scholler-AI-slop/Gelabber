@@ -68,7 +68,7 @@ describe("DM index", () => {
   it("mounts no rows beside a visible sidebar", () => {
     fixture.drawer = false;
     const html = renderToStaticMarkup(<DmIndexPage />);
-    expect(html).toContain("Wähle eine Unterhaltung oder fang eine neue an.");
+    expect(html).toContain("Wähle eine Unterhaltung.");
     expect(html).toContain("Neue Nachricht</button>");
     expect(html).not.toContain("<nav");
     expect(fixture.rows).toBe(0);
@@ -78,7 +78,7 @@ describe("DM index", () => {
     fixture.drawer = true;
     fixture.dms = [];
     const html = renderToStaticMarkup(<DmIndexPage />);
-    expect(html).toContain("<h1>Noch keine Unterhaltungen</h1>");
+    expect(html).toContain("<h1>Keine Unterhaltungen</h1>");
     expect(html).toContain("ui-button--primary");
     expect(html).toContain("Neue Nachricht</button>");
     expect(html).not.toContain("<nav");

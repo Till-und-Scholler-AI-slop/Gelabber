@@ -122,7 +122,7 @@ export function InvitePage() {
           </form>
         )}
         <Link to="/" className={buttonClass({ variant: "ghost", size: "lg" })}>
-          Nicht jetzt
+          Abbrechen
         </Link>
       </div>
     </section>
@@ -152,9 +152,7 @@ function InviteServer({ preview }: { preview: InvitePreview }) {
           fallback={initials(server.name)}
         />
       </span>
-      <p>
-        {member ? "Du bist schon Mitglied von" : "Du wurdest eingeladen zu"}
-      </p>
+      <p>{member ? "Du bist bereits Mitglied von" : "Einladung zu"}</p>
       <h1 id="invite-server-name">{server.name}</h1>
       <p>{expiry ? `${people} · ${expiry}` : people}</p>
     </div>
@@ -168,13 +166,11 @@ function DeadInvite({ code }: { code: ApiErrorCode }) {
       <div role="alert" className="auth-result">
         <p>
           {code === "not_found"
-            ? "Diesen Einladungslink gibt es nicht. Vielleicht wurde er widerrufen oder falsch kopiert."
+            ? "Dieser Einladungslink existiert nicht oder wurde widerrufen."
             : errorMessage(code)}
         </p>
         {code === "banned" ? null : (
-          <p className="auth-quiet">
-            Bitte die Person, die dich eingeladen hat, um einen neuen Link.
-          </p>
+          <p className="auth-quiet">Frag nach einem neuen Link.</p>
         )}
       </div>
       <div className="auth-actions">

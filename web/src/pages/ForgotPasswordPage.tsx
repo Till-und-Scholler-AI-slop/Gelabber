@@ -57,7 +57,7 @@ export function ForgotPasswordPage() {
     <section className="lr-auth-card">
       <h1>Passwort vergessen</h1>
       <p className="auth-lead">
-        Wir schicken dir einen Link, mit dem du ein neues Passwort festlegst.
+        Du erhältst einen Link, um ein neues Passwort festzulegen.
       </p>
       <form ref={form} onSubmit={onSubmit} noValidate className="auth-form">
         <Field
@@ -108,7 +108,7 @@ function ResetMailSent({
     mutationFn: () => requestPasswordReset(email),
     onSuccess: () => {
       start(RESEND_COOLDOWN_S);
-      show({ tone: "success", message: "Neuer Link ist unterwegs." });
+      show({ tone: "success", message: "Neuer Link gesendet." });
     },
     onError: (error) => {
       if (
@@ -133,12 +133,11 @@ function ResetMailSent({
       </h1>
       <div className="auth-result">
         <p>
-          Wenn es zu <strong>{email}</strong> ein Konto gibt, ist jetzt eine
-          Mail mit einem Link unterwegs. Er gilt eine Stunde.
+          Falls zu <strong>{email}</strong> ein Konto existiert, wurde ein Link
+          gesendet. Er gilt eine Stunde.
         </p>
         <p className="auth-quiet">
-          Nichts angekommen? Schau im Spam-Ordner nach oder lass dir den Link
-          noch einmal schicken.
+          Keine Mail erhalten? Prüfe den Spam-Ordner oder sende den Link erneut.
         </p>
       </div>
       <div className="auth-actions">
