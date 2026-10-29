@@ -97,6 +97,7 @@ export function shortcutList(
     { keys: [mod, alt, "↑ / ↓"], label: "Vorheriger oder nächster Server" },
     { keys: ["Esc"], label: "Unterhaltung als gelesen markieren" },
     { keys: [shift, "Esc"], label: "Ganzen Server als gelesen markieren" },
+    { keys: ["K"], label: "Kino im Sprachkanal ein oder aus" },
     { keys: [mod, "/"], label: "Diese Übersicht" },
   ];
 }

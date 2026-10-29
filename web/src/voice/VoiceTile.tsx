@@ -62,11 +62,11 @@ import {
   useMediaSettings,
 } from "./settings.ts";
 import {
-  CONTROLS_IDLE_MS,
   FRAME_LOADING_MS,
   FRAME_STALLED_MS,
   fullscreenRoute,
 } from "./stage.ts";
+import { useWake } from "./useWake.ts";
 import "./viewer.css";
 
 type VoiceTileProps = {
@@ -136,23 +136,6 @@ export function StreamViewer(props: VoiceTileProps & { onClose: () => void }) {
       />
     </dialog>
   );
-}
-
-/** True for a while after `wake`, then false until the next one. */
-function useWake(initial: boolean): [boolean, () => void] {
-  const [awake, setAwake] = useState(initial);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const wake = useCallback(() => {
-    setAwake(true);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setAwake(false), CONTROLS_IDLE_MS);
-  }, []);
-  useEffect(() => {
-    if (initial)
-      timer.current = setTimeout(() => setAwake(false), CONTROLS_IDLE_MS);
-    return () => clearTimeout(timer.current);
-  }, [initial]);
-  return [awake, wake];
 }
 
 /** How long `key` has waited for its first picture. */

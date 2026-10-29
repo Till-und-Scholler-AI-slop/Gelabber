@@ -60,6 +60,7 @@ export function Participant({
   onProfile,
   tile = false,
   spotlight = false,
+  pinnable = true,
   onSelect,
   className,
   style,
@@ -81,6 +82,8 @@ export function Participant({
   tile?: boolean;
   /** The camera fills the stage in Fokus. */
   spotlight?: boolean;
+  /** False where the camera is in front for good, as in Kino. */
+  pinnable?: boolean;
   /** A press on the camera brings it to the front. */
   onSelect?: () => void;
   className?: string;
@@ -156,7 +159,7 @@ export function Participant({
           caption={false}
           spotlight={spotlight}
           pinned={pinned === camera.id}
-          onTogglePin={() => onTogglePin(camera.id)}
+          onTogglePin={pinnable ? () => onTogglePin(camera.id) : undefined}
           onSelect={onSelect}
         />
       ) : (

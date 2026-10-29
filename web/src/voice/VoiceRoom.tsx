@@ -6,12 +6,14 @@
 // on the stage, and the tiles together fill it; the people without a
 // camera line up under it (Raster). In Fokus one picture fills the stage
 // over a row of the others and the people; it is the view while someone
-// else is live, unless the user picked one in this call. The overview keeps its Lives in a spotlight and
+// else is live, unless the user picked one in this call. Kino (K, Esc)
+// gives that picture the window but for the call bar. The overview keeps its Lives in a spotlight and
 // a filmstrip, and a camera in its owner's place. A Live is watched in the
 // room: outside it, the room only says who is live.
 
 import {
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useRef,
   useState,
@@ -27,6 +29,8 @@ import {
   GridIcon,
   MicIcon,
   SpeakerIcon,
+  TheaterExitIcon,
+  TheaterIcon,
 } from "../components/Icons.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { ChipGroup } from "../components/ui/ChipGroup.tsx";
@@ -51,6 +55,8 @@ import {
   arrangeStage,
   focusOf,
   focusRects,
+  kinoKey,
+  kinoRects,
   rasterOrder,
   rasterRects,
   type Rect,
@@ -64,6 +70,8 @@ import {
   useStageChoices,
   type StageView,
 } from "./stageView.ts";
+import { useMediaSettings } from "./settings.ts";
+import { useWake } from "./useWake.ts";
 import "./room.css";
 
 type StageTile = {
@@ -249,6 +257,63 @@ export function VoiceRoom({
     return () => setMemberPanelVideo(false);
   }, [overview, staged]);
   const [stageRef, stageSize] = useBoxSize<HTMLUListElement>(staged);
+  // Kino: the stage takes the window but for the call bar. A desktop's,
+  // and only while pictures run here.
+  const roomy = !useMediaQuery("(max-width: 800px)");
+  const canKino = staged && roomy;
+  const [kinoOn, setKino] = useState(false);
+  if (kinoOn && !canKino) setKino(false);
+  const kino = kinoOn && canKino;
+  const [awake, wake] = useWake(false);
+  const kinoButton = useRef<HTMLButtonElement>(null);
+  const kinoExit = useRef<HTMLButtonElement>(null);
+  /** Where the focus goes once Kino has changed: its way out after the
+   * button, the button after the way out. */
+  const refocus = useRef(false);
+  const enterKino = (byButton: boolean) => {
+    refocus.current = byButton;
+    wake();
+    setKino(true);
+  };
+  const leaveKino = () => {
+    const active = document.activeElement;
+    refocus.current =
+      active === null ||
+      active === document.body ||
+      Boolean(stageRef.current?.closest(".voice-room")?.contains(active));
+    setKino(false);
+  };
+  const onKinoKey = useEffectEvent((event: KeyboardEvent) => {
+    const settings = useMediaSettings.getState();
+    const action = kinoKey(
+      event,
+      kino,
+      settings.voiceInput === "ptt" ? settings.pttKey : null,
+    );
+    if (!action || typingIn(event.target) || modalOpen()) return;
+    event.preventDefault();
+    if (action === "leave" || kino) leaveKino();
+    else enterKino(false);
+  });
+  useEffect(() => {
+    if (!canKino) return;
+    const onKey = (event: KeyboardEvent) => onKinoKey(event);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [canKino]);
+  useEffect(() => {
+    if (!kino) return;
+    // The shell's rail, sidebar, header and member list make way (room.css).
+    document.documentElement.dataset.kino = "";
+    return () => {
+      delete document.documentElement.dataset.kino;
+    };
+  }, [kino]);
+  useEffect(() => {
+    if (!refocus.current) return;
+    refocus.current = false;
+    (kino ? kinoExit : kinoButton).current?.focus({ preventScroll: true });
+  }, [kino]);
   const view: StageView = narrow
     ? "raster"
     : stageViewFor(
@@ -256,7 +321,7 @@ export function VoiceRoom({
         shares.some((tile) => tile.userId !== me),
       );
   const focus =
-    view === "fokus"
+    view === "fokus" || kino
       ? focusOf(shares, [...cameras.values()], pinned, me)
       : null;
   const ordered = rasterOrder(shares, [...cameras.values()], pinned);
@@ -266,16 +331,29 @@ export function VoiceRoom({
   const stripPeople = focus ? occupants.filter(([id]) => !cameras.has(id)) : [];
   const layout = !stageSize
     ? null
-    : focus
-      ? focusRects(
-          strip.length + stripPeople.length,
+    : kino
+      ? kinoRects(
+          [
+            ...strip.map(() => "picture" as const),
+            ...stripPeople.map(() => "person" as const),
+          ],
           stageSize.width,
           stageSize.height,
         )
-      : {
-          focus: null,
-          strip: rasterRects(ordered.length, stageSize.width, stageSize.height),
-        };
+      : focus
+        ? focusRects(
+            strip.length + stripPeople.length,
+            stageSize.width,
+            stageSize.height,
+          )
+        : {
+            focus: null,
+            strip: rasterRects(
+              ordered.length,
+              stageSize.width,
+              stageSize.height,
+            ),
+          };
   /** A picture's or person's place on the stage, for the stylesheet. */
   const at = (rect: Rect | null | undefined): CSSProperties | undefined =>
     rect
@@ -340,6 +418,12 @@ export function VoiceRoom({
       data-joined={here || undefined}
       data-page={!overview || undefined}
       data-stage={staged || undefined}
+      data-kino={kino || undefined}
+      data-awake={(kino && awake) || undefined}
+      onPointerMove={kino ? wake : undefined}
+      onPointerDown={kino ? wake : undefined}
+      onKeyDown={kino ? wake : undefined}
+      onFocus={kino ? wake : undefined}
     >
       {overview ? (
         <div className="voice-room-heading">
@@ -350,7 +434,7 @@ export function VoiceRoom({
           ) : null}
           {liveOn ? <span className="voice-room-live-badge">Live</span> : null}
         </div>
-      ) : staged ? (
+      ) : kino ? null : staged ? (
         <div className="voice-stage-bar">
           <p className="voice-stage-facts">
             {stageFacts({
@@ -388,6 +472,19 @@ export function VoiceRoom({
               ]}
             />
           )}
+          {canKino ? (
+            <button
+              ref={kinoButton}
+              type="button"
+              className="voice-stage-kino"
+              aria-keyshortcuts="K"
+              title="Kino (K)"
+              onClick={() => enterKino(true)}
+            >
+              <TheaterIcon size={15} />
+              Kino
+            </button>
+          ) : null}
         </div>
       ) : (
         <p className="voice-room-summary">
@@ -420,7 +517,11 @@ export function VoiceRoom({
                   live
                   spotlight={tile === focus}
                   pinned={pinned === tile.id}
-                  onTogglePin={() => togglePin(tile.id)}
+                  onTogglePin={
+                    kino && tile === focus
+                      ? undefined
+                      : () => togglePin(tile.id)
+                  }
                   onSelect={bringForward(tile)}
                 />
               </li>
@@ -431,6 +532,7 @@ export function VoiceRoom({
                 camera={tile}
                 tile
                 spotlight={tile === focus}
+                pinnable={!(kino && tile === focus)}
                 onSelect={bringForward(tile)}
                 className={`voice-stage-item ${place(tile)}`.trim()}
                 style={placed(tile)}
@@ -447,6 +549,30 @@ export function VoiceRoom({
             />
           ))}
         </ul>
+      ) : null}
+      {kino ? (
+        <div className="voice-kino-bar">
+          <button
+            ref={kinoExit}
+            type="button"
+            className="voice-kino-chip voice-kino-exit"
+            aria-keyshortcuts="Escape"
+            onClick={leaveKino}
+          >
+            <TheaterExitIcon size={15} />
+            Kino verlassen
+            <kbd aria-hidden="true">Esc</kbd>
+          </button>
+          {focus ? (
+            <span className="voice-kino-chip voice-kino-label">
+              {focus.kind === "live" ? (
+                <span className="voice-kino-live">Live</span>
+              ) : null}
+              <strong>{nameOf(focus.userId)}</strong>
+              <span className="voice-kino-place">· {channelName}</span>
+            </span>
+          ) : null}
+        </div>
       ) : null}
       {overview && stageTiles.length > 0 ? (
         <div
@@ -601,4 +727,27 @@ function useBoxSize<T extends HTMLElement>(
     return () => observer.disconnect();
   }, [active]);
   return [ref, active ? size : null];
+}
+
+/** A dialog has the keys; the workspace's drawers are dialogs too, but
+ * open beside the page, not over it. */
+function modalOpen(): boolean {
+  try {
+    return document.querySelector("dialog:modal") !== null;
+  } catch {
+    return false;
+  }
+}
+
+/** A key typed into a field is text, not a shortcut. */
+function typingIn(target: EventTarget | null): boolean {
+  if (typeof HTMLElement === "undefined" || !(target instanceof HTMLElement))
+    return false;
+  return (
+    target.isContentEditable ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLInputElement &&
+      !["checkbox", "radio", "range", "button", "submit"].includes(target.type))
+  );
 }
