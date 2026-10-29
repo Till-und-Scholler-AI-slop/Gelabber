@@ -238,10 +238,17 @@ export function MediaSettingsForm({
               checked={settings.callSounds}
               onChange={(callSounds) => settings.patch({ callSounds })}
             >
-              Kurze Töne beim Beitreten und Verlassen sowie für dein Mikrofon
-              und Taubstellen. Wenn du taubgestellt bist, bleiben
-              Teilnehmer-Töne stumm.
+              Töne für Beitreten, Verlassen, Stumm, Taub, Kamera und Live.
             </SwitchLine>
+            <Toggle
+              id="other-mute-sounds"
+              label="Töne, wenn andere sich stumm schalten"
+              checked={settings.otherMuteSounds}
+              disabled={!settings.callSounds}
+              onChange={(otherMuteSounds) =>
+                settings.patch({ otherMuteSounds })
+              }
+            />
             <div className="media-field">
               <label htmlFor="call-sound-volume">
                 Lautstärke der Signaltöne
@@ -274,7 +281,7 @@ export function MediaSettingsForm({
                 settings.callSoundVolume === 0 ||
                 settings.outputVolume === 0
               }
-              onClick={() => playCallSound("join")}
+              onClick={() => playCallSound("joinSelf")}
             >
               Testton abspielen
             </Button>

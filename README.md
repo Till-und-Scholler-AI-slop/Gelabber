@@ -57,4 +57,4 @@ cd web && npm run dev
 
 ## Call-Sounds
 
-Kurze Töne für Beitritt, Verlassen, Stummschalten und Taubstellen. Unter **Einstellungen → Audio** lassen sie sich abschalten, anpassen und vorhören. Browserprüfung ohne laufende API: `cd web && npm run test:call-sounds-smoke`.
+Jedes Call-Ereignis hat einen eigenen kurzen Ton: Beitreten und Verlassen (du oder andere), dein Mikrofon und Taubstellen, das Stummschalten anderer, deine Kamera und jedes Live im Call, das startet oder endet. Die Töne werden im Client synthetisiert (`web/src/voice/callSoundSynth.ts`), es gibt keine Audiodateien. Unter **Einstellungen → Audio** lassen sie sich abschalten, anpassen und vorhören; die Töne für das Stummschalten anderer haben einen eigenen Schalter. Browserprüfung ohne laufende API: `cd web && npm run test:call-sounds-smoke`.

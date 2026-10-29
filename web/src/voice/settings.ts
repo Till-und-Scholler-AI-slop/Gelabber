@@ -185,6 +185,8 @@ export type MediaSettings = {
   videoUploadLimit: number;
   callSounds: boolean;
   callSoundVolume: number;
+  /** A cue when someone else in the call mutes or unmutes. */
+  otherMuteSounds: boolean;
   messageToasts: boolean;
   desktopNotify: boolean;
   /** A short cue with a message notification on a desktop (issue #247). */
@@ -220,6 +222,7 @@ export const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
   videoUploadLimit: 0,
   callSounds: true,
   callSoundVolume: 0.35,
+  otherMuteSounds: true,
   messageToasts: true,
   desktopNotify: false,
   messageSound: true,
@@ -428,6 +431,7 @@ function snapshot(state: MediaSettingsState): MediaSettings {
     videoUploadLimit: state.videoUploadLimit,
     callSounds: state.callSounds,
     callSoundVolume: state.callSoundVolume,
+    otherMuteSounds: state.otherMuteSounds,
     messageToasts: state.messageToasts,
     desktopNotify: state.desktopNotify,
     messageSound: state.messageSound,
@@ -521,6 +525,7 @@ export const useMediaSettings = create<MediaSettingsState>()(
             partial.callSoundVolume !== undefined
               ? clampVolume(partial.callSoundVolume)
               : prev.callSoundVolume,
+          otherMuteSounds: partial.otherMuteSounds ?? prev.otherMuteSounds,
           messageToasts:
             partial.messageToasts !== undefined
               ? partial.messageToasts
@@ -578,6 +583,10 @@ export const useMediaSettings = create<MediaSettingsState>()(
           callSounds:
             typeof stored.callSounds === "boolean" ? stored.callSounds : true,
           callSoundVolume: clampVolume(stored.callSoundVolume ?? 0.35),
+          otherMuteSounds:
+            typeof stored.otherMuteSounds === "boolean"
+              ? stored.otherMuteSounds
+              : true,
           messageSound:
             typeof stored.messageSound === "boolean"
               ? stored.messageSound

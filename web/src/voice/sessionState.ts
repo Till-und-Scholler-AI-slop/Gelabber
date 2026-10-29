@@ -79,6 +79,9 @@ export type VoiceSession = {
   awaitingScreen: { serverId: string; channelId: string } | null;
   republishOnJoin: boolean;
   announced: Set<TrackKind>;
+  /** The others in the call, for their cues: since when they are here (as
+   * far as their latest join says) and whether they are muted. */
+  peers: Map<string, { since: number; muted: boolean }>;
 
   /** Seat media peer. `joinVoice` / `leaveVoice` hold this object. */
   seat: MediaPeer;
@@ -170,6 +173,7 @@ export function createVoiceSession(previous?: VoiceSession): VoiceSession {
     awaitingScreen: null,
     republishOnJoin: false,
     announced: new Set(),
+    peers: new Map(),
 
     seat: new MediaPeer(),
     seatRecoverySlot: new Map(),
