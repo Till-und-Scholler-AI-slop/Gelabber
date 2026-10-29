@@ -639,6 +639,11 @@ function VideoSurface({
                 className="voice-video-action"
               />
             ) : null}
+            {spotlight &&
+            streamSound &&
+            !(sourceWatch && !sourceWatch.watching) ? (
+              <StreamSoundAction />
+            ) : null}
             {onTogglePin ? (
               <IconButton
                 size="sm"
@@ -762,6 +767,22 @@ function WatchStrip({
         <span>Vollbild beenden</span>
       </button>
     </div>
+  );
+}
+
+/** The stream sound on and off, on the picture in front. */
+function StreamSoundAction() {
+  const muted = useMediaSettings((s) => s.sourceAudioMuted);
+  const patch = useMediaSettings((s) => s.patch);
+  return (
+    <IconButton
+      size="sm"
+      label="Stream-Ton stummschalten"
+      pressed={muted}
+      icon={muted ? <SpeakerOffIcon size={16} /> : <SpeakerIcon size={16} />}
+      onClick={() => patch({ sourceAudioMuted: !muted })}
+      className="voice-video-action"
+    />
   );
 }
 

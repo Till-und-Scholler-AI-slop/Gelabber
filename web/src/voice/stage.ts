@@ -1,7 +1,8 @@
 // How a room's pictures are laid out. The channel's page gives every
-// picture a tile of its own, sized to fill the stage (fitGrid). The
-// overview keeps one spotlight, a filmstrip of the other Lives, and
-// cameras in their owners' places among the participants.
+// picture a tile of its own, sized to fill the stage (Raster, fitGrid), or
+// one picture the stage over a row of the others and the people (Fokus,
+// focusRects). The overview keeps one spotlight, a filmstrip of the other
+// Lives, and cameras in their owners' places among the participants.
 
 export type StageKind = "live" | "camera";
 
@@ -115,6 +116,72 @@ export function rasterRects(
       height: fit.height,
     };
   });
+}
+
+/** The picture that fills the stage in Fokus: the pinned one, else the
+ * first Live of someone else, else the own Live, else someone else's
+ * camera, else the own. */
+export function focusOf<
+  T extends { id: string; kind: StageKind; userId: string },
+>(
+  shares: readonly T[],
+  cameras: readonly T[],
+  pinned: string | null,
+  me: string | undefined,
+): T | null {
+  return (
+    [...shares, ...cameras].find((tile) => tile.id === pinned) ??
+    shares.find((tile) => tile.userId !== me) ??
+    shares[0] ??
+    cameras.find((tile) => tile.userId !== me) ??
+    cameras[0] ??
+    null
+  );
+}
+
+/** Fokus's row under the picture: 96 pixels high, its tiles 16:9. */
+export const STRIP_HEIGHT = 96;
+export const STRIP_TILE = 171;
+export const STRIP_GAP = 10;
+
+/** Fokus: the largest 16:9 picture the stage holds above a row of
+ * `stripCount` small tiles, both centred. The row's tiles narrow when
+ * there are more than fit. Null while the stage has no size. */
+export function focusRects(
+  stripCount: number,
+  width: number,
+  height: number,
+  gap = STAGE_GAP,
+): { focus: Rect; strip: Rect[] } | null {
+  const strip = stripCount > 0 ? STRIP_HEIGHT + gap : 0;
+  const fit = fitGrid(1, width, height - strip, 0, {
+    min: 16 / 9,
+    max: 16 / 9,
+  });
+  if (!fit) return null;
+  const tile = Math.max(
+    0,
+    Math.min(
+      STRIP_TILE,
+      Math.floor((width - STRIP_GAP * (stripCount - 1)) / stripCount),
+    ),
+  );
+  const row = stripCount * tile + (stripCount - 1) * STRIP_GAP;
+  const left = Math.round((width - row) / 2);
+  return {
+    focus: {
+      x: Math.round((width - fit.width) / 2),
+      y: Math.round((height - strip - fit.height) / 2),
+      width: fit.width,
+      height: fit.height,
+    },
+    strip: Array.from({ length: stripCount }, (_, index) => ({
+      x: left + index * (tile + STRIP_GAP),
+      y: height - STRIP_HEIGHT,
+      width: tile,
+      height: STRIP_HEIGHT,
+    })),
+  };
 }
 
 /** How a tile gets the whole screen: the element itself where the page may

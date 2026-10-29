@@ -4,7 +4,9 @@
 //
 // On the channel's page, every picture in the call gets a tile of its own
 // on the stage, and the tiles together fill it; the people without a
-// camera line up under it. The overview keeps its Lives in a spotlight and
+// camera line up under it (Raster). In Fokus one picture fills the stage
+// over a row of the others and the people; it is the view while someone
+// else is live, unless the user picked one in this call. The overview keeps its Lives in a spotlight and
 // a filmstrip, and a camera in its owner's place. A Live is watched in the
 // room: outside it, the room only says who is live.
 
@@ -20,9 +22,16 @@ import {
 import { can } from "../servers/permissions.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import { MemberProfileDialog } from "../components/MemberProfileDialog.tsx";
-import { MicIcon, SpeakerIcon } from "../components/Icons.tsx";
+import {
+  FocusIcon,
+  GridIcon,
+  MicIcon,
+  SpeakerIcon,
+} from "../components/Icons.tsx";
 import { Button } from "../components/ui/Button.tsx";
+import { ChipGroup } from "../components/ui/ChipGroup.tsx";
 import { IconButton } from "../components/ui/IconButton.tsx";
+import { useMediaQuery } from "../components/useMediaQuery.ts";
 import { setMemberPanelVideo } from "../components/memberPanelState.ts";
 import { useSession } from "../auth/session.ts";
 import { joinVoice, useVoice, toggleSourceWatch } from "./session.ts";
@@ -40,11 +49,21 @@ import { QuickCallSettingsButton } from "./QuickCallSettings.tsx";
 import { roomSummary, stageFacts } from "./roomSummary.ts";
 import {
   arrangeStage,
+  focusOf,
+  focusRects,
   rasterOrder,
   rasterRects,
   type Rect,
   type StageKind,
 } from "./stage.ts";
+import {
+  choicesFor,
+  chooseView,
+  pinPicture,
+  stageViewFor,
+  useStageChoices,
+  type StageView,
+} from "./stageView.ts";
 import "./room.css";
 
 type StageTile = {
@@ -99,7 +118,11 @@ export function VoiceRoom({
     serverId: string;
     memberId: string;
   } | null>(null);
-  const [pinned, setPinned] = useState<string | null>(null);
+  const choices = useStageChoices((state) => choicesFor(state, roomKey));
+  const pinned = choices.pinned;
+  // A phone keeps its column of pictures; Fokus and its row are for wider
+  // screens.
+  const narrow = useMediaQuery("(max-width: 640px)");
   const members = new Map(
     server.members.map((member) => [member.user_id, member]),
   );
@@ -215,7 +238,7 @@ export function VoiceRoom({
     pinned,
   );
   const togglePin = (id: string) =>
-    setPinned((current) => (current === id ? null : id));
+    pinPicture(roomKey, pinned === id ? null : id);
   const stageTiles = spotlight ? [spotlight, ...filmstrip] : [];
   // The channel's page: a stage of its own while any picture runs.
   const pictures = overview ? [] : [...shares, ...cameras.values()];
@@ -226,14 +249,36 @@ export function VoiceRoom({
     return () => setMemberPanelVideo(false);
   }, [overview, staged]);
   const [stageRef, stageSize] = useBoxSize<HTMLUListElement>(staged);
+  const view: StageView = narrow
+    ? "raster"
+    : stageViewFor(
+        choices.view,
+        shares.some((tile) => tile.userId !== me),
+      );
+  const focus =
+    view === "fokus"
+      ? focusOf(shares, [...cameras.values()], pinned, me)
+      : null;
   const ordered = rasterOrder(shares, [...cameras.values()], pinned);
-  const rects = stageSize
-    ? rasterRects(ordered.length, stageSize.width, stageSize.height)
-    : [];
-  /** A picture's place on the stage, for the stylesheet. */
-  const placed = (tile: StageTile): CSSProperties | undefined => {
-    const rect: Rect | undefined = rects[ordered.indexOf(tile)];
-    return rect
+  // Fokus: the picture in front, the others and then the people without a
+  // camera in the row under it.
+  const strip = ordered.filter((tile) => tile !== focus);
+  const stripPeople = focus ? occupants.filter(([id]) => !cameras.has(id)) : [];
+  const layout = !stageSize
+    ? null
+    : focus
+      ? focusRects(
+          strip.length + stripPeople.length,
+          stageSize.width,
+          stageSize.height,
+        )
+      : {
+          focus: null,
+          strip: rasterRects(ordered.length, stageSize.width, stageSize.height),
+        };
+  /** A picture's or person's place on the stage, for the stylesheet. */
+  const at = (rect: Rect | null | undefined): CSSProperties | undefined =>
+    rect
       ? ({
           "--stage-x": `${rect.x}px`,
           "--stage-y": `${rect.y}px`,
@@ -241,7 +286,17 @@ export function VoiceRoom({
           "--stage-h": `${rect.height}px`,
         } as CSSProperties)
       : undefined;
-  };
+  const placed = (tile: StageTile) =>
+    at(
+      tile === focus
+        ? layout?.focus
+        : layout?.strip[(focus ? strip : ordered).indexOf(tile)],
+    );
+  /** Where the stage puts a picture, for its classes. */
+  const place = (tile: StageTile) =>
+    tile === focus ? "is-focus" : focus ? "is-strip" : "";
+  const bringForward = (tile: StageTile) =>
+    focus && tile !== focus ? () => pinPicture(roomKey, tile.id) : undefined;
   const liveOn = occupants.some(([id]) => isLive(id));
   const others = occupants
     .filter(([id]) => id !== me)
@@ -305,6 +360,34 @@ export function VoiceRoom({
               selfLive: here && voice.sharing,
             })}
           </p>
+          {narrow ? null : (
+            <ChipGroup
+              label="Ansicht"
+              className="voice-stage-views"
+              value={view}
+              onChange={(next) => chooseView(roomKey, next)}
+              options={[
+                {
+                  value: "raster",
+                  label: (
+                    <>
+                      <GridIcon size={15} />
+                      Raster
+                    </>
+                  ),
+                },
+                {
+                  value: "fokus",
+                  label: (
+                    <>
+                      <FocusIcon size={15} />
+                      Fokus
+                    </>
+                  ),
+                },
+              ]}
+            />
+          )}
         </div>
       ) : (
         <p className="voice-room-summary">
@@ -316,15 +399,17 @@ export function VoiceRoom({
           ref={stageRef}
           className="voice-stage"
           aria-label="Bühne"
-          data-measured={rects.length > 0 || undefined}
+          data-view={view}
+          data-measured={layout ? "" : undefined}
         >
           {/* One element per picture, in a fixed order: a place on the
-              stage is a position, so a pin never rebuilds a video. */}
+              stage is a position, so a pin or another view never rebuilds
+              a video. */}
           {pictures.map((tile) =>
             tile.kind === "live" ? (
               <li
                 key={tile.id}
-                className="voice-stage-item"
+                className={`voice-stage-item ${place(tile)}`.trim()}
                 style={placed(tile)}
               >
                 <VoiceTile
@@ -333,8 +418,10 @@ export function VoiceRoom({
                   label={tile.name}
                   screen
                   live
+                  spotlight={tile === focus}
                   pinned={pinned === tile.id}
                   onTogglePin={() => togglePin(tile.id)}
+                  onSelect={bringForward(tile)}
                 />
               </li>
             ) : (
@@ -343,11 +430,22 @@ export function VoiceRoom({
                 {...person(tile.userId, flagsOf.get(tile.userId) ?? noFlags)}
                 camera={tile}
                 tile
-                className="voice-stage-item"
+                spotlight={tile === focus}
+                onSelect={bringForward(tile)}
+                className={`voice-stage-item ${place(tile)}`.trim()}
                 style={placed(tile)}
               />
             ),
           )}
+          {stripPeople.map(([id, flags], index) => (
+            <Participant
+              key={id}
+              {...person(id, flags)}
+              camera={null}
+              className="voice-stage-item is-strip"
+              style={at(layout?.strip[strip.length + index])}
+            />
+          ))}
         </ul>
       ) : null}
       {overview && stageTiles.length > 0 ? (
@@ -383,7 +481,9 @@ export function VoiceRoom({
                     pinned={pinned === tile.id}
                     onTogglePin={() => togglePin(tile.id)}
                     onSelect={
-                      inSpotlight ? undefined : () => setPinned(tile.id)
+                      inSpotlight
+                        ? undefined
+                        : () => pinPicture(roomKey, tile.id)
                     }
                   />
                 </div>
@@ -392,7 +492,7 @@ export function VoiceRoom({
         </div>
       ) : null}
       {staged ? (
-        occupants.some(([id]) => !cameras.has(id)) ? (
+        !focus && occupants.some(([id]) => !cameras.has(id)) ? (
           <ul
             className="voice-room-participants voice-stage-people"
             aria-label="Ohne Kamera"

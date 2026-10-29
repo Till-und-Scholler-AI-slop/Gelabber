@@ -4,6 +4,8 @@ import {
   arrangeStage,
   createLongPress,
   fitGrid,
+  focusOf,
+  focusRects,
   fullscreenRoute,
   LONG_PRESS_MS,
   rasterOrder,
@@ -119,6 +121,49 @@ describe("raster rects", () => {
 
   it("is empty before the stage has a size", () => {
     expect(rasterRects(2, 0, 0)).toEqual([]);
+  });
+});
+
+describe("fokus", () => {
+  type Tile = { id: string; kind: StageKind; userId: string };
+  const mine: Tile = { id: "me-s", kind: "live", userId: "me" };
+  const theirs: Tile = { id: "mia-s", kind: "live", userId: "mia" };
+  const face: Tile = { id: "kim-v", kind: "camera", userId: "kim" };
+
+  it("fills the stage with the pinned picture, else someone else's Live", () => {
+    expect(focusOf([mine, theirs], [face], "kim-v", "me")).toBe(face);
+    expect(focusOf([mine, theirs], [face], null, "me")).toBe(theirs);
+    expect(focusOf([mine], [face], null, "me")).toBe(mine);
+    expect(focusOf([], [face], "gone-v", "me")).toBe(face);
+    const own: Tile = { id: "me-v", kind: "camera", userId: "me" };
+    expect(focusOf([], [own, face], null, "me")).toBe(face);
+    expect(focusOf([], [own], null, "me")).toBe(own);
+    expect(focusOf([], [], null, "me")).toBeNull();
+  });
+
+  it("puts a 16:9 picture over a row of 171x96 tiles", () => {
+    // The stage of a 1280x800 window in Fokus: no chips under it.
+    expect(focusRects(3, 944, 612)).toEqual({
+      focus: { x: 24, y: 0, width: 896, height: 504 },
+      strip: [
+        { x: 206, y: 516, width: 171, height: 96 },
+        { x: 387, y: 516, width: 171, height: 96 },
+        { x: 568, y: 516, width: 171, height: 96 },
+      ],
+    });
+  });
+
+  it("gives a lone picture the whole stage and narrows a long row", () => {
+    expect(focusRects(0, 944, 612)?.focus).toEqual({
+      x: 0,
+      y: 41,
+      width: 944,
+      height: 531,
+    });
+    const row = focusRects(8, 944, 612)!.strip;
+    expect(row[0]).toEqual({ x: 1, y: 516, width: 109, height: 96 });
+    expect(row[7]!.x + row[7]!.width).toBeLessThanOrEqual(944);
+    expect(focusRects(2, 0, 0)).toBeNull();
   });
 });
 

@@ -346,6 +346,25 @@ describe("tile actions", () => {
     expect(tile(true)).toMatch(/aria-label="Anheften" aria-pressed="true"/);
   });
 
+  it("has the stream sound on a watched Live in front only", () => {
+    const tile = (spotlight: boolean, watching: boolean) =>
+      renderToStaticMarkup(
+        <VoiceTile
+          stream={null}
+          label="Mia — Live"
+          screen
+          live
+          spotlight={spotlight}
+          sourceWatch={{ watching, toggle: () => undefined }}
+        />,
+      );
+    expect(tile(true, true)).toMatch(
+      /aria-label="Stream-Ton stummschalten" aria-pressed="false"/,
+    );
+    expect(tile(false, true)).not.toContain("Stream-Ton");
+    expect(tile(true, false)).not.toContain("Stream-Ton");
+  });
+
   it("names a camera in a participant's place without a second caption", () => {
     const html = renderToStaticMarkup(
       <VoiceTile stream={null} label="Mia" caption={false} />,
