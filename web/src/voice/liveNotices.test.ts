@@ -457,4 +457,32 @@ describe("live notices from voice frames", () => {
     expect(h.toast).not.toHaveBeenCalled();
     expect(h.notify).not.toHaveBeenCalled();
   });
+
+  it("gives one start the same notification id in every window, at a cooldown window's edge too", async () => {
+    // Both windows hear the start just before a cooldown window ends. The
+    // second guesses the server's clock most of a second later, and fetches
+    // the server's detail meanwhile.
+    let clock = 3 * LIVE_NOTICE_COOLDOWN_MS - 1;
+    const first = harness({ now: () => clock, serverNow: () => clock });
+    const second = harness({
+      now: () => clock,
+      serverNow: () => clock + 900,
+      server: async () => {
+        clock += 1_500;
+        return server;
+      },
+    });
+    await first.send(start());
+    await second.send(start());
+    const id = (h: ReturnType<typeof harness>, call = 0) =>
+      h.notify.mock.calls[call]?.[0].messageId;
+    expect(id(first)).toBeDefined();
+    expect(id(second)).toBe(id(first));
+    // A Live after the cooldown is news again, with an id of its own.
+    await first.send(stop());
+    clock += LIVE_NOTICE_COOLDOWN_MS;
+    await first.send(start());
+    expect(first.notify).toHaveBeenCalledTimes(2);
+    expect(id(first, 1)).not.toBe(id(first));
+  });
 });
