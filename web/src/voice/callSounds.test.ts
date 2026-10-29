@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CallSoundPlayer, callSoundWave } from "./callSounds.ts";
+import { CallSoundPlayer, callSoundWave, playLiveSound } from "./callSounds.ts";
 import { setNativeBridgeForTests } from "./native/bridge.ts";
-import { DEFAULT_MEDIA_SETTINGS } from "./settings.ts";
+import {
+  DEFAULT_MEDIA_SETTINGS,
+  resetMediaSettingsForTests,
+  useMediaSettings,
+} from "./settings.ts";
 
 function harness() {
   const settings = { ...DEFAULT_MEDIA_SETTINGS };
@@ -21,7 +25,11 @@ function harness() {
   };
 }
 
-afterEach(() => setNativeBridgeForTests(undefined));
+afterEach(() => {
+  setNativeBridgeForTests(undefined);
+  vi.unstubAllGlobals();
+  resetMediaSettingsForTests();
+});
 
 describe("call sounds", () => {
   it("produces short, distinct, bounded PCM with silent ends", () => {
@@ -191,5 +199,30 @@ describe("call sounds", () => {
       unsupported.play("join");
       unsupported.stop();
     }).not.toThrow();
+  });
+
+  it("sounds a Live with the message cue and its switch, not the call sounds' one", () => {
+    const played: string[] = [];
+    vi.stubGlobal(
+      "Audio",
+      class {
+        src = "";
+        volume = 1;
+        play = vi.fn(async () => {
+          played.push(this.src);
+        });
+        pause = vi.fn();
+      },
+    );
+    useMediaSettings.getState().patch({ messageSound: false });
+    playLiveSound();
+    expect(played).toHaveLength(0);
+    useMediaSettings
+      .getState()
+      .patch({ messageSound: true, callSounds: false });
+    playLiveSound();
+    expect(played).toEqual([
+      `data:audio/wav;base64,${btoa(String.fromCharCode(...callSoundWave("message")))}`,
+    ]);
   });
 });

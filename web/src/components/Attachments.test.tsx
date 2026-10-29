@@ -7,6 +7,7 @@ import {
   AttachmentList,
   DownloadLink,
 } from "./Attachments.tsx";
+import { rememberImageSize } from "./imageBox.ts";
 import { reloadMedia } from "./mediaReload.ts";
 
 const file = (
@@ -59,6 +60,33 @@ describe("attachment list (#255)", () => {
 
   it("renders nothing without attachments", () => {
     expect(renderToStaticMarkup(<AttachmentList attachments={[]} />)).toBe("");
+  });
+});
+
+// Markup only; scripts/smoke-chat-scroll.mjs checks the boxes in a browser.
+describe("picture box", () => {
+  it("is the picture's own shape once its size is known", () => {
+    const shot = file("s1", "zeile.png", "image/png");
+    expect(
+      renderToStaticMarkup(<AttachmentList attachments={[shot]} />),
+    ).toContain('class="lr-attachment-image"');
+    rememberImageSize(shot, { width: 972, height: 114 });
+    const html = renderToStaticMarkup(<AttachmentList attachments={[shot]} />);
+    expect(html).toContain('class="lr-attachment-image is-sized"');
+    expect(html).toContain('style="width:358px;aspect-ratio:972 / 114"');
+  });
+
+  it("keeps the grid's cells for several pictures", () => {
+    const shots = [
+      file("s2", "a.png", "image/png"),
+      file("s3", "b.png", "image/png"),
+    ];
+    for (const shot of shots)
+      rememberImageSize(shot, { width: 972, height: 114 });
+    const html = renderToStaticMarkup(<AttachmentList attachments={shots} />);
+    expect(html).toContain("lr-attachment-grid");
+    expect(html).not.toContain("is-sized");
+    expect(html).not.toContain("aspect-ratio");
   });
 });
 

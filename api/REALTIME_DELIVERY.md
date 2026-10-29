@@ -37,8 +37,8 @@ floors/tombstones for deletes. Older HTTP responses / events must not overwrite
 newer entities or resurrect a deletion whose revision has already been seen.
 Duplicate transport events do not create duplicate messages.
 
-Message create/edit/delete and Live text notices persist an outbox row in
-the same Postgres transaction as the write. DM creation persists discovery for
+Message create/edit/delete persists an outbox row in the same Postgres
+transaction as the write. DM creation persists discovery for
 both participants in its transaction. Channel advisory transaction locks order
 writers and delivery; the database sequence allocates revisions while that
 lock is held. A per-process delivery worker publishes the outbox in batches of
