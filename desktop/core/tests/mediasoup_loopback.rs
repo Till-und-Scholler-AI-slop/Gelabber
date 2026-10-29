@@ -451,10 +451,11 @@ async fn round_trip(server: &Server) {
 }
 
 /// For a producer whose layers did not all reach the server. A layer may be
-/// missing only if the sender held it back: it sent no byte of it, and its
-/// qualityLimitationReason names the bandwidth estimate or the CPU. Every
-/// layer the sender did send must be at the server under its rid; losing one
-/// between the native client and the server is what the layer check is for.
+/// missing only if the sender held it back: it sent no byte of it, and a
+/// layer's qualityLimitationReason names the bandwidth estimate or the CPU.
+/// One layer at least must arrive. Every layer the sender did send must be at
+/// the server under its rid; losing one between the native client and the
+/// server is what the layer check is for.
 async fn check_held_back_layers(
     name: &str,
     producer: &Producer,
@@ -491,10 +492,18 @@ async fn check_held_back_layers(
         tokio::time::sleep(Duration::from_millis(200)).await;
         at_server = live_rids(producer).await;
     }
-    let reason = layers
+    // libwebrtc names the limitation per stream: the lowest layer may say
+    // `none` while an upper one is held back for the estimate.
+    let reasons: Vec<(Option<&str>, &str)> = layers
         .iter()
-        .find_map(|layer| layer["qualityLimitationReason"].as_str())
-        .unwrap_or("unknown");
+        .map(|layer| {
+            let reason = layer["qualityLimitationReason"].as_str();
+            (layer["rid"].as_str(), reason.unwrap_or("unknown"))
+        })
+        .collect();
+    let limited = reasons
+        .iter()
+        .any(|(_, reason)| matches!(*reason, "bandwidth" | "cpu"));
     let missing: Vec<_> = rids.iter().filter(|rid| !at_server.contains(rid)).collect();
     for rid in &missing {
         let sent = bytes_sent(rid);
@@ -502,15 +511,20 @@ async fn check_held_back_layers(
             sent, 0,
             "{name} layer {rid:?}: the sender sent {sent} bytes of it, the server got none"
         );
-        assert!(
-            matches!(reason, "bandwidth" | "cpu"),
-            "{name} sends all its layers: {rid:?} sent nothing, and the sender is not \
-             limited (qualityLimitationReason {reason})"
-        );
     }
+    assert!(
+        missing.len() < rids.len(),
+        "{name} sends at least one of its layers: it held back all of {rids:?} \
+         (qualityLimitationReason by rid: {reasons:?})"
+    );
+    assert!(
+        missing.is_empty() || limited,
+        "{name} sends all its layers: {missing:?} sent nothing, and no layer is limited \
+         (qualityLimitationReason by rid: {reasons:?})"
+    );
     eprintln!(
-        "{name}: the sender holds back {missing:?} ({reason}); every layer it sent reached \
-         the server"
+        "{name}: the sender holds back {missing:?} (qualityLimitationReason by rid: \
+         {reasons:?}); every layer it sent reached the server"
     );
 }
 
