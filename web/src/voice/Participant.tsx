@@ -59,6 +59,8 @@ export function Participant({
   channelName,
   onProfile,
   tile = false,
+  spotlight = false,
+  onSelect,
   className,
   style,
 }: {
@@ -77,6 +79,10 @@ export function Participant({
   channelName: string;
   onProfile: (memberId: string) => void;
   tile?: boolean;
+  /** The camera fills the stage in Fokus. */
+  spotlight?: boolean;
+  /** A press on the camera brings it to the front. */
+  onSelect?: () => void;
   className?: string;
   style?: CSSProperties;
 }) {
@@ -148,8 +154,10 @@ export function Participant({
           mirror={camera.mirror ?? false}
           speaking={camera.speaking ?? false}
           caption={false}
+          spotlight={spotlight}
           pinned={pinned === camera.id}
           onTogglePin={() => onTogglePin(camera.id)}
+          onSelect={onSelect}
         />
       ) : (
         <button

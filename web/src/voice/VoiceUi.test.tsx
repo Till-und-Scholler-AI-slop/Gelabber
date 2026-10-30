@@ -244,11 +244,21 @@ describe("active media UI", () => {
     expect(html).toContain('data-source="source-from-a"');
     expect(html).toContain('data-source="bob-screen"');
     expect(html.match(/— Live</g)).toHaveLength(2);
-    // Each Live is a tile of the stage, whoever went live first first.
-    expect(html.match(/<li class="voice-stage-item"/g)).toHaveLength(2);
-    expect(html.indexOf('data-source="bob-screen"')).toBeLessThan(
-      html.indexOf('data-source="source-from-a"'),
+    // Someone is live: Fokus, whoever went live first in front, the other
+    // Live and the people in the row under it.
+    expect(html).toContain('data-view="fokus"');
+    expect(html).toMatch(
+      /<li class="voice-stage-item is-focus">(?:(?!<\/li>).)*data-source="bob-screen"/,
     );
+    expect(html).toMatch(
+      /<li class="voice-stage-item is-strip">(?:(?!<\/li>).)*data-source="source-from-a"/,
+    );
+    expect(
+      html.match(
+        /<li class="voice-room-participant voice-stage-item is-strip"/g,
+      ),
+    ).toHaveLength(3);
+    expect(html).not.toContain('aria-label="Ohne Kamera"');
     expect(html).toContain("3 im Kanal · Jemand und Jemand sind live");
     expect(html.match(/· Live</g)).toHaveLength(2);
     // The overview keeps the spotlight for whoever went live first.
@@ -367,19 +377,19 @@ describe("active media UI", () => {
       );
     const html = render("a");
     expect(html.match(/data-source="source-from-a"/g)).toHaveLength(2);
-    // Live and camera are tiles of the stage, above the people without a
-    // camera: here only the own seat. Alice's tile is her entry.
-    expect(html.indexOf('aria-label="Bühne"')).toBeLessThan(
-      html.indexOf('aria-label="Ohne Kamera"'),
-    );
+    // Live and camera are tiles of the stage: Alice is live, so her Live
+    // is in front and her camera, her entry, in the row with the own seat.
     expect(html).not.toContain("voice-room-spotlight");
     expect(html.match(/<li class="voice-room-participant/g)).toHaveLength(2);
     expect(html).toMatch(
-      /<li class="voice-room-participant has-video voice-stage-item"(?:(?!<\/li>).)*data-source="source-from-a"/,
+      /<li class="voice-room-participant has-video voice-stage-item is-strip"(?:(?!<\/li>).)*data-source="source-from-a"/,
     );
     expect(html).toContain("Im Raum · Live");
     expect(html).not.toContain("Bildschirm");
-    expect(html).not.toContain("Raster");
+    // The views to switch between, Fokus picked by the Live.
+    expect(html).toMatch(
+      /role="radiogroup" aria-label="Ansicht"(?:(?!<\/div>).)*aria-checked="false"[^>]*>(?:<svg.*?<\/svg>)?Raster(?:(?!<\/div>).)*aria-checked="true"[^>]*>(?:<svg.*?<\/svg>)?Fokus/,
+    );
     // The overview: the share in its spotlight, the camera in its owner's
     // card.
     const overview = renderToStaticMarkup(

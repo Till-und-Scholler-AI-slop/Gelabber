@@ -300,6 +300,30 @@ export function PaletteIcon(props: IconProps) {
   );
 }
 
+/** The stage as a grid of equal tiles. */
+export function GridIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="3" y="3" width="8" height="8" rx="1.5" />
+      <rect x="13" y="3" width="8" height="8" rx="1.5" />
+      <rect x="3" y="13" width="8" height="8" rx="1.5" />
+      <rect x="13" y="13" width="8" height="8" rx="1.5" />
+    </svg>
+  );
+}
+
+/** The stage with one large picture over a row of small ones. */
+export function FocusIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="3" y="3" width="18" height="12" rx="1.5" />
+      <rect x="3" y="17" width="5" height="4" rx="1" />
+      <rect x="9.5" y="17" width="5" height="4" rx="1" />
+      <rect x="16" y="17" width="5" height="4" rx="1" />
+    </svg>
+  );
+}
+
 /** Layout and motion: how the app looks. */
 export function LayoutIcon(props: IconProps) {
   return (
