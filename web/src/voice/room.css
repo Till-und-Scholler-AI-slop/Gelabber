@@ -226,6 +226,151 @@
   outline: 2px solid var(--lr-focus);
   outline-offset: 2px;
 }
+.voice-stage-kino {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius);
+  color: var(--lr-text);
+  font: var(--lr-type-ui);
+  cursor: pointer;
+  transition: background-color var(--lr-dur-fast) var(--lr-ease-standard);
+}
+.voice-stage-kino:hover {
+  background: var(--lr-hover);
+}
+.voice-stage-kino:focus-visible,
+.voice-kino-exit:focus-visible {
+  outline: 2px solid var(--lr-focus);
+  outline-offset: 2px;
+}
+/* Kino: the rail, the sidebar, the header and the member list make way,
+   the call bar spans the window, and the stage takes the rest. The
+   picture in front fills it; the others lie small over its bottom right
+   corner and fade with the pointer's rest. */
+html[data-kino] .workspace-navigation,
+html[data-kino] .lr-channel-header,
+html[data-kino] .member-panel-drawer,
+html[data-kino] .member-drawer-trigger {
+  display: none;
+}
+html[data-kino] .app-shell-workspace .voice-session-dock {
+  left: 0;
+}
+.voice-room[data-kino] {
+  position: relative;
+  min-height: 0;
+  padding: 0;
+  background: #0b0d0e;
+}
+.voice-room[data-kino]:not([data-awake]) {
+  cursor: none;
+}
+.voice-room[data-kino] .voice-stage > .is-focus,
+.voice-room[data-kino] .voice-stage > .is-focus > .voice-video-tile {
+  border-radius: 0;
+}
+/* The corner names the picture in front instead. */
+.voice-room[data-kino] .is-focus .voice-video-caption,
+.voice-room[data-kino] .is-focus .voice-video-live,
+.voice-room[data-kino] .is-focus > .voice-room-participant-text,
+.voice-room[data-kino] .is-focus > .voice-room-participant-more {
+  display: none;
+}
+.voice-room[data-kino] .is-focus .voice-video-actions {
+  top: 12px;
+  right: 16px;
+}
+.voice-room[data-kino] .is-focus .voice-video-tile .voice-video-action {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  border-radius: var(--lr-radius);
+  background: rgb(10 12 13 / 0.72);
+}
+.voice-room[data-kino][data-awake] .is-focus .voice-video-actions {
+  opacity: 1;
+}
+.voice-room[data-kino] .voice-stage > .is-strip {
+  z-index: 1;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.45);
+  transition: opacity var(--lr-dur) var(--lr-ease);
+}
+.voice-room[data-kino]
+  .voice-stage
+  > .voice-room-participant.is-strip:not(.has-video) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--lr-panel) 92%, transparent);
+}
+.voice-room[data-kino]:not([data-awake])
+  .voice-stage
+  > .is-strip:not(:hover, :focus-within),
+.voice-room[data-kino]:not([data-awake])
+  .is-focus
+  .voice-video-actions:not(:focus-within) {
+  opacity: 0;
+  pointer-events: none;
+}
+.voice-kino-bar {
+  position: absolute;
+  z-index: 3;
+  top: 24px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 160px);
+}
+.voice-kino-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: var(--lr-radius);
+  background: rgb(10 12 13 / 0.72);
+  color: #fff;
+  font: var(--lr-type-ui);
+  white-space: nowrap;
+}
+.voice-kino-exit {
+  cursor: pointer;
+}
+.voice-kino-exit:hover {
+  background: rgb(10 12 13 / 0.88);
+}
+.voice-kino-exit > kbd {
+  padding: 1px 5px;
+  border: 1px solid rgb(255 255 255 / 0.25);
+  border-radius: var(--lr-radius-xs);
+  color: #c9cdd0;
+  font: var(--lr-type-meta);
+  font-size: 11px;
+}
+.voice-kino-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+.voice-kino-live {
+  padding: 1px 5px;
+  border-radius: var(--lr-radius-xs);
+  background: var(--lr-danger-bg);
+  color: var(--lr-on-danger);
+  font: var(--lr-type-caps);
+  font-size: 10px;
+}
+.voice-kino-place {
+  color: #c9cdd0;
+  font-weight: 400;
+}
 /* Fokus's row: small tiles, a press on one brings it to the front. */
 .voice-stage > .is-strip,
 .voice-stage > .is-strip > .voice-video-tile {

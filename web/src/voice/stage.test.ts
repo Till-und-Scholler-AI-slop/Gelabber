@@ -7,6 +7,8 @@ import {
   focusOf,
   focusRects,
   fullscreenRoute,
+  kinoKey,
+  kinoRects,
   LONG_PRESS_MS,
   rasterOrder,
   rasterRects,
@@ -164,6 +166,58 @@ describe("fokus", () => {
     expect(row[0]).toEqual({ x: 1, y: 516, width: 109, height: 96 });
     expect(row[7]!.x + row[7]!.width).toBeLessThanOrEqual(944);
     expect(focusRects(2, 0, 0)).toBeNull();
+  });
+});
+
+describe("kino", () => {
+  it("fills a 1280x744 stage with 1280x720 and puts the others bottom right", () => {
+    expect(kinoRects(["picture", "picture", "person"], 1280, 744)).toEqual({
+      focus: { x: 0, y: 12, width: 1280, height: 720 },
+      strip: [
+        { x: 838, y: 630, width: 160, height: 90 },
+        { x: 1006, y: 630, width: 160, height: 90 },
+        { x: 1174, y: 630, width: 90, height: 90 },
+      ],
+    });
+  });
+
+  it("shrinks a row that would not fit, and has none without others", () => {
+    const strip = kinoRects(Array(10).fill("picture"), 1280, 744)!.strip;
+    expect(strip[0]!.x).toBe(16);
+    expect(strip[9]!.x + strip[9]!.width).toBeLessThanOrEqual(1264);
+    expect(kinoRects([], 1280, 744)?.strip).toEqual([]);
+    expect(kinoRects([], 0, 744)).toBeNull();
+  });
+
+  const key = (key: string, extra: Partial<KeyboardEvent> = {}) => ({
+    key,
+    code: key.length === 1 ? `Key${key.toUpperCase()}` : key,
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false,
+    repeat: false,
+    defaultPrevented: false,
+    ...extra,
+  });
+
+  it("toggles on K and leaves on Esc", () => {
+    expect(kinoKey(key("k"), false, null)).toBe("toggle");
+    expect(kinoKey(key("K", { code: "KeyK" }), true, null)).toBe("toggle");
+    expect(kinoKey(key("Escape"), true, null)).toBe("leave");
+    expect(kinoKey(key("Escape"), false, null)).toBeNull();
+  });
+
+  it("leaves the shell's chords, a held key, push-to-talk and handled keys alone", () => {
+    expect(kinoKey(key("k", { ctrlKey: true }), false, null)).toBeNull();
+    expect(kinoKey(key("k", { metaKey: true }), false, null)).toBeNull();
+    expect(kinoKey(key("K", { shiftKey: true }), false, null)).toBeNull();
+    expect(kinoKey(key("k", { repeat: true }), false, null)).toBeNull();
+    expect(kinoKey(key("k"), false, "KeyK")).toBeNull();
+    expect(
+      kinoKey(key("Escape", { defaultPrevented: true }), true, null),
+    ).toBeNull();
+    expect(kinoKey(key("j"), false, null)).toBeNull();
   });
 });
 

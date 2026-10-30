@@ -184,6 +184,87 @@ export function focusRects(
   };
 }
 
+/** Kino's small pictures: a camera or Live 160x90, a person 90x90, in a
+ * row in the bottom right corner over the picture. */
+export const KINO_THUMB = {
+  picture: 160,
+  person: 90,
+  height: 90,
+  gap: 8,
+  right: 16,
+  bottom: 24,
+} as const;
+
+/** Kino: the largest 16:9 picture the stage holds, and the others as
+ * small pictures over its bottom right corner, smaller when they would
+ * not fit in a row. Null while the stage has no size. */
+export function kinoRects(
+  thumbs: readonly ("picture" | "person")[],
+  width: number,
+  height: number,
+): { focus: Rect; strip: Rect[] } | null {
+  const fit = fitGrid(1, width, height, 0, { min: 16 / 9, max: 16 / 9 });
+  if (!fit) return null;
+  const widths = thumbs.map((kind) => KINO_THUMB[kind]);
+  const row =
+    widths.reduce((sum, size) => sum + size, 0) +
+    KINO_THUMB.gap * (widths.length - 1);
+  const scale = row > 0 ? Math.min(1, (width - 2 * KINO_THUMB.right) / row) : 1;
+  let x = width - KINO_THUMB.right - row * scale;
+  const thumbHeight = Math.floor(KINO_THUMB.height * scale);
+  return {
+    focus: {
+      x: Math.round((width - fit.width) / 2),
+      y: Math.round((height - fit.height) / 2),
+      width: fit.width,
+      height: fit.height,
+    },
+    strip: widths.map((size) => {
+      const rect = {
+        x: Math.round(x),
+        y: height - KINO_THUMB.bottom - thumbHeight,
+        width: Math.floor(size * scale),
+        height: thumbHeight,
+      };
+      x += (size + KINO_THUMB.gap) * scale;
+      return rect;
+    }),
+  };
+}
+
+/** What a key does to Kino: K turns it on and off, Esc leaves it. Keys
+ * with Strg, Alt or ⌘ stay the shell's (Strg+K is the quick switcher),
+ * and so does a key push-to-talk holds. Text fields and open dialogs are
+ * the caller's to check. */
+export function kinoKey(
+  event: Pick<
+    KeyboardEvent,
+    | "key"
+    | "code"
+    | "ctrlKey"
+    | "metaKey"
+    | "altKey"
+    | "shiftKey"
+    | "repeat"
+    | "defaultPrevented"
+  > & { isComposing?: boolean },
+  kino: boolean,
+  pttKey: string | null,
+): "toggle" | "leave" | null {
+  if (
+    event.defaultPrevented ||
+    event.isComposing ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.altKey ||
+    event.shiftKey
+  )
+    return null;
+  if (event.key === "Escape") return kino ? "leave" : null;
+  if (event.repeat || event.code === pttKey) return null;
+  return event.key.toLowerCase() === "k" ? "toggle" : null;
+}
+
 /** How a tile gets the whole screen: the element itself where the page may
  * go fullscreen, the video's own player on an iPhone, the large view
  * otherwise. */

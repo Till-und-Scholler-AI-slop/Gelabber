@@ -386,6 +386,10 @@ describe("active media UI", () => {
     );
     expect(html).toContain("Im Raum · Live");
     expect(html).not.toContain("Bildschirm");
+    // Kino, by its button or K.
+    expect(html).toMatch(
+      /<button type="button" class="voice-stage-kino" aria-keyshortcuts="K"[^>]*>(?:<svg.*?<\/svg>)?Kino<\/button>/,
+    );
     // The views to switch between, Fokus picked by the Live.
     expect(html).toMatch(
       /role="radiogroup" aria-label="Ansicht"(?:(?!<\/div>).)*aria-checked="false"[^>]*>(?:<svg.*?<\/svg>)?Raster(?:(?!<\/div>).)*aria-checked="true"[^>]*>(?:<svg.*?<\/svg>)?Fokus/,
