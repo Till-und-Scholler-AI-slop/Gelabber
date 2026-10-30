@@ -36,3 +36,25 @@ export function roomSummary(
   if (live.length === 0) return there;
   return `${there} ${nameList(live)} ${live.length === 1 ? "ist" : "sind"} live.`;
 }
+
+/** The stage's line while pictures run: how many are in the channel and
+ * who is live, or how many cameras are on. "3 im Kanal · 2 Kameras",
+ * "3 im Kanal · Jonas ist live". `live` names the others; `selfLive` adds
+ * the viewer as "Du". */
+export function stageFacts({
+  people,
+  cameras,
+  live,
+  selfLive,
+}: {
+  people: number;
+  cameras: number;
+  live: readonly string[];
+  selfLive: boolean;
+}): string {
+  const count = `${people} im Kanal`;
+  if (live.length > 0 || selfLive)
+    return `${count} · ${liveSentence(selfLive ? ["Du", ...live] : live, selfLive)}`;
+  if (cameras === 0) return count;
+  return `${count} · ${cameras} ${cameras === 1 ? "Kamera" : "Kameras"}`;
+}

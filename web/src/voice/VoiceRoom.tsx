@@ -2,24 +2,28 @@
 // Camera and screen tiles render local streams immediately; SFU publish
 // is background work and never rides the chat socket.
 //
-// Lives take the stage above the people: one in the spotlight, the others
-// in a filmstrip. A camera stays in its owner's place, so each person
-// appears once, unless it is pinned to the spotlight. A Live is watched in
-// the room: outside it, the room only says who is live.
+// On the channel's page, every picture in the call gets a tile of its own
+// on the stage, and the tiles together fill it; the people without a
+// camera line up under it. The overview keeps its Lives in a spotlight and
+// a filmstrip, and a camera in its owner's place. A Live is watched in the
+// room: outside it, the room only says who is live.
 
-import { useEffect, useRef, useState, type RefObject } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 
 import { can } from "../servers/permissions.ts";
-import type { Member, ServerDetail } from "../servers/types.ts";
-import { VoiceStateIcons } from "../components/VoiceStateIcons.tsx";
+import type { ServerDetail } from "../servers/types.ts";
 import { MemberProfileDialog } from "../components/MemberProfileDialog.tsx";
-import { Avatar } from "../components/Avatar.tsx";
-import { MicIcon, MoreIcon, SpeakerIcon } from "../components/Icons.tsx";
+import { MicIcon, SpeakerIcon } from "../components/Icons.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { IconButton } from "../components/ui/IconButton.tsx";
-import { Popover } from "../components/ui/Popover.tsx";
-import { POPOVER_SHEET_QUERY } from "../components/ui/popoverPosition.ts";
-import { useMediaQuery } from "../components/useMediaQuery.ts";
+import { setMemberPanelVideo } from "../components/memberPanelState.ts";
 import { useSession } from "../auth/session.ts";
 import { joinVoice, useVoice, toggleSourceWatch } from "./session.ts";
 import { isDesktopApp } from "./native/bridge.ts";
@@ -30,15 +34,17 @@ import {
 } from "./roster.ts";
 import { useSpeakingUsers } from "./speaking.ts";
 import { VoiceTile } from "./VoiceTile.tsx";
-import {
-  LocallyMutedIcon,
-  UserVolumeControl,
-} from "../components/UserVolumeControl.tsx";
-import { userVolumeOf, useUserVolumes } from "./userVolume.ts";
+import { Participant } from "./Participant.tsx";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
 import { QuickCallSettingsButton } from "./QuickCallSettings.tsx";
-import { roomSummary } from "./roomSummary.ts";
-import { arrangeStage, createLongPress, type StageKind } from "./stage.ts";
+import { roomSummary, stageFacts } from "./roomSummary.ts";
+import {
+  arrangeStage,
+  rasterOrder,
+  rasterRects,
+  type Rect,
+  type StageKind,
+} from "./stage.ts";
 import "./room.css";
 
 type StageTile = {
@@ -211,6 +217,31 @@ export function VoiceRoom({
   const togglePin = (id: string) =>
     setPinned((current) => (current === id ? null : id));
   const stageTiles = spotlight ? [spotlight, ...filmstrip] : [];
+  // The channel's page: a stage of its own while any picture runs.
+  const pictures = overview ? [] : [...shares, ...cameras.values()];
+  const staged = pictures.length > 0;
+  useEffect(() => {
+    if (overview) return;
+    setMemberPanelVideo(staged);
+    return () => setMemberPanelVideo(false);
+  }, [overview, staged]);
+  const [stageRef, stageSize] = useBoxSize<HTMLUListElement>(staged);
+  const ordered = rasterOrder(shares, [...cameras.values()], pinned);
+  const rects = stageSize
+    ? rasterRects(ordered.length, stageSize.width, stageSize.height)
+    : [];
+  /** A picture's place on the stage, for the stylesheet. */
+  const placed = (tile: StageTile): CSSProperties | undefined => {
+    const rect: Rect | undefined = rects[ordered.indexOf(tile)];
+    return rect
+      ? ({
+          "--stage-x": `${rect.x}px`,
+          "--stage-y": `${rect.y}px`,
+          "--stage-w": `${rect.width}px`,
+          "--stage-h": `${rect.height}px`,
+        } as CSSProperties)
+      : undefined;
+  };
   const liveOn = occupants.some(([id]) => isLive(id));
   const others = occupants
     .filter(([id]) => id !== me)
@@ -226,12 +257,34 @@ export function VoiceRoom({
         ? FREE_SEATS_EMPTY
         : 1;
 
+  const person = (id: string, flags: { muted: boolean; deafened: boolean }) => {
+    const camera = cameras.get(id);
+    return {
+      id,
+      member: members.get(id),
+      self: id === me,
+      fallbackName: user?.name ?? "Du",
+      fallbackAvatar: id === me ? (user?.avatar_url ?? null) : null,
+      muted: id === me && here ? voice.muted : flags.muted,
+      deafened: id === me && here ? voice.deafened : flags.deafened,
+      speaking: speaks(id, flags),
+      media: isLive(id) ? "Live" : camera ? "Kamera an" : null,
+      pinned,
+      onTogglePin: togglePin,
+      channelName,
+      onProfile: openProfile,
+    };
+  };
+  const flagsOf = new Map(occupants);
+  const noFlags = { muted: false, deafened: false };
+
   return (
     <section
       className="voice-room"
       aria-label={channelName}
       data-joined={here || undefined}
       data-page={!overview || undefined}
+      data-stage={staged || undefined}
     >
       {overview ? (
         <div className="voice-room-heading">
@@ -242,12 +295,62 @@ export function VoiceRoom({
           ) : null}
           {liveOn ? <span className="voice-room-live-badge">Live</span> : null}
         </div>
+      ) : staged ? (
+        <div className="voice-stage-bar">
+          <p className="voice-stage-facts">
+            {stageFacts({
+              people: occupants.length,
+              cameras: cameras.size,
+              live: othersLive,
+              selfLive: here && voice.sharing,
+            })}
+          </p>
+        </div>
       ) : (
         <p className="voice-room-summary">
           {roomSummary(others, { here, live: othersLive })}
         </p>
       )}
-      {stageTiles.length > 0 ? (
+      {staged ? (
+        <ul
+          ref={stageRef}
+          className="voice-stage"
+          aria-label="Bühne"
+          data-measured={rects.length > 0 || undefined}
+        >
+          {/* One element per picture, in a fixed order: a place on the
+              stage is a position, so a pin never rebuilds a video. */}
+          {pictures.map((tile) =>
+            tile.kind === "live" ? (
+              <li
+                key={tile.id}
+                className="voice-stage-item"
+                style={placed(tile)}
+              >
+                <VoiceTile
+                  {...sourceProps(tile)}
+                  stream={tile.stream}
+                  label={tile.name}
+                  screen
+                  live
+                  pinned={pinned === tile.id}
+                  onTogglePin={() => togglePin(tile.id)}
+                />
+              </li>
+            ) : (
+              <Participant
+                key={tile.id}
+                {...person(tile.userId, flagsOf.get(tile.userId) ?? noFlags)}
+                camera={tile}
+                tile
+                className="voice-stage-item"
+                style={placed(tile)}
+              />
+            ),
+          )}
+        </ul>
+      ) : null}
+      {overview && stageTiles.length > 0 ? (
         <div
           className="voice-room-stage"
           role="region"
@@ -288,7 +391,20 @@ export function VoiceRoom({
             })}
         </div>
       ) : null}
-      {occupants.length > 0 || freeSeats > 0 ? (
+      {staged ? (
+        occupants.some(([id]) => !cameras.has(id)) ? (
+          <ul
+            className="voice-room-participants voice-stage-people"
+            aria-label="Ohne Kamera"
+          >
+            {occupants
+              .filter(([id]) => !cameras.has(id))
+              .map(([id, flags]) => (
+                <Participant key={id} {...person(id, flags)} camera={null} />
+              ))}
+          </ul>
+        ) : null
+      ) : occupants.length > 0 || freeSeats > 0 ? (
         <ul
           className="voice-room-participants"
           aria-label="Teilnehmer im Sprachkanal"
@@ -298,20 +414,8 @@ export function VoiceRoom({
             return (
               <Participant
                 key={id}
-                id={id}
-                member={members.get(id)}
-                self={id === me}
-                fallbackName={user?.name ?? "Du"}
-                fallbackAvatar={id === me ? (user?.avatar_url ?? null) : null}
-                muted={id === me && here ? voice.muted : flags.muted}
-                deafened={id === me && here ? voice.deafened : flags.deafened}
-                speaking={speaks(id, flags)}
-                media={isLive(id) ? "Live" : camera ? "Kamera an" : null}
+                {...person(id, flags)}
                 camera={camera && camera !== spotlight ? camera : null}
-                pinned={pinned}
-                onTogglePin={togglePin}
-                channelName={channelName}
-                onProfile={openProfile}
               />
             );
           })}
@@ -371,224 +475,30 @@ export function VoiceRoom({
   );
 }
 
-/** One person in the room, once: their camera in place of the avatar while
- * it is on. "…", a long press or a right click opens their volume. */
-function Participant({
-  id,
-  member,
-  self,
-  fallbackName,
-  fallbackAvatar,
-  muted,
-  deafened,
-  speaking,
-  media,
-  camera,
-  pinned,
-  onTogglePin,
-  channelName,
-  onProfile,
-}: {
-  id: string;
-  member: Member | undefined;
-  self: boolean;
-  fallbackName: string;
-  fallbackAvatar: string | null;
-  muted: boolean;
-  deafened: boolean;
-  speaking: boolean;
-  media: string | null;
-  camera: StageTile | null;
-  pinned: string | null;
-  onTogglePin: (id: string) => void;
-  channelName: string;
-  onProfile: (memberId: string) => void;
-}) {
-  const [menu, setMenu] = useState(false);
-  const menuAnchor = useRef<HTMLButtonElement>(null);
-  const hasMenu = Boolean(member) && !self;
-  const [press] = useState(() => createLongPress(() => setMenu(true)));
-  // Someone who leaves mid-press opens nothing.
-  useEffect(() => press.up, [press]);
-  const name = member?.name ?? (self ? fallbackName : "Mitglied");
-  const status = deafened
-    ? "Taub"
-    : muted
-      ? "Stumm"
-      : speaking
-        ? "Spricht"
-        : "Im Raum";
-  const profile = () => {
-    if (press.consumeClick()) return;
-    if (member) onProfile(id);
-  };
-  return (
-    <li
-      className={[
-        "voice-room-participant",
-        speaking ? "is-speaking" : "",
-        camera ? "has-video" : "",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      onPointerDown={hasMenu ? (event) => press.down(event) : undefined}
-      onPointerMove={hasMenu ? (event) => press.move(event) : undefined}
-      onPointerUp={hasMenu ? press.up : undefined}
-      onPointerCancel={hasMenu ? press.up : undefined}
-      onTouchEnd={
-        hasMenu
-          ? (event) => {
-              // The finger that opened the menu lifts over its backdrop: no
-              // click may follow and close it again.
-              if (press.consumeClick()) event.preventDefault();
-            }
-          : undefined
-      }
-      onContextMenu={(event) => {
-        // A right click, or Android's long press: the volume menu.
-        if (!hasMenu) return;
-        event.preventDefault();
-        setMenu(true);
-      }}
-    >
-      {camera ? (
-        <VoiceTile
-          stream={camera.stream}
-          label={camera.name}
-          mirror={camera.mirror ?? false}
-          speaking={camera.speaking ?? false}
-          caption={false}
-          pinned={pinned === camera.id}
-          onTogglePin={() => onTogglePin(camera.id)}
-        />
-      ) : (
-        <button
-          type="button"
-          className="voice-room-avatar"
-          aria-label={`Profil von ${name}`}
-          disabled={!member}
-          onClick={profile}
-        >
-          <Avatar
-            name={name}
-            url={member?.avatar_url ?? fallbackAvatar}
-            size="lg"
-            className={speaking ? "is-speaking" : ""}
-          />
-          <span className="voice-room-connection" aria-hidden="true" />
-        </button>
-      )}
-      <span className="voice-room-participant-text">
-        <strong>
-          <button
-            type="button"
-            className="voice-room-profile-name"
-            disabled={!member}
-            onClick={profile}
-          >
-            {name}
-            {self ? <span className="voice-room-self"> (du)</span> : null}
-          </button>
-        </strong>
-        {/* `data-media`: the overview shows this line only for a camera or
-            a Live; the state is the corner's icons and the speaking ring. */}
-        <span
-          className="voice-room-participant-status"
-          data-media={media ? "" : undefined}
-        >
-          {status}
-          {media ? ` · ${media}` : ""}
-        </span>
-      </span>
-      <span className="voice-room-participant-marks">
-        {self ? null : <VolumeChip userId={id} />}
-        {self ? null : <LocallyMutedIcon userId={id} />}
-        <VoiceStateIcons
-          inVoice
-          muted={muted}
-          deafened={deafened}
-          channelName={channelName}
-        />
-      </span>
-      {hasMenu ? (
-        <>
-          <IconButton
-            ref={menuAnchor}
-            size="xs"
-            label={`Optionen für ${name}`}
-            aria-haspopup="dialog"
-            aria-expanded={menu}
-            icon={<MoreIcon size={16} />}
-            onClick={() => setMenu((open) => !open)}
-            className="voice-room-participant-more"
-          />
-          <ParticipantMenu
-            open={menu}
-            onClose={() => setMenu(false)}
-            anchor={menuAnchor}
-            userId={id}
-            name={name}
-            onProfile={() => {
-              setMenu(false);
-              onProfile(id);
-            }}
-          />
-        </>
-      ) : null}
-    </li>
+/** The element's size in CSS pixels while `active`, followed as it
+ * changes; null before the first measure. */
+function useBoxSize<T extends HTMLElement>(
+  active: boolean,
+): [RefObject<T | null>, { width: number; height: number } | null] {
+  const ref = useRef<T>(null);
+  const [size, setSize] = useState<{ width: number; height: number } | null>(
+    null,
   );
-}
-
-function ParticipantMenu({
-  open,
-  onClose,
-  anchor,
-  userId,
-  name,
-  onProfile,
-}: {
-  open: boolean;
-  onClose: () => void;
-  anchor: RefObject<HTMLButtonElement | null>;
-  userId: string;
-  name: string;
-  onProfile: () => void;
-}) {
-  // A bottom sheet shows the name as its title already.
-  const sheet = useMediaQuery(POPOVER_SHEET_QUERY);
-  return (
-    <Popover
-      open={open}
-      onClose={onClose}
-      anchor={anchor}
-      label={name}
-      placement="bottom-end"
-      className="voice-participant-menu"
-    >
-      {sheet ? null : (
-        <strong className="voice-participant-name">{name}</strong>
-      )}
-      <UserVolumeControl userId={userId} name={name} />
-      <Button
-        size="sm"
-        variant="ghost"
-        className="voice-participant-profile"
-        onClick={onProfile}
-      >
-        Profil ansehen
-      </Button>
-    </Popover>
-  );
-}
-
-/** A volume other than 100 % stays in sight on the card. */
-function VolumeChip({ userId }: { userId: string }) {
-  const level = useUserVolumes((s) => userVolumeOf(userId, s.users));
-  if (level.muted || level.volume === 1) return null;
-  return (
-    <span className="voice-room-volume-chip" title="Lokale Lautstärke">
-      <span className="sr-only">Lautstärke </span>
-      {Math.round(level.volume * 100)} %
-    </span>
-  );
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!active || !element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() =>
+      setSize((current) => {
+        // Client sizes are CSS pixels, whatever the Textgröße zooms.
+        const width = element.clientWidth;
+        const height = element.clientHeight;
+        return current?.width === width && current.height === height
+          ? current
+          : { width, height };
+      }),
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [active]);
+  return [ref, active ? size : null];
 }

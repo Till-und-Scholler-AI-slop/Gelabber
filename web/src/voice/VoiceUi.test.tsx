@@ -244,11 +244,25 @@ describe("active media UI", () => {
     expect(html).toContain('data-source="source-from-a"');
     expect(html).toContain('data-source="bob-screen"');
     expect(html.match(/— Live</g)).toHaveLength(2);
-    // Whoever went live first holds the spotlight.
-    expect(html).toMatch(
+    // Each Live is a tile of the stage, whoever went live first first.
+    expect(html.match(/<li class="voice-stage-item"/g)).toHaveLength(2);
+    expect(html.indexOf('data-source="bob-screen"')).toBeLessThan(
+      html.indexOf('data-source="source-from-a"'),
+    );
+    expect(html).toContain("3 im Kanal · Jemand und Jemand sind live");
+    expect(html.match(/· Live</g)).toHaveLength(2);
+    // The overview keeps the spotlight for whoever went live first.
+    const overview = renderToStaticMarkup(
+      <VoiceRoom
+        server={server}
+        channelId="stage"
+        channelName="Stage"
+        overview
+      />,
+    );
+    expect(overview).toMatch(
       /<div class="voice-room-spotlight"><span data-source="bob-screen"/,
     );
-    expect(html.match(/· Live</g)).toHaveLength(2);
   });
 
   it("shows real avatars and disconnected self, without fictional activity or capture", () => {
@@ -353,19 +367,36 @@ describe("active media UI", () => {
       );
     const html = render("a");
     expect(html.match(/data-source="source-from-a"/g)).toHaveLength(2);
-    // The share on the stage, above the people; the camera in its owner's
-    // place, so Alice is one list entry. No chips to switch layouts.
-    expect(html.indexOf('aria-label="Übertragungen"')).toBeLessThan(
-      html.indexOf('aria-label="Teilnehmer im Sprachkanal"'),
+    // Live and camera are tiles of the stage, above the people without a
+    // camera: here only the own seat. Alice's tile is her entry.
+    expect(html.indexOf('aria-label="Bühne"')).toBeLessThan(
+      html.indexOf('aria-label="Ohne Kamera"'),
     );
-    expect(html).toContain('<div class="voice-room-spotlight">');
+    expect(html).not.toContain("voice-room-spotlight");
     expect(html.match(/<li class="voice-room-participant/g)).toHaveLength(2);
     expect(html).toMatch(
-      /<li class="voice-room-participant has-video"(?:(?!<\/li>).)*data-source="source-from-a"/,
+      /<li class="voice-room-participant has-video voice-stage-item"(?:(?!<\/li>).)*data-source="source-from-a"/,
     );
     expect(html).toContain("Im Raum · Live");
     expect(html).not.toContain("Bildschirm");
     expect(html).not.toContain("Raster");
+    // The overview: the share in its spotlight, the camera in its owner's
+    // card.
+    const overview = renderToStaticMarkup(
+      <VoiceRoom
+        server={server}
+        channelId="stage"
+        channelName="Room"
+        overview
+      />,
+    );
+    expect(overview.indexOf('aria-label="Übertragungen"')).toBeLessThan(
+      overview.indexOf('aria-label="Teilnehmer im Sprachkanal"'),
+    );
+    expect(overview).toContain('<div class="voice-room-spotlight">');
+    expect(overview).toMatch(
+      /<li class="voice-room-participant has-video"(?:(?!<\/li>).)*data-source="source-from-a"/,
+    );
     expect(render("b")).not.toContain('data-source="source-from-a"');
     expect(render("a", "other")).not.toContain('data-source="source-from-a"');
   });
@@ -656,18 +687,25 @@ describe("active media UI", () => {
       />,
     );
     const tiles = html.match(/<li class="voice-room-participant[^"]*"/g);
-    // alice, bob (muted), carol, and the own seat (muted here).
+    // alice's camera on the stage; bob (muted), carol, and the own seat
+    // (muted here) under it.
     expect(tiles).toEqual([
-      '<li class="voice-room-participant is-speaking has-video"',
+      '<li class="voice-room-participant is-speaking has-video voice-stage-item"',
       '<li class="voice-room-participant"',
       '<li class="voice-room-participant"',
       '<li class="voice-room-participant"',
     ]);
     expect(html).toContain("Spricht");
-    // Alice's camera is in her entry and carries the one ring.
+    // Alice's camera is her entry and carries the one ring; her volume is
+    // a press away on it, her marks in the label with her name.
     expect(html).not.toContain("gel-avatar-lg is-speaking");
+    expect(html).toContain('aria-label="Optionen für Alice"');
     expect(html).toMatch(
-      /<li class="voice-room-participant is-speaking has-video"(?:(?!<\/li>).)*data-source="source-from-a" data-speaking="true"/,
+      /has-video voice-stage-item"(?:(?!<\/li>).)*<span class="voice-room-participant-text"><span class="voice-room-participant-marks">/,
+    );
+    expect(html).toContain('aria-label="Ohne Kamera"');
+    expect(html).toMatch(
+      /<li class="voice-room-participant is-speaking has-video voice-stage-item"(?:(?!<\/li>).)*data-source="source-from-a" data-speaking="true"/,
     );
 
     // Another room of the same server shows no levels of this call.
