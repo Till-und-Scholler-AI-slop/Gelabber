@@ -463,13 +463,6 @@ try {
     assert.deepEqual(await named(page, "media_view_configure"), [
       { view: 1, maxWidth: 960, maxHeight: 540 },
     ]);
-    assert.equal(
-      await page.evaluate(
-        (id) => window.smoke.renderedVideoHeight(id),
-        ids.Alex,
-      ),
-      540,
-    );
     console.log("PASS: BT.601 colour bars from a remote stream");
 
     await bars(
@@ -637,12 +630,6 @@ try {
         reopened,
       ),
       { view: reopened, maxWidth: 1920, maxHeight: 1080 },
-    );
-    assert.ok(
-      (await page.evaluate(
-        (id) => window.smoke.renderedVideoHeight(id),
-        ids.Alex,
-      )) > 540,
     );
     assert.equal((await named(page, "media_view_open")).length, opens);
     await bars(
@@ -910,13 +897,6 @@ try {
       { ...source, colours: [...BARS].reverse() },
       "the next JSON frames",
       [320, 180],
-    );
-    assert.equal(
-      await page.evaluate(
-        (id) => window.smoke.renderedVideoHeight(id),
-        ids.Alex,
-      ),
-      180,
     );
     // Views that open later are small from their first frame on.
     Object.assign(

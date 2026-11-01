@@ -8,7 +8,6 @@ import { createRoot } from "react-dom/client";
 import "../src/index.css";
 import { NativeStream, NativeTrack } from "../src/voice/native/tracks.ts";
 import { nativeVideoLimit } from "../src/voice/native/videoFeed.ts";
-import { renderedVideoHeight } from "../src/voice/viewerLayers.ts";
 import { VoiceTile } from "../src/voice/VoiceTile.tsx";
 
 const root = createRoot(document.querySelector("#root"));
@@ -63,6 +62,5 @@ window.smoke = {
     );
     return ids;
   },
-  renderedVideoHeight,
   nativeVideoLimit,
 };

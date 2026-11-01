@@ -1,7 +1,7 @@
 // Local or remote video tile. srcObject is set in an effect so the
 // preview can appear in the same frame as the stream, without SDP.
 //
-// Two actions per tile: "Hervorheben" pins it to the room's spotlight,
+// Two actions per tile: "Anheften" pins it to the front of the stage,
 // "Vollbild" gives it the screen (the element where the page may go
 // fullscreen, the video's own player on an iPhone, the large view
 // otherwise). Fullscreen and the large view hide the call bar, so they
@@ -62,11 +62,11 @@ import {
   useMediaSettings,
 } from "./settings.ts";
 import {
-  CONTROLS_IDLE_MS,
   FRAME_LOADING_MS,
   FRAME_STALLED_MS,
   fullscreenRoute,
 } from "./stage.ts";
+import { useWake } from "./useWake.ts";
 import "./viewer.css";
 
 type VoiceTileProps = {
@@ -79,7 +79,7 @@ type VoiceTileProps = {
   speaking?: boolean;
   /** Large, in the room's spotlight. */
   spotlight?: boolean;
-  /** "Hervorheben": whether the picture is pinned to the spotlight. */
+  /** "Anheften": whether the picture is pinned to the front. */
   pinned?: boolean;
   onTogglePin?: () => void;
   /** A press on the picture: the filmstrip swaps it into the spotlight. */
@@ -136,23 +136,6 @@ export function StreamViewer(props: VoiceTileProps & { onClose: () => void }) {
       />
     </dialog>
   );
-}
-
-/** True for a while after `wake`, then false until the next one. */
-function useWake(initial: boolean): [boolean, () => void] {
-  const [awake, setAwake] = useState(initial);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const wake = useCallback(() => {
-    setAwake(true);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setAwake(false), CONTROLS_IDLE_MS);
-  }, []);
-  useEffect(() => {
-    if (initial)
-      timer.current = setTimeout(() => setAwake(false), CONTROLS_IDLE_MS);
-    return () => clearTimeout(timer.current);
-  }, [initial]);
-  return [awake, wake];
 }
 
 /** How long `key` has waited for its first picture. */
@@ -639,10 +622,15 @@ function VideoSurface({
                 className="voice-video-action"
               />
             ) : null}
+            {spotlight &&
+            streamSound &&
+            !(sourceWatch && !sourceWatch.watching) ? (
+              <StreamSoundAction />
+            ) : null}
             {onTogglePin ? (
               <IconButton
                 size="sm"
-                label="Hervorheben"
+                label="Anheften"
                 pressed={pinned}
                 icon={<PinIcon size={16} />}
                 onClick={onTogglePin}
@@ -762,6 +750,22 @@ function WatchStrip({
         <span>Vollbild beenden</span>
       </button>
     </div>
+  );
+}
+
+/** The stream sound on and off, on the picture in front. */
+function StreamSoundAction() {
+  const muted = useMediaSettings((s) => s.sourceAudioMuted);
+  const patch = useMediaSettings((s) => s.patch);
+  return (
+    <IconButton
+      size="sm"
+      label="Stream-Ton stummschalten"
+      pressed={muted}
+      icon={muted ? <SpeakerOffIcon size={16} /> : <SpeakerIcon size={16} />}
+      onClick={() => patch({ sourceAudioMuted: !muted })}
+      className="voice-video-action"
+    />
   );
 }
 

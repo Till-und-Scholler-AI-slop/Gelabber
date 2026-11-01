@@ -80,6 +80,10 @@ describe("shell shortcuts", () => {
   it("names the keys as the keyboard prints them", () => {
     expect(shortcutList(false)[0]?.keys).toEqual(["Strg", "K"]);
     expect(shortcutList(true)[0]?.keys).toEqual(["⌘", "K"]);
+    // A plain K is the voice channel's Kino.
+    expect(
+      shortcutList(false).find((entry) => entry.keys.join() === "K")?.label,
+    ).toBe("Kino im Sprachkanal ein oder aus");
   });
 
   it("lists Strg+F for the conversation search, not Strg+K (#377)", () => {

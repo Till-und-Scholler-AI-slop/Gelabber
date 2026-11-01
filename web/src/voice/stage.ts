@@ -1,5 +1,8 @@
-// How a room's pictures are laid out: one spotlight, a filmstrip of the
-// other Lives, and cameras in their owners' places among the participants.
+// How a room's pictures are laid out. The channel's page gives every
+// picture a tile of its own, sized to fill the stage (Raster, fitGrid), or
+// one picture the stage over a row of the others and the people (Fokus,
+// focusRects). The overview keeps one spotlight, a filmstrip of the other
+// Lives, and cameras in their owners' places among the participants.
 
 export type StageKind = "live" | "camera";
 
@@ -19,6 +22,247 @@ export function arrangeStage<T extends { id: string; kind: StageKind }>(
     spotlight,
     filmstrip: shares.filter((tile) => tile !== spotlight),
   };
+}
+
+/** The stage's pictures in their order: a pinned one first, then the
+ * Lives, then the cameras. */
+export function rasterOrder<T extends { id: string }>(
+  shares: readonly T[],
+  cameras: readonly T[],
+  pinned: string | null,
+): T[] {
+  const all = [...shares, ...cameras];
+  const first = all.find((tile) => tile.id === pinned);
+  return first ? [first, ...all.filter((tile) => tile !== first)] : all;
+}
+
+/** Tiles in rows and columns, each `width` × `height` pixels. */
+export type GridFit = {
+  columns: number;
+  rows: number;
+  width: number;
+  height: number;
+};
+
+/** A camera is cut to fit its tile, but never narrower than square nor
+ * wider than 16:9. */
+export const TILE_ASPECT = { min: 1, max: 16 / 9 } as const;
+
+/** How `count` tiles fill a `width` × `height` stage with `gap` between
+ * them: of every number of columns, the one whose tiles come out largest.
+ * A tile keeps its width to height between `aspect.min` and `aspect.max`,
+ * so a lone camera on a tall stage is not a sliver. Null while there is
+ * no room to measure. */
+export function fitGrid(
+  count: number,
+  width: number,
+  height: number,
+  gap: number,
+  aspect: { min: number; max: number } = TILE_ASPECT,
+): GridFit | null {
+  if (count < 1 || !(width > 0) || !(height > 0)) return null;
+  let best: GridFit | null = null;
+  let bestArea = 0;
+  for (let columns = 1; columns <= count; columns++) {
+    const rows = Math.ceil(count / columns);
+    const cellWidth = (width - gap * (columns - 1)) / columns;
+    const cellHeight = (height - gap * (rows - 1)) / rows;
+    if (cellWidth <= 0 || cellHeight <= 0) continue;
+    const tileWidth = Math.min(cellWidth, cellHeight * aspect.max);
+    const tileHeight = Math.min(cellHeight, tileWidth / aspect.min);
+    const area = tileWidth * tileHeight;
+    // Ties keep the fewer columns.
+    if (area > bestArea + 0.5) {
+      bestArea = area;
+      best = {
+        columns,
+        rows,
+        width: Math.floor(tileWidth),
+        height: Math.floor(tileHeight),
+      };
+    }
+  }
+  return best;
+}
+
+/** A tile's place on the stage, in CSS pixels from its top left corner. */
+export type Rect = { x: number; y: number; width: number; height: number };
+
+/** The space between tiles on the stage. */
+export const STAGE_GAP = 12;
+
+/** Every picture as a tile of fitGrid's size, the grid centred on the
+ * stage and a short last row centred under the others. In the order of
+ * the pictures; empty while the stage has no size. */
+export function rasterRects(
+  count: number,
+  width: number,
+  height: number,
+  gap = STAGE_GAP,
+): Rect[] {
+  const fit = fitGrid(count, width, height, gap);
+  if (!fit) return [];
+  const span = (n: number, size: number) => n * size + (n - 1) * gap;
+  const top = Math.round((height - span(fit.rows, fit.height)) / 2);
+  return Array.from({ length: count }, (_, index) => {
+    const row = Math.floor(index / fit.columns);
+    const column = index - row * fit.columns;
+    const inRow = Math.min(fit.columns, count - row * fit.columns);
+    const left = Math.round((width - span(inRow, fit.width)) / 2);
+    return {
+      x: left + column * (fit.width + gap),
+      y: top + row * (fit.height + gap),
+      width: fit.width,
+      height: fit.height,
+    };
+  });
+}
+
+/** The picture that fills the stage in Fokus: the pinned one, else the
+ * first Live of someone else, else the own Live, else someone else's
+ * camera, else the own. */
+export function focusOf<
+  T extends { id: string; kind: StageKind; userId: string },
+>(
+  shares: readonly T[],
+  cameras: readonly T[],
+  pinned: string | null,
+  me: string | undefined,
+): T | null {
+  return (
+    [...shares, ...cameras].find((tile) => tile.id === pinned) ??
+    shares.find((tile) => tile.userId !== me) ??
+    shares[0] ??
+    cameras.find((tile) => tile.userId !== me) ??
+    cameras[0] ??
+    null
+  );
+}
+
+/** Fokus's row under the picture: 96 pixels high, its tiles 16:9. */
+export const STRIP_HEIGHT = 96;
+export const STRIP_TILE = 171;
+export const STRIP_GAP = 10;
+
+/** Fokus: the largest 16:9 picture the stage holds above a row of
+ * `stripCount` small tiles, both centred. The row's tiles narrow when
+ * there are more than fit. Null while the stage has no size. */
+export function focusRects(
+  stripCount: number,
+  width: number,
+  height: number,
+  gap = STAGE_GAP,
+): { focus: Rect; strip: Rect[] } | null {
+  const strip = stripCount > 0 ? STRIP_HEIGHT + gap : 0;
+  const fit = fitGrid(1, width, height - strip, 0, {
+    min: 16 / 9,
+    max: 16 / 9,
+  });
+  if (!fit) return null;
+  const tile = Math.max(
+    0,
+    Math.min(
+      STRIP_TILE,
+      Math.floor((width - STRIP_GAP * (stripCount - 1)) / stripCount),
+    ),
+  );
+  const row = stripCount * tile + (stripCount - 1) * STRIP_GAP;
+  const left = Math.round((width - row) / 2);
+  return {
+    focus: {
+      x: Math.round((width - fit.width) / 2),
+      y: Math.round((height - strip - fit.height) / 2),
+      width: fit.width,
+      height: fit.height,
+    },
+    strip: Array.from({ length: stripCount }, (_, index) => ({
+      x: left + index * (tile + STRIP_GAP),
+      y: height - STRIP_HEIGHT,
+      width: tile,
+      height: STRIP_HEIGHT,
+    })),
+  };
+}
+
+/** Kino's small pictures: a camera or Live 160x90, a person 90x90, in a
+ * row in the bottom right corner over the picture. */
+export const KINO_THUMB = {
+  picture: 160,
+  person: 90,
+  height: 90,
+  gap: 8,
+  right: 16,
+  bottom: 24,
+} as const;
+
+/** Kino: the largest 16:9 picture the stage holds, and the others as
+ * small pictures over its bottom right corner, smaller when they would
+ * not fit in a row. Null while the stage has no size. */
+export function kinoRects(
+  thumbs: readonly ("picture" | "person")[],
+  width: number,
+  height: number,
+): { focus: Rect; strip: Rect[] } | null {
+  const fit = fitGrid(1, width, height, 0, { min: 16 / 9, max: 16 / 9 });
+  if (!fit) return null;
+  const widths = thumbs.map((kind) => KINO_THUMB[kind]);
+  const row =
+    widths.reduce((sum, size) => sum + size, 0) +
+    KINO_THUMB.gap * (widths.length - 1);
+  const scale = row > 0 ? Math.min(1, (width - 2 * KINO_THUMB.right) / row) : 1;
+  let x = width - KINO_THUMB.right - row * scale;
+  const thumbHeight = Math.floor(KINO_THUMB.height * scale);
+  return {
+    focus: {
+      x: Math.round((width - fit.width) / 2),
+      y: Math.round((height - fit.height) / 2),
+      width: fit.width,
+      height: fit.height,
+    },
+    strip: widths.map((size) => {
+      const rect = {
+        x: Math.round(x),
+        y: height - KINO_THUMB.bottom - thumbHeight,
+        width: Math.floor(size * scale),
+        height: thumbHeight,
+      };
+      x += (size + KINO_THUMB.gap) * scale;
+      return rect;
+    }),
+  };
+}
+
+/** What a key does to Kino: K turns it on and off, Esc leaves it. Keys
+ * with Strg, Alt or ⌘ stay the shell's (Strg+K is the quick switcher),
+ * and so does a key push-to-talk holds. Text fields and open dialogs are
+ * the caller's to check. */
+export function kinoKey(
+  event: Pick<
+    KeyboardEvent,
+    | "key"
+    | "code"
+    | "ctrlKey"
+    | "metaKey"
+    | "altKey"
+    | "shiftKey"
+    | "repeat"
+    | "defaultPrevented"
+  > & { isComposing?: boolean },
+  kino: boolean,
+  pttKey: string | null,
+): "toggle" | "leave" | null {
+  if (
+    event.defaultPrevented ||
+    event.isComposing ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.altKey ||
+    event.shiftKey
+  )
+    return null;
+  if (event.key === "Escape") return kino ? "leave" : null;
+  if (event.repeat || event.code === pttKey) return null;
+  return event.key.toLowerCase() === "k" ? "toggle" : null;
 }
 
 /** How a tile gets the whole screen: the element itself where the page may

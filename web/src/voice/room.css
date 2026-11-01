@@ -54,6 +54,480 @@
   flex: 0 0 auto;
   width: 192px;
 }
+/* The channel's stage while pictures run: a line of facts, the pictures
+   filling the space between the header and the call bar, and the people
+   without a camera under them. VoiceRoom measures the stage and places
+   each picture (--stage-x, -y, -w, -h); the pictures never change their
+   element, only their place. */
+.voice-room[data-stage] {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  min-height: 360px;
+  padding: 16px 24px;
+}
+.voice-stage-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+}
+.voice-stage-facts {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--lr-muted);
+  font: var(--lr-type-ui);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.voice-stage {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.voice-stage > .voice-stage-item {
+  position: absolute;
+  border: 0;
+  left: var(--stage-x);
+  top: var(--stage-y);
+  width: var(--stage-w);
+  height: var(--stage-h);
+  aspect-ratio: auto;
+}
+.voice-stage-item > .voice-video-tile {
+  height: 100%;
+  aspect-ratio: auto;
+}
+/* On a tile, the name and the marks are one label in its corner, and the
+   buttons sit on the picture where a hover or focus shows them. */
+.voice-stage > .voice-room-participant.has-video > .voice-room-participant-text,
+.voice-stage .voice-video-caption {
+  position: absolute;
+  inset: auto auto 10px 10px;
+  z-index: 2;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 20px);
+  height: 28px;
+  margin: 0;
+  padding: 0 10px;
+  border-radius: var(--lr-radius-sm);
+  background: rgb(10 12 13 / 0.62);
+  color: #fff;
+  font: var(--lr-type-ui);
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.voice-stage
+  > .voice-room-participant.has-video
+  > .voice-room-participant-text {
+  max-width: calc(100% - 58px);
+}
+.voice-stage .voice-room-participant-text strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.voice-stage .voice-room-self {
+  font-weight: 400;
+  opacity: 0.75;
+}
+.voice-stage .voice-room-participant-text > .voice-room-participant-marks {
+  position: static;
+  flex: none;
+  color: #fff;
+}
+.voice-stage
+  .voice-room-participant-text
+  > .voice-room-participant-marks:not(
+    :has(
+      .voice-room-volume-chip,
+      .user-volume-muted,
+      .voice-state-icons svg:not(.voice-state-icons-speaker)
+    )
+  ) {
+  display: none;
+}
+/* Only a closed microphone or headset is worth a mark on a picture. */
+.voice-stage .voice-room-participant-marks .voice-state-icons {
+  width: auto;
+}
+.voice-stage .voice-room-participant-marks .voice-state-icons > span:empty,
+.voice-stage .voice-room-participant-marks .voice-state-icons-speaker,
+.voice-stage
+  .voice-room-participant-marks
+  .voice-state-icons:not(:has(svg:not(.voice-state-icons-speaker))) {
+  display: none;
+}
+.voice-stage .voice-room-participant-marks .voice-state-icons svg {
+  color: #f39b98;
+}
+.voice-stage
+  > .voice-room-participant.has-video
+  > .voice-room-participant-more {
+  right: 10px;
+  bottom: 10px;
+  border-radius: var(--lr-radius-sm);
+  background: rgb(10 12 13 / 0.62);
+}
+.voice-stage .voice-video-actions {
+  top: 10px;
+  right: 10px;
+  gap: 6px;
+}
+.voice-stage .voice-video-tile .voice-video-action {
+  border-radius: var(--lr-radius-sm);
+  background: rgb(10 12 13 / 0.62);
+}
+.voice-stage .voice-video-tile .voice-video-action:hover:not(:disabled),
+.voice-stage .voice-video-tile .voice-video-action[aria-pressed="true"] {
+  background: rgb(10 12 13 / 0.82);
+}
+.voice-stage .voice-video-scrim {
+  display: none;
+}
+/* Raster or Fokus: two segments in one frame, the chosen one raised. */
+.voice-stage-views.ui-chip-group {
+  flex-wrap: nowrap;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius);
+  background: var(--lr-panel);
+}
+.voice-stage-views .ui-chip {
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--lr-radius-sm);
+  color: var(--lr-muted);
+}
+.voice-stage-views .ui-chip:hover:not(:disabled) {
+  color: var(--lr-text);
+}
+.voice-stage-views .ui-chip[aria-checked="true"] {
+  background: var(--lr-surface);
+  box-shadow: inset 0 0 0 1px var(--lr-border);
+  color: var(--lr-text);
+  font-weight: 500;
+}
+.voice-stage-views .ui-chip:focus-visible {
+  outline: 2px solid var(--lr-focus);
+  outline-offset: 2px;
+}
+.voice-stage-kino {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius);
+  color: var(--lr-text);
+  font: var(--lr-type-ui);
+  cursor: pointer;
+  transition: background-color var(--lr-dur-fast) var(--lr-ease-standard);
+}
+.voice-stage-kino:hover {
+  background: var(--lr-hover);
+}
+.voice-stage-kino:focus-visible,
+.voice-kino-exit:focus-visible {
+  outline: 2px solid var(--lr-focus);
+  outline-offset: 2px;
+}
+/* Kino: the rail, the sidebar, the header and the member list make way,
+   the call bar spans the window, and the stage takes the rest. The
+   picture in front fills it; the others lie small over its bottom right
+   corner and fade with the pointer's rest. */
+html[data-kino] .workspace-navigation,
+html[data-kino] .lr-channel-header,
+html[data-kino] .member-panel-drawer,
+html[data-kino] .member-drawer-trigger {
+  display: none;
+}
+html[data-kino] .app-shell-workspace .voice-session-dock {
+  left: 0;
+}
+.voice-room[data-kino] {
+  position: relative;
+  min-height: 0;
+  padding: 0;
+  background: #0b0d0e;
+}
+.voice-room[data-kino]:not([data-awake]) {
+  cursor: none;
+}
+.voice-room[data-kino] .voice-stage > .is-focus,
+.voice-room[data-kino] .voice-stage > .is-focus > .voice-video-tile {
+  border-radius: 0;
+}
+/* The corner names the picture in front instead. */
+.voice-room[data-kino] .is-focus .voice-video-caption,
+.voice-room[data-kino] .is-focus .voice-video-live,
+.voice-room[data-kino] .is-focus > .voice-room-participant-text,
+.voice-room[data-kino] .is-focus > .voice-room-participant-more {
+  display: none;
+}
+.voice-room[data-kino] .is-focus .voice-video-actions {
+  top: 12px;
+  right: 16px;
+}
+.voice-room[data-kino] .is-focus .voice-video-tile .voice-video-action {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  border-radius: var(--lr-radius);
+  background: rgb(10 12 13 / 0.72);
+}
+.voice-room[data-kino][data-awake] .is-focus .voice-video-actions {
+  opacity: 1;
+}
+.voice-room[data-kino] .voice-stage > .is-strip {
+  z-index: 1;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.45);
+  transition: opacity var(--lr-dur) var(--lr-ease);
+}
+.voice-room[data-kino]
+  .voice-stage
+  > .voice-room-participant.is-strip:not(.has-video) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--lr-panel) 92%, transparent);
+}
+.voice-room[data-kino]:not([data-awake])
+  .voice-stage
+  > .is-strip:not(:hover, :focus-within),
+.voice-room[data-kino]:not([data-awake])
+  .is-focus
+  .voice-video-actions:not(:focus-within) {
+  opacity: 0;
+  pointer-events: none;
+}
+.voice-kino-bar {
+  position: absolute;
+  z-index: 3;
+  top: 24px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 160px);
+}
+.voice-kino-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: var(--lr-radius);
+  background: rgb(10 12 13 / 0.72);
+  color: #fff;
+  font: var(--lr-type-ui);
+  white-space: nowrap;
+}
+.voice-kino-exit {
+  cursor: pointer;
+}
+.voice-kino-exit:hover {
+  background: rgb(10 12 13 / 0.88);
+}
+.voice-kino-exit > kbd {
+  padding: 1px 5px;
+  border: 1px solid rgb(255 255 255 / 0.25);
+  border-radius: var(--lr-radius-xs);
+  color: #c9cdd0;
+  font: var(--lr-type-meta);
+  font-size: 11px;
+}
+.voice-kino-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+.voice-kino-live {
+  padding: 1px 5px;
+  border-radius: var(--lr-radius-xs);
+  background: var(--lr-danger-bg);
+  color: var(--lr-on-danger);
+  font: var(--lr-type-caps);
+  font-size: 10px;
+}
+.voice-kino-place {
+  color: #c9cdd0;
+  font-weight: 400;
+}
+/* Fokus's row: small tiles, a press on one brings it to the front. */
+.voice-stage > .is-strip,
+.voice-stage > .is-strip > .voice-video-tile {
+  border-radius: var(--lr-radius);
+}
+.voice-stage > .is-strip .voice-video-tile.is-selectable:hover {
+  filter: brightness(1.08);
+}
+.voice-stage > .is-strip.has-video > .voice-room-participant-text,
+.voice-stage > .is-strip .voice-video-caption {
+  inset: auto auto 6px 6px;
+  gap: 4px;
+  max-width: calc(100% - 12px);
+  height: auto;
+  padding: 1px 6px;
+  border-radius: var(--lr-radius-xs);
+  font: var(--lr-type-caps);
+  text-transform: none;
+}
+.voice-stage > .is-strip .voice-video-live {
+  top: 6px;
+  left: 6px;
+}
+.voice-stage > .is-strip .voice-video-actions {
+  top: 4px;
+  right: 4px;
+  gap: 2px;
+}
+.voice-stage > .is-strip.has-video > .voice-room-participant-more {
+  right: 4px;
+  bottom: 4px;
+}
+/* Someone without a camera in the row: their avatar and name. */
+.voice-stage > .voice-room-participant.is-strip:not(.has-video) {
+  gap: 6px;
+  padding: 8px;
+}
+.voice-stage > .is-strip:not(.has-video) .voice-room-avatar {
+  width: 40px;
+}
+.voice-stage > .is-strip:not(.has-video) .voice-room-avatar > .gel-avatar {
+  font-size: 15px;
+}
+.voice-stage > .is-strip:not(.has-video) .voice-room-connection {
+  display: none;
+}
+.voice-stage > .is-strip:not(.has-video) .voice-room-participant-text {
+  margin: 0;
+}
+.voice-stage > .is-strip:not(.has-video) strong {
+  font: var(--lr-type-meta);
+  font-weight: 600;
+}
+.voice-stage > .is-strip:not(.has-video) .voice-room-participant-marks {
+  top: 6px;
+  left: 6px;
+}
+.voice-stage
+  > .is-strip:not(.has-video)
+  .voice-room-participant-marks
+  .voice-state-icons-speaker {
+  display: none;
+}
+.voice-stage > .voice-room-participant.is-strip .voice-room-participant-more {
+  top: 4px;
+  right: 4px;
+}
+/* Said to a screen reader; the picture and its ring show it. */
+.voice-stage .voice-room-participant-status,
+.voice-stage-people .voice-room-participant-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@media (min-width: 641px) {
+  /* The frame before the first measure has no places yet. */
+  .voice-stage:not([data-measured]) > .voice-stage-item {
+    visibility: hidden;
+  }
+  /* The people without a camera: a row of chips under the pictures. */
+  .voice-room-participants.voice-stage-people {
+    display: flex;
+    flex: none;
+    flex-wrap: wrap;
+    gap: 8px;
+    max-width: none;
+    margin: 0;
+  }
+  .voice-stage-people > .voice-room-participant {
+    flex-direction: row;
+    gap: 10px;
+    height: 44px;
+    aspect-ratio: auto;
+    padding: 0 14px 0 5px;
+    border-radius: var(--lr-radius-full);
+  }
+  .voice-stage-people .voice-room-avatar {
+    width: 32px;
+  }
+  .voice-stage-people .voice-room-avatar > .gel-avatar {
+    font-size: 13px;
+  }
+  .voice-stage-people .voice-room-connection {
+    display: none;
+  }
+  .voice-stage-people .voice-room-participant-text {
+    margin: 0;
+  }
+  .voice-stage-people .voice-room-participant-marks,
+  .voice-stage-people .voice-room-participant .voice-room-participant-more {
+    position: static;
+  }
+  .voice-stage-people .voice-room-participant-marks .voice-state-icons {
+    width: auto;
+  }
+  .voice-stage-people
+    .voice-room-participant-marks
+    .voice-state-icons
+    > span:empty,
+  .voice-stage-people .voice-room-participant-marks .voice-state-icons-speaker,
+  .voice-stage-people
+    .voice-room-participant-marks
+    .voice-state-icons:not(:has(svg:not(.voice-state-icons-speaker))) {
+    display: none;
+  }
+  /* "…" opens out of the chip's end on a hover or focus; a finger always
+     has it. */
+  .voice-stage-people .voice-room-participant .voice-room-participant-more {
+    width: 0;
+    min-width: 0;
+    margin-left: -10px;
+    margin-right: -8px;
+    overflow: hidden;
+    transition:
+      width var(--lr-dur-fast) var(--lr-ease),
+      margin var(--lr-dur-fast) var(--lr-ease),
+      opacity var(--lr-dur-fast) var(--lr-ease);
+  }
+  .voice-stage-people
+    .voice-room-participant:is(:hover, :focus-within)
+    > .voice-room-participant-more,
+  .voice-stage-people
+    .voice-room-participant
+    > .voice-room-participant-more[aria-expanded="true"] {
+    width: var(--lr-control-xs);
+    margin-left: 0;
+  }
+}
+@media (min-width: 641px) and (pointer: coarse) {
+  .voice-stage-people .voice-room-participant .voice-room-participant-more {
+    width: var(--lr-control-xs);
+    margin-left: 0;
+  }
+}
 /* People as tiles, like video tiles without video. */
 .voice-room-participants {
   display: grid;
@@ -381,6 +855,29 @@ html[data-compact-rooms="true"] .voice-room-seat {
   }
   .voice-room-filmstrip-tile {
     width: 160px;
+  }
+  /* A phone keeps its column: each picture a row of its own, the people
+     in threes under them, the page scrolling. */
+  .voice-room[data-stage] {
+    display: block;
+    height: auto;
+    min-height: 0;
+    padding: 16px var(--voice-room-inline) var(--voice-room-bottom);
+  }
+  .voice-stage {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .voice-stage > .voice-stage-item {
+    position: relative;
+    inset: auto;
+    width: auto;
+    height: auto;
+    aspect-ratio: 16 / 9;
+  }
+  .voice-stage-people {
+    margin-top: 16px;
   }
   .voice-room-join {
     flex: 1 1 auto;
