@@ -272,193 +272,208 @@ fn render(out: &Path, only: Option<Vec<String>>) {
     let config = std::env::temp_dir().join(format!("gelabber-parity-{}", std::process::id()));
     // SAFETY: set before the first client starts a thread.
     unsafe { std::env::set_var("GELABBER_CONFIG_DIR", &config) };
+    let mut failed = Vec::new();
     for scene in &scenes.scenes {
         if only.as_ref().is_some_and(|o| !o.contains(&scene.name)) {
             continue;
         }
-        let _ = std::fs::remove_dir_all(&config);
-        // Opening a channel marks it read; every scene starts from the reference.
-        reset();
-        // `before` is undone once the scene ends, also when it fails, so the
-        // last scene of a run does not leave its theme behind.
-        let _restore = scene.before.as_ref().map(|before| {
-            let restore = Restore;
-            say(&before.split(' ').collect::<Vec<_>>());
-            restore
-        });
-        let _call = scene.call.as_deref().map(Call::start);
-        let client = gelabber_client::Client::new(&fixture.base).expect("client");
-        if let Some(user) = &scene.user {
-            let email = &fixture.users[user].email;
-            client
-                .login_blocking(email, &fixture.password)
-                .unwrap_or_else(|e| panic!("login {user}: {e}"));
-        }
-        let route = fill(&scene.path, &fixture);
-        let size = egui::vec2(scenes.size[0] as f32, scenes.size[1] as f32);
-        let system = match scene.scheme.as_deref() {
-            Some("dark") => egui::Theme::Dark,
-            _ => egui::Theme::Light,
-        };
-        let mut harness = egui_kittest::Harness::builder()
-            .with_size(size)
-            .with_pixels_per_point(1.0)
-            .with_max_steps(10_000)
-            // Browser screenshots carry no pointer.
-            .with_render_cursor(false)
-            // Frames as in a browser, not 4 a second: timed things (toasts,
-            // fades) are as far along as in the web shot.
-            .with_step_dt(1.0 / 60.0)
-            .wgpu()
-            .build_eframe(|cc| {
-                cc.egui_ctx.options_mut(|o| o.fallback_theme = system);
-                match &scene.page {
-                    Some(page) => page_app(cc, page, &scene.query),
-                    None => {
-                        gelabber_ui::Launcher::with_app(cc, client.clone(), Some(route.clone()))
-                    }
-                }
+        // A scene that fails is reported, and the others still render.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = std::fs::remove_dir_all(&config);
+            // Opening a channel marks it read; every scene starts from the reference.
+            reset();
+            // `before` is undone once the scene ends, also when it fails, so the
+            // last scene of a run does not leave its theme behind.
+            let _restore = scene.before.as_ref().map(|before| {
+                let restore = Restore;
+                say(&before.split(' ').collect::<Vec<_>>());
+                restore
             });
-        // The system theme as Chromium was told it (prefers-color-scheme).
-        harness.input_mut().system_theme = Some(system);
-        // Step until the app has nothing in flight for a while: data,
-        // images and layout settle like the web page after networkidle.
-        settle(&mut harness);
-        // shots.mjs hides the caret (caret-color: transparent); so here.
-        // A browser screenshot never shows a `title` tooltip, which egui's
-        // hover texts stand for (the custom tooltips still show).
-        harness.ctx.all_styles_mut(|s| {
-            s.visuals.text_cursor.stroke.color = egui::Color32::TRANSPARENT;
-            s.interaction.tooltip_delay = f32::MAX;
-        });
-        let mut undo = Undo {
-            said: Vec::new(),
-            after: scene.after.clone(),
-        };
-        let mut hovered = false;
-        let mut calls = Vec::new();
-        for action in &scene.actions {
-            match action {
-                Action::Say(spec) => {
-                    let mut parts = spec.splitn(3, ' ');
-                    let (who, at, text) = (
-                        parts.next().unwrap_or_default(),
-                        parts.next().unwrap_or_default(),
-                        parts.next().unwrap_or_default(),
-                    );
-                    undo.said
-                        .push((who.to_owned(), say(&["post", who, at, text])));
-                }
-                Action::Click(name) => {
-                    use egui::accesskit::Role;
-                    reveal(&mut harness, size.y, name, &[Role::Button]);
-                    find(&harness, name, &[Role::Button])
-                        .unwrap_or_else(|| panic!("{}: no button {name:?}", scene.name))
-                        .click();
-                }
-                Action::Link(name) => {
-                    use egui::accesskit::Role;
-                    reveal(&mut harness, size.y, name, &[Role::Link]);
-                    find(&harness, name, &[Role::Link])
-                        .unwrap_or_else(|| panic!("{}: no link {name:?}", scene.name))
-                        .click();
-                }
-                Action::Menuitem(name) => {
-                    use egui::accesskit::Role;
-                    reveal(&mut harness, size.y, name, &[Role::MenuItem]);
-                    find(&harness, name, &[Role::MenuItem])
-                        .unwrap_or_else(|| panic!("{}: no menu entry {name:?}", scene.name))
-                        .click();
-                }
-                Action::Rightclick(name) => {
-                    use egui::accesskit::Role;
-                    reveal(&mut harness, size.y, name, &[Role::Button, Role::Link]);
-                    find(&harness, name, &[Role::Button, Role::Link])
-                        .unwrap_or_else(|| panic!("{}: no button or link {name:?}", scene.name))
-                        .click_secondary();
-                }
-                Action::Clicktext(label) => {
-                    reveal(&mut harness, size.y, label, &[]);
-                    if std::env::var_os("PARITY_DEBUG").is_some() {
-                        use egui_kittest::kittest::{NodeT, Queryable};
-                        for n in harness.query_all_by_label(label) {
-                            eprintln!("{label}: {:?} {:?}", n.accesskit_node().role(), n.rect());
+            let _call = scene.call.as_deref().map(Call::start);
+            let client = gelabber_client::Client::new(&fixture.base).expect("client");
+            if let Some(user) = &scene.user {
+                let email = &fixture.users[user].email;
+                client
+                    .login_blocking(email, &fixture.password)
+                    .unwrap_or_else(|e| panic!("login {user}: {e}"));
+            }
+            let route = fill(&scene.path, &fixture);
+            let size = egui::vec2(scenes.size[0] as f32, scenes.size[1] as f32);
+            let system = match scene.scheme.as_deref() {
+                Some("dark") => egui::Theme::Dark,
+                _ => egui::Theme::Light,
+            };
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(size)
+                .with_pixels_per_point(1.0)
+                .with_max_steps(10_000)
+                // Browser screenshots carry no pointer.
+                .with_render_cursor(false)
+                // Frames as in a browser, not 4 a second: timed things (toasts,
+                // fades) are as far along as in the web shot.
+                .with_step_dt(1.0 / 60.0)
+                .wgpu()
+                .build_eframe(|cc| {
+                    cc.egui_ctx.options_mut(|o| o.fallback_theme = system);
+                    match &scene.page {
+                        Some(page) => page_app(cc, page, &scene.query),
+                        None => {
+                            gelabber_ui::Launcher::with_app(cc, client.clone(), Some(route.clone()))
                         }
                     }
-                    // getByText skips aria-labels, such as a rail icon's: links
-                    // only when nothing else carries the text.
-                    find_text(&harness, label)
-                        .unwrap_or_else(|| panic!("{}: nothing labelled {label:?}", scene.name))
-                        .click();
-                }
-                Action::Hover(label) => {
-                    use egui::accesskit::Role;
-                    reveal(&mut harness, size.y, label, &[Role::Button, Role::Link]);
-                    find(&harness, label, &[Role::Button, Role::Link])
-                        .or_else(|| find(&harness, label, &[]))
-                        .unwrap_or_else(|| panic!("{}: nothing labelled {label:?}", scene.name))
-                        .hover();
-                    hovered = true;
-                }
-                Action::Focus(label) => {
-                    use egui::accesskit::Role;
-                    let roles = [
-                        Role::TextInput,
-                        Role::MultilineTextInput,
-                        Role::PasswordInput,
-                        Role::SearchInput,
-                    ];
-                    find(&harness, label, &roles)
-                        .unwrap_or_else(|| panic!("{}: no text field {label:?}", scene.name))
-                        .focus();
-                }
-                Action::Key(spec) => {
-                    let (modifiers, key) = parse_key(spec);
-                    harness.key_press_modifiers(modifiers, key);
-                }
-                Action::Type(text) => {
-                    harness.event(egui::Event::Text(text.clone()));
-                }
-                Action::Wait(ms) => {
-                    let until = Instant::now() + Duration::from_millis(*ms);
-                    while Instant::now() < until {
-                        harness.step();
-                        std::thread::sleep(Duration::from_millis(16));
-                    }
-                }
-                Action::Call(spec) => calls.push(Call::start(spec)),
-                Action::Placeholder(label) => {
-                    use egui::accesskit::Role;
-                    let fields = [Role::TextInput, Role::SearchInput, Role::MultilineTextInput];
-                    find(&harness, label, &fields)
-                        .unwrap_or_else(|| panic!("{}: no field {label:?}", scene.name))
-                        .click();
-                }
-                Action::Back(back) => {
-                    if *back {
-                        harness.key_press_modifiers(egui::Modifiers::ALT, egui::Key::ArrowLeft);
-                    }
-                }
-            }
+                });
+            // The system theme as Chromium was told it (prefers-color-scheme).
+            harness.input_mut().system_theme = Some(system);
+            // Step until the app has nothing in flight for a while: data,
+            // images and layout settle like the web page after networkidle.
             settle(&mut harness);
+            // shots.mjs hides the caret (caret-color: transparent); so here.
+            // A browser screenshot never shows a `title` tooltip, which egui's
+            // hover texts stand for (the custom tooltips still show).
+            harness.ctx.all_styles_mut(|s| {
+                s.visuals.text_cursor.stroke.color = egui::Color32::TRANSPARENT;
+                s.interaction.tooltip_delay = f32::MAX;
+            });
+            let mut undo = Undo {
+                said: Vec::new(),
+                after: scene.after.clone(),
+            };
+            let mut hovered = false;
+            let mut calls = Vec::new();
+            for action in &scene.actions {
+                match action {
+                    Action::Say(spec) => {
+                        let mut parts = spec.splitn(3, ' ');
+                        let (who, at, text) = (
+                            parts.next().unwrap_or_default(),
+                            parts.next().unwrap_or_default(),
+                            parts.next().unwrap_or_default(),
+                        );
+                        undo.said
+                            .push((who.to_owned(), say(&["post", who, at, text])));
+                    }
+                    Action::Click(name) => {
+                        use egui::accesskit::Role;
+                        reveal(&mut harness, size.y, name, &[Role::Button]);
+                        find(&harness, name, &[Role::Button])
+                            .unwrap_or_else(|| panic!("{}: no button {name:?}", scene.name))
+                            .click();
+                    }
+                    Action::Link(name) => {
+                        use egui::accesskit::Role;
+                        reveal(&mut harness, size.y, name, &[Role::Link]);
+                        find(&harness, name, &[Role::Link])
+                            .unwrap_or_else(|| panic!("{}: no link {name:?}", scene.name))
+                            .click();
+                    }
+                    Action::Menuitem(name) => {
+                        use egui::accesskit::Role;
+                        reveal(&mut harness, size.y, name, &[Role::MenuItem]);
+                        find(&harness, name, &[Role::MenuItem])
+                            .unwrap_or_else(|| panic!("{}: no menu entry {name:?}", scene.name))
+                            .click();
+                    }
+                    Action::Rightclick(name) => {
+                        use egui::accesskit::Role;
+                        reveal(&mut harness, size.y, name, &[Role::Button, Role::Link]);
+                        find(&harness, name, &[Role::Button, Role::Link])
+                            .unwrap_or_else(|| panic!("{}: no button or link {name:?}", scene.name))
+                            .click_secondary();
+                    }
+                    Action::Clicktext(label) => {
+                        reveal(&mut harness, size.y, label, &[]);
+                        if std::env::var_os("PARITY_DEBUG").is_some() {
+                            use egui_kittest::kittest::{NodeT, Queryable};
+                            for n in harness.query_all_by_label(label) {
+                                eprintln!(
+                                    "{label}: {:?} {:?}",
+                                    n.accesskit_node().role(),
+                                    n.rect()
+                                );
+                            }
+                        }
+                        // getByText skips aria-labels, such as a rail icon's: links
+                        // only when nothing else carries the text.
+                        find_text(&harness, label)
+                            .unwrap_or_else(|| panic!("{}: nothing labelled {label:?}", scene.name))
+                            .click();
+                    }
+                    Action::Hover(label) => {
+                        use egui::accesskit::Role;
+                        reveal(&mut harness, size.y, label, &[Role::Button, Role::Link]);
+                        find(&harness, label, &[Role::Button, Role::Link])
+                            .or_else(|| find(&harness, label, &[]))
+                            .unwrap_or_else(|| panic!("{}: nothing labelled {label:?}", scene.name))
+                            .hover();
+                        hovered = true;
+                    }
+                    Action::Focus(label) => {
+                        use egui::accesskit::Role;
+                        let roles = [
+                            Role::TextInput,
+                            Role::MultilineTextInput,
+                            Role::PasswordInput,
+                            Role::SearchInput,
+                        ];
+                        find(&harness, label, &roles)
+                            .unwrap_or_else(|| panic!("{}: no text field {label:?}", scene.name))
+                            .focus();
+                    }
+                    Action::Key(spec) => {
+                        let (modifiers, key) = parse_key(spec);
+                        harness.key_press_modifiers(modifiers, key);
+                    }
+                    Action::Type(text) => {
+                        harness.event(egui::Event::Text(text.clone()));
+                    }
+                    Action::Wait(ms) => {
+                        let until = Instant::now() + Duration::from_millis(*ms);
+                        while Instant::now() < until {
+                            harness.step();
+                            std::thread::sleep(Duration::from_millis(16));
+                        }
+                    }
+                    Action::Call(spec) => calls.push(Call::start(spec)),
+                    Action::Placeholder(label) => {
+                        use egui::accesskit::Role;
+                        let fields = [Role::TextInput, Role::SearchInput, Role::MultilineTextInput];
+                        find(&harness, label, &fields)
+                            .unwrap_or_else(|| panic!("{}: no field {label:?}", scene.name))
+                            .click();
+                    }
+                    Action::Back(back) => {
+                        if *back {
+                            harness.key_press_modifiers(egui::Modifiers::ALT, egui::Key::ArrowLeft);
+                        }
+                    }
+                }
+                settle(&mut harness);
+            }
+            // The pointer rests in the bottom-right corner, as shots.mjs leaves
+            // it, unless a scene put it on something.
+            if !hovered {
+                harness.hover_at(egui::pos2(size.x - 1.0, size.y - 1.0));
+            }
+            // Long enough for the hover fades to end.
+            harness.run_steps(15);
+            let image = harness
+                .render()
+                .unwrap_or_else(|e| panic!("render {}: {e}", scene.name));
+            let path = out.join(format!("{}.png", scene.name));
+            image.save(&path).expect("save png");
+            drop(undo);
+            drop(calls);
+            println!("{}: {route} -> {}", scene.name, path.display());
+        }));
+        if outcome.is_err() {
+            failed.push(scene.name.clone());
         }
-        // The pointer rests in the bottom-right corner, as shots.mjs leaves
-        // it, unless a scene put it on something.
-        if !hovered {
-            harness.hover_at(egui::pos2(size.x - 1.0, size.y - 1.0));
-        }
-        // Long enough for the hover fades to end.
-        harness.run_steps(15);
-        let image = harness
-            .render()
-            .unwrap_or_else(|e| panic!("render {}: {e}", scene.name));
-        let path = out.join(format!("{}.png", scene.name));
-        image.save(&path).expect("save png");
-        drop(undo);
-        drop(calls);
-        println!("{}: {route} -> {}", scene.name, path.display());
     }
     let _ = std::fs::remove_dir_all(&config);
+    if !failed.is_empty() {
+        eprintln!("failed scenes: {}", failed.join(","));
+        std::process::exit(1);
+    }
 }
 
 type App<'a> = egui_kittest::Harness<'a, gelabber_ui::Launcher>;

@@ -643,38 +643,35 @@ fn channel_row(
     }
 
     // Hover (or focus) actions cover the name's end with the row's own fill.
-    let edit_id = Id::unique(("edit-channel", ch.id));
-    let delete_id = Id::unique(("delete-channel", ch.id));
-    if can_manage && !(hovered || ui.rect_contains_pointer(row) || keys.within) {
-        // Out of sight, but the row's Tab stop may still be one of them.
-        for (i, (id, label)) in [(edit_id, "Kanal bearbeiten"), (delete_id, "Kanal löschen")]
-            .into_iter()
-            .enumerate()
-        {
-            if keys.stop == Some(i + 1) {
-                let at = Rect::from_min_size(row.right_top(), Vec2::ZERO);
-                let r = common::click_stop(ui, at, id, true);
-                r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
-            }
-        }
-    }
-    if can_manage && (hovered || ui.rect_contains_pointer(row) || keys.within) {
+    // Out of sight they stay there unseen (`opacity-0`), as on the web, so a
+    // click on them still lands; the row's single Tab stop may be one of them.
+    if can_manage {
+        let shown = hovered || ui.rect_contains_pointer(row) || keys.within;
+        let edit_id = Id::unique(("edit-channel", ch.id));
+        let delete_id = Id::unique(("delete-channel", ch.id));
         let actions = Rect::from_min_max(
             pos2(row.right() - 61.0, row.top() + 4.0),
             pos2(row.right() - 3.0, row.top() + 30.0),
         );
-        painter.rect(
-            actions,
-            corner(theme.radius.md),
-            under,
-            Stroke::NONE,
-            StrokeKind::Inside,
-        );
+        if shown {
+            painter.rect(
+                actions,
+                corner(theme.radius.md),
+                under,
+                Stroke::NONE,
+                StrokeKind::Inside,
+            );
+        }
         let edit =
             Rect::from_min_size(pos2(actions.left() + 6.0, actions.top()), Vec2::splat(26.0));
         let delete = Rect::from_min_size(pos2(edit.right(), actions.top()), Vec2::splat(26.0));
         let focused = ui.memory(|m| m.focused());
         let stop_at = |i: usize, id: Id| keys.stop == Some(i) || focused == Some(id);
+        let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(actions));
+        if !shown {
+            ui.set_opacity(0.0);
+        }
+        let ui = &mut ui;
         if shell_icon_button_stop(
             ui,
             edit,
