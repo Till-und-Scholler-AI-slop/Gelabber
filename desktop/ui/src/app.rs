@@ -373,6 +373,15 @@ impl GelabberApp {
         &self.nav
     }
 
+    /// For the desktop platform (notifications, sign-in, tray).
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
+    pub fn call(&self) -> &gelabber_call::Call {
+        &self.call
+    }
+
     pub fn navigate(&mut self, href: &str) {
         self.nav.navigate(href);
     }

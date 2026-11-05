@@ -13,3 +13,4 @@ wins. The parity check in `desktop/parity` decides whether a screen matches.
 | `ui-auth-settings-dialogs.md` | sign-in pages, overview, DMs, settings, dialogs, menus |
 | `protocol-rest-auth.md` | REST endpoints, cookies, CSRF, errors, native cookie mode |
 | `protocol-gateway.md` | `/ws` and `/media/ws` frames, timers, resume |
+| `platform.md` | config files, kept sign-in, notifications, tray, single instance, push-to-talk, updates |

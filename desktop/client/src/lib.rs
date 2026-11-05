@@ -29,6 +29,10 @@ pub use store::{
 /// Called whenever the state changes, so the interface repaints.
 pub type Repaint = Arc<dyn Fn() + Send + Sync>;
 
+/// Sees every sequenced chat event after the state took it (the desktop
+/// app's notifications). Runs on the client runtime: keep it short.
+pub type EventTap = Arc<dyn Fn(&EventFrame) + Send + Sync>;
+
 /// Input-driven state that lives outside [`State`] so the UI thread can
 /// update it without taking the state lock.
 #[derive(Default)]
@@ -72,6 +76,7 @@ struct Inner {
     /// Bumped on every gateway start and stop: events of a socket that was
     /// already replaced are dropped.
     gateway_generation: AtomicU64,
+    event_tap: RwLock<Option<EventTap>>,
 }
 
 impl Drop for Inner {
@@ -117,6 +122,7 @@ impl Client {
                 unread_generation: AtomicU64::new(0),
                 read_generation: AtomicU64::new(0),
                 gateway_generation: AtomicU64::new(0),
+                event_tap: RwLock::new(None),
             }),
         };
         let weak = Arc::downgrade(&client.inner);
@@ -149,6 +155,10 @@ impl Client {
 
     pub fn http(&self) -> &Http {
         &self.inner.http
+    }
+
+    pub fn set_event_tap(&self, tap: Option<EventTap>) {
+        *self.inner.event_tap.write() = tap;
     }
 
     pub fn set_repaint(&self, repaint: Repaint) {

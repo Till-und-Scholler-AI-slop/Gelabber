@@ -1547,6 +1547,10 @@ impl Client {
                     self.schedule_mark_read(event.c.unwrap_or_default());
                 }
                 self.schedule_unread_refresh();
+                let tap = self.inner.event_tap.read().clone();
+                if let Some(tap) = tap {
+                    tap(&event);
+                }
             }
             GatewayEvent::Gap(_) => self.schedule_recovery(false),
             GatewayEvent::Resync => self.schedule_recovery(false),

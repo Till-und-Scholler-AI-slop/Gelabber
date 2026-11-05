@@ -237,6 +237,33 @@ impl Http {
             .and_then(|v| v.to_str().ok().map(str::to_owned))
     }
 
+    /// The session cookie's value, so the desktop app can keep the sign-in
+    /// across restarts.
+    pub fn session_cookie(&self) -> Option<String> {
+        self.cookie_header()?
+            .split("; ")
+            .find_map(|kv| kv.strip_prefix("gelabber_session="))
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned)
+    }
+
+    /// Puts a remembered session cookie back before the first request.
+    pub fn restore_session_cookie(&self, value: &str) {
+        let token = |c: char| c.is_ascii_graphic() && !matches!(c, ';' | ',' | '"' | '\\');
+        if value.is_empty() || !value.chars().all(token) {
+            return;
+        }
+        let secure = if self.base.scheme() == "https" {
+            "; Secure"
+        } else {
+            ""
+        };
+        self.jar.add_cookie_str(
+            &format!("gelabber_session={value}; Path=/; HttpOnly{secure}"),
+            &self.base,
+        );
+    }
+
     /// Whether the jar holds a session cookie (not whether it is valid).
     pub fn has_session_cookie(&self) -> bool {
         self.cookie_header()
