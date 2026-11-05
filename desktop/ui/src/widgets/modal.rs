@@ -135,7 +135,9 @@ impl<'a> Modal<'a> {
             } else {
                 0.0
             };
-            let body_max = (card.top() + max_h - body_top - 24.0 - footer_h - 1.0).max(0.0) + 8.0;
+            // The bottom padding scrolls with the body, so a scrolled body shows
+            // its content down to the footer, as `.gel-modal__body` does.
+            let body_max = (card.top() + max_h - body_top - footer_h - 1.0).max(0.0) + 8.0;
             ui.scope_builder(UiBuilder::new().max_rect(body_rect), |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt(self.id.with("body"))
@@ -147,16 +149,16 @@ impl<'a> Modal<'a> {
                                 left: 24,
                                 right: 24,
                                 top: 8,
-                                bottom: 0,
+                                bottom: 24,
                             })
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 inner = Some(body(ui));
                             });
                     });
-                used_bottom = ui.min_rect().bottom().max(body_top);
+                used_bottom = ui.min_rect().bottom().max(body_top + 24.0);
             });
-            let mut bottom = used_bottom + 24.0;
+            let mut bottom = used_bottom;
             if let Some(footer) = footer {
                 painter.hline(
                     card.left() + 1.0..=card.right() - 1.0,
