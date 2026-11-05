@@ -82,11 +82,12 @@ pub fn show(
     );
     let response = common::click(ui, button, Id::unique(("server-menu", server)))
         .on_hover_text(&detail.server.name);
+    // The web's `<summary>`: a disclosure named by the server's name.
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
-            egui::Role::Button,
+            egui::Role::DisclosureTriangle,
             true,
-            format!("Menü für {}", detail.server.name),
+            detail.server.name.clone(),
         )
     });
     if response.hovered() || menu_open {
@@ -544,22 +545,31 @@ fn channel_row(
             .on_hover_text(format!("{} · verbunden", ch.name));
     }
 
-    // Hover actions cover the name's end with the row's own fill.
-    if can_manage && (hovered || ui.rect_contains_pointer(row)) {
+    // Hover actions cover the name's end with the row's own fill. Unhovered
+    // they stay there unseen (`opacity-0`), for the keyboard and tests.
+    if can_manage {
+        let shown = hovered || ui.rect_contains_pointer(row);
         let actions = Rect::from_min_max(
             pos2(row.right() - 61.0, row.top() + 4.0),
             pos2(row.right() - 3.0, row.top() + 30.0),
         );
-        painter.rect(
-            actions,
-            corner(theme.radius.md),
-            under,
-            Stroke::NONE,
-            StrokeKind::Inside,
-        );
+        if shown {
+            painter.rect(
+                actions,
+                corner(theme.radius.md),
+                under,
+                Stroke::NONE,
+                StrokeKind::Inside,
+            );
+        }
         let edit =
             Rect::from_min_size(pos2(actions.left() + 6.0, actions.top()), Vec2::splat(26.0));
         let delete = Rect::from_min_size(pos2(edit.right(), actions.top()), Vec2::splat(26.0));
+        let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(actions));
+        if !shown {
+            ui.set_opacity(0.0);
+        }
+        let ui = &mut ui;
         if shell_icon_button(
             ui,
             edit,
@@ -883,6 +893,7 @@ fn row_menu(ui: &mut Ui) {
 fn menu_row(ui: &mut Ui, icon: Icon, label: &str, width: f32) -> egui::Response {
     let theme = Theme::of(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 36.0), egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     if response.hovered() {
         common::fill(ui.painter(), rect, theme.radius.sm, theme.c.hover);
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);

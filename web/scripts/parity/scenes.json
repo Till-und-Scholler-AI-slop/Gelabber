@@ -639,6 +639,214 @@
           "key": "Escape"
         }
       ]
+    },
+    {
+      "name": "toast-hover",
+      "path": "/s/00000000-0000-4000-8000-000000000001",
+      "user": "lena",
+      "actions": [
+        {
+          "wait": 1000
+        },
+        {
+          "hover": "Schließen"
+        },
+        {
+          "wait": 4000
+        }
+      ]
+    },
+    {
+      "name": "member-profile-back",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Control+k"
+        },
+        {
+          "type": "musik"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "wait": 500
+        },
+        {
+          "click": "Profil von Tom"
+        },
+        {
+          "back": true
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
+      "name": "notify-back",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Control+k"
+        },
+        {
+          "type": "musik"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "wait": 500
+        },
+        {
+          "click": "Benachrichtigungen für #musik"
+        },
+        {
+          "back": true
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
+      "name": "create-server",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Server hinzufügen"
+        },
+        {
+          "clicktext": "Server erstellen"
+        }
+      ]
+    },
+    {
+      "name": "create-channel",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "clicktext": "Wohnzimmer"
+        },
+        {
+          "clicktext": "Kanal erstellen"
+        }
+      ]
+    },
+    {
+      "name": "create-category",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "clicktext": "Wohnzimmer"
+        },
+        {
+          "clicktext": "Kategorie erstellen"
+        }
+      ]
+    },
+    {
+      "name": "edit-channel",
+      "path": "/s/{home}/c/{spiele}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Kanal bearbeiten"
+        }
+      ]
+    },
+    {
+      "name": "delete-channel-confirm",
+      "path": "/s/{home}/c/{spiele}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Kanal löschen"
+        }
+      ]
+    },
+    {
+      "name": "notify-muted",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Benachrichtigungen für #allgemein"
+        },
+        {
+          "clicktext": "Bis ich es wieder einschalte"
+        },
+        {
+          "wait": 500
+        }
+      ],
+      "after": "unmute lena allgemein"
+    },
+    {
+      "name": "member-profile-leave",
+      "path": "/d/{dm}",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "Wohnzimmer"
+        },
+        {
+          "wait": 500
+        },
+        {
+          "click": "Profil von Tom"
+        },
+        {
+          "back": true
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
+      "name": "search-hits",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "placeholder": "Suchen"
+        },
+        {
+          "type": "Snacks"
+        },
+        {
+          "wait": 600
+        }
+      ]
+    },
+    {
+      "name": "search-context",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "placeholder": "Suchen"
+        },
+        {
+          "type": "zusammen"
+        },
+        {
+          "wait": 600
+        },
+        {
+          "click": "Zur Nachricht von Jonas: Hallo zusammen! 👋"
+        },
+        {
+          "wait": 500
+        }
+      ]
     }
   ]
 }

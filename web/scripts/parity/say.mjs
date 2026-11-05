@@ -6,6 +6,7 @@
 //   node scripts/parity/say.mjs post <user> <channel-key> <text>   → prints the id
 //   node scripts/parity/say.mjs delete <user> <message-id>
 //   node scripts/parity/say.mjs revoke-unused <user> <server-key>   (invites a dialog made)
+//   node scripts/parity/say.mjs unmute <user> <channel-key|server-key>  (notification settings)
 // <channel-key> is "dm" or a channel name of fixture.json; "{lena}" (any
 // user key) in the text becomes that user's mention token.
 /* global process, console, fetch, URL */
@@ -16,7 +17,7 @@ const here = new URL(".", import.meta.url).pathname;
 const fixture = JSON.parse(await readFile(join(here, "fixture.json"), "utf8"));
 const [command, who, target, ...words] = process.argv.slice(2);
 const user = fixture.users[who];
-if (!user || !["post", "delete", "revoke-unused"].includes(command) || !target)
+if (!user || !["post", "delete", "revoke-unused", "unmute"].includes(command) || !target)
   throw new Error("usage: say.mjs post <user> <channel-key> <text> | delete <user> <id>");
 
 const cookies = new Map();
@@ -48,17 +49,23 @@ csrf = (await call("GET", "/auth/session")).csrf_token;
 if (command === "post") {
   const channel = target === "dm" ? fixture.dm : fixture.servers.home.channels[target];
   if (!channel) throw new Error(`unknown channel ${target}`);
-  // A leading "image=<file>" attaches web/public/images/living-room/<file>.
+  // A leading "image=<file>" attaches web/public/images/living-room/<file>,
+  // "file=<file>" the text file scripts/parity/files/<file>.
   const attachment_ids = [];
   let text = words.join(" ");
-  if (text.startsWith("image=")) {
+  if (text.startsWith("image=") || text.startsWith("file=")) {
     const [file, ...rest] = text.split(" ");
     text = rest.join(" ");
-    const filename = file.slice("image=".length);
-    const data = await readFile(join(here, "../../public/images/living-room", filename));
+    const image = file.startsWith("image=");
+    const filename = file.slice(file.indexOf("=") + 1);
+    const data = await readFile(
+      image
+        ? join(here, "../../public/images/living-room", filename)
+        : join(here, "files", filename),
+    );
     const presigned = await call("POST", `/channels/${channel}/attachments`, {
       filename,
-      content_type: "image/png",
+      content_type: image ? "image/png" : "text/plain",
       size: data.length,
     });
     const url = presigned.upload_url.startsWith("/")
@@ -86,6 +93,13 @@ if (command === "post") {
   for (const invite of await call("GET", `/servers/${server}/invites`))
     if (invite.uses === 0 && invite.created_by === user.id)
       await call("DELETE", `/invites/${encodeURIComponent(invite.code)}`);
+} else if (command === "unmute") {
+  // Back to inheriting: no level of its own, not muted.
+  const server = fixture.servers[target]?.id;
+  const channel = target === "dm" ? fixture.dm : fixture.servers.home.channels[target];
+  if (!server && !channel) throw new Error(`unknown channel or server ${target}`);
+  const scope = server ? `/servers/${server}` : `/channels/${channel}`;
+  await call("PUT", `${scope}/notification-settings`, { level: null, muted: false });
 } else {
   await call("DELETE", `/messages/${target}`);
 }

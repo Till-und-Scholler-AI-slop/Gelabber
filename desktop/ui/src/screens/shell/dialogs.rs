@@ -33,6 +33,7 @@ const USES: [(&str, Option<u32>); 4] = [
 ];
 
 pub fn open_add(ctx: &egui::Context, step: AddStep) {
+    super::overlays::opened(ctx);
     state::with(ctx, |s| {
         s.dialog = Some(Dialog::Add {
             step,
@@ -46,6 +47,7 @@ pub fn open_add(ctx: &egui::Context, step: AddStep) {
 
 /// "Zu {server} einladen": creates a link as it opens.
 pub fn open_invite(ctx: &egui::Context, server: Uuid, name: &str) {
+    super::overlays::opened(ctx);
     state::with(ctx, |s| {
         s.dialog = Some(Dialog::Invite(Box::new(InviteState {
             server,
@@ -67,6 +69,7 @@ pub fn open_channel(
     editing: Option<&Channel>,
     category: Option<Uuid>,
 ) {
+    super::overlays::opened(ctx);
     state::with(ctx, |s| {
         s.dialog = Some(Dialog::Channel {
             server,
@@ -80,6 +83,7 @@ pub fn open_channel(
 }
 
 pub fn open_category(ctx: &egui::Context, server: Uuid, editing: Option<&Category>) {
+    super::overlays::opened(ctx);
     state::with(ctx, |s| {
         s.dialog = Some(Dialog::Category {
             server,
@@ -122,6 +126,7 @@ pub fn confirm_delete_category(ctx: &egui::Context, server: Uuid, category: &Cat
 }
 
 pub fn open_new_message(ctx: &egui::Context) {
+    super::overlays::opened(ctx);
     state::with(ctx, |s| {
         s.dialog = Some(Dialog::NewMessage {
             picker: PickerState::default(),
@@ -132,6 +137,7 @@ pub fn open_new_message(ctx: &egui::Context) {
 
 /// Draws the open dialog, if any.
 pub fn show(ui: &mut Ui, app: &mut AppCtx) {
+    super::overlays::follow_route(ui.ctx(), app.nav.route());
     let Some(mut dialog) = state::with(ui.ctx(), |s| s.dialog.take()) else {
         return;
     };
@@ -460,11 +466,7 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
             Ok(invite) => {
                 if let Some((old, _)) = s.invite.take() {
                     if !s.handed_out {
-                        let http = app.client.http().clone();
-                        let code = old.code.clone();
-                        app.client.spawn(async move {
-                            let _ = http.revoke_invite(&code).await;
-                        });
+                        app.client.revoke_invite(&old.code);
                     }
                     s.status = Some((
                         format!("Neuer Link · {}", summary(s.terms)),
@@ -548,12 +550,13 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
                 if creating {
                     s.status = Some(("Link wird erstellt…".into(), StatusTone::Neutral));
                 } else if !link.is_empty() {
-                    ui.ctx().copy_text(link.clone());
-                    s.handed_out = true;
-                    s.status = Some((
-                        format!("Link kopiert · {}", summary(s.terms)),
-                        StatusTone::Success,
-                    ));
+                    let (message, tone, copied) = crate::screens::chat::clipboard::copy_link(
+                        ui.ctx(),
+                        &link,
+                        &summary(s.terms),
+                    );
+                    s.handed_out |= copied;
+                    s.status = Some((message, tone));
                 }
             }
             match &s.status {

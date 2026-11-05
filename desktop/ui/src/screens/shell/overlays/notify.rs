@@ -84,6 +84,9 @@ pub struct NotifyDialog {
     /// When a save was sent whose answer is outstanding, and whether its
     /// op was seen running (an older answer may still be in the slot).
     saving: Option<(f64, bool)>,
+    /// The setting when that save was sent: a changed one is its answer,
+    /// even when the op ran between two frames.
+    before: Setting,
     error: Option<&'static str>,
 }
 
@@ -92,6 +95,7 @@ impl NotifyDialog {
         Self {
             target,
             saving: None,
+            before: Setting::default(),
             error: None,
         }
     }
@@ -133,7 +137,7 @@ fn level_name(level: NotificationLevel) -> &'static str {
 /// `text-sm font-semibold`: 600 14px/20px.
 const HEAD: TextStyle = TextStyle::new(14.0, 600.0, 20.0 / 14.0);
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq)]
 struct Setting {
     level: Option<NotificationLevel>,
     muted: bool,
@@ -186,7 +190,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, d: &mut NotifyDialog) -> bool {
                     "Nicht gespeichert. Versuch es noch einmal."
                 });
             }
-            _ if *seen || stale => d.saving = None,
+            _ if *seen || stale || own != d.before => d.saving = None,
             _ => ctx.request_repaint(),
         }
     }
@@ -345,6 +349,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, d: &mut NotifyDialog) -> bool {
         };
         app.client.set_notifications(to, body);
         d.saving = Some((time, false));
+        d.before = own;
         d.error = None;
     }
     !(output.close_requested || done)
@@ -421,13 +426,16 @@ fn muted_box(ui: &mut Ui, text: &str, disabled: bool) -> bool {
         pos2(rect.right() - 12.0 - bw, rect.center().y - 16.0),
         Vec2::new(bw, 32.0),
     );
-    ui.put(
-        button,
-        Button::new("Aufheben")
-            .size(ButtonSize::Sm)
-            .disabled(disabled),
-    )
-    .clicked()
+    // In a child: `put` would move the cursor to under the button, not
+    // under the box.
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(button));
+    child
+        .add(
+            Button::new("Aufheben")
+                .size(ButtonSize::Sm)
+                .disabled(disabled),
+        )
+        .clicked()
 }
 
 /// A `RadioCard` whose description is optional.

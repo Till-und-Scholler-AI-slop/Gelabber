@@ -365,13 +365,15 @@ fn poll_loads(ui: &Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, m
     if let Some(r) = poll(&mut s.revoke) {
         match r {
             Ok(()) => s.invites_status.success(ui, "Link widerrufen."),
-            Err(e) => s
-                .invites_status
-                .error(ui, error_message(Failure::from_api(&e).code.as_str())),
+            // useRevokeInvite: a toast, not the section's status.
+            Err(e) => app.toasts.failure("Einladung nicht widerrufen.", &e),
         }
         reload_invites(app, s, id);
     }
-    if poll(&mut s.unban).is_some() {
+    if let Some(r) = poll(&mut s.unban) {
+        if let Err(e) = r {
+            app.toasts.failure("Mitglied nicht entsperrt.", &e);
+        }
         reload_bans(app, s, id);
     }
     if let Some(r) = poll(&mut s.icon) {

@@ -59,6 +59,140 @@ pub struct PendingMessage {
     pub files: Vec<OutgoingFile>,
     pub created_at: Timestamp,
     pub failed: Option<ApiError>,
+    /// Where the send is, or where it stopped.
+    pub stage: SendStage,
+    /// The bind's answer did not come back (`status: "uncertain"`): the
+    /// message may be saved, so it is not sent again.
+    pub uncertain: bool,
+    /// Uploads that arrived, in file order; a retry binds them again.
+    pub uploaded: Vec<Uuid>,
+}
+
+impl PendingMessage {
+    pub fn new(channel_id: Uuid, content: String, created_at: Timestamp) -> Self {
+        Self {
+            nonce: Uuid::new_v4(),
+            channel_id,
+            content,
+            reply_to: None,
+            gif: None,
+            files: Vec::new(),
+            created_at,
+            failed: None,
+            stage: SendStage::Bind,
+            uncertain: false,
+            uploaded: Vec::new(),
+        }
+    }
+
+    /// File `index` while the send runs (`attachment.upload`): arrived,
+    /// going up now, or waiting for the ones before it.
+    pub fn upload_state(&self, index: usize) -> UploadState {
+        if index < self.uploaded.len() || self.failed.is_some() {
+            UploadState::Done
+        } else if index == self.uploaded.len() && self.stage != SendStage::Bind {
+            UploadState::Uploading
+        } else {
+            UploadState::Waiting
+        }
+    }
+}
+
+/// `SendAttempt.stage` (messages/queries.ts).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SendStage {
+    Presign,
+    Upload,
+    #[default]
+    Bind,
+}
+
+impl SendStage {
+    /// The start of the row's failure line: "{label} fehlgeschlagen.".
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Presign => "Dateifreigabe",
+            Self::Upload => "Dateiübertragung",
+            Self::Bind => "Nachricht speichern",
+        }
+    }
+}
+
+/// One file of a pending send (`upload: "waiting" | "uploading" | "done"`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UploadState {
+    Waiting,
+    Uploading,
+    Done,
+}
+
+/// Whether a failed send may be saved anyway: only a bind whose answer
+/// was lost (network, timeout, 408, 5xx) is in doubt.
+pub fn send_uncertain(stage: SendStage, error: &ApiError) -> bool {
+    stage == SendStage::Bind
+        && match error {
+            ApiError::Api { status, .. } => *status == 0 || *status == 408 || *status >= 500,
+            ApiError::Transport(_) | ApiError::Decode(_) => true,
+        }
+}
+
+/// Uploads the bind turned down (`rejectedUploads`), which go up again on
+/// a retry: each `(file index, field, code)` the server named, or `None`
+/// when the error is not about the uploads.
+pub fn rejected_uploads(error: &ApiError) -> Option<Vec<(Option<usize>, String, String)>> {
+    let ApiError::Api { code, fields, .. } = error else {
+        return None;
+    };
+    if code != "validation_failed" {
+        return None;
+    }
+    let fields: Vec<(String, String)> = fields
+        .as_object()?
+        .iter()
+        .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned())))
+        .collect();
+    let about_uploads = fields.iter().any(|(field, code)| {
+        field.starts_with("attachment_ids.")
+            || (field == "attachment_ids" && code == "invalid")
+            || field == "size"
+    });
+    about_uploads.then(|| {
+        fields
+            .into_iter()
+            .map(|(field, code)| {
+                let index = field
+                    .strip_prefix("attachment_ids.")
+                    .and_then(|n| n.parse().ok());
+                (index, field, code)
+            })
+            .collect()
+    })
+}
+
+/// The toast's first words when an optimistic write fails
+/// (`notifyError(error, failed)`), by op key; `None`: no toast.
+pub fn failure_text(op: &str) -> Option<&'static str> {
+    let kind = op.split_once(':').map_or(op, |(kind, _)| kind);
+    Some(match kind {
+        "server_update" => "Server nicht gespeichert.",
+        "delete_server" => "Server nicht gelöscht.",
+        "leave" => "Server nicht verlassen.",
+        "create_category" => "Kategorie nicht erstellt.",
+        "category" => "Kategorie nicht gespeichert.",
+        "delete_category" => "Kategorie nicht gelöscht.",
+        "create_channel" => "Kanal nicht erstellt.",
+        "channel" => "Kanal nicht gespeichert.",
+        "delete_channel" => "Kanal nicht gelöscht.",
+        "revoke" => "Einladung nicht widerrufen.",
+        "kick" => "Mitglied nicht entfernt.",
+        "ban" => "Mitglied nicht gesperrt.",
+        "unban" => "Mitglied nicht entsperrt.",
+        "edit" => "Änderung nicht gespeichert.",
+        "delete" => "Nachricht nicht gelöscht.",
+        "react" => "Reaktion nicht gespeichert.",
+        "dm" => "Unterhaltung nicht geöffnet.",
+        _ => return None,
+    })
 }
 
 /// A file to attach; kept with the pending row so a retry can send it again.
@@ -83,6 +217,8 @@ pub struct ChannelMessages {
     pub pending: Vec<PendingMessage>,
     /// Missed events (gap): fetch again when opened.
     pub stale: bool,
+    /// The last read mark was not saved ("Lesestatus nicht gespeichert.").
+    pub read_failed: bool,
 }
 
 impl ChannelMessages {
@@ -263,6 +399,12 @@ pub enum Notice {
         text: String,
     },
     Error(String),
+    /// An optimistic write the server turned down: `failed` names it
+    /// ("Nachricht nicht gelöscht."), the UI adds the error's text.
+    Failed {
+        failed: &'static str,
+        error: ApiError,
+    },
     /// A new message by someone else (`useMessageToastsBridge`): the UI
     /// decides whether it shows as a toast.
     Message {
@@ -885,13 +1027,7 @@ mod tests {
         let nonce = id(77);
         c.pending.push(PendingMessage {
             nonce,
-            channel_id: id(100),
-            content: "x".into(),
-            reply_to: None,
-            gif: None,
-            files: vec![],
-            created_at: chrono::Utc::now(),
-            failed: None,
+            ..PendingMessage::new(id(100), "x".into(), chrono::Utc::now())
         });
         let mut original = message(1, 10, 1);
         original.nonce = Some(nonce);
@@ -981,6 +1117,87 @@ mod tests {
         let epoch = s.epoch;
         s.reset_account();
         assert_eq!(s.epoch, epoch + 1);
+    }
+
+    fn api(status: u16, code: &str, fields: serde_json::Value) -> ApiError {
+        ApiError::Api {
+            status,
+            code: code.into(),
+            message: String::new(),
+            fields,
+        }
+    }
+
+    #[test]
+    fn a_lost_bind_answer_leaves_the_send_uncertain() {
+        let none = serde_json::Value::Null;
+        let lost = ApiError::Transport("connection reset".into());
+        assert!(send_uncertain(SendStage::Bind, &lost));
+        assert!(send_uncertain(
+            SendStage::Bind,
+            &api(502, "internal", none.clone())
+        ));
+        assert!(send_uncertain(
+            SendStage::Bind,
+            &api(408, "internal", none.clone())
+        ));
+        // A refusal is an answer: the message was not saved.
+        assert!(!send_uncertain(
+            SendStage::Bind,
+            &api(403, "forbidden", none.clone())
+        ));
+        // Before the bind nothing can be saved yet.
+        assert!(!send_uncertain(SendStage::Upload, &lost));
+        assert!(!send_uncertain(SendStage::Presign, &lost));
+        assert_eq!(SendStage::Bind.label(), "Nachricht speichern");
+
+        let mut p = PendingMessage::new(id(100), "x".into(), chrono::Utc::now());
+        p.files = vec![
+            OutgoingFile {
+                filename: "a.txt".into(),
+                content_type: "text/plain".into(),
+                data: Default::default(),
+            };
+            3
+        ];
+        p.stage = SendStage::Upload;
+        p.uploaded = vec![id(1)];
+        assert_eq!(p.upload_state(0), UploadState::Done);
+        assert_eq!(p.upload_state(1), UploadState::Uploading);
+        assert_eq!(p.upload_state(2), UploadState::Waiting);
+
+        let rejected = api(
+            422,
+            "validation_failed",
+            serde_json::json!({"attachment_ids.1": "mismatch"}),
+        );
+        assert_eq!(
+            rejected_uploads(&rejected),
+            Some(vec![(
+                Some(1),
+                "attachment_ids.1".into(),
+                "mismatch".into()
+            )])
+        );
+        let content = api(
+            422,
+            "validation_failed",
+            serde_json::json!({"content": "too_long"}),
+        );
+        assert_eq!(rejected_uploads(&content), None);
+    }
+
+    #[test]
+    fn failed_writes_name_what_did_not_happen() {
+        assert_eq!(failure_text("delete:1"), Some("Nachricht nicht gelöscht."));
+        assert_eq!(
+            failure_text("delete_channel:1"),
+            Some("Kanal nicht gelöscht.")
+        );
+        assert_eq!(failure_text("dm"), Some("Unterhaltung nicht geöffnet."));
+        // Loads and form-only writes have their own error places.
+        assert_eq!(failure_text("server:1"), None);
+        assert_eq!(failure_text("login"), None);
     }
 
     #[test]

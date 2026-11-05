@@ -16,7 +16,8 @@ use crate::gateway::{Gateway, GatewayEvent};
 use crate::http::ApiError;
 use crate::models::*;
 use crate::store::{
-    Notice, OpState, OutgoingFile, PAGE_SIZE, PendingMessage, Session, State, View, VoiceSelf,
+    Notice, OpState, OutgoingFile, PAGE_SIZE, PendingMessage, SendStage, Session, State, View,
+    VoiceSelf,
 };
 
 /// Session check retries while the server is unreachable (`session.ts`).
@@ -75,12 +76,24 @@ impl Client {
                 .write_in(epoch, |s| s.ops.insert(key.to_owned(), OpState::Done))
                 .map(|_| value),
             Err(error) => {
-                self.write_in(epoch, |s| {
-                    s.ops.insert(key.to_owned(), OpState::Failed(error))
-                });
+                if self.epoch() == epoch {
+                    self.fail_op(key, error);
+                }
                 None
             }
         }
+    }
+
+    /// Records the named operation as failed, as its request does: the op
+    /// state, and for an optimistic write the error toast's notice.
+    pub fn fail_op(&self, key: &str, error: ApiError) {
+        if let Some(failed) = crate::store::failure_text(key) {
+            self.notify(Notice::Failed {
+                failed,
+                error: error.clone(),
+            });
+        }
+        self.write(|s| s.ops.insert(key.to_owned(), OpState::Failed(error)));
     }
 
     /// Forgets a finished operation (a form that was closed).
@@ -479,24 +492,20 @@ impl Client {
             Some(server) => self.open_conversation(server, channel),
             None => {
                 // Unknown yet: a DM not in the list, or a server not loaded.
+                // Op key `dm_load:<id>` (the DM page's load error).
                 let this = self.clone();
                 self.spawn(async move {
                     let epoch = this.epoch();
-                    match this.http().dm(channel).await {
-                        Ok(dm) => {
-                            let current = this.write_in(epoch, |s| {
-                                if s.dm(dm.id).is_none() {
-                                    s.dms.insert(0, dm);
-                                }
-                            });
-                            if current.is_some() {
-                                this.open_conversation(None, channel);
+                    let http = this.http().clone();
+                    let key = format!("dm_load:{channel}");
+                    if let Some(dm) = this.op(&key, http.dm(channel)).await {
+                        let current = this.write_in(epoch, |s| {
+                            if s.dm(dm.id).is_none() {
+                                s.dms.insert(0, dm);
                             }
-                        }
-                        Err(error) => {
-                            this.write_in(epoch, |s| {
-                                s.channel_mut(channel).error = Some(error);
-                            });
+                        });
+                        if current.is_some() {
+                            this.open_conversation(None, channel);
                         }
                     }
                 });
@@ -678,15 +687,17 @@ impl Client {
         if text.trim().is_empty() && gif.is_none() && files.is_empty() {
             return;
         }
+        let stage = if files.is_empty() || gif.is_some() {
+            SendStage::Bind
+        } else {
+            SendStage::Presign
+        };
         let pending = PendingMessage {
-            nonce: Uuid::new_v4(),
-            channel_id: channel,
-            content: text.to_owned(),
             reply_to,
             gif,
             files,
-            created_at: self.http().server_now(),
-            failed: None,
+            stage,
+            ..PendingMessage::new(channel, text.to_owned(), self.http().server_now())
         };
         self.stop_typing();
         let this = self.clone();
@@ -696,48 +707,103 @@ impl Client {
         });
     }
 
-    async fn deliver(&self, pending: PendingMessage) {
-        let epoch = self.epoch();
-        let http = self.http().clone();
-        let work = async {
-            let mut ids = Vec::with_capacity(pending.files.len());
-            for file in &pending.files {
-                let attachment = http
-                    .upload_attachment(
-                        pending.channel_id,
-                        &file.filename,
-                        &file.content_type,
-                        file.data.as_ref().clone(),
-                    )
-                    .await?;
-                ids.push(attachment.id);
-            }
-            let body = NewMessage {
-                content: pending.content.clone(),
-                attachment_ids: pending.gif.is_none().then_some(ids),
-                gif: pending.gif.clone(),
-                reply_to: pending.reply_to,
-                nonce: Some(pending.nonce),
-            };
-            http.create_message(pending.channel_id, &body).await
-        };
-        let result = work.await;
-        self.write_in(epoch, |s| match result {
-            Ok(message) => s.apply_message(message),
-            Err(error) => {
-                if let Some(row) = s
-                    .channel_mut(pending.channel_id)
-                    .pending
-                    .iter_mut()
-                    .find(|p| p.nonce == pending.nonce)
-                {
-                    row.failed = Some(error);
-                }
+    /// Changes the pending row `nonce` of `channel`, if it is still there
+    /// (the live event may have confirmed it meanwhile).
+    fn update_pending(
+        &self,
+        epoch: u64,
+        channel: Uuid,
+        nonce: Uuid,
+        f: impl FnOnce(&mut PendingMessage),
+    ) {
+        self.write_in(epoch, |s| {
+            if let Some(row) = s
+                .channel_mut(channel)
+                .pending
+                .iter_mut()
+                .find(|p| p.nonce == nonce)
+            {
+                f(row);
             }
         });
     }
 
-    /// Sends a failed pending row again with the same nonce.
+    /// Uploads the files one after another (a retry continues after those
+    /// that arrived), then binds them: each stage is kept on the row, so a
+    /// failure names where it stopped (`sendMessageAttempt`).
+    async fn deliver(&self, pending: PendingMessage) {
+        let epoch = self.epoch();
+        let http = self.http().clone();
+        let (channel, nonce) = (pending.channel_id, pending.nonce);
+        let mut ids = pending.uploaded.clone();
+        let mut failure = None;
+        if pending.gif.is_none() {
+            for file in pending.files.iter().skip(ids.len()) {
+                self.update_pending(epoch, channel, nonce, |p| p.stage = SendStage::Presign);
+                let request = PresignRequest {
+                    filename: file.filename.clone(),
+                    content_type: file.content_type.clone(),
+                    size: file.data.len() as i64,
+                };
+                let presigned = match http.presign_attachment(channel, &request).await {
+                    Ok(presigned) => presigned,
+                    Err(error) => {
+                        failure = Some((SendStage::Presign, error));
+                        break;
+                    }
+                };
+                self.update_pending(epoch, channel, nonce, |p| p.stage = SendStage::Upload);
+                let put = http
+                    .put_upload(
+                        &presigned.upload_url,
+                        &presigned.headers,
+                        file.data.as_ref().clone(),
+                    )
+                    .await;
+                if let Err(error) = put {
+                    failure = Some((SendStage::Upload, error));
+                    break;
+                }
+                ids.push(presigned.attachment.id);
+                let uploaded = ids.clone();
+                self.update_pending(epoch, channel, nonce, |p| p.uploaded = uploaded);
+            }
+        }
+        let result = match failure {
+            Some(failure) => Err(failure),
+            None => {
+                self.update_pending(epoch, channel, nonce, |p| p.stage = SendStage::Bind);
+                let body = NewMessage {
+                    content: pending.content.clone(),
+                    attachment_ids: pending.gif.is_none().then_some(ids),
+                    gif: pending.gif.clone(),
+                    reply_to: pending.reply_to,
+                    nonce: Some(nonce),
+                };
+                http.create_message(channel, &body)
+                    .await
+                    .map_err(|e| (SendStage::Bind, e))
+            }
+        };
+        match result {
+            Ok(message) => {
+                self.write_in(epoch, |s| s.apply_message(message));
+            }
+            Err((stage, error)) => self.update_pending(epoch, channel, nonce, |row| {
+                row.stage = stage;
+                row.uncertain = crate::store::send_uncertain(stage, &error);
+                // These ids may be taken (a lost bind) or were turned down:
+                // a retry uploads the files again.
+                if row.uncertain || crate::store::rejected_uploads(&error).is_some() {
+                    row.uploaded.clear();
+                }
+                row.failed = Some(error);
+            }),
+        }
+    }
+
+    /// Sends a failed pending row again with the same nonce; never one
+    /// whose bind may have been saved.
     pub fn retry_send(&self, channel: Uuid, nonce: Uuid) {
         let this = self.clone();
         self.spawn(async move {
@@ -746,7 +812,7 @@ impl Client {
                     .channel_mut(channel)
                     .pending
                     .iter_mut()
-                    .find(|p| p.nonce == nonce && p.failed.is_some())?;
+                    .find(|p| p.nonce == nonce && p.failed.is_some() && !p.uncertain)?;
                 row.failed = None;
                 Some(row.clone())
             });
@@ -843,9 +909,16 @@ impl Client {
             return;
         }
         let epoch = self.epoch();
-        if let Ok(row) = self.http().mark_read(channel, None).await {
-            self.write_in(epoch, |s| s.apply_read_states(vec![row]));
-        }
+        let result = self.http().mark_read(channel, None).await;
+        self.write_in(epoch, |s| {
+            let failed = result.is_err();
+            if let Ok(row) = result {
+                s.apply_read_states(vec![row]);
+            }
+            if failed || s.channels.contains_key(&channel) {
+                s.channel_mut(channel).read_failed = failed;
+            }
+        });
     }
 
     /// "Als gelesen markieren" on a server.
@@ -1320,7 +1393,12 @@ impl Client {
                     http.leave_server(id).await
                 }
             };
-            if this.op(&format!("leave:{id}"), work).await.is_some() {
+            let key = if delete {
+                format!("delete_server:{id}")
+            } else {
+                format!("leave:{id}")
+            };
+            if this.op(&key, work).await.is_some() {
                 this.write(|s| s.forget_server(id));
                 this.sync_topics();
             }
@@ -1365,7 +1443,7 @@ impl Client {
 
     pub fn delete_channel(&self, server: Uuid, channel: Uuid) {
         let http = self.http().clone();
-        self.server_change(format!("channel:{channel}"), server, async move {
+        self.server_change(format!("delete_channel:{channel}"), server, async move {
             http.delete_channel(channel).await
         });
     }
@@ -1388,7 +1466,7 @@ impl Client {
 
     pub fn delete_category(&self, server: Uuid, category: Uuid) {
         let http = self.http().clone();
-        self.server_change(format!("category:{category}"), server, async move {
+        self.server_change(format!("delete_category:{category}"), server, async move {
             http.delete_category(category).await
         });
     }
@@ -1405,6 +1483,18 @@ impl Client {
         self.server_change(format!("ban:{user}"), server, async move {
             http.ban(server, user).await
         });
+    }
+
+    /// Revokes an invite link in the background (one a dialog made and
+    /// nobody got). Op key `revoke:<code>`.
+    pub fn revoke_invite(&self, code: &str) {
+        let http = self.http().clone();
+        let code = code.to_owned();
+        self.run(
+            format!("revoke:{code}"),
+            async move { http.revoke_invite(&code).await },
+            |_, ()| {},
+        );
     }
 
     // ------------------------------------------------- account & settings

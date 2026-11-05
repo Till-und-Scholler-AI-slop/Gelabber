@@ -187,6 +187,7 @@ pub fn collect(ctx: &egui::Context, app: &mut AppCtx, toasts: &mut MessageToasts
                 }
             }
             Notice::Error(text) => app.toasts.error(text),
+            Notice::Failed { failed, error } => app.toasts.failure(failed, &error),
             Notice::Message { server, message } => {
                 if !prefs::get(ctx).message_toasts || viewing == Some(message.channel_id) {
                     continue;

@@ -348,8 +348,9 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
         history.messages.iter().map(|m| (m, None)).collect();
     for (p, m) in history.pending.iter().zip(pending.iter()) {
         let state = match &p.failed {
-            Some(e) => SendState::Failed {
-                error: e.german().to_owned(),
+            Some(_) => SendState::Failed {
+                error: row::failure_line(p),
+                uncertain: p.uncertain,
             },
             None => SendState::Sending {
                 visible: (input.now - p.created_at).num_milliseconds() >= 400,
@@ -997,6 +998,124 @@ fn paint_jump(ui: &mut Ui, rect: Rect, arrived: usize) -> bool {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     response.clicked()
+}
+
+/// Where the context list stands (MessageContext.tsx): its scroll offset,
+/// and whether the found message was brought into view yet.
+#[derive(Default)]
+pub struct ContextScroll {
+    pub offset: f32,
+    pub centered: bool,
+}
+
+/// The rows of a message's context, each a whole row (`continued: false`)
+/// below 12px of padding; the found one framed in the accent
+/// (`mx-1 rounded border-2`, 12% accent fill) and scrolled to the middle.
+pub fn context_rows(
+    ui: &mut Ui,
+    rect: Rect,
+    input: &ListInput,
+    messages: &[Message],
+    target: Uuid,
+    scroll: &mut ContextScroll,
+) -> Vec<RowAction> {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let now_t = ui.input(|i| i.time);
+    let snap = Snap {
+        intents: HashMap::new(),
+        revealed: HashMap::new(),
+        editing: None,
+        copied: None,
+        highlight: None,
+        empty: HashSet::new(),
+        now_t,
+    };
+    let items: Vec<Item> = messages
+        .iter()
+        .map(|m| Item {
+            msg: std::borrow::Cow::Borrowed(m),
+            send: None,
+            day: None,
+            new_divider: false,
+            start: false,
+            continued: false,
+        })
+        .collect();
+    // The found row is 4px in from both sides and has a 2px border.
+    const INSET: f32 = 4.0 + 2.0;
+    let mut layouts = Vec::with_capacity(items.len());
+    let mut y = 12.0;
+    let mut spans = Vec::with_capacity(items.len());
+    for item in &items {
+        let cx = make_cx(item, input, &snap);
+        let found = item.msg.id == target;
+        let width = if found {
+            rect.width() - 2.0 * INSET
+        } else {
+            rect.width()
+        };
+        let layout = row::layout(ui, &cx, width);
+        let h = layout.height.round() + if found { 2.0 * 2.0 } else { 0.0 };
+        spans.push((y, h));
+        y += h;
+        layouts.push(layout);
+    }
+    let content_h = y + 12.0;
+    let max_offset = (content_h - rect.height()).max(0.0);
+    if !scroll.centered
+        && let Some(i) = items.iter().position(|it| it.msg.id == target)
+    {
+        scroll.centered = true;
+        let (top, h) = spans[i];
+        scroll.offset = (top + h / 2.0 - rect.height() / 2.0).clamp(0.0, max_offset);
+    }
+    if ui.rect_contains_pointer(rect) {
+        let delta = ui.input(|i| i.smooth_scroll_delta.y);
+        scroll.offset = (scroll.offset - delta).clamp(0.0, max_offset);
+    }
+    scroll.offset = scroll.offset.clamp(0.0, max_offset);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+    let pointer = ui.input(|i| i.pointer.hover_pos());
+    let mut actions = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        let (top, h) = spans[i];
+        let y = rect.top() + top - scroll.offset;
+        if y + h < rect.top() - 20.0 || y > rect.bottom() + 20.0 {
+            continue;
+        }
+        let cx = make_cx(item, input, &snap);
+        let found = item.msg.id == target;
+        let outer = Rect::from_min_size(pos2(rect.left(), y), vec2(rect.width(), h));
+        let row_rect = if found {
+            let frame = outer.shrink2(vec2(4.0, 0.0));
+            child.painter().rect(
+                frame,
+                corner(4.0),
+                mix(c.bg, c.accent, 0.12),
+                Stroke::new(2.0, c.accent),
+                StrokeKind::Inside,
+            );
+            frame.shrink(2.0)
+        } else {
+            outer
+        };
+        let hovered = pointer.is_some_and(|p| row_rect.contains(p) && rect.contains(p));
+        let painted = row::paint(
+            &mut child,
+            &cx,
+            &layouts[i],
+            row_rect,
+            row::Look {
+                hovered,
+                menu_open: false,
+            },
+            None,
+        );
+        actions.extend(painted.actions);
+    }
+    actions
 }
 
 #[cfg(test)]

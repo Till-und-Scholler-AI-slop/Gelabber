@@ -3,8 +3,10 @@
 //! pages/DmChannelPage.tsx).
 
 mod attachments;
+pub mod clipboard;
 mod composer;
 mod content;
+mod context;
 mod emoji;
 mod gif;
 mod header;
@@ -42,6 +44,8 @@ struct ChatState {
     panes: HashMap<Uuid, PaneState>,
     composers: HashMap<Uuid, ComposerState>,
     searches: HashMap<Uuid, search::SearchState>,
+    /// A message shown in its context, per conversation.
+    contexts: HashMap<Uuid, context::ContextState>,
     picker: emoji::PickerState,
     gif: gif::GifState,
     requests: Vec<ChatRequest>,
@@ -282,6 +286,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         .is_none_or(|(c, f)| c != channel || f + 1 < frame)
     {
         chat.panes.insert(channel, PaneState::default());
+        chat.contexts.remove(&channel);
     }
     chat.shown = Some((channel, frame));
     let me = client
@@ -372,8 +377,45 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         .searches
         .get_mut(&channel)
         .is_some_and(|s| s.active(ui.input(|i| i.time)));
+    // A hit's context holds while its query is typed; a reply's while no
+    // search runs (MessageSearch `opened`, MessagePane `contextTarget`).
+    let typed = chat
+        .searches
+        .get(&channel)
+        .map(|s| s.text.trim().to_owned())
+        .unwrap_or_default();
+    if chat
+        .contexts
+        .get(&channel)
+        .is_some_and(|x| x.query.as_ref().is_some_and(|q| *q != typed))
+    {
+        chat.contexts.remove(&channel);
+    }
+    let in_context = chat
+        .contexts
+        .get(&channel)
+        .is_some_and(|x| x.query.is_some() == searching);
     let mut list_actions = Vec::new();
-    if searching {
+    let mut context_actions = Vec::new();
+    if in_context {
+        let state = client.state();
+        let input = ListInput {
+            channel,
+            state: &state,
+            me,
+            names: &names,
+            can_send: conv.can_send,
+            can_moderate: conv.can_moderate,
+            start: conv.start.clone(),
+            now,
+            images: app.images,
+            http: client.http(),
+        };
+        let view = chat.contexts.get_mut(&channel).expect("context state");
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list_rect));
+        child.set_clip_rect(list_rect.intersect(ui.clip_rect()));
+        context_actions = context::show(&mut child, list_rect, client, channel, view, &input);
+    } else if searching {
         let s = chat.searches.get_mut(&channel).expect("search state");
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list_rect));
         child.set_clip_rect(list_rect.intersect(ui.clip_rect()));
@@ -382,9 +424,11 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
                 s.text.clear();
                 ui.memory_mut(|m| m.request_focus(header::search_id(channel)));
             }
+            // A hit always opens in its context.
             Some(search::SearchAction::Open(id)) => {
-                s.text.clear();
-                pane_state.focus = Some(id);
+                let query = s.text.trim().to_owned();
+                chat.contexts
+                    .insert(channel, context::ContextState::new(id, Some(query)));
             }
             None => {}
         }
@@ -415,7 +459,23 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
     let composer_actions = composer::show(ui, composer_rect, composer_state, &composer_input);
 
     // The rows' requests, now that the state lock is released.
-    let pane_state = chat.panes.get_mut(&channel).expect("pane state");
+    for action in context_actions {
+        match action {
+            context::ContextAction::Hits => {
+                chat.contexts.remove(&channel);
+            }
+            context::ContextAction::Chat => {
+                chat.contexts.remove(&channel);
+                if let Some(s) = chat.searches.get_mut(&channel)
+                    && !s.text.is_empty()
+                {
+                    s.text.clear();
+                    ui.memory_mut(|m| m.request_focus(header::search_id(channel)));
+                }
+            }
+            context::ContextAction::Row(row) => list_actions.push(ListAction::Row(row)),
+        }
+    }
     let now_t = ui.input(|i| i.time);
     for action in list_actions {
         match action {
@@ -427,12 +487,15 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
             }
             ListAction::MarkReadNow => client.mark_read(channel),
             ListAction::Reload => client.reload_channel(channel),
+            ListAction::Row(RowAction::JumpTo(id)) => jump_to(chat, client, channel, id),
             ListAction::Row(action) => {
+                let pane_state = chat.panes.entry(channel).or_default();
                 let composer_state = chat.composers.entry(channel).or_default();
                 row_action(ui, app, &conv, pane_state, composer_state, action, now_t);
             }
         }
     }
+    let pane_state = chat.panes.entry(channel).or_default();
     let composer_state = chat.composers.entry(channel).or_default();
     for action in composer_actions {
         match action {
@@ -514,6 +577,22 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
     }
 }
 
+/// `jumpTo`: the search closes; a loaded message is scrolled to, one that
+/// is not opens in its context.
+fn jump_to(chat: &mut ChatState, client: &Client, channel: Uuid, id: Uuid) {
+    if let Some(s) = chat.searches.get_mut(&channel) {
+        s.text.clear();
+    }
+    let loaded = client.with_state(|s| s.messages(channel).is_some_and(|h| h.get(id).is_some()));
+    if loaded {
+        chat.contexts.remove(&channel);
+        chat.panes.entry(channel).or_default().focus = Some(id);
+    } else {
+        chat.contexts
+            .insert(channel, context::ContextState::new(id, None));
+    }
+}
+
 fn row_action(
     ui: &mut Ui,
     app: &mut AppCtx,
@@ -550,25 +629,16 @@ fn row_action(
                 Some((id, anchor))
             };
         }
-        RowAction::JumpTo(id) => {
-            if client.with_state(|s| {
-                s.messages(conv.channel)
-                    .is_some_and(|h| h.get(id).is_some())
-            }) {
-                pane.focus = Some(id);
-            } else {
-                app.toasts
-                    .notify("Die ursprüngliche Nachricht ist nicht geladen.");
-            }
-        }
+        // Taken by `jump_to` before the rows' actions get here.
+        RowAction::JumpTo(_) => {}
         RowAction::Content(id, content) => match content {
             ContentAction::OpenLink(href) => open_external(ui.ctx(), &href),
             ContentAction::RevealSpoiler(n) => {
                 pane.revealed.entry(id).or_default().insert(n);
             }
             ContentAction::CopyCode(n, text) => {
-                ui.ctx().copy_text(text);
-                pane.copied = Some((id, n, true, now_t));
+                let copied = clipboard::copy(ui.ctx(), &text);
+                pane.copied = Some((id, n, copied, now_t));
             }
         },
         RowAction::Media(media) => match media {
@@ -843,8 +913,8 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
                     pane.start_edit(id, mentions::from_wire(&message.content, &conv.members));
                 }
                 MenuChoice::Copy => {
-                    ctx.copy_text(mentions::from_wire(&message.content, &conv.members));
-                    app.toasts.notify("Text kopiert.");
+                    let text = mentions::from_wire(&message.content, &conv.members);
+                    clipboard::copy_message(&ctx, &text, app.toasts);
                 }
                 MenuChoice::Delete(skip) => {
                     if skip {
