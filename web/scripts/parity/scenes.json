@@ -613,6 +613,32 @@
           "wait": 1000
         }
       ]
+    },
+    {
+      "name": "quick-switcher-escape",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Control+k"
+        },
+        {
+          "key": "Escape"
+        }
+      ]
+    },
+    {
+      "name": "notify-escape",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Benachrichtigungen für #allgemein"
+        },
+        {
+          "key": "Escape"
+        }
+      ]
     }
   ]
 }
