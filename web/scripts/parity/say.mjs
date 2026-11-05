@@ -47,10 +47,36 @@ csrf = (await call("GET", "/auth/session")).csrf_token;
 if (command === "post") {
   const channel = target === "dm" ? fixture.dm : fixture.servers.home.channels[target];
   if (!channel) throw new Error(`unknown channel ${target}`);
-  const content = words
-    .join(" ")
-    .replace(/\{(\w+)\}/g, (_, key) => `<@${fixture.users[key].id}>`);
-  const message = await call("POST", `/channels/${channel}/messages`, { content });
+  // A leading "image=<file>" attaches web/public/images/living-room/<file>.
+  const attachment_ids = [];
+  let text = words.join(" ");
+  if (text.startsWith("image=")) {
+    const [file, ...rest] = text.split(" ");
+    text = rest.join(" ");
+    const filename = file.slice("image=".length);
+    const data = await readFile(join(here, "../../public/images/living-room", filename));
+    const presigned = await call("POST", `/channels/${channel}/attachments`, {
+      filename,
+      content_type: "image/png",
+      size: data.length,
+    });
+    const url = presigned.upload_url.startsWith("/")
+      ? `${fixture.base}${presigned.upload_url}`
+      : presigned.upload_url;
+    const headers = { ...presigned.headers };
+    if (presigned.upload_url.startsWith("/")) {
+      headers.Cookie = [...cookies].map(([k, v]) => `${k}=${v}`).join("; ");
+      headers["X-CSRF-Token"] = csrf;
+    }
+    const put = await fetch(url, { method: "PUT", headers, body: data });
+    if (!put.ok) throw new Error(`upload → ${put.status} ${await put.text()}`);
+    attachment_ids.push(presigned.id);
+  }
+  const content = text.replace(/\{(\w+)\}/g, (_, key) => `<@${fixture.users[key].id}>`);
+  const message = await call("POST", `/channels/${channel}/messages`, {
+    content,
+    ...(attachment_ids.length ? { attachment_ids } : {}),
+  });
   console.log(message.id);
 } else {
   await call("DELETE", `/messages/${target}`);

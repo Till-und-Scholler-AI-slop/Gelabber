@@ -495,6 +495,47 @@
           "click": "Vom Server entfernen"
         }
       ]
+    },
+    {
+      "name": "lightbox",
+      "path": "/s/{home}/c/{musik}",
+      "user": "lena",
+      "actions": [
+        {
+          "say": "jonas musik image=community-banner.png Unser neues Banner"
+        },
+        {
+          "wait": 2000
+        },
+        {
+          "link": "community-banner.png vergrößern"
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
+      "name": "lightbox-escape",
+      "path": "/s/{home}/c/{musik}",
+      "user": "lena",
+      "actions": [
+        {
+          "say": "jonas musik image=community-banner.png Unser neues Banner"
+        },
+        {
+          "wait": 2000
+        },
+        {
+          "link": "community-banner.png vergrößern"
+        },
+        {
+          "wait": 500
+        },
+        {
+          "key": "Escape"
+        }
+      ]
     }
   ]
 }

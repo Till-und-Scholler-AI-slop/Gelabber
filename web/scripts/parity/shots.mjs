@@ -101,6 +101,8 @@ for (const scene of scenes) {
     }
     if (action.click)
       await page.getByRole("button", { name: action.click, exact: true }).first().click();
+    if (action.link)
+      await page.getByRole("link", { name: action.link, exact: true }).first().click();
     // The first button or link of that name, with the secondary button.
     if (action.rightclick)
       await page

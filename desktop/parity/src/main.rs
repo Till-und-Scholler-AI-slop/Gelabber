@@ -45,6 +45,8 @@ struct Scene {
 enum Action {
     /// Click the button with this accessible name.
     Click(String),
+    /// Click the link with this accessible name.
+    Link(String),
     /// Right-click the first button or link with this accessible name.
     Rightclick(String),
     /// Click the first element with this label, whatever its role.
@@ -249,6 +251,13 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                     reveal(&mut harness, size.y, name, &[Role::Button]);
                     find(&harness, name, &[Role::Button])
                         .unwrap_or_else(|| panic!("{}: no button {name:?}", scene.name))
+                        .click();
+                }
+                Action::Link(name) => {
+                    use egui::accesskit::Role;
+                    reveal(&mut harness, size.y, name, &[Role::Link]);
+                    find(&harness, name, &[Role::Link])
+                        .unwrap_or_else(|| panic!("{}: no link {name:?}", scene.name))
                         .click();
                 }
                 Action::Rightclick(name) => {
