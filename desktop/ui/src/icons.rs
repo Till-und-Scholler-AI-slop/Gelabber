@@ -52,6 +52,16 @@ fn rasterize(icon: Icon, size_px: f32, fx: f32, fy: f32) -> Option<ColorImage> {
 /// Paints `icon` as a `size`×`size` px box with its top-left at `min`
 /// (CSS position, may be fractional), in `color`.
 pub fn paint(painter: &Painter, icon: Icon, min: Pos2, size: f32, color: Color32) {
+    paint_uv(painter, icon, min, size, color, false);
+}
+
+/// Like [`paint`], turned by 180° (`rotate: 180deg`, a chevron that
+/// points up).
+pub fn paint_rotated(painter: &Painter, icon: Icon, min: Pos2, size: f32, color: Color32) {
+    paint_uv(painter, icon, min, size, color, true);
+}
+
+fn paint_uv(painter: &Painter, icon: Icon, min: Pos2, size: f32, color: Color32, turned: bool) {
     let ctx = painter.ctx();
     let ppp = ctx.pixels_per_point();
     let (x, y) = (min.x * ppp, min.y * ppp);
@@ -92,12 +102,12 @@ pub fn paint(painter: &Painter, icon: Icon, min: Pos2, size: f32, color: Color32
         Pos2::new(x0 / ppp, y0 / ppp),
         Vec2::new(w as f32 / ppp, h as f32 / ppp),
     );
-    painter.image(
-        texture.id(),
-        rect,
-        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-        color,
-    );
+    let uv = if turned {
+        Rect::from_min_max(Pos2::new(1.0, 1.0), Pos2::ZERO)
+    } else {
+        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0))
+    };
+    painter.image(texture.id(), rect, uv, color);
 }
 
 /// Paints `icon` centred in `rect`.
