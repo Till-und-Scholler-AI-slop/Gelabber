@@ -527,3 +527,38 @@ fn reconnect_resumes_without_losing_or_repeating_events() {
     raw.stop();
     drop(scratch);
 }
+
+#[test]
+#[ignore = "needs the seeded stack (GELABBER_TEST_SERVER)"]
+fn switching_accounts_keeps_nothing_of_the_first() {
+    let fx = fixture();
+    let client = signed_in(&fx, "lena");
+    let home = fx.servers.home.id;
+    let allgemein = fx.servers.home.channels["allgemein"];
+    client.open_server_channel(home, allgemein);
+    // Sign out while the history and its read mark are still in flight.
+    client.logout();
+    wait(&client, "signed out", |s| {
+        s.session == Session::Anonymous && s.op("logout") == Some(&OpState::Done)
+    });
+    client.login(&fx.users["jonas"].email, &fx.password);
+    wait(&client, "jonas bootstrapped", |s| {
+        s.me().is_some_and(|m| m.id == fx.users["jonas"].id) && s.bootstrapped
+    });
+    wait(&client, "gateway open", |s| {
+        s.gateway == GatewayStatus::Open
+    });
+    // Lena's stopped socket must not report its end over Jonas' one.
+    std::thread::sleep(Duration::from_millis(500));
+    let http = client.http().clone();
+    let servers = client
+        .block_on(async move { http.servers().await })
+        .unwrap();
+    client.with_state(|s| {
+        assert_eq!(s.gateway, GatewayStatus::Open);
+        assert_eq!(s.view, View::default());
+        assert!(s.messages(allgemein).is_none());
+        let ids: Vec<Uuid> = s.servers.iter().map(|v| v.id).collect();
+        assert_eq!(ids, servers.iter().map(|v| v.id).collect::<Vec<_>>());
+    });
+}

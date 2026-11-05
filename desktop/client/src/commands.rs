@@ -4,6 +4,7 @@
 //! commands report progress in `State::ops` under the key they document.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use futures_util::future::join_all;
@@ -58,21 +59,25 @@ impl Client {
         let this = self.clone();
         let op = op.into();
         self.spawn(async move {
+            let epoch = this.epoch();
             if let Some(value) = this.op(&op, work).await {
-                this.write(|s| apply(s, value));
+                this.write_in(epoch, |s| apply(s, value));
             }
         });
     }
 
+    /// `None` also when the account changed meanwhile: the answer is dropped.
     async fn op<T>(&self, key: &str, work: impl Future<Output = Result<T, ApiError>>) -> Option<T> {
+        let epoch = self.epoch();
         self.write(|s| s.ops.insert(key.to_owned(), OpState::Pending));
         match work.await {
-            Ok(value) => {
-                self.write(|s| s.ops.insert(key.to_owned(), OpState::Done));
-                Some(value)
-            }
+            Ok(value) => self
+                .write_in(epoch, |s| s.ops.insert(key.to_owned(), OpState::Done))
+                .map(|_| value),
             Err(error) => {
-                self.write(|s| s.ops.insert(key.to_owned(), OpState::Failed(error)));
+                self.write_in(epoch, |s| {
+                    s.ops.insert(key.to_owned(), OpState::Failed(error))
+                });
                 None
             }
         }
@@ -282,6 +287,7 @@ impl Client {
 
     async fn load_workspace(&self) {
         let http = self.http().clone();
+        let epoch = self.epoch();
         self.write(|s| s.ops.insert("bootstrap".into(), OpState::Pending));
         let (servers, dms, unread, settings, privacy, themes) = tokio::join!(
             http.servers(),
@@ -292,7 +298,7 @@ impl Client {
             http.themes(),
         );
         let mut failure: Option<ApiError> = None;
-        self.write(|s| {
+        let current = self.write_in(epoch, |s| {
             match servers {
                 Ok(list) => {
                     s.servers = list;
@@ -333,7 +339,7 @@ impl Client {
                 },
             );
         });
-        if self.with_state(|s| s.me().is_some()) {
+        if current.is_some() && self.with_state(|s| s.me().is_some()) {
             self.ensure_gateway();
             self.activity();
             self.sync_topics();
@@ -347,8 +353,9 @@ impl Client {
     }
 
     async fn reload_servers(&self) {
+        let epoch = self.epoch();
         if let Ok(list) = self.http().servers().await {
-            self.write(|s| {
+            self.write_in(epoch, |s| {
                 let gone: Vec<Uuid> = s
                     .server_details
                     .keys()
@@ -366,9 +373,10 @@ impl Client {
     }
 
     async fn reload_server(&self, id: Uuid) -> Result<(), ApiError> {
+        let epoch = self.epoch();
         match self.http().server(id).await {
             Ok(detail) => {
-                self.write(|s| {
+                self.write_in(epoch, |s| {
                     if let Some(entry) = s.servers.iter_mut().find(|v| v.id == id) {
                         *entry = detail.server.clone();
                     }
@@ -378,7 +386,7 @@ impl Client {
                 Ok(())
             }
             Err(e) if e.is_gone() => {
-                self.write(|s| s.forget_server(id));
+                self.write_in(epoch, |s| s.forget_server(id));
                 self.sync_topics();
                 Err(e)
             }
@@ -393,8 +401,9 @@ impl Client {
     }
 
     async fn reload_unread(&self) {
+        let epoch = self.epoch();
         if let Ok(rows) = self.http().unread().await {
-            self.write(|s| {
+            self.write_in(epoch, |s| {
                 s.read.clear();
                 s.apply_read_states(rows);
             });
@@ -461,18 +470,23 @@ impl Client {
                 // Unknown yet: a DM not in the list, or a server not loaded.
                 let this = self.clone();
                 self.spawn(async move {
+                    let epoch = this.epoch();
                     match this.http().dm(channel).await {
                         Ok(dm) => {
-                            this.write(|s| {
+                            let current = this.write_in(epoch, |s| {
                                 if s.dm(dm.id).is_none() {
                                     s.dms.insert(0, dm);
                                 }
                             });
-                            this.open_conversation(None, channel);
+                            if current.is_some() {
+                                this.open_conversation(None, channel);
+                            }
                         }
-                        Err(error) => this.write(|s| {
-                            s.channel_mut(channel).error = Some(error);
-                        }),
+                        Err(error) => {
+                            this.write_in(epoch, |s| {
+                                s.channel_mut(channel).error = Some(error);
+                            });
+                        }
                     }
                 });
             }
@@ -543,7 +557,12 @@ impl Client {
         if previous.channel != view.channel {
             self.stop_typing();
         }
-        self.write(|s| s.view = view);
+        self.write(|s| {
+            s.view = view;
+            if view.server.is_some() {
+                s.last_server = view.server;
+            }
+        });
         self.sync_topics();
     }
 
@@ -554,23 +573,31 @@ impl Client {
     }
 
     async fn load_latest(&self, channel: Uuid) {
+        let epoch = self.epoch();
         self.write(|s| {
             let h = s.channel_mut(channel);
             h.loading = true;
             h.error = None;
         });
-        match self
+        let result = self
             .http()
             .messages(channel, &HistoryQuery::latest(PAGE_SIZE))
-            .await
-        {
-            Ok(page) => self.write(|s| s.channel_mut(channel).replace(page)),
-            Err(error) => self.write(|s| {
-                let h = s.channel_mut(channel);
-                h.loading = false;
-                h.error = Some(error);
-            }),
-        }
+            .await;
+        self.write_in(epoch, |s| {
+            let h = s.channel_mut(channel);
+            match result {
+                // A stale history keeps its older pages and live rows.
+                Ok(page) if h.loaded => {
+                    h.merge_latest(page);
+                    h.loading = false;
+                }
+                Ok(page) => h.replace(page),
+                Err(error) => {
+                    h.loading = false;
+                    h.error = Some(error);
+                }
+            }
+        });
     }
 
     /// The next older page, while `has_more`.
@@ -586,19 +613,22 @@ impl Client {
         };
         let this = self.clone();
         self.spawn(async move {
+            let epoch = this.epoch();
             this.write(|s| s.channel_mut(channel).loading_older = true);
-            match this
+            let result = this
                 .http()
                 .messages(channel, &HistoryQuery::before(cursor, PAGE_SIZE))
-                .await
-            {
-                Ok(page) => this.write(|s| s.channel_mut(channel).prepend(page)),
-                Err(error) => this.write(|s| {
-                    let h = s.channel_mut(channel);
-                    h.loading_older = false;
-                    h.error = Some(error);
-                }),
-            }
+                .await;
+            this.write_in(epoch, |s| {
+                let h = s.channel_mut(channel);
+                match result {
+                    Ok(page) => h.prepend(page),
+                    Err(error) => {
+                        h.loading_older = false;
+                        h.error = Some(error);
+                    }
+                }
+            });
         });
     }
 
@@ -656,6 +686,7 @@ impl Client {
     }
 
     async fn deliver(&self, pending: PendingMessage) {
+        let epoch = self.epoch();
         let http = self.http().clone();
         let work = async {
             let mut ids = Vec::with_capacity(pending.files.len());
@@ -679,9 +710,10 @@ impl Client {
             };
             http.create_message(pending.channel_id, &body).await
         };
-        match work.await {
-            Ok(message) => self.write(|s| s.apply_message(message)),
-            Err(error) => self.write(|s| {
+        let result = work.await;
+        self.write_in(epoch, |s| match result {
+            Ok(message) => s.apply_message(message),
+            Err(error) => {
                 if let Some(row) = s
                     .channel_mut(pending.channel_id)
                     .pending
@@ -690,8 +722,8 @@ impl Client {
                 {
                     row.failed = Some(error);
                 }
-            }),
-        }
+            }
+        });
     }
 
     /// Sends a failed pending row again with the same nonce.
@@ -799,8 +831,9 @@ impl Client {
         if !is_text {
             return;
         }
+        let epoch = self.epoch();
         if let Ok(row) = self.http().mark_read(channel, None).await {
-            self.write(|s| s.apply_read_states(vec![row]));
+            self.write_in(epoch, |s| s.apply_read_states(vec![row]));
         }
     }
 
@@ -1403,8 +1436,9 @@ impl Client {
 
     async fn reload_notification_settings(&self) {
         let http = self.http().clone();
+        let epoch = self.epoch();
         let (settings, unread) = tokio::join!(http.notification_settings(), http.unread());
-        self.write(|s| {
+        self.write_in(epoch, |s| {
             if let Ok(list) = settings {
                 s.notification_settings = list;
             }
@@ -1438,9 +1472,14 @@ impl Client {
         if slot.is_some() {
             return;
         }
+        let generation = self.inner.gateway_generation.fetch_add(1, Ordering::AcqRel) + 1;
         let weak = self.weak();
+        // A stopped socket may still hand over a frame or its last status;
+        // after a sign-out that belongs to nobody.
         let handler = Arc::new(move |event: GatewayEvent| {
-            if let Some(client) = Client::from_weak(&weak) {
+            if let Some(client) = Client::from_weak(&weak)
+                && client.inner.gateway_generation.load(Ordering::Acquire) == generation
+            {
                 client.on_gateway(event);
             }
         });
@@ -1459,7 +1498,9 @@ impl Client {
     }
 
     fn stop_gateway(&self) {
-        if let Some(gateway) = self.inner.gateway.lock().take() {
+        let mut slot = self.inner.gateway.lock();
+        self.inner.gateway_generation.fetch_add(1, Ordering::AcqRel);
+        if let Some(gateway) = slot.take() {
             gateway.stop();
         }
     }
@@ -1609,9 +1650,10 @@ impl Client {
             return true;
         }
         let http = self.http().clone();
+        let epoch = self.epoch();
         let (servers, dms, unread) = tokio::join!(http.servers(), http.dms(), http.unread());
         let mut ok = servers.is_ok() && dms.is_ok() && unread.is_ok();
-        self.write(|s| {
+        let current = self.write_in(epoch, |s| {
             if let Ok(list) = servers {
                 let gone: Vec<Uuid> = s
                     .server_details
@@ -1632,6 +1674,9 @@ impl Client {
                 s.apply_read_states(rows);
             }
         });
+        if current.is_none() {
+            return true;
+        }
         let loaded: Vec<Uuid> = self.with_state(|s| s.server_details.keys().copied().collect());
         let results = join_all(loaded.into_iter().map(|id| self.reload_server(id))).await;
         ok &= results
@@ -1653,7 +1698,9 @@ impl Client {
                 .messages(channel, &HistoryQuery::latest(PAGE_SIZE))
                 .await
             {
-                Ok(page) => self.write(|s| s.channel_mut(channel).merge_latest(page)),
+                Ok(page) => {
+                    self.write_in(epoch, |s| s.channel_mut(channel).merge_latest(page));
+                }
                 Err(e) if e.is_gone() => {}
                 Err(_) => ok = false,
             }
@@ -1680,15 +1727,22 @@ impl Client {
             let Some(client) = Client::from_weak(&weak) else {
                 return;
             };
-            let latest = client
-                .inner
-                .unread_generation
-                .load(std::sync::atomic::Ordering::Acquire);
-            if latest != generation && first.elapsed() < UNREAD_MAX_WAIT {
-                return;
+            let fire = {
+                let mut local = client.inner.local.lock();
+                let latest = client.inner.unread_generation.load(Ordering::Acquire);
+                // Past the max wait only the round's first waker fetches;
+                // the others of that burst would repeat the same request.
+                let overdue =
+                    first.elapsed() >= UNREAD_MAX_WAIT && local.unread_since == Some(first);
+                let fire = latest == generation || overdue;
+                if fire {
+                    local.unread_since = None;
+                }
+                fire
+            };
+            if fire {
+                client.reload_unread().await;
             }
-            client.inner.local.lock().unread_since = None;
-            client.reload_unread().await;
         });
     }
 

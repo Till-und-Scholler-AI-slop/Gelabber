@@ -69,6 +69,9 @@ struct Inner {
     /// Debounce generations for unread refreshes and read marks.
     unread_generation: AtomicU64,
     read_generation: AtomicU64,
+    /// Bumped on every gateway start and stop: events of a socket that was
+    /// already replaced are dropped.
+    gateway_generation: AtomicU64,
 }
 
 impl Drop for Inner {
@@ -113,6 +116,7 @@ impl Client {
                 opening: Mutex::new(Default::default()),
                 unread_generation: AtomicU64::new(0),
                 read_generation: AtomicU64::new(0),
+                gateway_generation: AtomicU64::new(0),
             }),
         };
         let weak = Arc::downgrade(&client.inner);
@@ -219,6 +223,24 @@ impl Client {
         out
     }
 
+    /// The account the state belongs to now; see [`Self::write_in`].
+    fn epoch(&self) -> u64 {
+        self.inner.state.read().epoch
+    }
+
+    /// Writes only while the state still belongs to the account `epoch` was
+    /// read under, so an answer that outlived a sign-out is dropped.
+    fn write_in<R>(&self, epoch: u64, change: impl FnOnce(&mut State) -> R) -> Option<R> {
+        let out = {
+            let mut state = self.inner.state.write();
+            (state.epoch == epoch).then(|| change(&mut state))
+        };
+        if out.is_some() {
+            self.repaint();
+        }
+        out
+    }
+
     /// Toasts that arrived since the last call (kicked, banned, errors).
     pub fn take_notices(&self) -> Vec<Notice> {
         std::mem::take(&mut *self.inner.notices.lock())
@@ -254,5 +276,54 @@ mod tests {
         });
         rx.recv().unwrap();
         drop(client);
+    }
+
+    /// Answers every request with `body` after `delay`.
+    fn slow_server(body: &'static str, delay: std::time::Duration) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let _ = stream.read(&mut buf);
+                    std::thread::sleep(delay);
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[test]
+    fn an_answer_for_a_signed_out_account_is_dropped() {
+        let servers = include_str!("../tests/fixtures/servers.json");
+        let url = slow_server(servers, std::time::Duration::from_millis(300));
+        let client = Client::new(&url).unwrap();
+        client.refresh_servers();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        // Signed out while the list was on its way.
+        client.write(State::reset_account);
+        let start = Instant::now();
+        while client.busy() && start.elapsed() < std::time::Duration::from_secs(5) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!client.busy());
+        assert!(client.with_state(|s| s.servers.is_empty() && !s.servers_loaded));
+        // The same request without a sign-out lands.
+        client.refresh_servers();
+        let start = Instant::now();
+        while !client.with_state(|s| s.servers_loaded)
+            && start.elapsed() < std::time::Duration::from_secs(5)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(client.with_state(|s| !s.servers.is_empty()));
     }
 }

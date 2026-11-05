@@ -448,7 +448,12 @@ impl Task {
                 GatewayStatus::Reconnecting
             });
             first = false;
-            if let Some(socket) = self.connect().await {
+            let socket = match self.connect().await {
+                Ok(socket) => socket,
+                Err(Closed::Stopped) => break,
+                Err(Closed::Dropped) => None,
+            };
+            if let Some(socket) = socket {
                 attempt = 0;
                 if let Closed::Stopped = self.serve(socket).await {
                     break;
@@ -464,21 +469,23 @@ impl Task {
         self.set_status(GatewayStatus::Idle);
     }
 
-    async fn connect(&self) -> Option<Socket> {
-        let mut request = self.http.ws_url("/ws").into_client_request().ok()?;
-        if let Some(cookie) = self.http.cookie_header()
-            && let Ok(value) = cookie.parse()
-        {
-            request.headers_mut().insert("Cookie", value);
-        }
-        let connect = tokio_tungstenite::connect_async(request);
-        match tokio::time::timeout(Duration::from_secs(10), connect).await {
-            Ok(Ok((socket, _))) => Some(socket),
-            Ok(Err(error)) => {
-                tracing::debug!(%error, "gateway connect failed");
-                None
+    /// Connects while still taking commands, so a sign-out during a slow
+    /// handshake never opens a socket afterwards. `Err(Stopped)` when stopped.
+    async fn connect(&mut self) -> Result<Option<Socket>, Closed> {
+        let connecting = connect(self.http.clone());
+        tokio::pin!(connecting);
+        loop {
+            tokio::select! {
+                socket = &mut connecting => return Ok(socket),
+                command = self.rx.recv() => match command {
+                    None | Some(Command::Stop) => return Err(Closed::Stopped),
+                    Some(Command::SetTopics(topics)) => {
+                        self.diff_topics(topics);
+                    }
+                    Some(Command::Focus(on)) => self.focus = on,
+                    Some(Command::Send(_)) => {}
+                },
             }
-            Err(_) => None,
         }
     }
 
@@ -669,6 +676,24 @@ impl Task {
             other => (self.handler)(GatewayEvent::Frame(other)),
         }
         Vec::new()
+    }
+}
+
+async fn connect(http: Http) -> Option<Socket> {
+    let mut request = http.ws_url("/ws").into_client_request().ok()?;
+    if let Some(cookie) = http.cookie_header()
+        && let Ok(value) = cookie.parse()
+    {
+        request.headers_mut().insert("Cookie", value);
+    }
+    let connect = tokio_tungstenite::connect_async(request);
+    match tokio::time::timeout(Duration::from_secs(10), connect).await {
+        Ok(Ok((socket, _))) => Some(socket),
+        Ok(Err(error)) => {
+            tracing::debug!(%error, "gateway connect failed");
+            None
+        }
+        Err(_) => None,
     }
 }
 

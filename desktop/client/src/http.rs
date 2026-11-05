@@ -457,9 +457,11 @@ impl Http {
         } else {
             self.url(path_or_url)
         };
+        // Attachments can be large: the upload timeout, not the REST one.
         let res = self
             .client
             .get(url)
+            .timeout(UPLOAD_TIMEOUT)
             .send()
             .await
             .map_err(ApiError::from_reqwest)?;

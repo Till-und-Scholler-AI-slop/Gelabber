@@ -145,8 +145,17 @@ impl ChannelMessages {
     }
 
     /// The first page (or a refetch after a gap) replaces what was loaded.
+    /// Rows newer than the page came live while it was requested and stay;
+    /// before the first load, every row held came that way.
     pub fn replace(&mut self, page: MessagePage) {
-        self.messages = page.messages;
+        let first_load = !self.loaded;
+        let newest = page.messages.last().map(Message::order_key);
+        let held = std::mem::replace(&mut self.messages, page.messages);
+        for message in held {
+            if first_load || newest.is_some_and(|n| message.order_key() > n) {
+                self.upsert(message);
+            }
+        }
         self.has_more = page.has_more;
         self.loaded = true;
         self.loading = false;
@@ -177,8 +186,12 @@ impl ChannelMessages {
             return;
         }
         let start = page.messages[0].order_key();
-        self.messages
-            .retain(|m| m.order_key() < start || page.messages.iter().any(|p| p.id == m.id));
+        let end = page.messages[page.messages.len() - 1].order_key();
+        // Rows past the page's end came live after it was read.
+        self.messages.retain(|m| {
+            let key = m.order_key();
+            key < start || key > end || page.messages.iter().any(|p| p.id == m.id)
+        });
         for message in page.messages {
             self.upsert(message);
         }
@@ -284,6 +297,11 @@ pub struct State {
     pub session_expired: bool,
     /// The last gateway `err` frame: code, server, channel (voice joins).
     pub gateway_error: Option<(String, Option<Uuid>, Option<Uuid>)>,
+    /// The last server shown; its channels stay subscribed in DMs and
+    /// settings, like the web's remembered server (`useGateway.ts`).
+    pub last_server: Option<Uuid>,
+    /// Bumped by every account reset; answers started before are dropped.
+    pub(crate) epoch: u64,
 }
 
 impl State {
@@ -330,8 +348,10 @@ impl State {
     /// Clears all account data (sign-out, other account).
     pub fn reset_account(&mut self) {
         let mail = self.mail;
+        let epoch = self.epoch + 1;
         *self = State {
             mail,
+            epoch,
             ..State::default()
         };
     }
@@ -395,7 +415,9 @@ impl State {
         let Some(channel) = self.channels.get_mut(&message.channel_id) else {
             return;
         };
-        if !channel.loaded {
+        // While the first page loads, live rows are kept: they may be newer
+        // than the page, and `replace` merges them in.
+        if !channel.loaded && !channel.loading {
             if let Some(nonce) = message.nonce {
                 channel.pending.retain(|p| p.nonce != nonce);
             }
@@ -468,6 +490,9 @@ impl State {
         self.live.remove(&server);
         if self.view.server == Some(server) {
             self.view = View::default();
+        }
+        if self.last_server == Some(server) {
+            self.last_server = None;
         }
         if self.voice_self.server == Some(server) {
             self.voice_self = VoiceSelf::default();
@@ -729,8 +754,8 @@ impl State {
     // ------------------------------------------------------------- topics
 
     /// The gateway topics the web subscribes (`useGateway.ts`): the open
-    /// server and channel, every text channel of the open server, every DM,
-    /// and the voice room while in a call.
+    /// server and channel, every text channel of the open (or last) server,
+    /// every DM, and the voice room while in a call.
     pub fn desired_topics(&self) -> Vec<Topic> {
         let mut topics = Vec::new();
         if let Some(server) = self.view.server {
@@ -738,6 +763,11 @@ impl State {
             if let Some(channel) = self.view.channel {
                 topics.push(Topic::channel(server, channel));
             }
+        } else if let Some(dm) = self.view.channel {
+            topics.push(Topic::dm(dm));
+        }
+        if let Some(server) = self.view.server.or(self.last_server) {
+            topics.push(Topic::server(server));
             if let Some(detail) = self.server_details.get(&server) {
                 for channel in detail
                     .channels
@@ -747,8 +777,6 @@ impl State {
                     topics.push(Topic::channel(server, channel.id));
                 }
             }
-        } else if let Some(dm) = self.view.channel {
-            topics.push(Topic::dm(dm));
         }
         for dm in &self.dms {
             topics.push(Topic::dm(dm.id));
@@ -887,6 +915,60 @@ mod tests {
         assert!(c.remove(id(1)));
         let quoted = c.get(id(2)).unwrap().reply.clone().unwrap();
         assert!(quoted.deleted && quoted.author.is_none());
+    }
+
+    fn page(messages: Vec<Message>) -> MessagePage {
+        serde_json::from_value(serde_json::json!({
+            "messages": messages,
+            "has_more": false,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn live_rows_survive_a_racing_page() {
+        let mut s = State::default();
+        s.channel_mut(id(100)).loading = true;
+        // Created live while the first page was requested.
+        s.apply_message(message(3, 30, 3));
+        s.channel_mut(id(100))
+            .replace(page(vec![message(1, 10, 1), message(2, 20, 2)]));
+        let ids = |s: &State| {
+            s.channels[&id(100)]
+                .messages
+                .iter()
+                .map(|m| m.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&s), vec![id(1), id(2), id(3)]);
+        // A stale refetch read before 4 arrived: 2 was deleted meanwhile.
+        s.apply_message(message(4, 40, 4));
+        s.channel_mut(id(100))
+            .merge_latest(page(vec![message(1, 10, 1), message(3, 30, 3)]));
+        assert_eq!(ids(&s), vec![id(1), id(3), id(4)]);
+        // Without overlap the page replaces everything but newer live rows.
+        s.channel_mut(id(100))
+            .merge_latest(page(vec![message(5, 50, 5)]));
+        assert_eq!(ids(&s), vec![id(5)]);
+    }
+
+    #[test]
+    fn last_server_stays_subscribed_and_reset_bumps_the_epoch() {
+        let mut s = State::default();
+        let (server, dm) = (id(1), id(2));
+        s.last_server = Some(server);
+        s.view = View {
+            server: None,
+            channel: Some(dm),
+        };
+        let keys: Vec<String> = s.desired_topics().iter().map(Topic::key).collect();
+        assert!(keys.contains(&Topic::server(server).key()));
+        assert!(keys.contains(&Topic::dm(dm).key()));
+        s.forget_server(server);
+        assert_eq!(s.last_server, None);
+        let epoch = s.epoch;
+        s.reset_account();
+        assert_eq!(s.epoch, epoch + 1);
     }
 
     #[test]
