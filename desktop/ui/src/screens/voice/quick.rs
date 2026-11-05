@@ -11,9 +11,10 @@ use crate::text::{self, Block};
 use crate::theme::Theme;
 use crate::widgets::Popover;
 
-/// The device choices: the system default, then what the call lists.
+/// The device choices: the system default, then what the call lists. The
+/// desktop app names the default "Systemstandard" (`deviceChoices`).
 pub fn device_options(list: &[Device]) -> Vec<(String, String)> {
-    std::iter::once((String::new(), "Standard".to_owned()))
+    std::iter::once((String::new(), "Systemstandard".to_owned()))
         .chain(list.iter().map(|d| (d.id.clone(), d.label.clone())))
         .collect()
 }

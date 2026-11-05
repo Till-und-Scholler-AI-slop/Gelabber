@@ -124,7 +124,9 @@ impl Default for Prefs {
             call_sound_volume: 0.35,
             other_mute_sounds: true,
             message_toasts: true,
-            desktop_notify: false,
+            // The desktop app announces messages from the start, as chat
+            // apps do (`desktopNotify: isDesktopApp()`).
+            desktop_notify: true,
             message_sound: true,
             voice_input: "activity".into(),
             ptt_key: String::new(),

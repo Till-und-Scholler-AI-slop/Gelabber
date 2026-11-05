@@ -1,21 +1,18 @@
 //! "Benachrichtigungen" (components/MessageAlertSettings.tsx,
 //! NotificationPrivacy.tsx, NotificationPermission.tsx).
 
-use egui::{Rect, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
+use egui::{Rect, Stroke, StrokeKind, Ui, pos2, vec2};
 
 use super::controls::{self, Scope};
 use super::{op_pending, prefs, settled};
 use crate::app::AppCtx;
 use crate::text::{self, Block};
 use crate::theme::{Theme, corner};
-use crate::widgets::Button;
 
 #[derive(Default)]
 pub struct State {
     failed: bool,
     saving: bool,
-    /// "Benachrichtigungen erlauben" was pressed.
-    allowed: bool,
     /// desktop.json could not be written.
     tray_failed: bool,
 }
@@ -40,11 +37,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     controls::switch_row(
         ui,
         "desktop-notify",
-        if desktop.is_some() {
-            "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist"
-        } else {
-            "Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist"
-        },
+        "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist",
         None,
         &mut p.desktop_notify,
         false,
@@ -128,22 +121,18 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         );
     }
 
-    // The permission note (`.settings-note`).
+    // The permission note (`.settings-note`). The system shows the desktop
+    // app's notifications: there is no browser permission to ask for.
     ui.add_space(32.0);
     let width = ui.available_width();
-    // In the desktop app the system shows them: no permission to ask for.
-    let system = desktop.is_some_and(|d| d.system_notifications);
-    let allowed = s.allowed || system;
-    let message = if system {
-        "Benachrichtigungen laufen über dein System. Sperrbildschirm und „Nicht stören“ stellst du dort ein."
-    } else if s.allowed {
-        "Browser-Benachrichtigungen sind erlaubt."
-    } else {
-        "Der Browser benötigt noch deine Erlaubnis für Benachrichtigungen."
-    };
-    let block = Block::wrapped(ui, message, text::BODY, c.text, width - 34.0);
-    let button_h = if allowed { 0.0 } else { 8.0 + 36.0 };
-    let h = 2.0 + 28.0 + block.height() + button_h;
+    let block = Block::wrapped(
+        ui,
+        "Benachrichtigungen laufen über dein System. Sperrbildschirm und „Nicht stören“ stellst du dort ein.",
+        text::BODY,
+        c.text,
+        width - 34.0,
+    );
+    let h = 2.0 + 28.0 + block.height();
     let top = ui.cursor().min;
     let rect = Rect::from_min_size(top, vec2(width, h));
     ui.painter().rect(
@@ -154,17 +143,5 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         StrokeKind::Inside,
     );
     block.paint(ui.painter(), pos2(rect.left() + 17.0, rect.top() + 15.0));
-    if !allowed {
-        let brect = Rect::from_min_size(
-            pos2(rect.left() + 17.0, rect.top() + 15.0 + block.height() + 8.0),
-            vec2(width - 34.0, 36.0),
-        );
-        controls::place(ui, UiBuilder::new().max_rect(brect), |ui| {
-            if ui.add(Button::new("Benachrichtigungen erlauben")).clicked() {
-                s.allowed = true;
-                prefs::update(ui.ctx(), |p| p.desktop_notify = true);
-            }
-        });
-    }
     ui.allocate_exact_size(vec2(width, h), egui::Sense::hover());
 }

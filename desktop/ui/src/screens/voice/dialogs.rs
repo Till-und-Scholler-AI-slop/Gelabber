@@ -97,10 +97,6 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
 fn settings_dialog(ui: &mut Ui, app: &mut AppCtx, tab: Tab, on_top: bool) {
     let ctx = ui.ctx().clone();
     let mut form = with(&ctx, |o| o.form.clone());
-    // In a call the microphone's names are known: no "Gerätenamen anzeigen".
-    if app.call.with_state(|s| s.channel.is_some()) {
-        form.revealed = true;
-    }
     let mut chosen = tab;
     let mut done = false;
     let focus_tab = with(&ctx, |o| std::mem::take(&mut o.focus_tab));
@@ -301,14 +297,6 @@ fn meter(ui: &mut Ui, value: f64, width: f32) {
     }
 }
 
-/// `AUDIO_PROCESSING`'s labels, as the settings' filter cards name them
-/// (the desktop branch says "WebRTC-Filter").
-const MODES: [(&str, &str); 3] = [
-    ("enhanced", "Verbesserte Sprache"),
-    ("browser", "Browserfilter"),
-    ("original", "Original / Musik"),
-];
-
 fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
     let ctx = ui.ctx().clone();
     let test: MicTest = app.call.mic_test();
@@ -330,11 +318,10 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
             let (r, _) = ui.allocate_exact_size(vec2(width, 36.0), Sense::hover());
             icons::paint(ui.painter(), Icon::Mic, r.min, 36.0, c.accent_text);
             ui.add_space(14.0);
-            // The browser's wording, as the settings page keeps it; the
-            // desktop branch would say "ohne Aufnahme oder Übertragung".
+            // The native test only meters: nothing is recorded (no A/B clips).
             controls::paragraph(
                 ui,
-                "Der Test läuft lokal, ohne Übertragung. Aufnahmen dauern höchstens acht Sekunden und werden beim Schließen gelöscht.",
+                "Der Test läuft lokal, ohne Aufnahme oder Übertragung.",
                 text::BODY,
                 c.muted,
                 width,
@@ -367,7 +354,7 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
             let top = ui.cursor().min + vec2(pad, 0.0);
             let inner = width - 2.0 * pad;
             let (mut x, mut y) = (top.x, top.y);
-            for (mode, label) in MODES {
+            for (mode, label, _) in media::PROCESSING_MODES {
                 let block = Block::single(ui, label, text::UI.weight(400.0), c.text);
                 let w = 20.0 + 8.0 + block.width();
                 if x > top.x && x + w > top.x + inner {
@@ -486,14 +473,6 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
             if ui.put(close_rect, ghost).clicked() {
                 close = true;
             }
-            ui.add_space(14.0);
-            controls::paragraph(
-                ui,
-                "Ein Wechsel der Verarbeitung startet den Test neu und löscht die Aufnahmen.",
-                text::BODY,
-                c.muted,
-                width,
-            );
         },
         None,
     );
