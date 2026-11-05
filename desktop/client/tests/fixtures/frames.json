@@ -1,0 +1,287 @@
+[
+ {
+  "op": "ok",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "n": 0,
+  "ep": "2f7866ed-8df5-4b0e-b5dc-e216e089bc71"
+ },
+ {
+  "op": "p",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "snap": [
+   {
+    "u": "3796349f-6f8f-4bcf-826f-d2237e2fe9d3",
+    "st": "o"
+   }
+  ]
+ },
+ {
+  "op": "sig",
+  "t": "r",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "snap": []
+ },
+ {
+  "op": "ok",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "c": "e0325764-662e-4dac-9763-ca8c561b4b1d",
+  "n": 0,
+  "ep": "df67c843-d3fc-47a3-b1de-301f3c73af1a"
+ },
+ {
+  "op": "p",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "snap": [
+   {
+    "u": "3796349f-6f8f-4bcf-826f-d2237e2fe9d3",
+    "st": "o"
+   }
+  ]
+ },
+ {
+  "op": "sig",
+  "t": "r",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "snap": []
+ },
+ {
+  "op": "p",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "u": "3796349f-6f8f-4bcf-826f-d2237e2fe9d3",
+  "st": "o"
+ },
+ {
+  "op": "p",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "u": "7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab",
+  "st": "o"
+ },
+ {
+  "op": "y",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "c": "e0325764-662e-4dac-9763-ca8c561b4b1d",
+  "u": "7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab",
+  "on": true
+ },
+ {
+  "op": "sig",
+  "t": "j",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "c": "f9409dd9-d08d-4911-bb7a-5cdd46282464",
+  "u": "7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab",
+  "m": false,
+  "d": false
+ },
+ {
+  "op": "sig",
+  "t": "m",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "c": "f9409dd9-d08d-4911-bb7a-5cdd46282464",
+  "u": "7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab",
+  "on": true
+ },
+ {
+  "op": "e",
+  "t": "c",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "c": "e0325764-662e-4dac-9763-ca8c561b4b1d",
+  "n": 1,
+  "ep": "df67c843-d3fc-47a3-b1de-301f3c73af1a",
+  "i": "9d9205d5-b433-4e69-85f3-fdb8db86e9b7",
+  "d": {
+   "attachments": [],
+   "author": {
+    "avatar_url": null,
+    "id": "7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab",
+    "name": "Jonas"
+   },
+   "channel_id": "e0325764-662e-4dac-9763-ca8c561b4b1d",
+   "content": "Erste **Nachricht** ||geheim||",
+   "created_at": "2026-11-05T15:54:14.852617Z",
+   "created_order": 16,
+   "edited_at": null,
+   "id": "9d9205d5-b433-4e69-85f3-fdb8db86e9b7",
+   "mention_everyone": false,
+   "mentions": [],
+   "nonce": "da1d9b25-1c04-4c58-947b-1261f14baf5f",
+   "reactions": [],
+   "revision": 21
+  },
+  "r": 21
+ },
+ {
+  "op": "e",
+  "t": "c",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "c": "e0325764-662e-4dac-9763-ca8c561b4b1d",
+  "n": 2,
+  "ep": "df67c843-d3fc-47a3-b1de-301f3c73af1a",
+  "i": "ef23b60f-2828-4d7c-985e-9c75cc875f79",
+  "d": {
+   "attachments": [],
+   "author": {
+    "avatar_url": null,
+    "id": "3796349f-6f8f-4bcf-826f-d2237e2fe9d3",
+    "name": "Lena"
+   },
+   "channel_id": "e0325764-662e-4dac-9763-ca8c561b4b1d",
+   "content": "Antwort <@7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab>",
+   "created_at": "2026-11-05T15:54:14.861899Z",
+   "created_order": 17,
+   "edited_at": null,
+   "id": "ef23b60f-2828-4d7c-985e-9c75cc875f79",
+   "mention_everyone": false,
+   "mentions": [
+    "7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab"
+   ],
+   "reactions": [],
+   "reply": {
+    "author": {
+     "id": "7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab",
+     "name": "Jonas"
+    },
+    "deleted": false,
+    "excerpt": "Erste **Nachricht** ▒▒▒",
+    "id": "9d9205d5-b433-4e69-85f3-fdb8db86e9b7"
+   },
+   "revision": 22
+  },
+  "r": 22
+ },
+ {
+  "op": "e",
+  "t": "e",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "c": "e0325764-662e-4dac-9763-ca8c561b4b1d",
+  "n": 3,
+  "ep": "df67c843-d3fc-47a3-b1de-301f3c73af1a",
+  "i": "9d9205d5-b433-4e69-85f3-fdb8db86e9b7",
+  "d": {
+   "attachments": [],
+   "author": {
+    "avatar_url": null,
+    "id": "7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab",
+    "name": "Jonas"
+   },
+   "channel_id": "e0325764-662e-4dac-9763-ca8c561b4b1d",
+   "content": "Erste **Nachricht** ||geheim||",
+   "created_at": "2026-11-05T15:54:14.852617Z",
+   "created_order": 16,
+   "edited_at": null,
+   "id": "9d9205d5-b433-4e69-85f3-fdb8db86e9b7",
+   "mention_everyone": false,
+   "mentions": [],
+   "reactions": [
+    {
+     "emoji": "👍",
+     "user_ids": [
+      "3796349f-6f8f-4bcf-826f-d2237e2fe9d3"
+     ]
+    }
+   ],
+   "revision": 23
+  },
+  "r": 23
+ },
+ {
+  "op": "e",
+  "t": "e",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "c": "e0325764-662e-4dac-9763-ca8c561b4b1d",
+  "n": 4,
+  "ep": "df67c843-d3fc-47a3-b1de-301f3c73af1a",
+  "i": "9d9205d5-b433-4e69-85f3-fdb8db86e9b7",
+  "d": {
+   "attachments": [],
+   "author": {
+    "avatar_url": null,
+    "id": "7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab",
+    "name": "Jonas"
+   },
+   "channel_id": "e0325764-662e-4dac-9763-ca8c561b4b1d",
+   "content": "Erste Nachricht, geändert",
+   "created_at": "2026-11-05T15:54:14.852617Z",
+   "created_order": 16,
+   "edited_at": "2026-11-05T15:54:14.879674Z",
+   "id": "9d9205d5-b433-4e69-85f3-fdb8db86e9b7",
+   "mention_everyone": false,
+   "mentions": [],
+   "reactions": [
+    {
+     "emoji": "👍",
+     "user_ids": [
+      "3796349f-6f8f-4bcf-826f-d2237e2fe9d3"
+     ]
+    }
+   ],
+   "revision": 24
+  },
+  "r": 24
+ },
+ {
+  "op": "rd",
+  "d": [
+   {
+    "channel_id": "e0325764-662e-4dac-9763-ca8c561b4b1d",
+    "server_id": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+    "read_message_id": "ef23b60f-2828-4d7c-985e-9c75cc875f79",
+    "read_at": "2026-11-05T15:54:14.861899Z",
+    "read_order": 17,
+    "membership_at": "2026-11-05T15:54:14.020275Z",
+    "latest_order": 17,
+    "unread_count": 0,
+    "mention_count": 0
+   }
+  ]
+ },
+ {
+  "op": "ns"
+ },
+ {
+  "op": "e",
+  "t": "d",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "c": "e0325764-662e-4dac-9763-ca8c561b4b1d",
+  "n": 5,
+  "ep": "df67c843-d3fc-47a3-b1de-301f3c73af1a",
+  "i": "9d9205d5-b433-4e69-85f3-fdb8db86e9b7",
+  "r": 25
+ },
+ {
+  "op": "y",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "c": "e0325764-662e-4dac-9763-ca8c561b4b1d",
+  "u": "7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab",
+  "on": false
+ },
+ {
+  "op": "sig",
+  "t": "l",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "c": "f9409dd9-d08d-4911-bb7a-5cdd46282464",
+  "u": "7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab"
+ },
+ {
+  "op": "sig",
+  "t": "r",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "snap": []
+ },
+ {
+  "op": "p",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "u": "7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab",
+  "st": "x"
+ },
+ {
+  "op": "e",
+  "t": "d",
+  "s": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+  "n": 1,
+  "ep": "2f7866ed-8df5-4b0e-b5dc-e216e089bc71",
+  "i": "7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab",
+  "d": {
+   "k": "k"
+  }
+ }
+]

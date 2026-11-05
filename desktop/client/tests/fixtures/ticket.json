@@ -1,0 +1,6 @@
+{
+ "ticket": "abcdefghjkmn",
+ "expires_in": 30,
+ "media_path": "/media/ws",
+ "ice_servers": []
+}
