@@ -1,0 +1,78 @@
+{
+ "id": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+ "name": "Capture",
+ "owner_id": "3796349f-6f8f-4bcf-826f-d2237e2fe9d3",
+ "icon_url": null,
+ "created_at": "2026-11-05T15:54:14.020275Z",
+ "role": "owner",
+ "permissions": [
+  "manage_server",
+  "manage_channels",
+  "manage_messages",
+  "mention_everyone",
+  "send_messages",
+  "send_files",
+  "join_voice",
+  "go_live"
+ ],
+ "member_permissions": [
+  "send_messages",
+  "send_files",
+  "join_voice",
+  "go_live"
+ ],
+ "categories": [
+  {
+   "id": "ef099e93-1ea9-4c41-8fe1-dd02de7dca12",
+   "server_id": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+   "name": "Textkanäle",
+   "created_at": "2026-11-05T15:54:14.021837Z"
+  },
+  {
+   "id": "8645d1ab-ba8f-459b-8ee5-d35319e06a81",
+   "server_id": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+   "name": "Sprachkanäle",
+   "created_at": "2026-11-05T15:54:14.022307Z"
+  }
+ ],
+ "channels": [
+  {
+   "id": "e0325764-662e-4dac-9763-ca8c561b4b1d",
+   "server_id": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+   "category_id": "ef099e93-1ea9-4c41-8fe1-dd02de7dca12",
+   "name": "allgemein",
+   "kind": "text",
+   "created_at": "2026-11-05T15:54:14.022084Z"
+  },
+  {
+   "id": "f9409dd9-d08d-4911-bb7a-5cdd46282464",
+   "server_id": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+   "category_id": "8645d1ab-ba8f-459b-8ee5-d35319e06a81",
+   "name": "Wohnzimmer",
+   "kind": "voice",
+   "created_at": "2026-11-05T15:54:14.022421Z"
+  }
+ ],
+ "members": [
+  {
+   "user_id": "3796349f-6f8f-4bcf-826f-d2237e2fe9d3",
+   "name": "Lena",
+   "avatar_url": null,
+   "joined_at": "2026-11-05T15:54:14.020275Z",
+   "status_text": null,
+   "accent_color": null,
+   "avatar_decoration": null,
+   "role": "owner"
+  },
+  {
+   "user_id": "7cd32018-b2d5-4a9d-af2e-eb2b2a8366ab",
+   "name": "Jonas",
+   "avatar_url": null,
+   "joined_at": "2026-11-05T15:54:14.040438Z",
+   "status_text": null,
+   "accent_color": null,
+   "avatar_decoration": null,
+   "role": "member"
+  }
+ ]
+}
