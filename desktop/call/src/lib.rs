@@ -7,8 +7,9 @@
 //! nothing here blocks the calling thread.
 //!
 //! `GELABBER_FAKE_MEDIA=1` runs without devices, like Chromium's fake
-//! devices: no sound card (the core's dummy audio, a silent microphone) and
-//! a test pattern for the camera and a Live.
+//! devices: no sound card (the core's dummy audio, which sends silence; the
+//! own speaking meter beeps every 500 ms like Chromium's fake microphone)
+//! and a test pattern for the camera and a Live.
 #![cfg_attr(not(feature = "media"), allow(dead_code))]
 
 pub mod logic;
@@ -426,6 +427,12 @@ impl Inner {
 /// Whether `GELABBER_FAKE_MEDIA=1` asks for a call without devices.
 pub fn fake_media() -> bool {
     std::env::var("GELABBER_FAKE_MEDIA").is_ok_and(|v| v == "1" || v == "true")
+}
+
+/// Whether fake media also replaces the screen picker with a test pattern;
+/// `GELABBER_FAKE_SCREEN=0` keeps the real picker (to test its failures).
+pub fn fake_screen() -> bool {
+    fake_media() && !std::env::var("GELABBER_FAKE_SCREEN").is_ok_and(|v| v == "0")
 }
 
 /// Cheap to clone; one per app.

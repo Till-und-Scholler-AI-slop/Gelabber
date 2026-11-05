@@ -239,8 +239,13 @@ impl Prefs {
 
 /// `<config>/gelabber/settings.json`, next to the remembered server.
 fn file() -> Option<PathBuf> {
+    config_file("settings.json")
+}
+
+/// A file of this device's settings: `<config>/gelabber/<name>`.
+pub(crate) fn config_file(name: &str) -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("GELABBER_CONFIG_DIR") {
-        return Some(PathBuf::from(dir).join("settings.json"));
+        return Some(PathBuf::from(dir).join(name));
     }
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA").map(PathBuf::from)
@@ -251,7 +256,7 @@ fn file() -> Option<PathBuf> {
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
     }?;
-    Some(base.join("gelabber").join("settings.json"))
+    Some(base.join("gelabber").join(name))
 }
 
 fn load() -> Prefs {

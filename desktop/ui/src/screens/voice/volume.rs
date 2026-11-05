@@ -2,18 +2,23 @@
 //! only (components/UserVolumeControl.tsx, voice/userVolume.ts), and the
 //! playback slider's mapping (voice/settings.ts): 100 % in the middle.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use egui::{Color32, Id, Sense, Ui, UiBuilder, vec2};
+use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
-use crate::screens::settings::controls;
+use crate::screens::settings::{controls, prefs};
 use crate::text::{self, Block, TextStyle};
 use crate::theme::Theme;
 use crate::widgets::Checkbox;
 
 /// `MAX_PLAYBACK_VOLUME`.
 pub const MAX_PLAYBACK: f64 = 4.0;
+/// `SAVE_DELAY_MS`: a slider drag is written once it rests.
+const SAVE_DELAY: Duration = Duration::from_millis(400);
+const FILE: &str = "user-volumes.json";
 
 /// `playbackSliderPosition` (0..200).
 pub fn position(volume: f64) -> f64 {
@@ -52,67 +57,153 @@ impl Default for Level {
     }
 }
 
+/// The levels of the signed-in account (`gelabber.user-volumes:<account>`):
+/// only people away from 100 % and not muted are kept.
+#[derive(Clone, Default)]
+struct Store {
+    account: Option<Uuid>,
+    levels: HashMap<Uuid, Level>,
+    save_at: Option<Instant>,
+}
+
 fn store_id() -> Id {
     Id::unique("gelabber-user-volumes")
 }
 
+fn with_store<R>(ctx: &egui::Context, f: impl FnOnce(&mut Store) -> R) -> R {
+    ctx.data_mut(|d| f(d.get_temp_mut_or_default::<Store>(store_id())))
+}
+
 pub fn level(ctx: &egui::Context, user: Uuid) -> Level {
     ctx.data(|d| {
-        d.get_temp::<HashMap<Uuid, Level>>(store_id())
-            .and_then(|m| m.get(&user).copied())
+        d.get_temp::<Store>(store_id())
+            .and_then(|s| s.levels.get(&user).copied())
     })
     .unwrap_or_default()
 }
 
-/// Keeps `level` and hands the call what it plays at.
+/// Keeps `level` for the account and hands it to the call.
 pub fn set(ctx: &egui::Context, call: &gelabber_call::Call, user: Uuid, level: Level) {
-    ctx.data_mut(|d| {
-        d.get_temp_mut_or_default::<HashMap<Uuid, Level>>(store_id())
-            .insert(user, level);
-    });
-    let played = if level.muted { 0.0 } else { level.volume };
-    call.set_volume(user, played as f32);
-}
-
-/// Hands the call the kept level of everyone who (re)appears in it: the
-/// levels last for the session, a new call or consumer starts at 100 %.
-pub fn sync(ctx: &egui::Context, call: &gelabber_call::Call) {
-    let seen_id = Id::unique("gelabber-user-volumes-seen");
-    let present: HashSet<Uuid> = call.with_state(|s| {
-        if super::session::joined(s).is_none() {
-            return HashSet::new();
+    with_store(ctx, |s| {
+        if level == Level::default() {
+            s.levels.remove(&user);
+        } else {
+            s.levels.insert(user, level);
         }
-        s.participants
-            .iter()
-            .filter(|p| !p.me)
-            .map(|p| p.user)
-            .collect()
+        s.save_at = Some(Instant::now() + SAVE_DELAY);
     });
-    let before: HashSet<Uuid> = ctx.data(|d| d.get_temp(seen_id)).unwrap_or_default();
-    if present == before {
-        return;
-    }
-    let kept: HashMap<Uuid, Level> = ctx.data(|d| d.get_temp(store_id())).unwrap_or_default();
-    for (user, played) in to_apply(&before, &present, &kept) {
-        call.set_volume(user, played);
-    }
-    ctx.data_mut(|d| d.insert_temp(seen_id, present));
+    ctx.request_repaint_after(SAVE_DELAY);
+    call.set_volume(user, level.volume as f32);
+    call.set_user_muted(user, level.muted);
 }
 
-/// The kept levels of the people new in `present`, as the call plays them.
-fn to_apply(
-    before: &HashSet<Uuid>,
-    present: &HashSet<Uuid>,
-    kept: &HashMap<Uuid, Level>,
-) -> Vec<(Uuid, f32)> {
-    present
-        .difference(before)
-        .filter_map(|user| {
-            let level = kept.get(user).filter(|l| **l != Level::default())?;
-            let played = if level.muted { 0.0 } else { level.volume };
-            Some((*user, played as f32))
+/// Once per frame: the account's kept levels reach the call when someone
+/// signs in, and a change is written once it rests.
+pub fn sync(ctx: &egui::Context, call: &gelabber_call::Call, account: Option<Uuid>) {
+    let (switched, write) = with_store(ctx, |s| {
+        let due = s
+            .save_at
+            .is_some_and(|at| at <= Instant::now() || s.account != account);
+        let write = due.then(|| (s.account, s.levels.clone()));
+        if due {
+            s.save_at = None;
+        }
+        let switched = s.account != account;
+        if switched {
+            s.account = account;
+            s.levels = account.map(load).unwrap_or_default();
+        }
+        (switched.then(|| s.levels.clone()), write)
+    });
+    if let Some((Some(owner), levels)) = write {
+        save(owner, levels);
+    }
+    if let Some(levels) = switched {
+        call.set_volumes(
+            levels
+                .into_iter()
+                .map(|(user, l)| {
+                    let v = gelabber_call::UserVolume {
+                        volume: l.volume,
+                        muted: l.muted,
+                    };
+                    (user, v)
+                })
+                .collect(),
+        );
+    }
+}
+
+fn read_file() -> Map<String, Value> {
+    prefs::config_file(FILE)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default()
+}
+
+/// The account's levels, sanitized like `sanitize` of userVolume.ts.
+fn load(account: Uuid) -> HashMap<Uuid, Level> {
+    parse(
+        read_file()
+            .get(&account.to_string())
+            .unwrap_or(&Value::Null),
+    )
+}
+
+fn parse(saved: &Value) -> HashMap<Uuid, Level> {
+    let Some(entries) = saved.as_object() else {
+        return HashMap::new();
+    };
+    entries
+        .iter()
+        .filter_map(|(id, v)| {
+            let user = Uuid::parse_str(id).ok()?;
+            let v = v.as_object()?;
+            let level = Level {
+                volume: v
+                    .get("volume")
+                    .and_then(Value::as_f64)
+                    .filter(|x| x.is_finite())
+                    .unwrap_or(1.0)
+                    .clamp(0.0, MAX_PLAYBACK),
+                muted: v.get("muted").and_then(Value::as_bool) == Some(true),
+            };
+            (level != Level::default()).then_some((user, level))
         })
         .collect()
+}
+
+fn save(account: Uuid, levels: HashMap<Uuid, Level>) {
+    let Some(path) = prefs::config_file(FILE) else {
+        return;
+    };
+    // Off the UI thread; a failed write only loses the levels on restart.
+    std::thread::spawn(move || {
+        let mut all = read_file();
+        let entries: Map<String, Value> = levels
+            .iter()
+            .map(|(u, l)| {
+                (
+                    u.to_string(),
+                    json!({ "volume": l.volume, "muted": l.muted }),
+                )
+            })
+            .collect();
+        if entries.is_empty() {
+            all.remove(&account.to_string());
+        } else {
+            all.insert(account.to_string(), Value::Object(entries));
+        }
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let tmp = path.with_extension("json.tmp");
+        let text = serde_json::to_string_pretty(&Value::Object(all)).unwrap_or_default();
+        if std::fs::write(&tmp, text).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    });
 }
 
 /// `UserVolumeControl`: "Lautstärke" and the percentage, the slider,
@@ -137,13 +228,12 @@ pub fn control(ui: &mut Ui, call: &gelabber_call::Call, user: Uuid) {
     let mut pos = position(lv.volume);
     let slider = egui::Rect::from_min_size(ui.cursor().min, vec2(width, 20.0));
     let changed = controls::place(ui, UiBuilder::new().max_rect(slider), |ui| {
-        controls::slider(
+        controls::slider_named(
             ui,
             ("user-volume", user),
+            "Lautstärke",
             &mut pos,
-            0.0,
-            200.0,
-            1.0,
+            (0.0, 200.0, 1.0),
             lv.muted,
         )
     });
@@ -158,7 +248,10 @@ pub fn control(ui: &mut Ui, call: &gelabber_call::Call, user: Uuid) {
         egui::pos2(row.left(), row.center().y - 10.0),
         vec2(20.0, 20.0),
     );
-    ui.put(check, Checkbox::new(&mut lv.muted));
+    ui.put(
+        check,
+        Checkbox::new(&mut lv.muted).label("Lokal stummschalten"),
+    );
     let label = Block::single(ui, "Lokal stummschalten", body, c.text);
     label.paint(ui.painter(), egui::pos2(row.left() + 28.0, row.top()));
     let mute_hit = ui.interact(
@@ -264,34 +357,29 @@ mod tests {
     }
 
     #[test]
-    fn kept_levels_reach_whoever_comes_back() {
-        let (jonas, mira) = (Uuid::from_u128(1), Uuid::from_u128(2));
-        let kept: HashMap<Uuid, Level> = [
-            (
-                jonas,
-                Level {
-                    volume: 0.5,
-                    muted: false,
-                },
-            ),
-            (
-                mira,
-                Level {
-                    volume: 1.0,
-                    muted: true,
-                },
-            ),
-        ]
-        .into();
-        let none = HashSet::new();
-        let both: HashSet<Uuid> = [jonas, mira].into();
-        let mut applied = to_apply(&none, &both, &kept);
-        applied.sort_by_key(|(u, _)| *u);
-        assert_eq!(applied, [(jonas, 0.5), (mira, 0.0)]);
-        // Nobody new: nothing is sent again.
-        assert!(to_apply(&both, &both, &kept).is_empty());
-        // Untouched levels stay the call's own.
-        let other = Uuid::from_u128(3);
-        assert!(to_apply(&none, &[other].into(), &kept).is_empty());
+    fn saved_levels_are_sanitized() {
+        let (jonas, mira, tom) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let saved = json!({
+            jonas.to_string(): { "volume": 9.0 },
+            mira.to_string(): { "volume": 1.0, "muted": true },
+            tom.to_string(): { "volume": 1.0, "muted": false },
+            "nobody": { "volume": 0.5 },
+        });
+        let levels = parse(&saved);
+        assert_eq!(levels.len(), 2);
+        assert_eq!(
+            levels[&jonas],
+            Level {
+                volume: 4.0,
+                muted: false
+            }
+        );
+        assert_eq!(
+            levels[&mira],
+            Level {
+                volume: 1.0,
+                muted: true
+            }
+        );
     }
 }

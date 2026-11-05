@@ -486,6 +486,8 @@ impl GelabberApp {
         }
 
         self.sync_workspace();
+        let signed_in = matches!(self.session.status, SessionStatus::Authenticated(_));
+        screens::voice::sync::sync(&ctx, &self.call, &mut self.toasts, signed_in);
         self.guard();
         if self.nav.take_changed() {
             self.screen = ScreenState::for_location(self.nav.location());

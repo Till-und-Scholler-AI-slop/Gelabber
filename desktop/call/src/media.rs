@@ -38,8 +38,8 @@ const DEFAULT_REQUEST: VideoRequest = VideoRequest {
 const SCREEN_POLL: Duration = Duration::from_millis(1000);
 /// How often an open desktop picker is asked for an answer.
 const PICKER_POLL: Duration = Duration::from_millis(250);
-/// Quality is measured every this many speaking polls (2 s).
-const QUALITY_EVERY: u32 = 8;
+/// How often the quality bars are measured, on a speaking poll.
+const QUALITY_PERIOD: Duration = Duration::from_secs(2);
 
 #[derive(Default)]
 pub(crate) struct Media {
@@ -505,6 +505,8 @@ struct St {
     speaking: logic::Speaking,
     speaking_now: HashSet<Uuid>,
     mic_blocks: Option<u64>,
+    /// The fake microphone's first beep.
+    beep_origin: Option<Instant>,
     played: HashMap<String, u64>,
     /// Bytes received per voice and when, for fake media's levels.
     received: HashMap<String, (u64, Instant)>,
@@ -950,10 +952,11 @@ impl Session {
             st.screen_turn
         };
         let fake = self.fake;
+        let fake_screen = fake && crate::fake_screen();
         let picked = {
             let engine = engine.clone();
             blocking(move || {
-                if fake {
+                if fake_screen {
                     return core::Source::test_pattern(&engine, size.width, size.height, size.fps);
                 }
                 let options = json!({
@@ -978,7 +981,9 @@ impl Session {
         };
         // The desktop picker stays open until the person chose.
         let mut state = source.state().unwrap_or(Value::Null);
+        let mut pending = false;
         while state["state"] == "pending" {
+            pending = true;
             tokio::time::sleep(PICKER_POLL).await;
             if self.st.lock().screen_turn != turn {
                 std::thread::spawn(move || drop(source));
@@ -986,13 +991,13 @@ impl Session {
             }
             state = source.state().unwrap_or(Value::Null);
         }
+        // `screenCancelled` of capture.ts: a failure after the picker was up
+        // counts as a cancel; one before it gets the message without reason.
         match state["state"].as_str() {
             Some("live") => {}
             Some("cancelled") => return fail(None),
-            other => {
-                let reason = state["reason"].as_str().or(other).unwrap_or("unbekannt");
-                return fail(Some(reason.to_owned()));
-            }
+            Some("failed") if pending => return fail(None),
+            _ => return fail(Some(String::new())),
         }
         let height = state["height"].as_u64().map_or(size.height, |h| h as u32);
         let audio = if with_audio && !fake {
@@ -1712,7 +1717,15 @@ impl Session {
     // ------------------------------------------------- speaking, quality
 
     async fn ticker(self: Arc<Self>, generation: u64) {
-        let mut tick = tokio::time::interval(logic::SPEAKING_POLL);
+        let poll = if self.fake {
+            logic::BROWSER_SPEAKING_POLL
+        } else {
+            logic::SPEAKING_POLL
+        };
+        let quality_every = (QUALITY_PERIOD.as_millis() / poll.as_millis()).max(1) as u32;
+        let mut tick = tokio::time::interval(poll);
+        // A poll still running skips the tick, as the web's `polling` guard.
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut count: u32 = 0;
         loop {
             tick.tick().await;
@@ -1721,7 +1734,7 @@ impl Session {
             }
             let Some(seat) = self.seat() else { return };
             let session = self.clone();
-            let measure = count.is_multiple_of(QUALITY_EVERY);
+            let measure = count.is_multiple_of(quality_every);
             count = count.wrapping_add(1);
             let _ = blocking(move || session.measure(&seat, measure)).await;
         }
@@ -1735,11 +1748,16 @@ impl Session {
         let now = Instant::now();
         let (muted, deafened) = inner.read(|s| (s.muted, s.deafened));
         let mut levels: Vec<(Uuid, f64)> = Vec::new();
-        if !muted
-            && !deafened
-            && inner.gate_open()
-            && let Ok(meters) = engine.audio_levels()
-        {
+        let sending = !muted && !deafened && inner.gate_open();
+        if self.fake {
+            // Dummy audio captures silence; the fake microphone beeps
+            // instead, as Chromium's fake device does for the web.
+            let mut st = self.st.lock();
+            let origin = *st.beep_origin.get_or_insert(now);
+            if sending && st.mic.is_some() {
+                levels.push((self.me, logic::fake_beep_level(origin, now)));
+            }
+        } else if sending && let Ok(meters) = engine.audio_levels() {
             let blocks = meters["blocks"].as_u64().unwrap_or(0);
             let moved = self.st.lock().mic_blocks.replace(blocks) != Some(blocks);
             levels.push((

@@ -13,6 +13,7 @@ pub mod quick;
 pub mod session;
 pub mod stage;
 pub mod summary;
+pub mod sync;
 pub mod tile;
 pub mod video;
 pub mod volume;

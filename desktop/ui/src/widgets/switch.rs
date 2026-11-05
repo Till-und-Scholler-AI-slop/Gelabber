@@ -75,6 +75,7 @@ pub struct Checkbox<'a> {
     checked: &'a mut bool,
     radio: bool,
     disabled: bool,
+    label: Option<&'a str>,
 }
 
 impl<'a> Checkbox<'a> {
@@ -83,7 +84,14 @@ impl<'a> Checkbox<'a> {
             checked,
             radio: false,
             disabled: false,
+            label: None,
         }
+    }
+
+    /// The accessible name, where the text beside it is drawn apart.
+    pub fn label(mut self, label: &'a str) -> Self {
+        self.label = Some(label);
+        self
     }
 
     pub fn radio(mut self) -> Self {
@@ -120,6 +128,15 @@ impl Widget for Checkbox<'_> {
         if response.clicked() {
             *self.checked = if self.radio { true } else { !*self.checked };
             response.mark_changed();
+        }
+        if let Some(label) = self.label {
+            let (checked, enabled) = (*self.checked, !self.disabled);
+            let role = if self.radio {
+                egui::Role::RadioButton
+            } else {
+                egui::Role::CheckBox
+            };
+            response.widget_info(|| egui::WidgetInfo::selected(role, enabled, checked, label));
         }
         if ui.is_rect_visible(rect) {
             let alpha = if self.disabled { 0.5 } else { 1.0 };

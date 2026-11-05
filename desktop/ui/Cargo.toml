@@ -30,3 +30,8 @@ url = "2.5.8"
 [dev-dependencies]
 gelabber-call = { path = "../call", features = ["testing"] }
 egui_kittest = { version = "0.37.0", features = ["wgpu", "eframe"] }
+
+# Against the seeded stack with the native media core (see its header).
+[[test]]
+name = "voice_live"
+required-features = ["media"]

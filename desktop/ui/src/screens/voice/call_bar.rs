@@ -16,14 +16,62 @@ use crate::screens::settings::prefs;
 use crate::screens::shell::common::{self, line, paint_mid};
 use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner, mix};
-use crate::widgets::{Button, Popover, eased, hairline_h};
+use crate::widgets::{Button, IconButton, Popover, eased, hairline_h};
 
 /// `SHOWN_PEOPLE`.
 const SHOWN: usize = 3;
 
-/// Whether the bar shows: while a call runs.
+/// Whether the bar shows: while a call runs, or to offer a lost one again.
 pub fn visible(app: &AppCtx) -> bool {
-    app.call.with_state(|s| session::joined(s).is_some())
+    app.call
+        .with_state(|s| session::joined(s).is_some() || s.lost_call.is_some())
+}
+
+/// `.voice-session-lost`: the warning, "Verbindung verloren" over the
+/// channel, "Erneut versuchen" and "Schließen".
+fn lost(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid, channel: Uuid) {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let painter = ui.painter().clone();
+    painter.rect_filled(rect, 0.0, c.panel);
+    hairline_h(&painter, &theme, rect.left()..=rect.right(), rect.top());
+    let cy = rect.top() + 1.0 + 8.0 + (rect.height() - 1.0 - 16.0) / 2.0;
+    let left = rect.left() + 16.0;
+    let right = rect.right() - 16.0;
+    let close = Rect::from_min_size(pos2(right - 36.0, cy - 18.0), Vec2::splat(36.0));
+    if ui
+        .add(IconButton::new(Icon::Close, "Schließen").at(close))
+        .clicked()
+    {
+        app.call.dismiss_lost_call();
+    }
+    let label = "Erneut versuchen";
+    let width = Block::single(ui, label, text::UI.weight(600.0), c.text).width() + 34.0;
+    let retry = Rect::from_min_size(
+        pos2(close.left() - 6.0 - width, cy - 18.0),
+        vec2(width, 36.0),
+    );
+    if ui.put(retry, Button::new(label)).clicked() {
+        app.call.join(server, channel);
+    }
+    let x = left + 2.0;
+    icons::paint(&painter, Icon::Warning, pos2(x, cy - 8.0), 16.0, c.danger);
+    let x = x + 16.0 + 8.0;
+    let max = (retry.left() - 6.0 - x).max(10.0);
+    let name = app
+        .client
+        .with_state(|s| s.channel(channel).map(|ch| ch.name.clone()))
+        .unwrap_or_default();
+    let strong = line(
+        ui,
+        "Verbindung verloren",
+        TextStyle::new(12.0, 600.0, 1.3),
+        c.danger,
+        max,
+    );
+    strong.paint(&painter, pos2(x, cy - 15.6));
+    let place = line(ui, &name, TextStyle::new(12.0, 400.0, 1.3), c.muted, max);
+    place.paint(&painter, pos2(x, cy));
 }
 
 /// One person in the call, for the avatars and the "Im Anruf" list.
@@ -80,6 +128,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     let c = theme.c;
     let state = app.call.state();
     let Some((server, channel)) = session::joined(&state) else {
+        if let Some((server, channel)) = state.lost_call {
+            lost(ui, app, rect, server, channel);
+        }
         return;
     };
     shortcuts(ui, app, &state);

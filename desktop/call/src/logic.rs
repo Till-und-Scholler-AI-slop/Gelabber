@@ -528,6 +528,28 @@ impl Speaking {
     }
 }
 
+/// The fake microphone as the web's parity shots meet it in Chromium: its
+/// fake capture device beeps every 500 ms (sine peak about 0.65 after
+/// processing), and the page reads it as libwebrtc's send level.
+pub const FAKE_BEEP_PERIOD: Duration = Duration::from_millis(500);
+const FAKE_BEEP_PEAK: f64 = 0.65;
+/// libwebrtc's `AudioLevel` publishes the peak every 11 frames of 10 ms
+/// and then quarters it, so a beep stays visible for a few windows.
+const SEND_LEVEL_WINDOW: Duration = Duration::from_millis(110);
+/// `PEAK_PER_RMS` of speaking.ts.
+const PEAK_PER_RMS: f64 = 3.0;
+/// The browser's poll (`POLL_MS`), which fake calls use: the desktop app's
+/// slower one misses the gaps between beeps the browser bridges.
+pub const BROWSER_SPEAKING_POLL: Duration = Duration::from_millis(120);
+
+/// The fake microphone's level on the RMS scale at `now`, for beeps at
+/// `origin` + k·period: the beep's peak, quartered each meter window since.
+pub fn fake_beep_level(origin: Instant, now: Instant) -> f64 {
+    let since = now.saturating_duration_since(origin).as_nanos() % FAKE_BEEP_PERIOD.as_nanos();
+    let windows = (since / SEND_LEVEL_WINDOW.as_nanos()) as i32;
+    FAKE_BEEP_PEAK / 4f64.powi(windows) / PEAK_PER_RMS
+}
+
 /// A level from a voice's received bitrate, for calls without playout
 /// (dummy audio): Opus in DTX silence sends a few hundred bit/s, speech or a
 /// tone tens of kbit/s.
@@ -681,7 +703,12 @@ pub fn engine_failed(reason: &str) -> String {
 }
 
 pub fn screen_failed(reason: &str) -> String {
-    format!("Die Bildschirmaufnahme konnte nicht gestartet werden ({reason}).")
+    let reason = reason.trim();
+    if reason.is_empty() {
+        "Die Bildschirmaufnahme konnte nicht gestartet werden.".into()
+    } else {
+        format!("Die Bildschirmaufnahme konnte nicht gestartet werden ({reason}).")
+    }
 }
 
 /// A stable picture key per person and kind, so a tile keeps its key
@@ -853,6 +880,35 @@ mod tests {
         let audio = audio_parameters(&json!({"encodings": [{}]}), Some(64_000));
         assert_eq!(audio["encodings"][0]["priority"], "high");
         assert_eq!(audio["encodings"][0]["maxBitrate"], 64_000);
+    }
+
+    #[test]
+    fn the_fake_microphone_keeps_speaking_through_its_beeps() {
+        let origin = Instant::now();
+        let at = |ms: u64| origin + Duration::from_millis(ms);
+        assert!(fake_beep_level(origin, at(0)) >= SPEAKING_LEVEL);
+        assert!(
+            fake_beep_level(origin, at(150)) >= SPEAKING_LEVEL,
+            "the next window"
+        );
+        assert!(
+            fake_beep_level(origin, at(250)) < SPEAKING_LEVEL,
+            "quartered twice"
+        );
+        assert!(
+            fake_beep_level(origin, at(510)) >= SPEAKING_LEVEL,
+            "the next beep"
+        );
+        // Polled as fake calls do, with up to 40 ms of lateness, the ring
+        // never drops between beeps.
+        let user = Uuid::from_u128(1);
+        let mut speaking = Speaking::default();
+        for poll in 0..80u64 {
+            let late = (poll * 37) % 41;
+            let now = at(poll * BROWSER_SPEAKING_POLL.as_millis() as u64 + late);
+            speaking.note(user, fake_beep_level(origin, now), now);
+            assert_eq!(speaking.speaking(now), vec![user], "poll {poll}");
+        }
     }
 
     #[test]
