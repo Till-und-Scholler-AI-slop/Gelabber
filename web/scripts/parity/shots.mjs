@@ -4,7 +4,7 @@
 // Run in web/ against a seeded stack (seed.mjs):
 //   node scripts/parity/shots.mjs [out-dir] [scene,…]
 // GELABBER_PARITY_BROWSER names the Chromium binary (default /usr/bin/chromium).
-/* global process, console, document */
+/* global process, console, document, URL, setTimeout */
 import { execFileSync, spawn } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";

@@ -4,7 +4,7 @@
 // Run in web/: node scripts/parity/call.mjs [channel] [person[:muted|:camera],…]
 //   default: Sofa jonas,mira:muted
 // GELABBER_PARITY_BROWSER names the Chromium binary (default /usr/bin/chromium).
-/* global process, console */
+/* global process, console, URL */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { chromium } from "playwright";

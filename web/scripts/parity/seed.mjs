@@ -2,7 +2,7 @@
 // (desktop/parity): people, two servers, channels, messages and a DM.
 // Run in web/: node scripts/parity/seed.mjs [base-url] [out.json]
 // The base URL is the web origin (Vite proxies /api), default 127.0.0.1:5180.
-/* global process, console */
+/* global process, console, fetch */
 import { writeFile } from "node:fs/promises";
 
 const BASE = process.argv[2] ?? "http://127.0.0.1:5180";

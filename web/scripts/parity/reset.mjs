@@ -5,7 +5,7 @@
 // Run in web/: node scripts/parity/reset.mjs
 // GELABBER_PARITY_PSQL is the psql command line (default: the gnative-pg
 // container of the local stack).
-/* global process */
+/* global process, URL */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
