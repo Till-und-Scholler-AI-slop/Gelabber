@@ -5,6 +5,8 @@
 
 #[cfg(target_os = "linux")]
 mod sni;
+#[cfg(target_os = "linux")]
+pub mod unity;
 #[cfg(windows)]
 mod win;
 
@@ -40,6 +42,17 @@ impl Unread {
             Some(UNREAD)
         } else {
             None
+        }
+    }
+
+    /// `titleWith` of unreadIndicators.ts: `(3) Gelabber`, `(99+) …` from
+    /// 100 on, `• Gelabber` for unread messages without a number.
+    pub fn title(self) -> String {
+        match self.count {
+            0 if self.any => "• Gelabber".to_owned(),
+            0 => "Gelabber".to_owned(),
+            n if n > 99 => "(99+) Gelabber".to_owned(),
+            n => format!("({n}) Gelabber"),
         }
     }
 
@@ -192,6 +205,23 @@ mod tests {
             }
             .tooltip(),
             "Gelabber: 1 neue Nachricht"
+        );
+        // titleWith: the window title follows like the browser tab's.
+        assert_eq!(two.title(), "(2) Gelabber");
+        assert_eq!(quiet.title(), "• Gelabber");
+        assert_eq!(Unread::default().title(), "Gelabber");
+        let many = Unread {
+            count: 100,
+            any: true,
+        };
+        assert_eq!(many.title(), "(99+) Gelabber");
+        assert_eq!(
+            Unread {
+                count: 99,
+                any: true
+            }
+            .title(),
+            "(99) Gelabber"
         );
         let picture = Picture::app(32).unwrap();
         assert_eq!(picture.rgba.len(), 32 * 32 * 4);

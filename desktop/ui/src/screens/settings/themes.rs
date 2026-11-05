@@ -1809,6 +1809,31 @@ mod tests {
         assert!(apply_op(&doc, &Op::Apply("nope".into())).is_err());
     }
 
+    /// "System" follows the OS while the app runs, as prefers-color-scheme.
+    #[test]
+    fn system_follows_the_os_live() {
+        // apply_theme stores the theme for the next start: not in the real config.
+        let _config = crate::platform::paths::testing::TempConfig::new("themes-system");
+        let ctx = egui::Context::default();
+        let client = Client::new("http://127.0.0.1:9").unwrap();
+        sync(&ctx).lock().local = Some(ThemeDocument {
+            active: "system".into(),
+            ..ThemeDocument::default()
+        });
+        let frame = |system: egui::Theme| {
+            let input = egui::RawInput {
+                system_theme: Some(system),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| apply_theme(ui.ctx(), &client));
+            out.textures_delta.clear();
+            Theme::of(&ctx).is_dark()
+        };
+        assert!(!frame(egui::Theme::Light));
+        assert!(frame(egui::Theme::Dark));
+        assert!(!frame(egui::Theme::Light));
+    }
+
     #[test]
     fn import_is_strict() {
         let t = stored_of(&preset("nord"));

@@ -675,6 +675,55 @@
       "page": "desktop/app/setup/index.html",
       "query": "?server=http%3A%2F%2F127.0.0.1%3A1&error=127.0.0.1%3A1%20ist%20nicht%20erreichbar%20(Connection%20refused%20(os%20error%20111)).",
       "scheme": "dark"
+    },
+    {
+      "name": "light-channel",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-overview",
+      "path": "/s/{home}",
+      "user": "lena",
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-dm",
+      "path": "/d/{dm}",
+      "user": "lena",
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-settings-darstellung",
+      "path": "/settings/darstellung",
+      "user": "lena",
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-voice-sofa",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "before": "theme lena light"
+    },
+    {
+      "name": "theme-flexoki-light",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "before": "theme lena flexoki-light"
+    },
+    {
+      "name": "theme-system-light",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "before": "theme lena system"
+    },
+    {
+      "name": "theme-custom",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "before": "theme lena {\"version\":1,\"id\":\"custom-7a1c3e52-9d4b-4f0e-8a6d-2b5c9e1f3a70\",\"name\":\"Flieder\",\"mode\":\"light\",\"style\":\"soft\",\"colors\":{\"background\":\"#f6f3fb\",\"panel\":\"#efeaf7\",\"surface\":\"#e6dff2\",\"rail\":\"#e9e3f4\",\"text\":\"#2a2433\",\"muted\":\"#5d566a\",\"accent\":\"#8a5cf6\",\"border\":\"#d9d0e8\"}}"
     }
   ]
 }
