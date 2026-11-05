@@ -177,6 +177,7 @@ pub fn show(
         Vec2::new(rect.width() - 1.0 - 16.0, 34.0),
     );
     let response = common::click(ui, link, Id::unique(("overview-link", server)));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, "Übersicht"));
     let (fill, color, icon_color) = if overview {
         (c.selected, c.text, c.accent_text)
     } else if response.hovered() {

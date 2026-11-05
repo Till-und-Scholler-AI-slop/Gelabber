@@ -175,6 +175,32 @@ pub fn unread_name(ui: &Ui, rect: Rect, name: &str, draft: bool) -> f32 {
     w
 }
 
+/// A black scrim fading in from `rect`'s top to `alpha` at its bottom,
+/// whose lower corners follow the card's `radius` (`overflow: hidden`).
+fn bottom_scrim(painter: &egui::Painter, rect: Rect, radius: f32, alpha: f32) {
+    let steps = 24;
+    let mut mesh = egui::Mesh::default();
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        let y = rect.top() + t * rect.height();
+        let dy = y - (rect.bottom() - radius);
+        let inset = if dy > 0.0 {
+            radius - (radius * radius - dy * dy).max(0.0).sqrt()
+        } else {
+            0.0
+        };
+        let color = Color32::from_black_alpha((alpha * t * 255.0).round() as u8);
+        mesh.colored_vertex(pos2(rect.left() + inset, y), color);
+        mesh.colored_vertex(pos2(rect.right() - inset, y), color);
+        if i > 0 {
+            let b = 2 * i as u32;
+            mesh.add_triangle(b - 2, b - 1, b);
+            mesh.add_triangle(b - 1, b + 1, b);
+        }
+    }
+    painter.add(mesh);
+}
+
 /// `MainSkeleton kind="overview"` while the server loads: a few quiet bars.
 fn skeleton(ui: &Ui, rect: Rect) {
     let theme = Theme::of(ui.ctx());
@@ -469,7 +495,13 @@ fn voice_room(
                 .flatten()
                 .and_then(|key| app.call.frame(key).map(|f| (key, f)));
             if let Some((key, frame)) = camera {
-                let inner = tile.shrink(1.0);
+                // `.has-video`: no border, the picture to the card's edge.
+                let inner = tile;
+                ui.painter().rect_filled(
+                    tile,
+                    corner(theme.radius.lg),
+                    Color32::from_rgb(0x0b, 0x0d, 0x0e),
+                );
                 voice::video::request(
                     ui,
                     app.call,
@@ -484,27 +516,54 @@ fn voice_room(
                     frame,
                     voice::video::Fit::Cover,
                     me == Some(*user),
-                    theme.radius.lg - 1.0,
+                    theme.radius.lg,
                 );
-                let label = if me == Some(*user) {
-                    format!("{name} (du)")
+                // Name and status over a scrim at the bottom (padding 18 44 6 10).
+                let white = Color32::WHITE;
+                let soft = Color32::from_white_alpha((0.82 * 255.0) as u8);
+                let name_b = line(ui, name, text::UI.weight(600.0), white, 168.0 - 54.0);
+                let self_b =
+                    (me == Some(*user)).then(|| line(ui, " (du)", text::UI, white, 168.0 - 54.0));
+                let status = if occupant.deafened {
+                    "Taub"
+                } else if occupant.muted {
+                    "Stumm"
+                } else if speaking {
+                    "Spricht"
                 } else {
-                    name.to_owned()
+                    "Im Raum"
                 };
-                let pill = line(
+                let status_b = line(
                     ui,
-                    &label,
-                    text::UI.weight(600.0),
-                    Color32::WHITE,
-                    168.0 - 40.0,
+                    &format!("{status} · Kamera an"),
+                    text::META,
+                    soft,
+                    168.0 - 54.0,
                 );
-                let pr = Rect::from_min_size(
-                    pos2(tile.left() + 10.0, tile.bottom() - 10.0 - 28.0),
-                    Vec2::new(pill.width() + 20.0, 28.0),
-                );
-                ui.painter()
-                    .rect_filled(pr, corner(theme.radius.sm), voice::look::pill(0.62));
-                paint_mid(ui.painter(), &pill, pr.left() + 10.0, pr.center().y);
+                let h = 18.0 + name_b.height() + status_b.height() + 6.0;
+                let scrim = Rect::from_min_max(pos2(tile.left(), tile.bottom() - h), tile.max);
+                bottom_scrim(ui.painter(), scrim, theme.radius.lg, 0.7);
+                let ny = scrim.top() + 18.0;
+                name_b.paint(ui.painter(), pos2(tile.left() + 10.0, ny));
+                if let Some(b) = self_b {
+                    // The overview's `.voice-room-self` stays muted over a picture too.
+                    b.paint_tinted(
+                        ui.painter(),
+                        pos2(tile.left() + 10.0 + name_b.width(), ny),
+                        Some(c.muted),
+                    );
+                }
+                status_b.paint(ui.painter(), pos2(tile.left() + 10.0, ny + name_b.height()));
+                let mut mx = tile.left() + 8.0;
+                for (on, icon) in [
+                    (occupant.muted || occupant.deafened, Icon::MicOff),
+                    (occupant.deafened, Icon::HeadsetOff),
+                ] {
+                    if on {
+                        icons::paint(ui.painter(), icon, pos2(mx, tile.top() + 8.0), 14.0, soft);
+                        mx += 16.0;
+                    }
+                }
                 let _ = common::click(ui, tile, Id::unique(("overview-person", *user)));
                 continue;
             }
@@ -526,22 +585,25 @@ fn voice_room(
                 1.0,
                 c.surface,
             );
-            let mut label = name_block;
-            if me == Some(*user) {
-                let text_w = label.width();
-                let _ = text_w;
-                label = line(
+            // `.voice-room-self`: " (du)" regular and muted after the name.
+            let self_b = (me == Some(*user)).then(|| {
+                line(
                     ui,
-                    &format!("{name} (du)"),
-                    label_style,
-                    c.text,
-                    168.0 - 24.0,
+                    " (du)",
+                    text::UI,
+                    c.muted,
+                    (168.0 - 24.0 - name_block.width()).max(0.0),
+                )
+            });
+            let total = name_block.width() + self_b.as_ref().map_or(0.0, |b| b.width());
+            let lx = tile.center().x - total / 2.0;
+            name_block.paint(ui.painter(), pos2(lx, avatar.bottom() + 8.0));
+            if let Some(b) = self_b {
+                b.paint(
+                    ui.painter(),
+                    pos2(lx + name_block.width(), avatar.bottom() + 8.0),
                 );
             }
-            label.paint(
-                ui.painter(),
-                pos2(tile.center().x - label.width() / 2.0, avatar.bottom() + 8.0),
-            );
             let mut mx = tile.left() + 8.0;
             if occupant.muted || occupant.deafened {
                 icons::paint(

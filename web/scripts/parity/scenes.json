@@ -822,6 +822,27 @@
       "call": "Sofa jonas:camera,mira:muted"
     },
     {
+      "name": "voice-overview-camera-joined",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "link": "Übersicht"
+        },
+        {
+          "wait": 3000
+        }
+      ]
+    },
+    {
       "name": "voice-live-own",
       "path": "/s/{home}/c/{Sofa}",
       "user": "lena",
@@ -883,6 +904,9 @@
         },
         {
           "type": "sofa"
+        },
+        {
+          "wait": 500
         },
         {
           "key": "Enter"
