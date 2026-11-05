@@ -281,8 +281,19 @@ impl Client {
     /// The web's startup request set (servers, DMs, unread, notification
     /// settings and privacy, themes) and the gateway. Op key `bootstrap`.
     pub fn bootstrap(&self) {
-        let this = self.clone();
-        self.spawn(async move { this.load_workspace().await });
+        // Several screens ask for the workspace in the same frame; marking it
+        // pending here, not in the task, keeps that to one load.
+        let started = self.write(|s| {
+            if matches!(s.ops.get("bootstrap"), Some(OpState::Pending)) {
+                return false;
+            }
+            s.ops.insert("bootstrap".into(), OpState::Pending);
+            true
+        });
+        if started {
+            let this = self.clone();
+            self.spawn(async move { this.load_workspace().await });
+        }
     }
 
     async fn load_workspace(&self) {

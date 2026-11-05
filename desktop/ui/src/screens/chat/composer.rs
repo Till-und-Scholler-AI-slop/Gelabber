@@ -504,6 +504,12 @@ pub fn show(
                 .inner
         })
         .inner;
+    // The web's textarea is labelled "Nachricht an #channel".
+    let _ = output
+        .response
+        .response
+        .clone()
+        .accessible_name(&format!("Nachricht an {}", input.placeholder));
     if let Some(range) = output.cursor_range {
         let caret = (range.primary.index == range.secondary.index).then_some(range.primary.index.0);
         if caret != state.last_caret {

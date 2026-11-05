@@ -224,8 +224,10 @@ pub fn show(
                 .show(ui)
         })
         .inner;
-    out.search_changed |= edit.response.changed();
-    out.search_focused = edit.response.has_focus();
+    // The web names the field by its aria-label "Suchen".
+    let edit_response = edit.response.response.clone().accessible_name("Suchen");
+    out.search_changed |= edit_response.changed();
+    out.search_focused = edit_response.has_focus();
     if search.is_empty() {
         let hint = Block::single(ui, "Suchen", SEARCH, mix(c.panel, c.subtle, 0.8));
         hint.paint(ui.painter(), pos2(input_left, mid - SEARCH.line_px() / 2.0));
