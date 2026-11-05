@@ -676,6 +676,10 @@ pub const CAMERA_UNAVAILABLE: &str = "Die Kamera ist nicht verfügbar.";
 pub const NO_MEDIA_CORE: &str =
     "Anrufe brauchen den Medienkern der Desktop-App, der in diesem Build fehlt.";
 
+pub fn engine_failed(reason: &str) -> String {
+    format!("Der Medienkern konnte nicht starten ({reason}).")
+}
+
 pub fn screen_failed(reason: &str) -> String {
     format!("Die Bildschirmaufnahme konnte nicht gestartet werden ({reason}).")
 }

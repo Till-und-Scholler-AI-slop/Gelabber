@@ -596,7 +596,7 @@ impl Session {
             Some(Ok(engine)) => engine,
             Some(Err(e)) => {
                 tracing::warn!("media engine: {e}");
-                self.give_up(Leave::Refused(logic::NO_MEDIA_CORE.into()));
+                self.give_up(Leave::Refused(logic::engine_failed(&e)));
                 return;
             }
             None => return,
