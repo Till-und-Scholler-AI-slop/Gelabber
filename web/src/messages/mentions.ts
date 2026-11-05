@@ -1,7 +1,7 @@
 // Mentions (issue #241). On the wire a user is `<@user-id>`, so a rename does
 // not break old messages; the composer shows `@Name` and swaps both ways.
 // `@everyone` (all members) and `@here` (members online) stay as written.
-// The server decides who is mentioned (api/src/messages/mentions.rs) and
+// The server decides who is mentioned (backend/api/src/messages/mentions.rs) and
 // sends the result with the message as `mentions` / `mention_everyone`.
 import { linkLengthAt } from "./markdown.ts";
 import type { Message } from "./types.ts";

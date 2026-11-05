@@ -58,16 +58,17 @@ always holds only the newest release.
 - `repo.sh test`: adds that repository to pacman with `SigLevel = Required`,
   installs, upgrades to a newer build with `-Syu`, removes with `-Rns` and
   fails if a library is missing or a file is left behind.
-- `.github/workflows/desktop-native.yml`:
-  - every run: job "Arch package and repository" builds with a throwaway
-    key and runs the test; the repository is the `arch-repo` artifact.
-  - on a published GitHub release (pre-releases included; releases made by
-    `release.yml` dispatch this workflow on their tag instead): attaches
-    `gelabber-desktop-linux-x64.tar.gz` to the release, builds the
-    repository with the real key, and, only if publishing is on, deploys it
-    to GitHub Pages. The package takes its version from the tag, the app in
-    it from `desktop/Cargo.toml`: the job fails unless the two are the same
-    (`0.6.0-rc.1` there for the tag `v0.6.0-rc.1`).
+- `.github/workflows/desktop-native.yml` (run by `ci.yml` and
+  `desktop-release.yml`): job "Arch package and repository" builds with a
+  throwaway key and runs the test, except for pull requests; the repository
+  is the `arch-repo` artifact.
+- `.github/workflows/desktop-release.yml`, on a published GitHub release
+  (pre-releases included; releases made by `release.yml` dispatch it on
+  their tag instead): attaches `gelabber-desktop-linux-x64.tar.gz` to the
+  release, builds the repository with the real key, and, only if publishing
+  is on, deploys it to GitHub Pages. The package takes its version from the
+  tag, the app in it from `desktop/Cargo.toml`: the job fails unless the two
+  are the same (`0.6.0-rc.1` there for the tag `v0.6.0-rc.1`).
 
 `yay` itself is not run in CI (it refuses to run as root); for packages from
 a pacman repository it calls pacman, which the test covers.

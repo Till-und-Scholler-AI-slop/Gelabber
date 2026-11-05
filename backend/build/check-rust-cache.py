@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Local, slow acceptance checks; never use the operator's Compose stack.
 
-Example: python3 docker/check-rust-cache.py --baseline-ref <main-sha> \
+Example: python3 backend/build/check-rust-cache.py --baseline-ref <main-sha> \
     --output /tmp/gelabber-cache-report --keep-images
 """
 
@@ -20,7 +20,7 @@ import time
 import uuid
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 LOCAL_PACKAGES = {"gelabber-api", "gelabber-media", "gelabber-shared"}
 
 
@@ -29,20 +29,20 @@ def command(argv, **kwargs):
 
 
 def source_change(context, package, marker="cache-transition"):
-    path = context / package / "src" / ("lib.rs" if package == "shared" else "main.rs")
+    path = context / "backend" / package / "src" / ("lib.rs" if package == "shared" else "main.rs")
     with path.open("a") as stream:
         stream.write(f"\n// Local Docker cache acceptance source mutation: {marker}.\n")
 
 
 def version_change(context):
-    manifest = context / "Cargo.toml"
+    manifest = context / "backend/Cargo.toml"
     content = manifest.read_text()
     match = re.search(r'(?m)^version = "([^"]+)"$', content)
     if not match:
         raise RuntimeError("workspace version not found")
     old, new = match[1], "0.0.0-cache-acceptance"
     manifest.write_text(content[:match.start(1)] + new + content[match.end(1):])
-    lock = context / "Cargo.lock"
+    lock = context / "backend/Cargo.lock"
     content = lock.read_text()
     count = 0
     blocks = content.split("[[package]]")
@@ -58,7 +58,7 @@ def version_change(context):
 
 
 def feature_change(context, package):
-    manifest = context / package / "Cargo.toml"
+    manifest = context / "backend" / package / "Cargo.toml"
     content, changed = re.subn(r'(?m)^(serde = .*features = \[)"derive"(\].*)$',
                              r'\1"derive", "rc"\2', manifest.read_text())
     if changed != 1:
@@ -114,7 +114,7 @@ class Runner:
         if export and tag not in self.images:
             self.images.append(tag)
         argv = ["docker", "buildx", "build", "--builder", builder, "--progress=plain",
-                "--file", str(context / package / "Dockerfile")]
+                "--file", str(context / "backend" / package / "Dockerfile")]
         if export:
             argv += ["--load", "--tag", tag,
                      "--build-arg", "OCI_REVISION=" + self.report["head_sha"],
@@ -190,7 +190,7 @@ class Runner:
             contexts[mode] = work / f"{package}-{mode}"
             shutil.copytree(snapshot, contexts[mode])
             if mode == "baseline":
-                (contexts[mode] / package / "Dockerfile").write_text(baseline[package])
+                (contexts[mode] / "backend" / package / "Dockerfile").write_text(baseline[package])
             record = self.build(contexts[mode], builders[mode], package, mode, "cold")
             samples[mode]["cold"].append(record["seconds"])
         for round_number in range(1, self.args.rounds + 1):
@@ -259,7 +259,7 @@ def main():
     try:
         baseline_sha = command(["git", "rev-parse", "--verify", "--end-of-options",
                                 args.baseline_ref + "^{commit}"], cwd=ROOT).strip()
-        baseline = {package: command(["git", "show", f"{baseline_sha}:{package}/Dockerfile"], cwd=ROOT)
+        baseline = {package: command(["git", "show", f"{baseline_sha}:backend/{package}/Dockerfile"], cwd=ROOT)
                     for package in args.packages}
         runner.report.update({"baseline_sha": baseline_sha,
                               "head_sha": command(["git", "rev-parse", "HEAD"], cwd=ROOT).strip(),
@@ -269,15 +269,15 @@ def main():
                               "mode": args.mode, "rounds": args.rounds,
                               "timing_target": "build stage; no image export; one cold seed per implementation",
                               "workspace_version": re.search(r'(?m)^version = "([^"]+)"$',
-                                                             (ROOT / "Cargo.toml").read_text())[1]})
+                                                             (ROOT / "backend/Cargo.toml").read_text())[1]})
         with tempfile.TemporaryDirectory(prefix=runner.prefix + "-") as temporary:
             work = Path(temporary)
             snapshot = work / "snapshot"
             files = command(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=ROOT)
             digests = {}
             for relative in set(files.split("\0")) - {""}:
-                if (relative in {"Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".dockerignore"}
-                        or relative.startswith(("api/", "media/", "shared/", "docker/"))):
+                if (relative in {"rust-toolchain.toml", ".dockerignore"}
+                        or relative.startswith("backend/")):
                     source, target = ROOT / relative, snapshot / relative
                     if source.is_file():
                         target.parent.mkdir(parents=True, exist_ok=True)

@@ -11,21 +11,18 @@ on:
       - deploy/compose/mc/**
       - deploy/compose/minio-init.sh
       - deploy/compose/compose.yaml
-      - Cargo.toml
+      - backend/Cargo.toml
       - .github/workflows/publish-minio.yml
-  pull_request:
-    paths:
-      - deploy/compose/minio/**
-      - deploy/compose/mc/**
-      - deploy/compose/minio-init.sh
-      - deploy/compose/compose.yaml
-      - Cargo.toml
-      - .github/workflows/publish-minio.yml
+  # ci.yml builds and checks the images for pull requests.
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: minio-images-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 env:
   MINIO_RELEASE: RELEASE.2025-10-15T17-29-55Z
@@ -45,7 +42,7 @@ jobs:
       - name: Image names
         run: |
           repo="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
-          ver="v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' Cargo.toml | head -n 1)"
+          ver="v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' backend/Cargo.toml | head -n 1)"
           echo "GHCR_IMAGE=ghcr.io/${repo}/minio" >> "$GITHUB_ENV"
           echo "LOCAL_IMAGE=gelabber/minio" >> "$GITHUB_ENV"
           echo "GHCR_MC_IMAGE=ghcr.io/${repo}/mc" >> "$GITHUB_ENV"
@@ -67,7 +64,7 @@ jobs:
           grep -F "${GHCR_MC_IMAGE}:${MC_RELEASE}" deploy/compose/compose.yaml
           grep -F "MC_RELEASE: ${MC_RELEASE}" deploy/compose/compose.yaml
           grep -F "ARG MC_RELEASE=${MC_RELEASE}" deploy/compose/mc/Dockerfile
-          test "${GELABBER_VERSION}" = "v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' Cargo.toml | head -n 1)"
+          test "${GELABBER_VERSION}" = "v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\([^"]*\)"/\1/p}' backend/Cargo.toml | head -n 1)"
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1

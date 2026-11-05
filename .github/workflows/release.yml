@@ -1,8 +1,12 @@
-# A maintainer explicitly releases a completed, CI-gated main image set.
-# No release on every main push, feature branch, or arbitrary v* tag push.
+# Releases a new version as soon as its images are published from main
+# (image_set.py decide). By hand only to repeat a release or repair latest.
 name: Release
 
 on:
+  workflow_run:
+    workflows: [Publish app images]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
@@ -21,27 +25,75 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  # write: dispatches the desktop workflow for the new release.
-  actions: write
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
-  github-release:
-    if: github.ref == 'refs/heads/main'
+  # The version and image set to release, or none: a main commit that keeps
+  # the shipped version publishes images but releases nothing.
+  decide:
+    name: Version to release
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      tag: ${{ steps.decide.outputs.tag }}
+      image_run_id: ${{ steps.decide.outputs.image_run_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+      - name: Download the run's image set
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-set
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Decide
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_RUN: ${{ inputs.image_run_id }}
+          IMAGE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = workflow_dispatch ]; then
+            printf 'tag=%s\nimage_run_id=%s\n' "$INPUT_TAG" "$INPUT_RUN" >> "$GITHUB_OUTPUT"
+          else
+            python3 .github/workflows/scripts/image_set.py decide >> "$GITHUB_OUTPUT"
+          fi
+
+  github-release:
+    name: GitHub release
+    needs: decide
+    if: needs.decide.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # write: dispatches the desktop workflow for the new release.
+      actions: write
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
       # The desktop apps carry the version of their own workspace, and
-      # desktop-native.yml attaches them only to a release whose tag is that
+      # desktop-release.yml attaches them only to a release whose tag is that
       # version. Found out here, before the tag and the release exist.
       - name: Desktop apps have the release's version
         if: ${{ !inputs.refresh_latest_only }}
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ needs.decide.outputs.tag }}
         run: |
           set -euo pipefail
           app="v$(sed -n 's/^version = "\(.*\)"$/\1/p' desktop/Cargo.toml | head -n1)"
@@ -70,11 +122,11 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: image-set
-          run-id: ${{ inputs.image_run_id }}
+          run-id: ${{ needs.decide.outputs.image_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Check artifact provenance
         env:
-          IMAGE_RUN_ID: ${{ inputs.image_run_id }}
+          IMAGE_RUN_ID: ${{ needs.decide.outputs.image_run_id }}
         run: |
           python3 -c 'import json,os; assert json.load(open("image-set.json"))["publish_run_id"] == int(os.environ["IMAGE_RUN_ID"])'
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -86,7 +138,7 @@ jobs:
       - name: Verify image set, release and update latest aliases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ needs.decide.outputs.tag }}
           REFRESH_LATEST_ONLY: ${{ inputs.refresh_latest_only }}
         run: |
           if [ "$REFRESH_LATEST_ONLY" = true ]; then
@@ -100,5 +152,5 @@ jobs:
         if: ${{ !inputs.refresh_latest_only }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ inputs.tag }}
-        run: gh workflow run desktop-native.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG" -f release_tag="$RELEASE_TAG"
+          RELEASE_TAG: ${{ needs.decide.outputs.tag }}
+        run: gh workflow run desktop-release.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG" -f release_tag="$RELEASE_TAG"

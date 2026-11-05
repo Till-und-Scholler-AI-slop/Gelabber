@@ -22,7 +22,7 @@ import { bannerOf } from "../components/profileStyle.ts";
 
 const ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
-describe("profile card rules (mirror of api/src/auth/validate.rs)", () => {
+describe("profile card rules (mirror of backend/api/src/auth/validate.rs)", () => {
   it("texts: empty clears, limits in characters, control characters", () => {
     expect(validateBio("")).toBeNull();
     expect(validateBio("  Hallo\r\nWelt  ")).toBeNull();

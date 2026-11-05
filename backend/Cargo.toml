@@ -1,11 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["api", "media", "shared"]
-# Desktop client: own workspace, needs the native libwebrtc package.
-exclude = ["desktop"]
 
 [workspace.package]
-version = "0.8.8"
+version = "0.8.9"
 edition = "2024"
 rust-version = "1.98.1"
 license = "MIT"

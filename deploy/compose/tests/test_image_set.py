@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+from test_changes import changed_areas
 
 ROOT = Path(__file__).resolve().parents[3]
 spec = importlib.util.spec_from_file_location('image_set', ROOT / '.github/workflows/scripts/image_set.py')
@@ -73,21 +74,17 @@ class Gates(unittest.TestCase):
             m.preflight({'api': {'image': 'image', 'digest': DIGEST}}, 'v0.2.4')
 
     def test_shared_and_build_dependencies_trigger_workflows(self):
-        # Inspect the actual filters, not a duplicate list pretending to execute Actions.
-        # Each runs for its own workflow file and the script it shares; CI
-        # also for the image workflow, which its deployment tests read.
-        workflows = {'ci': ('ci', 'publish-images'), 'publish-images': ('publish-images',)}
-        for name, own in workflows.items():
-            text = (ROOT / f'.github/workflows/{name}.yml').read_text()
-            paths = text.split('  pull_request:', 1)[1].split('\n\n', 1)[0]
-            for path in ('shared/**', 'api/**', 'media/**', 'web/**', 'docker/**',
-                         '.dockerignore', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml',
-                         '.github/workflows/scripts/**', 'deploy/compose/**',
-                         *(f'.github/workflows/{workflow}.yml' for workflow in own)):
-                self.assertIn('      - ' + path + '\n', paths + '\n')
+        # Ask the script ci.yml runs, not a duplicate list pretending to execute Actions.
+        for path in ('backend/shared/src/lib.rs', 'backend/api/src/main.rs', 'backend/media/src/main.rs',
+                     'backend/build/run-native-ci.sh', '.dockerignore', 'backend/Cargo.toml',
+                     'backend/Cargo.lock', 'rust-toolchain.toml', '.github/workflows/scripts/image_set.py',
+                     '.github/workflows/publish-images.yml'):
+            with self.subTest(path=path):
+                self.assertIn('backend', changed_areas(path))
+        self.assertIn('web', changed_areas('web/Dockerfile'))
+        self.assertIn('deploy', changed_areas('deploy/compose/compose.yaml'))
         text = (ROOT / '.github/workflows/ci.yml').read_text()
-        self.assertNotIn('paths:', text.split('  push:', 1)[1].split('concurrency:', 1)[0])
-
+        self.assertNotIn('paths:', text.split('\non:\n', 1)[1].split('concurrency:', 1)[0])
 
 
 class Promotion(unittest.TestCase):
@@ -95,7 +92,8 @@ class Promotion(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.old = os.getcwd()
         os.chdir(self.tmp.name)
-        Path('Cargo.toml').write_text('[workspace.package]\nversion="0.2.4"\n')
+        Path('backend').mkdir()
+        Path('backend/Cargo.toml').write_text('[workspace.package]\nversion="0.2.4"\n')
         Path('digests').mkdir()
         self.images = {}
         for name in m.SERVICES:
@@ -297,6 +295,44 @@ class Promotion(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 m.release()
             self.assertFalse(any(c.args[0] == 'docker' for c in calls.call_args_list))
+
+
+
+class Decide(unittest.TestCase):
+    """What release.yml releases on its own after a publish run."""
+
+    setUp = Promotion.setUp
+    tearDown = Promotion.tearDown
+
+    def decide(self, run_id='2'):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with patch.dict(os.environ, IMAGE_RUN_ID=run_id), contextlib.redirect_stdout(out):
+            m.decide()
+        return out.getvalue()
+
+    def promote(self, tag=None):
+        with patch.object(m, 'tag_sha', return_value=tag), patch.object(m, 'registry_digest', return_value=DIGEST), patch.object(m, 'run'):
+            m.promote()
+
+    def test_a_new_version_is_released(self):
+        self.promote()
+        self.assertEqual(self.decide(), 'tag=v0.2.4\nimage_run_id=2\n')
+
+    def test_a_shipped_version_is_not_released_again(self):
+        self.promote(tag='d' * 40)
+        self.assertEqual(self.decide(), '')
+
+    def test_a_pre_release_is_left_to_a_maintainer(self):
+        Path('backend/Cargo.toml').write_text('[workspace.package]\nversion="0.3.0-rc.1"\n')
+        self.promote()
+        self.assertEqual(self.decide(), '')
+
+    def test_the_set_of_another_run_is_refused(self):
+        self.promote()
+        with self.assertRaises(ValueError):
+            self.decide(run_id='3')
 
 
 if __name__ == '__main__':

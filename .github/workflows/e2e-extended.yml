@@ -111,7 +111,7 @@ jobs:
                                                                  text=True).splitlines()}, indent=2))
           PY
           native_build_dir="${RUNNER_TEMP}/gelabber-native-build"
-          python3 docker/mediasoup-build-tools.py --destination "$native_build_dir"
+          python3 backend/build/mediasoup-build-tools.py --destination "$native_build_dir"
           python3 - "$native_build_dir" "$GITHUB_ENV" <<'PY'
           import sys
           from pathlib import Path
@@ -124,7 +124,7 @@ jobs:
           PY
 
       - name: Build owned API and SFU for isolated fault acceptance
-        run: cargo build --locked -p gelabber-api -p gelabber-media
+        run: cargo build --locked --manifest-path backend/Cargo.toml -p gelabber-api -p gelabber-media
 
       - name: Node for owned core fault acceptance
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

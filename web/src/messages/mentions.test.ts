@@ -83,7 +83,7 @@ describe("mentions", () => {
     ]);
   });
 
-  // The cases of `links_follow_the_web_client` in api/src/messages/mentions.rs:
+  // The cases of `links_follow_the_web_client` in backend/api/src/messages/mentions.rs:
   // the markdown view highlights exactly what the server pings.
   it("highlights in markdown exactly where the server pings", () => {
     const pings = (content: string) => {

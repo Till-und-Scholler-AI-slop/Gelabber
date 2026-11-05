@@ -2,7 +2,7 @@
 //!
 //! Safe Rust over the native libmediasoupclient/libwebrtc library
 //! (desktop/native). Signaling stays with the caller: transport events ask it
-//! to run `connect`/`produce` on the media server (media/src/protocol.rs) and
+//! to run `connect`/`produce` on the media server (backend/media/src/protocol.rs) and
 //! to answer with [`Transport::respond`].
 //!
 //! Ownership mirrors the native graph: a [`Producer`] keeps its [`Transport`]

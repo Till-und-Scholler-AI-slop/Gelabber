@@ -1,4 +1,4 @@
-// Wire shapes of `/api/servers/*` (see `api/src/servers`).
+// Wire shapes of `/api/servers/*` (see `backend/api/src/servers`).
 
 import type { ProfileCard } from "../auth/types.ts";
 

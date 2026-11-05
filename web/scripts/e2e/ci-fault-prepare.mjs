@@ -41,12 +41,12 @@ async function prepare() {
   }
   const sourceSha = (await exec("git", ["rev-parse", "HEAD"])).stdout.trim();
   assert.match(sourceSha, /^[a-f0-9]{40}$/);
-  const binary = await readFile(resolve("target/debug/gelabber-api"));
+  const binary = await readFile(resolve("backend/target/debug/gelabber-api"));
   const sha256 = createHash("sha256").update(binary).digest("hex");
   const withMedia = process.env.GELABBER_E2E_PREPARE_MEDIA === "true";
   let mediaBinary, iceAddress;
   if (withMedia) {
-    mediaBinary = await readFile(resolve("target/debug/gelabber-media"));
+    mediaBinary = await readFile(resolve("backend/target/debug/gelabber-media"));
     iceAddress = Object.values(networkInterfaces())
       .flat()
       .find((item) => item?.family === "IPv4" && !item.internal)?.address;
@@ -75,7 +75,7 @@ async function prepare() {
   db.pathname = `/${name}`;
   const dir = await mkdtemp(join(tmpdir(), "gelabber-e2e-ci-runtime-"));
   const binaryPath = join(dir, "api");
-  await copyFile(resolve("target/debug/gelabber-api"), binaryPath);
+  await copyFile(resolve("backend/target/debug/gelabber-api"), binaryPath);
   assert.equal(
     createHash("sha256")
       .update(await readFile(binaryPath))
@@ -89,7 +89,7 @@ async function prepare() {
       sourceSha,
       binaryPath,
       sha256,
-      build: "cargo build --locked -p gelabber-api; current CI checkout",
+      build: "cargo build --locked --manifest-path backend/Cargo.toml -p gelabber-api; current CI checkout",
     }) + "\n",
     { mode: 0o600 },
   );
@@ -112,7 +112,7 @@ async function prepare() {
   const mediaExports = [];
   if (withMedia) {
     const mediaPath = join(dir, "media");
-    await copyFile(resolve("target/debug/gelabber-media"), mediaPath);
+    await copyFile(resolve("backend/target/debug/gelabber-media"), mediaPath);
     const mediaSha = createHash("sha256").update(mediaBinary).digest("hex");
     assert.equal(
       createHash("sha256")
@@ -127,7 +127,7 @@ async function prepare() {
         sourceSha,
         binaryPath: mediaPath,
         sha256: mediaSha,
-        build: "cargo build --locked -p gelabber-media; current CI checkout",
+        build: "cargo build --locked --manifest-path backend/Cargo.toml -p gelabber-media; current CI checkout",
       }) + "\n",
       { mode: 0o600 },
     );

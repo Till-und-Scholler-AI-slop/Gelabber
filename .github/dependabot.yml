@@ -1,5 +1,5 @@
 # The workflows pin every action to a commit SHA with its version as a
-# comment (#299, checked by workflow-pins.yml). Dependabot moves the pins and
+# comment (#299, checked by the deployment tests in ci.yml). Dependabot moves the pins and
 # comments to new releases, all actions in one weekly pull request.
 version: 2
 updates:

@@ -8,8 +8,8 @@ from as a comment, the form Dependabot (.github/dependabot.yml) updates:
     uses: actions/checkout@<40 hex digits> # v7.0.1
 
 Local actions (./...) and Docker images by digest need no pin. Read as text,
-without a YAML library. workflow-pins.yml runs this on every change to a
-workflow; ci.yml runs it with the other deployment tests.
+without a YAML library. ci.yml runs it with the other deployment tests,
+which every change to .github/ starts.
 """
 from pathlib import Path
 import re

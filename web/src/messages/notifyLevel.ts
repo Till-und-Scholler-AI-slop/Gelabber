@@ -1,7 +1,7 @@
 // What a conversation's unread state and notification settings (#241, #242)
 // mean for its badge, the totals outside the page and its notifications.
 // The server sends the effective level and mute with every unread row
-// (api/src/messages/workflows.rs); nothing here asks for more.
+// (backend/api/src/messages/workflows.rs); nothing here asks for more.
 import type { ReadState } from "./readState.ts";
 
 export type NotifyLevel = "all" | "mentions" | "none";

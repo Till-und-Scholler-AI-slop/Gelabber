@@ -1,4 +1,4 @@
-// Client-side mirror of `api/src/auth/validate.rs`, so obvious mistakes are
+// Client-side mirror of `backend/api/src/auth/validate.rs`, so obvious mistakes are
 // shown inline before a round-trip. The server stays the authority; its
 // field codes render through the same `fieldMessage` table.
 

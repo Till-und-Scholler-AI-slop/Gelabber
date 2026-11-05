@@ -1,0 +1,110 @@
+# Builds the desktop apps for a published release and attaches them to it;
+# once enabled, also publishes the pacman repository (desktop/packaging/arch).
+# release.yml dispatches this with release_tag: a release made with the
+# workflow token raises no release event.
+name: Desktop release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published release to attach the apps to and build the pacman repository for (run on that tag)
+        required: true
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+
+jobs:
+  build:
+    uses: ./.github/workflows/desktop-native.yml
+    with:
+      release_tag: ${{ github.event.release.tag_name || inputs.release_tag }}
+    secrets: inherit
+
+  # The app tarball becomes a release asset, which the PKGBUILD downloads.
+  # `build` includes the third-party notices, so none go out of date.
+  release-asset:
+    name: Attach the Linux app to the release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download the app
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: gelabber-desktop-linux-x64
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ env.RELEASE_TAG }}
+        run: gh release upload "$TAG" gelabber-desktop-linux-x64.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
+
+  # Installer, checksum, signature and latest.json, which the installed apps
+  # poll (desktop/app/src/update.rs).
+  release-asset-windows:
+    name: Attach the Windows app to the release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download the app
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: gelabber-desktop-windows-x64
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          # The installer must be built from the released source, as the
+          # Linux package is.
+          if [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then
+            echo "release $TAG must be built from its tag, not $GITHUB_REF"; exit 1
+          fi
+          sha256sum --check gelabber-desktop-windows-x64-setup.exe.sha256
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gelabber-desktop-windows-x64-setup.exe"
+          jq -n --arg version "${TAG#v}" --arg url "$url" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --rawfile signature gelabber-desktop-windows-x64-setup.exe.sig \
+            '{version: $version, pub_date: $date,
+              platforms: {"windows-x86_64": {url: $url, signature: ($signature | rtrimstr("\n"))}}}' > latest.json
+          cat latest.json
+          gh release upload "$TAG" gelabber-desktop-windows-x64-setup.exe \
+            gelabber-desktop-windows-x64-setup.exe.sha256 gelabber-desktop-windows-x64-setup.exe.sig \
+            latest.json --clobber --repo "$GITHUB_REPOSITORY"
+
+  # Public: the repository on GitHub Pages. Off until the repository
+  # variable ARCH_REPO_PUBLISH is "true", and the github-pages environment
+  # should require an approval (desktop/packaging/arch/README.md).
+  arch-repo-publish:
+    name: Publish the pacman repository
+    if: vars.ARCH_REPO_PUBLISH == 'true'
+    needs: [build, release-asset]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Download the repository
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: arch-repo
+          path: site
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

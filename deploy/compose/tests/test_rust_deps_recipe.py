@@ -17,15 +17,15 @@ class DependencyRecipe(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.input = Path(self.temp.name) / 'input'
         self.input.mkdir()
-        for name in ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml'):
-            shutil.copyfile(ROOT / name, self.input / name)
+        for name in ('backend/Cargo.toml', 'backend/Cargo.lock', 'rust-toolchain.toml'):
+            shutil.copyfile(ROOT / name, self.input / Path(name).name)
         for member in MEMBERS:
             (self.input / member).mkdir()
-            shutil.copyfile(ROOT / member / 'Cargo.toml', self.input / member / 'Cargo.toml')
+            shutil.copyfile(ROOT / 'backend' / member / 'Cargo.toml', self.input / member / 'Cargo.toml')
 
     def recipe(self, name='output', check=True):
         output = Path(self.temp.name) / name
-        result = subprocess.run(['sh', str(ROOT / 'docker/rust-deps-recipe.sh'),
+        result = subprocess.run(['sh', str(ROOT / 'backend/build/rust-deps-recipe.sh'),
                                  str(self.input), str(output)], capture_output=True, text=True)
         if check:
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -112,7 +112,7 @@ class DependencyRecipe(unittest.TestCase):
 
     def test_rejects_existing_output_to_protect_source(self):
         original = self.contents(self.input)
-        result = subprocess.run(['sh', str(ROOT / 'docker/rust-deps-recipe.sh'),
+        result = subprocess.run(['sh', str(ROOT / 'backend/build/rust-deps-recipe.sh'),
                                  str(self.input), str(self.input)], capture_output=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(original, self.contents(self.input))

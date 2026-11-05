@@ -2,8 +2,8 @@
 FROM rust:1.98.1-slim-trixie@sha256:4cd829461bd5c4d511c32e269da9cb8929223b666519d8004e35fc8d1d771ab7 AS toolchain
 
 FROM toolchain AS base
-COPY docker/debian-snapshot.sources /etc/apt/sources.list.d/debian.sources
-COPY docker/rust-build-ca.sh /tmp/rust-build-ca.sh
+COPY backend/build/debian-snapshot.sources /etc/apt/sources.list.d/debian.sources
+COPY backend/build/rust-build-ca.sh /tmp/rust-build-ca.sh
 RUN sh /tmp/rust-build-ca.sh
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_DIR=/etc/ssl/certs \
@@ -13,11 +13,11 @@ ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     CARGO_BUILD_JOBS=2
 FROM base AS recipe
 WORKDIR /input
-COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
-COPY api/Cargo.toml ./api/Cargo.toml
-COPY media/Cargo.toml ./media/Cargo.toml
-COPY shared/Cargo.toml ./shared/Cargo.toml
-COPY docker/rust-deps-recipe.sh /tmp/rust-deps-recipe.sh
+COPY rust-toolchain.toml backend/Cargo.toml backend/Cargo.lock ./
+COPY backend/api/Cargo.toml ./api/Cargo.toml
+COPY backend/media/Cargo.toml ./media/Cargo.toml
+COPY backend/shared/Cargo.toml ./shared/Cargo.toml
+COPY backend/build/rust-deps-recipe.sh /tmp/rust-deps-recipe.sh
 RUN sh /tmp/rust-deps-recipe.sh /input /recipe
 
 FROM base AS dependencies
@@ -29,17 +29,17 @@ RUN cargo build --locked --release -p gelabber-api \
 
 FROM dependencies AS build
 # Restore all original manifests/versions; no placeholder artifact may survive.
-COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
-COPY media/Cargo.toml ./media/Cargo.toml
-COPY api ./api
-COPY shared ./shared
+COPY rust-toolchain.toml backend/Cargo.toml backend/Cargo.lock ./
+COPY backend/media/Cargo.toml ./media/Cargo.toml
+COPY backend/api ./api
+COPY backend/shared ./shared
 RUN cargo build --locked --release -p gelabber-api
 
 FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 # Bootstrap HTTPS APT with the untouched, digest-pinned public CA bundle.
 # Build-time proxy certificates must never be copied into the runtime image.
 COPY --from=toolchain /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY docker/debian-snapshot.sources /etc/apt/sources.list.d/debian.sources
+COPY backend/build/debian-snapshot.sources /etc/apt/sources.list.d/debian.sources
 ARG OCI_REVISION=unknown
 ARG OCI_VERSION=unknown
 ARG OCI_CREATED=unknown

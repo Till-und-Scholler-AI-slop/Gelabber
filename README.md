@@ -24,7 +24,7 @@ cd deploy/compose
 docker compose up
 ```
 
-Dann [http://localhost](http://localhost). App-Images: `ghcr.io/till-und-scholler-ai-slop/gelabber/{api,web,media}:v0.8.8`. Fehlt das Paket (GHCR oft privat), baut Compose aus dem Source. `docker compose up --build` erzwingt den Build; auf arm64 ist er nötig, Image-CI baut `linux/amd64`. MinIO bleibt auf `ghcr.io/till-und-scholler-ai-slop/gelabber/minio:RELEASE.2025-10-15T17-29-55Z`.
+Dann [http://localhost](http://localhost). App-Images: `ghcr.io/till-und-scholler-ai-slop/gelabber/{api,web,media}:v0.8.9`. Fehlt das Paket (GHCR oft privat), baut Compose aus dem Source. `docker compose up --build` erzwingt den Build; auf arm64 ist er nötig, Image-CI baut `linux/amd64`. MinIO bleibt auf `ghcr.io/till-und-scholler-ai-slop/gelabber/minio:RELEASE.2025-10-15T17-29-55Z`.
 
 Postgres, Redis und MinIO-Konsole hängen nur an Loopback. UDP für Voice (coturn 3478 + Relay, SFU 10000 plus ein Port je weiterem Medien-Worker, siehe `deploy/README.md`) geht nicht durch Caddy.
 
@@ -41,19 +41,20 @@ PWA auf dem Handy: [Gelabber als PWA installieren](docs/v0.6-pwa.md).
 | `media/` | Eigener Media-Gateway, offizielle Rust-Bindung mediasoup 0.29.0 als einzige SFU-Engine |
 | `deploy/compose` | Caddy 2.11.4, Postgres 18.6, Redis 8.10.1, MinIO CE `RELEASE.2025-10-15T17-29-55Z`, coturn 4.18.0 |
 
-Aktuell veröffentlicht: [v0.8.8](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/tag/v0.8.8).
+Aktuell veröffentlicht: [v0.8.9](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/tag/v0.8.9).
 
 ## Dev ohne Compose
 
 Vor dem Media-Build die [gepinnten nativen Buildwerkzeuge](docs/v0.4-mediasoup-migration.md#gepinnter-nativer-build) gemäß Migrationsdokument einrichten. Die dortige Anleitung verwendet eine isolierte Python-Umgebung und begrenzt die native Buildparallelität.
 
 ```bash
+cd backend
 set -a; . api/.env.example; set +a; cargo run -p gelabber-api
 set -a; . media/.env.example; set +a; cargo run -p gelabber-media
-cd web && npm run dev
+cd ../web && npm run dev
 ```
 
-`npm run dev` proxyt `/api` und `/ws` nach `:8080`, `/media` nach `:8081`. Tests: `DATABASE_URL=postgres://gelabber:gelabber@127.0.0.1:5432/gelabber cargo test -p gelabber-api` (Gateway zusätzlich `REDIS_URL`).
+`npm run dev` proxyt `/api` und `/ws` nach `:8080`, `/media` nach `:8081`. Tests in `backend/`: `DATABASE_URL=postgres://gelabber:gelabber@127.0.0.1:5432/gelabber cargo test -p gelabber-api` (Gateway zusätzlich `REDIS_URL`).
 
 ## Call-Sounds
 
