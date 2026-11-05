@@ -104,7 +104,12 @@ impl Toasts {
             .fixed_pos(screen.min)
             .interactable(true)
             .show(&ctx, |ui| {
+                // Two regions, info over errors, 8px apart: an empty error
+                // region still keeps its gap.
                 let mut y = bottom;
+                if !self.items.iter().any(|t| t.error) {
+                    y -= 8.0;
+                }
                 for toast in order.iter().rev() {
                     let left_pad = if toast.error {
                         12.0 + 3.0 + 16.0 + 12.0
@@ -113,7 +118,8 @@ impl Toasts {
                     };
                     let text_w = width - left_pad - 12.0 - 32.0 - 9.0;
                     let block = Block::wrapped(ui, &toast.text, text::BODY, c.text, text_w);
-                    let height = block.height().max(32.0) + 24.0 + 2.0;
+                    // The 32px close button overhangs by 6px top and bottom.
+                    let height = block.height().max(32.0 - 12.0) + 24.0 + 2.0;
                     let rect = Rect::from_min_max(pos2(right - width, y - height), pos2(right, y));
                     let painter = ui.painter();
                     painter.add(theme.shadow_2.as_shape(rect, corner(theme.radius.lg)));

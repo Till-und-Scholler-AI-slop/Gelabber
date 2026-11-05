@@ -615,6 +615,11 @@ fn person_row(
         Id::unique(("voice-person", occupant.channel_id, user)),
     )
     .on_hover_text(title);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+    // A click or a right click: the profile with its volume controls.
+    if response.clicked() || response.secondary_clicked() {
+        super::overlays::open_member(ui.ctx(), detail.server.id, user);
+    }
     let painter = ui.painter().clone();
     if response.hovered() {
         common::fill(&painter, row, theme.radius.md, c.hover);
