@@ -7,8 +7,13 @@ license.workspace = true
 description = "Gelabber native desktop interface (egui)"
 publish = false
 
+[features]
+# Real calls through the native media core (see desktop/call).
+media = ["gelabber-call/media"]
+
 [dependencies]
 gelabber-client = { path = "../client" }
+gelabber-call = { path = "../call" }
 eframe = { version = "0.37.0", default-features = false, features = ["wgpu", "accesskit", "wayland", "x11"] }
 egui = "0.37.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }

@@ -301,6 +301,8 @@ impl Session {
 /// What a screen gets each frame.
 pub struct AppCtx<'a> {
     pub client: &'a Client,
+    /// The voice call (desktop/call).
+    pub call: &'a gelabber_call::Call,
     pub images: &'a Images,
     pub nav: &'a mut Nav,
     pub session: &'a mut Session,
@@ -312,6 +314,7 @@ pub struct AppCtx<'a> {
 
 pub struct GelabberApp {
     client: Client,
+    call: gelabber_call::Call,
     images: Images,
     nav: Nav,
     session: Session,
@@ -348,6 +351,7 @@ impl GelabberApp {
         }));
         Self {
             nav: Nav::new(route.as_deref().unwrap_or("/")),
+            call: gelabber_call::Call::new(client.clone()),
             client,
             images,
             session,
@@ -362,7 +366,7 @@ impl GelabberApp {
 
     /// True while data or images are still loading.
     pub fn busy(&self) -> bool {
-        self.client.busy() || self.images.busy()
+        self.client.busy() || self.images.busy() || self.call.busy()
     }
 
     pub fn nav(&self) -> &Nav {
@@ -459,6 +463,7 @@ impl GelabberApp {
         if self.session.status == SessionStatus::Unknown {
             let mut app = AppCtx {
                 client: &self.client,
+                call: &self.call,
                 images: &self.images,
                 nav: &mut self.nav,
                 session: &mut self.session,
@@ -481,6 +486,7 @@ impl GelabberApp {
         }
         let mut app = AppCtx {
             client: &self.client,
+            call: &self.call,
             images: &self.images,
             nav: &mut self.nav,
             session: &mut self.session,

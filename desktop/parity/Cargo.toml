@@ -8,7 +8,7 @@ description = "Renders native scenes headless and compares them with the web cli
 publish = false
 
 [dependencies]
-gelabber-ui = { path = "../ui" }
+gelabber-ui = { path = "../ui", features = ["media"] }
 gelabber-client = { path = "../client" }
 egui = "0.37.0"
 egui_kittest = { version = "0.37.0", features = ["wgpu", "eframe"] }

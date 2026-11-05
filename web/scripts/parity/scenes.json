@@ -114,6 +114,32 @@
       "path": "/s/{home}/c/{Sofa}",
       "user": "lena",
       "call": "Sofa jonas,mira:muted"
+    },
+    {
+      "name": "voice-overview",
+      "path": "/s/{home}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted"
+    },
+    {
+      "name": "voice-joined",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        }
+      ]
+    },
+    {
+      "name": "voice-empty",
+      "path": "/s/{home}/c/{Kino}",
+      "user": "lena"
     }
   ]
 }

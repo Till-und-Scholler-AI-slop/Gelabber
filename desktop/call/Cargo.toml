@@ -1,0 +1,22 @@
+[package]
+name = "gelabber-call"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Gelabber native calls: the media socket, mediasoup through gelabber-media-core, call state for the UI"
+publish = false
+
+[features]
+# The real engine; needs the native core (GELABBER_MEDIA_LIB_DIR or a
+# libwebrtc package). Without it a call fails to start with a message.
+media = ["dep:gelabber-media-core"]
+
+[dependencies]
+gelabber-client = { path = "../client" }
+gelabber-media-core = { path = "../core", optional = true }
+parking_lot = "0.12.5"
+serde_json = "1.0.151"
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "time", "sync"] }
+tracing = "0.1"
+uuid = { version = "1.27.0", features = ["serde"] }

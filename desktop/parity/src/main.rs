@@ -35,6 +35,18 @@ struct Scene {
     user: Option<String>,
     /// `channel people` for call.mjs: people kept in a voice channel.
     call: Option<String>,
+    /// Steps after the page settled, the same in both shot tools.
+    #[serde(default)]
+    actions: Vec<Action>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Action {
+    /// Click the button with this accessible name.
+    Click(String),
+    /// Wait this many milliseconds.
+    Wait(u64),
 }
 
 /// call.mjs running for a scene; leaves the call when dropped.
@@ -159,16 +171,26 @@ fn render(out: &Path, only: Option<Vec<String>>) {
             });
         // Step until the app has nothing in flight for a while: data,
         // images and layout settle like the web page after networkidle.
-        let start = Instant::now();
-        let mut quiet = 0;
-        while quiet < 10 && start.elapsed() < Duration::from_secs(20) {
-            harness.step();
-            if harness.state().busy() {
-                quiet = 0;
-                std::thread::sleep(Duration::from_millis(20));
-            } else {
-                quiet += 1;
+        settle(&mut harness);
+        for action in &scene.actions {
+            match action {
+                Action::Click(name) => {
+                    use egui_kittest::kittest::Queryable;
+                    harness
+                        .query_all_by_role_and_label(egui::accesskit::Role::Button, name)
+                        .next()
+                        .unwrap_or_else(|| panic!("{}: no button {name:?}", scene.name))
+                        .click();
+                }
+                Action::Wait(ms) => {
+                    let until = Instant::now() + Duration::from_millis(*ms);
+                    while Instant::now() < until {
+                        harness.step();
+                        std::thread::sleep(Duration::from_millis(16));
+                    }
+                }
             }
+            settle(&mut harness);
         }
         harness.run_steps(5);
         let image = harness
@@ -177,6 +199,21 @@ fn render(out: &Path, only: Option<Vec<String>>) {
         let path = out.join(format!("{}.png", scene.name));
         image.save(&path).expect("save png");
         println!("{}: {route} -> {}", scene.name, path.display());
+    }
+}
+
+/// Steps until the app has had nothing in flight for ten frames.
+fn settle(harness: &mut egui_kittest::Harness<'_, gelabber_ui::GelabberApp>) {
+    let start = Instant::now();
+    let mut quiet = 0;
+    while quiet < 10 && start.elapsed() < Duration::from_secs(20) {
+        harness.step();
+        if harness.state().busy() {
+            quiet = 0;
+            std::thread::sleep(Duration::from_millis(20));
+        } else {
+            quiet += 1;
+        }
     }
 }
 

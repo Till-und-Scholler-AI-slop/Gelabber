@@ -48,16 +48,24 @@ function stopCall(child) {
 }
 
 await mkdir(OUT, { recursive: true });
-const browser = await chromium.launch({
-  executablePath: process.env.GELABBER_PARITY_BROWSER ?? "/usr/bin/chromium",
-  args: ["--font-render-hinting=none", "--disable-lcd-text"],
-});
+const launch = (extra) =>
+  chromium.launch({
+    executablePath: process.env.GELABBER_PARITY_BROWSER ?? "/usr/bin/chromium",
+    args: ["--font-render-hinting=none", "--disable-lcd-text", ...extra],
+  });
+const browser = await launch([]);
+// Scenes with `media` join calls: fake devices there only, so the device
+// lists of the other scenes stay as a machine without devices shows them.
+let mediaBrowser = null;
 
 for (const scene of scenes) {
   if (ONLY && !ONLY.includes(scene.name)) continue;
   // Every scene starts from the reference read state (reset.mjs).
   execFileSync(process.execPath, [join(here, "reset.mjs")], { stdio: "inherit" });
-  const context = await browser.newContext({
+  if (scene.media && !mediaBrowser)
+    mediaBrowser = await launch(["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"]);
+  const context = await (scene.media ? mediaBrowser : browser).newContext({
+    permissions: scene.media ? ["microphone", "camera"] : [],
     baseURL: fixture.base,
     viewport: { width: size[0], height: size[1] },
     deviceScaleFactor: 1,
@@ -78,6 +86,12 @@ for (const scene of scenes) {
   const page = await context.newPage();
   await page.goto(fill(scene.path), { waitUntil: "networkidle" });
   await page.evaluate(() => document.fonts.ready);
+  for (const action of scene.actions ?? []) {
+    if (action.click)
+      await page.getByRole("button", { name: action.click, exact: true }).first().click();
+    if (action.wait) await page.waitForTimeout(action.wait);
+    await page.waitForLoadState("networkidle");
+  }
   await page.addStyleTag({ content: "*{caret-color:transparent !important}" });
   // Let lists settle and late images decode.
   await page.waitForTimeout(800);
@@ -88,3 +102,4 @@ for (const scene of scenes) {
   if (call) await stopCall(call);
 }
 await browser.close();
+await mediaBrowser?.close();

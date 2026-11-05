@@ -2349,6 +2349,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "gelabber-call"
+version = "0.8.9"
+dependencies = [
+ "gelabber-client",
+ "gelabber-media-core",
+ "parking_lot",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "gelabber-client"
 version = "0.8.9"
 dependencies = [
@@ -2425,6 +2438,7 @@ dependencies = [
  "egui",
  "egui_kittest",
  "egui_system_font_provider",
+ "gelabber-call",
  "gelabber-client",
  "image",
  "parking_lot",
