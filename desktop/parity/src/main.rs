@@ -103,6 +103,24 @@ impl Drop for Undo {
     }
 }
 
+/// Puts the fixture back to the reference state (reset.mjs).
+fn reset() {
+    let reset = std::process::Command::new("node")
+        .arg(parity_dir().join("reset.mjs"))
+        .status()
+        .expect("run reset.mjs");
+    assert!(reset.success(), "reset.mjs failed");
+}
+
+/// Runs reset.mjs when dropped: undoes a scene's `before`.
+struct Restore;
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        reset();
+    }
+}
+
 /// Runs say.mjs with `args`; its output (a message id for "post").
 fn say(args: &[&str]) -> String {
     let out = std::process::Command::new("node")
@@ -250,14 +268,14 @@ fn render(out: &Path, only: Option<Vec<String>>) {
         }
         let _ = std::fs::remove_dir_all(&config);
         // Opening a channel marks it read; every scene starts from the reference.
-        let reset = std::process::Command::new("node")
-            .arg(parity_dir().join("reset.mjs"))
-            .status()
-            .expect("run reset.mjs");
-        assert!(reset.success(), "reset.mjs failed");
-        if let Some(before) = &scene.before {
+        reset();
+        // `before` is undone once the scene ends, also when it fails, so the
+        // last scene of a run does not leave its theme behind.
+        let _restore = scene.before.as_ref().map(|before| {
+            let restore = Restore;
             say(&before.split(' ').collect::<Vec<_>>());
-        }
+            restore
+        });
         let _call = scene.call.as_deref().map(Call::start);
         let client = gelabber_client::Client::new(&fixture.base).expect("client");
         if let Some(user) = &scene.user {

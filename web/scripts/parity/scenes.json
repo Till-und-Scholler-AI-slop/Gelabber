@@ -885,7 +885,7 @@
           "focus": "E-Mail-Adresse"
         },
         {
-          "type": "lena@example.test"
+          "type": "niemand@example.test"
         },
         {
           "focus": "Passwort"

@@ -195,6 +195,9 @@ for (const scene of scenes) {
       });
     // say.mjs words that undo what the scene's dialogs made (invite links).
     if (scene.after) sayWords(scene.after);
+    // And what `before` set, so the last scene leaves no theme behind.
+    if (scene.before)
+      execFileSync(process.execPath, [join(here, "reset.mjs")], { stdio: "inherit" });
   }
   console.log(`${scene.name}: ${page.url()}`);
   await context.close();
