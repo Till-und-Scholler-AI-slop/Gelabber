@@ -8,7 +8,7 @@
 //   node scripts/parity/say.mjs revoke-unused <user> <server-key>   (invites a dialog made)
 // <channel-key> is "dm" or a channel name of fixture.json; "{lena}" (any
 // user key) in the text becomes that user's mention token.
-/* global process, console, fetch */
+/* global process, console, fetch, URL */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
