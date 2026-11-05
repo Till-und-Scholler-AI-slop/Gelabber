@@ -58,15 +58,14 @@ pub fn store(origin: &str, cookie: Option<&str>) -> Result<(), String> {
     store_in(system(), origin, cookie)
 }
 
-/// The keyring first, then the file (an older run's, or a locked keyring's).
+/// The file first, then the keyring: a file entry is only ever newer (an
+/// older run's, or written while the keyring was locked).
 fn stored_in(keyring: Option<&dyn Keyring>, origin: &str) -> Option<String> {
-    if let Some(Ok(Some(cookie))) = keyring.map(|k| k.get(origin)) {
-        return Some(cookie);
-    }
-    load()
+    let file = load()
         .get(origin)
         .and_then(Value::as_str)
-        .map(str::to_owned)
+        .map(str::to_owned);
+    file.or_else(|| keyring.and_then(|k| k.get(origin).ok().flatten()))
 }
 
 /// Into the keyring when it takes it (and out of the file then), else
@@ -595,6 +594,16 @@ mod tests {
         assert_eq!(
             stored_in(keyring, "https://other.example").as_deref(),
             Some("zzz")
+        );
+        // A sign-in while locked beats the keyring's older cookie.
+        shared.lock().locked = false;
+        store_in(keyring, "http://127.0.0.1:9", Some("older")).unwrap();
+        shared.lock().locked = true;
+        store_in(keyring, "http://127.0.0.1:9", Some("newer")).unwrap();
+        shared.lock().locked = false;
+        assert_eq!(
+            stored_in(keyring, "http://127.0.0.1:9").as_deref(),
+            Some("newer")
         );
         // No service on the bus: no keyring at all.
         let (_empty, other) = crate::platform::testing::private_bus("secrets-none").unwrap();

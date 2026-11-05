@@ -123,9 +123,12 @@ pub fn rove(ui: &Ui, list: Id, rows: &[NavRow], preferred: Option<usize>) -> Rov
         ui.ctx().input_mut(|input| {
             let none = egui::Modifiers::NONE;
             let count = rows[r].items.len();
-            if input.consume_key(none, egui::Key::ArrowDown) {
+            // consume_key ignores Shift and Alt; with a modifier ↑/↓ are not
+            // the list's (moveWithinList).
+            let plain = input.modifiers.is_none();
+            if plain && input.consume_key(none, egui::Key::ArrowDown) {
                 target = ((r + 1).min(rows.len() - 1), 0);
-            } else if input.consume_key(none, egui::Key::ArrowUp) {
+            } else if plain && input.consume_key(none, egui::Key::ArrowUp) {
                 target = (r.saturating_sub(1), 0);
             } else if input.consume_key(none, egui::Key::ArrowRight) {
                 target = (r, (i + 1).min(count - 1));
@@ -356,5 +359,42 @@ mod tests {
             focused_label(&harness).as_deref(),
             Some("Kanal in dieser Kategorie")
         );
+    }
+
+    /// "Zum Inhalt springen" (AppShell.tsx): the next Tab is the page's,
+    /// past the navigation; Shift+Tab goes back into it.
+    #[test]
+    fn the_skip_link_jumps_to_the_page() {
+        let _config = TempConfig::new("shell-skip");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for_label(&mut harness, "allgemein");
+        harness.key_press(egui::Key::Tab);
+        harness.run_steps(2);
+        assert_eq!(
+            focused_label(&harness).as_deref(),
+            Some("Zum Inhalt springen")
+        );
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Tab);
+        harness.run_steps(2);
+        // The channel header's search field, the page's first control.
+        let focused = {
+            use egui_kittest::kittest::{NodeT, Queryable};
+            harness
+                .query_all(egui_kittest::kittest::By::new().predicate(|n| n.is_focused()))
+                .next()
+                .and_then(|n| n.accesskit_node().bounding_box())
+                .expect("a focused node")
+        };
+        assert!(
+            focused.x0 >= 288.0 && focused.y1 <= 52.0,
+            "{focused:?} is not in the page header"
+        );
+        // Back: the user panel's last control ends the navigation.
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
+        harness.run_steps(2);
+        assert_eq!(focused_label(&harness).as_deref(), Some("Benutzermenü"));
     }
 }

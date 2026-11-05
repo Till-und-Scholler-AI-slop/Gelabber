@@ -542,6 +542,9 @@ impl GelabberApp {
             account_mail: self.account_mail,
             toasts: &mut self.toasts,
         };
+        if !is_workspace(app.nav.route()) {
+            content_anchor(ui, screen.min);
+        }
         screens::show(ui, &mut app, &mut self.screen);
         skip.paint(ui);
         if signed_in {
@@ -567,6 +570,8 @@ struct SkipLink {
 
 fn skip_link(ui: &mut Ui) -> SkipLink {
     let id = egui::Id::unique("gelabber-skip-link");
+    // A jump no page took up (a screen without content) does not linger.
+    ui.ctx().data_mut(|d| d.remove_temp::<bool>(skip_target()));
     let focused = ui.memory(|m| m.has_focus(id));
     let label = "Zum Inhalt springen";
     let style = crate::text::TextStyle::new(16.0, 400.0, 1.5);
@@ -585,10 +590,34 @@ fn skip_link(ui: &mut Ui) -> SkipLink {
     let response = ui.interact(rect, id, sense);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, label));
     if response.clicked() {
-        // To the content: what follows the navigation takes the next Tab.
-        response.surrender_focus();
+        // To the content: [`content_anchor`] takes the focus this frame.
+        ui.ctx().data_mut(|d| d.insert_temp(skip_target(), true));
     }
     SkipLink { focused, rect }
+}
+
+fn skip_target() -> egui::Id {
+    egui::Id::unique("gelabber-skip-target")
+}
+
+/// `#workspace-content` / `#app-content` (tabIndex -1): the page's start,
+/// called right before the page draws. "Zum Inhalt springen" focuses it,
+/// so the next Tab reaches the page's first control.
+pub fn content_anchor(ui: &Ui, at: egui::Pos2) {
+    let id = egui::Id::unique("gelabber-content-anchor");
+    let jump = ui
+        .ctx()
+        .data_mut(|d| d.remove_temp::<bool>(skip_target()))
+        .unwrap_or(false);
+    // Only a Tab stop while it holds the focus, like tabIndex -1.
+    if !jump && !ui.memory(|m| m.has_focus(id)) {
+        return;
+    }
+    let rect = egui::Rect::from_min_size(at, egui::vec2(1.0, 1.0));
+    ui.interact(rect, id, egui::Sense::focusable_noninteractive());
+    if jump {
+        ui.memory_mut(|m| m.request_focus(id));
+    }
 }
 
 impl SkipLink {

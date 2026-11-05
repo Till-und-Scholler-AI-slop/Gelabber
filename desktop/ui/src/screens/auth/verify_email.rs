@@ -5,7 +5,7 @@ use egui::Ui;
 use reqwest::Method;
 use serde_json::{Value, json};
 
-use super::{Request, fail, focus_invalid, form_error, layout, result_lines, submit};
+use super::{Request, fail, focus_invalid, form_error, layout, result_lines, submit_after};
 use crate::app::AppCtx;
 use crate::rules::{Failure, FormErrors, field_message, link_token};
 use crate::task::{Pending, poll};
@@ -83,7 +83,11 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         }
         ui.add_space(space::S5);
         form_error(ui, &s.errors);
-        if (submit(ui, "Bestätigen", "Wird bestätigt…", pending) || password.submitted) && !pending
+        let cooldown = s.errors.cooldown();
+        if (submit_after(ui, "Bestätigen", "Wird bestätigt…", pending, cooldown)
+            || password.submitted)
+            && !pending
+            && cooldown == 0
         {
             if s.password.is_empty() {
                 s.errors

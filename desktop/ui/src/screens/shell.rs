@@ -107,7 +107,12 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
         _ => (None, false, None),
     };
     rail::show(ui, app, rail, active_server, dm_active);
-    let panel = |ui: &mut Ui, app: &mut AppCtx| user_panel::show(ui, app, dock, context);
+    // The navigation ends with the user panel; the page (`<main>`) follows.
+    let main_at = pos2(column.right(), screen.top());
+    let panel = |ui: &mut Ui, app: &mut AppCtx| {
+        user_panel::show(ui, app, dock, context);
+        crate::app::content_anchor(ui, main_at);
+    };
     match route.clone() {
         Route::Server(s) => {
             channel_sidebar::show(ui, app, sidebar, s, None, true);

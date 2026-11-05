@@ -261,7 +261,7 @@ pub fn show(
     };
     common::list_hint(ui, list, Id::unique(("channel-list", server)), hint);
     // The open conversation shows its draft in the composer already.
-    let drafts = crate::screens::chat::drafts(ui.ctx());
+    let drafts = crate::screens::chat::with_drafts(ui.ctx());
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list));
     child.set_clip_rect(list.intersect(ui.clip_rect()));
     egui::ScrollArea::vertical()
@@ -306,7 +306,7 @@ pub fn show(
                     }
                     Row::Channel(ch) => {
                         let row_rect = Rect::from_min_size(slot.min, Vec2::new(slot.width(), 34.0));
-                        let draft = drafts.contains_key(&ch.id)
+                        let draft = drafts.contains(&ch.id)
                             && ch.kind == ChannelKind::Text
                             && channel != Some(ch.id);
                         channel_row(

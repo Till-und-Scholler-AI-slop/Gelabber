@@ -113,7 +113,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
             let preferred = dms.iter().position(|dm| active == Some(dm.id));
             let roved = common::rove(ui, Id::unique("dm-list"), &nav, preferred);
             common::list_hint(ui, area, Id::unique("dm-list"), common::LIST_HINT);
-            let drafts = crate::screens::chat::drafts(ui.ctx());
+            let drafts = crate::screens::chat::with_drafts(ui.ctx());
             for (i, dm) in dms.iter().enumerate() {
                 let row = Rect::from_min_size(
                     pos2(area.left() + 8.0, area.top() + 8.0 + SLOT * i as f32),
@@ -194,7 +194,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
                     );
                     right = r.left() - 10.0;
                 }
-                if drafts.contains_key(&dm.id) && !is_active {
+                if drafts.contains(&dm.id) && !is_active {
                     // `.channel-row-draft` as in the channel list.
                     let pencil = Rect::from_min_size(
                         pos2(right - 13.0, row.center().y - 6.5),

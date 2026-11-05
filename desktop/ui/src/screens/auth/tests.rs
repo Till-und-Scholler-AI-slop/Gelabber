@@ -165,3 +165,32 @@ fn caps_lock_shows_under_the_password() {
     harness.step();
     assert!(harness.query_by_label("Feststelltaste ist an").is_none());
 }
+
+/// A mailed link's 64 hex digits.
+const LINK: &str = "#token=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+#[test]
+fn reset_password_waits_out_a_rate_limit() {
+    let _config = TempConfig::new("auth-reset-limit");
+    let api = limited("/auth/password-reset/confirm");
+    let mut harness = launcher(&api, &format!("/reset-password{LINK}"));
+    wait_for_label(&mut harness, "Neues Passwort");
+    type_into(&mut harness, "Neues Passwort", "parity-pass-123");
+    harness
+        .get_by_role_and_label(Role::Button, "Passwort speichern")
+        .click();
+    assert_cooldown(&mut harness);
+}
+
+#[test]
+fn verify_email_waits_out_a_rate_limit() {
+    let _config = TempConfig::new("auth-verify-limit");
+    let api = limited("/auth/verify-email");
+    let mut harness = launcher(&api, &format!("/verify-email{LINK}"));
+    wait_for_label(&mut harness, "Passwort");
+    type_into(&mut harness, "Passwort", "parity-pass-123");
+    harness
+        .get_by_role_and_label(Role::Button, "Bestätigen")
+        .click();
+    assert_cooldown(&mut harness);
+}
