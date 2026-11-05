@@ -151,6 +151,8 @@ fn hex_digit(b: u8) -> Option<u8> {
 pub struct Nav {
     current: Location,
     back: Vec<Location>,
+    /// Entries left by going back, for Alt+→ and the mouse's forward button.
+    forward: Vec<Location>,
     changed: bool,
 }
 
@@ -159,6 +161,7 @@ impl Nav {
         Self {
             current: Location::parse(href),
             back: Vec::new(),
+            forward: Vec::new(),
             changed: true,
         }
     }
@@ -176,6 +179,7 @@ impl Nav {
         let next = Location::parse(href);
         if next != self.current {
             self.back.push(std::mem::replace(&mut self.current, next));
+            self.forward.clear();
             self.changed = true;
         }
     }
@@ -197,7 +201,20 @@ impl Nav {
     pub fn back(&mut self) -> bool {
         match self.back.pop() {
             Some(previous) => {
-                self.current = previous;
+                self.forward
+                    .push(std::mem::replace(&mut self.current, previous));
+                self.changed = true;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Forward one entry after [`Self::back`]; false when there is none.
+    pub fn forward(&mut self) -> bool {
+        match self.forward.pop() {
+            Some(next) => {
+                self.back.push(std::mem::replace(&mut self.current, next));
                 self.changed = true;
                 true
             }
@@ -465,12 +482,19 @@ impl GelabberApp {
                 ctx.request_repaint_after(Duration::from_secs_f64(wait.min(1.0)));
             }
         }
-        // Mouse back button and Alt+← go back, as in the browser.
-        if ctx.input(|i| {
-            i.pointer.button_pressed(egui::PointerButton::Extra1)
-                || (i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft))
-        }) {
+        // The mouse's back and forward buttons and Alt+←/→, as in the browser.
+        let (back, forward) = ctx.input(|i| {
+            (
+                i.pointer.button_pressed(egui::PointerButton::Extra1)
+                    || (i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft)),
+                i.pointer.button_pressed(egui::PointerButton::Extra2)
+                    || (i.modifiers.alt && i.key_pressed(egui::Key::ArrowRight)),
+            )
+        });
+        if back {
             self.nav.back();
+        } else if forward {
+            self.nav.forward();
         }
 
         // The account's theme (or the one stored for the first paint), text
@@ -480,6 +504,8 @@ impl GelabberApp {
         self.background.set(theme.c.bg);
         let screen = ctx.content_rect();
         ui.painter().rect_filled(screen, 0.0, theme.c.bg);
+        // The first Tab stop of every page.
+        let skip = skip_link(ui);
 
         if self.session.status == SessionStatus::Unknown {
             let mut app = AppCtx {
@@ -517,9 +543,72 @@ impl GelabberApp {
             toasts: &mut self.toasts,
         };
         screens::show(ui, &mut app, &mut self.screen);
+        skip.paint(ui);
+        if signed_in {
+            let status = self.client.with_state(|s| s.gateway);
+            screens::shell::connection::show(ui, status);
+        } else {
+            screens::shell::connection::show(ui, gelabber_client::GatewayStatus::Idle);
+        }
         logout_failed(ui, &self.client, signed_in);
         self.toasts.show(ui, !is_workspace(self.nav.route()));
         crate::widgets::opener::restore(&ctx);
+    }
+}
+
+/// "Zum Inhalt springen" (`.shell-skip-link`, AppShell.tsx): off screen
+/// until it has focus, then in the top left corner over the page.
+struct SkipLink {
+    focused: bool,
+    rect: egui::Rect,
+}
+
+fn skip_link(ui: &mut Ui) -> SkipLink {
+    let id = egui::Id::unique("gelabber-skip-link");
+    let focused = ui.memory(|m| m.has_focus(id));
+    let label = "Zum Inhalt springen";
+    let style = crate::text::TextStyle::new(16.0, 400.0, 1.5);
+    let block = crate::text::Block::single(ui, label, style, egui::Color32::PLACEHOLDER);
+    // padding 12px 18px at left 12px, top 12px.
+    let rect = egui::Rect::from_min_size(
+        ui.ctx().content_rect().min + egui::vec2(12.0, 12.0),
+        egui::vec2(18.0 + block.width() + 18.0, 12.0 + block.height() + 12.0),
+    );
+    // Only clickable while shown; otherwise it takes no pointer.
+    let sense = if focused {
+        egui::Sense::click()
+    } else {
+        egui::Sense::focusable_noninteractive()
+    };
+    let response = ui.interact(rect, id, sense);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, label));
+    if response.clicked() {
+        // To the content: what follows the navigation takes the next Tab.
+        response.surrender_focus();
+    }
+    SkipLink { focused, rect }
+}
+
+impl SkipLink {
+    /// Over everything else of the page.
+    fn paint(&self, ui: &Ui) {
+        if !self.focused {
+            return;
+        }
+        let theme = Theme::of(ui.ctx());
+        let painter = ui.ctx().layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::unique("gelabber-skip-layer"),
+        ));
+        painter.rect_filled(self.rect, theme::corner(theme.radius.md), theme.c.accent);
+        crate::widgets::focus_ring(&painter, self.rect, theme.radius.md, &theme);
+        let block = crate::text::Block::single(
+            ui,
+            "Zum Inhalt springen",
+            crate::text::TextStyle::new(16.0, 400.0, 1.5),
+            theme.c.accent_ink,
+        );
+        block.paint(&painter, self.rect.min + egui::vec2(18.0, 12.0));
     }
 }
 
@@ -675,5 +764,12 @@ mod tests {
         assert!(nav.back());
         assert_eq!(nav.route(), &Route::Login);
         assert!(!nav.back());
+        // Forward returns until a new navigation drops the way forward.
+        assert!(nav.forward());
+        assert_eq!(nav.route(), &Route::Register);
+        assert!(!nav.forward());
+        assert!(nav.back());
+        nav.navigate("/forgot-password");
+        assert!(!nav.forward());
     }
 }

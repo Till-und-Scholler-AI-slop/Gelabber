@@ -160,6 +160,13 @@ for (const scene of scenes) {
           .hover();
         hovered = true;
       }
+      // The text field with this accessible name (a label or its placeholder).
+      if (action.focus)
+        await page
+          .getByRole("textbox", { name: action.focus, exact: true })
+          .or(page.getByPlaceholder(action.focus, { exact: true }))
+          .first()
+          .focus();
       // Playwright key names, e.g. "Control+k", "ArrowDown", "Escape".
       if (action.key) await page.keyboard.press(action.key);
       // Typed into whatever has the focus.

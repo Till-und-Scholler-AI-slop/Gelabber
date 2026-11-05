@@ -39,6 +39,16 @@ impl<'a> Tooltip<'a> {
         self
     }
 
+    /// Like [`Self::on_hover`], and at once while it has keyboard focus
+    /// (the rail's `onFocus` with `:focus-visible`).
+    pub fn on_hover_or_focus(self, response: &Response, side: Side) {
+        if response.has_focus() && super::keyboard_focus(&response.ctx) {
+            self.show(&response.ctx, response.rect, side);
+        } else {
+            self.on_hover(response, side);
+        }
+    }
+
     /// Shows the tooltip for `response` once it has been hovered for 200ms.
     pub fn on_hover(self, response: &Response, side: Side) {
         let ctx = &response.ctx;

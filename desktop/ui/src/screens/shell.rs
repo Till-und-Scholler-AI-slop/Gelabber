@@ -6,6 +6,7 @@
 
 mod channel_sidebar;
 pub(crate) mod common;
+pub mod connection;
 pub mod dialogs;
 mod dm_index;
 mod dm_sidebar;
@@ -96,22 +97,28 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
         column.top()..=column.bottom(),
     );
 
-    let mut active_server = None;
-    let mut dm_active = false;
-    let mut context = None;
+    // Drawn in the web's Tab order: rail, sidebar, user panel, then the page.
+    let (active_server, dm_active, context) = match route {
+        Route::Server(s) | Route::Channel(s, _) | Route::ServerSettings(s) => {
+            (Some(s), false, Some(s))
+        }
+        Route::Dms => (None, true, None),
+        Route::Dm(c) => (None, true, Some(c)),
+        _ => (None, false, None),
+    };
+    rail::show(ui, app, rail, active_server, dm_active);
+    let panel = |ui: &mut Ui, app: &mut AppCtx| user_panel::show(ui, app, dock, context);
     match route.clone() {
         Route::Server(s) => {
-            active_server = Some(s);
-            context = Some(s);
             channel_sidebar::show(ui, app, sidebar, s, None, true);
+            panel(ui, app);
             let page = layout::page_rect(content, true);
             overview::show(ui, app, page, s);
             members::show(ui, app, members_rect(content), s);
         }
         Route::Channel(s, c) => {
-            active_server = Some(s);
-            context = Some(s);
             channel_sidebar::show(ui, app, sidebar, s, Some(c), false);
+            panel(ui, app);
             let voice_room = is_voice(app, c);
             // Next to pictures the member list starts closed.
             layout::set_members_video(ui.ctx(), voice_room && voice::page::staged(app, s, c));
@@ -128,11 +135,10 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
             }
         }
         Route::ServerSettings(s) => {
-            active_server = Some(s);
-            context = Some(s);
             channel_sidebar::show(ui, app, sidebar, s, None, false);
             let mut side = ui.new_child(UiBuilder::new().max_rect(sidebar));
             server_settings::sidebar(&mut side, app, s);
+            panel(ui, app);
             let mut main =
                 ui.new_child(UiBuilder::new().max_rect(layout::page_rect(content, false)));
             server_settings::page(&mut main, app, s);
@@ -140,19 +146,19 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
         Route::Settings(area) => {
             let mut side = ui.new_child(UiBuilder::new().max_rect(sidebar));
             settings::sidebar(&mut side, app, area.as_deref());
+            panel(ui, app);
             let mut main =
                 ui.new_child(UiBuilder::new().max_rect(layout::page_rect(content, false)));
             settings::page(&mut main, app, area.as_deref());
         }
         Route::Dms => {
-            dm_active = true;
             dm_sidebar::show(ui, app, sidebar, None);
+            panel(ui, app);
             dm_index::show(ui, app, layout::page_rect(content, false));
         }
         Route::Dm(c) => {
-            dm_active = true;
-            context = Some(c);
             dm_sidebar::show(ui, app, sidebar, Some(c));
+            panel(ui, app);
             let mut main =
                 ui.new_child(UiBuilder::new().max_rect(layout::page_rect(content, false)));
             chat::dm_page(&mut main, app, c);
@@ -177,13 +183,12 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
                     pos2(sidebar.left() + 22.0, sidebar.top() + 52.0 + 24.0),
                 );
             }
+            panel(ui, app);
             if !home::redirect(ui, app) {
                 home::welcome(ui, app, layout::page_rect(content, false));
             }
         }
     }
-    rail::show(ui, app, rail, active_server, dm_active);
-    user_panel::show(ui, app, dock, context);
     call_bar(ui, app, screen, false);
     dialogs::show(ui, app);
     overlays::show(ui, app);

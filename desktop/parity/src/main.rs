@@ -11,8 +11,8 @@
 //! window is not built yet; acceptance is always on the full scene.
 //!
 //! Reads web/scripts/parity/{scenes,fixture}.json from the repository.
-//! A scene's actions (click, link, rightclick, clicktext, hover, key, type,
-//! say, wait) mean the same in shots.mjs; `before` runs say.mjs words ahead
+//! A scene's actions (click, link, rightclick, clicktext, hover, focus, key,
+//! type, say, wait) mean the same in shots.mjs; `before` runs say.mjs words ahead
 //! of the page, posts and `after` are undone with say.mjs once the
 //! screenshot is taken. A scene with `page` shows a bundled page of the
 //! desktop app (desktop/app/setup) instead of a route: the Launcher here.
@@ -71,6 +71,8 @@ enum Action {
     /// Rest the pointer on the first button or link, else element, with this label;
     /// it stays there for the screenshot.
     Hover(String),
+    /// Focus the text field with this accessible name.
+    Focus(String),
     /// Press a key, Playwright style: "Control+k", "ArrowDown", "Escape".
     Key(String),
     /// Type text into whatever has the focus.
@@ -346,6 +348,18 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                         .unwrap_or_else(|| panic!("{}: nothing labelled {label:?}", scene.name))
                         .hover();
                     hovered = true;
+                }
+                Action::Focus(label) => {
+                    use egui::accesskit::Role;
+                    let roles = [
+                        Role::TextInput,
+                        Role::MultilineTextInput,
+                        Role::PasswordInput,
+                        Role::SearchInput,
+                    ];
+                    find(&harness, label, &roles)
+                        .unwrap_or_else(|| panic!("{}: no text field {label:?}", scene.name))
+                        .focus();
                 }
                 Action::Key(spec) => {
                     let (modifiers, key) = parse_key(spec);

@@ -92,6 +92,7 @@ pub fn show(
     if response.hovered() || menu_open {
         common::fill(&painter, button, theme.radius.sm, c.hover);
     }
+    common::focus_visible(ui, &response, button, theme.radius.sm);
     let muted = app.client.with_state(|s| {
         let now = chrono::Utc::now();
         s.notification_settings.iter().any(|n| {
@@ -177,6 +178,7 @@ pub fn show(
         Vec2::new(rect.width() - 1.0 - 16.0, 34.0),
     );
     let response = common::click(ui, link, Id::unique(("overview-link", server)));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, "Übersicht"));
     let (fill, color, icon_color) = if overview {
         (c.selected, c.text, c.accent_text)
     } else if response.hovered() {
@@ -185,6 +187,7 @@ pub fn show(
         (Color32::TRANSPARENT, c.muted, c.muted)
     };
     common::fill(&painter, link, theme.radius.md, fill);
+    common::focus_visible(ui, &response, link, theme.radius.md);
     icons::paint(
         &painter,
         Icon::Chat,
@@ -222,6 +225,43 @@ pub fn show(
     }
     let content_h: f32 = rows.iter().map(Row::slot).sum::<f32>() + 12.0;
     let now = chrono::Utc::now();
+    // One Tab stop for the list; the rows that take focus, in order.
+    let mut nav = Vec::new();
+    let mut nav_of = vec![None; rows.len()];
+    for (i, row) in rows.iter().enumerate() {
+        let items = match row {
+            Row::Channel(ch) => {
+                let mut items = vec![Id::unique(("channel-row", ch.id))];
+                if can_manage {
+                    items.push(Id::unique(("edit-channel", ch.id)));
+                    items.push(Id::unique(("delete-channel", ch.id)));
+                }
+                items
+            }
+            Row::Category(category) if can_manage => (0..3)
+                .map(|a| Id::unique(("category-action", category.id, a)))
+                .collect(),
+            _ => continue,
+        };
+        nav_of[i] = Some(nav.len());
+        nav.push(common::NavRow {
+            key: items[0],
+            items,
+        });
+    }
+    let preferred = rows.iter().enumerate().find_map(|(i, row)| match row {
+        Row::Channel(ch) if channel == Some(ch.id) => nav_of[i],
+        _ => None,
+    });
+    let roved = common::rove(ui, Id::unique(("channel-list", server)), &nav, preferred);
+    let hint = if can_manage {
+        common::ROW_HINT
+    } else {
+        common::LIST_HINT
+    };
+    common::list_hint(ui, list, Id::unique(("channel-list", server)), hint);
+    // The open conversation shows its draft in the composer already.
+    let drafts = crate::screens::chat::drafts(ui.ctx());
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list));
     child.set_clip_rect(list.intersect(ui.clip_rect()));
     egui::ScrollArea::vertical()
@@ -234,18 +274,31 @@ pub fn show(
             let mut y = area.top();
             let left = area.left() + 8.0;
             let right = area.right() - 8.0;
-            for row in &rows {
+            for (index, row) in rows.iter().enumerate() {
                 let slot = Rect::from_min_max(pos2(left, y), pos2(right, y + row.slot()));
                 y += row.slot();
-                if !ui.is_rect_visible(slot) {
+                let at = nav_of[index];
+                let stop = at.and_then(|r| roved.stop.filter(|(s, _)| *s == r).map(|(_, i)| i));
+                let within = at.is_some_and(|r| roved.has_focus_within(r));
+                // The stop and the focused row stay in the frame off screen
+                // too: egui drops focus from a widget it does not see.
+                if !ui.is_rect_visible(slot) && stop.is_none() && !within {
                     continue;
                 }
+                if within
+                    && ui.input(|i| {
+                        i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::ArrowUp)
+                    })
+                {
+                    ui.scroll_to_rect(slot, None);
+                }
+                let keys = RowKeys { stop, within };
                 match row {
                     Row::Section => {
                         caps(ui, slot, "Sprachkanäle", slot.width() - 11.0);
                     }
                     Row::Category(category) => {
-                        category_row(ui, app, &theme, slot, server, category, can_manage);
+                        category_row(ui, app, &theme, slot, server, category, can_manage, keys);
                     }
                     Row::Empty => {
                         let block = Block::single(ui, "Leer", text::META.line_height(1.5), c.muted);
@@ -253,6 +306,9 @@ pub fn show(
                     }
                     Row::Channel(ch) => {
                         let row_rect = Rect::from_min_size(slot.min, Vec2::new(slot.width(), 34.0));
+                        let draft = drafts.contains_key(&ch.id)
+                            && ch.kind == ChannelKind::Text
+                            && channel != Some(ch.id);
                         channel_row(
                             ui,
                             app,
@@ -263,6 +319,8 @@ pub fn show(
                             channel == Some(ch.id),
                             can_manage,
                             now,
+                            draft,
+                            keys,
                         );
                     }
                     Row::Person(user, occupant, live) => {
@@ -367,6 +425,15 @@ fn caps(ui: &Ui, slot: Rect, label: &str, max: f32) {
     );
 }
 
+/// A row's part in its list's roving Tab stop.
+#[derive(Clone, Copy, Debug, Default)]
+struct RowKeys {
+    /// The item of this row that Tab reaches, when the row holds the stop.
+    stop: Option<usize>,
+    /// Focus is inside the row: its actions show as on hover.
+    within: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn category_row(
     ui: &mut Ui,
@@ -376,6 +443,7 @@ fn category_row(
     server: Uuid,
     category: &Category,
     can_manage: bool,
+    keys: RowKeys,
 ) {
     // The 78px of hidden actions always take room (they stay in flow).
     let max = if can_manage {
@@ -387,10 +455,11 @@ fn category_row(
     if !can_manage {
         return;
     }
+    // The right-click menu only: no Tab stop of its own.
     let menu = ui.interact(
         slot,
         Id::unique(("category-menu", category.id)),
-        egui::Sense::click(),
+        egui::Sense::CLICK,
     );
     if menu.secondary_clicked() {
         state::with(ui.ctx(), |s| {
@@ -398,7 +467,7 @@ fn category_row(
         });
     }
     let hovered = ui.rect_contains_pointer(slot);
-    if !hovered {
+    if !hovered && !keys.within && keys.stop.is_none() {
         return;
     }
     let top = slot.top() + 3.0;
@@ -408,10 +477,20 @@ fn category_row(
         (Icon::Pencil, "Kategorie umbenennen"),
         (Icon::Trash, "Kategorie löschen"),
     ];
+    // Hidden but in the Tab order (the stop) unless hovered or focused.
+    let shown = hovered || keys.within;
     for (i, (icon, label)) in actions.into_iter().enumerate() {
         let rect = Rect::from_min_size(pos2(x0 + 26.0 * i as f32, top), Vec2::splat(26.0));
         let id = Id::unique(("category-action", category.id, i));
-        if shell_icon_button(ui, rect, icon, 14.0, label, id).clicked() {
+        let stop = keys.stop == Some(i) || ui.memory(|m| m.has_focus(id));
+        let clicked = if shown {
+            shell_icon_button_stop(ui, rect, icon, 14.0, label, id, stop).clicked()
+        } else {
+            let response = common::click_stop(ui, rect, id, stop);
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+            false
+        };
+        if clicked {
             match i {
                 0 => super::dialogs::open_channel(ui.ctx(), server, None, Some(category.id)),
                 1 => super::dialogs::open_category(ui.ctx(), server, Some(category)),
@@ -433,9 +512,14 @@ fn channel_row(
     active: bool,
     can_manage: bool,
     now: chrono::DateTime<chrono::Utc>,
+    draft: bool,
+    keys: RowKeys,
 ) {
     let c = theme.c;
-    let response = common::click(ui, row, Id::unique(("channel-row", ch.id)));
+    let link_id = Id::unique(("channel-row", ch.id));
+    let stop = keys.stop == Some(0) || ui.memory(|m| m.has_focus(link_id));
+    let response = common::click_stop(ui, row, link_id, stop);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, &ch.name));
     let voice = ch.kind == ChannelKind::Voice;
     if response.secondary_clicked() {
         if can_manage {
@@ -536,16 +620,44 @@ fn channel_row(
     } else {
         color
     };
+    if draft {
+        // `.channel-row-draft`: the pencil titled "Entwurf" before the badge.
+        let pencil = Rect::from_min_size(
+            pos2(name_right - 13.0, row.center().y - 6.5),
+            Vec2::splat(13.0),
+        );
+        icons::paint(&painter, Icon::Pencil, pencil.min, 13.0, c.muted);
+        let mark = ui.interact(pencil, link_id.with("draft"), egui::Sense::hover());
+        crate::widgets::announce(&mark, egui::Role::Label, "Entwurf");
+        mark.on_hover_text("Entwurf");
+        name_right = pencil.left() - 10.0;
+    }
     let name = line(ui, &ch.name, style, name_color, name_right - name_left);
     paint_mid(&painter, &name, name_left, row.center().y);
+    common::focus_visible(ui, &response, row, theme.radius.md);
     if in_voice {
         response
             .clone()
             .on_hover_text(format!("{} · verbunden", ch.name));
     }
 
-    // Hover actions cover the name's end with the row's own fill.
-    if can_manage && (hovered || ui.rect_contains_pointer(row)) {
+    // Hover (or focus) actions cover the name's end with the row's own fill.
+    let edit_id = Id::unique(("edit-channel", ch.id));
+    let delete_id = Id::unique(("delete-channel", ch.id));
+    if can_manage && !(hovered || ui.rect_contains_pointer(row) || keys.within) {
+        // Out of sight, but the row's Tab stop may still be one of them.
+        for (i, (id, label)) in [(edit_id, "Kanal bearbeiten"), (delete_id, "Kanal löschen")]
+            .into_iter()
+            .enumerate()
+        {
+            if keys.stop == Some(i + 1) {
+                let at = Rect::from_min_size(row.right_top(), Vec2::ZERO);
+                let r = common::click_stop(ui, at, id, true);
+                r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+            }
+        }
+    }
+    if can_manage && (hovered || ui.rect_contains_pointer(row) || keys.within) {
         let actions = Rect::from_min_max(
             pos2(row.right() - 61.0, row.top() + 4.0),
             pos2(row.right() - 3.0, row.top() + 30.0),
@@ -560,26 +672,30 @@ fn channel_row(
         let edit =
             Rect::from_min_size(pos2(actions.left() + 6.0, actions.top()), Vec2::splat(26.0));
         let delete = Rect::from_min_size(pos2(edit.right(), actions.top()), Vec2::splat(26.0));
-        if shell_icon_button(
+        let focused = ui.memory(|m| m.focused());
+        let stop_at = |i: usize, id: Id| keys.stop == Some(i) || focused == Some(id);
+        if shell_icon_button_stop(
             ui,
             edit,
             Icon::Pencil,
             14.0,
             "Kanal bearbeiten",
-            Id::unique(("edit-channel", ch.id)),
+            edit_id,
+            stop_at(1, edit_id),
         )
         .clicked()
         {
             super::dialogs::open_channel(ui.ctx(), server, Some(ch), ch.category_id);
             return;
         }
-        if shell_icon_button(
+        if shell_icon_button_stop(
             ui,
             delete,
             Icon::Trash,
             14.0,
             "Kanal löschen",
-            Id::unique(("delete-channel", ch.id)),
+            delete_id,
+            stop_at(2, delete_id),
         )
         .clicked()
         {
@@ -689,8 +805,22 @@ pub fn shell_icon_button(
     label: &str,
     id: Id,
 ) -> egui::Response {
+    shell_icon_button_stop(ui, rect, icon, size, label, id, true)
+}
+
+/// Like [`shell_icon_button`]; `stop` whether Tab reaches it.
+pub fn shell_icon_button_stop(
+    ui: &mut Ui,
+    rect: Rect,
+    icon: Icon,
+    size: f32,
+    label: &str,
+    id: Id,
+    stop: bool,
+) -> egui::Response {
     let theme = Theme::of(ui.ctx());
-    let response = common::click(ui, rect, id).on_hover_text(label);
+    let response = common::click_stop(ui, rect, id, stop).on_hover_text(label);
+    common::focus_visible(ui, &response, rect, theme.radius.md);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     let color = if response.hovered() {
         common::fill(ui.painter(), rect, theme.radius.md, theme.c.hover);

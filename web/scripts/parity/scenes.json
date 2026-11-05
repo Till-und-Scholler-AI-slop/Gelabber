@@ -724,6 +724,122 @@
       "path": "/s/{home}/c/{allgemein}",
       "user": "lena",
       "before": "theme lena {\"version\":1,\"id\":\"custom-7a1c3e52-9d4b-4f0e-8a6d-2b5c9e1f3a70\",\"name\":\"Flieder\",\"mode\":\"light\",\"style\":\"soft\",\"colors\":{\"background\":\"#f6f3fb\",\"panel\":\"#efeaf7\",\"surface\":\"#e6dff2\",\"rail\":\"#e9e3f4\",\"text\":\"#2a2433\",\"muted\":\"#5d566a\",\"accent\":\"#8a5cf6\",\"border\":\"#d9d0e8\"}}"
+    },
+    {
+      "name": "sidebar-draft",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "focus": "Nachricht an #allgemein"
+        },
+        {
+          "type": "Hallo"
+        },
+        {
+          "key": "Control+k"
+        },
+        {
+          "type": "spiele"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
+      "name": "skip-link",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Tab"
+        }
+      ]
+    },
+    {
+      "name": "rail-arrows",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "ArrowDown"
+        }
+      ]
+    },
+    {
+      "name": "sidebar-arrows",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "ArrowDown"
+        },
+        {
+          "key": "ArrowRight"
+        }
+      ]
+    },
+    {
+      "name": "dm-sidebar-tab",
+      "path": "/d/{dm}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        }
+      ]
     }
   ]
 }
