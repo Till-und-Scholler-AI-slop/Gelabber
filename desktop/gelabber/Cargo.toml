@@ -10,5 +10,7 @@ publish = false
 [dependencies]
 gelabber-ui = { path = "../ui", features = ["media"] }
 gelabber-client = { path = "../client" }
+# Only for its library directory (DEP_GELABBER_MEDIA_LIB_DIR in build.rs).
+gelabber-media-core = { path = "../core" }
 eframe = { version = "0.37.0", default-features = false, features = ["wgpu", "accesskit", "wayland", "x11"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

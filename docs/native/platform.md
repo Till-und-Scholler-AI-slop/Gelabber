@@ -22,6 +22,18 @@ renamed, so a crash never leaves half a file.
 | `settings.json` | device settings (`screens/settings/prefs.rs`) | no |
 | `session.json` (0600) | `gelabber_session` cookie per server origin | no |
 | `native-state.json` (0600) | per account: last place, last channel per server, last DM, drafts (7 days), per-person volumes; window size, position, maximized | no |
+| `legacy-settings.json` | the Tauri app's export of the web client's localStorage (read once, never written) | written by it |
+
+First start (`legacy.rs`): while `settings.json` is missing, the app takes
+over `legacy-settings.json` (`{"version": 1, "localStorage": {key: value}}`:
+`gelabber.media`, `gelabber.media.source-audio-share`, `gelabber.interface`
+into `settings.json`, `gelabber.user-volumes:<account>` and
+`gelabber:chat-draft:<account>:<channel>` into `native-state.json`) and the
+files of native builds before 0.9 (`<config base>/gelabber/settings.json`
+and `…/server`, the latter only where `desktop.json` has no server). It
+overwrites nothing (a `desktop.json` or `native-state.json` it cannot read
+stays as it is) and leaves the sources where they are; `settings.json` is
+written even when empty, so it happens once.
 
 Server choice, first match wins: `--server <url>` / `--server=<url>`,
 `GELABBER_SERVER`, `desktop.json`, else the setup screen. The cookie is not
@@ -79,10 +91,12 @@ the GlobalShortcuts portal (KDE, GNOME 48+, Hyprland:
 ## Updates (`update.rs`)
 
 15 s after the start and every 6 hours while `autoCheck` holds, the
-`latest.json` of the latest GitHub release (`GELABBER_UPDATE_ENDPOINT`
-replaces it) is read. A newer version shows "Gelabber x.y.z ist da."
-(the Tauri notice's first sentence) with "Herunterladen" (the release page)
-and "Später", never during a call. `verify` checks a package as the Tauri updater does
+`latest-native.json` of the latest GitHub release (`GELABBER_UPDATE_ENDPOINT`
+replaces it) is read: the Tauri app's `latest.json` names its own installer.
+desktop-release.yml writes both in the same format. A newer version shows
+"Gelabber x.y.z ist da." (the Tauri notice's first sentence) with
+"Herunterladen" (that version's release page) and "Später", never during a
+call. `verify` checks a package as the Tauri updater does
 (minisign, `desktop/app/updater.pub` or `GELABBER_UPDATER_PUBKEY` at build
 time, signed for the announced version). Downloading and installing belong
 to packaging.

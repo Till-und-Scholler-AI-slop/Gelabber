@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Points the PKGBUILD at one build of the app and regenerates .SRCINFO.
+# Points the PKGBUILD next to it at one build of the app and regenerates
+# .SRCINFO (repo.sh copies it next to native/PKGBUILD for the native app).
 #
 #   update-pkgbuild.sh <version> <source> <tarball> [pkgrel]
 #

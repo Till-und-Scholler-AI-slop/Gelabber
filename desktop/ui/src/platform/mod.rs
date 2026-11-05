@@ -5,6 +5,7 @@
 //! [`Platform`] and calls it every pass; parity runs go without one.
 
 pub mod instance;
+pub mod legacy;
 pub mod notify;
 pub mod paths;
 pub mod ptt;
@@ -629,7 +630,9 @@ impl Updates {
                                 )
                                 .clicked()
                             {
-                                ctx.open_url(egui::OpenUrl::new_tab(update::RELEASES));
+                                ctx.open_url(egui::OpenUrl::new_tab(update::release_page(
+                                    &found.version,
+                                )));
                             }
                             if ui
                                 .add(crate::widgets::Button::new("Später").small())

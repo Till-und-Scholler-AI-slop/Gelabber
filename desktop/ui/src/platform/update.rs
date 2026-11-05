@@ -1,17 +1,32 @@
 //! The update check of the Tauri app (desktop/app/src/update.rs): shortly
-//! after the start and every six hours, `latest.json` of the latest release
+//! after the start and every six hours, the manifest of the latest release
 //! is read; a newer version shows the update notice. What is
 //! installed later must carry a minisign signature by `desktop/app/updater.pub`
 //! made for the version announced ([`verify`]); installing is packaging's.
+//!
+//! The manifest is this app's own, `latest-native.json` (desktop-release.yml
+//! writes it in the format of the Tauri app's `latest.json`): the Tauri
+//! releases' file names the Tauri installer, which this app must not offer.
 
 use std::time::Duration;
 
 use serde::Deserialize;
 
-const ENDPOINT: &str =
-    "https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/latest/download/latest.json";
-/// Where "Herunterladen" leads.
-pub const RELEASES: &str = "https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/latest";
+const REPOSITORY: &str = "https://github.com/Till-und-Scholler-AI-slop/Gelabber";
+/// The native app's manifest; `latest.json` stays the Tauri app's.
+pub const MANIFEST: &str = "latest-native.json";
+/// `releases/latest` leaves pre-releases out, as for the Tauri app.
+const ENDPOINT: &str = "https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/latest/download/latest-native.json";
+
+/// Where "Herunterladen" leads: the release page of `version` (as
+/// [`newer`] reports it, without `v`).
+pub fn release_page(version: &str) -> String {
+    format!(
+        "{REPOSITORY}/releases/tag/v{}",
+        version.trim_start_matches('v')
+    )
+}
+
 pub const FIRST_CHECK: Duration = Duration::from_secs(15);
 pub const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 
@@ -26,7 +41,7 @@ pub fn pubkey() -> &'static str {
     PUBKEY.trim()
 }
 
-/// `latest.json` as desktop-native.yml writes it (Tauri's format).
+/// The manifest as desktop-release.yml writes it (the Tauri app's format).
 #[derive(Clone, Debug, Deserialize)]
 pub struct Latest {
     pub version: String,
@@ -94,7 +109,7 @@ pub async fn check(http: reqwest::Client) -> Result<Option<Found>, String> {
         .await
         .map_err(|e| e.to_string())?;
     if !response.status().is_success() {
-        return Err(format!("latest.json: {}", response.status()));
+        return Err(format!("{MANIFEST}: {}", response.status()));
     }
     let bytes = response.bytes().await.map_err(|e| e.to_string())?;
     let latest: Latest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
@@ -185,6 +200,41 @@ mod tests {
         assert!(newer(&latest, "1.0.0", "linux-x86_64").is_none());
         assert!(newer(&latest, "kaputt", "linux-x86_64").is_none());
         assert!(target().contains('-'));
+    }
+
+    #[test]
+    fn the_native_app_reads_its_own_manifest_not_the_tauri_apps() {
+        let _config = crate::platform::paths::testing::TempConfig::new("endpoint");
+        assert_eq!(
+            endpoint(),
+            format!("{REPOSITORY}/releases/latest/download/{MANIFEST}")
+        );
+        assert_eq!(MANIFEST, "latest-native.json");
+        assert!(!endpoint().ends_with("/latest.json"));
+        assert_eq!(
+            release_page("0.9.0-beta.2"),
+            format!("{REPOSITORY}/releases/tag/v0.9.0-beta.2")
+        );
+        assert_eq!(
+            release_page("v0.9.0"),
+            format!("{REPOSITORY}/releases/tag/v0.9.0")
+        );
+    }
+
+    #[test]
+    fn the_manifest_reads_as_desktop_release_writes_it() {
+        // The jq program of release-asset-windows in desktop-release.yml.
+        let url =
+            format!("{REPOSITORY}/releases/download/v0.9.1/gelabber-native-windows-x64-setup.exe");
+        let manifest = serde_json::json!({
+            "version": "0.9.1",
+            "pub_date": "2026-11-05T12:00:00Z",
+            "platforms": {"windows-x86_64": {"url": url, "signature": "c2ln"}},
+        });
+        let latest: Latest = serde_json::from_value(manifest).unwrap();
+        let found = newer(&latest, "0.9.0", "windows-x86_64").unwrap();
+        assert_eq!(found.package, Some((url, "c2ln".into())));
+        assert_eq!(found.notes, None);
     }
 
     #[test]
