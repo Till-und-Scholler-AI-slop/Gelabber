@@ -86,17 +86,58 @@ for (const scene of scenes) {
   const page = await context.newPage();
   await page.goto(fill(scene.path), { waitUntil: "networkidle" });
   await page.evaluate(() => document.fonts.ready);
-  for (const action of scene.actions ?? []) {
-    if (action.click)
-      await page.getByRole("button", { name: action.click, exact: true }).first().click();
-    if (action.wait) await page.waitForTimeout(action.wait);
-    await page.waitForLoadState("networkidle");
+  // Messages the scene posts (say.mjs), deleted after the screenshot, also
+  // when a step fails, so the fixture stays as seeded.
+  const said = [];
+  try {
+    for (const action of scene.actions ?? []) {
+      // "<user> <channel-key> <text>": someone else writes.
+      if (action.say) {
+        const [who, where, ...words] = action.say.split(" ");
+        const id = execFileSync(
+          process.execPath,
+          [join(here, "say.mjs"), "post", who, where, words.join(" ")],
+          { encoding: "utf8" },
+        ).trim();
+        said.push([who, id]);
+      }
+      if (action.click)
+        await page.getByRole("button", { name: action.click, exact: true }).first().click();
+      if (action.link)
+        await page.getByRole("link", { name: action.link, exact: true }).first().click();
+      // The first button or link of that name, with the secondary button.
+      if (action.rightclick)
+        await page
+          .getByRole("button", { name: action.rightclick, exact: true })
+          .or(page.getByRole("link", { name: action.rightclick, exact: true }))
+          .first()
+          .click({ button: "right" });
+      // Elements without a button role, such as a <summary>.
+      if (action.clicktext)
+        await page.getByText(action.clicktext, { exact: true }).first().click();
+      // Playwright key names, e.g. "Control+k", "ArrowDown", "Escape".
+      if (action.key) await page.keyboard.press(action.key);
+      // Typed into whatever has the focus.
+      if (action.type) await page.keyboard.type(action.type);
+      if (action.wait) await page.waitForTimeout(action.wait);
+      await page.waitForLoadState("networkidle");
+    }
+    await page.addStyleTag({ content: "*{caret-color:transparent !important}" });
+    // Let lists settle and late images decode.
+    await page.waitForTimeout(800);
+    await page.mouse.move(size[0] - 1, size[1] - 1);
+    await page.screenshot({ path: join(OUT, `${scene.name}.png`) });
+  } finally {
+    for (const [who, id] of said)
+      execFileSync(process.execPath, [join(here, "say.mjs"), "delete", who, id], {
+        stdio: "inherit",
+      });
+    // say.mjs words that undo what the scene's dialogs made (invite links).
+    if (scene.after)
+      execFileSync(process.execPath, [join(here, "say.mjs"), ...scene.after.split(" ")], {
+        stdio: "inherit",
+      });
   }
-  await page.addStyleTag({ content: "*{caret-color:transparent !important}" });
-  // Let lists settle and late images decode.
-  await page.waitForTimeout(800);
-  await page.mouse.move(size[0] - 1, size[1] - 1);
-  await page.screenshot({ path: join(OUT, `${scene.name}.png`) });
   console.log(`${scene.name}: ${page.url()}`);
   await context.close();
   if (call) await stopCall(call);

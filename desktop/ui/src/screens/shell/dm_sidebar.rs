@@ -108,6 +108,12 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
                     continue;
                 }
                 let response = common::click(ui, row, Id::unique(("dm-row", dm.id)));
+                if response.secondary_clicked() {
+                    super::overlays::open_notifications(
+                        ui.ctx(),
+                        super::overlays::Target::dm(dm.id, dm.peer.name.clone()),
+                    );
+                }
                 let is_active = active == Some(dm.id);
                 let (badge, muted, presence) = app.client.with_state(|s| {
                     (

@@ -28,7 +28,7 @@ use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner};
 use crate::widgets::{
     Avatar, Badge, BadgeTone, Button, ButtonVariant, IconButton, Popover, Presence, TextField,
-    eased, menu_item,
+    eased,
 };
 
 /// `PERMISSIONS` of servers/permissions.ts.
@@ -188,6 +188,7 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
         let r = Rect::from_min_size(pos2(x, nav.top() + 8.0), vec2(b.width() + 24.0, 32.0));
         let wid = Id::unique(("gelabber-server-nav", *id));
         let response = ui.interact(r, wid, Sense::click());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, *label));
         let fill = eased(&ctx, wid, response.hovered(), Color32::TRANSPARENT, c.hover);
         ui.painter().rect_filled(r, corner(16.0), fill);
         b.paint_tinted(
@@ -929,10 +930,13 @@ fn members(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, 
             if s.menu == Some(m.user_id) {
                 let shown = Popover::new(("member-menu", m.user_id), br)
                     .align_end()
-                    .min_width(200.0)
+                    // `.member-menu`: min-width 200 inside the 8px padding.
+                    .min_width(218.0)
                     .show(ui.ctx(), |ui| {
-                        let kick = menu_item(ui, None, "Vom Server entfernen", false).clicked();
-                        let ban = menu_item(ui, None, "Sperren", true).clicked();
+                        use crate::screens::shell::overlays::profile::member_menu_item;
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        let kick = member_menu_item(ui, "Vom Server entfernen", false).clicked();
+                        let ban = member_menu_item(ui, "Sperren", true).clicked();
                         (kick, ban)
                     });
                 match shown {

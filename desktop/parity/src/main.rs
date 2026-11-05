@@ -11,6 +11,9 @@
 //! window is not built yet; acceptance is always on the full scene.
 //!
 //! Reads web/scripts/parity/{scenes,fixture}.json from the repository.
+//! A scene's actions (click, link, rightclick, clicktext, key, type, say,
+//! wait) mean the same in shots.mjs; posts and `after` are undone with
+//! say.mjs once the screenshot is taken.
 
 mod pixels;
 mod ssim;
@@ -38,6 +41,8 @@ struct Scene {
     /// Steps after the page settled, the same in both shot tools.
     #[serde(default)]
     actions: Vec<Action>,
+    /// say.mjs words run after the screenshot (undo what dialogs made).
+    after: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -45,8 +50,80 @@ struct Scene {
 enum Action {
     /// Click the button with this accessible name.
     Click(String),
+    /// Click the link with this accessible name.
+    Link(String),
+    /// Right-click the first button or link with this accessible name.
+    Rightclick(String),
+    /// Click the first element with this label, whatever its role.
+    Clicktext(String),
+    /// Press a key, Playwright style: "Control+k", "ArrowDown", "Escape".
+    Key(String),
+    /// Type text into whatever has the focus.
+    Type(String),
+    /// "<user> <channel-key> <text>": someone else writes (say.mjs); the
+    /// message is deleted after the screenshot.
+    Say(String),
     /// Wait this many milliseconds.
     Wait(u64),
+}
+
+/// What a scene posted and what it undoes afterwards: run when dropped,
+/// so a failing step leaves the fixture as seeded too.
+#[derive(Default)]
+struct Undo {
+    said: Vec<(String, String)>,
+    after: Option<String>,
+}
+
+impl Drop for Undo {
+    fn drop(&mut self) {
+        for (who, id) in &self.said {
+            say(&["delete", who, id]);
+        }
+        if let Some(after) = &self.after {
+            say(&after.split(' ').collect::<Vec<_>>());
+        }
+    }
+}
+
+/// Runs say.mjs with `args`; its output (a message id for "post").
+fn say(args: &[&str]) -> String {
+    let out = std::process::Command::new("node")
+        .arg(parity_dir().join("say.mjs"))
+        .args(args)
+        .output()
+        .expect("run say.mjs");
+    assert!(
+        out.status.success(),
+        "say.mjs {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+/// "Control+Shift+k" as egui modifiers and key.
+fn parse_key(spec: &str) -> (egui::Modifiers, egui::Key) {
+    let mut modifiers = egui::Modifiers::NONE;
+    let mut parts: Vec<&str> = spec.split('+').collect();
+    // "Control++" would name the plus key; none of the scenes needs it.
+    let name = parts.pop().expect("key name");
+    for part in parts {
+        match part {
+            "Control" | "Meta" => modifiers |= egui::Modifiers::COMMAND,
+            "Shift" => modifiers |= egui::Modifiers::SHIFT,
+            "Alt" => modifiers |= egui::Modifiers::ALT,
+            other => panic!("unknown modifier {other:?} in {spec:?}"),
+        }
+    }
+    let key = if name.chars().count() == 1 {
+        egui::Key::from_name(&name.to_uppercase())
+    } else {
+        egui::Key::from_name(name)
+    };
+    (
+        modifiers,
+        key.unwrap_or_else(|| panic!("unknown key {name:?}")),
+    )
 }
 
 /// call.mjs running for a scene; leaves the call when dropped.
@@ -165,6 +242,11 @@ fn render(out: &Path, only: Option<Vec<String>>) {
             .with_size(size)
             .with_pixels_per_point(1.0)
             .with_max_steps(10_000)
+            // Browser screenshots carry no pointer.
+            .with_render_cursor(false)
+            // Frames as in a browser, not 4 a second: timed things (toasts,
+            // fades) are as far along as in the web shot.
+            .with_step_dt(1.0 / 60.0)
             .wgpu()
             .build_eframe(|cc| {
                 gelabber_ui::GelabberApp::new(cc, client.clone(), Some(route.clone()))
@@ -172,15 +254,59 @@ fn render(out: &Path, only: Option<Vec<String>>) {
         // Step until the app has nothing in flight for a while: data,
         // images and layout settle like the web page after networkidle.
         settle(&mut harness);
+        // shots.mjs hides the caret (caret-color: transparent); so here.
+        harness.ctx.all_styles_mut(|s| {
+            s.visuals.text_cursor.stroke.color = egui::Color32::TRANSPARENT;
+        });
+        let mut undo = Undo {
+            said: Vec::new(),
+            after: scene.after.clone(),
+        };
         for action in &scene.actions {
             match action {
+                Action::Say(spec) => {
+                    let mut parts = spec.splitn(3, ' ');
+                    let (who, at, text) = (
+                        parts.next().unwrap_or_default(),
+                        parts.next().unwrap_or_default(),
+                        parts.next().unwrap_or_default(),
+                    );
+                    undo.said
+                        .push((who.to_owned(), say(&["post", who, at, text])));
+                }
                 Action::Click(name) => {
-                    use egui_kittest::kittest::Queryable;
-                    harness
-                        .query_all_by_role_and_label(egui::accesskit::Role::Button, name)
-                        .next()
+                    use egui::accesskit::Role;
+                    reveal(&mut harness, size.y, name, &[Role::Button]);
+                    find(&harness, name, &[Role::Button])
                         .unwrap_or_else(|| panic!("{}: no button {name:?}", scene.name))
                         .click();
+                }
+                Action::Link(name) => {
+                    use egui::accesskit::Role;
+                    reveal(&mut harness, size.y, name, &[Role::Link]);
+                    find(&harness, name, &[Role::Link])
+                        .unwrap_or_else(|| panic!("{}: no link {name:?}", scene.name))
+                        .click();
+                }
+                Action::Rightclick(name) => {
+                    use egui::accesskit::Role;
+                    reveal(&mut harness, size.y, name, &[Role::Button, Role::Link]);
+                    find(&harness, name, &[Role::Button, Role::Link])
+                        .unwrap_or_else(|| panic!("{}: no button or link {name:?}", scene.name))
+                        .click_secondary();
+                }
+                Action::Clicktext(label) => {
+                    reveal(&mut harness, size.y, label, &[]);
+                    find(&harness, label, &[])
+                        .unwrap_or_else(|| panic!("{}: nothing labelled {label:?}", scene.name))
+                        .click();
+                }
+                Action::Key(spec) => {
+                    let (modifiers, key) = parse_key(spec);
+                    harness.key_press_modifiers(modifiers, key);
+                }
+                Action::Type(text) => {
+                    harness.event(egui::Event::Text(text.clone()));
                 }
                 Action::Wait(ms) => {
                     let until = Instant::now() + Duration::from_millis(*ms);
@@ -192,13 +318,59 @@ fn render(out: &Path, only: Option<Vec<String>>) {
             }
             settle(&mut harness);
         }
-        harness.run_steps(5);
+        // The pointer rests in the bottom-right corner, as shots.mjs leaves it.
+        harness.hover_at(egui::pos2(size.x - 1.0, size.y - 1.0));
+        // Long enough for the hover fades to end.
+        harness.run_steps(15);
         let image = harness
             .render()
             .unwrap_or_else(|e| panic!("render {}: {e}", scene.name));
         let path = out.join(format!("{}.png", scene.name));
         image.save(&path).expect("save png");
+        drop(undo);
         println!("{}: {route} -> {}", scene.name, path.display());
+    }
+}
+
+type App<'a> = egui_kittest::Harness<'a, gelabber_ui::GelabberApp>;
+
+/// The first node labelled `label` with one of `roles` (any role if empty).
+fn find<'t>(
+    harness: &'t App<'_>,
+    label: &'t str,
+    roles: &[egui::accesskit::Role],
+) -> Option<egui_kittest::Node<'t>> {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    harness
+        .query_all_by_label(label)
+        .find(|n| roles.is_empty() || roles.contains(&n.accesskit_node().role()))
+}
+
+/// Playwright scrolls a target out of view to the middle before it
+/// clicks; here in 100px scroll steps until it is there or cannot move.
+fn reveal(harness: &mut App<'_>, height: f32, label: &str, roles: &[egui::accesskit::Role]) {
+    let middle = height / 2.0;
+    let mut scrolling = false;
+    for _ in 0..60 {
+        let Some(node) = find(harness, label, roles) else {
+            return;
+        };
+        let rect = node.rect();
+        let visible = rect.top() >= 0.0 && rect.bottom() <= height;
+        if (!scrolling && visible) || (scrolling && (rect.center().y - middle).abs() <= 50.0) {
+            return;
+        }
+        scrolling = true;
+        if rect.center().y > middle {
+            node.scroll_down();
+        } else {
+            node.scroll_up();
+        }
+        harness.run_steps(10);
+        let moved = find(harness, label, roles).map(|n| n.rect().center().y);
+        if moved == Some(rect.center().y) {
+            return;
+        }
     }
 }
 

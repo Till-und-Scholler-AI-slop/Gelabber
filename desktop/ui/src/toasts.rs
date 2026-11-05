@@ -16,6 +16,19 @@ struct Toast {
     until: Option<f64>,
 }
 
+/// The composer drawn this frame (`anchor-name: --lr-composer`).
+pub fn set_anchor(ctx: &egui::Context, rect: Rect) {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.insert_temp(Id::unique("gelabber-toast-anchor"), (rect, frame)));
+}
+
+fn anchor(ctx: &egui::Context) -> Option<Rect> {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data(|d| d.get_temp::<(Rect, u64)>(Id::unique("gelabber-toast-anchor")))
+        .filter(|(_, f)| *f == frame)
+        .map(|(r, _)| r)
+}
+
 #[derive(Default)]
 pub struct Toasts {
     items: Vec<Toast>,
@@ -74,8 +87,14 @@ impl Toasts {
         self.items.retain(|t| t.until.is_none_or(|u| u > now));
         let screen = ctx.content_rect();
         let width = 380.0_f32.min(screen.width() - 32.0);
-        let bottom = screen.bottom() - if outside_workspace { 16.0 } else { 12.0 };
-        let right = screen.right() - 16.0;
+        // In the workspace 12px over the composer, 16px in from its right
+        // edge; without one, 12px over the bottom.
+        let composer = (!outside_workspace).then(|| anchor(&ctx)).flatten();
+        let bottom = match composer {
+            Some(r) => r.top() - 12.0,
+            None => screen.bottom() - if outside_workspace { 16.0 } else { 12.0 },
+        };
+        let right = composer.map_or(screen.right(), |r| r.right()) - 16.0;
         let mut closed = None;
         // Info toasts sit above the error toasts.
         let mut order: Vec<&Toast> = self.items.iter().filter(|t| !t.error).collect();
@@ -85,7 +104,12 @@ impl Toasts {
             .fixed_pos(screen.min)
             .interactable(true)
             .show(&ctx, |ui| {
+                // Two regions, info over errors, 8px apart: an empty error
+                // region still keeps its gap.
                 let mut y = bottom;
+                if !self.items.iter().any(|t| t.error) {
+                    y -= 8.0;
+                }
                 for toast in order.iter().rev() {
                     let left_pad = if toast.error {
                         12.0 + 3.0 + 16.0 + 12.0
@@ -94,7 +118,8 @@ impl Toasts {
                     };
                     let text_w = width - left_pad - 12.0 - 32.0 - 9.0;
                     let block = Block::wrapped(ui, &toast.text, text::BODY, c.text, text_w);
-                    let height = block.height().max(32.0) + 24.0 + 2.0;
+                    // The 32px close button overhangs by 6px top and bottom.
+                    let height = block.height().max(32.0 - 12.0) + 24.0 + 2.0;
                     let rect = Rect::from_min_max(pos2(right - width, y - height), pos2(right, y));
                     let painter = ui.painter();
                     painter.add(theme.shadow_2.as_shape(rect, corner(theme.radius.lg)));

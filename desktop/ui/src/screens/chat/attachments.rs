@@ -183,6 +183,28 @@ fn paint_image(ui: &Ui, images: &Images, url: &str, rect: Rect, cover: bool) {
     );
 }
 
+/// The global `:focus-visible` ring around a picture link, for example
+/// once the lightbox it opened hands focus back: square, as the link box
+/// has no radius of its own.
+fn picture_ring(ui: &Ui, response: &egui::Response, rect: Rect) {
+    if response.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
+        let theme = Theme::of(ui.ctx());
+        let painter = ui.painter();
+        painter.rect_stroke(
+            rect.expand(1.0),
+            0.0,
+            Stroke::new(2.0, theme.c.bg),
+            StrokeKind::Middle,
+        );
+        painter.rect_stroke(
+            rect.expand(3.0),
+            0.0,
+            Stroke::new(2.0, theme.c.focus),
+            StrokeKind::Middle,
+        );
+    }
+}
+
 impl Media {
     pub fn paint(
         &self,
@@ -201,6 +223,14 @@ impl Media {
                     let rect = Rect::from_min_size(pos2(origin.x, top), *size);
                     paint_image(ui, images, url, rect, false);
                     let response = ui.interact(rect, id.with(("image", n)), Sense::click());
+                    response.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::Role::Link,
+                            true,
+                            format!("{name} vergrößern"),
+                        )
+                    });
+                    picture_ring(ui, &response, rect);
                     if response.hovered() {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::ZoomIn);
                     }
@@ -219,6 +249,14 @@ impl Media {
                         );
                         paint_image(ui, images, url, rect, true);
                         let response = ui.interact(rect, id.with(("cell", n, i)), Sense::click());
+                        response.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::Role::Link,
+                                true,
+                                format!("{name} vergrößern"),
+                            )
+                        });
+                        picture_ring(ui, &response, rect);
                         if response.hovered() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::ZoomIn);
                         }
@@ -283,81 +321,99 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, url: &str, name: &str) -> 
     let screen = ctx.content_rect();
     let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     let mut download = false;
-    egui::Area::new(egui::Id::unique("gelabber-lightbox"))
+    let area = egui::Area::new(egui::Id::unique("gelabber-lightbox"))
         .order(egui::Order::Foreground)
-        .fixed_pos(screen.min)
-        .show(ctx, |ui| {
-            let backdrop = ui.allocate_rect(screen, Sense::click());
-            ui.painter()
-                .rect_filled(screen, 0.0, Color32::from_black_alpha(217));
-            let area = Rect::from_min_max(
-                pos2(screen.left() + 16.0, screen.top() + 56.0),
-                pos2(screen.right() - 16.0, screen.bottom() - 16.0),
+        .fixed_pos(screen.min);
+    // A modal <dialog>: the chat under it takes no clicks or Tab.
+    ctx.memory_mut(|m| m.set_modal_layer(area.layer()));
+    crate::widgets::opener::dialog_shown(ctx, area.layer());
+    let first = crate::widgets::field::mounted(ctx, egui::Id::unique("gelabber-lightbox-open"));
+    area.show(ctx, |ui| {
+        let backdrop = ui.allocate_rect(screen, Sense::click());
+        ui.painter()
+            .rect_filled(screen, 0.0, Color32::from_black_alpha(217));
+        let area = Rect::from_min_max(
+            pos2(screen.left() + 16.0, screen.top() + 56.0),
+            pos2(screen.right() - 16.0, screen.bottom() - 16.0),
+        );
+        let mut image_rect = None;
+        if let ImageState::Ready(t) = images.get(ctx, url) {
+            let size = t.size_vec2();
+            let scale = (area.width() / size.x).min(area.height() / size.y).min(1.0);
+            let r = Rect::from_center_size(area.center(), size * scale);
+            ui.painter().add(
+                egui::epaint::RectShape::filled(r, CornerRadius::same(7), Color32::WHITE)
+                    .with_texture(t.id(), Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0))),
             );
-            let mut image_rect = None;
-            if let ImageState::Ready(t) = images.get(ctx, url) {
-                let size = t.size_vec2();
-                let scale = (area.width() / size.x).min(area.height() / size.y).min(1.0);
-                let r = Rect::from_center_size(area.center(), size * scale);
-                ui.painter().add(
-                    egui::epaint::RectShape::filled(r, CornerRadius::same(7), Color32::WHITE)
-                        .with_texture(t.id(), Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0))),
-                );
-                image_rect = Some(r);
+            image_rect = Some(r);
+        }
+        let white = Color32::WHITE;
+        let style = TextStyle::new(14.0, 400.0, 1.5);
+        let close_rect = Rect::from_min_size(
+            pos2(screen.right() - 16.0 - 40.0, screen.top() + 10.0),
+            vec2(40.0, 40.0),
+        );
+        let dl = Block::single(ui, "Herunterladen", style, white);
+        let dl_rect = Rect::from_min_size(
+            pos2(
+                close_rect.left() - 16.0 - dl.width(),
+                close_rect.center().y - dl.height() / 2.0,
+            ),
+            dl.size(),
+        );
+        let title_w = (dl_rect.left() - 16.0 - screen.left() - 16.0).max(10.0);
+        let mut job = crate::text::job(name, style, white, Some(title_w));
+        job.wrap.max_rows = 1;
+        job.wrap.break_anywhere = true;
+        Block::new(ui, job, style).paint(ui.painter(), pos2(screen.left() + 16.0, dl_rect.top()));
+        dl.paint(ui.painter(), dl_rect.min);
+        crate::widgets::link::underline(
+            ui.painter(),
+            style,
+            dl_rect.top(),
+            dl_rect.left(),
+            dl_rect.right(),
+            white,
+        );
+        let dl_resp = ui.interact(
+            dl_rect,
+            egui::Id::unique("gelabber-lightbox-dl"),
+            Sense::click(),
+        );
+        let close_resp = ui.interact(
+            close_rect,
+            egui::Id::unique("gelabber-lightbox-close"),
+            Sense::click(),
+        );
+        dl_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, "Herunterladen"));
+        close_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Schließen"));
+        // The close button has the focus, not the download link.
+        if first {
+            close_resp.request_focus();
+        }
+        ui.painter()
+            .circle_filled(close_rect.center(), 20.0, Color32::from_white_alpha(31));
+        icons::paint_centered(ui.painter(), Icon::Close, close_rect, 18.0, white);
+        let keyboard = crate::widgets::keyboard_focus(ui.ctx());
+        for (r, focused, radius) in [
+            (close_rect, close_resp.has_focus(), 20.0),
+            (dl_rect, dl_resp.has_focus(), 3.0),
+        ] {
+            if focused && keyboard {
+                crate::widgets::focus_ring(ui.painter(), r, radius, &Theme::of(ui.ctx()));
             }
-            let white = Color32::WHITE;
-            let style = TextStyle::new(14.0, 400.0, 1.5);
-            let close_rect = Rect::from_min_size(
-                pos2(screen.right() - 16.0 - 40.0, screen.top() + 10.0),
-                vec2(40.0, 40.0),
-            );
-            let dl = Block::single(ui, "Herunterladen", style, white);
-            let dl_rect = Rect::from_min_size(
-                pos2(
-                    close_rect.left() - 16.0 - dl.width(),
-                    close_rect.center().y - dl.height() / 2.0,
-                ),
-                dl.size(),
-            );
-            let title_w = (dl_rect.left() - 16.0 - screen.left() - 16.0).max(10.0);
-            let mut job = crate::text::job(name, style, white, Some(title_w));
-            job.wrap.max_rows = 1;
-            job.wrap.break_anywhere = true;
-            Block::new(ui, job, style)
-                .paint(ui.painter(), pos2(screen.left() + 16.0, dl_rect.top()));
-            dl.paint(ui.painter(), dl_rect.min);
-            crate::widgets::link::underline(
-                ui.painter(),
-                style,
-                dl_rect.top(),
-                dl_rect.left(),
-                dl_rect.right(),
-                white,
-            );
-            let dl_resp = ui.interact(
-                dl_rect,
-                egui::Id::unique("gelabber-lightbox-dl"),
-                Sense::click(),
-            );
-            let close_resp = ui.interact(
-                close_rect,
-                egui::Id::unique("gelabber-lightbox-close"),
-                Sense::click(),
-            );
-            ui.painter()
-                .circle_filled(close_rect.center(), 20.0, Color32::from_white_alpha(31));
-            icons::paint_centered(ui.painter(), Icon::Close, close_rect, 18.0, white);
-            if dl_resp.hovered() || close_resp.hovered() {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-            }
-            download = dl_resp.clicked();
-            let on_image = ui
-                .input(|i| i.pointer.interact_pos())
-                .is_some_and(|p| image_rect.is_some_and(|r| r.contains(p)));
-            if close_resp.clicked() || (backdrop.clicked() && !on_image) {
-                close = true;
-            }
-        });
+        }
+        if dl_resp.hovered() || close_resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        download = dl_resp.clicked();
+        let on_image = ui
+            .input(|i| i.pointer.interact_pos())
+            .is_some_and(|p| image_rect.is_some_and(|r| r.contains(p)));
+        if close_resp.clicked() || (backdrop.clicked() && !on_image) {
+            close = true;
+        }
+    });
     (close, download)
 }
 

@@ -116,6 +116,7 @@ pub fn menu_item(ui: &mut Ui, icon: Option<Icon>, label: &str, danger: bool) -> 
     let c = &theme.c;
     let width = ui.available_width().max(160.0);
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 32.0), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     if ui.is_rect_visible(rect) {
         let fill = eased(
             ui.ctx(),

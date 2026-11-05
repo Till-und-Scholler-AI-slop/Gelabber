@@ -8,7 +8,8 @@ use gelabber_client::{ApiError, Category, Channel, ChannelKind, ChannelPatch, In
 use uuid::Uuid;
 
 use super::common::{self, line, paint_mid};
-use super::state::{self, AddStep, Dialog, Doomed, InviteState, Terms};
+use super::overlays::picker::{PickerState, Row, RowIcon};
+use super::state::{self, AddStep, Dialog, InviteState, Terms};
 use crate::app::AppCtx;
 use crate::icons::{self, Icon};
 use crate::rules;
@@ -89,32 +90,41 @@ pub fn open_category(ctx: &egui::Context, server: Uuid, editing: Option<&Categor
     });
 }
 
+/// Asked through the confirm host, which starts on "Abbrechen".
 pub fn confirm_delete_channel(ctx: &egui::Context, server: Uuid, channel: &Channel) {
-    state::with(ctx, |s| {
-        s.dialog = Some(Dialog::Confirm {
-            title: format!("Kanal „{}“ löschen?", channel.name),
-            message: "Alle Nachrichten darin werden gelöscht.".into(),
-            button: "Kanal löschen",
-            doomed: Doomed::Channel(server, channel.id),
-        });
-    });
+    super::overlays::ask(
+        ctx,
+        super::overlays::Question::danger(
+            format!("Kanal „{}“ löschen?", channel.name),
+            Some("Alle Nachrichten darin werden gelöscht."),
+            "Kanal löschen",
+            super::overlays::ConfirmAction::DeleteChannel {
+                server,
+                channel: channel.id,
+            },
+        ),
+    );
 }
 
 pub fn confirm_delete_category(ctx: &egui::Context, server: Uuid, category: &Category) {
-    state::with(ctx, |s| {
-        s.dialog = Some(Dialog::Confirm {
-            title: format!("Kategorie „{}“ löschen?", category.name),
-            message: "Die Kanäle darin bleiben erhalten.".into(),
-            button: "Kategorie löschen",
-            doomed: Doomed::Category(server, category.id),
-        });
-    });
+    super::overlays::ask(
+        ctx,
+        super::overlays::Question::danger(
+            format!("Kategorie „{}“ löschen?", category.name),
+            Some("Die Kanäle darin bleiben erhalten."),
+            "Kategorie löschen",
+            super::overlays::ConfirmAction::DeleteCategory {
+                server,
+                category: category.id,
+            },
+        ),
+    );
 }
 
 pub fn open_new_message(ctx: &egui::Context) {
     state::with(ctx, |s| {
         s.dialog = Some(Dialog::NewMessage {
-            query: String::new(),
+            picker: PickerState::default(),
             waiting: None,
         });
     });
@@ -148,13 +158,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
             name,
             error,
         } => category_dialog(ui, app, *server, *editing, name, error),
-        Dialog::Confirm {
-            title,
-            message,
-            button,
-            doomed,
-        } => confirm(ui, app, title, message, button, *doomed),
-        Dialog::NewMessage { query, waiting } => new_message(ui, app, query, waiting),
+        Dialog::NewMessage { picker, waiting } => new_message(ui, app, picker, waiting),
     };
     if keep {
         state::with(ui.ctx(), |s| {
@@ -238,7 +242,13 @@ fn add_server(
                 match step {
                     AddStep::Choose => {
                         ui.spacing_mut().item_spacing.y = 8.0;
-                        if choice(ui, Icon::Plus, "Server erstellen", CREATE_HINT).clicked() {
+                        let create = choice(ui, Icon::Plus, "Server erstellen", CREATE_HINT);
+                        // The dialog opens on its first control, as showModal does.
+                        if crate::widgets::field::mounted(ui.ctx(), Id::unique("gelabber-add-open"))
+                        {
+                            create.request_focus();
+                        }
+                        if create.clicked() {
                             *step = AddStep::Create;
                         }
                         if choice(
@@ -327,9 +337,13 @@ fn choice(ui: &mut Ui, icon: Icon, title: &str, detail: &str) -> egui::Response 
     let c = theme.c;
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 64.0), egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, title));
     let hovered = response.hovered();
     if hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    if response.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
+        crate::widgets::focus_ring(ui.painter(), rect, theme.radius.md, &theme);
     }
     ui.painter().rect(
         rect,
@@ -492,8 +506,8 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
                 + 16.0
                 + 8.0
                 + 34.0;
-            let (row, _) = ui.allocate_exact_size(Vec2::new(row_w, 37.0), egui::Sense::hover());
-            let field = Rect::from_min_size(row.min, Vec2::new(row_w - copy_w - 8.0, 37.0));
+            let (row, _) = ui.allocate_exact_size(Vec2::new(row_w, 36.0), egui::Sense::hover());
+            let field = Rect::from_min_size(row.min, Vec2::new(row_w - copy_w - 8.0, 36.0));
             ui.painter().rect(
                 field,
                 corner(theme.radius.sm),
@@ -525,10 +539,12 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
                 Vec2::new(copy_w, 36.0),
             );
             let mut copy = ui.new_child(egui::UiBuilder::new().max_rect(copy_rect));
-            if copy
-                .add(Button::new(copy_label).primary().icon(Icon::Copy))
-                .clicked()
-            {
+            let copy_button = copy.add(Button::new(copy_label).primary().icon(Icon::Copy));
+            // `initialFocus` on "Link kopieren".
+            if crate::widgets::field::mounted(ui.ctx(), Id::unique("gelabber-invite-open")) {
+                copy_button.request_focus();
+            }
+            if copy_button.clicked() {
                 if creating {
                     s.status = Some(("Link wird erstellt…".into(), StatusTone::Neutral));
                 } else if !link.is_empty() {
@@ -570,6 +586,9 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
                 Vec2::new(label.width() + 4.0 + 14.0, 32.0),
             );
             let response = common::click(ui, summary_rect, Id::unique("invite-terms"));
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::Button, true, "Ablauf & Limit ändern")
+            });
             let color = if response.hovered() { c.text } else { c.muted };
             paint_mid(
                 ui.painter(),
@@ -585,17 +604,23 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
                 s.terms_open = !s.terms_open;
             }
             if s.terms_open {
-                // Column gap 8, margin-top 8; each caps label 8 more.
+                // Column gap 8, margin-top 8; each caps label 8 more (the
+                // panel's 12 after the summary already counts).
+                ui.add_space(4.0);
                 ui.spacing_mut().item_spacing.y = 8.0;
                 let mut changed = None;
-                for (caps, options, current, which) in [
+                for (n, (caps, options, current, which)) in [
                     ("Läuft ab nach", EXPIRY.map(|o| o.0), s.terms.expiry, 0),
                     ("Wie oft nutzbar", USES.map(|o| o.0), s.terms.uses, 1),
-                ] {
-                    ui.add_space(8.0);
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    if n > 0 {
+                        ui.add_space(8.0);
+                    }
                     text::label(ui, &caps.to_uppercase(), text::CAPS, c.muted);
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 8.0;
+                    super::overlays::row(ui, 32.0, 8.0, |ui| {
                         for (i, option) in options.iter().enumerate() {
                             if chip(ui, option, i == current).clicked() && i != current {
                                 changed = Some((which, i));
@@ -894,52 +919,15 @@ fn category_dialog(
     !(output.close_requested || done)
 }
 
-fn confirm(
-    ui: &mut Ui,
-    app: &mut AppCtx,
-    title: &str,
-    message: &str,
-    button: &str,
-    doomed: Doomed,
-) -> bool {
-    let ctx = ui.ctx().clone();
-    let theme = Theme::of(&ctx);
-    let mut done = false;
-    let mut confirmed = false;
-    let output = Modal::new("confirm", title).show(
-        &ctx,
-        |ui| {
-            text::label(ui, message, text::BODY, theme.c.muted);
-        },
-        Some(&mut |ui: &mut Ui| {
-            if ui.add(Button::new(button).danger()).clicked() {
-                confirmed = true;
-            }
-            if ui.add(Button::new("Abbrechen").ghost()).clicked() {
-                done = true;
-            }
-        }),
-    );
-    if confirmed || ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-        match doomed {
-            Doomed::Channel(server, channel) => app.client.delete_channel(server, channel),
-            Doomed::Category(server, category) => app.client.delete_category(server, category),
-        }
-        return false;
-    }
-    !(output.close_requested || done)
-}
-
-/// "Neue Nachricht": anyone from the servers you share, then their DM.
+/// "Neue Nachricht" (`NewMessageDialog`): anyone from the servers you
+/// share, picked with the keyboard or a click, then their DM.
 fn new_message(
     ui: &mut Ui,
     app: &mut AppCtx,
-    query: &mut String,
+    picker: &mut PickerState,
     waiting: &mut Option<Uuid>,
 ) -> bool {
     let ctx = ui.ctx().clone();
-    let theme = Theme::of(&ctx);
-    let c = theme.c;
     if let Some(user) = *waiting {
         if let Some(dm) = app
             .client
@@ -955,10 +943,11 @@ fn new_message(
             *waiting = None;
         }
     }
-    // dmCandidates: members of every server (loaded on demand), and DMs.
+    // dmCandidates: everyone you share a server with (details loaded on
+    // demand); people already written to first, in DM order, then by name.
     let (people, missing) = app.client.with_state(|s| {
         let me = s.me().map(|m| m.id);
-        let mut people: Vec<(Uuid, String, Option<String>, String)> = Vec::new();
+        let mut people: Vec<(Uuid, String, Option<String>, String, bool)> = Vec::new();
         let missing: Vec<Uuid> = s
             .servers
             .iter()
@@ -975,33 +964,31 @@ fn new_message(
                 }
                 match people.iter_mut().find(|p| p.0 == m.user_id) {
                     Some(p) => {
-                        if !p.3.is_empty() && !p.3.starts_with("Unterhaltung") {
-                            p.3.push_str(", ");
-                            p.3.push_str(&server.name);
-                        }
+                        p.3.push_str(", ");
+                        p.3.push_str(&server.name);
                     }
                     None => people.push((
                         m.user_id,
                         m.name.clone(),
                         m.avatar_url.clone(),
                         server.name.clone(),
+                        false,
                     )),
                 }
             }
         }
+        let mut recent = Vec::new();
         for dm in &s.dms {
-            match people.iter_mut().find(|p| p.0 == dm.peer.id) {
-                Some(p) => p.3 = "Unterhaltung fortsetzen".into(),
-                None => people.push((
-                    dm.peer.id,
-                    dm.peer.name.clone(),
-                    dm.peer.avatar_url.clone(),
-                    "Unterhaltung fortsetzen".into(),
-                )),
+            if let Some(i) = people.iter().position(|p| p.0 == dm.peer.id) {
+                let mut p = people.remove(i);
+                p.3 = "Unterhaltung fortsetzen".into();
+                p.4 = true;
+                recent.push(p);
             }
         }
         people.sort_by_cached_key(|p| gelabber_client::store::collation_key(&p.1));
-        (people, missing)
+        recent.extend(people);
+        (recent, missing)
     });
     let opened = Id::unique("new-message-loaded");
     if !ctx.data(|d| d.get_temp::<bool>(opened).unwrap_or(false)) {
@@ -1010,82 +997,57 @@ fn new_message(
         }
         ctx.data_mut(|d| d.insert_temp(opened, true));
     }
-    let q = query.trim().to_lowercase();
-    let shown: Vec<_> = people
+    // filterCandidates: best match first, the list order among equals.
+    let mut scored: Vec<(u8, usize)> = people
         .iter()
-        .filter(|p| q.is_empty() || p.1.to_lowercase().contains(&q))
+        .enumerate()
+        .filter_map(|(i, p)| {
+            super::overlays::picker::match_score(&picker.query, &p.1).map(|s| (s, i))
+        })
         .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    let shown: Vec<_> = scored.iter().map(|(_, i)| &people[*i]).collect();
+    let rows: Vec<Row> = shown
+        .iter()
+        .map(|(_, name, avatar, detail, _)| Row {
+            label: name.clone(),
+            detail: Some(detail.clone()),
+            icon: RowIcon::Avatar {
+                name: name.clone(),
+                url: avatar.clone(),
+            },
+            badge: gelabber_client::Badge::default(),
+        })
+        .collect();
+    let empty = if !missing.is_empty() {
+        "Wird geladen…".to_owned()
+    } else if people.is_empty() {
+        "Keine Personen. Direktnachrichten gehen an Mitglieder deiner Server.".to_owned()
+    } else {
+        format!("Niemand gefunden für „{}“.", picker.query.trim())
+    };
     let mut picked = None;
+    let busy = waiting.is_some();
     let output = Modal::new("new-message", "Neue Nachricht").show(
         &ctx,
         |ui| {
-            ui.spacing_mut().item_spacing.y = 8.0;
-            TextField::new("new-message-query", query)
-                .placeholder("Name suchen")
-                .autofocus(true)
-                .show(ui);
-            if shown.is_empty() {
-                let text = if !missing.is_empty() {
-                    "Wird geladen…".to_owned()
-                } else if people.is_empty() {
-                    "Keine Personen. Direktnachrichten gehen an Mitglieder deiner Server."
-                        .to_owned()
-                } else {
-                    format!("Niemand gefunden für „{}“.", query.trim())
-                };
-                ui.add_space(8.0);
-                let block = Block::wrapped(ui, &text, text::UI, c.muted, ui.available_width());
-                let (r, _) = ui.allocate_exact_size(
-                    Vec2::new(ui.available_width(), block.height() + 16.0),
-                    egui::Sense::hover(),
-                );
-                block.paint(
-                    ui.painter(),
-                    pos2(r.center().x - block.width() / 2.0, r.top() + 8.0),
-                );
-                return;
-            }
-            egui::ScrollArea::vertical()
-                .max_height(360.0)
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    for (id, name, avatar, detail) in &shown {
-                        let (rect, response) = ui.allocate_exact_size(
-                            Vec2::new(ui.available_width(), 44.0),
-                            egui::Sense::click(),
-                        );
-                        if response.hovered() {
-                            common::fill(ui.painter(), rect, theme.radius.sm, c.selected);
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                        }
-                        let a = Rect::from_min_size(
-                            pos2(rect.left() + 8.0, rect.center().y - 14.0),
-                            Vec2::splat(28.0),
-                        );
-                        common::avatar(
-                            ui,
-                            app.images,
-                            a,
-                            name,
-                            avatar.as_deref(),
-                            11.0,
-                            1.0,
-                            c.elevated,
-                        );
-                        let label = line(ui, name, text::UI, c.text, rect.width() - 54.0);
-                        let small = line(ui, detail, text::META, c.muted, rect.width() - 54.0);
-                        let top = rect.center().y - (label.height() + small.height()) / 2.0;
-                        label.paint(ui.painter(), pos2(a.right() + 10.0, top));
-                        small.paint(ui.painter(), pos2(a.right() + 10.0, top + label.height()));
-                        if response.clicked() {
-                            picked = Some(*id);
-                        }
-                    }
-                });
+            ui.spacing_mut().item_spacing.y = 0.0;
+            picked = super::overlays::picker::show(
+                ui,
+                app.images,
+                "new-message-query",
+                picker,
+                "Person",
+                "Name suchen",
+                &rows,
+                &empty,
+                busy,
+            );
         },
         None,
     );
-    if let Some(user) = picked {
+    if let Some(i) = picked {
+        let user = shown[i].0;
         match app
             .client
             .with_state(|s| s.dms.iter().find(|d| d.peer.id == user).map(|d| d.id))

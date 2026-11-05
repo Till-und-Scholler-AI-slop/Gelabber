@@ -47,6 +47,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
     let response =
         common::click(ui, home, Id::unique("rail-home")).on_hover_text("Direktnachrichten");
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, "Direktnachrichten"));
+    if response.secondary_clicked() {
+        super::overlays::open_notifications(ui.ctx(), super::overlays::Target::all_dms());
+    }
     let lit = response.hovered() || dm_active;
     if lit {
         common::fill(&painter, home, theme.radius.md, c.hover);
@@ -154,6 +157,12 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
                 let is_active = active == Some(*id);
                 let response = common::click(ui, tile, Id::unique(("rail-server", *id)));
                 response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, name));
+                if response.secondary_clicked() {
+                    super::overlays::open_notifications(
+                        ui.ctx(),
+                        super::overlays::Target::server(*id, name),
+                    );
+                }
                 let summary = if badge.count > 0 {
                     Some(if badge.count > 99 {
                         "Mehr als 99 Erwähnungen".to_owned()

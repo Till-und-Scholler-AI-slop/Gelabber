@@ -171,12 +171,25 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                     y += h + 2.0;
                     let response = common::click(ui, row, Id::unique(("member-row", server, e.id)))
                         .on_hover_text(format!("Profil von {}", e.name));
+                    response.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::Role::Button,
+                            true,
+                            format!("Profil von {}", e.name),
+                        )
+                    });
+                    if response.clicked() {
+                        super::overlays::open_member(ui.ctx(), server, e.id);
+                    }
                     let under = if response.hovered() {
                         common::fill(ui.painter(), row, theme.radius.md, c.hover);
                         c.hover
                     } else {
                         c.panel
                     };
+                    if response.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
+                        crate::widgets::focus_ring(ui.painter(), row, theme.radius.md, &theme);
+                    }
                     let avatar = Rect::from_min_size(
                         pos2(row.left() + 6.0, row.center().y - 16.0),
                         Vec2::splat(32.0),

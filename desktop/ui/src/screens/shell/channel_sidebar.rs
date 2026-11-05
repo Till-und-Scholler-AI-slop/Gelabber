@@ -157,7 +157,7 @@ pub fn show(
         rect.top() + 51.0,
     );
 
-    row_menu(ui, app);
+    row_menu(ui);
     if menu_open {
         server_menu(
             ui,
@@ -443,7 +443,10 @@ fn channel_row(
             });
         } else if !voice {
             // Members get the channel's notification settings.
-            app.nav.navigate("/settings/benachrichtigungen");
+            super::overlays::open_notifications(
+                ui.ctx(),
+                super::overlays::Target::channel(ch.id, server, format!("#{}", ch.name)),
+            );
         }
     }
     let (badge, muted, in_voice, live) = app.client.with_state(|s| {
@@ -612,6 +615,11 @@ fn person_row(
         Id::unique(("voice-person", occupant.channel_id, user)),
     )
     .on_hover_text(title);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+    // A click or a right click: the profile with its volume controls.
+    if response.clicked() || response.secondary_clicked() {
+        super::overlays::open_member(ui.ctx(), detail.server.id, user);
+    }
     let painter = ui.painter().clone();
     if response.hovered() {
         common::fill(&painter, row, theme.radius.md, c.hover);
@@ -742,8 +750,10 @@ fn server_menu(
             state::with(ui.ctx(), |s| s.server_menu = false);
             match action {
                 0 => super::dialogs::open_invite(ui.ctx(), server, name),
-                // The notification dialog belongs to the chat header.
-                1 => app.nav.navigate("/settings/benachrichtigungen"),
+                1 => super::overlays::open_notifications(
+                    ui.ctx(),
+                    super::overlays::Target::server(server, name),
+                ),
                 2 => super::dialogs::open_channel(ui.ctx(), server, None, None),
                 3 => super::dialogs::open_category(ui.ctx(), server, None),
                 _ => app.nav.navigate(&format!("/s/{server}/settings")),
@@ -755,7 +765,7 @@ fn server_menu(
 /// `.shell-menu-item`: min-height 36, padding 0 10, gap 10, radius 5.
 /// The right-click menu of a channel or category row (`.shell-menu-item`
 /// rows with 18px icons, a separator before the danger item).
-fn row_menu(ui: &mut Ui, app: &mut AppCtx) {
+fn row_menu(ui: &mut Ui) {
     let Some((menu, anchor)) = state::with(ui.ctx(), |s| s.row_menu.clone()) else {
         return;
     };
@@ -832,8 +842,11 @@ fn row_menu(ui: &mut Ui, app: &mut AppCtx) {
                 (state::RowMenu::Channel(server, ch), "Kanal bearbeiten") => {
                     super::dialogs::open_channel(ui.ctx(), *server, Some(ch), ch.category_id)
                 }
-                (state::RowMenu::Channel(..), "Benachrichtigungen…") => {
-                    app.nav.navigate("/settings/benachrichtigungen")
+                (state::RowMenu::Channel(server, ch), "Benachrichtigungen…") => {
+                    super::overlays::open_notifications(
+                        ui.ctx(),
+                        super::overlays::Target::channel(ch.id, *server, format!("#{}", ch.name)),
+                    )
                 }
                 (state::RowMenu::Channel(server, ch), _) => {
                     super::dialogs::confirm_delete_channel(ui.ctx(), *server, ch)

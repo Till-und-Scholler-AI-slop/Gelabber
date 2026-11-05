@@ -252,11 +252,23 @@ pub struct VoiceSelf {
 }
 
 /// A one-off message for a toast.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Notice {
-    Kicked { server: Uuid, text: String },
-    Banned { server: Uuid, text: String },
+    Kicked {
+        server: Uuid,
+        text: String,
+    },
+    Banned {
+        server: Uuid,
+        text: String,
+    },
     Error(String),
+    /// A new message by someone else (`useMessageToastsBridge`): the UI
+    /// decides whether it shows as a toast.
+    Message {
+        server: Uuid,
+        message: Box<Message>,
+    },
 }
 
 #[derive(Debug, Default)]

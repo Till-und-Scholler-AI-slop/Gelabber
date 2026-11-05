@@ -8,6 +8,7 @@ pub mod button;
 pub mod field;
 pub mod link;
 pub mod modal;
+pub mod opener;
 pub mod popover;
 pub mod separator;
 pub mod status;
@@ -43,6 +44,12 @@ pub fn keyboard_focus(ctx: &egui::Context) -> bool {
     }
     ctx.data_mut(|d| d.insert_temp(id, state));
     state
+}
+
+/// Marks focus as moved by keyboard (or by pointer), as a shortcut that
+/// opens a dialog does for :focus-visible in the browser.
+pub fn set_keyboard_focus(ctx: &egui::Context, on: bool) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("gelabber-keyboard-focus"), on));
 }
 
 /// The global focus ring (index.css): a 2px page-coloured gap around the

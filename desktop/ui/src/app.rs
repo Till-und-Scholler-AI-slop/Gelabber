@@ -495,6 +495,7 @@ impl GelabberApp {
         };
         screens::show(ui, &mut app, &mut self.screen);
         self.toasts.show(ui, !is_workspace(self.nav.route()));
+        crate::widgets::opener::restore(&ctx);
     }
 }
 

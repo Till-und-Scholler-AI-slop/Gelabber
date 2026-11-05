@@ -79,6 +79,11 @@ pub fn show(
     right -= 32.0 + 10.0;
 
     let max_title = right - 260.0 - 10.0 - rect.left() - 20.0;
+    // NotificationBell's aria-label: "#allgemein" or the person.
+    let bell_name = match &title {
+        Title::Channel { name, .. } => format!("Benachrichtigungen für #{name}"),
+        Title::Dm { name, .. } => format!("Benachrichtigungen für {name}"),
+    } + if muted { " (stumm)" } else { "" };
     match title {
         Title::Channel { name, voice } => {
             let x = rect.left() + 20.0;
@@ -113,6 +118,14 @@ pub fn show(
                 egui::Id::unique(("gelabber-dm-peer", channel)),
                 Sense::click(),
             );
+            // The button reads its contents: the presence, then the name.
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::Role::Button,
+                    true,
+                    format!("{} {name}", presence.label()),
+                )
+            });
             let fill = eased(
                 ui.ctx(),
                 response.id.with("hover"),
@@ -262,7 +275,8 @@ pub fn show(
         },
         id.with("bell"),
     );
-    out.bell_clicked = bell;
+    bell.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &bell_name));
+    out.bell_clicked = bell.clicked();
     if let Some(r) = toggle_rect {
         let on = layout::members_visible(ui.ctx());
         let label = if on {
@@ -270,7 +284,9 @@ pub fn show(
         } else {
             "Mitgliederliste einblenden"
         };
-        if header_icon(ui, r, Icon::Users, 18.0, on, label, id.with("members")) {
+        let toggle = header_icon(ui, r, Icon::Users, 18.0, on, label, id.with("members"));
+        toggle.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+        if toggle.clicked() {
             layout::set_members_visible(ui.ctx(), !on);
         }
     }
@@ -285,7 +301,7 @@ fn header_icon(
     on: bool,
     label: &str,
     id: egui::Id,
-) -> bool {
+) -> egui::Response {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let response = ui.interact(rect, id, Sense::click());
@@ -298,6 +314,9 @@ fn header_icon(
         c.hover,
     );
     ui.painter().rect_filled(rect, corner(7.0), fill);
+    if response.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
+        crate::widgets::focus_ring(ui.painter(), rect, 7.0, &theme);
+    }
     icons::paint_centered(
         ui.painter(),
         icon,
@@ -309,5 +328,5 @@ fn header_icon(
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     Tooltip::new(label).on_hover(&response, Side::Below);
-    response.clicked()
+    response
 }
