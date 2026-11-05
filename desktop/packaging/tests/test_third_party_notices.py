@@ -298,7 +298,7 @@ class WorkflowFactTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         file = tree(tmp.name, {'workflow.yml': workflow}) / 'workflow.yml'
-        return mock.patch.object(notices, 'WORKFLOW', file)
+        return mock.patch.multiple(notices, WORKFLOW=file, RELEASE_WORKFLOW=file)
 
     def facts(self, workflow):
         with self.reading(workflow):

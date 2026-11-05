@@ -13,19 +13,16 @@ on:
       - deploy/compose/compose.yaml
       - backend/Cargo.toml
       - .github/workflows/publish-minio.yml
-  pull_request:
-    paths:
-      - deploy/compose/minio/**
-      - deploy/compose/mc/**
-      - deploy/compose/minio-init.sh
-      - deploy/compose/compose.yaml
-      - backend/Cargo.toml
-      - .github/workflows/publish-minio.yml
+  # ci.yml builds and checks the images for pull requests.
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: minio-images-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 env:
   MINIO_RELEASE: RELEASE.2025-10-15T17-29-55Z

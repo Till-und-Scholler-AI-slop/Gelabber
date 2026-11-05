@@ -26,6 +26,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from test_changes import changed_areas
 from test_homelab_caddy import (
     HOSTPORT,
     _adapt,
@@ -279,26 +280,14 @@ class OperatorGuideTriggerTest(unittest.TestCase):
 
     def test_every_guide_starts_ci(self) -> None:
         repo = COMPOSE.parents[1]
-        workflow = (repo / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        block = workflow.split("  pull_request:", 1)[1].split("\n\n", 1)[0]
-        filters = [
-            line.strip()[2:]
-            for line in block.splitlines()
-            if line.strip().startswith("- ")
-        ]
-        self.assertIn("deploy/compose/**", filters)
         for path in OPERATOR_GUIDES:
             name = path.relative_to(repo).as_posix()
             with self.subTest(name):
-                self.assertTrue(
-                    any(
-                        name == entry
-                        or (entry.endswith("/**") and name.startswith(entry[:-2]))
-                        for entry in filters
-                    ),
+                self.assertIn(
+                    "deploy",
+                    changed_areas(name),
                     f"a pull request that only changes {name} starts no CI run",
                 )
-
 
 if __name__ == "__main__":
     unittest.main()

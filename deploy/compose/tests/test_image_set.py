@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+from test_changes import changed_areas
 
 ROOT = Path(__file__).resolve().parents[3]
 spec = importlib.util.spec_from_file_location('image_set', ROOT / '.github/workflows/scripts/image_set.py')
@@ -73,22 +74,17 @@ class Gates(unittest.TestCase):
             m.preflight({'api': {'image': 'image', 'digest': DIGEST}}, 'v0.2.4')
 
     def test_shared_and_build_dependencies_trigger_workflows(self):
-        # Inspect the actual filters, not a duplicate list pretending to execute Actions.
-        # Each runs for its own workflow file and the script it shares; CI
-        # also for the image workflow, which its deployment tests read.
-        workflows = {'ci': ('ci', 'publish-images'), 'publish-images': ('publish-images',)}
-        for name, own in workflows.items():
-            text = (ROOT / f'.github/workflows/{name}.yml').read_text()
-            paths = text.split('  pull_request:', 1)[1].split('\n\n', 1)[0]
-            for path in ('backend/shared/**', 'backend/api/**', 'backend/media/**', 'web/**',
-                         'backend/build/**', '.dockerignore', 'backend/Cargo.toml',
-                         'backend/Cargo.lock', 'rust-toolchain.toml',
-                         '.github/workflows/scripts/**', 'deploy/compose/**',
-                         *(f'.github/workflows/{workflow}.yml' for workflow in own)):
-                self.assertIn('      - ' + path + '\n', paths + '\n')
+        # Ask the script ci.yml runs, not a duplicate list pretending to execute Actions.
+        for path in ('backend/shared/src/lib.rs', 'backend/api/src/main.rs', 'backend/media/src/main.rs',
+                     'backend/build/run-native-ci.sh', '.dockerignore', 'backend/Cargo.toml',
+                     'backend/Cargo.lock', 'rust-toolchain.toml', '.github/workflows/scripts/image_set.py',
+                     '.github/workflows/publish-images.yml'):
+            with self.subTest(path=path):
+                self.assertIn('backend', changed_areas(path))
+        self.assertIn('web', changed_areas('web/Dockerfile'))
+        self.assertIn('deploy', changed_areas('deploy/compose/compose.yaml'))
         text = (ROOT / '.github/workflows/ci.yml').read_text()
-        self.assertNotIn('paths:', text.split('  push:', 1)[1].split('concurrency:', 1)[0])
-
+        self.assertNotIn('paths:', text.split('\non:\n', 1)[1].split('concurrency:', 1)[0])
 
 
 class Promotion(unittest.TestCase):

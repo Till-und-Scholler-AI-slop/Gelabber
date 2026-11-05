@@ -56,11 +56,12 @@ package; see `desktop/README.md`.
 Keep CI lean. Pull requests check only what is needed to merge safely.
 
 - **Pull requests:** fmt, clippy/lint, tests, build, and one representative integration check per area. Aim for under 15 minutes per workflow with a warm cache.
+- **Areas:** each top-level folder is one area (`backend/`, `web/`, `desktop/`, `deploy/`). `ci.yml` runs only the areas a pull request touches; `.github/workflows/scripts/changes.py` maps paths to areas. `ci-ok` is the one required check; a new job joins its `needs`.
 - **After merge (push to `main`/`v*`) and releases:** packaging, installers, package repositories, signing and uploads.
 - **Manual diagnostics** (fault matrices, soak and stability loops) go in their own workflow, started by hand or by a PR label, outside the PR gate (see `e2e-extended.yml`: label `e2e-extended`).
 - **Lists of scripts** go behind one entry point (e.g. `npm run test:checks`). CI and developers run the same command.
 - **New check:** say what it catches that existing checks miss. Add it to an existing job unless a parallel job saves wall time. Remove checks that a new one replaces.
-- **Every workflow** sets top-level `permissions`, by default `contents: read`, with jobs adding only what they need. Every job sets `timeout-minutes`. Actions stay pinned to commit SHAs (`workflow-pins.yml`).
+- **Every workflow** sets top-level `permissions`, by default `contents: read`, with jobs adding only what they need. Every job sets `timeout-minutes`. Actions stay pinned to commit SHAs (`deploy/compose/tests/test_workflow_pins.py`).
 - **Caches** are saved only by pushes (`save-if`, `cache-to`). Pull requests only read them, because per-PR copies exceed the repository's cache quota.
 - **Comments** in workflows are one or two lines saying why. Longer reasoning and history go in commit messages or `docs/`.
 

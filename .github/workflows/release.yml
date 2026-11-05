@@ -36,7 +36,7 @@ jobs:
         with:
           fetch-depth: 0
       # The desktop apps carry the version of their own workspace, and
-      # desktop-native.yml attaches them only to a release whose tag is that
+      # desktop-release.yml attaches them only to a release whose tag is that
       # version. Found out here, before the tag and the release exist.
       - name: Desktop apps have the release's version
         if: ${{ !inputs.refresh_latest_only }}
@@ -101,4 +101,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ inputs.tag }}
-        run: gh workflow run desktop-native.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG" -f release_tag="$RELEASE_TAG"
+        run: gh workflow run desktop-release.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG" -f release_tag="$RELEASE_TAG"

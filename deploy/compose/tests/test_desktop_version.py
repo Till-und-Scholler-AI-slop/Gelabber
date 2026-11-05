@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import tomllib
 import unittest
+from test_changes import changed_areas
 
 ROOT = Path(__file__).resolve().parents[3]
 SEMVER = re.compile(
@@ -64,13 +65,11 @@ class DesktopVersion(unittest.TestCase):
             desktop_version_allowed('0.6', '0.5.2')
 
     def test_ci_runs_this_when_either_version_changes(self):
-        ci = (ROOT / '.github/workflows/ci.yml').read_text()
-        paths = ci.split('pull_request:', 1)[1].split('push:', 1)[0]
-        for path in ('backend/Cargo.toml', 'desktop/Cargo.toml', 'deploy/compose/**'):
+        for path in ('backend/Cargo.toml', 'desktop/Cargo.toml'):
             with self.subTest(path=path):
-                self.assertIn(f'      - {path}\n', paths)
+                self.assertIn('deploy', changed_areas(path))
+        ci = (ROOT / '.github/workflows/ci.yml').read_text()
         self.assertIn('python3 -m unittest discover -s deploy/compose/tests', ci)
-
 
 if __name__ == '__main__':
     unittest.main()

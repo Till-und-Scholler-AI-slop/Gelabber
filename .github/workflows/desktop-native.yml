@@ -1,38 +1,23 @@
 # Desktop app for Linux and Windows: libwebrtc builds (cached), the native
-# core with a loopback call against mediasoup, the packaged apps and, for a
-# release, signing and upload. Pull requests run the checks; packaging runs
-# on pushes to main/v* and releases.
+# core with a loopback call against mediasoup and the packaged apps. ci.yml
+# calls it for pull requests and pushes, desktop-release.yml for a release.
 name: Desktop native core
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       release_tag:
-        description: Published release to attach the apps to and build the pacman repository for (run on that tag)
+        description: Release to build for (signing keys, pacman repository); empty for checks
+        type: string
         required: false
         default: ""
-  pull_request:
-    paths:
-      - desktop/**
-      - .github/workflows/desktop-native.yml
-  push:
-    branches: [main, "v[0-9]*"]
-    paths:
-      - desktop/**
-      - .github/workflows/desktop-native.yml
-  # Attaches the Linux and Windows apps to the release (pre-releases too) and,
-  # once enabled, publishes the pacman repository; see desktop/packaging/arch.
-  # Releases made by release.yml use the workflow token, which triggers no
-  # release event; it dispatches this workflow with release_tag instead.
-  release:
-    types: [published]
 
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
-  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag || '' }}
+  RELEASE_TAG: ${{ inputs.release_tag }}
 
 jobs:
   libwebrtc-linux:
@@ -659,8 +644,8 @@ jobs:
         id: sign
         timeout-minutes: 10
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && github.ref == format('refs/tags/{0}', github.event.release.tag_name || inputs.release_tag) && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && github.ref == format('refs/tags/{0}', github.event.release.tag_name || inputs.release_tag) && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.release_tag != '' && github.ref == format('refs/tags/{0}', inputs.release_tag) && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.release_tag != '' && github.ref == format('refs/tags/{0}', inputs.release_tag) && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           $name = 'gelabber-desktop-windows-x64-setup.exe'
@@ -999,7 +984,7 @@ jobs:
     env:
       # Releases sign with the repository key; everything else with a
       # throwaway key that only this job trusts.
-      ARCH_REPO_GPG_KEY: ${{ (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && secrets.ARCH_REPO_GPG_KEY || '' }}
+      ARCH_REPO_GPG_KEY: ${{ inputs.release_tag != '' && secrets.ARCH_REPO_GPG_KEY || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1053,7 +1038,7 @@ jobs:
 
       # The repository as built before the upgrade test added a pkgrel 2.
       - name: Rebuild the repository for upload
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        if: inputs.release_tag != ''
         env:
           TAG: ${{ env.RELEASE_TAG }}
         run: |
@@ -1068,86 +1053,3 @@ jobs:
           name: arch-repo
           path: site
           retention-days: 14
-
-  # Release only: the app tarball becomes a release asset, which the
-  # PKGBUILD downloads. Not with third-party notices that are out of date.
-  release-asset:
-    name: Attach the Linux app to the release
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
-    needs: [arch-repo, notices]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - name: Download the app
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: gelabber-desktop-linux-x64
-      - name: Upload to the release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ env.RELEASE_TAG }}
-        run: gh release upload "$TAG" gelabber-desktop-linux-x64.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
-
-  # Release only: installer, checksum, signature and latest.json, which the
-  # installed apps poll (desktop/app/src/update.rs). Independent of the Linux
-  # uploads; both wait for the notices.
-  release-asset-windows:
-    name: Attach the Windows app to the release
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
-    needs: [core-windows, notices]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - name: Download the app
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: gelabber-desktop-windows-x64
-      - name: Upload to the release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ env.RELEASE_TAG }}
-        run: |
-          set -euo pipefail
-          # The installer must be built from the released source, as the
-          # Linux package is.
-          if [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then
-            echo "release $TAG must be built from its tag, not $GITHUB_REF"; exit 1
-          fi
-          sha256sum --check gelabber-desktop-windows-x64-setup.exe.sha256
-          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gelabber-desktop-windows-x64-setup.exe"
-          jq -n --arg version "${TAG#v}" --arg url "$url" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --rawfile signature gelabber-desktop-windows-x64-setup.exe.sig \
-            '{version: $version, pub_date: $date,
-              platforms: {"windows-x86_64": {url: $url, signature: ($signature | rtrimstr("\n"))}}}' > latest.json
-          cat latest.json
-          gh release upload "$TAG" gelabber-desktop-windows-x64-setup.exe \
-            gelabber-desktop-windows-x64-setup.exe.sha256 gelabber-desktop-windows-x64-setup.exe.sig \
-            latest.json --clobber --repo "$GITHUB_REPOSITORY"
-
-  # Public: the repository on GitHub Pages. Off until the repository
-  # variable ARCH_REPO_PUBLISH is "true", and the github-pages environment
-  # should require an approval (desktop/packaging/arch/README.md).
-  arch-repo-publish:
-    name: Publish the pacman repository
-    if: (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')) && vars.ARCH_REPO_PUBLISH == 'true'
-    needs: [arch-repo, release-asset]
-    runs-on: ubuntu-24.04
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
-      - name: Download the repository
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: arch-repo
-          path: site
-      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
-        with:
-          path: site
-      - id: deploy
-        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
