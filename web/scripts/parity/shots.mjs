@@ -137,6 +137,15 @@ for (const scene of scenes) {
     await page.goto(fill(scene.path), { waitUntil: "networkidle" });
   }
   await page.evaluate(() => document.fonts.ready);
+  // A theme set by `before` arrives with the account's theme sync, which can
+  // land after the network went quiet: wait until the page shows it.
+  const [verb, , ...spec] = scene.before?.split(" ") ?? [];
+  if (verb === "theme") {
+    const text = spec.join(" ");
+    const id = text.startsWith("{") ? JSON.parse(text).id : text;
+    if (id !== "system")
+      await page.waitForFunction((want) => document.documentElement.dataset.theme === want, id);
+  }
   // Messages the scene posts (say.mjs), deleted after the screenshot, also
   // when a step fails, so the fixture stays as seeded.
   const said = [];
