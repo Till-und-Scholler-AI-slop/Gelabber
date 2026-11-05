@@ -424,6 +424,55 @@ fn fix_contrast(mut definition: Definition) -> Definition {
     definition
 }
 
+/// `fixContrast` of theme/model.ts, for the theme editor's "Kontraste
+/// verbessern" and the gallery swatches.
+pub fn fixed(definition: Definition) -> Definition {
+    fix_contrast(definition)
+}
+
+/// `contrastIssues` of theme/model.ts: what the theme editor warns about,
+/// computed from the colours as entered.
+pub fn contrast_issues(definition: &Definition) -> Vec<&'static str> {
+    let c = definition.colors;
+    let dark = definition.mode == Mode::Dark;
+    let elevated = if dark {
+        mix(c.panel, c.text, 0.04)
+    } else {
+        mix(c.background, Color32::WHITE, 0.6)
+    };
+    let selected = mix(c.panel, c.accent, 0.18);
+    let accent_text = ensure_contrast(c.accent, &[c.background, c.panel, c.surface, selected], 4.5);
+    let border_strong = ensure_contrast(
+        mix(c.border, c.text, 0.35),
+        &[c.background, c.panel, c.surface, elevated],
+        3.0,
+    );
+    let backgrounds = [c.background, c.panel, c.surface, c.rail];
+    let mut issues = Vec::new();
+    if backgrounds.iter().any(|bg| contrast(c.text, *bg) < 4.5) {
+        issues.push("Text ist auf mindestens einer Fläche schwer lesbar.");
+    }
+    if backgrounds.iter().any(|bg| contrast(c.muted, *bg) < 4.5) {
+        issues.push("Sekundärtext braucht mehr Kontrast.");
+    }
+    if contrast(readable_ink(c.accent), c.accent) < 4.5 {
+        issues.push("Schrift auf der Akzentfarbe ist schwer lesbar.");
+    }
+    if [c.background, c.panel, c.surface, selected]
+        .iter()
+        .any(|bg| contrast(accent_text, *bg) < 4.5)
+    {
+        issues.push("Links in der Akzentfarbe heben sich zu wenig ab.");
+    }
+    if [c.background, c.panel, c.surface, elevated]
+        .iter()
+        .any(|bg| contrast(border_strong, *bg) < 3.0)
+    {
+        issues.push("Rahmen von Eingabefeldern heben sich zu wenig ab.");
+    }
+    issues
+}
+
 /// `--lr-space-*` (4px grid).
 pub mod space {
     pub const S0_5: f32 = 2.0;
