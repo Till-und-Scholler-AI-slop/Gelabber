@@ -137,6 +137,7 @@ puts the tests' mediasoup on it; the CI job tries which one works.
 | App: the commands a server origin reaches, frames of a test pattern | `app/scripts/smoke.sh`, `app/scripts/smoke.ps1` | CI, Linux and Windows |
 | Viewer window: colours on a screenshot | `cargo test --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --ignored viewer` under Xvfb | CI, Linux |
 | Video inside the page: the web client's renderer, feed and tiles on real pixels | in `web/`: `npm run test:native-video-smoke` | **only locally** |
+| Native client calls (gelabber-call): a call on the seeded stack with Chromium people from `web/scripts/parity/call.mjs`, without devices (`GELABBER_FAKE_MEDIA=1`: dummy audio, test pattern camera and Live; speaking from the received bitrate) | `GELABBER_TEST_SERVER=http://127.0.0.1:5180 cargo test -p gelabber-call --features media --test live -- --ignored` | **only locally** |
 | Third-party notices | `python3 -m unittest discover -s desktop/packaging/tests`, `packaging/third-party-notices.py --check` | CI |
 
 The video inside the page is drawn by the web client

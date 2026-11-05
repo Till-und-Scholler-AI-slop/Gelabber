@@ -377,6 +377,12 @@ fn list_devices(engine: &core::Engine) -> Devices {
     }
 }
 
+pub(crate) fn simulate_media_loss(inner: &Arc<Inner>) {
+    if let Some(seat) = inner.media.current().and_then(|s| s.seat()) {
+        seat.sock.close();
+    }
+}
+
 pub(crate) fn apply_request(inner: &Arc<Inner>, key: VideoKey, request: VideoRequest) {
     if let Some(session) = inner.media.current() {
         session.apply_request(key, request);

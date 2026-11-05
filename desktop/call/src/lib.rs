@@ -528,6 +528,14 @@ impl Call {
         }
     }
 
+    /// Tests: drops the media socket as a network loss would, so the call
+    /// rebuilds its seat.
+    #[doc(hidden)]
+    pub fn simulate_media_loss(&self) {
+        #[cfg(feature = "media")]
+        media::simulate_media_loss(&self.inner);
+    }
+
     /// Puts away the note of a call whose connection was lost or failed.
     pub fn dismiss_lost_call(&self) {
         self.inner.write(|s| {
@@ -743,11 +751,12 @@ impl Call {
     pub fn request_video(&self, key: VideoKey, width: u32, height: u32, fps: u32) {
         let request = VideoRequest { width, height, fps };
         let previous = self.inner.requests.lock().insert(key, request);
-        if previous == Some(request) {
-            return;
-        }
         #[cfg(feature = "media")]
-        media::apply_request(&self.inner, key, request);
+        if previous != Some(request) {
+            media::apply_request(&self.inner, key, request);
+        }
+        #[cfg(not(feature = "media"))]
+        let _ = previous;
     }
 
     fn on_gateway(&self, event: &GatewayEvent) {

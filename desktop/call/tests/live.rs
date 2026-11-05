@@ -194,6 +194,32 @@ fn lena_joins_sofa_with_jonas_and_mira() {
             .iter()
             .any(|p| p.me && p.camera == Some(VideoKey::camera(lena)))
     }));
+    // The media connection drops: the seat is rebuilt with what was sent.
+    let before = published.lock().len();
+    call.simulate_media_loss();
+    wait("reconnecting", Duration::from_secs(5), || {
+        call.with_state(|s| s.status != CallStatus::Connected)
+    });
+    wait("connected again", Duration::from_secs(30), || {
+        call.with_state(|s| s.status == CallStatus::Connected)
+    });
+    wait(
+        "camera and microphone announced again",
+        Duration::from_secs(10),
+        || {
+            let seen = published.lock();
+            let again = &seen[before..];
+            again.contains(&(SigKind::P, Some(TrackKind::A)))
+                && again.contains(&(SigKind::P, Some(TrackKind::V)))
+        },
+    );
+    wait("Jonas' camera again", Duration::from_secs(20), || {
+        call.frame(VideoKey::camera(jonas))
+            .is_some_and(|f| f.serial > 5)
+    });
+    wait("Jonas heard again", Duration::from_secs(15), || {
+        call.levels().get(&jonas).is_some_and(|l| *l > 0.0)
+    });
     call.set_camera(false);
     wait("camera off for the others", Duration::from_secs(10), || {
         published.lock().contains(&(SigKind::U, Some(TrackKind::V)))
