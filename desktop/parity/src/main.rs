@@ -476,13 +476,31 @@ fn reveal(harness: &mut App<'_>, height: f32, label: &str, roles: &[egui::access
     }
 }
 
+/// Signed in on a server's page whose presence has not arrived yet.
+fn presence_pending(harness: &mut App<'_>) -> bool {
+    use gelabber_ui::route::Route;
+    let Some(app) = harness.state_mut().app() else {
+        return false;
+    };
+    let server = match app.nav().route() {
+        Route::Server(s) | Route::Channel(s, _) | Route::ServerSettings(s) => *s,
+        _ => return false,
+    };
+    app.client()
+        .with_state(|s| s.me().is_some() && !s.presence.contains_key(&server))
+}
+
 /// Steps until the app has had nothing in flight for ten frames.
 fn settle(harness: &mut App<'_>) {
     let start = Instant::now();
     let mut quiet = 0;
     while quiet < 10 && start.elapsed() < Duration::from_secs(20) {
         harness.step();
-        if harness.state().busy() {
+        // The gateway's presence snapshot is no request the client counts;
+        // without it the member list shows everyone offline. A server that
+        // never sends one (not a member) waits 5 s at most.
+        let presence = start.elapsed() < Duration::from_secs(5) && presence_pending(harness);
+        if harness.state().busy() || presence {
             quiet = 0;
             std::thread::sleep(Duration::from_millis(20));
         } else {
