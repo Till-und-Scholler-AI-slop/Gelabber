@@ -603,6 +603,16 @@
           "clicktext": "Server beitreten"
         }
       ]
+    },
+    {
+      "name": "toast-server-missing",
+      "path": "/s/00000000-0000-4000-8000-000000000001",
+      "user": "lena",
+      "actions": [
+        {
+          "wait": 1000
+        }
+      ]
     }
   ]
 }

@@ -148,6 +148,7 @@ pub fn show(
             pos2(area.right() - 16.0, area.bottom() - 14.0),
         );
         ui.painter().rect_filled(r, corner(7.0), c.panel);
+        crate::toasts::set_anchor(ui.ctx(), r);
         Block::single(
             ui,
             "Du kannst in diesem Kanal nicht schreiben.",
@@ -239,6 +240,8 @@ pub fn show(
         Stroke::new(1.0, border),
         StrokeKind::Inside,
     );
+    // `anchor-name: --lr-composer`: the toasts sit above it.
+    crate::toasts::set_anchor(ui.ctx(), field);
     let mut fy = field.top() + 1.0;
 
     // The reply bar.

@@ -16,6 +16,19 @@ struct Toast {
     until: Option<f64>,
 }
 
+/// The composer drawn this frame (`anchor-name: --lr-composer`).
+pub fn set_anchor(ctx: &egui::Context, rect: Rect) {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.insert_temp(Id::unique("gelabber-toast-anchor"), (rect, frame)));
+}
+
+fn anchor(ctx: &egui::Context) -> Option<Rect> {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data(|d| d.get_temp::<(Rect, u64)>(Id::unique("gelabber-toast-anchor")))
+        .filter(|(_, f)| *f == frame)
+        .map(|(r, _)| r)
+}
+
 #[derive(Default)]
 pub struct Toasts {
     items: Vec<Toast>,
@@ -74,8 +87,14 @@ impl Toasts {
         self.items.retain(|t| t.until.is_none_or(|u| u > now));
         let screen = ctx.content_rect();
         let width = 380.0_f32.min(screen.width() - 32.0);
-        let bottom = screen.bottom() - if outside_workspace { 16.0 } else { 12.0 };
-        let right = screen.right() - 16.0;
+        // In the workspace 12px over the composer, 16px in from its right
+        // edge; without one, 12px over the bottom.
+        let composer = (!outside_workspace).then(|| anchor(&ctx)).flatten();
+        let bottom = match composer {
+            Some(r) => r.top() - 12.0,
+            None => screen.bottom() - if outside_workspace { 16.0 } else { 12.0 },
+        };
+        let right = composer.map_or(screen.right(), |r| r.right()) - 16.0;
         let mut closed = None;
         // Info toasts sit above the error toasts.
         let mut order: Vec<&Toast> = self.items.iter().filter(|t| !t.error).collect();

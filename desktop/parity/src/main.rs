@@ -64,6 +64,25 @@ enum Action {
     Wait(u64),
 }
 
+/// What a scene posted and what it undoes afterwards: run when dropped,
+/// so a failing step leaves the fixture as seeded too.
+#[derive(Default)]
+struct Undo {
+    said: Vec<(String, String)>,
+    after: Option<String>,
+}
+
+impl Drop for Undo {
+    fn drop(&mut self) {
+        for (who, id) in &self.said {
+            say(&["delete", who, id]);
+        }
+        if let Some(after) = &self.after {
+            say(&after.split(' ').collect::<Vec<_>>());
+        }
+    }
+}
+
 /// Runs say.mjs with `args`; its output (a message id for "post").
 fn say(args: &[&str]) -> String {
     let out = std::process::Command::new("node")
@@ -236,7 +255,10 @@ fn render(out: &Path, only: Option<Vec<String>>) {
         harness.ctx.all_styles_mut(|s| {
             s.visuals.text_cursor.stroke.color = egui::Color32::TRANSPARENT;
         });
-        let mut said = Vec::new();
+        let mut undo = Undo {
+            said: Vec::new(),
+            after: scene.after.clone(),
+        };
         for action in &scene.actions {
             match action {
                 Action::Say(spec) => {
@@ -246,7 +268,8 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                         parts.next().unwrap_or_default(),
                         parts.next().unwrap_or_default(),
                     );
-                    said.push((who.to_owned(), say(&["post", who, at, text])));
+                    undo.said
+                        .push((who.to_owned(), say(&["post", who, at, text])));
                 }
                 Action::Click(name) => {
                     use egui::accesskit::Role;
@@ -301,12 +324,7 @@ fn render(out: &Path, only: Option<Vec<String>>) {
             .unwrap_or_else(|e| panic!("render {}: {e}", scene.name));
         let path = out.join(format!("{}.png", scene.name));
         image.save(&path).expect("save png");
-        for (who, id) in &said {
-            say(&["delete", who, id]);
-        }
-        if let Some(after) = &scene.after {
-            say(&after.split(' ').collect::<Vec<_>>());
-        }
+        drop(undo);
         println!("{}: {route} -> {}", scene.name, path.display());
     }
 }
