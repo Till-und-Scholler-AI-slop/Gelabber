@@ -108,6 +108,12 @@
       "name": "home",
       "path": "/",
       "user": "lena"
+    },
+    {
+      "name": "voice-sofa",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted"
     }
   ]
 }

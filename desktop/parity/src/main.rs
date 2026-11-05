@@ -96,6 +96,12 @@ fn render(out: &Path, only: Option<Vec<String>>) {
         if only.as_ref().is_some_and(|o| !o.contains(&scene.name)) {
             continue;
         }
+        // Opening a channel marks it read; every scene starts from the reference.
+        let reset = std::process::Command::new("node")
+            .arg(parity_dir().join("reset.mjs"))
+            .status()
+            .expect("run reset.mjs");
+        assert!(reset.success(), "reset.mjs failed");
         let client = gelabber_client::Client::new(&fixture.base).expect("client");
         if let Some(user) = &scene.user {
             let email = &fixture.users[user].email;

@@ -5,6 +5,7 @@
 //   node scripts/parity/shots.mjs [out-dir] [scene,…]
 // GELABBER_PARITY_BROWSER names the Chromium binary (default /usr/bin/chromium).
 /* global process, console, document */
+import { execFileSync } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { chromium } from "playwright";
@@ -31,6 +32,8 @@ const browser = await chromium.launch({
 
 for (const scene of scenes) {
   if (ONLY && !ONLY.includes(scene.name)) continue;
+  // Every scene starts from the reference read state (reset.mjs).
+  execFileSync(process.execPath, [join(here, "reset.mjs")], { stdio: "inherit" });
   const context = await browser.newContext({
     baseURL: fixture.base,
     viewport: { width: size[0], height: size[1] },
