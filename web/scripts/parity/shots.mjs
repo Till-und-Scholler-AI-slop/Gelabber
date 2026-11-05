@@ -5,7 +5,7 @@
 //   node scripts/parity/shots.mjs [out-dir] [scene,…]
 // GELABBER_PARITY_BROWSER names the Chromium binary (default /usr/bin/chromium).
 /* global process, console, document */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { chromium } from "playwright";
@@ -23,6 +23,29 @@ const ids = {
   ...fixture.servers.home.channels,
 };
 const fill = (path) => path.replace(/\{(\w+)\}/g, (_, key) => ids[key]);
+
+/** call.mjs with `channel people`, resolved once everyone is in. */
+function startCall(spec) {
+  const child = spawn(process.execPath, [join(here, "call.mjs"), ...spec.split(" ")], {
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  return new Promise((resolve, reject) => {
+    let out = "";
+    child.stdout.on("data", (chunk) => {
+      out += chunk;
+      if (out.includes("in the call")) setTimeout(() => resolve(child), 1500);
+    });
+    child.on("exit", (code) => reject(new Error(`call.mjs exited with ${code}`)));
+  });
+}
+
+function stopCall(child) {
+  return new Promise((resolve) => {
+    child.removeAllListeners("exit");
+    child.on("exit", () => setTimeout(resolve, 1500));
+    child.kill("SIGTERM");
+  });
+}
 
 await mkdir(OUT, { recursive: true });
 const browser = await chromium.launch({
@@ -51,6 +74,7 @@ for (const scene of scenes) {
     });
     if (!login.ok()) throw new Error(`login ${scene.user}: ${login.status()}`);
   }
+  const call = scene.call ? await startCall(scene.call) : null;
   const page = await context.newPage();
   await page.goto(fill(scene.path), { waitUntil: "networkidle" });
   await page.evaluate(() => document.fonts.ready);
@@ -61,5 +85,6 @@ for (const scene of scenes) {
   await page.screenshot({ path: join(OUT, `${scene.name}.png`) });
   console.log(`${scene.name}: ${page.url()}`);
   await context.close();
+  if (call) await stopCall(call);
 }
 await browser.close();

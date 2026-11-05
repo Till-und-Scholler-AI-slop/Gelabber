@@ -33,6 +33,43 @@ struct Scene {
     name: String,
     path: String,
     user: Option<String>,
+    /// `channel people` for call.mjs: people kept in a voice channel.
+    call: Option<String>,
+}
+
+/// call.mjs running for a scene; leaves the call when dropped.
+struct Call(std::process::Child);
+
+impl Call {
+    fn start(spec: &str) -> Self {
+        use std::io::{BufRead, BufReader};
+        let mut child = std::process::Command::new("node")
+            .arg(parity_dir().join("call.mjs"))
+            .args(spec.split(' '))
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("run call.mjs");
+        let out = child.stdout.take().expect("call.mjs stdout");
+        for line in BufReader::new(out).lines() {
+            let line = line.expect("read call.mjs");
+            if line.contains("in the call") {
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(1500));
+        Self(child)
+    }
+}
+
+impl Drop for Call {
+    fn drop(&mut self) {
+        // SIGTERM lets the browsers leave the call cleanly.
+        let _ = std::process::Command::new("kill")
+            .arg(self.0.id().to_string())
+            .status();
+        let _ = self.0.wait();
+        std::thread::sleep(Duration::from_millis(1500));
+    }
 }
 
 #[derive(Deserialize)]
@@ -102,6 +139,7 @@ fn render(out: &Path, only: Option<Vec<String>>) {
             .status()
             .expect("run reset.mjs");
         assert!(reset.success(), "reset.mjs failed");
+        let _call = scene.call.as_deref().map(Call::start);
         let client = gelabber_client::Client::new(&fixture.base).expect("client");
         if let Some(user) = &scene.user {
             let email = &fixture.users[user].email;
