@@ -172,14 +172,10 @@ fn actions(ui: &mut Ui, height: f32, add: impl FnOnce(&mut Ui)) {
 /// `.lr-primary` height: one 21px line, padding 12, a 1px border.
 const PRIMARY_H: f32 = 2.0 + 24.0 + 21.0;
 
-/// The ghost "Schließen", centred in the row's height.
+/// The ghost "Schließen", stretched to the row's height (flex
+/// `align-items: stretch`).
 fn close_button(ui: &mut Ui, height: f32) -> egui::Response {
-    ui.allocate_ui_with_layout(
-        Vec2::new(0.0, height),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| ui.add(Button::new("Schließen").ghost()),
-    )
-    .inner
+    ui.add(Button::new("Schließen").ghost().height(height))
 }
 
 const DT: TextStyle = TextStyle::new(13.0, 400.0, 1.5);

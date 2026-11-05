@@ -53,6 +53,7 @@ pub struct Button<'a> {
     icon: Option<Icon>,
     fill_width: bool,
     width: Option<f32>,
+    height: Option<f32>,
     disabled: bool,
     pending: Option<&'a str>,
     text_color: Option<Color32>,
@@ -67,6 +68,7 @@ impl<'a> Button<'a> {
             icon: None,
             fill_width: false,
             width: None,
+            height: None,
             disabled: false,
             pending: None,
             text_color: None,
@@ -117,6 +119,12 @@ impl<'a> Button<'a> {
 
     pub fn width(mut self, width: f32) -> Self {
         self.width = Some(width);
+        self
+    }
+
+    /// A taller box, as `align-items: stretch` makes it in a flex row.
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = Some(height);
         self
     }
 
@@ -207,7 +215,7 @@ impl Widget for Button<'_> {
             self.width
                 .unwrap_or(content_w + 2.0 * self.size.padding() + 2.0)
         };
-        let height = self.size.height();
+        let height = self.height.unwrap_or_else(|| self.size.height());
         let busy = self.pending.is_some();
         let enabled = !self.disabled && !busy;
         let sense = if enabled {
