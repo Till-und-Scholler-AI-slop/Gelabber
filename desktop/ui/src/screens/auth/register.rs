@@ -168,7 +168,7 @@ fn mail_sent(ui: &mut Ui, app: &mut AppCtx, s: &mut State, redirect: Option<&str
     let seconds = seconds_left(ui, s.resend_until);
     let pending = s.resend.is_some();
     layout::frame(ui, app, "register-mail", |ui, app| {
-        layout::heading(ui, "Postfach prüfen");
+        layout::focused_heading(ui, "Postfach prüfen");
         result_with_strong(
             ui,
             "Bestätigungslink an ",

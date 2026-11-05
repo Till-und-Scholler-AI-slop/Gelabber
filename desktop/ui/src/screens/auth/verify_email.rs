@@ -49,7 +49,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     }
     if s.dead_link {
         layout::frame(ui, app, "verify-dead", |ui, app| {
-            layout::heading(ui, "Link abgelaufen");
+            layout::focused_heading(ui, "Link abgelaufen");
             result_lines(
                 ui,
                 &[
@@ -61,7 +61,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 ],
             );
             ui.add_space(space::S6);
-            if layout::link_line(ui, "Zur Anmeldung") {
+            if layout::action_link(ui, "Zur Anmeldung") {
                 app.nav.navigate("/login");
             }
         });

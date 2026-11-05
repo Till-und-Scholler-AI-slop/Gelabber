@@ -11,6 +11,7 @@ pub mod modal;
 pub mod opener;
 pub mod popover;
 pub mod separator;
+pub mod skeleton;
 pub mod status;
 pub mod switch;
 pub mod tooltip;
@@ -23,7 +24,7 @@ pub use link::Link;
 pub use modal::{Modal, ModalOutput, ModalWidth};
 pub use popover::{Popover, menu_item};
 pub use separator::{hairline_h, hairline_v};
-pub use status::{FormError, InlineStatus, StatusTone};
+pub use status::{FormError, InlineStatus, StatusTone, load_error};
 pub use switch::{Checkbox, Switch};
 pub use tooltip::Tooltip;
 

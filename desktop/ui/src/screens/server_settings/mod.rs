@@ -300,6 +300,16 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     controls::show_confirm(&ctx);
 }
 
+/// Whether a copy can land anywhere: without a display server (Linux) there
+/// is no clipboard, and egui would drop the text without a word.
+fn clipboard_reachable() -> bool {
+    if cfg!(target_os = "linux") {
+        std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some()
+    } else {
+        true
+    }
+}
+
 fn load_error(ui: &mut Ui, app: &AppCtx, rect: Rect, server: Uuid) {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
@@ -825,9 +835,16 @@ fn invites(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
                             )
                             .clicked()
                         {
-                            ui.ctx().copy_text(app.client.http().invite_link(&inv.code));
-                            s.copied.insert(inv.code.clone(), now);
-                            s.invites_status.clear();
+                            if clipboard_reachable() {
+                                ui.ctx().copy_text(app.client.http().invite_link(&inv.code));
+                                s.copied.insert(inv.code.clone(), now);
+                                s.invites_status.clear();
+                            } else {
+                                s.invites_status.error(
+                                    ui,
+                                    format!("Kopieren ging nicht. Der Code ist {}.", inv.code),
+                                );
+                            }
                             ui.ctx()
                                 .request_repaint_after(std::time::Duration::from_millis(1500));
                         }

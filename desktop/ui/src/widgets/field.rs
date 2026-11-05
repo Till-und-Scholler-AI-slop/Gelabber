@@ -113,8 +113,8 @@ impl<'a> TextField<'a> {
             let rect =
                 Rect::from_min_size(pos2(top.x, y), Vec2::new(block.width(), block.height()));
             block.paint(ui.painter(), rect.min);
-            // Clicking the <label> focuses its input.
-            let label_response = ui.interact(rect, self.id.with("label"), Sense::click());
+            // Clicking the <label> focuses its input; Tab passes it by.
+            let label_response = ui.interact(rect, self.id.with("label"), Sense::CLICK);
             if label_response.clicked() {
                 ui.memory_mut(|m| m.request_focus(self.id));
             }

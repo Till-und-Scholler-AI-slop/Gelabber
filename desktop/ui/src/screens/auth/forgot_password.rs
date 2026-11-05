@@ -123,7 +123,7 @@ fn sent(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     let seconds = seconds_left(ui, s.resend_until);
     let pending = s.resend.is_some();
     layout::frame(ui, app, "forgot-password-sent", |ui, app| {
-        layout::heading(ui, "Postfach prüfen");
+        layout::focused_heading(ui, "Postfach prüfen");
         result_with_strong(
             ui,
             "Falls zu ",

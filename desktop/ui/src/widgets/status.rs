@@ -124,3 +124,47 @@ impl Widget for InlineStatus<'_> {
         response
     }
 }
+
+/// `LoadError` (`.ui-load-error`): the message and "Erneut versuchen"
+/// under it, in the danger box. True when the button was pressed.
+pub fn load_error(ui: &mut Ui, message: &str, pending: bool) -> bool {
+    let theme = Theme::of(ui.ctx());
+    let c = &theme.c;
+    let width = ui.available_width();
+    // padding 10px 12px after the 3px bar; the button 12px under the text.
+    let block = Block::wrapped(ui, message, text::BODY, c.text, width - 3.0 - 24.0);
+    let text_h = super::field::layout_unit(block.height());
+    let height = 10.0 + text_h + 12.0 + 32.0 + 10.0;
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    super::announce(&response, egui::Role::Alert, message);
+    let painter = ui.painter().clone();
+    let box_rect = super::snap(ui.ctx(), rect);
+    painter.rect_filled(
+        box_rect,
+        corner(theme.radius.sm),
+        over(c.bg, c.danger_bg, 0.18),
+    );
+    painter
+        .with_clip_rect(Rect::from_min_max(
+            box_rect.min,
+            pos2(box_rect.left() + 3.0, box_rect.bottom()),
+        ))
+        .rect_filled(box_rect, corner(theme.radius.sm), c.danger);
+    block.paint(&painter, pos2(rect.left() + 15.0, rect.top() + 10.0));
+    let button = super::Button::new("Erneut versuchen")
+        .small()
+        .pending(pending.then_some("Wird geladen…"));
+    let at = pos2(rect.left() + 15.0, rect.top() + 10.0 + text_h + 12.0);
+    let clicked = ui
+        .put(
+            Rect::from_min_size(at, Vec2::new(button_width(ui, "Erneut versuchen"), 32.0)),
+            button,
+        )
+        .clicked();
+    clicked && !pending
+}
+
+/// A small button's width for `label` (padding 12px, a 1px border).
+fn button_width(ui: &Ui, label: &str) -> f32 {
+    Block::single(ui, label, text::UI, Color32::WHITE).width() + 26.0
+}

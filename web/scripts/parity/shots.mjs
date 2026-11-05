@@ -23,7 +23,15 @@ const ids = {
   dm: fixture.dm,
   ...fixture.servers.home.channels,
 };
-const fill = (path) => path.replace(/\{(\w+)\}/g, (_, key) => ids[key]);
+// "{invite}": the seeded invite's code, asked for when a scene needs it.
+const fill = (path) =>
+  path.replace(/\{(\w+)\}/g, (_, key) =>
+    key === "invite"
+      ? execFileSync(process.execPath, [join(here, "say.mjs"), "invite-code", "lena", "home"], {
+          encoding: "utf8",
+        }).trim()
+      : ids[key],
+  );
 
 /** call.mjs with `channel people`, resolved once everyone is in. */
 function startCall(spec) {
@@ -164,6 +172,7 @@ for (const scene of scenes) {
       if (action.focus)
         await page
           .getByRole("textbox", { name: action.focus, exact: true })
+          .or(page.getByLabel(action.focus, { exact: true }))
           .or(page.getByPlaceholder(action.focus, { exact: true }))
           .first()
           .focus();

@@ -186,6 +186,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
             panel(ui, app);
             if !home::redirect(ui, app) {
                 home::welcome(ui, app, layout::page_rect(content, false));
+            } else if home::loading(app) {
+                crate::widgets::skeleton::main(
+                    ui,
+                    layout::page_rect(content, false),
+                    crate::widgets::skeleton::Kind::Overview,
+                    egui::Id::unique("home-skeleton"),
+                );
             }
         }
     }

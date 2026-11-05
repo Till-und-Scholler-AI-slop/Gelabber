@@ -414,6 +414,10 @@ fn poll_sync(client: &Client, s: &mut Sync) {
                     s.error = None;
                 }
             }
+            // theme/account.ts: a document it cannot read is the server's.
+            Err(ApiError::Decode(_)) => {
+                s.error = Some("Unbekanntes Theme-Format vom Server.".into())
+            }
             Err(_) => {
                 s.error =
                     Some("Themes konnten nicht geladen werden. Bitte erneut versuchen.".into())
@@ -463,7 +467,11 @@ pub fn change(ctx: &egui::Context, app: &AppCtx, op: Op) -> bool {
             true
         }
         Err(e) => {
-            s.error = Some(e);
+            s.error = Some(if e.is_empty() {
+                "Theme konnte nicht gespeichert werden.".into()
+            } else {
+                e
+            });
             false
         }
     }
@@ -1013,6 +1021,12 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
             StrokeKind::Inside,
         );
         block.paint(ui.painter(), pos2(rect.left() + 15.0, rect.top() + 13.0));
+        let status = ui.interact(
+            Rect::from_min_size(pos2(rect.left() + 15.0, rect.top() + 13.0), block.size()),
+            Id::unique("gelabber-theme-sync-status"),
+            Sense::hover(),
+        );
+        crate::widgets::announce(&status, egui::Role::Status, &msg);
         if !sync_view.saving {
             let brect = Rect::from_min_size(
                 pos2(
@@ -1807,6 +1821,59 @@ mod tests {
         let deleted = apply_op(&saved, &Op::Delete(custom.id.clone())).unwrap();
         assert_eq!(deleted.active, "dark");
         assert!(apply_op(&doc, &Op::Apply("nope".into())).is_err());
+    }
+
+    /// A theme change the server refuses, then a document it cannot read
+    /// (theme/account.ts): the sync box says so and offers the retry.
+    #[test]
+    fn failed_theme_saves_and_unknown_documents() {
+        use crate::app::testkit::{FakeApi, Reply, launcher, wait_for_label};
+        use egui::accesskit::Role;
+        use egui_kittest::kittest::Queryable;
+        let _config = crate::platform::paths::testing::TempConfig::new("themes-failed");
+        let garbage = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let serve = garbage.clone();
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("PUT", "/me/themes") => Some(Reply::error(500, "internal")),
+            ("GET", "/me/themes") if serve.load(std::sync::atomic::Ordering::SeqCst) => {
+                Some(Reply::json(serde_json::json!({"active": 7})))
+            }
+            _ => None,
+        });
+        let mut harness = launcher(&api, "/settings/darstellung");
+        wait_for_label(&mut harness, "Hell");
+        // The card takes the click once the account's document is loaded.
+        let start = std::time::Instant::now();
+        while Theme::of(&harness.ctx).is_dark() {
+            assert!(start.elapsed().as_secs() < 15, "the theme did not change");
+            harness
+                .get_by_role_and_label(Role::RadioButton, "Hell")
+                .click();
+            harness.run_steps(2);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let unsynced = "Noch nicht synchronisiert. Deine Änderung ist hier gespeichert.";
+        wait_for_label(&mut harness, "Nicht gespeichert – erneut versuchen");
+        // The Themes area holds the sync box with the account's state.
+        harness
+            .state_mut()
+            .app()
+            .expect("the app")
+            .navigate("/settings/themes");
+        wait_for_label(&mut harness, unsynced);
+        // The local change shows meanwhile, as in the web.
+        assert!(!Theme::of(&harness.ctx).is_dark());
+        garbage.store(true, std::sync::atomic::Ordering::SeqCst);
+        harness
+            .get_by_role_and_label(Role::Button, "Erneut anwenden")
+            .click();
+        wait_for_label(&mut harness, "Unbekanntes Theme-Format vom Server.");
+        // An operation that cannot apply says why, or the generic line.
+        let doc = ThemeDocument::default();
+        assert_eq!(
+            apply_op(&doc, &Op::Apply("nope".into())).unwrap_err(),
+            "Das ausgewählte Theme ist nicht mehr verfügbar."
+        );
     }
 
     /// "System" follows the OS while the app runs, as prefers-color-scheme.

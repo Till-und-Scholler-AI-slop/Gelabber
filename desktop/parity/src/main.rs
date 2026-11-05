@@ -228,6 +228,10 @@ fn fill(path: &str, fixture: &Fixture) -> String {
     for (key, value) in ids {
         out = out.replace(&format!("{{{key}}}"), &value);
     }
+    // The seeded invite's code, asked for when a scene needs it.
+    if out.contains("{invite}") {
+        out = out.replace("{invite}", &say(&["invite-code", "lena", "home"]));
+    }
     out
 }
 

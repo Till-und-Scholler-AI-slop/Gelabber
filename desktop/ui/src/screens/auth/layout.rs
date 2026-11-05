@@ -175,6 +175,51 @@ pub fn heading(ui: &mut Ui, title: &str) {
     show_block(ui, &block);
 }
 
+/// A heading that takes focus on mount (`useFocusOnMount`, tabindex -1):
+/// its outline is off, but the global focus rule's page-coloured 2px
+/// shadow shows around the block until the user moves on.
+pub fn focused_heading(ui: &mut Ui, title: &str) {
+    let ctx = ui.ctx().clone();
+    let id = egui::Id::unique(("gelabber-focused-heading", title));
+    if crate::widgets::field::mounted(&ctx, id.with("mount")) {
+        ctx.data_mut(|d| d.insert_temp(id, true));
+    }
+    // A click or a key takes the focus elsewhere, as in the browser.
+    if ctx.input(|i| {
+        i.pointer.any_pressed()
+            || i.events
+                .iter()
+                .any(|e| matches!(e, egui::Event::Key { pressed: true, .. }))
+    }) {
+        ctx.data_mut(|d| d.insert_temp(id, false));
+    }
+    let theme = Theme::of(&ctx);
+    let block = Block::wrapped(ui, title, HEADING, theme.c.text, ui.available_width());
+    let top = ui.cursor().min;
+    show_block(ui, &block);
+    if ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false) {
+        let rect = Rect::from_min_size(top, Vec2::new(ui.available_width(), block.height()));
+        ui.painter().rect_stroke(
+            rect.expand(1.0),
+            egui::CornerRadius::ZERO,
+            egui::Stroke::new(2.0, theme.c.bg),
+            egui::StrokeKind::Middle,
+        );
+    }
+}
+
+/// An `.auth-link` in `.auth-actions`: the card's 16px, not the footer's 14.
+pub fn action_link(ui: &mut Ui, label: &str) -> bool {
+    let style = text::TextStyle::new(16.0, 500.0, 1.5);
+    let (row, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), style.line_px()),
+        Sense::hover(),
+    );
+    let block = Block::single(ui, label, style, Color32::WHITE);
+    let rect = Rect::from_min_size(row.min, Vec2::new(block.width(), row.height()));
+    ui.put(rect, Link::new(label).style(style)).clicked()
+}
+
 /// `.auth-lead` (margin-top 4): muted body text.
 pub fn lead(ui: &mut Ui, lead: &str) {
     let theme = Theme::of(ui.ctx());

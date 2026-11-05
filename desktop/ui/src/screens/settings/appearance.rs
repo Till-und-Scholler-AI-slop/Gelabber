@@ -98,6 +98,9 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         let wid = Id::unique(("gelabber-mode", *id));
         let response = ui.interact(rect, wid, Sense::click());
         let checked = active == *id;
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::Role::RadioButton, true, checked, *label)
+        });
         let fill = eased(ui.ctx(), wid, response.hovered(), c.panel, c.hover);
         let painter = ui.painter();
         if response.has_focus() && keyboard_focus(ui.ctx()) {

@@ -1042,6 +1042,21 @@ pub fn placeholder(
     let c = theme.c;
     brand(ui, rect);
     let painter = ui.painter().clone();
+    // `aria-label` of the <aside>, and its role="status" text.
+    let region = ui.interact(
+        rect,
+        Id::unique("sidebar-placeholder"),
+        egui::Sense::hover(),
+    );
+    crate::widgets::announce(
+        &region,
+        egui::Role::Navigation,
+        if failure.is_some() {
+            "Navigation"
+        } else {
+            "Navigation wird geladen"
+        },
+    );
     match failure {
         None => {
             let t = ui.input(|i| i.time) as f32;
@@ -1069,6 +1084,12 @@ pub fn placeholder(
             );
             let top = rect.top() + 52.0 + 24.0;
             block.paint(&painter, pos2(rect.left() + 22.0, top));
+            let status = ui.interact(
+                Rect::from_min_size(pos2(rect.left() + 22.0, top), block.size()),
+                Id::unique("sidebar-failure"),
+                egui::Sense::hover(),
+            );
+            crate::widgets::announce(&status, egui::Role::Status, message);
             let busy = app.client.busy();
             let label = if busy {
                 "Wird geladen…"
@@ -1081,6 +1102,7 @@ pub fn placeholder(
                 Vec2::new(lb.width() + 26.0, 36.0),
             );
             let response = common::click(ui, button, Id::unique("sidebar-retry"));
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, !busy, label));
             painter.rect(
                 button,
                 corner(theme.radius.sm),

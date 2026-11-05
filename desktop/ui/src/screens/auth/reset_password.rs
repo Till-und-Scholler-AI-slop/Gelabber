@@ -51,7 +51,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     }
     if s.dead_link {
         layout::frame(ui, app, "reset-dead", |ui, app| {
-            layout::heading(ui, "Link abgelaufen");
+            layout::focused_heading(ui, "Link abgelaufen");
             result_lines(
                 ui,
                 &[(
@@ -60,7 +60,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 )],
             );
             ui.add_space(space::S6);
-            if layout::link_line(ui, "Neuen Link anfordern") {
+            if layout::action_link(ui, "Neuen Link anfordern") {
                 app.nav.navigate("/forgot-password");
             }
         });

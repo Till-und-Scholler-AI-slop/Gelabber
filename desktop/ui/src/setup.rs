@@ -458,7 +458,7 @@ fn setup_page(ui: &mut Ui, setup: &mut Setup, checking: bool) -> Option<Action> 
     let input_id = crate::widgets::field::field_id("server");
     let label_rect = Rect::from_min_size(pos2(x, y), label.size());
     if ui
-        .interact(label_rect, input_id.with("label"), Sense::click())
+        .interact(label_rect, input_id.with("label"), Sense::CLICK)
         .clicked()
     {
         ui.memory_mut(|m| m.request_focus(input_id));

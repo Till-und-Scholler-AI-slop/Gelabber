@@ -840,6 +840,66 @@
           "key": "Tab"
         }
       ]
+    },
+    {
+      "name": "forgot-password",
+      "path": "/forgot-password",
+      "user": null
+    },
+    {
+      "name": "reset-password",
+      "path": "/reset-password",
+      "user": null
+    },
+    {
+      "name": "verify-email",
+      "path": "/verify-email",
+      "user": null
+    },
+    {
+      "name": "invite-page",
+      "path": "/invite/{invite}",
+      "user": null
+    },
+    {
+      "name": "invite-invalid",
+      "path": "/invite/xyz",
+      "user": null
+    },
+    {
+      "name": "not-found",
+      "path": "/gibt-es-nicht",
+      "user": "lena"
+    },
+    {
+      "name": "login-expired",
+      "path": "/login?reason=expired",
+      "user": null
+    },
+    {
+      "name": "login-error",
+      "path": "/login",
+      "user": null,
+      "actions": [
+        {
+          "focus": "E-Mail-Adresse"
+        },
+        {
+          "type": "lena@example.test"
+        },
+        {
+          "focus": "Passwort"
+        },
+        {
+          "type": "kein-richtiges-passwort"
+        },
+        {
+          "click": "Anmelden"
+        },
+        {
+          "wait": 500
+        }
+      ]
     }
   ]
 }
