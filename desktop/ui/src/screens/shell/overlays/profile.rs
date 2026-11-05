@@ -450,6 +450,33 @@ fn moderation(
     });
 }
 
+/// `.member-menu__item` of `MemberActionsMenu`: 36 high, padding 0 12,
+/// hover fill, danger text for "Sperren".
+pub fn member_menu_item(ui: &mut Ui, label: &str, danger: bool) -> egui::Response {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let width = ui.available_width().max(200.0);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 36.0), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    let fill = eased(
+        ui.ctx(),
+        response.id.with("hover"),
+        response.hovered(),
+        egui::Color32::TRANSPARENT,
+        c.hover,
+    );
+    common::fill(ui.painter(), rect, theme.radius.sm, fill);
+    if response.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
+        crate::widgets::focus_ring(ui.painter(), rect, theme.radius.sm, &theme);
+    }
+    let block = Block::single(ui, label, text::UI, if danger { c.danger } else { c.text });
+    common::paint_mid(ui.painter(), &block, rect.left() + 12.0, rect.center().y);
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    response
+}
+
 /// The DM peer's card (`UserProfileDialog`) with only "Schließen".
 pub fn user_dialog(ui: &mut Ui, app: &mut AppCtx, d: &mut UserDialog) -> bool {
     let ctx = ui.ctx().clone();

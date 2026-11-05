@@ -472,6 +472,29 @@
           "wait": 1500
         }
       ]
+    },
+    {
+      "name": "server-settings-member-menu",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Aktionen für Ada"
+        }
+      ]
+    },
+    {
+      "name": "server-settings-kick",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Aktionen für Ada"
+        },
+        {
+          "click": "Vom Server entfernen"
+        }
+      ]
     }
   ]
 }

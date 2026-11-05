@@ -17,8 +17,8 @@ use crate::icons::{self, Icon};
 use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner, mix};
 use crate::widgets::{
-    Badge, BadgeTone, Button, Checkbox, InlineStatus, Modal, Popover, StatusTone, Switch, eased,
-    focus_ring, keyboard_focus, snap,
+    Badge, BadgeTone, Checkbox, InlineStatus, Popover, StatusTone, Switch, eased, focus_ring,
+    keyboard_focus, snap,
 };
 
 // ------------------------------------------------------------------ text
@@ -831,38 +831,16 @@ pub fn show_confirm(ctx: &egui::Context) {
     let Some(q) = slot.lock().open.clone() else {
         return;
     };
-    let theme = Theme::of(ctx);
-    let mut result: Option<bool> = None;
-    let enter = ctx.input(|i| i.key_pressed(egui::Key::Enter));
-    let out = Modal::new(("confirm", q.key.clone()), &q.title).show(
+    // The workspace's ConfirmDialog: starts on "Abbrechen" unless neutral,
+    // so Enter answers with the focused button.
+    let result = crate::screens::shell::overlays::confirm::dialog(
         ctx,
-        |ui| {
-            if let Some(m) = &q.message {
-                let w = ui.available_width();
-                paragraph(ui, m, text::BODY, theme.c.muted, w);
-            }
-        },
-        Some(&mut |ui: &mut Ui| {
-            let confirm = Button::new(&q.label);
-            let confirm = if q.neutral {
-                confirm.primary()
-            } else {
-                confirm.danger()
-            };
-            if ui.add(confirm).clicked() {
-                result = Some(true);
-            }
-            if ui.add(Button::new("Abbrechen").ghost()).clicked() {
-                result = Some(false);
-            }
-        }),
+        &q.title,
+        q.message.as_deref(),
+        &q.label,
+        q.neutral,
+        false,
     );
-    if out.close_requested {
-        result = Some(false);
-    }
-    if enter && result.is_none() {
-        result = Some(true);
-    }
     if let Some(a) = result {
         let mut s = slot.lock();
         s.open = None;

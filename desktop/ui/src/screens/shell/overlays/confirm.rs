@@ -71,13 +71,41 @@ impl Question {
 /// host took away from the dialog underneath.
 pub fn show(ui: &mut Ui, app: &mut AppCtx, q: &Question, escape: bool) -> bool {
     let ctx = ui.ctx().clone();
-    let theme = Theme::of(&ctx);
-    let first = crate::widgets::field::mounted(&ctx, egui::Id::unique("gelabber-confirm-open"));
-    let mut answer = None;
-    let output = Modal::new(("confirm", &q.title), &q.title).show(
+    let answer = dialog(
         &ctx,
+        &q.title,
+        q.message.as_deref(),
+        &q.label,
+        q.neutral,
+        escape,
+    );
+    match answer {
+        Some(true) => {
+            run(app, q.action);
+            true
+        }
+        Some(false) => true,
+        None => false,
+    }
+}
+
+/// The `ConfirmDialog` itself, for every confirm host: the answer once
+/// given. Enter answers through the focused button, as in the browser.
+pub fn dialog(
+    ctx: &egui::Context,
+    title: &str,
+    message: Option<&str>,
+    label: &str,
+    neutral: bool,
+    escape: bool,
+) -> Option<bool> {
+    let theme = Theme::of(ctx);
+    let first = crate::widgets::field::mounted(ctx, egui::Id::unique(("gelabber-confirm", title)));
+    let mut answer = None;
+    let output = Modal::new(("confirm", title), title).show(
+        ctx,
         |ui| {
-            if let Some(m) = &q.message {
+            if let Some(m) = message {
                 let w = ui.available_width();
                 let block = text::Block::wrapped(ui, m, text::BODY, theme.c.muted, w);
                 text::show(ui, &block);
@@ -88,8 +116,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, q: &Question, escape: bool) -> bool {
             let width = |label: &str, style: text::TextStyle| {
                 text::Block::single(ui, label, style, theme.c.text).width() + 34.0
             };
-            let total =
-                width("Abbrechen", text::UI) + 8.0 + width(&q.label, text::UI.weight(600.0));
+            let total = width("Abbrechen", text::UI) + 8.0 + width(label, text::UI.weight(600.0));
             let (no, yes) = ui
                 .allocate_ui_with_layout(
                     egui::vec2(total, 36.0),
@@ -97,8 +124,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, q: &Question, escape: bool) -> bool {
                     |ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
                         let no = ui.add(Button::new("Abbrechen").ghost());
-                        let confirm = Button::new(&q.label);
-                        let confirm = if q.neutral {
+                        let confirm = Button::new(label);
+                        let confirm = if neutral {
                             confirm.primary()
                         } else {
                             confirm.danger()
@@ -108,7 +135,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, q: &Question, escape: bool) -> bool {
                 )
                 .inner;
             if first {
-                if q.neutral {
+                if neutral {
                     yes.request_focus();
                 } else {
                     no.request_focus();
@@ -125,14 +152,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, q: &Question, escape: bool) -> bool {
     if output.close_requested || escape {
         answer.get_or_insert(false);
     }
-    match answer {
-        Some(true) => {
-            run(app, q.action);
-            true
-        }
-        Some(false) => true,
-        None => false,
-    }
+    answer
 }
 
 fn run(app: &AppCtx, action: ConfirmAction) {

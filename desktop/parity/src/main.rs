@@ -245,31 +245,22 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                     said.push((who.to_owned(), say(&["post", who, at, text])));
                 }
                 Action::Click(name) => {
-                    use egui_kittest::kittest::Queryable;
-                    harness
-                        .query_all_by_role_and_label(egui::accesskit::Role::Button, name)
-                        .next()
+                    use egui::accesskit::Role;
+                    reveal(&mut harness, size.y, name, &[Role::Button]);
+                    find(&harness, name, &[Role::Button])
                         .unwrap_or_else(|| panic!("{}: no button {name:?}", scene.name))
                         .click();
                 }
                 Action::Rightclick(name) => {
-                    use egui_kittest::kittest::{NodeT, Queryable};
-                    harness
-                        .query_all_by_label(name)
-                        .find(|n| {
-                            matches!(
-                                n.accesskit_node().role(),
-                                egui::accesskit::Role::Button | egui::accesskit::Role::Link
-                            )
-                        })
+                    use egui::accesskit::Role;
+                    reveal(&mut harness, size.y, name, &[Role::Button, Role::Link]);
+                    find(&harness, name, &[Role::Button, Role::Link])
                         .unwrap_or_else(|| panic!("{}: no button or link {name:?}", scene.name))
                         .click_secondary();
                 }
                 Action::Clicktext(label) => {
-                    use egui_kittest::kittest::Queryable;
-                    harness
-                        .query_all_by_label(label)
-                        .next()
+                    reveal(&mut harness, size.y, label, &[]);
+                    find(&harness, label, &[])
                         .unwrap_or_else(|| panic!("{}: nothing labelled {label:?}", scene.name))
                         .click();
                 }
@@ -303,6 +294,48 @@ fn render(out: &Path, only: Option<Vec<String>>) {
             say(&["delete", who, id]);
         }
         println!("{}: {route} -> {}", scene.name, path.display());
+    }
+}
+
+type App<'a> = egui_kittest::Harness<'a, gelabber_ui::GelabberApp>;
+
+/// The first node labelled `label` with one of `roles` (any role if empty).
+fn find<'t>(
+    harness: &'t App<'_>,
+    label: &'t str,
+    roles: &[egui::accesskit::Role],
+) -> Option<egui_kittest::Node<'t>> {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    harness
+        .query_all_by_label(label)
+        .find(|n| roles.is_empty() || roles.contains(&n.accesskit_node().role()))
+}
+
+/// Playwright scrolls a target out of view to the middle before it
+/// clicks; here in 100px scroll steps until it is there or cannot move.
+fn reveal(harness: &mut App<'_>, height: f32, label: &str, roles: &[egui::accesskit::Role]) {
+    let middle = height / 2.0;
+    let mut scrolling = false;
+    for _ in 0..60 {
+        let Some(node) = find(harness, label, roles) else {
+            return;
+        };
+        let rect = node.rect();
+        let visible = rect.top() >= 0.0 && rect.bottom() <= height;
+        if (!scrolling && visible) || (scrolling && (rect.center().y - middle).abs() <= 50.0) {
+            return;
+        }
+        scrolling = true;
+        if rect.center().y > middle {
+            node.scroll_down();
+        } else {
+            node.scroll_up();
+        }
+        harness.run_steps(10);
+        let moved = find(harness, label, roles).map(|n| n.rect().center().y);
+        if moved == Some(rect.center().y) {
+            return;
+        }
     }
 }
 
