@@ -32,17 +32,18 @@ The **shipped line** is the latest release tag on `main`.
 
 ## Commands
 
-Rust workspace (`api`, `media`, `shared`), from the repo root:
+Rust workspace in `backend/` (`api`, `media`, `shared`), from `backend/`:
 
 - `cargo fmt --all -- --check`
 - `cargo clippy --locked --workspace --all-targets -- -D warnings`
-- Tests run in the native toolchain image, as in CI: build it once with
-  `docker build --target base --file media/Dockerfile --tag gelabber-native-ci-toolchain:local .`,
-  then `sh docker/run-native-ci.sh test --locked --workspace --all-targets`.
+- Tests run in the native toolchain image, as in CI. From the repo root, build
+  it once with
+  `docker build --target base --file backend/media/Dockerfile --tag gelabber-native-ci-toolchain:local .`,
+  then `sh backend/build/run-native-ci.sh test --locked --workspace --all-targets`.
   They need Postgres, Redis and MinIO plus `DATABASE_URL`, `REDIS_URL`,
   `MINIO_ENDPOINT`, `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` (values in
-  `api/.env.example`); storage and avatar tests fail without the MinIO ones.
-  The database role needs `CREATEDB` for `sqlx::test`.
+  `backend/api/.env.example`); storage and avatar tests fail without the MinIO
+  ones. The database role needs `CREATEDB` for `sqlx::test`.
 
 Web (`web/`, Node from `engines` in `package.json`): `npm run lint`,
 `npm test`, `npm run test:checks`, `npm run build`.

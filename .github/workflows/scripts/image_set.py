@@ -65,7 +65,7 @@ def promote():
     sha = os.environ['SOURCE_SHA']
     ci_id = int(os.environ['CI_RUN_ID'])
     check_ci(api(f'actions/runs/{ci_id}'), sha, repo)
-    version = 'v' + tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version']
+    version = 'v' + tomllib.loads(Path('backend/Cargo.toml').read_text())['workspace']['package']['version']
     images = {name: json.loads(Path(f'digests/{name}.json').read_text()) for name in SERVICES}
     for name, item in images.items():
         if (item['revision'] != sha or item['image'] != f'ghcr.io/{repo.lower()}/{name}'
@@ -166,7 +166,7 @@ def release():
     check_ci(api(f'actions/runs/{manifest["ci_run_id"]}'), sha, repo)
     if api('git/ref/heads/main')['object']['sha'] != sha or run('git', 'rev-parse', 'HEAD') != sha:
         raise ValueError('Release source must be current, tested main')
-    expected = 'v' + tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version']
+    expected = 'v' + tomllib.loads(Path('backend/Cargo.toml').read_text())['workspace']['package']['version']
     if expected != version or tag_sha(version) not in (None, sha):
         raise ValueError('Version or existing tag has a different source SHA')
     for name in SERVICES:

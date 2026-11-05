@@ -2,7 +2,7 @@
 
 release.yml refuses a release whose tag is not desktop/Cargo.toml's version,
 but only after the images are promoted. This holds the rule on every change
-to either Cargo.toml instead: the desktop app has the root workspace's
+to either Cargo.toml instead: the desktop app has the backend workspace's
 version, or is a pre-release of a later one (an alpha cut from a feature
 branch while the server is still on the released line).
 """
@@ -41,10 +41,10 @@ def workspace_version(path):
 class DesktopVersion(unittest.TestCase):
     def test_desktop_version_fits_the_server_version(self):
         desktop = workspace_version(ROOT / 'desktop/Cargo.toml')
-        root = workspace_version(ROOT / 'Cargo.toml')
+        root = workspace_version(ROOT / 'backend/Cargo.toml')
         self.assertTrue(
             desktop_version_allowed(desktop, root),
-            f'desktop/Cargo.toml says {desktop}, Cargo.toml {root}: the desktop app has the '
+            f'desktop/Cargo.toml says {desktop}, backend/Cargo.toml {root}: the desktop app has the '
             f'server\'s version, or a pre-release (with a "-") of a later one',
         )
 
@@ -66,7 +66,7 @@ class DesktopVersion(unittest.TestCase):
     def test_ci_runs_this_when_either_version_changes(self):
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
         paths = ci.split('pull_request:', 1)[1].split('push:', 1)[0]
-        for path in ('Cargo.toml', 'desktop/Cargo.toml', 'deploy/compose/**'):
+        for path in ('backend/Cargo.toml', 'desktop/Cargo.toml', 'deploy/compose/**'):
             with self.subTest(path=path):
                 self.assertIn(f'      - {path}\n', paths)
         self.assertIn('python3 -m unittest discover -s deploy/compose/tests', ci)

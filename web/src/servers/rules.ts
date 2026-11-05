@@ -1,4 +1,4 @@
-// Client-side mirror of `api/src/servers/validate.rs`.
+// Client-side mirror of `backend/api/src/servers/validate.rs`.
 
 import type { FieldCode } from "../api/client.ts";
 import type { ChannelKind } from "./types.ts";

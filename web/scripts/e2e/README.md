@@ -8,10 +8,10 @@ transport compaction preserves captures and creates fresh Producer/Consumer IDs.
 Use the current executed test/runtime freeze when reporting limits or results.
 The previous engine's `media/tests/browser-lifecycle.mjs` (removed in v0.7.1),
 dated media test docs and historical reports are not v4 acceptance gates. See
-[SOURCE_AUDIO.md](../../../media/SOURCE_AUDIO.md) and the
+[SOURCE_AUDIO.md](../../../backend/media/SOURCE_AUDIO.md) and the
 [migration document](../../../docs/v0.4-mediasoup-migration.md).
 
-Recorded 11b/c execution, the row-by-row acceptance matrix, fault-runtime instructions and CI limits are in [AUTOMATION-HANDOFF.md](AUTOMATION-HANDOFF.md). [HANDOFF.md](HANDOFF.md) preserves historical 11a findings. Those results retain their recorded runtime hashes and do not establish acceptance of the new v4 engine.
+Recorded 11b/c execution, the row-by-row acceptance matrix, fault-runtime instructions and CI limits are in [AUTOMATION-HANDOFF.md](../../../docs/e2e-handoffs/AUTOMATION-HANDOFF.md). [HANDOFF.md](../../../docs/e2e-handoffs/HANDOFF.md) preserves historical 11a findings. Those results retain their recorded runtime hashes and do not establish acceptance of the new v4 engine.
 
 This runner provides scenario construction and automated local/CI subset gates. Complete acceptance also requires the documented manual, HTTPS/WAN and production gates. The runner creates isolated `example.test` accounts and its own server through the UI, uses the actual API, Gateway, SFU and object store, and deletes only its own server. Accounts remain as test fixtures; no shared Redis keys, services or existing data are reset. A fresh browser cookie jar is used for each participant. Core scenarios verify and restore each fixture account before and after every check; failed restoration blocks following scenarios.
 
@@ -75,9 +75,9 @@ The final local Chromium153/Firefox155 controls on clean test freeze `d2fd0f6` p
 
 ## Open acceptance
 
-Core/Storage/Epoch, concurrent attempts and row rollback, real slow raw TCP reader and transaction-forced Ban/Join now have actual Chromium and Firefox controls on the approved immutable core snapshot. Their exact results and earlier test errors are recorded in the current handoff. Final approved08b runtime now supports the executable media15/access6 and own API-/Redis-lease cases; exact author/clean-source coverage is recorded in [MEDIA-HANDOFF.md](MEDIA-HANDOFF.md). Native screen-picker, audible two-device quality, WAN/production and full remote netem remain explicit separate gates. The original relay/audio/recovery assertions and strict selected-case/cleanup gates remain in force.
+Core/Storage/Epoch, concurrent attempts and row rollback, real slow raw TCP reader and transaction-forced Ban/Join now have actual Chromium and Firefox controls on the approved immutable core snapshot. Their exact results and earlier test errors are recorded in the current handoff. Final approved08b runtime now supports the executable media15/access6 and own API-/Redis-lease cases; exact author/clean-source coverage is recorded in [MEDIA-HANDOFF.md](../../../docs/e2e-handoffs/MEDIA-HANDOFF.md). Native screen-picker, audible two-device quality, WAN/production and full remote netem remain explicit separate gates. The original relay/audio/recovery assertions and strict selected-case/cleanup gates remain in force.
 
-See [HANDOFF.md](HANDOFF.md) and [evidence/](evidence/) for executed checks, controls and remaining blockers. The coordinator authorized 11b/c automation after the separate 11a fix; runtime prerequisites and final 11d gates remain explicit. No product edits or self-deployment.
+See [HANDOFF.md](../../../docs/e2e-handoffs/HANDOFF.md) and [evidence/](evidence/) for executed checks, controls and remaining blockers. The coordinator authorized 11b/c automation after the separate 11a fix; runtime prerequisites and final 11d gates remain explicit. No product edits or self-deployment.
 
 ## Continuous call and resource return
 

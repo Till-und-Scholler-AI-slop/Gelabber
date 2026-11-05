@@ -1,4 +1,4 @@
-// Wire shapes of `/api/dms` (see `api/src/dms`).
+// Wire shapes of `/api/dms` (see `backend/api/src/dms`).
 
 export type DmPeer = {
   id: string;

@@ -1,7 +1,7 @@
 export type AvatarDecoration = "ring" | "glow" | "rainbow" | "stars";
 
 /**
- * Optional profile card fields (`ProfileCard` in `api/src/auth/user.rs`).
+ * Optional profile card fields (`ProfileCard` in `backend/api/src/auth/user.rs`).
  * `null` or absent means "not set"; the card falls back to its defaults.
  */
 export type ProfileCard = {

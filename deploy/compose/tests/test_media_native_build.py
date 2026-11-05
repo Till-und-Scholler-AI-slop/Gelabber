@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def load_script(name):
-    spec = importlib.util.spec_from_file_location(name, ROOT / "docker" / (name + ".py"))
+    spec = importlib.util.spec_from_file_location(name, ROOT / "backend/build" / (name + ".py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -110,7 +110,7 @@ class DebianArchiveIntegrity(unittest.TestCase):
                               "with open(os.environ['APT_TEST_MARKER'],'a') as output: output.write(sys.argv[-1]+'\\n')\n"
                               "print(json.loads(os.environ['APT_TEST_METADATA'])[sys.argv[-1]])\n")
             reader.chmod(0o755)
-            result = subprocess.run(["sh", str(ROOT / "docker/install-mediasoup-debian-build-tools.sh"),
+            result = subprocess.run(["sh", str(ROOT / "backend/build/install-mediasoup-debian-build-tools.sh"),
                                      "--verify-only", str(lock), str(archives), "amd64"],
                                     env={**os.environ, "PATH": str(commands) + os.pathsep + os.environ["PATH"],
                                          "APT_TEST_MARKER": str(marker), "APT_TEST_METADATA": json.dumps(metadata or {
@@ -149,8 +149,8 @@ class NativeCiBoundary(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             workspace = root / "checkout with spaces"
-            workspace.mkdir()
-            (workspace / "Cargo.toml").write_text("[workspace]\n")
+            (workspace / "backend").mkdir(parents=True)
+            (workspace / "backend/Cargo.toml").write_text("[workspace]\n")
             cache = root / "cargo cache"
             commands = root / "commands"
             commands.mkdir()
@@ -161,7 +161,7 @@ class NativeCiBoundary(unittest.TestCase):
                               "if sys.argv[1:3]==['image','inspect']: print(os.environ['CI_TEST_IMAGE'])\n"
                               "else: sys.exit(int(os.environ['CI_TEST_EXIT']))\n")
             docker.chmod(0o755)
-            result = subprocess.run(["sh", str(ROOT / "docker/run-native-ci.sh"), "test", "--locked",
+            result = subprocess.run(["sh", str(ROOT / "backend/build/run-native-ci.sh"), "test", "--locked",
                                      "--workspace", "--", "--exact", "literal;argument"],
                                     env={**os.environ, "PATH": str(commands) + os.pathsep + os.environ["PATH"],
                                          "GITHUB_WORKSPACE": str(workspace), "CARGO_HOME": str(cache),
@@ -177,10 +177,10 @@ class NativeCiBoundary(unittest.TestCase):
         run = calls[1]
         self.assertEqual(run[run.index("--network") + 1], "host")
         self.assertEqual(run[run.index("--user") + 1], f"{os.getuid()}:{os.getgid()}")
-        self.assertEqual(run[run.index("--workdir") + 1], str(workspace))
+        self.assertEqual(run[run.index("--workdir") + 1], str(workspace / "backend"))
         self.assertIn(str(workspace) + ":" + str(workspace), run)
         self.assertIn(str(cache) + ":/cargo", run)
-        self.assertIn("CARGO_TARGET_DIR=" + str(workspace / "target/native-debian"), run)
+        self.assertIn("CARGO_TARGET_DIR=" + str(workspace / "backend/target/native-debian"), run)
         self.assertIn("RUSTUP_HOME=/usr/local/rustup", run)
         self.assertIn("CARGO_HOME=/cargo", run)
         self.assertNotIn("PYTHON", run)

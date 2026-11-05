@@ -1,8 +1,8 @@
 // System messages (issue #314): rows the server writes on its own, sent as
 // a kind plus parameters instead of a finished sentence, so the words are
-// the client's (`api/src/messages/system.rs`). The author is the person the
+// the client's (`backend/api/src/messages/system.rs`). The author is the person the
 // message is about; `content` is empty. A push uses the same wording
-// (`system_text` in api/src/i18n.rs).
+// (`system_text` in backend/api/src/i18n.rs).
 
 export type SystemMessage = {
   kind: string;

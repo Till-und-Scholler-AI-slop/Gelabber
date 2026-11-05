@@ -3,11 +3,11 @@
 # The optional Ubuntu fault diagnostic uses its own default target directory.
 set -eu
 
-workspace=${GITHUB_WORKSPACE:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)}
+workspace=${GITHUB_WORKSPACE:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)}
 workspace=$(CDPATH= cd -- "$workspace" && pwd -P)
-test -f "$workspace/Cargo.toml"
+test -f "$workspace/backend/Cargo.toml"
 cargo_cache=${CARGO_HOME:-"$HOME/.cargo"}
-mkdir -p "$cargo_cache" "$workspace/target/native-debian"
+mkdir -p "$cargo_cache" "$workspace/backend/target/native-debian"
 cargo_cache=$(CDPATH= cd -- "$cargo_cache" && pwd -P)
 case "$workspace:$cargo_cache" in
   *'
@@ -27,10 +27,10 @@ exec docker run --rm --init --network host \
   --user "$(id -u):$(id -g)" \
   --volume "$workspace:$workspace" \
   --volume "$cargo_cache:/cargo" \
-  --workdir "$workspace" \
+  --workdir "$workspace/backend" \
   --env CARGO_HOME=/cargo \
   --env RUSTUP_HOME=/usr/local/rustup \
-  --env CARGO_TARGET_DIR="$workspace/target/native-debian" \
+  --env CARGO_TARGET_DIR="$workspace/backend/target/native-debian" \
   --env CARGO_TERM_COLOR \
   --env DATABASE_URL --env REDIS_URL \
   --env MINIO_ENDPOINT --env MINIO_ROOT_USER --env MINIO_ROOT_PASSWORD \

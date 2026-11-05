@@ -48,12 +48,13 @@ Aktuell veröffentlicht: [v0.8.7](https://github.com/Till-und-Scholler-AI-slop/G
 Vor dem Media-Build die [gepinnten nativen Buildwerkzeuge](docs/v0.4-mediasoup-migration.md#gepinnter-nativer-build) gemäß Migrationsdokument einrichten. Die dortige Anleitung verwendet eine isolierte Python-Umgebung und begrenzt die native Buildparallelität.
 
 ```bash
+cd backend
 set -a; . api/.env.example; set +a; cargo run -p gelabber-api
 set -a; . media/.env.example; set +a; cargo run -p gelabber-media
-cd web && npm run dev
+cd ../web && npm run dev
 ```
 
-`npm run dev` proxyt `/api` und `/ws` nach `:8080`, `/media` nach `:8081`. Tests: `DATABASE_URL=postgres://gelabber:gelabber@127.0.0.1:5432/gelabber cargo test -p gelabber-api` (Gateway zusätzlich `REDIS_URL`).
+`npm run dev` proxyt `/api` und `/ws` nach `:8080`, `/media` nach `:8081`. Tests in `backend/`: `DATABASE_URL=postgres://gelabber:gelabber@127.0.0.1:5432/gelabber cargo test -p gelabber-api` (Gateway zusätzlich `REDIS_URL`).
 
 ## Call-Sounds
 

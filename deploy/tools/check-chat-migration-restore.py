@@ -33,8 +33,8 @@ def main():
     inspected = json.loads(subprocess.check_output(['docker', 'inspect', args.container], text=True))[0]
     if not inspected['State']['Running'] or not inspected['Config']['Image'].startswith('postgres:'):
         parser.error('the dedicated test container must run PostgreSQL')
-    root = Path(__file__).resolve().parents[1]
-    migrations = sorted((root / 'api/migrations').glob('*.sql'))
+    root = Path(__file__).resolve().parents[2]
+    migrations = sorted((root / 'backend/api/migrations').glob('*.sql'))
     legacy = [path for path in migrations if int(path.name.split('_', 1)[0]) <= 9]
     additive = [path for path in migrations if int(path.name.split('_', 1)[0]) > 9]
     if len(legacy) != 9 or not additive:

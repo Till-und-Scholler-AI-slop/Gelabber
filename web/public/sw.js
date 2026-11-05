@@ -63,7 +63,7 @@ self.addEventListener("fetch", (event) => {
 // Message notifications are shown through this worker's registration
 // (src/pwa/notifications.ts), because phones do not let a page create one
 // itself. While the app is closed, direct messages and mentions arrive here
-// as Web Push (src/pwa/push.ts, api/src/push).
+// as Web Push (src/pwa/push.ts, backend/api/src/push).
 function notificationTarget(data) {
   try {
     const url = new URL(data.path, self.location.origin);
@@ -181,7 +181,7 @@ async function strictAboutSilentPushes() {
   }
 }
 
-// A deleted message (`recall` from api/src/push): what is on screen for it
+// A deleted message (`recall` from backend/api/src/push): what is on screen for it
 // becomes "Nachricht gelöscht", quietly. A newer message shown in its place
 // stays. With nothing shown (the push service replaced the queued message
 // by this one, or it was swiped away) nothing comes back, except where a

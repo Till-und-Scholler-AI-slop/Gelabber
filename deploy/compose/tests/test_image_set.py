@@ -80,8 +80,9 @@ class Gates(unittest.TestCase):
         for name, own in workflows.items():
             text = (ROOT / f'.github/workflows/{name}.yml').read_text()
             paths = text.split('  pull_request:', 1)[1].split('\n\n', 1)[0]
-            for path in ('shared/**', 'api/**', 'media/**', 'web/**', 'docker/**',
-                         '.dockerignore', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml',
+            for path in ('backend/shared/**', 'backend/api/**', 'backend/media/**', 'web/**',
+                         'backend/build/**', '.dockerignore', 'backend/Cargo.toml',
+                         'backend/Cargo.lock', 'rust-toolchain.toml',
                          '.github/workflows/scripts/**', 'deploy/compose/**',
                          *(f'.github/workflows/{workflow}.yml' for workflow in own)):
                 self.assertIn('      - ' + path + '\n', paths + '\n')
@@ -95,7 +96,8 @@ class Promotion(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.old = os.getcwd()
         os.chdir(self.tmp.name)
-        Path('Cargo.toml').write_text('[workspace.package]\nversion="0.2.4"\n')
+        Path('backend').mkdir()
+        Path('backend/Cargo.toml').write_text('[workspace.package]\nversion="0.2.4"\n')
         Path('digests').mkdir()
         self.images = {}
         for name in m.SERVICES:

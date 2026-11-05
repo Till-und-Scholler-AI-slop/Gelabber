@@ -11,7 +11,7 @@ import {
   validateContent,
 } from "./rules.ts";
 
-describe("message content (mirror of api/src/messages/validate.rs)", () => {
+describe("message content (mirror of backend/api/src/messages/validate.rs)", () => {
   it("trims and normalises newlines", () => {
     expect(normaliseContent("  hi  ")).toBe("hi");
     expect(normaliseContent("win\r\nline")).toBe("win\nline");
@@ -26,7 +26,7 @@ describe("message content (mirror of api/src/messages/validate.rs)", () => {
   });
 });
 
-describe("attachment limits (mirror of api/src/attachments/validate.rs)", () => {
+describe("attachment limits (mirror of backend/api/src/attachments/validate.rs)", () => {
   it("infers type from extension when the browser leaves type empty", () => {
     expect(inferContentType({ name: "cat.PNG", type: "" })).toBe("image/png");
     expect(inferContentType({ name: "a.jpg", type: "image/jpeg" })).toBe(

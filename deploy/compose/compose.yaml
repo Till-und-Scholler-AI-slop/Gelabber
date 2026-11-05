@@ -45,7 +45,7 @@ services:
     pull_policy: missing
     build:
       context: ../..
-      dockerfile: api/Dockerfile
+      dockerfile: backend/api/Dockerfile
       tags:
         - gelabber/api:v0.8.7
     environment:
@@ -114,7 +114,7 @@ services:
     pull_policy: missing
     build:
       context: ../..
-      dockerfile: media/Dockerfile
+      dockerfile: backend/media/Dockerfile
       tags:
         - gelabber/media:v0.8.7
     environment:

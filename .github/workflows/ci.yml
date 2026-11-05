@@ -12,18 +12,18 @@ on:
         default: false
   pull_request:
     paths:
-      - api/**
-      - media/**
-      - shared/**
+      - backend/api/**
+      - backend/media/**
+      - backend/shared/**
       - web/**
-      - docker/**
+      - backend/build/**
       - .dockerignore
       - deploy/compose/**
       # Read by deploy/compose/tests.
       - deploy/backup.sh
       - deploy/README.md
-      - Cargo.toml
-      - Cargo.lock
+      - backend/Cargo.toml
+      - backend/Cargo.lock
       - rust-toolchain.toml
       - desktop/Cargo.toml
       # This workflow and what its deployment tests read.
@@ -60,13 +60,13 @@ jobs:
           components: rustfmt, clippy
 
       - name: Format
-        run: cargo fmt --all -- --check
+        run: cargo fmt --manifest-path backend/Cargo.toml --all -- --check
 
       # Type check only: DOCS_RS makes mediasoup-sys skip its worker build.
       - name: Clippy
         env:
           DOCS_RS: "1"
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --manifest-path backend/Cargo.toml --workspace --all-targets -- -D warnings
 
   rust:
     name: Rust tests
@@ -140,7 +140,7 @@ jobs:
         uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
 
       - name: Build verified Debian native CI toolchain
-        run: docker build --target base --file media/Dockerfile --tag gelabber-native-ci-toolchain:local .
+        run: docker build --target base --file backend/media/Dockerfile --tag gelabber-native-ci-toolchain:local .
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -152,8 +152,8 @@ jobs:
           # The build runs in the Debian image (shared-key), so the runner's
           # own Rust versions must not change the key and drop the cache.
           add-rust-environment-hash-key: false
-          shared-key: native-debian-${{ hashFiles('media/Dockerfile', 'docker/mediasoup-*', 'docker/install-mediasoup-debian-build-tools.sh') }}
-          workspaces: . -> target/native-debian
+          shared-key: native-debian-${{ hashFiles('backend/media/Dockerfile', 'backend/build/mediasoup-*', 'backend/build/install-mediasoup-debian-build-tools.sh') }}
+          workspaces: backend -> target/native-debian
 
       - name: Install Caddy
         run: |
@@ -177,7 +177,7 @@ jobs:
           test -n "$MINIO_ROOT_PASSWORD"
           curl -fsS "$MINIO_ENDPOINT/minio/health/ready" >/dev/null
           # The 100 ms typing assertion runs alone in the next step.
-          sh docker/run-native-ci.sh test --locked --workspace --all-targets --no-fail-fast -- --skip typing_broadcasts_fast_and_clears_on_stop --test-threads=4
+          sh backend/build/run-native-ci.sh test --locked --workspace --all-targets --no-fail-fast -- --skip typing_broadcasts_fast_and_clears_on_stop --test-threads=4
 
       - name: Test typing latency in isolation
         env:
@@ -191,7 +191,7 @@ jobs:
           for ((iteration=1; iteration<=repetitions; iteration++)); do
             echo "Isolated typing latency check ${iteration}/${repetitions}"
             # Same flags as above, so the built tests are reused.
-            sh docker/run-native-ci.sh test --locked --workspace --all-targets typing_broadcasts_fast_and_clears_on_stop -- --exact --test-threads=1
+            sh backend/build/run-native-ci.sh test --locked --workspace --all-targets typing_broadcasts_fast_and_clears_on_stop -- --exact --test-threads=1
           done
 
       - name: Dump test MinIO logs
@@ -227,7 +227,7 @@ jobs:
         run: npm ci
 
       - name: Verify pinned emoji data
-        run: python3 ../tools/generate-emoji-data.py --check
+        run: python3 scripts/generate-emoji-data.py --check
 
       - name: Lint
         run: npm run lint

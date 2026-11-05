@@ -8,14 +8,14 @@ on:
     branches: [main]
   pull_request:
     paths:
-      - api/**
-      - media/**
-      - shared/**
+      - backend/api/**
+      - backend/media/**
+      - backend/shared/**
       - web/**
-      - docker/**
+      - backend/build/**
       - .dockerignore
-      - Cargo.toml
-      - Cargo.lock
+      - backend/Cargo.toml
+      - backend/Cargo.lock
       - rust-toolchain.toml
       - deploy/compose/**
       - .github/workflows/publish-images.yml
@@ -48,10 +48,10 @@ jobs:
         include:
           - name: api
             context: .
-            file: api/Dockerfile
+            file: backend/api/Dockerfile
           - name: media
             context: .
-            file: media/Dockerfile
+            file: backend/media/Dockerfile
           - name: web
             context: web
             file: web/Dockerfile
@@ -69,7 +69,7 @@ jobs:
           echo "GHCR_IMAGE=ghcr.io/${repo}/${{ matrix.name }}" >> "$GITHUB_ENV"
           echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
           echo "IMAGE_TAG=sha-${SOURCE_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
-          echo "GELABBER_VERSION=v$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')" >> "$GITHUB_ENV"
+          echo "GELABBER_VERSION=v$(python3 -c 'import tomllib; print(tomllib.load(open("backend/Cargo.toml", "rb"))["workspace"]["package"]["version"])')" >> "$GITHUB_ENV"
           echo "OCI_CREATED=$(git show -s --format=%cI HEAD)" >> "$GITHUB_ENV"
       - name: Compose version pins match workspace
         run: |
@@ -103,7 +103,7 @@ jobs:
           cache-to: ${{ github.event_name == 'workflow_run' && format('type=gha,mode=max,scope={0}', matrix.name) || '' }}
       - name: Verify actual media image readiness and normal shutdown
         if: github.event_name == 'pull_request' && matrix.name == 'media'
-        run: python3 docker/check-media-image.py --image "${GHCR_IMAGE}:${IMAGE_TAG}" --revision "$SOURCE_SHA"
+        run: python3 backend/build/check-media-image.py --image "${GHCR_IMAGE}:${IMAGE_TAG}" --revision "$SOURCE_SHA"
       - name: Record digest
         if: github.event_name == 'workflow_run'
         env:
@@ -149,7 +149,7 @@ jobs:
         run: |
           media_ref=$(python3 -c 'import json; d=json.load(open("digests/media.json")); print(d["image"]+"@"+d["digest"])')
           docker pull "$media_ref"
-          python3 docker/check-media-image.py --image "$media_ref" --revision "$SOURCE_SHA"
+          python3 backend/build/check-media-image.py --image "$media_ref" --revision "$SOURCE_SHA"
       - name: Verify CI, preflight immutable release, record image set
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -383,7 +383,7 @@ matching old DB/object store pair.
 
 The full local drill is described in [Upgrade/Storage/Restore](../docs/upgrade-storage-restore.md).
 It uses only its own throwaway containers and runs a real rollback to an old
-API binary; the older `tools/check-chat-migration-restore.py` stays available
+API binary; the older `deploy/tools/check-chat-migration-restore.py` stays available
 as a quick schema/data drill without object store or binary acceptance.
 
 ## Metrics
@@ -404,9 +404,9 @@ The API and media Docker builds keep compiled external Rust dependencies in a la
 
 The existing separate GitHub Actions layer caches for API and media stay. Cold builds have to compile the dependencies once; warm builds can reuse them. Cache recipe checks run with the deployment configuration tests; actual run times and container readiness must also be checked with Docker.
 
-The slow local cache acceptance starts with `python3 docker/check-rust-cache.py --baseline-ref <commit-before-cache-change> --output /tmp/gelabber-rust-cache`. It checks source, shared, version and feature changes in buildx caches of their own and compares three different source rebuilds with the previous Dockerfiles. JSON and full logs contain the cache hits and the measured run times of the build stage, without image export; at least 20 percent improvement is checked. `--keep-images` then exports images from the unchanged source state for a separate readiness check. This runner belongs to local acceptance and does not run in CI.
+The slow local cache acceptance starts with `python3 backend/build/check-rust-cache.py --baseline-ref <commit-before-cache-change> --output /tmp/gelabber-rust-cache`. It checks source, shared, version and feature changes in buildx caches of their own and compares three different source rebuilds with the previous Dockerfiles. JSON and full logs contain the cache hits and the measured run times of the build stage, without image export; at least 20 percent improvement is checked. `--keep-images` then exports images from the unchanged source state for a separate readiness check. This runner belongs to local acceptance and does not run in CI.
 
-The Compose default is the published version `v0.8.7`. Existing release tags are not overwritten. MinIO independently uses the existing CE pin `RELEASE.2025-10-15T17-29-55Z`. Org packages can be private: `docker login ghcr.io` or build locally. All stack pins stay. The source build sets `CARGO_HTTP_CAINFO`; with TLS inspection, `docker/rust-build-ca.sh` appends the presented chain.
+The Compose default is the published version `v0.8.7`. Existing release tags are not overwritten. MinIO independently uses the existing CE pin `RELEASE.2025-10-15T17-29-55Z`. Org packages can be private: `docker login ghcr.io` or build locally. All stack pins stay. The source build sets `CARGO_HTTP_CAINFO`; with TLS inspection, `backend/build/rust-build-ca.sh` appends the presented chain.
 
 CI runs for **every main commit**, so that deploy/workflow changes have a definite CI SHA too. PR path filters cover `shared/**`, all workspace members, Docker contexts, lockfiles and workflows. The image workflow builds PRs without pushing. On main it starts only after a successful `CI` push run of the same SHA; failed/cancelled CI starts no publish job.
 

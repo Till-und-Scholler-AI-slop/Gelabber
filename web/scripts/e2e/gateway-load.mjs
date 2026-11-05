@@ -204,7 +204,7 @@ export async function gatewayLoadScenarios(h, f, runtime) {
         postLoadObservationBudgetMs: 2500,
         timeoutSourceEvidence: {
           apiSource: runtime.manifest.sourceSha,
-          file: "api/src/gateway/conn.rs",
+          file: "backend/api/src/gateway/conn.rs",
           sendMs: 1000,
           finalCloseMs: 1000,
           attribution: "source contract; not measured from blocked-send onset",
