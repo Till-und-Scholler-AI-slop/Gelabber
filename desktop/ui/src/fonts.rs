@@ -23,6 +23,12 @@ pub fn mono_family() -> FontFamily {
 }
 
 pub fn install(ctx: &egui::Context) {
+    // Once per context: the setup screen installs them before the app does.
+    let done = egui::Id::unique("gelabber-fonts-installed");
+    if ctx.data(|d| d.get_temp::<bool>(done)).unwrap_or(false) {
+        return;
+    }
+    ctx.data_mut(|d| d.insert_temp(done, true));
     let mut fonts = FontDefinitions::empty();
     fonts.font_data.insert(
         INTER.into(),
