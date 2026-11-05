@@ -26,10 +26,10 @@ jobs:
       release_tag: ${{ github.event.release.tag_name || inputs.release_tag }}
     secrets: inherit
 
-  # The app tarball becomes a release asset, which the PKGBUILD downloads.
+  # Both app tarballs become release assets, which the PKGBUILDs download.
   # `build` includes the third-party notices, so none go out of date.
   release-asset:
-    name: Attach the Linux app to the release
+    name: Attach the Linux apps to the release
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -40,16 +40,22 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: gelabber-desktop-linux-x64
+      - name: Download the native app
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: gelabber-native-linux-x64
       - name: Upload to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ env.RELEASE_TAG }}
-        run: gh release upload "$TAG" gelabber-desktop-linux-x64.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
+        run: |
+          gh release upload "$TAG" gelabber-desktop-linux-x64.tar.gz gelabber-native-linux-x64.tar.gz \
+            --clobber --repo "$GITHUB_REPOSITORY"
 
-  # Installer, checksum, signature and latest.json, which the installed apps
-  # poll (desktop/app/src/update.rs).
+  # Installers, checksums, signatures and the manifests the installed apps
+  # poll: latest.json (Tauri app), latest-native.json (native app).
   release-asset-windows:
-    name: Attach the Windows app to the release
+    name: Attach the Windows apps to the release
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -60,6 +66,10 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: gelabber-desktop-windows-x64
+      - name: Download the native app
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: gelabber-native-windows-x64
       - name: Upload to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -72,15 +82,24 @@ jobs:
             echo "release $TAG must be built from its tag, not $GITHUB_REF"; exit 1
           fi
           sha256sum --check gelabber-desktop-windows-x64-setup.exe.sha256
-          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gelabber-desktop-windows-x64-setup.exe"
-          jq -n --arg version "${TAG#v}" --arg url "$url" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --rawfile signature gelabber-desktop-windows-x64-setup.exe.sig \
-            '{version: $version, pub_date: $date,
-              platforms: {"windows-x86_64": {url: $url, signature: ($signature | rtrimstr("\n"))}}}' > latest.json
-          cat latest.json
+          sha256sum --check gelabber-native-windows-x64-setup.exe.sha256
+          date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # manifest <installer> <file>: one per app in the same format, each
+          # naming only its own installer.
+          manifest() {
+            url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/$1"
+            jq -n --arg version "${TAG#v}" --arg url "$url" --arg date "$date" \
+              --rawfile signature "$1.sig" \
+              '{version: $version, pub_date: $date,
+                platforms: {"windows-x86_64": {url: $url, signature: ($signature | rtrimstr("\n"))}}}' > "$2"
+            cat "$2"
+          }
+          manifest gelabber-desktop-windows-x64-setup.exe latest.json
+          manifest gelabber-native-windows-x64-setup.exe latest-native.json
           gh release upload "$TAG" gelabber-desktop-windows-x64-setup.exe \
             gelabber-desktop-windows-x64-setup.exe.sha256 gelabber-desktop-windows-x64-setup.exe.sig \
-            latest.json --clobber --repo "$GITHUB_REPOSITORY"
+            latest.json gelabber-native-windows-x64-setup.exe gelabber-native-windows-x64-setup.exe.sha256 \
+            gelabber-native-windows-x64-setup.exe.sig latest-native.json --clobber --repo "$GITHUB_REPOSITORY"
 
   # Public: the repository on GitHub Pages. Off until the repository
   # variable ARCH_REPO_PUBLISH is "true", and the github-pages environment

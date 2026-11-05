@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Gelabber
+Comment=Voice, chat and Live
+Exec=gelabber %U
+Icon=gelabber
+Terminal=false
+Categories=Network;Chat;InstantMessaging;AudioVideo;
+Keywords=voice;chat;discord;screenshare;
+StartupNotify=true
+StartupWMClass=gelabber

@@ -44,6 +44,16 @@ choice stay in `~/.config/io.github.till-und-scholler-ai-slop.gelabber` and
 `~/.local/share/io.github.till-und-scholler-ai-slop.gelabber` (pacman never
 touches home directories); delete them by hand for a clean slate.
 
+The native app of 0.9 (no web view) is the beta package
+`gelabber-desktop-native` in the same repository, from the release's
+`gelabber-native-linux-x64.tar.gz`. It conflicts with `gelabber-desktop`
+(pacman offers to remove it), keeps its settings and starts as `gelabber`:
+
+```sh
+yay -S gelabber-desktop-native   # instead of gelabber-desktop
+yay -S gelabber-desktop          # back to the Tauri app
+```
+
 Pre-releases (alpha, beta, rc) are published too and sort before the final
 release: `0.5.0alpha.1 < 0.5.0beta.1 < 0.5.0rc.1 < 0.5.0`. The repository
 always holds only the newest release.
@@ -58,6 +68,10 @@ always holds only the newest release.
 - `repo.sh test`: adds that repository to pacman with `SigLevel = Required`,
   installs, upgrades to a newer build with `-Syu`, removes with `-Rns` and
   fails if a library is missing or a file is left behind.
+- `native/PKGBUILD` / `native/.SRCINFO`, `repo.sh build-native` and
+  `repo.sh test-native`: the same for `gelabber-desktop-native`, added to the
+  same database; the test switches from an installed `gelabber-desktop` and
+  starts the app under Xvfb (`../native/smoke.sh`).
 - `.github/workflows/desktop-native.yml` (run by `ci.yml` and
   `desktop-release.yml`): job "Arch package and repository" builds with a
   throwaway key and runs the test, except for pull requests; the repository

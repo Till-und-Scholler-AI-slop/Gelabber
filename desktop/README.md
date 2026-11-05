@@ -31,9 +31,70 @@ loopback), and watching. What users get to read ships from `app/package/`.
 | `app/scripts/smoke.ps1` | The same on Windows, against a built or installed `gelabber-desktop.exe` |
 | `app/tauri.bundle.windows.json` | What the Windows installer (NSIS) holds: the app, `gelabber_media.dll` from `app/bundle-input/`, README and third-party notices |
 | `app/package/` | What ships next to the binaries: `README.txt` (Linux), `README-windows.txt` (installed as `README.txt`), `THIRD-PARTY-NOTICES.txt` (generated) |
-| `packaging/third-party-notices.py` | Writes `THIRD-PARTY-NOTICES.txt`; its tests are in `packaging/tests/` |
-| `packaging/arch/` | The pacman package and repository; see its README |
+| `packaging/third-party-notices.py` | Writes `THIRD-PARTY-NOTICES.txt` (`--app native`: the native app's); its tests are in `packaging/tests/` |
+| `packaging/arch/` | The pacman package and repository; see its README. `arch/native/` is the native app's beta package `gelabber-desktop-native` |
 | `core/tests/voice.rs` | Microphone modes, RNNoise, device selection, Opus through mediasoup, playout (`GELABBER_TEST_AUDIO=1`) |
+| `client/`, `call/`, `ui/`, `gelabber/` | The native app of 0.9 (egui, no web view): REST and gateway, calls, the interface with `ui/src/platform/` (docs/native/platform.md), the binary; see "Native app" below |
+| `parity/` | Renders the native scenes headless and scores them against the web client's screenshots |
+| `packaging/native/` | The native app's packages: `tarball.sh` (Linux), `windows/installer.nsi` (NSIS), `smoke.sh`, desktop entry, READMEs, `THIRD-PARTY-NOTICES.txt` (generated) |
+
+## Native app (0.9, beta)
+
+`desktop/gelabber` is the egui app that replaces the Tauri app (plan:
+`docs/v0.9-plan.md`); the Tauri app stays as the fallback until 0.10. It
+links the same media core, so it needs `GELABBER_LIBWEBRTC_DIR` (the core is
+built) or `GELABBER_MEDIA_LIB_DIR` (a built `libgelabber_media.so`, e.g. from
+a release tarball) as above.
+
+```sh
+cargo run --manifest-path desktop/Cargo.toml -p gelabber -- --server https://gelabber.example.org
+cargo test --manifest-path desktop/Cargo.toml -p gelabber-client -p gelabber-call -p gelabber-ui -p gelabber
+cargo clippy --manifest-path desktop/Cargo.toml -p gelabber-ui -p gelabber --all-targets -- -D warnings
+# Starts it for 10 s with no server and empty settings (Xvfb when there is no display):
+desktop/packaging/native/smoke.sh desktop/target/debug/gelabber 10
+```
+
+Server and settings: as the Tauri app (`desktop.json` in the same directory,
+docs/native/platform.md). On the first start, while it has no
+`settings.json` of its own, it takes over `legacy-settings.json` (the Tauri
+app's export) and the files of earlier native builds in `~/.config/gelabber/`
+(`ui/src/platform/legacy.rs`). `GELABBER_SMOKE=<seconds>` makes the app end
+after that long, with 0 once it painted its setup or login screen; CI's
+smoke tests use it.
+
+Parity with the web client, against a seeded local stack (in `web/`:
+`node scripts/parity/seed.mjs`, then `node scripts/parity/shots.mjs <web-dir>`):
+
+```sh
+cargo run --manifest-path desktop/Cargo.toml -p gelabber-parity -- render <native-dir>
+cargo run --manifest-path desktop/Cargo.toml -p gelabber-parity -- compare <web-dir> <native-dir> <report-dir>
+```
+
+Packages, built by `desktop-native.yml` after merge and for releases, with
+their own asset names next to the Tauri app's:
+
+```sh
+# Linux: builds the release binary, checks both files, writes gelabber-native-linux-x64.tar.gz
+desktop/packaging/native/tarball.sh <dir>/libgelabber_media.so [<out-dir>]
+# The notices it ships (after a change to desktop/Cargo.lock):
+python3 desktop/packaging/third-party-notices.py --app native
+```
+
+- Arch: `gelabber-desktop-native` (`packaging/arch/native/PKGBUILD`,
+  `conflicts=gelabber-desktop`), in the same pacman repository
+  (`repo.sh build-native`, `repo.sh test-native`); `/usr/bin/gelabber`,
+  files in `/opt/gelabber`. No `webkit2gtk-4.1`, `libsoup3` or `gtk3`.
+- Windows: `gelabber-native-windows-x64-setup.exe` from
+  `packaging/native/windows/installer.nsi` (`makensis /DVERSION=…
+  /DFILEVERSION=… /DSOURCE=<dir> /DOUTFILE=… installer.nsi`, the staged
+  files as in the job `core-windows`). It installs into the Tauri app's
+  folder (`%LOCALAPPDATA%\Gelabber`) with the same uninstall entry,
+  shortcuts and AppUserModelId, replaces `gelabber-desktop.exe`, and accepts
+  the Tauri updater's `/P /UPDATE /R /ARGS` as well as `/S`.
+- Updates: the native app reads `latest-native.json` of the latest release
+  (same format and key as `latest.json`, which stays the Tauri app's), so it
+  is never offered a Tauri installer. GitHub's `releases/latest` leaves
+  pre-releases out, so an installed beta is offered full releases only.
 
 ## Why a shared library with a C ABI
 
@@ -135,6 +196,8 @@ puts the tests' mediasoup on it; the CI job tries which one works.
 |---|---|---|
 | Core: loopback call, video sinks; with their switches screen capture and voice | `cargo test --manifest-path desktop/Cargo.toml`; `GELABBER_TEST_SCREEN=1`, `GELABBER_TEST_AUDIO=1` inside `native/scripts/fake-desktop-session.sh`; on Windows `GELABBER_TEST_SCREEN_MONITOR=1` | CI, Linux and Windows (voice: Linux) |
 | App: the commands a server origin reaches, frames of a test pattern | `app/scripts/smoke.sh`, `app/scripts/smoke.ps1` | CI, Linux and Windows |
+| Native app: starts, paints its setup screen and ends (`GELABBER_SMOKE`) | `packaging/native/smoke.sh <gelabber>`; on Windows the job starts `gelabber.exe` itself | CI, Linux (lavapipe under Xvfb, also the installed Arch package) and Windows |
+| Native packages: names, files and arguments against the app and the Tauri app | `python3 -m unittest discover -s desktop/packaging/tests` | CI |
 | Viewer window: colours on a screenshot | `cargo test --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --ignored viewer` under Xvfb | CI, Linux |
 | Video inside the page: the web client's renderer, feed and tiles on real pixels | in `web/`: `npm run test:native-video-smoke` | **only locally** |
 | Third-party notices | `python3 -m unittest discover -s desktop/packaging/tests`, `packaging/third-party-notices.py --check` | CI |
@@ -161,6 +224,9 @@ not what the script would write (`--check`), and the uploads to a release
 wait for that job. When a pin of the native core or the build configuration
 the file describes has changed, the script stops and says what it needs
 (`--webrtc-src`, `--core-build`; its header has the details).
+The native app ships its own file, `packaging/native/THIRD-PARTY-NOTICES.txt`
+(`--app native`; it adds the fonts and data the interface embeds and takes
+the two media-core parts from the Tauri app's file). The same job checks it.
 
 ## Running the app
 

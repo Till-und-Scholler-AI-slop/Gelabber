@@ -1,0 +1,63 @@
+# Maintainer: Gelabber <https://github.com/Till-und-Scholler-AI-slop/Gelabber>
+#
+# Beta package of the native desktop app (desktop/gelabber): installs the
+# tarball that the "Desktop native core" workflow attaches to a GitHub
+# release (desktop/packaging/native/tarball.sh). It replaces the Tauri app's
+# package, whose settings it shares. The release workflow sets pkgver, the
+# source URL and the checksum with ../update-pkgbuild.sh and regenerates
+# .SRCINFO; do not edit them by hand.
+pkgname=gelabber-desktop-native
+pkgver=0.9.0dev
+pkgrel=1
+pkgdesc='Gelabber native desktop app (beta): voice, chat and Live without a web view'
+arch=('x86_64')
+url='https://github.com/Till-und-Scholler-AI-slop/Gelabber'
+license=('MIT' 'BSD-3-Clause')
+# No webkit2gtk-4.1, libsoup3 or gtk3: egui draws on Vulkan, the tray is
+# a StatusNotifierItem over D-Bus. winit loads Wayland or X11 at run time.
+depends=(
+  'glibc'
+  'gcc-libs'
+  'glib2'
+  'gstreamer'
+  'gst-plugins-base'
+  'gst-plugins-good'
+  'libpulse'
+  'pipewire'
+  'xdg-desktop-portal'
+  'vulkan-icd-loader'
+  'mesa'
+  'libdrm'
+  'libxkbcommon'
+  'wayland'
+)
+optdepends=(
+  'pipewire-pulse: microphone and speakers through PipeWire'
+  'xdg-desktop-portal-hyprland: screen share and push-to-talk on Hyprland (Omarchy)'
+  'xdg-desktop-portal-gnome: screen share on GNOME'
+  'xdg-desktop-portal-kde: screen share and push-to-talk on KDE Plasma'
+  'vulkan-driver: the window (nvidia-utils, vulkan-intel, vulkan-radeon)'
+  'libx11: the window on X11 (with libxcursor, libxrandr, libxi)'
+  'libxkbcommon-x11: the keyboard on X11'
+  'gst-plugins-bad: H264 and AV1 on the GPU (h264parse, av1parse; NVIDIA through nvcodec)'
+  'gst-plugin-va: H264 and AV1 on Intel and AMD GPUs (VA-API)'
+  'gst-libav: H264 decoding on the CPU (avdec_h264)'
+)
+conflicts=('gelabber-desktop' 'gelabber-desktop-bin' 'gelabber-desktop-git')
+options=('!strip' '!debug')
+source=("${pkgname}-${pkgver}-${pkgrel}.tar.gz::${url}/releases/download/v0.9.0-dev/gelabber-native-linux-x64.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  cd gelabber-native-linux-x64
+  # The binary finds libgelabber_media.so next to itself ($ORIGIN rpath).
+  install -Dm755 gelabber "${pkgdir}/opt/gelabber/gelabber"
+  install -Dm755 libgelabber_media.so "${pkgdir}/opt/gelabber/libgelabber_media.so"
+  install -Dm644 README.txt "${pkgdir}/usr/share/doc/${pkgname}/README.txt"
+  install -Dm644 THIRD-PARTY-NOTICES.txt "${pkgdir}/usr/share/licenses/${pkgname}/THIRD-PARTY-NOTICES.txt"
+  install -dm755 "${pkgdir}/usr/bin"
+  ln -s /opt/gelabber/gelabber "${pkgdir}/usr/bin/gelabber"
+  # gelabber is the app id of the window and the notifications.
+  install -Dm644 gelabber.desktop "${pkgdir}/usr/share/applications/gelabber.desktop"
+  install -Dm644 gelabber.png "${pkgdir}/usr/share/icons/hicolor/256x256/apps/gelabber.png"
+}
