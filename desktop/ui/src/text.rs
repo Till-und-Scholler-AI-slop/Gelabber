@@ -1,6 +1,7 @@
 //! Text as Chromium sets it: the type scale of index.css, Inter with
 //! `wght` and `opsz` (font-optical-sizing: auto) as variation coordinates,
-//! CSS line boxes with half-leading and letter-spacing in em.
+//! CSS line boxes with half-leading and letter-spacing in em. A terminal
+//! theme swaps Inter for the system monospace font (fonts.rs).
 //!
 //! Boxes are CSS boxes: [`Block::paint`] takes the top-left corner of the
 //! first line box and puts the baseline where Blink does, so text lands on
@@ -14,10 +15,6 @@ use egui::{Align, Color32, FontFamily, FontId, Galley, Painter, Pos2, Rect, Stro
 
 use crate::fonts;
 
-/// Inter's vertical metrics (unitsPerEm 2048: ascender 1984, descender 494).
-const ASCENT_EM: f32 = 1984.0 / 2048.0;
-const DESCENT_EM: f32 = 494.0 / 2048.0;
-
 /// One CSS `font` shorthand plus letter-spacing.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextStyle {
@@ -30,6 +27,8 @@ pub struct TextStyle {
     /// `letter-spacing` in em.
     pub tracking: f32,
     pub italic: bool,
+    /// `font-family: system-ui` instead of the app's `--lr-font`.
+    pub system_ui: bool,
 }
 
 /// `--lr-type-caps` (use with `.to_uppercase()`; carries its .06em).
@@ -57,7 +56,14 @@ impl TextStyle {
             line_height,
             tracking: 0.0,
             italic: false,
+            system_ui: false,
         }
+    }
+
+    /// In `system-ui` (the desktop setup page) instead of `--lr-font`.
+    pub const fn system_ui(mut self) -> Self {
+        self.system_ui = true;
+        self
     }
 
     pub const fn size(mut self, size: f32) -> Self {
@@ -96,9 +102,16 @@ impl TextStyle {
         self.tracking * self.size
     }
 
+    /// Bold from 600 on, the weights files without a weight axis have
+    /// (CSS font matching picks 700 over 400 there).
     pub fn font_id(&self) -> FontId {
-        let family = if self.italic {
+        let bold = self.weight >= 600.0;
+        let family = if self.system_ui {
+            fonts::system_ui_family(bold)
+        } else if self.italic {
             fonts::italic_family()
+        } else if bold {
+            fonts::bold_family()
         } else {
             FontFamily::Proportional
         };
@@ -129,8 +142,13 @@ impl TextStyle {
     /// Distance from the top of a line box to the baseline, as Blink
     /// computes it: rounded ascent and descent, the half-leading floored.
     pub fn baseline(&self) -> f32 {
-        let ascent = (ASCENT_EM * self.size).round();
-        let descent = (DESCENT_EM * self.size).round();
+        let m = if self.system_ui {
+            fonts::system_ui_metrics()
+        } else {
+            fonts::ui_metrics()
+        };
+        let ascent = (m.ascent * self.size).round();
+        let descent = (m.descent * self.size).round();
         let half_leading = ((self.line_px() - ascent - descent) / 2.0).floor();
         ascent + half_leading
     }

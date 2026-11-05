@@ -328,6 +328,8 @@ pub struct GelabberApp {
     client_signed_in: bool,
     /// The video tiles' pipeline is installed in the renderer.
     video_ready: bool,
+    /// The theme's page colour, for the window's clear colour.
+    background: std::cell::Cell<egui::Color32>,
 }
 
 impl GelabberApp {
@@ -339,7 +341,9 @@ impl GelabberApp {
     /// screen hands over to the app once a server is chosen).
     pub fn with_context(ctx: &egui::Context, client: Client, route: Option<String>) -> Self {
         crate::fonts::install(ctx);
-        theme::set(ctx, Theme::dark());
+        theme::ensure(ctx);
+        // A new server's account: its own theme document.
+        screens::settings::forget_account(ctx);
         let repaint_ctx = ctx.clone();
         client.set_repaint(std::sync::Arc::new(move || repaint_ctx.request_repaint()));
         let images = Images::new(client.clone());
@@ -364,6 +368,7 @@ impl GelabberApp {
             workspace: false,
             client_signed_in: false,
             video_ready: false,
+            background: std::cell::Cell::new(Theme::dark().c.bg),
         }
     }
 
@@ -468,7 +473,11 @@ impl GelabberApp {
             self.nav.back();
         }
 
+        // The account's theme (or the one stored for the first paint), text
+        // size and motion, on every page.
+        screens::settings::apply_preferences(&ctx, &self.client);
         let theme = Theme::of(&ctx);
+        self.background.set(theme.c.bg);
         let screen = ctx.content_rect();
         ui.painter().rect_filled(screen, 0.0, theme.c.bg);
 
@@ -541,8 +550,7 @@ impl eframe::App for GelabberApp {
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        let theme = Theme::dark();
-        egui::Rgba::from(theme.c.bg).to_array()
+        egui::Rgba::from(self.background.get()).to_array()
     }
 }
 

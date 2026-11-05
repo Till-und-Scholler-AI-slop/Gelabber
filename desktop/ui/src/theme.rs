@@ -307,8 +307,28 @@ impl Theme {
     }
 }
 
+/// Installs the dark default unless a theme is active already (a second
+/// app on the same window keeps the one shown).
+pub fn ensure(ctx: &egui::Context) {
+    if ctx
+        .data(|d| d.get_temp::<Arc<Theme>>(egui::Id::NULL))
+        .is_none()
+    {
+        set(ctx, Theme::dark());
+    }
+}
+
 /// Installs `theme` as the active one and restyles egui with it.
 pub fn set(ctx: &egui::Context, theme: Theme) {
+    // `--lr-font` follows the style: monospace for terminal themes.
+    crate::fonts::set_family(
+        ctx,
+        if theme.definition.style == Style::Terminal {
+            crate::fonts::Family::Terminal
+        } else {
+            crate::fonts::Family::Inter
+        },
+    );
     let theme = Arc::new(theme);
     crate::style::apply(ctx, &theme);
     ctx.data_mut(|d| d.insert_temp(egui::Id::NULL, theme));

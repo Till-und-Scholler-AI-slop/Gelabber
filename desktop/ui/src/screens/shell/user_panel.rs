@@ -205,7 +205,13 @@ fn icon_button(
 fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
-    let items = ["Profil bearbeiten", "Einstellungen", "Abmelden"];
+    // "Server wechseln …" is the desktop app's own (isDesktopApp).
+    let items = [
+        "Profil bearbeiten",
+        "Einstellungen",
+        "Server wechseln …",
+        "Abmelden",
+    ];
     let width = 180.0;
     let height = 2.0 + 16.0 + 37.0 * items.len() as f32 + 3.0 * (items.len() - 1) as f32;
     let frame = Rect::from_min_max(
@@ -237,6 +243,13 @@ fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
                 let item =
                     Rect::from_min_size(pos2(frame.left() + 9.0, y), Vec2::new(width - 18.0, 37.0));
                 let response = common::click(ui, item, Id::unique(("user-menu-item", i)));
+                response
+                    .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, *label));
+                let response = if i == 2 {
+                    response.on_hover_text("Strg+Umschalt+S")
+                } else {
+                    response
+                };
                 if response.hovered() {
                     common::fill(ui.painter(), item, theme.radius.sm, c.hover);
                 }
@@ -262,14 +275,40 @@ fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
     match picked {
         Some(0) => app.nav.navigate("/settings/profil"),
         Some(1) => app.nav.navigate("/settings/darstellung"),
-        Some(_) => {
-            // Signed out at once like the web, then the server is told.
-            app.client.logout();
-            app.session.adopt(&serde_json::Value::Null);
-            app.nav.navigate("/login");
-        }
+        Some(2) => crate::setup::switch_server(ui.ctx()),
+        Some(_) => log_out(ui.ctx(), app),
         None => {}
     }
+}
+
+/// `logOut` (components/logout.ts): asks first when it would end a call.
+pub fn log_out(ctx: &egui::Context, app: &mut AppCtx) {
+    use gelabber_call::CallStatus;
+    if matches!(
+        app.call.state().status,
+        CallStatus::Connected | CallStatus::Reconnecting
+    ) {
+        super::overlays::ask(
+            ctx,
+            super::overlays::Question {
+                title: "Abmelden und Anruf beenden?".into(),
+                message: Some("Du verlässt dabei den Sprachkanal.".into()),
+                label: "Abmelden".into(),
+                neutral: false,
+                action: super::overlays::ConfirmAction::Logout,
+            },
+        );
+    } else {
+        sign_out(app);
+    }
+}
+
+/// Signed out at once like the web, then the server is told.
+pub fn sign_out(app: &mut AppCtx) {
+    app.call.leave();
+    app.client.logout();
+    app.session.adopt(&serde_json::Value::Null);
+    app.nav.navigate("/login");
 }
 
 /// "Dein Status": who you are, the status line with "Speichern", and the

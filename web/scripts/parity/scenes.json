@@ -639,6 +639,42 @@
           "key": "Escape"
         }
       ]
+    },
+    {
+      "name": "rail-hover",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "hover": "Spieleabend"
+        }
+      ]
+    },
+    {
+      "name": "theme-terminal",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "before": "theme lena kanagawa"
+    },
+    {
+      "name": "setup",
+      "page": "desktop/app/setup/index.html"
+    },
+    {
+      "name": "setup-dark",
+      "page": "desktop/app/setup/index.html",
+      "scheme": "dark"
+    },
+    {
+      "name": "setup-switch",
+      "page": "desktop/app/setup/index.html",
+      "query": "?server=http%3A%2F%2F127.0.0.1%3A5180"
+    },
+    {
+      "name": "setup-error",
+      "page": "desktop/app/setup/index.html",
+      "query": "?server=http%3A%2F%2F127.0.0.1%3A1&error=127.0.0.1%3A1%20ist%20nicht%20erreichbar%20(Connection%20refused%20(os%20error%20111)).",
+      "scheme": "dark"
     }
   ]
 }

@@ -350,6 +350,18 @@ fn sync(ctx: &egui::Context) -> Arc<Mutex<Sync>> {
     })
 }
 
+/// A fresh sync for another account; the theme on the window stays until
+/// that account's document arrives.
+pub fn forget(ctx: &egui::Context) {
+    let shared = sync(ctx);
+    let mut s = shared.lock();
+    let shown = s.shown.take();
+    *s = Sync {
+        shown,
+        ..Sync::default()
+    };
+}
+
 /// What the pages read about the account's themes.
 pub struct SyncView {
     pub doc: ThemeDocument,

@@ -194,6 +194,12 @@ pub(crate) fn op_pending(app: &AppCtx, key: &str) -> bool {
 /// What the settings change for the whole window: the account's theme
 /// (or a gallery preview), text size and reduced motion. Cheap; the shell
 /// calls it every frame so every page follows.
+/// Drops what the window knows about the previous account's themes (a
+/// new app after "Server wechseln").
+pub fn forget_account(ctx: &egui::Context) {
+    themes::forget(ctx);
+}
+
 pub fn apply_preferences(ctx: &egui::Context, client: &gelabber_client::Client) {
     themes::apply_theme(ctx, client);
     prefs::apply(ctx, &prefs::get(ctx));

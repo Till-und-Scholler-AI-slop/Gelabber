@@ -6,6 +6,8 @@
 //   node scripts/parity/say.mjs post <user> <channel-key> <text>   → prints the id
 //   node scripts/parity/say.mjs delete <user> <message-id>
 //   node scripts/parity/say.mjs revoke-unused <user> <server-key>   (invites a dialog made)
+//   node scripts/parity/say.mjs theme <user> <preset-id|theme JSON>  (reset.mjs undoes it)
+//   node scripts/parity/say.mjs unmute <user> <channel-key|server-key>  (notification settings)
 // <channel-key> is "dm" or a channel name of fixture.json; "{lena}" (any
 // user key) in the text becomes that user's mention token.
 /* global process, console, fetch, URL */
@@ -16,8 +18,9 @@ const here = new URL(".", import.meta.url).pathname;
 const fixture = JSON.parse(await readFile(join(here, "fixture.json"), "utf8"));
 const [command, who, target, ...words] = process.argv.slice(2);
 const user = fixture.users[who];
-if (!user || !["post", "delete", "revoke-unused"].includes(command) || !target)
-  throw new Error("usage: say.mjs post <user> <channel-key> <text> | delete <user> <id>");
+const COMMANDS = ["post", "delete", "revoke-unused", "theme", "unmute"];
+if (!user || !COMMANDS.includes(command) || !target)
+  throw new Error(`usage: say.mjs ${COMMANDS.join("|")} <user> …`);
 
 const cookies = new Map();
 let csrf = null;
@@ -86,6 +89,26 @@ if (command === "post") {
   for (const invite of await call("GET", `/servers/${server}/invites`))
     if (invite.uses === 0 && invite.created_by === user.id)
       await call("DELETE", `/invites/${encodeURIComponent(invite.code)}`);
+} else if (command === "theme") {
+  // A built-in id, or a whole custom theme (theme/model.ts ThemeDefinition)
+  // that becomes the active one.
+  const doc = await call("GET", "/me/themes");
+  const spec = [target, ...words].join(" ");
+  if (spec.startsWith("{")) {
+    const theme = JSON.parse(spec);
+    doc.customThemes = [...doc.customThemes.filter((t) => t.id !== theme.id), theme];
+    doc.active = theme.id;
+  } else {
+    doc.active = spec;
+  }
+  await call("PUT", "/me/themes", doc);
+} else if (command === "unmute") {
+  // Back to inheriting: no level of its own, not muted.
+  const server = fixture.servers[target]?.id;
+  const channel = target === "dm" ? fixture.dm : fixture.servers.home.channels[target];
+  if (!server && !channel) throw new Error(`unknown channel or server ${target}`);
+  const scope = server ? `/servers/${server}` : `/channels/${channel}`;
+  await call("PUT", `${scope}/notification-settings`, { level: null, muted: false });
 } else {
   await call("DELETE", `/messages/${target}`);
 }

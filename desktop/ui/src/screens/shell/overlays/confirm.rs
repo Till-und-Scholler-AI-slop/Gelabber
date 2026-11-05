@@ -14,10 +14,24 @@ use crate::widgets::{Button, Modal};
 /// What a "yes" does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConfirmAction {
-    Kick { server: Uuid, user: Uuid },
-    Ban { server: Uuid, user: Uuid },
-    DeleteChannel { server: Uuid, channel: Uuid },
-    DeleteCategory { server: Uuid, category: Uuid },
+    Kick {
+        server: Uuid,
+        user: Uuid,
+    },
+    Ban {
+        server: Uuid,
+        user: Uuid,
+    },
+    DeleteChannel {
+        server: Uuid,
+        channel: Uuid,
+    },
+    DeleteCategory {
+        server: Uuid,
+        category: Uuid,
+    },
+    /// Signing out ends the call (components/logout.ts).
+    Logout,
 }
 
 #[derive(Clone, Debug)]
@@ -155,7 +169,7 @@ pub fn dialog(
     answer
 }
 
-fn run(app: &AppCtx, action: ConfirmAction) {
+fn run(app: &mut AppCtx, action: ConfirmAction) {
     match action {
         ConfirmAction::Kick { server, user } => app.client.kick(server, user),
         ConfirmAction::Ban { server, user } => app.client.ban(server, user),
@@ -165,5 +179,6 @@ fn run(app: &AppCtx, action: ConfirmAction) {
         ConfirmAction::DeleteCategory { server, category } => {
             app.client.delete_category(server, category)
         }
+        ConfirmAction::Logout => crate::screens::shell::user_panel::sign_out(app),
     }
 }
