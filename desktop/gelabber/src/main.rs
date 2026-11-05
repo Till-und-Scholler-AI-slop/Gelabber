@@ -5,8 +5,10 @@
 //! push-to-talk, updates) is `gelabber_ui::platform`.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod smoke;
+
 use eframe::egui;
-use gelabber_ui::platform::{self, Platform, instance, settings, state};
+use gelabber_ui::platform::{self, Platform, instance, legacy, settings, state};
 use gelabber_ui::{GelabberApp, Launcher};
 use tracing_subscriber::EnvFilter;
 
@@ -14,14 +16,39 @@ use tracing_subscriber::EnvFilter;
 struct Desktop {
     launcher: Launcher,
     platform: Platform,
+    smoke: Option<smoke::Smoke>,
+}
+
+impl Desktop {
+    /// `GELABBER_SMOKE`: the verdict once the time is up, then the window closes.
+    fn smoke(&mut self, ctx: &egui::Context) {
+        let Some(test) = &mut self.smoke else { return };
+        // Nothing else wakes a window that gets no input (Xvfb).
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        let now = ctx.input(|i| i.time);
+        if test.overdue(now) {
+            std::process::exit(smoke::exit_code().unwrap_or(1));
+        }
+        let screen = match self.launcher.app() {
+            None => "setup".to_owned(),
+            Some(app) => format!("{:?}", app.nav().route()),
+        };
+        if test.check(now, &screen).is_some() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
 }
 
 impl eframe::App for Desktop {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.platform.logic(ctx, self.launcher.app());
+        self.smoke(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        if let Some(test) = &mut self.smoke {
+            test.frame();
+        }
         eframe::App::ui(&mut self.launcher, ui, frame);
         let app: Option<&GelabberApp> = self.launcher.app().map(|a| &*a);
         self.platform.paint(ui, app);
@@ -53,6 +80,13 @@ fn main() -> eframe::Result {
         instance::Claim::First(instance) => instance,
         instance::Claim::Running => return Ok(()),
     };
+    // Before anything reads the settings: the Tauri app's, on the first start.
+    match legacy::import() {
+        Ok(Some(imported)) => eprintln!("gelabber: took over {imported}"),
+        Ok(None) => {}
+        Err(e) => eprintln!("gelabber: taking over the Tauri app's settings: {e}"),
+    }
+    let smoke = smoke::Smoke::from_env(std::env::var("GELABBER_SMOKE").ok().as_deref());
     let server = settings::configured_server(
         std::env::args().skip(1),
         std::env::var("GELABBER_SERVER").ok(),
@@ -80,7 +114,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     let platform = Platform::new(Some(instance));
-    eframe::run_native(
+    let result = eframe::run_native(
         "Gelabber",
         options,
         Box::new(move |cc| {
@@ -88,7 +122,15 @@ fn main() -> eframe::Result {
             platform.set_window(cc);
             let prepare = platform.prepare_hook();
             let launcher = Launcher::with_prepare(cc, server, Box::new(remember), Some(prepare));
-            Ok(Box::new(Desktop { launcher, platform }))
+            Ok(Box::new(Desktop {
+                launcher,
+                platform,
+                smoke,
+            }))
         }),
-    )
+    );
+    if let Some(code) = smoke::exit_code() {
+        std::process::exit(code);
+    }
+    result
 }

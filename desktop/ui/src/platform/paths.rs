@@ -23,7 +23,8 @@ pub fn config_dir() -> Option<PathBuf> {
     base_dir().map(|base| base.join(IDENTIFIER))
 }
 
-fn base_dir() -> Option<PathBuf> {
+/// The directory the per-app directories are in (`%APPDATA%`, `~/.config`).
+pub(super) fn base_dir() -> Option<PathBuf> {
     let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
     if cfg!(windows) {
         var("APPDATA").map(PathBuf::from)
