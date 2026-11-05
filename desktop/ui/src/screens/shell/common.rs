@@ -379,19 +379,9 @@ mod tests {
         harness.run_steps(2);
         harness.key_press(egui::Key::Tab);
         harness.run_steps(2);
-        // The channel header's search field, the page's first control.
-        let focused = {
-            use egui_kittest::kittest::{NodeT, Queryable};
-            harness
-                .query_all(egui_kittest::kittest::By::new().predicate(|n| n.is_focused()))
-                .next()
-                .and_then(|n| n.accesskit_node().bounding_box())
-                .expect("a focused node")
-        };
-        assert!(
-            focused.x0 >= 288.0 && focused.y1 <= 52.0,
-            "{focused:?} is not in the page header"
-        );
+        // The channel header's search field, the page's first control
+        // (its frame is no Tab stop of its own).
+        assert_eq!(focused_label(&harness).as_deref(), Some("Suchen"));
         // Back: the user panel's last control ends the navigation.
         harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
         harness.run_steps(2);
