@@ -191,7 +191,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
             panel(ui, app);
             if !home::redirect(ui, app) {
                 home::welcome(ui, app, layout::page_rect(content, false));
-            } else if home::loading(app) {
+            } else if home::loading(ui.ctx(), app) {
                 crate::widgets::skeleton::main(
                     ui,
                     layout::page_rect(content, false),

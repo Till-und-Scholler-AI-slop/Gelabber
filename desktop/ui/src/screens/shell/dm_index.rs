@@ -22,7 +22,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
             s.op("bootstrap").cloned(),
         )
     });
-    let failed = matches!(bootstrap, Some(gelabber_client::OpState::Failed(_)));
+    let failed = super::home::bootstrap_failed(ui.ctx(), app.client, loaded);
     let last = state::memory(ui.ctx(), user).dm;
     if let Some(last) = last {
         if dms.contains(&last) {

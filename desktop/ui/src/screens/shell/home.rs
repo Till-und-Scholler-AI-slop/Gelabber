@@ -23,7 +23,7 @@ pub fn redirect(ui: &Ui, app: &mut AppCtx) -> bool {
     });
     if !servers_loaded {
         // A failed load shows the welcome with its error.
-        return !failed(app);
+        return !failed(ui.ctx(), app);
     }
     let remembered = state::memory(ui.ctx(), user).place;
     let target = match remembered {
@@ -42,15 +42,36 @@ pub fn redirect(ui: &Ui, app: &mut AppCtx) -> bool {
 }
 
 /// The first load failed (`isError` of the server list).
-fn failed(app: &AppCtx) -> bool {
-    app.client.with_state(|s| {
-        !s.servers_loaded && matches!(s.op("bootstrap"), Some(gelabber_client::OpState::Failed(_)))
-    })
+fn failed(ctx: &egui::Context, app: &AppCtx) -> bool {
+    let loaded = app.client.with_state(|s| s.servers_loaded);
+    bootstrap_failed(ctx, app.client, loaded)
+}
+
+/// Whether the workspace's first load failed and `loaded` is still false.
+/// It stays failed while "Erneut versuchen" runs, as a query keeps
+/// `isError` during its refetch: the error shows with a pending button
+/// instead of falling back to the skeleton.
+pub fn bootstrap_failed(
+    ctx: &egui::Context,
+    client: &gelabber_client::Client,
+    loaded: bool,
+) -> bool {
+    use gelabber_client::OpState;
+    let id = egui::Id::unique("gelabber-bootstrap-failed");
+    let op = client.with_state(|s| s.op("bootstrap").cloned());
+    let failed = match op {
+        _ if loaded => false,
+        Some(OpState::Failed(_)) => true,
+        Some(OpState::Pending) => ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false),
+        _ => false,
+    };
+    ctx.data_mut(|d| d.insert_temp(id, failed));
+    failed
 }
 
 /// Whether "/" still waits for the lists (`MainSkeleton kind="overview"`).
-pub fn loading(app: &AppCtx) -> bool {
-    app.client.with_state(|s| !s.servers_loaded) && !failed(app)
+pub fn loading(ctx: &egui::Context, app: &AppCtx) -> bool {
+    app.client.with_state(|s| !s.servers_loaded) && !failed(ctx, app)
 }
 
 /// `.welcome__error`: the alert and "Erneut versuchen" in one row under
@@ -121,7 +142,7 @@ pub fn welcome(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     let h1 = Block::wrapped(ui, &title, text::HERO.tracking(-0.035), c.text, width);
     h1.paint(ui.painter(), pos2(left, rect.top() + 40.0));
     let mut top = rect.top() + 40.0 + h1.height() + 32.0;
-    if failed(app) {
+    if failed(ui.ctx(), app) {
         top += welcome_error(ui, app, left, rect.top() + 40.0 + h1.height() + 20.0, width) - 20.0
             + 12.0;
     }
@@ -238,6 +259,46 @@ mod tests {
             .next()
             .expect("a retry button");
         retry.click();
+        wait_for(&mut harness, "the list", |h| {
+            h.query_by_label(page).is_none()
+        });
+    }
+
+    /// "Erneut versuchen" keeps the error up while it runs, with the pending
+    /// button (a query's refetch keeps `isError`), instead of the skeleton.
+    #[test]
+    fn a_retry_keeps_the_error_while_it_runs() {
+        let _config = TempConfig::new("dms-retry");
+        // 0: the lists fail, 1: they hang, 2: they load.
+        let phase = Arc::new(std::sync::atomic::AtomicU8::new(0));
+        let serve = phase.clone();
+        let api = FakeApi::start(true, move |method, path, _| {
+            if method != "GET" || !matches!(path, "/servers" | "/dms") {
+                return None;
+            }
+            match serve.load(Ordering::SeqCst) {
+                0 => Some(Reply::error(500, "internal")),
+                _ => {
+                    while serve.load(Ordering::SeqCst) == 1 {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    None
+                }
+            }
+        });
+        let mut harness = launcher(&api, "/d");
+        let page = "Die Direktnachrichten konnten nicht geladen werden.";
+        wait_for_label(&mut harness, page);
+        phase.store(1, Ordering::SeqCst);
+        harness
+            .query_all_by_label("Erneut versuchen")
+            .next()
+            .expect("a retry button")
+            .click();
+        wait_for_label(&mut harness, "Wird geladen…");
+        harness.run_steps(5);
+        assert!(harness.query_by_label(page).is_some());
+        phase.store(2, Ordering::SeqCst);
         wait_for(&mut harness, "the list", |h| {
             h.query_by_label(page).is_none()
         });
