@@ -636,8 +636,10 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
             egui::Id::unique(("gelabber-row-bg", item.msg.id)),
             Sense::click(),
         );
-        if row_resp.secondary_clicked() && !row::bar_buttons(&cx).is_empty() {
-            actions.push(ListAction::Row(RowAction::Menu(item.msg.id, row_rect)));
+        if row_resp.secondary_clicked()
+            && let Some(anchor) = row::more_rect(&cx, row_rect)
+        {
+            actions.push(ListAction::Row(RowAction::Menu(item.msg.id, anchor)));
         }
         let mut draft = pane
             .editing

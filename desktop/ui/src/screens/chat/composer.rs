@@ -381,7 +381,7 @@ pub fn show(
                 (
                     i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
                     i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
-                    i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                    super::consume_plain(i, egui::Key::Enter)
                         || i.consume_key(egui::Modifiers::NONE, egui::Key::Tab),
                     i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
                 )
@@ -454,12 +454,10 @@ pub fn show(
     let disabled = over || (state.draft.trim().is_empty() && state.files.is_empty());
     let mut submit = false;
     if focused {
-        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
+        if ui.input_mut(|i| super::consume_plain(i, egui::Key::Enter)) {
             submit = true;
         }
-        if state.draft.is_empty()
-            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp))
-        {
+        if state.draft.is_empty() && ui.input_mut(|i| super::consume_plain(i, egui::Key::ArrowUp)) {
             actions.push(ComposerAction::EditLast);
         }
     }

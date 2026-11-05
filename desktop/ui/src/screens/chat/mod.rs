@@ -590,6 +590,20 @@ fn row_action(
     }
 }
 
+/// Consumes `key` pressed without any modifier. egui's `consume_key`
+/// ignores an extra Shift, so Shift+Enter would send instead of breaking the line.
+fn consume_plain(input: &mut egui::InputState, key: egui::Key) -> bool {
+    let before = input.events.len();
+    input.events.retain(|event| {
+        !matches!(
+            event,
+            egui::Event::Key { key: k, modifiers, pressed: true, .. }
+                if *k == key && modifiers.matches_exact(egui::Modifiers::NONE)
+        )
+    });
+    input.events.len() != before
+}
+
 /// Opens a link in the system browser.
 pub fn open_external(ctx: &egui::Context, url: &str) {
     ctx.open_url(egui::OpenUrl::new_tab(url));
@@ -996,4 +1010,31 @@ fn menu_row(ui: &mut Ui, icon: crate::icons::Icon, label: &str, danger: bool) ->
             .on_hover(&response, crate::widgets::tooltip::Side::Above);
     }
     response.clicked()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn enter(modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn shift_enter_is_not_a_plain_enter() {
+        let mut input = egui::InputState::default();
+        input.events = vec![enter(egui::Modifiers::SHIFT)];
+        assert!(!consume_plain(&mut input, egui::Key::Enter));
+        // It stays for the text field, which breaks the line.
+        assert_eq!(input.events.len(), 1);
+        input.events = vec![enter(egui::Modifiers::NONE)];
+        assert!(consume_plain(&mut input, egui::Key::Enter));
+        assert!(input.events.is_empty());
+    }
 }

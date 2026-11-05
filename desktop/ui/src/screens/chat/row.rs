@@ -328,8 +328,9 @@ pub fn layout(ui: &Ui, cx: &RowCx, width: f32) -> RowLayout {
     if let Some(draft) = cx.edit {
         let lines = draft.split('\n').count().max(1) as f32;
         let editor = (lines * EDIT.line_px() + 18.0).clamp(50.75, 400.0);
-        // Form: margin-top 4, gap 6, then the actions line (12px/1.5).
-        let h = editor + 6.0 + 18.0;
+        // Form: margin-top 4, gap 6, then the actions line: its buttons
+        // (padding 4, 12px/1.5) make it 26 tall.
+        let h = editor + 6.0 + 26.0;
         let top = stack.add(4.0, h, 0.0);
         out.edit = Some((top, editor));
     } else if !msg.content.is_empty() || msg.gif.is_none() {
@@ -541,6 +542,17 @@ pub fn bar_rect(cx: &RowCx, rect: Rect) -> Option<Rect> {
     ))
 }
 
+/// The bar's "more" button for a row at `rect`: the menu's anchor, also
+/// when a right click opens it (`setMenu("more")`).
+pub fn more_rect(cx: &RowCx, rect: Rect) -> Option<Rect> {
+    let bar = bar_rect(cx, rect)?;
+    let n = bar_buttons(cx).len() as f32;
+    Some(Rect::from_min_size(
+        pos2(bar.left() + 3.0 + (n - 1.0) * 32.0, bar.top() + 3.0),
+        vec2(30.0, 28.0),
+    ))
+}
+
 /// How the row shows: hovered (or focused), its menu open.
 #[derive(Clone, Copy, Default)]
 pub struct Look {
@@ -574,6 +586,8 @@ pub fn paint(
     let c = theme.c;
     let msg = cx.msg;
     let id = egui::Id::unique(("gelabber-row", msg.id));
+    // `.lr-message-row:focus-within` looks hovered: the editor has the keyboard.
+    let hovered = hovered || (edit.is_some() && ui.memory(|m| m.has_focus(editor_id(msg.id))));
     let mut actions = Vec::new();
     if let Some(fill) = background(&theme, cx, hovered) {
         ui.painter().rect_filled(rect, 0.0, fill);
@@ -880,6 +894,10 @@ fn paint_bar(
     }
 }
 
+fn editor_id(message: Uuid) -> egui::Id {
+    egui::Id::unique(("gelabber-edit", message))
+}
+
 fn paint_editor(ui: &mut Ui, id: Uuid, rect: Rect, edit: Editing, actions: &mut Vec<RowAction>) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
@@ -891,9 +909,9 @@ fn paint_editor(ui: &mut Ui, id: Uuid, rect: Rect, edit: Editing, actions: &mut 
         Stroke::new(1.0, c.accent),
         StrokeKind::Inside,
     );
-    let edit_id = egui::Id::unique(("gelabber-edit", id));
+    let edit_id = editor_id(id);
     let focused = ui.memory(|m| m.has_focus(edit_id));
-    if focused && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
+    if focused && ui.input_mut(|i| super::consume_plain(i, egui::Key::Enter)) {
         actions.push(RowAction::SaveEdit(id));
     }
     // Esc drops egui's focus before the frame runs; it was the editor's.
@@ -934,8 +952,10 @@ fn paint_editor(ui: &mut Ui, id: Uuid, rect: Rect, edit: Editing, actions: &mut 
             .set_char_range(Some(egui::text::CCursorRange::one(end)));
         state.store(ui.ctx(), edit_id);
     }
-    // "Esc bricht ab · Enter speichert" · Abbrechen · Speichern.
-    let y = rect.bottom() + 6.0;
+    // "Esc bricht ab · Enter speichert" · Abbrechen · Speichern: the
+    // actions line starts 6 below the field; its text sits 4 below that.
+    let line = rect.bottom() + 6.0;
+    let y = line + 4.0;
     let hint = Block::single(
         ui,
         "Esc bricht ab · Enter speichert",
@@ -947,12 +967,11 @@ fn paint_editor(ui: &mut Ui, id: Uuid, rect: Rect, edit: Editing, actions: &mut 
     let save = Block::single(ui, "Speichern", label, c.accent_ink);
     let cancel = Block::single(ui, "Abbrechen", label, c.text);
     let save_rect = Rect::from_min_size(
-        pos2(rect.right() - save.width() - 20.0, y - 4.0 + 4.5),
-        vec2(save.width() + 20.0, 18.0 + 8.0),
+        pos2(rect.right() - save.width() - 20.0, line),
+        vec2(save.width() + 20.0, 26.0),
     );
-    let save_rect = Rect::from_min_size(pos2(save_rect.left(), y - 4.0), save_rect.size());
     let cancel_rect = Rect::from_min_size(
-        pos2(save_rect.left() - 6.0 - cancel.width() - 20.0, y - 4.0),
+        pos2(save_rect.left() - 6.0 - cancel.width() - 20.0, line),
         vec2(cancel.width() + 20.0, 26.0),
     );
     let r_cancel = ui.interact(cancel_rect, edit_id.with("cancel"), Sense::click());

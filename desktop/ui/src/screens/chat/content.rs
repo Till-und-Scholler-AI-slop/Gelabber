@@ -20,6 +20,13 @@ pub const BODY: TextStyle = TextStyle::new(14.5, 400.0, 1.5);
 const MONO_SIZE: f32 = 12.76;
 /// `pre`: 14.5px strut × 1.45, in Blink's 1/64 px layout units.
 const PRE_LINE: f32 = 1345.0 / 64.0;
+/// A search hit's text (`.lr-search-results`): 14px / 1.5.
+const HIT_BODY: TextStyle = TextStyle::new(14.0, 400.0, 1.5);
+/// A hit's code line: the 21px strut plus the mono run hanging below it,
+/// as Blink measures it (1/64 px).
+const HIT_PRE_LINE: f32 = 1374.0 / 64.0;
+/// `span.lr-md-codeblock`: `max-height: 8em` of 14px, overflow hidden.
+const HIT_CODE_MAX: f32 = 112.0;
 
 /// Who the mentions of one message name and whether they reached me.
 pub struct Mentions<'a> {
@@ -87,6 +94,9 @@ pub struct Laid {
     pub margin_bottom: f32,
     /// The text column width it was laid out for.
     pub width: f32,
+    body: TextStyle,
+    /// A search hit: code blocks without their bar.
+    hit: bool,
 }
 
 /// What a click inside the content asks for.
@@ -108,6 +118,7 @@ struct Builder<'a> {
     hereish: bool,
     color: Color32,
     theme: &'a Theme,
+    body: TextStyle,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -121,7 +132,7 @@ struct Marks {
 
 impl Builder<'_> {
     fn style(&self, marks: Marks) -> TextStyle {
-        let mut style = BODY;
+        let mut style = self.body;
         if marks.bold {
             style = style.weight(700.0);
         }
@@ -135,7 +146,7 @@ impl Builder<'_> {
         if text.is_empty() {
             return;
         }
-        format.line_height = Some(BODY.line_px());
+        format.line_height = Some(self.body.line_px());
         if marks.underline {
             format.underline = Stroke::new(1.0, format.color);
         }
@@ -215,7 +226,7 @@ impl Builder<'_> {
                 }
                 Inline::Code(code) => {
                     let mut format = self.style(marks).format(self.color);
-                    format.font_id = FontId::new(MONO_SIZE, FontFamily::Monospace);
+                    format.font_id = FontId::new(mono_size(self.body), FontFamily::Monospace);
                     format.coords = Default::default();
                     self.push(code, format, Span::Code, marks);
                 }
@@ -297,6 +308,15 @@ pub fn body_color(theme: &Theme) -> Color32 {
     mix(theme.c.muted, theme.c.text, 0.9)
 }
 
+/// `0.88em` of the text.
+fn mono_size(body: TextStyle) -> f32 {
+    if body.size == BODY.size {
+        MONO_SIZE
+    } else {
+        body.size * 0.88
+    }
+}
+
 /// Lays out `content` for a text column `width` wide. `edited` appends the
 /// "(bearbeitet)" marker after the last glyph.
 pub fn layout(
@@ -307,7 +327,26 @@ pub fn layout(
     revealed: &HashSet<usize>,
     edited: bool,
 ) -> Laid {
+    layout_as(ui, content, width, mentions, revealed, edited, false)
+}
+
+/// A search hit's content (`MessageContent interactive={false}` in
+/// `.lr-search-hit`): 14px in the text colour, code blocks without their bar.
+pub fn layout_hit(ui: &Ui, content: &str, width: f32, mentions: &Mentions) -> Laid {
+    layout_as(ui, content, width, mentions, &HashSet::new(), false, true)
+}
+
+fn layout_as(
+    ui: &Ui,
+    content: &str,
+    width: f32,
+    mentions: &Mentions,
+    revealed: &HashSet<usize>,
+    edited: bool,
+    hit: bool,
+) -> Laid {
     let theme = Theme::of(ui.ctx());
+    let body = if hit { HIT_BODY } else { BODY };
     let blocks = parse_message(content);
     let named = named_tokens(&blocks);
     let hereish = mentions.everyone
@@ -315,7 +354,11 @@ pub fn layout(
             .mentions
             .iter()
             .any(|id| !named.contains(&id.to_string()));
-    let color = body_color(&theme);
+    let color = if hit {
+        theme.c.text
+    } else {
+        body_color(&theme)
+    };
     let mut parts: Vec<Part> = Vec::new();
     let mut spoilers = 0;
     let mut codes = 0;
@@ -340,6 +383,7 @@ pub fn layout(
                     hereish,
                     color,
                     theme: &theme,
+                    body,
                 };
                 b.inline(nodes, Marks::default());
                 if edited && last {
@@ -348,7 +392,7 @@ pub fn layout(
                 spoilers = b.spoilers;
                 b.job.wrap.max_width = (width - inset).max(1.0);
                 b.job.wrap.break_anywhere = false;
-                let block = Block::new(ui, b.job, BODY);
+                let block = Block::new(ui, b.job, body);
                 let height = block.height();
                 let margin = if quote { 2.0 } else { 0.0 };
                 boxes.push((
@@ -368,9 +412,10 @@ pub fn layout(
                     .as_deref()
                     .map(|l| Block::single(ui, l, TextStyle::new(11.0, 400.0, 1.5), theme.c.muted));
                 let mut job = LayoutJob::default();
+                let line = if hit { HIT_PRE_LINE } else { PRE_LINE };
                 let mut format = egui::TextFormat {
-                    font_id: FontId::new(MONO_SIZE, FontFamily::Monospace),
-                    line_height: Some(PRE_LINE),
+                    font_id: FontId::new(mono_size(body), FontFamily::Monospace),
+                    line_height: Some(line),
                     color,
                     valign: egui::Align::Center,
                     ..Default::default()
@@ -378,9 +423,14 @@ pub fn layout(
                 format.extra_letter_spacing = 0.0;
                 job.append(code, 0.0, format);
                 job.wrap.max_width = f32::INFINITY;
-                let lines = Block::new(ui, job, BODY.line_height(1.45));
-                // Border, bar (2 + 20.5 button), pre padding 2 … 8.
-                let height = 2.0 + 22.5 + 2.0 + lines.rows() as f32 * PRE_LINE + 8.0;
+                let lines = Block::new(ui, job, body.line_height(line / body.size));
+                let height = if hit {
+                    // Border, padding 6 … 6, at most 8em of lines.
+                    2.0 + 12.0 + (lines.rows() as f32 * line).min(HIT_CODE_MAX)
+                } else {
+                    // Border, bar (2 + 20.5 button), pre padding 2 … 8.
+                    2.0 + 22.5 + 2.0 + lines.rows() as f32 * PRE_LINE + 8.0
+                };
                 boxes.push((
                     height,
                     4.0,
@@ -415,10 +465,11 @@ pub fn layout(
             hereish,
             color,
             theme: &theme,
+            body,
         };
         push_edited(&mut b, &theme);
         b.job.wrap.max_width = width.max(1.0);
-        let block = Block::new(ui, b.job, BODY);
+        let block = Block::new(ui, b.job, body);
         let height = block.height();
         boxes.push((
             height,
@@ -432,7 +483,9 @@ pub fn layout(
             }),
         ));
     }
-    let margin_top = boxes.first().map_or(1.0, |b| b.1.max(1.0));
+    // `.lr-message-text` has a 1px top margin, a hit's text paragraph 2px.
+    let floor = if hit { 2.0 } else { 1.0 };
+    let margin_top = boxes.first().map_or(floor, |b| b.1.max(floor));
     let margin_bottom = boxes.last().map_or(0.0, |b| b.2);
     let mut y = 0.0;
     let mut previous_bottom: Option<f32> = None;
@@ -450,6 +503,8 @@ pub fn layout(
         margin_top,
         margin_bottom,
         width,
+        body,
+        hit,
     }
 }
 
@@ -515,9 +570,10 @@ impl Laid {
                             Color32::from_rgba_unmultiplied(c.text.r(), c.text.g(), c.text.b(), 64),
                         );
                     }
-                    let line = BODY.line_px();
+                    let body = self.body;
+                    let line = body.line_px();
                     let baseline =
-                        |r: usize| ((top + r as f32 * line + BODY.baseline()) * ppp).round() / ppp;
+                        |r: usize| ((top + r as f32 * line + body.baseline()) * ppp).round() / ppp;
                     // Chips under the glyphs.
                     for (s, section) in t.sections.iter().enumerate() {
                         let (fill, stroke, radius, up, down, pad) = match section.span {
@@ -653,7 +709,7 @@ impl Laid {
                         for (r, lo, hi) in rows {
                             crate::widgets::link::underline(
                                 ui.painter(),
-                                BODY,
+                                body,
                                 top + r as f32 * line,
                                 left + lo,
                                 left + hi,
@@ -678,6 +734,15 @@ impl Laid {
                         Stroke::new(1.0, c.border),
                         egui::StrokeKind::Inside,
                     );
+                    if self.hit {
+                        // `span.lr-md-codeblock`: padding 6 8, clipped at 8em.
+                        let clip = ui
+                            .painter()
+                            .with_clip_rect(rect.shrink(1.0).intersect(ui.clip_rect()));
+                        code.lines
+                            .paint(&clip, pos2(rect.left() + 9.0, rect.top() + 1.0 + 6.0));
+                        continue;
+                    }
                     if let Some(lang) = &code.lang {
                         lang.paint(
                             ui.painter(),
