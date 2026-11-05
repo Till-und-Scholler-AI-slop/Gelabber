@@ -184,9 +184,12 @@ fn room_content(
 ) -> f32 {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
+    // `html[data-compact-rooms]`: 16px above and below, cards as high as
+    // their content.
+    let compact = crate::screens::settings::prefs::get(ui.ctx()).compact_rooms;
     let left = left + 28.0;
     let w = (width - 56.0).max(0.0);
-    let mut y = top + 20.0;
+    let mut y = top + if compact { 16.0 } else { 20.0 };
     let line = summary::room_summary(&room.others, room.here, &room.others_live);
     let block = Block::wrapped(ui, &line, text::BODY, c.muted, w);
     block.paint(ui.painter(), pos2(left, y + 2.0));
@@ -205,7 +208,11 @@ fn room_content(
         let grid_w = w.min(1100.0);
         let cols = (((grid_w + 12.0) / 212.0).floor() as usize).max(1);
         let tile_w = (grid_w - 12.0 * (cols as f32 - 1.0)) / cols as f32;
-        let tile_h = tile_w * 10.0 / 16.0;
+        let tile_h = if compact {
+            compact_card_height()
+        } else {
+            tile_w * 10.0 / 16.0
+        };
         for i in 0..count {
             let (row, col) = (i / cols, i % cols);
             let rect = Rect::from_min_size(
@@ -216,7 +223,7 @@ fn room_content(
                 vec2(tile_w, tile_h),
             );
             match room.occupants.get(i) {
-                Some(p) => tile::card(ui, app, rect, p),
+                Some(p) => tile::card(ui, app, rect, room.server, p),
                 None => tile::seat(ui, rect),
             }
         }
@@ -244,7 +251,13 @@ fn room_content(
         y += 20.0;
         y = actions(ui, app, room, left, y);
     }
-    y + 28.0
+    y + if compact { 16.0 } else { 28.0 }
+}
+
+/// A card's height without its 16:10 (`aspect-ratio: auto`): the 64px
+/// avatar, the name and the status line inside the card's padding.
+fn compact_card_height() -> f32 {
+    1.0 + 14.0 + 64.0 + 2.0 + 6.0 + text::UI.line_px() + text::META.line_px() + 12.0 + 1.0
 }
 
 /// "Beitreten" (or the missing permission), the microphone test and the
@@ -291,8 +304,7 @@ pub fn actions(ui: &mut Ui, app: &mut AppCtx, room: &Room, left: f32, top: f32) 
         )
         .clicked()
     {
-        // The microphone test runs in the audio settings on this client.
-        app.nav.navigate("/settings/audio");
+        super::dialogs::open_mic_test(ui.ctx());
     }
     let gear = mic.translate(Vec2::new(36.0 + 8.0, 0.0));
     let response = ui.put(
@@ -515,7 +527,7 @@ fn stage_room(
             } else {
                 1.0
             };
-            tile::strip_person(ui, app, rect, p, kino, opacity);
+            tile::strip_person(ui, app, rect, room.server, p, kino, opacity);
         }
     }
     if let Some((top, rows)) = people_top {
@@ -524,7 +536,7 @@ fn stage_room(
             let mut x = left;
             for (p, width) in row {
                 let rect = Rect::from_min_size(pos2(x, top + r as f32 * 52.0), vec2(*width, 44.0));
-                tile::chip(ui, app, rect, p);
+                tile::chip(ui, app, rect, room.server, p);
                 x += width + 8.0;
             }
         }
@@ -568,7 +580,10 @@ fn people_rows(ui: &Ui, people: &[Person], width: f32) -> Vec<Vec<(Person, f32)>
 /// K and Esc for Kino, unless a field has the keys or a dialog is open.
 fn kino_keys(ui: &Ui, kino: bool) {
     let ctx = ui.ctx();
-    if ctx.egui_wants_keyboard_input() || crate::screens::shell::dialog_open(ctx) {
+    if ctx.egui_wants_keyboard_input()
+        || crate::screens::shell::dialog_open(ctx)
+        || super::dialogs::open(ctx)
+    {
         return;
     }
     let ptt = {
@@ -697,6 +712,18 @@ fn fullscreen(ui: &mut Ui, app: &mut AppCtx, room: &Room) {
                     0.0,
                 );
             }
+            // The Live badge stays in the large view (`.voice-video-live`).
+            if pic.id.kind == Kind::Live {
+                let theme = Theme::of(ui.ctx());
+                let style = TextStyle::new(11.0, 600.0, 1.3);
+                let label = Block::single(ui, "Live", style, Color32::WHITE);
+                let badge = Rect::from_min_size(
+                    screen.min + vec2(8.0, 8.0),
+                    vec2(label.width() + 12.0, label.height() + 4.0),
+                );
+                painter.rect_filled(badge, corner(theme.radius.xs), theme.c.danger_bg);
+                label.paint(&painter, badge.min + vec2(6.0, 2.0));
+            }
             leave |= watch_strip(ui, app, room, &pic, screen, &state);
         });
     if leave {
@@ -722,9 +749,14 @@ fn watch_strip(
     let stop = (pic.id.kind == Kind::Live && pic.watching)
         .then(|| button_label(ui, "Nicht mehr zuschauen"));
     let toggles = room.here;
+    // `StreamVolume`: someone else's Live has the stream sound beside it.
+    let stream_sound = pic.id.kind == Kind::Live && !pic.own;
     let mut w = 14.0 + label.width() + 4.0 + 8.0;
     if toggles {
         w += 1.0 + 8.0 + 36.0 + 4.0 + 36.0 + 8.0;
+    }
+    if stream_sound {
+        w += 1.0 + 8.0 + 36.0 + 4.0 + 112.0 + 8.0;
     }
     if let Some(s) = &stop {
         w += 12.0 + 16.0 + 6.0 + s.width() + 12.0 + 8.0;
@@ -803,6 +835,71 @@ fn watch_strip(
             }
         }
         x += 4.0;
+    }
+    if stream_sound {
+        painter.line_segment(
+            [pos2(x, cy - 18.0), pos2(x, cy + 18.0)],
+            Stroke::new(1.0, Color32::from_white_alpha(36)),
+        );
+        x += 9.0;
+        let mut p = crate::screens::settings::prefs::get(ui.ctx());
+        let muted = p.source_audio_muted;
+        let r = Rect::from_min_size(pos2(x, cy - 18.0), Vec2::splat(36.0));
+        let resp = common::click(ui, r, Id::unique("watch-strip-stream-mute"));
+        resp.widget_info(|| {
+            egui::WidgetInfo::selected(egui::Role::Button, true, muted, "Stream-Ton stummschalten")
+        });
+        let resp = resp.on_hover_text(if muted {
+            "Stream-Ton wieder einschalten"
+        } else {
+            "Stream-Ton stummschalten"
+        });
+        let fill = if muted {
+            c.danger_bg.gamma_multiply(0.45)
+        } else if resp.hovered() {
+            Color32::from_white_alpha(36)
+        } else {
+            Color32::TRANSPARENT
+        };
+        painter.rect_filled(r, corner(theme.radius.md), fill);
+        icons::paint_centered(
+            &painter,
+            if muted {
+                Icon::SpeakerOff
+            } else {
+                Icon::Speaker
+            },
+            r,
+            17.0,
+            white,
+        );
+        if resp.clicked() {
+            p.source_audio_muted = !muted;
+        }
+        x += 36.0 + 4.0;
+        let slider = Rect::from_min_size(pos2(x, cy - 10.0), vec2(112.0, 20.0));
+        let mut pos = super::volume::position(p.source_audio_volume);
+        let changed = crate::screens::settings::controls::place(
+            ui,
+            UiBuilder::new().max_rect(slider),
+            |ui| {
+                crate::screens::settings::controls::slider_named(
+                    ui,
+                    "watch-strip-stream-volume",
+                    "Stream-Ton-Lautstärke",
+                    &mut pos,
+                    (0.0, 200.0, 1.0),
+                    muted || state.deafened,
+                )
+            },
+        );
+        if changed {
+            p.source_audio_volume = super::volume::volume(pos);
+        }
+        if p != crate::screens::settings::prefs::get(ui.ctx()) {
+            crate::screens::settings::prefs::update(ui.ctx(), |q| *q = p);
+        }
+        x += 112.0 + 8.0;
     }
     let pill_button = |ui: &mut Ui, x: &mut f32, icon: Icon, block: &Block, id: &str| -> bool {
         let bw = 12.0 + 16.0 + 6.0 + block.width() + 12.0;

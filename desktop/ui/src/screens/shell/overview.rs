@@ -25,6 +25,11 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
     let c = theme.c;
     let painter = ui.painter().clone();
     painter.rect_filled(rect, 0.0, c.bg);
+    let detail = app.client.with_state(|s| s.detail(server).cloned());
+    // `ServerPage`: without the server, its error in place of the page.
+    if detail.is_none() && load_error(ui, app, rect, server) {
+        return;
+    }
 
     // The bar.
     icons::paint(
@@ -48,7 +53,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
         rect.top() + 51.0,
     );
 
-    let Some(detail) = app.client.with_state(|s| s.detail(server).cloned()) else {
+    let Some(detail) = detail else {
         skeleton(ui, rect);
         return;
     };
@@ -82,6 +87,118 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
     if let Some((id, name)) = prompt {
         super::dialogs::open_invite(ui.ctx(), id, &name);
     }
+}
+
+fn failed_id(server: Uuid) -> Id {
+    Id::unique(("gelabber-overview-failed", server))
+}
+
+/// `LoadError` "Der Server konnte nicht geladen werden." with "Erneut
+/// versuchen" ("Wird geladen…" while it runs) at the page's 24px padding;
+/// false while the server just loads.
+fn load_error(ui: &mut Ui, app: &AppCtx, rect: Rect, server: Uuid) -> bool {
+    let op = app
+        .client
+        .with_state(|s| s.op(&format!("server:{server}")).cloned());
+    let ctx = ui.ctx().clone();
+    let failed_before: bool = ctx.data(|d| d.get_temp(failed_id(server))).unwrap_or(false);
+    let failed = matches!(op, Some(gelabber_client::OpState::Failed(_)));
+    let pending = matches!(op, Some(gelabber_client::OpState::Pending));
+    if failed != failed_before && !pending {
+        ctx.data_mut(|d| d.insert_temp(failed_id(server), failed));
+    }
+    // The error stays while the retry runs, as a query keeps its error.
+    if !failed && !(pending && failed_before) {
+        return false;
+    }
+    let theme = Theme::of(&ctx);
+    let c = &theme.c;
+    let area = Rect::from_min_size(
+        pos2(rect.left() + 24.0, rect.top() + 24.0),
+        Vec2::new(rect.width() - 48.0, 200.0),
+    );
+    let msg = "Der Server konnte nicht geladen werden.";
+    let block = Block::wrapped(ui, msg, text::BODY, c.text, area.width() - 30.0);
+    let h = 20.0 + block.height() + 12.0 + 32.0;
+    let r = Rect::from_min_size(area.min, Vec2::new(area.width(), h));
+    ui.painter()
+        .rect_filled(r, corner(theme.radius.sm), mix(c.panel, c.danger_bg, 0.18));
+    let bar = Rect::from_min_max(r.min, pos2(r.left() + 3.0, r.bottom()));
+    ui.painter()
+        .with_clip_rect(bar)
+        .rect_filled(r, corner(theme.radius.sm), c.danger);
+    let text_rect = Rect::from_min_size(pos2(r.left() + 15.0, r.top() + 10.0), block.size());
+    block.paint(ui.painter(), text_rect.min);
+    ui.interact(
+        text_rect,
+        Id::unique(("overview-load-error", server)),
+        egui::Sense::hover(),
+    )
+    .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, msg));
+    let label = "Erneut versuchen";
+    let bw = Block::single(ui, label, text::UI.weight(600.0), c.text).width() + 26.0;
+    let br = Rect::from_min_size(
+        pos2(r.left() + 15.0, r.top() + 10.0 + block.height() + 12.0),
+        Vec2::new(bw, 32.0),
+    );
+    let button = Button::new(label)
+        .small()
+        .pending(pending.then_some("Wird geladen…"));
+    if ui.put(br, button).clicked() && !pending {
+        app.client.refresh_server(server);
+    }
+    true
+}
+
+/// The channel's name in an unread row, with the pencil of a draft
+/// (`channel-row-draft`, "Entwurf"); returns the width taken.
+pub fn unread_name(ui: &Ui, rect: Rect, name: &str, draft: bool) -> f32 {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let max = if draft { 120.0 - 13.0 - 6.0 } else { 120.0 };
+    let block = line(ui, name, text::BODY.weight(600.0), c.text, max);
+    let cy = rect.center().y;
+    paint_mid(ui.painter(), &block, rect.left(), cy);
+    let mut w = block.width();
+    if draft {
+        let pencil = Rect::from_min_size(pos2(rect.left() + w + 6.0, cy - 6.5), Vec2::splat(13.0));
+        icons::paint(ui.painter(), Icon::Pencil, pencil.min, 13.0, c.muted);
+        let response = ui.interact(
+            pencil,
+            Id::unique(("overview-draft", name)),
+            egui::Sense::hover(),
+        );
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, "Entwurf"));
+        response.on_hover_text("Entwurf");
+        w += 6.0 + 13.0;
+    }
+    w
+}
+
+/// A black scrim fading in from `rect`'s top to `alpha` at its bottom,
+/// whose lower corners follow the card's `radius` (`overflow: hidden`).
+fn bottom_scrim(painter: &egui::Painter, rect: Rect, radius: f32, alpha: f32) {
+    let steps = 24;
+    let mut mesh = egui::Mesh::default();
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        let y = rect.top() + t * rect.height();
+        let dy = y - (rect.bottom() - radius);
+        let inset = if dy > 0.0 {
+            radius - (radius * radius - dy * dy).max(0.0).sqrt()
+        } else {
+            0.0
+        };
+        let color = Color32::from_black_alpha((alpha * t * 255.0).round() as u8);
+        mesh.colored_vertex(pos2(rect.left() + inset, y), color);
+        mesh.colored_vertex(pos2(rect.right() - inset, y), color);
+        if i > 0 {
+            let b = 2 * i as u32;
+            mesh.add_triangle(b - 2, b - 1, b);
+            mesh.add_triangle(b - 1, b + 1, b);
+        }
+    }
+    painter.add(mesh);
 }
 
 /// `MainSkeleton kind="overview"` while the server loads: a few quiet bars.
@@ -367,6 +484,89 @@ fn voice_room(
                 Stroke::new(1.0, if speaking { c.speaking } else { c.border }),
                 StrokeKind::Inside,
             );
+            // In the call a camera fills its owner's tile, the name over it.
+            let camera = here
+                .then(|| {
+                    call.participants
+                        .iter()
+                        .find(|p| p.user == *user)
+                        .and_then(|p| p.camera)
+                })
+                .flatten()
+                .and_then(|key| app.call.frame(key).map(|f| (key, f)));
+            if let Some((key, frame)) = camera {
+                // `.has-video`: no border, the picture to the card's edge.
+                let inner = tile;
+                ui.painter().rect_filled(
+                    tile,
+                    corner(theme.radius.lg),
+                    Color32::from_rgb(0x0b, 0x0d, 0x0e),
+                );
+                voice::video::request(
+                    ui,
+                    app.call,
+                    key,
+                    voice::video::drawn_rect(inner, &frame, voice::video::Fit::Cover),
+                    15,
+                );
+                voice::video::paint(
+                    ui,
+                    Id::unique(("overview-camera", *user)),
+                    inner,
+                    frame,
+                    voice::video::Fit::Cover,
+                    me == Some(*user),
+                    theme.radius.lg,
+                );
+                // Name and status over a scrim at the bottom (padding 18 44 6 10).
+                let white = Color32::WHITE;
+                let soft = Color32::from_white_alpha((0.82 * 255.0) as u8);
+                let name_b = line(ui, name, text::UI.weight(600.0), white, 168.0 - 54.0);
+                let self_b =
+                    (me == Some(*user)).then(|| line(ui, " (du)", text::UI, white, 168.0 - 54.0));
+                let status = if occupant.deafened {
+                    "Taub"
+                } else if occupant.muted {
+                    "Stumm"
+                } else if speaking {
+                    "Spricht"
+                } else {
+                    "Im Raum"
+                };
+                let status_b = line(
+                    ui,
+                    &format!("{status} · Kamera an"),
+                    text::META,
+                    soft,
+                    168.0 - 54.0,
+                );
+                let h = 18.0 + name_b.height() + status_b.height() + 6.0;
+                let scrim = Rect::from_min_max(pos2(tile.left(), tile.bottom() - h), tile.max);
+                bottom_scrim(ui.painter(), scrim, theme.radius.lg, 0.7);
+                let ny = scrim.top() + 18.0;
+                name_b.paint(ui.painter(), pos2(tile.left() + 10.0, ny));
+                if let Some(b) = self_b {
+                    // The overview's `.voice-room-self` stays muted over a picture too.
+                    b.paint_tinted(
+                        ui.painter(),
+                        pos2(tile.left() + 10.0 + name_b.width(), ny),
+                        Some(c.muted),
+                    );
+                }
+                status_b.paint(ui.painter(), pos2(tile.left() + 10.0, ny + name_b.height()));
+                let mut mx = tile.left() + 8.0;
+                for (on, icon) in [
+                    (occupant.muted || occupant.deafened, Icon::MicOff),
+                    (occupant.deafened, Icon::HeadsetOff),
+                ] {
+                    if on {
+                        icons::paint(ui.painter(), icon, pos2(mx, tile.top() + 8.0), 14.0, soft);
+                        mx += 16.0;
+                    }
+                }
+                let _ = common::click(ui, tile, Id::unique(("overview-person", *user)));
+                continue;
+            }
             let label_style = text::UI.weight(600.0);
             let name_block = line(ui, name, label_style, c.text, 168.0 - 24.0);
             let content_h = 56.0 + 8.0 + name_block.height();
@@ -385,22 +585,25 @@ fn voice_room(
                 1.0,
                 c.surface,
             );
-            let mut label = name_block;
-            if me == Some(*user) {
-                let text_w = label.width();
-                let _ = text_w;
-                label = line(
+            // `.voice-room-self`: " (du)" regular and muted after the name.
+            let self_b = (me == Some(*user)).then(|| {
+                line(
                     ui,
-                    &format!("{name} (du)"),
-                    label_style,
-                    c.text,
-                    168.0 - 24.0,
+                    " (du)",
+                    text::UI,
+                    c.muted,
+                    (168.0 - 24.0 - name_block.width()).max(0.0),
+                )
+            });
+            let total = name_block.width() + self_b.as_ref().map_or(0.0, |b| b.width());
+            let lx = tile.center().x - total / 2.0;
+            name_block.paint(ui.painter(), pos2(lx, avatar.bottom() + 8.0));
+            if let Some(b) = self_b {
+                b.paint(
+                    ui.painter(),
+                    pos2(lx + name_block.width(), avatar.bottom() + 8.0),
                 );
             }
-            label.paint(
-                ui.painter(),
-                pos2(tile.center().x - label.width() / 2.0, avatar.bottom() + 8.0),
-            );
             let mut mx = tile.left() + 8.0;
             if occupant.muted || occupant.deafened {
                 icons::paint(
@@ -487,8 +690,7 @@ fn voice_room(
         )
         .clicked()
     {
-        // The microphone test lives in the audio settings on this client.
-        app.nav.navigate("/settings/audio");
+        voice::dialogs::open_mic_test(ui.ctx());
     }
     let gear = mic.translate(Vec2::new(36.0 + 8.0, 0.0));
     let response = ui.put(
@@ -568,6 +770,7 @@ fn unread(
         .map(|m| (m.user_id, m.name.clone()))
         .collect();
     let me = app.client.with_state(|s| s.me().map(|m| m.id));
+    let drafts = crate::screens::chat::drafts(ui.ctx());
     let mut y = list.top() + 1.0;
     let count = channels.len();
     for (i, (_, ch, latest, badge)) in channels.into_iter().enumerate() {
@@ -594,8 +797,11 @@ fn unread(
             18.0,
             c.muted,
         );
-        let name = line(ui, &ch.name, text::BODY.weight(600.0), c.text, 120.0);
-        paint_mid(ui.painter(), &name, inner_left + 30.0, cy);
+        let name_rect = Rect::from_min_size(
+            pos2(inner_left + 30.0, row.top()),
+            Vec2::new(120.0, row.height()),
+        );
+        unread_name(ui, name_rect, &ch.name, drafts.contains_key(&ch.id));
         // Badge column: min 18, the dot or the count right-aligned.
         let badge_w = if badge.count > 0 {
             let label = if badge.count > 99 {

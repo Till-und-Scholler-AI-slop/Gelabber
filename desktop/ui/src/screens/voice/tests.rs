@@ -173,3 +173,7 @@ fn pictures_of_the_call() {
     assert!(!outside.staged());
     assert_eq!(outside.others_live, ["Mira"]);
 }
+
+// The interface in egui_kittest: the call bar, tiles and the overview.
+#[path = "tests_drawn.rs"]
+mod drawn;

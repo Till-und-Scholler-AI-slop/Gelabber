@@ -5,7 +5,7 @@
 //! headset, camera, "Live", the settings and "Verlassen".
 
 use egui::{Color32, Id, Key, Modifiers, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
-use gelabber_call::{CallState, CallStatus, LiveSource};
+use gelabber_call::{CallState, CallStatus, LiveSource, MicStatus};
 use uuid::Uuid;
 
 use super::look;
@@ -70,6 +70,12 @@ fn lost(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid, channel: Uuid) 
         max,
     );
     strong.paint(&painter, pos2(x, cy - 15.6));
+    ui.interact(
+        Rect::from_min_size(pos2(x, cy - 15.6), strong.size()),
+        Id::unique("gelabber-call-lost-text"),
+        Sense::hover(),
+    )
+    .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, "Verbindung verloren"));
     let place = line(ui, &name, TextStyle::new(12.0, 400.0, 1.3), c.muted, max);
     place.paint(&painter, pos2(x, cy));
 }
@@ -285,42 +291,62 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     if deafen.clicked() {
         app.call.set_deafened(!state.deafened);
     }
-    let ptt = prefs::get(ui.ctx()).voice_input == "ptt";
-    let held = push_to_talk(ui, app, ptt && !muted);
-    let mic_title = format!(
-        "{}{}",
-        if muted {
-            "Stummschaltung aufheben (Strg+Umschalt+M)"
-        } else {
-            "Stummschalten (Strg+Umschalt+M)"
-        },
-        if ptt && !muted {
-            " · Push-to-Talk"
-        } else {
-            ""
+    if matches!(state.mic, MicStatus::Unavailable | MicStatus::Denied) {
+        // `MicProblem`: the call goes on without one; pressing says why.
+        let mic = control(
+            ui,
+            &mut x,
+            cy,
+            Icon::MicOff,
+            Some("Kein Mikrofon"),
+            false,
+            Tone::Problem,
+            "Kein Mikrofon",
+            "Kein Mikrofon",
+        );
+        // The warning dot over the icon's corner, ringed in the panel.
+        let dot = pos2(mic.rect.left() + 20.0 + 4.0, mic.rect.top() + 6.0 + 4.0);
+        ui.painter().circle_filled(dot, 4.0, c.panel);
+        ui.painter().circle_filled(dot, 2.5, c.warning);
+        mic_problem(ui, app, &mic, state.mic == MicStatus::Denied);
+    } else {
+        let ptt = prefs::get(ui.ctx()).voice_input == "ptt";
+        let held = push_to_talk(ui, app, ptt && !muted);
+        let mic_title = format!(
+            "{}{}",
+            if muted {
+                "Stummschaltung aufheben (Strg+Umschalt+M)"
+            } else {
+                "Stummschalten (Strg+Umschalt+M)"
+            },
+            if ptt && !muted {
+                " · Push-to-Talk"
+            } else {
+                ""
+            }
+        );
+        let mic = control(
+            ui,
+            &mut x,
+            cy,
+            if muted { Icon::MicOff } else { Icon::Mic },
+            (ptt && !muted).then_some("PTT"),
+            false,
+            if muted {
+                Tone::Off
+            } else if ptt && held {
+                Tone::Talking
+            } else if ptt {
+                Tone::Idle
+            } else {
+                Tone::Plain
+            },
+            "Stummschalten",
+            &mic_title,
+        );
+        if mic.clicked() {
+            app.call.set_muted(!muted);
         }
-    );
-    let mic = control(
-        ui,
-        &mut x,
-        cy,
-        if muted { Icon::MicOff } else { Icon::Mic },
-        (ptt && !muted).then_some("PTT"),
-        false,
-        if muted {
-            Tone::Off
-        } else if ptt && held {
-            Tone::Talking
-        } else if ptt {
-            Tone::Idle
-        } else {
-            Tone::Plain
-        },
-        "Stummschalten",
-        &mic_title,
-    );
-    if mic.clicked() {
-        app.call.set_muted(!muted);
     }
     let controls_left = x + 4.0;
 
@@ -394,6 +420,109 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         }
         people_popover(ui, app, &response, &list);
     }
+    notice(ui, &state, rect);
+}
+
+/// `dockNotices` of the desktop app: what the bar says about the own
+/// Live's sound, most important first; `None` without one.
+pub fn dock_notice(state: &CallState, share: &str, app: &str) -> Option<String> {
+    use gelabber_call::LiveSound;
+    if !state.live {
+        return None;
+    }
+    match &state.live_sound {
+        LiveSound::Unavailable(Some(reason)) => Some(format!(
+            "Der Stream-Ton konnte nicht aufgenommen werden ({reason}). Das Video läuft weiter."
+        )),
+        LiveSound::Unavailable(None) => {
+            Some("Der Stream-Ton konnte nicht aufgenommen werden. Das Video läuft weiter.".into())
+        }
+        LiveSound::Ended => Some("Der Stream-Ton wurde beendet. Das Video läuft weiter.".into()),
+        LiveSound::Silent(name) => Some(format!("Kein Ton von „{name}“.")),
+        LiveSound::Sharing if app.is_empty() => {
+            Some("Dein Stream sendet den Ton aller Anwendungen außer Gelabber.".into())
+        }
+        LiveSound::Sharing => None,
+        // The sound is captured as a Live starts: switched on during one,
+        // it comes with the next.
+        LiveSound::Off if sound_on(share) => Some("Stream-Ton ab dem nächsten Live.".into()),
+        LiveSound::Off => None,
+    }
+}
+
+/// The notice (`.voice-session-notice`) over the bar's right end, until
+/// "Hinweis schließen"; a new notice shows again.
+fn notice(ui: &mut Ui, state: &CallState, bar: Rect) {
+    let p = prefs::get(ui.ctx());
+    let Some(text_s) = dock_notice(state, &p.source_audio_share, &p.source_audio_app) else {
+        return;
+    };
+    let ctx = ui.ctx().clone();
+    let id = Id::unique("gelabber-call-notice-dismissed");
+    let dismissed: Option<String> = ctx.data(|d| d.get_temp(id)).flatten();
+    if dismissed.as_deref() == Some(text_s.as_str()) {
+        return;
+    }
+    let theme = Theme::of(&ctx);
+    let c = theme.c;
+    let width = (bar.width() - 32.0).min(560.0);
+    let block = Block::wrapped(
+        ui,
+        &text_s,
+        text::META,
+        c.text,
+        width - 15.0 - 8.0 - 24.0 - 28.0,
+    );
+    let h = block.height().max(24.0) + 12.0;
+    let rect = Rect::from_min_size(
+        pos2(bar.right() - 16.0 - width, bar.top() - 8.0 - h),
+        vec2(width, h),
+    );
+    egui::Area::new(Id::unique("gelabber-call-notice"))
+        .order(egui::Order::Middle)
+        .fixed_pos(rect.min)
+        .show(&ctx, |ui| {
+            let painter = ui.painter();
+            painter.rect(
+                rect,
+                corner(theme.radius.md),
+                mix(c.panel, c.warning, 0.12),
+                Stroke::new(1.0, c.border),
+                StrokeKind::Inside,
+            );
+            icons::paint(
+                painter,
+                Icon::Warning,
+                pos2(rect.left() + 12.0, rect.center().y - 7.5),
+                15.0,
+                c.warning,
+            );
+            let tr = Rect::from_min_size(
+                pos2(
+                    rect.left() + 12.0 + 15.0 + 8.0,
+                    rect.center().y - block.height() / 2.0,
+                ),
+                block.size(),
+            );
+            block.paint(painter, tr.min);
+            ui.interact(tr, Id::unique("gelabber-call-notice-text"), Sense::hover())
+                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &text_s));
+            let close = Rect::from_min_size(
+                pos2(rect.right() - 6.0 - 24.0, rect.center().y - 12.0),
+                Vec2::splat(24.0),
+            );
+            if ui
+                .add(
+                    IconButton::new(Icon::Close, "Hinweis schließen")
+                        .size(24.0)
+                        .icon_size(14.0)
+                        .at(close),
+                )
+                .clicked()
+            {
+                ctx.data_mut(|d| d.insert_temp(id, Some(text_s.clone())));
+            }
+        });
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -409,6 +538,8 @@ enum Tone {
     Talking,
     /// Push-to-talk waiting: the icon dimmed.
     Idle,
+    /// No microphone: the text colour, no fill.
+    Problem,
 }
 
 /// Push-to-talk inside the window: the chosen key (or Maustaste 4/5)
@@ -494,6 +625,14 @@ fn control(
         ),
         Tone::Idle if hovered => (c.hover, c.text),
         Tone::Idle => (Color32::TRANSPARENT, c.muted),
+        Tone::Problem => (
+            if hovered {
+                c.hover
+            } else {
+                Color32::TRANSPARENT
+            },
+            c.text,
+        ),
         Tone::Plain if hovered => (c.hover, c.text),
         Tone::Plain => (Color32::TRANSPARENT, c.muted),
     };
@@ -563,7 +702,11 @@ fn status(
         CallStatus::Connected => {
             let bars = Rect::from_min_size(pos2(x, cy - 18.0), Vec2::splat(36.0));
             let level = state.quality.min(4);
-            let label = "Verbindung: wird gemessen …";
+            let label = state
+                .connection
+                .as_ref()
+                .and_then(super::diagnostics::summary)
+                .unwrap_or_else(|| "Verbindung: wird gemessen …".into());
             let response = common::click(ui, bars, Id::unique("gelabber-call-quality"));
             response.widget_info(|| {
                 egui::WidgetInfo::labeled(
@@ -572,7 +715,8 @@ fn status(
                     format!("{label} – Details anzeigen"),
                 )
             });
-            let response = response.on_hover_text(label);
+            let response = response.on_hover_text(&label);
+            connection_popover(ui, app, &response, state);
             if response.hovered() {
                 painter.rect_filled(bars, corner(theme.radius.md), c.hover);
             }
@@ -675,6 +819,174 @@ fn status(
     }
     if response.clicked() {
         app.nav.navigate(&format!("/s/{server}/c/{channel}"));
+    }
+}
+
+/// "Verbindung" (`QualityBars`' popover, 340 wide, over the bars): the
+/// compact status, what goes out and comes in, the way to the settings and
+/// to the diagnostics.
+fn connection_popover(ui: &mut Ui, app: &mut AppCtx, button: &egui::Response, state: &CallState) {
+    let ctx = ui.ctx().clone();
+    let id = Id::unique("gelabber-call-connection-open");
+    let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+    if button.clicked() {
+        open = !open;
+        ctx.data_mut(|d| d.insert_temp(id, open));
+        return;
+    }
+    if !open {
+        return;
+    }
+    let pings = app.call.diagnostics().pings(30);
+    let measuring = super::diagnostics::measuring(state);
+    let mut show = None;
+    let shown = Popover::new("call-connection", button.rect)
+        .min_width(340.0)
+        .show(&ctx, |ui| {
+            let theme = Theme::of(ui.ctx());
+            let c = theme.c;
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            let width = 340.0 - 18.0;
+            super::diagnostics::status(
+                ui,
+                state.connection.as_ref(),
+                measuring,
+                &pings,
+                true,
+                width,
+            );
+            ui.add_space(12.0);
+            let top = ui.cursor().min;
+            ui.painter().hline(
+                top.x..=top.x + width,
+                top.y + 0.5,
+                Stroke::new(1.0, c.border),
+            );
+            ui.add_space(1.0);
+            let rate = |bps: Option<f64>| {
+                bps.map_or("–".to_owned(), |b| {
+                    gelabber_call::diagnostics::format_bps(Some(b))
+                })
+            };
+            let conn = state.connection.clone().unwrap_or_default();
+            for (arrow, label, value) in [
+                ("↑", "Du sendest", rate(conn.sent_bps)),
+                ("↓", "Du empfängst", rate(conn.received_bps)),
+            ] {
+                // The popover's own 16px text, not the body's.
+                let style = TextStyle::new(16.0, 400.0, 1.5);
+                let (row, _) =
+                    ui.allocate_exact_size(vec2(width, 7.0 + 24.0 + 7.0), Sense::hover());
+                let a = Block::single(ui, arrow, style, c.accent_text);
+                let l = Block::single(ui, label, style, c.subtle);
+                let v = Block::single(ui, &value, style.weight(500.0), c.text);
+                paint_mid(ui.painter(), &a, row.left(), row.center().y);
+                paint_mid(
+                    ui.painter(),
+                    &l,
+                    row.left() + a.width() + 8.0,
+                    row.center().y,
+                );
+                paint_mid(ui.painter(), &v, row.right() - v.width(), row.center().y);
+                ui.painter().hline(
+                    row.left()..=row.right(),
+                    row.bottom() + 0.5,
+                    Stroke::new(1.0, c.border),
+                );
+                ui.add_space(1.0);
+            }
+            ui.add_space(14.0);
+            let top = ui.cursor().min;
+            let w1 =
+                Block::single(ui, "Einstellungen", text::UI.weight(600.0), c.text).width() + 26.0;
+            let a = Rect::from_min_size(top, vec2(w1, 32.0));
+            if ui
+                .put(a, Button::new("Einstellungen").small().ghost())
+                .clicked()
+            {
+                show = Some(super::dialogs::Tab::Audio);
+            }
+            let w2 =
+                Block::single(ui, "Alle Details", text::UI.weight(600.0), c.text).width() + 26.0;
+            let b = Rect::from_min_size(pos2(top.x + width - w2, top.y), vec2(w2, 32.0));
+            if ui.put(b, Button::new("Alle Details").small()).clicked() {
+                show = Some(super::dialogs::Tab::Diagnose);
+            }
+        });
+    if let Some(tab) = show {
+        super::dialogs::open_settings(&ctx, tab);
+    }
+    if shown.is_none() || show.is_some() {
+        ctx.data_mut(|d| d.insert_temp(id, false));
+    }
+}
+
+fn mic_problem_id() -> Id {
+    Id::unique("gelabber-mic-problem-open")
+}
+
+/// The popover of `MicProblem` (`.voice-mic-problem`, at most 320 wide):
+/// why, "Erneut versuchen" and "Mikrofon wählen …".
+fn mic_problem(ui: &mut Ui, app: &mut AppCtx, button: &egui::Response, denied: bool) {
+    let ctx = ui.ctx().clone();
+    let mut open = ctx
+        .data(|d| d.get_temp::<bool>(mic_problem_id()))
+        .unwrap_or(false);
+    if button.clicked() {
+        open = !open;
+        ctx.data_mut(|d| d.insert_temp(mic_problem_id(), open));
+        return;
+    }
+    if !open {
+        return;
+    }
+    let mut retry = false;
+    let mut choose = false;
+    let shown = Popover::new("mic-problem", button.rect).show(&ctx, |ui| {
+        let theme = Theme::of(ui.ctx());
+        let c = theme.c;
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        let text_s = mic_problem_text(denied);
+        let width = 320.0 - 18.0;
+        let p = Block::wrapped(ui, text_s, text::BODY, c.text, width);
+        let (r, response) = ui.allocate_exact_size(vec2(p.width(), p.height()), Sense::hover());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, text_s));
+        p.paint(ui.painter(), r.min);
+        ui.add_space(12.0);
+        let top = ui.cursor().min;
+        let w1 =
+            Block::single(ui, "Erneut versuchen", text::UI.weight(600.0), c.text).width() + 26.0;
+        let a = Rect::from_min_size(top, vec2(w1, 32.0));
+        if ui.put(a, Button::new("Erneut versuchen").small()).clicked() {
+            retry = true;
+        }
+        let w2 =
+            Block::single(ui, "Mikrofon wählen …", text::UI.weight(600.0), c.text).width() + 26.0;
+        let b = Rect::from_min_size(pos2(a.right() + 8.0, top.y), vec2(w2, 32.0));
+        if ui
+            .put(b, Button::new("Mikrofon wählen …").small().ghost())
+            .clicked()
+        {
+            choose = true;
+        }
+    });
+    if retry {
+        app.call.retry_microphone();
+    }
+    if choose {
+        super::dialogs::open_settings(&ctx, super::dialogs::Tab::Audio);
+    }
+    if shown.is_none() || retry || choose {
+        ctx.data_mut(|d| d.insert_temp(mic_problem_id(), false));
+    }
+}
+
+/// Why there is no microphone, as the desktop app says it.
+pub fn mic_problem_text(denied: bool) -> &'static str {
+    if denied {
+        "Kein Zugriff auf das Mikrofon. Erlaube ihn in den Systemeinstellungen."
+    } else {
+        "Mikrofon nicht gefunden oder belegt."
     }
 }
 
@@ -793,7 +1105,7 @@ fn live_menu(
                 false,
                 false,
             ) {
-                app.nav.navigate("/settings/video");
+                super::dialogs::open_settings(ui.ctx(), super::dialogs::Tab::Audio);
                 done = true;
             }
             done
@@ -845,7 +1157,7 @@ fn menu_entry(
     let content = t.height() + h_block.as_ref().map_or(0.0, |b| 2.0 + b.height());
     let (rect, response) =
         ui.allocate_exact_size(vec2(width, (content + 16.0).max(36.0)), Sense::click());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, !disabled, title));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::MenuItem, !disabled, title));
     if response.hovered() && !disabled {
         ui.painter()
             .rect_filled(rect, corner(theme.radius.sm), c.hover);

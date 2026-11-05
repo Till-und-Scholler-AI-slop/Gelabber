@@ -26,6 +26,7 @@ pub fn settings(p: &Prefs) -> CallSettings {
         economy_mode: p.economy_mode,
         video_upload_limit: p.video_upload_limit,
         source_audio_app: p.source_audio_app.clone(),
+        share_source_audio: p.source_audio_share != "off",
         call_sounds: p.call_sounds,
         call_sound_volume: p.call_sound_volume,
         other_mute_sounds: p.other_mute_sounds,

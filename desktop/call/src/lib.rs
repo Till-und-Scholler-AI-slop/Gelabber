@@ -12,6 +12,7 @@
 //! and a test pattern for the camera and a Live.
 #![cfg_attr(not(feature = "media"), allow(dead_code))]
 
+pub mod diagnostics;
 pub mod logic;
 #[cfg(feature = "media")]
 mod media;
@@ -103,6 +104,65 @@ pub enum LiveSource {
     Screen { with_audio: bool },
 }
 
+/// The call's microphone (web `VoiceMic` without push-to-talk's states).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MicStatus {
+    #[default]
+    Live,
+    /// None found, or it is busy: the call goes on listening only.
+    Unavailable,
+    /// The system refused access to it.
+    Denied,
+}
+
+/// The sound of the own Live (web `sourceAudio.s` with `sourceAudioNote`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum LiveSound {
+    /// No sound asked for, or no Live.
+    #[default]
+    Off,
+    Sharing,
+    /// Sent, but the chosen application plays nothing.
+    Silent(String),
+    /// Asked for but not captured, with the core's reason if it gave one.
+    Unavailable(Option<String>),
+    /// It stopped during the Live; the video goes on.
+    Ended,
+}
+
+/// How the call's connection goes, from the newest measurement (web
+/// `callQuality` and `directionTotal`); `None` fields are unmeasured.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Connection {
+    pub rtt_ms: Option<f64>,
+    /// The worst audio loss, 0..1.
+    pub loss: Option<f64>,
+    /// True when the selected candidate pair runs over a TURN relay.
+    pub relay: Option<bool>,
+    pub sent_bps: Option<f64>,
+    pub received_bps: Option<f64>,
+}
+
+/// Where the microphone test stands (web `ComparisonState` of the desktop
+/// branch: no recordings, meters only).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum MicTestPhase {
+    #[default]
+    Idle,
+    Pending,
+    Active,
+    Error(String),
+}
+
+/// The microphone test's meters, 0..100 (`media_audio_levels`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MicTest {
+    pub phase: MicTestPhase,
+    pub input: f64,
+    pub processed: f64,
+    pub clipping: bool,
+}
+
 /// Everything the interface draws about the call.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CallState {
@@ -115,9 +175,13 @@ pub struct CallState {
     pub live: bool,
     /// The own Live sends application sound.
     pub live_audio: bool,
+    pub live_sound: LiveSound,
+    pub mic: MicStatus,
     pub participants: Vec<Participant>,
     /// 0..=4 bars, as the web's connection indicator; 0 = not measured.
     pub quality: u8,
+    /// The newest measurement, while one runs.
+    pub connection: Option<Connection>,
     pub devices: Devices,
     /// Lives can be watched (the media connection is up).
     pub watch_supported: bool,
@@ -194,6 +258,8 @@ pub struct CallSettings {
     pub video_upload_limit: f64,
     /// The application whose sound a Live sends; "" = every one but this.
     pub source_audio_app: String,
+    /// "Ton mitsenden".
+    pub share_source_audio: bool,
     pub call_sounds: bool,
     pub call_sound_volume: f64,
     pub other_mute_sounds: bool,
@@ -221,6 +287,7 @@ impl Default for CallSettings {
             economy_mode: false,
             video_upload_limit: 0.0,
             source_audio_app: String::new(),
+            share_source_audio: true,
             call_sounds: true,
             call_sound_volume: 0.5,
             other_mute_sounds: false,
@@ -278,8 +345,16 @@ pub(crate) struct Inner {
     levels: Mutex<HashMap<Uuid, f32>>,
     requests: Mutex<HashMap<VideoKey, VideoRequest>>,
     notices: Mutex<Vec<String>>,
+    diagnostics: Mutex<diagnostics::Diagnostics>,
+    mic_test: Mutex<MicTest>,
+    /// Bumped by every start and stop of the microphone test.
+    mic_test_turn: std::sync::atomic::AtomicU64,
     player: sounds::Player,
     gate: Mutex<ptt::Gate>,
+    #[cfg(feature = "testing")]
+    retries: std::sync::atomic::AtomicU64,
+    #[cfg(feature = "testing")]
+    joins: std::sync::atomic::AtomicU64,
     runtime: OnceLock<tokio::runtime::Runtime>,
     #[cfg(feature = "media")]
     media: media::Media,
@@ -422,6 +497,26 @@ impl Inner {
     pub(crate) fn gate_open(&self) -> bool {
         self.gate.lock().is_open()
     }
+
+    pub(crate) fn diagnostics(&self) -> parking_lot::MutexGuard<'_, diagnostics::Diagnostics> {
+        self.diagnostics.lock()
+    }
+
+    pub(crate) fn set_mic_test(&self, change: impl FnOnce(&mut MicTest)) {
+        let changed = {
+            let mut test = self.mic_test.lock();
+            let before = test.clone();
+            change(&mut test);
+            *test != before
+        };
+        if changed {
+            self.client.repaint();
+        }
+    }
+
+    pub(crate) fn mic_test_turn(&self) -> u64 {
+        self.mic_test_turn.load(Ordering::Acquire)
+    }
 }
 
 /// Whether `GELABBER_FAKE_MEDIA=1` asks for a call without devices.
@@ -457,8 +552,15 @@ impl Call {
                 levels: Mutex::new(HashMap::new()),
                 requests: Mutex::new(HashMap::new()),
                 notices: Mutex::new(Vec::new()),
+                diagnostics: Mutex::new(diagnostics::Diagnostics::default()),
+                mic_test: Mutex::new(MicTest::default()),
+                mic_test_turn: std::sync::atomic::AtomicU64::new(0),
                 player: sounds::Player::default(),
                 gate: Mutex::new(ptt::Gate::default()),
+                #[cfg(feature = "testing")]
+                retries: std::sync::atomic::AtomicU64::new(0),
+                #[cfg(feature = "testing")]
+                joins: std::sync::atomic::AtomicU64::new(0),
                 runtime: OnceLock::new(),
                 #[cfg(feature = "media")]
                 media: media::Media::default(),
@@ -527,6 +629,8 @@ impl Call {
     /// Joins (or moves to) a voice channel: the gateway seat at once, the
     /// media connection in the background.
     pub fn join(&self, server: Uuid, channel: Uuid) {
+        #[cfg(feature = "testing")]
+        self.inner.joins.fetch_add(1, Ordering::AcqRel);
         #[cfg(feature = "media")]
         {
             media::join(&self.inner, server, channel);
@@ -542,11 +646,92 @@ impl Call {
     }
 
     /// Tests: drops the media socket as a network loss would, so the call
-    /// rebuilds its seat.
+    /// rebuilds its seat. Without a media session (interface tests) the
+    /// call ends as a lost one, the state the bar then offers to rejoin.
     #[doc(hidden)]
     pub fn simulate_media_loss(&self) {
         #[cfg(feature = "media")]
-        media::simulate_media_loss(&self.inner);
+        if media::simulate_media_loss(&self.inner) {
+            return;
+        }
+        self.inner.write(|s| {
+            if let (Some(server), Some(channel)) = (s.server, s.channel) {
+                *s = CallState {
+                    status: CallStatus::Failed(logic::LOST_CALL_MESSAGE.into()),
+                    devices: std::mem::take(&mut s.devices),
+                    push_to_talk_open: s.push_to_talk_open,
+                    lost_call: Some((server, channel)),
+                    ..CallState::default()
+                };
+            }
+        });
+    }
+
+    /// Asks for the microphone again after it was missing or refused
+    /// (`retryMicrophone`); the call keeps going either way.
+    pub fn retry_microphone(&self) {
+        #[cfg(feature = "testing")]
+        self.inner.retries.fetch_add(1, Ordering::AcqRel);
+        #[cfg(feature = "media")]
+        media::retry_microphone(&self.inner);
+    }
+
+    /// Tests: how often [`Self::join`] was called.
+    #[cfg(feature = "testing")]
+    pub fn join_attempts(&self) -> u64 {
+        self.inner.joins.load(Ordering::Acquire)
+    }
+
+    /// Tests: how often [`Self::retry_microphone`] was called.
+    #[cfg(feature = "testing")]
+    pub fn microphone_retries(&self) -> u64 {
+        self.inner.retries.load(Ordering::Acquire)
+    }
+
+    /// The measurements of the running call, for the diagnostics tab.
+    pub fn diagnostics(&self) -> diagnostics::Diagnostics {
+        self.inner.diagnostics.lock().clone()
+    }
+
+    /// Tests: a measurement as the call would take it.
+    #[cfg(feature = "testing")]
+    pub fn push_sample(&self, sample: diagnostics::Sample) {
+        self.inner.diagnostics.lock().push(sample);
+    }
+
+    /// The microphone test's state and meters.
+    pub fn mic_test(&self) -> MicTest {
+        self.inner.mic_test.lock().clone()
+    }
+
+    /// Starts the microphone test (`media_audio_monitor`): capture and
+    /// processing without a call, the meters polled until [`Self::stop_mic_test`].
+    pub fn start_mic_test(&self) {
+        let turn = self.inner.mic_test_turn.fetch_add(1, Ordering::AcqRel) + 1;
+        self.inner.set_mic_test(|t| {
+            *t = MicTest {
+                phase: MicTestPhase::Pending,
+                ..MicTest::default()
+            }
+        });
+        #[cfg(feature = "media")]
+        media::start_mic_test(&self.inner, turn);
+        #[cfg(not(feature = "media"))]
+        {
+            let _ = turn;
+            self.inner.set_mic_test(|t| {
+                t.phase = MicTestPhase::Error(logic::MIC_TEST_FAILED.into());
+            });
+        }
+    }
+
+    /// Ends the microphone test and frees the microphone; `ended` says so
+    /// in its message (a closed dialog needs none).
+    pub fn stop_mic_test(&self) {
+        self.inner.mic_test_turn.fetch_add(1, Ordering::AcqRel);
+        #[cfg(feature = "media")]
+        media::stop_mic_test(&self.inner);
+        self.inner.set_mic_test(|t| *t = MicTest::default());
     }
 
     /// Puts away the note of a call whose connection was lost or failed.

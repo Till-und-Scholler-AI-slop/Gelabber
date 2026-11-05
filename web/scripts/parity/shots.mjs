@@ -32,12 +32,19 @@ const fill = (path) =>
         }).trim()
       : ids[key],
   );
+// "/…/" names a regular expression, for labels that carry measurements.
+const named = (name) => (/^\/.+\/$/.test(name) ? new RegExp(name.slice(1, -1)) : name);
+
+// A step that fails ends the run; the call it started must not stay behind.
+let running = null;
+process.on("exit", () => running?.kill("SIGTERM"));
 
 /** call.mjs with `channel people`, resolved once everyone is in. */
 function startCall(spec) {
   const child = spawn(process.execPath, [join(here, "call.mjs"), ...spec.split(" ")], {
     stdio: ["ignore", "pipe", "inherit"],
   });
+  running = child;
   return new Promise((resolve, reject) => {
     let out = "";
     child.stdout.on("data", (chunk) => {
@@ -49,6 +56,7 @@ function startCall(spec) {
 }
 
 function stopCall(child) {
+  running = null;
   return new Promise((resolve) => {
     child.removeAllListeners("exit");
     child.on("exit", () => setTimeout(resolve, 1500));
@@ -101,6 +109,8 @@ for (const scene of scenes) {
     if (!login.ok()) throw new Error(`login ${scene.user}: ${login.status()}`);
   }
   const call = scene.call ? await startCall(scene.call) : null;
+  // A missing control fails the scene instead of waiting for ever.
+  context.setDefaultTimeout(20_000);
   const page = await context.newPage();
   if (scene.page) {
     // A bundled page of the desktop app (its setup page), outside Tauri:
@@ -149,7 +159,9 @@ for (const scene of scenes) {
         said.push([who, id]);
       }
       if (action.click)
-        await page.getByRole("button", { name: action.click, exact: true }).first().click();
+        await page.getByRole("button", { name: named(action.click), exact: true }).first().click();
+      if (action.menuitem)
+        await page.getByRole("menuitem", { name: named(action.menuitem), exact: true }).first().click();
       if (action.link)
         await page.getByRole("link", { name: action.link, exact: true }).first().click();
       // The first button or link of that name, with the secondary button.
@@ -161,7 +173,7 @@ for (const scene of scenes) {
           .click({ button: "right" });
       // Elements without a button role, such as a <summary>.
       if (action.clicktext)
-        await page.getByText(action.clicktext, { exact: true }).first().click();
+        await page.getByText(named(action.clicktext), { exact: true }).first().click();
       // The first button or link, else the first element, with this name.
       if (action.hover) {
         await page
