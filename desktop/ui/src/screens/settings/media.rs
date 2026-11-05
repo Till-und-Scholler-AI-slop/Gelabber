@@ -377,7 +377,8 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 "voice-input",
                 &modes,
                 usize::from(ptt),
-                36.0,
+                // The settings page makes its chips 36px; elsewhere they stay 32.
+                if in_dialog(ui) { 32.0 } else { 36.0 },
                 (!in_dialog(ui)).then_some(c.accent_text),
             ) {
                 p.voice_input = if i == 1 { "ptt" } else { "activity" }.into();

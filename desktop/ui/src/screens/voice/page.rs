@@ -209,7 +209,7 @@ fn room_content(
         let cols = (((grid_w + 12.0) / 212.0).floor() as usize).max(1);
         let tile_w = (grid_w - 12.0 * (cols as f32 - 1.0)) / cols as f32;
         let tile_h = if compact {
-            compact_card_height(&theme)
+            compact_card_height()
         } else {
             tile_w * 10.0 / 16.0
         };
@@ -256,8 +256,7 @@ fn room_content(
 
 /// A card's height without its 16:10 (`aspect-ratio: auto`): the 64px
 /// avatar, the name and the status line inside the card's padding.
-fn compact_card_height(theme: &Theme) -> f32 {
-    let _ = theme;
+fn compact_card_height() -> f32 {
     1.0 + 14.0 + 64.0 + 2.0 + 6.0 + text::UI.line_px() + text::META.line_px() + 12.0 + 1.0
 }
 
@@ -712,6 +711,18 @@ fn fullscreen(ui: &mut Ui, app: &mut AppCtx, room: &Room) {
                     pic.mirror,
                     0.0,
                 );
+            }
+            // The Live badge stays in the large view (`.voice-video-live`).
+            if pic.id.kind == Kind::Live {
+                let theme = Theme::of(ui.ctx());
+                let style = TextStyle::new(11.0, 600.0, 1.3);
+                let label = Block::single(ui, "Live", style, Color32::WHITE);
+                let badge = Rect::from_min_size(
+                    screen.min + vec2(8.0, 8.0),
+                    vec2(label.width() + 12.0, label.height() + 4.0),
+                );
+                painter.rect_filled(badge, corner(theme.radius.xs), theme.c.danger_bg);
+                label.paint(&painter, badge.min + vec2(6.0, 2.0));
             }
             leave |= watch_strip(ui, app, room, &pic, screen, &state);
         });

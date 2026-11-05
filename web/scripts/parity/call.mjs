@@ -3,10 +3,11 @@
 // Each person is a headless Chromium with fake microphone and camera.
 // Run in web/: node scripts/parity/call.mjs [channel] [person[:muted|:camera|:live],…]
 //   default: Sofa jonas,mira:muted
-// Cameras show one still picture (a generated y4m), so web and native
-// shots get the same frame; a Live is Chromium's fake screen capture.
+// Cameras show one still picture (a generated y4m) and a Live a still
+// canvas instead of Chromium's moving fake screen, so web and native shots
+// get the same frames.
 // GELABBER_PARITY_BROWSER names the Chromium binary (default /usr/bin/chromium).
-/* global process, console, URL, Buffer */
+/* global process, console, URL, Buffer, navigator, document, setInterval */
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -75,6 +76,28 @@ for (const person of people) {
     headers: { "X-CSRF-Token": session.csrf_token },
   });
   if (!login.ok()) throw new Error(`login ${person.name}: ${login.status()}`);
+  // getDisplayMedia answers with a canvas that keeps one picture.
+  await context.addInitScript(() => {
+    navigator.mediaDevices.getDisplayMedia = async () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1280;
+      canvas.height = 720;
+      const draw = () => {
+        const g = canvas.getContext("2d");
+        const fill = g.createLinearGradient(0, 0, 1280, 720);
+        fill.addColorStop(0, "#1d4a6b");
+        fill.addColorStop(1, "#7a3f63");
+        g.fillStyle = fill;
+        g.fillRect(0, 0, 1280, 720);
+        g.fillStyle = "#e8d8a0";
+        g.fillRect(420, 220, 440, 280);
+      };
+      draw();
+      // A canvas sends a frame when it is drawn: the same picture again.
+      setInterval(draw, 100);
+      return canvas.captureStream(30);
+    };
+  });
   const page = await context.newPage();
   await page.goto(`/s/${fixture.servers.home.id}/c/${channel}`, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Beitreten", exact: true }).first().click();

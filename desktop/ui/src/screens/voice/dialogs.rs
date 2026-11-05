@@ -12,7 +12,7 @@ use crate::app::AppCtx;
 use crate::icons::{self, Icon};
 use crate::screens::settings::{controls, media, prefs};
 use crate::text::{self, Block};
-use crate::theme::Theme;
+use crate::theme::{Theme, corner};
 use crate::widgets::{Button, Modal, ModalWidth};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,6 +119,8 @@ fn settings_dialog(ui: &mut Ui, app: &mut AppCtx, tab: Tab, on_top: bool) {
             &ctx,
             |ui| {
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
+                // The web's title line is a pixel shorter than the modal's.
+                ui.add_space(-1.0);
                 let width = ui.available_width();
                 if let Some(next) = tabs(ui, chosen, width) {
                     chosen = next;
@@ -238,10 +240,11 @@ fn meter(ui: &mut Ui, value: f64, width: f32) {
     }
 }
 
-/// `AUDIO_PROCESSING_DESKTOP`'s labels.
+/// `AUDIO_PROCESSING`'s labels, as the settings' filter cards name them
+/// (the desktop branch says "WebRTC-Filter").
 const MODES: [(&str, &str); 3] = [
     ("enhanced", "Verbesserte Sprache"),
-    ("browser", "WebRTC-Filter"),
+    ("browser", "Browserfilter"),
     ("original", "Original / Musik"),
 ];
 
@@ -254,6 +257,8 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
     let before = p.clone();
     let mut action: Option<bool> = None;
     let mut close = false;
+    // Opened from the settings, the settings page's form look reaches it.
+    let framed = matches!(app.nav.route(), crate::route::Route::Settings(_));
     let output = Modal::new("mic-test", "Mikrofon testen").show(
         &ctx,
         |ui| {
@@ -264,9 +269,11 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
             let (r, _) = ui.allocate_exact_size(vec2(width, 36.0), Sense::hover());
             icons::paint(ui.painter(), Icon::Mic, r.min, 36.0, c.accent_text);
             ui.add_space(14.0);
+            // The browser's wording, as the settings page keeps it; the
+            // desktop branch would say "ohne Aufnahme oder Übertragung".
             controls::paragraph(
                 ui,
-                "Der Test läuft lokal, ohne Aufnahme oder Übertragung.",
+                "Der Test läuft lokal, ohne Übertragung. Aufnahmen dauern höchstens acht Sekunden und werden beim Schließen gelöscht.",
                 text::BODY,
                 c.muted,
                 width,
@@ -281,20 +288,32 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
                 meter(ui, value, width);
                 ui.add_space(14.0);
             }
-            // The fieldset: its legend, then the modes in a wrapping row.
+            // The fieldset: its legend, then the modes in a wrapping row. In
+            // the settings their fieldset look applies: a framed box with
+            // the legend on its edge and 36px rows.
             let legend = Block::single(ui, "Verarbeitung", text::UI.weight(600.0), c.text);
-            let (r, _) = ui.allocate_exact_size(vec2(width, legend.height() + 6.0), Sense::hover());
-            legend.paint(ui.painter(), r.min);
-            let top = ui.cursor().min;
+            let frame_top = ui.cursor().min;
+            let (pad, row_h, legend_h) = if framed {
+                // The frame's top edge runs through the legend's middle.
+                (18.0, 36.0, legend.height() / 2.0 + 33.0)
+            } else {
+                (0.0, 32.0, legend.height() + 6.0)
+            };
+            let (r, _) = ui.allocate_exact_size(vec2(width, legend_h), Sense::hover());
+            if !framed {
+                legend.paint(ui.painter(), r.min);
+            }
+            let top = ui.cursor().min + vec2(pad, 0.0);
+            let inner = width - 2.0 * pad;
             let (mut x, mut y) = (top.x, top.y);
             for (mode, label) in MODES {
                 let block = Block::single(ui, label, text::UI.weight(400.0), c.text);
                 let w = 20.0 + 8.0 + block.width();
-                if x > top.x && x + w > top.x + width {
+                if x > top.x && x + w > top.x + inner {
                     x = top.x;
-                    y += 32.0 + 8.0;
+                    y += row_h + 8.0;
                 }
-                let rect = Rect::from_min_size(pos2(x, y), vec2(w, 32.0));
+                let rect = Rect::from_min_size(pos2(x, y), vec2(w, row_h));
                 let response = ui.interact(
                     rect,
                     Id::unique(("gelabber-mic-test-mode", mode)),
@@ -322,9 +341,35 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
                 x += w + 16.0;
             }
             ui.allocate_rect(
-                Rect::from_min_max(top, pos2(top.x + width, y + 32.0)),
+                Rect::from_min_max(top, pos2(top.x + inner, y + row_h)),
                 Sense::hover(),
             );
+            if framed {
+                ui.add_space(19.0);
+                let frame = Rect::from_min_max(
+                    frame_top + vec2(0.0, legend.height() / 2.0),
+                    pos2(frame_top.x + width, ui.cursor().min.y),
+                );
+                let painter = ui.painter();
+                painter.rect(
+                    frame,
+                    corner(theme.radius.md),
+                    Color32::TRANSPARENT,
+                    Stroke::new(1.0, c.border),
+                    egui::StrokeKind::Inside,
+                );
+                // The legend interrupts the frame's top edge.
+                let lx = frame.left() + 25.0;
+                painter.rect_filled(
+                    Rect::from_min_size(
+                        pos2(lx - 4.0, frame.top() - 1.0),
+                        vec2(legend.width() + 8.0, 3.0),
+                    ),
+                    0.0,
+                    c.elevated,
+                );
+                legend.paint(painter, pos2(lx, frame.top() - legend.height() / 2.0));
+            }
             ui.add_space(14.0);
             let message = match &test.phase {
                 MicTestPhase::Idle if stopped => {
@@ -371,12 +416,23 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
             }
             let cw = Block::single(ui, "Schließen", text::UI.weight(600.0), c.text).width() + 34.0;
             let close_rect = Rect::from_min_size(pos2(start.right() + 8.0, top.y), vec2(cw, 36.0));
-            if ui
-                .put(close_rect, Button::new("Schließen").ghost())
-                .clicked()
-            {
+            let ghost = Button::new("Schließen").ghost();
+            let ghost = if framed {
+                ghost.text_color(c.accent_text)
+            } else {
+                ghost
+            };
+            if ui.put(close_rect, ghost).clicked() {
                 close = true;
             }
+            ui.add_space(14.0);
+            controls::paragraph(
+                ui,
+                "Ein Wechsel der Verarbeitung startet den Test neu und löscht die Aufnahmen.",
+                text::BODY,
+                c.muted,
+                width,
+            );
         },
         None,
     );

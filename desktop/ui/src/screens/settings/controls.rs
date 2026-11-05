@@ -245,6 +245,8 @@ pub fn switch_row(
         },
     );
     let id = Id::unique(("gelabber-switch-row", id));
+    // The row is the switch's label, as `<label>` around the web's input.
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, !disabled, *on, label));
     let mut changed = false;
     if response.clicked() && !disabled {
         *on = !*on;

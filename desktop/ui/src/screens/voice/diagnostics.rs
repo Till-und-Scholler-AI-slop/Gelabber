@@ -143,6 +143,9 @@ pub fn measuring(state: &CallState) -> bool {
     state.channel.is_some() && state.status == CallStatus::Connected
 }
 
+/// A figure: its label, the value with its unit, the value's tone.
+type Figure<'a> = (&'a str, Option<(String, &'a str)>, Option<Tone>);
+
 /// `SignalBars` at `rect.min`: four bars of `width`, `gap` apart, the
 /// heights from the bottom.
 fn signal(ui: &Ui, origin: egui::Pos2, level: u8, heights: [f32; 4], width: f32, gap: f32) {
@@ -294,7 +297,7 @@ pub fn status(
     let number = if compact { FIGURE_COMPACT } else { FIGURE };
     let rtt = quality.and_then(|q| q.rtt_ms);
     let loss = quality.and_then(|q| q.loss);
-    let mut figures: Vec<(&str, Option<(String, &str)>, Option<Tone>)> = vec![
+    let mut figures: Vec<Figure> = vec![
         (
             "Ping",
             rtt.map(|ms| (format!("{}", ms.round() as i64), "ms")),
@@ -407,13 +410,6 @@ pub fn status(
         Rect::from_min_max(top, pos2(top.x + width, bottom)),
         Sense::hover(),
     );
-}
-
-/// The panel behind the full status block: painted first, under it.
-fn status_background(ui: &Ui, rect: Rect) {
-    let theme = Theme::of(ui.ctx());
-    ui.painter()
-        .rect_filled(rect, corner(theme.radius.md), theme.c.panel);
 }
 
 /// A section head (`.connection-block-head`): the title, an optional note.
@@ -558,7 +554,6 @@ pub fn tab(ui: &mut Ui, app: &mut AppCtx, width: f32) {
         bg,
         Shape::rect_filled(block, corner(theme.radius.md), c.panel),
     );
-    let _ = status_background;
     upload_tip(ui, &state, &data, width, p.economy_mode);
     ui.add_space(28.0);
 
