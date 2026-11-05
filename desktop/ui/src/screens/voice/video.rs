@@ -27,24 +27,18 @@ const SHADER: &str = r#"
 @group(0) @binding(2) var plane_v: texture_2d<f32>;
 @group(0) @binding(3) var bilinear: sampler;
 // a: BT.709 (1) or BT.601 (0), clockwise quarter turns, mirror, sRGB target.
-// b: the part of the shown picture that fills the viewport (offset, scale).
-// c: the tile in viewport pixels (offset, size); d: corner radius, viewport size.
-struct Params { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32> };
+// b: the part of the shown picture that fills the drawn rect (offset, scale).
+// c: the tile in target pixels (min, size); d: corner radius, _, drawn size;
+// e: the drawn rect's min in target pixels. Target pixels, because egui
+// clamps the viewport to the window when a tile reaches past its edge.
+struct Params { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32>, e: vec4<f32> };
 @group(0) @binding(4) var<uniform> params: Params;
 
-struct Out {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-};
-
 @vertex
-fn vs(@builtin(vertex_index) index: u32) -> Out {
+fn vs(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
     // One triangle covering the viewport.
     let uv = vec2<f32>(f32((index << 1u) & 2u), f32(index & 2u));
-    var out: Out;
-    out.position = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
-    out.uv = uv;
-    return out;
+    return vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
 }
 
 fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
@@ -54,16 +48,17 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
 }
 
 @fragment
-fn fs(input: Out) -> @location(0) vec4<f32> {
+fn fs(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let uv_rect = (position.xy - params.e.xy) / params.d.zw;
     // Rounded corners of the tile.
-    let px = input.uv * params.d.zw - params.c.xy;
+    let px = position.xy - params.c.xy;
     let half = params.c.zw * 0.5;
     let r = params.d.x;
     let q = abs(px - half) - (half - vec2<f32>(r));
     let dist = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
     let alpha = clamp(0.5 - dist, 0.0, 1.0);
     // The point of the shown picture, then of the frame once it is turned.
-    var shown = params.b.xy + input.uv * params.b.zw;
+    var shown = params.b.xy + uv_rect * params.b.zw;
     if (params.a.z > 0.5) {
         shown.x = 1.0 - shown.x;
     }
@@ -231,7 +226,7 @@ impl Planes {
         ];
         let params = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("video params"),
-            size: 64,
+            size: PARAMS_SIZE as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -324,16 +319,19 @@ struct Params {
     bt709: bool,
     turns: u32,
     mirror: bool,
-    /// The part of the shown picture in the viewport: offset and scale.
+    /// The part of the shown picture in the drawn rect: offset and scale.
     crop: [f32; 4],
-    /// The tile relative to the viewport, in pixels: offset and size.
+    /// The tile in target pixels: min and size.
     tile: [f32; 4],
     radius: f32,
-    viewport: [f32; 2],
+    /// The drawn rect in target pixels: min and size.
+    drawn: [f32; 4],
 }
 
+const PARAMS_SIZE: usize = 80;
+
 impl Params {
-    fn bytes(&self, srgb: bool) -> [u8; 64] {
+    fn bytes(&self, srgb: bool) -> [u8; PARAMS_SIZE] {
         let values = [
             f32::from(u8::from(self.bt709)),
             self.turns as f32,
@@ -349,10 +347,14 @@ impl Params {
             self.tile[3],
             self.radius,
             0.0,
-            self.viewport[0],
-            self.viewport[1],
+            self.drawn[2],
+            self.drawn[3],
+            self.drawn[0],
+            self.drawn[1],
+            0.0,
+            0.0,
         ];
-        let mut out = [0u8; 64];
+        let mut out = [0u8; PARAMS_SIZE];
         for (i, v) in values.iter().enumerate() {
             out[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
         }
@@ -480,20 +482,24 @@ pub fn paint(
 ) {
     let ppp = ui.ctx().pixels_per_point();
     let (rect, crop) = placement(tile, shown_size(&frame), fit);
-    let viewport = [rect.width() * ppp, rect.height() * ppp];
     let params = Params {
         bt709: false,
         turns: (frame.rotation / 90) & 3,
         mirror,
         crop,
         tile: [
-            (tile.left() - rect.left()) * ppp,
-            (tile.top() - rect.top()) * ppp,
+            tile.left() * ppp,
+            tile.top() * ppp,
             tile.width() * ppp,
             tile.height() * ppp,
         ],
         radius: radius * ppp,
-        viewport,
+        drawn: [
+            rect.left() * ppp,
+            rect.top() * ppp,
+            rect.width() * ppp,
+            rect.height() * ppp,
+        ],
     };
     let draw = Draw {
         id,
@@ -634,5 +640,48 @@ mod tests {
         let [r, g, b, _] = px(220, 60);
         assert!(r < 25 && g > 230 && b < 25, "green: {r} {g} {b}");
         assert_eq!(&px(160, 60)[..3], &[11, 13, 14]);
+    }
+
+    /// A tile reaching past the window's edge keeps its scale: egui clamps
+    /// the viewport, the shader maps from target pixels.
+    #[test]
+    fn a_tile_past_the_edge_is_cut_not_squeezed() {
+        // Top half red, bottom half green.
+        let mut halves = solid(64, 64, 81, 90, 240, 1);
+        halves.y[64 * 32..].fill(145);
+        halves.u[32 * 16..].fill(54);
+        halves.v[32 * 16..].fill(34);
+        let halves = Arc::new(halves);
+        let render_state = egui_kittest::wgpu::create_render_state(
+            egui_kittest::wgpu::default_wgpu_setup(),
+            egui_wgpu::RendererOptions::PREDICTABLE,
+        );
+        install(&render_state);
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(vec2(120.0, 120.0))
+            .with_pixels_per_point(1.0)
+            .renderer(egui_kittest::wgpu::WgpuTestRenderer::from_render_state(
+                render_state,
+            ))
+            .build_ui(move |ui| {
+                // 100 high from y 70: only its top half is in the window.
+                let tile = Rect::from_min_size(pos2(10.0, 70.0), vec2(100.0, 100.0));
+                paint(
+                    ui,
+                    egui::Id::unique("video-test-edge"),
+                    tile,
+                    halves.clone(),
+                    Fit::Cover,
+                    false,
+                    0.0,
+                );
+            });
+        harness.run();
+        let image = harness.render().expect("render");
+        let [r, g, b, _] = image.get_pixel(60, 115).0;
+        assert!(
+            r > 230 && g < 25 && b < 25,
+            "still the top half: {r} {g} {b}"
+        );
     }
 }

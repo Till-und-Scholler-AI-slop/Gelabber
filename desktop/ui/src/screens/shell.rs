@@ -183,6 +183,7 @@ fn is_voice(app: &AppCtx, channel: Uuid) -> bool {
 /// The call bar in the bottom strip, from the sidebar's edge (Kino: from
 /// the window's).
 fn call_bar(ui: &mut Ui, app: &mut AppCtx, screen: Rect, full: bool) {
+    voice::volume::sync(ui.ctx(), app.call);
     if !voice::call_bar::visible(app) {
         return;
     }

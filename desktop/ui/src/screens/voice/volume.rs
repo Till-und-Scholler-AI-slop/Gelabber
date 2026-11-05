@@ -2,7 +2,7 @@
 //! only (components/UserVolumeControl.tsx, voice/userVolume.ts), and the
 //! playback slider's mapping (voice/settings.ts): 100 % in the middle.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use egui::{Color32, Id, Sense, Ui, UiBuilder, vec2};
 use uuid::Uuid;
@@ -72,6 +72,47 @@ pub fn set(ctx: &egui::Context, call: &gelabber_call::Call, user: Uuid, level: L
     });
     let played = if level.muted { 0.0 } else { level.volume };
     call.set_volume(user, played as f32);
+}
+
+/// Hands the call the kept level of everyone who (re)appears in it: the
+/// levels last for the session, a new call or consumer starts at 100 %.
+pub fn sync(ctx: &egui::Context, call: &gelabber_call::Call) {
+    let seen_id = Id::unique("gelabber-user-volumes-seen");
+    let present: HashSet<Uuid> = call.with_state(|s| {
+        if super::session::joined(s).is_none() {
+            return HashSet::new();
+        }
+        s.participants
+            .iter()
+            .filter(|p| !p.me)
+            .map(|p| p.user)
+            .collect()
+    });
+    let before: HashSet<Uuid> = ctx.data(|d| d.get_temp(seen_id)).unwrap_or_default();
+    if present == before {
+        return;
+    }
+    let kept: HashMap<Uuid, Level> = ctx.data(|d| d.get_temp(store_id())).unwrap_or_default();
+    for (user, played) in to_apply(&before, &present, &kept) {
+        call.set_volume(user, played);
+    }
+    ctx.data_mut(|d| d.insert_temp(seen_id, present));
+}
+
+/// The kept levels of the people new in `present`, as the call plays them.
+fn to_apply(
+    before: &HashSet<Uuid>,
+    present: &HashSet<Uuid>,
+    kept: &HashMap<Uuid, Level>,
+) -> Vec<(Uuid, f32)> {
+    present
+        .difference(before)
+        .filter_map(|user| {
+            let level = kept.get(user).filter(|l| **l != Level::default())?;
+            let played = if level.muted { 0.0 } else { level.volume };
+            Some((*user, played as f32))
+        })
+        .collect()
 }
 
 /// `UserVolumeControl`: "Lautstärke" and the percentage, the slider,
@@ -220,5 +261,37 @@ mod tests {
         assert_eq!(volume(100.0), 1.0);
         assert_eq!(volume(150.0), 2.5);
         assert_eq!(volume(200.0), 4.0);
+    }
+
+    #[test]
+    fn kept_levels_reach_whoever_comes_back() {
+        let (jonas, mira) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let kept: HashMap<Uuid, Level> = [
+            (
+                jonas,
+                Level {
+                    volume: 0.5,
+                    muted: false,
+                },
+            ),
+            (
+                mira,
+                Level {
+                    volume: 1.0,
+                    muted: true,
+                },
+            ),
+        ]
+        .into();
+        let none = HashSet::new();
+        let both: HashSet<Uuid> = [jonas, mira].into();
+        let mut applied = to_apply(&none, &both, &kept);
+        applied.sort_by_key(|(u, _)| *u);
+        assert_eq!(applied, [(jonas, 0.5), (mira, 0.0)]);
+        // Nobody new: nothing is sent again.
+        assert!(to_apply(&both, &both, &kept).is_empty());
+        // Untouched levels stay the call's own.
+        let other = Uuid::from_u128(3);
+        assert!(to_apply(&none, &[other].into(), &kept).is_empty());
     }
 }

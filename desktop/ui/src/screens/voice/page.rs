@@ -61,7 +61,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, server: Uuid, channel: Uuid) {
         stage::set_kino(ui.ctx(), false);
     }
     let kino = choices.kino && can_kino;
-    if can_kino {
+    // The large view has the keys: Esc leaves it, not Kino under it.
+    if can_kino && !fullscreen_open(ui.ctx()) {
         kino_keys(ui, kino);
     }
     if kino {
@@ -618,6 +619,12 @@ fn fullscreen_id() -> Id {
     Id::unique("gelabber-voice-fullscreen")
 }
 
+fn fullscreen_open(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<Option<PicId>>(fullscreen_id()))
+        .flatten()
+        .is_some()
+}
+
 fn open_fullscreen(ctx: &egui::Context, id: PicId) {
     ctx.data_mut(|d| d.insert_temp(fullscreen_id(), Some(id)));
     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
@@ -652,7 +659,15 @@ fn fullscreen(ui: &mut Ui, app: &mut AppCtx, room: &Room) {
     let screen = ctx.content_rect();
     let state = app.call.state();
     let mut leave = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-    if room.here && ctx.input(|i| i.key_pressed(egui::Key::M) || i.key_pressed(egui::Key::Space)) {
+    // As `VoiceTile` onKeyDown: not with Strg/Alt/⌘ (Strg+Umschalt+M is the
+    // call bar's), and Space stays a focused button's.
+    let space_free = ctx.memory(|m| m.focused().is_none());
+    let toggle = ctx.input(|i| {
+        let m = i.modifiers;
+        !(m.ctrl || m.command || m.mac_cmd || m.alt)
+            && (i.key_pressed(egui::Key::M) || (space_free && i.key_pressed(egui::Key::Space)))
+    });
+    if room.here && toggle {
         app.call.set_muted(!(state.muted || state.deafened));
     }
     egui::Area::new(Id::unique("gelabber-voice-fullscreen-area"))
