@@ -82,11 +82,12 @@ pub fn show(
     );
     let response = common::click(ui, button, Id::unique(("server-menu", server)))
         .on_hover_text(&detail.server.name);
+    // The web's `<summary>`: a disclosure named by the server's name.
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
-            egui::Role::Button,
+            egui::Role::DisclosureTriangle,
             true,
-            format!("Menü für {}", detail.server.name),
+            detail.server.name.clone(),
         )
     });
     if response.hovered() || menu_open {
@@ -544,45 +545,42 @@ fn channel_row(
             .on_hover_text(format!("{} · verbunden", ch.name));
     }
 
-    // Hover actions cover the name's end with the row's own fill.
-    if can_manage && (hovered || ui.rect_contains_pointer(row)) {
+    // Hover actions cover the name's end with the row's own fill. Unhovered
+    // they stay there unseen (`opacity-0`), for the keyboard and tests.
+    if can_manage {
+        let edit_id = Id::unique(("edit-channel", ch.id));
+        let delete_id = Id::unique(("delete-channel", ch.id));
+        // `group-focus-within:opacity-100`: a Tab onto the row or its buttons shows them.
+        let shown = hovered
+            || ui.rect_contains_pointer(row)
+            || response.has_focus()
+            || ui.memory(|m| m.has_focus(edit_id) || m.has_focus(delete_id));
         let actions = Rect::from_min_max(
             pos2(row.right() - 61.0, row.top() + 4.0),
             pos2(row.right() - 3.0, row.top() + 30.0),
         );
-        painter.rect(
-            actions,
-            corner(theme.radius.md),
-            under,
-            Stroke::NONE,
-            StrokeKind::Inside,
-        );
+        if shown {
+            painter.rect(
+                actions,
+                corner(theme.radius.md),
+                under,
+                Stroke::NONE,
+                StrokeKind::Inside,
+            );
+        }
         let edit =
             Rect::from_min_size(pos2(actions.left() + 6.0, actions.top()), Vec2::splat(26.0));
         let delete = Rect::from_min_size(pos2(edit.right(), actions.top()), Vec2::splat(26.0));
-        if shell_icon_button(
-            ui,
-            edit,
-            Icon::Pencil,
-            14.0,
-            "Kanal bearbeiten",
-            Id::unique(("edit-channel", ch.id)),
-        )
-        .clicked()
-        {
+        let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(actions));
+        if !shown {
+            ui.set_opacity(0.0);
+        }
+        let ui = &mut ui;
+        if shell_icon_button(ui, edit, Icon::Pencil, 14.0, "Kanal bearbeiten", edit_id).clicked() {
             super::dialogs::open_channel(ui.ctx(), server, Some(ch), ch.category_id);
             return;
         }
-        if shell_icon_button(
-            ui,
-            delete,
-            Icon::Trash,
-            14.0,
-            "Kanal löschen",
-            Id::unique(("delete-channel", ch.id)),
-        )
-        .clicked()
-        {
+        if shell_icon_button(ui, delete, Icon::Trash, 14.0, "Kanal löschen", delete_id).clicked() {
             super::dialogs::confirm_delete_channel(ui.ctx(), server, ch);
             return;
         }
@@ -883,6 +881,7 @@ fn row_menu(ui: &mut Ui) {
 fn menu_row(ui: &mut Ui, icon: Icon, label: &str, width: f32) -> egui::Response {
     let theme = Theme::of(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 36.0), egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     if response.hovered() {
         common::fill(ui.painter(), rect, theme.radius.sm, theme.c.hover);
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);

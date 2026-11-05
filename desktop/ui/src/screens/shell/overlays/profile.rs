@@ -36,6 +36,10 @@ impl MemberDialog {
             requested: false,
         }
     }
+
+    pub fn server(&self) -> Uuid {
+        self.server
+    }
 }
 
 pub struct UserDialog {

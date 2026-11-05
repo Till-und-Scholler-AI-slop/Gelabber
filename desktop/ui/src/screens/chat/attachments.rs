@@ -1,24 +1,50 @@
 //! What a message carries besides text (components/Attachments.tsx,
-//! imageBox.ts, GifPicker.tsx `GifMessageButton`, LinkPreviews.tsx;
-//! chat.css `.lr-attachments`, `.lr-gif`, `.lr-preview`): pictures, files,
-//! GIFs and link previews, each sized before its image arrives.
+//! imageBox.ts, download.ts, GifPicker.tsx `GifMessageButton`,
+//! LinkPreviews.tsx; chat.css `.lr-attachments`, `.lr-gif`, `.lr-preview`):
+//! pictures (or the box saying one did not load), text files as a preview
+//! to open, every other file as a download, GIFs and link previews, each
+//! sized before its image arrives. Video and audio have no player here:
+//! they are downloads, as on the web where the browser cannot play them.
+
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use egui::{Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
+use gelabber_client::store::UploadState;
 use gelabber_client::{Attachment, Gif, LinkPreview};
+use parking_lot::Mutex;
+use uuid::Uuid;
 
 use crate::icons::{self, Icon};
-use crate::images::{ImageState, Images, cover_uv};
+use crate::images::{ImageState, Images, TextState, cover_uv};
 use crate::text::{Block, TextStyle};
 use crate::theme::{Theme, corner, mix};
 
 const IMAGE_BOX_W: f32 = 360.0;
 const IMAGE_BOX_H: f32 = 240.0;
+/// `TEXT_PREVIEW_MAX`: larger text files are plain downloads.
+const TEXT_PREVIEW_MAX: i64 = 100 * 1024;
+/// `DOWNLOAD_STARTED_MS`.
+const DOWNLOAD_STARTED: f64 = 4.0;
+/// `.lr-attachment-file` and the text summary: padding 7, a 13px line.
+const FILE_H: f32 = 35.5;
+const FILE_STYLE: TextStyle = TextStyle::new(13.0, 600.0, 1.5);
+const SIZE_STYLE: TextStyle = TextStyle::new(11.0, 400.0, 1.5);
+const STATE_STYLE: TextStyle = TextStyle::new(12.0, 400.0, 1.5);
+/// `line-height: 1.45` on the `<pre>`; the `<code>` in it, in another monospace
+/// font, makes each line 19.2px in Chromium.
+const PRE_STYLE: TextStyle = TextStyle::new(12.5, 400.0, 19.2 / 12.5);
 
 pub fn is_image(content_type: &str) -> bool {
     matches!(
         content_type,
         "image/jpeg" | "image/png" | "image/gif" | "image/webp"
     )
+}
+
+/// `isTextType`.
+pub fn is_text(content_type: &str) -> bool {
+    content_type.starts_with("text/") || content_type == "application/json"
 }
 
 /// `formatSize`: "1,5 MB" or "12 KB".
@@ -30,8 +56,22 @@ pub fn format_size(bytes: i64) -> String {
     }
 }
 
-pub fn attachment_url(id: uuid::Uuid) -> String {
+pub fn attachment_url(id: Uuid) -> String {
     format!("/api/attachments/{id}")
+}
+
+/// `attachmentDownloadUrl`.
+pub fn download_url(id: Uuid) -> String {
+    format!("{}?download=1", attachment_url(id))
+}
+
+/// The upload state's words (`UploadState`), none once it arrived.
+pub fn upload_text(state: Option<UploadState>) -> Option<&'static str> {
+    match state? {
+        UploadState::Uploading => Some("Wird hochgeladen…"),
+        UploadState::Waiting => Some("Wartet"),
+        UploadState::Done => None,
+    }
 }
 
 /// What a click on a piece asks for.
@@ -42,24 +82,97 @@ pub enum MediaAction {
     External(String),
 }
 
+/// What the attachments remember between frames: open text previews, and
+/// when a download link was last pressed.
+#[derive(Default)]
+struct Shown {
+    open: HashMap<Uuid, bool>,
+    started: HashMap<Uuid, f64>,
+    /// GIF messages the reader started or stopped (`chosen`).
+    gifs: HashMap<Uuid, bool>,
+}
+
+fn shown(ctx: &egui::Context) -> Arc<Mutex<Shown>> {
+    ctx.data_mut(|d| {
+        d.get_temp_mut_or_insert_with(egui::Id::unique("gelabber-attachments"), || {
+            Arc::new(Mutex::new(Shown::default()))
+        })
+        .clone()
+    })
+}
+
+/// `useDownload`: whether the link of `id` says "Download gestartet".
+fn download_started(ctx: &egui::Context, id: Uuid) -> bool {
+    let now = ctx.input(|i| i.time);
+    let at = shown(ctx).lock().started.get(&id).copied();
+    match at {
+        Some(at) if now - at < DOWNLOAD_STARTED => {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(
+                DOWNLOAD_STARTED - (now - at),
+            ));
+            true
+        }
+        _ => false,
+    }
+}
+
+/// A press on a download link: it starts once, then rests for 4s.
+fn start_download(ctx: &egui::Context, id: Uuid) -> bool {
+    if download_started(ctx, id) {
+        return false;
+    }
+    let now = ctx.input(|i| i.time);
+    shown(ctx).lock().started.insert(id, now);
+    true
+}
+
 enum Piece {
     /// A single picture: its box (border included).
     Image {
+        att: Attachment,
         url: String,
-        name: String,
         size: Vec2,
+        upload: Option<UploadState>,
     },
     Grid {
-        cells: Vec<(String, String)>,
+        cells: Vec<(Attachment, String)>,
+    },
+    /// A picture that did not load (`AttachmentImageFailed`).
+    Failed {
+        att: Attachment,
+        size: Vec2,
     },
     File(Box<FilePiece>),
+    Text(Box<TextPiece>),
 }
 
 struct FilePiece {
     att: Attachment,
     name: Block,
     size: Block,
+    upload: Option<(Block, &'static str)>,
+    started: bool,
     width: f32,
+    /// The link's name: what it shows.
+    label: String,
+}
+
+struct TextPiece {
+    att: Attachment,
+    name: Block,
+    size: Block,
+    upload: Option<(Block, &'static str)>,
+    width: f32,
+    open: bool,
+    body: TextBody,
+}
+
+enum TextBody {
+    Closed,
+    /// "Vorschau wird geladen…" or "Vorschau nicht verfügbar." with the link.
+    State(Block, bool),
+    /// The text (at most 320 high, scrolling) and "Herunterladen".
+    Text(Block, f32),
 }
 
 /// Laid-out attachments: pieces at y offsets inside a column.
@@ -89,11 +202,29 @@ fn natural(ui: &Ui, images: &Images, url: &str) -> Option<Vec2> {
     }
 }
 
-pub fn layout(ui: &Ui, images: &Images, attachments: &[Attachment], width: f32) -> Option<Media> {
+/// A picture that failed, not one still on its way up (`isPendingId`).
+fn failed(ui: &Ui, images: &Images, att: &Attachment, url: &str) -> bool {
+    !att.id.is_nil() && matches!(images.get(ui.ctx(), url), ImageState::Failed)
+}
+
+/// Lays out `attachments` in a column `width` wide; `uploads` are the
+/// files' states while my message is on its way.
+pub fn layout(
+    ui: &Ui,
+    images: &Images,
+    attachments: &[Attachment],
+    width: f32,
+    uploads: Option<&[UploadState]>,
+) -> Option<Media> {
     if attachments.is_empty() {
         return None;
     }
     let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let upload_of = |a: &Attachment| {
+        let i = attachments.iter().position(|x| std::ptr::eq(x, a))?;
+        uploads.and_then(|u| u.get(i).copied())
+    };
     let pictures: Vec<&Attachment> = attachments
         .iter()
         .filter(|a| is_image(&a.content_type))
@@ -110,21 +241,35 @@ pub fn layout(ui: &Ui, images: &Images, attachments: &[Attachment], width: f32) 
     if pictures.len() == 1 {
         let a = pictures[0];
         let url = attachment_url(a.id);
-        let size = image_box(natural(ui, images, &url), width);
-        push(
-            &mut pieces,
-            size.y,
-            Piece::Image {
-                url,
-                name: a.filename.clone(),
-                size,
-            },
-        );
+        if failed(ui, images, a, &url) {
+            // The box of a picture still loading: 240 wide, 240 high.
+            let size = vec2(240.0_f32.min(width), IMAGE_BOX_H);
+            push(
+                &mut pieces,
+                size.y,
+                Piece::Failed {
+                    att: a.clone(),
+                    size,
+                },
+            );
+        } else {
+            let size = image_box(natural(ui, images, &url), width);
+            push(
+                &mut pieces,
+                size.y,
+                Piece::Image {
+                    att: a.clone(),
+                    url,
+                    size,
+                    upload: upload_of(a),
+                },
+            );
+        }
     } else if pictures.len() > 1 {
         let rows = pictures.len().div_ceil(2) as f32;
         let cells = pictures
             .iter()
-            .map(|a| (attachment_url(a.id), a.filename.clone()))
+            .map(|a| ((*a).clone(), attachment_url(a.id)))
             .collect();
         push(
             &mut pieces,
@@ -132,38 +277,110 @@ pub fn layout(ui: &Ui, images: &Images, attachments: &[Attachment], width: f32) 
             Piece::Grid { cells },
         );
     }
+    let state = shown(ui.ctx());
     for a in attachments.iter().filter(|a| !is_image(&a.content_type)) {
-        let name = Block::single(
-            ui,
-            &a.filename,
-            TextStyle::new(13.0, 600.0, 1.5),
-            theme.c.text,
-        );
-        let size = Block::single(
-            ui,
-            &format_size(a.size),
-            TextStyle::new(11.0, 400.0, 1.5),
-            theme.c.muted,
-        );
-        let w = (10.0 + 15.0 + 8.0 + name.width() + 8.0 + size.width() + 12.0 + 2.0).min(width);
+        let upload =
+            upload_text(upload_of(a)).map(|t| (Block::single(ui, t, SIZE_STYLE, c.muted), t));
+        let name = Block::single(ui, &a.filename, FILE_STYLE, c.text);
+        if is_text(&a.content_type) && a.size <= TEXT_PREVIEW_MAX {
+            let size = Block::single(ui, &format_size(a.size), SIZE_STYLE, c.muted);
+            let open = state.lock().open.get(&a.id).copied().unwrap_or(false);
+            let width = width.min(560.0);
+            let inner = width - 2.0 - 24.0;
+            let body = if !open {
+                TextBody::Closed
+            } else {
+                match (a.id.is_nil(), images.text(ui.ctx(), &attachment_url(a.id))) {
+                    (false, TextState::Ready(text)) => {
+                        let mut format = PRE_STYLE.format(c.text);
+                        format.font_id = egui::FontId::new(12.5, crate::fonts::mono_family());
+                        format.line_height = Some(PRE_STYLE.line_px());
+                        let mut job = egui::text::LayoutJob::single_section(
+                            text.trim_end_matches('\n').to_owned(),
+                            format,
+                        );
+                        job.wrap.max_width = f32::INFINITY;
+                        let block = Block::new(ui, job, PRE_STYLE);
+                        let shown_h = block.height().min(320.0 - 20.0);
+                        TextBody::Text(block, shown_h)
+                    }
+                    (false, TextState::Failed) => TextBody::State(
+                        Block::wrapped(
+                            ui,
+                            "Vorschau nicht verfügbar.",
+                            STATE_STYLE,
+                            c.muted,
+                            inner,
+                        ),
+                        true,
+                    ),
+                    _ => TextBody::State(
+                        Block::wrapped(ui, "Vorschau wird geladen…", STATE_STYLE, c.muted, inner),
+                        false,
+                    ),
+                }
+            };
+            let body_h = match &body {
+                TextBody::Closed => 0.0,
+                TextBody::State(block, _) => 6.0 + block.height() + 8.0,
+                TextBody::Text(_, shown_h) => 1.0 + 10.0 + shown_h + 10.0 + 6.0 + 18.0 + 8.0,
+            };
+            push(
+                &mut pieces,
+                FILE_H + body_h,
+                Piece::Text(Box::new(TextPiece {
+                    att: a.clone(),
+                    name,
+                    size,
+                    upload,
+                    width,
+                    open,
+                    body,
+                })),
+            );
+            continue;
+        }
+        let started = download_started(ui.ctx(), a.id);
+        // With an upload state last, the size is a plain 13px span.
+        let size = if started {
+            Block::single(ui, "Download gestartet", SIZE_STYLE, c.muted)
+        } else if upload.is_some() {
+            Block::single(ui, &format_size(a.size), FILE_STYLE.weight(400.0), c.text)
+        } else {
+            Block::single(ui, &format_size(a.size), SIZE_STYLE, c.muted)
+        };
+        let upload_w = upload.as_ref().map_or(0.0, |(u, _)| 8.0 + u.width());
+        let w = (10.0 + 15.0 + 8.0 + name.width() + 8.0 + size.width() + upload_w + 12.0 + 2.0)
+            .min(width);
         push(
             &mut pieces,
-            35.5,
+            FILE_H,
             Piece::File(Box::new(FilePiece {
                 att: a.clone(),
                 name,
                 size,
+                upload,
+                started,
                 width: w,
+                label: format!(
+                    "{} {}",
+                    a.filename,
+                    if started {
+                        "Download gestartet".to_owned()
+                    } else {
+                        format_size(a.size)
+                    }
+                ),
             })),
         );
     }
     Some(Media { pieces, height: y })
 }
 
-fn paint_image(ui: &Ui, images: &Images, url: &str, rect: Rect, cover: bool) {
+fn paint_image(ui: &Ui, images: &Images, url: &str, rect: Rect, cover: bool, play: bool) {
     let theme = Theme::of(ui.ctx());
     let painter = ui.painter();
-    if let ImageState::Ready(texture) = images.get(ui.ctx(), url) {
+    if let ImageState::Ready(texture) = images.frame(ui.ctx(), url, play) {
         let inner = rect.shrink(1.0);
         let uv = if cover {
             cover_uv(texture.size_vec2(), inner.size())
@@ -205,6 +422,219 @@ fn picture_ring(ui: &Ui, response: &egui::Response, rect: Rect) {
     }
 }
 
+/// The browser animates pictures unless motion is reduced.
+fn animate(ui: &Ui) -> bool {
+    !crate::screens::settings::prefs::get(ui.ctx()).reduced_motion
+}
+
+/// A 1px dashed rounded box (`border: 1px dashed`), dashes 3 and gaps 3.
+fn dashed(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let r = rect.shrink(0.5);
+    let stroke = Stroke::new(1.0, color);
+    let corners = [
+        r.left_top(),
+        r.right_top(),
+        r.right_bottom(),
+        r.left_bottom(),
+    ];
+    for i in 0..4 {
+        let (a, b) = (corners[i], corners[(i + 1) % 4]);
+        let dir = (b - a).normalized();
+        // Leave the rounded corners to the arcs.
+        let (a, b) = (a + dir * 7.0, b - dir * 7.0);
+        painter.extend(egui::Shape::dashed_line(&[a, b], stroke, 3.0, 3.0));
+    }
+    for (center, start) in [
+        (r.left_top() + vec2(7.0, 7.0), std::f32::consts::PI),
+        (r.right_top() + vec2(-7.0, 7.0), 1.5 * std::f32::consts::PI),
+        (r.right_bottom() + vec2(-7.0, -7.0), 0.0),
+        (
+            r.left_bottom() + vec2(7.0, -7.0),
+            0.5 * std::f32::consts::PI,
+        ),
+    ] {
+        let points: Vec<Pos2> = (0..=6)
+            .map(|k| {
+                let a = start + k as f32 / 6.0 * std::f32::consts::FRAC_PI_2;
+                center + vec2(a.cos(), a.sin()) * 7.0
+            })
+            .collect();
+        painter.add(egui::Shape::line(points, stroke));
+    }
+}
+
+/// An underlined 12px text button in the accent text colour
+/// (`.lr-attachment-image-actions > button, > a`).
+fn text_action(
+    ui: &mut Ui,
+    at: Pos2,
+    label: &str,
+    role: egui::Role,
+    id: egui::Id,
+) -> egui::Response {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let block = Block::single(ui, label, STATE_STYLE, c.accent_text);
+    let rect = Rect::from_min_size(at, block.size());
+    let response = ui.interact(rect, id, Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(role, true, label));
+    block.paint(ui.painter(), rect.min);
+    crate::widgets::link::underline(
+        ui.painter(),
+        STATE_STYLE,
+        rect.top(),
+        rect.left(),
+        rect.right(),
+        c.accent_text,
+    );
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    response
+}
+
+/// `AttachmentImageFailed`: name, "Bild konnte nicht geladen werden.",
+/// "Erneut laden" and "Herunterladen", centred in a dashed box.
+fn paint_failed(
+    ui: &mut Ui,
+    images: &Images,
+    att: &Attachment,
+    rect: Rect,
+    id: egui::Id,
+) -> Option<MediaAction> {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    ui.painter()
+        .rect_filled(rect, corner(theme.radius.md), c.panel);
+    dashed(ui.painter(), rect, c.border);
+    let inner = rect.shrink(12.0 + 1.0);
+    let mut name_job = crate::text::job(
+        &att.filename,
+        TextStyle::new(13.0, 400.0, 1.5),
+        c.text,
+        Some(inner.width()),
+    );
+    name_job.wrap.max_rows = 1;
+    let name = Block::new(ui, name_job, TextStyle::new(13.0, 400.0, 1.5));
+    let status = Block::wrapped(
+        ui,
+        "Bild konnte nicht geladen werden.",
+        STATE_STYLE,
+        c.muted,
+        inner.width(),
+    );
+    let actions_h = STATE_STYLE.line_px();
+    let total = 15.0 + 6.0 + name.height() + 6.0 + status.height() + 6.0 + actions_h;
+    let mut y = rect.center().y - total / 2.0;
+    icons::paint(
+        ui.painter(),
+        Icon::Paperclip,
+        pos2(inner.left(), y),
+        15.0,
+        c.accent_text,
+    );
+    y += 15.0 + 6.0;
+    name.paint(ui.painter(), pos2(inner.left(), y));
+    y += name.height() + 6.0;
+    status.paint(ui.painter(), pos2(inner.left(), y));
+    self::status(
+        ui,
+        Rect::from_min_size(pos2(inner.left(), y), status.size()),
+        "Bild konnte nicht geladen werden.",
+    );
+    y += status.height() + 6.0;
+    let mut action = None;
+    let retry = text_action(
+        ui,
+        pos2(inner.left(), y),
+        "Erneut laden",
+        egui::Role::Button,
+        id.with("retry"),
+    );
+    if retry.clicked() {
+        images.retry(&attachment_url(att.id));
+        ui.ctx().request_repaint();
+    }
+    let download = text_action(
+        ui,
+        pos2(retry.rect.right() + 12.0, y),
+        if download_started(ui.ctx(), att.id) {
+            "Download gestartet"
+        } else {
+            "Herunterladen"
+        },
+        egui::Role::Link,
+        id.with("download"),
+    );
+    if download.clicked() && start_download(ui.ctx(), att.id) {
+        action = Some(MediaAction::External(download_url(att.id)));
+    }
+    action
+}
+
+/// The upload state over a picture's bottom-left corner.
+fn paint_upload_badge(ui: &Ui, rect: Rect, text: &str) {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let block = Block::single(ui, text, SIZE_STYLE, c.muted);
+    let badge = Rect::from_min_size(
+        pos2(
+            rect.left() + 6.0,
+            rect.bottom() - 6.0 - block.height() - 4.0,
+        ),
+        vec2(block.width() + 12.0, block.height() + 4.0),
+    );
+    ui.painter()
+        .rect_filled(badge, corner(theme.radius.xs), c.panel.gamma_multiply(0.85));
+    block.paint(ui.painter(), pos2(badge.left() + 6.0, badge.top() + 2.0));
+    status(ui, badge, text);
+}
+
+/// `role="status"`: the words are read out (and found by tests).
+fn status(ui: &Ui, rect: Rect, text: &str) {
+    let id = egui::Id::unique((
+        "gelabber-attachment-status",
+        text,
+        rect.min.x as i32,
+        rect.min.y as i32,
+    ));
+    ui.interact(rect, id, Sense::hover())
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, text));
+}
+
+/// Icon, name and size (and the upload state) of a file line.
+fn paint_file_line(
+    ui: &Ui,
+    rect: Rect,
+    icon: Icon,
+    name: &Block,
+    size: &Block,
+    upload: Option<&(Block, &'static str)>,
+) {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    icons::paint(
+        ui.painter(),
+        icon,
+        pos2(rect.left() + 11.0, rect.top() + FILE_H / 2.0 - 7.5),
+        15.0,
+        c.accent_text,
+    );
+    let x = rect.left() + 11.0 + 15.0 + 8.0;
+    let clip = ui
+        .painter()
+        .with_clip_rect(rect.shrink(1.0).intersect(ui.clip_rect()));
+    let mid = rect.top() + FILE_H / 2.0;
+    name.paint(&clip, pos2(x, mid - name.height() / 2.0));
+    let sx = x + name.width() + 8.0;
+    size.paint(&clip, pos2(sx, mid - size.height() / 2.0 + 0.5));
+    if let Some((upload, text)) = upload {
+        let at = pos2(sx + size.width() + 8.0, mid - upload.height() / 2.0 + 0.5);
+        upload.paint(&clip, at);
+        status(ui, Rect::from_min_size(at, upload.size()), text);
+    }
+}
+
 impl Media {
     pub fn paint(
         &self,
@@ -215,31 +645,46 @@ impl Media {
     ) -> Option<MediaAction> {
         let theme = Theme::of(ui.ctx());
         let c = theme.c;
+        let play = animate(ui);
         let mut action = None;
         for (n, (y, piece)) in self.pieces.iter().enumerate() {
             let top = origin.y + y;
             match piece {
-                Piece::Image { url, name, size } => {
+                Piece::Image {
+                    att,
+                    url,
+                    size,
+                    upload,
+                } => {
                     let rect = Rect::from_min_size(pos2(origin.x, top), *size);
-                    paint_image(ui, images, url, rect, false);
+                    paint_image(ui, images, url, rect, false, play);
+                    if let Some(text) = upload_text(*upload) {
+                        paint_upload_badge(ui, rect, text);
+                    }
                     let response = ui.interact(rect, id.with(("image", n)), Sense::click());
                     response.widget_info(|| {
                         egui::WidgetInfo::labeled(
                             egui::Role::Link,
                             true,
-                            format!("{name} vergrößern"),
+                            format!("{} vergrößern", att.filename),
                         )
                     });
                     picture_ring(ui, &response, rect);
                     if response.hovered() {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::ZoomIn);
                     }
-                    if response.clicked() {
-                        action = Some(MediaAction::Open(url.clone(), name.clone()));
+                    if response.clicked() && !att.id.is_nil() {
+                        action = Some(MediaAction::Open(url.clone(), att.filename.clone()));
+                    }
+                }
+                Piece::Failed { att, size } => {
+                    let rect = Rect::from_min_size(pos2(origin.x, top), *size);
+                    if let Some(a) = paint_failed(ui, images, att, rect, id.with(("failed", n))) {
+                        action = Some(a);
                     }
                 }
                 Piece::Grid { cells } => {
-                    for (i, (url, name)) in cells.iter().enumerate() {
+                    for (i, (att, url)) in cells.iter().enumerate() {
                         let col = (i % 2) as f32;
                         let row = (i / 2) as f32;
                         let cell_w = 198.0;
@@ -247,21 +692,28 @@ impl Media {
                             pos2(origin.x + col * (cell_w + 4.0), top + row * 164.0),
                             vec2(cell_w, 160.0),
                         );
-                        paint_image(ui, images, url, rect, true);
+                        if failed(ui, images, att, url) {
+                            let cell_id = id.with(("cell-failed", n, i));
+                            if let Some(a) = paint_failed(ui, images, att, rect, cell_id) {
+                                action = Some(a);
+                            }
+                            continue;
+                        }
+                        paint_image(ui, images, url, rect, true, play);
                         let response = ui.interact(rect, id.with(("cell", n, i)), Sense::click());
                         response.widget_info(|| {
                             egui::WidgetInfo::labeled(
                                 egui::Role::Link,
                                 true,
-                                format!("{name} vergrößern"),
+                                format!("{} vergrößern", att.filename),
                             )
                         });
                         picture_ring(ui, &response, rect);
                         if response.hovered() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::ZoomIn);
                         }
-                        if response.clicked() {
-                            action = Some(MediaAction::Open(url.clone(), name.clone()));
+                        if response.clicked() && !att.id.is_nil() {
+                            action = Some(MediaAction::Open(url.clone(), att.filename.clone()));
                         }
                     }
                 }
@@ -270,10 +722,16 @@ impl Media {
                         att,
                         name,
                         size,
+                        upload,
+                        started,
                         width,
+                        label,
                     } = &**file;
-                    let rect = Rect::from_min_size(pos2(origin.x, top), vec2(*width, 35.5));
+                    let rect = Rect::from_min_size(pos2(origin.x, top), vec2(*width, FILE_H));
                     let response = ui.interact(rect, id.with(("file", n)), Sense::click());
+                    response.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::Role::Link, true, label.clone())
+                    });
                     let fill = if response.hovered() { c.hover } else { c.panel };
                     ui.painter().rect(
                         rect,
@@ -282,30 +740,23 @@ impl Media {
                         Stroke::new(1.0, c.border),
                         StrokeKind::Inside,
                     );
-                    icons::paint(
-                        ui.painter(),
-                        Icon::Paperclip,
-                        pos2(rect.left() + 11.0, rect.center().y - 7.5),
-                        15.0,
-                        c.accent_text,
-                    );
-                    let x = rect.left() + 11.0 + 15.0 + 8.0;
-                    let clip = ui
-                        .painter()
-                        .with_clip_rect(rect.shrink(1.0).intersect(ui.clip_rect()));
-                    name.paint(&clip, pos2(x, rect.center().y - 9.75));
-                    size.paint(
-                        &clip,
-                        pos2(x + name.width() + 8.0, rect.center().y - 8.25 + 0.5),
-                    );
-                    if response.hovered() {
+                    let icon = if *started {
+                        Icon::Check
+                    } else {
+                        Icon::Paperclip
+                    };
+                    paint_file_line(ui, rect, icon, name, size, upload.as_ref());
+                    if response.hovered() && !started {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
-                    if response.clicked() {
-                        action = Some(MediaAction::External(format!(
-                            "{}?download=1",
-                            attachment_url(att.id)
-                        )));
+                    if response.clicked() && !att.id.is_nil() && start_download(ui.ctx(), att.id) {
+                        action = Some(MediaAction::External(download_url(att.id)));
+                    }
+                }
+                Piece::Text(text) => {
+                    if let Some(a) = paint_text(ui, text, pos2(origin.x, top), id.with(("text", n)))
+                    {
+                        action = Some(a);
                     }
                 }
             }
@@ -314,6 +765,100 @@ impl Media {
     }
 }
 
+/// `AttachmentText`: a `<details>` whose summary is the file line; open,
+/// the text (or its state) and "Herunterladen".
+fn paint_text(ui: &mut Ui, piece: &TextPiece, at: Pos2, id: egui::Id) -> Option<MediaAction> {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let body_h = match &piece.body {
+        TextBody::Closed => 0.0,
+        TextBody::State(block, _) => 6.0 + block.height() + 8.0,
+        TextBody::Text(_, shown_h) => 1.0 + 10.0 + shown_h + 10.0 + 6.0 + 18.0 + 8.0,
+    };
+    let rect = Rect::from_min_size(at, vec2(piece.width, FILE_H + body_h));
+    ui.painter().rect(
+        rect,
+        corner(7.0),
+        c.panel,
+        Stroke::new(1.0, c.border),
+        StrokeKind::Inside,
+    );
+    let summary = Rect::from_min_size(at, vec2(piece.width, FILE_H));
+    let response = ui.interact(summary, id.with("summary"), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::DisclosureTriangle, true, &piece.att.filename)
+    });
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    if response.clicked() {
+        shown(ui.ctx())
+            .lock()
+            .open
+            .insert(piece.att.id, !piece.open);
+        // A clicked `<summary>` keeps the focus: its row looks hovered.
+        response.request_focus();
+        ui.ctx().request_repaint();
+    }
+    paint_file_line(
+        ui,
+        summary,
+        Icon::Paperclip,
+        &piece.name,
+        &piece.size,
+        piece.upload.as_ref(),
+    );
+    let mut action = None;
+    let link = |ui: &mut Ui, pos: Pos2, action: &mut Option<MediaAction>| {
+        let started = download_started(ui.ctx(), piece.att.id);
+        let label = if started {
+            "Download gestartet"
+        } else {
+            "Herunterladen"
+        };
+        let block = Block::single(ui, label, STATE_STYLE, c.muted);
+        let r = Rect::from_min_size(pos, block.size());
+        let response = ui.interact(r, id.with("download"), Sense::click());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, label));
+        block.paint(ui.painter(), r.min);
+        if response.hovered() && !started {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if response.clicked() && start_download(ui.ctx(), piece.att.id) {
+            *action = Some(MediaAction::External(download_url(piece.att.id)));
+        }
+    };
+    match &piece.body {
+        TextBody::Closed => {}
+        TextBody::State(block, failed) => {
+            let p = pos2(at.x + 1.0 + 12.0, summary.bottom() + 6.0);
+            block.paint(ui.painter(), p);
+            if *failed {
+                // "Vorschau nicht verfügbar. " and the link on its line.
+                let space = Block::single(ui, " ", STATE_STYLE, c.muted).width();
+                link(ui, pos2(p.x + block.width() + space, p.y), &mut action);
+            }
+        }
+        TextBody::Text(block, shown_h) => {
+            let line = summary.bottom();
+            ui.painter().rect_filled(
+                Rect::from_min_size(pos2(at.x + 1.0, line), vec2(piece.width - 2.0, 1.0)),
+                0.0,
+                c.border,
+            );
+            let pre = Rect::from_min_size(
+                pos2(at.x + 1.0, line + 1.0),
+                vec2(piece.width - 2.0, 10.0 + shown_h + 10.0),
+            );
+            block.paint(
+                &ui.painter().with_clip_rect(pre.intersect(ui.clip_rect())),
+                pos2(pre.left() + 12.0, pre.top() + 10.0),
+            );
+            link(ui, pos2(at.x + 1.0 + 12.0, pre.bottom() + 6.0), &mut action);
+        }
+    }
+    action
+}
 /// The picture large over the window (components/ImageLightbox.tsx):
 /// filename, "Herunterladen", close; Esc or a click beside it closes.
 /// Returns (close, download).
@@ -424,19 +969,39 @@ pub fn gif_box(gif: &Gif) -> Vec2 {
     vec2((w * scale).round().max(1.0), (h * scale).round().max(1.0))
 }
 
-/// A GIF message's picture (first frame; the native client does not play it).
+/// A GIF message (`GifMessageButton`): it plays, unless motion is reduced,
+/// then the still with the "GIF" badge plays while hovered; a click
+/// starts or stops it for good.
 pub fn paint_gif(
     ui: &mut Ui,
     images: &Images,
     gif: &Gif,
-    url: &str,
+    still: &str,
+    message: Uuid,
     rect: Rect,
     id: egui::Id,
 ) -> Option<MediaAction> {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
+    let response = ui.interact(rect, id.with("gif"), Sense::click());
+    let label = if gif.title.is_empty() {
+        "GIF".to_owned()
+    } else {
+        format!("GIF: {}", gif.title)
+    };
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::Button, true, format!("{label}, Animation"))
+    });
+    let state = shown(ui.ctx());
+    let chosen = state.lock().gifs.get(&message).copied();
+    let playing = chosen.unwrap_or(animate(ui) || response.hovered());
+    if response.clicked() {
+        state.lock().gifs.insert(message, !playing);
+    }
+    let played = images.client().http().gif_media_url(&gif.url);
+    let url = if playing { played.as_str() } else { still };
     ui.painter().rect_filled(rect, corner(7.0), c.panel);
-    match images.get(ui.ctx(), url) {
+    match images.frame(ui.ctx(), url, playing) {
         ImageState::Ready(texture) => {
             ui.painter().add(
                 egui::epaint::RectShape::filled(
@@ -463,31 +1028,30 @@ pub fn paint_gif(
         Stroke::new(1.0, c.border),
         StrokeKind::Inside,
     );
-    // Paused: the "GIF" badge bottom-left.
-    let badge_text = Block::single(
-        ui,
-        "GIF",
-        TextStyle::new(11.0, 700.0, 1.5).tracking(0.04),
-        Color32::WHITE,
-    );
-    let badge = Rect::from_min_size(
-        pos2(
-            rect.left() + 6.0,
-            rect.bottom() - 6.0 - badge_text.height() - 2.0,
-        ),
-        vec2(badge_text.width() + 12.0, badge_text.height() + 2.0),
-    );
-    ui.painter()
-        .rect_filled(badge, CornerRadius::same(5), Color32::from_black_alpha(166));
-    badge_text.paint(ui.painter(), pos2(badge.left() + 6.0, badge.top() + 1.0));
-    let response = ui.interact(rect, id.with("gif"), Sense::click());
+    if !playing {
+        // Paused: the "GIF" badge bottom-left.
+        let badge_text = Block::single(
+            ui,
+            "GIF",
+            TextStyle::new(11.0, 700.0, 1.5).tracking(0.04),
+            Color32::WHITE,
+        );
+        let badge = Rect::from_min_size(
+            pos2(
+                rect.left() + 6.0,
+                rect.bottom() - 6.0 - badge_text.height() - 2.0,
+            ),
+            vec2(badge_text.width() + 12.0, badge_text.height() + 2.0),
+        );
+        ui.painter()
+            .rect_filled(badge, CornerRadius::same(5), Color32::from_black_alpha(166));
+        badge_text.paint(ui.painter(), pos2(badge.left() + 6.0, badge.top() + 1.0));
+    }
     if !gif.title.is_empty() {
         crate::widgets::Tooltip::new(&gif.title)
             .on_hover(&response, crate::widgets::tooltip::Side::Above);
     }
-    response
-        .clicked()
-        .then(|| MediaAction::External(gif.url.clone()))
+    None
 }
 
 /// Laid-out link previews.
@@ -734,6 +1298,101 @@ impl Previews {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::kittest::Queryable as _;
+
+    fn attachment(id: u128, name: &str, content_type: &str) -> Attachment {
+        Attachment {
+            id: Uuid::from_u128(id),
+            filename: name.into(),
+            content_type: content_type.into(),
+            size: 2048,
+        }
+    }
+
+    /// Draws `attachments` as a message row does, against a server that
+    /// is not there: every picture fails.
+    fn harness<'a>(
+        attachments: Vec<Attachment>,
+        uploads: Option<Vec<UploadState>>,
+    ) -> (egui_kittest::Harness<'a>, Images) {
+        let client = gelabber_client::Client::new("http://127.0.0.1:9").expect("client");
+        let images = Images::new(client);
+        let drawn = images.clone();
+        let harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(700.0, 500.0))
+            .build_ui(move |ui| {
+                crate::fonts::install(ui.ctx());
+                crate::theme::set(ui.ctx(), Theme::dark());
+                let media = layout(ui, &drawn, &attachments, 600.0, uploads.as_deref());
+                if let Some(media) = media {
+                    let _ = media.paint(ui, &drawn, pos2(10.0, 10.0), egui::Id::unique("t"));
+                }
+            });
+        (harness, images)
+    }
+
+    fn settle(harness: &mut egui_kittest::Harness<'_>, images: &Images) {
+        for _ in 0..200 {
+            harness.step();
+            if !images.busy() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        harness.run_steps(3);
+    }
+
+    #[test]
+    fn a_picture_that_did_not_load_says_so() {
+        let (mut harness, images) = harness(vec![attachment(1, "banner.png", "image/png")], None);
+        settle(&mut harness, &images);
+        harness.get_by_label("Bild konnte nicht geladen werden.");
+        harness.get_by_label("Herunterladen");
+        // "Erneut laden" asks again; here it fails again.
+        harness.get_by_label("Erneut laden").click();
+        for _ in 0..300 {
+            harness.step();
+            if harness
+                .query_by_label("Bild konnte nicht geladen werden.")
+                .is_some()
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        harness.get_by_label("Bild konnte nicht geladen werden.");
+        let url = attachment_url(Uuid::from_u128(1));
+        images.retry(&url);
+        assert!(matches!(
+            images.get(&harness.ctx, &url),
+            ImageState::Loading
+        ));
+    }
+
+    #[test]
+    fn files_on_their_way_show_their_upload_state() {
+        let files = vec![
+            attachment(0, "a.pdf", "application/pdf"),
+            attachment(0, "b.pdf", "application/pdf"),
+            attachment(0, "c.png", "image/png"),
+        ];
+        let uploads = vec![
+            UploadState::Uploading,
+            UploadState::Waiting,
+            UploadState::Waiting,
+        ];
+        let (mut harness, images) = harness(files, Some(uploads));
+        settle(&mut harness, &images);
+        harness.get_by_label("Wird hochgeladen…");
+        assert_eq!(harness.query_all_by_label("Wartet").count(), 2);
+        // A picture still uploading is no failed picture.
+        assert!(
+            harness
+                .query_by_label("Bild konnte nicht geladen werden.")
+                .is_none()
+        );
+        assert_eq!(upload_text(Some(UploadState::Done)), None);
+    }
 
     #[test]
     fn sizes() {

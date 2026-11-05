@@ -3,13 +3,17 @@
 //! pages/DmChannelPage.tsx).
 
 mod attachments;
+pub mod clipboard;
 mod composer;
 mod content;
+mod context;
 mod emoji;
+mod files;
 mod gif;
 mod header;
 pub mod markdown;
 mod mentions;
+mod notice;
 mod pane;
 mod reactions;
 mod row;
@@ -42,6 +46,8 @@ struct ChatState {
     panes: HashMap<Uuid, PaneState>,
     composers: HashMap<Uuid, ComposerState>,
     searches: HashMap<Uuid, search::SearchState>,
+    /// A message shown in its context, per conversation.
+    contexts: HashMap<Uuid, context::ContextState>,
     picker: emoji::PickerState,
     gif: gif::GifState,
     requests: Vec<ChatRequest>,
@@ -185,10 +191,19 @@ pub fn channel_page(ui: &mut Ui, app: &mut AppCtx, server: Uuid, channel: Uuid) 
         }))
     });
     match conversation {
-        // Not loaded yet: the page background, like MainSkeleton's.
+        // Not loaded yet: the page background, like MainSkeleton's, or the
+        // load error inside `p-6`.
         None => {
             let theme = Theme::of(ui.ctx());
-            ui.painter().rect_filled(ui.max_rect(), 0.0, theme.c.bg);
+            let page = ui.max_rect();
+            ui.painter().rect_filled(page, 0.0, theme.c.bg);
+            if let Some(pending) = app.client.with_state(|s| notice::channel_error(s, server)) {
+                let at = pos2(page.left() + 24.0, page.top() + 24.0);
+                let message = "Dieser Kanal konnte nicht geladen werden.";
+                if notice::load_error(ui, at, page.width() - 48.0, message, pending) {
+                    app.client.refresh_server(server);
+                }
+            }
         }
         // The channel is gone (or is a voice channel, which the voice page draws).
         Some(None) => {
@@ -259,7 +274,23 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
                 app.client.open_channel(channel);
             }
             let theme = Theme::of(ui.ctx());
-            ui.painter().rect_filled(ui.max_rect(), 0.0, theme.c.bg);
+            let page = ui.max_rect();
+            ui.painter().rect_filled(page, 0.0, theme.c.bg);
+            // Gone: back to the list. Else the error, centred in `p-8`.
+            if app.client.with_state(|s| notice::dm_gone(s, channel)) {
+                app.nav.replace("/d");
+            } else if let Some(pending) = app.client.with_state(|s| notice::dm_error(s, channel)) {
+                let message = "Diese Unterhaltung konnte nicht geladen werden.";
+                let width =
+                    (crate::text::Block::single(ui, message, crate::text::BODY, theme.c.text)
+                        .width()
+                        + 30.0)
+                        .min(page.width() - 64.0);
+                let at = pos2(page.center().x - width / 2.0, page.center().y - 40.0);
+                if notice::load_error(ui, at, width, message, pending) {
+                    app.client.open_channel(channel);
+                }
+            }
         }
     }
 }
@@ -282,6 +313,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         .is_none_or(|(c, f)| c != channel || f + 1 < frame)
     {
         chat.panes.insert(channel, PaneState::default());
+        chat.contexts.remove(&channel);
     }
     chat.shown = Some((channel, frame));
     let me = client
@@ -342,6 +374,40 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         chat.requests.push(ChatRequest::Profile { user: peer.id });
     }
 
+    // Who is live on the server: a pill in the header, on a narrow window
+    // a strip under it (ChannelPage.tsx `LiveHint`).
+    let mut top = page.top() + header::HEIGHT;
+    if let Some(server) = conv.server {
+        let narrow = crate::screens::voice::hint::narrow(ui.ctx());
+        if !narrow {
+            crate::screens::voice::hint::pill_right(
+                ui,
+                app,
+                server,
+                head.search_left - 10.0,
+                head.mid,
+                head.title_right + 10.0,
+            );
+        } else {
+            let h = crate::screens::voice::hint::strip_height(app, server);
+            let strip = Rect::from_min_size(pos2(page.left(), top), vec2(page.width(), h));
+            crate::screens::voice::hint::strip(ui, app, server, strip);
+            top += h;
+        }
+    }
+    // "Lesestatus nicht gespeichert." with its retry (MessagePane.tsx).
+    let read_failed = client.with_state(|s| s.messages(channel).is_some_and(|h| h.read_failed));
+    if read_failed {
+        let r = Rect::from_min_size(
+            pos2(page.left() + 16.0, top + 8.0),
+            vec2(page.width() - 32.0, 30.0),
+        );
+        if notice::inline_notice(ui, r, "Lesestatus nicht gespeichert.", "Erneut versuchen") {
+            client.mark_read(channel);
+        }
+        top = r.bottom();
+    }
+
     // Composer height first: the list gives way to it.
     let composer_input = ComposerInput {
         channel,
@@ -355,10 +421,13 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         unsent,
     };
     let composer_state = chat.composers.entry(channel).or_default();
-    let composer_h = composer::height(composer_state, &composer_input);
+    let composer_h = composer::height(ui.ctx(), composer_state, &composer_input, page.width());
+    // `.lr-toast-space` between the typing bar and the composer.
+    let toasts = crate::toasts::space(ui.ctx());
+    let room = toasts + toasts.min(12.0);
     let list_rect = Rect::from_min_max(
-        pos2(page.left(), page.top() + header::HEIGHT),
-        pos2(page.right(), page.bottom() - composer_h - TYPING_BAR),
+        pos2(page.left(), top),
+        pos2(page.right(), page.bottom() - composer_h - room - TYPING_BAR),
     );
     let typing_rect = Rect::from_min_size(
         pos2(page.left(), list_rect.bottom()),
@@ -372,8 +441,45 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         .searches
         .get_mut(&channel)
         .is_some_and(|s| s.active(ui.input(|i| i.time)));
+    // A hit's context holds while its query is typed; a reply's while no
+    // search runs (MessageSearch `opened`, MessagePane `contextTarget`).
+    let typed = chat
+        .searches
+        .get(&channel)
+        .map(|s| s.text.trim().to_owned())
+        .unwrap_or_default();
+    if chat
+        .contexts
+        .get(&channel)
+        .is_some_and(|x| x.query.as_ref().is_some_and(|q| *q != typed))
+    {
+        chat.contexts.remove(&channel);
+    }
+    let in_context = chat
+        .contexts
+        .get(&channel)
+        .is_some_and(|x| x.query.is_some() == searching);
     let mut list_actions = Vec::new();
-    if searching {
+    let mut context_actions = Vec::new();
+    if in_context {
+        let state = client.state();
+        let input = ListInput {
+            channel,
+            state: &state,
+            me,
+            names: &names,
+            can_send: conv.can_send,
+            can_moderate: conv.can_moderate,
+            start: conv.start.clone(),
+            now,
+            images: app.images,
+            http: client.http(),
+        };
+        let view = chat.contexts.get_mut(&channel).expect("context state");
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list_rect));
+        child.set_clip_rect(list_rect.intersect(ui.clip_rect()));
+        context_actions = context::show(&mut child, list_rect, client, channel, view, &input);
+    } else if searching {
         let s = chat.searches.get_mut(&channel).expect("search state");
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list_rect));
         child.set_clip_rect(list_rect.intersect(ui.clip_rect()));
@@ -382,9 +488,11 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
                 s.text.clear();
                 ui.memory_mut(|m| m.request_focus(header::search_id(channel)));
             }
+            // A hit always opens in its context.
             Some(search::SearchAction::Open(id)) => {
-                s.text.clear();
-                pane_state.focus = Some(id);
+                let query = s.text.trim().to_owned();
+                chat.contexts
+                    .insert(channel, context::ContextState::new(id, Some(query)));
             }
             None => {}
         }
@@ -413,9 +521,39 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
     let composer_rect = Rect::from_min_max(pos2(page.left(), page.bottom() - composer_h), page.max);
     let composer_state = chat.composers.entry(channel).or_default();
     let composer_actions = composer::show(ui, composer_rect, composer_state, &composer_input);
+    // `.lr-message-pane.is-drop-target`: a dashed accent outline 6px inside.
+    if composer::dropping(ui.ctx(), &composer_input) {
+        let r = page.shrink(6.0 + 1.0);
+        let stroke = egui::Stroke::new(2.0, Theme::of(ui.ctx()).c.accent.gamma_multiply(0.7));
+        let corners = [
+            r.left_top(),
+            r.right_top(),
+            r.right_bottom(),
+            r.left_bottom(),
+            r.left_top(),
+        ];
+        ui.painter()
+            .extend(egui::Shape::dashed_line(&corners, stroke, 6.0, 6.0));
+    }
 
     // The rows' requests, now that the state lock is released.
-    let pane_state = chat.panes.get_mut(&channel).expect("pane state");
+    for action in context_actions {
+        match action {
+            context::ContextAction::Hits => {
+                chat.contexts.remove(&channel);
+            }
+            context::ContextAction::Chat => {
+                chat.contexts.remove(&channel);
+                if let Some(s) = chat.searches.get_mut(&channel)
+                    && !s.text.is_empty()
+                {
+                    s.text.clear();
+                    ui.memory_mut(|m| m.request_focus(header::search_id(channel)));
+                }
+            }
+            context::ContextAction::Row(row) => list_actions.push(ListAction::Row(row)),
+        }
+    }
     let now_t = ui.input(|i| i.time);
     for action in list_actions {
         match action {
@@ -427,12 +565,15 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
             }
             ListAction::MarkReadNow => client.mark_read(channel),
             ListAction::Reload => client.reload_channel(channel),
+            ListAction::Row(RowAction::JumpTo(id)) => jump_to(chat, client, channel, id),
             ListAction::Row(action) => {
+                let pane_state = chat.panes.entry(channel).or_default();
                 let composer_state = chat.composers.entry(channel).or_default();
                 row_action(ui, app, &conv, pane_state, composer_state, action, now_t);
             }
         }
     }
+    let pane_state = chat.panes.entry(channel).or_default();
     let composer_state = chat.composers.entry(channel).or_default();
     for action in composer_actions {
         match action {
@@ -514,6 +655,22 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
     }
 }
 
+/// `jumpTo`: the search closes; a loaded message is scrolled to, one that
+/// is not opens in its context.
+fn jump_to(chat: &mut ChatState, client: &Client, channel: Uuid, id: Uuid) {
+    if let Some(s) = chat.searches.get_mut(&channel) {
+        s.text.clear();
+    }
+    let loaded = client.with_state(|s| s.messages(channel).is_some_and(|h| h.get(id).is_some()));
+    if loaded {
+        chat.contexts.remove(&channel);
+        chat.panes.entry(channel).or_default().focus = Some(id);
+    } else {
+        chat.contexts
+            .insert(channel, context::ContextState::new(id, None));
+    }
+}
+
 fn row_action(
     ui: &mut Ui,
     app: &mut AppCtx,
@@ -550,25 +707,16 @@ fn row_action(
                 Some((id, anchor))
             };
         }
-        RowAction::JumpTo(id) => {
-            if client.with_state(|s| {
-                s.messages(conv.channel)
-                    .is_some_and(|h| h.get(id).is_some())
-            }) {
-                pane.focus = Some(id);
-            } else {
-                app.toasts
-                    .notify("Die ursprüngliche Nachricht ist nicht geladen.");
-            }
-        }
+        // Taken by `jump_to` before the rows' actions get here.
+        RowAction::JumpTo(_) => {}
         RowAction::Content(id, content) => match content {
             ContentAction::OpenLink(href) => open_external(ui.ctx(), &href),
             ContentAction::RevealSpoiler(n) => {
                 pane.revealed.entry(id).or_default().insert(n);
             }
             ContentAction::CopyCode(n, text) => {
-                ui.ctx().copy_text(text);
-                pane.copied = Some((id, n, true, now_t));
+                let copied = clipboard::copy(ui.ctx(), &text);
+                pane.copied = Some((id, n, copied, now_t));
             }
         },
         RowAction::Media(media) => match media {
@@ -843,8 +991,8 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
                     pane.start_edit(id, mentions::from_wire(&message.content, &conv.members));
                 }
                 MenuChoice::Copy => {
-                    ctx.copy_text(mentions::from_wire(&message.content, &conv.members));
-                    app.toasts.notify("Text kopiert.");
+                    let text = mentions::from_wire(&message.content, &conv.members);
+                    clipboard::copy_message(&ctx, &text, app.toasts);
                 }
                 MenuChoice::Delete(skip) => {
                     if skip {
@@ -987,13 +1135,20 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
     }
     // My optimistic votes end once the server agrees, or after a while.
     let pane = chat.panes.entry(channel).or_default();
+    // A refused vote ends at once: the toast says so, the chip goes back.
+    let failures = &mut pane.intent_failures;
     pane.intents.retain(|(id, emoji), (add, since)| {
-        let settled = client.with_state(|s| {
-            s.find_message(*id)
-                .is_some_and(|m| m.reacted(emoji, me) == *add)
+        let (settled, failed) = client.with_state(|s| {
+            (
+                s.find_message(*id)
+                    .is_some_and(|m| m.reacted(emoji, me) == *add),
+                s.failures(&format!("react:{id}")),
+            )
         });
-        !settled && now_t - *since < 8.0
+        let refused = *failures.entry(*id).or_insert(failed) != failed;
+        !settled && !refused && now_t - *since < 8.0
     });
+    failures.retain(|id, _| pane.intents.keys().any(|(i, _)| i == id));
 }
 
 enum MenuChoice {

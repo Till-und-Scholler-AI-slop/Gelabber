@@ -250,6 +250,9 @@ impl Platform {
             client.set_focused(in_front);
         }
         let p = prefs::get(ctx);
+        let (joined, deafened) = app
+            .call()
+            .with_state(|s| (crate::screens::voice::session::joined(s), s.deafened));
         let outcome = self.notifier.frame(
             &client,
             notify::Context {
@@ -257,6 +260,8 @@ impl Platform {
                 desktop_enabled: p.desktop_notify,
                 now_ms: state::now_ms(),
                 server_now: client.http().server_now(),
+                joined,
+                deafened,
             },
         );
         if outcome.focus {
@@ -273,6 +278,9 @@ impl Platform {
         let call = app.call().clone();
         if outcome.sound && p.message_sound && !call.with_state(|s| s.deafened) {
             call.play_sound(gelabber_call::Sound::Message);
+        }
+        if outcome.live_sound && p.message_sound && !deafened {
+            call.play_sound(gelabber_call::Sound::LiveStart);
         }
         self.ptt.tick(ctx, &call, &p);
         if now >= self.next_tick {

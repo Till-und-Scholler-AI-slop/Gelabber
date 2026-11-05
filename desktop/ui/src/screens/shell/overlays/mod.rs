@@ -20,6 +20,7 @@ use parking_lot::Mutex;
 use uuid::Uuid;
 
 use crate::app::AppCtx;
+use crate::route::Route;
 use crate::screens::chat::{self, ChatRequest};
 
 pub use confirm::{ConfirmAction, Question};
@@ -38,6 +39,57 @@ struct OverlayState {
     overlay: Option<Overlay>,
     question: Option<Question>,
     toasts: message_toasts::MessageToasts,
+    /// The route the open dialogs belong to.
+    route: Option<Route>,
+    /// The frame the last overlay or dialog opened in.
+    opened: u64,
+}
+
+/// Notes that a dialog or overlay opens now: one opened in the frame a
+/// route changed belongs to the new route (an invite prompt).
+pub(super) fn opened(ctx: &egui::Context) {
+    shared(ctx).lock().opened = ctx.cumulative_frame_nr();
+}
+
+/// After a route change (back, a link) a dialog closes when the part of
+/// the page that owns it on the web goes: the member panel's profile off
+/// the server, the sidebar's channel and invite dialogs with their server,
+/// the DM page's profile and "Neue Nachricht" outside the DMs. The global
+/// hosts (switcher, notifications, confirm) stay, as on the web.
+pub(super) fn follow_route(ctx: &egui::Context, route: &Route) {
+    let state = shared(ctx);
+    let mut s = state.lock();
+    if s.route.as_ref() == Some(route) {
+        return;
+    }
+    let first = s.route.is_none();
+    s.route = Some(route.clone());
+    if first || s.opened == ctx.cumulative_frame_nr() {
+        return;
+    }
+    let server = match route {
+        Route::Server(s) | Route::Channel(s, _) => Some(*s),
+        _ => None,
+    };
+    let dms = matches!(route, Route::Dms | Route::Dm(_));
+    s.overlay = match s.overlay.take() {
+        Some(Overlay::Member(m)) if Some(m.server()) != server => None,
+        Some(Overlay::User(_)) if !matches!(route, Route::Dm(_)) => None,
+        other => other,
+    };
+    drop(s);
+    super::state::with(ctx, |s| {
+        let keep = match &s.dialog {
+            Some(super::state::Dialog::Channel { server: id, .. })
+            | Some(super::state::Dialog::Category { server: id, .. }) => server == Some(*id),
+            Some(super::state::Dialog::Invite(invite)) => server == Some(invite.server),
+            Some(super::state::Dialog::NewMessage { .. }) => dms,
+            Some(super::state::Dialog::Add { .. }) | None => true,
+        };
+        if !keep {
+            s.dialog = None;
+        }
+    });
 }
 
 fn shared(ctx: &egui::Context) -> Arc<Mutex<OverlayState>> {
@@ -65,7 +117,10 @@ pub fn row<R>(ui: &mut Ui, height: f32, gap: f32, add: impl FnOnce(&mut Ui) -> R
 
 /// Opens `overlay` in place of the one open now.
 pub fn open(ctx: &egui::Context, overlay: Overlay) {
-    shared(ctx).lock().overlay = Some(overlay);
+    let state = shared(ctx);
+    let mut s = state.lock();
+    s.overlay = Some(overlay);
+    s.opened = ctx.cumulative_frame_nr();
     ctx.request_repaint();
 }
 
@@ -89,7 +144,10 @@ pub fn open_notifications(ctx: &egui::Context, target: Target) {
 
 /// `confirmAction`: a new question replaces an open one.
 pub fn ask(ctx: &egui::Context, question: Question) {
-    shared(ctx).lock().question = Some(question);
+    let state = shared(ctx);
+    let mut s = state.lock();
+    s.question = Some(question);
+    s.opened = ctx.cumulative_frame_nr();
     ctx.request_repaint();
 }
 
@@ -139,6 +197,7 @@ pub fn keys(ui: &Ui, other_dialog: bool) {
     }
     // A keyboard opening shows the focus ring, as :focus-visible does.
     crate::widgets::set_keyboard_focus(ctx, true);
+    s.opened = ctx.cumulative_frame_nr();
     s.overlay = Some(if switch {
         Overlay::Switcher(switcher::Switcher::default())
     } else {
@@ -150,6 +209,7 @@ pub fn keys(ui: &Ui, other_dialog: bool) {
 /// toasts; takes the chat's requests and the client's notices first.
 pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     let ctx = ui.ctx().clone();
+    follow_route(&ctx, app.nav.route());
     for request in chat::take_requests(&ctx) {
         match request {
             ChatRequest::Notifications {

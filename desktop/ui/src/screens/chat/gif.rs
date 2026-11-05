@@ -175,15 +175,35 @@ pub fn show(
                                 continue;
                             }
                             ui.painter().rect_filled(r, corner(7.0), c.panel);
-                            let url = client
-                                .http()
-                                .gif_media_url(gif.still.as_deref().unwrap_or(&gif.url));
                             let resp = ui.interact(
                                 r,
                                 egui::Id::unique(("gelabber-gif", i)),
                                 Sense::click(),
                             );
-                            if let ImageState::Ready(t) = images.get(ui.ctx(), &url) {
+                            // `playing={!reduced || active === gif.slug}`: the tile under
+                            // the pointer or the focus plays even with reduced motion.
+                            let playing = !crate::screens::settings::prefs::get(ui.ctx())
+                                .reduced_motion
+                                || resp.hovered()
+                                || resp.has_focus();
+                            let src = if playing {
+                                Some(gif.url.as_str())
+                            } else {
+                                gif.still.as_deref()
+                            };
+                            let url = src.map(|src| client.http().gif_media_url(src));
+                            if url.is_none() {
+                                let block = Block::single(
+                                    ui,
+                                    "GIF",
+                                    TextStyle::new(13.0, 700.0, 1.5).tracking(0.04),
+                                    c.muted,
+                                );
+                                block.paint(ui.painter(), r.center() - block.size() / 2.0);
+                            }
+                            if let Some(ImageState::Ready(t)) =
+                                url.map(|url| images.frame(ui.ctx(), &url, playing))
+                            {
                                 let tint = if resp.hovered() {
                                     Color32::WHITE
                                 } else {

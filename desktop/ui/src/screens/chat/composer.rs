@@ -9,6 +9,7 @@ use gelabber_client::OutgoingFile;
 use uuid::Uuid;
 
 use super::attachments::format_size;
+use super::files;
 use super::mentions::{self, Member, Suggestion};
 use crate::icons::{self, Icon};
 use crate::text::{Block, TextStyle};
@@ -27,6 +28,8 @@ pub struct ComposerState {
     /// Replying to (message, author name).
     pub reply: Option<(Uuid, String)>,
     pub files: Vec<OutgoingFile>,
+    /// The files left out last, and why (`fileError`).
+    pub file_error: Option<String>,
     pub emoji_open: bool,
     pub gif_open: bool,
     active: usize,
@@ -98,12 +101,45 @@ fn suggestions_for(state: &ComposerState, input: &ComposerInput) -> Vec<Suggesti
     }
 }
 
-/// The composer's height (the list area gives way to it).
-pub fn height(state: &ComposerState, input: &ComposerInput) -> f32 {
+/// Files hover the window while they are dragged over it: the pane says
+/// where they go ("Loslassen zum Anhängen").
+pub fn dropping(ctx: &egui::Context, input: &ComposerInput) -> bool {
+    input.can_send && input.can_send_files && ctx.input(|i| !i.raw.hovered_files.is_empty())
+}
+
+const NOTE: TextStyle = TextStyle::new(12.0, 400.0, 1.5);
+
+/// The file note's lines (`.lr-composer-file-error`), at `width`.
+fn file_error_height(ctx: &egui::Context, state: &ComposerState, width: f32) -> f32 {
+    let Some(error) = &state.file_error else {
+        return 0.0;
+    };
+    let galley = ctx.fonts_mut(|f| {
+        f.layout_job(crate::text::job(
+            error,
+            NOTE,
+            Color32::WHITE,
+            Some(width - 32.0 - 12.0),
+        ))
+    });
+    4.0 + galley.rows.len() as f32 * NOTE.line_px()
+}
+
+/// The composer's height in a pane `width` wide (the list area gives way
+/// to it).
+pub fn height(
+    ctx: &egui::Context,
+    state: &ComposerState,
+    input: &ComposerInput,
+    width: f32,
+) -> f32 {
     if !input.can_send {
         return 14.0 + 43.5;
     }
     let mut field = 2.0 + ROW;
+    if dropping(ctx, input) {
+        field += 10.0 + 19.5;
+    }
     if state.reply.is_some() {
         field += 8.0 + 40.0;
     }
@@ -121,7 +157,7 @@ pub fn height(state: &ComposerState, input: &ComposerInput) -> f32 {
     if remaining(state, input) < 200 {
         h += 4.0 + 18.0;
     }
-    h
+    h + file_error_height(ctx, state, width)
 }
 
 fn remaining(state: &ComposerState, input: &ComposerInput) -> i64 {
@@ -139,7 +175,7 @@ pub fn show(
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let mut actions = Vec::new();
-    let h = height(state, input);
+    let h = height(ui.ctx(), state, input, pane.width());
     let area = Rect::from_min_max(pos2(pane.left(), pane.bottom() - h), pane.max);
     ui.painter().rect_filled(area, 0.0, c.bg);
     if !input.can_send {
@@ -216,12 +252,19 @@ pub fn show(
     } else {
         0.0
     };
-    let field = Rect::from_min_max(pos2(left, y), pos2(right, area.bottom() - 14.0 - status_h));
+    let file_h = file_error_height(ui.ctx(), state, pane.width());
+    let field = Rect::from_min_max(
+        pos2(left, y),
+        pos2(right, area.bottom() - 14.0 - status_h - file_h),
+    );
+    let drop_target = dropping(ui.ctx(), input);
     let edit_id = egui::Id::unique(("gelabber-composer", input.channel));
     let focused = ui.memory(|m| m.has_focus(edit_id));
     // Esc drops egui's focus before the frame runs; it was ours.
     let had_focus = focused || ui.memory(|m| m.had_focus_last_frame(edit_id));
-    let border = if focused {
+    let border = if drop_target {
+        c.accent
+    } else if focused {
         mix(c.border, c.accent, 0.7)
     } else {
         c.border_strong
@@ -229,7 +272,7 @@ pub fn show(
     let border = crate::widgets::eased(
         ui.ctx(),
         edit_id.with("border"),
-        focused,
+        focused || drop_target,
         c.border_strong,
         border,
     );
@@ -240,9 +283,33 @@ pub fn show(
         Stroke::new(1.0, border),
         StrokeKind::Inside,
     );
-    // `anchor-name: --lr-composer`: the toasts sit above it.
-    crate::toasts::set_anchor(ui.ctx(), field);
+    // `anchor-name: --lr-composer` (the whole composer, the pane wide): the
+    // toasts sit above it, 16px in from the pane's edge.
+    crate::toasts::set_anchor(
+        ui.ctx(),
+        Rect::from_min_max(pos2(area.left(), field.top()), area.max),
+    );
     let mut fy = field.top() + 1.0;
+    if drop_target {
+        let note = Block::single(
+            ui,
+            "Loslassen zum Anhängen",
+            TextStyle::new(13.0, 600.0, 1.5),
+            c.accent_text,
+        );
+        let at = pos2(field.left() + 1.0 + 14.0, fy + 10.0);
+        note.paint(ui.painter(), at);
+        // Tests find it; the web hides it from screen readers.
+        ui.interact(
+            Rect::from_min_size(at, note.size()),
+            edit_id.with("drop"),
+            Sense::hover(),
+        )
+        .widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::Label, true, "Loslassen zum Anhängen")
+        });
+        fy += 10.0 + 19.5;
+    }
 
     // The reply bar.
     if let Some((_, name)) = state.reply.clone() {
@@ -332,6 +399,7 @@ pub fn show(
         }
         if let Some(i) = remove {
             state.files.remove(i);
+            state.file_error = None;
         }
         fy += 10.0 + 56.0;
     }
@@ -627,6 +695,7 @@ pub fn show(
             files: std::mem::take(&mut state.files),
         });
         state.draft.clear();
+        state.file_error = None;
         state.picked.clear();
         state.focus = true;
         actions.push(ComposerAction::StopTyping);
@@ -645,45 +714,71 @@ pub fn show(
             pos2(right - 6.0 - block.width(), field.bottom() + 4.0),
         );
     }
+    // The files left out, under the status line (`role="alert"`).
+    if let Some(error) = &state.file_error {
+        let block = Block::wrapped(ui, error, NOTE, c.danger, right - left - 12.0);
+        let at = pos2(left + 6.0, field.bottom() + status_h + 4.0);
+        block.paint(ui.painter(), at);
+        ui.interact(
+            Rect::from_min_size(at, block.size()),
+            edit_id.with("file-error"),
+            Sense::hover(),
+        )
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, error));
+    }
+    let mut next = Vec::new();
     // Files picked with the paperclip.
     let picked = state.chosen.as_ref().and_then(|slot| slot.lock().take());
     if let Some(paths) = picked {
         state.chosen = None;
         for path in paths {
             if let Ok(data) = std::fs::read(&path) {
-                let filename = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "Datei".into());
-                state.files.push(OutgoingFile {
-                    content_type: guess_type(&filename),
-                    filename,
-                    data: std::sync::Arc::new(data),
-                });
+                next.push(outgoing(&path, data));
             }
         }
         state.focus = true;
     }
-    // Files dropped on the window attach like the paperclip.
     if input.can_send_files {
+        // Files dropped on the window attach like the paperclip.
         let dropped = ui.input(|i| i.raw.dropped_files.clone());
         for file in dropped {
             if let Ok(data) = file.bytes() {
-                let filename = file
-                    .path()
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "Datei".into());
-                let content_type = guess_type(&filename);
-                state.files.push(OutgoingFile {
-                    filename,
-                    content_type,
-                    data: std::sync::Arc::new(data),
-                });
+                next.push(outgoing(file.path(), data));
+                state.focus = true;
             }
         }
+        // A picture pasted into the draft (`pastedFiles`).
+        if had_focus {
+            let now = chrono::Utc::now();
+            let pasted: Vec<OutgoingFile> = ui.input(|i| {
+                i.events
+                    .iter()
+                    .filter_map(|e| match e {
+                        egui::Event::PasteImage(image) => files::pasted_image(image, now),
+                        _ => None,
+                    })
+                    .collect()
+            });
+            next.extend(pasted);
+        }
+    }
+    if !next.is_empty() {
+        state.file_error = files::add_files(&mut state.files, next);
     }
     actions
+}
+
+/// A file from the disk: its name, the type its name says, the bytes.
+fn outgoing(path: &std::path::Path, data: Vec<u8>) -> OutgoingFile {
+    let filename = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    OutgoingFile {
+        content_type: files::infer_content_type(&filename, ""),
+        filename,
+        data: std::sync::Arc::new(data),
+    }
 }
 
 /// Runs the desktop's file chooser on a thread; the slot fills with the
@@ -747,29 +842,6 @@ fn choose_files(
     slot
 }
 
-fn guess_type(name: &str) -> String {
-    let ext = name
-        .rsplit('.')
-        .next()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    match ext.as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "mp4" => "video/mp4",
-        "webm" => "video/webm",
-        "mp3" => "audio/mpeg",
-        "ogg" => "audio/ogg",
-        "txt" | "md" | "rs" | "ts" | "js" | "py" | "toml" | "log" => "text/plain",
-        "json" => "application/json",
-        "pdf" => "application/pdf",
-        _ => "application/octet-stream",
-    }
-    .into()
-}
-
 fn composer_icon(ui: &mut Ui, rect: Rect, icon: Icon, label: &str, id: egui::Id) -> bool {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
@@ -794,4 +866,71 @@ fn composer_icon(ui: &mut Ui, rect: Rect, icon: Icon, label: &str, id: egui::Id)
     }
     Tooltip::new(label).on_hover(&resp, Side::Above);
     resp.clicked()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::kittest::Queryable as _;
+
+    /// Files dragged over the window: the composer says where they go;
+    /// dropped, the ones the API refuses are named and left out.
+    #[test]
+    fn files_over_the_window_show_where_they_go() {
+        let members: Vec<Member> = Vec::new();
+        let state = std::cell::RefCell::new(ComposerState::default());
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(800.0, 300.0))
+            .build_ui(|ui| {
+                crate::fonts::install(ui.ctx());
+                crate::theme::set(ui.ctx(), crate::theme::Theme::dark());
+                let input = ComposerInput {
+                    channel: Uuid::nil(),
+                    placeholder: "#allgemein".into(),
+                    can_send: true,
+                    can_send_files: true,
+                    gifs: false,
+                    members: &members,
+                    me: None,
+                    keywords: false,
+                    unsent: 0,
+                };
+                let pane = ui.max_rect();
+                let _ = show(ui, pane, &mut state.borrow_mut(), &input);
+            });
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Loslassen zum Anhängen").is_none());
+        harness.input_mut().hovered_files.push(egui::HoveredFile {
+            path: Some("liste.txt".into()),
+            mime: String::new(),
+        });
+        harness.run_steps(2);
+        harness.get_by_label("Loslassen zum Anhängen");
+        harness.input_mut().hovered_files.clear();
+        #[derive(Debug)]
+        struct Dropped(std::path::PathBuf, Vec<u8>);
+        impl egui::DroppedFile for Dropped {
+            fn path(&self) -> &std::path::Path {
+                &self.0
+            }
+            fn bytes(&self) -> Result<Vec<u8>, String> {
+                Ok(self.1.clone())
+            }
+        }
+        for (name, bytes) in [
+            ("liste.txt", b"Milch".to_vec()),
+            ("seite.html", b"<p>".to_vec()),
+        ] {
+            harness
+                .input_mut()
+                .dropped_files
+                .push(std::sync::Arc::new(Dropped(name.into(), bytes)));
+        }
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Loslassen zum Anhängen").is_none());
+        harness.get_by_label("seite.html: Dieser Dateityp ist nicht erlaubt.");
+        let state = state.borrow();
+        assert_eq!(state.files.len(), 1);
+        assert_eq!(state.files[0].content_type, "text/plain");
+    }
 }

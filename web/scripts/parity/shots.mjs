@@ -89,8 +89,14 @@ for (const scene of scenes) {
   // Messages the scene posts (say.mjs), deleted after the screenshot, also
   // when a step fails, so the fixture stays as seeded.
   const said = [];
+  // A hover keeps the pointer where it put it for the screenshot.
+  let hovered = false;
+  // Calls an action started while the page was open (`call`).
+  const calls = [];
   try {
     for (const action of scene.actions ?? []) {
+      // "channel people" for call.mjs, as a scene's `call`, but now.
+      if (action.call) calls.push(await startCall(action.call));
       // "<user> <channel-key> <text>": someone else writes.
       if (action.say) {
         const [who, where, ...words] = action.say.split(" ");
@@ -115,17 +121,32 @@ for (const scene of scenes) {
       // Elements without a button role, such as a <summary>.
       if (action.clicktext)
         await page.getByText(action.clicktext, { exact: true }).first().click();
+      // The first button or link, else the first element, with this name.
+      if (action.hover) {
+        await page
+          .getByRole("button", { name: action.hover, exact: true })
+          .or(page.getByRole("link", { name: action.hover, exact: true }))
+          .or(page.getByText(action.hover, { exact: true }))
+          .first()
+          .hover();
+        hovered = true;
+      }
+      // A text field by its placeholder, such as the header's "Suchen".
+      if (action.placeholder)
+        await page.getByPlaceholder(action.placeholder, { exact: true }).first().click();
       // Playwright key names, e.g. "Control+k", "ArrowDown", "Escape".
       if (action.key) await page.keyboard.press(action.key);
       // Typed into whatever has the focus.
       if (action.type) await page.keyboard.type(action.type);
       if (action.wait) await page.waitForTimeout(action.wait);
+      // The browser's back (Alt+← or the mouse's back button).
+      if (action.back) await page.goBack();
       await page.waitForLoadState("networkidle");
     }
     await page.addStyleTag({ content: "*{caret-color:transparent !important}" });
     // Let lists settle and late images decode.
     await page.waitForTimeout(800);
-    await page.mouse.move(size[0] - 1, size[1] - 1);
+    if (!hovered) await page.mouse.move(size[0] - 1, size[1] - 1);
     await page.screenshot({ path: join(OUT, `${scene.name}.png`) });
   } finally {
     for (const [who, id] of said)
@@ -137,6 +158,7 @@ for (const scene of scenes) {
       execFileSync(process.execPath, [join(here, "say.mjs"), ...scene.after.split(" ")], {
         stdio: "inherit",
       });
+    for (const started of calls) await stopCall(started);
   }
   console.log(`${scene.name}: ${page.url()}`);
   await context.close();

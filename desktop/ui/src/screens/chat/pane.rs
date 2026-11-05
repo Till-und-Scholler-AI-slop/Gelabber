@@ -77,6 +77,8 @@ pub struct PaneState {
     pub copied: Option<(Uuid, usize, bool, f64)>,
     /// My optimistic reaction votes: (message, emoji) → (add, since).
     pub intents: HashMap<(Uuid, String), (bool, f64)>,
+    /// The `react:<id>` failure count when a message's vote was cast.
+    pub intent_failures: HashMap<Uuid, u64>,
     hover_bar: Option<(Uuid, Rect)>,
     pub last_marked: Option<Uuid>,
     /// A scroll to the end was asked for (sent, jump pill).
@@ -125,6 +127,7 @@ pub enum ListAction {
 struct Item<'a> {
     msg: std::borrow::Cow<'a, Message>,
     send: Option<SendState>,
+    uploads: Option<Vec<gelabber_client::store::UploadState>>,
     day: Option<String>,
     new_divider: bool,
     start: bool,
@@ -249,6 +252,7 @@ fn make_cx<'a>(item: &'a Item<'a>, input: &'a ListInput<'a>, snap: &'a Snap) -> 
                 }
             })
             .unwrap_or(0.0),
+        uploads: item.uploads.clone(),
         gif_url: m.gif.as_ref().map(|g| {
             input
                 .http
@@ -344,12 +348,14 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
         .iter()
         .map(|p| pending_message(p, input.state))
         .collect();
-    let mut all: Vec<(&Message, Option<SendState>)> =
-        history.messages.iter().map(|m| (m, None)).collect();
+    type Uploads = Option<Vec<gelabber_client::store::UploadState>>;
+    let mut all: Vec<(&Message, Option<SendState>, Uploads)> =
+        history.messages.iter().map(|m| (m, None, None)).collect();
     for (p, m) in history.pending.iter().zip(pending.iter()) {
         let state = match &p.failed {
-            Some(e) => SendState::Failed {
-                error: e.german().to_owned(),
+            Some(_) => SendState::Failed {
+                error: row::failure_line(p),
+                uncertain: p.uncertain,
             },
             None => SendState::Sending {
                 visible: (input.now - p.created_at).num_milliseconds() >= 400,
@@ -359,18 +365,24 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
-        all.push((m, Some(state)));
+        // A failed row hides its files' upload states (`.is-failed`).
+        let uploads = p
+            .failed
+            .is_none()
+            .then(|| (0..p.files.len()).map(|i| p.upload_state(i)).collect());
+        all.push((m, Some(state), uploads));
     }
-    let refs: Vec<&Message> = all.iter().map(|(m, _)| *m).collect();
+    let refs: Vec<&Message> = all.iter().map(|(m, _, _)| *m).collect();
     let new_index = unread_anchor(&refs, pane.new_after.flatten());
     let mut items: Vec<Item> = Vec::with_capacity(all.len());
-    for (i, (m, send)) in all.iter().enumerate() {
+    for (i, (m, send, uploads)) in all.iter().enumerate() {
         let previous = i.checked_sub(1).map(|p| refs[p]);
         let new_day = time::day_break(previous.map(|p| p.created_at), m.created_at);
         let first_new = new_index == Some(i);
         items.push(Item {
             msg: std::borrow::Cow::Borrowed(*m),
             send: send.clone(),
+            uploads: uploads.clone(),
             day: new_day.then(|| time::day_label(m.created_at, input.now)),
             new_divider: first_new,
             start: i == 0 && !has_more,
@@ -997,6 +1009,125 @@ fn paint_jump(ui: &mut Ui, rect: Rect, arrived: usize) -> bool {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     response.clicked()
+}
+
+/// Where the context list stands (MessageContext.tsx): its scroll offset,
+/// and whether the found message was brought into view yet.
+#[derive(Default)]
+pub struct ContextScroll {
+    pub offset: f32,
+    pub centered: bool,
+}
+
+/// The rows of a message's context, each a whole row (`continued: false`)
+/// below 12px of padding; the found one framed in the accent
+/// (`mx-1 rounded border-2`, 12% accent fill) and scrolled to the middle.
+pub fn context_rows(
+    ui: &mut Ui,
+    rect: Rect,
+    input: &ListInput,
+    messages: &[Message],
+    target: Uuid,
+    scroll: &mut ContextScroll,
+) -> Vec<RowAction> {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let now_t = ui.input(|i| i.time);
+    let snap = Snap {
+        intents: HashMap::new(),
+        revealed: HashMap::new(),
+        editing: None,
+        copied: None,
+        highlight: None,
+        empty: HashSet::new(),
+        now_t,
+    };
+    let items: Vec<Item> = messages
+        .iter()
+        .map(|m| Item {
+            msg: std::borrow::Cow::Borrowed(m),
+            send: None,
+            uploads: None,
+            day: None,
+            new_divider: false,
+            start: false,
+            continued: false,
+        })
+        .collect();
+    // The found row is 4px in from both sides and has a 2px border.
+    const INSET: f32 = 4.0 + 2.0;
+    let mut layouts = Vec::with_capacity(items.len());
+    let mut y = 12.0;
+    let mut spans = Vec::with_capacity(items.len());
+    for item in &items {
+        let cx = make_cx(item, input, &snap);
+        let found = item.msg.id == target;
+        let width = if found {
+            rect.width() - 2.0 * INSET
+        } else {
+            rect.width()
+        };
+        let layout = row::layout(ui, &cx, width);
+        let h = layout.height.round() + if found { 2.0 * 2.0 } else { 0.0 };
+        spans.push((y, h));
+        y += h;
+        layouts.push(layout);
+    }
+    let content_h = y + 12.0;
+    let max_offset = (content_h - rect.height()).max(0.0);
+    if !scroll.centered
+        && let Some(i) = items.iter().position(|it| it.msg.id == target)
+    {
+        scroll.centered = true;
+        let (top, h) = spans[i];
+        scroll.offset = (top + h / 2.0 - rect.height() / 2.0).clamp(0.0, max_offset);
+    }
+    if ui.rect_contains_pointer(rect) {
+        let delta = ui.input(|i| i.smooth_scroll_delta.y);
+        scroll.offset = (scroll.offset - delta).clamp(0.0, max_offset);
+    }
+    scroll.offset = scroll.offset.clamp(0.0, max_offset);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+    let pointer = ui.input(|i| i.pointer.hover_pos());
+    let mut actions = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        let (top, h) = spans[i];
+        let y = rect.top() + top - scroll.offset;
+        if y + h < rect.top() - 20.0 || y > rect.bottom() + 20.0 {
+            continue;
+        }
+        let cx = make_cx(item, input, &snap);
+        let found = item.msg.id == target;
+        let outer = Rect::from_min_size(pos2(rect.left(), y), vec2(rect.width(), h));
+        let row_rect = if found {
+            let frame = outer.shrink2(vec2(4.0, 0.0));
+            child.painter().rect(
+                frame,
+                corner(4.0),
+                mix(c.bg, c.accent, 0.12),
+                Stroke::new(2.0, c.accent),
+                StrokeKind::Inside,
+            );
+            frame.shrink(2.0)
+        } else {
+            outer
+        };
+        let hovered = pointer.is_some_and(|p| row_rect.contains(p) && rect.contains(p));
+        let painted = row::paint(
+            &mut child,
+            &cx,
+            &layouts[i],
+            row_rect,
+            row::Look {
+                hovered,
+                menu_open: false,
+            },
+            None,
+        );
+        actions.extend(painted.actions);
+    }
+    actions
 }
 
 #[cfg(test)]

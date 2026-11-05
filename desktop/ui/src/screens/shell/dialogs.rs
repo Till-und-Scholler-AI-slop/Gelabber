@@ -33,6 +33,7 @@ const USES: [(&str, Option<u32>); 4] = [
 ];
 
 pub fn open_add(ctx: &egui::Context, step: AddStep) {
+    super::overlays::opened(ctx);
     state::with(ctx, |s| {
         s.dialog = Some(Dialog::Add {
             step,
@@ -46,6 +47,7 @@ pub fn open_add(ctx: &egui::Context, step: AddStep) {
 
 /// "Zu {server} einladen": creates a link as it opens.
 pub fn open_invite(ctx: &egui::Context, server: Uuid, name: &str) {
+    super::overlays::opened(ctx);
     state::with(ctx, |s| {
         s.dialog = Some(Dialog::Invite(Box::new(InviteState {
             server,
@@ -67,6 +69,7 @@ pub fn open_channel(
     editing: Option<&Channel>,
     category: Option<Uuid>,
 ) {
+    super::overlays::opened(ctx);
     state::with(ctx, |s| {
         s.dialog = Some(Dialog::Channel {
             server,
@@ -80,6 +83,7 @@ pub fn open_channel(
 }
 
 pub fn open_category(ctx: &egui::Context, server: Uuid, editing: Option<&Category>) {
+    super::overlays::opened(ctx);
     state::with(ctx, |s| {
         s.dialog = Some(Dialog::Category {
             server,
@@ -122,6 +126,7 @@ pub fn confirm_delete_category(ctx: &egui::Context, server: Uuid, category: &Cat
 }
 
 pub fn open_new_message(ctx: &egui::Context) {
+    super::overlays::opened(ctx);
     state::with(ctx, |s| {
         s.dialog = Some(Dialog::NewMessage {
             picker: PickerState::default(),
@@ -132,6 +137,7 @@ pub fn open_new_message(ctx: &egui::Context) {
 
 /// Draws the open dialog, if any.
 pub fn show(ui: &mut Ui, app: &mut AppCtx) {
+    super::overlays::follow_route(ui.ctx(), app.nav.route());
     let Some(mut dialog) = state::with(ui.ctx(), |s| s.dialog.take()) else {
         return;
     };
@@ -460,11 +466,7 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
             Ok(invite) => {
                 if let Some((old, _)) = s.invite.take() {
                     if !s.handed_out {
-                        let http = app.client.http().clone();
-                        let code = old.code.clone();
-                        app.client.spawn(async move {
-                            let _ = http.revoke_invite(&code).await;
-                        });
+                        app.client.revoke_invite(&old.code);
                     }
                     s.status = Some((
                         format!("Neuer Link · {}", summary(s.terms)),
@@ -548,12 +550,13 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
                 if creating {
                     s.status = Some(("Link wird erstellt…".into(), StatusTone::Neutral));
                 } else if !link.is_empty() {
-                    ui.ctx().copy_text(link.clone());
-                    s.handed_out = true;
-                    s.status = Some((
-                        format!("Link kopiert · {}", summary(s.terms)),
-                        StatusTone::Success,
-                    ));
+                    let (message, tone, copied) = crate::screens::chat::clipboard::copy_link(
+                        ui.ctx(),
+                        &link,
+                        &summary(s.terms),
+                    );
+                    s.handed_out |= copied;
+                    s.status = Some((message, tone));
                 }
             }
             match &s.status {
@@ -731,7 +734,8 @@ fn channel_dialog(
             ui.spacing_mut().item_spacing.y = 20.0;
             if editing.is_none() {
                 ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 8.0;
+                    // The legend sits 2px higher in its fieldset than a label.
+                    ui.spacing_mut().item_spacing.y = 6.0;
                     text::label(ui, "Kanaltyp", text::UI, c.text);
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
@@ -740,8 +744,17 @@ fn channel_dialog(
                             (false, Icon::Hash, "Text", "Nachrichten, Dateien"),
                             (true, Icon::Speaker, "Voice", "Sprache, Live"),
                         ] {
+                            // A `RadioCard`: the radio, then the label and its hint.
                             let (rect, response) =
-                                ui.allocate_exact_size(Vec2::new(w, 60.0), egui::Sense::click());
+                                ui.allocate_exact_size(Vec2::new(w, 63.0), egui::Sense::click());
+                            response.widget_info(|| {
+                                egui::WidgetInfo::selected(
+                                    egui::Role::RadioButton,
+                                    true,
+                                    *voice == is_voice,
+                                    label,
+                                )
+                            });
                             let on = *voice == is_voice;
                             ui.painter().rect(
                                 rect,
@@ -756,25 +769,25 @@ fn channel_dialog(
                                 Stroke::new(1.0, if on { c.accent } else { c.border_strong }),
                                 StrokeKind::Inside,
                             );
+                            crate::screens::settings::controls::radio_mark(
+                                ui,
+                                pos2(rect.left() + 13.0, rect.top() + 12.0),
+                                on,
+                            );
+                            let x = rect.left() + 46.0;
                             icons::paint(
                                 ui.painter(),
                                 icon,
-                                pos2(rect.left() + 13.0, rect.top() + 14.0),
+                                pos2(x, rect.top() + 16.0),
                                 14.0,
                                 c.text,
                             );
                             let strong = Block::single(ui, label, text::UI.weight(600.0), c.text);
-                            strong.paint(
-                                ui.painter(),
-                                pos2(rect.left() + 13.0 + 20.0, rect.top() + 11.0),
-                            );
+                            strong.paint(ui.painter(), pos2(x + 14.0 + 6.0, rect.top() + 13.0));
                             let small = Block::single(ui, detail, text::META, c.muted);
                             small.paint(
                                 ui.painter(),
-                                pos2(
-                                    rect.left() + 13.0,
-                                    rect.top() + 11.0 + strong.height() + 2.0,
-                                ),
+                                pos2(x, rect.top() + 13.0 + strong.height() + 3.0),
                             );
                             if response.clicked() {
                                 *voice = is_voice;

@@ -33,6 +33,11 @@ pub struct HeaderOut {
     pub search_focused: bool,
     pub peer_clicked: bool,
     pub bell_clicked: bool,
+    /// Where the title ends and the search field starts, and the middle
+    /// line: room for the Live pill between them.
+    pub title_right: f32,
+    pub search_left: f32,
+    pub mid: f32,
 }
 
 pub fn search_id(channel: uuid::Uuid) -> egui::Id {
@@ -67,6 +72,9 @@ pub fn show(
         search_focused: false,
         peer_clicked: false,
         bell_clicked: false,
+        title_right: rect.left(),
+        search_left: rect.right(),
+        mid,
     };
     // Right side, from the end: toggle, bell, search.
     let mut right = rect.right() - 12.0;
@@ -99,6 +107,7 @@ pub fn show(
             job.wrap.break_anywhere = true;
             let block = Block::new(ui, job, TITLE);
             block.paint(ui.painter(), pos2(x + 28.0, mid - TITLE.line_px() / 2.0));
+            out.title_right = x + 28.0 + block.width();
         }
         Title::Dm {
             name,
@@ -160,6 +169,7 @@ pub fn show(
         ui.ctx()
             .animate_value_with_time(id.with("width"), if wide { 260.0 } else { 200.0 }, 0.1);
     let field = Rect::from_min_size(pos2(right - width, mid - 15.0), vec2(width, 30.0));
+    out.search_left = field.left();
     let field_resp = ui.interact(field, id.with("box"), Sense::click());
     let hot = field_resp.hovered() || focused || !search.is_empty();
     let border = if focused {

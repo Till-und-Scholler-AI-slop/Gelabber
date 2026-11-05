@@ -237,9 +237,260 @@ impl Default for Pacing {
 /// not notify.
 pub const LIVE_WINDOW_MS: i64 = 30_000;
 
+/// What the window and the switches say about a Live notice (`LiveDevice`).
+#[derive(Clone, Copy, Debug)]
+pub struct LiveDevice {
+    /// The `messageToasts` switch.
+    pub toasts: bool,
+    /// The `desktopNotify` switch.
+    pub desktop: bool,
+    /// Focused, not minimized and not in the tray.
+    pub in_front: bool,
+    /// The channel this window shows.
+    pub viewing: Option<Uuid>,
+}
+
+/// `liveNoticeDecision`: (toast, system notification) for a new Live. Not
+/// my own, not in the voice channel I sit in (`here`), only in a voice
+/// channel of a server I may join, and only at the server's level "all"
+/// (a Live mentions nobody); then as a message in that channel would be.
+pub fn live_decision(
+    state: &gelabber_client::State,
+    start: &gelabber_client::store::LiveStart,
+    here: bool,
+    device: LiveDevice,
+    now: DateTime<Utc>,
+) -> (bool, bool) {
+    let none = (false, false);
+    if state.me().map(|m| m.id) == Some(start.user) || here {
+        return none;
+    }
+    let Some(detail) = state.detail(start.server) else {
+        return none;
+    };
+    let voice = detail
+        .channels
+        .iter()
+        .any(|c| c.id == start.channel && c.kind == gelabber_client::ChannelKind::Voice);
+    let may_join = detail.server.role == gelabber_client::Role::Owner
+        || detail.server.can(gelabber_client::Permission::JoinVoice);
+    if !voice || !may_join {
+        return none;
+    }
+    let setting = state
+        .notification_settings
+        .iter()
+        .find(|s| s.scope == SettingScope::Server && s.id == start.server)
+        .map(|s| Setting {
+            level: s.level.unwrap_or_default(),
+            muted: s.muted,
+            muted_until: s.muted_until,
+        });
+    if !wants_notification(setting, false, false, now) {
+        return none;
+    }
+    (
+        device.toasts && device.viewing != Some(start.channel),
+        wants_desktop(device.desktop, device.in_front, false),
+    )
+}
+
+/// `liveText`: "Ada ist live in Lounge.".
+pub fn live_text(author: &str, voice: &str) -> String {
+    let sentence = crate::screens::voice::summary::live_sentence(&[author.to_owned()], false);
+    format!("{sentence} in {voice}.")
+}
+
+/// `liveNotificationText`: with message content hidden (#268) only who,
+/// not where.
+pub fn live_notification_text(
+    hide: bool,
+    author: &str,
+    server: &str,
+    text: &str,
+) -> (String, String) {
+    if hide {
+        let sentence = crate::screens::voice::summary::live_sentence(&[author.to_owned()], false);
+        return (sentence, String::new());
+    }
+    (format!("{author} · {server}"), text.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod live {
+        use super::*;
+        use gelabber_client::store::LiveStart;
+        use gelabber_client::{NotificationLevel, NotificationSetting, Session, State};
+
+        fn id(n: u128) -> Uuid {
+            Uuid::from_u128(n)
+        }
+
+        const ME: u128 = 7;
+        const SRV: u128 = 1;
+        const LOUNGE: u128 = 2;
+        const CHAT: u128 = 4;
+        const ADA: u128 = 3;
+
+        fn state(role: &str, permissions: &[&str]) -> State {
+            let mut s = State::default();
+            s.session = Session::Authenticated(Box::new(
+                serde_json::from_value(serde_json::json!({
+                    "id": id(ME), "email": "ich@example.test", "name": "Ich",
+                    "created_at": "2026-10-01T00:00:00Z",
+                }))
+                .unwrap(),
+            ));
+            let channel = |n: u128, name: &str, kind: &str| {
+                serde_json::json!({
+                    "id": id(n), "server_id": id(SRV), "category_id": null, "name": name,
+                    "kind": kind, "created_at": "2026-10-01T00:00:00Z",
+                })
+            };
+            let detail = serde_json::from_value(serde_json::json!({
+                "id": id(SRV), "name": "Runde", "owner_id": id(99), "icon_url": null,
+                "created_at": "2026-10-01T00:00:00Z", "role": role,
+                "permissions": permissions, "member_permissions": permissions,
+                "categories": [],
+                "channels": [channel(LOUNGE, "Lounge", "voice"), channel(CHAT, "allgemein", "text")],
+                "members": [{
+                    "user_id": id(ADA), "name": "Ada", "avatar_url": null,
+                    "joined_at": "2026-10-01T00:00:00Z", "role": "member",
+                }],
+            }))
+            .unwrap();
+            s.server_details.insert(id(SRV), detail);
+            s
+        }
+
+        fn start(user: u128, channel: u128) -> LiveStart {
+            LiveStart {
+                seq: 1,
+                server: id(SRV),
+                channel: id(channel),
+                user: id(user),
+                heard_ms: 0,
+                at: chrono::Utc::now(),
+            }
+        }
+
+        /// A hidden window with toasts and system notifications on.
+        const HIDDEN: LiveDevice = LiveDevice {
+            toasts: true,
+            desktop: true,
+            in_front: false,
+            viewing: None,
+        };
+
+        fn at(s: &str) -> DateTime<Utc> {
+            s.parse().unwrap()
+        }
+
+        // liveNotices.test.ts "whether a new Live is announced".
+        #[test]
+        fn someone_elses_live_where_i_am_not_is_announced() {
+            let s = state("member", &["join_voice", "send_messages"]);
+            let now = chrono::Utc::now();
+            assert_eq!(
+                live_decision(&s, &start(ADA, LOUNGE), false, HIDDEN, now),
+                (true, true)
+            );
+            assert_eq!(
+                live_decision(&s, &start(ME, LOUNGE), false, HIDDEN, now),
+                (false, false)
+            );
+            assert_eq!(
+                live_decision(&s, &start(ADA, LOUNGE), true, HIDDEN, now),
+                (false, false)
+            );
+        }
+
+        #[test]
+        fn only_the_servers_level_all_announces_and_a_mute_holds() {
+            let now = at("2026-10-29T12:00:00Z");
+            let decide = |level: Option<NotificationLevel>, muted: bool, until: Option<&str>| {
+                let mut s = state("member", &["join_voice"]);
+                s.notification_settings = vec![NotificationSetting {
+                    scope: SettingScope::Server,
+                    id: id(SRV),
+                    level,
+                    muted,
+                    muted_until: until.map(at),
+                }];
+                live_decision(&s, &start(ADA, LOUNGE), false, HIDDEN, now).0
+            };
+            assert!(decide(Some(NotificationLevel::All), false, None));
+            assert!(!decide(Some(NotificationLevel::Mentions), false, None));
+            assert!(!decide(Some(NotificationLevel::None), false, None));
+            assert!(!decide(None, true, None));
+            assert!(!decide(None, true, Some("2026-10-29T13:00:00Z")));
+            // A mute that has run out is over.
+            assert!(decide(None, true, Some("2026-10-29T11:00:00Z")));
+        }
+
+        #[test]
+        fn it_needs_a_voice_channel_of_a_server_i_may_join() {
+            let now = chrono::Utc::now();
+            let none = (false, false);
+            assert_eq!(
+                live_decision(&State::default(), &start(ADA, LOUNGE), false, HIDDEN, now),
+                none
+            );
+            let s = state("member", &["send_messages"]);
+            assert_eq!(
+                live_decision(&s, &start(ADA, LOUNGE), false, HIDDEN, now),
+                none
+            );
+            let owner = state("owner", &[]);
+            assert!(live_decision(&owner, &start(ADA, LOUNGE), false, HIDDEN, now).0);
+            let s = state("member", &["join_voice"]);
+            assert_eq!(live_decision(&s, &start(ADA, 66), false, HIDDEN, now), none);
+            assert_eq!(
+                live_decision(&s, &start(ADA, CHAT), false, HIDDEN, now),
+                none
+            );
+        }
+
+        #[test]
+        fn the_switches_decide_like_for_a_message_in_that_channel() {
+            let s = state("member", &["join_voice"]);
+            let now = chrono::Utc::now();
+            let device = |patch: fn(&mut LiveDevice)| {
+                let mut d = HIDDEN;
+                patch(&mut d);
+                live_decision(&s, &start(ADA, LOUNGE), false, d, now)
+            };
+            assert_eq!(device(|d| d.toasts = false), (false, true));
+            assert_eq!(device(|d| d.desktop = false), (true, false));
+            // In front, the toast is enough; the room itself needs neither.
+            assert_eq!(device(|d| d.in_front = true), (true, false));
+            assert_eq!(
+                device(|d| {
+                    d.in_front = true;
+                    d.viewing = Some(id(LOUNGE));
+                }),
+                (false, false)
+            );
+        }
+
+        // "the words".
+        #[test]
+        fn the_words_say_who_is_live_where() {
+            let text = live_text("Ada", "Lounge");
+            assert_eq!(text, "Ada ist live in Lounge.");
+            assert_eq!(
+                live_notification_text(false, "Ada", "Runde", &text),
+                ("Ada · Runde".into(), "Ada ist live in Lounge.".into())
+            );
+            assert_eq!(
+                live_notification_text(true, "Ada", "Runde", &text),
+                ("Ada ist live".into(), String::new())
+            );
+        }
+    }
     use chrono::Duration;
 
     fn setting(

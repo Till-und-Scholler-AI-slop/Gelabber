@@ -46,6 +46,8 @@ struct Toast {
 pub struct MessageToasts {
     items: Vec<Toast>,
     next: u64,
+    /// The last Live start (`State::live_started`) handled.
+    live_seen: u64,
 }
 
 /// The parts of a toast before it is stacked.
@@ -187,6 +189,7 @@ pub fn collect(ctx: &egui::Context, app: &mut AppCtx, toasts: &mut MessageToasts
                 }
             }
             Notice::Error(text) => app.toasts.error(text),
+            Notice::Failed { failed, error } => app.toasts.failure(failed, &error),
             Notice::Message { server, message } => {
                 if !prefs::get(ctx).message_toasts || viewing == Some(message.channel_id) {
                     continue;
@@ -197,6 +200,79 @@ pub fn collect(ctx: &egui::Context, app: &mut AppCtx, toasts: &mut MessageToasts
             }
         }
     }
+    for incoming in live_toasts(ctx, app, &mut toasts.live_seen, viewing) {
+        toasts.push(incoming, now);
+    }
+}
+
+/// Whether I sit in that voice channel, here or on another device.
+pub fn sits_in(app: &AppCtx, server: Uuid, channel: Uuid) -> bool {
+    let joined = app.call.with_state(crate::screens::voice::session::joined);
+    joined == Some((server, channel))
+        || app.client.with_state(|s| {
+            let me = s.me().map(|m| m.id);
+            me.and_then(|me| s.voice.get(&server).and_then(|r| r.get(&me)))
+                .is_some_and(|seat| seat.channel_id == channel)
+        })
+}
+
+/// The new Lives since `seen` that show as a toast (useLiveNotices.ts):
+/// "Ada ist live in Lounge." under the server's name.
+fn live_toasts(
+    ctx: &egui::Context,
+    app: &AppCtx,
+    seen: &mut u64,
+    viewing: Option<Uuid>,
+) -> Vec<Incoming> {
+    let starts: Vec<gelabber_client::store::LiveStart> = app.client.with_state(|s| {
+        // A new account starts its count anew.
+        if s.live_started.last().is_none_or(|l| l.seq < *seen) {
+            *seen = 0;
+        }
+        s.live_started
+            .iter()
+            .filter(|l| l.seq > *seen)
+            .cloned()
+            .collect()
+    });
+    let Some(last) = starts.last() else {
+        return Vec::new();
+    };
+    *seen = last.seq;
+    let device = crate::platform::notify::rules::LiveDevice {
+        toasts: prefs::get(ctx).message_toasts,
+        desktop: false,
+        in_front: ctx.input(|i| i.focused),
+        viewing,
+    };
+    let now = app.client.http().server_now();
+    let mut out = Vec::new();
+    for start in starts {
+        let here = sits_in(app, start.server, start.channel);
+        let incoming = app.client.with_state(|s| {
+            let (toast, _) =
+                crate::platform::notify::rules::live_decision(s, &start, here, device, now);
+            if !toast {
+                return None;
+            }
+            let detail = s.detail(start.server)?;
+            let voice = detail.channels.iter().find(|c| c.id == start.channel)?;
+            let member = detail.members.iter().find(|m| m.user_id == start.user);
+            let author = member.map_or_else(|| "Jemand".to_owned(), |m| m.name.clone());
+            Some(Incoming {
+                channel: start.channel,
+                server: start.server,
+                dm: false,
+                label: detail.server.name.clone(),
+                preview: crate::platform::notify::rules::live_text(&author, &voice.name),
+                author,
+                avatar: member.and_then(|m| m.avatar_url.clone()),
+                mentioned: false,
+            })
+        });
+        out.extend(incoming);
+    }
+    out
 }
 
 /// Whether and how a message shows (`wantsNotification`, `channelLabel`).

@@ -12,8 +12,8 @@
 //!
 //! Reads web/scripts/parity/{scenes,fixture}.json from the repository.
 //! A scene's actions (click, link, rightclick, clicktext, key, type, say,
-//! wait) mean the same in shots.mjs; posts and `after` are undone with
-//! say.mjs once the screenshot is taken.
+//! wait, hover, back, placeholder, call) mean the same in shots.mjs; posts and
+//! `after` are undone with say.mjs once the screenshot is taken.
 
 mod pixels;
 mod ssim;
@@ -56,6 +56,9 @@ enum Action {
     Rightclick(String),
     /// Click the first element with this label, whatever its role.
     Clicktext(String),
+    /// Rest the pointer on the first button or link, else element, with this label;
+    /// it stays there for the screenshot.
+    Hover(String),
     /// Press a key, Playwright style: "Control+k", "ArrowDown", "Escape".
     Key(String),
     /// Type text into whatever has the focus.
@@ -65,6 +68,13 @@ enum Action {
     Say(String),
     /// Wait this many milliseconds.
     Wait(u64),
+    /// `true`: go back, as the browser does on Alt+←.
+    Back(bool),
+    /// Click the text field with this placeholder (natively its name).
+    Placeholder(String),
+    /// `channel people` for call.mjs, started now and kept until the
+    /// screenshot is taken (a Live that begins while the page is open).
+    Call(String),
 }
 
 /// What a scene posted and what it undoes afterwards: run when dropped,
@@ -261,13 +271,18 @@ fn render(out: &Path, only: Option<Vec<String>>) {
         // images and layout settle like the web page after networkidle.
         settle(&mut harness);
         // shots.mjs hides the caret (caret-color: transparent); so here.
+        // A browser screenshot never shows a `title` tooltip, which egui's
+        // hover texts stand for (the custom tooltips still show).
         harness.ctx.all_styles_mut(|s| {
             s.visuals.text_cursor.stroke.color = egui::Color32::TRANSPARENT;
+            s.interaction.tooltip_delay = f32::MAX;
         });
         let mut undo = Undo {
             said: Vec::new(),
             after: scene.after.clone(),
         };
+        let mut hovered = false;
+        let mut calls = Vec::new();
         for action in &scene.actions {
             match action {
                 Action::Say(spec) => {
@@ -303,6 +318,12 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                 }
                 Action::Clicktext(label) => {
                     reveal(&mut harness, size.y, label, &[]);
+                    if std::env::var_os("PARITY_DEBUG").is_some() {
+                        use egui_kittest::kittest::{NodeT, Queryable};
+                        for n in harness.query_all_by_label(label) {
+                            eprintln!("{label}: {:?} {:?}", n.accesskit_node().role(), n.rect());
+                        }
+                    }
                     find(&harness, label, &[])
                         .unwrap_or_else(|| panic!("{}: nothing labelled {label:?}", scene.name))
                         .click();
@@ -321,11 +342,36 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                         std::thread::sleep(Duration::from_millis(16));
                     }
                 }
+                Action::Hover(label) => {
+                    use egui::accesskit::Role;
+                    reveal(&mut harness, size.y, label, &[Role::Button, Role::Link]);
+                    find(&harness, label, &[Role::Button, Role::Link])
+                        .or_else(|| find(&harness, label, &[]))
+                        .unwrap_or_else(|| panic!("{}: nothing labelled {label:?}", scene.name))
+                        .hover();
+                    hovered = true;
+                }
+                Action::Call(spec) => calls.push(Call::start(spec)),
+                Action::Placeholder(label) => {
+                    use egui::accesskit::Role;
+                    let fields = [Role::TextInput, Role::SearchInput, Role::MultilineTextInput];
+                    find(&harness, label, &fields)
+                        .unwrap_or_else(|| panic!("{}: no field {label:?}", scene.name))
+                        .click();
+                }
+                Action::Back(back) => {
+                    if *back {
+                        harness.key_press_modifiers(egui::Modifiers::ALT, egui::Key::ArrowLeft);
+                    }
+                }
             }
             settle(&mut harness);
         }
-        // The pointer rests in the bottom-right corner, as shots.mjs leaves it.
-        harness.hover_at(egui::pos2(size.x - 1.0, size.y - 1.0));
+        // The pointer rests in the bottom-right corner, as shots.mjs leaves
+        // it, unless a scene put it on something.
+        if !hovered {
+            harness.hover_at(egui::pos2(size.x - 1.0, size.y - 1.0));
+        }
         // Long enough for the hover fades to end.
         harness.run_steps(15);
         let image = harness
@@ -334,6 +380,7 @@ fn render(out: &Path, only: Option<Vec<String>>) {
         let path = out.join(format!("{}.png", scene.name));
         image.save(&path).expect("save png");
         drop(undo);
+        drop(calls);
         println!("{}: {route} -> {}", scene.name, path.display());
     }
     let _ = std::fs::remove_dir_all(&config);

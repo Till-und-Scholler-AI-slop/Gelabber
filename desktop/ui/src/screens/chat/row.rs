@@ -40,12 +40,60 @@ const EDIT: TextStyle = TextStyle::new(14.5, 400.0, 1.5);
 #[derive(Clone, Debug, PartialEq)]
 pub enum SendState {
     /// Still on its way; the status shows after 400ms.
-    Sending {
-        visible: bool,
-    },
-    Failed {
-        error: String,
-    },
+    Sending { visible: bool },
+    /// Not sent; `uncertain`: the answer to the bind was lost, so the
+    /// message may be saved and is not offered again (`"uncertain"`).
+    Failed { error: String, uncertain: bool },
+}
+
+impl SendState {
+    /// `SendStatus`: the words in place of the time.
+    pub fn status(&self) -> &'static str {
+        match self {
+            Self::Sending { .. } => "Wird gesendet…",
+            Self::Failed {
+                uncertain: false, ..
+            } => "Nicht gesendet",
+            Self::Failed {
+                uncertain: true, ..
+            } => "Status unklar – Verlauf prüfen",
+        }
+    }
+
+    /// `SendFailure`: why it was not sent; for a lost answer, what to check.
+    pub fn failure(&self) -> Option<String> {
+        match self {
+            Self::Sending { .. } => None,
+            Self::Failed { error, uncertain } => Some(if *uncertain {
+                format!(
+                    "{error} Die Nachricht kann bereits gespeichert sein. Prüfe den Verlauf, bevor du sie erneut sendest."
+                )
+            } else {
+                error.clone()
+            }),
+        }
+    }
+}
+
+/// `attempt.error`: "{stage} fehlgeschlagen." and the uploads the server
+/// turned down, by file name.
+pub fn failure_line(pending: &gelabber_client::PendingMessage) -> String {
+    let mut line = format!("{} fehlgeschlagen.", pending.stage.label());
+    if let Some(error) = &pending.failed
+        && let Some(rejected) = gelabber_client::store::rejected_uploads(error)
+    {
+        for (index, field, code) in rejected {
+            if let Some(file) = index.and_then(|i| pending.files.get(i)) {
+                line.push(' ');
+                line.push_str(&format!(
+                    "{}: {}",
+                    file.filename,
+                    crate::rules::field_message(&field, &code)
+                ));
+            }
+        }
+    }
+    line
 }
 
 pub struct RowCx<'a> {
@@ -70,6 +118,8 @@ pub struct RowCx<'a> {
     pub highlight: f32,
     /// The GIF's picture through the server's media proxy.
     pub gif_url: Option<String>,
+    /// My files' upload states while the message is on its way.
+    pub uploads: Option<Vec<gelabber_client::store::UploadState>>,
 }
 
 impl RowCx<'_> {
@@ -305,9 +355,9 @@ pub fn layout(ui: &Ui, cx: &RowCx, width: f32) -> RowLayout {
             stack.add(0.0, 20.0, 2.0);
         }
         let status = cx.send.as_ref().map(|s| match s {
-            SendState::Sending { .. } => Block::single(ui, "Wird gesendet…", STATUS, c.muted),
+            SendState::Sending { .. } => Block::single(ui, s.status(), STATUS, c.muted),
             SendState::Failed { .. } => {
-                Block::single(ui, "Nicht gesendet", STATUS.weight(600.0), c.danger)
+                Block::single(ui, s.status(), STATUS.weight(600.0), c.danger)
             }
         });
         out.head = Some(Head {
@@ -348,18 +398,24 @@ pub fn layout(ui: &Ui, cx: &RowCx, width: f32) -> RowLayout {
     if cx.edit.is_none() {
         add_extras(ui, cx, &mut out, &mut stack, column);
     }
-    if !head && let Some(SendState::Sending { .. } | SendState::Failed { .. }) = &cx.send {
-        let block = match cx.send.as_ref() {
-            Some(SendState::Failed { .. }) => {
-                Block::single(ui, "Nicht gesendet", STATUS.weight(600.0), c.danger)
+    if !head && let Some(send) = &cx.send {
+        let block = match send {
+            SendState::Failed { .. } => {
+                Block::single(ui, send.status(), STATUS.weight(600.0), c.danger)
             }
-            _ => Block::single(ui, "Wird gesendet…", STATUS, c.muted),
+            SendState::Sending { .. } => Block::single(ui, send.status(), STATUS, c.muted),
         };
         let top = stack.add(2.0, block.height(), 0.0);
         out.status_line = Some((top, block));
     }
-    if let Some(SendState::Failed { error }) = &cx.send {
-        let text = Block::wrapped(ui, error, FAILURE, c.muted, column);
+    if let Some(send @ SendState::Failed { uncertain, .. }) = &cx.send {
+        let text = Block::wrapped(
+            ui,
+            &send.failure().unwrap_or_default(),
+            FAILURE,
+            c.muted,
+            column,
+        );
         // Text, then the buttons (32) 6px below.
         let h = text.height() + 6.0 + 32.0;
         let top = stack.add(6.0, h, 0.0);
@@ -367,7 +423,8 @@ pub fn layout(ui: &Ui, cx: &RowCx, width: f32) -> RowLayout {
             top,
             Failure {
                 text,
-                retry: true,
+                // Sending again could save it twice.
+                retry: !uncertain,
                 edit: msg.gif.is_none(),
             },
         ));
@@ -388,7 +445,13 @@ fn add_extras(ui: &Ui, cx: &RowCx, out: &mut RowLayout, stack: &mut Stack, colum
         let top = stack.add(4.0, size.y, 0.0);
         out.gif = Some((top, size));
     }
-    if let Some(media) = attachments::layout(ui, cx.images, &msg.attachments, column) {
+    if let Some(media) = attachments::layout(
+        ui,
+        cx.images,
+        &msg.attachments,
+        column,
+        cx.uploads.as_deref(),
+    ) {
         let top = stack.add(6.0, media.height, 0.0);
         out.media = Some((top, media));
     }
@@ -725,7 +788,7 @@ pub fn paint(
         && let (Some(gif), Some(url)) = (&msg.gif, &cx.gif_url)
     {
         let r = Rect::from_min_size(pos2(x, top + y), *size);
-        if let Some(a) = attachments::paint_gif(ui, cx.images, gif, url, r, id) {
+        if let Some(a) = attachments::paint_gif(ui, cx.images, gif, url, msg.id, r, id) {
             actions.push(RowAction::Media(a));
         }
     }
@@ -993,6 +1056,54 @@ fn paint_editor(ui: &mut Ui, id: Uuid, rect: Rect, edit: Editing, actions: &mut 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_lost_answer_reads_as_unknown() {
+        use gelabber_client::store::SendStage;
+        let mut p =
+            gelabber_client::PendingMessage::new(Uuid::nil(), "Hallo".into(), chrono::Utc::now());
+        p.failed = Some(gelabber_client::ApiError::Transport("reset".into()));
+        p.uncertain = true;
+        let state = SendState::Failed {
+            error: failure_line(&p),
+            uncertain: p.uncertain,
+        };
+        assert_eq!(state.status(), "Status unklar – Verlauf prüfen");
+        assert_eq!(
+            state.failure().as_deref(),
+            Some(
+                "Nachricht speichern fehlgeschlagen. Die Nachricht kann bereits gespeichert sein. Prüfe den Verlauf, bevor du sie erneut sendest."
+            )
+        );
+        // A refused upload names the file.
+        p.uncertain = false;
+        p.stage = SendStage::Bind;
+        p.files = vec![gelabber_client::OutgoingFile {
+            filename: "liste.txt".into(),
+            content_type: "text/plain".into(),
+            data: Default::default(),
+        }];
+        p.failed = Some(gelabber_client::ApiError::Api {
+            status: 422,
+            code: "validation_failed".into(),
+            message: String::new(),
+            fields: serde_json::json!({"attachment_ids.0": "mismatch"}),
+        });
+        let state = SendState::Failed {
+            error: failure_line(&p),
+            uncertain: false,
+        };
+        assert_eq!(state.status(), "Nicht gesendet");
+        assert_eq!(
+            state.failure().as_deref(),
+            Some(
+                "Nachricht speichern fehlgeschlagen. liste.txt: Der Inhalt der Datei passt nicht zu ihrem Typ."
+            )
+        );
+        p.stage = SendStage::Upload;
+        p.failed = Some(gelabber_client::ApiError::Transport("timeout".into()));
+        assert_eq!(failure_line(&p), "Dateiübertragung fehlgeschlagen.");
+    }
 
     #[test]
     fn mentions_read_as_names() {

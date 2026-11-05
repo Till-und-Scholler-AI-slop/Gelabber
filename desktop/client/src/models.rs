@@ -972,6 +972,9 @@ pub struct SigFrame {
     pub d: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snap: Option<Vec<VoiceEntry>>,
+    /// Someone who is there already, replayed to a new occupant: no news.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replay: bool,
 }
 
 /// A gateway topic: a server (`c: None`), a channel, or a DM (`s == c`).

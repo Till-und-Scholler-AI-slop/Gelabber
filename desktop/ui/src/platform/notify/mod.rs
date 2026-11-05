@@ -166,6 +166,9 @@ pub struct Outcome {
     pub attention: bool,
     /// A notification was shown: the message cue plays once for a burst.
     pub sound: bool,
+    /// A Live notice was shown: its cue plays (`playLiveSound`), never
+    /// into a deafened call.
+    pub live_sound: bool,
 }
 
 /// What a pass needs to know about the window and the app.
@@ -176,6 +179,9 @@ pub struct Context {
     pub desktop_enabled: bool,
     pub now_ms: i64,
     pub server_now: DateTime<Utc>,
+    /// The voice channel this device's call is in, `(server, channel)`.
+    pub joined: Option<(Uuid, Uuid)>,
+    pub deafened: bool,
 }
 
 pub struct Notifier {
@@ -193,6 +199,9 @@ pub struct Notifier {
     /// it was read.
     silenced: Option<Uuid>,
     hid_content: bool,
+    /// The last Live start (`State::live_started`) handled.
+    live_seen: u64,
+    live_sound: Pacing,
 }
 
 impl Notifier {
@@ -219,6 +228,8 @@ impl Notifier {
             attention: Pacing::default(),
             silenced: None,
             hid_content: false,
+            live_seen: 0,
+            live_sound: Pacing::default(),
         }
     }
 
@@ -306,7 +317,78 @@ impl Notifier {
                 }
             }
         }
+        self.live(state, me, cx, &mut out);
         out
+    }
+
+    /// New Lives as system notifications (`createLiveNotices`): one per
+    /// voice channel, a click opens it; the cue with a shown notice.
+    fn live(&mut self, state: &State, me: Uuid, cx: Context, out: &mut Outcome) {
+        if state
+            .live_started
+            .last()
+            .is_none_or(|l| l.seq < self.live_seen)
+        {
+            self.live_seen = 0;
+        }
+        let starts: Vec<_> = state
+            .live_started
+            .iter()
+            .filter(|l| l.seq > self.live_seen)
+            .cloned()
+            .collect();
+        for start in starts {
+            self.live_seen = start.seq;
+            let here = cx.joined == Some((start.server, start.channel))
+                || state
+                    .voice
+                    .get(&start.server)
+                    .and_then(|r| r.get(&me))
+                    .is_some_and(|seat| seat.channel_id == start.channel);
+            let device = rules::LiveDevice {
+                toasts: false,
+                desktop: cx.desktop_enabled,
+                in_front: cx.in_front,
+                viewing: state.view.channel,
+            };
+            let (_, desktop) = rules::live_decision(state, &start, here, device, cx.server_now);
+            let Some(detail) = state.server_details.get(&start.server) else {
+                continue;
+            };
+            let Some(voice) = detail.channels.iter().find(|c| c.id == start.channel) else {
+                continue;
+            };
+            if !desktop {
+                continue;
+            }
+            let author = detail
+                .members
+                .iter()
+                .find(|m| m.user_id == start.user)
+                .map_or_else(|| "Jemand".to_owned(), |m| m.name.clone());
+            let text = rules::live_text(&author, &voice.name);
+            let (title, body) = rules::live_notification_text(
+                hides_content(state),
+                &author,
+                &detail.server.name,
+                &text,
+            );
+            let tag = rules::tag_of(me, Some(start.channel));
+            let path = rules::conversation_path(false, start.server, start.channel);
+            let Some(notice) = Notice::new(tag, title, body) else {
+                continue;
+            };
+            let shown = match &self.backend {
+                Some(backend) => backend.show(notice.clone()).is_ok(),
+                None => false,
+            };
+            if shown {
+                self.targets.insert(notice.tag, (me, path));
+                if !cx.deafened && self.live_sound.take(Uuid::nil(), cx.now_ms) {
+                    out.live_sound = true;
+                }
+            }
+        }
     }
 
     /// The notice for one event, with where its click leads.
@@ -508,7 +590,84 @@ mod tests {
             desktop_enabled: true,
             now_ms: 0,
             server_now: Utc::now(),
+            joined: None,
+            deafened: false,
         }
+    }
+
+    /// liveNotices.test.ts "announces a start event with a toast, a
+    /// notification and the cue", and no cue deafened.
+    #[test]
+    fn a_new_live_notifies_with_the_cue_and_a_click_opens_its_channel() {
+        let fake = Arc::new(Fake::default());
+        let backend: Arc<dyn Backend> = fake.clone();
+        let mut notifier = Notifier::new(move |_| Some(backend), Arc::new(|| {}));
+        let (me, ada, server, lounge) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let mut st = state(me);
+        let detail = serde_json::from_value(json!({
+            "id": server, "name": "Runde", "owner_id": Uuid::new_v4(), "icon_url": null,
+            "created_at": "2026-10-01T00:00:00Z", "role": "member",
+            "permissions": ["join_voice"], "member_permissions": ["join_voice"],
+            "categories": [],
+            "channels": [{
+                "id": lounge, "server_id": server, "category_id": null, "name": "Lounge",
+                "kind": "voice", "created_at": "2026-10-01T00:00:00Z",
+            }],
+            "members": [{
+                "user_id": ada, "name": "Ada", "avatar_url": null,
+                "joined_at": "2026-10-01T00:00:00Z", "role": "member",
+            }],
+        }))
+        .unwrap();
+        st.server_details.insert(server, detail);
+        let start = |seq| gelabber_client::store::LiveStart {
+            seq,
+            server,
+            channel: lounge,
+            user: ada,
+            heard_ms: 0,
+            at: Utc::now(),
+        };
+        st.live_started = vec![start(1)];
+        let out = notifier.pass(&st, cx(false));
+        let shown = fake.shown.lock().clone();
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].title, "Ada · Runde");
+        assert_eq!(shown[0].body, "Ada ist live in Lounge.");
+        assert!(out.live_sound);
+        // Each start once; deafened the notice comes without its cue.
+        assert!(!notifier.pass(&st, cx(false)).live_sound);
+        st.live_started.push(start(2));
+        let out = notifier.pass(
+            &st,
+            Context {
+                deafened: true,
+                now_ms: 60_000,
+                ..cx(false)
+            },
+        );
+        assert_eq!(fake.shown.lock().len(), 2);
+        assert!(!out.live_sound);
+        // In the call there, nothing.
+        st.live_started.push(start(3));
+        notifier.pass(
+            &st,
+            Context {
+                joined: Some((server, lounge)),
+                ..cx(false)
+            },
+        );
+        assert_eq!(fake.shown.lock().len(), 2);
+        let tag = format!("gelabber:{me}:{lounge}");
+        assert_eq!(
+            notifier.targets.get(&tag).map(|(_, p)| p.clone()),
+            Some(format!("/s/{server}/c/{lounge}"))
+        );
     }
 
     #[test]
