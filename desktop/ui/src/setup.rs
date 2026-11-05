@@ -316,7 +316,13 @@ impl eframe::App for Launcher {
                     *probe = None;
                 }
                 let origin = origin.clone();
-                if take_switch(&ctx) || shortcut {
+                let switch = take_switch(&ctx) || shortcut;
+                if switch || failed.is_some() {
+                    // Leaving for the setup page ends the call, as the
+                    // Tauri window's navigation does; the server is told.
+                    app.call().leave();
+                }
+                if switch {
                     self.show_setup(origin, None);
                 } else if let Some(reason) = failed {
                     self.show_setup(origin, Some(reason));

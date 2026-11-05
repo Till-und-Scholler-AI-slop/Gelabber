@@ -94,9 +94,10 @@ pub fn choose(choosers: &Choosers, title: &str, filter: &[&str]) -> Choice {
                     Choice::Chosen(path.into())
                 };
             }
-            // The dialog ran and was cancelled.
-            Ok(_) => return Choice::Cancelled,
-            Err(_) => continue,
+            // Exit 1 is a cancelled dialog in both; anything else (no
+            // display, a broken install) tries the next chooser.
+            Ok(out) if out.status.code() == Some(1) => return Choice::Cancelled,
+            Ok(_) | Err(_) => continue,
         }
     }
     Choice::InApp
@@ -341,6 +342,13 @@ mod tests {
             ..nothing()
         };
         assert_eq!(choose(&cancelled, "Bild", &[]), Choice::Cancelled);
+        // One that failed otherwise (here ls on zenity's options, exit 2):
+        // the next chooser, and at the end the window.
+        let broken = Choosers {
+            zenity: "ls".into(),
+            ..nothing()
+        };
+        assert_eq!(choose(&broken, "Bild", &[]), Choice::InApp);
         let chosen = Choosers {
             zenity: "echo".into(),
             ..nothing()
