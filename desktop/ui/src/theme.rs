@@ -307,6 +307,24 @@ impl Theme {
     }
 }
 
+fn os_scheme_id() -> egui::Id {
+    egui::Id::unique("gelabber-os-color-scheme")
+}
+
+/// The desktop's dark preference where egui gets none from the window
+/// system (Linux: the Settings portal, platform/scheme.rs).
+pub fn set_os_dark(ctx: &egui::Context, dark: bool) {
+    ctx.data_mut(|d| d.insert_temp(os_scheme_id(), dark));
+    ctx.request_repaint();
+}
+
+/// `prefers-color-scheme: dark`: the desktop's preference, else what egui
+/// says, dark when nobody does.
+pub fn system_dark(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(os_scheme_id()))
+        .unwrap_or_else(|| ctx.system_theme() != Some(egui::Theme::Light))
+}
+
 /// Installs the dark default unless a theme is active already (a second
 /// app on the same window keeps the one shown).
 pub fn ensure(ctx: &egui::Context) {

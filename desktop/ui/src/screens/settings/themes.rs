@@ -255,7 +255,7 @@ pub fn stored_of(d: &Definition) -> gelabber_client::Theme {
 }
 
 fn system_dark(ctx: &egui::Context) -> bool {
-    ctx.system_theme() != Some(egui::Theme::Light)
+    crate::theme::system_dark(ctx)
 }
 
 /// The definition behind a theme id of `doc` ("system" follows the OS).
@@ -1899,6 +1899,9 @@ mod tests {
         assert!(!frame(egui::Theme::Light));
         assert!(frame(egui::Theme::Dark));
         assert!(!frame(egui::Theme::Light));
+        // Linux: the portal's preference, where winit reports none.
+        crate::theme::set_os_dark(&ctx, true);
+        assert!(frame(egui::Theme::Light));
     }
 
     #[test]

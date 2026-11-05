@@ -335,8 +335,7 @@ impl eframe::App for Launcher {
                 let checked = setup.probe.as_ref().and_then(|p| p.lock().take());
                 let checking = setup.probe.is_some() && checked.is_none();
                 let action = setup_page(ui, setup, checking);
-                self.setup_dark
-                    .set(ctx.system_theme().unwrap_or(egui::Theme::Dark) == egui::Theme::Dark);
+                self.setup_dark.set(crate::theme::system_dark(&ctx));
                 let target = match (&checked, action) {
                     (Some(_), _) | (None, None) => None,
                     (None, Some(_)) if checking => None,
@@ -429,7 +428,7 @@ enum Action {
 fn setup_page(ui: &mut Ui, setup: &mut Setup, checking: bool) -> Option<Action> {
     let ctx = ui.ctx().clone();
     crate::fonts::use_system_ui(&ctx);
-    let dark = ctx.system_theme().unwrap_or(egui::Theme::Dark) == egui::Theme::Dark;
+    let dark = crate::theme::system_dark(&ctx);
     let p = Palette::of(dark);
     let screen = ctx.content_rect();
     ui.painter().rect_filled(screen, 0.0, p.bg);

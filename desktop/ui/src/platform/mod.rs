@@ -9,6 +9,8 @@ pub mod instance;
 pub mod notify;
 pub mod paths;
 pub mod ptt;
+#[cfg(target_os = "linux")]
+pub mod scheme;
 pub mod session;
 pub mod settings;
 pub mod state;
@@ -190,6 +192,10 @@ impl Platform {
         #[cfg(target_os = "linux")]
         {
             self.badge = tray::unity::Badge::start(None).map(|b| (b, u32::MAX));
+            // winit reports no light or dark on Linux; "System" and the
+            // setup screen follow the portal's preference.
+            let scheme = ctx.clone();
+            scheme::watch(None, move |dark| crate::theme::set_os_dark(&scheme, dark));
         }
         if let Some(instance) = &self.instance {
             instance.set_wake(waker(&self.wake));
