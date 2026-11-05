@@ -86,7 +86,19 @@ for (const scene of scenes) {
   const page = await context.newPage();
   await page.goto(fill(scene.path), { waitUntil: "networkidle" });
   await page.evaluate(() => document.fonts.ready);
+  // Messages the scene posts (say.mjs), deleted after the screenshot.
+  const said = [];
   for (const action of scene.actions ?? []) {
+    // "<user> <channel-key> <text>": someone else writes.
+    if (action.say) {
+      const [who, where, ...words] = action.say.split(" ");
+      const id = execFileSync(
+        process.execPath,
+        [join(here, "say.mjs"), "post", who, where, words.join(" ")],
+        { encoding: "utf8" },
+      ).trim();
+      said.push([who, id]);
+    }
     if (action.click)
       await page.getByRole("button", { name: action.click, exact: true }).first().click();
     // The first button or link of that name, with the secondary button.
@@ -111,6 +123,8 @@ for (const scene of scenes) {
   await page.waitForTimeout(800);
   await page.mouse.move(size[0] - 1, size[1] - 1);
   await page.screenshot({ path: join(OUT, `${scene.name}.png`) });
+  for (const [who, id] of said)
+    execFileSync(process.execPath, [join(here, "say.mjs"), "delete", who, id], { stdio: "inherit" });
   console.log(`${scene.name}: ${page.url()}`);
   await context.close();
   if (call) await stopCall(call);

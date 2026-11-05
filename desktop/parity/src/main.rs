@@ -53,8 +53,26 @@ enum Action {
     Key(String),
     /// Type text into whatever has the focus.
     Type(String),
+    /// "<user> <channel-key> <text>": someone else writes (say.mjs); the
+    /// message is deleted after the screenshot.
+    Say(String),
     /// Wait this many milliseconds.
     Wait(u64),
+}
+
+/// Runs say.mjs with `args`; its output (a message id for "post").
+fn say(args: &[&str]) -> String {
+    let out = std::process::Command::new("node")
+        .arg(parity_dir().join("say.mjs"))
+        .args(args)
+        .output()
+        .expect("run say.mjs");
+    assert!(
+        out.status.success(),
+        "say.mjs {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
 }
 
 /// "Control+Shift+k" as egui modifiers and key.
@@ -200,6 +218,9 @@ fn render(out: &Path, only: Option<Vec<String>>) {
             .with_max_steps(10_000)
             // Browser screenshots carry no pointer.
             .with_render_cursor(false)
+            // Frames as in a browser, not 4 a second: timed things (toasts,
+            // fades) are as far along as in the web shot.
+            .with_step_dt(1.0 / 60.0)
             .wgpu()
             .build_eframe(|cc| {
                 gelabber_ui::GelabberApp::new(cc, client.clone(), Some(route.clone()))
@@ -211,8 +232,18 @@ fn render(out: &Path, only: Option<Vec<String>>) {
         harness.ctx.all_styles_mut(|s| {
             s.visuals.text_cursor.stroke.color = egui::Color32::TRANSPARENT;
         });
+        let mut said = Vec::new();
         for action in &scene.actions {
             match action {
+                Action::Say(spec) => {
+                    let mut parts = spec.splitn(3, ' ');
+                    let (who, at, text) = (
+                        parts.next().unwrap_or_default(),
+                        parts.next().unwrap_or_default(),
+                        parts.next().unwrap_or_default(),
+                    );
+                    said.push((who.to_owned(), say(&["post", who, at, text])));
+                }
                 Action::Click(name) => {
                     use egui_kittest::kittest::Queryable;
                     harness
@@ -268,6 +299,9 @@ fn render(out: &Path, only: Option<Vec<String>>) {
             .unwrap_or_else(|e| panic!("render {}: {e}", scene.name));
         let path = out.join(format!("{}.png", scene.name));
         image.save(&path).expect("save png");
+        for (who, id) in &said {
+            say(&["delete", who, id]);
+        }
         println!("{}: {route} -> {}", scene.name, path.display());
     }
 }

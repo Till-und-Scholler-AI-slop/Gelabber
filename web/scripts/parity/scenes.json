@@ -430,6 +430,48 @@
           "key": "ArrowDown"
         }
       ]
+    },
+    {
+      "name": "message-toast",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "say": "jonas dm Hast du kurz Zeit? Ich würde gern die Fotos fürs Album aussuchen."
+        },
+        {
+          "wait": 1500
+        }
+      ]
+    },
+    {
+      "name": "message-toast-stack",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "say": "jonas dm Hallo?"
+        },
+        {
+          "say": "jonas dm Bist du da?"
+        },
+        {
+          "wait": 1500
+        }
+      ]
+    },
+    {
+      "name": "message-toast-mention",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "say": "jonas musik {lena} kommst du heute Abend?"
+        },
+        {
+          "wait": 1500
+        }
+      ]
     }
   ]
 }
