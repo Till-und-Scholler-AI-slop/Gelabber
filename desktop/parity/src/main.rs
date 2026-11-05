@@ -45,8 +45,41 @@ struct Scene {
 enum Action {
     /// Click the button with this accessible name.
     Click(String),
+    /// Right-click the first button or link with this accessible name.
+    Rightclick(String),
+    /// Click the first element with this label, whatever its role.
+    Clicktext(String),
+    /// Press a key, Playwright style: "Control+k", "ArrowDown", "Escape".
+    Key(String),
+    /// Type text into whatever has the focus.
+    Type(String),
     /// Wait this many milliseconds.
     Wait(u64),
+}
+
+/// "Control+Shift+k" as egui modifiers and key.
+fn parse_key(spec: &str) -> (egui::Modifiers, egui::Key) {
+    let mut modifiers = egui::Modifiers::NONE;
+    let mut parts: Vec<&str> = spec.split('+').collect();
+    // "Control++" would name the plus key; none of the scenes needs it.
+    let name = parts.pop().expect("key name");
+    for part in parts {
+        match part {
+            "Control" | "Meta" => modifiers |= egui::Modifiers::COMMAND,
+            "Shift" => modifiers |= egui::Modifiers::SHIFT,
+            "Alt" => modifiers |= egui::Modifiers::ALT,
+            other => panic!("unknown modifier {other:?} in {spec:?}"),
+        }
+    }
+    let key = if name.chars().count() == 1 {
+        egui::Key::from_name(&name.to_uppercase())
+    } else {
+        egui::Key::from_name(name)
+    };
+    (
+        modifiers,
+        key.unwrap_or_else(|| panic!("unknown key {name:?}")),
+    )
 }
 
 /// call.mjs running for a scene; leaves the call when dropped.
@@ -165,6 +198,8 @@ fn render(out: &Path, only: Option<Vec<String>>) {
             .with_size(size)
             .with_pixels_per_point(1.0)
             .with_max_steps(10_000)
+            // Browser screenshots carry no pointer.
+            .with_render_cursor(false)
             .wgpu()
             .build_eframe(|cc| {
                 gelabber_ui::GelabberApp::new(cc, client.clone(), Some(route.clone()))
@@ -172,6 +207,10 @@ fn render(out: &Path, only: Option<Vec<String>>) {
         // Step until the app has nothing in flight for a while: data,
         // images and layout settle like the web page after networkidle.
         settle(&mut harness);
+        // shots.mjs hides the caret (caret-color: transparent); so here.
+        harness.ctx.all_styles_mut(|s| {
+            s.visuals.text_cursor.stroke.color = egui::Color32::TRANSPARENT;
+        });
         for action in &scene.actions {
             match action {
                 Action::Click(name) => {
@@ -181,6 +220,34 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                         .next()
                         .unwrap_or_else(|| panic!("{}: no button {name:?}", scene.name))
                         .click();
+                }
+                Action::Rightclick(name) => {
+                    use egui_kittest::kittest::{NodeT, Queryable};
+                    harness
+                        .query_all_by_label(name)
+                        .find(|n| {
+                            matches!(
+                                n.accesskit_node().role(),
+                                egui::accesskit::Role::Button | egui::accesskit::Role::Link
+                            )
+                        })
+                        .unwrap_or_else(|| panic!("{}: no button or link {name:?}", scene.name))
+                        .click_secondary();
+                }
+                Action::Clicktext(label) => {
+                    use egui_kittest::kittest::Queryable;
+                    harness
+                        .query_all_by_label(label)
+                        .next()
+                        .unwrap_or_else(|| panic!("{}: nothing labelled {label:?}", scene.name))
+                        .click();
+                }
+                Action::Key(spec) => {
+                    let (modifiers, key) = parse_key(spec);
+                    harness.key_press_modifiers(modifiers, key);
+                }
+                Action::Type(text) => {
+                    harness.event(egui::Event::Text(text.clone()));
                 }
                 Action::Wait(ms) => {
                     let until = Instant::now() + Duration::from_millis(*ms);
@@ -192,7 +259,10 @@ fn render(out: &Path, only: Option<Vec<String>>) {
             }
             settle(&mut harness);
         }
-        harness.run_steps(5);
+        // The pointer rests in the bottom-right corner, as shots.mjs leaves it.
+        harness.hover_at(egui::pos2(size.x - 1.0, size.y - 1.0));
+        // Long enough for the hover fades to end.
+        harness.run_steps(15);
         let image = harness
             .render()
             .unwrap_or_else(|e| panic!("render {}: {e}", scene.name));

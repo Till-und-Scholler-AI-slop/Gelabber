@@ -140,6 +140,296 @@
       "name": "voice-empty",
       "path": "/s/{home}/c/{Kino}",
       "user": "lena"
+    },
+    {
+      "name": "quick-switcher",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Control+k"
+        }
+      ]
+    },
+    {
+      "name": "quick-switcher-search",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Control+k"
+        },
+        {
+          "type": "s"
+        },
+        {
+          "key": "ArrowDown"
+        }
+      ]
+    },
+    {
+      "name": "quick-switcher-empty",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Control+k"
+        },
+        {
+          "type": "xyz"
+        }
+      ]
+    },
+    {
+      "name": "shortcuts",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Control+/"
+        }
+      ]
+    },
+    {
+      "name": "member-profile",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Tom"
+        }
+      ]
+    },
+    {
+      "name": "member-profile-self",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Lena"
+        }
+      ]
+    },
+    {
+      "name": "member-moderation",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Ada"
+        },
+        {
+          "clicktext": "Moderation"
+        }
+      ]
+    },
+    {
+      "name": "kick-confirm",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Ada"
+        },
+        {
+          "clicktext": "Moderation"
+        },
+        {
+          "click": "Vom Server entfernen"
+        }
+      ]
+    },
+    {
+      "name": "ban-confirm",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Ada"
+        },
+        {
+          "clicktext": "Moderation"
+        },
+        {
+          "click": "Sperren"
+        }
+      ]
+    },
+    {
+      "name": "member-profile-owner",
+      "path": "/s/{evening}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Tom"
+        }
+      ]
+    },
+    {
+      "name": "dm-profile",
+      "path": "/d/{dm}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Offline Jonas"
+        }
+      ]
+    },
+    {
+      "name": "notify-channel",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Benachrichtigungen für #allgemein"
+        }
+      ]
+    },
+    {
+      "name": "notify-dm",
+      "path": "/d/{dm}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Benachrichtigungen für Jonas"
+        }
+      ]
+    },
+    {
+      "name": "notify-server",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "Wohnzimmer"
+        }
+      ]
+    },
+    {
+      "name": "notify-all-dms",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "Direktnachrichten"
+        }
+      ]
+    },
+    {
+      "name": "new-message",
+      "path": "/d",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Neue Nachricht"
+        }
+      ]
+    },
+    {
+      "name": "new-message-search",
+      "path": "/d",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Neue Nachricht"
+        },
+        {
+          "type": "o"
+        }
+      ]
+    },
+    {
+      "name": "quick-switcher-enter",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Control+k"
+        },
+        {
+          "type": "musik"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
+      "name": "member-profile-escape",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Tom"
+        },
+        {
+          "key": "Escape"
+        }
+      ]
+    },
+    {
+      "name": "member-profile-tab",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Tom"
+        },
+        {
+          "key": "Tab"
+        }
+      ]
+    },
+    {
+      "name": "kick-escape",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Ada"
+        },
+        {
+          "clicktext": "Moderation"
+        },
+        {
+          "click": "Vom Server entfernen"
+        },
+        {
+          "key": "Escape"
+        }
+      ]
+    },
+    {
+      "name": "notify-enter",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Benachrichtigungen für #allgemein"
+        },
+        {
+          "key": "Enter"
+        }
+      ]
+    },
+    {
+      "name": "new-message-arrows",
+      "path": "/d",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Neue Nachricht"
+        },
+        {
+          "key": "ArrowDown"
+        },
+        {
+          "key": "ArrowDown"
+        }
+      ]
     }
   ]
 }

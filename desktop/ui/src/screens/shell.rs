@@ -11,6 +11,7 @@ mod dm_index;
 mod dm_sidebar;
 mod home;
 mod members;
+pub mod overlays;
 mod overview;
 mod rail;
 mod state;
@@ -35,6 +36,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     ui.painter().rect_filled(screen, 0.0, theme.c.bg);
     effects(ui, app);
     let route = app.nav.route().clone();
+    overlays::keys(ui, state::with(ui.ctx(), |s| s.dialog.is_some()));
     shortcuts(ui, app, &route);
 
     let rail = Rect::from_min_max(
@@ -141,6 +143,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     rail::show(ui, app, rail, active_server, dm_active);
     user_panel::show(ui, app, dock, context);
     dialogs::show(ui, app);
+    overlays::show(ui, app);
 }
 
 fn members_rect(screen: Rect) -> Rect {
@@ -230,7 +233,7 @@ fn effects(ui: &Ui, app: &mut AppCtx) {
 /// shellShortcuts.ts: Alt+↑/↓ the previous or next channel, with Umschalt
 /// the previous or next unread one, with Strg the previous or next server.
 fn shortcuts(ui: &Ui, app: &mut AppCtx, route: &Route) {
-    if state::with(ui.ctx(), |s| s.dialog.is_some()) {
+    if state::with(ui.ctx(), |s| s.dialog.is_some()) || overlays::is_open(ui.ctx()) {
         return;
     }
     let mut step = 0i32;

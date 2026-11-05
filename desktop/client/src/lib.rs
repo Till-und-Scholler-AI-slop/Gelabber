@@ -247,7 +247,13 @@ impl Client {
     }
 
     fn notify(&self, notice: Notice) {
-        self.inner.notices.lock().push(notice);
+        let mut notices = self.inner.notices.lock();
+        // Nobody may be reading (a headless client): keep the newest only.
+        if notices.len() >= 256 {
+            notices.remove(0);
+        }
+        notices.push(notice);
+        drop(notices);
         self.repaint();
     }
 

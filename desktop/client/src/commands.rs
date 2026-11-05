@@ -1532,16 +1532,25 @@ impl Client {
                 self.schedule_recovery(true);
             }
             GatewayEvent::Event(event) => {
-                let (removed, read_now) = self.write(|s| {
+                let (removed, read_now, created) = self.write(|s| {
                     let removed = s.apply_event(&event);
                     let me = s.me().map(|u| u.id);
-                    let foreign_create = event.t == EventKind::C
-                        && event.message().is_some_and(|m| Some(m.author.id) != me);
-                    let read_now = foreign_create && event.c.is_some() && event.c == s.view.channel;
-                    (removed, read_now)
+                    let created = (event.t == EventKind::C)
+                        .then(|| event.message())
+                        .flatten()
+                        .filter(|m| Some(m.author.id) != me);
+                    let read_now =
+                        created.is_some() && event.c.is_some() && event.c == s.view.channel;
+                    (removed, read_now, created)
                 });
                 if let Some((server, banned)) = removed {
                     self.removed_from(server, banned);
+                }
+                if let Some(message) = created {
+                    self.notify(Notice::Message {
+                        server: event.s,
+                        message: Box::new(message),
+                    });
                 }
                 if read_now && self.inner.local.lock().in_front {
                     self.schedule_mark_read(event.c.unwrap_or_default());

@@ -186,11 +186,11 @@ impl<'a> TextField<'a> {
             edit = edit.char_limit(limit);
         }
         if let Some(placeholder) = self.placeholder {
-            edit = edit.hint_text(
-                egui::RichText::new(placeholder)
-                    .color(c.subtle)
-                    .font(text::BODY.font_id()),
-            );
+            // The typed text's 21px line box, so both sit on one baseline.
+            edit = edit.hint_text(LayoutJob::single_section(
+                placeholder.to_owned(),
+                text::BODY.format(c.subtle),
+            ));
         }
         let output = ui
             .scope_builder(UiBuilder::new().max_rect(inner), |ui| edit.show(ui))

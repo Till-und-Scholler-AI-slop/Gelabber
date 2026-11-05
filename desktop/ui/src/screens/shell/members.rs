@@ -171,6 +171,16 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                     y += h + 2.0;
                     let response = common::click(ui, row, Id::unique(("member-row", server, e.id)))
                         .on_hover_text(format!("Profil von {}", e.name));
+                    response.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::Role::Button,
+                            true,
+                            format!("Profil von {}", e.name),
+                        )
+                    });
+                    if response.clicked() {
+                        super::overlays::open_member(ui.ctx(), server, e.id);
+                    }
                     let under = if response.hovered() {
                         common::fill(ui.painter(), row, theme.radius.md, c.hover);
                         c.hover

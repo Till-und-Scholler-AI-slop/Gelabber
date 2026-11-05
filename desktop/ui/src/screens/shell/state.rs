@@ -65,13 +65,6 @@ pub struct InviteState {
     pub terms_open: bool,
 }
 
-/// What a confirmed deletion removes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Doomed {
-    Channel(Uuid, Uuid),
-    Category(Uuid, Uuid),
-}
-
 pub enum Dialog {
     Add {
         step: AddStep,
@@ -97,14 +90,8 @@ pub enum Dialog {
         name: String,
         error: Option<String>,
     },
-    Confirm {
-        title: String,
-        message: String,
-        button: &'static str,
-        doomed: Doomed,
-    },
     NewMessage {
-        query: String,
+        picker: super::overlays::picker::PickerState,
         /// The person picked; the dialog waits for their DM.
         waiting: Option<Uuid>,
     },

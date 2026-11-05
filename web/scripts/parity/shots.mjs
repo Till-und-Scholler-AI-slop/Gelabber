@@ -89,6 +89,20 @@ for (const scene of scenes) {
   for (const action of scene.actions ?? []) {
     if (action.click)
       await page.getByRole("button", { name: action.click, exact: true }).first().click();
+    // The first button or link of that name, with the secondary button.
+    if (action.rightclick)
+      await page
+        .getByRole("button", { name: action.rightclick, exact: true })
+        .or(page.getByRole("link", { name: action.rightclick, exact: true }))
+        .first()
+        .click({ button: "right" });
+    // Elements without a button role, such as a <summary>.
+    if (action.clicktext)
+      await page.getByText(action.clicktext, { exact: true }).first().click();
+    // Playwright key names, e.g. "Control+k", "ArrowDown", "Escape".
+    if (action.key) await page.keyboard.press(action.key);
+    // Typed into whatever has the focus.
+    if (action.type) await page.keyboard.type(action.type);
     if (action.wait) await page.waitForTimeout(action.wait);
     await page.waitForLoadState("networkidle");
   }
