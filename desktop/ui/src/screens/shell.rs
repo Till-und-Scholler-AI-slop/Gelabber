@@ -5,7 +5,7 @@
 //! workspace shortcuts; the pages draw into the rects it hands them.
 
 mod channel_sidebar;
-mod common;
+pub(crate) mod common;
 pub mod dialogs;
 mod dm_index;
 mod dm_sidebar;
@@ -24,7 +24,7 @@ use uuid::Uuid;
 use crate::app::AppCtx;
 use crate::route::Route;
 use crate::screens::layout::{self, MEMBERS_WIDTH, RAIL_WIDTH, SIDEBAR_WIDTH};
-use crate::screens::{chat, server_settings, settings};
+use crate::screens::{chat, server_settings, settings, voice};
 use crate::theme::{Theme, layout::DOCK_HEIGHT};
 use crate::widgets::hairline_v;
 
@@ -50,6 +50,29 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     let route = app.nav.route().clone();
     overlays::keys(ui, state::with(ui.ctx(), |s| s.dialog.is_some()));
     shortcuts(ui, app, &route);
+
+    // A running call's bar takes the bottom strip next to the user panel;
+    // the page and the member panel end above it.
+    let bar = voice::call_bar::visible(app);
+    let content = if bar {
+        Rect::from_min_max(
+            screen.min,
+            pos2(screen.right(), screen.bottom() - DOCK_HEIGHT),
+        )
+    } else {
+        screen
+    };
+    if let Route::Channel(s, c) = route
+        && is_voice(app, c)
+        && voice::page::kino(ui.ctx(), app, s, c)
+    {
+        // Kino: the stage takes the window but for the call bar.
+        let mut main = ui.new_child(UiBuilder::new().max_rect(content));
+        voice::show(&mut main, app, s, c);
+        call_bar(ui, app, screen, true);
+        dialogs::show(ui, app);
+        return;
+    }
 
     let rail = Rect::from_min_max(
         screen.min,
@@ -81,20 +104,27 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
             active_server = Some(s);
             context = Some(s);
             channel_sidebar::show(ui, app, sidebar, s, None, true);
-            let page = layout::page_rect(screen, true);
+            let page = layout::page_rect(content, true);
             overview::show(ui, app, page, s);
-            members::show(ui, app, members_rect(screen), s);
+            members::show(ui, app, members_rect(content), s);
         }
         Route::Channel(s, c) => {
             active_server = Some(s);
             context = Some(s);
             channel_sidebar::show(ui, app, sidebar, s, Some(c), false);
+            let voice_room = is_voice(app, c);
+            // Next to pictures the member list starts closed.
+            layout::set_members_video(ui.ctx(), voice_room && voice::page::staged(app, s, c));
             let visible = layout::members_visible(ui.ctx());
-            let page = layout::page_rect(screen, visible);
+            let page = layout::page_rect(content, visible);
             let mut main = ui.new_child(UiBuilder::new().max_rect(page));
-            chat::channel_page(&mut main, app, s, c);
+            if voice_room {
+                voice::show(&mut main, app, s, c);
+            } else {
+                chat::channel_page(&mut main, app, s, c);
+            }
             if visible {
-                members::show(ui, app, members_rect(screen), s);
+                members::show(ui, app, members_rect(content), s);
             }
         }
         Route::ServerSettings(s) => {
@@ -104,27 +134,27 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
             let mut side = ui.new_child(UiBuilder::new().max_rect(sidebar));
             server_settings::sidebar(&mut side, app, s);
             let mut main =
-                ui.new_child(UiBuilder::new().max_rect(layout::page_rect(screen, false)));
+                ui.new_child(UiBuilder::new().max_rect(layout::page_rect(content, false)));
             server_settings::page(&mut main, app, s);
         }
         Route::Settings(area) => {
             let mut side = ui.new_child(UiBuilder::new().max_rect(sidebar));
             settings::sidebar(&mut side, app, area.as_deref());
             let mut main =
-                ui.new_child(UiBuilder::new().max_rect(layout::page_rect(screen, false)));
+                ui.new_child(UiBuilder::new().max_rect(layout::page_rect(content, false)));
             settings::page(&mut main, app, area.as_deref());
         }
         Route::Dms => {
             dm_active = true;
             dm_sidebar::show(ui, app, sidebar, None);
-            dm_index::show(ui, app, layout::page_rect(screen, false));
+            dm_index::show(ui, app, layout::page_rect(content, false));
         }
         Route::Dm(c) => {
             dm_active = true;
             context = Some(c);
             dm_sidebar::show(ui, app, sidebar, Some(c));
             let mut main =
-                ui.new_child(UiBuilder::new().max_rect(layout::page_rect(screen, false)));
+                ui.new_child(UiBuilder::new().max_rect(layout::page_rect(content, false)));
             chat::dm_page(&mut main, app, c);
         }
         _ => {
@@ -148,14 +178,44 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
                 );
             }
             if !home::redirect(ui, app) {
-                home::welcome(ui, app, layout::page_rect(screen, false));
+                home::welcome(ui, app, layout::page_rect(content, false));
             }
         }
     }
     rail::show(ui, app, rail, active_server, dm_active);
     user_panel::show(ui, app, dock, context);
+    call_bar(ui, app, screen, false);
     dialogs::show(ui, app);
     overlays::show(ui, app);
+}
+
+fn is_voice(app: &AppCtx, channel: Uuid) -> bool {
+    app.client
+        .with_state(|s| s.channel(channel).map(|ch| ch.kind))
+        == Some(ChannelKind::Voice)
+}
+
+/// The call bar in the bottom strip, from the sidebar's edge (Kino: from
+/// the window's).
+fn call_bar(ui: &mut Ui, app: &mut AppCtx, screen: Rect, full: bool) {
+    let account = app.client.with_state(|s| s.me().map(|m| m.id));
+    voice::volume::sync(ui.ctx(), app.call, account);
+    if !voice::call_bar::visible(app) {
+        return;
+    }
+    let left = if full {
+        screen.left()
+    } else {
+        screen.left() + RAIL_WIDTH + SIDEBAR_WIDTH
+    };
+    let rect = Rect::from_min_max(pos2(left, screen.bottom() - DOCK_HEIGHT), screen.max);
+    let mut bar = ui.new_child(UiBuilder::new().max_rect(rect));
+    voice::call_bar::show(&mut bar, app, rect);
+}
+
+/// Whether a shell dialog is open (shortcuts keep off then).
+pub fn dialog_open(ctx: &egui::Context) -> bool {
+    state::with(ctx, |s| s.dialog.is_some())
 }
 
 fn members_rect(screen: Rect) -> Rect {
@@ -180,6 +240,10 @@ fn effects(ui: &Ui, app: &mut AppCtx) {
         }
         first
     });
+    // Kino belongs to the room's page: another page leaves it.
+    if first {
+        voice::stage::set_kino(ui.ctx(), false);
+    }
     let user = app.client.with_state(|s| s.me().map(|m| m.id));
     match &route {
         Route::Server(s) => {

@@ -281,9 +281,10 @@ fn app_refresh(app: &AppCtx, server: Uuid) {
 /// the people in it.
 fn build_rows(app: &AppCtx, detail: &gelabber_client::ServerDetail) -> Vec<Row> {
     let server = detail.server.id;
+    let call = app.call.state();
     let voice_of = |channel: Uuid| -> Vec<Row> {
         app.client.with_state(|s| {
-            s.voice_occupants(server, channel)
+            crate::screens::voice::session::occupants(s, &call, server, channel, true)
                 .into_iter()
                 .map(|(user, o)| Row::Person(user, o, s.is_live(server, channel, user)))
                 .collect()
@@ -449,12 +450,13 @@ fn channel_row(
             );
         }
     }
+    let own = crate::screens::voice::session::own_seat(app, server).map(|(c, _, _)| c);
     let (badge, muted, in_voice, live) = app.client.with_state(|s| {
         let read = s.read.get(&ch.id);
         (
             s.channel_badge(ch.id, now),
             read.is_some_and(|r| r.is_muted(now)),
-            s.voice_self.channel == Some(ch.id),
+            own == Some(ch.id),
             s.live
                 .get(&server)
                 .and_then(|l| l.get(&ch.id))
@@ -476,10 +478,11 @@ fn channel_row(
     } else {
         c.muted
     };
-    let icon_color = if active {
-        c.accent_text
-    } else if in_voice {
+    // `.is-in-voice` comes after `.is-active` in index.css.
+    let icon_color = if in_voice {
         c.online_text
+    } else if active {
+        c.accent_text
     } else {
         color
     };
@@ -629,6 +632,12 @@ fn person_row(
         pos2(row.left() + 36.0, row.center().y - 10.0),
         Vec2::splat(20.0),
     );
+    let speaking = app.call.with_state(|call| {
+        crate::screens::voice::session::speaking(call, user, occupant.muted, occupant.deafened)
+    });
+    if speaking {
+        crate::screens::voice::look::speaking_ring(ui, &painter, avatar, true);
+    }
     common::avatar(
         ui,
         app.images,
@@ -665,7 +674,7 @@ fn person_row(
         ui,
         name,
         text::UI.weight(400.0).line_height(1.5),
-        c.muted,
+        if speaking { c.text } else { c.muted },
         right - left,
     );
     paint_mid(&painter, &block, left, row.center().y);

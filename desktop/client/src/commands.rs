@@ -1045,9 +1045,21 @@ impl Client {
     /// Takes a seat in a voice channel on the gateway (presence only; the
     /// media connection is separate). Leaves another seat first.
     pub fn voice_join(&self, server: Uuid, channel: Uuid) {
-        let this = self.clone();
-        self.spawn(async move {
-            let current = this.with_state(|s| s.voice_self);
+        self.voice_join_flags(server, channel, None);
+    }
+
+    /// [`Self::voice_join`] with the mute and deafen flags to take into the
+    /// channel; `None` keeps the current ones.
+    pub fn voice_join_flags(&self, server: Uuid, channel: Uuid, flags: Option<(bool, bool)>) {
+        self.voice_queue(move |this| {
+            let mut current = this.with_state(|s| s.voice_self);
+            if let Some((muted, deafened)) = flags {
+                current.muted = muted || deafened;
+                current.deafened = deafened;
+                if !deafened {
+                    this.inner.local.lock().muted_before_deafen = muted;
+                }
+            }
             if let (Some(s), Some(c)) = (current.server, current.channel)
                 && (s, c) != (server, channel)
             {
@@ -1108,8 +1120,7 @@ impl Client {
     }
 
     pub fn voice_leave(&self) {
-        let this = self.clone();
-        self.spawn(async move {
+        self.voice_queue(move |this| {
             let current = this.with_state(|s| s.voice_self);
             let (Some(s), Some(c)) = (current.server, current.channel) else {
                 return;
@@ -1148,8 +1159,7 @@ impl Client {
 
     /// Mute; unmuting while deafened also undeafens (`session.ts`).
     pub fn set_voice_muted(&self, muted: bool) {
-        let this = self.clone();
-        self.spawn(async move {
+        self.voice_queue(move |this| {
             let current = this.with_state(|s| s.voice_self);
             let deafened = current.deafened && muted;
             this.write(|s| {
@@ -1181,8 +1191,7 @@ impl Client {
 
     /// Deafen implies mute; undeafen restores the mute from before.
     pub fn set_voice_deafened(&self, deafened: bool) {
-        let this = self.clone();
-        self.spawn(async move {
+        self.voice_queue(move |this| {
             let current = this.with_state(|s| s.voice_self);
             if current.deafened == deafened {
                 return;
@@ -1223,16 +1232,19 @@ impl Client {
 
     /// Announces (`on`) or retracts a published track of my seat.
     pub fn voice_publish(&self, kind: TrackKind, on: bool) {
-        let me = self.with_state(|s| s.voice_self);
-        if let (Some(s), Some(c)) = (me.server, me.channel) {
-            self.send_frame(ClientFrame::Sig {
+        self.voice_queue(move |this| {
+            let me = this.with_state(|s| s.voice_self);
+            let (Some(s), Some(c)) = (me.server, me.channel) else {
+                return;
+            };
+            this.send_frame(ClientFrame::Sig {
                 t: if on { SigKind::P } else { SigKind::U },
                 s,
                 c,
                 k: Some(kind),
                 on: None,
             });
-        }
+        });
     }
 
     // -------------------------------------------------- servers & channels
@@ -1527,6 +1539,7 @@ impl Client {
                     });
                 }
                 if self.with_state(|s| s.voice_self.channel.is_some()) {
+                    self.voice_hook(&GatewayEvent::Ready);
                     self.send_join_frames();
                 }
                 self.schedule_recovery(true);
@@ -1563,7 +1576,14 @@ impl Client {
             }
             GatewayEvent::Gap(_) => self.schedule_recovery(false),
             GatewayEvent::Resync => self.schedule_recovery(false),
-            GatewayEvent::Frame(frame) => self.on_frame(frame),
+            GatewayEvent::Frame(frame) => {
+                let voice = matches!(frame, ServerFrame::Sig(_) | ServerFrame::Err { .. });
+                let event = voice.then(|| GatewayEvent::Frame(frame.clone()));
+                self.on_frame(frame);
+                if let Some(event) = event {
+                    self.voice_hook(&event);
+                }
+            }
         }
     }
 

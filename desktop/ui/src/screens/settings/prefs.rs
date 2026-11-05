@@ -240,7 +240,12 @@ impl Prefs {
 /// `settings.json` in the app's config directory, next to `desktop.json`
 /// (platform/paths.rs).
 fn file() -> Option<PathBuf> {
-    crate::platform::paths::file("settings.json")
+    config_file("settings.json")
+}
+
+/// A file of this device's settings in the app's config directory.
+pub(crate) fn config_file(name: &str) -> Option<PathBuf> {
+    crate::platform::paths::file(name)
 }
 
 fn load() -> Prefs {

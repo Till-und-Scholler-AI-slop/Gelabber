@@ -326,6 +326,8 @@ pub struct GelabberApp {
     workspace: bool,
     /// The client's own session was signed in last frame.
     client_signed_in: bool,
+    /// The video tiles' pipeline is installed in the renderer.
+    video_ready: bool,
 }
 
 impl GelabberApp {
@@ -361,6 +363,7 @@ impl GelabberApp {
             toasts: Toasts::default(),
             workspace: false,
             client_signed_in: false,
+            video_ready: false,
         }
     }
 
@@ -488,6 +491,8 @@ impl GelabberApp {
         }
 
         self.sync_workspace();
+        let signed_in = matches!(self.session.status, SessionStatus::Authenticated(_));
+        screens::voice::sync::sync(&ctx, &self.call, &mut self.toasts, signed_in);
         self.guard();
         if self.nav.take_changed() {
             self.screen = ScreenState::for_location(self.nav.location());
@@ -524,7 +529,14 @@ pub fn is_workspace(route: &Route) -> bool {
 }
 
 impl eframe::App for GelabberApp {
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
+        // Video tiles draw through the renderer's wgpu device.
+        if !self.video_ready
+            && let Some(render_state) = frame.wgpu_render_state()
+        {
+            screens::voice::video::install(render_state);
+            self.video_ready = true;
+        }
         self.frame(ui);
     }
 

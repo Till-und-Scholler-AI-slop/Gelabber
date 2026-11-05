@@ -152,6 +152,15 @@ impl Toasts {
                             rect.center().y - block.height() / 2.0,
                         ),
                     );
+                    // role="status": the message is read out (and found by tests).
+                    ui.interact(
+                        rect,
+                        Id::unique(("gelabber-toast", toast.id)),
+                        egui::Sense::hover(),
+                    )
+                    .widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::Role::Label, true, &toast.text)
+                    });
                     let close = Rect::from_min_size(
                         pos2(rect.right() - 9.0 - 32.0, rect.center().y - 16.0),
                         Vec2::splat(32.0),

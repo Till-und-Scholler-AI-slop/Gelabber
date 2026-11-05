@@ -33,6 +33,13 @@ pub type Repaint = Arc<dyn Fn() + Send + Sync>;
 /// app's notifications). Runs on the client runtime: keep it short.
 pub type EventTap = Arc<dyn Fn(&EventFrame) + Send + Sync>;
 
+/// Sees the gateway's `ready`, `sig` and `err` after the state took them
+/// in, for the call (gelabber-call), which keeps its own room state.
+pub type VoiceHook = Arc<dyn Fn(&GatewayEvent) + Send + Sync>;
+
+/// A voice command, run in the order the commands were given.
+type VoiceJob = Box<dyn FnOnce(&Client) + Send>;
+
 /// Input-driven state that lives outside [`State`] so the UI thread can
 /// update it without taking the state lock.
 #[derive(Default)]
@@ -62,6 +69,8 @@ struct Inner {
     http: Http,
     busy: AtomicUsize,
     repaint: RwLock<Option<Repaint>>,
+    voice_hook: RwLock<Option<VoiceHook>>,
+    voice_jobs: Mutex<Option<tokio::sync::mpsc::UnboundedSender<VoiceJob>>>,
     state: RwLock<State>,
     gateway: Mutex<Option<Gateway>>,
     gateway_config: Mutex<GatewayConfig>,
@@ -112,6 +121,8 @@ impl Client {
                 http,
                 busy: AtomicUsize::new(0),
                 repaint: RwLock::new(None),
+                voice_hook: RwLock::new(None),
+                voice_jobs: Mutex::new(None),
                 state: RwLock::new(State::default()),
                 gateway: Mutex::new(None),
                 gateway_config: Mutex::new(GatewayConfig::default()),
@@ -163,6 +174,38 @@ impl Client {
 
     pub fn set_repaint(&self, repaint: Repaint) {
         *self.inner.repaint.write() = Some(repaint);
+    }
+
+    pub fn set_voice_hook(&self, hook: Option<VoiceHook>) {
+        *self.inner.voice_hook.write() = hook;
+    }
+
+    /// Runs voice commands one after the other in the order they were
+    /// given (a leave right after a join must not overtake it), off the
+    /// calling thread like every command.
+    fn voice_queue(&self, job: impl FnOnce(&Client) + Send + 'static) {
+        let mut slot = self.inner.voice_jobs.lock();
+        let jobs = slot.get_or_insert_with(|| {
+            let (jobs, mut queue) = tokio::sync::mpsc::unbounded_channel::<VoiceJob>();
+            let weak = self.weak();
+            self.runtime().spawn(async move {
+                while let Some(job) = queue.recv().await {
+                    let Some(client) = Client::from_weak(&weak) else {
+                        return;
+                    };
+                    job(&client);
+                }
+            });
+            jobs
+        });
+        let _ = jobs.send(Box::new(job));
+    }
+
+    fn voice_hook(&self, event: &GatewayEvent) {
+        let hook = self.inner.voice_hook.read().clone();
+        if let Some(hook) = hook {
+            hook(event);
+        }
     }
 
     pub fn repaint(&self) {

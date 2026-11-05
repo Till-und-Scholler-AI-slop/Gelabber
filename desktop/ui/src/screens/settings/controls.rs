@@ -563,6 +563,29 @@ pub fn slider(
     step: f64,
     disabled: bool,
 ) -> bool {
+    range(ui, id, None, value, (min, max, step), disabled)
+}
+
+/// [`slider`] with an accessible name (`aria-label`).
+pub fn slider_named(
+    ui: &mut Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    label: &str,
+    value: &mut f64,
+    (min, max, step): (f64, f64, f64),
+    disabled: bool,
+) -> bool {
+    range(ui, id, Some(label), value, (min, max, step), disabled)
+}
+
+fn range(
+    ui: &mut Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    label: Option<&str>,
+    value: &mut f64,
+    (min, max, step): (f64, f64, f64),
+    disabled: bool,
+) -> bool {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
     let width = ui.available_width();
@@ -600,6 +623,10 @@ pub fn slider(
         }
     }
     *value = value.clamp(min, max);
+    if let Some(label) = label {
+        let shown = *value;
+        response.widget_info(|| egui::WidgetInfo::slider(!disabled, shown, label));
+    }
     let t = ((*value - min) / (max - min)).clamp(0.0, 1.0) as f32;
     let alpha = if disabled { 0.45 } else { 1.0 };
     let painter = ui.painter();

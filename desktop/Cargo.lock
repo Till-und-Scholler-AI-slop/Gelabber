@@ -2370,13 +2370,16 @@ dependencies = [
 name = "gelabber-call"
 version = "0.8.9"
 dependencies = [
+ "futures-util",
  "gelabber-client",
  "gelabber-media-core",
  "parking_lot",
  "serde_json",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
