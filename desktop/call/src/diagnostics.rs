@@ -443,6 +443,10 @@ pub fn format_ms(ms: Option<f64>) -> String {
 /// `toLocaleString("de-DE")` with up to (or, `fixed`, exactly) `digits`
 /// decimals.
 pub fn german(value: f64, digits: usize, fixed: bool) -> String {
+    // Halves away from zero, as `toLocaleString` rounds (format! would
+    // round them to even).
+    let factor = 10f64.powi(digits as i32);
+    let value = (value * factor).round() / factor;
     let text = format!("{value:.digits$}");
     let (int, frac) = text.split_once('.').unwrap_or((&text, ""));
     let frac = if fixed {
