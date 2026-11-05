@@ -1,0 +1,272 @@
+//! The front-door frame (pages/AuthLayout.tsx, auth.css): the dimmed
+//! Living Room artwork, the app icon with the wordmark over one centred
+//! card, and the pieces every card uses (heading, lead, links).
+
+use egui::epaint::{Mesh, RectShape, Vertex, WHITE_UV};
+use egui::{
+    Color32, CornerRadius, Id, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, Vec2,
+    pos2,
+};
+
+use crate::app::AppCtx;
+use crate::images::{self, ImageState};
+use crate::text::{self, Block, Rich, TextStyle};
+use crate::theme::{Theme, corner, space};
+use crate::widgets::field::layout_unit;
+use crate::widgets::{Link, link};
+
+/// The approved artwork (public/images/living-room).
+pub const ARTWORK: &str = "/images/living-room/community-banner.png";
+const ICON: &[u8] = include_bytes!("../../../assets/images/icon-192.png");
+
+/// `.lr-auth-card h1`: `--lr-type-page`, letter-spacing −0.03em.
+pub const HEADING: TextStyle = text::PAGE.tracking(-0.03);
+/// `.auth-brand`: 700 20px/1.2, −0.02em.
+const BRAND: TextStyle = TextStyle::new(20.0, 700.0, 1.2).tracking(-0.02);
+
+/// The page: artwork, brand and a card whose content `card` lays out in a
+/// 318px column (the card's padding is 32px, its border 1px).
+pub fn frame(ui: &mut Ui, app: &mut AppCtx, id: &str, card: impl FnOnce(&mut Ui, &mut AppCtx)) {
+    let ctx = ui.ctx().clone();
+    let theme = Theme::of(&ctx);
+    let c = theme.c;
+    let screen = ctx.content_rect();
+    if screen.width() >= 800.0 {
+        artwork(ui, app, screen);
+    }
+
+    let height_id = Id::unique(("gelabber-auth-column", id));
+    let column_h: f32 = ctx.data(|d| d.get_temp(height_id)).unwrap_or(0.0);
+    let padding_x = space::S4;
+    let width = (screen.width() - 2.0 * padding_x).min(384.0);
+    let page_h = (column_h + 2.0 * space::S8).max(screen.height());
+
+    egui::ScrollArea::vertical()
+        .id_salt(("auth-page", id))
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let (page, _) =
+                ui.allocate_exact_size(Vec2::new(screen.width(), page_h), Sense::hover());
+            let top =
+                page.top() + space::S8 + ((page_h - 2.0 * space::S8 - column_h) / 2.0).max(0.0);
+            let left = page.left() + (page.width() - width) / 2.0;
+
+            // Brand: the icon and "Gelabber", centred, linking to "/".
+            let brand_text = Block::single(ui, "Gelabber", BRAND, c.text);
+            let brand_w = 40.0 + 10.0 + brand_text.width();
+            let brand = Rect::from_min_size(
+                pos2(left + (width - brand_w) / 2.0, top),
+                Vec2::new(brand_w, 40.0),
+            );
+            if let Some(icon) = images::bundled(&ctx, "icon-192", ICON) {
+                let icon_rect = Rect::from_min_size(brand.min, Vec2::splat(40.0));
+                ui.painter().add(
+                    RectShape::filled(icon_rect, corner(theme.radius.md), Color32::WHITE)
+                        .with_texture(icon.id(), Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0))),
+                );
+            }
+            brand_text.paint(
+                ui.painter(),
+                pos2(
+                    brand.left() + 50.0,
+                    brand.center().y - brand_text.height() / 2.0,
+                ),
+            );
+            let brand_response =
+                Link::interact(ui, brand, Id::unique("gelabber-auth-brand"), "Gelabber");
+            if brand_response.clicked() {
+                app.nav.navigate("/");
+            }
+
+            let card_rect = card_at(ui, app, pos2(left, brand.bottom() + space::S6), width, card);
+            let measured = 40.0 + space::S6 + card_rect.height();
+            if (measured - column_h).abs() > 0.01 {
+                ctx.data_mut(|d| d.insert_temp(height_id, measured));
+                ctx.request_discard("auth column height");
+            }
+        });
+}
+
+/// `.lr-auth-card` with its top-left at `min`: the panel box (painted
+/// under the content once its height is known) around `content`.
+pub fn card_at(
+    ui: &mut Ui,
+    app: &mut AppCtx,
+    min: Pos2,
+    width: f32,
+    content: impl FnOnce(&mut Ui, &mut AppCtx),
+) -> Rect {
+    let ctx = ui.ctx().clone();
+    let theme = Theme::of(&ctx);
+    let background = ui.painter().add(Shape::Noop);
+    let inner = Rect::from_min_size(
+        min + Vec2::splat(1.0 + space::S8),
+        Vec2::new(width - 2.0 - 2.0 * space::S8, f32::INFINITY),
+    );
+    let content_h = ui
+        .scope_builder(UiBuilder::new().max_rect(inner), |ui| {
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            content(ui, app);
+            ui.min_rect().height()
+        })
+        .inner;
+    let rect = Rect::from_min_size(min, Vec2::new(width, content_h + 2.0 + 2.0 * space::S8));
+    ui.painter().set(
+        background,
+        RectShape::new(
+            crate::widgets::snap(&ctx, rect),
+            corner(theme.radius.lg),
+            theme.c.panel,
+            Stroke::new(1.0, theme.c.border),
+            StrokeKind::Inside,
+        ),
+    );
+    rect
+}
+
+/// `.auth-layout::before/::after`: the artwork with `cover` at opacity
+/// .18, under `radial-gradient(ellipse at center, transparent 30%, bg 95%)`.
+fn artwork(ui: &Ui, app: &AppCtx, screen: Rect) {
+    let theme = Theme::of(ui.ctx());
+    let painter = ui.painter();
+    if let ImageState::Ready(texture) = app.images.get(ui.ctx(), ARTWORK) {
+        let uv = images::cover_uv(texture.size_vec2(), screen.size());
+        painter.image(texture.id(), screen, uv, Color32::from_white_alpha(46));
+    }
+    painter.add(vignette(screen, theme.c.bg));
+}
+
+/// The ellipse-at-centre gradient as a mesh: rings at the colour stops,
+/// alpha linear in the normalised radius like the CSS gradient line.
+fn vignette(rect: Rect, color: Color32) -> Shape {
+    // `farthest-corner` with the aspect ratio of `closest-side`.
+    let center = rect.center();
+    let radii = rect.size() / 2.0 * std::f32::consts::SQRT_2;
+    let stops: [(f32, f32); 3] = [(0.3, 0.0), (0.95, 1.0), (1.2, 1.0)];
+    const SEGMENTS: usize = 256;
+    let mut mesh = Mesh::default();
+    for (t, alpha) in stops {
+        let fill = color.gamma_multiply(alpha);
+        for i in 0..SEGMENTS {
+            let angle = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+            let pos = center + Vec2::new(angle.cos() * radii.x, angle.sin() * radii.y) * t;
+            mesh.vertices.push(Vertex {
+                pos,
+                uv: WHITE_UV,
+                color: fill,
+            });
+        }
+    }
+    for ring in 0..stops.len() as u32 - 1 {
+        let (a, b) = (ring * SEGMENTS as u32, (ring + 1) * SEGMENTS as u32);
+        for i in 0..SEGMENTS as u32 {
+            let j = (i + 1) % SEGMENTS as u32;
+            mesh.add_triangle(a + i, a + j, b + i);
+            mesh.add_triangle(a + j, b + j, b + i);
+        }
+    }
+    Shape::mesh(mesh)
+}
+
+/// `.lr-auth-card h1`.
+pub fn heading(ui: &mut Ui, title: &str) {
+    let theme = Theme::of(ui.ctx());
+    let block = Block::wrapped(ui, title, HEADING, theme.c.text, ui.available_width());
+    show_block(ui, &block);
+}
+
+/// `.auth-lead` (margin-top 4): muted body text.
+pub fn lead(ui: &mut Ui, lead: &str) {
+    let theme = Theme::of(ui.ctx());
+    ui.add_space(space::S1);
+    let block = Block::wrapped(ui, lead, text::BODY, theme.c.muted, ui.available_width());
+    show_block(ui, &block);
+}
+
+/// A lead sentence ending in a link ("Noch kein Konto? Registrieren");
+/// true when the link was clicked.
+pub fn lead_with_link(ui: &mut Ui, sentence: &str, link_label: &str) -> bool {
+    let theme = Theme::of(ui.ctx());
+    ui.add_space(space::S1);
+    let link_style = text::BODY.weight(500.0);
+    let rich = Rich::new(text::BODY)
+        .push(&format!("{sentence} "), text::BODY, theme.c.muted)
+        .push(link_label, link_style, theme.c.accent_text)
+        .wrap(ui.available_width());
+    let block = rich.layout(ui);
+    let top_left = ui.cursor().min;
+    show_block(ui, &block);
+    paragraph_link(ui, &block, top_left, 1, link_style, link_label)
+}
+
+/// Underline, hover and click for section `index` of a painted paragraph.
+pub fn paragraph_link(
+    ui: &mut Ui,
+    block: &Block,
+    top_left: Pos2,
+    index: usize,
+    style: TextStyle,
+    label: &str,
+) -> bool {
+    let theme = Theme::of(ui.ctx());
+    let Some(rect) = block.section_rect(top_left, index) else {
+        return false;
+    };
+    link::underline(
+        ui.painter(),
+        style,
+        rect.top(),
+        rect.left(),
+        rect.right(),
+        theme.c.accent_text,
+    );
+    Link::interact(ui, rect, Id::unique(("gelabber-auth-link", label)), label).clicked()
+}
+
+/// A paragraph in the card at the cursor, its height in layout units.
+pub fn show_block(ui: &mut Ui, block: &Block) {
+    let size = Vec2::new(ui.available_width(), layout_unit(block.height()));
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    block.paint(ui.painter(), rect.min);
+}
+
+/// A standalone link on its own line (`.auth-link self-start`).
+pub fn link_line(ui: &mut Ui, label: &str) -> bool {
+    // One body line box; the link hugs its text at the left.
+    let (row, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), text::BODY.line_px()),
+        Sense::hover(),
+    );
+    let block = Block::single(ui, label, text::BODY.weight(500.0), Color32::WHITE);
+    let rect = Rect::from_min_size(row.min, Vec2::new(block.width(), row.height()));
+    ui.put(rect, Link::new(label)).clicked()
+}
+
+/// `AppPlaceholder`: icon, wordmark and "Verbinde…" while the session is
+/// being checked.
+pub fn placeholder(ui: &mut Ui) {
+    let ctx = ui.ctx().clone();
+    let theme = Theme::of(&ctx);
+    let screen = ctx.content_rect();
+    let word = Block::single(ui, "Gelabber", BRAND, theme.c.text);
+    let status = Block::single(ui, "Verbinde…", text::UI, theme.c.muted);
+    let total = 48.0 + 12.0 + word.height() + 12.0 + status.height();
+    let top = screen.center().y - total / 2.0;
+    if let Some(icon) = images::bundled(&ctx, "icon-192", ICON) {
+        let rect = Rect::from_min_size(pos2(screen.center().x - 24.0, top), Vec2::splat(48.0));
+        ui.painter().add(
+            RectShape::filled(rect, CornerRadius::same(12), Color32::WHITE)
+                .with_texture(icon.id(), Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0))),
+        );
+    }
+    let y = top + 48.0 + 12.0;
+    word.paint(
+        ui.painter(),
+        pos2(screen.center().x - word.width() / 2.0, y),
+    );
+    let y = y + word.height() + 12.0;
+    status.paint(
+        ui.painter(),
+        pos2(screen.center().x - status.width() / 2.0, y),
+    );
+}

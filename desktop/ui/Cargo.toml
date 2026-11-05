@@ -11,7 +11,6 @@ publish = false
 gelabber-client = { path = "../client" }
 eframe = { version = "0.37.0", default-features = false, features = ["wgpu", "accesskit", "wayland", "x11"] }
 egui = "0.37.0"
-egui_extras = { version = "0.37.0", default-features = false, features = ["svg", "image"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 uuid = { version = "1.27.0", features = ["serde"] }
@@ -19,3 +18,8 @@ serde_json = "1.0.151"
 parking_lot = "0.12.5"
 egui_system_font_provider = "0.37.0"
 tracing = "0.1"
+resvg = { version = "0.45.1", default-features = false }
+reqwest = { version = "0.13.5", default-features = false }
+
+[dev-dependencies]
+egui_kittest = { version = "0.37.0", features = ["wgpu", "eframe"] }
