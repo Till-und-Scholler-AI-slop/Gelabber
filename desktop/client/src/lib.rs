@@ -29,6 +29,10 @@ pub use store::{
 /// Called whenever the state changes, so the interface repaints.
 pub type Repaint = Arc<dyn Fn() + Send + Sync>;
 
+/// Sees the gateway's `ready`, `sig` and `err` after the state took them
+/// in, for the call (gelabber-call), which keeps its own room state.
+pub type VoiceHook = Arc<dyn Fn(&GatewayEvent) + Send + Sync>;
+
 /// Input-driven state that lives outside [`State`] so the UI thread can
 /// update it without taking the state lock.
 #[derive(Default)]
@@ -58,6 +62,7 @@ struct Inner {
     http: Http,
     busy: AtomicUsize,
     repaint: RwLock<Option<Repaint>>,
+    voice_hook: RwLock<Option<VoiceHook>>,
     state: RwLock<State>,
     gateway: Mutex<Option<Gateway>>,
     gateway_config: Mutex<GatewayConfig>,
@@ -107,6 +112,7 @@ impl Client {
                 http,
                 busy: AtomicUsize::new(0),
                 repaint: RwLock::new(None),
+                voice_hook: RwLock::new(None),
                 state: RwLock::new(State::default()),
                 gateway: Mutex::new(None),
                 gateway_config: Mutex::new(GatewayConfig::default()),
@@ -153,6 +159,17 @@ impl Client {
 
     pub fn set_repaint(&self, repaint: Repaint) {
         *self.inner.repaint.write() = Some(repaint);
+    }
+
+    pub fn set_voice_hook(&self, hook: Option<VoiceHook>) {
+        *self.inner.voice_hook.write() = hook;
+    }
+
+    fn voice_hook(&self, event: &GatewayEvent) {
+        let hook = self.inner.voice_hook.read().clone();
+        if let Some(hook) = hook {
+            hook(event);
+        }
     }
 
     pub fn repaint(&self) {

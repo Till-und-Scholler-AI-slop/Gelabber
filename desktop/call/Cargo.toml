@@ -17,6 +17,11 @@ gelabber-client = { path = "../client" }
 gelabber-media-core = { path = "../core", optional = true }
 parking_lot = "0.12.5"
 serde_json = "1.0.151"
-tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "time", "sync"] }
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
 tracing = "0.1"
-uuid = { version = "1.27.0", features = ["serde"] }
+uuid = { version = "1.27.0", features = ["serde", "v4"] }
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Media_Audio"] }
