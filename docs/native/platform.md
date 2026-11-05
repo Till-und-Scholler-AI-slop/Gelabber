@@ -31,8 +31,9 @@ into `settings.json`, `gelabber.user-volumes:<account>` and
 `gelabber:chat-draft:<account>:<channel>` into `native-state.json`) and the
 files of native builds before 0.9 (`<config base>/gelabber/settings.json`
 and `…/server`, the latter only where `desktop.json` has no server). It
-overwrites nothing and leaves the sources where they are; `settings.json`
-is written even when empty, so it happens once.
+overwrites nothing (a `desktop.json` or `native-state.json` it cannot read
+stays as it is) and leaves the sources where they are; `settings.json` is
+written even when empty, so it happens once.
 
 Server choice, first match wins: `--server <url>` / `--server=<url>`,
 `GELABBER_SERVER`, `desktop.json`, else the setup screen. The cookie is not

@@ -211,15 +211,19 @@ pub fn import_into(
 
     if let Some(server) = old_server {
         let desktop_path = config.join(DESKTOP);
-        let mut desktop = match read_json(&desktop_path) {
-            Some(Value::Object(map)) => map,
-            _ => Map::new(),
+        // The Tauri app's file too: one that does not read as an object stays.
+        let desktop = match read_json(&desktop_path) {
+            Some(Value::Object(map)) => Some(map),
+            None if !desktop_path.exists() => Some(Map::new()),
+            _ => None,
         };
-        let has_server = desktop
-            .get("server")
-            .and_then(Value::as_str)
-            .is_some_and(|s| !s.trim().is_empty());
-        if !has_server {
+        let has_server = |desktop: &Map<String, Value>| {
+            desktop
+                .get("server")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty())
+        };
+        if let Some(mut desktop) = desktop.filter(|d| !has_server(d)) {
             desktop.insert("server".into(), Value::String(server));
             write_json(&desktop_path, &Value::Object(desktop), false)?;
             imported.server = true;
@@ -229,21 +233,26 @@ pub fn import_into(
     let accounts = account_data(&entries, now);
     if !accounts.is_empty() {
         let state_path = config.join(STATE);
-        let mut state: Stored = read_json(&state_path)
-            .and_then(|v| serde_json::from_value(v).ok())
-            .unwrap_or_default();
-        for (id, (volumes, drafts)) in accounts {
-            let account = state.accounts.entry(id).or_default();
-            if account.volumes.is_empty() {
-                imported.volumes += volumes.len();
-                account.volumes = volumes;
+        // A state file this build cannot read is left alone, not replaced.
+        let state: Option<Stored> = match read_json(&state_path) {
+            Some(value) => serde_json::from_value(value).ok(),
+            None if !state_path.exists() => Some(Stored::default()),
+            None => None,
+        };
+        if let Some(mut state) = state {
+            for (id, (volumes, drafts)) in accounts {
+                let account = state.accounts.entry(id).or_default();
+                if account.volumes.is_empty() {
+                    imported.volumes += volumes.len();
+                    account.volumes = volumes;
+                }
+                if account.drafts.is_empty() {
+                    imported.drafts += drafts.len();
+                    account.drafts = drafts;
+                }
             }
-            if account.drafts.is_empty() {
-                imported.drafts += drafts.len();
-                account.drafts = drafts;
-            }
+            write_json(&state_path, &state, true)?;
         }
-        write_json(&state_path, &state, true)?;
     }
     Ok(Some(imported))
 }
@@ -446,6 +455,30 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+    }
+
+    #[test]
+    fn files_that_do_not_read_stay_as_they_are() {
+        let dirs = Dirs::new("damaged");
+        std::fs::create_dir_all(&dirs.old).unwrap();
+        std::fs::write(dirs.old.join("server"), "https://old.example").unwrap();
+        write_json(&dirs.config.join(LEGACY_FILE), &export(), false).unwrap();
+        std::fs::write(dirs.config.join(DESKTOP), "{halb").unwrap();
+        std::fs::write(dirs.config.join(STATE), r#"{"accounts": 3}"#).unwrap();
+        let imported = import_into(&dirs.config, Some(&dirs.old), NOW)
+            .unwrap()
+            .unwrap();
+        assert!(!imported.server);
+        assert_eq!((imported.volumes, imported.drafts), (0, 0));
+        assert_eq!(
+            std::fs::read_to_string(dirs.config.join(DESKTOP)).unwrap(),
+            "{halb"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dirs.config.join(STATE)).unwrap(),
+            r#"{"accounts": 3}"#
+        );
+        assert!(dirs.config.join(SETTINGS).exists());
     }
 
     #[test]
