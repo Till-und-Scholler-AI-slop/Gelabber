@@ -597,6 +597,13 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
             }
         }
     }
+    // `:focus-within`: a row holding the focus looks hovered too.
+    let focus_at = ui
+        .ctx()
+        .memory(|m| m.focused())
+        .and_then(|id| ui.ctx().read_response(id))
+        .filter(|r| r.layer_id == child.layer_id())
+        .map(|r| r.rect.center());
     let menu_id = pane.menu.map(|(id, _)| id);
     let mut new_bar = None;
     for (i, item) in items.iter().enumerate() {
@@ -629,7 +636,8 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
             ui.ctx().request_repaint();
         }
         let row_rect = Rect::from_min_size(pos2(rect.left(), y), vec2(width, layout.height));
-        let hovered = hovered_id == Some(item.msg.id);
+        let hovered =
+            hovered_id == Some(item.msg.id) || focus_at.is_some_and(|p| row_rect.contains(p));
         let menu_open = menu_id == Some(item.msg.id);
         let row_resp = child.interact(
             row_rect,

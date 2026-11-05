@@ -183,6 +183,28 @@ fn paint_image(ui: &Ui, images: &Images, url: &str, rect: Rect, cover: bool) {
     );
 }
 
+/// The global `:focus-visible` ring around a picture link, for example
+/// once the lightbox it opened hands focus back: square, as the link box
+/// has no radius of its own.
+fn picture_ring(ui: &Ui, response: &egui::Response, rect: Rect) {
+    if response.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
+        let theme = Theme::of(ui.ctx());
+        let painter = ui.painter();
+        painter.rect_stroke(
+            rect.expand(1.0),
+            0.0,
+            Stroke::new(2.0, theme.c.bg),
+            StrokeKind::Middle,
+        );
+        painter.rect_stroke(
+            rect.expand(3.0),
+            0.0,
+            Stroke::new(2.0, theme.c.focus),
+            StrokeKind::Middle,
+        );
+    }
+}
+
 impl Media {
     pub fn paint(
         &self,
@@ -208,6 +230,7 @@ impl Media {
                             format!("{name} vergrößern"),
                         )
                     });
+                    picture_ring(ui, &response, rect);
                     if response.hovered() {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::ZoomIn);
                     }
@@ -233,6 +256,7 @@ impl Media {
                                 format!("{name} vergrößern"),
                             )
                         });
+                        picture_ring(ui, &response, rect);
                         if response.hovered() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::ZoomIn);
                         }
@@ -302,6 +326,7 @@ pub fn lightbox(ctx: &egui::Context, images: &Images, url: &str, name: &str) -> 
         .fixed_pos(screen.min);
     // A modal <dialog>: the chat under it takes no clicks or Tab.
     ctx.memory_mut(|m| m.set_modal_layer(area.layer()));
+    crate::widgets::opener::dialog_shown(ctx, area.layer());
     let first = crate::widgets::field::mounted(ctx, egui::Id::unique("gelabber-lightbox-open"));
     area.show(ctx, |ui| {
         let backdrop = ui.allocate_rect(screen, Sense::click());

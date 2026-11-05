@@ -314,6 +314,9 @@ fn header_icon(
         c.hover,
     );
     ui.painter().rect_filled(rect, corner(7.0), fill);
+    if response.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
+        crate::widgets::focus_ring(ui.painter(), rect, 7.0, &theme);
+    }
     icons::paint_centered(
         ui.painter(),
         icon,

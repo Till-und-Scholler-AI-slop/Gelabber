@@ -187,6 +187,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                     } else {
                         c.panel
                     };
+                    if response.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
+                        crate::widgets::focus_ring(ui.painter(), row, theme.radius.md, &theme);
+                    }
                     let avatar = Rect::from_min_size(
                         pos2(row.left() + 6.0, row.center().y - 16.0),
                         Vec2::splat(32.0),

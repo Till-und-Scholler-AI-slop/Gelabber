@@ -88,6 +88,7 @@ impl<'a> Modal<'a> {
             .fixed_pos(screen.min);
         // Like a modal <dialog>: what is under it takes no clicks or Tab.
         ctx.memory_mut(|m| m.set_modal_layer(area.layer()));
+        super::opener::dialog_shown(ctx, area.layer());
         area.show(ctx, |ui| {
             // Backdrop.
             let backdrop = ui.allocate_rect(screen, Sense::click());

@@ -8,6 +8,7 @@ pub mod button;
 pub mod field;
 pub mod link;
 pub mod modal;
+pub mod opener;
 pub mod popover;
 pub mod separator;
 pub mod status;
