@@ -141,10 +141,16 @@ fn render(out: &Path, only: Option<Vec<String>>) {
     let scenes: Scenes = read("scenes.json");
     let fixture: Fixture = read("fixture.json");
     std::fs::create_dir_all(out).expect("create output directory");
+    // Device settings start empty in every scene, as in a fresh browser
+    // context, and the user's own app config is never read or written.
+    let config = std::env::temp_dir().join(format!("gelabber-parity-{}", std::process::id()));
+    // SAFETY: set before the first client starts a thread.
+    unsafe { std::env::set_var("GELABBER_CONFIG_DIR", &config) };
     for scene in &scenes.scenes {
         if only.as_ref().is_some_and(|o| !o.contains(&scene.name)) {
             continue;
         }
+        let _ = std::fs::remove_dir_all(&config);
         // Opening a channel marks it read; every scene starts from the reference.
         let reset = std::process::Command::new("node")
             .arg(parity_dir().join("reset.mjs"))
@@ -200,6 +206,7 @@ fn render(out: &Path, only: Option<Vec<String>>) {
         image.save(&path).expect("save png");
         println!("{}: {route} -> {}", scene.name, path.display());
     }
+    let _ = std::fs::remove_dir_all(&config);
 }
 
 /// Steps until the app has had nothing in flight for ten frames.

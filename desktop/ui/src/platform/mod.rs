@@ -108,6 +108,8 @@ pub struct Platform {
     keeper: Arc<Mutex<Option<session::Keeper>>>,
     started: bool,
     hidden: bool,
+    /// False on Wayland, where winit can neither hide nor raise the window.
+    window_can_hide: bool,
     quitting: bool,
     front: Option<bool>,
     next_tick: f64,
@@ -134,6 +136,7 @@ impl Platform {
             keeper: Arc::default(),
             started: false,
             hidden: false,
+            window_can_hide: true,
             quitting: false,
             front: None,
             next_tick: 0.0,
@@ -156,6 +159,17 @@ impl Platform {
             *keeper.lock() = Some(session::Keeper::restore(client));
             client.set_event_tap(Some(tap.clone()));
         })
+    }
+
+    /// Once the window exists. On Wayland winit 0.30 ignores hiding, un-minimizing
+    /// and focus, so a window closed to the tray would stay and never return.
+    pub fn set_window(&mut self, cc: &eframe::CreationContext<'_>) {
+        use eframe::egui_wgpu::wgpu::rwh::{HasDisplayHandle, RawDisplayHandle};
+        let wayland = matches!(
+            cc.display_handle().map(|h| h.as_raw()),
+            Ok(RawDisplayHandle::Wayland(_))
+        );
+        self.window_can_hide = !wayland;
     }
 
     fn start(&mut self, ctx: &Context) {
@@ -196,7 +210,9 @@ impl Platform {
                 }
             }
         }
-        let tray_shown = self.tray.as_ref().is_some_and(tray::Tray::visible);
+        // Close-to-tray needs a tray and a window that can hide and return.
+        let tray_shown =
+            self.window_can_hide && self.tray.as_ref().is_some_and(tray::Tray::visible);
         let (close, focused, minimized) = ctx.input(|i| {
             let v = i.viewport();
             (v.close_requested(), v.focused, v.minimized)
@@ -599,8 +615,7 @@ impl Updates {
                         ui.set_max_width(width);
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 10.0;
-                            let line =
-                                format!("Update verfügbar: Gelabber {} ist da.", found.version);
+                            let line = format!("Gelabber {} ist da.", found.version);
                             let block =
                                 crate::text::Block::single(ui, &line, crate::text::BODY, c.text);
                             let (rect, _) =

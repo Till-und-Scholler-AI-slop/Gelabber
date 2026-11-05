@@ -1,6 +1,6 @@
 //! The update check of the Tauri app (desktop/app/src/update.rs): shortly
 //! after the start and every six hours, `latest.json` of the latest release
-//! is read; a newer version shows the "Update verfügbar" notice. What is
+//! is read; a newer version shows the update notice. What is
 //! installed later must carry a minisign signature by `desktop/app/updater.pub`
 //! made for the version announced ([`verify`]); installing is packaging's.
 

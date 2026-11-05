@@ -37,10 +37,8 @@ impl ksni::Tray for Item {
         ksni::Category::Communications
     }
 
-    fn icon_name(&self) -> String {
-        crate::platform::APP_ID.into()
-    }
-
+    // No `icon_name`: hosts prefer a theme icon over the pixmap, so an
+    // installed `gelabber` icon would hide the unread dot.
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         let Some(picture) = &self.picture else {
             return Vec::new();

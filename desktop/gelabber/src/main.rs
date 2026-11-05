@@ -84,6 +84,8 @@ fn main() -> eframe::Result {
         "Gelabber",
         options,
         Box::new(move |cc| {
+            let mut platform = platform;
+            platform.set_window(cc);
             let prepare = platform.prepare_hook();
             let launcher = Launcher::with_prepare(cc, server, Box::new(remember), Some(prepare));
             Ok(Box::new(Desktop { launcher, platform }))

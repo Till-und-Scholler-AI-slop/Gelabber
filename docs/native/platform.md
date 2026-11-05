@@ -57,7 +57,9 @@ without notifications; the settings page then shows the browser texts.
   `Gelabber: 2 neue Nachrichten`.
 - Close-to-tray: with a visible tray and `close_to_tray`, closing hides the
   window; a call keeps running. The switch "Fenster schließen minimiert in
-  den Infobereich" appears in Benachrichtigungen only with a tray.
+  den Infobereich" appears in Benachrichtigungen only with a tray. Not on
+  Wayland: winit 0.30 can neither hide the window there nor raise it again,
+  so closing ends the app (the tray still shows the dot and "Beenden").
 - One instance: a Unix socket in `$XDG_RUNTIME_DIR` (0600), a loopback port
   with a secret on Windows. A second start shows the first window and ends.
 - Window: title "Gelabber", app id `gelabber`, icon `icon-192.png`, 1280×800,
@@ -78,9 +80,9 @@ the GlobalShortcuts portal (KDE, GNOME 48+, Hyprland:
 
 15 s after the start and every 6 hours while `autoCheck` holds, the
 `latest.json` of the latest GitHub release (`GELABBER_UPDATE_ENDPOINT`
-replaces it) is read. A newer version shows "Update verfügbar: Gelabber
-x.y.z ist da." with "Herunterladen" (the release page) and "Später", never
-during a call. `verify` checks a package as the Tauri updater does
+replaces it) is read. A newer version shows "Gelabber x.y.z ist da."
+(the Tauri notice's first sentence) with "Herunterladen" (the release page)
+and "Später", never during a call. `verify` checks a package as the Tauri updater does
 (minisign, `desktop/app/updater.pub` or `GELABBER_UPDATER_PUBKEY` at build
 time, signed for the announced version). Downloading and installing belong
 to packaging.

@@ -15,6 +15,11 @@ pub fn config_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("GELABBER_CONFIG_DIR").filter(|d| !d.is_empty()) {
         return Some(PathBuf::from(dir));
     }
+    // Tests that change a setting must not write into the user's own app.
+    if cfg!(test) {
+        let dir = format!("gelabber-ui-tests-{}", std::process::id());
+        return Some(std::env::temp_dir().join(dir));
+    }
     base_dir().map(|base| base.join(IDENTIFIER))
 }
 
