@@ -295,16 +295,21 @@ pub(crate) fn watch(inner: &Arc<Inner>, user: Uuid, on: bool) {
     if user == session.me {
         return;
     }
-    let changed = {
+    {
         let mut st = session.st.lock();
-        if on {
+        let changed = if on {
             st.watching.insert(user)
         } else {
             st.watching.remove(&user)
+        };
+        if !changed {
+            return;
         }
-    };
-    if !changed {
-        return;
+        // Queued under the lock, so the requests keep the order of the
+        // changes; without a seat the next one sends what is watched.
+        if let Some(seat) = &st.seat {
+            seat.queue_watch(user, on);
+        }
     }
     if !on {
         // Off drops the stream and its sound at once.
@@ -312,15 +317,6 @@ pub(crate) fn watch(inner: &Arc<Inner>, user: Uuid, on: bool) {
         inner.drop_frame(VideoKey::live(user));
     }
     session.publish_participants();
-    let seat = session.seat();
-    if let Some(seat) = seat {
-        spawn(inner, async move {
-            let data = json!({ "u": user, "k": "s", "on": on });
-            if let Err(e) = seat.sock.request("w", data).await {
-                tracing::debug!("watch {user}: {e}");
-            }
-        });
-    }
 }
 
 pub(crate) fn refresh_devices(inner: &Arc<Inner>) {
@@ -704,7 +700,11 @@ impl Session {
             hardware,
             ice_servers,
             send: tokio::sync::Mutex::new(None),
+            send_tp: Mutex::new(None),
             recv: Mutex::new(None),
+            pause_lock: tokio::sync::Mutex::new(()),
+            watch_queue: Mutex::new(std::collections::VecDeque::new()),
+            watch_lock: tokio::sync::Mutex::new(()),
             producers: Mutex::new(HashMap::new()),
             consumers: Mutex::new(HashMap::new()),
             removed: Mutex::new(HashSet::new()),
@@ -844,6 +844,11 @@ impl Session {
         };
         let local = {
             let mut st = self.st.lock();
+            if !self.live() {
+                drop(st);
+                std::thread::spawn(move || drop(source));
+                return;
+            }
             let epoch = st.mic_epoch;
             let local = Local {
                 source,
@@ -1203,8 +1208,7 @@ impl Session {
             let _ = mic.source.set_enabled(!silent);
         }
         if let Some(seat) = self.seat() {
-            let rt = inner.runtime().handle().clone();
-            rt.spawn(async move { seat.set_paused(Kind::A, mic_off).await });
+            inner.runtime().spawn(async move { seat.sync_mic().await });
         }
     }
 
@@ -1978,7 +1982,17 @@ pub(crate) struct Seat {
     /// The send transport, made with the first publication; the lock also
     /// keeps publications one at a time.
     send: tokio::sync::Mutex<Option<Arc<Tp>>>,
+    /// The send transport too, for `close` to refuse its requests while a
+    /// publication holds `send`.
+    send_tp: Mutex<Option<Arc<Tp>>>,
     recv: Mutex<Option<Arc<Tp>>>,
+    /// Keeps the microphone's pause in order: each turn sends the state
+    /// wanted when it runs, so the last one wins.
+    pause_lock: tokio::sync::Mutex<()>,
+    /// `w` requests in the order they were given; one turn of
+    /// `watch_lock` sends the oldest.
+    watch_queue: Mutex<std::collections::VecDeque<(Uuid, bool)>>,
+    watch_lock: tokio::sync::Mutex<()>,
     producers: Mutex<HashMap<Kind, Held>>,
     consumers: Mutex<HashMap<String, Received>>,
     /// `consumerId:generation` of consumers that closed.
@@ -2015,7 +2029,10 @@ impl Seat {
         }
         let recv = self.recv.lock().take();
         let send = self.send.try_lock().ok().and_then(|mut s| s.take());
-        for tp in recv.iter().chain(send.iter()) {
+        // A publication in flight holds `send`; its transport is refused
+        // here all the same and freed when `publish` returns.
+        let in_flight = self.send_tp.lock().take();
+        for tp in recv.iter().chain(send.iter()).chain(in_flight.iter()) {
             tp.orphan();
         }
         if leave && self.sock.is_open() {
@@ -2203,6 +2220,25 @@ impl Seat {
         parent: Option<String>,
         paused: bool,
     ) -> Result<(), MediaError> {
+        let result = self.publish_now(kind, local, parent, paused).await;
+        // `close` cannot take the send transport while a publication holds
+        // it: the last one out frees it, off the runtime.
+        if self.closed.load(Ordering::Acquire)
+            && let Ok(mut send) = self.send.try_lock()
+            && let Some(tp) = send.take()
+        {
+            std::thread::spawn(move || drop(tp));
+        }
+        result
+    }
+
+    async fn publish_now(
+        self: &Arc<Self>,
+        kind: Kind,
+        local: &Local,
+        parent: Option<String>,
+        paused: bool,
+    ) -> Result<(), MediaError> {
         let mut send = self.send.lock().await;
         if self.closed.load(Ordering::Acquire) {
             return Err(MediaError::new("connection_closed"));
@@ -2230,7 +2266,11 @@ impl Seat {
             return match replaced {
                 Some(Ok(())) => {
                     drop(send);
-                    self.set_paused(kind, paused).await;
+                    if kind == Kind::A {
+                        self.sync_mic().await;
+                    } else {
+                        self.set_paused(kind, paused).await;
+                    }
                     Ok(())
                 }
                 _ => Err(MediaError::new("sdk_failed")),
@@ -2248,7 +2288,9 @@ impl Seat {
             _ => parent,
         };
         if send.is_none() {
-            *send = Some(self.make_transport(core::Direction::Send).await?);
+            let tp = self.make_transport(core::Direction::Send).await?;
+            *self.send_tp.lock() = Some(tp.clone());
+            *send = Some(tp);
         }
         let tp = send.clone().expect("send transport");
         let old = self.producers.lock().get(&kind).map(|h| h.id.clone());
@@ -2328,6 +2370,10 @@ impl Seat {
             let _ = producer.lock().set_paused(true);
         }
         self.apply_parameters_of(kind, &producer, local, &settings);
+        if kind == Kind::A {
+            // Mute may have changed while the producer was made.
+            self.sync_mic().await;
+        }
         Ok(())
     }
 
@@ -2419,6 +2465,34 @@ impl Seat {
                 (k, logic::stream_profile(id))
             })
             .collect()
+    }
+
+    /// Pauses or resumes the microphone's producer as mute and deafen are
+    /// now, in order with the other calls of this.
+    async fn sync_mic(&self) {
+        let _turn = self.pause_lock.lock().await;
+        let Some(inner) = self.session.upgrade().and_then(|s| s.inner()) else {
+            return;
+        };
+        let paused = inner.read(|s| s.muted || s.deafened);
+        self.set_paused(Kind::A, paused).await;
+    }
+
+    /// Queues a `w` behind the ones given before it. Each step counts: an
+    /// off already dropped the stream here, so the server must see it too.
+    fn queue_watch(self: &Arc<Self>, user: Uuid, on: bool) {
+        self.watch_queue.lock().push_back((user, on));
+        let seat = self.clone();
+        self.runtime.spawn(async move {
+            let _turn = seat.watch_lock.lock().await;
+            let Some((user, on)) = seat.watch_queue.lock().pop_front() else {
+                return;
+            };
+            let data = json!({ "u": user, "k": "s", "on": on });
+            if let Err(e) = seat.sock.request("w", data).await {
+                tracing::debug!("watch {user}: {e}");
+            }
+        });
     }
 
     /// Pauses or resumes a producer here and on the server.

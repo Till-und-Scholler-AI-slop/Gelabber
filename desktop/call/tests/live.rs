@@ -276,6 +276,19 @@ fn lena_joins_sofa_with_jonas_and_mira() {
     wait("watching ends", Duration::from_secs(5), || {
         tom_call.frame(VideoKey::live(lena)).is_none()
     });
+    // Quick toggles reach the server in order: the last one wins.
+    tom_call.watch(lena, true);
+    tom_call.watch(lena, false);
+    tom_call.watch(lena, true);
+    wait("Tom watches again", Duration::from_secs(20), || {
+        tom_call
+            .frame(VideoKey::live(lena))
+            .is_some_and(|f| f.serial > 3)
+    });
+    tom_call.watch(lena, false);
+    wait("watching ends again", Duration::from_secs(5), || {
+        tom_call.frame(VideoKey::live(lena)).is_none()
+    });
     call.stop_live();
     wait("Live off for the others", Duration::from_secs(10), || {
         published.lock().contains(&(SigKind::U, Some(TrackKind::S)))

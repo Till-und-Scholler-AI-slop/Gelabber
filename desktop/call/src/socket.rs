@@ -167,12 +167,14 @@ impl MediaSocket {
 
     /// Sends a request and waits up to ten seconds for its answer.
     pub(crate) async fn request(&self, op: &str, data: Value) -> Answer {
-        if !self.is_open() {
-            return Err(MediaError::new("connection_closed"));
-        }
         let (tx, rx) = oneshot::channel();
         let id = {
             let mut pending = self.pending.lock();
+            // Checked under the lock `fail_all` drains, so a request racing
+            // a close fails now instead of waiting out the deadline.
+            if !self.is_open() {
+                return Err(MediaError::new("connection_closed"));
+            }
             if pending.len() >= MAX_PENDING {
                 return Err(MediaError::new("request_overflow"));
             }
