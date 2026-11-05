@@ -648,7 +648,8 @@ fn general(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
                 }
             }
         }
-        crate::screens::auth::focus_invalid(ui, &mut s.name_errors);
+        // The web form has no form ref, so focus stays where it was.
+        s.name_errors.focus = None;
     });
 }
 

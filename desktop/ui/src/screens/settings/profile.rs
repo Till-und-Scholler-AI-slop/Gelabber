@@ -8,7 +8,7 @@ use super::controls::{self, Confirm, Picked};
 use super::{adopt_user, op_pending, settled};
 use crate::app::AppCtx;
 use crate::rules::{Failure, FormErrors, field_message, validate_name, validate_password};
-use crate::screens::auth::{focus_invalid, form_error};
+use crate::screens::auth::form_error;
 use crate::text;
 use crate::theme::Theme;
 use crate::widgets::{Avatar, AvatarSize, Button, ButtonVariant, TextField};
@@ -293,7 +293,8 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
                 s.errors.set_fields(fields);
             }
         }
-        focus_invalid(ui, &mut s.errors);
+        // ProfilePage's forms call useFormErrors() without a form ref: focus stays put.
+        s.errors.focus = None;
     });
 }
 
@@ -415,7 +416,8 @@ pub fn security(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut SecurityStat
                 s.errors.set_fields(fields);
             }
         }
-        focus_invalid(ui, &mut s.errors);
+        // ProfilePage's forms call useFormErrors() without a form ref: focus stays put.
+        s.errors.focus = None;
 
         // `.settings-danger`: margin-top 40, border-top, padding-top 24.
         ui.add_space(32.0);

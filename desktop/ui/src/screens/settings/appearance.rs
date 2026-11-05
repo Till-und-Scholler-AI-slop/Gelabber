@@ -9,7 +9,7 @@ use super::themes::{self, preset};
 use crate::app::AppCtx;
 use crate::text::{self, Block};
 use crate::theme::{BaseColors, Theme, corner};
-use crate::widgets::{eased, focus_ring, keyboard_focus};
+use crate::widgets::{Link, eased, focus_ring, keyboard_focus, link};
 
 const MODES: [(&str, &str, &str); 3] = [
     ("light", "Hell", "Gelabber Hell"),
@@ -192,16 +192,22 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         .unwrap_or_default();
     let rich = text::Rich::new(controls::HINT)
         .push(&lead, controls::HINT, c.muted)
-        .push_underlined("Weitere Themes", controls::HINT, c.accent_text)
+        .push("Weitere Themes", controls::HINT, c.accent_text)
         .layout(ui);
     let link_top = ui.cursor().min;
     text::show(ui, &rich);
     if let Some(r) = rich.section_rect(link_top, 1) {
-        let resp = ui.interact(r, Id::unique("gelabber-more-themes"), Sense::click());
-        if resp.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
-        if resp.clicked() {
+        // `.settings-link`: underline 2px under the baseline, not at the line box.
+        link::underline(
+            ui.painter(),
+            controls::HINT,
+            r.top(),
+            r.left(),
+            r.right(),
+            c.accent_text,
+        );
+        let id = Id::unique("gelabber-more-themes");
+        if Link::interact(ui, r, id, "Weitere Themes").clicked() {
             super::go(ui.ctx(), app, "/settings/themes");
         }
     }

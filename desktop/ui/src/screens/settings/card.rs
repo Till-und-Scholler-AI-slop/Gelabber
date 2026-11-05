@@ -807,7 +807,8 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
             s.errors.set_fields(fields);
         }
     }
-    crate::screens::auth::focus_invalid(ui, &mut s.errors);
+    // ProfileCardForm has no form ref, so focus stays where it was.
+    s.errors.focus = None;
 
     // The preview sticks 24px under the top while the form scrolls.
     let person = CardPerson {

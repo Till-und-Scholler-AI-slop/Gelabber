@@ -237,11 +237,17 @@ fn toggle(ui: &mut Ui, id: &str, label: &str, on: &mut bool, disabled: bool) -> 
 /// A settings-area button: 36px, accent text (settings.css override).
 fn button(ui: &mut Ui, label: &str, ghost: bool, disabled: bool) -> bool {
     let theme = Theme::of(ui.ctx());
+    // `size="sm"` padding (12px) at the form's 36px min-height.
     let b = Button::new(label)
+        .width(button_width(ui, label))
         .text_color(theme.c.accent_text)
         .disabled(disabled);
     let b = if ghost { b.ghost() } else { b };
     ui.add(b).clicked()
+}
+
+fn button_width(ui: &Ui, label: &str) -> f32 {
+    Block::single(ui, label, text::UI, Color32::WHITE).width() + 2.0 * 12.0 + 2.0
 }
 
 /// A field with its small label above (`.media-field`).
@@ -432,8 +438,7 @@ pub fn audio(ui: &mut Ui, _app: &mut AppCtx, s: &mut State) {
                 HINT,
                 c.muted,
             );
-            let bw = Block::single(ui, "Mikrofon testen und vergleichen", text::UI, c.text).width()
-                + 34.0;
+            let bw = button_width(ui, "Mikrofon testen und vergleichen");
             let rect = Rect::from_min_size(pos2(top.x + w - bw, top.y), vec2(bw, 36.0));
             controls::place(ui, UiBuilder::new().max_rect(rect), |ui| {
                 button(ui, "Mikrofon testen und vergleichen", false, false);
@@ -558,7 +563,7 @@ fn reveal_box(ui: &mut Ui, s: &mut State) {
     let width = ui.available_width();
     let top = ui.cursor().min;
     let label = "Gerätenamen anzeigen";
-    let bw = Block::single(ui, label, text::UI, c.text).width() + 34.0;
+    let bw = button_width(ui, label);
     let text_w = width - 24.0 - 12.0 - bw;
     let msg = Block::wrapped(
         ui,
@@ -1002,7 +1007,7 @@ pub fn video(ui: &mut Ui, _app: &mut AppCtx, s: &mut State) {
                     p.video_upload_limit > 0.0
                 };
                 let b = Block::single(ui, label, text::UI, c.text);
-                let w = 1.0 + 12.0 + 20.0 + 8.0 + b.width() + 12.0 + 1.0 + 4.0;
+                let w = 1.0 + 12.0 + 20.0 + 8.0 + b.width() + 12.0 + 1.0;
                 let rect = Rect::from_min_size(pos2(x, top.y), vec2(w, 36.0));
                 let id = Id::unique(("gelabber-upload-mode", i));
                 let response = ui.interact(rect, id, Sense::click());
@@ -1022,7 +1027,7 @@ pub fn video(ui: &mut Ui, _app: &mut AppCtx, s: &mut State) {
                 b.paint(
                     ui.painter(),
                     pos2(
-                        rect.left() + 13.0 + 20.0 + 12.0,
+                        rect.left() + 13.0 + 20.0 + 8.0,
                         rect.center().y - b.height() / 2.0,
                     ),
                 );

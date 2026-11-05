@@ -16,7 +16,7 @@ use crate::icons::{self, Icon};
 use crate::task::{Pending, poll};
 use crate::text::{self, Block, TextStyle};
 use crate::theme::{self, BaseColors, Definition, Mode, Style, Theme, corner, hex};
-use crate::widgets::{Button, ButtonVariant, eased, focus_ring, keyboard_focus};
+use crate::widgets::{Button, ButtonVariant, Link, eased, focus_ring, keyboard_focus, link};
 
 const MAX_THEMES: usize = 50;
 const MAX_IMPORT_BYTES: usize = 64 * 1024;
@@ -1126,7 +1126,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
                     Style::Soft => "Weich",
                     Style::Terminal => "Terminal",
                 };
-                Block::single(ui, &format!("{mode} ·  {style}"), controls::HINT, c.muted)
+                Block::single(ui, &format!("{mode} · {style}"), controls::HINT, c.muted)
                     .paint(ui.painter(), pos2(x, desc_top + 13.0 + 19.5 + 4.0));
                 let sy = desc_top + 13.0 + 19.5 + 4.0 + 18.0 + 10.0;
                 for (k, col) in [
@@ -1331,18 +1331,16 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
     };
     let rich = text::Rich::new(foot)
         .push(&format!("{lead} Paletten nach "), foot, c.muted)
-        .push_underlined("Omarchy", foot, c.muted)
+        .push("Omarchy", foot, c.muted)
         .push(", für Gelabber angepasst.", foot, c.muted)
         .wrap(width)
         .layout(ui);
     let at = ui.cursor().min;
     text::show(ui, &rich);
     if let Some(r) = rich.section_rect(at, 1) {
-        let resp = ui.interact(r, Id::unique("gelabber-omarchy"), Sense::click());
-        if resp.hovered() {
-            ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
-        if resp.clicked() {
+        // Under the baseline, not at the bottom of the 1.6 line box.
+        link::underline(ui.painter(), foot, r.top(), r.left(), r.right(), c.muted);
+        if Link::interact(ui, r, Id::unique("gelabber-omarchy"), "Omarchy").clicked() {
             ctx.open_url(egui::OpenUrl::new_tab(
                 "https://github.com/omacom/omarchy/tree/quattro/themes",
             ));
