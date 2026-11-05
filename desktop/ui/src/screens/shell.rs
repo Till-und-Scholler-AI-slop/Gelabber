@@ -223,6 +223,10 @@ fn effects(ui: &Ui, app: &mut AppCtx) {
         }
         first
     });
+    // Kino belongs to the room's page: another page leaves it.
+    if first {
+        voice::stage::set_kino(ui.ctx(), false);
+    }
     let user = app.client.with_state(|s| s.me().map(|m| m.id));
     match &route {
         Route::Server(s) => {
