@@ -734,7 +734,8 @@ fn channel_dialog(
             ui.spacing_mut().item_spacing.y = 20.0;
             if editing.is_none() {
                 ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 8.0;
+                    // The legend sits 2px higher in its fieldset than a label.
+                    ui.spacing_mut().item_spacing.y = 6.0;
                     text::label(ui, "Kanaltyp", text::UI, c.text);
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
@@ -743,8 +744,17 @@ fn channel_dialog(
                             (false, Icon::Hash, "Text", "Nachrichten, Dateien"),
                             (true, Icon::Speaker, "Voice", "Sprache, Live"),
                         ] {
+                            // A `RadioCard`: the radio, then the label and its hint.
                             let (rect, response) =
-                                ui.allocate_exact_size(Vec2::new(w, 60.0), egui::Sense::click());
+                                ui.allocate_exact_size(Vec2::new(w, 63.0), egui::Sense::click());
+                            response.widget_info(|| {
+                                egui::WidgetInfo::selected(
+                                    egui::Role::RadioButton,
+                                    true,
+                                    *voice == is_voice,
+                                    label,
+                                )
+                            });
                             let on = *voice == is_voice;
                             ui.painter().rect(
                                 rect,
@@ -759,25 +769,25 @@ fn channel_dialog(
                                 Stroke::new(1.0, if on { c.accent } else { c.border_strong }),
                                 StrokeKind::Inside,
                             );
+                            crate::screens::settings::controls::radio_mark(
+                                ui,
+                                pos2(rect.left() + 13.0, rect.top() + 12.0),
+                                on,
+                            );
+                            let x = rect.left() + 46.0;
                             icons::paint(
                                 ui.painter(),
                                 icon,
-                                pos2(rect.left() + 13.0, rect.top() + 14.0),
+                                pos2(x, rect.top() + 16.0),
                                 14.0,
                                 c.text,
                             );
                             let strong = Block::single(ui, label, text::UI.weight(600.0), c.text);
-                            strong.paint(
-                                ui.painter(),
-                                pos2(rect.left() + 13.0 + 20.0, rect.top() + 11.0),
-                            );
+                            strong.paint(ui.painter(), pos2(x + 14.0 + 6.0, rect.top() + 13.0));
                             let small = Block::single(ui, detail, text::META, c.muted);
                             small.paint(
                                 ui.painter(),
-                                pos2(
-                                    rect.left() + 13.0,
-                                    rect.top() + 11.0 + strong.height() + 2.0,
-                                ),
+                                pos2(x, rect.top() + 13.0 + strong.height() + 3.0),
                             );
                             if response.clicked() {
                                 *voice = is_voice;
