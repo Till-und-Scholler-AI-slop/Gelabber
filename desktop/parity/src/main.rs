@@ -11,6 +11,9 @@
 //! window is not built yet; acceptance is always on the full scene.
 //!
 //! Reads web/scripts/parity/{scenes,fixture}.json from the repository.
+//! A scene's actions (click, link, rightclick, clicktext, key, type, say,
+//! wait) mean the same in shots.mjs; posts and `after` are undone with
+//! say.mjs once the screenshot is taken.
 
 mod pixels;
 mod ssim;
