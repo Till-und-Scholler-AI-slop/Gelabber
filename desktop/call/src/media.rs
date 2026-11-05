@@ -1240,6 +1240,11 @@ impl Session {
     /// Ends the Live when its capture stops (the person ended it in the
     /// desktop, the window closed).
     async fn watch_screen(self: Arc<Self>, turn: u64) {
+        let app = self
+            .inner()
+            .map(|i| i.settings().source_audio_app)
+            .unwrap_or_default();
+        let mut quiet = 0;
         loop {
             tokio::time::sleep(SCREEN_POLL).await;
             let source = {
@@ -1265,12 +1270,19 @@ impl Session {
                 .map(|a| a.source.clone());
             if let Some(audio) = audio
                 && let Ok(state) = audio.state()
-                && state["state"].as_str().is_some_and(|s| s != "live")
                 && let Some(inner) = self.inner()
             {
+                let ended = state["state"].as_str().is_some_and(|st| st != "live");
+                // `noteSilentSource`: a chosen application that plays nothing.
+                let silent = logic::silent_app(&app, state["streams"].as_u64(), &mut quiet);
                 inner.write(|s| {
-                    if s.live_sound == LiveSound::Sharing {
+                    if !matches!(s.live_sound, LiveSound::Sharing | LiveSound::Silent(_)) {
+                        return;
+                    }
+                    if ended {
                         s.live_sound = LiveSound::Ended;
+                    } else if let Some(silent) = silent {
+                        s.live_sound = silent.map_or(LiveSound::Sharing, LiveSound::Silent);
                     }
                 });
             }

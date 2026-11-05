@@ -710,6 +710,23 @@ pub const MIC_TEST_STALLED: &str =
     "Das Mikrofon liefert keine Daten. Prüfe das Eingabegerät und starte den Test erneut.";
 pub const MIC_TEST_NO_LEVELS: &str = "Mikrofonpegel nicht verfügbar.";
 
+/// `SILENT_SECONDS` of localSourceAudio.ts: a chosen application may pause
+/// between two songs; only one quiet this many polls in a row counts.
+pub const SILENT_POLLS: u32 = 3;
+
+/// One poll of the Live sound's capture (`streams` playback streams of the
+/// chosen `app`): `Some(Some(app))` once it stays without any, `Some(None)`
+/// while it plays, `None` when nothing can be said ("every application",
+/// or no count from the core).
+pub fn silent_app(app: &str, streams: Option<u64>, quiet: &mut u32) -> Option<Option<String>> {
+    if app.is_empty() {
+        return None;
+    }
+    let streams = streams?;
+    *quiet = if streams > 0 { 0 } else { *quiet + 1 };
+    Some((*quiet >= SILENT_POLLS).then(|| app.to_owned()))
+}
+
 /// Whether the core's microphone error is a refused permission rather
 /// than a missing or busy device (`micRefused`).
 pub fn mic_refused(error: &str) -> bool {
@@ -754,6 +771,23 @@ pub fn video_key(user: Uuid, kind: Kind) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chosen_application_counts_as_silent_after_three_quiet_polls() {
+        let mut quiet = 0;
+        assert_eq!(silent_app("Spotify", Some(0), &mut quiet), Some(None));
+        assert_eq!(silent_app("Spotify", Some(0), &mut quiet), Some(None));
+        assert_eq!(
+            silent_app("Spotify", Some(0), &mut quiet),
+            Some(Some("Spotify".into()))
+        );
+        // A song again: sharing.
+        assert_eq!(silent_app("Spotify", Some(2), &mut quiet), Some(None));
+        assert_eq!(quiet, 0);
+        // "Every application" with nothing playing is ordinary silence.
+        assert_eq!(silent_app("", Some(0), &mut quiet), None);
+        assert_eq!(silent_app("Spotify", None, &mut quiet), None);
+    }
 
     fn codec(mime: &str, parameters: Value) -> Value {
         json!({ "mimeType": mime, "parameters": parameters, "kind": "video" })
