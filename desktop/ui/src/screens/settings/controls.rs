@@ -236,12 +236,13 @@ pub fn switch_row(
         description.map(|d| Block::wrapped(ui, d, text::META.line_height(1.5), c.muted, text_w));
     let content_h = label_block.height() + desc_block.as_ref().map_or(0.0, |d| 4.0 + d.height());
     let height = (content_h + 24.0 + 1.0).max(64.0);
+    // The row only forwards clicks; Tab reaches the switch in it.
     let (rect, response) = ui.allocate_exact_size(
         vec2(width, height),
         if disabled {
             Sense::hover()
         } else {
-            Sense::click()
+            Sense::CLICK
         },
     );
     let id = Id::unique(("gelabber-switch-row", id));
@@ -277,6 +278,8 @@ pub fn switch_row(
         UiBuilder::new().max_rect(switch_rect).id_salt(id),
         |ui| ui.add(Switch::new(&mut value).disabled(disabled)),
     );
+    // `<label>` of the switch input: the row's text names it.
+    sw.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, !disabled, *on, label));
     if sw.changed() && !changed {
         *on = value;
         changed = true;
@@ -312,7 +315,13 @@ pub fn chips(
         let block = Block::single(ui, label, style, c.text);
         let w = block.width() + 24.0 + 2.0;
         let rect = Rect::from_min_size(pos2(x, start.y), vec2(w, height));
-        let response = ui.interact(rect, id.with(i), Sense::click());
+        // One Tab stop for the group, the chosen chip (`role=radiogroup`
+        // with a roving tabIndex); the arrows move between them.
+        let stop = on || ui.memory(|m| m.has_focus(id.with(i)));
+        let sense = if stop { Sense::click() } else { Sense::CLICK };
+        let response = ui.interact(rect, id.with(i), sense);
+        response
+            .widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, on, *label));
         if response.clicked() {
             chosen = Some(i);
         }
@@ -431,8 +440,7 @@ pub fn radio_mark(ui: &mut Ui, min: Pos2, checked: bool) {
     let rect = Rect::from_min_size(min, Vec2::splat(20.0));
     let mut value = checked;
     place(ui, UiBuilder::new().max_rect(rect), |ui| {
-        let response = ui.add(Checkbox::new(&mut value).radio());
-        response.surrender_focus();
+        ui.add(Checkbox::new(&mut value).radio().decorative());
     });
 }
 
@@ -878,66 +886,15 @@ pub fn show_confirm(ctx: &egui::Context) {
 // ----------------------------------------------------------- image pick
 
 /// A file chosen in the system dialog, read off the UI thread.
-pub type Picked = Arc<Mutex<Option<Option<(Vec<u8>, String)>>>>;
+pub use crate::platform::files::Picked;
 
-/// Opens the desktop's file dialog (xdg-desktop-portal through zenity or
-/// kdialog); the slot fills with the bytes and the file name, or `None`
-/// when nothing was chosen.
+/// Opens the desktop's file chooser (platform/files.rs: the portal, zenity
+/// or kdialog, else a path field in the window); the slot fills with the
+/// bytes and the file name, or `None` when nothing was chosen.
 pub fn pick_file(ctx: &egui::Context, title: &str, filter: &[&str]) -> Picked {
     let slot: Picked = Arc::new(Mutex::new(None));
-    let out = slot.clone();
-    let ctx = ctx.clone();
-    let title = title.to_owned();
-    let patterns = filter.join(" ");
-    std::thread::spawn(move || {
-        let path = run_dialog(&title, &patterns);
-        let file = path.and_then(|p| {
-            let name = std::path::Path::new(&p)
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            std::fs::read(&p).ok().map(|bytes| (bytes, name))
-        });
-        *out.lock() = Some(file);
-        ctx.request_repaint();
-    });
+    crate::platform::files::pick(ctx, title, filter, slot.clone());
     slot
-}
-
-fn run_dialog(title: &str, patterns: &str) -> Option<String> {
-    use std::process::Command;
-    let attempts: [(&str, Vec<String>); 2] = [
-        (
-            "zenity",
-            vec![
-                "--file-selection".into(),
-                format!("--title={title}"),
-                format!("--file-filter={patterns}"),
-            ],
-        ),
-        (
-            "kdialog",
-            vec![
-                "--title".into(),
-                title.into(),
-                "--getopenfilename".into(),
-                ".".into(),
-                patterns.into(),
-            ],
-        ),
-    ];
-    for (program, args) in attempts {
-        match Command::new(program).args(&args).output() {
-            Ok(out) if out.status.success() => {
-                let path = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-                return (!path.is_empty()).then_some(path);
-            }
-            // The dialog ran and was cancelled.
-            Ok(_) => return None,
-            Err(_) => continue,
-        }
-    }
-    None
 }
 
 /// Saves `bytes` where the user chooses (the web's download); without a

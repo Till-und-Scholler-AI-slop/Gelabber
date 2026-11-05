@@ -116,6 +116,12 @@ impl<'a> Modal<'a> {
             // Header: padding 20 64 12 24.
             let title = Block::wrapped(ui, self.title, text::TITLE_SM, c.text, width - 2.0 - 88.0);
             title.paint(&painter, pos2(card.left() + 25.0, card.top() + 21.0));
+            let heading = ui.interact(
+                Rect::from_min_size(pos2(card.left() + 25.0, card.top() + 21.0), title.size()),
+                ui.scope_id().with("modal-title"),
+                Sense::hover(),
+            );
+            super::announce(&heading, egui::Role::Heading, self.title);
             let close_rect = Rect::from_min_size(
                 pos2(card.right() - 12.0 - 36.0, card.top() + 12.0),
                 Vec2::splat(36.0),

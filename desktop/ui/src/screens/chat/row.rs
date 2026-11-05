@@ -1088,6 +1088,7 @@ mod tests {
             code: "validation_failed".into(),
             message: String::new(),
             fields: serde_json::json!({"attachment_ids.0": "mismatch"}),
+            retry_after: None,
         });
         let state = SendState::Failed {
             error: failure_line(&p),

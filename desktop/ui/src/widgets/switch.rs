@@ -75,6 +75,8 @@ pub struct Checkbox<'a> {
     checked: &'a mut bool,
     radio: bool,
     disabled: bool,
+    /// Only the mark, for a card that is the control itself.
+    decorative: bool,
     label: Option<&'a str>,
 }
 
@@ -84,6 +86,7 @@ impl<'a> Checkbox<'a> {
             checked,
             radio: false,
             disabled: false,
+            decorative: false,
             label: None,
         }
     }
@@ -103,6 +106,13 @@ impl<'a> Checkbox<'a> {
         self.disabled = disabled;
         self
     }
+
+    /// Drawn like an enabled one but takes no click or focus: the card
+    /// around it is the radio (no Tab stop that would swallow the Tab).
+    pub fn decorative(mut self) -> Self {
+        self.decorative = true;
+        self
+    }
 }
 
 /// The check mark's `clip-path` polygon in a 12×12 box.
@@ -119,7 +129,7 @@ impl Widget for Checkbox<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         let theme = Theme::of(ui.ctx());
         let c = &theme.c;
-        let sense = if self.disabled {
+        let sense = if self.disabled || self.decorative {
             Sense::hover()
         } else {
             Sense::click()

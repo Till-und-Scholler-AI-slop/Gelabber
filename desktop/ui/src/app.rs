@@ -151,6 +151,8 @@ fn hex_digit(b: u8) -> Option<u8> {
 pub struct Nav {
     current: Location,
     back: Vec<Location>,
+    /// Entries left by going back, for Alt+→ and the mouse's forward button.
+    forward: Vec<Location>,
     changed: bool,
 }
 
@@ -159,6 +161,7 @@ impl Nav {
         Self {
             current: Location::parse(href),
             back: Vec::new(),
+            forward: Vec::new(),
             changed: true,
         }
     }
@@ -176,6 +179,7 @@ impl Nav {
         let next = Location::parse(href);
         if next != self.current {
             self.back.push(std::mem::replace(&mut self.current, next));
+            self.forward.clear();
             self.changed = true;
         }
     }
@@ -197,7 +201,20 @@ impl Nav {
     pub fn back(&mut self) -> bool {
         match self.back.pop() {
             Some(previous) => {
-                self.current = previous;
+                self.forward
+                    .push(std::mem::replace(&mut self.current, previous));
+                self.changed = true;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Forward one entry after [`Self::back`]; false when there is none.
+    pub fn forward(&mut self) -> bool {
+        match self.forward.pop() {
+            Some(next) => {
+                self.back.push(std::mem::replace(&mut self.current, next));
                 self.changed = true;
                 true
             }
@@ -328,6 +345,8 @@ pub struct GelabberApp {
     client_signed_in: bool,
     /// The video tiles' pipeline is installed in the renderer.
     video_ready: bool,
+    /// The theme's page colour, for the window's clear colour.
+    background: std::cell::Cell<egui::Color32>,
 }
 
 impl GelabberApp {
@@ -339,7 +358,9 @@ impl GelabberApp {
     /// screen hands over to the app once a server is chosen).
     pub fn with_context(ctx: &egui::Context, client: Client, route: Option<String>) -> Self {
         crate::fonts::install(ctx);
-        theme::set(ctx, Theme::dark());
+        theme::ensure(ctx);
+        // A new server's account: its own theme document.
+        screens::settings::forget_account(ctx);
         let repaint_ctx = ctx.clone();
         client.set_repaint(std::sync::Arc::new(move || repaint_ctx.request_repaint()));
         let images = Images::new(client.clone());
@@ -364,6 +385,7 @@ impl GelabberApp {
             workspace: false,
             client_signed_in: false,
             video_ready: false,
+            background: std::cell::Cell::new(Theme::dark().c.bg),
         }
     }
 
@@ -460,17 +482,30 @@ impl GelabberApp {
                 ctx.request_repaint_after(Duration::from_secs_f64(wait.min(1.0)));
             }
         }
-        // Mouse back button and Alt+← go back, as in the browser.
-        if ctx.input(|i| {
-            i.pointer.button_pressed(egui::PointerButton::Extra1)
-                || (i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft))
-        }) {
+        // The mouse's back and forward buttons and Alt+←/→, as in the browser.
+        let (back, forward) = ctx.input(|i| {
+            (
+                i.pointer.button_pressed(egui::PointerButton::Extra1)
+                    || (i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft)),
+                i.pointer.button_pressed(egui::PointerButton::Extra2)
+                    || (i.modifiers.alt && i.key_pressed(egui::Key::ArrowRight)),
+            )
+        });
+        if back {
             self.nav.back();
+        } else if forward {
+            self.nav.forward();
         }
 
+        // The account's theme (or the one stored for the first paint), text
+        // size and motion, on every page.
+        screens::settings::apply_preferences(&ctx, &self.client);
         let theme = Theme::of(&ctx);
+        self.background.set(theme.c.bg);
         let screen = ctx.content_rect();
         ui.painter().rect_filled(screen, 0.0, theme.c.bg);
+        // The first Tab stop of every page.
+        let skip = skip_link(ui);
 
         if self.session.status == SessionStatus::Unknown {
             let mut app = AppCtx {
@@ -507,10 +542,188 @@ impl GelabberApp {
             account_mail: self.account_mail,
             toasts: &mut self.toasts,
         };
+        if !is_workspace(app.nav.route()) {
+            content_anchor(ui, screen.min);
+        }
         screens::show(ui, &mut app, &mut self.screen);
+        skip.paint(ui);
+        if signed_in {
+            let status = self.client.with_state(|s| s.gateway);
+            screens::shell::connection::show(ui, status);
+        } else {
+            screens::shell::connection::show(ui, gelabber_client::GatewayStatus::Idle);
+        }
+        logout_failed(ui, &self.client, signed_in);
+        // A file choice that no desktop chooser took: the path field.
+        crate::platform::files::show_in_app(&ctx);
         self.toasts.show(ui, !is_workspace(self.nav.route()));
         crate::widgets::opener::restore(&ctx);
     }
+}
+
+/// "Zum Inhalt springen" (`.shell-skip-link`, AppShell.tsx): off screen
+/// until it has focus, then in the top left corner over the page.
+struct SkipLink {
+    focused: bool,
+    rect: egui::Rect,
+}
+
+fn skip_link(ui: &mut Ui) -> SkipLink {
+    let id = egui::Id::unique("gelabber-skip-link");
+    // A jump no page took up (a screen without content) does not linger.
+    ui.ctx().data_mut(|d| d.remove_temp::<bool>(skip_target()));
+    let focused = ui.memory(|m| m.has_focus(id));
+    let label = "Zum Inhalt springen";
+    let style = crate::text::TextStyle::new(16.0, 400.0, 1.5);
+    let block = crate::text::Block::single(ui, label, style, egui::Color32::PLACEHOLDER);
+    // padding 12px 18px at left 12px, top 12px.
+    let rect = egui::Rect::from_min_size(
+        ui.ctx().content_rect().min + egui::vec2(12.0, 12.0),
+        egui::vec2(18.0 + block.width() + 18.0, 12.0 + block.height() + 12.0),
+    );
+    // Only clickable while shown; otherwise it takes no pointer.
+    let sense = if focused {
+        egui::Sense::click()
+    } else {
+        egui::Sense::focusable_noninteractive()
+    };
+    let response = ui.interact(rect, id, sense);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, label));
+    if response.clicked() {
+        // To the content: [`content_anchor`] takes the focus this frame.
+        ui.ctx().data_mut(|d| d.insert_temp(skip_target(), true));
+    }
+    SkipLink { focused, rect }
+}
+
+fn skip_target() -> egui::Id {
+    egui::Id::unique("gelabber-skip-target")
+}
+
+/// `#workspace-content` / `#app-content` (tabIndex -1): the page's start,
+/// called right before the page draws. "Zum Inhalt springen" focuses it,
+/// so the next Tab reaches the page's first control.
+pub fn content_anchor(ui: &Ui, at: egui::Pos2) {
+    let jump = ui
+        .ctx()
+        .data_mut(|d| d.remove_temp::<bool>(skip_target()))
+        .unwrap_or(false);
+    focus_anchor(ui, egui::Id::unique("gelabber-content-anchor"), at, jump);
+}
+
+/// An element with `tabIndex={-1}` at `at` that takes the focus when
+/// `take` (a skip target, a heading focused on mount). It is a Tab stop
+/// only while it holds the focus, so the next Tab reaches what follows it.
+pub fn focus_anchor(ui: &Ui, id: egui::Id, at: egui::Pos2, take: bool) {
+    if !take && !ui.memory(|m| m.has_focus(id)) {
+        return;
+    }
+    let rect = egui::Rect::from_min_size(at, egui::vec2(1.0, 1.0));
+    ui.interact(rect, id, egui::Sense::focusable_noninteractive());
+    if take {
+        ui.memory_mut(|m| m.request_focus(id));
+    }
+}
+
+impl SkipLink {
+    /// Over everything else of the page.
+    fn paint(&self, ui: &Ui) {
+        if !self.focused {
+            return;
+        }
+        let theme = Theme::of(ui.ctx());
+        let painter = ui.ctx().layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::unique("gelabber-skip-layer"),
+        ));
+        painter.rect_filled(self.rect, theme::corner(theme.radius.md), theme.c.accent);
+        crate::widgets::focus_ring(&painter, self.rect, theme.radius.md, &theme);
+        let block = crate::text::Block::single(
+            ui,
+            "Zum Inhalt springen",
+            crate::text::TextStyle::new(16.0, 400.0, 1.5),
+            theme.c.accent_ink,
+        );
+        block.paint(&painter, self.rect.min + egui::vec2(18.0, 12.0));
+    }
+}
+
+/// `LogoutFailed` (SessionRecoveryNotice.tsx): the server did not confirm
+/// the sign-out; a strip above the page offers "Erneut abmelden".
+fn logout_failed(ui: &mut Ui, client: &Client, signed_in: bool) {
+    use gelabber_client::OpState;
+    let state = client.with_state(|s| s.op("logout").cloned());
+    // A new sign-in ends the old problem, as applySession does.
+    if signed_in {
+        if matches!(state, Some(OpState::Failed(_))) {
+            client.clear_op("logout");
+        }
+        return;
+    }
+    let pending = matches!(state, Some(OpState::Pending));
+    let shown = ui
+        .ctx()
+        .data(|d| d.get_temp::<bool>(egui::Id::unique("gelabber-logout-failed")))
+        .unwrap_or(false);
+    let failed = matches!(state, Some(OpState::Failed(_)));
+    if !failed && !(pending && shown) {
+        ui.ctx()
+            .data_mut(|d| d.remove::<bool>(egui::Id::unique("gelabber-logout-failed")));
+        return;
+    }
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(egui::Id::unique("gelabber-logout-failed"), true));
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let message =
+        "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut.";
+    let screen = ui.ctx().content_rect();
+    // margin 12px 16px, padding 12px 16px, the 3px warning bar on the left.
+    let outer = egui::Rect::from_min_max(
+        egui::pos2(screen.left() + 16.0, screen.top() + 12.0),
+        egui::pos2(screen.right() - 16.0, screen.top() + 12.0 + 56.0),
+    );
+    egui::Area::new(egui::Id::unique("gelabber-logout-failed-strip"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(outer.min)
+        .show(ui.ctx(), |ui| {
+            let painter = ui.painter();
+            painter.rect(
+                outer,
+                theme::corner(theme.radius.md),
+                c.elevated,
+                egui::Stroke::new(1.0, c.border),
+                egui::StrokeKind::Inside,
+            );
+            painter
+                .with_clip_rect(egui::Rect::from_min_max(
+                    outer.min,
+                    egui::pos2(outer.left() + 3.0, outer.bottom()),
+                ))
+                .rect_filled(outer, theme::corner(theme.radius.md), c.warning);
+            let block = crate::text::Block::single(ui, message, crate::text::UI, c.text);
+            let at = egui::pos2(outer.left() + 19.0, outer.center().y - block.height() / 2.0);
+            block.paint(painter, at);
+            let alert = ui.interact(
+                egui::Rect::from_min_size(at, block.size()),
+                egui::Id::unique("gelabber-logout-failed-text"),
+                egui::Sense::hover(),
+            );
+            crate::widgets::announce(&alert, egui::Role::Alert, message);
+            let button = egui::Rect::from_min_size(
+                egui::pos2(outer.right() - 16.0 - 140.0, outer.center().y - 16.0),
+                egui::vec2(140.0, 32.0),
+            );
+            let retry = ui.put(
+                button,
+                crate::widgets::Button::new("Erneut abmelden")
+                    .small()
+                    .pending(pending.then_some("Wird abgemeldet…")),
+            );
+            if retry.clicked() && !pending {
+                client.logout();
+            }
+        });
 }
 
 /// Routes inside the signed-in workspace (`workspaceLayout`).
@@ -541,10 +754,12 @@ impl eframe::App for GelabberApp {
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        let theme = Theme::dark();
-        egui::Rgba::from(theme.c.bg).to_array()
+        egui::Rgba::from(self.background.get()).to_array()
     }
 }
+
+#[cfg(test)]
+pub(crate) mod testkit;
 
 #[cfg(test)]
 mod tests {
@@ -585,5 +800,12 @@ mod tests {
         assert!(nav.back());
         assert_eq!(nav.route(), &Route::Login);
         assert!(!nav.back());
+        // Forward returns until a new navigation drops the way forward.
+        assert!(nav.forward());
+        assert_eq!(nav.route(), &Route::Register);
+        assert!(!nav.forward());
+        assert!(nav.back());
+        nav.navigate("/forgot-password");
+        assert!(!nav.forward());
     }
 }

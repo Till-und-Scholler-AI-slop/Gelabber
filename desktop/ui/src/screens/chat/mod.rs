@@ -105,6 +105,18 @@ pub fn drafts(ctx: &egui::Context) -> HashMap<Uuid, String> {
         .collect()
 }
 
+/// The conversations with an unsent draft (`hasDraft`: text beyond
+/// whitespace, or files), for the sidebars' pencil.
+pub fn with_drafts(ctx: &egui::Context) -> std::collections::HashSet<Uuid> {
+    chat_state(ctx)
+        .lock()
+        .composers
+        .iter()
+        .filter(|(_, c)| !c.draft.trim().is_empty() || !c.files.is_empty())
+        .map(|(id, _)| *id)
+        .collect()
+}
+
 /// Puts stored texts back where this run has none yet.
 pub fn restore_drafts(ctx: &egui::Context, drafts: HashMap<Uuid, String>) {
     let state = chat_state(ctx);

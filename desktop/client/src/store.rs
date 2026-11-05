@@ -1293,6 +1293,7 @@ mod tests {
             code: code.into(),
             message: String::new(),
             fields,
+            retry_after: None,
         }
     }
 

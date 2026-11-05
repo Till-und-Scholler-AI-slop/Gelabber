@@ -205,7 +205,13 @@ fn icon_button(
 fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
-    let items = ["Profil bearbeiten", "Einstellungen", "Abmelden"];
+    // "Server wechseln …" is the desktop app's own (isDesktopApp).
+    let items = [
+        "Profil bearbeiten",
+        "Einstellungen",
+        "Server wechseln …",
+        "Abmelden",
+    ];
     let width = 180.0;
     let height = 2.0 + 16.0 + 37.0 * items.len() as f32 + 3.0 * (items.len() - 1) as f32;
     let frame = Rect::from_min_max(
@@ -237,6 +243,13 @@ fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
                 let item =
                     Rect::from_min_size(pos2(frame.left() + 9.0, y), Vec2::new(width - 18.0, 37.0));
                 let response = common::click(ui, item, Id::unique(("user-menu-item", i)));
+                response
+                    .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, *label));
+                let response = if i == 2 {
+                    response.on_hover_text("Strg+Umschalt+S")
+                } else {
+                    response
+                };
                 if response.hovered() {
                     common::fill(ui.painter(), item, theme.radius.sm, c.hover);
                 }
@@ -262,14 +275,40 @@ fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
     match picked {
         Some(0) => app.nav.navigate("/settings/profil"),
         Some(1) => app.nav.navigate("/settings/darstellung"),
-        Some(_) => {
-            // Signed out at once like the web, then the server is told.
-            app.client.logout();
-            app.session.adopt(&serde_json::Value::Null);
-            app.nav.navigate("/login");
-        }
+        Some(2) => crate::setup::switch_server(ui.ctx()),
+        Some(_) => log_out(ui.ctx(), app),
         None => {}
     }
+}
+
+/// `logOut` (components/logout.ts): asks first when it would end a call.
+pub fn log_out(ctx: &egui::Context, app: &mut AppCtx) {
+    use gelabber_call::CallStatus;
+    if matches!(
+        app.call.state().status,
+        CallStatus::Connected | CallStatus::Reconnecting
+    ) {
+        super::overlays::ask(
+            ctx,
+            super::overlays::Question {
+                title: "Abmelden und Anruf beenden?".into(),
+                message: Some("Du verlässt dabei den Sprachkanal.".into()),
+                label: "Abmelden".into(),
+                neutral: false,
+                action: super::overlays::ConfirmAction::Logout,
+            },
+        );
+    } else {
+        sign_out(app);
+    }
+}
+
+/// Signed out at once like the web, then the server is told.
+pub fn sign_out(app: &mut AppCtx) {
+    app.call.leave();
+    app.client.logout();
+    app.session.adopt(&serde_json::Value::Null);
+    app.nav.navigate("/login");
 }
 
 /// "Dein Status": who you are, the status line with "Speichern", and the
@@ -432,5 +471,105 @@ fn status_card(
                 app.nav.navigate("/settings/profil");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::{NodeT, Queryable};
+
+    use crate::app::testkit::{FakeApi, Reply, launcher, wait_for, wait_for_label};
+    use crate::platform::paths::testing::TempConfig;
+
+    fn open_menu(harness: &mut egui_kittest::Harness<'_, crate::Launcher>) {
+        wait_for_label(harness, "Benutzermenü");
+        harness
+            .get_by_role_and_label(Role::Button, "Benutzermenü")
+            .click();
+        wait_for_label(harness, "Abmelden");
+    }
+
+    /// logOut: in a call it asks first; "Abbrechen" stays signed in.
+    #[test]
+    fn signing_out_in_a_call_asks_first() {
+        let _config = TempConfig::new("logout-call");
+        let api = FakeApi::start(true, |_, _, _| None);
+        let mut harness = launcher(&api, "/");
+        open_menu(&mut harness);
+        let call = harness.state_mut().app().unwrap().call().clone();
+        call.set_state(gelabber_call::CallState {
+            status: gelabber_call::CallStatus::Connected,
+            server: Some(uuid::Uuid::from_u128(1)),
+            channel: Some(uuid::Uuid::from_u128(2)),
+            ..Default::default()
+        });
+        harness
+            .get_by_role_and_label(Role::Button, "Abmelden")
+            .click();
+        wait_for_label(&mut harness, "Abmelden und Anruf beenden?");
+        assert!(
+            harness
+                .query_by_label("Du verlässt dabei den Sprachkanal.")
+                .is_some()
+        );
+        harness
+            .get_by_role_and_label(Role::Button, "Abbrechen")
+            .click();
+        harness.run_steps(10);
+        assert!(!api.saw("POST /auth/logout"));
+        assert!(
+            harness
+                .query_by_label("Abmelden und Anruf beenden?")
+                .is_none()
+        );
+        // Confirmed: signed out, on the login page.
+        open_menu(&mut harness);
+        harness
+            .get_by_role_and_label(Role::Button, "Abmelden")
+            .click();
+        wait_for_label(&mut harness, "Abmelden und Anruf beenden?");
+        let confirm = harness
+            .query_all_by_label("Abmelden")
+            .rfind(|n| n.accesskit_node().role() == Role::Button)
+            .expect("the dialog's button");
+        confirm.click();
+        wait_for(&mut harness, "the logout", |_| api.saw("POST /auth/logout"));
+        wait_for_label(&mut harness, "Anmelden");
+    }
+
+    /// Without a call it signs out at once; a failed server logout shows
+    /// the strip with "Erneut abmelden" (SessionRecoveryNotice LogoutFailed).
+    #[test]
+    fn a_failed_logout_offers_to_try_again() {
+        let _config = TempConfig::new("logout-failed");
+        let fail = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let failing = fail.clone();
+        let api = FakeApi::start(true, move |method, path, _| {
+            (method == "POST"
+                && path == "/auth/logout"
+                && failing.load(std::sync::atomic::Ordering::SeqCst))
+            .then(|| Reply::error(500, "internal"))
+        });
+        let mut harness = launcher(&api, "/");
+        open_menu(&mut harness);
+        harness
+            .get_by_role_and_label(Role::Button, "Abmelden")
+            .click();
+        let text =
+            "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut.";
+        wait_for_label(&mut harness, text);
+        assert!(
+            harness
+                .query_by_label("Abmelden und Anruf beenden?")
+                .is_none()
+        );
+        fail.store(false, std::sync::atomic::Ordering::SeqCst);
+        harness
+            .get_by_role_and_label(Role::Button, "Erneut abmelden")
+            .click();
+        wait_for(&mut harness, "the strip to go", |h| {
+            h.query_by_label(text).is_none()
+        });
     }
 }

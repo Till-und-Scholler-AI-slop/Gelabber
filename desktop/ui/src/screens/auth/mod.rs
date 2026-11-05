@@ -33,7 +33,8 @@ pub fn banner(ui: &mut Ui, message: &str, invite: bool) {
     let width = ui.available_width();
     let block = Block::wrapped(ui, message, text::UI, c.text, width - 3.0 - 24.0);
     let height = 20.0 + layout_unit(block.height());
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    crate::widgets::announce(&response, egui::Role::Status, message);
     let (fill, bar) = if invite {
         (mix(c.panel, c.accent, 0.14), c.accent)
     } else {
@@ -71,6 +72,32 @@ pub fn form_error(ui: &mut Ui, errors: &FormErrors) {
 
 /// `<SubmitButton size="lg">`: the primary, full-width form action.
 pub fn submit(ui: &mut Ui, label: &str, pending_label: &str, pending: bool) -> bool {
+    submit_after(ui, label, pending_label, pending, 0)
+}
+
+/// `SubmitButton` with `cooldown`: "Erneut versuchen in N s", disabled
+/// until the rate limit is over.
+pub fn submit_after(
+    ui: &mut Ui,
+    label: &str,
+    pending_label: &str,
+    pending: bool,
+    cooldown: u64,
+) -> bool {
+    if cooldown > 0 {
+        // Each second drops one, as useCooldown's timer does.
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(250));
+        let waiting = format!("Erneut versuchen in {cooldown} s");
+        ui.add(
+            Button::new(&waiting)
+                .primary()
+                .large()
+                .fill()
+                .disabled(true),
+        );
+        return false;
+    }
     ui.add(
         Button::new(label)
             .primary()
@@ -149,3 +176,6 @@ pub const RESEND_COOLDOWN_S: f64 = 60.0;
 pub fn quiet(theme: &Theme) -> Color32 {
     theme.c.muted
 }
+
+#[cfg(test)]
+mod tests;

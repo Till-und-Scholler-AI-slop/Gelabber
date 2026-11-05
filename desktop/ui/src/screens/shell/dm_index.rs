@@ -14,13 +14,15 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     ui.painter().rect_filled(rect, 0.0, c.bg);
-    let (loaded, dms, user) = app.client.with_state(|s| {
+    let (loaded, dms, user, bootstrap) = app.client.with_state(|s| {
         (
             s.dms_loaded,
             s.dms.iter().map(|d| d.id).collect::<Vec<_>>(),
             s.me().map(|m| m.id),
+            s.op("bootstrap").cloned(),
         )
     });
+    let failed = super::home::bootstrap_failed(ui.ctx(), app.client, loaded);
     let last = state::memory(ui.ctx(), user).dm;
     if let Some(last) = last {
         if dms.contains(&last) {
@@ -31,7 +33,27 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
             state::remember(ui.ctx(), user, |m| m.dm = None);
         }
     }
+    if !loaded && failed {
+        // `.p-6` around LoadError.
+        let area = rect.shrink(24.0);
+        let mut box_ui = ui.new_child(egui::UiBuilder::new().max_rect(area));
+        let pending = matches!(bootstrap, Some(gelabber_client::OpState::Pending));
+        if crate::widgets::load_error(
+            &mut box_ui,
+            "Die Direktnachrichten konnten nicht geladen werden.",
+            pending,
+        ) {
+            app.client.bootstrap();
+        }
+        return;
+    }
     if !loaded {
+        crate::widgets::skeleton::main(
+            ui,
+            rect,
+            crate::widgets::skeleton::Kind::List,
+            egui::Id::unique("dm-index-skeleton"),
+        );
         return;
     }
     let any = !dms.is_empty();

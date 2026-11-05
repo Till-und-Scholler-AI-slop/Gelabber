@@ -28,6 +28,9 @@ pub enum ApiError {
         code: String,
         message: String,
         fields: serde_json::Value,
+        /// Seconds to wait before trying again (`retry_after` of a 429,
+        /// else its `Retry-After` header).
+        retry_after: Option<f64>,
     },
     #[error("Unerwartete Antwort ({0})")]
     Decode(String),
@@ -49,6 +52,14 @@ impl ApiError {
             Self::Api { .. } | Self::Decode(_) => "internal",
             Self::Transport(detail) if detail.starts_with(TIMEOUT_PREFIX) => "timeout",
             Self::Transport(_) => "network",
+        }
+    }
+
+    /// How long a rate limit asks to wait, in seconds (`ApiError.retryAfter`).
+    pub fn retry_after(&self) -> Option<f64> {
+        match self {
+            Self::Api { retry_after, .. } => *retry_after,
+            _ => None,
         }
     }
 
@@ -337,12 +348,13 @@ impl Http {
             let res = req.send().await.map_err(ApiError::from_reqwest)?;
             self.track_clock(&res);
             let status = res.status();
+            let wait = retry_after_header(res.headers());
             let bytes = res.bytes().await.map_err(ApiError::from_reqwest)?;
             if status.is_success() {
                 self.remember_csrf(&bytes);
                 return Ok(bytes.to_vec());
             }
-            let error = envelope(status, &bytes);
+            let error = envelope(status, &bytes, wait);
             if write && !retried && error.code() == "csrf_invalid" {
                 retried = true;
                 self.refresh_csrf().await?;
@@ -433,6 +445,7 @@ impl Http {
                 code: "upload_failed".into(),
                 message: "Der Upload ist fehlgeschlagen.".into(),
                 fields: serde_json::Value::Null,
+                retry_after: None,
             })
         }
     }
@@ -449,7 +462,7 @@ impl Http {
         let status = res.status();
         let bytes = res.bytes().await.map_err(ApiError::from_reqwest)?;
         if !status.is_success() {
-            return Err(envelope(status, &bytes));
+            return Err(envelope(status, &bytes, None));
         }
         let session: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|e| ApiError::Decode(format!("/auth/session: {e}")))?;
@@ -495,7 +508,7 @@ impl Http {
         let status = res.status();
         let bytes = res.bytes().await.map_err(ApiError::from_reqwest)?;
         if !status.is_success() {
-            return Err(envelope(status, &bytes));
+            return Err(envelope(status, &bytes, None));
         }
         Ok(bytes.to_vec())
     }
@@ -543,9 +556,26 @@ fn decode<T: DeserializeOwned>(path: &str, bytes: &[u8]) -> Result<T, ApiError> 
     serde_json::from_slice(bytes).map_err(|e| ApiError::Decode(format!("{path}: {e}")))
 }
 
-fn envelope(status: StatusCode, bytes: &[u8]) -> ApiError {
+/// `Retry-After` in seconds; an HTTP date counts from now.
+fn retry_after_header(headers: &header::HeaderMap) -> Option<f64> {
+    let value = headers.get(header::RETRY_AFTER)?.to_str().ok()?.trim();
+    if let Ok(seconds) = value.parse::<f64>() {
+        return (seconds.is_finite() && seconds >= 0.0).then_some(seconds);
+    }
+    let at = chrono::DateTime::parse_from_rfc2822(value).ok()?;
+    let wait = (at.with_timezone(&chrono::Utc) - chrono::Utc::now()).num_milliseconds();
+    Some((wait.max(0) as f64) / 1000.0)
+}
+
+fn envelope(status: StatusCode, bytes: &[u8], header_wait: Option<f64>) -> ApiError {
     let value: serde_json::Value = serde_json::from_slice(bytes).unwrap_or(serde_json::Value::Null);
+    // The body's number first, as the web reads it (api/client.ts).
+    let retry_after = value
+        .get("retry_after")
+        .and_then(serde_json::Value::as_f64)
+        .or(header_wait);
     ApiError::Api {
+        retry_after,
         status: status.as_u16(),
         code: value
             .get("error")
@@ -631,6 +661,7 @@ mod tests {
             code: code.into(),
             message: String::new(),
             fields: serde_json::json!({"email": "invalid"}),
+            retry_after: None,
         };
         assert_eq!(api("not_found").code(), "not_found");
         assert_eq!(api("weird").code(), "internal");
@@ -641,6 +672,34 @@ mod tests {
             api("banned").german(),
             "Du bist auf diesem Server gesperrt."
         );
+    }
+
+    #[test]
+    fn rate_limits_say_how_long_to_wait() {
+        let mut headers = header::HeaderMap::new();
+        assert_eq!(retry_after_header(&headers), None);
+        headers.insert(header::RETRY_AFTER, header::HeaderValue::from_static("8"));
+        assert_eq!(retry_after_header(&headers), Some(8.0));
+        let later = (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc2822();
+        headers.insert(header::RETRY_AFTER, later.parse().unwrap());
+        let wait = retry_after_header(&headers).unwrap();
+        assert!((28.0..=30.0).contains(&wait), "{wait}");
+        headers.insert(
+            header::RETRY_AFTER,
+            header::HeaderValue::from_static("soon"),
+        );
+        assert_eq!(retry_after_header(&headers), None);
+        let body = br#"{"error":"rate_limited","message":"Too many","retry_after":12}"#;
+        let limited = envelope(StatusCode::TOO_MANY_REQUESTS, body, Some(3.0));
+        assert_eq!(limited.code(), "rate_limited");
+        assert_eq!(limited.retry_after(), Some(12.0));
+        let header_only = envelope(
+            StatusCode::TOO_MANY_REQUESTS,
+            br#"{"error":"rate_limited"}"#,
+            Some(3.0),
+        );
+        assert_eq!(header_only.retry_after(), Some(3.0));
+        assert_eq!(ApiError::Transport("x".into()).retry_after(), None);
     }
 
     #[test]

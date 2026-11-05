@@ -130,6 +130,8 @@ pub(crate) struct PageState {
     pub notifications: notifications::State,
     /// A navigation that waits for a "discard?" answer.
     pub leave_to: Option<String>,
+    /// A new area moves focus to its heading (UserSettingsPage).
+    focus_heading: bool,
 }
 
 fn page_state(ctx: &egui::Context) -> Arc<Mutex<PageState>> {
@@ -194,6 +196,12 @@ pub(crate) fn op_pending(app: &AppCtx, key: &str) -> bool {
 /// What the settings change for the whole window: the account's theme
 /// (or a gallery preview), text size and reduced motion. Cheap; the shell
 /// calls it every frame so every page follows.
+/// Drops what the window knows about the previous account's themes (a
+/// new app after "Server wechseln").
+pub fn forget_account(ctx: &egui::Context) {
+    themes::forget(ctx);
+}
+
 pub fn apply_preferences(ctx: &egui::Context, client: &gelabber_client::Client) {
     themes::apply_theme(ctx, client);
     prefs::apply(ctx, &prefs::get(ctx));
@@ -250,6 +258,7 @@ pub fn sidebar(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
             let rect = Rect::from_min_size(pos2(x, y), vec2(width, 34.0));
             let id = Id::unique(("gelabber-settings-nav", a.id));
             let response = ui.interact(rect, id, Sense::click());
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, a.label));
             let on = a.id == current;
             let hover = eased(
                 ui.ctx(),
@@ -358,6 +367,7 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
         let fresh = PageState {
             area: info.id,
             user: Some(user.id),
+            focus_heading: true,
             ..PageState::default()
         };
         *s = fresh;
@@ -390,6 +400,11 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
                 .layout(egui::Layout::top_down(egui::Align::Min)),
         );
         child.spacing_mut().item_spacing = egui::Vec2::ZERO;
+        // The heading takes the focus, so screen readers say where they are
+        // and the next Tab is the area's first control.
+        let take = std::mem::take(&mut st.focus_heading);
+        let heading = Id::unique("gelabber-settings-heading");
+        crate::app::focus_anchor(&child, heading, child.cursor().min, take);
         controls::area_heading(&mut child, info.label, info.scope, info.description);
         match info.id {
             "profil" => profile::profile(&mut child, app, &user, &mut st.profile),

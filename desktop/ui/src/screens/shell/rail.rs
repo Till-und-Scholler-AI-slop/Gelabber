@@ -54,6 +54,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
     if lit {
         common::fill(&painter, home, theme.radius.md, c.hover);
     }
+    common::focus_visible(ui, &response, home, theme.radius.md);
     icons::paint_centered(
         &painter,
         Icon::Chat,
@@ -120,6 +121,24 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
     let list_h = content_h.min(rect.bottom() - list_top - footer_h).max(0.0);
     let list = Rect::from_min_size(pos2(rect.left(), list_top), Vec2::new(rect.width(), list_h));
     let mut clicked: Option<(Uuid, Option<Uuid>)> = None;
+    // The server list is one Tab stop; ↑ and ↓ move between servers.
+    let nav: Vec<common::NavRow> = servers
+        .iter()
+        .map(|(id, ..)| {
+            let item = Id::unique(("rail-server", *id));
+            common::NavRow {
+                key: item,
+                items: vec![item],
+            }
+        })
+        .collect();
+    let preferred = servers.iter().position(|(id, ..)| active == Some(*id));
+    let roved = if loaded {
+        common::rove(ui, Id::unique("rail-list"), &nav, preferred)
+    } else {
+        common::Roved::default()
+    };
+    common::list_hint(ui, list, Id::unique("rail-list"), common::LIST_HINT);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list));
     child.set_clip_rect(list);
     egui::ScrollArea::vertical()
@@ -155,7 +174,16 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
                     Vec2::splat(TILE),
                 );
                 let is_active = active == Some(*id);
-                let response = common::click(ui, tile, Id::unique(("rail-server", *id)));
+                let item = Id::unique(("rail-server", *id));
+                let stop = roved.is_stop(i, 0) || ui.memory(|m| m.has_focus(item));
+                let response = common::click_stop(ui, tile, item, stop);
+                if roved.has_focus_within(i)
+                    && ui.input(|i| {
+                        i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::ArrowUp)
+                    })
+                {
+                    ui.scroll_to_rect(tile, None);
+                }
                 response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, name));
                 if response.secondary_clicked() {
                     super::overlays::open_notifications(
@@ -180,7 +208,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
                 };
                 Tooltip::new(name)
                     .detail(summary.as_deref())
-                    .on_hover(&response, Side::Right);
+                    .on_hover_or_focus(&response, Side::Right);
                 server_tile(
                     ui,
                     app,
@@ -213,6 +241,12 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
                         Some(c.rail),
                     );
                 }
+                let radius = if is_active || response.hovered() {
+                    theme.radius.lg
+                } else {
+                    TILE / 2.0
+                };
+                common::focus_visible(ui, &response, tile, radius);
                 if response.clicked() {
                     // railChannel: the overview while someone talks there.
                     let target = if *in_voice {
@@ -257,6 +291,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
         dashed_circle(&painter, add.center(), TILE / 2.0 - 0.5, c.border_strong);
     }
     icons::paint_centered(&painter, Icon::Plus, add, 20.0, c.online_text);
+    common::focus_visible(ui, &response, add, TILE / 2.0);
     if response.clicked() {
         super::dialogs::open_add(ui.ctx(), AddStep::Choose);
     }

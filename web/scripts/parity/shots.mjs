@@ -4,13 +4,14 @@
 // Run in web/ against a seeded stack (seed.mjs):
 //   node scripts/parity/shots.mjs [out-dir] [scene,…]
 // GELABBER_PARITY_BROWSER names the Chromium binary (default /usr/bin/chromium).
-/* global process, console, document, URL, setTimeout */
+/* global process, console, document, window, URL, setTimeout */
 import { execFileSync, spawn } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 import { chromium } from "playwright";
 
 const here = new URL(".", import.meta.url).pathname;
+const repo = join(here, "../../..");
 const OUT = process.argv[2] ?? "/tmp/gelabber-parity/web";
 const ONLY = process.argv[3]?.split(",").filter(Boolean);
 const fixture = JSON.parse(await readFile(join(here, "fixture.json"), "utf8"));
@@ -22,7 +23,15 @@ const ids = {
   dm: fixture.dm,
   ...fixture.servers.home.channels,
 };
-const fill = (path) => path.replace(/\{(\w+)\}/g, (_, key) => ids[key]);
+// "{invite}": the seeded invite's code, asked for when a scene needs it.
+const fill = (path) =>
+  path.replace(/\{(\w+)\}/g, (_, key) =>
+    key === "invite"
+      ? execFileSync(process.execPath, [join(here, "say.mjs"), "invite-code", "lena", "home"], {
+          encoding: "utf8",
+        }).trim()
+      : ids[key],
+  );
 
 /** call.mjs with `channel people`, resolved once everyone is in. */
 function startCall(spec) {
@@ -58,10 +67,17 @@ const browser = await launch([]);
 // lists of the other scenes stay as a machine without devices shows them.
 let mediaBrowser = null;
 
+const sayWords = (words) =>
+  execFileSync(process.execPath, [join(here, "say.mjs"), ...words.split(" ")], {
+    stdio: "inherit",
+  });
+
 for (const scene of scenes) {
   if (ONLY && !ONLY.includes(scene.name)) continue;
-  // Every scene starts from the reference read state (reset.mjs).
+  // Every scene starts from the reference state (reset.mjs).
   execFileSync(process.execPath, [join(here, "reset.mjs")], { stdio: "inherit" });
+  // say.mjs words that set the scene up (a theme), undone by the next reset.
+  if (scene.before) sayWords(scene.before);
   if (scene.media && !mediaBrowser)
     mediaBrowser = await launch(["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"]);
   const context = await (scene.media ? mediaBrowser : browser).newContext({
@@ -72,6 +88,8 @@ for (const scene of scenes) {
     reducedMotion: "reduce",
     locale: "de-DE",
     timezoneId: "Europe/Berlin",
+    // Playwright's default; the native tool sets the same system theme.
+    colorScheme: scene.scheme ?? "light",
   });
   if (scene.user) {
     const user = fixture.users[scene.user];
@@ -84,7 +102,30 @@ for (const scene of scenes) {
   }
   const call = scene.call ? await startCall(scene.call) : null;
   const page = await context.newPage();
-  await page.goto(fill(scene.path), { waitUntil: "networkidle" });
+  if (scene.page) {
+    // A bundled page of the desktop app (its setup page), outside Tauri:
+    // its commands fail as on Linux, where updates are the package manager's.
+    await page.addInitScript(() => {
+      window.__TAURI_INTERNALS__ = { invoke: () => Promise.reject(new Error("no app")) };
+    });
+    // Served from an origin of its own: Chromium runs no module scripts
+    // from file:// pages.
+    const origin = "http://desktop-page.localhost";
+    const dir = dirname(join(repo, scene.page));
+    await page.route(`${origin}/**`, async (route) => {
+      const file = join(dir, new URL(route.request().url()).pathname);
+      const type = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript" };
+      await route.fulfill({
+        body: await readFile(file),
+        contentType: type[extname(file)] ?? "application/octet-stream",
+      });
+    });
+    await page.goto(`${origin}/${basename(scene.page)}${scene.query ?? ""}`, {
+      waitUntil: "networkidle",
+    });
+  } else {
+    await page.goto(fill(scene.path), { waitUntil: "networkidle" });
+  }
   await page.evaluate(() => document.fonts.ready);
   // Messages the scene posts (say.mjs), deleted after the screenshot, also
   // when a step fails, so the fixture stays as seeded.
@@ -134,6 +175,14 @@ for (const scene of scenes) {
       // A text field by its placeholder, such as the header's "Suchen".
       if (action.placeholder)
         await page.getByPlaceholder(action.placeholder, { exact: true }).first().click();
+      // The text field with this accessible name (a label or its placeholder).
+      if (action.focus)
+        await page
+          .getByRole("textbox", { name: action.focus, exact: true })
+          .or(page.getByLabel(action.focus, { exact: true }))
+          .or(page.getByPlaceholder(action.focus, { exact: true }))
+          .first()
+          .focus();
       // Playwright key names, e.g. "Control+k", "ArrowDown", "Escape".
       if (action.key) await page.keyboard.press(action.key);
       // Typed into whatever has the focus.
@@ -154,10 +203,10 @@ for (const scene of scenes) {
         stdio: "inherit",
       });
     // say.mjs words that undo what the scene's dialogs made (invite links).
-    if (scene.after)
-      execFileSync(process.execPath, [join(here, "say.mjs"), ...scene.after.split(" ")], {
-        stdio: "inherit",
-      });
+    if (scene.after) sayWords(scene.after);
+    // And what `before` set, so the last scene leaves no theme behind.
+    if (scene.before)
+      execFileSync(process.execPath, [join(here, "reset.mjs")], { stdio: "inherit" });
     for (const started of calls) await stopCall(started);
   }
   console.log(`${scene.name}: ${page.url()}`);

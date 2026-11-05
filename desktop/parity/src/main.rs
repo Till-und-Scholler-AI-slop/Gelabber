@@ -11,9 +11,12 @@
 //! window is not built yet; acceptance is always on the full scene.
 //!
 //! Reads web/scripts/parity/{scenes,fixture}.json from the repository.
-//! A scene's actions (click, link, rightclick, clicktext, key, type, say,
-//! wait, hover, back, placeholder, call) mean the same in shots.mjs; posts and
-//! `after` are undone with say.mjs once the screenshot is taken.
+//! A scene's actions (click, link, rightclick, clicktext, hover, focus, key,
+//! type, say, wait, back, placeholder, call) mean the same in shots.mjs;
+//! `before` runs say.mjs words ahead of the page, posts and `after` are
+//! undone with say.mjs once the screenshot is taken. A scene with `page`
+//! shows a bundled page of the desktop app (desktop/app/setup) instead of a
+//! route: the Launcher here.
 
 mod pixels;
 mod ssim;
@@ -34,13 +37,23 @@ struct Scenes {
 #[derive(Deserialize)]
 struct Scene {
     name: String,
+    #[serde(default)]
     path: String,
+    /// A bundled page of the desktop app, e.g. "desktop/app/setup/index.html".
+    page: Option<String>,
+    /// The page's query, e.g. "?server=…&error=…".
+    #[serde(default)]
+    query: String,
+    /// The system's colour scheme, "light" (Playwright's default) or "dark".
+    scheme: Option<String>,
     user: Option<String>,
     /// `channel people` for call.mjs: people kept in a voice channel.
     call: Option<String>,
     /// Steps after the page settled, the same in both shot tools.
     #[serde(default)]
     actions: Vec<Action>,
+    /// say.mjs words run before the page loads (a theme); reset.mjs undoes them.
+    before: Option<String>,
     /// say.mjs words run after the screenshot (undo what dialogs made).
     after: Option<String>,
 }
@@ -59,6 +72,8 @@ enum Action {
     /// Rest the pointer on the first button or link, else element, with this label;
     /// it stays there for the screenshot.
     Hover(String),
+    /// Focus the text field with this accessible name.
+    Focus(String),
     /// Press a key, Playwright style: "Control+k", "ArrowDown", "Escape".
     Key(String),
     /// Type text into whatever has the focus.
@@ -93,6 +108,24 @@ impl Drop for Undo {
         if let Some(after) = &self.after {
             say(&after.split(' ').collect::<Vec<_>>());
         }
+    }
+}
+
+/// Puts the fixture back to the reference state (reset.mjs).
+fn reset() {
+    let reset = std::process::Command::new("node")
+        .arg(parity_dir().join("reset.mjs"))
+        .status()
+        .expect("run reset.mjs");
+    assert!(reset.success(), "reset.mjs failed");
+}
+
+/// Runs reset.mjs when dropped: undoes a scene's `before`.
+struct Restore;
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        reset();
     }
 }
 
@@ -221,6 +254,10 @@ fn fill(path: &str, fixture: &Fixture) -> String {
     for (key, value) in ids {
         out = out.replace(&format!("{{{key}}}"), &value);
     }
+    // The seeded invite's code, asked for when a scene needs it.
+    if out.contains("{invite}") {
+        out = out.replace("{invite}", &say(&["invite-code", "lena", "home"]));
+    }
     out
 }
 
@@ -239,11 +276,14 @@ fn render(out: &Path, only: Option<Vec<String>>) {
         }
         let _ = std::fs::remove_dir_all(&config);
         // Opening a channel marks it read; every scene starts from the reference.
-        let reset = std::process::Command::new("node")
-            .arg(parity_dir().join("reset.mjs"))
-            .status()
-            .expect("run reset.mjs");
-        assert!(reset.success(), "reset.mjs failed");
+        reset();
+        // `before` is undone once the scene ends, also when it fails, so the
+        // last scene of a run does not leave its theme behind.
+        let _restore = scene.before.as_ref().map(|before| {
+            let restore = Restore;
+            say(&before.split(' ').collect::<Vec<_>>());
+            restore
+        });
         let _call = scene.call.as_deref().map(Call::start);
         let client = gelabber_client::Client::new(&fixture.base).expect("client");
         if let Some(user) = &scene.user {
@@ -254,6 +294,10 @@ fn render(out: &Path, only: Option<Vec<String>>) {
         }
         let route = fill(&scene.path, &fixture);
         let size = egui::vec2(scenes.size[0] as f32, scenes.size[1] as f32);
+        let system = match scene.scheme.as_deref() {
+            Some("dark") => egui::Theme::Dark,
+            _ => egui::Theme::Light,
+        };
         let mut harness = egui_kittest::Harness::builder()
             .with_size(size)
             .with_pixels_per_point(1.0)
@@ -265,8 +309,16 @@ fn render(out: &Path, only: Option<Vec<String>>) {
             .with_step_dt(1.0 / 60.0)
             .wgpu()
             .build_eframe(|cc| {
-                gelabber_ui::GelabberApp::new(cc, client.clone(), Some(route.clone()))
+                cc.egui_ctx.options_mut(|o| o.fallback_theme = system);
+                match &scene.page {
+                    Some(page) => page_app(cc, page, &scene.query),
+                    None => {
+                        gelabber_ui::Launcher::with_app(cc, client.clone(), Some(route.clone()))
+                    }
+                }
             });
+        // The system theme as Chromium was told it (prefers-color-scheme).
+        harness.input_mut().system_theme = Some(system);
         // Step until the app has nothing in flight for a while: data,
         // images and layout settle like the web page after networkidle.
         settle(&mut harness);
@@ -328,6 +380,27 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                         .unwrap_or_else(|| panic!("{}: nothing labelled {label:?}", scene.name))
                         .click();
                 }
+                Action::Hover(label) => {
+                    use egui::accesskit::Role;
+                    reveal(&mut harness, size.y, label, &[Role::Button, Role::Link]);
+                    find(&harness, label, &[Role::Button, Role::Link])
+                        .or_else(|| find(&harness, label, &[]))
+                        .unwrap_or_else(|| panic!("{}: nothing labelled {label:?}", scene.name))
+                        .hover();
+                    hovered = true;
+                }
+                Action::Focus(label) => {
+                    use egui::accesskit::Role;
+                    let roles = [
+                        Role::TextInput,
+                        Role::MultilineTextInput,
+                        Role::PasswordInput,
+                        Role::SearchInput,
+                    ];
+                    find(&harness, label, &roles)
+                        .unwrap_or_else(|| panic!("{}: no text field {label:?}", scene.name))
+                        .focus();
+                }
                 Action::Key(spec) => {
                     let (modifiers, key) = parse_key(spec);
                     harness.key_press_modifiers(modifiers, key);
@@ -341,15 +414,6 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                         harness.step();
                         std::thread::sleep(Duration::from_millis(16));
                     }
-                }
-                Action::Hover(label) => {
-                    use egui::accesskit::Role;
-                    reveal(&mut harness, size.y, label, &[Role::Button, Role::Link]);
-                    find(&harness, label, &[Role::Button, Role::Link])
-                        .or_else(|| find(&harness, label, &[]))
-                        .unwrap_or_else(|| panic!("{}: nothing labelled {label:?}", scene.name))
-                        .hover();
-                    hovered = true;
                 }
                 Action::Call(spec) => calls.push(Call::start(spec)),
                 Action::Placeholder(label) => {
@@ -386,7 +450,23 @@ fn render(out: &Path, only: Option<Vec<String>>) {
     let _ = std::fs::remove_dir_all(&config);
 }
 
-type App<'a> = egui_kittest::Harness<'a, gelabber_ui::GelabberApp>;
+type App<'a> = egui_kittest::Harness<'a, gelabber_ui::Launcher>;
+
+/// The Launcher on a bundled page: the setup page with its `?server=` (the
+/// way back) and `?error=` (why it shows).
+fn page_app(cc: &eframe::CreationContext<'_>, page: &str, query: &str) -> gelabber_ui::Launcher {
+    assert_eq!(
+        page, "desktop/app/setup/index.html",
+        "no native page for {page}"
+    );
+    let query = gelabber_ui::Location::parse(&format!("/{query}"));
+    gelabber_ui::Launcher::setup(
+        cc,
+        query.query("server").map(str::to_owned),
+        query.query("error").map(str::to_owned),
+        Box::new(|_| {}),
+    )
+}
 
 /// The first node labelled `label` with one of `roles` (any role if empty).
 fn find<'t>(
@@ -428,13 +508,31 @@ fn reveal(harness: &mut App<'_>, height: f32, label: &str, roles: &[egui::access
     }
 }
 
+/// Signed in on a server's page whose presence has not arrived yet.
+fn presence_pending(harness: &mut App<'_>) -> bool {
+    use gelabber_ui::route::Route;
+    let Some(app) = harness.state_mut().app() else {
+        return false;
+    };
+    let server = match app.nav().route() {
+        Route::Server(s) | Route::Channel(s, _) | Route::ServerSettings(s) => *s,
+        _ => return false,
+    };
+    app.client()
+        .with_state(|s| s.me().is_some() && !s.presence.contains_key(&server))
+}
+
 /// Steps until the app has had nothing in flight for ten frames.
-fn settle(harness: &mut egui_kittest::Harness<'_, gelabber_ui::GelabberApp>) {
+fn settle(harness: &mut App<'_>) {
     let start = Instant::now();
     let mut quiet = 0;
     while quiet < 10 && start.elapsed() < Duration::from_secs(20) {
         harness.step();
-        if harness.state().busy() {
+        // The gateway's presence snapshot is no request the client counts;
+        // without it the member list shows everyone offline. A server that
+        // never sends one (not a member) waits 5 s at most.
+        let presence = start.elapsed() < Duration::from_secs(5) && presence_pending(harness);
+        if harness.state().busy() || presence {
             quiet = 0;
             std::thread::sleep(Duration::from_millis(20));
         } else {

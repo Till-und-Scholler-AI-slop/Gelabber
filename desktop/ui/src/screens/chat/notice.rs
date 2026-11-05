@@ -143,6 +143,7 @@ mod tests {
             code: code.into(),
             message: String::new(),
             fields: serde_json::Value::Null,
+            retry_after: None,
         }
     }
 

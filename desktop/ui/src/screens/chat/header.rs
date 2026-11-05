@@ -170,7 +170,8 @@ pub fn show(
             .animate_value_with_time(id.with("width"), if wide { 260.0 } else { 200.0 }, 0.1);
     let field = Rect::from_min_size(pos2(right - width, mid - 15.0), vec2(width, 30.0));
     out.search_left = field.left();
-    let field_resp = ui.interact(field, id.with("box"), Sense::click());
+    // Clicking the frame focuses the input; Tab reaches only the input.
+    let field_resp = ui.interact(field, id.with("box"), Sense::CLICK);
     let hot = field_resp.hovered() || focused || !search.is_empty();
     let border = if focused {
         mix(c.border, c.accent, 0.7)

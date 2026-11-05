@@ -4,7 +4,7 @@ use egui::Ui;
 use reqwest::Method;
 use serde_json::{Value, json};
 
-use super::{Request, fail, focus_invalid, form_error, layout, result_lines, submit};
+use super::{Request, fail, focus_invalid, form_error, layout, result_lines, submit_after};
 use crate::app::AppCtx;
 use crate::rules::{
     Failure, FormErrors, PASSWORD_MIN, field_message, link_token, validate_password,
@@ -51,7 +51,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     }
     if s.dead_link {
         layout::frame(ui, app, "reset-dead", |ui, app| {
-            layout::heading(ui, "Link abgelaufen");
+            layout::focused_heading(ui, "Link abgelaufen");
             result_lines(
                 ui,
                 &[(
@@ -60,7 +60,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 )],
             );
             ui.add_space(space::S6);
-            if layout::link_line(ui, "Neuen Link anfordern") {
+            if layout::action_link(ui, "Neuen Link anfordern") {
                 app.nav.navigate("/forgot-password");
             }
         });
@@ -84,8 +84,16 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         }
         ui.add_space(space::S5);
         form_error(ui, &s.errors);
-        if (submit(ui, "Passwort speichern", "Wird gespeichert…", pending) || password.submitted)
+        let cooldown = s.errors.cooldown();
+        if (submit_after(
+            ui,
+            "Passwort speichern",
+            "Wird gespeichert…",
+            pending,
+            cooldown,
+        ) || password.submitted)
             && !pending
+            && cooldown == 0
         {
             match validate_password(&s.password) {
                 Some(code) => s

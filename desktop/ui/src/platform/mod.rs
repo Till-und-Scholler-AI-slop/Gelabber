@@ -4,11 +4,14 @@
 //! global push-to-talk key, and the update check. The binary owns one
 //! [`Platform`] and calls it every pass; parity runs go without one.
 
+pub mod files;
 pub mod instance;
 pub mod legacy;
 pub mod notify;
 pub mod paths;
 pub mod ptt;
+#[cfg(target_os = "linux")]
+pub mod scheme;
 pub mod session;
 pub mod settings;
 pub mod state;
@@ -120,6 +123,13 @@ pub struct Platform {
     volumes: Volumes,
     ptt: PttLink,
     updates: Updates,
+    /// The window title last sent (`titleWith`).
+    title: String,
+    /// The title bar's theme last sent.
+    title_bar: Option<egui::SystemTheme>,
+    /// The unread count on the Linux launcher icon.
+    #[cfg(target_os = "linux")]
+    badge: Option<(tray::unity::Badge, u32)>,
 }
 
 impl Platform {
@@ -147,6 +157,10 @@ impl Platform {
             volumes: Volumes::default(),
             ptt: PttLink::default(),
             updates: Updates::default(),
+            title: "Gelabber".into(),
+            title_bar: None,
+            #[cfg(target_os = "linux")]
+            badge: None,
             wake,
         }
     }
@@ -176,8 +190,14 @@ impl Platform {
     fn start(&mut self, ctx: &Context) {
         self.started = true;
         *self.wake.lock() = Some(ctx.clone());
-        // Dark title bar and decorations, the app's only theme.
-        ctx.send_viewport_cmd(ViewportCommand::SetTheme(egui::SystemTheme::Dark));
+        #[cfg(target_os = "linux")]
+        {
+            self.badge = tray::unity::Badge::start(None).map(|b| (b, u32::MAX));
+            // winit reports no light or dark on Linux; "System" and the
+            // setup screen follow the portal's preference.
+            let scheme = ctx.clone();
+            scheme::watch(None, move |dark| crate::theme::set_os_dark(&scheme, dark));
+        }
         if let Some(instance) = &self.instance {
             instance.set_wake(waker(&self.wake));
         }
@@ -239,7 +259,19 @@ impl Platform {
             )
         });
         let now = ctx.input(|i| i.time);
+        // Title bar and decorations in the theme's mode; the setup screen
+        // follows the system, as its page does.
+        let title_bar = match &app {
+            Some(_) if crate::theme::Theme::of(ctx).is_dark() => egui::SystemTheme::Dark,
+            Some(_) => egui::SystemTheme::Light,
+            None => egui::SystemTheme::SystemDefault,
+        };
+        if self.title_bar != Some(title_bar) {
+            self.title_bar = Some(title_bar);
+            ctx.send_viewport_cmd(ViewportCommand::SetTheme(title_bar));
+        }
         let Some(app) = app else {
+            self.show_unread(ctx, tray::Unread::default());
             return;
         };
         let client = app.client().clone();
@@ -319,10 +351,33 @@ impl Platform {
                 },
             )
         });
+        // Signed out: nothing unread (useUnreadIndicators unmounts).
+        let unread = if me.is_some() {
+            unread
+        } else {
+            tray::Unread::default()
+        };
+        self.show_unread(ctx, unread);
+        self.remember(ctx, me, call);
+    }
+
+    /// The tray's dot, the window title and the launcher's count.
+    fn show_unread(&mut self, ctx: &Context, unread: tray::Unread) {
         if let Some(tray) = &mut self.tray {
             tray.set_unread(unread);
         }
-        self.remember(ctx, me, call);
+        let title = unread.title();
+        if self.title != title {
+            ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
+            self.title = title;
+        }
+        #[cfg(target_os = "linux")]
+        if let Some((badge, shown)) = &mut self.badge
+            && *shown != unread.count
+        {
+            badge.set(unread.count);
+            *shown = unread.count;
+        }
     }
 
     /// Restores an account's memory once, then keeps the file current.

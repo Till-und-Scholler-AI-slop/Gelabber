@@ -11,6 +11,7 @@ pub mod modal;
 pub mod opener;
 pub mod popover;
 pub mod separator;
+pub mod skeleton;
 pub mod status;
 pub mod switch;
 pub mod tooltip;
@@ -23,13 +24,19 @@ pub use link::Link;
 pub use modal::{Modal, ModalOutput, ModalWidth};
 pub use popover::{Popover, menu_item};
 pub use separator::{hairline_h, hairline_v};
-pub use status::{FormError, InlineStatus, StatusTone};
+pub use status::{FormError, InlineStatus, StatusTone, load_error};
 pub use switch::{Checkbox, Switch};
 pub use tooltip::Tooltip;
 
 use egui::{Color32, Painter, Rect, Stroke, StrokeKind};
 
 use crate::theme::{Theme, corner};
+
+/// Gives a drawn text its accessibility node (`role="alert"`, `"status"`,
+/// a plain label), so screen readers hear it and tests can find it.
+pub fn announce(response: &egui::Response, role: egui::Role, text: &str) {
+    response.widget_info(|| egui::WidgetInfo::labeled(role, true, text));
+}
 
 /// Whether focus moves by keyboard right now: `:focus-visible` shows the
 /// ring for buttons and links only then; text fields always show it.

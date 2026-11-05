@@ -99,15 +99,42 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
         .show(&mut child, |ui| {
             let (area, _) =
                 ui.allocate_exact_size(Vec2::new(list.width(), content_h), egui::Sense::hover());
+            // The list is one Tab stop; ↑ and ↓ move between conversations.
+            let nav: Vec<common::NavRow> = dms
+                .iter()
+                .map(|dm| {
+                    let item = Id::unique(("dm-row", dm.id));
+                    common::NavRow {
+                        key: item,
+                        items: vec![item],
+                    }
+                })
+                .collect();
+            let preferred = dms.iter().position(|dm| active == Some(dm.id));
+            let roved = common::rove(ui, Id::unique("dm-list"), &nav, preferred);
+            common::list_hint(ui, area, Id::unique("dm-list"), common::LIST_HINT);
+            let drafts = crate::screens::chat::with_drafts(ui.ctx());
             for (i, dm) in dms.iter().enumerate() {
                 let row = Rect::from_min_size(
                     pos2(area.left() + 8.0, area.top() + 8.0 + SLOT * i as f32),
                     Vec2::new(area.width() - 16.0, 44.0),
                 );
-                if !ui.is_rect_visible(row) {
+                let item = Id::unique(("dm-row", dm.id));
+                let stop = roved.is_stop(i, 0) || ui.memory(|m| m.has_focus(item));
+                if !ui.is_rect_visible(row) && !stop {
                     continue;
                 }
-                let response = common::click(ui, row, Id::unique(("dm-row", dm.id)));
+                if roved.has_focus_within(i)
+                    && ui.input(|i| {
+                        i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::ArrowUp)
+                    })
+                {
+                    ui.scroll_to_rect(row, None);
+                }
+                let response = common::click_stop(ui, row, item, stop);
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::Role::Link, true, &dm.peer.name)
+                });
                 if response.secondary_clicked() {
                     super::overlays::open_notifications(
                         ui.ctx(),
@@ -167,6 +194,24 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
                     );
                     right = r.left() - 10.0;
                 }
+                if drafts.contains(&dm.id) && !is_active {
+                    // `.channel-row-draft` as in the channel list.
+                    let pencil = Rect::from_min_size(
+                        pos2(right - 13.0, row.center().y - 6.5),
+                        Vec2::splat(13.0),
+                    );
+                    crate::icons::paint(
+                        ui.painter(),
+                        crate::icons::Icon::Pencil,
+                        pencil.min,
+                        13.0,
+                        c.muted,
+                    );
+                    let mark = ui.interact(pencil, item.with("draft"), egui::Sense::hover());
+                    crate::widgets::announce(&mark, egui::Role::Label, "Entwurf");
+                    mark.on_hover_text("Entwurf");
+                    right = pencil.left() - 10.0;
+                }
                 let color = if response.hovered() || is_active || unread {
                     c.text
                 } else {
@@ -186,6 +231,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
                     right - left,
                 );
                 paint_mid(ui.painter(), &name, left, row.center().y);
+                common::focus_visible(ui, &response, row, theme.radius.md);
                 if response.clicked() {
                     app.nav.navigate(&format!("/d/{}", dm.id));
                 }

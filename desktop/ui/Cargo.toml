@@ -22,6 +22,9 @@ uuid = { version = "1.27.0", features = ["serde"] }
 serde_json = "1.0.151"
 parking_lot = "0.12.5"
 egui_system_font_provider = "0.37.0"
+# The system faces of terminal themes and the setup screen (fonts.rs), the
+# lookup egui_system_font_provider already uses.
+fontique = { version = "0.11.1", default-features = false, features = ["system", "fontconfig-dlopen"] }
 tracing = "0.1"
 resvg = { version = "0.45.1", default-features = false }
 reqwest = { version = "0.13.5", default-features = false }
@@ -40,7 +43,7 @@ ksni = { version = "0.3.7", default-features = false, features = ["blocking", "a
 
 # Toasts, tray and the push-to-talk hook, as desktop/app has them.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Credentials", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 windows = { version = "0.62.2", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications"] }
 tray-icon = { version = "0.25.1", default-features = false }
 
