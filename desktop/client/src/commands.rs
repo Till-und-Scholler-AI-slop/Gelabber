@@ -1203,6 +1203,7 @@ impl Client {
                         m: Some(current.muted),
                         d: Some(current.deafened),
                         snap: None,
+                        replay: false,
                     });
                 }
             });
@@ -1264,6 +1265,7 @@ impl Client {
                         m: None,
                         d: None,
                         snap: None,
+                        replay: false,
                     });
                 }
             });
@@ -1720,7 +1722,16 @@ impl Client {
 
     fn on_frame(&self, frame: ServerFrame) {
         match frame {
-            ServerFrame::Sig(sig) => self.write(|s| s.apply_sig(&sig)),
+            ServerFrame::Sig(sig) => {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as i64);
+                let at = self.http().server_now();
+                self.write(|s| {
+                    s.live_event(&sig, now_ms, at);
+                    s.apply_sig(&sig)
+                })
+            }
             ServerFrame::Presence { s, u, st, snap } => {
                 self.write(|state| state.apply_presence(s, u, st, snap.as_deref()));
             }

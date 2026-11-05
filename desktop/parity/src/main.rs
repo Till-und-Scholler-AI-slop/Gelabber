@@ -12,7 +12,7 @@
 //!
 //! Reads web/scripts/parity/{scenes,fixture}.json from the repository.
 //! A scene's actions (click, link, rightclick, clicktext, key, type, say,
-//! wait, hover, back, placeholder) mean the same in shots.mjs; posts and
+//! wait, hover, back, placeholder, call) mean the same in shots.mjs; posts and
 //! `after` are undone with say.mjs once the screenshot is taken.
 
 mod pixels;
@@ -72,6 +72,9 @@ enum Action {
     Back(bool),
     /// Click the text field with this placeholder (natively its name).
     Placeholder(String),
+    /// `channel people` for call.mjs, started now and kept until the
+    /// screenshot is taken (a Live that begins while the page is open).
+    Call(String),
 }
 
 /// What a scene posted and what it undoes afterwards: run when dropped,
@@ -279,6 +282,7 @@ fn render(out: &Path, only: Option<Vec<String>>) {
             after: scene.after.clone(),
         };
         let mut hovered = false;
+        let mut calls = Vec::new();
         for action in &scene.actions {
             match action {
                 Action::Say(spec) => {
@@ -347,6 +351,7 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                         .hover();
                     hovered = true;
                 }
+                Action::Call(spec) => calls.push(Call::start(spec)),
                 Action::Placeholder(label) => {
                     use egui::accesskit::Role;
                     let fields = [Role::TextInput, Role::SearchInput, Role::MultilineTextInput];
@@ -375,6 +380,7 @@ fn render(out: &Path, only: Option<Vec<String>>) {
         let path = out.join(format!("{}.png", scene.name));
         image.save(&path).expect("save png");
         drop(undo);
+        drop(calls);
         println!("{}: {route} -> {}", scene.name, path.display());
     }
     let _ = std::fs::remove_dir_all(&config);

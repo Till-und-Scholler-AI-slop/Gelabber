@@ -888,6 +888,25 @@
           "wait": 1000
         }
       ]
+    },
+    {
+      "name": "channel-live-hint",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "call": "Sofa jonas:live"
+    },
+    {
+      "name": "live-toast",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "call": "Sofa jonas:live"
+        },
+        {
+          "wait": 2000
+        }
+      ]
     }
   ]
 }

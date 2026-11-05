@@ -12,6 +12,7 @@ mod gif;
 mod header;
 pub mod markdown;
 mod mentions;
+mod notice;
 mod pane;
 mod reactions;
 mod row;
@@ -189,10 +190,19 @@ pub fn channel_page(ui: &mut Ui, app: &mut AppCtx, server: Uuid, channel: Uuid) 
         }))
     });
     match conversation {
-        // Not loaded yet: the page background, like MainSkeleton's.
+        // Not loaded yet: the page background, like MainSkeleton's, or the
+        // load error inside `p-6`.
         None => {
             let theme = Theme::of(ui.ctx());
-            ui.painter().rect_filled(ui.max_rect(), 0.0, theme.c.bg);
+            let page = ui.max_rect();
+            ui.painter().rect_filled(page, 0.0, theme.c.bg);
+            if let Some(pending) = app.client.with_state(|s| notice::channel_error(s, server)) {
+                let at = pos2(page.left() + 24.0, page.top() + 24.0);
+                let message = "Dieser Kanal konnte nicht geladen werden.";
+                if notice::load_error(ui, at, page.width() - 48.0, message, pending) {
+                    app.client.refresh_server(server);
+                }
+            }
         }
         // The channel is gone (or is a voice channel, which the voice page draws).
         Some(None) => {
@@ -263,7 +273,23 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
                 app.client.open_channel(channel);
             }
             let theme = Theme::of(ui.ctx());
-            ui.painter().rect_filled(ui.max_rect(), 0.0, theme.c.bg);
+            let page = ui.max_rect();
+            ui.painter().rect_filled(page, 0.0, theme.c.bg);
+            // Gone: back to the list. Else the error, centred in `p-8`.
+            if app.client.with_state(|s| notice::dm_gone(s, channel)) {
+                app.nav.replace("/d");
+            } else if let Some(pending) = app.client.with_state(|s| notice::dm_error(s, channel)) {
+                let message = "Diese Unterhaltung konnte nicht geladen werden.";
+                let width =
+                    (crate::text::Block::single(ui, message, crate::text::BODY, theme.c.text)
+                        .width()
+                        + 30.0)
+                        .min(page.width() - 64.0);
+                let at = pos2(page.center().x - width / 2.0, page.center().y - 40.0);
+                if notice::load_error(ui, at, width, message, pending) {
+                    app.client.open_channel(channel);
+                }
+            }
         }
     }
 }
@@ -347,6 +373,40 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         chat.requests.push(ChatRequest::Profile { user: peer.id });
     }
 
+    // Who is live on the server: a pill in the header, on a narrow window
+    // a strip under it (ChannelPage.tsx `LiveHint`).
+    let mut top = page.top() + header::HEIGHT;
+    if let Some(server) = conv.server {
+        let narrow = crate::screens::voice::hint::narrow(ui.ctx());
+        if !narrow {
+            crate::screens::voice::hint::pill_right(
+                ui,
+                app,
+                server,
+                head.search_left - 10.0,
+                head.mid,
+                head.title_right + 10.0,
+            );
+        } else {
+            let h = crate::screens::voice::hint::strip_height(app, server);
+            let strip = Rect::from_min_size(pos2(page.left(), top), vec2(page.width(), h));
+            crate::screens::voice::hint::strip(ui, app, server, strip);
+            top += h;
+        }
+    }
+    // "Lesestatus nicht gespeichert." with its retry (MessagePane.tsx).
+    let read_failed = client.with_state(|s| s.messages(channel).is_some_and(|h| h.read_failed));
+    if read_failed {
+        let r = Rect::from_min_size(
+            pos2(page.left() + 16.0, top + 8.0),
+            vec2(page.width() - 32.0, 30.0),
+        );
+        if notice::inline_notice(ui, r, "Lesestatus nicht gespeichert.", "Erneut versuchen") {
+            client.mark_read(channel);
+        }
+        top = r.bottom();
+    }
+
     // Composer height first: the list gives way to it.
     let composer_input = ComposerInput {
         channel,
@@ -365,7 +425,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
     let toasts = crate::toasts::space(ui.ctx());
     let room = toasts + toasts.min(12.0);
     let list_rect = Rect::from_min_max(
-        pos2(page.left(), page.top() + header::HEIGHT),
+        pos2(page.left(), top),
         pos2(page.right(), page.bottom() - composer_h - room - TYPING_BAR),
     );
     let typing_rect = Rect::from_min_size(

@@ -91,8 +91,12 @@ for (const scene of scenes) {
   const said = [];
   // A hover keeps the pointer where it put it for the screenshot.
   let hovered = false;
+  // Calls an action started while the page was open (`call`).
+  const calls = [];
   try {
     for (const action of scene.actions ?? []) {
+      // "channel people" for call.mjs, as a scene's `call`, but now.
+      if (action.call) calls.push(await startCall(action.call));
       // "<user> <channel-key> <text>": someone else writes.
       if (action.say) {
         const [who, where, ...words] = action.say.split(" ");
@@ -154,6 +158,7 @@ for (const scene of scenes) {
       execFileSync(process.execPath, [join(here, "say.mjs"), ...scene.after.split(" ")], {
         stdio: "inherit",
       });
+    for (const started of calls) await stopCall(started);
   }
   console.log(`${scene.name}: ${page.url()}`);
   await context.close();
