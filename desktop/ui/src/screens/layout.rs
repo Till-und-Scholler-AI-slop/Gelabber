@@ -25,11 +25,41 @@ fn members_id() -> Id {
     Id::unique("gelabber-members-visible")
 }
 
-/// Whether the member panel is open (the header's members button).
+/// The choice next to pictures (memberPanelState.ts `withVideo`).
+fn video_choice_id() -> Id {
+    Id::unique("gelabber-members-visible-video")
+}
+
+/// The page shows a voice channel whose pictures run.
+fn video_id() -> Id {
+    Id::unique("gelabber-members-video")
+}
+
+/// Whether the member panel is open (the header's members button). Next
+/// to pictures it starts closed until chosen there.
 pub fn members_visible(ctx: &Context) -> bool {
+    if ctx
+        .data(|d| d.get_temp::<bool>(video_id()))
+        .unwrap_or(false)
+    {
+        return ctx.data(|d| d.get_temp(video_choice_id())).unwrap_or(false);
+    }
     ctx.data(|d| d.get_temp(members_id())).unwrap_or(true)
 }
 
 pub fn set_members_visible(ctx: &Context, visible: bool) {
-    ctx.data_mut(|d| d.insert_temp(members_id(), visible));
+    let video = ctx
+        .data(|d| d.get_temp::<bool>(video_id()))
+        .unwrap_or(false);
+    let id = if video {
+        video_choice_id()
+    } else {
+        members_id()
+    };
+    ctx.data_mut(|d| d.insert_temp(id, visible));
+}
+
+/// The voice page says whether its pictures run (`setMemberPanelVideo`).
+pub fn set_members_video(ctx: &Context, video: bool) {
+    ctx.data_mut(|d| d.insert_temp(video_id(), video));
 }

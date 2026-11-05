@@ -7,6 +7,7 @@ pub mod layout;
 pub mod server_settings;
 pub mod settings;
 pub mod shell;
+pub mod voice;
 
 use egui::Ui;
 

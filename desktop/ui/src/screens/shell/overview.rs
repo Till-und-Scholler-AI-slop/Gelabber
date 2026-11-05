@@ -11,6 +11,7 @@ use super::common::{self, line, paint_mid};
 use super::state::{self, Preview};
 use crate::app::AppCtx;
 use crate::icons::{self, Icon};
+use crate::screens::voice;
 use crate::task::Pending;
 use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner, mix};
@@ -162,14 +163,13 @@ fn overview_line(app: &AppCtx, detail: &ServerDetail) -> String {
         .filter(|c| c.kind == ChannelKind::Voice)
         .map(|c| c.id)
         .collect();
+    let own = voice::session::own_seat(app, server).map(|(ch, _, _)| ch);
     let (inside, spread) = app.client.with_state(|s| {
         let me = s.me().map(|m| m.id);
         let mut where_: Vec<Uuid> = Vec::new();
         for m in &detail.members {
             let channel = if Some(m.user_id) == me {
-                (s.voice_self.server == Some(server))
-                    .then_some(s.voice_self.channel)
-                    .flatten()
+                own
             } else {
                 s.voice
                     .get(&server)
@@ -205,10 +205,8 @@ fn overview_room<'a>(app: &AppCtx, ui: &Ui, detail: &'a ServerDetail) -> Option<
         .iter()
         .filter(|c| c.kind == ChannelKind::Voice)
         .collect();
-    let (active, occupied) = app.client.with_state(|s| {
-        let active = (s.voice_self.server == Some(server))
-            .then_some(s.voice_self.channel)
-            .flatten();
+    let active = voice::session::own_seat(app, server).map(|(ch, _, _)| ch);
+    let occupied = app.client.with_state(|s| {
         let occupied: Vec<Uuid> = s
             .voice
             .get(&server)
@@ -219,7 +217,7 @@ fn overview_room<'a>(app: &AppCtx, ui: &Ui, detail: &'a ServerDetail) -> Option<
                     .collect()
             })
             .unwrap_or_default();
-        (active, occupied)
+        occupied
     });
     let user = app.client.with_state(|s| s.me().map(|m| m.id));
     let remembered = state::memory(ui.ctx(), user).channels.get(&server).copied();
@@ -274,11 +272,15 @@ fn voice_room(
         }
         return y;
     };
+    let call = app.call.state();
+    let joined = voice::session::joined(&call);
     let (here, elsewhere, occupants, live_any, allowed, me, elsewhere_name) =
         app.client.with_state(|s| {
-            let here = s.voice_self.server == Some(server) && s.voice_self.channel == Some(room.id);
-            let elsewhere = s.voice_self.channel.is_some() && !here;
-            let occupants = s.voice_occupants(server, room.id);
+            let here = joined == Some((server, room.id));
+            let elsewhere = joined.is_some() && !here;
+            let mut occupants = voice::session::occupants(s, &call, server, room.id, false);
+            // The roster's order: the server lists seats by user id.
+            occupants.sort_by_key(|(u, _)| *u);
             let live_any = s
                 .live
                 .get(&server)
@@ -287,10 +289,7 @@ fn voice_room(
             let allowed = s
                 .server(server)
                 .is_none_or(|v| v.can(Permission::JoinVoice));
-            let elsewhere_name = s
-                .voice_self
-                .channel
-                .and_then(|ch| s.channel(ch).map(|c| c.name.clone()));
+            let elsewhere_name = joined.and_then(|(_, ch)| s.channel(ch).map(|c| c.name.clone()));
             (
                 here,
                 elsewhere,
@@ -351,11 +350,21 @@ fn voice_room(
             );
             let member = detail.members.iter().find(|m| m.user_id == *user);
             let name = member.map_or("Jemand", |m| m.name.as_str());
+            let speaking =
+                voice::session::speaking(&call, *user, occupant.muted, occupant.deafened);
+            if speaking {
+                ui.painter().rect_stroke(
+                    tile.expand(0.5),
+                    corner(theme.radius.lg + 0.5),
+                    Stroke::new(1.0, c.speaking),
+                    StrokeKind::Middle,
+                );
+            }
             ui.painter().rect(
                 tile,
                 corner(theme.radius.lg),
                 c.surface,
-                Stroke::new(1.0, c.border),
+                Stroke::new(1.0, if speaking { c.speaking } else { c.border }),
                 StrokeKind::Inside,
             );
             let label_style = text::UI.weight(600.0);
@@ -363,6 +372,9 @@ fn voice_room(
             let content_h = 56.0 + 8.0 + name_block.height();
             let ctop = tile.center().y - content_h / 2.0;
             let avatar = Rect::from_min_size(pos2(tile.center().x - 28.0, ctop), Vec2::splat(56.0));
+            if speaking {
+                voice::look::speaking_ring(ui, &ui.painter().clone(), avatar, true);
+            }
             common::avatar(
                 ui,
                 app.images,
@@ -450,9 +462,9 @@ fn voice_room(
         } else {
             "Beitreten"
         };
-        let join = join_button(ui, theme, row, label);
+        let join = voice::chips::join_button(ui, theme, row, label, Id::unique("overview-join"));
         if join.clicked() {
-            app.client.voice_join(server, room.id);
+            app.call.join(server, room.id);
         }
         x = join.rect.right() + 8.0;
     } else {
@@ -479,63 +491,14 @@ fn voice_room(
         app.nav.navigate("/settings/audio");
     }
     let gear = mic.translate(Vec2::new(36.0 + 8.0, 0.0));
-    if ui
-        .put(
-            gear,
-            IconButton::new(Icon::Gear, "Voice-Einstellungen")
-                .secondary()
-                .icon_size(17.0),
-        )
-        .clicked()
-    {
-        app.nav.navigate("/settings/audio");
-    }
+    let response = ui.put(
+        gear,
+        IconButton::new(Icon::Gear, "Voice-Einstellungen")
+            .secondary()
+            .icon_size(17.0),
+    );
+    voice::quick::button(ui, app, response, gear);
     y + 44.0
-}
-
-/// The primary lg join button: min-width 180, `SpeakerIcon 20` + label.
-fn join_button(ui: &mut Ui, theme: &Theme, row: Rect, label: &str) -> egui::Response {
-    let c = theme.c;
-    let style = text::UI.size(14.0).weight(600.0);
-    let block = Block::single(ui, label, style, c.accent_ink);
-    let content = 20.0 + 8.0 + block.width();
-    let width = (content + 40.0 + 2.0).max(180.0);
-    let rect = Rect::from_min_size(row.min, Vec2::new(width, 44.0));
-    let response = common::click(ui, rect, Id::unique("overview-join"));
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
-    let fill = crate::widgets::eased(
-        ui.ctx(),
-        response.id.with("hover"),
-        response.hovered(),
-        c.accent,
-        theme.primary_hover,
-    );
-    let pressed = response.is_pointer_button_down_on();
-    let scale = ui.ctx().animate_value_with_time(
-        response.id.with("press"),
-        if pressed {
-            crate::theme::motion::PRESS_SCALE
-        } else {
-            1.0
-        },
-        crate::theme::motion::MICRO,
-    );
-    let shown = crate::widgets::snap(
-        ui.ctx(),
-        Rect::from_center_size(rect.center(), rect.size() * scale),
-    );
-    ui.painter()
-        .rect_filled(shown, corner(theme.radius.sm), fill);
-    let x = rect.center().x - content / 2.0;
-    icons::paint(
-        ui.painter(),
-        Icon::Speaker,
-        pos2(x, rect.center().y - 10.0),
-        20.0,
-        c.accent_ink,
-    );
-    paint_mid(ui.painter(), &block, x + 28.0, rect.center().y);
-    response
 }
 
 /// The "Ungelesen" list; `None` when nothing is unread.

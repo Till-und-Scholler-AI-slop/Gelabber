@@ -165,6 +165,8 @@ fn render(out: &Path, only: Option<Vec<String>>) {
             .with_size(size)
             .with_pixels_per_point(1.0)
             .with_max_steps(10_000)
+            // The web shots have no pointer drawn over them.
+            .with_render_cursor(false)
             .wgpu()
             .build_eframe(|cc| {
                 gelabber_ui::GelabberApp::new(cc, client.clone(), Some(route.clone()))

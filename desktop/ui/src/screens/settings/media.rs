@@ -27,9 +27,14 @@ const COL_GAP: f32 = 16.0;
 /// `.media-hint`.
 const HINT: TextStyle = text::META;
 
-/// Device choices: the system default, then what the media core lists.
-fn devices(_kind: &str) -> Vec<(String, String)> {
-    vec![(String::new(), "Standard".into())]
+/// Device choices: the system default, then what the call lists.
+fn devices(list: &[gelabber_call::Device]) -> Vec<(String, String)> {
+    crate::screens::voice::quick::device_options(list)
+}
+
+/// A chosen device for the call: `None` is the system default.
+fn chosen(id: &str) -> Option<String> {
+    (!id.is_empty()).then(|| id.to_owned())
 }
 
 /// `.media-group-head`: the small subtle heading and an optional pill.
@@ -292,22 +297,25 @@ fn playback_volume(position: f64) -> f64 {
     (v * 100.0).round() / 100.0
 }
 
-pub fn audio(ui: &mut Ui, _app: &mut AppCtx, s: &mut State) {
+pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     let ctx = ui.ctx().clone();
     let theme = Theme::of(&ctx);
     let c = &theme.c;
     let mut p = prefs::get(&ctx);
     let before = p.clone();
+    let listed = app.call.with_state(|s| s.devices.clone());
     controls::column(ui, ui.available_width().min(720.0), |ui| {
         group_head(ui, "Eingabe", None);
         setting_row(ui, "Mikrofon", false, |ui| {
-            controls::select(
+            if controls::select(
                 ui,
                 "audio-input",
-                &devices("audioinput"),
+                &devices(&listed.inputs),
                 &mut p.audio_input_id,
                 c.surface,
-            );
+            ) {
+                app.call.set_input(chosen(&p.audio_input_id));
+            }
             if !s.revealed {
                 gap(ui);
                 reveal_box(ui, s);
@@ -449,13 +457,15 @@ pub fn audio(ui: &mut Ui, _app: &mut AppCtx, s: &mut State) {
 
         group_head(ui, "Ausgabe", None);
         setting_row(ui, "Lautsprecher", false, |ui| {
-            controls::select(
+            if controls::select(
                 ui,
                 "audio-output",
-                &devices("audiooutput"),
+                &devices(&listed.outputs),
                 &mut p.audio_output_id,
                 c.surface,
-            );
+            ) {
+                app.call.set_output(chosen(&p.audio_output_id));
+            }
         });
         let scale = ["0 %", "100 %", "400 %"];
         setting_row(ui, "Gespräche", false, |ui| {
@@ -919,22 +929,25 @@ fn mbit(bits: f64) -> String {
     }
 }
 
-pub fn video(ui: &mut Ui, _app: &mut AppCtx, s: &mut State) {
+pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     let ctx = ui.ctx().clone();
     let theme = Theme::of(&ctx);
     let c = &theme.c;
     let mut p = prefs::get(&ctx);
     let before = p.clone();
+    let listed = app.call.with_state(|s| s.devices.clone());
     controls::column(ui, ui.available_width().min(720.0), |ui| {
         group_head(ui, "Kamera", Some(&summary(&p.camera_profile)));
         setting_row(ui, "Gerät", false, |ui| {
-            controls::select(
+            if controls::select(
                 ui,
                 "video-input",
-                &devices("videoinput"),
+                &devices(&listed.cameras),
                 &mut p.video_input_id,
                 c.surface,
-            );
+            ) {
+                app.call.set_camera_device(chosen(&p.video_input_id));
+            }
             if !s.revealed {
                 gap(ui);
                 controls::row(ui, 0.0, 36.0, |ui| {

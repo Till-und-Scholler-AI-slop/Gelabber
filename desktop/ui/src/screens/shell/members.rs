@@ -29,6 +29,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
         voice: Option<(String, bool, bool)>,
         live: bool,
     }
+    let own_seat = crate::screens::voice::session::own_seat(app, server);
     let data = app.client.with_state(|s| {
         let detail = s.detail(server)?;
         let me = s.me();
@@ -48,10 +49,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                     .map(|m| {
                         let own = me.filter(|u| u.id == m.user_id);
                         let occupant = if own.is_some() {
-                            (s.voice_self.server == Some(server))
-                                .then_some(s.voice_self.channel)
-                                .flatten()
-                                .map(|ch| (ch, s.voice_self.muted, s.voice_self.deafened))
+                            own_seat
                         } else {
                             s.voice
                                 .get(&server)
@@ -262,7 +260,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                         block.paint(ui.painter(), pos2(text_left, ty));
                     }
                     // The 22px column centres its parts, gap 5: VoiceStateIcons
-                    // (a 32px box of two 14px slots) above the Live icon.
+                    // (a 32px box, its two 14px slots at the end) above the Live icon.
                     let column_x = row.right() - 6.0 - 11.0;
                     let parts_h = match (e.voice.is_some(), e.live) {
                         (true, true) => 14.0 + 5.0 + 20.0,
@@ -273,15 +271,16 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                     let mut part_top = row.center().y - parts_h / 2.0;
                     if let Some((channel, muted, deafened)) = &e.voice {
                         let slot1 =
-                            Rect::from_min_size(pos2(column_x - 16.0, part_top), Vec2::splat(14.0));
+                            Rect::from_min_size(pos2(column_x - 14.0, part_top), Vec2::splat(14.0));
                         let slot2 = slot1.translate(Vec2::new(16.0, 0.0));
                         part_top += 14.0 + 5.0;
-                        let icon = if *muted || *deafened {
-                            Icon::MicOff
+                        let (icon, tone) = if *muted || *deafened {
+                            (Icon::MicOff, c.muted)
                         } else {
-                            Icon::Speaker
+                            // `.voice-state-icons-speaker` (room.css).
+                            (Icon::Speaker, c.online)
                         };
-                        icons::paint(ui.painter(), icon, slot1.min, 14.0, c.muted);
+                        icons::paint(ui.painter(), icon, slot1.min, 14.0, tone);
                         if *deafened {
                             icons::paint(ui.painter(), Icon::HeadsetOff, slot2.min, 14.0, c.muted);
                         }

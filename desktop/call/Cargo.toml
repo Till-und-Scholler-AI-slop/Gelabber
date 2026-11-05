@@ -11,6 +11,8 @@ publish = false
 # The real engine; needs the native core (GELABBER_MEDIA_LIB_DIR or a
 # libwebrtc package). Without it a call fails to start with a message.
 media = ["dep:gelabber-media-core"]
+# A setter for the call state, so interface tests can draw a running call.
+testing = []
 
 [dependencies]
 gelabber-client = { path = "../client" }

@@ -478,6 +478,12 @@ impl Call {
         read(&self.inner.state.read())
     }
 
+    /// Replaces the whole state, as a running call would (interface tests).
+    #[cfg(feature = "testing")]
+    pub fn set_state(&self, state: CallState) {
+        *self.inner.state.write() = state;
+    }
+
     /// True while joining or a device change is in flight.
     pub fn busy(&self) -> bool {
         matches!(self.inner.state.read().status, CallStatus::Connecting)
