@@ -113,11 +113,11 @@ pub fn control(ui: &mut Ui, call: &gelabber_call::Call, user: Uuid) {
     ui.add_space(10.0);
     // Row: local mute and reset.
     let (row, _) = ui.allocate_exact_size(vec2(width, 21.0), Sense::hover());
-    let mut child = ui.new_child(UiBuilder::new().max_rect(row));
-    child.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        ui.add(Checkbox::new(&mut lv.muted));
-    });
+    let check = egui::Rect::from_min_size(
+        egui::pos2(row.left(), row.center().y - 10.0),
+        vec2(20.0, 20.0),
+    );
+    ui.put(check, Checkbox::new(&mut lv.muted));
     let label = Block::single(ui, "Lokal stummschalten", body, c.text);
     label.paint(ui.painter(), egui::pos2(row.left() + 28.0, row.top()));
     let mute_hit = ui.interact(

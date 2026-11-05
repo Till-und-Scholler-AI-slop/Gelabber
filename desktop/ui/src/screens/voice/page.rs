@@ -15,7 +15,7 @@ use super::session::{self, Person, Picture, Room};
 use super::stage::{self, Kind, KinoKey, PicId, StageRect, Thumb, View};
 use super::tile::{self, Place};
 use super::video::{self, Fit};
-use super::{chips, quick, summary};
+use super::{chips, hint, quick, summary};
 use crate::app::AppCtx;
 use crate::icons::{self, Icon};
 use crate::screens::layout;
@@ -68,7 +68,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, server: Uuid, channel: Uuid) {
         let body = page;
         stage_room(ui, app, &room, body, choices, true);
     } else {
-        header(ui, page, &room.channel_name, channel);
+        header(ui, app, page, &room.channel_name, room.server, channel);
         let body = Rect::from_min_max(pos2(page.left(), page.top() + HEADER), page.max);
         if staged {
             stage_room(ui, app, &room, body, choices, false);
@@ -82,7 +82,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, server: Uuid, channel: Uuid) {
 
 /// The header (`.lr-channel-header`): the speaker and the name, the
 /// members toggle at the end.
-fn header(ui: &mut Ui, page: Rect, name: &str, channel: Uuid) {
+fn header(ui: &mut Ui, app: &mut AppCtx, page: Rect, name: &str, server: Uuid, channel: Uuid) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let rect = Rect::from_min_size(page.min, vec2(page.width(), HEADER));
@@ -110,7 +110,17 @@ fn header(ui: &mut Ui, page: Rect, name: &str, channel: Uuid) {
     let mut job = text::job(name, TITLE, c.text, Some(max.max(40.0)));
     job.wrap.max_rows = 1;
     job.wrap.break_anywhere = true;
-    Block::new(ui, job, TITLE).paint(ui.painter(), pos2(x + 28.0, mid - TITLE.line_px() / 2.0));
+    let title = Block::new(ui, job, TITLE);
+    title.paint(ui.painter(), pos2(x + 28.0, mid - TITLE.line_px() / 2.0));
+    // Who is live on the server, right after the name (`LiveHint pill`).
+    hint::pill(
+        ui,
+        app,
+        server,
+        x + 28.0 + title.width() + 10.0,
+        mid,
+        toggle.left() - 20.0,
+    );
 
     let on = layout::members_visible(ui.ctx());
     let label = if on {
@@ -294,11 +304,6 @@ pub fn actions(ui: &mut Ui, app: &mut AppCtx, room: &Room, left: f32, top: f32) 
     top + 44.0
 }
 
-/// A picture on the stage with the person it belongs to.
-struct Placed {
-    pic: Picture,
-}
-
 /// The room with pictures: the stage bar, the stage, the people without a
 /// camera under it; in Kino the stage alone on the video background.
 fn stage_room(
@@ -441,14 +446,8 @@ fn stage_room(
     };
 
     if let Some((focus_rect, strip_rects)) = layout {
-        let pictures: Vec<Placed> = room
-            .shares
-            .iter()
-            .chain(room.cameras.iter())
-            .map(|p| Placed { pic: p.clone() })
-            .collect();
-        for placed in &pictures {
-            let pic = &placed.pic;
+        // One tile per picture in a fixed order; a place is only a rect.
+        for pic in room.shares.iter().chain(room.cameras.iter()) {
             let is_focus = focus.as_ref().is_some_and(|f| f.id == pic.id);
             let rect = if is_focus {
                 focus_rect

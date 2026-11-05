@@ -379,9 +379,11 @@ fn store(ctx: &Context, choices: Choices) {
 pub fn choices(ctx: &Context, call: (Uuid, Uuid), joined: Option<(Uuid, Uuid)>) -> Choices {
     let mut all = sync(ctx, joined);
     if all.call != Some(call) {
+        // Kino is the page's, not the call's: it stays.
         all = Choices {
             joined: all.joined,
-            kino: false,
+            kino: all.kino,
+            awake_until: all.awake_until,
             ..Choices::default()
         };
     }
@@ -405,6 +407,8 @@ pub fn choose_view(ctx: &Context, call: (Uuid, Uuid), view: View) {
     if all.call != Some(call) {
         all = Choices {
             joined: all.joined,
+            kino: all.kino,
+            awake_until: all.awake_until,
             ..Choices::default()
         };
     }
@@ -420,6 +424,8 @@ pub fn pin(ctx: &Context, call: (Uuid, Uuid), id: Option<PicId>) {
     if all.call != Some(call) {
         all = Choices {
             joined: all.joined,
+            kino: all.kino,
+            awake_until: all.awake_until,
             ..Choices::default()
         };
     }
@@ -601,5 +607,10 @@ mod tests {
         pin(&ctx, call, None);
         assert_eq!(choices(&ctx, call, Some(call)).view, Some(View::Fokus));
         assert_eq!(choices(&ctx, call, None).view, None);
+        // Kino belongs to the page and holds before any view is picked.
+        sync(&ctx, Some(call));
+        set_kino(&ctx, true);
+        assert!(choices(&ctx, call, Some(call)).kino);
+        assert!(kino(&ctx));
     }
 }

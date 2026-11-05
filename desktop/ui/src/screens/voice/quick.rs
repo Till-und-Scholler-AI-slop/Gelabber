@@ -9,7 +9,7 @@ use crate::app::AppCtx;
 use crate::screens::settings::{controls, prefs};
 use crate::text::{self, Block};
 use crate::theme::Theme;
-use crate::widgets::{Button, Popover};
+use crate::widgets::Popover;
 
 /// The device choices: the system default, then what the call lists.
 pub fn device_options(list: &[Device]) -> Vec<(String, String)> {
@@ -44,6 +44,105 @@ pub fn button(ui: &mut Ui, app: &mut AppCtx, response: Response, anchor: Rect) {
         Some(true) | None => {
             ctx.data_mut(|d| d.insert_temp(open_id(), None::<Rect>));
         }
+    }
+}
+
+/// The stream sound button's popover (`CallSound`, width 264): the call's
+/// volume and the stream's, with the stream's mute after its percentage.
+pub fn sound_button(ui: &mut Ui, response: Response, anchor: Rect, deafened: bool) {
+    let ctx = ui.ctx().clone();
+    let id = Id::unique("gelabber-voice-sound-open");
+    let mut open: bool = ctx.data(|d| d.get_temp(id)).unwrap_or(false);
+    if response.clicked() {
+        open = !open;
+        ctx.data_mut(|d| d.insert_temp(id, open));
+        return;
+    }
+    if !open {
+        return;
+    }
+    let shown = Popover::new("voice-sound", anchor)
+        .align_end()
+        .min_width(264.0)
+        .show(&ctx, |ui| {
+            let theme = Theme::of(ui.ctx());
+            let c = theme.c;
+            let width = 264.0 - 18.0 - 12.0;
+            ui.set_width(264.0 - 18.0);
+            let mut p = prefs::get(ui.ctx());
+            let before = p.clone();
+            let rect = Rect::from_min_size(ui.cursor().min + vec2(6.0, 6.0), vec2(width, 400.0));
+            let used = controls::place(ui, UiBuilder::new().max_rect(rect), |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let voices = &mut p.output_volume;
+                volume(
+                    ui,
+                    "sound-voices",
+                    "Gespräche",
+                    voices,
+                    deafened,
+                    width,
+                    0.0,
+                );
+                ui.add_space(14.0);
+                let stream_muted = p.source_audio_muted;
+                let row_top = ui.cursor().min.y;
+                let off = deafened || stream_muted;
+                let stream = &mut p.source_audio_volume;
+                volume(ui, "sound-stream", "Stream-Ton", stream, off, width, 38.0);
+                // The 30px mute after the percentage, reaching into the gaps.
+                let toggle = Rect::from_min_size(
+                    egui::pos2(rect.right() - 30.0, row_top + 16.8 / 2.0 - 15.0),
+                    vec2(30.0, 30.0),
+                );
+                let label = if stream_muted {
+                    "Stream-Ton wieder einschalten"
+                } else {
+                    "Stream-Ton stummschalten"
+                };
+                let hit = ui.interact(toggle, Id::unique("sound-stream-mute"), Sense::click());
+                hit.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::Role::Button, true, "Stream-Ton stummschalten")
+                });
+                let hit = hit.on_hover_text(label);
+                let (fill, fg) = if stream_muted {
+                    (c.danger_bg.gamma_multiply(0.16), c.danger)
+                } else if hit.hovered() {
+                    (c.hover, c.text)
+                } else {
+                    (egui::Color32::TRANSPARENT, c.muted)
+                };
+                ui.painter()
+                    .rect_filled(toggle, crate::theme::corner(theme.radius.md), fill);
+                crate::icons::paint_centered(
+                    ui.painter(),
+                    if stream_muted {
+                        crate::icons::Icon::SpeakerOff
+                    } else {
+                        crate::icons::Icon::Speaker
+                    },
+                    toggle,
+                    16.0,
+                    fg,
+                );
+                if hit.clicked() {
+                    p.source_audio_muted = !stream_muted;
+                }
+                if deafened {
+                    ui.add_space(14.0 - 6.0);
+                    let b = Block::single(ui, "Taubgeschaltet.", text::META, c.muted);
+                    let (r, _) = ui.allocate_exact_size(vec2(width, b.height()), Sense::hover());
+                    b.paint(ui.painter(), r.min);
+                }
+                ui.min_rect()
+            });
+            ui.allocate_exact_size(vec2(264.0 - 18.0, used.height() + 8.0), Sense::hover());
+            if p != before {
+                prefs::update(ui.ctx(), |q| *q = p);
+            }
+        });
+    if shown.is_none() {
+        ctx.data_mut(|d| d.insert_temp(id, false));
     }
 }
 
@@ -110,6 +209,7 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
             &mut p.output_volume,
             false,
             width,
+            0.0,
         );
         ui.add_space(14.0);
         let muted = p.source_audio_muted;
@@ -120,6 +220,7 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
             &mut p.source_audio_volume,
             muted,
             width,
+            0.0,
         );
         ui.add_space(14.0);
         let selected = usize::from(p.voice_input == "ptt");
@@ -152,15 +253,8 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
             top.y + 0.5,
             egui::Stroke::new(1.0, c.border),
         );
-        if ui
-            .add(
-                Button::new("Alle Einstellungen …")
-                    .ghost()
-                    .small()
-                    .width(width),
-            )
-            .clicked()
-        {
+        // Full width under a rule, square, the label at the start.
+        if super::chips::ghost_row(ui, "Alle Einstellungen …", top.x, width).clicked() {
             more = true;
         }
         ui.min_rect()
@@ -178,8 +272,17 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
     more
 }
 
-/// A volume row: label and `{pct} %`, the playback slider under them.
-fn volume(ui: &mut Ui, id: &str, label: &str, value: &mut f64, disabled: bool, width: f32) {
+/// A volume row: label and `{pct} %` (`end` px from the right), the
+/// playback slider under them.
+fn volume(
+    ui: &mut Ui,
+    id: &str,
+    label: &str,
+    value: &mut f64,
+    disabled: bool,
+    width: f32,
+    end: f32,
+) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let (row, _) = ui.allocate_exact_size(vec2(width, 16.8), Sense::hover());
@@ -192,7 +295,7 @@ fn volume(ui: &mut Ui, id: &str, label: &str, value: &mut f64, disabled: bool, w
     );
     pct.paint(
         ui.painter(),
-        egui::pos2(row.right() - pct.width(), row.top()),
+        egui::pos2(row.right() - end - pct.width(), row.top()),
     );
     ui.add_space(6.0);
     let mut pos = super::volume::position(*value);

@@ -6,6 +6,7 @@
 
 pub mod call_bar;
 pub mod chips;
+pub mod hint;
 pub mod look;
 pub mod page;
 pub mod quick;

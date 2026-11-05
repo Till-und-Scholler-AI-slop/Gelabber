@@ -529,6 +529,12 @@ pub fn request(
     }
 }
 
+/// Forgets the last size asked for `key`, so the next tile asks again.
+pub fn forget(ctx: &egui::Context, key: gelabber_call::VideoKey) {
+    let id = egui::Id::unique(("gelabber-video-request", key.0));
+    ctx.data_mut(|d| d.remove::<(u32, u32, u32)>(id));
+}
+
 /// The rect a [`placement`] gives, for callers that draw around it.
 pub fn drawn_rect(tile: Rect, frame: &Frame, fit: Fit) -> Rect {
     placement(tile, shown_size(frame), fit).0

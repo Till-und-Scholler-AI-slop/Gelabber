@@ -61,6 +61,33 @@ pub fn join_button(ui: &mut Ui, theme: &Theme, row: Rect, label: &str, id: Id) -
     response
 }
 
+/// A ghost sm button with its label at the start (`justify-content:
+/// flex-start`): 32 high, padding 0 12, `left` its left edge.
+pub fn ghost_row(ui: &mut Ui, label: &str, left: f32, width: f32) -> Response {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let top = ui.cursor().min.y;
+    let rect = Rect::from_min_size(pos2(left, top), vec2(width, 32.0));
+    ui.allocate_exact_size(
+        vec2(ui.available_width().max(1.0), 32.0),
+        egui::Sense::hover(),
+    );
+    let response = common::click(ui, rect, Id::unique(("gelabber-ghost-row", label)));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    let fill = eased(
+        ui.ctx(),
+        response.id.with("hover"),
+        response.hovered(),
+        Color32::TRANSPARENT,
+        c.hover,
+    );
+    ui.painter()
+        .rect_filled(rect, corner(theme.radius.sm), fill);
+    let block = Block::single(ui, label, text::UI, c.text);
+    paint_mid(ui.painter(), &block, rect.left() + 12.0, rect.center().y);
+    response
+}
+
 /// The view switch (`ChipGroup "Ansicht"`): Raster and Fokus in one 36px
 /// frame; returns the choice when it changed. `right` is its right edge.
 pub fn view_switch(ui: &mut Ui, right: f32, center_y: f32, view: View) -> (Rect, Option<View>) {

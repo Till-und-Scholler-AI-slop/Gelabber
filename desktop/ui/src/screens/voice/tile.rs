@@ -74,12 +74,9 @@ pub fn participant_menu(ui: &mut Ui, app: &mut AppCtx, room: &Room) {
             child.add_space(10.0);
             volume::control(&mut child, &call, user);
             child.add_space(8.0);
-            let profile = child.add(
-                crate::widgets::Button::new("Profil ansehen")
-                    .ghost()
-                    .small()
-                    .width(inner + 24.0),
-            );
+            // A row of the menu: out to its edges, the label in line.
+            let left = child.cursor().min.x - 12.0;
+            let profile = super::chips::ghost_row(&mut child, "Profil ansehen", left, inner + 24.0);
             let used = child.min_rect();
             ui.allocate_exact_size(vec2(288.0 - 18.0, used.height() + 3.0), Sense::hover());
             profile.clicked()
@@ -633,7 +630,17 @@ pub fn picture(
             if let Some(key) = pic.key {
                 video::request(ui, app.call, key, rect, 30);
             }
-            placeholder(ui, &painter, rect, wait_id, &pic.label, pic.key.is_some());
+            if placeholder(ui, &painter, rect, wait_id, &pic.label, pic.key.is_some()) {
+                // "Neu laden": watch the Live again, or ask for the camera anew.
+                ui.ctx().data_mut(|d| d.remove::<f64>(wait_id));
+                if let Some(key) = pic.key {
+                    video::forget(ui.ctx(), key);
+                }
+                if live && !pic.own {
+                    app.call.watch(pic.id.user, false);
+                    app.call.watch(pic.id.user, true);
+                }
+            }
         }
     }
     // The speaking ring lies over the picture, under the labels.
@@ -777,7 +784,15 @@ pub fn picture(
 
 /// No picture yet: the label, then a spinner and "Video wird geladen …",
 /// after 8 s "Kein Bild empfangen".
-fn placeholder(ui: &Ui, painter: &Painter, rect: Rect, wait_id: Id, label: &str, expected: bool) {
+/// Returns true when "Neu laden" was pressed.
+fn placeholder(
+    ui: &mut Ui,
+    painter: &Painter,
+    rect: Rect,
+    wait_id: Id,
+    label: &str,
+    expected: bool,
+) -> bool {
     let now = ui.input(|i| i.time);
     let since: f64 = ui
         .ctx()
@@ -797,7 +812,7 @@ fn placeholder(ui: &Ui, painter: &Painter, rect: Rect, wait_id: Id, label: &str,
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
-        return;
+        return false;
     }
     let text = if waited < stage::FRAME_STALLED {
         ui.ctx().request_repaint();
@@ -806,9 +821,24 @@ fn placeholder(ui: &Ui, painter: &Painter, rect: Rect, wait_id: Id, label: &str,
         "Kein Bild empfangen"
     };
     let block = Block::single(ui, text, style, color);
+    let stalled = waited >= stage::FRAME_STALLED;
+    // A spinner above the words while loading, "Neu laden" under them after.
     let total = 16.0 + 8.0 + block.height();
     let top = rect.center().y - total / 2.0;
-    if waited < stage::FRAME_STALLED {
+    if stalled {
+        let words = rect.center().y - (block.height() + 8.0 + 32.0) / 2.0;
+        block.paint(painter, pos2(rect.center().x - block.width() / 2.0, words));
+        let label = Block::single(ui, "Neu laden", text::UI.weight(600.0), Color32::WHITE);
+        let w = label.width() + 24.0 + 2.0;
+        let button = Rect::from_min_size(
+            pos2(rect.center().x - w / 2.0, words + block.height() + 8.0),
+            vec2(w, 32.0),
+        );
+        return ui
+            .put(button, crate::widgets::Button::new("Neu laden").small())
+            .clicked();
+    }
+    {
         let center = pos2(rect.center().x, top + 8.0);
         painter.circle_stroke(center, 7.0, Stroke::new(2.0, Color32::from_white_alpha(64)));
         let a = (now as f32 / 0.9).fract() * std::f32::consts::TAU;
@@ -824,6 +854,7 @@ fn placeholder(ui: &Ui, painter: &Painter, rect: Rect, wait_id: Id, label: &str,
         painter,
         pos2(rect.center().x - block.width() / 2.0, top + 24.0),
     );
+    false
 }
 
 /// The label on a picture: marks, the name and " (du)" (400, 75 %) on a

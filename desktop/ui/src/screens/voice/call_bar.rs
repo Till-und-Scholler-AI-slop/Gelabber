@@ -144,6 +144,31 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     );
     let gear_rect = gear.rect;
     quick::button(ui, app, gear, gear_rect);
+    // Stream sound, while someone's Live plays here.
+    let watching = state
+        .participants
+        .iter()
+        .any(|p| !p.me && p.watching && p.live.is_some());
+    if watching {
+        let stream_muted = prefs::get(ui.ctx()).source_audio_muted;
+        let sound = control(
+            ui,
+            &mut x,
+            cy,
+            if stream_muted {
+                Icon::SpeakerOff
+            } else {
+                Icon::Speaker
+            },
+            None,
+            false,
+            if stream_muted { Tone::Off } else { Tone::Plain },
+            "Lautstärke",
+            "Lautstärke",
+        );
+        let rect = sound.rect;
+        quick::sound_button(ui, sound, rect, state.deafened);
+    }
     let live_title = if state.live {
         "Du bist live"
     } else {
@@ -209,20 +234,39 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     if deafen.clicked() {
         app.call.set_deafened(!state.deafened);
     }
-    let mic = control(
-        ui,
-        &mut x,
-        cy,
-        if muted { Icon::MicOff } else { Icon::Mic },
-        None,
-        false,
-        if muted { Tone::Off } else { Tone::Plain },
-        "Stummschalten",
+    let ptt = prefs::get(ui.ctx()).voice_input == "ptt";
+    let held = push_to_talk(ui, app, ptt && !muted);
+    let mic_title = format!(
+        "{}{}",
         if muted {
             "Stummschaltung aufheben (Strg+Umschalt+M)"
         } else {
             "Stummschalten (Strg+Umschalt+M)"
         },
+        if ptt && !muted {
+            " · Push-to-Talk"
+        } else {
+            ""
+        }
+    );
+    let mic = control(
+        ui,
+        &mut x,
+        cy,
+        if muted { Icon::MicOff } else { Icon::Mic },
+        (ptt && !muted).then_some("PTT"),
+        false,
+        if muted {
+            Tone::Off
+        } else if ptt && held {
+            Tone::Talking
+        } else if ptt {
+            Tone::Idle
+        } else {
+            Tone::Plain
+        },
+        "Stummschalten",
+        &mic_title,
     );
     if mic.clicked() {
         app.call.set_muted(!muted);
@@ -310,6 +354,43 @@ enum Tone {
     On,
     /// Live: white on danger.
     Live,
+    /// Push-to-talk held: the speaking colour.
+    Talking,
+    /// Push-to-talk waiting: the icon dimmed.
+    Idle,
+}
+
+/// Push-to-talk inside the window: the chosen key (or Maustaste 4/5)
+/// opens the microphone while held. Returns whether it is held.
+fn push_to_talk(ui: &Ui, app: &AppCtx, active: bool) -> bool {
+    let id = Id::unique("gelabber-ptt-held");
+    let was: bool = ui.ctx().data(|d| d.get_temp(id)).unwrap_or(false);
+    if !active {
+        if was {
+            app.call.push_to_talk(false);
+            ui.ctx().data_mut(|d| d.insert_temp(id, false));
+        }
+        return false;
+    }
+    let code = prefs::get(ui.ctx()).ptt_key;
+    let held = ui.input(|i| match code.as_str() {
+        "Mouse4" => i.pointer.button_down(egui::PointerButton::Extra1),
+        "Mouse5" => i.pointer.button_down(egui::PointerButton::Extra2),
+        "" => false,
+        code => {
+            let name = code
+                .strip_prefix("Key")
+                .or_else(|| code.strip_prefix("Digit"))
+                .unwrap_or(code);
+            egui::Key::from_name(name).is_some_and(|k| i.key_down(k))
+                && !ui.ctx().egui_wants_keyboard_input()
+        }
+    });
+    if held != was {
+        app.call.push_to_talk(held);
+        ui.ctx().data_mut(|d| d.insert_temp(id, held));
+    }
+    held
 }
 
 /// A `.voice-control-compact` button ending at `*x`; moves `*x` left.
@@ -327,7 +408,13 @@ fn control(
 ) -> egui::Response {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
-    let block = label.map(|l| Block::single(ui, l, text::UI, c.text));
+    // "PTT" is a caps badge; "Live" a word.
+    let style = if label == Some("PTT") {
+        text::CAPS.tracking(0.04)
+    } else {
+        text::UI
+    };
+    let block = label.map(|l| Block::single(ui, l, style, c.text));
     let mut w = 1.0 + 8.0 + 17.0 + 8.0 + 1.0;
     if let Some(b) = &block {
         w += 4.0 + b.width();
@@ -346,6 +433,16 @@ fn control(
         Tone::Off => (c.danger_bg.gamma_multiply(0.16), c.danger),
         Tone::On => (c.selected, c.accent_text),
         Tone::Live => (c.danger_bg, c.on_danger),
+        Tone::Talking => (
+            if hovered {
+                c.hover
+            } else {
+                Color32::TRANSPARENT
+            },
+            c.speaking,
+        ),
+        Tone::Idle if hovered => (c.hover, c.text),
+        Tone::Idle => (Color32::TRANSPARENT, c.muted),
         Tone::Plain if hovered => (c.hover, c.text),
         Tone::Plain => (Color32::TRANSPARENT, c.muted),
     };
@@ -361,7 +458,12 @@ fn control(
     if block.is_none() && !caret {
         cx = rect.center().x - 8.5;
     }
-    icons::paint(painter, icon, pos2(cx, cy - 8.5), 17.0, fg);
+    let icon_fg = if tone == Tone::Idle {
+        fg.gamma_multiply(0.55)
+    } else {
+        fg
+    };
+    icons::paint(painter, icon, pos2(cx, cy - 8.5), 17.0, icon_fg);
     cx += 17.0 + 4.0;
     if let Some(b) = &block {
         b.paint_tinted(painter, pos2(cx, cy - b.height() / 2.0), Some(fg));
