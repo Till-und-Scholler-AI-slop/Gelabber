@@ -878,66 +878,15 @@ pub fn show_confirm(ctx: &egui::Context) {
 // ----------------------------------------------------------- image pick
 
 /// A file chosen in the system dialog, read off the UI thread.
-pub type Picked = Arc<Mutex<Option<Option<(Vec<u8>, String)>>>>;
+pub use crate::platform::files::Picked;
 
-/// Opens the desktop's file dialog (xdg-desktop-portal through zenity or
-/// kdialog); the slot fills with the bytes and the file name, or `None`
-/// when nothing was chosen.
+/// Opens the desktop's file chooser (platform/files.rs: the portal, zenity
+/// or kdialog, else a path field in the window); the slot fills with the
+/// bytes and the file name, or `None` when nothing was chosen.
 pub fn pick_file(ctx: &egui::Context, title: &str, filter: &[&str]) -> Picked {
     let slot: Picked = Arc::new(Mutex::new(None));
-    let out = slot.clone();
-    let ctx = ctx.clone();
-    let title = title.to_owned();
-    let patterns = filter.join(" ");
-    std::thread::spawn(move || {
-        let path = run_dialog(&title, &patterns);
-        let file = path.and_then(|p| {
-            let name = std::path::Path::new(&p)
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            std::fs::read(&p).ok().map(|bytes| (bytes, name))
-        });
-        *out.lock() = Some(file);
-        ctx.request_repaint();
-    });
+    crate::platform::files::pick(ctx, title, filter, slot.clone());
     slot
-}
-
-fn run_dialog(title: &str, patterns: &str) -> Option<String> {
-    use std::process::Command;
-    let attempts: [(&str, Vec<String>); 2] = [
-        (
-            "zenity",
-            vec![
-                "--file-selection".into(),
-                format!("--title={title}"),
-                format!("--file-filter={patterns}"),
-            ],
-        ),
-        (
-            "kdialog",
-            vec![
-                "--title".into(),
-                title.into(),
-                "--getopenfilename".into(),
-                ".".into(),
-                patterns.into(),
-            ],
-        ),
-    ];
-    for (program, args) in attempts {
-        match Command::new(program).args(&args).output() {
-            Ok(out) if out.status.success() => {
-                let path = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-                return (!path.is_empty()).then_some(path);
-            }
-            // The dialog ran and was cancelled.
-            Ok(_) => return None,
-            Err(_) => continue,
-        }
-    }
-    None
 }
 
 /// Saves `bytes` where the user chooses (the web's download); without a

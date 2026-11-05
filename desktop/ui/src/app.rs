@@ -551,6 +551,8 @@ impl GelabberApp {
             screens::shell::connection::show(ui, gelabber_client::GatewayStatus::Idle);
         }
         logout_failed(ui, &self.client, signed_in);
+        // A file choice that no desktop chooser took: the path field.
+        crate::platform::files::show_in_app(&ctx);
         self.toasts.show(ui, !is_workspace(self.nav.route()));
         crate::widgets::opener::restore(&ctx);
     }

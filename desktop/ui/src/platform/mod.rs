@@ -4,6 +4,7 @@
 //! global push-to-talk key, and the update check. The binary owns one
 //! [`Platform`] and calls it every pass; parity runs go without one.
 
+pub mod files;
 pub mod instance;
 pub mod notify;
 pub mod paths;
