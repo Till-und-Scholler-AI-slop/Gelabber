@@ -385,7 +385,9 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                             eprintln!("{label}: {:?} {:?}", n.accesskit_node().role(), n.rect());
                         }
                     }
-                    find(&harness, label, &[])
+                    // getByText skips aria-labels, such as a rail icon's: links
+                    // only when nothing else carries the text.
+                    find_text(&harness, label)
                         .unwrap_or_else(|| panic!("{}: nothing labelled {label:?}", scene.name))
                         .click();
                 }
@@ -493,6 +495,24 @@ fn find<'t>(
     harness
         .query_all_by_label(label)
         .find(|n| roles.is_empty() || roles.contains(&n.accesskit_node().role()))
+}
+
+/// The first node with this label that is not a link, else the first link.
+fn find_text<'t>(harness: &'t App<'_>, label: &'t str) -> Option<egui_kittest::Node<'t>> {
+    use egui::accesskit::Role;
+    let others = [
+        Role::Button,
+        Role::DisclosureTriangle,
+        Role::MenuItem,
+        Role::Tab,
+        Role::RadioButton,
+        Role::CheckBox,
+        Role::Switch,
+        Role::Label,
+        Role::GenericContainer,
+        Role::Unknown,
+    ];
+    find(harness, label, &others).or_else(|| find(harness, label, &[]))
 }
 
 /// Playwright scrolls a target out of view to the middle before it
