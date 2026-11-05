@@ -1,0 +1,15 @@
+{
+  "size": [1280, 800],
+  "scenes": [
+    { "name": "login", "path": "/login", "user": null },
+    { "name": "register", "path": "/register", "user": null },
+    { "name": "server-overview", "path": "/s/{home}", "user": "lena" },
+    { "name": "channel-allgemein", "path": "/s/{home}/c/{allgemein}", "user": "lena" },
+    { "name": "channel-spiele", "path": "/s/{home}/c/{spiele}", "user": "lena" },
+    { "name": "other-server", "path": "/s/{evening}", "user": "lena" },
+    { "name": "dm-list", "path": "/d", "user": "lena" },
+    { "name": "dm", "path": "/d/{dm}", "user": "lena" },
+    { "name": "settings", "path": "/settings", "user": "lena" },
+    { "name": "server-settings", "path": "/s/{home}/settings", "user": "lena" }
+  ]
+}

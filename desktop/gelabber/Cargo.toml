@@ -1,0 +1,14 @@
+[package]
+name = "gelabber"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Gelabber native desktop app"
+publish = false
+
+[dependencies]
+gelabber-ui = { path = "../ui" }
+gelabber-client = { path = "../client" }
+eframe = { version = "0.37.0", default-features = false, features = ["wgpu", "accesskit", "wayland", "x11"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

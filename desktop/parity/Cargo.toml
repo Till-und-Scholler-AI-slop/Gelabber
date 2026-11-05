@@ -1,0 +1,18 @@
+[package]
+name = "gelabber-parity"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Renders native scenes headless and compares them with the web client (SSIM)"
+publish = false
+
+[dependencies]
+gelabber-ui = { path = "../ui" }
+gelabber-client = { path = "../client" }
+egui = "0.37.0"
+egui_kittest = { version = "0.37.0", features = ["wgpu", "eframe"] }
+eframe = { version = "0.37.0", default-features = false, features = ["wgpu"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
