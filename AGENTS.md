@@ -17,9 +17,9 @@ The **shipped line** is the latest release tag on `main`.
   version branches are complete.
 - **Releases:** a release branch from the development line with `origin/main`
   merged in, the version bump and `.github/release-notes/vX.Y.Z.md`, opened as
-  a PR to `main`. After CI and image publishing finish on `main`, `release.yml`
-  (started by hand) tags and publishes. Then sync `main` back into the
-  development line by PR.
+  a PR to `main`. Merging it releases: after CI and image publishing on
+  `main`, `release.yml` tags and publishes the new version by itself. Then
+  sync `main` back into the development line by PR.
 - **Hotfixes** for the shipped line: PR to `main`, then a sync PR from `main`
   to the development line that keeps the hotfix commits, so ancestry proves the
   sync.

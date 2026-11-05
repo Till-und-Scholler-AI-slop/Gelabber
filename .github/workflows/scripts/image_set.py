@@ -151,6 +151,23 @@ def latest():
             raise ValueError('Latest alias does not match the released digest')
 
 
+def decide():
+    """After a publish run: `tag=` and `image_run_id=` lines for the version to
+    release, or nothing. Only a promoted set is a new version; a main commit
+    that keeps the shipped version, or a pre-release, is not released here."""
+    manifest = json.loads(Path('image-set.json').read_text())
+    run_id = int(os.environ['IMAGE_RUN_ID'])
+    if manifest.get('publish_run_id') != run_id:
+        raise ValueError('Image set belongs to another publish run')
+    version = manifest.get('version', '')
+    if manifest.get('promoted') is not True or not re.fullmatch(r'v\d+\.\d+\.\d+', version):
+        print(f'No new stable version in this publish run ({version}); nothing to release.',
+              file=sys.stderr)
+        return
+    print(f'tag={version}')
+    print(f'image_run_id={run_id}')
+
+
 def release():
     repo = os.environ['GITHUB_REPOSITORY']
     manifest = json.loads(Path('image-set.json').read_text())
@@ -190,4 +207,4 @@ def release():
 
 
 if __name__ == '__main__':
-    {'promote': promote, 'release': release, 'latest': latest}[sys.argv[1]]()
+    {'promote': promote, 'decide': decide, 'release': release, 'latest': latest}[sys.argv[1]]()

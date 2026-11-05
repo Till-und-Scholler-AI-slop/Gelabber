@@ -297,5 +297,43 @@ class Promotion(unittest.TestCase):
             self.assertFalse(any(c.args[0] == 'docker' for c in calls.call_args_list))
 
 
+
+class Decide(unittest.TestCase):
+    """What release.yml releases on its own after a publish run."""
+
+    setUp = Promotion.setUp
+    tearDown = Promotion.tearDown
+
+    def decide(self, run_id='2'):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with patch.dict(os.environ, IMAGE_RUN_ID=run_id), contextlib.redirect_stdout(out):
+            m.decide()
+        return out.getvalue()
+
+    def promote(self, tag=None):
+        with patch.object(m, 'tag_sha', return_value=tag), patch.object(m, 'registry_digest', return_value=DIGEST), patch.object(m, 'run'):
+            m.promote()
+
+    def test_a_new_version_is_released(self):
+        self.promote()
+        self.assertEqual(self.decide(), 'tag=v0.2.4\nimage_run_id=2\n')
+
+    def test_a_shipped_version_is_not_released_again(self):
+        self.promote(tag='d' * 40)
+        self.assertEqual(self.decide(), '')
+
+    def test_a_pre_release_is_left_to_a_maintainer(self):
+        Path('backend/Cargo.toml').write_text('[workspace.package]\nversion="0.3.0-rc.1"\n')
+        self.promote()
+        self.assertEqual(self.decide(), '')
+
+    def test_the_set_of_another_run_is_refused(self):
+        self.promote()
+        with self.assertRaises(ValueError):
+            self.decide(run_id='3')
+
+
 if __name__ == '__main__':
     unittest.main()
