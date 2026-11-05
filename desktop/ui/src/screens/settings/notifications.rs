@@ -16,6 +16,8 @@ pub struct State {
     saving: bool,
     /// "Benachrichtigungen erlauben" was pressed.
     allowed: bool,
+    /// desktop.json could not be written.
+    tray_failed: bool,
 }
 
 pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
@@ -33,10 +35,16 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         &mut p.message_toasts,
         false,
     );
+    // The desktop app's notifications come from its window, not a tab.
+    let desktop = crate::platform::desktop_info(&ctx);
     controls::switch_row(
         ui,
         "desktop-notify",
-        "Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist",
+        if desktop.is_some() {
+            "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist"
+        } else {
+            "Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist"
+        },
         None,
         &mut p.desktop_notify,
         false,
@@ -54,6 +62,31 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     );
     if p != before {
         prefs::update(&ctx, |x| *x = p);
+    }
+    // CloseToTray.tsx: with a tray only.
+    if let Some(info) = desktop.filter(|d| d.tray) {
+        let mut on = info.close_to_tray;
+        if controls::switch_row(
+            ui,
+            "close-to-tray",
+            "Fenster schließen minimiert in den Infobereich",
+            Some("Ein laufender Anruf geht weiter. Beenden über das Symbol im Infobereich."),
+            &mut on,
+            false,
+        ) {
+            s.tray_failed = crate::platform::set_close_to_tray(&ctx, on).is_err();
+        }
+        if s.tray_failed {
+            ui.add_space(6.0);
+            let w = ui.available_width();
+            controls::paragraph(
+                ui,
+                "Die Einstellung konnte nicht gespeichert werden.",
+                text::META,
+                c.danger,
+                w,
+            );
+        }
     }
 
     ui.add_space(32.0);
@@ -98,13 +131,18 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     // The permission note (`.settings-note`).
     ui.add_space(32.0);
     let width = ui.available_width();
-    let message = if s.allowed {
+    // In the desktop app the system shows them: no permission to ask for.
+    let system = desktop.is_some_and(|d| d.system_notifications);
+    let allowed = s.allowed || system;
+    let message = if system {
+        "Benachrichtigungen laufen über dein System. Sperrbildschirm und „Nicht stören“ stellst du dort ein."
+    } else if s.allowed {
         "Browser-Benachrichtigungen sind erlaubt."
     } else {
         "Der Browser benötigt noch deine Erlaubnis für Benachrichtigungen."
     };
     let block = Block::wrapped(ui, message, text::BODY, c.text, width - 34.0);
-    let button_h = if s.allowed { 0.0 } else { 8.0 + 36.0 };
+    let button_h = if allowed { 0.0 } else { 8.0 + 36.0 };
     let h = 2.0 + 28.0 + block.height() + button_h;
     let top = ui.cursor().min;
     let rect = Rect::from_min_size(top, vec2(width, h));
@@ -116,7 +154,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         StrokeKind::Inside,
     );
     block.paint(ui.painter(), pos2(rect.left() + 17.0, rect.top() + 15.0));
-    if !s.allowed {
+    if !allowed {
         let brect = Rect::from_min_size(
             pos2(rect.left() + 17.0, rect.top() + 15.0 + block.height() + 8.0),
             vec2(width - 34.0, 36.0),

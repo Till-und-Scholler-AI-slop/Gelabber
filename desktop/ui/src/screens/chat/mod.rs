@@ -87,6 +87,30 @@ fn ensure_workspace(client: &Client, chat: &mut ChatState) {
     }
 }
 
+/// The unsent texts per conversation (messages/drafts.ts keeps them across
+/// restarts; the desktop app stores them).
+pub fn drafts(ctx: &egui::Context) -> HashMap<Uuid, String> {
+    chat_state(ctx)
+        .lock()
+        .composers
+        .iter()
+        .filter(|(_, c)| !c.draft.is_empty())
+        .map(|(id, c)| (*id, c.draft.clone()))
+        .collect()
+}
+
+/// Puts stored texts back where this run has none yet.
+pub fn restore_drafts(ctx: &egui::Context, drafts: HashMap<Uuid, String>) {
+    let state = chat_state(ctx);
+    let mut chat = state.lock();
+    for (channel, text) in drafts {
+        let composer = chat.composers.entry(channel).or_default();
+        if composer.draft.is_empty() {
+            composer.draft = text;
+        }
+    }
+}
+
 /// What the chat asks the rest of the app to open: dialogs it does not own.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChatRequest {

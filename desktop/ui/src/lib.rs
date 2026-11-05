@@ -7,6 +7,7 @@ pub mod icons;
 mod icons_generated;
 pub mod images;
 pub mod initials;
+pub mod platform;
 pub mod route;
 pub mod rules;
 pub mod screens;

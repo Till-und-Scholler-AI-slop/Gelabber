@@ -28,7 +28,19 @@ use crate::screens::{chat, server_settings, settings};
 use crate::theme::{Theme, layout::DOCK_HEIGHT};
 use crate::widgets::hairline_v;
 
-use state::Place;
+pub use state::{Memory, Place};
+
+/// `user`'s remembered places, for the desktop app to keep across restarts.
+pub fn memory_of(ctx: &egui::Context, user: Uuid) -> Option<Memory> {
+    state::with(ctx, |s| s.memory.get(&user).cloned())
+}
+
+/// Puts stored places back, unless this run already has some.
+pub fn restore_memory(ctx: &egui::Context, user: Uuid, memory: Memory) {
+    state::with(ctx, |s| {
+        s.memory.entry(user).or_insert(memory);
+    });
+}
 
 pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     let theme = Theme::of(ui.ctx());

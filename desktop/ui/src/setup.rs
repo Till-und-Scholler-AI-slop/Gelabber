@@ -18,6 +18,10 @@ use crate::widgets::{Button, FormError, TextField};
 /// Called with the origin once a server was chosen, to remember it.
 pub type Remember = Box<dyn Fn(&str)>;
 
+/// Called with each new client before its first request (the desktop app
+/// puts the remembered sign-in back).
+pub type Prepare = Box<dyn Fn(&Client)>;
+
 /// `CONNECT_TIMEOUT` of the Tauri app's reachability check.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -37,6 +41,7 @@ enum Stage {
 pub struct Launcher {
     stage: Stage,
     remember: Remember,
+    prepare: Option<Prepare>,
 }
 
 impl Launcher {
@@ -45,6 +50,16 @@ impl Launcher {
         cc: &eframe::CreationContext<'_>,
         server: Option<String>,
         remember: Remember,
+    ) -> Self {
+        Self::with_prepare(cc, server, remember, None)
+    }
+
+    /// Like [`Self::new`], with a hook for each new client.
+    pub fn with_prepare(
+        cc: &eframe::CreationContext<'_>,
+        server: Option<String>,
+        remember: Remember,
+        prepare: Option<Prepare>,
     ) -> Self {
         crate::fonts::install(&cc.egui_ctx);
         theme::set(&cc.egui_ctx, Theme::dark());
@@ -55,6 +70,7 @@ impl Launcher {
                 probe: None,
             },
             remember,
+            prepare,
         };
         if let Some(server) = server {
             match server_origin(&server) {
@@ -100,9 +116,20 @@ impl Launcher {
                 if remember {
                     (self.remember)(origin);
                 }
+                if let Some(prepare) = &self.prepare {
+                    prepare(&client);
+                }
                 self.stage = Stage::App(Box::new(GelabberApp::with_context(ctx, client, None)));
             }
             Err(e) => self.fail(origin, e.to_string()),
+        }
+    }
+
+    /// The running app, once a server was chosen.
+    pub fn app(&mut self) -> Option<&mut GelabberApp> {
+        match &mut self.stage {
+            Stage::App(app) => Some(app.as_mut()),
+            Stage::Setup { .. } => None,
         }
     }
 
