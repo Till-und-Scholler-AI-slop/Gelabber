@@ -4,8 +4,8 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "shared/data/emoji-sources"
+ROOT = Path(__file__).resolve().parents[2]
+SOURCE = ROOT / "backend/shared/data/emoji-sources"
 EXPECTED = {
     "emoji-test-18.0.txt": "8f3735cda1f92a779d78af67cf86066bb1f07143dc22f2ac29394d9bc57ab21a",
     "annotations-de-48.2.3.json": "bfd22f5226d874843a28b6efec01db7e47dfae4ed802eceab8b416550f09e3c2",
@@ -42,7 +42,7 @@ for line in (SOURCE / "emoji-test-18.0.txt").read_text().splitlines():
 output = {"version": "18.0", "cldr": "48.2.3", "emoji": entries}
 encoded = json.dumps(output, ensure_ascii=False, separators=(",", ":")) + "\n"
 outputs = {
-    ROOT / "shared/data/emoji-18.0.json": encoded.encode("utf-8"),
+    ROOT / "backend/shared/data/emoji-18.0.json": encoded.encode("utf-8"),
     ROOT / "web/src/messages/emoji-data.json": encoded.encode("utf-8"),
     ROOT / "web/public/emoji-license.txt": (SOURCE / "LICENSE.txt").read_bytes(),
 }

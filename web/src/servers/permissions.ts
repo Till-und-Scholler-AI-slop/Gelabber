@@ -1,5 +1,5 @@
 // The six coarse flags of issue #4, in the API's canonical order, with the
-// copy the settings page shows. Mirrors `api/src/servers/permissions.rs`.
+// copy the settings page shows. Mirrors `backend/api/src/servers/permissions.rs`.
 
 import type { Permission, Server } from "./types.ts";
 

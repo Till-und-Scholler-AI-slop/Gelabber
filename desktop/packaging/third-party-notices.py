@@ -50,6 +50,8 @@ OUTPUT = REPO / "desktop/app/package/THIRD-PARTY-NOTICES.txt"
 # The workflow that builds the packages, and its job for the Windows one.
 WORKFLOW_NAME = ".github/workflows/desktop-native.yml"
 WORKFLOW = REPO / WORKFLOW_NAME
+# Runs WORKFLOW as a job (`uses:`) and attaches the apps to a release.
+RELEASE_WORKFLOW = REPO / ".github/workflows/desktop-release.yml"
 WINDOWS_JOB = "core-windows"
 WINDOWS_UPLOAD_JOB = "release-asset-windows"
 WINDOWS_INSTALLER = "gelabber-desktop-windows-x64-setup.exe"
@@ -378,7 +380,13 @@ def workflow_jobs(text):
 
 def workflow_facts():
     jobs = workflow_jobs(read(WORKFLOW))
-    windows, upload = jobs.get(WINDOWS_JOB, ""), jobs.get(WINDOWS_UPLOAD_JOB, "")
+    release = workflow_jobs(read(RELEASE_WORKFLOW)) if RELEASE_WORKFLOW != WORKFLOW else {}
+    windows, upload = jobs.get(WINDOWS_JOB, ""), {**jobs, **release}.get(WINDOWS_UPLOAD_JOB, "")
+    # The job itself, or the release workflow's job that runs this workflow.
+    builders = {WINDOWS_JOB} | {
+        name for name, job in release.items()
+        if re.search(rf"^    uses: \./{re.escape(WORKFLOW_NAME)}\s*$", job, re.M)
+    }
     # The job's own environment: a step could set the variable again.
     environment = re.search(r"^    env:\n((?:      \S.*\n)+)", windows, re.M)
     variables = dict(re.findall(r"^      (\w+): (.*)$", environment[1] if environment else "", re.M))
@@ -396,10 +404,10 @@ def workflow_facts():
             )
         ),
         "a release takes the Windows installer from that job only": (
-            bool(needs) and WINDOWS_JOB in re.findall(r"[\w-]+", needs[1])
+            bool(needs) and bool(builders & set(re.findall(r"[\w-]+", needs[1])))
             and WINDOWS_INSTALLER in upload
             and not any(
-                WINDOWS_INSTALLER in job for name, job in jobs.items()
+                WINDOWS_INSTALLER in job for name, job in [*jobs.items(), *release.items()]
                 if name not in (WINDOWS_JOB, WINDOWS_UPLOAD_JOB)
             )
         ),

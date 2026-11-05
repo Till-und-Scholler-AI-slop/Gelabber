@@ -2,138 +2,81 @@
 
 Mandatory for every coding agent. Read this before changing the repo.
 
-## Version branches (standing)
+## Hosting
 
-Name each major-cut branch `v<major>`: `v0.2`, `v0.3`, `v1.0`, ….
+`origin` is GitHub (`Till-und-Scholler-AI-slop/Gelabber`). Push there and use
+`gh` for PRs and releases.
 
-Work for the **current** major happens on that `v*` branch, **not** on `main`.
+## Branches and pull requests
 
-When starting a new `v*` branch, copy this setup **immediately**. Do not leave an unprotected `v*` branch.
+The **development line** is the newest version branch on `origin`:
+`git branch -r --list 'origin/v[0-9]*' --sort=-version:refname | head -1`.
+The **shipped line** is the latest release tag on `main`.
 
-Preferred protection: a repo ruleset whose pattern covers every version branch (`refs/heads/v[0-9]*`), same effect as on `v0.3`:
+- **Features:** branch off the development line; the PR targets it. Older
+  version branches are complete.
+- **Releases:** a release branch from the development line with `origin/main`
+  merged in, the version bump and `.github/release-notes/vX.Y.Z.md`, opened as
+  a PR to `main`. Merging it releases: after CI and image publishing on
+  `main`, `release.yml` tags and publishes the new version by itself. Then
+  sync `main` back into the development line by PR.
+- **Hotfixes** for the shipped line: PR to `main`, then a sync PR from `main`
+  to the development line that keeps the hotfix commits, so ancestry proves the
+  sync.
+- **Each fix** gets its own reviewed PR before a release PR bundles it.
+- **Protection:** the `Version branches` ruleset covers `refs/heads/v[0-9]*`
+  (PR required, same reviews as `main`); every change reaches `main` and `v*`
+  through a PR. A new version branch name must match that pattern, or gets the
+  same protection by hand before its first commit.
+- **Review:** SilasSch reviews product PRs.
 
-- Require a **pull request**. No direct pushes (`git push origin v0.3` of feature commits is forbidden; same for `main` and every future `v*`).
-- Do not require extra approvers beyond whatever the repo already needs for own-PRs.
-- Require CI status checks only if `main` already requires them.
+## Commands
 
-If a new `v*` name would miss that pattern, add the same protection by hand before any product commits.
+Rust workspace in `backend/` (`api`, `media`, `shared`), from `backend/`:
 
-## Pull requests
+- `cargo fmt --all -- --check`
+- `cargo clippy --locked --workspace --all-targets -- -D warnings`
+- Tests run in the native toolchain image, as in CI. From the repo root, build
+  it once with
+  `docker build --target base --file backend/media/Dockerfile --tag gelabber-native-ci-toolchain:local .`,
+  then `sh backend/build/run-native-ci.sh test --locked --workspace --all-targets`.
+  They need Postgres, Redis and MinIO plus `DATABASE_URL`, `REDIS_URL`,
+  `MINIO_ENDPOINT`, `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` (values in
+  `backend/api/.env.example`); storage and avatar tests fail without the MinIO
+  ones. The database role needs `CREATEDB` for `sqlx::test`.
 
-- Feature work uses feature branches off the current `v*` (e.g. `rft/<short>-01d0`, or Silas’s usual names). **PRs target that `v*` branch, not `main`.**
-- Merge a feature into the current `v*` when that feature is done and fixed (CI green, review as usual).
-- Merge `v*` → `main` **via a PR** only when the **whole** major is done and fixed. Then cut a **release** (tag `v0.2.0` etc.). Do not tag or release from a half-finished major or from a random feature branch.
-- Hotfixes for the currently shipped minor go to `main` (or a hotfix branch), followed by a sync PR to the current `v*` branch. The latest published tag on `main` identifies that shipped line. Older release lines require an explicitly scoped maintenance branch; do not mix their fixes into the current line unless Rafael says so.
-- After every merged hotfix on `main`, promptly open a sync PR from `main` (or a dedicated sync branch containing it) to the current `v*` branch. Preserve the hotfix commits so ancestry proves the sync; require the usual review and CI before merging. Feature branches then merge the updated version branch.
-- Keep fixes independently reviewable. Review and merge each focused fix before a release PR bundles it; a release bundle does not replace the individual reviews.
+Web (`web/`, Node from `engines` in `package.json`): `npm run lint`,
+`npm test`, `npm run test:checks`, `npm run build`.
+
+Desktop (`desktop/`) is its own Cargo workspace and needs a prebuilt libwebrtc
+package; see `desktop/README.md`.
 
 ## CI workflows (`.github/workflows`)
 
 Keep CI lean. Pull requests check only what is needed to merge safely.
 
 - **Pull requests:** fmt, clippy/lint, tests, build, and one representative integration check per area. Aim for under 15 minutes per workflow with a warm cache.
-- **After merge (push to `main`/`v*`) and releases:** packaging, installers, package repositories, signing and uploads. Do not run these on every PR.
-- **Manual diagnostics** (fault matrices, soak and stability loops) go in their own workflow, started by hand or by a PR label, not behind `if: inputs.*` steps in the PR gate (see `e2e-extended.yml`: label `e2e-extended`).
-- **Lists of scripts** go behind one entry point (e.g. `npm run test:checks`), not one CI line per file. CI and developers run the same command.
+- **Areas:** each top-level folder is one area (`backend/`, `web/`, `desktop/`, `deploy/`). `ci.yml` runs only the areas a pull request touches; `.github/workflows/scripts/changes.py` maps paths to areas. `ci-ok` is the one required check; a new job joins its `needs`.
+- **After merge (push to `main`/`v*`) and releases:** packaging, installers, package repositories, signing and uploads.
+- **Manual diagnostics** (fault matrices, soak and stability loops) go in their own workflow, started by hand or by a PR label, outside the PR gate (see `e2e-extended.yml`: label `e2e-extended`).
+- **Lists of scripts** go behind one entry point (e.g. `npm run test:checks`). CI and developers run the same command.
 - **New check:** say what it catches that existing checks miss. Add it to an existing job unless a parallel job saves wall time. Remove checks that a new one replaces.
-- **Every workflow** sets top-level `permissions`, by default `contents: read`, with jobs adding only what they need. Every job sets `timeout-minutes`. Actions stay pinned to commit SHAs (`workflow-pins.yml`).
+- **Every workflow** sets top-level `permissions`, by default `contents: read`, with jobs adding only what they need. Every job sets `timeout-minutes`. Actions stay pinned to commit SHAs (`deploy/compose/tests/test_workflow_pins.py`).
 - **Caches** are saved only by pushes (`save-if`, `cache-to`). Pull requests only read them, because per-PR copies exceed the repository's cache quota.
 - **Comments** in workflows are one or two lines saying why. Longer reasoning and history go in commit messages or `docs/`.
 
 ## Product
 
-No LiveKit, Daily, Agora, Twilio, Stream, or Socket.IO. Own WebSocket and own product signaling. Keep the locked stack pins.
-
-For v0.4, Rafael explicitly selected self-hosted mediasoup with its official Rust
-binding on 2026-10-06 and authorized full replacement of the existing SFU. There
-is no runtime backend selector or old-SFU fallback. Benchmark selection and new
-load tests are not prerequisites of this instruction. Preserve historical
-benchmark FAIL/BLOCKED results; do not claim calibrated latency or performance
-acceptance from the selection. Keep product tickets, ACL/revocation, Watch,
-Go Live and separate source lifetimes under Gelabber's own gateway. See
-`docs/v0.4-mediasoup-migration.md` for build, functional checks and the coherent
-previous-application rollback boundary. Only necessary mediasoup dependencies
-change; preserve unrelated stack pins. Browser-local DSP uses pinned,
-self-hosted RNNoise assets. Do not introduce a cloud audio service.
-
-SilasSch reviews product PRs when that is the standing rule. Do not invent extra process.
-
-Rafael explicitly waived human review for the finished v0.4 feature integration
-on 2026-10-06. This exception does not waive PRs or successful technical checks.
-Restore the normal review protection after that integration. He also excluded
-the one-hour call test; do not run it or record it as passed.
-
-The subsequent mediasoup implementation remains feature-PR work targeting
-`v0.4`. Rafael allows skipping human review; successful technical checks and
-PR protection still apply. Physical iOS/Omarchy acceptance remains deferred.
-This instruction does not authorize main merges, release or deployment.
-
-## Current development line: v0.8
-
-`v0.8` was cut from the `v0.7.1` line (`5ab3a90`) on 2026-10-21 at Rafael's
-request and is protected by the **Version branches** ruleset
-(`refs/heads/v[0-9]*`: PRs required, same review requirements as `main`).
-Major product work for this line targets `v0.8` through feature PRs: the UX
-redesign (#322 to #330: theme tokens and shared UI primitives, first run and
-invites, shell navigation, chat, the bottom call bar, the voice room, settings,
-motion and small details, and one "Live gehen" that replaces screen share and
-Go Live in the client) and the gateway follow-ups (#346). The redesign PRs are
-stacked: merge them in order and retarget the next one to `v0.8` after each
-merge. Do not target new feature PRs at `v0.7.1` or older lines. Release a
-completed line only from `main` after its version PR, CI and image publishing
-have finished.
-
-`v0.6` shipped as `v0.6.0`/`v0.6.1`, `v0.7` as `v0.7.0` and `v0.7.1` as
-`v0.7.1`; those lines are complete. `v0.5` shipped the Linux desktop app as
-`v0.5.0` on 2026-10-08 (#170, decided by Silas) and is complete.
-
-## Shipped line: latest published main tag
-
-The latest published release is currently `v0.8.7`. Hotfixes for the shipped
-minor go to `main`, followed by a sync PR to the current development branch once
-one exists; a feature-branch version is not a release.
-
-The existing product includes the Living Room interface and persistent call dock,
-account themes, configurable stream quality, fullscreen viewing, and separate
-screen/Go Live audio, alongside existing permissions, chat, direct messages,
-screen share, Go Live and moderation. Configurable join/leave and mute/deafen
-sounds, unread state, search, drafts, reactions, local RNNoise audio processing
-and the mediasoup media backend shipped with `v0.4.0`. The native Linux desktop
-app (Tauri shell, native libwebrtc/libmediasoupclient media core, pacman
-repository) shipped with `v0.5.0`.
-
-Hotfix work for the shipped line stays on `main`; future major product work uses
-its own protected version branch.
-
-The old `v0.2` development branch is frozen for historical reference. The active
-`Frozen v0.2` ruleset blocks updates and deletion with no bypass actors; releases
-remain available through their tags. Do not target new PRs at `v0.2`.
-
-## Cursor Cloud specific instructions
-
-This section applies only to the Cursor Cloud Agent image; the start script
-and the `/opt/...` paths below are not part of this repository. Ignore it
-elsewhere.
-
-The Cloud Agent start script brings the dev stack up on boot. Postgres 18.6
-listens on `127.0.0.1:5432` (role `gelabber`, database `gelabber`), Redis
-8.10.1 on `6379`, and MinIO `RELEASE.2025-10-15T17-29-55Z` on `9000`.
-`gelabber-api` listens on `8080`, `gelabber-media` on `8081`, and Vite on
-`5173`. Credentials match `api/.env.example` (MinIO password
-`gelabbergelabber`). Open `http://127.0.0.1:5173`; with `API_COOKIE_SECURE` off,
-sign-in only answers loopback hosts (`127.0.0.1`, `localhost`) unless
-`API_ALLOW_PLAIN_HTTP` is true.
-
-Node must be 26.8.2 from `/opt/node-v26.8.2`. The image's default Node is too
-old for `web/`. Lint, test, and build from `web/` with `npm run lint`,
-`npm test`, and `npm run build`.
-
-Media rebuilds use the pinned toolchain at `/opt/gelabber/native-build`.
-Cargo is already set to `gcc`/`g++`, `PYTHON=/opt/gelabber/native-build/native-python`,
-and two jobs. `cc` on this image is clang and cannot link `libstdc++`.
-
-API tests need `DATABASE_URL=postgres://gelabber:gelabber@127.0.0.1:5432/gelabber`,
-`REDIS_URL=redis://127.0.0.1:6379`, `MINIO_ENDPOINT=http://127.0.0.1:9000`,
-`MINIO_ROOT_USER=gelabber`, and `MINIO_ROOT_PASSWORD=gelabbergelabber`. The
-storage and avatar tests fail without the MinIO variables. The `gelabber` role
-can create databases for `sqlx::test`.
+- **Signaling** is Gelabber's own WebSocket protocol. No LiveKit, Daily, Agora,
+  Twilio, Stream or Socket.IO.
+- **Media** is self-hosted mediasoup through its official Rust binding, the
+  only SFU, with no backend selector or fallback. Build, functional checks and
+  rollback: `docs/v0.4-mediasoup-migration.md`.
+- **Gelabber's gateway** owns tickets, ACL/revocation, Watch, Go Live and the
+  separate source lifetimes.
+- **Audio processing** runs in the client with pinned, self-hosted RNNoise
+  assets, never a cloud audio service.
+- **Pins:** keep the locked versions; a change updates only the dependencies it
+  needs.
+- **Performance claims** state only what was measured. Historical benchmark
+  FAIL/BLOCKED results stay as recorded.

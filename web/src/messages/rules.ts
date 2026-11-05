@@ -1,5 +1,5 @@
-// Client-side mirror of `api/src/messages/validate.rs` and
-// `api/src/attachments/validate.rs`.
+// Client-side mirror of `backend/api/src/messages/validate.rs` and
+// `backend/api/src/attachments/validate.rs`.
 
 import type { FieldCode } from "../api/client.ts";
 

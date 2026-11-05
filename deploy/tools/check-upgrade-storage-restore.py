@@ -31,7 +31,7 @@ POSTGRES = 'postgres:18.6-alpine3.24'
 REDIS = 'redis:8.10.1-alpine'
 MINIO = 'ghcr.io/till-und-scholler-ai-slop/gelabber/minio:RELEASE.2025-10-15T17-29-55Z'
 LABEL = 'org.gelabber.local-restore-drill'
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def sha(data):
@@ -186,12 +186,14 @@ class Drill:
         # Read the frozen revision's toolchain, never adjust pins for the drill.
         import tomllib
         toolchain = tomllib.loads((source / 'rust-toolchain.toml').read_text())['toolchain']['channel']
+        # Revisions before the backend/ move keep the workspace at the root.
+        workspace = source / 'backend' if (source / 'backend/Cargo.toml').is_file() else source
         target = (self.args.target_dir or self.output / 'target').resolve()
         guard_running_binary(target / 'debug/gelabber-api')
         env = dict(os.environ, CARGO_TARGET_DIR=str(target))
         with (self.output / f'{label}-build.log').open('wb') as log:
             subprocess.run(['cargo', f'+{toolchain}', 'build', '--locked', '-p', 'gelabber-api'],
-                           cwd=source, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
+                           cwd=workspace, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
         binary = self.output / f'{label}-api'
         shutil.copy2(target / 'debug/gelabber-api', binary)
         self.report['binaries'][label] = {
@@ -199,8 +201,8 @@ class Drill:
             'git_archive_sha256': sha(archive), 'rust_toolchain': toolchain,
             'rustc_version': self.command(['rustc', f'+{toolchain}', '--version'], text=True).strip(),
             'cargo_version': self.command(['cargo', f'+{toolchain}', '--version'], text=True).strip(),
-            'cargo_lock_sha256': sha((source / 'Cargo.lock').read_bytes()),
-            'migrations': {p.name: sha(p.read_bytes()) for p in sorted((source / 'api/migrations').glob('*.sql'))},
+            'cargo_lock_sha256': sha((workspace / 'Cargo.lock').read_bytes()),
+            'migrations': {p.name: sha(p.read_bytes()) for p in sorted((workspace / 'api/migrations').glob('*.sql'))},
         }
         self.check(f'{label} frozen source built --locked and executable copied/hash recorded')
         return binary

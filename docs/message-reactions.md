@@ -48,7 +48,7 @@ edit/delete races, outbox preservation through Redis failure and permission
 loss while a request waits on the membership writer lock.
 ## Local upgrade and restore drill
 
-`python3 tools/check-chat-migration-restore.py --container gelabber-chat-test-postgres --output /tmp/gelabber-chat-restore.json`
+`python3 deploy/tools/check-chat-migration-restore.py --container gelabber-chat-test-postgres --output /tmp/gelabber-chat-restore.json`
 uses only fresh UUID databases in an explicitly named local test PostgreSQL
 container. It upgrades the nine shipped migrations with existing messages,
 then adds votes and a read cursor, makes a real custom-format `pg_dump` and

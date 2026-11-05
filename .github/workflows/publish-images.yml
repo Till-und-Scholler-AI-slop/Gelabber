@@ -1,4 +1,5 @@
-# Main publishing starts only after CI of the exact main SHA succeeds.
+# Pushes the app images once CI of the exact main SHA succeeds; ci.yml
+# builds them for pull requests.
 name: Publish app images
 
 on:
@@ -6,25 +7,10 @@ on:
     workflows: [CI]
     types: [completed]
     branches: [main]
-  pull_request:
-    paths:
-      - api/**
-      - media/**
-      - shared/**
-      - web/**
-      - docker/**
-      - .dockerignore
-      - Cargo.toml
-      - Cargo.lock
-      - rust-toolchain.toml
-      - deploy/compose/**
-      - .github/workflows/publish-images.yml
-      - .github/workflows/scripts/**
-
 # Serialize promotion across main revisions, including reruns.
 concurrency:
-  group: app-images-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: app-images-main
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -32,11 +18,10 @@ permissions:
 jobs:
   publish:
     if: >-
-      github.event_name == 'pull_request' ||
-      (github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -48,10 +33,10 @@ jobs:
         include:
           - name: api
             context: .
-            file: api/Dockerfile
+            file: backend/api/Dockerfile
           - name: media
             context: .
-            file: media/Dockerfile
+            file: backend/media/Dockerfile
           - name: web
             context: web
             file: web/Dockerfile
@@ -59,17 +44,17 @@ jobs:
       - name: Checkout exact tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
       - name: Image names and OCI metadata
         env:
-          SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY,,}"
           echo "GHCR_IMAGE=ghcr.io/${repo}/${{ matrix.name }}" >> "$GITHUB_ENV"
           echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
           echo "IMAGE_TAG=sha-${SOURCE_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
-          echo "GELABBER_VERSION=v$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')" >> "$GITHUB_ENV"
+          echo "GELABBER_VERSION=v$(python3 -c 'import tomllib; print(tomllib.load(open("backend/Cargo.toml", "rb"))["workspace"]["package"]["version"])')" >> "$GITHUB_ENV"
           echo "OCI_CREATED=$(git show -s --format=%cI HEAD)" >> "$GITHUB_ENV"
       - name: Compose version pins match workspace
         run: |
@@ -77,7 +62,6 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Login to GHCR
-        if: github.event_name == 'workflow_run'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -89,8 +73,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
-          push: ${{ github.event_name == 'workflow_run' }}
-          load: ${{ github.event_name == 'pull_request' && matrix.name == 'media' }}
+          push: true
           provenance: false
           tags: ${{ env.GHCR_IMAGE }}:${{ env.IMAGE_TAG }}
           build-args: |
@@ -100,19 +83,14 @@ jobs:
             OCI_SOURCE=https://github.com/${{ github.repository }}
           cache-from: type=gha,scope=${{ matrix.name }}
           # Only main writes the layer cache (quota); pull requests read it.
-          cache-to: ${{ github.event_name == 'workflow_run' && format('type=gha,mode=max,scope={0}', matrix.name) || '' }}
-      - name: Verify actual media image readiness and normal shutdown
-        if: github.event_name == 'pull_request' && matrix.name == 'media'
-        run: python3 docker/check-media-image.py --image "${GHCR_IMAGE}:${IMAGE_TAG}" --revision "$SOURCE_SHA"
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
       - name: Record digest
-        if: github.event_name == 'workflow_run'
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           mkdir -p digests
           python3 -c 'import json,os; json.dump({"image":os.environ["GHCR_IMAGE"],"digest":os.environ["DIGEST"],"tag":os.environ["IMAGE_TAG"],"revision":os.environ["SOURCE_SHA"]},open("digests/${{ matrix.name }}.json","w"))'
       - name: Upload digest
-        if: github.event_name == 'workflow_run'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digest-${{ matrix.name }}
@@ -120,7 +98,6 @@ jobs:
 
   promote:
     needs: publish
-    if: github.event_name == 'workflow_run'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -149,7 +126,7 @@ jobs:
         run: |
           media_ref=$(python3 -c 'import json; d=json.load(open("digests/media.json")); print(d["image"]+"@"+d["digest"])')
           docker pull "$media_ref"
-          python3 docker/check-media-image.py --image "$media_ref" --revision "$SOURCE_SHA"
+          python3 backend/build/check-media-image.py --image "$media_ref" --revision "$SOURCE_SHA"
       - name: Verify CI, preflight immutable release, record image set
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

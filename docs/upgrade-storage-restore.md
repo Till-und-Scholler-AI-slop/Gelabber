@@ -1,6 +1,6 @@
 # Local upgrade, paired storage restore and API rollback
 
-`tools/check-upgrade-storage-restore.py` exercises the actual HTTP API against
+`deploy/tools/check-upgrade-storage-restore.py` exercises the actual HTTP API against
 fresh PostgreSQL, Redis and MinIO containers. It never reads a deployment `.env`,
 connects to a remote daemon or accepts an existing database/volume name. Every
 container and volume gets a generated nonce and ownership label; cleanup checks
@@ -10,7 +10,7 @@ artifacts private: dumps contain disposable fixture password hashes/sessions.
 Run from a feature checkout containing the unchanged PR153/154 migrations:
 
 ```bash
-python3 tools/check-upgrade-storage-restore.py \
+python3 deploy/tools/check-upgrade-storage-restore.py \
   --old-ref v0.3.1 --current-ref HEAD \
   --output /tmp/gelabber-storage-restore-unique
 ```
@@ -81,7 +81,7 @@ unrelated authentication/network failure cannot count as a passing control.
 Fast safety tests:
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/tests -v
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy/tools/tests -v
 ```
 
 This is a slow local gate, not a CI browser/job extension. It verifies API
@@ -89,7 +89,7 @@ binary/data rollback, not an immutable Web/Media/API deployment image-set,
 production readiness, Caddy/TLS, device behavior or a production recovery time.
 An operator must still rehearse the actual archived deployment image set and
 configuration before a production rollout. The existing PostgreSQL-only
-`tools/check-chat-migration-restore.py` does not satisfy the objectstore/binary
+`deploy/tools/check-chat-migration-restore.py` does not satisfy the objectstore/binary
 part of this gate.
 
 ## Recorded local acceptance

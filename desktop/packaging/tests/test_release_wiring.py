@@ -1,15 +1,18 @@
-"""How desktop-native.yml attaches the apps to a release: python3 -m unittest
+"""How desktop-release.yml attaches the apps to a release: python3 -m unittest
 discover -s desktop/packaging/tests
 
-Both uploads wait for the third-party notices, so no release goes out with
-notices that are out of date, and the pacman repository is published only
-after the tarball its PKGBUILD downloads is attached. Read without a YAML
-library, which a runner's python need not have."""
+Both uploads wait for the whole build of desktop-native.yml, the third-party
+notices included, so no release goes out with notices that are out of date,
+and the pacman repository is published only after the tarball its PKGBUILD
+downloads is attached. Read without a YAML library, which a runner's python
+need not have."""
 from pathlib import Path
 import re
 import unittest
 
-WORKFLOW = Path(__file__).parents[3] / '.github/workflows/desktop-native.yml'
+WORKFLOWS = Path(__file__).parents[3] / '.github/workflows'
+WORKFLOW = WORKFLOWS / 'desktop-release.yml'
+BUILD = WORKFLOWS / 'desktop-native.yml'
 
 
 def jobs(text):
@@ -39,15 +42,17 @@ class ReleaseWiring(unittest.TestCase):
         sample = 'on: {}\njobs:\n  a:\n    runs-on: x\n  b:\n    needs: a\n  c:\n    needs: [a, b]\n'
         self.assertEqual(jobs(sample), {'a': set(), 'b': {'a'}, 'c': {'a', 'b'}})
 
-    def test_uploads_wait_for_the_notices(self):
-        self.assertIn('notices', self.jobs)
+    def test_the_build_holds_the_notices_and_both_apps(self):
+        self.assertIn('    uses: ./.github/workflows/desktop-native.yml\n', WORKFLOW.read_text())
+        build = jobs(BUILD.read_text())
+        for job in ('notices', 'arch-repo', 'core-windows'):
+            with self.subTest(job=job):
+                self.assertIn(job, build)
+
+    def test_uploads_wait_for_the_build(self):
         for job in ('release-asset', 'release-asset-windows'):
             with self.subTest(job=job):
-                self.assertIn('notices', self.jobs.get(job, set()))
-
-    def test_uploads_wait_for_their_builds(self):
-        self.assertIn('arch-repo', self.jobs['release-asset'])
-        self.assertIn('core-windows', self.jobs['release-asset-windows'])
+                self.assertIn('build', self.jobs.get(job, set()))
 
     def test_the_repository_is_published_after_the_tarball(self):
         self.assertIn('release-asset', self.jobs.get('arch-repo-publish', set()))

@@ -14,7 +14,7 @@ import {
   validatePassword,
 } from "./rules.ts";
 
-describe("validation rules (mirror of api/src/auth/validate.rs)", () => {
+describe("validation rules (mirror of backend/api/src/auth/validate.rs)", () => {
   it("email", () => {
     expect(validateEmail(" Ada@Example.com ")).toBeNull();
     expect(validateEmail("")).toBe("required");

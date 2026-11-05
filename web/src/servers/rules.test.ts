@@ -7,7 +7,7 @@ import {
   validateName,
 } from "./rules.ts";
 
-describe("server rules (mirror of api/src/servers/validate.rs)", () => {
+describe("server rules (mirror of backend/api/src/servers/validate.rs)", () => {
   it("validates names like the API", () => {
     expect(validateName("  Team ")).toBeNull();
     expect(validateName("   ")).toBe("required");

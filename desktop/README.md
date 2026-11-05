@@ -254,7 +254,7 @@ The Windows app updates itself (`app/src/update.rs`, issue #253). About 15 s
 after the start and then every 6 hours (unless switched off on the setup
 page; `update.json` next to `desktop.json`) it asks for
 `https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/latest/download/latest.json`,
-which `release-asset-windows` in `desktop-native.yml` attaches to every
+which `release-asset-windows` in `desktop-release.yml` attaches to every
 release with the installer's signature. "Latest" is the release GitHub marks
 as latest, by default the newest that is not a pre-release, so pre-releases
 are never offered. A hotfix of an older line (0.6.2 after 0.7.0) would take
@@ -292,7 +292,7 @@ replaced by hand. Nothing in the app writes to its own files.
 - Public key: `app/updater.pub`, one line as `tauri signer generate` writes
   it, read by `app/build.rs` at compile time. Without it the app is built
   without updates (the setup page says so) and a release stops in
-  `release.yml` and in `desktop-native.yml`.
+  `release.yml` and in `desktop-native.yml` (called by `desktop-release.yml`).
 - Private key and its password: the repository secret
   `TAURI_SIGNING_PRIVATE_KEY` (the content of the key file) is required.
   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` is optional: the Tauri CLI (v2.12+)

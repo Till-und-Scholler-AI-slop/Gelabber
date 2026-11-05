@@ -1,6 +1,5 @@
-# PR gate for API, media, web and deployment config. No image push, no
-# continue-on-error; missing Postgres/Redis/MinIO fail the job. Manual fault
-# diagnostics live in e2e-extended.yml.
+# PR gate: `changes` picks the areas a pull request touches and only their
+# jobs run; ci-ok is the one required check. Pushes and manual runs run all.
 name: CI
 
 on:
@@ -11,25 +10,6 @@ on:
         type: boolean
         default: false
   pull_request:
-    paths:
-      - api/**
-      - media/**
-      - shared/**
-      - web/**
-      - docker/**
-      - .dockerignore
-      - deploy/compose/**
-      # Read by deploy/compose/tests.
-      - deploy/backup.sh
-      - deploy/README.md
-      - Cargo.toml
-      - Cargo.lock
-      - rust-toolchain.toml
-      - desktop/Cargo.toml
-      # This workflow and what its deployment tests read.
-      - .github/workflows/ci.yml
-      - .github/workflows/publish-images.yml
-      - .github/workflows/scripts/**
   push:
     branches: [main, "v[0-9]*"]
 
@@ -44,8 +24,41 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  changes:
+    name: Changed areas
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      backend: ${{ steps.areas.outputs.backend }}
+      web: ${{ steps.areas.outputs.web }}
+      desktop: ${{ steps.areas.outputs.desktop }}
+      deploy: ${{ steps.areas.outputs.deploy }}
+      minio: ${{ steps.areas.outputs.minio }}
+      images: ${{ steps.areas.outputs.images }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      # A pull request checks out its merge commit; the first parent is the base.
+      - name: Areas
+        id: areas
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = pull_request ]; then
+            git diff --name-only HEAD^1 HEAD | python3 .github/workflows/scripts/changes.py >> "$GITHUB_OUTPUT"
+          else
+            python3 .github/workflows/scripts/changes.py --all >> "$GITHUB_OUTPUT"
+          fi
+
   lint:
     name: Rust lint
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -60,16 +73,18 @@ jobs:
           components: rustfmt, clippy
 
       - name: Format
-        run: cargo fmt --all -- --check
+        run: cargo fmt --manifest-path backend/Cargo.toml --all -- --check
 
       # Type check only: DOCS_RS makes mediasoup-sys skip its worker build.
       - name: Clippy
         env:
           DOCS_RS: "1"
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --manifest-path backend/Cargo.toml --workspace --all-targets -- -D warnings
 
   rust:
     name: Rust tests
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -140,7 +155,7 @@ jobs:
         uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
 
       - name: Build verified Debian native CI toolchain
-        run: docker build --target base --file media/Dockerfile --tag gelabber-native-ci-toolchain:local .
+        run: docker build --target base --file backend/media/Dockerfile --tag gelabber-native-ci-toolchain:local .
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -152,22 +167,8 @@ jobs:
           # The build runs in the Debian image (shared-key), so the runner's
           # own Rust versions must not change the key and drop the cache.
           add-rust-environment-hash-key: false
-          shared-key: native-debian-${{ hashFiles('media/Dockerfile', 'docker/mediasoup-*', 'docker/install-mediasoup-debian-build-tools.sh') }}
-          workspaces: . -> target/native-debian
-
-      - name: Install Caddy
-        run: |
-          set -euo pipefail
-          caddy_archive="$(mktemp)"
-          trap 'rm -f "$caddy_archive"' EXIT
-          curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_linux_amd64.tar.gz" -o "$caddy_archive"
-          tar -xzf "$caddy_archive" -C /usr/local/bin caddy
-          chmod +x /usr/local/bin/caddy
-          caddy version
-          test "$(caddy version | cut -d ' ' -f 1)" = "v2.11.4"
-
-      - name: Test deployment config
-        run: python3 -m unittest discover -s deploy/compose/tests -v
+          shared-key: native-debian-${{ hashFiles('backend/media/Dockerfile', 'backend/build/mediasoup-*', 'backend/build/install-mediasoup-debian-build-tools.sh') }}
+          workspaces: backend -> target/native-debian
 
       - name: Test workspace
         run: |
@@ -177,7 +178,7 @@ jobs:
           test -n "$MINIO_ROOT_PASSWORD"
           curl -fsS "$MINIO_ENDPOINT/minio/health/ready" >/dev/null
           # The 100 ms typing assertion runs alone in the next step.
-          sh docker/run-native-ci.sh test --locked --workspace --all-targets --no-fail-fast -- --skip typing_broadcasts_fast_and_clears_on_stop --test-threads=4
+          sh backend/build/run-native-ci.sh test --locked --workspace --all-targets --no-fail-fast -- --skip typing_broadcasts_fast_and_clears_on_stop --test-threads=4
 
       - name: Test typing latency in isolation
         env:
@@ -191,7 +192,7 @@ jobs:
           for ((iteration=1; iteration<=repetitions; iteration++)); do
             echo "Isolated typing latency check ${iteration}/${repetitions}"
             # Same flags as above, so the built tests are reused.
-            sh docker/run-native-ci.sh test --locked --workspace --all-targets typing_broadcasts_fast_and_clears_on_stop -- --exact --test-threads=1
+            sh backend/build/run-native-ci.sh test --locked --workspace --all-targets typing_broadcasts_fast_and_clears_on_stop -- --exact --test-threads=1
           done
 
       - name: Dump test MinIO logs
@@ -205,8 +206,37 @@ jobs:
             docker rm -f gelabber-rust-minio
           fi
 
+  deploy:
+    name: Deploy config
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Caddy
+        run: |
+          set -euo pipefail
+          caddy_archive="$(mktemp)"
+          trap 'rm -f "$caddy_archive"' EXIT
+          curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_linux_amd64.tar.gz" -o "$caddy_archive"
+          tar -xzf "$caddy_archive" -C /usr/local/bin caddy
+          chmod +x /usr/local/bin/caddy
+          caddy version
+          test "$(caddy version | cut -d ' ' -f 1)" = "v2.11.4"
+
+      # Also checks that every workflow action is pinned to a commit SHA.
+      - name: Test deployment config
+        run: python3 -m unittest discover -s deploy/compose/tests -v
+
   web:
     name: Frontend
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -227,7 +257,7 @@ jobs:
         run: npm ci
 
       - name: Verify pinned emoji data
-        run: python3 ../tools/generate-emoji-data.py --check
+        run: python3 scripts/generate-emoji-data.py --check
 
       - name: Lint
         run: npm run lint
@@ -240,3 +270,92 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # The app images a pull request touches, built without pushing;
+  # publish-images.yml pushes them from main.
+  images:
+    name: Image ${{ matrix.name }}
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.images != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.images) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Image names and OCI metadata
+        env:
+          IMAGE: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY,,}"
+          echo "GHCR_IMAGE=ghcr.io/${repo}/${IMAGE}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=sha-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+          echo "GELABBER_VERSION=v$(python3 -c 'import tomllib; print(tomllib.load(open("backend/Cargo.toml", "rb"))["workspace"]["package"]["version"])')" >> "$GITHUB_ENV"
+          echo "OCI_CREATED=$(git show -s --format=%cI HEAD)" >> "$GITHUB_ENV"
+
+      - name: Compose version pins match workspace
+        run: grep -F "${GHCR_IMAGE}:${GELABBER_VERSION}" deploy/compose/compose.yaml
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: false
+          load: ${{ matrix.name == 'media' }}
+          provenance: false
+          tags: ${{ env.GHCR_IMAGE }}:${{ env.IMAGE_TAG }}
+          build-args: |
+            OCI_REVISION=${{ github.sha }}
+            OCI_VERSION=${{ env.GELABBER_VERSION }}
+            OCI_CREATED=${{ env.OCI_CREATED }}
+            OCI_SOURCE=https://github.com/${{ github.repository }}
+          # Pull requests read the layer cache; main writes it.
+          cache-from: type=gha,scope=${{ matrix.name }}
+
+      - name: Verify actual media image readiness and normal shutdown
+        if: matrix.name == 'media'
+        run: python3 backend/build/check-media-image.py --image "${GHCR_IMAGE}:${IMAGE_TAG}" --revision "$GITHUB_SHA"
+
+  # Builds and checks the pinned MinIO and mc images; pushes only from main.
+  minio:
+    name: MinIO images
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.minio == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-minio.yml
+
+  desktop:
+    name: Desktop
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    uses: ./.github/workflows/desktop-native.yml
+
+  # The one required check: red if any job that ran failed or was cancelled.
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [changes, lint, rust, web, deploy, images, minio, desktop]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job that ran passed
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "$RESULTS"
+          if printf '%s' "$RESULTS" | grep -qE '"(failure|cancelled)"'; then
+            exit 1
+          fi
