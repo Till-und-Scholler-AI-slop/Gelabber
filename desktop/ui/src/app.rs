@@ -122,20 +122,28 @@ fn decode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b'%' if i + 2 < bytes.len() => match u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                Ok(v) => {
-                    out.push(v);
-                    i += 3;
-                    continue;
+            // Hex digits from the bytes: slicing the &str could split a
+            // multi-byte character and panic on hrefs like `%aé`.
+            b'%' if i + 2 < bytes.len() => {
+                match (hex_digit(bytes[i + 1]), hex_digit(bytes[i + 2])) {
+                    (Some(hi), Some(lo)) => {
+                        out.push(hi << 4 | lo);
+                        i += 3;
+                        continue;
+                    }
+                    _ => out.push(b'%'),
                 }
-                Err(_) => out.push(b'%'),
-            },
+            }
             b'+' => out.push(b' '),
             b => out.push(b),
         }
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_digit(b: u8) -> Option<u8> {
+    char::from(b).to_digit(16).map(|d| d as u8)
 }
 
 /// The navigation state: the current location and a back stack.
@@ -438,6 +446,7 @@ impl GelabberApp {
         self.guard();
         if self.nav.take_changed() {
             self.screen = ScreenState::for_location(self.nav.location());
+            crate::widgets::field::remount(&ctx);
         }
         let mut app = AppCtx {
             client: &self.client,
@@ -489,6 +498,11 @@ mod tests {
         assert_eq!(l.redirect().as_deref(), Some("/invite/abc"));
         assert_eq!(l.query("reason"), Some("expired"));
         assert_eq!(l.fragment, "token=x");
+        // Malformed escapes stay as typed, also next to multi-byte text.
+        assert_eq!(
+            Location::parse("/x?q=%aé%zz%e2%82%ac").query("q"),
+            Some("%aé%zz€")
+        );
         assert!(is_invite_redirect(Some("/invite/abc")));
         assert!(!is_invite_redirect(Some("/invite/")));
         assert_eq!(safe_redirect("//evil"), None);

@@ -4,8 +4,8 @@
 //! changes, so entries stay for the session.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock, mpsc};
 
 use egui::{ColorImage, TextureHandle, TextureOptions};
 use gelabber_client::Client;
@@ -73,18 +73,15 @@ impl Images {
             let bytes = http.bytes(&url).await;
             // Decoding a large PNG takes tens of milliseconds: not on the
             // UI thread and not on the two runtime workers.
-            std::thread::Builder::new()
-                .name("gelabber-image".into())
-                .spawn(move || {
-                    let state = match bytes.ok().and_then(|b| decode(&b)) {
-                        Some(image) => ImageState::Ready(ctx.load_texture(&url, image, PHOTO)),
-                        None => ImageState::Failed,
-                    };
-                    this.entries.lock().insert(url, state);
-                    this.loading.fetch_sub(1, Ordering::AcqRel);
-                    ctx.request_repaint();
-                })
-                .ok();
+            decode_off_thread(Box::new(move || {
+                let state = match bytes.ok().and_then(|b| decode(&b)) {
+                    Some(image) => ImageState::Ready(ctx.load_texture(&url, image, PHOTO)),
+                    None => ImageState::Failed,
+                };
+                this.entries.lock().insert(url, state);
+                this.loading.fetch_sub(1, Ordering::AcqRel);
+                ctx.request_repaint();
+            }));
         });
         ImageState::Loading
     }
@@ -92,6 +89,48 @@ impl Images {
     /// True while any image is still being fetched or decoded.
     pub fn busy(&self) -> bool {
         self.loading.load(Ordering::Acquire) > 0
+    }
+}
+
+type Job = Box<dyn FnOnce() + Send>;
+
+/// Worker threads shared by all decodes: a member list or a chat full of
+/// avatars must not start one OS thread per image.
+const DECODERS: usize = 2;
+
+fn decode_off_thread(job: Job) {
+    static QUEUE: OnceLock<Option<mpsc::Sender<Job>>> = OnceLock::new();
+    let queue = QUEUE.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<Job>();
+        let rx = Arc::new(Mutex::new(rx));
+        let started = (0..DECODERS)
+            .filter(|_| {
+                let rx = rx.clone();
+                std::thread::Builder::new()
+                    .name("gelabber-image".into())
+                    .spawn(move || {
+                        loop {
+                            // The lock is held only to receive, not while decoding.
+                            let next = rx.lock().recv();
+                            match next {
+                                Ok(job) => job(),
+                                Err(_) => break,
+                            }
+                        }
+                    })
+                    .is_ok()
+            })
+            .count();
+        (started > 0).then_some(tx)
+    });
+    // Without a worker the job runs here: slower, but the entry still settles.
+    match queue {
+        Some(tx) => {
+            if let Err(mpsc::SendError(job)) = tx.send(job) {
+                job();
+            }
+        }
+        None => job(),
     }
 }
 

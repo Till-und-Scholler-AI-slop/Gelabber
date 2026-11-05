@@ -2,8 +2,13 @@
 //! Tauri app's setup page, desktop/app/setup): asks for the server address,
 //! then hands the window over to [`GelabberApp`].
 
+use std::net::TcpStream;
+use std::sync::Arc;
+use std::time::Duration;
+
 use egui::{Rect, Stroke, StrokeKind, Ui, UiBuilder, Vec2};
 use gelabber_client::Client;
+use parking_lot::Mutex;
 
 use crate::app::GelabberApp;
 use crate::text::{self, Block};
@@ -13,10 +18,17 @@ use crate::widgets::{Button, FormError, TextField};
 /// Called with the origin once a server was chosen, to remember it.
 pub type Remember = Box<dyn Fn(&str)>;
 
+/// `CONNECT_TIMEOUT` of the Tauri app's reachability check.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The reachability check of a typed address, on its own thread.
+type Probe = Arc<Mutex<Option<Result<String, String>>>>;
+
 enum Stage {
     Setup {
         address: String,
         error: Option<String>,
+        probe: Option<Probe>,
     },
     App(Box<GelabberApp>),
 }
@@ -40,68 +52,134 @@ impl Launcher {
             stage: Stage::Setup {
                 address: server.clone().unwrap_or_default(),
                 error: None,
+                probe: None,
             },
             remember,
         };
         if let Some(server) = server {
-            launcher.connect(&cc.egui_ctx, &server);
+            match server_origin(&server) {
+                Ok(origin) => launcher.open(&cc.egui_ctx, &origin, false),
+                Err(message) => launcher.fail(&server, message),
+            }
         }
         launcher
     }
 
-    fn connect(&mut self, ctx: &egui::Context, input: &str) {
-        let result = server_origin(input).and_then(|origin| {
-            Client::new(&origin)
-                .map(|client| (origin, client))
-                .map_err(|e| e.to_string())
-        });
-        match result {
-            Ok((origin, client)) => {
-                (self.remember)(&origin);
-                self.stage = Stage::App(Box::new(GelabberApp::with_context(ctx, client, None)));
-            }
-            Err(message) => {
+    /// Like the Tauri app's `set_server`: only an address that accepts a
+    /// connection is stored, so a typo does not stick across restarts.
+    fn check(&mut self, ctx: &egui::Context, input: &str) {
+        let origin = match server_origin(input) {
+            Ok(origin) => origin,
+            Err(message) => return self.fail(input, message),
+        };
+        let probe = Probe::default();
+        let slot = probe.clone();
+        let repaint = ctx.clone();
+        let spawned = std::thread::Builder::new()
+            .name("gelabber-setup".into())
+            .spawn(move || {
+                let result = check_reachable(&origin).map(|()| origin);
+                *slot.lock() = Some(result);
+                repaint.request_repaint();
+            });
+        match spawned {
+            Ok(_) => {
                 self.stage = Stage::Setup {
                     address: input.to_owned(),
-                    error: Some(message),
-                };
+                    error: None,
+                    probe: Some(probe),
+                }
             }
+            Err(e) => self.fail(input, e.to_string()),
         }
+    }
+
+    fn open(&mut self, ctx: &egui::Context, origin: &str, remember: bool) {
+        match Client::new(origin) {
+            Ok(client) => {
+                if remember {
+                    (self.remember)(origin);
+                }
+                self.stage = Stage::App(Box::new(GelabberApp::with_context(ctx, client, None)));
+            }
+            Err(e) => self.fail(origin, e.to_string()),
+        }
+    }
+
+    fn fail(&mut self, input: &str, message: String) {
+        self.stage = Stage::Setup {
+            address: input.to_owned(),
+            error: Some(message),
+            probe: None,
+        };
     }
 }
 
 /// `server_origin` of the Tauri app: http(s) with a host, reduced to its
 /// origin.
 pub fn server_origin(input: &str) -> Result<String, String> {
-    let input = input.trim();
-    let (scheme, rest) = input.split_once("://").ok_or_else(|| {
-        "Die Serveradresse braucht http:// oder https:// und einen Host.".to_owned()
-    })?;
-    let scheme = scheme.to_ascii_lowercase();
-    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
-    if !matches!(scheme.as_str(), "http" | "https") || host.is_empty() || host.contains('@') {
+    let url = url::Url::parse(input.trim()).map_err(|e| format!("Ungültige Serveradresse: {e}"))?;
+    if !matches!(url.scheme(), "https" | "http") || url.host().is_none() {
         return Err("Die Serveradresse braucht http:// oder https:// und einen Host.".into());
     }
-    Ok(format!("{scheme}://{}", host.to_ascii_lowercase()))
+    Ok(url.origin().ascii_serialization())
+}
+
+/// `check_reachable` of the Tauri app: something has to accept a TCP
+/// connection at the origin.
+fn check_reachable(origin: &str) -> Result<(), String> {
+    let url = url::Url::parse(origin).map_err(|e| e.to_string())?;
+    let host = url.host_str().ok_or("Serveradresse ohne Host")?;
+    let port = url
+        .port_or_known_default()
+        .ok_or("Serveradresse ohne Port")?;
+    let unreachable = |reason: String| format!("{host}:{port} ist nicht erreichbar ({reason}).");
+    let addrs = url
+        .socket_addrs(|| None)
+        .map_err(|e| unreachable(e.to_string()))?;
+    let mut last = "keine Adresse".to_owned();
+    for addr in addrs {
+        match TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT) {
+            Ok(_) => return Ok(()),
+            Err(e) => last = e.to_string(),
+        }
+    }
+    Err(unreachable(last))
 }
 
 impl eframe::App for Launcher {
     fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
-        let mut connect = None;
-        match &mut self.stage {
+        let ctx = ui.ctx().clone();
+        let (submit, checked) = match &mut self.stage {
             Stage::App(app) => {
                 eframe::App::ui(app.as_mut(), ui, frame);
                 return;
             }
-            Stage::Setup { address, error } => {
-                if setup(ui, address, error.as_deref()) {
-                    connect = Some(address.clone());
+            Stage::Setup {
+                address,
+                error,
+                probe,
+            } => {
+                let checked = probe.as_ref().and_then(|p| p.lock().take());
+                let checking = probe.is_some() && checked.is_none();
+                let submit = setup(ui, address, error.as_deref(), checking) && !checking;
+                (submit.then(|| address.clone()), checked)
+            }
+        };
+        match checked {
+            Some(Ok(origin)) => self.open(&ctx, &origin, true),
+            Some(Err(message)) => {
+                let address = match &self.stage {
+                    Stage::Setup { address, .. } => address.clone(),
+                    Stage::App(_) => String::new(),
+                };
+                self.fail(&address, message);
+            }
+            None => {
+                if let Some(address) = submit {
+                    self.check(&ctx, &address);
                 }
             }
-        }
-        if let Some(address) = connect {
-            let ctx = ui.ctx().clone();
-            self.connect(&ctx, &address);
         }
     }
 
@@ -111,7 +189,7 @@ impl eframe::App for Launcher {
 }
 
 /// The setup card; true when "Verbinden" was pressed.
-fn setup(ui: &mut Ui, address: &mut String, error: Option<&str>) -> bool {
+fn setup(ui: &mut Ui, address: &mut String, error: Option<&str>, checking: bool) -> bool {
     let ctx = ui.ctx().clone();
     let theme = Theme::of(&ctx);
     let c = theme.c;
@@ -152,7 +230,13 @@ fn setup(ui: &mut Ui, address: &mut String, error: Option<&str>) -> bool {
                 ui.add_space(space::S5);
             }
             let pressed = ui
-                .add(Button::new("Verbinden").primary().large().fill())
+                .add(
+                    Button::new("Verbinden")
+                        .primary()
+                        .large()
+                        .fill()
+                        .disabled(checking),
+                )
                 .clicked()
                 || field.submitted;
             (pressed, ui.min_rect().height())
@@ -189,6 +273,11 @@ mod tests {
         assert_eq!(
             server_origin("http://localhost:5173").as_deref(),
             Ok("http://localhost:5173")
+        );
+        // Default ports drop out of the origin, as in the Tauri app.
+        assert_eq!(
+            server_origin("HTTPS://Chat.Example.org:443/").as_deref(),
+            Ok("https://chat.example.org")
         );
         assert!(server_origin("file:///etc/passwd").is_err());
         assert!(server_origin("chat.example.org").is_err());

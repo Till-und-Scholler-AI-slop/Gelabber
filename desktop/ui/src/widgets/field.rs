@@ -126,12 +126,8 @@ impl<'a> TextField<'a> {
         let shown = self.password && ui.data(|d| d.get_temp::<bool>(shown_key)).unwrap_or(false);
         let masked = self.password && !shown;
 
-        if self.autofocus {
-            let once = self.id.with("autofocused");
-            if !ui.data(|d| d.get_temp::<bool>(once).unwrap_or(false)) {
-                ui.data_mut(|d| d.insert_temp(once, true));
-                ui.memory_mut(|m| m.request_focus(self.id));
-            }
+        if self.autofocus && mounted(ui.ctx(), self.id.with("autofocus")) {
+            ui.memory_mut(|m| m.request_focus(self.id));
         }
 
         // Paint the box first; the text edit draws its text on top.
@@ -181,6 +177,8 @@ impl<'a> TextField<'a> {
             .min_size(inner.size())
             .align(egui::Align2::LEFT_TOP)
             .text_color(color)
+            // Besides the bullets: no copying, no plain text for AccessKit or the IME.
+            .password(masked)
             .layouter(&mut layouter)
             .interactive(!self.disabled);
         if let Some(limit) = self.char_limit {
@@ -248,6 +246,22 @@ impl<'a> TextField<'a> {
     }
 }
 
+/// Starts a new mount for every field: the app calls it when the location
+/// changes, so `autoFocus` fires again like a remounted React page.
+pub fn remount(ctx: &egui::Context) {
+    ctx.data_mut(|d| *d.get_temp_mut_or_default::<u64>(Id::unique("gelabber-mount-epoch")) += 1);
+}
+
+/// True on the first frame `key` is shown in this mount: after a
+/// [`remount`], or when it was not shown on the previous frame (a modal).
+pub fn mounted(ctx: &egui::Context, key: Id) -> bool {
+    let epoch = ctx.data(|d| d.get_temp::<u64>(Id::unique("gelabber-mount-epoch")));
+    let frame = ctx.cumulative_frame_nr();
+    let seen = ctx.data(|d| d.get_temp::<(Option<u64>, u64)>(key));
+    ctx.data_mut(|d| d.insert_temp(key, (epoch, frame)));
+    !seen.is_some_and(|(e, f)| e == epoch && f + 1 >= frame)
+}
+
 /// The egui id of the field with HTML id `id`.
 pub fn field_id(id: impl std::hash::Hash + std::fmt::Debug) -> Id {
     Id::unique(("gelabber-field", id))
@@ -261,4 +275,33 @@ pub fn layout_unit(px: f32) -> f32 {
 /// The colour of a field's bottom note, for callers drawing their own.
 pub fn note_color(theme: &Theme, error: bool) -> Color32 {
     if error { theme.c.danger } else { theme.c.muted }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autofocus_fires_once_per_mount() {
+        let ctx = egui::Context::default();
+        let key = Id::unique("probe");
+        let frame = |show: bool| {
+            let mut fired = None;
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                fired = show.then(|| mounted(ui.ctx(), key));
+            });
+            // No renderer here takes the font atlas upload.
+            output.textures_delta.clear();
+            fired
+        };
+        assert_eq!(frame(true), Some(true));
+        assert_eq!(frame(true), Some(false));
+        // Hidden for a frame (a closed modal): the next showing is a mount.
+        assert_eq!(frame(false), None);
+        assert_eq!(frame(true), Some(true));
+        // Navigating away and back without a gap still remounts.
+        remount(&ctx);
+        assert_eq!(frame(true), Some(true));
+        assert_eq!(frame(true), Some(false));
+    }
 }

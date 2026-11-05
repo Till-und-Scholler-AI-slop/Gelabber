@@ -131,8 +131,19 @@ impl<'a> Modal<'a> {
                     pos2(card.right() - 25.0, card.top() + max_h),
                 );
                 let mut used_bottom = body_top;
+                // `.gel-modal__body` scrolls once the card reaches its max-height.
+                let footer_h = if footer.is_some() {
+                    1.0 + 12.0 + 36.0 + 16.0
+                } else {
+                    0.0
+                };
+                let body_max = (card.top() + max_h - body_top - 24.0 - footer_h - 1.0).max(0.0);
                 ui.scope_builder(UiBuilder::new().max_rect(body_rect), |ui| {
-                    inner = Some(body(ui));
+                    egui::ScrollArea::vertical()
+                        .id_salt(self.id.with("body"))
+                        .max_height(body_max)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| inner = Some(body(ui)));
                     used_bottom = ui.min_rect().bottom().max(body_top);
                 });
                 let mut bottom = used_bottom + 24.0;
