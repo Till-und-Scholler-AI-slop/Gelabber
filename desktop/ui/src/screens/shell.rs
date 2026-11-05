@@ -12,7 +12,7 @@ mod dm_sidebar;
 mod home;
 mod members;
 pub mod overlays;
-mod overview;
+pub(crate) mod overview;
 mod rail;
 mod state;
 mod user_panel;
@@ -200,6 +200,7 @@ fn is_voice(app: &AppCtx, channel: Uuid) -> bool {
 fn call_bar(ui: &mut Ui, app: &mut AppCtx, screen: Rect, full: bool) {
     let account = app.client.with_state(|s| s.me().map(|m| m.id));
     voice::volume::sync(ui.ctx(), app.call, account);
+    voice::dialogs::show(ui, app);
     if !voice::call_bar::visible(app) {
         return;
     }

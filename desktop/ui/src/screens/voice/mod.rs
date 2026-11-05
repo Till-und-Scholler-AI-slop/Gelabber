@@ -6,6 +6,8 @@
 
 pub mod call_bar;
 pub mod chips;
+pub mod diagnostics;
+pub mod dialogs;
 pub mod hint;
 pub mod look;
 pub mod page;
@@ -17,6 +19,7 @@ pub mod sync;
 pub mod tile;
 pub mod video;
 pub mod volume;
+pub mod window;
 
 pub use page::show;
 

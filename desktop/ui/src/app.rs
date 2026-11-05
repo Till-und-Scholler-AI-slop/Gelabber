@@ -236,7 +236,7 @@ pub struct Session {
 }
 
 impl Session {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             status: SessionStatus::Unknown,
             check: None,

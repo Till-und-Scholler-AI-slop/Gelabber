@@ -108,9 +108,20 @@ struct Planes {
     used: u64,
 }
 
+/// The pipeline is in a renderer: pictures draw at their size.
+static INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Why pictures stay small here, if they do: without the GPU pipeline
+/// (another renderer) tiles have nothing to draw them with.
+pub fn limit() -> Option<super::tile::VideoLimit> {
+    (!INSTALLED.load(std::sync::atomic::Ordering::Acquire))
+        .then_some(super::tile::VideoLimit::Renderer)
+}
+
 /// Builds the pipeline once for the renderer's target (no MSAA, no depth:
 /// eframe's defaults, which the app keeps).
 pub fn install(render_state: &egui_wgpu::RenderState) {
+    INSTALLED.store(true, std::sync::atomic::Ordering::Release);
     let mut renderer = render_state.renderer.write();
     if renderer.callback_resources.contains::<Resources>() {
         return;

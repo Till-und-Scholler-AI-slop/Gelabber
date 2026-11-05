@@ -11,9 +11,10 @@
 //! window is not built yet; acceptance is always on the full scene.
 //!
 //! Reads web/scripts/parity/{scenes,fixture}.json from the repository.
-//! A scene's actions (click, link, rightclick, clicktext, key, type, say,
-//! wait) mean the same in shots.mjs; posts and `after` are undone with
-//! say.mjs once the screenshot is taken.
+//! A scene's actions (click, link, menuitem, rightclick, clicktext, key,
+//! type, say, wait) mean the same in shots.mjs; a name written `/…/` is a
+//! regular expression. Posts and `after` are undone with say.mjs once the
+//! screenshot is taken.
 
 mod pixels;
 mod ssim;
@@ -52,6 +53,8 @@ enum Action {
     Click(String),
     /// Click the link with this accessible name.
     Link(String),
+    /// Click the menu entry with this accessible name.
+    Menuitem(String),
     /// Right-click the first button or link with this accessible name.
     Rightclick(String),
     /// Click the first element with this label, whatever its role.
@@ -294,6 +297,13 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                         .unwrap_or_else(|| panic!("{}: no link {name:?}", scene.name))
                         .click();
                 }
+                Action::Menuitem(name) => {
+                    use egui::accesskit::Role;
+                    reveal(&mut harness, size.y, name, &[Role::MenuItem]);
+                    find(&harness, name, &[Role::MenuItem])
+                        .unwrap_or_else(|| panic!("{}: no menu entry {name:?}", scene.name))
+                        .click();
+                }
                 Action::Rightclick(name) => {
                     use egui::accesskit::Role;
                     reveal(&mut harness, size.y, name, &[Role::Button, Role::Link]);
@@ -348,6 +358,12 @@ fn find<'t>(
     roles: &[egui::accesskit::Role],
 ) -> Option<egui_kittest::Node<'t>> {
     use egui_kittest::kittest::{NodeT, Queryable};
+    if let Some(pattern) = label.strip_prefix('/').and_then(|l| l.strip_suffix('/')) {
+        let re = regex::Regex::new(pattern).unwrap_or_else(|e| panic!("{label}: {e}"));
+        return harness
+            .query_all_by(move |n| n.label().is_some_and(|l| re.is_match(&l)))
+            .find(|n| roles.is_empty() || roles.contains(&n.accesskit_node().role()));
+    }
     harness
         .query_all_by_label(label)
         .find(|n| roles.is_empty() || roles.contains(&n.accesskit_node().role()))

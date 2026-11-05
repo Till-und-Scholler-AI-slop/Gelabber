@@ -639,6 +639,258 @@
           "key": "Escape"
         }
       ]
+    },
+    {
+      "name": "mic-test",
+      "path": "/s/{home}/c/{Kino}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Mikrofon testen"
+        }
+      ]
+    },
+    {
+      "name": "mic-test-settings",
+      "path": "/settings/audio",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Mikrofon testen und vergleichen"
+        }
+      ]
+    },
+    {
+      "name": "voice-settings-dialog",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Voice-Einstellungen"
+        },
+        {
+          "clicktext": "Alle Einstellungen …"
+        }
+      ]
+    },
+    {
+      "name": "voice-settings-video",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Voice-Einstellungen"
+        },
+        {
+          "clicktext": "Alle Einstellungen …"
+        },
+        {
+          "clicktext": "Video & Stream"
+        }
+      ]
+    },
+    {
+      "name": "voice-connection",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "/^Verbindung: .* – Details anzeigen$/"
+        }
+      ]
+    },
+    {
+      "name": "voice-diagnostics-idle",
+      "path": "/s/{home}/c/{Kino}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Voice-Einstellungen"
+        },
+        {
+          "clicktext": "Alle Einstellungen …"
+        },
+        {
+          "clicktext": "Diagnose"
+        }
+      ]
+    },
+    {
+      "name": "voice-avatar-profile",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "actions": [
+        {
+          "click": "Profil von Jonas"
+        }
+      ]
+    },
+    {
+      "name": "voice-menu-profile",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "actions": [
+        {
+          "click": "Optionen für Jonas"
+        },
+        {
+          "clicktext": "Profil ansehen"
+        }
+      ]
+    },
+    {
+      "name": "voice-camera",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        }
+      ]
+    },
+    {
+      "name": "voice-kino",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "key": "k"
+        }
+      ]
+    },
+    {
+      "name": "voice-focus",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "clicktext": "Fokus"
+        }
+      ]
+    },
+    {
+      "name": "voice-overview-camera",
+      "path": "/s/{home}",
+      "user": "lena",
+      "call": "Sofa jonas:camera,mira:muted"
+    },
+    {
+      "name": "voice-live-own",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Live gehen"
+        },
+        {
+          "menuitem": "Live gehen"
+        },
+        {
+          "wait": 3000
+        }
+      ]
+    },
+    {
+      "name": "voice-fullscreen",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted:live",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Zuschauen"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Vollbild"
+        }
+      ]
+    },
+    {
+      "name": "voice-compact",
+      "path": "/settings/darstellung",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "actions": [
+        {
+          "clicktext": "/^Kompakte Sprachkanäle/"
+        },
+        {
+          "key": "Control+k"
+        },
+        {
+          "type": "sofa"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "wait": 500
+        }
+      ]
     }
   ]
 }

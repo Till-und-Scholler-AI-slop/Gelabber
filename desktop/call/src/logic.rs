@@ -695,6 +695,35 @@ pub const LOST_CALL_MESSAGE: &str =
     "Die Sprachverbindung konnte nicht wiederhergestellt werden. Bitte erneut beitreten.";
 pub const LIVE_FORBIDDEN_MESSAGE: &str = "In diesem Server darfst du nicht live gehen.";
 pub const CAMERA_UNAVAILABLE: &str = "Die Kamera ist nicht verfügbar.";
+/// `microphoneFailure` for a join that goes on listening.
+pub const MIC_NOT_FOUND: &str = "Kein Mikrofon gefunden, du hörst nur zu.";
+pub const MIC_DENIED: &str = "Mikrofonzugriff nicht erlaubt, du hörst nur zu.";
+/// The processing note of a call without a microphone.
+pub const MIC_LISTEN_ONLY: &str = "Mikrofon konnte nicht aktiviert werden; du hörst weiter zu";
+/// A device or processing change that failed while the old one still runs.
+pub const MIC_SWITCH_FAILED: &str =
+    "Mikrofonwechsel fehlgeschlagen; bisheriges Mikrofon bleibt aktiv";
+/// The microphone test (voice/native/microphoneTest.ts).
+pub const MIC_TEST_FAILED: &str =
+    "Mikrofontest konnte nicht starten. Prüfe das Eingabegerät in den Systemeinstellungen.";
+pub const MIC_TEST_STALLED: &str =
+    "Das Mikrofon liefert keine Daten. Prüfe das Eingabegerät und starte den Test erneut.";
+pub const MIC_TEST_NO_LEVELS: &str = "Mikrofonpegel nicht verfügbar.";
+
+/// Whether the core's microphone error is a refused permission rather
+/// than a missing or busy device (`micRefused`).
+pub fn mic_refused(error: &str) -> bool {
+    let e = error.to_ascii_lowercase();
+    [
+        "permission",
+        "denied",
+        "not allowed",
+        "notallowed",
+        "access",
+    ]
+    .iter()
+    .any(|w| e.contains(w))
+}
 pub const NO_MEDIA_CORE: &str =
     "Anrufe brauchen den Medienkern der Desktop-App, der in diesem Build fehlt.";
 

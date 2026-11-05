@@ -267,7 +267,7 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
         prefs::update(&ctx, |q| *q = p);
     }
     if more {
-        app.nav.navigate("/settings/audio");
+        super::dialogs::open_settings(&ctx, super::dialogs::Tab::Audio);
     }
     more
 }

@@ -13,11 +13,12 @@ use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner};
 use crate::widgets::{Button, Switch, eased};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct State {
     recording: bool,
     advanced_open: bool,
-    revealed: bool,
+    /// Device names are known (the dialog in a call has the microphone).
+    pub revealed: bool,
     /// The custom limit as typed.
     limit_text: Option<String>,
 }
@@ -26,6 +27,30 @@ const LABEL_W: f32 = 136.0;
 const COL_GAP: f32 = 16.0;
 /// `.media-hint`.
 const HINT: TextStyle = text::META;
+
+fn dialog_id() -> Id {
+    Id::unique("gelabber-media-form-in-dialog")
+}
+
+/// The forms inside the Voice & Video dialog: fields on the page colour,
+/// buttons and chips without the settings page's accent text.
+pub fn set_in_dialog(ctx: &egui::Context, on: bool) {
+    ctx.data_mut(|d| d.insert_temp(dialog_id(), on));
+}
+
+fn in_dialog(ui: &Ui) -> bool {
+    ui.ctx().data(|d| d.get_temp(dialog_id())).unwrap_or(false)
+}
+
+/// The fill of a select (`--lr-field` differs in a modal).
+fn field_fill(ui: &Ui) -> Color32 {
+    let theme = Theme::of(ui.ctx());
+    if in_dialog(ui) {
+        theme.c.bg
+    } else {
+        theme.c.surface
+    }
+}
 
 /// Device choices: the system default, then what the call lists.
 fn devices(list: &[gelabber_call::Device]) -> Vec<(String, String)> {
@@ -245,8 +270,13 @@ fn button(ui: &mut Ui, label: &str, ghost: bool, disabled: bool) -> bool {
     // `size="sm"` padding (12px) at the form's 36px min-height.
     let b = Button::new(label)
         .width(button_width(ui, label))
-        .text_color(theme.c.accent_text)
         .disabled(disabled);
+    // Outside the settings page a `size="sm"` button keeps its 32px.
+    let b = if in_dialog(ui) {
+        b.height(32.0)
+    } else {
+        b.text_color(theme.c.accent_text)
+    };
     let b = if ghost { b.ghost() } else { b };
     ui.add(b).clicked()
 }
@@ -267,7 +297,8 @@ fn labelled_select(
     let c = &theme.c;
     controls::paint(ui, ui.cursor().min, label, HINT, c.subtle);
     ui.add_space(16.8 + 4.0);
-    controls::select(ui, id.to_owned(), options, value, c.surface)
+    let fill = field_fill(ui);
+    controls::select(ui, id.to_owned(), options, value, fill)
 }
 
 fn pct(v: f64) -> String {
@@ -312,7 +343,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 "audio-input",
                 &devices(&listed.inputs),
                 &mut p.audio_input_id,
-                c.surface,
+                field_fill(ui),
             ) {
                 app.call.set_input(chosen(&p.audio_input_id));
             }
@@ -347,7 +378,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 &modes,
                 usize::from(ptt),
                 36.0,
-                Some(c.accent_text),
+                (!in_dialog(ui)).then_some(c.accent_text),
             ) {
                 p.voice_input = if i == 1 { "ptt" } else { "activity" }.into();
             }
@@ -382,14 +413,24 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                     p.ptt_key_label = label;
                 }
                 gap(ui);
-                hint(
-                    ui,
-                    if p.ptt_key.is_empty() {
-                        "Ohne Taste bleibt dein Mikrofon im Gespräch stumm."
-                    } else {
-                        "Im Gespräch hört die App die Taste auch, wenn ein anderes Fenster vorne ist."
-                    },
-                );
+                let note = if p.ptt_key.is_empty() {
+                    "Ohne Taste bleibt dein Mikrofon im Gespräch stumm.".to_owned()
+                } else {
+                    let in_call = app.call.with_state(|s| {
+                        matches!(
+                            s.status,
+                            gelabber_call::CallStatus::Connecting
+                                | gelabber_call::CallStatus::Connected
+                                | gelabber_call::CallStatus::Reconnecting
+                        )
+                    });
+                    global_key_note(
+                        crate::platform::ptt_status(ui.ctx()).as_ref(),
+                        in_call,
+                        cfg!(windows),
+                    )
+                };
+                hint(ui, &note);
             });
             setting_row(ui, "Nachlaufzeit", false, |ui| {
                 let suffix = format!("{} ms", p.ptt_release_delay.round() as i64);
@@ -439,19 +480,31 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             ui.add_space(2.0);
             let top = ui.cursor().min;
             let w = ui.available_width();
+            let processing = crate::screens::voice::diagnostics::processing_message(
+                &app.call.state(),
+                &p.processing_mode,
+            );
+            let bw = button_width(ui, "Mikrofon testen und vergleichen");
+            // `.media-actions` wraps the button under the status once the
+            // status' 200px basis and the button no longer fit side by side.
+            let stacked = w < 200.0 + 12.0 + bw;
+            let status_h = if stacked { 16.8 + 8.0 } else { 0.0 };
+            let bh = if in_dialog(ui) { 32.0 } else { 36.0 };
             controls::paint(
                 ui,
-                pos2(top.x, top.y + 9.6),
-                "Mikrofon inaktiv",
+                pos2(top.x, top.y + if stacked { 0.0 } else { 9.6 }),
+                &processing,
                 HINT,
                 c.muted,
             );
-            let bw = button_width(ui, "Mikrofon testen und vergleichen");
-            let rect = Rect::from_min_size(pos2(top.x + w - bw, top.y), vec2(bw, 36.0));
+            let left = if stacked { top.x } else { top.x + w - bw };
+            let rect = Rect::from_min_size(pos2(left, top.y + status_h), vec2(bw, bh));
             controls::place(ui, UiBuilder::new().max_rect(rect), |ui| {
-                button(ui, "Mikrofon testen und vergleichen", false, false);
+                if button(ui, "Mikrofon testen und vergleichen", false, false) {
+                    crate::screens::voice::dialogs::open_mic_test(ui.ctx());
+                }
             });
-            ui.allocate_exact_size(vec2(w, 36.0), Sense::hover());
+            ui.allocate_exact_size(vec2(w, status_h + bh), Sense::hover());
         });
         ui.add_space(20.0);
 
@@ -462,7 +515,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 "audio-output",
                 &devices(&listed.outputs),
                 &mut p.audio_output_id,
-                c.surface,
+                field_fill(ui),
             ) {
                 app.call.set_output(chosen(&p.audio_output_id));
             }
@@ -721,6 +774,39 @@ fn disclosure(ui: &mut Ui, s: &mut State, p: &mut Prefs) {
     );
 }
 
+/// `HYPRLAND_BIND`.
+const HYPRLAND_BIND: &str = "bind = , <Taste>, global, gelabber-desktop:push-to-talk";
+
+/// `globalKeyNote`: what the global key does, from the platform binding
+/// (`None` while it is not wanted or has not answered yet).
+pub fn global_key_note(
+    status: Option<&crate::platform::PttStatus>,
+    wanted: bool,
+    windows: bool,
+) -> String {
+    use crate::platform::PttStatus;
+    let linux = format!(
+        "Unter Linux bestimmt der Desktop die Taste: KDE und GNOME fragen beim ersten Mal nach, unter Hyprland gehört „{HYPRLAND_BIND}“ in die hyprland.conf."
+    );
+    match (wanted, status) {
+        (false, _) if windows => {
+            "Im Gespräch hört die App die Taste auch, wenn ein anderes Fenster vorne ist.".into()
+        }
+        (false, _) => format!(
+            "Im Gespräch hört die App die Taste auch, wenn ein anderes Fenster vorne ist. {linux}"
+        ),
+        (true, None) => "Die globale Taste wird eingerichtet …".into(),
+        (true, Some(PttStatus::Bound { trigger: Some(t) })) => format!("Global aktiv: {t}."),
+        (true, Some(PttStatus::Bound { trigger: None })) if windows => {
+            "Global aktiv, auch wenn ein anderes Fenster vorne ist.".into()
+        }
+        (true, Some(PttStatus::Bound { trigger: None })) => format!("Global aktiv. {linux}"),
+        (true, Some(PttStatus::Failed { reason })) => {
+            format!("Die Taste wirkt nur, solange Gelabber im Vordergrund ist: {reason}")
+        }
+    }
+}
+
 /// Web `KeyboardEvent.code` names for egui keys, as the PTT core expects.
 fn key_code(key: egui::Key) -> Option<String> {
     use egui::Key;
@@ -944,7 +1030,7 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 "video-input",
                 &devices(&listed.cameras),
                 &mut p.video_input_id,
-                c.surface,
+                field_fill(ui),
             ) {
                 app.call.set_camera_device(chosen(&p.video_input_id));
             }
@@ -1108,6 +1194,42 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_global_key_note_follows_the_binding() {
+        use crate::platform::PttStatus;
+        assert_eq!(
+            global_key_note(None, true, false),
+            "Die globale Taste wird eingerichtet …"
+        );
+        let bound = PttStatus::Bound {
+            trigger: Some("F13".into()),
+        };
+        assert_eq!(
+            global_key_note(Some(&bound), true, false),
+            "Global aktiv: F13."
+        );
+        let desktop = PttStatus::Bound { trigger: None };
+        let note = global_key_note(Some(&desktop), true, false);
+        assert!(note.starts_with("Global aktiv. Unter Linux bestimmt der Desktop die Taste:"));
+        assert!(note.ends_with("in die hyprland.conf."));
+        assert_eq!(
+            global_key_note(Some(&desktop), true, true),
+            "Global aktiv, auch wenn ein anderes Fenster vorne ist."
+        );
+        let failed = PttStatus::Failed {
+            reason: "Kein GlobalShortcuts-Portal".into(),
+        };
+        assert_eq!(
+            global_key_note(Some(&failed), true, false),
+            "Die Taste wirkt nur, solange Gelabber im Vordergrund ist: Kein GlobalShortcuts-Portal"
+        );
+        // Outside a call nothing is bound yet: what the key will do.
+        assert!(
+            global_key_note(None, false, false)
+                .starts_with("Im Gespräch hört die App die Taste auch")
+        );
+    }
 
     #[test]
     fn playback_scale_keeps_100_in_the_middle() {

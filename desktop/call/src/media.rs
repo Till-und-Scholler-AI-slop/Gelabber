@@ -24,8 +24,8 @@ use uuid::Uuid;
 use crate::logic::{self, Kind};
 use crate::socket::{MediaError, MediaSocket, SocketEvent};
 use crate::{
-    CallSettings, CallState, CallStatus, Device, Devices, Frame, Inner, LiveSource, Participant,
-    Sound, VideoKey, VideoRequest,
+    CallSettings, CallState, CallStatus, Device, Devices, Frame, Inner, LiveSound, LiveSource,
+    MicStatus, MicTestPhase, Participant, Sound, VideoKey, VideoRequest,
 };
 
 /// What a sink gets until a tile says how large it draws.
@@ -129,6 +129,9 @@ pub(crate) fn join(inner: &Arc<Inner>, server: Uuid, channel: Uuid) {
     }
     inner.drop_frames();
     inner.set_sounds_deafened(deafened);
+    if !same {
+        inner.diagnostics().clear();
+    }
     inner.write(|s| {
         *s = CallState {
             status: CallStatus::Connecting,
@@ -373,10 +376,109 @@ fn list_devices(engine: &core::Engine) -> Devices {
     }
 }
 
-pub(crate) fn simulate_media_loss(inner: &Arc<Inner>) {
-    if let Some(seat) = inner.media.current().and_then(|s| s.seat()) {
+pub(crate) fn retry_microphone(inner: &Arc<Inner>) {
+    if let Some(session) = inner.media.current() {
+        spawn(inner, async move { session.retry_microphone().await });
+    }
+}
+
+/// How often the microphone test reads the meters (`POLL_MS`).
+const MIC_TEST_POLL: Duration = Duration::from_millis(80);
+/// A capture that delivers no block for this long has failed (`STALL_MS`).
+const MIC_TEST_STALL: Duration = Duration::from_millis(2000);
+
+/// `createNativeMicrophoneTest`: the core captures and processes without
+/// a call; its meters every 80 ms until the turn moves on.
+pub(crate) fn start_mic_test(inner: &Arc<Inner>, turn: u64) {
+    let call = Arc::downgrade(inner);
+    spawn(inner, async move {
+        let Some(inner) = call.upgrade() else { return };
+        let settings = inner.settings();
+        let fail = |inner: &Inner, text: &str| {
+            if inner.mic_test_turn() == turn {
+                inner.set_mic_test(|t| t.phase = MicTestPhase::Error(text.into()));
+            }
+        };
+        let options = json!({
+            "processingMode": settings.processing_mode.as_str(),
+            "inputGain": settings.input_gain.clamp(0.0, 2.0),
+        });
+        let call2 = call.clone();
+        let started = blocking(move || {
+            let inner = call2.upgrade()?;
+            let engine = inner.media.engine().ok()?;
+            Some(engine.monitor_audio(Some(&options)).map(|()| engine))
+        })
+        .await
+        .flatten();
+        let engine = match started {
+            Some(Ok(engine)) => engine,
+            _ => return fail(&inner, logic::MIC_TEST_FAILED),
+        };
+        if inner.mic_test_turn() != turn {
+            let _ = blocking(move || engine.monitor_audio(None)).await;
+            return;
+        }
+        inner.set_mic_test(|t| t.phase = MicTestPhase::Active);
+        drop(inner);
+        let mut blocks = None;
+        let mut moved = Instant::now();
+        loop {
+            tokio::time::sleep(MIC_TEST_POLL).await;
+            let Some(inner) = call.upgrade() else { return };
+            if inner.mic_test_turn() != turn {
+                return;
+            }
+            let reader = engine.clone();
+            let levels = blocking(move || reader.audio_levels()).await;
+            let Some(Ok(levels)) = levels else {
+                fail(&inner, logic::MIC_TEST_NO_LEVELS);
+                let engine = engine.clone();
+                let _ = blocking(move || engine.monitor_audio(None)).await;
+                return;
+            };
+            let now = Instant::now();
+            let count = levels["blocks"].as_u64();
+            if count != blocks {
+                blocks = count;
+                moved = now;
+                inner.set_mic_test(|t| {
+                    t.input = levels["input"].as_f64().unwrap_or(0.0);
+                    t.processed = levels["processed"].as_f64().unwrap_or(0.0);
+                    t.clipping = levels["clipping"].as_bool().unwrap_or(false);
+                });
+            } else if now.duration_since(moved) >= MIC_TEST_STALL {
+                fail(&inner, logic::MIC_TEST_STALLED);
+                let engine = engine.clone();
+                let _ = blocking(move || engine.monitor_audio(None)).await;
+                return;
+            }
+        }
+    });
+}
+
+/// Ends the monitor; a call's own capture is not touched by it.
+pub(crate) fn stop_mic_test(inner: &Arc<Inner>) {
+    let call = Arc::downgrade(inner);
+    spawn(inner, async move {
+        let _ = blocking(move || {
+            let inner = call.upgrade()?;
+            let engine = inner.media.engine.get()?.as_ref().ok()?.clone();
+            engine.monitor_audio(None).ok()
+        })
+        .await;
+    });
+}
+
+/// False when no session runs (a state set by an interface test).
+pub(crate) fn simulate_media_loss(inner: &Arc<Inner>) -> bool {
+    let Some(session) = inner.media.current() else {
+        return false;
+    };
+    if let Some(seat) = session.seat() {
         seat.sock.close();
     }
+    true
 }
 
 pub(crate) fn apply_request(inner: &Arc<Inner>, key: VideoKey, request: VideoRequest) {
@@ -816,13 +918,35 @@ impl Session {
         )
     }
 
+    /// Captures the microphone; without one the call goes on listening
+    /// (`reportJoinMicFailure`): the bar says so and offers to retry.
     async fn capture_microphone(self: &Arc<Self>) -> Option<Local> {
         let engine = self.engine()?;
         let options = self.microphone_options();
-        let source = blocking(move || core::Source::microphone(&engine, &options))
-            .await?
-            .map_err(|e| tracing::warn!("microphone: {e}"))
-            .ok()?;
+        let source = match blocking(move || core::Source::microphone(&engine, &options)).await? {
+            Ok(source) => source,
+            Err(e) => {
+                tracing::warn!("microphone: {e}");
+                if self.live()
+                    && let Some(inner) = self.inner()
+                {
+                    let denied = logic::mic_refused(&e.to_string());
+                    inner.write(|s| {
+                        s.mic = if denied {
+                            MicStatus::Denied
+                        } else {
+                            MicStatus::Unavailable
+                        };
+                    });
+                    inner.notify(if denied {
+                        logic::MIC_DENIED
+                    } else {
+                        logic::MIC_NOT_FOUND
+                    });
+                }
+                return None;
+            }
+        };
         let mut st = self.st.lock();
         if !self.live() {
             return None;
@@ -833,16 +957,60 @@ impl Session {
             height: 0,
         };
         st.mic = Some(local.clone());
+        drop(st);
+        if let Some(inner) = self.inner() {
+            inner.write(|s| s.mic = MicStatus::Live);
+        }
         Some(local)
+    }
+
+    /// `retryMicrophone`: capture again and send it on the seat there is.
+    async fn retry_microphone(self: &Arc<Self>) {
+        if self.st.lock().mic.is_some() {
+            return;
+        }
+        let Some(mic) = self.capture_microphone().await else {
+            return;
+        };
+        self.apply_local_audio();
+        if let Some(seat) = self.seat() {
+            let paused = self
+                .inner()
+                .is_some_and(|i| i.read(|s| s.muted || s.deafened));
+            if seat.publish(Kind::A, &mic, None, paused).await.is_ok() {
+                self.announce(Kind::A, true);
+            }
+        }
     }
 
     /// The microphone again with new processing; the producer keeps its id.
     async fn restart_microphone(self: &Arc<Self>) {
         let Some(engine) = self.engine() else { return };
         let options = self.microphone_options();
-        let Some(Ok(source)) = blocking(move || core::Source::microphone(&engine, &options)).await
-        else {
-            return;
+        let source = match blocking(move || core::Source::microphone(&engine, &options)).await {
+            Some(Ok(source)) => source,
+            Some(Err(e)) => {
+                tracing::warn!("microphone switch: {e}");
+                // The old capture keeps sending; without one this is a retry.
+                if let Some(inner) = self.inner()
+                    && self.live()
+                {
+                    if self.st.lock().mic.is_some() {
+                        inner.notify(logic::MIC_SWITCH_FAILED);
+                    } else {
+                        let denied = logic::mic_refused(&e.to_string());
+                        inner.write(|s| {
+                            s.mic = if denied {
+                                MicStatus::Denied
+                            } else {
+                                MicStatus::Unavailable
+                            };
+                        });
+                    }
+                }
+                return;
+            }
+            None => return,
         };
         let local = {
             let mut st = self.st.lock();
@@ -1000,19 +1168,29 @@ impl Session {
             _ => return fail(Some(String::new())),
         }
         let height = state["height"].as_u64().map_or(size.height, |h| h as u32);
+        let mut sound = LiveSound::Off;
         let audio = if with_audio && !fake {
             let app = settings.source_audio_app.clone();
             let made =
                 blocking(move || core::Source::app_audio(&engine, &json!({ "app": app }))).await;
             match made {
-                Some(Ok(audio)) => Some(audio),
+                Some(Ok(audio)) => {
+                    sound = LiveSound::Sharing;
+                    Some(audio)
+                }
                 Some(Err(e)) => {
                     tracing::warn!("Live sound: {e}");
+                    sound = LiveSound::Unavailable(Some(e.to_string()).filter(|e| !e.is_empty()));
                     None
                 }
                 None => None,
             }
         } else {
+            // The test pattern has no sound to give, like a browser picker
+            // that withholds it.
+            if with_audio {
+                sound = LiveSound::Unavailable(None);
+            }
             None
         };
         let (screen, screen_audio) = {
@@ -1038,7 +1216,11 @@ impl Session {
             st.awaiting_screen = true;
             (screen, screen_audio)
         };
-        inner.write(|s| s.live_audio = screen_audio.is_some());
+        inner.write(|s| {
+            s.live_audio = screen_audio.is_some();
+            s.live_sound = sound;
+        });
+        inner.diagnostics().note("stream-start", "Live");
         inner.play(Sound::LiveStart, Some(false));
         self.preview(Kind::S, &source);
         self.publish_participants();
@@ -1073,6 +1255,25 @@ impl Session {
                 self.stop_video(Kind::S).await;
                 return;
             }
+            // The sound can end on its own (the application quit); the
+            // picture goes on.
+            let audio = self
+                .st
+                .lock()
+                .screen_audio
+                .as_ref()
+                .map(|a| a.source.clone());
+            if let Some(audio) = audio
+                && let Ok(state) = audio.state()
+                && state["state"].as_str().is_some_and(|s| s != "live")
+                && let Some(inner) = self.inner()
+            {
+                inner.write(|s| {
+                    if s.live_sound == LiveSound::Sharing {
+                        s.live_sound = LiveSound::Ended;
+                    }
+                });
+            }
         }
     }
 
@@ -1100,7 +1301,11 @@ impl Session {
             inner.write(|s| {
                 s.live = false;
                 s.live_audio = false;
+                s.live_sound = LiveSound::Off;
             });
+            if had {
+                inner.diagnostics().note("stream-stop", "Live");
+            }
         } else {
             inner.write(|s| s.camera = false);
         }
@@ -1830,9 +2035,84 @@ impl Session {
                     (dl + dr > 0).then(|| dl as f64 / (dl + dr) as f64)
                 };
                 let level = logic::quality_level(rtt, loss);
-                inner.write(|s| s.quality = level);
+                let mut connection = self.sample(&inner, seat, &stats);
+                // The bars' own loss counts both directions since the last round.
+                connection.loss = loss.or(connection.loss);
+                connection.rtt_ms = rtt.or(connection.rtt_ms);
+                inner.write(|s| {
+                    s.quality = level;
+                    s.connection = Some(connection);
+                });
             }
         }
+    }
+
+    /// One diagnostics sample (`sampleConnection`): the receive transport's
+    /// pair, each producer's and consumer's flows.
+    fn sample(&self, inner: &Inner, seat: &Seat, recv_stats: &Value) -> crate::Connection {
+        use crate::diagnostics::{self, Sample};
+        let at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |d| d.as_secs_f64() * 1000.0);
+        let producers: Vec<(Kind, Arc<Mutex<core::Producer>>)> = seat
+            .producers
+            .lock()
+            .iter()
+            .filter(|(_, h)| !h.paused)
+            .map(|(k, h)| (*k, h.producer.clone()))
+            .collect();
+        let consumers: Vec<(Kind, Arc<Mutex<core::Consumer>>)> = seat
+            .consumers
+            .lock()
+            .values()
+            .filter(|r| !r.paused)
+            .map(|r| (r.k, r.consumer.clone()))
+            .collect();
+        let sent: Vec<(Kind, Value)> = producers
+            .into_iter()
+            .filter_map(|(k, p)| p.lock().stats().ok().map(|s| (k, s)))
+            .collect();
+        let received: Vec<(Kind, Value)> = consumers
+            .into_iter()
+            .filter_map(|(k, c)| c.lock().stats().ok().map(|s| (k, s)))
+            .collect();
+        let (live, watching) = {
+            let st = self.st.lock();
+            (st.screen.is_some(), !st.watching.is_empty())
+        };
+        let room_codecs = seat.codecs.lock().as_ref().map(|(list, _)| list.clone());
+        let decodes_av1 = self
+            .inner()
+            .and_then(|i| i.media.av1_decoding.get().copied())
+            .unwrap_or(false);
+        let mut diag = inner.diagnostics();
+        diag.video = Some(diagnostics::VideoCaps {
+            room_codecs,
+            encoders: seat.hardware,
+            decodes_av1,
+        });
+        let mut flows = Vec::new();
+        for (k, stats) in &sent {
+            flows.extend(diag.flows(stats, true, *k, at_ms));
+        }
+        for (k, stats) in &received {
+            flows.extend(diag.flows(stats, false, *k, at_ms));
+        }
+        let sample = Sample {
+            at: diagnostics::iso(at_ms as i64),
+            phase: if watching {
+                "watch"
+            } else if live {
+                "stream-on"
+            } else {
+                "voice-only"
+            },
+            transport: diagnostics::transport(recv_stats),
+            flows,
+        };
+        let connection = sample.connection();
+        diag.push(sample);
+        connection
     }
 }
 
