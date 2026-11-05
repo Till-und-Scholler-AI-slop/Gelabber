@@ -464,7 +464,8 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         || chat.composers.get(&channel).is_some_and(|c| c.emoji_open);
     overlays(ui, app, &conv, chat, me);
     // Esc nobody else used marks the conversation read; Shift+Esc the server.
-    if !overlay_open {
+    // Not while the search hits are shown, as on the web.
+    if !overlay_open && !searching {
         let (esc, shift) = ui.input_mut(|i| {
             if i.consume_key(egui::Modifiers::SHIFT, egui::Key::Escape) {
                 (true, true)
