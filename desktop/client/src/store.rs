@@ -445,6 +445,9 @@ pub struct State {
     pub gateway: GatewayStatus,
     pub view: View,
     pub ops: HashMap<String, OpState>,
+    /// How often each op failed: a view that waits for an answer compares
+    /// counts, which an op failing between two frames still changes.
+    pub failures: HashMap<String, u64>,
     /// Registration answered with a confirmation mail ("Postfach prüfen").
     pub verification_sent: bool,
     /// The server ended the session (`Sitzung abgelaufen.` on the login page).
@@ -464,6 +467,10 @@ impl State {
             Session::Authenticated(user) => Some(user.as_ref()),
             _ => None,
         }
+    }
+
+    pub fn failures(&self, key: &str) -> u64 {
+        self.failures.get(key).copied().unwrap_or(0)
     }
 
     pub fn op(&self, key: &str) -> Option<&OpState> {

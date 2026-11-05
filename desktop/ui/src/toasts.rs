@@ -41,6 +41,24 @@ pub fn set_anchor(ctx: &egui::Context, rect: Rect) {
     ctx.data_mut(|d| d.insert_temp(Id::unique("gelabber-toast-anchor"), (rect, frame)));
 }
 
+fn space_id() -> Id {
+    Id::unique("gelabber-toast-space")
+}
+
+fn set_space(ctx: &egui::Context, space: f32) {
+    if space != self::space(ctx) {
+        ctx.request_repaint();
+    }
+    ctx.data_mut(|d| d.insert_temp(space_id(), space));
+}
+
+/// How tall the stack over the composer was last frame (`--lr-toast-space`),
+/// 0 without one: the message list ends that much plus 12px higher
+/// (`.lr-toast-space`), so no toast covers the newest message (#354).
+pub fn space(ctx: &egui::Context) -> f32 {
+    ctx.data(|d| d.get_temp::<f32>(space_id())).unwrap_or(0.0)
+}
+
 fn anchor(ctx: &egui::Context) -> Option<Rect> {
     let frame = ctx.cumulative_frame_nr();
     ctx.data(|d| d.get_temp::<(Rect, u64)>(Id::unique("gelabber-toast-anchor")))
@@ -157,6 +175,7 @@ impl Toasts {
         let now = ctx.input(|i| i.time);
         self.advance(now);
         if self.items.is_empty() {
+            set_space(&ctx, 0.0);
             return;
         }
         let theme = Theme::of(&ctx);
@@ -173,6 +192,7 @@ impl Toasts {
         let right = composer.map_or(screen.right(), |r| r.right()) - 16.0;
         let mut closed = None;
         let mut holds = Vec::new();
+        let mut span: Option<(f32, f32)> = None;
         // Info toasts sit above the error toasts.
         let mut order: Vec<&Toast> = self.items.iter().filter(|t| !t.error).collect();
         order.extend(self.items.iter().filter(|t| t.error));
@@ -254,9 +274,18 @@ impl Toasts {
                     // The close button covers part of the card: either holds it.
                     let hover = card.contains_pointer() || button.hovered();
                     holds.push((toast.id, hover, button.has_focus()));
+                    span = Some(span.map_or((rect.top(), rect.bottom()), |(t, b)| {
+                        (t.min(rect.top()), b.max(rect.bottom()))
+                    }));
                     y = rect.top() - 8.0;
                 }
             });
+        // `--lr-toast-space`: above a composer the list makes room for them.
+        let space = match (composer, span) {
+            (Some(_), Some((top, bottom))) => (bottom - top).ceil(),
+            _ => 0.0,
+        };
+        set_space(&ctx, space);
         for (id, hover, focus) in holds {
             self.hold(id, hover, focus);
         }

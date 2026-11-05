@@ -240,8 +240,12 @@ pub fn show(
         Stroke::new(1.0, border),
         StrokeKind::Inside,
     );
-    // `anchor-name: --lr-composer`: the toasts sit above it.
-    crate::toasts::set_anchor(ui.ctx(), field);
+    // `anchor-name: --lr-composer` (the whole composer, the pane wide): the
+    // toasts sit above it, 16px in from the pane's edge.
+    crate::toasts::set_anchor(
+        ui.ctx(),
+        Rect::from_min_max(pos2(area.left(), field.top()), area.max),
+    );
     let mut fy = field.top() + 1.0;
 
     // The reply bar.

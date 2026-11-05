@@ -142,6 +142,14 @@ pub fn paint(
                 Sense::hover()
             },
         );
+        let n = shown.users.len();
+        let label = format!(
+            "{}: {n} {}{}",
+            shown.emoji,
+            if n == 1 { "Reaktion" } else { "Reaktionen" },
+            if mine { ", du hast reagiert" } else { "" }
+        );
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &label));
         let hovered = enabled && response.hovered();
         let (fill, border) = if mine {
             (c.selected, mix(c.border, c.accent, 0.6))

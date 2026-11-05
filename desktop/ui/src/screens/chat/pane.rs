@@ -77,6 +77,8 @@ pub struct PaneState {
     pub copied: Option<(Uuid, usize, bool, f64)>,
     /// My optimistic reaction votes: (message, emoji) → (add, since).
     pub intents: HashMap<(Uuid, String), (bool, f64)>,
+    /// The `react:<id>` failure count when a message's vote was cast.
+    pub intent_failures: HashMap<Uuid, u64>,
     hover_bar: Option<(Uuid, Rect)>,
     pub last_marked: Option<Uuid>,
     /// A scroll to the end was asked for (sent, jump pill).
@@ -125,6 +127,7 @@ pub enum ListAction {
 struct Item<'a> {
     msg: std::borrow::Cow<'a, Message>,
     send: Option<SendState>,
+    uploads: Option<Vec<gelabber_client::store::UploadState>>,
     day: Option<String>,
     new_divider: bool,
     start: bool,
@@ -249,6 +252,7 @@ fn make_cx<'a>(item: &'a Item<'a>, input: &'a ListInput<'a>, snap: &'a Snap) -> 
                 }
             })
             .unwrap_or(0.0),
+        uploads: item.uploads.clone(),
         gif_url: m.gif.as_ref().map(|g| {
             input
                 .http
@@ -344,8 +348,9 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
         .iter()
         .map(|p| pending_message(p, input.state))
         .collect();
-    let mut all: Vec<(&Message, Option<SendState>)> =
-        history.messages.iter().map(|m| (m, None)).collect();
+    type Uploads = Option<Vec<gelabber_client::store::UploadState>>;
+    let mut all: Vec<(&Message, Option<SendState>, Uploads)> =
+        history.messages.iter().map(|m| (m, None, None)).collect();
     for (p, m) in history.pending.iter().zip(pending.iter()) {
         let state = match &p.failed {
             Some(_) => SendState::Failed {
@@ -360,18 +365,24 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
-        all.push((m, Some(state)));
+        // A failed row hides its files' upload states (`.is-failed`).
+        let uploads = p
+            .failed
+            .is_none()
+            .then(|| (0..p.files.len()).map(|i| p.upload_state(i)).collect());
+        all.push((m, Some(state), uploads));
     }
-    let refs: Vec<&Message> = all.iter().map(|(m, _)| *m).collect();
+    let refs: Vec<&Message> = all.iter().map(|(m, _, _)| *m).collect();
     let new_index = unread_anchor(&refs, pane.new_after.flatten());
     let mut items: Vec<Item> = Vec::with_capacity(all.len());
-    for (i, (m, send)) in all.iter().enumerate() {
+    for (i, (m, send, uploads)) in all.iter().enumerate() {
         let previous = i.checked_sub(1).map(|p| refs[p]);
         let new_day = time::day_break(previous.map(|p| p.created_at), m.created_at);
         let first_new = new_index == Some(i);
         items.push(Item {
             msg: std::borrow::Cow::Borrowed(*m),
             send: send.clone(),
+            uploads: uploads.clone(),
             day: new_day.then(|| time::day_label(m.created_at, input.now)),
             new_divider: first_new,
             start: i == 0 && !has_more,
@@ -1036,6 +1047,7 @@ pub fn context_rows(
         .map(|m| Item {
             msg: std::borrow::Cow::Borrowed(m),
             send: None,
+            uploads: None,
             day: None,
             new_divider: false,
             start: false,

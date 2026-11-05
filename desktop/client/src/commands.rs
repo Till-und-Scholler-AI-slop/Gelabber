@@ -93,7 +93,10 @@ impl Client {
                 error: error.clone(),
             });
         }
-        self.write(|s| s.ops.insert(key.to_owned(), OpState::Failed(error)));
+        self.write(|s| {
+            *s.failures.entry(key.to_owned()).or_default() += 1;
+            s.ops.insert(key.to_owned(), OpState::Failed(error))
+        });
     }
 
     /// Forgets a finished operation (a form that was closed).
@@ -829,12 +832,48 @@ impl Client {
         });
     }
 
+    /// A write to message `id` as the named op; a failed one fetches its
+    /// conversation again (`invalidateQueries`): it may be gone or changed.
+    fn message_write<T, F, A>(&self, op: String, id: Uuid, work: F, apply: A)
+    where
+        T: Send + 'static,
+        F: Future<Output = Result<T, ApiError>> + Send + 'static,
+        A: FnOnce(&mut State, T) + Send + 'static,
+    {
+        let channel = self.with_state(|s| s.find_message(id).map(|m| m.channel_id));
+        let this = self.clone();
+        self.spawn(async move {
+            let epoch = this.epoch();
+            match this.op(&op, work).await {
+                Some(value) => {
+                    this.write_in(epoch, |s| apply(s, value));
+                }
+                None => {
+                    // Gone on the server: the newer-than-the-page rule of a
+                    // refetch would keep the row, so it goes here.
+                    let gone = this.with_state(|s| {
+                        matches!(s.op(&op), Some(OpState::Failed(e)) if e.code() == "not_found")
+                    });
+                    if let Some(channel) = channel
+                        && this.epoch() == epoch
+                    {
+                        if gone {
+                            this.write_in(epoch, |s| s.apply_delete(channel, id));
+                        }
+                        this.load_latest(channel).await;
+                    }
+                }
+            }
+        });
+    }
+
     /// Op key `edit:<id>`.
     pub fn edit_message(&self, id: Uuid, content: &str) {
         let http = self.http().clone();
         let content = content.to_owned();
-        self.run(
+        self.message_write(
             format!("edit:{id}"),
+            id,
             async move { http.edit_message(id, &content).await },
             |s, m| s.apply_message(m),
         );
@@ -844,8 +883,9 @@ impl Client {
     pub fn delete_message(&self, id: Uuid) {
         let channel = self.with_state(|s| s.find_message(id).map(|m| m.channel_id));
         let http = self.http().clone();
-        self.run(
+        self.message_write(
             format!("delete:{id}"),
+            id,
             async move { http.delete_message(id).await },
             move |s, ()| {
                 if let Some(channel) = channel {
@@ -868,8 +908,9 @@ impl Client {
     pub fn set_reaction(&self, id: Uuid, emoji: &str, on: bool) {
         let http = self.http().clone();
         let emoji = emoji.to_owned();
-        self.run(
+        self.message_write(
             format!("react:{id}"),
+            id,
             async move {
                 if on {
                     http.add_reaction(id, &emoji).await

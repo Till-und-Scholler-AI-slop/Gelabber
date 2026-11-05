@@ -118,6 +118,8 @@ pub struct RowCx<'a> {
     pub highlight: f32,
     /// The GIF's picture through the server's media proxy.
     pub gif_url: Option<String>,
+    /// My files' upload states while the message is on its way.
+    pub uploads: Option<Vec<gelabber_client::store::UploadState>>,
 }
 
 impl RowCx<'_> {
@@ -443,7 +445,13 @@ fn add_extras(ui: &Ui, cx: &RowCx, out: &mut RowLayout, stack: &mut Stack, colum
         let top = stack.add(4.0, size.y, 0.0);
         out.gif = Some((top, size));
     }
-    if let Some(media) = attachments::layout(ui, cx.images, &msg.attachments, column) {
+    if let Some(media) = attachments::layout(
+        ui,
+        cx.images,
+        &msg.attachments,
+        column,
+        cx.uploads.as_deref(),
+    ) {
         let top = stack.add(6.0, media.height, 0.0);
         out.media = Some((top, media));
     }
@@ -780,7 +788,7 @@ pub fn paint(
         && let (Some(gif), Some(url)) = (&msg.gif, &cx.gif_url)
     {
         let r = Rect::from_min_size(pos2(x, top + y), *size);
-        if let Some(a) = attachments::paint_gif(ui, cx.images, gif, url, r, id) {
+        if let Some(a) = attachments::paint_gif(ui, cx.images, gif, url, msg.id, r, id) {
             actions.push(RowAction::Media(a));
         }
     }

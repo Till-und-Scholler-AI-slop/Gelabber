@@ -847,6 +847,47 @@
           "wait": 500
         }
       ]
+    },
+    {
+      "name": "toast-error",
+      "path": "/s/{home}/c/{musik}",
+      "user": "lena",
+      "actions": [
+        {
+          "say": "jonas musik ghost=👍 Wer legt heute auf?"
+        },
+        {
+          "wait": 1500
+        },
+        {
+          "click": "👍: 1 Reaktion"
+        },
+        {
+          "wait": 1500
+        },
+        {
+          "hover": "Schließen"
+        }
+      ]
+    },
+    {
+      "name": "attachment-text",
+      "path": "/s/{home}/c/{musik}",
+      "user": "lena",
+      "actions": [
+        {
+          "say": "jonas musik file=playlist.txt Die Liste für Samstag"
+        },
+        {
+          "wait": 2000
+        },
+        {
+          "clicktext": "playlist.txt"
+        },
+        {
+          "wait": 1000
+        }
+      ]
     }
   ]
 }

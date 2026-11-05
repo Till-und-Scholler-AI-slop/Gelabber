@@ -361,9 +361,12 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
     };
     let composer_state = chat.composers.entry(channel).or_default();
     let composer_h = composer::height(composer_state, &composer_input);
+    // `.lr-toast-space` between the typing bar and the composer.
+    let toasts = crate::toasts::space(ui.ctx());
+    let room = toasts + toasts.min(12.0);
     let list_rect = Rect::from_min_max(
         pos2(page.left(), page.top() + header::HEIGHT),
-        pos2(page.right(), page.bottom() - composer_h - TYPING_BAR),
+        pos2(page.right(), page.bottom() - composer_h - room - TYPING_BAR),
     );
     let typing_rect = Rect::from_min_size(
         pos2(page.left(), list_rect.bottom()),
@@ -1057,13 +1060,20 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
     }
     // My optimistic votes end once the server agrees, or after a while.
     let pane = chat.panes.entry(channel).or_default();
+    // A refused vote ends at once: the toast says so, the chip goes back.
+    let failures = &mut pane.intent_failures;
     pane.intents.retain(|(id, emoji), (add, since)| {
-        let settled = client.with_state(|s| {
-            s.find_message(*id)
-                .is_some_and(|m| m.reacted(emoji, me) == *add)
+        let (settled, failed) = client.with_state(|s| {
+            (
+                s.find_message(*id)
+                    .is_some_and(|m| m.reacted(emoji, me) == *add),
+                s.failures(&format!("react:{id}")),
+            )
         });
-        !settled && now_t - *since < 8.0
+        let refused = *failures.entry(*id).or_insert(failed) != failed;
+        !settled && !refused && now_t - *since < 8.0
     });
+    failures.retain(|id, _| pane.intents.keys().any(|(i, _)| i == id));
 }
 
 enum MenuChoice {

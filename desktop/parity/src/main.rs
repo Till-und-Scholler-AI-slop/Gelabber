@@ -268,8 +268,11 @@ fn render(out: &Path, only: Option<Vec<String>>) {
         // images and layout settle like the web page after networkidle.
         settle(&mut harness);
         // shots.mjs hides the caret (caret-color: transparent); so here.
+        // A browser screenshot never shows a `title` tooltip, which egui's
+        // hover texts stand for (the custom tooltips still show).
         harness.ctx.all_styles_mut(|s| {
             s.visuals.text_cursor.stroke.color = egui::Color32::TRANSPARENT;
+            s.interaction.tooltip_delay = f32::MAX;
         });
         let mut undo = Undo {
             said: Vec::new(),
