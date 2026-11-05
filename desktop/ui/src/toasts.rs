@@ -229,12 +229,34 @@ impl Toasts {
                         StrokeKind::Inside,
                     );
                     if toast.error {
+                        // `border-left: 3px` on a rounded card: the bar's inner
+                        // edge follows the corner, so it thins out at both ends.
+                        let r = theme.radius.lg;
+                        let end = painter.with_clip_rect(Rect::from_min_max(
+                            rect.min,
+                            pos2(rect.left() + r, rect.bottom()),
+                        ));
+                        end.rect_filled(rect, corner(r), c.danger);
+                        end.rect_filled(
+                            Rect::from_min_max(
+                                pos2(rect.left() + 3.0, rect.top() + 1.0),
+                                pos2(rect.right() - 1.0, rect.bottom() - 1.0),
+                            ),
+                            corner(r - 2.0),
+                            c.elevated,
+                        );
+                        // The top and bottom borders take over where the bar has thinned out.
                         painter
                             .with_clip_rect(Rect::from_min_max(
-                                rect.min,
-                                pos2(rect.left() + 3.0, rect.bottom()),
+                                pos2(rect.left() + 7.0, rect.top()),
+                                pos2(rect.left() + r, rect.bottom()),
                             ))
-                            .rect_filled(rect, corner(theme.radius.lg), c.danger);
+                            .rect_stroke(
+                                rect,
+                                corner(r),
+                                Stroke::new(1.0, c.border),
+                                StrokeKind::Inside,
+                            );
                         icons::paint(
                             painter,
                             Icon::Warning,

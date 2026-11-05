@@ -548,7 +548,13 @@ fn channel_row(
     // Hover actions cover the name's end with the row's own fill. Unhovered
     // they stay there unseen (`opacity-0`), for the keyboard and tests.
     if can_manage {
-        let shown = hovered || ui.rect_contains_pointer(row);
+        let edit_id = Id::unique(("edit-channel", ch.id));
+        let delete_id = Id::unique(("delete-channel", ch.id));
+        // `group-focus-within:opacity-100`: a Tab onto the row or its buttons shows them.
+        let shown = hovered
+            || ui.rect_contains_pointer(row)
+            || response.has_focus()
+            || ui.memory(|m| m.has_focus(edit_id) || m.has_focus(delete_id));
         let actions = Rect::from_min_max(
             pos2(row.right() - 61.0, row.top() + 4.0),
             pos2(row.right() - 3.0, row.top() + 30.0),
@@ -570,29 +576,11 @@ fn channel_row(
             ui.set_opacity(0.0);
         }
         let ui = &mut ui;
-        if shell_icon_button(
-            ui,
-            edit,
-            Icon::Pencil,
-            14.0,
-            "Kanal bearbeiten",
-            Id::unique(("edit-channel", ch.id)),
-        )
-        .clicked()
-        {
+        if shell_icon_button(ui, edit, Icon::Pencil, 14.0, "Kanal bearbeiten", edit_id).clicked() {
             super::dialogs::open_channel(ui.ctx(), server, Some(ch), ch.category_id);
             return;
         }
-        if shell_icon_button(
-            ui,
-            delete,
-            Icon::Trash,
-            14.0,
-            "Kanal löschen",
-            Id::unique(("delete-channel", ch.id)),
-        )
-        .clicked()
-        {
+        if shell_icon_button(ui, delete, Icon::Trash, 14.0, "Kanal löschen", delete_id).clicked() {
             super::dialogs::confirm_delete_channel(ui.ctx(), server, ch);
             return;
         }
