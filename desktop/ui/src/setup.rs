@@ -215,7 +215,7 @@ impl Launcher {
     }
 
     /// "Server wechseln": the setup screen with the current server filled in.
-    fn to_setup(&mut self, current: String, error: Option<String>) {
+    fn show_setup(&mut self, current: String, error: Option<String>) {
         self.stage = Stage::Setup(Setup::new(Some(current), error));
     }
 }
@@ -317,9 +317,9 @@ impl eframe::App for Launcher {
                 }
                 let origin = origin.clone();
                 if take_switch(&ctx) || shortcut {
-                    self.to_setup(origin, None);
+                    self.show_setup(origin, None);
                 } else if let Some(reason) = failed {
-                    self.to_setup(origin, Some(reason));
+                    self.show_setup(origin, Some(reason));
                 }
                 if self.in_setup() {
                     ctx.request_repaint();
@@ -588,6 +588,9 @@ fn setup_page(ui: &mut Ui, setup: &mut Setup, checking: bool) -> Option<Action> 
             content_w,
         );
         block.paint(ui.painter(), pos2(x, y));
+        let rect = Rect::from_min_size(pos2(x, y), block.size());
+        let alert = ui.interact(rect, Id::unique("gelabber-setup-error"), Sense::hover());
+        crate::widgets::announce(&alert, egui::Role::Alert, error);
         y += block.height();
     }
     let bottom = y + 2.0 * REM + 1.0;
@@ -606,7 +609,84 @@ fn setup_page(ui: &mut Ui, setup: &mut Setup, checking: bool) -> Option<Action> 
 
 #[cfg(test)]
 mod tests {
-    use super::{host_of, server_origin};
+    use super::{Launcher, host_of, server_origin};
+    use crate::app::testkit::{FakeApi, launcher, wait_for, wait_for_label};
+    use crate::platform::paths::testing::TempConfig;
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::{NodeT, Queryable};
+
+    fn host(api: &FakeApi) -> String {
+        api.origin.trim_start_matches("http://").to_owned()
+    }
+
+    /// "Server wechseln …" in the user menu: the setup with the way back.
+    #[test]
+    fn the_user_menu_switches_servers() {
+        let _config = TempConfig::new("setup-menu");
+        let api = FakeApi::start(true, |_, _, _| None);
+        let mut harness = launcher(&api, "/");
+        wait_for_label(&mut harness, "Benutzermenü");
+        harness
+            .get_by_role_and_label(Role::Button, "Benutzermenü")
+            .click();
+        wait_for_label(&mut harness, "Server wechseln …");
+        harness
+            .get_by_role_and_label(Role::Button, "Server wechseln …")
+            .click();
+        wait_for(&mut harness, "the setup", |h| h.state().in_setup());
+        let back = format!("Zurück zu {}", host(&api));
+        wait_for_label(&mut harness, &back);
+        let field = harness.get_by_label("Serveradresse");
+        assert_eq!(field.value().as_deref(), Some(api.origin.as_str()));
+        // Back: checked, then the app on the same server again.
+        harness.get_by_role_and_label(Role::Button, &back).click();
+        wait_for(&mut harness, "the app", |h| !h.state().in_setup());
+        wait_for_label(&mut harness, "Benutzermenü");
+    }
+
+    /// Ctrl+Shift+S (Strg+Umschalt+S), from any page.
+    #[test]
+    fn the_shortcut_switches_servers() {
+        let _config = TempConfig::new("setup-shortcut");
+        let api = FakeApi::start(true, |_, _, _| None);
+        let mut harness = launcher(&api, "/settings/darstellung");
+        wait_for_label(&mut harness, "Benutzermenü");
+        harness.key_press_modifiers(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::S,
+        );
+        wait_for(&mut harness, "the setup", |h| h.state().in_setup());
+        wait_for_label(&mut harness, &format!("Zurück zu {}", host(&api)));
+        assert!(harness.query_by_label("Verbinden").is_some());
+    }
+
+    /// A stored server that does not answer: the setup with the reason and
+    /// "Erneut verbinden mit".
+    #[test]
+    fn an_unreachable_server_starts_in_setup() {
+        let _config = TempConfig::new("setup-unreachable");
+        // A port nothing listens on: bound once, then given up.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let server = format!("http://127.0.0.1:{port}");
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .with_max_steps(10_000)
+            .build_eframe(move |cc| {
+                Launcher::with_prepare(cc, Some(server.clone()), Box::new(|_| {}), None)
+            });
+        wait_for(&mut harness, "the setup", |h| h.state().in_setup());
+        let retry = format!("Erneut verbinden mit 127.0.0.1:{port}");
+        wait_for_label(&mut harness, &retry);
+        let error = harness.get_by_label_contains("ist nicht erreichbar");
+        assert_eq!(error.accesskit_node().role(), Role::Alert);
+        let text = error.accesskit_node().label().unwrap_or_default();
+        assert!(text.starts_with(&format!("127.0.0.1:{port} ist nicht erreichbar (")));
+        assert!(harness.query_by_label_contains("Zurück zu").is_none());
+    }
 
     #[test]
     fn origins() {

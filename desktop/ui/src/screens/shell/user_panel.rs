@@ -473,3 +473,103 @@ fn status_card(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::{NodeT, Queryable};
+
+    use crate::app::testkit::{FakeApi, Reply, launcher, wait_for, wait_for_label};
+    use crate::platform::paths::testing::TempConfig;
+
+    fn open_menu(harness: &mut egui_kittest::Harness<'_, crate::Launcher>) {
+        wait_for_label(harness, "Benutzermenü");
+        harness
+            .get_by_role_and_label(Role::Button, "Benutzermenü")
+            .click();
+        wait_for_label(harness, "Abmelden");
+    }
+
+    /// logOut: in a call it asks first; "Abbrechen" stays signed in.
+    #[test]
+    fn signing_out_in_a_call_asks_first() {
+        let _config = TempConfig::new("logout-call");
+        let api = FakeApi::start(true, |_, _, _| None);
+        let mut harness = launcher(&api, "/");
+        open_menu(&mut harness);
+        let call = harness.state_mut().app().unwrap().call().clone();
+        call.set_state(gelabber_call::CallState {
+            status: gelabber_call::CallStatus::Connected,
+            server: Some(uuid::Uuid::from_u128(1)),
+            channel: Some(uuid::Uuid::from_u128(2)),
+            ..Default::default()
+        });
+        harness
+            .get_by_role_and_label(Role::Button, "Abmelden")
+            .click();
+        wait_for_label(&mut harness, "Abmelden und Anruf beenden?");
+        assert!(
+            harness
+                .query_by_label("Du verlässt dabei den Sprachkanal.")
+                .is_some()
+        );
+        harness
+            .get_by_role_and_label(Role::Button, "Abbrechen")
+            .click();
+        harness.run_steps(10);
+        assert!(!api.saw("POST /auth/logout"));
+        assert!(
+            harness
+                .query_by_label("Abmelden und Anruf beenden?")
+                .is_none()
+        );
+        // Confirmed: signed out, on the login page.
+        open_menu(&mut harness);
+        harness
+            .get_by_role_and_label(Role::Button, "Abmelden")
+            .click();
+        wait_for_label(&mut harness, "Abmelden und Anruf beenden?");
+        let confirm = harness
+            .query_all_by_label("Abmelden")
+            .rfind(|n| n.accesskit_node().role() == Role::Button)
+            .expect("the dialog's button");
+        confirm.click();
+        wait_for(&mut harness, "the logout", |_| api.saw("POST /auth/logout"));
+        wait_for_label(&mut harness, "Anmelden");
+    }
+
+    /// Without a call it signs out at once; a failed server logout shows
+    /// the strip with "Erneut abmelden" (SessionRecoveryNotice LogoutFailed).
+    #[test]
+    fn a_failed_logout_offers_to_try_again() {
+        let _config = TempConfig::new("logout-failed");
+        let fail = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let failing = fail.clone();
+        let api = FakeApi::start(true, move |method, path, _| {
+            (method == "POST"
+                && path == "/auth/logout"
+                && failing.load(std::sync::atomic::Ordering::SeqCst))
+            .then(|| Reply::error(500, "internal"))
+        });
+        let mut harness = launcher(&api, "/");
+        open_menu(&mut harness);
+        harness
+            .get_by_role_and_label(Role::Button, "Abmelden")
+            .click();
+        let text =
+            "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut.";
+        wait_for_label(&mut harness, text);
+        assert!(
+            harness
+                .query_by_label("Abmelden und Anruf beenden?")
+                .is_none()
+        );
+        fail.store(false, std::sync::atomic::Ordering::SeqCst);
+        harness
+            .get_by_role_and_label(Role::Button, "Erneut abmelden")
+            .click();
+        wait_for(&mut harness, "the strip to go", |h| {
+            h.query_by_label(text).is_none()
+        });
+    }
+}

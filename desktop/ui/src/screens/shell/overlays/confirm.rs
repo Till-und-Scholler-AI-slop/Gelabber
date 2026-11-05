@@ -122,7 +122,8 @@ pub fn dialog(
             if let Some(m) = message {
                 let w = ui.available_width();
                 let block = text::Block::wrapped(ui, m, text::BODY, theme.c.muted, w);
-                text::show(ui, &block);
+                let shown = text::show(ui, &block);
+                crate::widgets::announce(&shown, egui::Role::Label, m);
             }
         },
         Some(&mut |ui: &mut Ui| {

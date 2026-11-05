@@ -169,12 +169,20 @@ pub fn error_message(code: &str) -> &'static str {
 pub struct Failure {
     pub code: String,
     pub fields: BTreeMap<String, String>,
+    /// Seconds a rate limit asks to wait.
+    pub retry_after: Option<f64>,
 }
 
 impl Failure {
     pub fn from_api(error: &ApiError) -> Self {
         match error {
-            ApiError::Api { code, fields, .. } => Self {
+            ApiError::Api {
+                code,
+                fields,
+                retry_after,
+                ..
+            } => Self {
+                retry_after: *retry_after,
                 code: if code.is_empty() {
                     "internal".into()
                 } else {
@@ -191,11 +199,11 @@ impl Failure {
             },
             ApiError::Transport(_) => Self {
                 code: "network".into(),
-                fields: BTreeMap::new(),
+                ..Self::default()
             },
             ApiError::Decode(_) => Self {
                 code: "internal".into(),
-                fields: BTreeMap::new(),
+                ..Self::default()
             },
         }
     }
@@ -209,6 +217,8 @@ pub struct FormErrors {
     pub fields: BTreeMap<String, String>,
     /// The field to move focus to once the errors render.
     pub focus: Option<String>,
+    /// A rate limit's end (`useCooldown`): the submit button waits till then.
+    pub cooldown_until: Option<std::time::Instant>,
 }
 
 impl FormErrors {
@@ -223,8 +233,29 @@ impl FormErrors {
         self.fields = fields.into_iter().map(|(f, m)| (f.to_owned(), m)).collect();
     }
 
+    /// Whole seconds left of a rate limit; 0 once it is over.
+    pub fn cooldown(&self) -> u64 {
+        self.cooldown_until.map_or(0, |until| {
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            left.as_secs() + u64::from(left.subsec_nanos() > 0)
+        })
+    }
+
     /// `fromError`; `order` lists the form's fields top to bottom, for focus.
     pub fn from_failure(&mut self, failure: &Failure, order: &[&str]) {
+        if failure.code == "rate_limited"
+            && let Some(wait) = failure.retry_after.filter(|w| *w > 0.0)
+        {
+            let seconds = wait.ceil() as u64;
+            self.cooldown_until =
+                Some(std::time::Instant::now() + std::time::Duration::from_secs(seconds));
+            self.form = Some(format!(
+                "Zu viele Versuche. Bitte {seconds} Sekunden warten."
+            ));
+            self.fields.clear();
+            self.focus = None;
+            return;
+        }
         let fields: BTreeMap<String, String> = failure
             .fields
             .iter()
@@ -306,13 +337,42 @@ mod tests {
         errors.from_failure(
             &Failure {
                 code: "invalid_credentials".into(),
-                fields: BTreeMap::new(),
+                ..Failure::default()
             },
             &["email"],
         );
         assert_eq!(
             errors.form.as_deref(),
             Some("E-Mail oder Passwort ist falsch.")
+        );
+        assert_eq!(errors.cooldown(), 0);
+        // useFormErrors: a rate limit with a known wait counts it down.
+        errors.from_failure(
+            &Failure {
+                code: "rate_limited".into(),
+                retry_after: Some(7.2),
+                ..Failure::default()
+            },
+            &["email"],
+        );
+        assert_eq!(
+            errors.form.as_deref(),
+            Some("Zu viele Versuche. Bitte 8 Sekunden warten.")
+        );
+        assert_eq!(errors.cooldown(), 8);
+        // Without one, the generic line.
+        let mut plain = FormErrors::default();
+        plain.from_failure(
+            &Failure {
+                code: "rate_limited".into(),
+                ..Failure::default()
+            },
+            &["email"],
+        );
+        assert_eq!(plain.cooldown(), 0);
+        assert_eq!(
+            plain.form.as_deref(),
+            Some("Zu viele Anfragen. Bitte kurz warten und noch einmal versuchen.")
         );
     }
 

@@ -31,6 +31,12 @@ use egui::{Color32, Painter, Rect, Stroke, StrokeKind};
 
 use crate::theme::{Theme, corner};
 
+/// Gives a drawn text its accessibility node (`role="alert"`, `"status"`,
+/// a plain label), so screen readers hear it and tests can find it.
+pub fn announce(response: &egui::Response, role: egui::Role, text: &str) {
+    response.widget_info(|| egui::WidgetInfo::labeled(role, true, text));
+}
+
 /// Whether focus moves by keyboard right now: `:focus-visible` shows the
 /// ring for buttons and links only then; text fields always show it.
 pub fn keyboard_focus(ctx: &egui::Context) -> bool {

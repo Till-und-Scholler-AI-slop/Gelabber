@@ -517,9 +517,88 @@ impl GelabberApp {
             toasts: &mut self.toasts,
         };
         screens::show(ui, &mut app, &mut self.screen);
+        logout_failed(ui, &self.client, signed_in);
         self.toasts.show(ui, !is_workspace(self.nav.route()));
         crate::widgets::opener::restore(&ctx);
     }
+}
+
+/// `LogoutFailed` (SessionRecoveryNotice.tsx): the server did not confirm
+/// the sign-out; a strip above the page offers "Erneut abmelden".
+fn logout_failed(ui: &mut Ui, client: &Client, signed_in: bool) {
+    use gelabber_client::OpState;
+    let state = client.with_state(|s| s.op("logout").cloned());
+    // A new sign-in ends the old problem, as applySession does.
+    if signed_in {
+        if matches!(state, Some(OpState::Failed(_))) {
+            client.clear_op("logout");
+        }
+        return;
+    }
+    let pending = matches!(state, Some(OpState::Pending));
+    let shown = ui
+        .ctx()
+        .data(|d| d.get_temp::<bool>(egui::Id::unique("gelabber-logout-failed")))
+        .unwrap_or(false);
+    let failed = matches!(state, Some(OpState::Failed(_)));
+    if !failed && !(pending && shown) {
+        ui.ctx()
+            .data_mut(|d| d.remove::<bool>(egui::Id::unique("gelabber-logout-failed")));
+        return;
+    }
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(egui::Id::unique("gelabber-logout-failed"), true));
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let message =
+        "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut.";
+    let screen = ui.ctx().content_rect();
+    // margin 12px 16px, padding 12px 16px, the 3px warning bar on the left.
+    let outer = egui::Rect::from_min_max(
+        egui::pos2(screen.left() + 16.0, screen.top() + 12.0),
+        egui::pos2(screen.right() - 16.0, screen.top() + 12.0 + 56.0),
+    );
+    egui::Area::new(egui::Id::unique("gelabber-logout-failed-strip"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(outer.min)
+        .show(ui.ctx(), |ui| {
+            let painter = ui.painter();
+            painter.rect(
+                outer,
+                theme::corner(theme.radius.md),
+                c.elevated,
+                egui::Stroke::new(1.0, c.border),
+                egui::StrokeKind::Inside,
+            );
+            painter
+                .with_clip_rect(egui::Rect::from_min_max(
+                    outer.min,
+                    egui::pos2(outer.left() + 3.0, outer.bottom()),
+                ))
+                .rect_filled(outer, theme::corner(theme.radius.md), c.warning);
+            let block = crate::text::Block::single(ui, message, crate::text::UI, c.text);
+            let at = egui::pos2(outer.left() + 19.0, outer.center().y - block.height() / 2.0);
+            block.paint(painter, at);
+            let alert = ui.interact(
+                egui::Rect::from_min_size(at, block.size()),
+                egui::Id::unique("gelabber-logout-failed-text"),
+                egui::Sense::hover(),
+            );
+            crate::widgets::announce(&alert, egui::Role::Alert, message);
+            let button = egui::Rect::from_min_size(
+                egui::pos2(outer.right() - 16.0 - 140.0, outer.center().y - 16.0),
+                egui::vec2(140.0, 32.0),
+            );
+            let retry = ui.put(
+                button,
+                crate::widgets::Button::new("Erneut abmelden")
+                    .small()
+                    .pending(pending.then_some("Wird abgemeldet…")),
+            );
+            if retry.clicked() && !pending {
+                client.logout();
+            }
+        });
 }
 
 /// Routes inside the signed-in workspace (`workspaceLayout`).
@@ -553,6 +632,9 @@ impl eframe::App for GelabberApp {
         egui::Rgba::from(self.background.get()).to_array()
     }
 }
+
+#[cfg(test)]
+pub(crate) mod testkit;
 
 #[cfg(test)]
 mod tests {

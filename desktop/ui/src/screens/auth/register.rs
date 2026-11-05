@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use super::{
     RESEND_COOLDOWN_S, Request, fail, focus_invalid, form_error, invite_banner, layout,
-    result_lines, result_with_strong, seconds_left, submit, wide_button,
+    result_lines, result_with_strong, seconds_left, submit_after, wide_button,
 };
 use crate::app::{AppCtx, is_invite_redirect, with_query};
 use crate::rules::{
@@ -101,8 +101,18 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         }
         ui.add_space(space::S5);
         form_error(ui, &s.errors);
-        let clicked = submit(ui, "Registrieren", "Konto wird angelegt…", pending);
-        if (clicked || name.submitted || email.submitted || password.submitted) && !pending {
+        let cooldown = s.errors.cooldown();
+        let clicked = submit_after(
+            ui,
+            "Registrieren",
+            "Konto wird angelegt…",
+            pending,
+            cooldown,
+        );
+        if (clicked || name.submitted || email.submitted || password.submitted)
+            && !pending
+            && cooldown == 0
+        {
             let checks = [
                 ("name", validate_name(&s.name)),
                 ("email", validate_email(&s.email)),

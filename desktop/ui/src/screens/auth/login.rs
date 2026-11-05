@@ -3,7 +3,9 @@
 use egui::{Sense, Ui, Vec2};
 use gelabber_client::ApiError;
 
-use super::{Request, banner, fail, focus_invalid, form_error, invite_banner, layout, submit};
+use super::{
+    Request, banner, fail, focus_invalid, form_error, invite_banner, layout, submit_after,
+};
 use crate::app::{AppCtx, is_invite_redirect, with_query};
 use crate::rules::{FormErrors, field_message, validate_email};
 use crate::task::{Pending, poll};
@@ -82,8 +84,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         }
         ui.add_space(space::S5);
         form_error(ui, &s.errors);
-        let clicked = submit(ui, "Anmelden", "Anmelden…", pending);
-        if (clicked || email.submitted || password.submitted) && !pending {
+        let cooldown = s.errors.cooldown();
+        let clicked = submit_after(ui, "Anmelden", "Anmelden…", pending, cooldown);
+        if (clicked || email.submitted || password.submitted) && !pending && cooldown == 0 {
             let mut fields = Vec::new();
             if let Some(code) = validate_email(&s.email) {
                 fields.push(("email", field_message("email", code)));

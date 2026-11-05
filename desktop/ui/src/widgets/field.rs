@@ -232,6 +232,29 @@ impl<'a> TextField<'a> {
         }
 
         y = field_rect.bottom();
+        // "Feststelltaste ist an" under a focused password field.
+        if self.password && caps_lock(ui, self.id, response.has_focus()) {
+            y += space::S1_5;
+            let block = Block::single(ui, "Feststelltaste ist an", text::META, c.warning);
+            let row = Rect::from_min_size(
+                pos2(top.x, y),
+                Vec2::new(14.0 + space::S1_5 + block.width(), block.height()),
+            );
+            crate::icons::paint(
+                ui.painter(),
+                Icon::Warning,
+                pos2(row.left(), row.center().y - 7.0),
+                14.0,
+                c.warning,
+            );
+            block.paint(
+                ui.painter(),
+                pos2(row.left() + 14.0 + space::S1_5, row.top()),
+            );
+            let hint = ui.interact(row, self.id.with("caps"), Sense::hover());
+            super::announce(&hint, egui::Role::Label, "Feststelltaste ist an");
+            y += layout_unit(block.height());
+        }
         let note = self
             .error
             .map(|e| (e, c.danger))
@@ -250,6 +273,42 @@ impl<'a> TextField<'a> {
             rect,
         }
     }
+}
+
+/// Whether Caps Lock is on while the field has focus. egui has no lock
+/// state (getModifierState), so it follows the key and what it types: a
+/// letter whose case goes against Shift means it is on. Leaving the field
+/// forgets it, as the web's onBlur does.
+fn caps_lock(ui: &Ui, id: Id, focused: bool) -> bool {
+    let key = id.with("caps-lock");
+    if !focused {
+        ui.data_mut(|d| d.remove::<bool>(key));
+        return false;
+    }
+    let mut on = ui.data(|d| d.get_temp::<bool>(key)).unwrap_or(false);
+    ui.input(|i| {
+        for event in &i.events {
+            match event {
+                egui::Event::Key {
+                    key: egui::Key::CapsLock,
+                    pressed: true,
+                    repeat: false,
+                    ..
+                } => on = !on,
+                egui::Event::Text(typed) => {
+                    if let Some(letter) = typed.chars().rev().find(|c| c.is_alphabetic()) {
+                        let shift = i.modifiers.shift;
+                        if letter.is_uppercase() != letter.is_lowercase() {
+                            on = letter.is_uppercase() != shift;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+    ui.data_mut(|d| d.insert_temp(key, on));
+    on
 }
 
 /// Starts a new mount for every field: the app calls it when the location

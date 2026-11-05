@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use super::{
     RESEND_COOLDOWN_S, Request, fail, focus_invalid, form_error, layout, result_lines,
-    result_with_strong, seconds_left, submit, wide_button,
+    result_with_strong, seconds_left, submit_after, wide_button,
 };
 use crate::app::AppCtx;
 use crate::rules::{Failure, FormErrors, error_message, field_message, validate_email};
@@ -81,7 +81,11 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         }
         ui.add_space(space::S5);
         form_error(ui, &s.errors);
-        if (submit(ui, "Link schicken", "Wird gesendet…", pending) || email.submitted) && !pending
+        let cooldown = s.errors.cooldown();
+        if (submit_after(ui, "Link schicken", "Wird gesendet…", pending, cooldown)
+            || email.submitted)
+            && !pending
+            && cooldown == 0
         {
             match validate_email(&s.email) {
                 Some(code) => s

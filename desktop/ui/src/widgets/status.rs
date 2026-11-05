@@ -35,6 +35,8 @@ impl Widget for FormError<'_> {
         let block = Block::wrapped(ui, self.message, text::BODY, c.danger, width - 3.0 - 24.0);
         let height = 20.0 + super::field::layout_unit(block.height());
         let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+        // role="alert": screen readers (and tests) read the message.
+        super::announce(&response, egui::Role::Alert, self.message);
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
             let surface = self.on.unwrap_or(c.panel);
@@ -102,6 +104,7 @@ impl Widget for InlineStatus<'_> {
         let height = block.height().max(20.0);
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+        super::announce(&response, egui::Role::Status, message);
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
             if let Some(icon) = icon {
