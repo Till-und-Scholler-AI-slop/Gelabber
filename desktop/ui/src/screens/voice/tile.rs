@@ -825,11 +825,8 @@ pub fn picture(
         painter.rect_filled(badge, corner(theme.radius.xs), c.danger_bg);
         label.paint(&painter, badge.min + vec2(6.0, 2.0));
     }
-    // The name pill, bottom left.
-    if !kino_focus {
-        name_pill(ui, &painter, rect, pic, person, strip, live);
-    }
-    // The own Live says what becomes of its sound.
+    // The own Live says what becomes of its sound, under the name pill
+    // (the caption's z-index 2).
     if live
         && pic.own
         && !strip
@@ -843,6 +840,10 @@ pub fn picture(
             vec2(8.0, 5.0),
             Color32::from_rgba_unmultiplied(21, 24, 25, 223),
         );
+    }
+    // The name pill, bottom left.
+    if !kino_focus {
+        name_pill(ui, &painter, rect, pic, person, strip, live);
     }
     if frame.is_some()
         && let Some(limit) = video::limit()

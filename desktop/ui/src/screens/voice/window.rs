@@ -100,6 +100,14 @@ pub fn show(ctx: &egui::Context, call: &Call) {
                         let rect = ui.max_rect();
                         ui.allocate_rect(rect, Sense::hover());
                         if let Some(frame) = call.frame(key) {
+                            // The core scales to the size asked for: the window's, not the tile's.
+                            video::request(
+                                ui,
+                                &call,
+                                key,
+                                video::drawn_rect(rect, &frame, Fit::Contain),
+                                30,
+                            );
                             video::paint(
                                 ui,
                                 Id::unique(("video-window", key.0)),
