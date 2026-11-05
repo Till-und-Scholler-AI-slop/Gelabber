@@ -693,6 +693,13 @@ fn channel_dialog(
             .unwrap_or_default()
     });
     let mut done = false;
+    // An open category list takes Esc first, like the web's native select.
+    let select_id = Id::unique(("channel-category", server));
+    if ctx.data(|d| d.get_temp::<bool>(select_id)).unwrap_or(false)
+        && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        ctx.data_mut(|d| d.insert_temp(select_id, false));
+    }
     let output = Modal::new(("channel-dialog", server), title).show(
         &ctx,
         |ui| {
@@ -768,18 +775,9 @@ fn channel_dialog(
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 6.0;
                 text::label(ui, "Kategorie", text::UI, c.text);
-                let selected = category
-                    .and_then(|id| categories.iter().find(|x| x.id == id))
-                    .map_or("Ohne Kategorie".to_owned(), |x| x.name.clone());
-                egui::ComboBox::from_id_salt("channel-category")
-                    .selected_text(selected)
-                    .width(ui.available_width())
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(category, None, "Ohne Kategorie");
-                        for x in &categories {
-                            ui.selectable_value(category, Some(x.id), &x.name);
-                        }
-                    });
+                let mut options = vec![(None, "Ohne Kategorie".to_owned())];
+                options.extend(categories.iter().map(|x| (Some(x.id), x.name.clone())));
+                select(ui, select_id, &options, category);
             });
             let mut submit = field.submitted;
             buttons(ui, |ui| {
@@ -1108,6 +1106,73 @@ fn new_message(
         ctx.data_mut(|d| d.remove::<bool>(opened));
     }
     keep
+}
+
+/// `Select` (components/ui/Select.tsx): a `.ui-field` box with the chosen
+/// name and a 14px chevron 11px from the right; a click lists the options.
+fn select(ui: &mut Ui, id: Id, options: &[(Option<Uuid>, String)], value: &mut Option<Uuid>) {
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let mut open: bool = ui.data(|d| d.get_temp(id)).unwrap_or(false);
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 37.0), egui::Sense::click());
+    let rect = crate::widgets::snap(ui.ctx(), rect);
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    if response.clicked() {
+        open = !open;
+    }
+    let painter = ui.painter();
+    if open {
+        crate::widgets::focus_ring(painter, rect, theme.radius.sm, &theme);
+    }
+    painter.rect(
+        rect,
+        corner(theme.radius.sm),
+        c.bg,
+        Stroke::new(1.0, if open { c.focus } else { c.border_strong }),
+        StrokeKind::Inside,
+    );
+    let label = options
+        .iter()
+        .find(|(v, _)| v == value)
+        .or(options.first())
+        .map_or("", |(_, l)| l.as_str());
+    let block = line(ui, label, text::BODY, c.text, rect.width() - 12.0 - 34.0);
+    paint_mid(painter, &block, rect.left() + 12.0, rect.center().y);
+    icons::paint(
+        painter,
+        Icon::Chevron,
+        pos2(rect.right() - 11.0 - 14.0, rect.center().y - 7.0),
+        14.0,
+        c.muted,
+    );
+    if open {
+        // The popover tops out at 360 like `.ui-popover`.
+        let picked = crate::widgets::Popover::new(id, rect)
+            .min_width(rect.width().min(360.0))
+            .show(ui.ctx(), |ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                let mut picked = None;
+                for (v, l) in options {
+                    if crate::widgets::menu_item(ui, None, l, false).clicked() {
+                        picked = Some(*v);
+                    }
+                }
+                picked
+            });
+        match picked {
+            // A press outside; the box itself toggles above.
+            None => open = false,
+            Some(Some(v)) => {
+                *value = v;
+                open = false;
+            }
+            Some(None) => {}
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(id, open));
 }
 
 #[cfg(test)]

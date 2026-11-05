@@ -778,7 +778,13 @@ fn row_menu(ui: &mut Ui, app: &mut AppCtx) {
     };
     let picked = Popover::new("row-menu", anchor).show(ui.ctx(), |ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
-        let width = ui.available_width().max(180.0 - 18.0);
+        // Fits the longest item like the web's max-content popover
+        // (padding 10, 18px icon, gap 10, label, padding 10).
+        let widest = items
+            .iter()
+            .map(|(_, label, _)| Block::single(ui, label, text::UI, c.text).width())
+            .fold(0.0, f32::max);
+        let width = (38.0 + widest + 10.0).ceil().max(180.0 - 18.0);
         let mut picked = None;
         for (i, (icon, label, danger)) in items.iter().enumerate() {
             if *danger {

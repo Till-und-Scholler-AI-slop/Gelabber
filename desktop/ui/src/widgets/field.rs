@@ -126,7 +126,8 @@ impl<'a> TextField<'a> {
         let shown = self.password && ui.data(|d| d.get_temp::<bool>(shown_key)).unwrap_or(false);
         let masked = self.password && !shown;
 
-        if self.autofocus && mounted(ui.ctx(), self.id.with("autofocus")) {
+        let autofocus_now = self.autofocus && mounted(ui.ctx(), self.id.with("autofocus"));
+        if autofocus_now {
             ui.memory_mut(|m| m.request_focus(self.id));
         }
 
@@ -198,6 +199,11 @@ impl<'a> TextField<'a> {
             .response
             .response
             .accessible_name(self.label.or(self.placeholder).unwrap_or_default());
+        // The click that opened this field (a menu item, a dialog button)
+        // ends in this frame and egui surrenders focus on it; take it back.
+        if autofocus_now && !response.has_focus() {
+            response.request_focus();
+        }
         let submitted = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if response.hovered() && !self.disabled {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
