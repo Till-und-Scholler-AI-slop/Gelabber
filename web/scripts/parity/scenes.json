@@ -1223,7 +1223,7 @@
       "user": "lena",
       "actions": [
         {
-          "click": "Mikrofon testen und vergleichen"
+          "click": "/^Mikrofon testen( und vergleichen)?$/"
         }
       ]
     },

@@ -389,3 +389,22 @@ fn the_voice_dialog_opens_on_its_tab_and_moves_with_the_arrows() {
     h.run_steps(6);
     assert!(!dialogs::open(&h.ctx));
 }
+
+#[test]
+fn the_microphone_test_speaks_as_the_desktop_app() {
+    use crate::screens::voice::dialogs::{self, Tab};
+    let (client, call) = offline();
+    let mut h = harness(client, call, dialogs::show);
+    dialogs::open_settings(&h.ctx, Tab::Audio);
+    h.run_steps(6);
+    // The native test only meters: nothing to record and compare.
+    assert_eq!(h.query_all_by_label("Mikrofon testen").count(), 1);
+    assert!(
+        h.query_by_label("Mikrofon testen und vergleichen")
+            .is_none()
+    );
+    dialogs::open_mic_test(&h.ctx);
+    h.run_steps(6);
+    assert_eq!(h.query_all_by_label("WebRTC-Filter").count(), 1);
+    assert!(h.query_by_label("Browserfilter").is_none());
+}

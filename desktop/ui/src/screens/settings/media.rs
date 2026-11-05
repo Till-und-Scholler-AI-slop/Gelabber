@@ -17,8 +17,6 @@ use crate::widgets::{Button, Switch, eased};
 pub struct State {
     recording: bool,
     advanced_open: bool,
-    /// Device names are known (the dialog in a call has the microphone).
-    pub revealed: bool,
     /// The custom limit as typed.
     limit_text: Option<String>,
 }
@@ -27,6 +25,26 @@ const LABEL_W: f32 = 136.0;
 const COL_GAP: f32 = 16.0;
 /// `.media-hint`.
 const HINT: TextStyle = text::META;
+
+/// `AUDIO_PROCESSING_DESKTOP`: mode, label and hint as the desktop app
+/// words them, since its native core filters, not a browser.
+pub const PROCESSING_MODES: [(&str, &str, &str); 3] = [
+    (
+        "enhanced",
+        "Verbesserte Sprache",
+        "Lokale Rauschunterdrückung",
+    ),
+    (
+        "browser",
+        "WebRTC-Filter",
+        "Rauschunterdrückung und Auto-Gain von WebRTC",
+    ),
+    (
+        "original",
+        "Original / Musik",
+        "Stereo sofern unterstützt, ohne Rauschfilter, Auto-Gain oder Sprechpausen-Erkennung",
+    ),
+];
 
 fn dialog_id() -> Id {
     Id::unique("gelabber-media-form-in-dialog")
@@ -347,10 +365,6 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             ) {
                 app.call.set_input(chosen(&p.audio_input_id));
             }
-            if !s.revealed {
-                gap(ui);
-                reveal_box(ui, s);
-            }
         });
         setting_row(ui, "Mic-Gain", false, |ui| {
             let mut v = (p.input_gain * 100.0).round();
@@ -363,7 +377,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 1.0,
                 &pct(p.input_gain),
                 Some(["0 %", "100 %", "200 %"]),
-                Some("100 % fügt keine Verstärkung hinzu. Andere Werte laufen über Web Audio."),
+                Some("100 % fügt keine Verstärkung hinzu."),
                 false,
             ) {
                 p.input_gain = v / 100.0;
@@ -450,23 +464,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             });
         }
         setting_row(ui, "Filter", true, |ui| {
-            for (mode, label, desc) in [
-                (
-                    "enhanced",
-                    "Verbesserte Sprache",
-                    "Lokale Rauschunterdrückung und Auto-Gain; Browserfilter als Ersatz",
-                ),
-                (
-                    "browser",
-                    "Browserfilter",
-                    "Rauschunterdrückung und Auto-Gain deines Browsers",
-                ),
-                (
-                    "original",
-                    "Original / Musik",
-                    "Stereo sofern unterstützt, ohne Rauschfilter, Auto-Gain oder Sprechpausen-Erkennung",
-                ),
-            ] {
+            for (mode, label, desc) in PROCESSING_MODES {
                 if controls::radio_card(
                     ui,
                     ("processing", mode),
@@ -485,7 +483,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 &app.call.state(),
                 &p.processing_mode,
             );
-            let bw = button_width(ui, "Mikrofon testen und vergleichen");
+            let bw = button_width(ui, "Mikrofon testen");
             // `.media-actions` wraps the button under the status once the
             // status' 200px basis and the button no longer fit side by side.
             let stacked = w < 200.0 + 12.0 + bw;
@@ -501,7 +499,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             let left = if stacked { top.x } else { top.x + w - bw };
             let rect = Rect::from_min_size(pos2(left, top.y + status_h), vec2(bw, bh));
             controls::place(ui, UiBuilder::new().max_rect(rect), |ui| {
-                if button(ui, "Mikrofon testen und vergleichen", false, false) {
+                if button(ui, "Mikrofon testen", false, false) {
                     crate::screens::voice::dialogs::open_mic_test(ui.ctx());
                 }
             });
@@ -533,9 +531,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 1.0,
                 &pct(p.output_volume),
                 Some(scale),
-                Some(
-                    "Über 100 % wird der Ton digital verstärkt. Nutze dafür Kopfhörer: Über Lautsprecher können die anderen sonst ihr eigenes Echo hören.",
-                ),
+                Some("Über 100 % wird der Ton digital verstärkt."),
                 false,
             ) {
                 p.output_volume = playback_volume(pos);
@@ -604,7 +600,9 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 0.05,
                 &suffix,
                 None,
-                Some("Nutzt deinen gewählten Lautsprecher und die Wiedergabelautstärke."),
+                Some(
+                    "Nutzt die Wiedergabelautstärke. Signaltöne spielen auf dem Standard-Ausgabegerät des Systems.",
+                ),
                 off,
             );
             gap(ui);
@@ -621,42 +619,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     }
 }
 
-fn reveal_box(ui: &mut Ui, s: &mut State) {
-    let theme = Theme::of(ui.ctx());
-    let c = &theme.c;
-    let width = ui.available_width();
-    let top = ui.cursor().min;
-    let label = "Gerätenamen anzeigen";
-    let bw = button_width(ui, label);
-    let text_w = width - 24.0 - 12.0 - bw;
-    let msg = Block::wrapped(
-        ui,
-        "Die Gerätenamen zeigt der Browser erst, wenn du den Mikrofonzugriff erlaubst.",
-        TextStyle::new(12.0, 400.0, 16.0 / 12.0),
-        c.muted,
-        text_w,
-    );
-    let h = 20.0 + msg.height().max(36.0);
-    let rect = Rect::from_min_size(top, vec2(width, h));
-    ui.painter()
-        .rect_filled(rect, corner(theme.radius.md), c.surface);
-    msg.paint(
-        ui.painter(),
-        pos2(rect.left() + 12.0, rect.center().y - msg.height() / 2.0),
-    );
-    let brect = Rect::from_min_size(
-        pos2(rect.right() - 12.0 - bw, rect.center().y - 18.0),
-        vec2(bw, 36.0),
-    );
-    controls::place(ui, UiBuilder::new().max_rect(brect), |ui| {
-        if button(ui, label, false, false) {
-            s.revealed = true;
-        }
-    });
-    ui.allocate_exact_size(vec2(width, h), Sense::hover());
-}
-
-/// `media-disclosure`: "Echo und Browserfilter", closed in settings.
+/// `media-disclosure`: "Echo und WebRTC-Filter", closed in settings.
 fn disclosure(ui: &mut Ui, s: &mut State, p: &mut Prefs) {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
@@ -699,7 +662,7 @@ fn disclosure(ui: &mut Ui, s: &mut State, p: &mut Prefs) {
             summary.left() + 14.0 + 6.0 + 12.0,
             summary.center().y - text::UI.line_px() / 2.0,
         ),
-        "Echo und Browserfilter",
+        "Echo und WebRTC-Filter",
         text::UI.weight(600.0),
         c.text,
     );
@@ -742,7 +705,7 @@ fn disclosure(ui: &mut Ui, s: &mut State, p: &mut Prefs) {
                 switch_line(
                     ui,
                     "ns",
-                    "Rauschunterdrückung des Browsers.",
+                    "Rauschunterdrückung von WebRTC.",
                     &mut p.noise_suppression,
                     false,
                 );
@@ -753,7 +716,7 @@ fn disclosure(ui: &mut Ui, s: &mut State, p: &mut Prefs) {
                 switch_line(
                     ui,
                     "agc",
-                    "Auto-Gain des Browsers. Gleicht leise und laute Mikrofone auf einen hörbaren Pegel an.",
+                    "Auto-Gain von WebRTC. Gleicht leise und laute Mikrofone auf einen hörbaren Pegel an.",
                     &mut p.auto_gain_control,
                     false,
                 );
@@ -1035,14 +998,6 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             ) {
                 app.call.set_camera_device(chosen(&p.video_input_id));
             }
-            if !s.revealed {
-                gap(ui);
-                controls::row(ui, 0.0, 36.0, |ui| {
-                    if button(ui, "Kameranamen anzeigen", true, false) {
-                        s.revealed = true;
-                    }
-                });
-            }
         });
         setting_row(ui, "Qualität", true, |ui| {
             profile_fields(ui, "camera-stream-profile", &mut p.camera_profile, false);
@@ -1059,15 +1014,17 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             );
         });
         setting_row(ui, "Ton mitsenden", true, |ui| {
-            let mut on = p.source_audio_share == "on";
+            // `sharesSourceAudio` where "every application" leaves Gelabber
+            // out: unchosen means on, so off is a choice to keep.
+            let mut on = p.source_audio_share != "off";
             if switch_line(
                 ui,
                 "share-source-audio",
-                "Gilt ab deinem nächsten Live; Ausschalten wirkt sofort. Wähle den Ton im Browserdialog aus; je nach Browser und Quelle ist nur Video verfügbar. Der Stream-Ton wird als Stereo-Musik übertragen, ohne Mikrofonfilter.",
+                "Gilt auch während du live bist. Mitgesendet wird der Ton anderer Anwendungen, nie dein Mikrofon oder der Ton des Anrufs. Der Stream-Ton wird als Stereo-Musik übertragen, ohne Mikrofonfilter.",
                 &mut on,
                 false,
             ) {
-                p.source_audio_share = if on { "on" } else { "auto" }.into();
+                p.source_audio_share = if on { "on" } else { "off" }.into();
             }
         });
         ui.add_space(20.0);
@@ -1174,7 +1131,7 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             gap(ui);
             hint(
                 ui,
-                "Der Browser passt die tatsächliche Bitrate an die Verbindung an. Das Limit ist eine Obergrenze, keine feste Datenrate.",
+                "Die Desktop-App passt die tatsächliche Bitrate an die Verbindung an. Das Limit ist eine Obergrenze, keine feste Datenrate.",
             );
         });
         ui.add_space(20.0);

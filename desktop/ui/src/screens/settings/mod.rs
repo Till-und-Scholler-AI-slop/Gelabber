@@ -5,7 +5,6 @@
 pub mod appearance;
 pub mod card;
 pub mod controls;
-pub mod install;
 pub mod media;
 pub mod notifications;
 pub mod prefs;
@@ -254,7 +253,10 @@ pub fn sidebar(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
             c.muted,
         );
         y += 34.0;
-        for a in AREAS.iter().filter(|a| a.group == *group) {
+        // `visibleSettingsAreas`: nothing to install in the desktop app, so
+        // "App" is listed only while it is open.
+        let shown = |a: &&Area| a.group == *group && (a.id != "app" || current == "app");
+        for a in AREAS.iter().filter(shown) {
             let rect = Rect::from_min_size(pos2(x, y), vec2(width, 34.0));
             let id = Id::unique(("gelabber-settings-nav", a.id));
             let response = ui.interact(rect, id, Sense::click());
@@ -415,7 +417,9 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
             "audio" => media::audio(&mut child, app, &mut st.media),
             "video" => media::video(&mut child, app, &mut st.media),
             "benachrichtigungen" => notifications::area(&mut child, app, &mut st.notifications),
-            _ => install::area(&mut child),
+            // "App": `InstallPanel` draws nothing in the desktop app, which
+            // is installed already.
+            _ => {}
         }
         let used = child.min_rect();
         ui.advance_cursor_after_rect(Rect::from_min_max(
