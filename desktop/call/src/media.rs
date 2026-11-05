@@ -1137,7 +1137,8 @@ impl Session {
         let Some(inner) = self.inner() else { return };
         let request = inner.request_of(key).unwrap_or(DEFAULT_REQUEST);
         let _ = source.set_video_sink_limits(limits(request));
-        let _ = source.set_video_sink(Some(frame_sink(&self.call, key)));
+        let flag = inner.open_sink(key);
+        let _ = source.set_video_sink(Some(frame_sink(&self.call, key, flag)));
     }
 
     fn apply_request(&self, key: VideoKey, request: VideoRequest) {
@@ -1645,6 +1646,10 @@ impl Session {
             "update_required" | "unauthorized" => {
                 self.give_up(Leave::Refused(logic::media_error_message(code).into()));
             }
+            // A rebuild tries again; a first join has no seat to wait for.
+            "unavailable" if !joined && self.st.lock().attempts > 0 => {
+                self.schedule_rebuild(generation)
+            }
             "unavailable" if !joined => {
                 self.give_up(Leave::Refused(logic::media_error_message(code).into()));
             }
@@ -1819,15 +1824,20 @@ fn limits(request: VideoRequest) -> core::VideoSinkLimits {
     }
 }
 
-/// Copies each picture into the call's newest frame of `key`.
-fn frame_sink(call: &Weak<Inner>, key: VideoKey) -> core::VideoSink {
+/// Copies each picture into the call's newest frame of `key`, while
+/// `flag` holds.
+fn frame_sink(call: &Weak<Inner>, key: VideoKey, flag: Arc<AtomicBool>) -> core::VideoSink {
     let call = call.clone();
     let mut serial = 0u64;
     Box::new(move |frame: &core::VideoFrame<'_>| {
+        if !flag.load(Ordering::Acquire) {
+            return;
+        }
         let Some(inner) = call.upgrade() else { return };
         serial += 1;
         inner.put_frame(
             key,
+            &flag,
             Frame {
                 width: frame.width,
                 height: frame.height,
@@ -1903,6 +1913,8 @@ struct Received {
     generation: String,
     kind: &'static str,
     paused: bool,
+    /// The frame sink's flag of a video.
+    sink: Option<Arc<AtomicBool>>,
 }
 
 fn received_key(k: Kind, owner: Uuid) -> Option<VideoKey> {
@@ -1933,6 +1945,13 @@ fn received_volume(
 impl Received {
     fn key(&self) -> Option<VideoKey> {
         received_key(self.k, self.owner)
+    }
+
+    /// Its picture goes at once; the sink itself with the consumer.
+    fn close_sink(&self, inner: &Inner) {
+        if let (Some(key), Some(flag)) = (self.key(), &self.sink) {
+            inner.close_sink(key, flag);
+        }
     }
 
     fn volume(&self, inner: &Inner, settings: &CallSettings, deafened: bool) -> f64 {
@@ -1999,10 +2018,9 @@ impl Seat {
         self.sock.close();
         let consumers: Vec<Received> = self.consumers.lock().drain().map(|(_, r)| r).collect();
         let producers: Vec<Held> = self.producers.lock().drain().map(|(_, h)| h).collect();
-        let keys: Vec<VideoKey> = consumers.iter().filter_map(Received::key).collect();
         if let Some(inner) = self.session.upgrade().and_then(|s| s.inner()) {
-            for key in keys {
-                inner.drop_frame(key);
+            for received in &consumers {
+                received.close_sink(&inner);
             }
         }
         let device = self.device.clone();
@@ -2595,6 +2613,7 @@ impl Seat {
         let deafened = inner.read(|s| s.deafened);
         let kind = if media == "video" { "video" } else { "audio" };
         let paused = event["paused"].as_bool().unwrap_or(false);
+        let mut sink = None;
         if kind == "audio" {
             let _ = consumer.set_volume(received_volume(k, owner, &inner, &settings, deafened));
         } else if let Some(video) = received_key(k, owner) {
@@ -2602,7 +2621,9 @@ impl Seat {
             // frame reaches it.
             let request = inner.request_of(video).unwrap_or(DEFAULT_REQUEST);
             let _ = consumer.set_video_sink_limits(limits(request));
-            let _ = consumer.set_video_sink(Some(frame_sink(&session.call, video)));
+            let flag = inner.open_sink(video);
+            sink = Some(flag.clone());
+            let _ = consumer.set_video_sink(Some(frame_sink(&session.call, video, flag)));
         }
         if paused {
             let _ = consumer.set_paused(true);
@@ -2614,6 +2635,7 @@ impl Seat {
             generation: generation.clone(),
             kind,
             paused,
+            sink,
         };
         let gone = self.closed.load(Ordering::Acquire) || self.removed.lock().contains(&key);
         if gone {
@@ -2667,10 +2689,8 @@ impl Seat {
         let Some(received) = self.consumers.lock().remove(id) else {
             return;
         };
-        if let Some(key) = received.key()
-            && let Some(inner) = self.session.upgrade().and_then(|s| s.inner())
-        {
-            inner.drop_frame(key);
+        if let Some(inner) = self.session.upgrade().and_then(|s| s.inner()) {
+            received.close_sink(&inner);
         }
         // Removing the sink waits for a frame in delivery.
         std::thread::spawn(move || drop(received));

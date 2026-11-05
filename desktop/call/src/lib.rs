@@ -20,6 +20,7 @@ mod sounds;
 mod synth;
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -270,6 +271,8 @@ pub(crate) struct Inner {
     settings: RwLock<CallSettings>,
     volumes: Mutex<HashMap<Uuid, UserVolume>>,
     frames: Mutex<HashMap<VideoKey, Arc<Frame>>>,
+    /// Per key, whether its current sink may still put frames.
+    sinks: Mutex<HashMap<VideoKey, Arc<AtomicBool>>>,
     /// The last measured level per person, 0..1 RMS.
     levels: Mutex<HashMap<Uuid, f32>>,
     requests: Mutex<HashMap<VideoKey, VideoRequest>>,
@@ -353,19 +356,61 @@ impl Inner {
         self.requests.lock().get(&key).copied()
     }
 
-    pub(crate) fn put_frame(&self, key: VideoKey, frame: Frame) {
-        self.frames.lock().insert(key, Arc::new(frame));
+    /// A new sink for `key`: its frames count while the flag holds; an
+    /// older sink of the key is cut off.
+    pub(crate) fn open_sink(&self, key: VideoKey) -> Arc<AtomicBool> {
+        let flag = Arc::new(AtomicBool::new(true));
+        let _frames = self.frames.lock();
+        if let Some(old) = self.sinks.lock().insert(key, flag.clone()) {
+            old.store(false, Ordering::Release);
+        }
+        flag
+    }
+
+    /// Takes a frame from a sink that is still `flag`'s; checked under the
+    /// frames' lock, so a closed sink never puts a picture back.
+    pub(crate) fn put_frame(&self, key: VideoKey, flag: &AtomicBool, frame: Frame) {
+        {
+            let mut frames = self.frames.lock();
+            if !flag.load(Ordering::Acquire) {
+                return;
+            }
+            frames.insert(key, Arc::new(frame));
+        }
         self.client.repaint();
     }
 
+    /// Ends the sink `flag` and, while it is the key's, the key's picture.
+    pub(crate) fn close_sink(&self, key: VideoKey, flag: &Arc<AtomicBool>) {
+        let mut frames = self.frames.lock();
+        flag.store(false, Ordering::Release);
+        let mut sinks = self.sinks.lock();
+        if sinks.get(&key).is_some_and(|f| Arc::ptr_eq(f, flag)) {
+            sinks.remove(&key);
+            frames.remove(&key);
+        }
+    }
+
+    /// No more pictures of `key`, from any sink.
     pub(crate) fn drop_frame(&self, key: VideoKey) {
-        if self.frames.lock().remove(&key).is_some() {
+        let removed = {
+            let mut frames = self.frames.lock();
+            if let Some(flag) = self.sinks.lock().remove(&key) {
+                flag.store(false, Ordering::Release);
+            }
+            frames.remove(&key).is_some()
+        };
+        if removed {
             self.client.repaint();
         }
     }
 
     pub(crate) fn drop_frames(&self) {
-        self.frames.lock().clear();
+        let mut frames = self.frames.lock();
+        for (_, flag) in self.sinks.lock().drain() {
+            flag.store(false, Ordering::Release);
+        }
+        frames.clear();
         self.levels.lock().clear();
     }
 
@@ -401,6 +446,7 @@ impl Call {
                 settings: RwLock::new(CallSettings::default()),
                 volumes: Mutex::new(HashMap::new()),
                 frames: Mutex::new(HashMap::new()),
+                sinks: Mutex::new(HashMap::new()),
                 levels: Mutex::new(HashMap::new()),
                 requests: Mutex::new(HashMap::new()),
                 notices: Mutex::new(Vec::new()),
@@ -480,6 +526,16 @@ impl Call {
                 .write(|s| s.status = CallStatus::Failed(logic::NO_MEDIA_CORE.into()));
             self.inner.notify(logic::NO_MEDIA_CORE);
         }
+    }
+
+    /// Puts away the note of a call whose connection was lost or failed.
+    pub fn dismiss_lost_call(&self) {
+        self.inner.write(|s| {
+            if s.channel.is_none() {
+                s.status = CallStatus::Idle;
+                s.lost_call = None;
+            }
+        });
     }
 
     pub fn leave(&self) {

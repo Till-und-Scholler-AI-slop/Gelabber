@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gelabber_call::{Call, CallStatus, VideoKey};
+use gelabber_call::{Call, CallStatus, LiveSource, VideoKey};
 use gelabber_client::{Client, GatewayEvent, GatewayStatus, ServerFrame, SigKind, TrackKind};
 use parking_lot::Mutex;
 use serde_json::Value;
@@ -99,6 +99,7 @@ fn lena_joins_sofa_with_jonas_and_mira() {
     let lena = id(&fixture["users"]["lena"]["id"]);
     let jonas = id(&fixture["users"]["jonas"]["id"]);
     let mira = id(&fixture["users"]["mira"]["id"]);
+    let tom = id(&fixture["users"]["tom"]["id"]);
 
     let _people = People::start(&["Sofa", "jonas:camera,mira:muted"]);
 
@@ -198,12 +199,75 @@ fn lena_joins_sofa_with_jonas_and_mira() {
         published.lock().contains(&(SigKind::U, Some(TrackKind::V)))
     });
 
+    // Tom joins natively and watches Lena's Live (a test pattern).
+    let tom_client = signed_in(
+        &base,
+        fixture["users"]["tom"]["email"].as_str().unwrap(),
+        password,
+        home,
+    );
+    let tom_call = Call::new(tom_client);
+    tom_call.join(home, sofa);
+    wait("Tom connected", Duration::from_secs(30), || {
+        tom_call.with_state(|s| s.status == CallStatus::Connected && s.watch_supported)
+    });
+    wait("Lena sees Tom", Duration::from_secs(10), || {
+        call.with_state(|s| s.participants.iter().any(|p| p.user == tom))
+    });
+    call.start_live(LiveSource::Screen { with_audio: true });
+    wait("own Live preview", Duration::from_secs(10), || {
+        call.frame(VideoKey::live(lena))
+            .is_some_and(|f| f.serial > 5)
+    });
+    wait("the others see the Live", Duration::from_secs(10), || {
+        published.lock().contains(&(SigKind::P, Some(TrackKind::S)))
+    });
+    wait("Tom sees Lena live", Duration::from_secs(10), || {
+        tom_call.with_state(|s| {
+            s.participants
+                .iter()
+                .any(|p| p.user == lena && p.live == Some(VideoKey::live(lena)) && !p.watching)
+        })
+    });
+    assert!(
+        tom_call.frame(VideoKey::live(lena)).is_none(),
+        "a Live comes only when watched"
+    );
+    tom_call.request_video(VideoKey::live(lena), 640, 360, 15);
+    tom_call.watch(lena, true);
+    wait("Tom watches the Live", Duration::from_secs(20), || {
+        tom_call
+            .frame(VideoKey::live(lena))
+            .is_some_and(|f| f.serial > 3)
+    });
+    let live = tom_call.frame(VideoKey::live(lena)).unwrap();
+    eprintln!("Live at Tom: {}x{}", live.width, live.height);
+    assert!(
+        live.width <= 640 && live.height <= 360,
+        "sized by request_video"
+    );
+    tom_call.watch(lena, false);
+    wait("watching ends", Duration::from_secs(5), || {
+        tom_call.frame(VideoKey::live(lena)).is_none()
+    });
+    call.stop_live();
+    wait("Live off for the others", Duration::from_secs(10), || {
+        published.lock().contains(&(SigKind::U, Some(TrackKind::S)))
+    });
+    tom_call.leave();
+
     call.leave();
     assert_eq!(call.state().status, CallStatus::Idle);
     wait("no stray seat", Duration::from_secs(10), || {
         seat_of_lena().is_none()
     });
+    let seat_of_tom =
+        || observer.with_state(|s| s.voice.get(&home).and_then(|v| v.get(&tom)).copied());
+    wait("Tom left", Duration::from_secs(10), || {
+        seat_of_tom().is_none()
+    });
     // The seat stays gone (no rebuild after leaving).
     std::thread::sleep(Duration::from_secs(3));
     assert!(seat_of_lena().is_none(), "Lena came back");
+    assert!(seat_of_tom().is_none(), "Tom came back");
 }

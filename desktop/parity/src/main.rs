@@ -289,6 +289,12 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("render") if args.len() >= 2 => {
+            // No microphone or camera here: calls run on the core's dummy
+            // audio and a test pattern, like Chromium's fake devices.
+            if std::env::var_os("GELABBER_FAKE_MEDIA").is_none() {
+                // SAFETY: before any other thread of this process runs.
+                unsafe { std::env::set_var("GELABBER_FAKE_MEDIA", "1") };
+            }
             let only = args
                 .get(2)
                 .map(|s| s.split(',').map(str::to_owned).collect());

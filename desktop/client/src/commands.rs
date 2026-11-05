@@ -1051,8 +1051,7 @@ impl Client {
     /// [`Self::voice_join`] with the mute and deafen flags to take into the
     /// channel; `None` keeps the current ones.
     pub fn voice_join_flags(&self, server: Uuid, channel: Uuid, flags: Option<(bool, bool)>) {
-        let this = self.clone();
-        self.spawn(async move {
+        self.voice_queue(move |this| {
             let mut current = this.with_state(|s| s.voice_self);
             if let Some((muted, deafened)) = flags {
                 current.muted = muted || deafened;
@@ -1121,8 +1120,7 @@ impl Client {
     }
 
     pub fn voice_leave(&self) {
-        let this = self.clone();
-        self.spawn(async move {
+        self.voice_queue(move |this| {
             let current = this.with_state(|s| s.voice_self);
             let (Some(s), Some(c)) = (current.server, current.channel) else {
                 return;
@@ -1161,8 +1159,7 @@ impl Client {
 
     /// Mute; unmuting while deafened also undeafens (`session.ts`).
     pub fn set_voice_muted(&self, muted: bool) {
-        let this = self.clone();
-        self.spawn(async move {
+        self.voice_queue(move |this| {
             let current = this.with_state(|s| s.voice_self);
             let deafened = current.deafened && muted;
             this.write(|s| {
@@ -1194,8 +1191,7 @@ impl Client {
 
     /// Deafen implies mute; undeafen restores the mute from before.
     pub fn set_voice_deafened(&self, deafened: bool) {
-        let this = self.clone();
-        self.spawn(async move {
+        self.voice_queue(move |this| {
             let current = this.with_state(|s| s.voice_self);
             if current.deafened == deafened {
                 return;
@@ -1236,16 +1232,19 @@ impl Client {
 
     /// Announces (`on`) or retracts a published track of my seat.
     pub fn voice_publish(&self, kind: TrackKind, on: bool) {
-        let me = self.with_state(|s| s.voice_self);
-        if let (Some(s), Some(c)) = (me.server, me.channel) {
-            self.send_frame(ClientFrame::Sig {
+        self.voice_queue(move |this| {
+            let me = this.with_state(|s| s.voice_self);
+            let (Some(s), Some(c)) = (me.server, me.channel) else {
+                return;
+            };
+            this.send_frame(ClientFrame::Sig {
                 t: if on { SigKind::P } else { SigKind::U },
                 s,
                 c,
                 k: Some(kind),
                 on: None,
             });
-        }
+        });
     }
 
     // -------------------------------------------------- servers & channels
