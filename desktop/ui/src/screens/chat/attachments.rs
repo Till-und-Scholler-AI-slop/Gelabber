@@ -1350,7 +1350,16 @@ mod tests {
         harness.get_by_label("Herunterladen");
         // "Erneut laden" asks again; here it fails again.
         harness.get_by_label("Erneut laden").click();
-        settle(&mut harness, &images);
+        for _ in 0..300 {
+            harness.step();
+            if harness
+                .query_by_label("Bild konnte nicht geladen werden.")
+                .is_some()
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         harness.get_by_label("Bild konnte nicht geladen werden.");
         let url = attachment_url(Uuid::from_u128(1));
         images.retry(&url);

@@ -8,6 +8,7 @@ mod composer;
 mod content;
 mod context;
 mod emoji;
+mod files;
 mod gif;
 mod header;
 pub mod markdown;
@@ -420,7 +421,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         unsent,
     };
     let composer_state = chat.composers.entry(channel).or_default();
-    let composer_h = composer::height(composer_state, &composer_input);
+    let composer_h = composer::height(ui.ctx(), composer_state, &composer_input, page.width());
     // `.lr-toast-space` between the typing bar and the composer.
     let toasts = crate::toasts::space(ui.ctx());
     let room = toasts + toasts.min(12.0);
@@ -520,6 +521,20 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
     let composer_rect = Rect::from_min_max(pos2(page.left(), page.bottom() - composer_h), page.max);
     let composer_state = chat.composers.entry(channel).or_default();
     let composer_actions = composer::show(ui, composer_rect, composer_state, &composer_input);
+    // `.lr-message-pane.is-drop-target`: a dashed accent outline 6px inside.
+    if composer::dropping(ui.ctx(), &composer_input) {
+        let r = page.shrink(6.0 + 1.0);
+        let stroke = egui::Stroke::new(2.0, Theme::of(ui.ctx()).c.accent.gamma_multiply(0.7));
+        let corners = [
+            r.left_top(),
+            r.right_top(),
+            r.right_bottom(),
+            r.left_bottom(),
+            r.left_top(),
+        ];
+        ui.painter()
+            .extend(egui::Shape::dashed_line(&corners, stroke, 6.0, 6.0));
+    }
 
     // The rows' requests, now that the state lock is released.
     for action in context_actions {
