@@ -319,6 +319,10 @@ pub struct GelabberApp {
     mail_check: Option<Pending<Result<Value, ApiError>>>,
     account_mail: Option<bool>,
     toasts: Toasts,
+    /// The client's workspace (lists, gateway) was started for this sign-in.
+    workspace: bool,
+    /// The client's own session was signed in last frame.
+    client_signed_in: bool,
 }
 
 impl GelabberApp {
@@ -351,6 +355,8 @@ impl GelabberApp {
             mail_check,
             account_mail: None,
             toasts: Toasts::default(),
+            workspace: false,
+            client_signed_in: false,
         }
     }
 
@@ -393,6 +399,30 @@ impl GelabberApp {
             Route::Profile if signed_in => self.nav.replace("/settings/profil"),
             _ => {}
         }
+    }
+
+    /// Starts the client's workspace once signed in (`bootstrap`, or the
+    /// session check first when the client does not know the account yet),
+    /// and follows the client when the server ends the session.
+    fn sync_workspace(&mut self) {
+        let signed_in = matches!(self.session.status, SessionStatus::Authenticated(_));
+        let client_signed_in = self
+            .client
+            .with_state(|s| matches!(s.session, gelabber_client::Session::Authenticated(_)));
+        if signed_in && self.client_signed_in && !client_signed_in {
+            self.session.adopt(&Value::Null);
+            self.workspace = false;
+        } else if signed_in && !self.workspace {
+            self.workspace = true;
+            if client_signed_in {
+                self.client.bootstrap();
+            } else {
+                self.client.restore_session();
+            }
+        } else if !signed_in {
+            self.workspace = false;
+        }
+        self.client_signed_in = client_signed_in;
     }
 
     fn frame(&mut self, ui: &mut Ui) {
@@ -443,6 +473,7 @@ impl GelabberApp {
             return;
         }
 
+        self.sync_workspace();
         self.guard();
         if self.nav.take_changed() {
             self.screen = ScreenState::for_location(self.nav.location());
