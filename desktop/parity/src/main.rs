@@ -5,7 +5,10 @@
 //! (see pixels.rs for the two stricter measures).
 //!
 //!   gelabber-parity render <out-dir> [scene,…]
-//!   gelabber-parity compare <web-dir> <native-dir> <report-dir>
+//!   gelabber-parity compare <web-dir> <native-dir> <report-dir> [--only a,b] [--crop x,y,w,h]
+//!
+//! `--crop` scores one region (e.g. a page column) while the rest of the
+//! window is not built yet; acceptance is always on the full scene.
 //!
 //! Reads web/scripts/parity/{scenes,fixture}.json from the repository.
 
@@ -133,7 +136,13 @@ fn render(out: &Path, only: Option<Vec<String>>) {
     }
 }
 
-fn compare(web: &Path, native: &Path, report: &Path) -> bool {
+fn compare(
+    web: &Path,
+    native: &Path,
+    report: &Path,
+    only: Option<&[String]>,
+    crop: Option<[u32; 4]>,
+) -> bool {
     let scenes: Scenes = read("scenes.json");
     std::fs::create_dir_all(report).expect("create report directory");
     let mut all = true;
@@ -142,6 +151,9 @@ fn compare(web: &Path, native: &Path, report: &Path) -> bool {
         "|---|---|---|---|---|".to_owned(),
     ];
     for scene in &scenes.scenes {
+        if only.is_some_and(|o| !o.contains(&scene.name)) {
+            continue;
+        }
         let (a, b) = (
             web.join(format!("{}.png", scene.name)),
             native.join(format!("{}.png", scene.name)),
@@ -151,7 +163,11 @@ fn compare(web: &Path, native: &Path, report: &Path) -> bool {
             all = false;
             continue;
         };
-        let (a, b) = (a.to_rgba8(), b.to_rgba8());
+        let (mut a, mut b) = (a.to_rgba8(), b.to_rgba8());
+        if let Some([x, y, w, h]) = crop {
+            a = image::imageops::crop_imm(&a, x, y, w, h).to_image();
+            b = image::imageops::crop_imm(&b, x, y, w, h).to_image();
+        }
         if a.dimensions() != b.dimensions() {
             lines.push(format!(
                 "| {} | – | – | – | size {:?} vs {:?} |",
@@ -197,18 +213,34 @@ fn main() {
                 .map(|s| s.split(',').map(str::to_owned).collect());
             render(Path::new(&args[1]), only);
         }
-        Some("compare") if args.len() == 4 => {
+        Some("compare") if args.len() >= 4 => {
+            let flag = |name: &str| {
+                args.iter()
+                    .position(|a| a == name)
+                    .and_then(|i| args.get(i + 1))
+            };
+            let only: Option<Vec<String>> =
+                flag("--only").map(|s| s.split(',').map(str::to_owned).collect());
+            let crop = flag("--crop").map(|s| {
+                let v: Vec<u32> = s
+                    .split(',')
+                    .map(|n| n.parse().expect("--crop x,y,w,h"))
+                    .collect();
+                [v[0], v[1], v[2], v[3]]
+            });
             if !compare(
                 Path::new(&args[1]),
                 Path::new(&args[2]),
                 Path::new(&args[3]),
+                only.as_deref(),
+                crop,
             ) {
                 std::process::exit(1);
             }
         }
         _ => {
             eprintln!(
-                "usage: gelabber-parity render <out-dir> [scene,…] | compare <web-dir> <native-dir> <report-dir>"
+                "usage: gelabber-parity render <out-dir> [scene,…] | compare <web-dir> <native-dir> <report-dir> [--only a,b] [--crop x,y,w,h]"
             );
             std::process::exit(2);
         }

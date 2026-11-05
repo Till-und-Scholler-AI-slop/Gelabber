@@ -1,15 +1,113 @@
 {
-  "size": [1280, 800],
+  "size": [
+    1280,
+    800
+  ],
   "scenes": [
-    { "name": "login", "path": "/login", "user": null },
-    { "name": "register", "path": "/register", "user": null },
-    { "name": "server-overview", "path": "/s/{home}", "user": "lena" },
-    { "name": "channel-allgemein", "path": "/s/{home}/c/{allgemein}", "user": "lena" },
-    { "name": "channel-spiele", "path": "/s/{home}/c/{spiele}", "user": "lena" },
-    { "name": "other-server", "path": "/s/{evening}", "user": "lena" },
-    { "name": "dm-list", "path": "/d", "user": "lena" },
-    { "name": "dm", "path": "/d/{dm}", "user": "lena" },
-    { "name": "settings", "path": "/settings", "user": "lena" },
-    { "name": "server-settings", "path": "/s/{home}/settings", "user": "lena" }
+    {
+      "name": "login",
+      "path": "/login",
+      "user": null
+    },
+    {
+      "name": "register",
+      "path": "/register",
+      "user": null
+    },
+    {
+      "name": "server-overview",
+      "path": "/s/{home}",
+      "user": "lena"
+    },
+    {
+      "name": "channel-allgemein",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena"
+    },
+    {
+      "name": "channel-spiele",
+      "path": "/s/{home}/c/{spiele}",
+      "user": "lena"
+    },
+    {
+      "name": "other-server",
+      "path": "/s/{evening}",
+      "user": "lena"
+    },
+    {
+      "name": "dm-list",
+      "path": "/d",
+      "user": "lena"
+    },
+    {
+      "name": "dm",
+      "path": "/d/{dm}",
+      "user": "lena"
+    },
+    {
+      "name": "settings",
+      "path": "/settings",
+      "user": "lena"
+    },
+    {
+      "name": "server-settings",
+      "path": "/s/{home}/settings",
+      "user": "lena"
+    },
+    {
+      "name": "settings-profil",
+      "path": "/settings/profil",
+      "user": "lena"
+    },
+    {
+      "name": "settings-profilkarte",
+      "path": "/settings/profilkarte",
+      "user": "lena"
+    },
+    {
+      "name": "settings-konto",
+      "path": "/settings/konto",
+      "user": "lena"
+    },
+    {
+      "name": "settings-darstellung",
+      "path": "/settings/darstellung",
+      "user": "lena"
+    },
+    {
+      "name": "settings-themes",
+      "path": "/settings/themes",
+      "user": "lena"
+    },
+    {
+      "name": "settings-audio",
+      "path": "/settings/audio",
+      "user": "lena"
+    },
+    {
+      "name": "settings-video",
+      "path": "/settings/video",
+      "user": "lena"
+    },
+    {
+      "name": "settings-benachrichtigungen",
+      "path": "/settings/benachrichtigungen",
+      "user": "lena"
+    },
+    {
+      "name": "settings-app",
+      "path": "/settings/app",
+      "user": "lena"
+    },
+    {
+      "name": "server-settings-member",
+      "path": "/s/{evening}/settings",
+      "user": "lena"
+    },
+    {
+      "name": "home",
+      "path": "/",
+      "user": "lena"
+    }
   ]
 }

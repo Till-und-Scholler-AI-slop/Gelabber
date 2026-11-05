@@ -2,6 +2,10 @@
 //! state in [`ScreenState`], which resets whenever the location changes.
 
 pub mod auth;
+pub mod chat;
+pub mod layout;
+pub mod server_settings;
+pub mod settings;
 pub mod shell;
 
 use egui::Ui;
