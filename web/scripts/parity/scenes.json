@@ -777,6 +777,28 @@
       ]
     },
     {
+      "name": "settings-darstellung-tab",
+      "path": "/settings/darstellung",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        }
+      ]
+    },
+    {
       "name": "rail-arrows",
       "path": "/s/{home}",
       "user": "lena",

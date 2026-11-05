@@ -90,14 +90,40 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     let width = ui.available_width().min(640.0);
     let card_w = (width - 2.0 * gap) / 3.0;
     let card_h = 126.3;
+    let mut arrowed = None;
     for (i, (id, label, hint)) in MODES.iter().enumerate() {
         let rect = Rect::from_min_size(
             pos2(top.x + i as f32 * (card_w + gap), top.y),
             vec2(card_w, card_h),
         );
         let wid = Id::unique(("gelabber-mode", *id));
-        let response = ui.interact(rect, wid, Sense::click());
         let checked = active == *id;
+        // Radios of one name: the checked one is the group's Tab stop
+        // (all of them while none is), the arrows choose the next.
+        let none_checked = !MODES.iter().any(|m| m.0 == active);
+        let stop = checked || none_checked || ui.memory(|m| m.has_focus(wid));
+        let response = ui.interact(rect, wid, if stop { Sense::click() } else { Sense::CLICK });
+        if response.has_focus() {
+            // The arrows are the group's, not egui's spatial focus moves.
+            let arrows = egui::EventFilter {
+                horizontal_arrows: true,
+                vertical_arrows: true,
+                ..Default::default()
+            };
+            ui.memory_mut(|m| m.set_focus_lock_filter(wid, arrows));
+            let step = ui.input(|i| {
+                if i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::ArrowDown) {
+                    1
+                } else if i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::ArrowUp) {
+                    MODES.len() - 1
+                } else {
+                    0
+                }
+            });
+            if step > 0 {
+                arrowed = Some((i + step) % MODES.len());
+            }
+        }
         response.widget_info(|| {
             egui::WidgetInfo::selected(egui::Role::RadioButton, true, checked, *label)
         });
@@ -176,6 +202,14 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
         if response.clicked() && !checked && !sync.saving && sync.ready {
+            themes::change(ui.ctx(), app, themes::Op::Apply(id.to_string()));
+            s.waiting = true;
+        }
+    }
+    if let Some(next) = arrowed {
+        let id = MODES[next].0;
+        ui.memory_mut(|m| m.request_focus(Id::unique(("gelabber-mode", id))));
+        if active != id && !sync.saving && sync.ready {
             themes::change(ui.ctx(), app, themes::Op::Apply(id.to_string()));
             s.waiting = true;
         }
@@ -268,5 +302,47 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     );
     if p != before {
         prefs::update(ui.ctx(), |x| *x = p);
+    }
+}
+
+#[cfg(test)]
+mod tab_tests {
+    use crate::app::testkit::{FakeApi, focused_label, launcher, wait_for, workspace};
+    use crate::platform::paths::testing::TempConfig;
+
+    /// The area's heading holds the focus on arrival, then the controls
+    /// are named Tab stops, each radio group once (the checked radio, the
+    /// chosen chip), as the browser has them; the radio marks inside the
+    /// cards used to swallow the Tab after the first card.
+    #[test]
+    fn tab_reaches_every_control_once() {
+        let _config = TempConfig::new("appearance-tab");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, "/settings/darstellung");
+        // The account's document decides which radio is checked.
+        wait_for(&mut harness, "the theme document", |_| {
+            api.saw("GET /me/themes")
+        });
+        harness.run_steps(20);
+        let mut order = Vec::new();
+        for _ in 0..30 {
+            harness.key_press(egui::Key::Tab);
+            harness.run_steps(2);
+            let label = focused_label(&harness).unwrap_or_default();
+            if label == "Zum Inhalt springen" && !order.is_empty() {
+                break;
+            }
+            order.push(label);
+        }
+        assert_eq!(
+            order,
+            [
+                "Dunkel",
+                "Weitere Themes",
+                "Kompakt",
+                "Kompakte Sprachkanäle",
+                "Bewegung reduzieren"
+            ]
+        );
     }
 }

@@ -181,9 +181,12 @@ pub fn heading(ui: &mut Ui, title: &str) {
 pub fn focused_heading(ui: &mut Ui, title: &str) {
     let ctx = ui.ctx().clone();
     let id = egui::Id::unique(("gelabber-focused-heading", title));
-    if crate::widgets::field::mounted(&ctx, id.with("mount")) {
+    let mount = crate::widgets::field::mounted(&ctx, id.with("mount"));
+    if mount {
         ctx.data_mut(|d| d.insert_temp(id, true));
     }
+    // It holds the focus, so the next Tab is the card's first control.
+    crate::app::focus_anchor(ui, id.with("focus"), ui.cursor().min, mount);
     // A click or a key takes the focus elsewhere, as in the browser.
     if ctx.input(|i| {
         i.pointer.any_pressed()

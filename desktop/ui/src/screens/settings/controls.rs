@@ -236,12 +236,13 @@ pub fn switch_row(
         description.map(|d| Block::wrapped(ui, d, text::META.line_height(1.5), c.muted, text_w));
     let content_h = label_block.height() + desc_block.as_ref().map_or(0.0, |d| 4.0 + d.height());
     let height = (content_h + 24.0 + 1.0).max(64.0);
+    // The row only forwards clicks; Tab reaches the switch in it.
     let (rect, response) = ui.allocate_exact_size(
         vec2(width, height),
         if disabled {
             Sense::hover()
         } else {
-            Sense::click()
+            Sense::CLICK
         },
     );
     let id = Id::unique(("gelabber-switch-row", id));
@@ -277,6 +278,8 @@ pub fn switch_row(
         UiBuilder::new().max_rect(switch_rect).id_salt(id),
         |ui| ui.add(Switch::new(&mut value).disabled(disabled)),
     );
+    // `<label>` of the switch input: the row's text names it.
+    sw.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, !disabled, *on, label));
     if sw.changed() && !changed {
         *on = value;
         changed = true;
@@ -312,7 +315,13 @@ pub fn chips(
         let block = Block::single(ui, label, style, c.text);
         let w = block.width() + 24.0 + 2.0;
         let rect = Rect::from_min_size(pos2(x, start.y), vec2(w, height));
-        let response = ui.interact(rect, id.with(i), Sense::click());
+        // One Tab stop for the group, the chosen chip (`role=radiogroup`
+        // with a roving tabIndex); the arrows move between them.
+        let stop = on || ui.memory(|m| m.has_focus(id.with(i)));
+        let sense = if stop { Sense::click() } else { Sense::CLICK };
+        let response = ui.interact(rect, id.with(i), sense);
+        response
+            .widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, on, *label));
         if response.clicked() {
             chosen = Some(i);
         }
@@ -431,8 +440,7 @@ pub fn radio_mark(ui: &mut Ui, min: Pos2, checked: bool) {
     let rect = Rect::from_min_size(min, Vec2::splat(20.0));
     let mut value = checked;
     place(ui, UiBuilder::new().max_rect(rect), |ui| {
-        let response = ui.add(Checkbox::new(&mut value).radio());
-        response.surrender_focus();
+        ui.add(Checkbox::new(&mut value).radio().decorative());
     });
 }
 
