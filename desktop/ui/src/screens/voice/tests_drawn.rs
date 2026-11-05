@@ -362,3 +362,30 @@ fn an_unread_row_marks_a_draft() {
     h.run_steps(6);
     assert_eq!(h.query_all_by_label("Entwurf").count(), 1);
 }
+
+#[test]
+fn the_voice_dialog_opens_on_its_tab_and_moves_with_the_arrows() {
+    use crate::screens::voice::dialogs::{self, Tab};
+    use egui_kittest::kittest::NodeT;
+    let (client, call) = offline();
+    let mut h = harness(client, call, dialogs::show);
+    dialogs::open_settings(&h.ctx, Tab::Diagnose);
+    h.run_steps(6);
+    let selected = |h: &H, label: &str| {
+        h.get_by_label(label).accesskit_node().toggled() == Some(egui::accesskit::Toggled::True)
+    };
+    assert!(selected(&h, "Diagnose"), "opens on the asked tab");
+    assert!(h.get_by_label("Diagnose").accesskit_node().is_focused());
+    h.key_press(egui::Key::ArrowRight);
+    h.run_steps(6);
+    assert!(selected(&h, "Audio"), "the arrows wrap round");
+    h.key_press(egui::Key::End);
+    h.run_steps(6);
+    assert!(selected(&h, "Diagnose"));
+    h.key_press(egui::Key::ArrowLeft);
+    h.run_steps(6);
+    assert!(selected(&h, "Video & Stream"));
+    h.get_by_label("Fertig").click();
+    h.run_steps(6);
+    assert!(!dialogs::open(&h.ctx));
+}

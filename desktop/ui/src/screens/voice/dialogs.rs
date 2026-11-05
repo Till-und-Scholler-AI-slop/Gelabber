@@ -42,6 +42,8 @@ struct Open {
     form: media::State,
     /// The message of the microphone test once stopped by the person.
     stopped: bool,
+    /// The dialog opens with the focus on its tab (`autoFocus`).
+    focus_tab: bool,
 }
 
 fn id() -> Id {
@@ -59,6 +61,7 @@ pub fn open_settings(ctx: &egui::Context, tab: Tab) {
             o.form = media::State::default();
         }
         o.settings = Some(tab);
+        o.focus_tab = true;
     });
 }
 
@@ -100,6 +103,7 @@ fn settings_dialog(ui: &mut Ui, app: &mut AppCtx, tab: Tab, on_top: bool) {
     }
     let mut chosen = tab;
     let mut done = false;
+    let focus_tab = with(&ctx, |o| std::mem::take(&mut o.focus_tab));
     let mut footer = |ui: &mut Ui| {
         let w = Block::single(ui, "Fertig", text::UI.weight(600.0), Color32::WHITE).width() + 34.0;
         if ui.add(Button::new("Fertig").ghost().width(w)).clicked() {
@@ -122,7 +126,7 @@ fn settings_dialog(ui: &mut Ui, app: &mut AppCtx, tab: Tab, on_top: bool) {
                 // The web's title line is a pixel shorter than the modal's.
                 ui.add_space(-1.0);
                 let width = ui.available_width();
-                if let Some(next) = tabs(ui, chosen, width) {
+                if let Some(next) = tabs(ui, chosen, width, focus_tab) {
                     chosen = next;
                 }
                 ui.add_space(20.0);
@@ -155,12 +159,57 @@ fn settings_dialog(ui: &mut Ui, app: &mut AppCtx, tab: Tab, on_top: bool) {
 }
 
 /// The tab list (`.voice-settings-tablist`); returns a newly chosen tab.
-fn tabs(ui: &mut Ui, current: Tab, width: f32) -> Option<Tab> {
+/// Only the chosen tab is in the Tab order; the arrows, Home and End move
+/// between them (`nextChipIndex`).
+fn tabs(ui: &mut Ui, current: Tab, width: f32, focus: bool) -> Option<Tab> {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let top = ui.cursor().min;
     let mut x = top.x;
     let mut chosen = None;
+    let tab_id = |tab: Tab| Id::unique(("gelabber-voice-tab", tab.label()));
+    // The keys first, so the tab they choose is the focusable one this frame.
+    let mut current = current;
+    let mut focus = focus;
+    if ui.memory(|m| m.has_focus(tab_id(current))) {
+        // The arrows choose a tab instead of moving egui's focus.
+        ui.memory_mut(|m| {
+            m.set_focus_lock_filter(
+                tab_id(current),
+                egui::EventFilter {
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    ..Default::default()
+                },
+            )
+        });
+        let (prev, next, home, end) = ui.input(|i| {
+            (
+                i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::ArrowUp),
+                i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::ArrowDown),
+                i.key_pressed(egui::Key::Home),
+                i.key_pressed(egui::Key::End),
+            )
+        });
+        let at = Tab::ALL.iter().position(|t| *t == current).unwrap_or(0);
+        let n = Tab::ALL.len();
+        let to = if prev {
+            Some((at + n - 1) % n)
+        } else if next {
+            Some((at + 1) % n)
+        } else if home {
+            Some(0)
+        } else if end {
+            Some(n - 1)
+        } else {
+            None
+        };
+        if let Some(to) = to.filter(|t| *t != at) {
+            current = Tab::ALL[to];
+            chosen = Some(current);
+            focus = true;
+        }
+    }
     for tab in Tab::ALL {
         let selected = tab == current;
         let style = if selected {
@@ -170,11 +219,22 @@ fn tabs(ui: &mut Ui, current: Tab, width: f32) -> Option<Tab> {
         };
         let block = Block::single(ui, tab.label(), style, c.text);
         let rect = Rect::from_min_size(pos2(x, top.y), vec2(block.width() + 24.0, 36.0));
+        // Only the chosen tab is in the Tab order (`tabIndex`).
         let response = ui.interact(
             rect,
-            Id::unique(("gelabber-voice-tab", tab.label())),
-            Sense::click(),
+            tab_id(tab),
+            if selected {
+                Sense::click()
+            } else {
+                Sense::CLICK
+            },
         );
+        if selected && focus {
+            response.request_focus();
+        }
+        if response.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
+            crate::widgets::focus_ring(ui.painter(), rect, theme.radius.sm, &theme);
+        }
         response.widget_info(|| {
             egui::WidgetInfo::selected(egui::Role::Tab, true, selected, tab.label())
         });
@@ -203,6 +263,7 @@ fn tabs(ui: &mut Ui, current: Tab, width: f32) -> Option<Tab> {
         }
         if response.clicked() && !selected {
             chosen = Some(tab);
+            response.request_focus();
         }
         x = rect.right() + 4.0;
     }
