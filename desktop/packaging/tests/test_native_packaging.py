@@ -3,11 +3,13 @@ python3 -m unittest discover -s desktop/packaging/tests
 
 The names only meet at run time (the desktop entry and the window's app id,
 the installer and the Tauri app's folder and AppUserModelId), so a rename on
-one side is caught here rather than on a user's desktop. makensis and
-makepkg are not needed."""
+one side is caught here rather than on a user's desktop. makepkg is not
+needed; makensis compiles the installer where it is installed (CI)."""
 import json
+import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -85,6 +87,32 @@ class Installer(unittest.TestCase):
             name = removed if removed != self.defined['MAINBINARY'] else '${MAINBINARY}'
             with self.subTest(removed=removed):
                 self.assertIn(f'Delete "$INSTDIR\\{name}"', self.text)
+
+    def test_only_cmd_expands_environment_variables(self):
+        # nsExec starts programs directly: a %VAR% reaches them as it is.
+        for line in re.findall(r'^\s*nsExec::\w+ (.*)$', self.text, re.M):
+            if re.search(r'%\w+%', line):
+                with self.subTest(line=line):
+                    self.assertIn('cmd.exe', line)
+
+    def test_makensis_compiles_it(self):
+        # The installer is built after merge only; this compile runs on pull requests.
+        makensis = shutil.which('makensis')
+        if not makensis:
+            if os.environ.get('CI'):
+                self.fail('makensis is not installed (apt-get install nsis)')
+            self.skipTest('makensis is not installed')
+        with tempfile.TemporaryDirectory() as tmp:
+            stage = Path(tmp)
+            for name in ('gelabber.exe', 'gelabber_media.dll', 'README.txt', 'THIRD-PARTY-NOTICES.txt'):
+                (stage / name).write_text(name)
+            for name in ('icon.ico', 'icon.png'):
+                shutil.copy(DESKTOP / 'app/icons' / name, stage / name)
+            # The release's name: makensis warns about a bare setup.exe.
+            setup = stage / 'gelabber-native-windows-x64-setup.exe'
+            subprocess.run([makensis, '-V2', '-WX', '-DVERSION=0.9.0-beta.1', '-DFILEVERSION=0.9.0.0',
+                            f'-DSOURCE={stage}', f'-DOUTFILE={setup}', str(NSIS)], check=True)
+            self.assertTrue(setup.is_file())
 
 
 class ArchPackage(unittest.TestCase):

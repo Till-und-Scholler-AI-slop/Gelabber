@@ -67,8 +67,9 @@ foreign="$(nm -D --defined-only "$pkg/libgelabber_media.so" | awk '{print $3}' |
 if needed "$pkg/gelabber" | grep -E '^lib(webkit2gtk|javascriptcoregtk|soup|gtk|gdk)-'; then
   fail "gelabber depends on WebKitGTK, libsoup or GTK"
 fi
-readelf -d "$pkg/gelabber" | grep -E '\((RUNPATH|RPATH)\)' | grep -qF '$ORIGIN' ||
-  fail "gelabber has no \$ORIGIN rpath and would not find libgelabber_media.so"
+# First, or the build machine's core directory (also in it, for cargo run) wins.
+readelf -d "$pkg/gelabber" | grep -E '\((RUNPATH|RPATH)\)' | grep -qF '[$ORIGIN' ||
+  fail "gelabber's rpath does not start with \$ORIGIN: it would not load the libgelabber_media.so next to it"
 if needed "$pkg/gelabber" | grep -qx libgelabber_media.so; then
   found="$(env -u LD_LIBRARY_PATH ldd "$pkg/gelabber" | awk '$1 == "libgelabber_media.so" {print $3}')"
   [ "$found" = "$pkg/libgelabber_media.so" ] ||

@@ -31,10 +31,11 @@ fn main() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS");
     let lib_dir = std::env::var("DEP_GELABBER_MEDIA_LIB_DIR");
     if target_os.as_deref() == Ok("linux") {
+        // $ORIGIN first: a package must load its own core, not the build's.
+        println!("cargo:rustc-link-arg-bins=-Wl,-rpath,$ORIGIN");
         if let Ok(dir) = &lib_dir {
             println!("cargo:rustc-link-arg-bins=-Wl,-rpath,{dir}");
         }
-        println!("cargo:rustc-link-arg-bins=-Wl,-rpath,$ORIGIN");
     }
     if target_os.as_deref() == Ok("windows")
         && let Ok(dir) = &lib_dir

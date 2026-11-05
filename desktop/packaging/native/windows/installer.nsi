@@ -120,7 +120,9 @@ LangString deleteData ${LANG_GERMAN} "Auch die Einstellungen und die Anmeldung v
       MessageBox MB_OKCANCEL|MB_ICONINFORMATION "$(appRunning)" IDOK +2
       Quit
     ${EndIf}
-    nsExec::Exec `"$SYSDIR\taskkill.exe" /F /T /IM ${binary} /FI "USERNAME eq %USERNAME%"`
+    ; nsExec starts taskkill without cmd, which would expand %USERNAME%.
+    ReadEnvStr $1 USERNAME
+    nsExec::Exec `"$SYSDIR\taskkill.exe" /F /T /IM ${binary} /FI "USERNAME eq $1"`
     Pop $0
     Sleep 1500
   ${EndIf}
