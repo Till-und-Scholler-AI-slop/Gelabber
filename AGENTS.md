@@ -39,7 +39,8 @@ Rust workspace in `backend/` (`api`, `media`, `shared`), from `backend/`:
 - Tests run in the native toolchain image, as in CI. From the repo root, build
   it once with
   `docker build --target base --file backend/media/Dockerfile --tag gelabber-native-ci-toolchain:local .`,
-  then `sh backend/build/run-native-ci.sh test --locked --workspace --all-targets`.
+  then `sh backend/build/run-native-ci.sh test --locked --workspace --all-targets`
+  (CI runs the same binaries with `nextest run`, side by side).
   They need Postgres, Redis and MinIO plus `DATABASE_URL`, `REDIS_URL`,
   `MINIO_ENDPOINT`, `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` (values in
   `backend/api/.env.example`); storage and avatar tests fail without the MinIO
