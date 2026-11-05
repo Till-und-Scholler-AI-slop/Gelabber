@@ -509,7 +509,7 @@ pub fn show(
         .response
         .response
         .clone()
-        .accessible_name(&format!("Nachricht an {}", input.placeholder));
+        .accessible_name(format!("Nachricht an {}", input.placeholder));
     if let Some(range) = output.cursor_range {
         let caret = (range.primary.index == range.secondary.index).then_some(range.primary.index.0);
         if caret != state.last_caret {
