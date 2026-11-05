@@ -5,6 +5,7 @@
 // Run in web/:
 //   node scripts/parity/say.mjs post <user> <channel-key> <text>   → prints the id
 //   node scripts/parity/say.mjs delete <user> <message-id>
+//   node scripts/parity/say.mjs revoke-unused <user> <server-key>   (invites a dialog made)
 // <channel-key> is "dm" or a channel name of fixture.json; "{lena}" (any
 // user key) in the text becomes that user's mention token.
 /* global process, console, fetch */
@@ -15,7 +16,7 @@ const here = new URL(".", import.meta.url).pathname;
 const fixture = JSON.parse(await readFile(join(here, "fixture.json"), "utf8"));
 const [command, who, target, ...words] = process.argv.slice(2);
 const user = fixture.users[who];
-if (!user || !["post", "delete"].includes(command) || !target)
+if (!user || !["post", "delete", "revoke-unused"].includes(command) || !target)
   throw new Error("usage: say.mjs post <user> <channel-key> <text> | delete <user> <id>");
 
 const cookies = new Map();
@@ -78,6 +79,13 @@ if (command === "post") {
     ...(attachment_ids.length ? { attachment_ids } : {}),
   });
   console.log(message.id);
+} else if (command === "revoke-unused") {
+  // Invite links a scene's dialog made: never used, made by this user.
+  const server = fixture.servers[target]?.id;
+  if (!server) throw new Error(`unknown server ${target}`);
+  for (const invite of await call("GET", `/servers/${server}/invites`))
+    if (invite.uses === 0 && invite.created_by === user.id)
+      await call("DELETE", `/invites/${encodeURIComponent(invite.code)}`);
 } else {
   await call("DELETE", `/messages/${target}`);
 }

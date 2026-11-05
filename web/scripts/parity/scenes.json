@@ -536,6 +536,73 @@
           "key": "Escape"
         }
       ]
+    },
+    {
+      "name": "invite",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Einladen"
+        },
+        {
+          "wait": 500
+        }
+      ],
+      "after": "revoke-unused lena home"
+    },
+    {
+      "name": "invite-terms",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Einladen"
+        },
+        {
+          "wait": 500
+        },
+        {
+          "clicktext": "Ablauf & Limit ändern"
+        }
+      ],
+      "after": "revoke-unused lena home"
+    },
+    {
+      "name": "add-server",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Server hinzufügen"
+        }
+      ]
+    },
+    {
+      "name": "add-server-tab",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Server hinzufügen"
+        },
+        {
+          "key": "Tab"
+        }
+      ]
+    },
+    {
+      "name": "add-server-join",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Server hinzufügen"
+        },
+        {
+          "clicktext": "Server beitreten"
+        }
+      ]
     }
   ]
 }

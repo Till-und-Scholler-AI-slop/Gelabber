@@ -38,6 +38,8 @@ struct Scene {
     /// Steps after the page settled, the same in both shot tools.
     #[serde(default)]
     actions: Vec<Action>,
+    /// say.mjs words run after the screenshot (undo what dialogs made).
+    after: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -301,6 +303,9 @@ fn render(out: &Path, only: Option<Vec<String>>) {
         image.save(&path).expect("save png");
         for (who, id) in &said {
             say(&["delete", who, id]);
+        }
+        if let Some(after) = &scene.after {
+            say(&after.split(' ').collect::<Vec<_>>());
         }
         println!("{}: {route} -> {}", scene.name, path.display());
     }

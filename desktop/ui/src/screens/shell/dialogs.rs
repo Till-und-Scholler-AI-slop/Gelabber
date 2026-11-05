@@ -242,7 +242,13 @@ fn add_server(
                 match step {
                     AddStep::Choose => {
                         ui.spacing_mut().item_spacing.y = 8.0;
-                        if choice(ui, Icon::Plus, "Server erstellen", CREATE_HINT).clicked() {
+                        let create = choice(ui, Icon::Plus, "Server erstellen", CREATE_HINT);
+                        // The dialog opens on its first control, as showModal does.
+                        if crate::widgets::field::mounted(ui.ctx(), Id::unique("gelabber-add-open"))
+                        {
+                            create.request_focus();
+                        }
+                        if create.clicked() {
                             *step = AddStep::Create;
                         }
                         if choice(
@@ -331,9 +337,13 @@ fn choice(ui: &mut Ui, icon: Icon, title: &str, detail: &str) -> egui::Response 
     let c = theme.c;
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 64.0), egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, title));
     let hovered = response.hovered();
     if hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    if response.has_focus() && crate::widgets::keyboard_focus(ui.ctx()) {
+        crate::widgets::focus_ring(ui.painter(), rect, theme.radius.md, &theme);
     }
     ui.painter().rect(
         rect,
@@ -496,8 +506,8 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
                 + 16.0
                 + 8.0
                 + 34.0;
-            let (row, _) = ui.allocate_exact_size(Vec2::new(row_w, 37.0), egui::Sense::hover());
-            let field = Rect::from_min_size(row.min, Vec2::new(row_w - copy_w - 8.0, 37.0));
+            let (row, _) = ui.allocate_exact_size(Vec2::new(row_w, 36.0), egui::Sense::hover());
+            let field = Rect::from_min_size(row.min, Vec2::new(row_w - copy_w - 8.0, 36.0));
             ui.painter().rect(
                 field,
                 corner(theme.radius.sm),
@@ -529,10 +539,12 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
                 Vec2::new(copy_w, 36.0),
             );
             let mut copy = ui.new_child(egui::UiBuilder::new().max_rect(copy_rect));
-            if copy
-                .add(Button::new(copy_label).primary().icon(Icon::Copy))
-                .clicked()
-            {
+            let copy_button = copy.add(Button::new(copy_label).primary().icon(Icon::Copy));
+            // `initialFocus` on "Link kopieren".
+            if crate::widgets::field::mounted(ui.ctx(), Id::unique("gelabber-invite-open")) {
+                copy_button.request_focus();
+            }
+            if copy_button.clicked() {
                 if creating {
                     s.status = Some(("Link wird erstellt…".into(), StatusTone::Neutral));
                 } else if !link.is_empty() {
@@ -574,6 +586,9 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
                 Vec2::new(label.width() + 4.0 + 14.0, 32.0),
             );
             let response = common::click(ui, summary_rect, Id::unique("invite-terms"));
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::Button, true, "Ablauf & Limit ändern")
+            });
             let color = if response.hovered() { c.text } else { c.muted };
             paint_mid(
                 ui.painter(),
@@ -589,17 +604,23 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
                 s.terms_open = !s.terms_open;
             }
             if s.terms_open {
-                // Column gap 8, margin-top 8; each caps label 8 more.
+                // Column gap 8, margin-top 8; each caps label 8 more (the
+                // panel's 12 after the summary already counts).
+                ui.add_space(4.0);
                 ui.spacing_mut().item_spacing.y = 8.0;
                 let mut changed = None;
-                for (caps, options, current, which) in [
+                for (n, (caps, options, current, which)) in [
                     ("Läuft ab nach", EXPIRY.map(|o| o.0), s.terms.expiry, 0),
                     ("Wie oft nutzbar", USES.map(|o| o.0), s.terms.uses, 1),
-                ] {
-                    ui.add_space(8.0);
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    if n > 0 {
+                        ui.add_space(8.0);
+                    }
                     text::label(ui, &caps.to_uppercase(), text::CAPS, c.muted);
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 8.0;
+                    super::overlays::row(ui, 32.0, 8.0, |ui| {
                         for (i, option) in options.iter().enumerate() {
                             if chip(ui, option, i == current).clicked() && i != current {
                                 changed = Some((which, i));

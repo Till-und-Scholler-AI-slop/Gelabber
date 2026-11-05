@@ -127,6 +127,11 @@ for (const scene of scenes) {
   await page.screenshot({ path: join(OUT, `${scene.name}.png`) });
   for (const [who, id] of said)
     execFileSync(process.execPath, [join(here, "say.mjs"), "delete", who, id], { stdio: "inherit" });
+  // say.mjs words that undo what the scene's dialogs made (invite links).
+  if (scene.after)
+    execFileSync(process.execPath, [join(here, "say.mjs"), ...scene.after.split(" ")], {
+      stdio: "inherit",
+    });
   console.log(`${scene.name}: ${page.url()}`);
   await context.close();
   if (call) await stopCall(call);
