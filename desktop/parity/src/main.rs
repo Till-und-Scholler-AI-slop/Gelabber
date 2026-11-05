@@ -56,6 +56,10 @@ struct Scene {
     before: Option<String>,
     /// say.mjs words run after the screenshot (undo what dialogs made).
     after: Option<String>,
+    /// `[x, y, w, h]` areas left out of the comparison: picture content that
+    /// comes from the fake devices (Chromium's versus the core's), not the app.
+    #[serde(default)]
+    mask: Vec<[u32; 4]>,
 }
 
 #[derive(Deserialize)]
@@ -632,6 +636,15 @@ fn compare(
             ));
             all = false;
             continue;
+        }
+        for &[x, y, w, h] in &scene.mask {
+            for img in [&mut a, &mut b] {
+                for py in y..(y + h).min(img.height()) {
+                    for px in x..(x + w).min(img.width()) {
+                        img.put_pixel(px, py, image::Rgba([0, 0, 0, 255]));
+                    }
+                }
+            }
         }
         let score = ssim::compare(&a, &b);
         let (pixel, map) = pixels::pixel_match(&a, &b);
