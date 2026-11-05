@@ -161,6 +161,7 @@ fn effects(ui: &Ui, app: &mut AppCtx) {
         if first {
             s.server_menu = false;
             s.user_menu = false;
+            s.row_menu = None;
         }
         first
     });

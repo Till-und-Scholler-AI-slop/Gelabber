@@ -52,16 +52,25 @@ fn rasterize(icon: Icon, size_px: f32, fx: f32, fy: f32) -> Option<ColorImage> {
 /// Paints `icon` as a `size`×`size` px box with its top-left at `min`
 /// (CSS position, may be fractional), in `color`.
 pub fn paint(painter: &Painter, icon: Icon, min: Pos2, size: f32, color: Color32) {
-    paint_uv(painter, icon, min, size, color, false);
+    paint_turned(painter, icon, min, size, color, 0);
 }
 
 /// Like [`paint`], turned by 180° (`rotate: 180deg`, a chevron that
 /// points up).
 pub fn paint_rotated(painter: &Painter, icon: Icon, min: Pos2, size: f32, color: Color32) {
-    paint_uv(painter, icon, min, size, color, true);
+    paint_turned(painter, icon, min, size, color, 2);
 }
 
-fn paint_uv(painter: &Painter, icon: Icon, min: Pos2, size: f32, color: Color32, turned: bool) {
+/// Like [`paint`], turned clockwise by `quarters` × 90° (`rotate: -90deg`
+/// is 3).
+pub fn paint_turned(
+    painter: &Painter,
+    icon: Icon,
+    min: Pos2,
+    size: f32,
+    color: Color32,
+    quarters: u8,
+) {
     let ctx = painter.ctx();
     let ppp = ctx.pixels_per_point();
     let (x, y) = (min.x * ppp, min.y * ppp);
@@ -102,12 +111,32 @@ fn paint_uv(painter: &Painter, icon: Icon, min: Pos2, size: f32, color: Color32,
         Pos2::new(x0 / ppp, y0 / ppp),
         Vec2::new(w as f32 / ppp, h as f32 / ppp),
     );
-    let uv = if turned {
-        Rect::from_min_max(Pos2::new(1.0, 1.0), Pos2::ZERO)
-    } else {
-        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0))
-    };
-    painter.image(texture.id(), rect, uv, color);
+    if quarters.is_multiple_of(4) {
+        let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+        painter.image(texture.id(), rect, uv, color);
+        return;
+    }
+    // A quad whose texture corners are shifted round by the turn.
+    let corners = [
+        rect.left_top(),
+        rect.right_top(),
+        rect.right_bottom(),
+        rect.left_bottom(),
+    ];
+    let uvs = [
+        Pos2::ZERO,
+        Pos2::new(1.0, 0.0),
+        Pos2::new(1.0, 1.0),
+        Pos2::new(0.0, 1.0),
+    ];
+    let mut mesh = egui::Mesh::with_texture(texture.id());
+    for (i, pos) in corners.into_iter().enumerate() {
+        let uv = uvs[(i + 4 - usize::from(quarters % 4)) % 4];
+        mesh.vertices.push(egui::epaint::Vertex { pos, uv, color });
+    }
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 /// Paints `icon` centred in `rect`.

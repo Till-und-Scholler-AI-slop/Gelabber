@@ -497,7 +497,8 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
             ui.painter().rect(
                 field,
                 corner(theme.radius.sm),
-                c.bg,
+                // `.ui-field[readonly]`.
+                c.surface,
                 Stroke::new(1.0, c.border_strong),
                 StrokeKind::Inside,
             );
@@ -506,8 +507,18 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
             } else {
                 link.as_str()
             };
+            // `ui-monospace` 13px, cut with an ellipsis.
             let mono = TextStyle::new(13.0, 400.0, 1.5);
-            let block = line(ui, shown, mono, c.text, field.width() - 22.0);
+            let mut format = mono.format(c.text);
+            format.font_id = egui::FontId::new(13.0, crate::fonts::mono_family());
+            let mut job = egui::text::LayoutJob::single_section(shown.to_owned(), format);
+            job.wrap = egui::text::TextWrapping {
+                max_width: field.width() - 22.0,
+                max_rows: 1,
+                break_anywhere: true,
+                overflow_character: Some('…'),
+            };
+            let block = Block::new(ui, job, mono);
             paint_mid(ui.painter(), &block, field.left() + 11.0, field.center().y);
             let copy_rect = Rect::from_min_size(
                 pos2(field.right() + 8.0, row.top()),
@@ -566,17 +577,22 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
                 summary_rect.left(),
                 summary_rect.center().y,
             );
+            // The chevron points right while closed (`rotate: -90deg`).
             let chevron = pos2(summary_rect.right() - 14.0, summary_rect.center().y - 7.0);
-            icons::paint(ui.painter(), Icon::Chevron, chevron, 14.0, color);
+            let turn = if s.terms_open { 0 } else { 3 };
+            icons::paint_turned(ui.painter(), Icon::Chevron, chevron, 14.0, color, turn);
             if response.clicked() {
                 s.terms_open = !s.terms_open;
             }
             if s.terms_open {
+                // Column gap 8, margin-top 8; each caps label 8 more.
+                ui.spacing_mut().item_spacing.y = 8.0;
                 let mut changed = None;
                 for (caps, options, current, which) in [
                     ("Läuft ab nach", EXPIRY.map(|o| o.0), s.terms.expiry, 0),
                     ("Wie oft nutzbar", USES.map(|o| o.0), s.terms.uses, 1),
                 ] {
+                    ui.add_space(8.0);
                     text::label(ui, &caps.to_uppercase(), text::CAPS, c.muted);
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;

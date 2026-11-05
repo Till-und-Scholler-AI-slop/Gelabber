@@ -130,6 +130,14 @@ pub struct ShellState {
     pub effects_for: Option<String>,
     /// A server just created: its overview opens the invite dialog.
     pub invite_prompt: Option<(Uuid, String)>,
+    /// The right-click menu of a sidebar row, anchored at that row.
+    pub row_menu: Option<(RowMenu, egui::Rect)>,
+}
+
+#[derive(Clone, Debug)]
+pub enum RowMenu {
+    Channel(Uuid, gelabber_client::Channel),
+    Category(Uuid, gelabber_client::Category),
 }
 
 #[derive(Clone, Default)]

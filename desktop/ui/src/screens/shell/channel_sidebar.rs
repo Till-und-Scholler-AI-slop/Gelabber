@@ -157,6 +157,7 @@ pub fn show(
         rect.top() + 51.0,
     );
 
+    row_menu(ui, app);
     if menu_open {
         server_menu(
             ui,
@@ -385,6 +386,16 @@ fn category_row(
     if !can_manage {
         return;
     }
+    let menu = ui.interact(
+        slot,
+        Id::unique(("category-menu", category.id)),
+        egui::Sense::click(),
+    );
+    if menu.secondary_clicked() {
+        state::with(ui.ctx(), |s| {
+            s.row_menu = Some((state::RowMenu::Category(server, category.clone()), slot));
+        });
+    }
     let hovered = ui.rect_contains_pointer(slot);
     if !hovered {
         return;
@@ -425,6 +436,16 @@ fn channel_row(
     let c = theme.c;
     let response = common::click(ui, row, Id::unique(("channel-row", ch.id)));
     let voice = ch.kind == ChannelKind::Voice;
+    if response.secondary_clicked() {
+        if can_manage {
+            state::with(ui.ctx(), |s| {
+                s.row_menu = Some((state::RowMenu::Channel(server, ch.clone()), row));
+            });
+        } else if !voice {
+            // Members get the channel's notification settings.
+            app.nav.navigate("/settings/benachrichtigungen");
+        }
+    }
     let (badge, muted, in_voice, live) = app.client.with_state(|s| {
         let read = s.read.get(&ch.id);
         (
@@ -732,6 +753,105 @@ fn server_menu(
 }
 
 /// `.shell-menu-item`: min-height 36, padding 0 10, gap 10, radius 5.
+/// The right-click menu of a channel or category row (`.shell-menu-item`
+/// rows with 18px icons, a separator before the danger item).
+fn row_menu(ui: &mut Ui, app: &mut AppCtx) {
+    let Some((menu, anchor)) = state::with(ui.ctx(), |s| s.row_menu.clone()) else {
+        return;
+    };
+    let theme = Theme::of(ui.ctx());
+    let c = theme.c;
+    let items: Vec<(Icon, &str, bool)> = match &menu {
+        state::RowMenu::Channel(_, ch) => {
+            let mut v = vec![(Icon::Pencil, "Kanal bearbeiten", false)];
+            if ch.kind == ChannelKind::Text {
+                v.push((Icon::Bell, "Benachrichtigungen…", false));
+            }
+            v.push((Icon::Trash, "Kanal löschen", true));
+            v
+        }
+        state::RowMenu::Category(..) => vec![
+            (Icon::Plus, "Kanal in dieser Kategorie", false),
+            (Icon::Pencil, "Kategorie umbenennen", false),
+            (Icon::Trash, "Kategorie löschen", true),
+        ],
+    };
+    let picked = Popover::new("row-menu", anchor).show(ui.ctx(), |ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        let width = ui.available_width().max(180.0 - 18.0);
+        let mut picked = None;
+        for (i, (icon, label, danger)) in items.iter().enumerate() {
+            if *danger {
+                // `hr`: 1px border line, margin 4px 6px.
+                let (r, _) = ui.allocate_exact_size(Vec2::new(width, 9.0), egui::Sense::hover());
+                hairline_h(
+                    ui.painter(),
+                    &theme,
+                    r.left() + 6.0..=r.right() - 6.0,
+                    r.top() + 4.0,
+                );
+            }
+            let (rect, response) =
+                ui.allocate_exact_size(Vec2::new(width, 36.0), egui::Sense::click());
+            if response.hovered() {
+                common::fill(ui.painter(), rect, theme.radius.sm, c.hover);
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            let (icon_color, color) = if *danger {
+                (c.danger, c.danger)
+            } else {
+                (c.muted, c.text)
+            };
+            icons::paint(
+                ui.painter(),
+                *icon,
+                pos2(rect.left() + 10.0, rect.center().y - 9.0),
+                18.0,
+                icon_color,
+            );
+            let block = Block::single(ui, label, text::UI, color);
+            paint_mid(ui.painter(), &block, rect.left() + 38.0, rect.center().y);
+            if response.clicked() {
+                picked = Some(i);
+            }
+        }
+        picked
+    });
+    let close = match picked {
+        None => true,
+        Some(None) => false,
+        Some(Some(i)) => {
+            let (_, label, _) = items[i];
+            match (&menu, label) {
+                (state::RowMenu::Channel(server, ch), "Kanal bearbeiten") => {
+                    super::dialogs::open_channel(ui.ctx(), *server, Some(ch), ch.category_id)
+                }
+                (state::RowMenu::Channel(..), "Benachrichtigungen…") => {
+                    app.nav.navigate("/settings/benachrichtigungen")
+                }
+                (state::RowMenu::Channel(server, ch), _) => {
+                    super::dialogs::confirm_delete_channel(ui.ctx(), *server, ch)
+                }
+                (state::RowMenu::Category(server, cat), "Kanal in dieser Kategorie") => {
+                    super::dialogs::open_channel(ui.ctx(), *server, None, Some(cat.id))
+                }
+                (state::RowMenu::Category(server, cat), "Kategorie umbenennen") => {
+                    super::dialogs::open_category(ui.ctx(), *server, Some(cat))
+                }
+                (state::RowMenu::Category(server, cat), _) => {
+                    super::dialogs::confirm_delete_category(ui.ctx(), *server, cat)
+                }
+            }
+            true
+        }
+    };
+    // The right press that opened it is not a press outside.
+    let opening = ui.input(|i| i.pointer.secondary_pressed());
+    if close && !opening {
+        state::with(ui.ctx(), |s| s.row_menu = None);
+    }
+}
+
 fn menu_row(ui: &mut Ui, icon: Icon, label: &str, width: f32) -> egui::Response {
     let theme = Theme::of(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 36.0), egui::Sense::click());
