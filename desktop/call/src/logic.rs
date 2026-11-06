@@ -727,6 +727,57 @@ pub fn silent_app(app: &str, streams: Option<u64>, quiet: &mut u32) -> Option<Op
     Some((*quiet >= SILENT_POLLS).then(|| app.to_owned()))
 }
 
+/// Mute and deafen after "mute `want`" (unmuting also undeafens); `None`
+/// when that changes nothing, so no cue plays and nothing is sent.
+pub fn mute_change(muted: bool, deafened: bool, want: bool) -> Option<(bool, bool)> {
+    let next = (want, deafened && want);
+    (next != (muted, deafened)).then_some(next)
+}
+
+/// `applySourceAudioChoice` of the desktop app, for a running Live whose
+/// "Ton mitsenden" or application changed: whether its sound stops, and
+/// whether a new capture starts.
+pub fn source_audio_change(wanted: bool, running: bool, app_changed: bool) -> (bool, bool) {
+    (
+        running && (!wanted || app_changed),
+        wanted && (!running || app_changed),
+    )
+}
+
+/// What becomes of a Live's sound once its publication is answered
+/// (`addLocalSourceAudio`'s `mine()`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublishedSound {
+    /// Still the sound wanted: the others hear of it.
+    Announce,
+    /// Switched off meanwhile: the producer of this Live goes again.
+    Close,
+    /// Replaced meanwhile: the newer capture takes the producer over, or
+    /// it belongs to another Live.
+    Keep,
+}
+
+/// `current`: no change of the sound or the Live since it was asked;
+/// `newer`: a capture holds the Live's sound now; `ours`: the seat's sound
+/// producer is this Live's.
+pub fn published_sound(current: bool, newer: bool, ours: bool) -> PublishedSound {
+    if current {
+        PublishedSound::Announce
+    } else if !newer && ours {
+        PublishedSound::Close
+    } else {
+        PublishedSound::Keep
+    }
+}
+
+/// Whether a consumer that failed here is reported (`consumerFailed`),
+/// which counts against the server's retries for its producer: not one
+/// this client let go of meanwhile (a watch switched off), nor one the
+/// server already took back (`forbidden`).
+pub fn reports_consumer_failure(wanted: bool, code: Option<&str>) -> bool {
+    wanted && code != Some("forbidden")
+}
+
 /// Whether the core's microphone error is a refused permission rather
 /// than a missing or busy device (`micRefused`).
 pub fn mic_refused(error: &str) -> bool {
@@ -1025,6 +1076,49 @@ mod tests {
         assert_eq!(voice_volume(1.0, 1.0, false, true), 0.0);
         assert_eq!(stream_volume(0.5, false, false), 0.5);
         assert_eq!(stream_volume(0.5, true, false), 0.0);
+    }
+
+    #[test]
+    fn muting_again_changes_nothing() {
+        assert_eq!(mute_change(false, false, true), Some((true, false)));
+        assert_eq!(mute_change(true, false, true), None);
+        assert_eq!(mute_change(false, false, false), None);
+        // Deafened is muted: muting again is no change, unmuting undeafens.
+        assert_eq!(mute_change(true, true, true), None);
+        assert_eq!(mute_change(true, true, false), Some((false, false)));
+    }
+
+    #[test]
+    fn the_live_sound_follows_its_switch_and_application() {
+        // Off during a Live: the sound stops, nothing new.
+        assert_eq!(source_audio_change(false, true, false), (true, false));
+        // On during a Live without sound: a capture starts.
+        assert_eq!(source_audio_change(true, false, false), (false, true));
+        // Another application: the sound is replaced.
+        assert_eq!(source_audio_change(true, true, true), (true, true));
+        // Another application while off: nothing to do.
+        assert_eq!(source_audio_change(false, false, true), (false, false));
+    }
+
+    #[test]
+    fn a_sound_switched_off_while_it_was_published_goes_again() {
+        use PublishedSound::*;
+        assert_eq!(published_sound(true, true, true), Announce);
+        // Off during the publication: nothing announced, the producer goes.
+        assert_eq!(published_sound(false, false, true), Close);
+        // Another application meanwhile: its capture replaces the source.
+        assert_eq!(published_sound(false, true, true), Keep);
+        // The Live ended meanwhile: another Live's producer stays.
+        assert_eq!(published_sound(false, false, false), Keep);
+    }
+
+    #[test]
+    fn only_wanted_consumers_count_against_the_retries() {
+        assert!(reports_consumer_failure(true, None));
+        assert!(reports_consumer_failure(true, Some("sdk_failed")));
+        // The watch went off while it was made, or the server took it back.
+        assert!(!reports_consumer_failure(false, None));
+        assert!(!reports_consumer_failure(true, Some("forbidden")));
     }
 
     #[test]

@@ -450,6 +450,12 @@ pub fn radio_mark(ui: &mut Ui, min: Pos2, checked: bool) {
 
 /// `ui/Select.tsx`: a 37px field with the value and a chevron; a click
 /// opens the options under it.
+/// Whether the [`select`] named `id` has its list open.
+pub fn select_open(ctx: &egui::Context, id: &str) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(Id::unique(("gelabber-select-open", id))))
+        .unwrap_or(false)
+}
+
 pub fn select(
     ui: &mut Ui,
     id: impl std::hash::Hash + std::fmt::Debug + Clone,
@@ -461,6 +467,7 @@ pub fn select(
     let c = &theme.c;
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(vec2(width, 37.0), Sense::click());
+    crate::widgets::popover::focus_first(&response);
     let open_id = Id::unique(("gelabber-select-open", id.clone()));
     let mut open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
     if response.clicked() {
@@ -505,6 +512,7 @@ pub fn select(
     if open {
         let shown = Popover::new(("select", id), rect)
             .min_width(width)
+            .select_list()
             .show(ui.ctx(), |ui| {
                 let mut pick = None;
                 for (k, l) in options {
@@ -607,6 +615,7 @@ fn range(
         Sense::click_and_drag()
     };
     let response = ui.interact(rect, id, sense);
+    crate::widgets::popover::focus_first(&response);
     ui.allocate_exact_size(vec2(width, 20.0), Sense::hover());
     let before = *value;
     // The thumb's centre runs from 7px to width-7px, as in Chromium.

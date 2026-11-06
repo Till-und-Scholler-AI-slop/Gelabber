@@ -188,6 +188,7 @@ pub fn show(
                         .collect();
                     if let Some(()) = crate::widgets::Popover::new(("emoji-group", id), sel)
                         .min_width(width)
+                        .select_list()
                         .show(ctx, |ui| {
                             for option in &options {
                                 let label =

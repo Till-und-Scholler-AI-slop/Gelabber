@@ -156,6 +156,10 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
     ui.set_width(312.0 - 18.0);
     let mut p = prefs::get(&ctx);
     let before = p.clone();
+    // The device lists as the system has them now.
+    if crate::widgets::popover::opening(&ctx) {
+        app.call.refresh_devices();
+    }
     let devices = app.call.with_state(|s| s.devices.clone());
     let rect = Rect::from_min_size(ui.cursor().min + vec2(6.0, 6.0), vec2(width, 800.0));
     let mut more = false;

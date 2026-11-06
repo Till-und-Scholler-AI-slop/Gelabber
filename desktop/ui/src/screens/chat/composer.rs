@@ -846,6 +846,7 @@ fn composer_icon(ui: &mut Ui, rect: Rect, icon: Icon, label: &str, id: egui::Id)
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let resp = ui.interact(rect, id, Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     let fill = crate::widgets::eased(
         ui.ctx(),
         id.with("fill"),

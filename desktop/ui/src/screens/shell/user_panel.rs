@@ -538,6 +538,26 @@ mod tests {
         wait_for_label(&mut harness, "Anmelden");
     }
 
+    /// `focusInside`: the status field is the card's first control, so it
+    /// holds the focus from the frame the card opens, with no button first.
+    #[test]
+    fn the_status_card_opens_with_its_field_focused() {
+        let _config = TempConfig::new("status-focus");
+        let api = FakeApi::start(true, |_, _, _| None);
+        let mut harness = launcher(&api, "/");
+        wait_for_label(&mut harness, "Benutzermenü");
+        harness.get_by_role_and_label(Role::Button, "Lena").click();
+        let field = crate::widgets::field::field_id("user-status-text");
+        let mut seen = Vec::new();
+        for _ in 0..6 {
+            harness.step();
+            seen.push(harness.ctx.memory(|m| m.focused()));
+        }
+        assert!(harness.query_by_label("Speichern").is_some());
+        // The click's own frame may still settle; after it, only the field.
+        assert!(seen.iter().all(|f| *f == Some(field)), "{field:?} {seen:?}");
+    }
+
     /// Without a call it signs out at once; a failed server logout shows
     /// the strip with "Erneut abmelden" (SessionRecoveryNotice LogoutFailed).
     #[test]

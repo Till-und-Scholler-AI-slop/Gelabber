@@ -1429,6 +1429,9 @@
           "click": "Live gehen"
         },
         {
+          "clicktext": "Ton mitsenden"
+        },
+        {
           "menuitem": "Live gehen"
         },
         {

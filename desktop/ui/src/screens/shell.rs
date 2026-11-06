@@ -48,24 +48,19 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     let screen = ui.ctx().content_rect();
     ui.painter().rect_filled(screen, 0.0, theme.c.bg);
     effects(ui, app);
+    voice::video::sweep(ui.ctx(), app.call);
     let route = app.nav.route().clone();
     overlays::keys(ui, state::with(ui.ctx(), |s| s.dialog.is_some()));
     shortcuts(ui, app, &route);
 
     // A running call's bar takes the bottom strip next to the user panel;
     // the page and the member panel end above it.
-    let bar = voice::call_bar::visible(app);
-    let content = if bar {
-        Rect::from_min_max(
-            screen.min,
-            pos2(screen.right(), screen.bottom() - DOCK_HEIGHT),
-        )
-    } else {
-        screen
-    };
+    let kino = matches!(route, Route::Channel(s, c)
+        if is_voice(app, c) && voice::page::kino(ui.ctx(), app, s, c));
+    let bar = bar_height(ui, app, screen, kino);
+    let content = Rect::from_min_max(screen.min, pos2(screen.right(), screen.bottom() - bar));
     if let Route::Channel(s, c) = route
-        && is_voice(app, c)
-        && voice::page::kino(ui.ctx(), app, s, c)
+        && kino
     {
         // Kino: the stage takes the window but for the call bar.
         let mut main = ui.new_child(UiBuilder::new().max_rect(content));
@@ -221,14 +216,28 @@ fn call_bar(ui: &mut Ui, app: &mut AppCtx, screen: Rect, full: bool) {
     if !voice::call_bar::visible(app) {
         return;
     }
-    let left = if full {
+    let left = bar_left(screen, full);
+    let height = bar_height(ui, app, screen, full);
+    let rect = Rect::from_min_max(pos2(left, screen.bottom() - height), screen.max);
+    let mut bar = ui.new_child(UiBuilder::new().max_rect(rect));
+    voice::call_bar::show(&mut bar, app, rect);
+}
+
+fn bar_left(screen: Rect, full: bool) -> f32 {
+    if full {
         screen.left()
     } else {
         screen.left() + RAIL_WIDTH + SIDEBAR_WIDTH
-    };
-    let rect = Rect::from_min_max(pos2(left, screen.bottom() - DOCK_HEIGHT), screen.max);
-    let mut bar = ui.new_child(UiBuilder::new().max_rect(rect));
-    voice::call_bar::show(&mut bar, app, rect);
+    }
+}
+
+/// The call bar's height (0 without one): taller with a notice in it, and
+/// the page above it ends there, as the web reserves the measured dock.
+fn bar_height(ui: &Ui, app: &AppCtx, screen: Rect, full: bool) -> f32 {
+    if !voice::call_bar::visible(app) {
+        return 0.0;
+    }
+    voice::call_bar::height(ui, app, screen.right() - bar_left(screen, full))
 }
 
 /// Whether a shell dialog is open (shortcuts keep off then).

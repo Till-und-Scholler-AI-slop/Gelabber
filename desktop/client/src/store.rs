@@ -66,6 +66,9 @@ pub struct PendingMessage {
     pub uncertain: bool,
     /// Uploads that arrived, in file order; a retry binds them again.
     pub uploaded: Vec<Uuid>,
+    /// How many files ever arrived: a retry that uploads them again keeps
+    /// them marked as done until it gets there (`markUpload`).
+    pub arrived: usize,
 }
 
 impl PendingMessage {
@@ -82,16 +85,18 @@ impl PendingMessage {
             stage: SendStage::Bind,
             uncertain: false,
             uploaded: Vec::new(),
+            arrived: 0,
         }
     }
 
-    /// File `index` while the send runs (`attachment.upload`): arrived,
-    /// going up now, or waiting for the ones before it.
+    /// File `index` (`attachment.upload`): arrived, going up now, or
+    /// waiting for the ones before it. A failure keeps the marks where it
+    /// stopped, as the web does: the file it failed on still goes up.
     pub fn upload_state(&self, index: usize) -> UploadState {
-        if index < self.uploaded.len() || self.failed.is_some() {
-            UploadState::Done
-        } else if index == self.uploaded.len() && self.stage != SendStage::Bind {
+        if index == self.uploaded.len() && self.stage != SendStage::Bind {
             UploadState::Uploading
+        } else if index < self.uploaded.len().max(self.arrived) {
+            UploadState::Done
         } else {
             UploadState::Waiting
         }
@@ -509,6 +514,12 @@ impl State {
     /// Finds a loaded message in any conversation.
     pub fn find_message(&self, id: Uuid) -> Option<&Message> {
         self.channels.values().find_map(|c| c.get(id))
+    }
+
+    /// Bumped by every reset of the account data: answers asked for before
+    /// one are dropped.
+    pub fn epoch(&self) -> u64 {
+        self.epoch
     }
 
     /// Clears all account data (sign-out, other account).
@@ -1333,6 +1344,18 @@ mod tests {
         p.uploaded = vec![id(1)];
         assert_eq!(p.upload_state(0), UploadState::Done);
         assert_eq!(p.upload_state(1), UploadState::Uploading);
+        assert_eq!(p.upload_state(2), UploadState::Waiting);
+        // Failed on the second file: it stays going up, the third waits.
+        p.failed = Some(api(500, "internal", none.clone()));
+        assert_eq!(p.upload_state(1), UploadState::Uploading);
+        assert_eq!(p.upload_state(2), UploadState::Waiting);
+        // A retry that uploads again keeps those that arrived before done.
+        p.failed = None;
+        p.arrived = 2;
+        p.uploaded.clear();
+        p.stage = SendStage::Presign;
+        assert_eq!(p.upload_state(0), UploadState::Uploading);
+        assert_eq!(p.upload_state(1), UploadState::Done);
         assert_eq!(p.upload_state(2), UploadState::Waiting);
 
         let rejected = api(

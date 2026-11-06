@@ -522,6 +522,17 @@ pub fn paint(
         .add(egui_wgpu::Callback::new_paint_callback(rect, draw));
 }
 
+/// The size each key was last asked for and when (`input.time`).
+#[derive(Clone, Default)]
+struct Asked(HashMap<gelabber_call::VideoKey, ((u32, u32, u32), f64)>);
+
+fn asked_id() -> egui::Id {
+    egui::Id::unique("gelabber-video-requests")
+}
+
+/// A key no tile asked for this long has no tile any more.
+const GONE_AFTER: f64 = 0.5;
+
 /// Asks the call for the size a tile shows `key` at, in physical pixels,
 /// once per change: the core scales and drops frames before they reach
 /// Rust, and the SFU sends a fitting layer.
@@ -538,18 +549,46 @@ pub fn request(
         (tile.height() * ppp).round().max(1.0) as u32,
         fps,
     );
-    let id = egui::Id::unique(("gelabber-video-request", key.0));
-    let last: Option<(u32, u32, u32)> = ui.ctx().data(|d| d.get_temp(id));
+    let now = ui.ctx().input(|i| i.time);
+    let last = ui.ctx().data_mut(|d| {
+        d.get_temp_mut_or_default::<Asked>(asked_id())
+            .0
+            .insert(key, (size, now))
+            .map(|(size, _)| size)
+    });
     if last != Some(size) {
-        ui.ctx().data_mut(|d| d.insert_temp(id, size));
         call.request_video(key, size.0, size.1, size.2);
     }
 }
 
-/// Forgets the last size asked for `key`, so the next tile asks again.
-pub fn forget(ctx: &egui::Context, key: gelabber_call::VideoKey) {
-    let id = egui::Id::unique(("gelabber-video-request", key.0));
-    ctx.data_mut(|d| d.remove::<(u32, u32, u32)>(id));
+/// Forgets the last size asked for `key`, here and in the call, so the
+/// next tile asks again.
+pub fn forget(ctx: &egui::Context, call: &gelabber_call::Call, key: gelabber_call::VideoKey) {
+    ctx.data_mut(|d| {
+        d.get_temp_mut_or_default::<Asked>(asked_id())
+            .0
+            .remove(&key)
+    });
+    call.release_video(key);
+}
+
+/// Once a frame: a tile does not say it went, so a key no tile asked for
+/// a while is let go of, and its next tile asks for its size again.
+pub fn sweep(ctx: &egui::Context, call: &gelabber_call::Call) {
+    let now = ctx.input(|i| i.time);
+    let gone: Vec<gelabber_call::VideoKey> = ctx.data_mut(|d| {
+        let asked = &mut d.get_temp_mut_or_default::<Asked>(asked_id()).0;
+        let gone = asked
+            .iter()
+            .filter(|(_, (_, at))| now - at > GONE_AFTER)
+            .map(|(k, _)| *k)
+            .collect();
+        asked.retain(|_, (_, at)| now - *at <= GONE_AFTER);
+        gone
+    });
+    for key in gone {
+        call.release_video(key);
+    }
 }
 
 /// The rect a [`placement`] gives, for callers that draw around it.
@@ -577,6 +616,42 @@ mod tests {
             rotation: 0,
             serial,
         }
+    }
+
+    /// A tile that went stops holding its size: drawn again at the same
+    /// size, it asks the call again.
+    #[test]
+    fn a_tile_that_went_asks_again() {
+        let call = gelabber_call::Call::new(
+            gelabber_client::Client::new("http://127.0.0.1:9").expect("client"),
+        );
+        let key = gelabber_call::VideoKey(8);
+        let ctx = egui::Context::default();
+        let tile = Rect::from_min_size(pos2(0.0, 0.0), vec2(320.0, 180.0));
+        let frame = |time: f64, drawn: bool| {
+            let input = egui::RawInput {
+                time: Some(time),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                sweep(ui.ctx(), &call);
+                if drawn {
+                    request(ui, &call, key, tile, 30);
+                }
+            });
+            out.textures_delta.clear();
+        };
+        frame(0.0, true);
+        assert_eq!(call.video_request(key), Some((320, 180, 30)));
+        frame(0.3, false);
+        assert!(
+            call.video_request(key).is_some(),
+            "a frame away is not gone"
+        );
+        frame(1.0, false);
+        assert_eq!(call.video_request(key), None);
+        frame(1.1, true);
+        assert_eq!(call.video_request(key), Some((320, 180, 30)));
     }
 
     #[test]

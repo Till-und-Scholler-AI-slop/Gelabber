@@ -224,6 +224,7 @@ impl Widget for Button<'_> {
             Sense::hover()
         };
         let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), sense);
+        super::popover::focus_first(&response);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
         if !ui.is_rect_visible(rect) {
             return response;
@@ -382,6 +383,7 @@ impl Widget for IconButton<'_> {
             None => ui.allocate_exact_size(Vec2::splat(self.size), sense),
         };
         let response = response.on_hover_text(self.label);
+        super::popover::focus_first(&response);
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::Role::Button, !self.disabled, self.label)
         });

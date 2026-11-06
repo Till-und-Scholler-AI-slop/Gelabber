@@ -75,6 +75,23 @@ fn devices(list: &[gelabber_call::Device]) -> Vec<(String, String)> {
     crate::screens::voice::quick::device_options(list)
 }
 
+/// `SourceAudioApp` lists on mount and on focus, and the device lists
+/// follow the system: the call lists both again when `form` opens and when
+/// the window comes back to the front.
+fn refresh_lists(ui: &Ui, app: &AppCtx, form: &str) {
+    let ctx = ui.ctx();
+    let id = Id::unique(("gelabber-media-lists", form));
+    let frame = ctx.cumulative_frame_nr();
+    let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+    let last: Option<(u64, bool)> = ctx.data(|d| d.get_temp(id));
+    let opened = last.is_none_or(|(f, _)| f + 1 < frame);
+    let refocused = last.is_some_and(|(_, was)| !was) && focused;
+    ctx.data_mut(|d| d.insert_temp(id, (frame, focused)));
+    if opened || refocused {
+        app.call.refresh_devices();
+    }
+}
+
 /// A chosen device for the call: `None` is the system default.
 fn chosen(id: &str) -> Option<String> {
     (!id.is_empty()).then(|| id.to_owned())
@@ -352,6 +369,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     let c = &theme.c;
     let mut p = prefs::get(&ctx);
     let before = p.clone();
+    refresh_lists(ui, app, "audio");
     let listed = app.call.with_state(|s| s.devices.clone());
     controls::column(ui, ui.available_width().min(720.0), |ui| {
         group_head(ui, "Eingabe", None);
@@ -482,6 +500,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             let processing = crate::screens::voice::diagnostics::processing_message(
                 &app.call.state(),
                 &p.processing_mode,
+                &p.audio_input_id,
             );
             let bw = button_width(ui, "Mikrofon testen");
             // `.media-actions` wraps the button under the status once the
@@ -985,6 +1004,7 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     let c = &theme.c;
     let mut p = prefs::get(&ctx);
     let before = p.clone();
+    refresh_lists(ui, app, "video");
     let listed = app.call.with_state(|s| s.devices.clone());
     controls::column(ui, ui.available_width().min(720.0), |ui| {
         group_head(ui, "Kamera", Some(&summary(&p.camera_profile)));
@@ -1048,6 +1068,7 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                     .chain(quiet)
                     .chain(apps.iter().map(|a| (a.id.clone(), a.label.clone())))
                     .collect();
+            let was_open = controls::select_open(ui.ctx(), "source-audio-app");
             if controls::select(
                 ui,
                 "source-audio-app",
@@ -1056,6 +1077,10 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 field_fill(ui),
             ) {
                 p.source_audio_app = chosen;
+            }
+            // The list asks again as it opens (`onFocus={load}`).
+            if !was_open && controls::select_open(ui.ctx(), "source-audio-app") {
+                app.call.refresh_devices();
             }
         });
         ui.add_space(20.0);

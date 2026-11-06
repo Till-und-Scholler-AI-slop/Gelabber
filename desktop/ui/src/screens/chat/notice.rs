@@ -28,14 +28,16 @@ pub fn channel_error(s: &State, server: Uuid) -> Option<bool> {
 /// `DmChannelPage`: fetching the DM failed, and it is not gone (a gone DM
 /// goes back to the list).
 pub fn dm_error(s: &State, dm: Uuid) -> Option<bool> {
+    // Also for a DM the list has: the page shows its own fetch's error.
     let key = format!("dm_load:{dm}");
-    if s.failures(&key) == 0 || s.dm(dm).is_some() {
+    if s.failures(&key) == 0 {
         return None;
     }
     match s.op(&key) {
         Some(OpState::Failed(e)) if e.is_gone() => None,
+        Some(OpState::Failed(_)) => Some(false),
         Some(OpState::Pending) => Some(true),
-        _ => Some(false),
+        _ => None,
     }
 }
 

@@ -160,6 +160,8 @@ pub enum MicTestPhase {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MicTest {
     pub phase: MicTestPhase,
+    /// The microphone the test captures from ("" the system's), once it runs.
+    pub device: Option<String>,
     pub input: f64,
     pub processed: f64,
     pub clipping: bool,
@@ -179,6 +181,9 @@ pub struct CallState {
     pub live_audio: bool,
     pub live_sound: LiveSound,
     pub mic: MicStatus,
+    /// The microphone the call captures from ("" the system's) while it
+    /// does: the chosen one, or the system's when that one would not open.
+    pub mic_input: Option<String>,
     pub participants: Vec<Participant>,
     /// 0..=4 bars, as the web's connection indicator; 0 = not measured.
     pub quality: u8,
@@ -357,6 +362,8 @@ pub(crate) struct Inner {
     retries: std::sync::atomic::AtomicU64,
     #[cfg(feature = "testing")]
     joins: std::sync::atomic::AtomicU64,
+    #[cfg(feature = "testing")]
+    refreshes: std::sync::atomic::AtomicU64,
     runtime: OnceLock<tokio::runtime::Runtime>,
     #[cfg(feature = "media")]
     media: media::Media,
@@ -521,6 +528,15 @@ impl Inner {
     }
 }
 
+/// Lets go of `arc`; when that was the last hold, it is dropped on a thread
+/// of its own. A frame sink runs on the core's delivery thread, and tearing
+/// the call down there would wait for that very delivery.
+pub(crate) fn release_elsewhere<T: Send + 'static>(arc: Arc<T>) {
+    if let Some(last) = Arc::into_inner(arc) {
+        std::thread::spawn(move || drop(last));
+    }
+}
+
 /// Whether `GELABBER_FAKE_MEDIA=1` asks for a call without devices.
 pub fn fake_media() -> bool {
     std::env::var("GELABBER_FAKE_MEDIA").is_ok_and(|v| v == "1" || v == "true")
@@ -563,6 +579,8 @@ impl Call {
                 retries: std::sync::atomic::AtomicU64::new(0),
                 #[cfg(feature = "testing")]
                 joins: std::sync::atomic::AtomicU64::new(0),
+                #[cfg(feature = "testing")]
+                refreshes: std::sync::atomic::AtomicU64::new(0),
                 runtime: OnceLock::new(),
                 #[cfg(feature = "media")]
                 media: media::Media::default(),
@@ -682,6 +700,12 @@ impl Call {
     #[cfg(feature = "testing")]
     pub fn join_attempts(&self) -> u64 {
         self.inner.joins.load(Ordering::Acquire)
+    }
+
+    /// Tests: how often [`Self::refresh_devices`] was called.
+    #[cfg(feature = "testing")]
+    pub fn device_refreshes(&self) -> u64 {
+        self.inner.refreshes.load(Ordering::Acquire)
     }
 
     /// Tests: how often [`Self::retry_microphone`] was called.
@@ -866,7 +890,10 @@ impl Call {
     /// Lists microphones, speakers and cameras again into
     /// [`CallState::devices`].
     pub fn refresh_devices(&self) {
-        #[cfg(feature = "media")]
+        // Interface tests draw the lists they set, and start no engine.
+        #[cfg(feature = "testing")]
+        self.inner.refreshes.fetch_add(1, Ordering::AcqRel);
+        #[cfg(all(feature = "media", not(feature = "testing")))]
         media::refresh_devices(&self.inner);
     }
 
@@ -959,6 +986,21 @@ impl Call {
         let _ = previous;
     }
 
+    /// No tile shows `key` any more: its size is forgotten, so the next
+    /// tile's [`Self::request_video`] reaches the core even at that size.
+    pub fn release_video(&self, key: VideoKey) {
+        self.inner.requests.lock().remove(&key);
+    }
+
+    /// What a tile asked for `key`: width, height and rate.
+    pub fn video_request(&self, key: VideoKey) -> Option<(u32, u32, u32)> {
+        self.inner
+            .requests
+            .lock()
+            .get(&key)
+            .map(|r| (r.width, r.height, r.fps))
+    }
+
     fn on_gateway(&self, event: &GatewayEvent) {
         #[cfg(feature = "media")]
         media::on_gateway(&self.inner, event);
@@ -987,6 +1029,49 @@ mod tests {
             CallStatus::Failed(logic::NO_MEDIA_CORE.into())
         );
         assert_eq!(call.take_notices(), vec![logic::NO_MEDIA_CORE.to_owned()]);
+    }
+
+    /// The last hold let go of on a frame's thread drops the call
+    /// elsewhere, so its teardown cannot wait for that thread.
+    #[test]
+    fn the_last_hold_on_a_delivery_thread_drops_elsewhere() {
+        struct Noted(std::sync::mpsc::Sender<std::thread::ThreadId>);
+        impl Drop for Noted {
+            fn drop(&mut self) {
+                let _ = self.0.send(std::thread::current().id());
+            }
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let held = Arc::new(Noted(tx));
+        let weak = Arc::downgrade(&held);
+        let delivery = std::thread::spawn(move || {
+            // The sink's upgrade, then the app's own hold goes meanwhile.
+            let during = weak.upgrade().expect("alive");
+            drop(held);
+            release_elsewhere(during);
+            std::thread::current().id()
+        })
+        .join()
+        .unwrap();
+        let dropped_on = rx.recv_timeout(Duration::from_secs(5)).expect("dropped");
+        assert_ne!(dropped_on, delivery);
+        // Not the last hold: nothing is dropped.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let held = Arc::new(Noted(tx));
+        release_elsewhere(held.clone());
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_tile_that_went_lets_its_size_be_asked_again() {
+        let call = Call::new(Client::new("http://127.0.0.1:9").unwrap());
+        let key = VideoKey::camera(Uuid::new_v4());
+        call.request_video(key, 640, 360, 30);
+        assert_eq!(call.video_request(key), Some((640, 360, 30)));
+        call.release_video(key);
+        assert_eq!(call.video_request(key), None);
+        call.request_video(key, 640, 360, 30);
+        assert_eq!(call.video_request(key), Some((640, 360, 30)));
     }
 
     #[test]
