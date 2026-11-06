@@ -25,6 +25,8 @@ const VERSION: &[u8] = b"1";
 /// More than one value of a localStorage area can be (its quota is 10 MiB
 /// of UTF-16); a block that claims more is damaged.
 const MAX_BLOCK: usize = 64 << 20;
+/// LevelDB's kMaxSequenceNumber: a sequence shares its u64 with the type.
+const MAX_SEQUENCE: u64 = (1 << 56) - 1;
 
 /// Per key the newest entry seen: its sequence number and value (`None`:
 /// deleted).
@@ -357,7 +359,11 @@ fn write_batch(record: &[u8], merge: &mut Merge) {
         let count = u32::from_le_bytes(record.get(8..12)?.try_into().ok()?);
         let mut pos = 12;
         let mut ops = Vec::new();
-        for seq in (first..).take(usize::try_from(count).ok()?) {
+        let end = first.checked_add(u64::from(count))?;
+        if end > MAX_SEQUENCE + 1 {
+            return None;
+        }
+        for seq in first..end {
             let tag = *record.get(pos)?;
             pos += 1;
             let key = slice(record, &mut pos)?;
@@ -887,5 +893,22 @@ mod tests {
         .concat();
         assert_eq!(log_records(&log, Damage::SkipBlock), [old.clone(), new]);
         assert_eq!(log_records(&log, Damage::Stop), [old]);
+    }
+
+    #[test]
+    fn sequence_numbers_past_leveldbs_reject_the_batch() {
+        let key: &[u8] = b"k";
+        for (first, count) in [(u64::MAX, 1), (MAX_SEQUENCE, 2), (MAX_SEQUENCE + 1, 1)] {
+            let mut merge = Merge::new();
+            let ops = vec![(key, Some(b"v".as_slice())); count];
+            write_batch(&write::batch(first, &ops), &mut merge);
+            assert!(merge.is_empty(), "{first} + {count}");
+        }
+        let mut merge = Merge::new();
+        write_batch(
+            &write::batch(MAX_SEQUENCE, &[(key, Some(b"v"))]),
+            &mut merge,
+        );
+        assert_eq!(merge[key].0, MAX_SEQUENCE);
     }
 }
