@@ -33,7 +33,8 @@ pub const MANIFEST: &str = "latest-native.json";
 const ENDPOINT: &str = "https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/latest/download/latest-native.json";
 /// The Arch package's folder (desktop/packaging/arch/native/PKGBUILD).
 const PACMAN_DIR: &str = "/opt/gelabber";
-const PACMAN_PACKAGE: &str = "gelabber-desktop-native";
+/// The Tauri package's name, taken over so that `pacman -Syu` upgrades it.
+const PACMAN_PACKAGE: &str = "gelabber-desktop";
 
 /// Where "Herunterladen" leads: the release page of `version` (as
 /// [`newer`] reports it, without `v`).
@@ -1459,11 +1460,7 @@ mod tests {
         assert_eq!(link.text(), "Gelabber 0.9.1 ist da.");
         assert_eq!(link.buttons()[0].0, "Herunterladen");
         let pacman = Notice::new("0.9.1", Offer::PackageManager);
-        assert!(
-            pacman
-                .text()
-                .contains("pacman (Paket gelabber-desktop-native)")
-        );
+        assert!(pacman.text().contains("pacman (Paket gelabber-desktop)"));
         assert_eq!(pacman.buttons(), &[("Später", Click::Later)]);
     }
 

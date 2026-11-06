@@ -116,9 +116,22 @@ class Installer(unittest.TestCase):
 
 
 class ArchPackage(unittest.TestCase):
-    def test_the_beta_package_replaces_the_tauri_one(self):
-        self.assertIn('gelabber-desktop', bash_array(PKGBUILD, 'conflicts'))
-        self.assertEqual(bash_array(PKGBUILD, 'pkgname'), ['gelabber-desktop-native'])
+    def test_the_package_takes_over_the_tauri_packages_name(self):
+        # Same name, newer version: pacman -Syu upgrades a Tauri install.
+        self.assertEqual(bash_array(PKGBUILD, 'pkgname'), ['gelabber-desktop'])
+        self.assertEqual(bash_array(PKGBUILD, 'replaces'), ['gelabber-desktop-native'])
+        conflicts = bash_array(PKGBUILD, 'conflicts')
+        for name in ('gelabber-desktop-native', 'gelabber-desktop-bin', 'gelabber-desktop-git'):
+            with self.subTest(name=name):
+                self.assertIn(name, conflicts)
+        self.assertNotIn('gelabber-desktop', conflicts)
+        # The Tauri package's command stays, next to the app's own.
+        package = PKGBUILD.read_text().split('package() {', 1)[1]
+        for command in ('gelabber', 'gelabber-desktop'):
+            with self.subTest(command=command):
+                self.assertIn(f'ln -s /opt/gelabber/gelabber "${{pkgdir}}/usr/bin/{command}"', package)
+        update = (DESKTOP / 'ui/src/platform/update.rs').read_text()
+        self.assertIn('const PACMAN_PACKAGE: &str = "gelabber-desktop";', update)
 
     def test_no_web_view_or_gtk_dependency(self):
         depends = bash_array(PKGBUILD, 'depends')

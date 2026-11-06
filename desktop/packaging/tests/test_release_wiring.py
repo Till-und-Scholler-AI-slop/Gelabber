@@ -120,9 +120,13 @@ class NativeWiring(unittest.TestCase):
     def test_the_pacman_repository_carries_the_native_package(self):
         arch = job_text(self.build, 'arch-repo')
         self.assertIn('name: gelabber-native-linux-x64\n', arch)
-        self.assertIn('repo.sh build-native', arch)
-        self.assertIn('repo.sh test-native', arch)
-        self.assertEqual(arch.count('repo.sh build-native'), 2, 'test build and release rebuild')
+        self.assertNotIn('name: gelabber-desktop-linux-x64\n', arch)
+        self.assertEqual(arch.count('repo.sh build "'), 2, 'test build and release rebuild')
+        self.assertEqual(arch.count('gelabber-native-linux-x64.tar.gz site'), 2)
+        # The upgrade test starts from the Tauri package of a release.
+        test = arch.split('repo.sh test site', 1)[1].split('\n      - name:', 1)[0]
+        self.assertIn('tauri/PKGBUILD tauri/gelabber-desktop-linux-x64.tar.gz "$TAURI_RELEASE"', test)
+        self.assertRegex(arch, r'\n      TAURI_RELEASE: v0\.8\.\d+\n')
 
 
 if __name__ == '__main__':

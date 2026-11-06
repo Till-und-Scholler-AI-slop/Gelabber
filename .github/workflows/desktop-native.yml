@@ -1180,8 +1180,9 @@ jobs:
         if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
         run: cargo fmt --manifest-path desktop/Cargo.toml --all -- --check
 
-  # The pacman repository (Arch/Omarchy): both packages, signed database, and
-  # a user's install, upgrade and removal against it. Publishing is separate.
+  # The pacman repository (Arch/Omarchy): the package, signed database, and a
+  # user's upgrade from the Tauri package, upgrade and removal against it.
+  # Publishing is separate.
   arch-repo:
     name: Arch package and repository
     if: github.event_name != 'pull_request'
@@ -1193,19 +1194,27 @@ jobs:
       # Releases sign with the repository key; everything else with a
       # throwaway key that only this job trusts.
       ARCH_REPO_GPG_KEY: ${{ inputs.release_tag != '' && secrets.ARCH_REPO_GPG_KEY || '' }}
+      # The Tauri release whose package this one upgrades.
+      TAURI_RELEASE: v0.8.9
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Download the app
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: gelabber-desktop-linux-x64
 
       - name: Download the native app
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: gelabber-native-linux-x64
+
+      # The Tauri package as a release up to 0.8 built it: its PKGBUILD at
+      # the tag and the tarball attached to the release.
+      - name: Download the Tauri package's sources
+        run: |
+          set -euo pipefail
+          mkdir tauri
+          curl -fsSL --retry 3 -o tauri/PKGBUILD \
+            "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${TAURI_RELEASE}/desktop/packaging/arch/PKGBUILD"
+          curl -fsSL --retry 3 -o tauri/gelabber-desktop-linux-x64.tar.gz \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAURI_RELEASE}/gelabber-desktop-linux-x64.tar.gz"
 
       # Xvfb, lavapipe and the X11 libraries winit loads, for the native app's
       # start after its install.
@@ -1215,9 +1224,7 @@ jobs:
             libxkbcommon-x11 libxcursor libxrandr libxi
           useradd -m builder
           cp -r desktop/packaging/arch /tmp/arch && chown -R builder /tmp/arch
-          cd /tmp/arch
-          sudo -u builder makepkg --printsrcinfo | diff -u .SRCINFO -
-          cd native
+          cd /tmp/arch/native
           sudo -u builder makepkg --printsrcinfo | diff -u .SRCINFO -
 
       - name: Build package and repository
@@ -1242,22 +1249,19 @@ jobs:
               echo "release $TAG: desktop/Cargo.toml, and with it the app, says $app"; exit 1
             fi
             version="$TAG"
-            url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gelabber-desktop-linux-x64.tar.gz"
-            native_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gelabber-native-linux-x64.tar.gz"
+            url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gelabber-native-linux-x64.tar.gz"
           else
             # Test builds: the workspace version plus the run number.
             version="$(sed -n 's/^version = "\(.*\)"$/\1/p' desktop/Cargo.toml | head -n1).r${GITHUB_RUN_NUMBER}"
             url=""
-            native_url=""
           fi
-          desktop/packaging/arch/repo.sh build "$version" gelabber-desktop-linux-x64.tar.gz site $url
-          desktop/packaging/arch/repo.sh build-native "$version" gelabber-native-linux-x64.tar.gz site $native_url
+          desktop/packaging/arch/repo.sh build "$version" gelabber-native-linux-x64.tar.gz site $url
           cp desktop/packaging/arch/README.md site/README.md
 
-      - name: Install, upgrade and remove like a user
+      - name: Upgrade from the Tauri package, upgrade and remove like a user
         run: |
-          desktop/packaging/arch/repo.sh test site gelabber-desktop-linux-x64.tar.gz
-          desktop/packaging/arch/repo.sh test-native site gelabber-native-linux-x64.tar.gz
+          desktop/packaging/arch/repo.sh test site gelabber-native-linux-x64.tar.gz \
+            tauri/PKGBUILD tauri/gelabber-desktop-linux-x64.tar.gz "$TAURI_RELEASE"
 
       # The repository as built before the upgrade test added a pkgrel 2.
       - name: Rebuild the repository for upload
@@ -1266,9 +1270,7 @@ jobs:
           TAG: ${{ env.RELEASE_TAG }}
         run: |
           rm -rf site
-          desktop/packaging/arch/repo.sh build "$TAG" gelabber-desktop-linux-x64.tar.gz site \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gelabber-desktop-linux-x64.tar.gz"
-          desktop/packaging/arch/repo.sh build-native "$TAG" gelabber-native-linux-x64.tar.gz site \
+          desktop/packaging/arch/repo.sh build "$TAG" gelabber-native-linux-x64.tar.gz site \
             "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gelabber-native-linux-x64.tar.gz"
           cp desktop/packaging/arch/README.md site/README.md
 
