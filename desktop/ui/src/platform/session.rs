@@ -612,6 +612,7 @@ mod tests {
 
     #[test]
     fn a_restored_cookie_reaches_the_jar_and_changes_are_written() {
+        #[cfg_attr(not(unix), allow(unused_variables))]
         let config = TempConfig::new("session");
         store("http://127.0.0.1:9", Some("abc123")).unwrap();
         store("https://other.example", Some("zzz")).unwrap();

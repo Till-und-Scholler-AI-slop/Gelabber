@@ -710,7 +710,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub(crate) mod testing {
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
