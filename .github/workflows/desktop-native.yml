@@ -611,15 +611,15 @@ jobs:
           GELABBER_NATIVE_UPDATE_TEST_INSTALLER: ${{ format('{0}\gelabber-native-windows-x64-setup.exe', github.workspace) }}
         run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber -- the_installer_built_here --test-threads=1
 
-      # An installed 0.8 app's switch: the Tauri release, then this setup with
-      # its updater's passive arguments; a fresh install, one over it, removal.
+      # An installed 0.8 app's switch per Tauri release: its WebView filled by the
+      # fixture page, this setup with its updater's arguments, the import checked.
       - name: Install over the Tauri app and remove like a user
         id: native-install
         if: ${{ !cancelled() && steps.native-installer.outcome == 'success' }}
-        timeout-minutes: 20
+        timeout-minutes: 25
         env:
-          # The Tauri release whose installs this one updates.
-          TAURI_RELEASE: v0.8.9
+          # Releases up to 0.8.9 leave no export; add v0.8.10 (export path) once it is tagged.
+          TAURI_RELEASES: v0.8.9
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           $id = 'io.github.till-und-scholler-ai-slop.gelabber'
@@ -628,6 +628,9 @@ jobs:
           $desktop = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Gelabber.lnk'
           $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Gelabber'
           $version = (Select-String -Path desktop\Cargo.toml -Pattern '^version = "(.+)"\s*$' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $config = Join-Path $env:APPDATA $id
+          $data = Join-Path $env:LOCALAPPDATA $id
+          $fixtures = (Resolve-Path desktop\ui\tests\fixtures\webview).Path
           function Run($file, [string[]]$arguments, $minutes) {
             $process = Start-Process -FilePath $file -ArgumentList $arguments -PassThru
             # Without the handle taken now, the exit code is gone once the process ends.
@@ -675,39 +678,91 @@ jobs:
               throw "the uninstaller removed the installer's note of the folder without being asked"
             }
           }
+          # The Tauri app on the fixture page of one server until the page is done, then closed.
+          function Fill($port, [string[]]$serveArgs) {
+            Set-Content -LiteralPath (Join-Path $config 'desktop.json') -Value "{`"server`":`"http://127.0.0.1:$port`"}" -NoNewline
+            $done = Join-Path $env:RUNNER_TEMP "webview-done-$port"
+            Remove-Item -LiteralPath $done -ErrorAction SilentlyContinue
+            $server = Start-Process -FilePath python -ArgumentList (@('-I', (Join-Path $fixtures 'page\serve.py'), $port, $done) + $serveArgs) -PassThru -NoNewWindow
+            try {
+              $app = Start-Process -FilePath (Join-Path $install 'gelabber-desktop.exe') -PassThru
+              $deadline = (Get-Date).AddMinutes(2)
+              while (-not (Test-Path -LiteralPath $done) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
+              if (-not (Test-Path -LiteralPath $done)) { throw "the Tauri app did not run the fixture page on port $port" }
+              # A graceful close: Chromium commits the page's last writes then.
+              Start-Sleep -Seconds 8
+              $null = $app.CloseMainWindow()
+              if (-not $app.WaitForExit(60 * 1000)) { $app.Kill(); throw 'the Tauri app did not close' }
+              Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Wait-Process -Timeout 60
+            } finally {
+              Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+            }
+          }
+          function Migrate($release) {
+            $tauri = Join-Path $env:RUNNER_TEMP "gelabber-desktop-$release-setup.exe"
+            $base = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$release"
+            Invoke-WebRequest "$base/gelabber-desktop-windows-x64-setup.exe" -OutFile $tauri
+            Invoke-WebRequest "$base/gelabber-desktop-windows-x64-setup.exe.sha256" -OutFile "$tauri.sha256"
+            if ((Get-FileHash $tauri -Algorithm SHA256).Hash -ne ((Get-Content -Raw "$tauri.sha256") -split '\s+')[0]) {
+              throw "the Tauri installer of $release does not match its .sha256"
+            }
+            Run $tauri '/S' 15
+            if (-not (Test-Path (Join-Path $install 'gelabber-desktop.exe'))) { throw "the Tauri app is not in $install" }
+            $tauriShortcuts = @($lnk, $desktop | Where-Object { Test-Path $_ })
+            if ($tauriShortcuts -notcontains $lnk) { throw 'the Tauri setup made no Start menu shortcut' }
+            # 8124 first: a server the user left, with other values.
+            $null = New-Item -ItemType Directory -Force $config
+            Fill 8124 @('fixed')
+            Fill 8123 @()
+            $store = Join-Path $data 'EBWebView\Default\Local Storage\leveldb'
+            $files = @(Get-ChildItem -LiteralPath $store -File | Where-Object { $_.Name -eq 'CURRENT' -or $_.Name -like 'MANIFEST-*' -or $_.Extension -in '.log', '.ldb' })
+            if (-not ($files | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'gelabber.media' -SimpleMatch -Quiet })) {
+              throw "no gelabber.media in $store"
+            }
+            $copy = New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP "webview-fixture-windows\$release")
+            $files | Copy-Item -Destination $copy
+            $export = Join-Path $config 'legacy-settings.json'
+            if ([version]$release.TrimStart('v') -ge [version]'0.8.10') {
+              if (-not (Test-Path $export)) { throw "$release wrote no legacy-settings.json" }
+              # Only the export can give the values now.
+              Remove-Item -Recurse -Force (Join-Path $data 'EBWebView')
+            } elseif (Test-Path $export) {
+              throw "$release wrote legacy-settings.json"
+            }
+            # The restarted app imports, then ends by itself once it painted (GELABBER_SMOKE).
+            $env:GELABBER_SMOKE = '10'
+            Run $setup '/P', '/UPDATE', '/R', '/ARGS', '--server', '"https://gelabber.invalid"' 10
+            $restarted = @(Get-Process -Name gelabber -ErrorAction SilentlyContinue)
+            if (-not $restarted) { throw 'the update did not start gelabber.exe (/R)' }
+            foreach ($process in $restarted) { $null = $process.Handle }
+            foreach ($process in $restarted) {
+              if (-not $process.WaitForExit(120 * 1000)) { throw 'the restarted gelabber.exe did not end within 2 minutes' }
+              if ($process.ExitCode -ne 0) { throw "the restarted gelabber.exe ended with exit code $($process.ExitCode), not 0 (painted)" }
+            }
+            Remove-Item Env:GELABBER_SMOKE
+            python -I (Join-Path $fixtures 'check_import.py') $config
+            Installed $tauriShortcuts
+            Removed
+            Remove-Item -Recurse -Force $config, $data -ErrorAction SilentlyContinue
+          }
           $setup = (Resolve-Path gelabber-native-windows-x64-setup.exe).Path
-
-          $tauri = Join-Path $env:RUNNER_TEMP 'gelabber-desktop-windows-x64-setup.exe'
-          $base = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:TAURI_RELEASE"
-          Invoke-WebRequest "$base/gelabber-desktop-windows-x64-setup.exe" -OutFile $tauri
-          Invoke-WebRequest "$base/gelabber-desktop-windows-x64-setup.exe.sha256" -OutFile "$tauri.sha256"
-          if ((Get-FileHash $tauri -Algorithm SHA256).Hash -ne ((Get-Content -Raw "$tauri.sha256") -split '\s+')[0]) {
-            throw "the Tauri installer of $env:TAURI_RELEASE does not match its .sha256"
-          }
-          Run $tauri '/S' 15
-          if (-not (Test-Path (Join-Path $install 'gelabber-desktop.exe'))) { throw "the Tauri app is not in $install" }
-          $tauriShortcuts = @($lnk, $desktop | Where-Object { Test-Path $_ })
-          if ($tauriShortcuts -notcontains $lnk) { throw 'the Tauri setup made no Start menu shortcut' }
-          # The restarted app ends by itself once it painted (GELABBER_SMOKE).
-          $env:GELABBER_CONFIG_DIR = (New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'native-update')).FullName
-          $env:GELABBER_SMOKE = '10'
-          Run $setup '/P', '/UPDATE', '/R', '/ARGS', '--server', '"https://gelabber.invalid"' 10
-          $restarted = @(Get-Process -Name gelabber -ErrorAction SilentlyContinue)
-          if (-not $restarted) { throw 'the update did not start gelabber.exe (/R)' }
-          foreach ($process in $restarted) { $null = $process.Handle }
-          foreach ($process in $restarted) {
-            if (-not $process.WaitForExit(120 * 1000)) { throw 'the restarted gelabber.exe did not end within 2 minutes' }
-            if ($process.ExitCode -ne 0) { throw "the restarted gelabber.exe ended with exit code $($process.ExitCode), not 0 (painted)" }
-          }
-          Remove-Item Env:GELABBER_SMOKE, Env:GELABBER_CONFIG_DIR
-          Installed $tauriShortcuts
-          Removed
+          foreach ($release in $env:TAURI_RELEASES -split '\s+' | Where-Object { $_ }) { Migrate $release }
 
           Run $setup '/S' 10
           Installed @($lnk, $desktop)
           Run $setup '/S', '/UPDATE' 10
           Installed @($lnk)
           Removed
+
+      # WebView2's store as the step above left it, to compare with the Chromium fixture.
+      - name: Upload the WebView2 store
+        if: ${{ !cancelled() && steps.native-install.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: webview-fixture-windows
+          path: ${{ runner.temp }}/webview-fixture-windows
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload the native app
         if: ${{ !cancelled() && steps.native-installer.outcome == 'success' && steps.native-sign.outcome == 'success' }}
@@ -949,7 +1004,7 @@ jobs:
       # Releases sign with the repository key; everything else with a
       # throwaway key that only this job trusts.
       ARCH_REPO_GPG_KEY: ${{ inputs.release_tag != '' && secrets.ARCH_REPO_GPG_KEY || '' }}
-      # The Tauri release whose package this one upgrades.
+      # The Tauri release whose package this one upgrades; 0.8.9 leaves no export.
       TAURI_RELEASE: v0.8.9
     steps:
       - name: Checkout
@@ -972,11 +1027,11 @@ jobs:
             "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAURI_RELEASE}/gelabber-desktop-linux-x64.tar.gz"
 
       # Xvfb, lavapipe and the X11 libraries winit loads, for the native app's
-      # start after its install.
+      # start after its install; Python serves the Tauri app's fixture page.
       - name: Check PKGBUILD and .SRCINFO
         run: |
           pacman -Syu --noconfirm --needed git xorg-server-xvfb xorg-xauth vulkan-swrast \
-            libxkbcommon-x11 libxcursor libxrandr libxi
+            libxkbcommon-x11 libxcursor libxrandr libxi python
           useradd -m builder
           cp -r desktop/packaging/arch /tmp/arch && chown -R builder /tmp/arch
           cd /tmp/arch/native
@@ -1017,6 +1072,16 @@ jobs:
         run: |
           desktop/packaging/arch/repo.sh test site gelabber-native-linux-x64.tar.gz \
             tauri/PKGBUILD tauri/gelabber-desktop-linux-x64.tar.gz "$TAURI_RELEASE"
+
+      # The Tauri app's WebKitGTK storage from the step above (repo.sh test).
+      - name: Upload the WebKitGTK store
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: webview-fixture-arch
+          path: webview-fixture-arch
+          if-no-files-found: warn
+          retention-days: 14
 
       # The repository as built before the upgrade test added a pkgrel 2.
       - name: Rebuild the repository for upload
