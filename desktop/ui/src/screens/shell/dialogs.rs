@@ -1127,6 +1127,7 @@ fn select(ui: &mut Ui, id: Id, options: &[(Option<Uuid>, String)], value: &mut O
         // The popover tops out at 360 like `.ui-popover`.
         let picked = crate::widgets::Popover::new(id, rect)
             .min_width(rect.width().min(360.0))
+            .select_list()
             .show(ui.ctx(), |ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 let mut picked = None;

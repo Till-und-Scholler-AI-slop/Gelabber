@@ -512,6 +512,7 @@ pub fn select(
     if open {
         let shown = Popover::new(("select", id), rect)
             .min_width(width)
+            .select_list()
             .show(ui.ctx(), |ui| {
                 let mut pick = None;
                 for (k, l) in options {

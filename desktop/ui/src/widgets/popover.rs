@@ -15,6 +15,7 @@ pub struct Popover {
     anchor: Rect,
     align_end: bool,
     min_width: f32,
+    takes_focus: bool,
 }
 
 impl Popover {
@@ -24,6 +25,7 @@ impl Popover {
             anchor,
             align_end: false,
             min_width: 180.0,
+            takes_focus: true,
         }
     }
 
@@ -35,6 +37,13 @@ impl Popover {
 
     pub fn min_width(mut self, width: f32) -> Self {
         self.min_width = width;
+        self
+    }
+
+    /// The list of a native `<select>` the web draws: the focus stays on
+    /// its field instead of moving to the first option.
+    pub fn select_list(mut self) -> Self {
+        self.takes_focus = false;
         self
     }
 
@@ -82,8 +91,10 @@ impl Popover {
             d.insert_temp(seen_id, (opened, frame.max(1)));
             d.insert_temp(
                 opening_id(),
-                if opened == frame {
+                if opened == frame && self.takes_focus {
                     Focus::Free
+                } else if opened == frame {
+                    Focus::Taken
                 } else {
                     Focus::Shown
                 },
@@ -231,4 +242,46 @@ pub fn menu_item(ui: &mut Ui, icon: Option<Icon>, label: &str, danger: bool) -> 
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A menu moves the focus to its first entry as it opens; a native
+    /// `<select>`'s list leaves it on the field.
+    #[test]
+    fn a_select_list_leaves_the_focus_on_its_field() {
+        for list in [false, true] {
+            let ctx = egui::Context::default();
+            let field = Id::unique("probe-field");
+            let mut first = None;
+            for open in [false, true, true] {
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    let rect = Rect::from_min_size(pos2(10.0, 10.0), Vec2::new(200.0, 37.0));
+                    let response = ui.interact(rect, field, Sense::click());
+                    if !open {
+                        response.request_focus();
+                        return;
+                    }
+                    let mut popover = Popover::new(("probe", list), rect);
+                    if list {
+                        popover = popover.select_list();
+                    }
+                    let _ = popover.show(ui.ctx(), |ui| {
+                        first = Some(menu_item(ui, None, "Eins", false).id);
+                        menu_item(ui, None, "Zwei", false);
+                    });
+                });
+                // No renderer here takes the font atlas upload.
+                output.textures_delta.clear();
+            }
+            let focused = ctx.memory(|m| m.focused());
+            if list {
+                assert_eq!(focused, Some(field));
+            } else {
+                assert_eq!(focused, first);
+            }
+        }
+    }
 }
