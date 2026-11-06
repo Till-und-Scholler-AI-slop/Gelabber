@@ -100,6 +100,28 @@ const DESKTOP = {
   shell_info: { tray: false, close_to_tray: false },
   shell_unread: null,
 };
+// Scenes with `update` (and `desktop`): the update the app offers, as
+// update.rs `update_state` reports it, and its notice, the BANNER script
+// the Tauri app puts into every page. The install it starts stays at work.
+const BANNER = (await readFile(join(repo, "desktop/app/src/update.rs"), "utf8")).match(
+  /pub const BANNER: &str = r#"([\s\S]*?)"#;/,
+)[1];
+const updateState = (update) => ({
+  current: DESKTOP.media_info.version,
+  supported: true,
+  reason: null,
+  autoCheck: true,
+  phase: "idle",
+  available: null,
+  notes: null,
+  offer: true,
+  busy: false,
+  error: null,
+  lastCheck: null,
+  downloaded: 0,
+  total: null,
+  ...update,
+});
 // What the commands fail with here; every other command is not found.
 const DESKTOP_ERRORS = {
   media_audio_apps: "native media core: application sound needs PipeWire (libpipewire-0.3)",
@@ -177,7 +199,7 @@ for (const scene of scenes) {
   } else {
     if (scene.desktop)
       await page.addInitScript(
-        ({ answers, errors, log }) => {
+        ({ answers, errors, pending, log }) => {
           // @tauri-apps/api/core's contract: invoke, and ids for a Channel,
           // to which no answered command sends.
           let next = 0;
@@ -186,6 +208,7 @@ for (const scene of scenes) {
             unregisterCallback: () => {},
             invoke(command, args) {
               if (log) console.log(`invoke ${command} ${JSON.stringify(args)}`);
+              if (pending.includes(command)) return new Promise(() => {});
               if (Object.hasOwn(answers, command))
                 return Promise.resolve(structuredClone(answers[command]));
               return Promise.reject(errors[command] ?? `Command ${command} not found`);
@@ -193,11 +216,26 @@ for (const scene of scenes) {
           };
         },
         {
-          answers: DESKTOP,
+          answers: scene.update
+            ? { ...DESKTOP, update_state: updateState(scene.update), update_dismiss: null }
+            : DESKTOP,
           errors: DESKTOP_ERRORS,
+          pending: scene.update ? ["update_install"] : [],
           log: Boolean(process.env.GELABBER_PARITY_LOG_INVOKE),
         },
       );
+    // After the shim: the BANNER looks for it when it runs. Its shadow root
+    // opened, as Playwright finds buttons in open ones only.
+    if (scene.desktop && scene.update)
+      await page.addInitScript({
+        content: `{
+          const attach = Element.prototype.attachShadow;
+          Element.prototype.attachShadow = function (init) {
+            return attach.call(this, { ...init, mode: "open" });
+          };
+        }
+        ${BANNER}`,
+      });
     if (process.env.GELABBER_PARITY_LOG_INVOKE)
       page.on("console", (message) => {
         if (message.text().startsWith("invoke ")) console.log(`${scene.name}: ${message.text()}`);

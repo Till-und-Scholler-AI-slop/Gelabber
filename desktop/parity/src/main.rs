@@ -17,6 +17,8 @@
 //! say.mjs words ahead of the page, posts and `after` are undone with say.mjs
 //! once the screenshot is taken. A scene with `page` shows a bundled page of
 //! the desktop app (desktop/app/setup) instead of a route: the Launcher here.
+//! A scene with `update` shows the update notice over the page: the Tauri
+//! app's BANNER there, `platform::update::Notice` here.
 
 mod pixels;
 mod ssim;
@@ -24,6 +26,7 @@ mod ssim;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use gelabber_ui::platform::update::{Click, Notice, Offer, Phase};
 use serde::Deserialize;
 
 const THRESHOLD: f64 = 0.90;
@@ -63,6 +66,61 @@ struct Scene {
     /// comes from the fake devices (Chromium's versus the core's), not the app.
     #[serde(default)]
     mask: Vec<[u32; 4]>,
+    /// The update the app offers, in the shape of the Tauri app's
+    /// `update_state` (shots.mjs answers it with this).
+    update: Option<UpdateState>,
+}
+
+#[derive(Deserialize)]
+struct UpdateState {
+    available: String,
+    /// Where a click on "Neu starten" gets to: "downloading" with
+    /// `downloaded` of `total` bytes, or "installing".
+    #[serde(default)]
+    phase: String,
+    #[serde(default)]
+    downloaded: u64,
+    total: Option<u64>,
+}
+
+/// The Launcher with the update notice over it, as main.rs paints them.
+struct Shell {
+    launcher: gelabber_ui::Launcher,
+    notice: Option<(Notice, Phase)>,
+}
+
+impl Shell {
+    fn new(launcher: gelabber_ui::Launcher, update: Option<&UpdateState>) -> Self {
+        // The Tauri app's notice is the Windows setup's.
+        let notice = update.map(|u| {
+            let after = match u.phase.as_str() {
+                "installing" => Phase::Installing,
+                _ => Phase::Downloading {
+                    downloaded: u.downloaded,
+                    total: u.total,
+                },
+            };
+            (Notice::new(&u.available, Offer::Restart), after)
+        });
+        Self { launcher, notice }
+    }
+}
+
+impl eframe::App for Shell {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        eframe::App::ui(&mut self.launcher, ui, frame);
+        if let Some((notice, after)) = &mut self.notice {
+            match notice.paint(ui.ctx()) {
+                Some(Click::Restart) => notice.phase = after.clone(),
+                Some(Click::Later) => self.notice = None,
+                _ => {}
+            }
+        }
+    }
+
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        eframe::App::clear_color(&self.launcher, visuals)
+    }
 }
 
 #[derive(Deserialize)]
@@ -322,12 +380,13 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                 .wgpu()
                 .build_eframe(|cc| {
                     cc.egui_ctx.options_mut(|o| o.fallback_theme = system);
-                    match &scene.page {
+                    let launcher = match &scene.page {
                         Some(page) => page_app(cc, page, &scene.query),
                         None => {
                             gelabber_ui::Launcher::with_app(cc, client.clone(), Some(route.clone()))
                         }
-                    }
+                    };
+                    Shell::new(launcher, scene.update.as_ref())
                 });
             // The system theme as Chromium was told it (prefers-color-scheme).
             harness.input_mut().system_theme = Some(system);
@@ -483,7 +542,7 @@ fn render(out: &Path, only: Option<Vec<String>>) {
     }
 }
 
-type App<'a> = egui_kittest::Harness<'a, gelabber_ui::Launcher>;
+type App<'a> = egui_kittest::Harness<'a, Shell>;
 
 /// The Launcher on a bundled page: the setup page with its `?server=` (the
 /// way back) and `?error=` (why it shows).
@@ -568,7 +627,7 @@ fn reveal(harness: &mut App<'_>, height: f32, label: &str, roles: &[egui::access
 /// Signed in on a server's page whose presence has not arrived yet.
 fn presence_pending(harness: &mut App<'_>) -> bool {
     use gelabber_ui::route::Route;
-    let Some(app) = harness.state_mut().app() else {
+    let Some(app) = harness.state_mut().launcher.app() else {
         return false;
     };
     let server = match app.nav().route() {
@@ -589,7 +648,7 @@ fn settle(harness: &mut App<'_>) {
         // without it the member list shows everyone offline. A server that
         // never sends one (not a member) waits 5 s at most.
         let presence = start.elapsed() < Duration::from_secs(5) && presence_pending(harness);
-        if harness.state().busy() || presence {
+        if harness.state().launcher.busy() || presence {
             quiet = 0;
             std::thread::sleep(Duration::from_millis(20));
         } else {

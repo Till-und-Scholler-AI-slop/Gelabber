@@ -94,21 +94,52 @@ the GlobalShortcuts portal (KDE, GNOME 48+, Hyprland:
 `latest-native.json` of the latest GitHub release (`GELABBER_UPDATE_ENDPOINT`
 replaces it) is read: the Tauri app's `latest.json` names its own installer.
 desktop-release.yml writes both in the same format. A newer version shows
-"Gelabber x.y.z ist da." (the Tauri notice's first sentence) with
-"Herunterladen" (that version's release page) and "Später", never during a
-call. `verify` checks a package as the Tauri updater does
-(minisign, `desktop/app/updater.pub` or `GELABBER_UPDATER_PUBKEY` at build
-time, signed for the announced version). Downloading and installing belong
-to packaging.
+the notice of the Tauri app's `BANNER` (same texts, colours and place, top
+centre); what it offers depends on the install:
+
+| Install | Detected by | Notice |
+|---|---|---|
+| Windows setup | `uninstall.exe` next to the binary, and a `windows-x86_64` entry | "Gelabber x.y.z ist da. Zum Installieren startet die App neu." with "Neu starten" and "Später" |
+| pacman package | binary under `/opt/gelabber` (PKGBUILD) | "Gelabber x.y.z ist da. Updates kommen über pacman (Paket gelabber-desktop-native)." with "Später" |
+| anything else (tarball) | | "Gelabber x.y.z ist da." with "Herunterladen" (that version's release page) and "Später" |
+
+"Neu starten" downloads the installer the manifest names (no time limit as
+a whole, 30 s to connect, 60 s per read), shows "Update wird geladen … N %",
+and keeps it only when `verify` passes: minisign by `desktop/app/updater.pub`
+(or `GELABBER_UPDATER_PUBKEY` at build time), the trusted comment naming the
+announced version (`requireSignedVersion`). A failure stands in the notice
+and the buttons work again. Then the window closes and, after
+`run_native` returned (state written, single instance released), `main.rs`
+starts the setup with ShellExecuteW as the updater plugin does:
+`/P /UPDATE /R /ARGS <the app's arguments> /D=<its folder>`, so it installs
+passively into the same folder, keeps the shortcuts with their
+AppUserModelID and starts the new version with the same arguments.
+
+The call lock is the Tauri app's `Media::busy`: during a call (joining,
+connected, reconnecting, a channel held) or the microphone test, and for a
+minute after, no notice shows. An installer downloaded when a call began
+waits and installs once the lock lifts. "Später" hides the version until the
+next start.
+
+## AppUserModelID (`aumid.rs`)
+
+On Windows `main.rs` sets the process's id to the bundle id
+`io.github.till-und-scholler-ai-slop.gelabber` before the first window: the
+same id installer.nsi writes into the shortcuts and toast.rs registers, so
+the window groups with a pinned shortcut and the toasts belong to the app.
 
 ## Tested headless, and what needs a desktop
 
 `cargo test -p gelabber-ui platform` covers the rules, the files, the
 cookie round trip, the single instance (socket and loopback), the
 notification service and the portal against fakes on a private
-`dbus-daemon` (skipped where it is missing), signatures and the update
-check against a local endpoint, and a pass of `Platform` without a
-desktop. `GELABBER_TEST_SERVER=http://127.0.0.1:5180 cargo test -p
+`dbus-daemon` (skipped where it is missing), signatures (throwaway keys:
+wrong key, wrong or missing version, tampered file), the manifest, the
+call lock, the update check and the installer download against a local
+HTTP server, the setup's command line, the notice's texts and buttons,
+and a pass of `Platform` without a desktop. The parity scenes
+`update-notice` and `update-downloading` compare the notice with the
+Tauri app's BANNER (shots.mjs answers `update_state` from the scene). `GELABBER_TEST_SERVER=http://127.0.0.1:5180 cargo test -p
 gelabber-ui signed_in_after_a_restart -- --ignored` signs in against the
 seeded stack, restarts the client from the stored cookie and signs out.
 
@@ -117,5 +148,6 @@ StatusNotifier host, a notification click raising the window (on Wayland
 the compositor may refuse focus without the activation token, which egui
 cannot pass on), close-to-tray and the window coming back, the portal's
 key dialog, the window theme and the restored position (Wayland gives
-none). The Windows paths (toasts, tray-icon, keyboard hook) are copies of
-the Tauri app's but are not compiled on Linux.
+none). The Windows paths (toasts, tray-icon, keyboard hook, the
+AppUserModelID, starting the setup) are copies of the Tauri app's but are
+not compiled on Linux; an update end to end needs a signed release.

@@ -30,7 +30,7 @@ resvg = { version = "0.45.1", default-features = false }
 reqwest = { version = "0.13.5", default-features = false }
 url = "2.5.8"
 serde = { version = "1.0.229", features = ["derive"] }
-# Update checks (src/platform/update.rs): the signature format of desktop/app.
+# Updates (src/platform/update.rs): the signature format of desktop/app.
 minisign-verify = "0.3.0"
 base64 = "0.22.1"
 semver = "1.0.28"
@@ -41,9 +41,9 @@ semver = "1.0.28"
 zbus = { version = "5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
 ksni = { version = "0.3.7", default-features = false, features = ["blocking", "async-io"] }
 
-# Toasts, tray and the push-to-talk hook, as desktop/app has them.
+# Toasts, tray, the push-to-talk hook and the update's installer, as desktop/app has them.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Credentials", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Credentials", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 windows = { version = "0.62.2", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications"] }
 tray-icon = { version = "0.25.1", default-features = false }
 

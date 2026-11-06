@@ -36,8 +36,12 @@ Einstellungen und Daten
 Aktualisieren
   Die App sucht kurz nach dem Start und danach alle 6 Stunden nach einer
   neuen Version (latest-native.json der neuesten Version auf der
-  Release-Seite). Gibt es eine, erscheint "Gelabber <Version> ist da." mit
-  "Herunterladen"; das Setup der neuen Version dann wie oben ausführen.
+  Release-Seite). Gibt es eine, erscheint "Gelabber <Version> ist da. Zum
+  Installieren startet die App neu." mit "Neu starten" und "Später".
+  "Neu starten" lädt das Setup, prüft seine Signatur, beendet die App und
+  installiert ohne Rückfragen in denselben Ordner; danach startet die neue
+  Version. Während eines Anrufs erscheint der Hinweis nicht, ein schon
+  geladenes Update wartet bis nach dem Auflegen.
 
 Entfernen
   Einstellungen > Apps > Installierte Apps > Gelabber > Deinstallieren.
