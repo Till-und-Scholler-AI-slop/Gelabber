@@ -618,8 +618,8 @@ jobs:
         if: ${{ !cancelled() && steps.native-installer.outcome == 'success' }}
         timeout-minutes: 25
         env:
-          # Releases up to 0.8.9 leave no export; add v0.8.10 (export path) once it is tagged.
-          TAURI_RELEASES: v0.8.9
+          # 0.8.9 leaves no export (the WebView is read), 0.8.10 exports (only that is read).
+          TAURI_RELEASES: v0.8.9 v0.8.10
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           $id = 'io.github.till-und-scholler-ai-slop.gelabber'

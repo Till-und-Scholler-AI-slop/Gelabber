@@ -9,10 +9,10 @@ Status: the native app replaces the Tauri app from 0.9 on. The Tauri app
 removed in 0.9 without a fallback; its installs update into the native app
 (Windows: its updater runs the native installer; Arch: the package
 `gelabber-desktop` is the native app from 0.9 on). The web client's settings
-come along only in `legacy-settings.json`, which only a Tauri app with the
-export of commit f466bc2 writes. No release has that yet; it is meant for
-0.8.10, before 0.9.0. An update from 0.8.9 or older keeps only the server
-address (`desktop.json`). The web client's
+come along in `legacy-settings.json`, which the Tauri app's export of 0.8.10
+writes; an update from 0.8.9 or older reads the same
+entries from the Tauri app's WebView storage instead (WebView2 on Windows,
+WebKitGTK on Linux). The web client's
 code for the Tauri app (`web/src/voice/native/`, the desktop shell and
 notification bridges) is still there and goes in a later change.
 
