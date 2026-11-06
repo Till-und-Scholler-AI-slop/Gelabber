@@ -69,6 +69,18 @@ struct Scene {
     /// The update the app offers, in the shape of the Tauri app's
     /// `update_state` (shots.mjs answers it with this).
     update: Option<UpdateState>,
+    /// The setup page's update section, as the Tauri app's `update_state`
+    /// answers that page where the app updates itself.
+    updates: Option<SetupState>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetupState {
+    current: String,
+    auto_check: bool,
+    available: Option<String>,
+    last_check: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -87,6 +99,8 @@ struct UpdateState {
 struct Shell {
     launcher: gelabber_ui::Launcher,
     notice: Option<(Notice, Phase)>,
+    /// What the Updater would publish for the setup screen.
+    setup: Option<gelabber_ui::platform::update::SetupView>,
 }
 
 impl Shell {
@@ -102,12 +116,17 @@ impl Shell {
             };
             (Notice::new(&u.available, Offer::Restart), after)
         });
-        Self { launcher, notice }
+        Self {
+            launcher,
+            notice,
+            setup: None,
+        }
     }
 }
 
 impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        gelabber_ui::platform::update::show_setup(ui.ctx(), self.setup.clone());
         eframe::App::ui(&mut self.launcher, ui, frame);
         if let Some((notice, after)) = &mut self.notice {
             match notice.paint(ui.ctx()) {
@@ -386,7 +405,20 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                             gelabber_ui::Launcher::with_app(cc, client.clone(), Some(route.clone()))
                         }
                     };
-                    Shell::new(launcher, scene.update.as_ref())
+                    let mut shell = Shell::new(launcher, scene.update.as_ref());
+                    shell.setup =
+                        scene
+                            .updates
+                            .as_ref()
+                            .map(|u| gelabber_ui::platform::update::SetupView {
+                                current: u.current.clone(),
+                                auto_check: u.auto_check,
+                                checking: false,
+                                available: u.available.clone(),
+                                checked: u.last_check.is_some(),
+                                error: None,
+                            });
+                    shell
                 });
             // The system theme as Chromium was told it (prefers-color-scheme).
             harness.input_mut().system_theme = Some(system);

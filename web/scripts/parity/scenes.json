@@ -955,6 +955,27 @@
       "scheme": "dark"
     },
     {
+      "name": "setup-updates",
+      "page": "desktop/app/setup/index.html",
+      "updates": {
+        "current": "0.9.0",
+        "autoCheck": true,
+        "available": null,
+        "lastCheck": 1800000000
+      }
+    },
+    {
+      "name": "setup-updates-dark",
+      "page": "desktop/app/setup/index.html",
+      "scheme": "dark",
+      "updates": {
+        "current": "0.9.0",
+        "autoCheck": false,
+        "available": "0.9.1",
+        "lastCheck": 1800000000
+      }
+    },
+    {
       "name": "light-channel",
       "path": "/s/{home}/c/{allgemein}",
       "user": "lena",

@@ -34,6 +34,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 minisign-verify = "0.3.0"
 base64 = "0.22.1"
 semver = "1.0.28"
+# The setup screen's update check runs without a server's client and its runtime.
+tokio = { version = "1.53.2", features = ["rt"] }
 
 # Notifications, tray and push-to-talk portal on the session bus, in pure
 # Rust: the zbus eframe's accessibility already brings.

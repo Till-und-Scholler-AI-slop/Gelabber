@@ -526,14 +526,14 @@ fn setup_page(ui: &mut Ui, setup: &mut Setup, checking: bool) -> Option<Action> 
         .then_some(Action::Connect);
     y = input.bottom() + gap;
 
-    let button = |ui: &mut Ui, y: f32, label: &str, primary: bool| -> bool {
+    let button = |ui: &mut Ui, y: f32, label: &str, primary: bool, disabled: bool| -> bool {
         let rect = Rect::from_min_size(pos2(x, y), Vec2::new(content_w, control));
         let id = Id::unique(("gelabber-setup-button", label));
         let response = ui.interact(rect, id, Sense::click());
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, !checking, label));
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, !disabled, label));
         // button:disabled { opacity: 0.6 }
         let fade = |c: Color32| {
-            if checking {
+            if disabled {
                 crate::theme::mix(p.panel, c, 0.6)
             } else {
                 c
@@ -562,12 +562,12 @@ fn setup_page(ui: &mut Ui, setup: &mut Setup, checking: bool) -> Option<Action> 
             rect.top() + (control - text.height()) / 2.0,
         );
         text.paint(ui.painter(), at);
-        if response.hovered() && !checking {
+        if response.hovered() && !disabled {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        response.clicked() && !checking
+        response.clicked() && !disabled
     };
-    if button(ui, y, "Verbinden", true) {
+    if button(ui, y, "Verbinden", true, checking) {
         action = Some(Action::Connect);
     }
     y += control;
@@ -578,7 +578,13 @@ fn setup_page(ui: &mut Ui, setup: &mut Setup, checking: bool) -> Option<Action> 
         } else {
             "Zurück zu "
         };
-        if button(ui, y, &format!("{lead}{}", host_of(current)), false) {
+        if button(
+            ui,
+            y,
+            &format!("{lead}{}", host_of(current)),
+            false,
+            checking,
+        ) {
             action = Some(Action::Back);
         }
         y += control;
@@ -598,6 +604,9 @@ fn setup_page(ui: &mut Ui, setup: &mut Setup, checking: bool) -> Option<Action> 
         crate::widgets::announce(&alert, egui::Role::Alert, error);
         y += block.height();
     }
+    if let Some(view) = crate::platform::update::setup_view(&ctx) {
+        y = updates_section(ui, &view, &p, x, y, content_w, &button);
+    }
     let bottom = y + 2.0 * REM + 1.0;
     ui.painter().set(
         card,
@@ -611,6 +620,115 @@ fn setup_page(ui: &mut Ui, setup: &mut Setup, checking: bool) -> Option<Action> 
     );
     action
 }
+
+/// `#updates`: a grid with 0.6rem gaps under a top border, 1.5rem below the
+/// form; the Tauri page shows it only where the app updates itself.
+fn updates_section(
+    ui: &mut Ui,
+    view: &crate::platform::update::SetupView,
+    p: &Palette,
+    x: f32,
+    mut y: f32,
+    width: f32,
+    button: &dyn Fn(&mut Ui, f32, &str, bool, bool) -> bool,
+) -> f32 {
+    use crate::platform::update::{SetupAsk, ask};
+    let ctx = ui.ctx().clone();
+    let gap = 0.6 * REM;
+    y += 1.5 * REM;
+    ui.painter().rect_filled(
+        Rect::from_min_size(pos2(x, y), Vec2::new(width, 1.0)),
+        0.0,
+        p.border,
+    );
+    y += 1.0 + 1.25 * REM;
+    let title = Block::single(ui, "Updates", normal(REM, 700.0), p.text);
+    title.paint(ui.painter(), pos2(x, y));
+    y += title.height() + gap;
+
+    // label.check: a 1rem box, 0.5rem gap, the text centred beside it.
+    let label = "Beim Start und alle 6 Stunden nach Updates suchen";
+    let text = Block::single(ui, label, normal(0.85 * REM, 500.0), p.text);
+    let row_h = text.height().max(REM);
+    let row = Rect::from_min_size(pos2(x, y), Vec2::new(REM * 1.5 + text.width(), row_h));
+    let response = ui.interact(row, Id::unique("gelabber-setup-auto-check"), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::CheckBox, !view.checking, view.auto_check, label)
+    });
+    let check = Rect::from_min_size(pos2(x, y + (row_h - REM) / 2.0), Vec2::splat(REM));
+    paint_checkbox(ui, check, view.auto_check, view.checking, p);
+    text.paint(
+        ui.painter(),
+        pos2(x + 1.5 * REM, y + (row_h - text.height()) / 2.0),
+    );
+    if response.clicked() && !view.checking {
+        ask(&ctx, SetupAsk::AutoCheck(!view.auto_check));
+    }
+    y += row_h + gap;
+
+    if button(ui, y, "Jetzt nach Updates suchen", false, view.checking) {
+        ask(&ctx, SetupAsk::CheckNow);
+    }
+    y += 2.6 * REM + gap;
+
+    // #update-status: role status, 0.9rem/1.45 muted.
+    let line = view.line();
+    let block = Block::wrapped(
+        ui,
+        &line,
+        TextStyle::new(0.9 * REM, 400.0, 1.45).system_ui(),
+        p.muted,
+        width,
+    );
+    block.paint(ui.painter(), pos2(x, y));
+    let rect = Rect::from_min_size(pos2(x, y), block.size());
+    let status = ui.interact(
+        rect,
+        Id::unique("gelabber-setup-update-status"),
+        Sense::hover(),
+    );
+    crate::widgets::announce(&status, egui::Role::Status, &line);
+    y + block.height()
+}
+
+/// Chromium's checkbox with `accent-color`: a 2px-rounded box, filled with
+/// the accent and a check when on, a grey frame when off.
+fn paint_checkbox(ui: &Ui, rect: Rect, on: bool, disabled: bool, p: &Palette) {
+    let dark = crate::theme::system_dark(ui.ctx());
+    let fade = |c: Color32| {
+        if disabled {
+            crate::theme::mix(p.panel, c, 0.6)
+        } else {
+            c
+        }
+    };
+    let painter = ui.painter();
+    if on {
+        painter.rect_filled(rect, CornerRadius::same(2), fade(p.accent));
+        let s = rect.width() / 16.0;
+        let at = |px: f32, py: f32| pos2(rect.left() + px * s, rect.top() + py * s);
+        painter.add(egui::Shape::line(
+            vec![at(3.5, 8.0), at(6.5, 11.0), at(12.5, 5.0)],
+            Stroke::new(2.0 * s, fade(CHECK_MARK)),
+        ));
+    } else {
+        let (fill, frame) = if dark {
+            (crate::theme::hex(0x3b3b3b), crate::theme::hex(0x858585))
+        } else {
+            (Color32::WHITE, crate::theme::hex(0x767676))
+        };
+        painter.rect(
+            rect,
+            CornerRadius::same(2),
+            fade(fill),
+            Stroke::new(1.0, fade(frame)),
+            StrokeKind::Inside,
+        );
+    }
+}
+
+/// The check Chromium draws on a light accent.
+const CHECK_MARK: Color32 = Color32::BLACK;
 
 #[cfg(test)]
 mod tests {
@@ -691,6 +809,44 @@ mod tests {
         let text = error.accesskit_node().label().unwrap_or_default();
         assert!(text.starts_with(&format!("127.0.0.1:{port} ist nicht erreichbar (")));
         assert!(harness.query_by_label_contains("Zurück zu").is_none());
+    }
+
+    /// The Windows setup's `#updates`: shown only when the Updater says so;
+    /// the switch and the button ask it, the status line reads as setup.js's.
+    #[test]
+    fn the_update_section_shows_where_the_app_updates_itself() {
+        use crate::platform::update::{SetupAsk, SetupView, show_setup, take_ask};
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .build_eframe(|cc| Launcher::setup(cc, None, None, Box::new(|_| {})));
+        harness.run();
+        assert!(harness.query_by_label("Updates").is_none());
+        show_setup(
+            &harness.ctx,
+            Some(SetupView {
+                current: "0.9.0".into(),
+                auto_check: true,
+                checked: true,
+                ..SetupView::default()
+            }),
+        );
+        harness.run();
+        let label = "Beim Start und alle 6 Stunden nach Updates suchen";
+        let check = harness.get_by_role_and_label(Role::CheckBox, label);
+        assert_eq!(
+            check.accesskit_node().toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+        check.click();
+        harness.run();
+        assert_eq!(take_ask(&harness.ctx), Some(SetupAsk::AutoCheck(false)));
+        harness
+            .get_by_role_and_label(Role::Button, "Jetzt nach Updates suchen")
+            .click();
+        harness.run();
+        assert_eq!(take_ask(&harness.ctx), Some(SetupAsk::CheckNow));
+        let status = harness.get_by_label("Installiert: 0.9.0. Das ist die neueste Version.");
+        assert_eq!(status.accesskit_node().role(), Role::Status);
     }
 
     #[test]

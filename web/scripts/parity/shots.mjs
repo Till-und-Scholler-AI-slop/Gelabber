@@ -176,11 +176,17 @@ for (const scene of scenes) {
   context.setDefaultTimeout(20_000);
   const page = await context.newPage();
   if (scene.page) {
-    // A bundled page of the desktop app (its setup page), outside Tauri:
-    // its commands fail as on Linux, where updates are the package manager's.
-    await page.addInitScript(() => {
-      window.__TAURI_INTERNALS__ = { invoke: () => Promise.reject(new Error("no app")) };
-    });
+    // A bundled page of the desktop app (its setup page), outside Tauri: its
+    // commands fail as on Linux, unless the scene answers `update_state` as
+    // the Windows setup does.
+    await page.addInitScript((updates) => {
+      window.__TAURI_INTERNALS__ = {
+        invoke: (command) =>
+          updates && command === "update_state"
+            ? Promise.resolve({ supported: true, phase: "idle", error: null, ...updates })
+            : Promise.reject(new Error("no app")),
+      };
+    }, scene.updates ?? null);
     // Served from an origin of its own: Chromium runs no module scripts
     // from file:// pages.
     const origin = "http://desktop-page.localhost";

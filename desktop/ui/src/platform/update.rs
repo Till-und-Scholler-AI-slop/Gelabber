@@ -49,6 +49,9 @@ pub const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 /// How long after a call (or the microphone test) the app still counts as
 /// in one, as media.rs `BUSY_AFTER`: a quick rejoin is not cut off.
 pub const BUSY_AFTER: Duration = Duration::from_secs(60);
+/// The Tauri app's refusal of an install during a call.
+pub const IN_CALL: &str =
+    "Während eines Anrufs startet Gelabber nicht neu. Das Update kommt nach dem Auflegen.";
 
 /// The releases' key, or the build's own (`GELABBER_UPDATER_PUBKEY`, CI
 /// test builds), as desktop/app/build.rs picks it.
@@ -169,6 +172,83 @@ pub fn auto_check() -> bool {
         .get("autoCheck")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(true)
+}
+
+/// Switches the automatic check, in the Tauri app's `update.json`.
+pub fn set_auto_check(enabled: bool) -> Result<(), String> {
+    super::paths::write_json(
+        "update.json",
+        &serde_json::json!({ "autoCheck": enabled }),
+        false,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// The setup screen's update section (`#updates` of desktop/app/setup), only
+/// where the app updates itself, as the Tauri page's `update_state`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SetupView {
+    pub current: String,
+    pub auto_check: bool,
+    pub checking: bool,
+    pub available: Option<String>,
+    /// A check got an answer or failed.
+    pub checked: bool,
+    pub error: Option<String>,
+}
+
+impl SetupView {
+    /// setup.js `showUpdates`.
+    pub fn line(&self) -> String {
+        let mut line = format!("Installiert: {}.", self.current);
+        if self.checking {
+            line += " Suche läuft …";
+        } else if let Some(available) = &self.available {
+            line += &format!(" Verfügbar: {available}.");
+        } else if self.checked {
+            line += " Das ist die neueste Version.";
+        }
+        if let Some(error) = &self.error {
+            line += &format!(" Letzte Suche: {error}");
+        }
+        line
+    }
+}
+
+/// What the setup section asks of the [`Updater`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetupAsk {
+    AutoCheck(bool),
+    CheckNow,
+}
+
+fn setup_view_id() -> Id {
+    Id::unique("gelabber-update-setup-view")
+}
+
+fn setup_ask_id() -> Id {
+    Id::unique("gelabber-update-setup-ask")
+}
+
+/// Each pass: what the setup section shows; `None` hides it.
+pub fn show_setup(ctx: &Context, view: Option<SetupView>) {
+    ctx.data_mut(|d| d.insert_temp(setup_view_id(), view));
+}
+
+pub fn setup_view(ctx: &Context) -> Option<SetupView> {
+    ctx.data(|d| d.get_temp::<Option<SetupView>>(setup_view_id()))
+        .flatten()
+}
+
+/// A click in the setup section, for the next pass of the [`Updater`].
+pub fn ask(ctx: &Context, ask: SetupAsk) {
+    ctx.data_mut(|d| d.insert_temp(setup_ask_id(), Some(ask)));
+    ctx.request_repaint();
+}
+
+pub(crate) fn take_ask(ctx: &Context) -> Option<SetupAsk> {
+    ctx.data_mut(|d| d.remove_temp::<Option<SetupAsk>>(setup_ask_id()))
+        .flatten()
 }
 
 /// Whether the next automatic check is due; a clock that went back counts.
@@ -651,6 +731,7 @@ impl Notice {
 }
 
 type Slot<T> = Arc<Mutex<Option<T>>>;
+type Wake = Arc<dyn Fn() + Send + Sync>;
 
 /// The checks, the notice and an accepted install of the running app
 /// (Platform owns one).
@@ -673,6 +754,10 @@ pub struct Updater {
     locked: bool,
     /// The key a download must be signed with: [`pubkey`], a test's own.
     key: &'static str,
+    /// Why the last check failed, for the setup section.
+    error: Option<String>,
+    /// `auto_check`, read once and then as the setup section switches it.
+    auto: Option<bool>,
 }
 
 impl Default for Updater {
@@ -698,7 +783,48 @@ impl Updater {
             lock: CallLock::default(),
             locked: false,
             key: pubkey(),
+            error: None,
+            auto: None,
         }
+    }
+
+    /// Whether this copy installs updates itself, which the Tauri app's
+    /// `unsupported` tells: the Windows setup with a key in the build.
+    fn updates_itself(&self) -> bool {
+        matches!(self.install, Install::Setup { .. }) && !self.key.trim().is_empty()
+    }
+
+    /// Each pass, the setup screen's too: its section's clicks, then what it
+    /// shows ([`show_setup`]).
+    pub fn setup(&mut self, ctx: &Context) {
+        self.take_check();
+        if !self.updates_itself() {
+            show_setup(ctx, None);
+            return;
+        }
+        match take_ask(ctx) {
+            Some(SetupAsk::AutoCheck(enabled)) => match set_auto_check(enabled) {
+                Ok(()) => self.auto = Some(enabled),
+                Err(e) => self.error = Some(e),
+            },
+            Some(SetupAsk::CheckNow) if self.checking.is_none() && self.at_rest() => {
+                let wake = ctx.clone();
+                self.start_check(Arc::new(move || wake.request_repaint()));
+            }
+            _ => {}
+        }
+        let auto = *self.auto.get_or_insert_with(auto_check);
+        show_setup(
+            ctx,
+            Some(SetupView {
+                current: env!("CARGO_PKG_VERSION").to_owned(),
+                auto_check: auto,
+                checking: self.checking.is_some(),
+                available: self.found.as_ref().map(|f| f.version.clone()),
+                checked: self.last.is_some(),
+                error: self.error.clone(),
+            }),
+        );
     }
 
     /// The first look, [`FIRST_CHECK`] after `now`.
@@ -714,31 +840,58 @@ impl Updater {
         self.take_download();
         if self.requested {
             self.requested = false;
-            if !self.locked {
+            if self.locked {
+                self.phase = Phase::Failed(IN_CALL.into());
+            } else if self.ready.is_some() {
+                // The installer refused by a call is not loaded again.
+                self.phase = Phase::Ready;
+            } else {
                 self.start_download(client);
             }
         }
-        // An install put off by a call goes on once it ended.
         if self.phase == Phase::Ready
-            && !self.locked
             && let (Some(installer), Install::Setup { dir }) = (self.ready.clone(), &self.install)
         {
-            *PENDING.lock() = Some((installer, dir.clone()));
-            self.phase = Phase::Installing;
-            return true;
+            // A call that began during the download refuses, as in the Tauri
+            // app: the installer stays for the next "Neu starten".
+            if self.locked {
+                self.phase = Phase::Failed(IN_CALL.into());
+            } else {
+                *PENDING.lock() = Some((installer, dir.clone()));
+                self.phase = Phase::Installing;
+                return true;
+            }
         }
         if self.checking.is_none() && self.at_rest() && now >= self.next {
             self.next = now + 60.0;
             if auto_check() && due(self.last, SystemTime::now()) {
-                let slot: Slot<_> = Arc::default();
-                self.checking = Some(slot.clone());
-                let http = client.http().reqwest().clone();
-                client.spawn(async move {
-                    *slot.lock() = Some(check(http).await);
-                });
+                let wake = client.clone();
+                self.start_check(Arc::new(move || wake.repaint()));
             }
         }
         false
+    }
+
+    /// One check on its own thread, so the setup screen can ask without a
+    /// server's client; `wake` repaints when the answer is in.
+    fn start_check(&mut self, wake: Wake) {
+        let slot: Slot<_> = Arc::default();
+        self.checking = Some(slot.clone());
+        let spawned = std::thread::Builder::new()
+            .name("gelabber-update".into())
+            .spawn(move || {
+                let result = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| e.to_string())
+                    .and_then(|runtime| runtime.block_on(check(download_client()?)));
+                *slot.lock() = Some(result);
+                wake();
+            });
+        if let Err(e) = spawned {
+            self.checking = None;
+            self.error = Some(e.to_string());
+        }
     }
 
     /// No accepted update at work: a check may replace what was found.
@@ -756,11 +909,17 @@ impl Updater {
             Ok(found) => {
                 if found.as_ref().map(|f| &f.version) != self.found.as_ref().map(|f| &f.version) {
                     self.phase = Phase::Offer;
+                    self.ready = None;
                 }
                 self.found = found;
             }
-            Err(e) => tracing::info!("update check: {e}"),
+            Err(e) => {
+                tracing::info!("update check: {e}");
+                self.error = Some(e);
+                return;
+            }
         }
+        self.error = None;
     }
 
     fn start_download(&mut self, client: &Client) {
@@ -1322,7 +1481,7 @@ mod tests {
     }
 
     #[test]
-    fn a_call_hides_the_notice_and_puts_the_install_off_until_it_ended() {
+    fn a_call_hides_the_notice_and_refuses_the_install_as_the_tauri_app() {
         let _pending = PENDING_TESTS.lock();
         let client = gelabber_client::Client::new("http://127.0.0.1:9").unwrap();
         let dir = temp_dir("lock");
@@ -1338,16 +1497,21 @@ mod tests {
         // In a call: no notice, and "Neu starten" cannot have been clicked.
         assert!(!updater.tick(&client, 0.0, true));
         assert_eq!(updater.notice(), None);
-        // The download was done when a call began: the install waits.
+        // The download was done when a call began: refused, not put off.
         updater.ready = Some(dir.join("setup.exe"));
         updater.phase = Phase::Ready;
         assert!(!updater.tick(&client, 0.0, true));
         assert_eq!(*PENDING.lock(), None);
-        assert_eq!(updater.notice(), None);
-        // Still within a minute after the call.
-        assert!(!updater.tick(&client, 0.0, false));
-        // A minute later the install goes on, into the same folder.
+        assert_eq!(updater.phase, Phase::Failed(IN_CALL.into()));
+        // A minute after the call the notice says so, and nothing installs.
         updater.lock.last_busy = Some(Instant::now() - BUSY_AFTER);
+        assert!(!updater.tick(&client, 0.0, false));
+        assert_eq!(*PENDING.lock(), None);
+        let notice = updater.notice().unwrap();
+        assert_eq!(notice.text(), IN_CALL);
+        assert!(notice.enabled());
+        // "Neu starten" again: the loaded installer, into the same folder.
+        updater.requested = true;
         assert!(updater.tick(&client, 0.0, false));
         assert_eq!(updater.phase, Phase::Installing);
         assert_eq!(
@@ -1358,6 +1522,54 @@ mod tests {
             updater.notice().unwrap().text(),
             "Update wird installiert, Gelabber startet neu …"
         );
+    }
+
+    /// The setup page's `#updates`: its line as setup.js writes it, the
+    /// switch into update.json, and only where the app updates itself.
+    #[test]
+    fn the_setup_section_shows_switches_and_says_what_setup_js_says() {
+        let _config = crate::platform::paths::testing::TempConfig::new("update-setup");
+        let view = |checking, available: Option<&str>, checked, error: Option<&str>| SetupView {
+            current: "0.9.0".into(),
+            auto_check: true,
+            checking,
+            available: available.map(str::to_owned),
+            checked,
+            error: error.map(str::to_owned),
+        };
+        assert_eq!(view(false, None, false, None).line(), "Installiert: 0.9.0.");
+        assert_eq!(
+            view(true, Some("0.9.1"), true, None).line(),
+            "Installiert: 0.9.0. Suche läuft …"
+        );
+        assert_eq!(
+            view(false, Some("0.9.1"), true, None).line(),
+            "Installiert: 0.9.0. Verfügbar: 0.9.1."
+        );
+        assert_eq!(
+            view(false, None, true, Some("404")).line(),
+            "Installiert: 0.9.0. Das ist die neueste Version. Letzte Suche: 404"
+        );
+
+        let ctx = Context::default();
+        let mut manual = Updater::new(Install::Manual);
+        manual.setup(&ctx);
+        assert_eq!(setup_view(&ctx), None, "the tarball has no section");
+
+        let mut updater = Updater::new(Install::Setup {
+            dir: temp_dir("setup-section"),
+        });
+        updater.setup(&ctx);
+        let shown = setup_view(&ctx).unwrap();
+        assert!(shown.auto_check && !shown.checking && !shown.checked);
+        assert_eq!(shown.current, env!("CARGO_PKG_VERSION"));
+        ask(&ctx, SetupAsk::AutoCheck(false));
+        updater.setup(&ctx);
+        assert!(!setup_view(&ctx).unwrap().auto_check);
+        assert!(!auto_check(), "written to update.json");
+        ask(&ctx, SetupAsk::AutoCheck(true));
+        updater.setup(&ctx);
+        assert!(auto_check());
     }
 
     /// Ticks until the download is over, at most 10 s; whether the last

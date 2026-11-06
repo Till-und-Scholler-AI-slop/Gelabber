@@ -271,6 +271,7 @@ impl Platform {
             self.title_bar = Some(title_bar);
             ctx.send_viewport_cmd(ViewportCommand::SetTheme(title_bar));
         }
+        self.updates.setup(ctx);
         let Some(app) = app else {
             self.show_unread(ctx, tray::Unread::default());
             return;
