@@ -21,7 +21,7 @@ renamed, so a crash never leaves half a file.
 | `desktop.json` | `server`, `close_to_tray`; unknown keys are kept | yes |
 | `update.json` | `autoCheck` (read only) | yes |
 | `settings.json` | device settings (`screens/settings/prefs.rs`) | no |
-| `session.json` (0600) | `gelabber_session` cookie per server origin | no |
+| `session.json` (0600) | `gelabber_session` cookie per server origin, only where the keyring did not take it (see Sign-in) | no |
 | `native-state.json` (0600) | per account: last place, last channel per server, last DM, drafts (7 days), per-person volumes; window size, position, maximized | no |
 | `legacy-settings.json` | the Tauri app's export of the web client's localStorage (read once, never written) | written by it |
 
@@ -29,7 +29,12 @@ First start (`legacy.rs`): while `settings.json` is missing, the app takes
 over `legacy-settings.json` (`{"version": 1, "localStorage": {key: value}}`:
 `gelabber.media`, `gelabber.media.source-audio-share`, `gelabber.interface`
 into `settings.json`, `gelabber.user-volumes:<account>` and
-`gelabber:chat-draft:<account>:<channel>` into `native-state.json`) and the
+`gelabber:chat-draft:<account>:<channel>` into `native-state.json`). Without
+a readable `legacy-settings.json` (0.8.9 and older) it reads the same entries
+from the Tauri app's WebView storage (`webview.rs`: WebView2's LevelDB on
+Windows, WebKitGTK's SQLite on Linux); a failure that may pass (an I/O or
+sharing error, a busy database) leaves `settings.json` unwritten, so the next
+start tries again, while an unknown format or a damaged store counts as none. It also takes the
 files of native builds before 0.9 (`<config base>/gelabber/settings.json`
 and `…/server`, the latter only where `desktop.json` has no server). It
 overwrites nothing (a `desktop.json` or `native-state.json` it cannot read
@@ -37,9 +42,18 @@ stays as it is) and leaves the sources where they are; `settings.json` is
 written even when empty, so it happens once.
 
 Server choice, first match wins: `--server <url>` / `--server=<url>`,
-`GELABBER_SERVER`, `desktop.json`, else the setup screen. The cookie is not
-in an OS keyring: the maintained crates pull a second D-Bus stack and crypto
-in on Linux. The file is the user's only, as the browser's cookie store.
+`GELABBER_SERVER`, `desktop.json`, else the setup screen.
+
+Sign-in (`session.rs`): the `gelabber_session` cookie per server origin goes
+into the system keyring first. On Linux that is the Secret Service over the
+app's own zbus (item "Gelabber-Anmeldung (<origin>)", attributes
+`application` = `gelabber` and `origin`), on Windows the Credential Manager
+(target `Gelabber/<origin>`). Without a keyring, or while it is locked, the
+cookie goes into `session.json` (0600); the app never unlocks a keyring,
+because that would prompt in the middle of a frame. A cookie the keyring
+takes is removed from the file. Reading takes the file first, since an entry
+there is only ever newer. The Tauri app's WebView cookie is not taken over,
+so everyone signs in once after the switch.
 
 ## Notifications (`notify/`)
 
