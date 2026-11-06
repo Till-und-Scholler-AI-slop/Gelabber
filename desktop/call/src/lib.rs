@@ -92,6 +92,8 @@ pub struct Devices {
     pub inputs: Vec<Device>,
     pub outputs: Vec<Device>,
     pub cameras: Vec<Device>,
+    /// Applications playing sound, for "Ton von" (`media_audio_apps`).
+    pub apps: Vec<Device>,
     pub input: Option<String>,
     pub output: Option<String>,
     pub camera: Option<String>,

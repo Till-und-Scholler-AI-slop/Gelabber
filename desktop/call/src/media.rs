@@ -372,6 +372,8 @@ fn list_devices(engine: &core::Engine) -> Devices {
         inputs: entries(&audio["inputs"]),
         outputs: entries(&audio["outputs"]),
         cameras,
+        // Without PipeWire there are none to list, as in the web's catch.
+        apps: entries(&engine.audio_apps().unwrap_or(Value::Null)),
         ..Devices::default()
     }
 }
