@@ -864,6 +864,15 @@ jobs:
           }
           if (-not (Test-Path "$name.sig")) { throw "no signature $name.sig" }
 
+      # The native app's own check of that signature, with the key it was
+      # built with: a release key that is not updater.pub stops the release.
+      - name: Native update signature
+        if: ${{ !cancelled() && steps.native-sign.outcome == 'success' }}
+        timeout-minutes: 20
+        env:
+          GELABBER_NATIVE_UPDATE_TEST_INSTALLER: ${{ format('{0}\gelabber-native-windows-x64-setup.exe', github.workspace) }}
+        run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber -- the_installer_built_here --test-threads=1
+
       # Into the Tauri app's folder (removed above), with its shortcuts and
       # AppUserModelId; then over itself as the updater runs it, and removed.
       - name: Install and remove the native app like a user

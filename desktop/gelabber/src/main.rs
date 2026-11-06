@@ -143,3 +143,29 @@ fn main() -> eframe::Result {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use gelabber_ui::platform::update::{pubkey, verify};
+
+    /// The native installer CI built and signed (desktop-native.yml sets the
+    /// variable): its signature holds for the key this build carries and for
+    /// this version, as the installed app checks it. Nothing without it.
+    #[test]
+    fn the_installer_built_here_passes_the_updaters_check() {
+        let installer = std::env::var_os("GELABBER_NATIVE_UPDATE_TEST_INSTALLER");
+        let Some(installer) = installer.filter(|path| !path.is_empty()) else {
+            return;
+        };
+        assert!(!pubkey().trim().is_empty(), "this build has no updater key");
+        let mut bytes = std::fs::read(&installer).unwrap();
+        let mut path = installer;
+        path.push(".sig");
+        let signature = std::fs::read_to_string(path).unwrap();
+        let version = env!("CARGO_PKG_VERSION");
+        assert_eq!(verify(&bytes, &signature, pubkey(), version), Ok(()));
+        let last = bytes.len() - 1;
+        bytes[last] ^= 1;
+        assert!(verify(&bytes, &signature, pubkey(), version).is_err());
+    }
+}
