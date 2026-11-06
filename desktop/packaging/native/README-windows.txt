@@ -1,20 +1,18 @@
-Gelabber, native Desktop-App (Windows x64, Beta)
+Gelabber, Desktop-App (Windows x64)
 
 Installieren
   gelabber-native-windows-x64-setup.exe ausführen. Das Setup braucht keine
   Administratorrechte: Es installiert für das angemeldete Konto nach
-  %LOCALAPPDATA%\Gelabber, also an die Stelle der bisherigen Desktop-App
+  %LOCALAPPDATA%\Gelabber, also an die Stelle der Desktop-App bis 0.8
   (Tauri), und legt Einträge im Startmenü und auf dem Desktop an. Eine
   installierte Tauri-App wird dabei ersetzt; ihre Serveradresse bleibt.
+  Eine installierte Tauri-App bekommt diese App auch über ihr eigenes Update.
 
   Die Datei ist nicht signiert. Windows SmartScreen meldet deshalb beim
   Start des Setups "Der Computer wurde durch Windows geschützt". Dort auf
   "Weitere Informationen" klicken, dann auf "Trotzdem ausführen". Das Setup
   nur von der Release-Seite laden:
     https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases
-
-  Zurück zur Tauri-App: deren Setup (gelabber-desktop-windows-x64-setup.exe)
-  von der Release-Seite ausführen.
 
 Voraussetzungen
   - Windows 10 oder 11 (64 Bit, x64). Eine WebView2 Runtime braucht die
@@ -28,7 +26,7 @@ Starten
 
 Einstellungen und Daten
   %APPDATA%\io.github.till-und-scholler-ai-slop.gelabber\
-  (desktop.json mit der Serveradresse teilt sie mit der Tauri-App). Beim
+  (desktop.json mit der Serveradresse stammt von der Tauri-App). Beim
   ersten Start übernimmt die App die von der Tauri-App exportierten
   Einstellungen (legacy-settings.json dort). Die Anmeldung wird nicht
   übernommen: einmal neu anmelden.
