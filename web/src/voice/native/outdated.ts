@@ -31,7 +31,7 @@ export async function warnIfDesktopOutdated(): Promise<void> {
   warned = true;
   const versions = app === null ? "" : ` (v${app}, Server v${APP_VERSION})`;
   notify(
-    `Die Desktop-App ist veraltet${versions}. Ab 0.9 gibt es eine neue Desktop-App: unter Windows über das App-Update, unter Arch mit pacman -Syu, sonst gelabber-native-* aus dem GitHub-Release.`,
+    `Die Desktop-App ist veraltet${versions}. Ab 0.9 gibt es eine neue Desktop-App: unter Windows ab v0.7 über das App-Update, unter Arch mit pacman -Syu, sonst gelabber-native-* aus dem GitHub-Release.`,
     { duration: ERROR_MS },
   );
 }
