@@ -63,6 +63,32 @@ impl Popover {
             screen.left() + 8.0,
             (screen.right() - 8.0 - size.x).max(screen.left() + 8.0),
         );
+        // `focusInside`: the frame it opens in (all passes of it), so the
+        // content can take the focus as the web's autofocus does.
+        let frame = ctx.cumulative_frame_nr();
+        let seen_id = self.id.with("seen");
+        let (opened, seen) = ctx
+            .data(|d| d.get_temp::<(u64, u64)>(seen_id))
+            .unwrap_or((0, 0));
+        let opened = if seen == 0 || seen + 1 < frame {
+            frame
+        } else {
+            opened
+        };
+        // A select's list inside a popover is a popover too: the outer
+        // one's state comes back after it.
+        let outer: Option<Focus> = ctx.data(|d| d.get_temp(opening_id()));
+        ctx.data_mut(|d| {
+            d.insert_temp(seen_id, (opened, frame.max(1)));
+            d.insert_temp(
+                opening_id(),
+                if opened == frame {
+                    Focus::Free
+                } else {
+                    Focus::Shown
+                },
+            );
+        });
         let mut out = None;
         let area = egui::Area::new(self.id)
             .order(Order::Foreground)
@@ -98,6 +124,7 @@ impl Popover {
                 }
                 ui.allocate_rect(frame_rect, Sense::hover());
             });
+        ctx.data_mut(|d| d.insert_temp(opening_id(), outer.unwrap_or(Focus::Shown)));
         let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
         let outside = ctx.input(|i| {
             i.pointer.any_pressed()
@@ -109,6 +136,54 @@ impl Popover {
     }
 }
 
+/// Where the focus of the popover being drawn stands (Popover.tsx
+/// `focusInside`: the element with `autoFocus`, else the first control).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Focus {
+    /// Not opening now, or no popover.
+    Shown,
+    /// Opening, and no control took the focus yet.
+    Free,
+    /// Opening, and a control took it.
+    Taken,
+}
+
+fn opening_id() -> Id {
+    Id::unique("gelabber-popover-opening")
+}
+
+fn focus_state(ctx: &egui::Context) -> Focus {
+    ctx.data(|d| d.get_temp(opening_id()))
+        .unwrap_or(Focus::Shown)
+}
+
+/// True while a popover draws its content in the frame it opened in.
+pub fn opening(ctx: &egui::Context) -> bool {
+    focus_state(ctx) != Focus::Shown
+}
+
+/// A control in a popover: the first one drawn as it opens takes the
+/// focus. Called by the shared controls, so each popover gets it.
+pub fn focus_first(response: &Response) {
+    if focus_state(&response.ctx) == Focus::Free && response.sense.is_focusable() {
+        response.request_focus();
+        response
+            .ctx
+            .data_mut(|d| d.insert_temp(opening_id(), Focus::Taken));
+    }
+}
+
+/// `autoFocus`: this control takes the focus as its popover opens, over
+/// the first one.
+pub fn autofocus(response: &Response) {
+    if opening(&response.ctx) && response.sense.is_focusable() {
+        response.request_focus();
+        response
+            .ctx
+            .data_mut(|d| d.insert_temp(opening_id(), Focus::Taken));
+    }
+}
+
 /// A row in a popover menu: optional 16px icon, label in `--lr-type-ui`,
 /// hover fill, danger tone for destructive items.
 pub fn menu_item(ui: &mut Ui, icon: Option<Icon>, label: &str, danger: bool) -> Response {
@@ -117,6 +192,7 @@ pub fn menu_item(ui: &mut Ui, icon: Option<Icon>, label: &str, danger: bool) -> 
     let width = ui.available_width().max(160.0);
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 32.0), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    focus_first(&response);
     if ui.is_rect_visible(rect) {
         let fill = eased(
             ui.ctx(),

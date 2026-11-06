@@ -21,6 +21,30 @@ use crate::widgets::{Button, IconButton, Popover, eased, hairline_h};
 /// `SHOWN_PEOPLE`.
 const SHOWN: usize = 3;
 
+/// Below a laptop's width (`max-width: 1023px`) the bar keeps its
+/// controls' names for tooltips only: no "Kein Mikrofon", "Live" or
+/// "Verlassen" in words.
+pub fn narrow(ctx: &egui::Context) -> bool {
+    ctx.content_rect().width() < 1024.0
+}
+
+/// The bar's height for `width`: the dock's 56px, or taller with a notice
+/// in its own row under the controls (`.voice-session-dock` gap 6).
+pub fn height(ui: &Ui, app: &AppCtx, width: f32) -> f32 {
+    let state = app.call.state();
+    match notice_text(ui.ctx(), &state) {
+        Some(text_s) if session::joined(&state).is_some() => {
+            let row = notice_block(ui, &text_s, width).height().max(NOTICE_ROW);
+            (1.0 + 8.0 + 36.0 + 6.0 + row + 8.0).max(DOCK_HEIGHT)
+        }
+        _ => DOCK_HEIGHT,
+    }
+}
+
+const DOCK_HEIGHT: f32 = crate::theme::layout::DOCK_HEIGHT;
+/// The notice row: its "Hinweis schließen" is an `xs` icon button.
+const NOTICE_ROW: f32 = 28.0;
+
 /// Whether the bar shows: while a call runs, or to offer a lost one again.
 pub fn visible(app: &AppCtx) -> bool {
     app.call
@@ -143,8 +167,15 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     let painter = ui.painter().clone();
     painter.rect_filled(rect, 0.0, c.panel);
     hairline_h(&painter, &theme, rect.left()..=rect.right(), rect.top());
-    // The row: 36 high, centred between the 8px paddings under the line.
-    let cy = rect.top() + 1.0 + 8.0 + (rect.height() - 1.0 - 16.0) / 2.0;
+    let narrow = narrow(ui.ctx());
+    let notice_s = notice_text(ui.ctx(), &state);
+    let notice_h = notice_s.as_ref().map_or(0.0, |t| {
+        6.0 + notice_block(ui, t, rect.width()).height().max(NOTICE_ROW)
+    });
+    // The rows: 36 high (and the notice's), centred between the 8px
+    // paddings under the line.
+    let slack = ((rect.height() - 1.0 - 16.0) - (36.0 + notice_h)).max(0.0) / 2.0;
+    let cy = rect.top() + 1.0 + 8.0 + slack + 18.0;
     let left = rect.left() + 16.0;
     let right = rect.right() - 16.0;
 
@@ -158,9 +189,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     });
 
     // Right side, from the end.
-    let leave_label = Block::single(ui, "Verlassen", text::UI, c.on_danger);
-    // Every `.voice-control` keeps a 1px (transparent) border.
-    let leave_w = 1.0 + 12.0 + 18.0 + 4.0 + leave_label.width() + 12.0 + 1.0;
+    let leave_label = (!narrow).then(|| Block::single(ui, "Verlassen", text::UI, c.on_danger));
+    // Every `.voice-control` keeps a 1px (transparent) border; narrow, the
+    // padding is 8 and the word goes.
+    let leave_w = match &leave_label {
+        Some(label) => 1.0 + 12.0 + 18.0 + 4.0 + label.width() + 12.0 + 1.0,
+        None => 1.0 + 8.0 + 18.0 + 8.0 + 1.0,
+    };
     let leave = Rect::from_min_size(pos2(right - leave_w, cy - 18.0), vec2(leave_w, 36.0));
     let response = common::click(ui, leave, Id::unique("gelabber-call-leave"));
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Verlassen"));
@@ -173,14 +208,17 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         mix(c.danger_bg, Color32::BLACK, 0.12),
     );
     painter.rect_filled(leave, corner(theme.radius.md), fill);
+    let pad = if leave_label.is_some() { 13.0 } else { 9.0 };
     icons::paint(
         &painter,
         Icon::HangUp,
-        pos2(leave.left() + 13.0, cy - 9.0),
+        pos2(leave.left() + pad, cy - 9.0),
         18.0,
         c.on_danger,
     );
-    paint_mid(&painter, &leave_label, leave.left() + 13.0 + 18.0 + 4.0, cy);
+    if let Some(label) = &leave_label {
+        paint_mid(&painter, label, leave.left() + 13.0 + 18.0 + 4.0, cy);
+    }
     if response.clicked() {
         app.call.leave();
     }
@@ -236,7 +274,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         &mut x,
         cy,
         Icon::Live,
-        Some("Live"),
+        (!narrow).then_some("Live"),
         true,
         if state.live { Tone::Live } else { Tone::Plain },
         "Live gehen",
@@ -298,7 +336,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
             &mut x,
             cy,
             Icon::MicOff,
-            Some("Kein Mikrofon"),
+            (!narrow).then_some("Kein Mikrofon"),
             false,
             Tone::Problem,
             "Kein Mikrofon",
@@ -420,12 +458,18 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         }
         people_popover(ui, app, &response, &list);
     }
-    notice(ui, &state, rect);
+    if let Some(text_s) = notice_s {
+        let row = Rect::from_min_max(
+            pos2(left, cy + 18.0 + 6.0),
+            pos2(right, cy + 18.0 + notice_h),
+        );
+        notice(ui, &text_s, row);
+    }
 }
 
 /// `dockNotices` of the desktop app: what the bar says about the own
 /// Live's sound, most important first; `None` without one.
-pub fn dock_notice(state: &CallState, share: &str, app: &str) -> Option<String> {
+pub fn dock_notice(state: &CallState, app: &str) -> Option<String> {
     use gelabber_call::LiveSound;
     if !state.live {
         return None;
@@ -442,87 +486,75 @@ pub fn dock_notice(state: &CallState, share: &str, app: &str) -> Option<String> 
         LiveSound::Sharing if app.is_empty() => {
             Some("Dein Stream sendet den Ton aller Anwendungen außer Gelabber.".into())
         }
-        LiveSound::Sharing => None,
-        // The sound is captured as a Live starts: switched on during one,
-        // it comes with the next.
-        LiveSound::Off if sound_on(share) => Some("Stream-Ton ab dem nächsten Live.".into()),
-        LiveSound::Off => None,
+        // Switched on during a Live, the sound joins it at once: nothing
+        // waits for the next one, unlike in a browser.
+        LiveSound::Sharing | LiveSound::Off => None,
     }
 }
 
-/// The notice (`.voice-session-notice`) over the bar's right end, until
-/// "Hinweis schließen"; a new notice shows again.
-fn notice(ui: &mut Ui, state: &CallState, bar: Rect) {
-    let p = prefs::get(ui.ctx());
-    let Some(text_s) = dock_notice(state, &p.source_audio_share, &p.source_audio_app) else {
-        return;
-    };
-    let ctx = ui.ctx().clone();
-    let id = Id::unique("gelabber-call-notice-dismissed");
-    let dismissed: Option<String> = ctx.data(|d| d.get_temp(id)).flatten();
-    if dismissed.as_deref() == Some(text_s.as_str()) {
-        return;
+/// The notice the bar shows, unless "Hinweis schließen" put it away; a
+/// new notice shows again.
+fn notice_text(ctx: &egui::Context, state: &CallState) -> Option<String> {
+    let p = prefs::get(ctx);
+    let text_s = dock_notice(state, &p.source_audio_app);
+    let dismissed: Option<String> = ctx.data(|d| d.get_temp(dismissed_id())).flatten();
+    // A put-away notice that went may come back with the next Live.
+    if dismissed.is_some() && dismissed != text_s {
+        ctx.data_mut(|d| d.remove::<Option<String>>(dismissed_id()));
+        return text_s;
     }
-    let theme = Theme::of(&ctx);
-    let c = theme.c;
-    let width = (bar.width() - 32.0).min(560.0);
-    let block = Block::wrapped(
-        ui,
-        &text_s,
-        text::META,
-        c.text,
-        width - 15.0 - 8.0 - 24.0 - 28.0,
+    text_s.filter(|t| dismissed.as_deref() != Some(t.as_str()))
+}
+
+fn dismissed_id() -> Id {
+    Id::unique("gelabber-call-notice-dismissed")
+}
+
+/// The notice's words, wrapped beside its icon and close button in a bar
+/// `width` wide.
+fn notice_block(ui: &Ui, text_s: &str, width: f32) -> Block {
+    let c = Theme::of(ui.ctx()).c;
+    let room = width - 32.0 - 4.0 - 15.0 - 8.0 - 8.0 - NOTICE_ROW;
+    Block::wrapped(ui, text_s, text::META, c.muted, room.max(40.0))
+}
+
+/// `.voice-session-notice`: a row of the bar under its controls, the
+/// warning icon, the words in the muted colour and "Hinweis schließen".
+fn notice(ui: &mut Ui, text_s: &str, row: Rect) {
+    let ctx = ui.ctx().clone();
+    let c = Theme::of(&ctx).c;
+    let block = notice_block(ui, text_s, row.width() + 32.0);
+    let painter = ui.painter().clone();
+    let mid = row.center().y;
+    icons::paint(
+        &painter,
+        Icon::Warning,
+        pos2(row.left() + 4.0, mid - 7.5),
+        15.0,
+        c.warning,
     );
-    let h = block.height().max(24.0) + 12.0;
-    let rect = Rect::from_min_size(
-        pos2(bar.right() - 16.0 - width, bar.top() - 8.0 - h),
-        vec2(width, h),
+    let tr = Rect::from_min_size(
+        pos2(row.left() + 4.0 + 15.0 + 8.0, mid - block.height() / 2.0),
+        block.size(),
     );
-    egui::Area::new(Id::unique("gelabber-call-notice"))
-        .order(egui::Order::Middle)
-        .fixed_pos(rect.min)
-        .show(&ctx, |ui| {
-            let painter = ui.painter();
-            painter.rect(
-                rect,
-                corner(theme.radius.md),
-                mix(c.panel, c.warning, 0.12),
-                Stroke::new(1.0, c.border),
-                StrokeKind::Inside,
-            );
-            icons::paint(
-                painter,
-                Icon::Warning,
-                pos2(rect.left() + 12.0, rect.center().y - 7.5),
-                15.0,
-                c.warning,
-            );
-            let tr = Rect::from_min_size(
-                pos2(
-                    rect.left() + 12.0 + 15.0 + 8.0,
-                    rect.center().y - block.height() / 2.0,
-                ),
-                block.size(),
-            );
-            block.paint(painter, tr.min);
-            ui.interact(tr, Id::unique("gelabber-call-notice-text"), Sense::hover())
-                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &text_s));
-            let close = Rect::from_min_size(
-                pos2(rect.right() - 6.0 - 24.0, rect.center().y - 12.0),
-                Vec2::splat(24.0),
-            );
-            if ui
-                .add(
-                    IconButton::new(Icon::Close, "Hinweis schließen")
-                        .size(24.0)
-                        .icon_size(14.0)
-                        .at(close),
-                )
-                .clicked()
-            {
-                ctx.data_mut(|d| d.insert_temp(id, Some(text_s.clone())));
-            }
-        });
+    block.paint(&painter, tr.min);
+    ui.interact(tr, Id::unique("gelabber-call-notice-text"), Sense::hover())
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, text_s));
+    let close = Rect::from_min_size(
+        pos2(row.right() - NOTICE_ROW, mid - NOTICE_ROW / 2.0),
+        Vec2::splat(NOTICE_ROW),
+    );
+    if ui
+        .add(
+            IconButton::new(Icon::Close, "Hinweis schließen")
+                .size(NOTICE_ROW)
+                .icon_size(14.0)
+                .at(close),
+        )
+        .clicked()
+    {
+        ctx.data_mut(|d| d.insert_temp(dismissed_id(), Some(text_s.to_owned())));
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -909,7 +941,10 @@ fn connection_popover(ui: &mut Ui, app: &mut AppCtx, button: &egui::Response, st
             let w2 =
                 Block::single(ui, "Alle Details", text::UI.weight(600.0), c.text).width() + 26.0;
             let b = Rect::from_min_size(pos2(top.x + width - w2, top.y), vec2(w2, 32.0));
-            if ui.put(b, Button::new("Alle Details").small()).clicked() {
+            let details = ui.put(b, Button::new("Alle Details").small());
+            // Focus starts on the way to the details.
+            crate::widgets::popover::autofocus(&details);
+            if details.clicked() {
                 show = Some(super::dialogs::Tab::Diagnose);
             }
         });
@@ -1066,6 +1101,7 @@ fn live_menu(
             response.widget_info(|| {
                 egui::WidgetInfo::selected(egui::Role::CheckBox, true, sound, "Ton mitsenden")
             });
+            crate::widgets::popover::focus_first(&response);
             if response.hovered() {
                 ui.painter()
                     .rect_filled(rect, corner(theme.radius.sm), c.hover);
@@ -1158,7 +1194,10 @@ fn menu_entry(
     let (rect, response) =
         ui.allocate_exact_size(vec2(width, (content + 16.0).max(36.0)), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::MenuItem, !disabled, title));
-    if response.hovered() && !disabled {
+    crate::widgets::popover::focus_first(&response);
+    // `:focus-visible` gives an entry the hover fill.
+    let keyed = response.has_focus() && crate::widgets::keyboard_focus(ui.ctx());
+    if (response.hovered() || keyed) && !disabled {
         ui.painter()
             .rect_filled(rect, corner(theme.radius.sm), c.hover);
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);

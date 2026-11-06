@@ -425,12 +425,10 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
                 }
                 MicTestPhase::Idle => "Prüfe dein Mikrofon und vergleiche die Verarbeitung.".into(),
                 MicTestPhase::Pending => "Mikrofon wird gestartet.".into(),
-                MicTestPhase::Active => super::diagnostics::processing_message(
-                    &gelabber_call::CallState {
-                        channel: Some(uuid::Uuid::nil()),
-                        ..Default::default()
-                    },
+                MicTestPhase::Active => super::diagnostics::processing_text(
                     &p.processing_mode,
+                    test.device.as_deref(),
+                    &p.audio_input_id,
                 ),
                 MicTestPhase::Error(text) => text.clone(),
             };

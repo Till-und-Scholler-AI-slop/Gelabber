@@ -225,23 +225,18 @@ fn the_own_live_says_what_becomes_of_its_sound() {
         ..CallState::default()
     };
     assert_eq!(
-        call_bar::dock_notice(&live(LiveSound::Ended), "on", "").as_deref(),
+        call_bar::dock_notice(&live(LiveSound::Ended), "").as_deref(),
         Some("Der Stream-Ton wurde beendet. Das Video läuft weiter.")
     );
+    // Switched on during a Live, the sound joins it: nothing waits for
+    // the next one, as the desktop text "Gilt auch während du live bist" says.
+    assert_eq!(call_bar::dock_notice(&live(LiveSound::Off), ""), None);
     assert_eq!(
-        call_bar::dock_notice(&live(LiveSound::Off), "on", "").as_deref(),
-        Some("Stream-Ton ab dem nächsten Live.")
-    );
-    assert_eq!(
-        call_bar::dock_notice(&live(LiveSound::Off), "off", ""),
-        None
-    );
-    assert_eq!(
-        call_bar::dock_notice(&live(LiveSound::Sharing), "on", "").as_deref(),
+        call_bar::dock_notice(&live(LiveSound::Sharing), "").as_deref(),
         Some("Dein Stream sendet den Ton aller Anwendungen außer Gelabber.")
     );
     assert_eq!(
-        call_bar::dock_notice(&live(LiveSound::Sharing), "on", "Spotify"),
+        call_bar::dock_notice(&live(LiveSound::Sharing), "Spotify"),
         None
     );
 }
@@ -407,4 +402,132 @@ fn the_microphone_test_speaks_as_the_desktop_app() {
     h.run_steps(6);
     assert_eq!(h.query_all_by_label("WebRTC-Filter").count(), 1);
     assert!(h.query_by_label("Browserfilter").is_none());
+}
+
+/// The bar with the window's width, as the shell lays it out.
+fn wide_bar(ui: &mut Ui, app: &mut AppCtx) {
+    let screen = ui.ctx().content_rect();
+    let height = call_bar::height(ui, app, screen.width() - 288.0);
+    call_bar::show(
+        ui,
+        app,
+        Rect::from_min_max(pos2(288.0, screen.bottom() - height), screen.max),
+    );
+}
+
+#[test]
+fn under_1024_the_bar_keeps_its_words_for_tooltips_only() {
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Unavailable));
+    let mut h = harness(client, call.clone(), wide_bar);
+    h.run_steps(4);
+    let widths = |h: &H| {
+        ["Verlassen", "Kein Mikrofon", "Live gehen"].map(|l| h.get_by_label(l).rect().width())
+    };
+    let [leave, mic, live] = widths(&h);
+    assert!(
+        leave > 80.0 && mic > 100.0 && live > 70.0,
+        "{leave} {mic} {live}"
+    );
+    h.set_size(vec2(1000.0, 800.0));
+    h.run_steps(4);
+    // Icon (and the Live menu's caret) in an 8px padding, the names kept.
+    assert_eq!(widths(&h), [36.0, 36.0, 51.0]);
+    h.set_size(vec2(1024.0, 800.0));
+    h.run_steps(4);
+    assert_eq!(widths(&h)[0], leave);
+}
+
+#[test]
+fn the_notice_is_a_row_of_the_bar() {
+    let (client, call) = offline();
+    let mut state = in_sofa(MicStatus::Live);
+    state.live = true;
+    state.live_sound = LiveSound::Ended;
+    call.set_state(state);
+    let mut h = harness(client, call.clone(), wide_bar);
+    h.run_steps(4);
+    let text = "Der Stream-Ton wurde beendet. Das Video läuft weiter.";
+    let notice = h.get_by_label(text).rect();
+    let leave = h.get_by_label("Verlassen").rect();
+    // Under the controls, 6px apart, inside the bar that grew by its row.
+    assert!(notice.top() >= leave.bottom() + 6.0, "{notice:?} {leave:?}");
+    assert!(notice.bottom() <= 800.0 - 8.0);
+    assert_eq!(leave.top(), 800.0 - 87.0 + 1.0 + 8.0);
+    h.get_by_label("Hinweis schließen").click();
+    h.run_steps(4);
+    assert!(h.query_by_label(text).is_none());
+    assert_eq!(
+        h.get_by_label("Verlassen").rect().top(),
+        800.0 - 56.0 + 1.0 + 8.0 + 1.5
+    );
+}
+
+#[test]
+fn the_media_form_lists_devices_as_it_opens_and_on_focus() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (client, call) = offline();
+    let shown = Arc::new(AtomicBool::new(true));
+    let mut form = crate::screens::settings::media::State::default();
+    let on = shown.clone();
+    let mut h = harness(client, call.clone(), move |ui, app| {
+        if on.load(Ordering::Relaxed) {
+            crate::screens::settings::media::video(ui, app, &mut form);
+        }
+    });
+    h.run_steps(3);
+    assert_eq!(call.device_refreshes(), 1, "as it opens");
+    h.run_steps(3);
+    assert_eq!(call.device_refreshes(), 1, "not every frame");
+    let focus = |h: &mut H, on: bool| {
+        h.input_mut()
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default()
+            .focused = Some(on);
+    };
+    focus(&mut h, false);
+    h.run_steps(2);
+    focus(&mut h, true);
+    h.run_steps(2);
+    assert_eq!(call.device_refreshes(), 2, "the window back in front");
+    shown.store(false, Ordering::Relaxed);
+    h.run_steps(2);
+    shown.store(true, Ordering::Relaxed);
+    h.run_steps(2);
+    assert_eq!(call.device_refreshes(), 3, "opened again");
+}
+
+/// The label of the node with the focus.
+fn focused(h: &H) -> Option<String> {
+    use egui_kittest::kittest::NodeT;
+    h.query_all(egui_kittest::kittest::By::new().predicate(|n| n.is_focused()))
+        .next()
+        .map(|n| n.accesskit_node().label().unwrap_or_default())
+}
+
+#[test]
+fn popovers_open_with_the_focus_where_the_web_puts_it() {
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call.clone(), bar);
+    h.run_steps(4);
+    // The connection's details: "Alle Details" (`autoFocus`), not the first button.
+    h.get_by_label("Verbindung: wird gemessen … – Details anzeigen")
+        .click();
+    h.run_steps(4);
+    assert_eq!(focused(&h).as_deref(), Some("Alle Details"));
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+    // Without one, the first control: "Erneut versuchen".
+    call.set_state(in_sofa(MicStatus::Unavailable));
+    h.run_steps(2);
+    h.get_by_label("Kein Mikrofon").click();
+    h.run_steps(4);
+    assert_eq!(focused(&h).as_deref(), Some("Erneut versuchen"));
+    // Drawn again, the popover leaves the focus where it went.
+    h.get_by_label("Mikrofon wählen …").focus();
+    h.run_steps(4);
+    assert_eq!(focused(&h).as_deref(), Some("Mikrofon wählen …"));
 }

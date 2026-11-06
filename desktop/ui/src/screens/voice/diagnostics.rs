@@ -122,20 +122,31 @@ fn tone_color(theme: &Theme, tone: Option<Tone>) -> Color32 {
 }
 
 /// The microphone's processing in words (`useAudioProcessing().message`,
-/// the desktop app's `nativeInfo`), or why there is none.
-pub fn processing_message(state: &CallState, mode: &str) -> String {
+/// the desktop app's `nativeInfo`), or why there is none; `chosen` is the
+/// microphone picked in the settings.
+pub fn processing_message(state: &CallState, mode: &str, chosen: &str) -> String {
     if state.channel.is_none() {
         return "Mikrofon inaktiv".into();
     }
     if state.mic != MicStatus::Live {
         return logic::MIC_LISTEN_ONLY.into();
     }
-    match mode {
+    processing_text(mode, state.mic_input.as_deref(), chosen)
+}
+
+/// `nativeInfo`'s message for a capture on `captured`: the mode, and
+/// "; Standardmikrofon" where the chosen microphone did not open.
+pub fn processing_text(mode: &str, captured: Option<&str>, chosen: &str) -> String {
+    let words = match mode {
         "browser" => "Desktop-App: WebRTC-Rauschfilter im nativen Kern",
         "original" => "Desktop-App: Originalton (Stereo, ohne Filter)",
         _ => "Desktop-App: RNNoise im nativen Kern",
+    };
+    if captured.is_some_and(|c| c != chosen) {
+        format!("{words}; Standardmikrofon")
+    } else {
+        words.into()
     }
-    .into()
 }
 
 /// A measurement runs (`polling.voice`): connected in a call.
@@ -626,7 +637,11 @@ pub fn tab(ui: &mut Ui, app: &mut AppCtx, width: f32) {
         "–".into()
     };
     let rows: Vec<(&str, String, bool)> = vec![
-        ("Verarbeitung", processing_message(&state, mode), true),
+        (
+            "Verarbeitung",
+            processing_message(&state, mode, &p.audio_input_id),
+            true,
+        ),
         ("Format", format, false),
         (
             "Echo-Unterdrückung",
@@ -677,7 +692,7 @@ pub fn tab(ui: &mut Ui, app: &mut AppCtx, width: f32) {
         let processing = serde_json::json!({
             "requested": mode,
             "actual": mode,
-            "message": processing_message(&state, mode),
+            "message": processing_message(&state, mode, &p.audio_input_id),
             "sampleRate": in_call.then_some(48_000),
             "channels": in_call.then_some(if mode == "original" { 2 } else { 1 }),
             "inputGain": p.input_gain,
@@ -1186,15 +1201,29 @@ mod tests {
     #[test]
     fn processing_follows_the_call() {
         let mut state = CallState::default();
-        assert_eq!(processing_message(&state, "enhanced"), "Mikrofon inaktiv");
-        state.channel = Some(uuid::Uuid::nil());
         assert_eq!(
-            processing_message(&state, "enhanced"),
+            processing_message(&state, "enhanced", ""),
+            "Mikrofon inaktiv"
+        );
+        state.channel = Some(uuid::Uuid::nil());
+        state.mic_input = Some("usb".into());
+        assert_eq!(
+            processing_message(&state, "enhanced", "usb"),
+            "Desktop-App: RNNoise im nativen Kern"
+        );
+        // The chosen microphone did not open: the call runs on the system's.
+        state.mic_input = Some(String::new());
+        assert_eq!(
+            processing_message(&state, "browser", "usb"),
+            "Desktop-App: WebRTC-Rauschfilter im nativen Kern; Standardmikrofon"
+        );
+        assert_eq!(
+            processing_message(&state, "enhanced", ""),
             "Desktop-App: RNNoise im nativen Kern"
         );
         state.mic = MicStatus::Unavailable;
         assert_eq!(
-            processing_message(&state, "enhanced"),
+            processing_message(&state, "enhanced", "usb"),
             "Mikrofon konnte nicht aktiviert werden; du hörst weiter zu"
         );
     }

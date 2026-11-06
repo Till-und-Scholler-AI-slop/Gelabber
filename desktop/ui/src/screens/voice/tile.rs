@@ -783,7 +783,7 @@ pub fn picture(
                 // "Neu laden": watch the Live again, or ask for the camera anew.
                 ui.ctx().data_mut(|d| d.remove::<f64>(wait_id));
                 if let Some(key) = pic.key {
-                    video::forget(ui.ctx(), key);
+                    video::forget(ui.ctx(), app.call, key);
                 }
                 if live && !pic.own {
                     app.call.watch(pic.id.user, false);
@@ -1032,6 +1032,7 @@ fn tile_menu(ui: &mut Ui, pic: &Picture, anchor: Rect) {
         response.widget_info(|| {
             egui::WidgetInfo::selected(egui::Role::MenuItemCheckBox, true, open, label)
         });
+        crate::widgets::popover::focus_first(&response);
         if response.hovered() {
             ui.painter()
                 .rect_filled(rect, corner(theme.radius.sm), c.hover);
