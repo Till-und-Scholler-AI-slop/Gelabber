@@ -48,10 +48,13 @@ From 0.9 on `gelabber-desktop` is the native app (no web view); up to 0.8 it
 was the Tauri app. `yay -Syu` upgrades a Tauri install into it like any
 other update: files in `/opt/gelabber` instead of `/opt/gelabber-desktop`,
 the command `gelabber` (and `gelabber-desktop`, which keybinds and autostarts
-of the Tauri app call), the same settings. WebKitGTK, libsoup and GTK are no
-longer needed; pacman keeps them as orphans when nothing else needs them
-(`pacman -Qdt` lists them). The beta package `gelabber-desktop-native` of
-test builds before 0.9 is replaced by `gelabber-desktop`.
+of the Tauri app call), the same settings. Push-to-talk registers with the
+desktop as `gelabber` instead of `gelabber-desktop`: a Hyprland bind becomes
+`bind = , F13, global, gelabber:push-to-talk`, and KDE or GNOME may ask for
+the key again. WebKitGTK, libsoup and GTK are no longer needed; pacman keeps
+them as orphans when nothing else needs them (`pacman -Qdt` lists them). The
+beta package `gelabber-desktop-native` of test builds before 0.9 is replaced
+by `gelabber-desktop`.
 
 Pre-releases (alpha, beta, rc) are published too and sort before the final
 release: `0.5.0alpha.1 < 0.5.0beta.1 < 0.5.0rc.1 < 0.5.0`. The repository
