@@ -63,7 +63,7 @@ fn wanted(key: &str) -> bool {
     KEYS.contains(&key) || PREFIXES.iter().any(|prefix| key.starts_with(prefix))
 }
 
-/// The file legacy.rs reads: `{"version": 1, "localStorage": {key: value}}`
+/// The file the native app reads: `{"version": 1, "localStorage": {key: value}}`
 /// with the wanted entries only.
 fn document(entries: BTreeMap<String, String>) -> Result<Vec<u8>, String> {
     let kept: BTreeMap<String, String> = entries.into_iter().filter(|(k, _)| wanted(k)).collect();
@@ -208,8 +208,12 @@ mod tests {
             ),
         ];
         for (source, name, key) in web {
-            let declaration = format!("\nconst {name} = \"{key}\";\n");
-            assert!(source.contains(&declaration), "web/src: {declaration:?}");
+            // Line by line: the Windows runner checks out with CRLF (core.autocrlf).
+            let declaration = format!("const {name} = \"{key}\";");
+            assert!(
+                source.lines().any(|line| line == declaration),
+                "web/src: {declaration:?}"
+            );
         }
         let exported: Vec<&str> = KEYS.iter().chain(PREFIXES).copied().collect();
         let named: Vec<&str> = web.iter().map(|(_, _, key)| *key).collect();
