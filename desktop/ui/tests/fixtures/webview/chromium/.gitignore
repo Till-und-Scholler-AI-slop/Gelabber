@@ -1,0 +1,2 @@
+# LevelDB keeps its write-ahead logs as *.log, which the root .gitignore drops.
+!*.log
