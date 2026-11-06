@@ -33,7 +33,8 @@ The **shipped line** is the latest release tag on `main`.
   when a PR is ready for review: push to a draft, mark it ready when done;
   after a later push, set it to draft and back. A PR to `main` also needs a
   human approval. Paths in `.github/CODEOWNERS` (CI, review rules, update
-  key) always need an owner's approval.
+  key) always need an owner's approval. Only the owners merge past a check
+  by bypass; agents never use it, also not with an owner's token.
 
 ## Commands
 

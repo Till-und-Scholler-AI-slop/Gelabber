@@ -57,10 +57,15 @@ to `ai-review.yml` takes effect only once it is on `main`. The PR's base, not
    - The status `ai-review` shows up and can be chosen as a required check.
    - GitHub still asks for an owner's approval when approvals are 0.
 4. **Rulesets:**
-   - **`Version branches`:** require the status checks `ci-ok` and
-     `ai-review`. Set the approvals to 0 and keep "Require review from Code
-     Owners".
-   - **`Main Protection`:** require the status check `ci-ok`.
+   - **`Version branches`:**
+     - Require the status checks `ci-ok` and `ai-review`.
+     - Set the approvals to 0 and keep "Require review from Code Owners".
+     - Bypass: the role Repository admin, for pull requests only. That lets
+       an owner merge past a wrong block; GitHub marks the merge as a bypass.
+   - **`Main Protection`:**
+     - Require the status check `ci-ok`.
+     - Set the Organization admin bypass from "always" to "for pull requests
+       only".
 
 ## Who can use the key
 
