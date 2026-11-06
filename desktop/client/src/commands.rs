@@ -165,12 +165,13 @@ impl Client {
     }
 
     /// Signed in (or not): reset what belonged to someone else, load the
-    /// workspace.
+    /// workspace. Loaded before the first check, it is this account's (the
+    /// same cookie) and stays.
     async fn adopt_session(&self, user: Option<User>) {
         match user {
             Some(user) => {
-                let same = self.with_state(|s| s.me().map(|m| m.id) == Some(user.id));
-                if !same {
+                let other = self.with_state(|s| s.me().is_some_and(|m| m.id != user.id));
+                if other {
                     self.stop_gateway();
                     self.write(State::reset_account);
                 }
