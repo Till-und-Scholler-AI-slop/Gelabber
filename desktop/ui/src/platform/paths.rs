@@ -1,11 +1,11 @@
-//! The app's config directory: the one the Tauri app uses
-//! (`app_config_dir()` of the bundle identifier), so both share
-//! `desktop.json`. `GELABBER_CONFIG_DIR` replaces it (tests, parity runs).
+//! The app's config directory: the one the Tauri app used up to 0.8
+//! (`app_config_dir()` of the bundle identifier), so its `desktop.json` and
+//! `legacy-settings.json` are found. `GELABBER_CONFIG_DIR` replaces it (tests, parity runs).
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-/// desktop/app/tauri.conf.json `identifier`.
+/// The Tauri app's bundle `identifier` (up to 0.8); fixed for its installs.
 pub const IDENTIFIER: &str = "io.github.till-und-scholler-ai-slop.gelabber";
 
 /// `<config>/io.github.till-und-scholler-ai-slop.gelabber`, per platform as
@@ -35,6 +35,23 @@ pub(super) fn base_dir() -> Option<PathBuf> {
             .map(PathBuf::from)
             .filter(|p| p.is_absolute())
             .or_else(|| var("HOME").map(|h| PathBuf::from(h).join(".config")))
+    }
+}
+
+/// The directory of per-app local data (`%LOCALAPPDATA%`, `~/.local/share`),
+/// Tauri's `data_local_dir`, where the Tauri app's WebView kept its profile;
+/// none on macOS, where WKWebView keeps it elsewhere.
+pub(super) fn local_data_base() -> Option<PathBuf> {
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+    if cfg!(windows) {
+        var("LOCALAPPDATA").map(PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        None
+    } else {
+        var("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| var("HOME").map(|h| PathBuf::from(h).join(".local/share")))
     }
 }
 

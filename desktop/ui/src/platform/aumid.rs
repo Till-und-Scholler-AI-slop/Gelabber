@@ -2,7 +2,7 @@
 //! into the shortcuts and toast.rs registers, so the window groups with a
 //! pinned shortcut on the taskbar and the toasts belong to the app.
 
-/// The bundle id of the Tauri app (tauri.conf.json `identifier`).
+/// The bundle id of the Tauri app before 0.9, which its installs keep.
 pub const AUMID: &str = super::paths::IDENTIFIER;
 
 /// Before the first window: Windows reads the id when the window appears.
@@ -34,8 +34,8 @@ mod tests {
     fn the_process_has_the_id_of_the_shortcuts_and_the_toasts() {
         let nsi = include_str!("../../../packaging/native/windows/installer.nsi");
         assert!(nsi.contains(&format!("!define BUNDLEID \"{AUMID}\"")));
-        let tauri = include_str!("../../../app/tauri.conf.json");
-        assert!(tauri.contains(&format!("\"identifier\": \"{AUMID}\"")));
+        // The Tauri app's identifier: its shortcuts and toast entry carry it.
+        assert_eq!(AUMID, "io.github.till-und-scholler-ai-slop.gelabber");
         let toast = include_str!("notify/toast.rs");
         assert!(toast.contains("crate::platform::paths::IDENTIFIER"));
         assert_eq!(set_for_process(), Ok(()));

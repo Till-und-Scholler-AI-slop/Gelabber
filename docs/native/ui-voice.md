@@ -604,7 +604,7 @@ Sent: `{op:"sig",t:"j",s,c}` join; `t:"l"` leave; `t:"m"|"d", on` mute/deafen; `
 
 ## 12. Native media core: commands the web client calls (the egui app calls `desktop/core` directly)
 
-The page invokes Tauri commands (`voice/native/bridge.ts:53-58`); each is a thin wrapper in `desktop/app/src/media.rs` over `gelabber_media_core` (`desktop/core`). Handles are `u64` registry keys in the app; the egui app can hold the core objects directly. "Channel" = an ordered event callback.
+The page invokes Tauri commands (`voice/native/bridge.ts:53-58`); each was a thin wrapper in `desktop/app/src/media.rs` (the Tauri app, removed in 0.9; see git history) over `gelabber_media_core` (`desktop/core`). Handles are `u64` registry keys in the app; the egui app can hold the core objects directly. "Channel" = an ordered event callback.
 
 | Command | Args (JSON names) | Returns | Core call (`desktop/app/src/media.rs`) | Web caller |
 |---|---|---|---|---|

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Gelabber WebView fixture</title>
+</head>
+<body>
+<p id="status">phase 1</p>
+<script>
+// Fills localStorage as the web client of 0.8 left it (desktop/ui/src/platform/legacy.rs
+// reads it back). Port 8124 stands for a server the app was switched away from.
+"use strict";
+const ACCOUNT = "0f9a4c1e-8f1b-4f3e-9d55-2b7a1c3e5d01";
+const FRIEND = "6b0e2a77-3c44-4d0a-a1c2-9e8f7d6c5b4a";
+const CHANNEL = "c2d3e4f5-a6b7-4c8d-9e0f-1a2b3c4d5e6f";
+const GONE = "d4e5f6a7-b8c9-4dae-8f01-2b3c4d5e6f70";
+const WEEK = 7 * 24 * 60 * 60 * 1000;
+// ?at=fixed: the unit tests' NOW (legacy.rs), else the clock of this run.
+const now = new URLSearchParams(location.search).get("at") === "fixed" ? 1800000000000 : Date.now();
+const other = location.port === "8124";
+const set = (key, value) => localStorage.setItem(key, typeof value === "string" ? value : JSON.stringify(value));
+const media = (inputGain) => ({
+  state: { inputGain, voiceInput: "ptt", pttKey: "F13", shareSourceAudio: false },
+  version: 3,
+});
+
+// Phase 1, committed by Chromium about 5 s later; the filler takes that
+// commit over LevelDB's 64 KiB write buffer (WebKit's SQLite needs none).
+const chromium = /Chrome\//.test(navigator.userAgent);
+set("gelabber.media", media(other ? 0.25 : 0.8));
+set("gelabber.media.source-audio-share", other ? "on" : "off");
+set("gelabber.interface", { uiScale: other ? "small" : "large", compactRooms: !other, greeting: "Grüße" });
+set(`gelabber.user-volumes:${ACCOUNT}`, {
+  [FRIEND]: { volume: other ? 2 : 0.5, muted: !other },
+  kaputt: { volume: 1 },
+});
+set(`gelabber:chat-draft:${ACCOUNT}:${CHANNEL}`, { text: other ? "anderer Server" : "bis gleich 👋", at: now - 60000 });
+set(`gelabber:chat-draft:${ACCOUNT}:${FRIEND}`, { text: "vor Wochen", at: now - WEEK - 1 });
+set(`gelabber:chat-draft:${ACCOUNT}:${GONE}`, { text: "schon gesendet", at: now - 30000 });
+set("gelabber.theme.paint", "{}");
+if (chromium) set("gelabber.fixture.filler", "Gelabber ".repeat(8000));
+
+// Phase 2, after that commit: an overwrite and two deletions that land in a
+// newer log than the table the filler's commit becomes.
+setTimeout(() => {
+  set("gelabber.media", media(other ? 0.75 : 1.5));
+  localStorage.removeItem("gelabber.fixture.filler");
+  localStorage.removeItem(`gelabber:chat-draft:${ACCOUNT}:${GONE}`);
+  document.getElementById("status").textContent = "phase 2";
+  fetch("/done").finally(() => (document.getElementById("status").textContent = "done"));
+}, 6000);
+</script>
+</body>
+</html>

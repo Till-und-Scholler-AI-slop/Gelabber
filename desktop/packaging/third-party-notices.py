@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Writes desktop/app/package/THIRD-PARTY-NOTICES.txt: the third-party
-software built into the desktop packages, with the licence texts it ships.
-With --app native: desktop/packaging/native/THIRD-PARTY-NOTICES.txt for the
-native app (desktop/gelabber), whose parts on the media core are taken from
-the Tauri app's file while their inputs are the same.
+"""Writes desktop/packaging/native/THIRD-PARTY-NOTICES.txt: the third-party
+software built into the packages of the desktop app (desktop/gelabber), with
+the licence texts it ships.
 
-  desktop/packaging/third-party-notices.py [--app native]
+  desktop/packaging/third-party-notices.py
       Rust parts afresh from desktop/Cargo.lock (cargo tree, cargo metadata,
       the crate sources in the cargo registry and the licence texts of the
       pinned Rust toolchain). The two parts on the native media core are
@@ -18,7 +16,7 @@ the Tauri app's file while their inputs are the same.
       <target>/<profile>/build/gelabber-media-core-*/out/build and holds
       the unstripped libgelabber_media.so of that build. --core-build alone
       renews only the part that does not need the libwebrtc checkout.
-  desktop/packaging/third-party-notices.py [--app native] --check
+  desktop/packaging/third-party-notices.py --check
       Exit status 1 when the committed file is not what the first form
       would write, or when a kept part was changed by hand.
 
@@ -49,7 +47,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 NATIVE = REPO / "desktop/native"
-OUTPUT = REPO / "desktop/app/package/THIRD-PARTY-NOTICES.txt"
+OUTPUT = REPO / "desktop/packaging/native/THIRD-PARTY-NOTICES.txt"
 # The workflow that builds the packages, and its job for the Windows one.
 WORKFLOW_NAME = ".github/workflows/desktop-native.yml"
 WORKFLOW = REPO / WORKFLOW_NAME
@@ -57,25 +55,14 @@ WORKFLOW = REPO / WORKFLOW_NAME
 RELEASE_WORKFLOW = REPO / ".github/workflows/desktop-release.yml"
 WINDOWS_JOB = "core-windows"
 WINDOWS_UPLOAD_JOB = "release-asset-windows"
-# The two applications the script writes a file for: the cargo package (also
-# the Linux binary), the Windows binary, the file and the installer.
-APPS = {
-    "tauri": {
-        "package": "gelabber-desktop",
-        "exe": "gelabber-desktop.exe",
-        "output": OUTPUT,
-        "installer": "gelabber-desktop-windows-x64-setup.exe",
-        "title": "Gelabber desktop",
-    },
-    "native": {
-        "package": "gelabber",
-        "exe": "gelabber.exe",
-        "output": REPO / "desktop/packaging/native/THIRD-PARTY-NOTICES.txt",
-        "installer": "gelabber-native-windows-x64-setup.exe",
-        "title": "Gelabber native desktop app",
-    },
+# The application: the cargo package (also the Linux binary), the Windows
+# binary, the installer and the file's title.
+APP = {
+    "package": "gelabber",
+    "exe": "gelabber.exe",
+    "installer": "gelabber-native-windows-x64-setup.exe",
+    "title": "Gelabber native desktop app",
 }
-APP = APPS["tauri"]
 WINDOWS_INSTALLER = APP["installer"]
 # What the native app embeds besides its crates (desktop/ui/assets): name,
 # file in the repository, where it comes from, licence text.
@@ -117,7 +104,6 @@ EXPECTED_FACTS = {
     "Windows libwebrtc is built with use_custom_libcxx=false": True,
     "the core does not define WEBRTC_USE_H264": True,
     "the core links the static MSVC runtime on Windows": True,
-    "the Windows installer embeds the WebView2 bootstrapper": True,
 }
 # The same for the sentences of part 1 on what the workflow does when it
 # builds the Windows package. Kept apart: part 2 says nothing that depends on
@@ -243,36 +229,19 @@ REVIEWED = {
         "feature prebuilt-nasm (on here) the build links them into {exe} when the "
         "Windows build machine has no NASM assembler.",
     ),
-    ("libdbus-sys", "vendor/"): (
-        "skip",
-        "libdbus sources that are only compiled with the crate feature `vendored`. The "
-        "feature is off; the application loads the system's libdbus.",
+    ("libsqlite3-sys", "sqlcipher/"): (
+        "note",
+        "SQLCipher's licence; the crate builds SQLCipher only with its sqlcipher "
+        "features (off here). With its feature bundled (on here) it compiles SQLite "
+        "3.53.2 (sqlite3/sqlite3.c) into {app} on Linux; SQLite's authors disclaim "
+        "copyright in it (public domain, sqlite.org/copyright.html).",
     ),
     ("windows_x86_64_msvc", "lib/"): (
         "skip",
         "The import library for Windows system DLLs that the crate consists of, built by "
         "the windows-rs project that publishes it.",
     ),
-    ("webview2-com-sys", "x64/"): (
-        "note",
-        "Prebuilt loader libraries of Microsoft's WebView2 SDK. For the MSVC target the "
-        "crate links x64/WebView2LoaderStatic.lib statically into {exe} "
-        "(src/lib.rs). The crate names no licence for these files and ships no licence "
-        "text for them.",
-    ),
-    ("webview2-com-sys", "x86/"): ("skip", "The same loader for 32-bit x86; not used."),
-    ("webview2-com-sys", "arm64/"): ("skip", "The same loader for ARM64; not used."),
-    ("sctk-adwaita", "src/title/"): (
-        "font",
-        "A font that the crate embeds into {app} for window titles on Wayland "
-        "(include_bytes! in src/title/ab_glyph_renderer.rs, crate feature ab_glyph). The "
-        "crate ships no licence text for it.",
-    ),
 }
-
-
-# An entry of REVIEWED that only holds while a feature of the crate is off.
-FEATURE_MUST_BE_OFF = {"libdbus-sys": "vendored"}
 
 
 def die(message):
@@ -398,7 +367,6 @@ def build_facts():
         if not line.strip().startswith("#")
     ]
     h264 = [line for line in cmake if "WEBRTC_USE_H264" in line]
-    bundle = json.loads(read(REPO / "desktop/app/tauri.bundle.windows.json"))["bundle"]
     return {
         "Linux libwebrtc is built with rtc_use_h264=false": (
             "rtc_use_h264=false" in gn_args and "rtc_use_h264=true" not in gn_args
@@ -410,10 +378,6 @@ def build_facts():
         "the core does not define WEBRTC_USE_H264": not h264,
         "the core links the static MSVC runtime on Windows": any(
             'CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded"' in line for line in cmake
-        ),
-        "the Windows installer embeds the WebView2 bootstrapper": (
-            bundle["targets"] == ["nsis"]
-            and bundle["windows"]["webviewInstallMode"]["type"] == "embedBootstrapper"
         ),
     }
 
@@ -1251,7 +1215,7 @@ def spdx_census(folder):
     return ", ".join(f"{name} in {count}" for name, count in sorted(counts.items()))
 
 
-def below_root(name, root, below, features):
+def below_root(name, root, below):
     """What REVIEWED says about a crate's findings: files to reproduce, remarks."""
     wanted, remarks = [], {}
     for path in below:
@@ -1262,7 +1226,7 @@ def below_root(name, root, below, features):
             ),
             (None, None),
         )
-        if action is None or FEATURE_MUST_BE_OFF.get(name) in features:
+        if action is None:
             action = "bundled" if path.lower().endswith(BUNDLED) else "text"
             sentence = "Not looked at yet" + ("." if action == "bundled" else "; reproduced in part 6.")
         if action == "text":
@@ -1276,7 +1240,7 @@ def below_root(name, root, below, features):
 
 
 def rust_parts(offline):
-    packages, features, linked, build_time = {}, {}, {}, set()
+    packages, linked, build_time = {}, {}, set()
     graphs, reported = {}, {}
     for target, system in TARGETS.items():
         # Per target: without the filter cargo wants every crate of the lock
@@ -1289,8 +1253,6 @@ def rust_parts(offline):
             if known["id"] != package["id"]:
                 die(f"two packages are called {package['name']} {package['version']}")
         graphs[target] = {node["id"]: node for node in metadata["resolve"]["nodes"]}
-        for node in metadata["resolve"]["nodes"]:
-            features.setdefault(node["id"], set()).update(node["features"])
         in_binary = cargo_tree(target, "normal,no-proc-macro", offline)
         for key in in_binary:
             linked.setdefault(key, []).append(system)
@@ -1330,7 +1292,7 @@ def rust_parts(offline):
         top, below = scan_crate(root)
         if package["license_file"] and package["license_file"] not in top:
             top.append(package["license_file"])
-        nested, said = below_root(key[0], root, below, features[package["id"]])
+        nested, said = below_root(key[0], root, below)
         remarks += [f"{label}: {remark}" for remark in said]
         numbers = []
         for file in top + nested:
@@ -1469,8 +1431,7 @@ def scope_part():
     out += "\n"
     out += f"    {APP['package']} (Linux), {APP['exe']} (Windows)\n"
     out += "        the application, written in Rust: parts 4 to 6\n"
-    if APP is not APPS["tauri"]:
-        out += "        and the fonts and data built into it: part 7\n"
+    out += "        and the fonts and data built into it: part 7\n"
     out += "    libgelabber_media.so (Linux), gelabber_media.dll (Windows)\n"
     out += "        the native media core, C++ behind a C interface: parts 2 and 3\n"
     out += "\n"
@@ -1481,14 +1442,9 @@ def scope_part():
     out += "\nWhat is not covered\n"
     out += item(
         "Libraries the programs load from the operating system when they run, for example "
-        + (
-            "glibc, GLib, GTK 3, WebKitGTK, libdbus, PipeWire and GStreamer on Linux, the "
-            "system DLLs and the WebView2 Runtime on Windows."
-            if APP is APPS["tauri"] else
-            "glibc, GLib, PipeWire, GStreamer, the Vulkan loader, Wayland and X11 "
-            "libraries on Linux, the system DLLs on Windows."
-        )
-        + " The libraries are not in the "
+        "glibc, GLib, PipeWire, GStreamer, the Vulkan loader, Wayland and X11 "
+        "libraries on Linux, the system DLLs on Windows."
+        " The libraries are not in the "
         "packages. Their header files are used when the programs are compiled, and inline "
         "functions and macros of those headers become part of the programs. The last entry "
         "of part 2 says what a search of the Linux media core found of them and prints the "
@@ -1508,10 +1464,6 @@ def scope_part():
         "the two, and fails when it finds one; a release takes its installer from a run of "
         "that job only. That is a search for names in the file, not proof that it holds "
         "none of that code.")
-    if APP is APPS["tauri"]:
-        out += item(
-            "The web client. The application shows the pages of the Gelabber server it is "
-            "connected to; they are not in the packages.")
     out += item(
         "Notices that stand only inside individual source files and not in a licence "
         "file, except where a part says that it collected them.")
@@ -1532,10 +1484,9 @@ def scope_part():
         "parts 4 to 6: desktop/Cargo.lock through cargo tree and cargo metadata on Linux "
         "x86-64, the crate sources in the cargo registry, and the licence texts in the "
         "Rust toolchain that rust-toolchain.toml pins")
-    if APP is not APPS["tauri"]:
-        out += item(
-            "part 7: the files of desktop/ui/assets that are embedded into the application "
-            "and the licence texts kept next to them in the repository")
+    out += item(
+        "part 7: the files of desktop/ui/assets that are embedded into the application "
+        "and the licence texts kept next to them in the repository")
     out += para(
         "Nothing was built or run for Windows to produce it; what it says about the "
         "Windows package is derived from the build scripts, from the workflow that builds "
@@ -1553,19 +1504,11 @@ def scope_part():
         "libraries the code linked into the application pulls in was not established. "
         "Versions and licence texts of these libraries are not listed: they come from the "
         "Visual Studio and LLVM installation of the build machine.")
-    if APP is APPS["tauri"]:
-        out += item(
-            "The Windows installer. It is made by Tauri's bundler with NSIS "
-            "(desktop/app/tauri.bundle.windows.json) and embeds Microsoft's WebView2 Runtime "
-            "bootstrapper (webviewInstallMode embedBootstrapper). The installer program, the "
-            "NSIS plugins it uses and the bootstrapper are not listed: they are added when "
-            "the installer is built.")
-    else:
-        out += item(
-            "The Windows installer. It is made with NSIS from "
-            "desktop/packaging/native/windows/installer.nsi. The installer program and the "
-            "NSIS headers and plugins it uses are not listed: they are added when the "
-            "installer is built.")
+    out += item(
+        "The Windows installer. It is made with NSIS from "
+        "desktop/packaging/native/windows/installer.nsi. The installer program and the "
+        "NSIS headers and plugins it uses are not listed: they are added when the "
+        "installer is built.")
     out += item(
         "The Rust standard library's own dependencies are not listed, see part 4.")
     out += item(
@@ -1588,13 +1531,6 @@ def assets_part():
             para(about.replace("{app}", APP["package"])) + "\n" + read(REPO / licence),
         )
     return out
-
-
-def use_app(name):
-    """Points the script at one of APPS."""
-    global APP, WINDOWS_INSTALLER
-    APP = APPS[name]
-    WINDOWS_INSTALLER = APP["installer"]
 
 
 # --- the file -----------------------------------------------------------------
@@ -1651,25 +1587,16 @@ def main():
     option("--webrtc-src", help="libwebrtc checkout (the src directory) at the pinned commit")
     option("--webrtc-out", default="out/gelabber", help="its GN build directory (default: %(default)s)")
     option("--core-build", help=f"CMake build directory of the media core (_deps, {CORE_LIBRARY})")
-    option("--app", choices=sorted(APPS), default="tauri", help="default: %(default)s")
-    option("--output", type=Path, help="default: the file of the app")
+    option("--output", type=Path, help=f"default: {OUTPUT.relative_to(REPO)}")
     option("--offline", action="store_true", help="pass --offline to cargo")
     option("--check", action="store_true", help="compare instead of writing; exit status 1 on a difference")
     args = parser.parse_args()
     if args.webrtc_src and not args.core_build:
         die(f"--webrtc-src needs --core-build: part 2 says what of libwebrtc is in {CORE_LIBRARY}")
 
-    use_app(args.app)
-    args.output = args.output or APP["output"]
+    args.output = args.output or OUTPUT
     existing = read(args.output).replace("\r\n", "\n") if args.output.is_file() else ""
     kept = kept_parts(existing)
-    if APP is not APPS["tauri"] and OUTPUT.is_file():
-        # The same media core ships with both apps: a part of the Tauri app's
-        # file is taken where this file's own is missing or out of date.
-        current = {2: libwebrtc_fingerprint(), 3: core_fingerprint()}
-        for number, part in kept_parts(read(OUTPUT).replace("\r\n", "\n")).items():
-            if kept.get(number, ("",))[0] != current.get(number) == part[0]:
-                kept[number] = part
     toolchain = rust_toolchain()
     crates, licence_texts = rust_parts(args.offline)
     parts = [
@@ -1692,9 +1619,8 @@ def main():
         ("Application: Rust standard library", std_part(toolchain)),
         ("Application: Rust crates", crates),
         ("Application: licence texts of the Rust crates", licence_texts),
+        ("Application: fonts and data", assets_part()),
     ]
-    if APP is not APPS["tauri"]:
-        parts.append(("Application: fonts and data", assets_part()))
 
     heading = f"{APP['title']}: third-party notices"
     out = heading + "\n" + "=" * len(heading) + "\n\n"
@@ -1708,8 +1634,7 @@ def main():
 
     if args.check:
         if out != existing:
-            again = "" if APP is APPS["tauri"] else f" --app {args.app}"
-            sys.exit(f"{args.output} is out of date: run desktop/packaging/third-party-notices.py{again}")
+            sys.exit(f"{args.output} is out of date: run desktop/packaging/third-party-notices.py")
         print(f"{args.output} is up to date")
         return
     args.output.write_text(out, encoding="utf-8", newline="\n")

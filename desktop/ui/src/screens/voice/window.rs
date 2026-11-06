@@ -1,5 +1,5 @@
 //! A video in a window of its own (VoiceTile.tsx `OwnWindow`, the Tauri
-//! app's desktop/app/src/viewer.rs): for a second monitor or a tiling
+//! app's viewer.rs): for a second monitor or a tiling
 //! compositor. An egui deferred viewport titled "<label> – Gelabber" that
 //! draws the newest picture contained on black; its tile says "Läuft im
 //! eigenen Fenster." meanwhile.

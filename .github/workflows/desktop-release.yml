@@ -1,4 +1,4 @@
-# Builds the desktop apps for a published release and attaches them to it;
+# Builds the desktop app for a published release and attaches it;
 # once enabled, also publishes the pacman repository (desktop/packaging/arch).
 # release.yml dispatches this with release_tag: a release made with the
 # workflow token raises no release event.
@@ -26,20 +26,16 @@ jobs:
       release_tag: ${{ github.event.release.tag_name || inputs.release_tag }}
     secrets: inherit
 
-  # Both app tarballs become release assets, which the PKGBUILDs download.
+  # The app tarball becomes a release asset, which the PKGBUILD downloads.
   # `build` includes the third-party notices, so none go out of date.
   release-asset:
-    name: Attach the Linux apps to the release
+    name: Attach the Linux app to the release
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
     steps:
-      - name: Download the app
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: gelabber-desktop-linux-x64
       - name: Download the native app
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -49,23 +45,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ env.RELEASE_TAG }}
         run: |
-          gh release upload "$TAG" gelabber-desktop-linux-x64.tar.gz gelabber-native-linux-x64.tar.gz \
-            --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload "$TAG" gelabber-native-linux-x64.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
 
-  # Installers, checksums, signatures and the manifests the installed apps
-  # poll: latest.json (Tauri app), latest-native.json (native app).
+  # The installer, its checksum and signature, and the manifests the
+  # installed apps poll: latest-native.json (0.9 on), latest.json (Tauri 0.8).
   release-asset-windows:
-    name: Attach the Windows apps to the release
+    name: Attach the Windows app to the release
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
     steps:
-      - name: Download the app
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: gelabber-desktop-windows-x64
       - name: Download the native app
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -81,25 +72,18 @@ jobs:
           if [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then
             echo "release $TAG must be built from its tag, not $GITHUB_REF"; exit 1
           fi
-          sha256sum --check gelabber-desktop-windows-x64-setup.exe.sha256
           sha256sum --check gelabber-native-windows-x64-setup.exe.sha256
-          date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          # manifest <installer> <file>: one per app in the same format, each
-          # naming only its own installer.
-          manifest() {
-            url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/$1"
-            jq -n --arg version "${TAG#v}" --arg url "$url" --arg date "$date" \
-              --rawfile signature "$1.sig" \
-              '{version: $version, pub_date: $date,
-                platforms: {"windows-x86_64": {url: $url, signature: ($signature | rtrimstr("\n"))}}}' > "$2"
-            cat "$2"
-          }
-          manifest gelabber-desktop-windows-x64-setup.exe latest.json
-          manifest gelabber-native-windows-x64-setup.exe latest-native.json
-          gh release upload "$TAG" gelabber-desktop-windows-x64-setup.exe \
-            gelabber-desktop-windows-x64-setup.exe.sha256 gelabber-desktop-windows-x64-setup.exe.sig \
-            latest.json gelabber-native-windows-x64-setup.exe gelabber-native-windows-x64-setup.exe.sha256 \
-            gelabber-native-windows-x64-setup.exe.sig latest-native.json --clobber --repo "$GITHUB_REPOSITORY"
+          setup=gelabber-native-windows-x64-setup.exe
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/$setup"
+          jq -n --arg version "${TAG#v}" --arg url "$url" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --rawfile signature "$setup.sig" \
+            '{version: $version, pub_date: $date,
+              platforms: {"windows-x86_64": {url: $url, signature: ($signature | rtrimstr("\n"))}}}' > latest-native.json
+          cat latest-native.json
+          # The Tauri apps' updater reads latest.json: the same, so they install the native app.
+          cp latest-native.json latest.json
+          gh release upload "$TAG" "$setup" "$setup.sha256" "$setup.sig" latest-native.json latest.json \
+            --clobber --repo "$GITHUB_REPOSITORY"
 
   # Public: the repository on GitHub Pages. Off until the repository
   # variable ARCH_REPO_PUBLISH is "true", and the github-pages environment

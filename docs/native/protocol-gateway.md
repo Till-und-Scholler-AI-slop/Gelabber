@@ -856,5 +856,5 @@ Voice connection states exposed to UI (`web/src/voice/voiceStore.ts:16-21`):
 - No live events for channel/server/role/profile changes; only kick/ban. Native must refetch on reconnect/gap like the web, or poll.
 - Typing expiry is client-side only (6 s); the server never sends `on:false` for a vanished typer except on its socket's disconnect cleanup.
 - Media `result` vs event ordering is not guaranteed; queue consumer events until the recv transport exists, and key consumers by `(consumerId, generation)`.
-- The existing desktop app (`desktop/`) embeds the web UI via Tauri and a native libwebrtc media device (`web/src/voice/native/*`, `desktop/core`); a pure egui client needs its own mediasoup-compatible client (device.load, transports, produce/consume) — mediasoup-client semantics (RTP capabilities/parameters JSON) are what `/media/ws` expects.
+- The desktop app of that time (`desktop/app`, removed in 0.9) embedded the web UI via Tauri and a native libwebrtc media device (`web/src/voice/native/*`, `desktop/core`); a pure egui client needs its own mediasoup-compatible client (device.load, transports, produce/consume) — mediasoup-client semantics (RTP capabilities/parameters JSON) are what `/media/ws` expects.
 - `Origin`: omit it from native upgrades (`/ws` passes without Origin; `/media/ws` never checks).

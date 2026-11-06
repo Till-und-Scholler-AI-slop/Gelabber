@@ -1,6 +1,7 @@
 """The areas ci.yml runs for a pull request (.github/workflows/scripts/changes.py)."""
 import importlib.util
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -28,7 +29,7 @@ def changed_areas(*paths):
 class Areas(unittest.TestCase):
     def test_each_folder_starts_its_area(self):
         for path, area in (('backend/api/src/main.rs', 'backend'), ('web/src/main.tsx', 'web'),
-                           ('desktop/app/src/main.rs', 'desktop'), ('deploy/backup.sh', 'deploy'),
+                           ('desktop/gelabber/src/main.rs', 'desktop'), ('deploy/backup.sh', 'deploy'),
                            ('deploy/compose/minio/Dockerfile', 'minio')):
             with self.subTest(path=path):
                 self.assertIn(area, changes.areas([path]))
@@ -41,6 +42,14 @@ class Areas(unittest.TestCase):
 
     def test_the_toolchain_concerns_both_rust_workspaces(self):
         self.assertTrue({'backend', 'desktop'} <= changes.areas(['rust-toolchain.toml']))
+
+    def test_the_storage_keys_the_desktop_test_reads_concern_it_too(self):
+        legacy = (ROOT / 'desktop/ui/src/platform/legacy.rs').read_text(encoding='utf-8')
+        read = set(re.findall(r'include_str!\("(?:\.\./)+(web/[^"]+)"\)', legacy))
+        self.assertTrue(read)
+        for path in read:
+            with self.subTest(path=path):
+                self.assertEqual(changes.areas([path]), {'web', 'desktop'})
 
     def test_emoji_data_concerns_web_too(self):
         self.assertIn('web', changes.areas(['backend/shared/data/emoji-18.0.json']))

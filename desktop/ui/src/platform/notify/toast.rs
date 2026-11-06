@@ -1,4 +1,4 @@
-//! Windows: toast notifications, from desktop/app/src/notify/toast.rs. The
+//! Windows: toast notifications, from the Tauri app's notify/toast.rs. The
 //! app is not packaged, so Windows learns its name and icon from the
 //! AppUserModelID's entry under `HKCU\Software\Classes\AppUserModelId`,
 //! written at every start. A click arrives through the toast's `Activated`.

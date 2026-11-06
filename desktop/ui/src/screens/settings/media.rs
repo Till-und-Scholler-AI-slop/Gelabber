@@ -757,8 +757,14 @@ fn disclosure(ui: &mut Ui, s: &mut State, p: &mut Prefs) {
     );
 }
 
-/// `HYPRLAND_BIND`.
-const HYPRLAND_BIND: &str = "bind = , <Taste>, global, gelabber-desktop:push-to-talk";
+/// `HYPRLAND_BIND`, with the app id the portal registers (the Tauri app's
+/// was `gelabber-desktop`, which the web client still names).
+fn hyprland_bind() -> String {
+    format!(
+        "bind = , <Taste>, global, {}:push-to-talk",
+        crate::platform::APP_ID
+    )
+}
 
 /// `globalKeyNote`: what the global key does, from the platform binding
 /// (`None` while it is not wanted or has not answered yet).
@@ -769,7 +775,8 @@ pub fn global_key_note(
 ) -> String {
     use crate::platform::PttStatus;
     let linux = format!(
-        "Unter Linux bestimmt der Desktop die Taste: KDE und GNOME fragen beim ersten Mal nach, unter Hyprland gehört „{HYPRLAND_BIND}“ in die hyprland.conf."
+        "Unter Linux bestimmt der Desktop die Taste: KDE und GNOME fragen beim ersten Mal nach, unter Hyprland gehört „{}“ in die hyprland.conf.",
+        hyprland_bind()
     );
     match (wanted, status) {
         (false, _) if windows => {
@@ -1227,6 +1234,7 @@ mod tests {
         let note = global_key_note(Some(&desktop), true, false);
         assert!(note.starts_with("Global aktiv. Unter Linux bestimmt der Desktop die Taste:"));
         assert!(note.ends_with("in die hyprland.conf."));
+        assert!(note.contains("„bind = , <Taste>, global, gelabber:push-to-talk“"));
         assert_eq!(
             global_key_note(Some(&desktop), true, true),
             "Global aktiv, auch wenn ein anderes Fenster vorne ist."

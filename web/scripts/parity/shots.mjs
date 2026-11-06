@@ -66,7 +66,7 @@ function stopCall(child) {
 }
 
 // Scenes with `desktop`: the web client as the Tauri desktop app loads it
-// (isDesktopApp()), each command answered as desktop/app's would here.
+// (isDesktopApp()), each command answered as the Tauri app's would here.
 const desktopToml = await readFile(join(repo, "desktop/Cargo.toml"), "utf8");
 const ffi = await readFile(join(repo, "desktop/core/src/ffi.rs"), "utf8");
 const DESKTOP = {
@@ -102,10 +102,8 @@ const DESKTOP = {
 };
 // Scenes with `update` (and `desktop`): the update the app offers, as
 // update.rs `update_state` reports it, and its notice, the BANNER script
-// the Tauri app puts into every page. The install it starts stays at work.
-const BANNER = (await readFile(join(repo, "desktop/app/src/update.rs"), "utf8")).match(
-  /pub const BANNER: &str = r#"([\s\S]*?)"#;/,
-)[1];
+// the Tauri app put into every page. The install it starts stays at work.
+const BANNER = await readFile(join(repo, "desktop/parity/reference/update-banner.js"), "utf8");
 const updateState = (update) => ({
   current: DESKTOP.media_info.version,
   supported: true,

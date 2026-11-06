@@ -936,27 +936,27 @@
     },
     {
       "name": "setup",
-      "page": "desktop/app/setup/index.html"
+      "page": "desktop/parity/reference/setup/index.html"
     },
     {
       "name": "setup-dark",
-      "page": "desktop/app/setup/index.html",
+      "page": "desktop/parity/reference/setup/index.html",
       "scheme": "dark"
     },
     {
       "name": "setup-switch",
-      "page": "desktop/app/setup/index.html",
+      "page": "desktop/parity/reference/setup/index.html",
       "query": "?server=http%3A%2F%2F127.0.0.1%3A5180"
     },
     {
       "name": "setup-error",
-      "page": "desktop/app/setup/index.html",
+      "page": "desktop/parity/reference/setup/index.html",
       "query": "?server=http%3A%2F%2F127.0.0.1%3A1&error=127.0.0.1%3A1%20ist%20nicht%20erreichbar%20(Connection%20refused%20(os%20error%20111)).",
       "scheme": "dark"
     },
     {
       "name": "setup-updates",
-      "page": "desktop/app/setup/index.html",
+      "page": "desktop/parity/reference/setup/index.html",
       "updates": {
         "current": "0.9.0",
         "autoCheck": true,
@@ -966,7 +966,7 @@
     },
     {
       "name": "setup-updates-dark",
-      "page": "desktop/app/setup/index.html",
+      "page": "desktop/parity/reference/setup/index.html",
       "scheme": "dark",
       "updates": {
         "current": "0.9.0",

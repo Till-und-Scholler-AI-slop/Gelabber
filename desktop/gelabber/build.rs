@@ -1,7 +1,7 @@
 //! Lets the binary find the native media core: on Linux through the rpath
 //! (`$ORIGIN` for the packages, the core's build directory for `cargo run`),
 //! on Windows by copying `gelabber_media.dll` next to the executable, which
-//! has no rpath (as desktop/app/build.rs does for the Tauri app).
+//! has no rpath.
 use std::path::{Path, PathBuf};
 
 fn place_core_dll(lib_dir: &Path) {
