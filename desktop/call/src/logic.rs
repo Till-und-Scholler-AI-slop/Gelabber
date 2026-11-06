@@ -744,6 +744,32 @@ pub fn source_audio_change(wanted: bool, running: bool, app_changed: bool) -> (b
     )
 }
 
+/// What becomes of a Live's sound once its publication is answered
+/// (`addLocalSourceAudio`'s `mine()`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublishedSound {
+    /// Still the sound wanted: the others hear of it.
+    Announce,
+    /// Switched off meanwhile: the producer of this Live goes again.
+    Close,
+    /// Replaced meanwhile: the newer capture takes the producer over, or
+    /// it belongs to another Live.
+    Keep,
+}
+
+/// `current`: no change of the sound or the Live since it was asked;
+/// `newer`: a capture holds the Live's sound now; `ours`: the seat's sound
+/// producer is this Live's.
+pub fn published_sound(current: bool, newer: bool, ours: bool) -> PublishedSound {
+    if current {
+        PublishedSound::Announce
+    } else if !newer && ours {
+        PublishedSound::Close
+    } else {
+        PublishedSound::Keep
+    }
+}
+
 /// Whether a consumer that failed here is reported (`consumerFailed`),
 /// which counts against the server's retries for its producer: not one
 /// this client let go of meanwhile (a watch switched off), nor one the
@@ -1072,6 +1098,18 @@ mod tests {
         assert_eq!(source_audio_change(true, true, true), (true, true));
         // Another application while off: nothing to do.
         assert_eq!(source_audio_change(false, false, true), (false, false));
+    }
+
+    #[test]
+    fn a_sound_switched_off_while_it_was_published_goes_again() {
+        use PublishedSound::*;
+        assert_eq!(published_sound(true, true, true), Announce);
+        // Off during the publication: nothing announced, the producer goes.
+        assert_eq!(published_sound(false, false, true), Close);
+        // Another application meanwhile: its capture replaces the source.
+        assert_eq!(published_sound(false, true, true), Keep);
+        // The Live ended meanwhile: another Live's producer stays.
+        assert_eq!(published_sound(false, false, false), Keep);
     }
 
     #[test]

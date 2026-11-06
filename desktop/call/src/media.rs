@@ -1452,7 +1452,23 @@ impl Session {
             return;
         }
         match seat.publish(Kind::Sa, &audio, None, false).await {
-            Ok(()) => self.announce(Kind::Sa, true),
+            Ok(()) => {
+                // Switched off while it went up: the others never hear of it.
+                let (now, newer) = {
+                    let st = self.st.lock();
+                    (current(&st), st.screen_audio.is_some())
+                };
+                let ours = seat
+                    .producers
+                    .lock()
+                    .get(&Kind::Sa)
+                    .is_some_and(|h| h.epoch == epoch);
+                match logic::published_sound(now, newer, ours) {
+                    logic::PublishedSound::Announce => self.announce(Kind::Sa, true),
+                    logic::PublishedSound::Close => seat.close_source(Kind::Sa).await,
+                    logic::PublishedSound::Keep => {}
+                }
+            }
             // The seat went: its next one publishes the sound with the video.
             Err(e) if e.code() == "connection_closed" => {}
             Err(e) => {
