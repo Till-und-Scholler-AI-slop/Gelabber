@@ -1,5 +1,5 @@
 //! Linux: `org.freedesktop.Notifications` on the session bus (mako, KDE,
-//! GNOME, dunst, swaync), as desktop/app/src/notify/dbus.rs does it, through
+//! GNOME, dunst, swaync), as the Tauri app's notify/dbus.rs did it, through
 //! zbus instead of GIO. A worker thread sends, a second one listens for
 //! clicks; the service's id per tag lets a newer message replace the older.
 

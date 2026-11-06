@@ -1,4 +1,4 @@
-//! The desktop around the window, what the Tauri app (desktop/app) does
+//! The desktop around the window, what the Tauri app (up to 0.8) did
 //! outside its page: persistence in its config directory, system
 //! notifications, the tray with close-to-tray, one app per user, the
 //! global push-to-talk key, and the update check. The binary owns one
@@ -18,6 +18,7 @@ pub mod settings;
 pub mod state;
 pub mod tray;
 pub mod update;
+pub mod webview;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -710,7 +711,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub(crate) mod testing {
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};

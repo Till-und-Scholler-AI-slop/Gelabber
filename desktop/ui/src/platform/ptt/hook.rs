@@ -1,5 +1,5 @@
 //! Windows: the bound key through a low-level keyboard or mouse hook
-//! (a copy of desktop/app/src/ptt/hook.rs).
+//! (a copy of the Tauri app's ptt/hook.rs).
 //!
 //! The hook runs on a thread of its own, whose message loop Windows calls it
 //! from. It must answer fast (`LowLevelHooksTimeout`, after which Windows

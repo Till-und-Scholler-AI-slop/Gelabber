@@ -1,21 +1,22 @@
 # Native app: the desktop around the window
 
-`desktop/ui/src/platform/` does for the egui app what the Tauri app
-(`desktop/app/src`) does outside its page. The binary (`desktop/gelabber`)
+`desktop/ui/src/platform/` does for the egui app what the Tauri app (up to
+0.8, removed in 0.9) did outside its page. The binary (`desktop/gelabber`)
 owns one `Platform` and calls `logic` every pass (also while the window is
 hidden in the tray) and `paint` after the page. Parity runs construct
 `GelabberApp` without it, so nothing here changes a parity scene.
 
 ## Files in the config directory
 
-The Tauri app's `app_config_dir()`:
+The Tauri app's `app_config_dir()`, kept so that its installs keep their
+settings:
 `$XDG_CONFIG_HOME` or `~/.config`, `%APPDATA%`, or
 `~/Library/Application Support`, plus
 `io.github.till-und-scholler-ai-slop.gelabber/`. `GELABBER_CONFIG_DIR`
 replaces the whole path. Every write goes to a partial file first and is
 renamed, so a crash never leaves half a file.
 
-| File | Content | Shared with the Tauri app |
+| File | Content | Written by the Tauri app too |
 |---|---|---|
 | `desktop.json` | `server`, `close_to_tray`; unknown keys are kept | yes |
 | `update.json` | `autoCheck` (read only) | yes |
@@ -58,7 +59,7 @@ sound goes through `Call::play_sound(Sound::Message)`, once per burst, not
 while deafened, only with "messageSound".
 
 Linux uses `org.freedesktop.Notifications` through zbus, Windows toasts
-through WinRT (the Tauri app's code). Without a service the app runs
+through WinRT (from the Tauri app's code). Without a service the app runs
 without notifications; the settings page then shows the browser texts.
 
 ## Tray, close-to-tray, one instance, window
@@ -75,7 +76,7 @@ without notifications; the settings page then shows the browser texts.
 - One instance: a Unix socket in `$XDG_RUNTIME_DIR` (0600), a loopback port
   with a secret on Windows. A second start shows the first window and ends.
 - Window: title "Gelabber", app id `gelabber`, icon `icon-192.png`, 1280×800,
-  at least 480×360 (tauri.conf.json), dark title bar through the window
+  at least 480×360 (as the Tauri window), dark title bar through the window
   theme, size and position restored.
 
 ## Push-to-talk (`ptt/`)
@@ -92,20 +93,22 @@ the GlobalShortcuts portal (KDE, GNOME 48+, Hyprland:
 
 15 s after the start and every 6 hours while `autoCheck` holds, the
 `latest-native.json` of the latest GitHub release (`GELABBER_UPDATE_ENDPOINT`
-replaces it) is read: the Tauri app's `latest.json` names its own installer.
-desktop-release.yml writes both in the same format. A newer version shows
-the notice of the Tauri app's `BANNER` (same texts, colours and place, top
-centre); what it offers depends on the install:
+replaces it) is read. desktop-release.yml writes the same content into
+`latest.json`, which the installed Tauri apps (0.8) read, so their updater
+installs this app; `latest.json` of 0.8 releases names the Tauri installer.
+A newer version shows the notice of the Tauri app's `BANNER`
+(`desktop/parity/reference/update-banner.js`: same texts, colours and place,
+top centre); what it offers depends on the install:
 
 | Install | Detected by | Notice |
 |---|---|---|
 | Windows setup | `uninstall.exe` next to the binary, and a `windows-x86_64` entry | "Gelabber x.y.z ist da. Zum Installieren startet die App neu." with "Neu starten" and "Später" |
-| pacman package | binary under `/opt/gelabber` (PKGBUILD) | "Gelabber x.y.z ist da. Updates kommen über pacman (Paket gelabber-desktop-native)." with "Später" |
+| pacman package | binary under `/opt/gelabber` (PKGBUILD) | "Gelabber x.y.z ist da. Updates kommen über pacman (Paket gelabber-desktop)." with "Später" |
 | anything else (tarball) | | "Gelabber x.y.z ist da." with "Herunterladen" (that version's release page) and "Später" |
 
 "Neu starten" downloads the installer the manifest names (no time limit as
 a whole, 30 s to connect, 60 s per read), shows "Update wird geladen … N %",
-and keeps it only when `verify` passes: minisign by `desktop/app/updater.pub`
+and keeps it only when `verify` passes: minisign by `desktop/packaging/updater.pub`
 (or `GELABBER_UPDATER_PUBKEY` at build time), the trusted comment naming the
 announced version (`requireSignedVersion`). A failure stands in the notice
 and the buttons work again. Then the window closes and, after
@@ -115,7 +118,7 @@ starts the setup with ShellExecuteW as the updater plugin does:
 passively into the same folder, keeps the shortcuts with their
 AppUserModelID and starts the new version with the same arguments.
 
-The call lock is the Tauri app's `Media::busy`: during a call (joining,
+The call lock works as the Tauri app's `Media::busy` did: during a call (joining,
 connected, reconnecting, a channel held) or the microphone test, and for a
 minute after, no notice shows. An installer downloaded when a call began
 waits and installs once the lock lifts. "Später" hides the version until the
@@ -139,7 +142,8 @@ call lock, the update check and the installer download against a local
 HTTP server, the setup's command line, the notice's texts and buttons,
 and a pass of `Platform` without a desktop. The parity scenes
 `update-notice` and `update-downloading` compare the notice with the
-Tauri app's BANNER (shots.mjs answers `update_state` from the scene). `GELABBER_TEST_SERVER=http://127.0.0.1:5180 cargo test -p
+Tauri app's BANNER, kept in `desktop/parity/reference/` (shots.mjs answers
+`update_state` from the scene). `GELABBER_TEST_SERVER=http://127.0.0.1:5180 cargo test -p
 gelabber-ui signed_in_after_a_restart -- --ignored` signs in against the
 seeded stack, restarts the client from the stored cookie and signs out.
 
@@ -149,5 +153,7 @@ the compositor may refuse focus without the activation token, which egui
 cannot pass on), close-to-tray and the window coming back, the portal's
 key dialog, the window theme and the restored position (Wayland gives
 none). The Windows paths (toasts, tray-icon, keyboard hook, the
-AppUserModelID, starting the setup) are copies of the Tauri app's but are
-not compiled on Linux; an update end to end needs a signed release.
+AppUserModelID, starting the setup) come from the Tauri app's code; they are
+linted for Windows in CI's `core-windows`, and the installer over a Tauri
+install is tested there after merge. An update end to end from a running
+app needs a signed release.

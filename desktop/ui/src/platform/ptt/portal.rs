@@ -1,5 +1,5 @@
 //! Linux: the key through the GlobalShortcuts portal of xdg-desktop-portal
-//! (KDE, GNOME 48+, Hyprland), as desktop/app/src/ptt/portal.rs does it,
+//! (KDE, GNOME 48+, Hyprland), as the Tauri app's ptt/portal.rs did it,
 //! through zbus. One shortcut, `push-to-talk`, in a portal session on a
 //! connection of its own; the portal ends the session with the connection.
 

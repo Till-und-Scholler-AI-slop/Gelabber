@@ -16,10 +16,11 @@
 //! focus, key, type, say, wait, back, placeholder, call) mean the same in
 //! shots.mjs; a name written `/…/` is a regular expression. `before` runs
 //! say.mjs words ahead of the page, posts and `after` are undone with say.mjs
-//! once the screenshot is taken. A scene with `page` shows a bundled page of
-//! the desktop app (desktop/app/setup) instead of a route: the Launcher here.
-//! A scene with `update` shows the update notice over the page: the Tauri
-//! app's BANNER there, `platform::update::Notice` here.
+//! once the screenshot is taken. A scene with `page` shows the Tauri app's
+//! setup page (kept in desktop/parity/reference/setup) instead of a route:
+//! the Launcher here. A scene with `update` shows the update notice over the
+//! page: the Tauri app's BANNER (reference/update-banner.js) there,
+//! `platform::update::Notice` here.
 
 mod pixels;
 mod ssim;
@@ -43,7 +44,7 @@ struct Scene {
     name: String,
     #[serde(default)]
     path: String,
-    /// A bundled page of the desktop app, e.g. "desktop/app/setup/index.html".
+    /// A page of the desktop app, e.g. "desktop/parity/reference/setup/index.html".
     page: Option<String>,
     /// The page's query, e.g. "?server=…&error=…".
     #[serde(default)]
@@ -637,7 +638,7 @@ fn unnamed(harness: &App<'_>) -> (usize, Vec<String>) {
 /// way back) and `?error=` (why it shows).
 fn page_app(cc: &eframe::CreationContext<'_>, page: &str, query: &str) -> gelabber_ui::Launcher {
     assert_eq!(
-        page, "desktop/app/setup/index.html",
+        page, "desktop/parity/reference/setup/index.html",
         "no native page for {page}"
     );
     let query = gelabber_ui::Location::parse(&format!("/{query}"));

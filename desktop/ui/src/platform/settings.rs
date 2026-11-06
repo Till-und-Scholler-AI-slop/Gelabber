@@ -1,5 +1,4 @@
-//! `desktop.json`, shared with the Tauri app (desktop/app/src/main.rs
-//! `Settings`): the chosen server and close-to-tray. Keys this app does not
+//! `desktop.json`, as the Tauri app wrote it (its `Settings`): the chosen server and close-to-tray. Keys this app does not
 //! know stay as they are.
 
 use serde_json::{Map, Value};

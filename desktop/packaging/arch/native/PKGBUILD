@@ -1,15 +1,16 @@
 # Maintainer: Gelabber <https://github.com/Till-und-Scholler-AI-slop/Gelabber>
 #
-# Beta package of the native desktop app (desktop/gelabber): installs the
-# tarball that the "Desktop native core" workflow attaches to a GitHub
-# release (desktop/packaging/native/tarball.sh). It replaces the Tauri app's
-# package, whose settings it shares. The release workflow sets pkgver, the
-# source URL and the checksum with ../update-pkgbuild.sh and regenerates
-# .SRCINFO; do not edit them by hand.
-pkgname=gelabber-desktop-native
+# The desktop app (desktop/gelabber): installs the tarball that the
+# "Desktop native core" workflow attaches to a GitHub release
+# (desktop/packaging/native/tarball.sh). From 0.9 on it is gelabber-desktop,
+# the Tauri app's package name, so `pacman -Syu` upgrades a Tauri install into
+# it; the settings stay. The release workflow sets pkgver, the source URL and
+# the checksum with ../update-pkgbuild.sh and regenerates .SRCINFO; do not
+# edit them by hand.
+pkgname=gelabber-desktop
 pkgver=0.9.0dev
 pkgrel=1
-pkgdesc='Gelabber native desktop app (beta): voice, chat and Live without a web view'
+pkgdesc='Gelabber desktop app: voice, chat and Live with a native media core'
 arch=('x86_64')
 url='https://github.com/Till-und-Scholler-AI-slop/Gelabber'
 license=('MIT' 'BSD-3-Clause')
@@ -43,7 +44,9 @@ optdepends=(
   'gst-plugin-va: H264 and AV1 on Intel and AMD GPUs (VA-API)'
   'gst-libav: H264 decoding on the CPU (avdec_h264)'
 )
-conflicts=('gelabber-desktop' 'gelabber-desktop-bin' 'gelabber-desktop-git')
+# The beta package of the native app before 0.9.
+replaces=('gelabber-desktop-native')
+conflicts=('gelabber-desktop-native' 'gelabber-desktop-bin' 'gelabber-desktop-git')
 options=('!strip' '!debug')
 source=("${pkgname}-${pkgver}-${pkgrel}.tar.gz::${url}/releases/download/v0.9.0-dev/gelabber-native-linux-x64.tar.gz")
 sha256sums=('SKIP')
@@ -57,6 +60,8 @@ package() {
   install -Dm644 THIRD-PARTY-NOTICES.txt "${pkgdir}/usr/share/licenses/${pkgname}/THIRD-PARTY-NOTICES.txt"
   install -dm755 "${pkgdir}/usr/bin"
   ln -s /opt/gelabber/gelabber "${pkgdir}/usr/bin/gelabber"
+  # The Tauri package's command, which keybinds and autostarts may call.
+  ln -s /opt/gelabber/gelabber "${pkgdir}/usr/bin/gelabber-desktop"
   # gelabber is the app id of the window and the notifications.
   install -Dm644 gelabber.desktop "${pkgdir}/usr/share/applications/gelabber.desktop"
   install -Dm644 gelabber.png "${pkgdir}/usr/share/icons/hicolor/256x256/apps/gelabber.png"

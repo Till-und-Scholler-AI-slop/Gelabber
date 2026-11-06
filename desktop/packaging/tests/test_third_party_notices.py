@@ -284,12 +284,12 @@ class WorkflowFactTests(unittest.TestCase):
         '          )\n'
         '      - name: Upload the app\n'
         '        with:\n'
-        '          path: gelabber-desktop-windows-x64-setup.exe\n'
+        '          path: gelabber-native-windows-x64-setup.exe\n'
         '\n'
         '  release-asset-windows:\n'
         '    needs: [core-windows, notices]\n'
         '    steps:\n'
-        '      - run: gh release upload "$TAG" gelabber-desktop-windows-x64-setup.exe\n'
+        '      - run: gh release upload "$TAG" gelabber-native-windows-x64-setup.exe\n'
     )
     RUNTIME, H264, RELEASE = notices.EXPECTED_WORKFLOW_FACTS
 
@@ -340,7 +340,7 @@ class WorkflowFactTests(unittest.TestCase):
     def test_an_installer_from_elsewhere_is_noticed(self):
         other = (
             '\n  nightly:\n    steps:\n'
-            '      - run: gh release upload nightly gelabber-desktop-windows-x64-setup.exe\n'
+            '      - run: gh release upload nightly gelabber-native-windows-x64-setup.exe\n'
         )
         for workflow in (
             self.WORKFLOW.replace('needs: [core-windows, notices]', 'needs: [notices]'),

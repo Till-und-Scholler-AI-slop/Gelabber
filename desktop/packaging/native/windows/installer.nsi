@@ -1,8 +1,8 @@
-; Windows installer of the native app (desktop/gelabber), made with makensis
-; in desktop-native.yml. It takes the Tauri app's place as its update: the
-; same folder, uninstall entry, shortcuts and AppUserModelId as Tauri's NSIS
-; installer (desktop/app/tauri.bundle.windows.json, windows/hooks.nsh), and
-; the arguments its updater passes (/P /UPDATE /R /ARGS).
+; Windows installer of the app (desktop/gelabber), made with makensis in
+; desktop-native.yml. It takes the place of the Tauri app (up to 0.8) as its
+; update: the same folder, uninstall entry, shortcuts and AppUserModelId as
+; Tauri's NSIS installer in currentUser mode, and the arguments its updater
+; passes (tauri-plugin-updater, installMode passive: /P /UPDATE /R /ARGS).
 ;
 ;   makensis /DVERSION=<x.y.z[-pre]> /DFILEVERSION=<x.y.z.0> /DSOURCE=<dir> /DOUTFILE=<setup.exe> installer.nsi
 ;
@@ -30,7 +30,7 @@ RequestExecutionLevel user
 
 !define PRODUCTNAME "Gelabber"
 !define MANUFACTURER "Gelabber"
-; desktop/app/tauri.conf.json identifier: the toasts' and shortcuts' AppUserModelId.
+; The Tauri app's identifier: the toasts' and shortcuts' AppUserModelId.
 !define BUNDLEID "io.github.till-und-scholler-ai-slop.gelabber"
 !define MAINBINARY "gelabber.exe"
 !define TAURIBINARY "gelabber-desktop.exe"
@@ -83,7 +83,7 @@ Var AppArgs
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 
-; Tauri's languages (tauri.bundle.windows.json); the system's is chosen.
+; The Tauri installer's languages; the system's is chosen.
 !insertmacro MUI_LANGUAGE "English"
 !insertmacro MUI_LANGUAGE "German"
 
@@ -301,7 +301,7 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\${PRODUCTNAME}.lnk"
   Delete "$DESKTOP\${PRODUCTNAME}.lnk"
   DeleteRegKey HKCU "${UNINSTKEY}"
-  ; Written by the app at every start; gone with the app (hooks.nsh).
+  ; Written by the app at every start; gone with the app, as Tauri's hook did.
   DeleteRegKey HKCU "${AUMIDKEY}"
 
   ; Settings and sign-in stay unless the user asks, never in a silent run.

@@ -2,7 +2,7 @@
 //! sounds, recovery) and mediasoupConnection.ts (device, transports,
 //! producers, consumers) over gelabber-media-core.
 //!
-//! Ordering rules from desktop/app/src/media.rs: `produce` and `consume`
+//! Ordering rules from the Tauri app's media.rs: `produce` and `consume`
 //! block until the transport's CONNECT/PRODUCE requests are answered, so
 //! they run on blocking threads and the answers come from the runtime;
 //! every request gets an answer (a refusal once the seat is gone), or the
@@ -2432,7 +2432,7 @@ fn frame_sink(call: &Weak<Inner>, key: VideoKey, flag: Arc<AtomicBool>) -> core:
 
 // ------------------------------------------------------------------ seat
 
-/// A transport and the requests it still waits on (desktop/app media.rs
+/// A transport and the requests it still waits on (the Tauri app's
 /// `PageTransport`): each gets an answer, the server's or a refusal.
 struct Tp {
     native: core::Transport,

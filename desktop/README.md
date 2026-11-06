@@ -1,15 +1,20 @@
 # Gelabber Desktop
 
-Native desktop client (issue #165): Tauri 2 shell around the existing web UI,
-with a native media core instead of the browser's WebRTC. Linux
-(Omarchy/Hyprland/Wayland) first, then Windows.
+Native desktop client for Linux x64 (Omarchy/Hyprland/Wayland first) and
+Windows x64: an egui app in Rust (`gelabber/`, `ui/`, `call/`, `client/`)
+with a native media core instead of a browser's WebRTC, and no web view.
 
-Status: **released** for Linux x64 since v0.5.0, as a tarball on the release
-page and as a pacman package (`packaging/arch/`). From v0.6 on a Windows x64
-installer is built, installed and smoke-tested by CI and attached to the
-release; that app has voice, camera and Live (a screen or window, picked in
-the system's capture picker) with application sound (WASAPI process
-loopback), and watching. What users get to read ships from `app/package/`.
+Status: the native app replaces the Tauri app from 0.9 on. The Tauri app
+(a Tauri 2 window around the web client, released from v0.5.0 to 0.8.x) was
+removed in 0.9 without a fallback; its installs update into the native app
+(Windows: its updater runs the native installer; Arch: the package
+`gelabber-desktop` is the native app from 0.9 on). The web client's settings
+come along only in `legacy-settings.json`, which only a Tauri app with the
+export of commit f466bc2 writes. No release has that yet; it is meant for
+0.8.10, before 0.9.0. An update from 0.8.9 or older keeps only the server
+address (`desktop.json`). The web client's
+code for the Tauri app (`web/src/voice/native/`, the desktop shell and
+notification bridges) is still there and goes in a later change.
 
 ## Layout
 
@@ -26,25 +31,21 @@ loopback), and watching. What users get to read ships from `app/package/`.
 | `core/tests/mediasoup_loopback.rs` | Loopback call against mediasoup 0.29 with the server's router codecs (VP8 and H264 in three layers, VP9 as SVC, AV1 as one stream); on Windows also application sound through process loopback |
 | `core/tests/source_preview.rs` | Video sinks for views in the app: a local source without a producer, scaling and rate limits, sinks going away mid-frame |
 | `core/tests/screen_capture.rs` | Screen capture through the portal, H264, mediasoup, native decode, and the screen as the web client shares it: VP8 in two simulcast layers (`GELABBER_TEST_SCREEN=1`); on Windows the primary monitor through Windows.Graphics.Capture as VP8 in two layers (`GELABBER_TEST_SCREEN_MONITOR=1`) |
-| `app/` | Tauri 2 app `gelabber-desktop`: window on the server origin, bundled setup page, media commands (`src/media.rs`), global push-to-talk (`src/ptt.rs`: low-level hook on Windows, GlobalShortcuts portal on Linux), updates of the Windows app (`src/update.rs`, `updater.pub`) |
-| `app/scripts/smoke.sh` | Starts the app on a stand-in origin under Xvfb and checks which commands the page reaches and that the frames of a test-pattern view arrive; then kills the page's web process and checks that the app loads the page again |
-| `app/scripts/smoke.ps1` | The same on Windows, against a built or installed `gelabber-desktop.exe` |
-| `app/tauri.bundle.windows.json` | What the Windows installer (NSIS) holds: the app, `gelabber_media.dll` from `app/bundle-input/`, README and third-party notices |
-| `app/package/` | What ships next to the binaries: `README.txt` (Linux), `README-windows.txt` (installed as `README.txt`), `THIRD-PARTY-NOTICES.txt` (generated) |
-| `packaging/third-party-notices.py` | Writes `THIRD-PARTY-NOTICES.txt` (`--app native`: the native app's); its tests are in `packaging/tests/` |
-| `packaging/arch/` | The pacman package and repository; see its README. `arch/native/` is the native app's beta package `gelabber-desktop-native` |
 | `core/tests/voice.rs` | Microphone modes, RNNoise, device selection, Opus through mediasoup, playout (`GELABBER_TEST_AUDIO=1`) |
-| `client/`, `call/`, `ui/`, `gelabber/` | The native app of 0.9 (egui, no web view): REST and gateway, calls, the interface with `ui/src/platform/` (docs/native/platform.md), the binary; see "Native app" below |
-| `parity/` | Renders the native scenes headless and scores them against the web client's screenshots |
-| `packaging/native/` | The native app's packages: `tarball.sh` (Linux), `windows/installer.nsi` (NSIS), `smoke.sh`, desktop entry, READMEs, `THIRD-PARTY-NOTICES.txt` (generated) |
+| `client/`, `call/`, `ui/`, `gelabber/` | The app (egui, no web view): REST and gateway, calls, the interface with `ui/src/platform/` (docs/native/platform.md), the binary; see "Native app" below |
+| `parity/` | Renders the native scenes headless and scores them against the web client's screenshots; `parity/reference/` keeps the Tauri app's setup page and update notice, the references of the scenes `setup*` and `update-*` |
+| `packaging/native/` | The packages: `tarball.sh` (Linux), `windows/installer.nsi` (NSIS), `smoke.sh`, desktop entry, READMEs, `THIRD-PARTY-NOTICES.txt` (generated) |
+| `packaging/arch/` | The pacman package `gelabber-desktop` (`arch/native/PKGBUILD`) and repository; see its README |
+| `packaging/icons/` | The app icon (`icon.png`, `icon.ico`) for the packages and the installer |
+| `packaging/updater.pub` | The public key updates are checked with (see "Updates") |
+| `packaging/third-party-notices.py` | Writes `packaging/native/THIRD-PARTY-NOTICES.txt`; its tests are in `packaging/tests/` |
 
-## Native app (0.9, beta)
+## Native app
 
-`desktop/gelabber` is the egui app that replaces the Tauri app (plan:
-`docs/v0.9-plan.md`); the Tauri app stays as the fallback until 0.10. It
-links the same media core, so it needs `GELABBER_LIBWEBRTC_DIR` (the core is
-built) or `GELABBER_MEDIA_LIB_DIR` (a built `libgelabber_media.so`, e.g. from
-a release tarball) as above.
+`desktop/gelabber` is the egui app (plan: `docs/v0.9-plan.md`). It links the
+media core, so it needs `GELABBER_LIBWEBRTC_DIR` (the core is built) or
+`GELABBER_MEDIA_LIB_DIR` (a built `libgelabber_media.so`, e.g. from a
+release tarball), see "Building".
 
 ```sh
 cargo run --manifest-path desktop/Cargo.toml -p gelabber -- --server https://gelabber.example.org
@@ -54,10 +55,14 @@ cargo clippy --manifest-path desktop/Cargo.toml -p gelabber-ui -p gelabber --all
 desktop/packaging/native/smoke.sh desktop/target/debug/gelabber 10
 ```
 
-Server and settings: as the Tauri app (`desktop.json` in the same directory,
-docs/native/platform.md). On the first start, while it has no
-`settings.json` of its own, it takes over `legacy-settings.json` (the Tauri
-app's export) and the files of earlier native builds in `~/.config/gelabber/`
+Server and settings: in the Tauri app's config directory
+(`~/.config/io.github.till-und-scholler-ai-slop.gelabber`, Windows:
+`%APPDATA%\io.github.till-und-scholler-ai-slop.gelabber`), with its
+`desktop.json` (docs/native/platform.md). Server choice, first match wins:
+`--server <url>`, `GELABBER_SERVER`, `server` in `desktop.json`, else the
+setup screen. On the first start, while it has no `settings.json` of its
+own, it takes over `legacy-settings.json` (the Tauri app's export) and the
+files of earlier native builds in `~/.config/gelabber/`
 (`ui/src/platform/legacy.rs`). `GELABBER_SMOKE=<seconds>` makes the app end
 after that long, with 0 once it painted its setup or login screen; CI's
 smoke tests use it.
@@ -70,37 +75,36 @@ cargo run --manifest-path desktop/Cargo.toml -p gelabber-parity -- render <nativ
 cargo run --manifest-path desktop/Cargo.toml -p gelabber-parity -- compare <web-dir> <native-dir> <report-dir>
 ```
 
-Packages, built by `desktop-native.yml` after merge and for releases, with
-their own asset names next to the Tauri app's:
+Packages, built by `desktop-native.yml` after merge and for releases:
 
 ```sh
 # Linux: builds the release binary, checks both files, writes gelabber-native-linux-x64.tar.gz
 desktop/packaging/native/tarball.sh <dir>/libgelabber_media.so [<out-dir>]
 # The notices it ships (after a change to desktop/Cargo.lock):
-python3 desktop/packaging/third-party-notices.py --app native
+python3 desktop/packaging/third-party-notices.py
 ```
 
-- Arch: `gelabber-desktop-native` (`packaging/arch/native/PKGBUILD`,
-  `conflicts=gelabber-desktop`), in the same pacman repository
-  (`repo.sh build-native`, `repo.sh test-native`); `/usr/bin/gelabber`,
-  files in `/opt/gelabber`. No `webkit2gtk-4.1`, `libsoup3` or `gtk3`.
+- Arch: `gelabber-desktop` (`packaging/arch/native/PKGBUILD`), the Tauri
+  package's name, so `pacman -Syu` upgrades a Tauri install into it;
+  `replaces=gelabber-desktop-native` (the beta package before 0.9).
+  `/usr/bin/gelabber` and `/usr/bin/gelabber-desktop` (the Tauri package's
+  command), files in `/opt/gelabber`. No `webkit2gtk-4.1`, `libsoup3` or
+  `gtk3`.
 - Windows: `gelabber-native-windows-x64-setup.exe` from
   `packaging/native/windows/installer.nsi` (`makensis /DVERSION=…
   /DFILEVERSION=… /DSOURCE=<dir> /DOUTFILE=… installer.nsi`, the staged
   files as in the job `core-windows`). It installs into the Tauri app's
   folder (`%LOCALAPPDATA%\Gelabber`) with the same uninstall entry,
-  shortcuts and AppUserModelId, replaces `gelabber-desktop.exe`, and accepts
-  the Tauri updater's `/P /UPDATE /R /ARGS` as well as `/S`.
-- Updates: the native app reads `latest-native.json` of the latest release
-  (same format and key as `latest.json`, which stays the Tauri app's), so it
-  is never offered a Tauri installer. GitHub's `releases/latest` leaves
-  pre-releases out, so an installed beta is offered full releases only.
+  shortcuts and AppUserModelId, ends and replaces `gelabber-desktop.exe`,
+  and accepts the Tauri updater's `/P /UPDATE /R /ARGS` as well as `/S`.
+- Updates: see "Updates".
 
 ## Why a shared library with a C ABI
 
 libwebrtc is built with Chromium's clang, sysroot and libc++ (`std::__Cr`).
-The Tauri process also loads WebKitGTK, which uses the system libstdc++.
-The core links Chromium's libc++ statically, hides every symbol except `gm_*`
+The app's process also loads system libraries built against the system's
+libstdc++ (GPU drivers, GStreamer plugins). The core links Chromium's libc++
+statically, hides every symbol except `gm_*`
 (version script + `--exclude-libs,ALL`) and exchanges only C types and JSON.
 So neither C++ runtime leaks into the other, and the Rust side needs no C++
 toolchain. On Windows the same holds with the MSVC STL and a DLL.
@@ -141,38 +145,31 @@ $env:CARGO_TARGET_DIR = 'C:\t'
 # needs the Visual C++ redistributable.
 $env:RUSTFLAGS = '-C target-feature=+crt-static'
 cargo build --release --locked --manifest-path desktop\Cargo.toml -p gelabber-media-core
-cargo build --release --locked --manifest-path desktop\Cargo.toml -p gelabber-desktop
+cargo build --release --locked --manifest-path desktop\Cargo.toml -p gelabber
 ```
 
 The libwebrtc build takes hours, like the Linux one. The core is compiled
 with `clang-cl`, which built the package, and linked with Visual Studio's
 libraries; `GELABBER_MEDIA_COMPILER` names another compiler (`cl`, or a
 path). The result is `gelabber_media.dll` with its import library, and the
-app's build script copies the DLL next to `gelabber-desktop.exe` in
-`C:\t\release`: Windows has no rpath, the DLL must stay next to the
-executable. `GELABBER_MEDIA_LIB_DIR` points at a prebuilt core here too.
+app's build script (`gelabber/build.rs`) copies the DLL next to
+`gelabber.exe` in `C:\t\release`: Windows has no rpath, the DLL must stay
+next to the executable. `GELABBER_MEDIA_LIB_DIR` points at a prebuilt core
+here too.
 
-The installer, from what was just built (the pinned Tauri CLI only bundles):
+The installer, from what was just built, with NSIS (`makensis`): stage
+`gelabber.exe`, `gelabber_media.dll`, `packaging\icons\icon.ico` and
+`icon.png`, `packaging\native\THIRD-PARTY-NOTICES.txt` and
+`packaging\native\README-windows.txt` (as `README.txt`) in one folder, then
 
 ```powershell
-New-Item -ItemType Directory -Force desktop\app\bundle-input
-Copy-Item C:\t\release\gelabber_media.dll desktop\app\bundle-input\
-cd desktop\app
-npx.cmd --yes '@tauri-apps/cli@2.12.1' bundle --bundles nsis --config tauri.bundle.windows.json
-# -> C:\t\release\bundle\nsis\Gelabber_<version>_x64-setup.exe
+makensis /DVERSION=<version> /DFILEVERSION=<x.y.z.0> /DSOURCE=<folder> /DOUTFILE=gelabber-native-windows-x64-setup.exe desktop\packaging\native\windows\installer.nsi
 ```
 
 `<version>` is the one of `desktop/Cargo.toml`. CI builds a release only
-when its tag is that version (`v<version>`).
-
-The smoke test takes a built or an installed app and the ABI version it
-must report (`GM_ABI_VERSION` in `native/include/gelabber_media.h`). It
-needs Python and the WebView2 Runtime and asks for dummy audio itself
-(`GELABBER_AUDIO=dummy`, for machines without audio devices):
-
-```powershell
-pwsh desktop\app\scripts\smoke.ps1 -App C:\t\release\gelabber-desktop.exe -Abi <GM_ABI_VERSION>
-```
+when its tag is that version (`v<version>`). The smoke test starts
+`gelabber.exe` with `GELABBER_SMOKE=10` and an empty `GELABBER_CONFIG_DIR`;
+exit status 0 means it painted its setup screen.
 
 The core's tests call a mediasoup worker that is built with Meson, against
 the same static C runtime:
@@ -195,244 +192,125 @@ puts the tests' mediasoup on it; the CI job tries which one works.
 | What | How | Where |
 |---|---|---|
 | Core: loopback call, video sinks; with their switches screen capture and voice | `cargo test --manifest-path desktop/Cargo.toml`; `GELABBER_TEST_SCREEN=1`, `GELABBER_TEST_AUDIO=1` inside `native/scripts/fake-desktop-session.sh`; on Windows `GELABBER_TEST_SCREEN_MONITOR=1` | CI, Linux and Windows (voice: Linux) |
-| App: the commands a server origin reaches, frames of a test pattern | `app/scripts/smoke.sh`, `app/scripts/smoke.ps1` | CI, Linux and Windows |
-| Native app: starts, paints its setup screen and ends (`GELABBER_SMOKE`) | `packaging/native/smoke.sh <gelabber>`; on Windows the job starts `gelabber.exe` itself | CI, Linux (lavapipe under Xvfb, also the installed Arch package) and Windows |
-| Native packages: names, files and arguments against the app and the Tauri app | `python3 -m unittest discover -s desktop/packaging/tests` | CI |
-| Viewer window: colours on a screenshot | `cargo test --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --ignored viewer` under Xvfb | CI, Linux |
-| Video inside the page: the web client's renderer, feed and tiles on real pixels | in `web/`: `npm run test:native-video-smoke` | **only locally** |
+| App: starts, paints its setup screen and ends (`GELABBER_SMOKE`) | `packaging/native/smoke.sh <gelabber>`; on Windows the job starts `gelabber.exe` itself | CI, Linux (lavapipe under Xvfb, also the installed Arch package) and Windows |
+| Packages: names, files and arguments against the app and the Tauri app's installs | `python3 -m unittest discover -s desktop/packaging/tests` | CI |
+| Update of a Tauri install: Windows (0.8 installer, then this one as its updater runs it), Arch (`pacman -Syu` from the Tauri package) | job `core-windows` (after merge), `packaging/arch/repo.sh test` | CI |
 | Native client calls (gelabber-call): a call on the seeded stack with Chromium people from `web/scripts/parity/call.mjs`, without devices (`GELABBER_FAKE_MEDIA=1`: dummy audio, test pattern camera and Live; speaking from the received bitrate, the own meter beeping like Chromium's fake microphone) | `GELABBER_TEST_SERVER=http://127.0.0.1:5180 cargo test -p gelabber-call --features media --test live -- --ignored` | **only locally** |
 | Native client voice end to end (gelabber-ui): the real app in egui_kittest joins, mutes, deafens, turns the camera on, draws Jonas' camera, switches Raster/Fokus/Kino, fails Go Live without a portal (`GELABBER_FAKE_SCREEN=0`), watches a Live and sets a volume, checked in the Chromium people's pages (`ui/tests/voice_observer.mjs`) | `GELABBER_TEST_SERVER=http://127.0.0.1:5180 cargo test -p gelabber-ui --features media --test voice_live -- --ignored` | **only locally** |
 | Third-party notices | `python3 -m unittest discover -s desktop/packaging/tests`, `packaging/third-party-notices.py --check` | CI |
 
-The video inside the page is drawn by the web client
-(`web/src/voice/native/frames.ts`, `videoFeed.ts`, the tiles), and `npm test`
-drives that renderer against a stand-in for WebGL: it never compiles the
-shaders. `npm run test:native-video-smoke` does, in headless Chromium with a
-stand-in for the app, and reads the tiles' pixels back; no server, about ten
-seconds. It needs a Chromium (`npx playwright install chromium` once, or
-`GELABBER_NATIVE_VIDEO_BROWSER_EXECUTABLE=/usr/bin/chromium`). CI runs no
-browser smoke tests (`.github/workflows/ci.yml`), so run it after a change to
-those files. WebKitGTK itself is not covered by it.
-
 ## Third-party notices
 
-Every package ships `app/package/THIRD-PARTY-NOTICES.txt`. It is generated;
-`packaging/third-party-notices.py` writes it (Linux x86-64 only, with the
-toolchain of `rust-toolchain.toml`). Run without arguments it lists the Rust
-crates afresh from `desktop/Cargo.lock` and keeps the two parts on the
-native core. Run it after every change to `desktop/Cargo.lock` and commit
-the file: the CI job "Third-party notices" fails when the committed file is
-not what the script would write (`--check`), and the uploads to a release
-wait for that job. When a pin of the native core or the build configuration
-the file describes has changed, the script stops and says what it needs
-(`--webrtc-src`, `--core-build`; its header has the details).
-The native app ships its own file, `packaging/native/THIRD-PARTY-NOTICES.txt`
-(`--app native`; it adds the fonts and data the interface embeds and takes
-the two media-core parts from the Tauri app's file). The same job checks it.
+Every package ships `packaging/native/THIRD-PARTY-NOTICES.txt`. It is
+generated; `packaging/third-party-notices.py` writes it (Linux x86-64 only,
+with the toolchain of `rust-toolchain.toml`). Run without arguments it lists
+the Rust crates afresh from `desktop/Cargo.lock`, adds the fonts and data the
+interface embeds, and keeps the two parts on the native core. Run it after
+every change to `desktop/Cargo.lock` and commit the file: the CI job
+"Third-party notices" fails when the committed file is not what the script
+would write (`--check`), and the uploads to a release wait for that job.
+When a pin of the native core or the build configuration the file describes
+has changed, the script stops and says what it needs (`--webrtc-src`,
+`--core-build`; its header has the details).
 
 ## Running the app
 
-```sh
-cargo run --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --server https://gelabber.example.org
-```
-
-Server choice, first match wins: `--server <url>`, `GELABBER_SERVER`, then
-`server` in `~/.config/io.github.till-und-scholler-ai-slop.gelabber/desktop.json`
-(Windows: `%APPDATA%\io.github.till-und-scholler-ai-slop.gelabber\desktop.json`).
-Without one the window shows the bundled setup page, which writes that file
-once something accepts connections at the address. The window has no menu
-bar. If the stored server does not answer at start, the setup page opens with
-the reason and a retry button. **Strg+Umschalt+S** and "Server wechseln …" in
-the web client's user menu lead back to that page at any time; **F5** or
-**Strg+R** reload the current page.
-Only the configured origin gets the `media`, `shell` and `update` permission sets
-(`app/permissions/`) plus `allow-open-setup` and `allow-settings-export`; every page load closes the previous page's
-transports, producers and sources. Tauri cannot take such a grant back, so
-after a change of server the app itself refuses every command that does not
-come from the setup page or the current server's pages.
-
-For the native app of 0.9, the server's pages keep the web client's voice
-settings, Live sound, interface choices, volumes and drafts in
-`legacy-settings.json` next to `desktop.json` (`app/src/export.rs`): on load,
-when the window is hidden and once a minute, only when they changed. The
-native app takes them over on its first start.
-
-The `shell` commands (`app/src/shell.rs`) carry the web client's unread state
-out of the window: a number on the launcher (Linux, where the desktop shows
-one, such as KDE or Dock-based launchers), a red dot on the taskbar button
-(Windows), and a tray icon with a light dot for unread messages and a red one
-for counted ones. A direct message while the window is not in front flashes
-the taskbar button (Windows) or marks the window urgent (Linux), at most
-once every 5 seconds. The tray menu has "Gelabber öffnen" and "Beenden"; a left click
-brings the window back (Windows; AppIndicator only has the menu). On Linux
-the tray needs `libayatana-appindicator` (or `libappindicator-gtk3`) and a
-tray host (KDE, waybar's `tray` module on Omarchy/Hyprland); without the
-library the app starts without a tray, and plain GNOME shows none without an
-extension. With a tray, "Fenster schließen minimiert in den Infobereich"
-(settings, off by default, stored as `close_to_tray` in `desktop.json`) hides
-the window on close, and a call goes on; "Beenden" in the tray ends the app.
-Message notifications are the system's own (`app/src/notify.rs`, the
-`notify_*` commands): Windows toasts, and on Linux the desktop's notification
-service on the session bus (`org.freedesktop.Notifications`: mako on
-Omarchy/Hyprland, KDE, GNOME, dunst, swaync). The web client still decides
-what is announced and how it reads (level and mute of the conversation, the
-window not in front, "Nachrichteninhalt verbergen" from #268) and hands over
-a tag, a title and a text; one notification per conversation, a newer
-message replaces the older, and a conversation that is being read takes its
-notification down. They stay silent, the page plays its own cue. A click
-brings the window to the front (on Wayland with the activation token the
-service sends along, which Hyprland, KDE and GNOME need for that) and opens
-the conversation. On Linux the notification names the app through
-`desktop-entry=gelabber-desktop` and shows the icon of the pacman package
-(or the archive's `icon.png`). On Windows the app writes its name and icon
-(`icon.png` next to the binary) under
-`HKCU\Software\Classes\AppUserModelId\io.github.till-und-scholler-ai-slop.gelabber`
-at every start, which an unpackaged app needs for toasts; "Gelabber" then
-appears in the system's notification settings. A click reaches the app only
-while it runs, so the app takes its notifications down when it ends (and on
-Windows also when it starts, after a crash). With the desktop app the
-"window not in front" notifications are on by default.
-
-Without a notification service (`notify_info` answers `available: false`)
-and in an app older than this, the page falls back to web notifications: the
-app allows them for the server origin when the page asks (WebKitGTK refuses
-them otherwise), and on Linux it starts every web process with that origin
-allowed, since WebKitGTK does not keep the answer. WebView2 keeps it in its
-profile. WebKitGTK needs `libwebkit2gtk-4.1`.
-On the NVIDIA driver the app sets `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1`
-before GTK starts: WebKitGTK's DMA-BUF renderer otherwise fails under Wayland
-with "Error 71 (Protocol error) dispatching to Wayland display". Handing its
-buffers over through shared memory avoids that and keeps accelerated
-compositing; with the renderer disabled altogether (what the app set up to
-0.5.2) the web process paints video on the CPU, half a core and more for one
-stream across the window. Setting that variable or
-`WEBKIT_DISABLE_DMABUF_RENDERER` yourself (to any value) leaves both as you
-set them. On the same driver the app ends WebKit's web process the moment
-its window is closed (`webkit_web_view_terminate_web_process`): once a page
-has drawn with WebGL, as the video tiles do, a web process left to shut
-down crashes inside the driver when it frees its GL contexts
-(`eglDestroyContext` in libnvidia-eglcore; driver 610.57.04, WebKitGTK
-2.52.6, with either renderer setting), which left a core dump and a crash
-notification behind every close. An app that is killed instead of closed
-(SIGTERM, the end of the session) still leaves the web process to that.
-When the web process ends by itself while the app runs (a crash, the
-kernel's out-of-memory killer), the app closes what the page had running,
-as a page load does, and loads the page again: the reload keys are a script
-of the page and gone with it. If it ends again within a minute, the setup
-page opens with the reason; if that does not stay up either, the view is
-left as it is.
+See "Native app" for the server choice and the setup screen, and
+docs/native/platform.md for what the app does around its window: the
+files in the config directory, notifications, tray and close-to-tray, one
+instance per user, global push-to-talk and the update check.
 
 ## Updates
 
-The Windows app updates itself (`app/src/update.rs`, issue #253). About 15 s
-after the start and then every 6 hours (unless switched off on the setup
-page; `update.json` next to `desktop.json`) it asks for
-`https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/latest/download/latest.json`,
-which `release-asset-windows` in `desktop-release.yml` attaches to every
-release with the installer's signature. "Latest" is the release GitHub marks
-as latest, by default the newest that is not a pre-release, so pre-releases
-are never offered. A hotfix of an older line (0.6.2 after 0.7.0) would take
-that mark, and the 0.7 apps would see nothing new until the next 0.7.x (they
-never go back: only a higher version is offered). Publish such a hotfix with
-`gh release create … --latest=false`, or set the mark back on the newest
-release afterwards. A newer version
-shows a notice over the page (an initialization script of the app, so it
-works with every server's web client); "Neu starten" asks once more in a
-message box of the app itself, which no script of the page can answer, then
-downloads the installer (with progress; no overall time limit, only for
-connecting and for each read), checks its signature and runs it (NSIS, passive, `/UPDATE`), which ends the
-app and starts the new version with the same arguments. Not during a call:
-while the page has a transport or a source, and for a minute after the last
-one closed (a call that reconnects or comes back after a reload; see
-`Media::busy`), the notice is hidden and `update_install` refuses. `GELABBER_UPDATE_ENDPOINT` points the
-check at another `latest.json` (HTTPS only), e.g. one of a test release; its
-installer needs the same signature.
+The Windows app updates itself (`ui/src/platform/update.rs`,
+docs/native/platform.md). About 15 s after the start and then every 6 hours
+(unless switched off on the setup screen; `update.json` next to
+`desktop.json`) it reads
+`https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/latest/download/latest-native.json`.
+`release-asset-windows` in `desktop-release.yml` attaches it to every
+release, and the same content as `latest.json`, which the installed Tauri
+apps of 0.8 read: their updater (tauri-plugin-updater, `installMode`
+passive) downloads the native installer, checks its signature with the same
+key and runs it with `/P /UPDATE /R /ARGS <its arguments>`, so they become
+the native app in the same folder. "Latest" is the release GitHub marks as
+latest, by default the newest that is not a pre-release, so pre-releases
+are never offered. A hotfix of an older line would take that mark, and the
+apps of the newer line would see nothing new until its next release (they
+never go back: only a higher version is offered). Publish such a hotfix
+with `gh release create … --latest=false`, or set the mark back on the
+newest release afterwards. Not during a call: the notice waits, and an
+installer downloaded before the call installs once it ended.
+`GELABBER_UPDATE_ENDPOINT` points the check at another manifest (HTTPS
+only), e.g. one of a test release; its installer needs the same signature.
 
 The signature is the Tauri updater's (minisign), separate from Authenticode.
 The app checks it against the public key it was built with and accepts it
-only when its trusted comment names the version `latest.json` announces
-(`requireSignedVersion` in `app/tauri.conf.json`), so an old, validly signed
-installer cannot be passed off as a new version. The page gets three
-commands (`permissions/update.toml`: state, install, dismiss), none of the
-plugin's own; server-side XSS can at most start the install of a signed
-newer release.
+only when its trusted comment names the version the manifest announces
+(`requireSignedVersion` of the Tauri apps), so an old, validly signed
+installer cannot be passed off as a new version.
 
-Linux has no in-app updater, and the plugin is not linked there: pacman
-updates the package from the `[gelabber]` repository, the tarball is
-replaced by hand. Nothing in the app writes to its own files.
+Linux has no in-app updater: pacman updates the package from the
+`[gelabber]` repository, the tarball is replaced by hand. Nothing in the app
+writes to its own files.
 
 ### The updater key
 
-- Public key: `app/updater.pub`, one line as `tauri signer generate` writes
-  it, read by `app/build.rs` at compile time. Without it the app is built
-  without updates (the setup page says so) and a release stops in
-  `release.yml` and in `desktop-native.yml` (called by `desktop-release.yml`).
+- Public key: `packaging/updater.pub`, one line as `tauri signer generate`
+  writes it, compiled into the app (`ui/src/platform/update.rs`; CI test
+  builds take `GELABBER_UPDATER_PUBKEY`). The installed Tauri apps carry the
+  same key. Without it a release stops in `release.yml` and in
+  `desktop-native.yml` (called by `desktop-release.yml`).
 - Private key and its password: the repository secret
   `TAURI_SIGNING_PRIVATE_KEY` (the content of the key file) is required.
   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` is optional: the Tauri CLI (v2.12+)
   treats a missing or empty password as a passwordless key, so keys
   generated without a password work without the secret. Only the step
-  "Sign update" of a release run from the release's tag sees these secrets;
-  a run on any other ref stops before signing, so there is one signed
-  installer per version. Putting these secrets into an environment with
-  required reviewers instead would gate that step on an approval as well
-  (not set up). Keep an offline copy: a lost key means no installed app can
-  be updated any more, every user has to install the next version by hand.
+  "Sign the native update" of a release run from the release's tag sees
+  these secrets; a run on any other ref stops before signing, so there is
+  one signed installer per version. Putting these secrets into an
+  environment with required reviewers instead would gate that step on an
+  approval as well (not set up). Keep an offline copy: a lost key means no
+  installed app can be updated any more, every user has to install the next
+  version by hand.
 - Making it, once (any machine with Node):
 
   ```sh
   npx --yes @tauri-apps/cli@2.12.3 signer generate -w ~/.tauri/gelabber-updater.key
-  cp ~/.tauri/gelabber-updater.key.pub desktop/app/updater.pub   # commit this
+  cp ~/.tauri/gelabber-updater.key.pub desktop/packaging/updater.pub   # commit this
   gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/gelabber-updater.key
   # Only if the key has a password:
   gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD
   ```
 
-- Every other CI run (pull requests, pushes) makes a key of its own,
-  builds the app with it, signs the installer with it and checks that
-  signature in the app's unit tests. Those test installers therefore never
-  update to a release, and a release is never signed with a test key.
+- Every other CI run (pushes) makes a key of its own, builds the app with
+  it, signs the installer with it and checks that signature with the app's
+  own test (`the_installer_built_here` in `gelabber/src/main.rs`). Those
+  test installers therefore never update to a release, and a release is
+  never signed with a test key.
 - Rotation: the app knows one key. Release N+1 is still signed with the old
   key but carries the new `updater.pub`; switch the secrets after N+1 is out.
   Apps older than N+1 then reach N+1 and from there the releases signed with
   the new key. A key that leaked: rotate the same way at once, and tell
   users of versions before N+1 to install by hand.
-- Signing uses `@tauri-apps/cli` 2.12.3 (`signer sign --app-version`); the
-  bundle itself stays on the CLI that matches the `tauri` crate.
+- Signing uses `@tauri-apps/cli` 2.12.3 (`signer sign --app-version`), the
+  format the 0.8 Tauri apps check.
 
 Not done: Authenticode signing of the installer, so SmartScreen still warns
-on a manual install (`app/package/README-windows.txt`). An update installed
+on a manual install (`packaging/native/README-windows.txt`). An update installed
 by the app is downloaded by the app itself and carries no Mark of the Web,
 so SmartScreen should not stop it (not tried yet). Code signing needs a certificate and is a
 separate decision.
 
 ## Design rules
 
-- Signaling stays in TypeScript (`web/src/voice/mediasoupConnection.ts`):
-  tickets, ACL, source epochs, generations and `consumerReady` are not
-  duplicated. The core only turns `transport`/`connect`/`produce`/`consumer`
-  data into native media (`TransportEvent::Connect`/`Produce` are answered
-  by the caller after the server replied).
-- The Tauri window loads the server origin. Its native commands are narrow
-  (media core only), because server-side XSS reaches them.
-- Features: one web client is served to every installed app, old and new,
-  on both systems, so it asks. `media_info` answers with `features`, what
-  this build can do besides voice and watching (`FEATURES` in
-  `app/src/media.rs`; the Windows app has the Linux app's list since it
-  captures screens and application sound too). The web client
-  (`web/src/voice/capabilities.ts`) keeps the button of a capture the app
-  lacks in its place, greyed out and with the reason, and hides the
-  controls for application sound. An app up to 0.5.x answers without a list
-  and is taken for what it was: the Linux app with screen capture, camera
-  and application sound. The other way round, a web client before v0.6
-  does not ask and takes every app for that Linux app, which the Windows
-  app now matches; the alpha of 0.6.0 for Windows without screen capture
-  needed a server from 0.6 on, because such a client offered it Go Live and
-  a refused Go Live left a claim that blocked the channel. (A capture that
-  fails or is cancelled still does that with such a client, on either
-  system.)
-- Video codecs: the web client names the codec of every producer
-  (`chooseVideoCodec` in `web/src/voice/videoCodec.ts`) among those every
+- Signaling is Gelabber's own: `desktop/call` in the app,
+  `web/src/voice/mediasoupConnection.ts` in the browser. The core only turns
+  `transport`/`connect`/`produce`/`consumer` data into native media
+  (`TransportEvent::Connect`/`Produce` are answered by the caller after the
+  server replied).
+- Video codecs: the client names the codec of every producer
+  (`chooseVideoCodec` in `web/src/voice/videoCodec.ts`, `choose_video_codec`
+  in `call/src/logic.rs`) among those every
   receiver in the room decodes, which the media server announces. It takes
   AV1 where the device encodes it in hardware, then H264 where the device
   encodes that in hardware, else VP8 in three layers; AV1 on the CPU never
@@ -441,10 +319,9 @@ separate decision.
   that has no VP8 or H264: libwebrtc caps each VP9 spatial layer at about
   1.6 x pixels + 50 kbit/s, far below what VP8 layers may use. The core
   produces what it is asked for, and a caller that names no codec gets H264
-  before VP8. `media_info` reports the features `h264-hardware`,
-  `av1-hardware`, `av1-hardware-decode` and `vp9-svc` (on Linux and Windows
-  alike: VP9 is libvpx in software) and, under
-  `videoCodecs`, what `gm_video_codecs` found. mediasoup forwards AV1 (like
+  before VP8. `gm_video_codecs` reports which codecs the system has and
+  whether they run on the GPU (VP9 is libvpx in software on Linux and
+  Windows alike). mediasoup forwards AV1 (like
   VP9) as one stream or SVC, never in simulcast layers, so AV1 goes out as
   one stream and the server refuses AV1 or VP9 producers with more than one
   encoding. Every receiver then decodes the whole picture, so a device that
@@ -540,56 +417,24 @@ separate decision.
 - Camera: libwebrtc's video capture module (V4L2 on Linux, DirectShow on
   Windows) at the closest format to the requested profile. CI runners have
   no camera, so only the "no camera" path is tested there.
-- Video display: WebKitGTK has no WebRTC and cannot take a native texture,
-  so the page pulls the core's frames and draws them itself, on a `<canvas>`
-  where the browser build has a `<video>` (`app/src/frames.rs`).
-  `media_view_open` opens a view of a remote video consumer or of a local
-  source (camera, screen: the self view, which needs no producer),
-  `media_view_frame` answers with the next frame the page has not seen (a
-  long poll with a raw response: a 32-byte header, then the I420 planes),
-  `media_view_configure` says how large the page draws, `media_view_close`
-  ends it. A slow page skips frames: a view keeps only the newest. One native
-  sink per consumer or source (`gm_consumer_set_video_sink`,
-  `gm_source_set_video_sink`) feeds all its views. Before frames cross into
-  Rust the core scales them down to the largest view (libyuv; never up, so a
-  4K screen costs a small tile little) and drops those above the views' rate
-  limit. Views end with the page and with their consumer or source. The
-  header says which matrix the colours need: BT.601 for remote video and for
-  a self view at any size, because that is what the core converts a captured
-  screen with and what Chromium takes received video as when the stream does
-  not say (one 1280x720 VP8 stream measured in a Chromium 153 tile and in the
-  app; by size, as up to 0.5 in the viewer window, a stream also changed its
-  colours with its simulcast layer). A stream that does carry its colour
-  description (H.264 with VUI, VP9, AV1) is not looked at yet. Frames
-  go through an ordinary command because Tauri checks commands against the
-  server origin's capability; a scheme of the app's own or a pushed channel
-  measured no faster. A Content-Security-Policy on the server that keeps the
-  page from fetching `ipc://localhost` (Windows: `http://ipc.localhost`)
-  makes Tauri fall back to postMessage with frames as JSON number arrays,
-  which is far too slow for video: allow it in `connect-src`.
-  `GELABBER_VIDEO_TEST_PATTERN=1` lets `media_view_open` take
-  `testPattern: {width, height, fps}` (colour bars) instead of a consumer
-  or source; the smoke test uses it.
+- Video display: the core hands decoded I420 frames to a sink per consumer
+  or source (`gm_consumer_set_video_sink`, `gm_source_set_video_sink`), and
+  the app draws them with a wgpu shader in its tiles
+  (`ui/src/screens/voice/video.rs`). Before frames cross into Rust the core
+  scales them down to the largest view (libyuv; never up, so a 4K screen
+  costs a small tile little) and drops those above the views' rate limit.
+  Remote video and a self view at any size are BT.601, because that is what
+  the core converts a captured screen with and what Chromium takes received
+  video as when the stream does not say. A stream that does carry its
+  colour description (H.264 with VUI, VP9, AV1) is not looked at yet.
 - Self view: a view of a local source shows the picture as it goes to the
   encoders, not the capture. While an encoder has the source step down (a
   weak uplink, the first seconds of a producer) the view shows that smaller
   picture or lower rate, unlike a browser's local `<video>`. A view from
   before that adaptation would need a second output in every source
   (camera, screen, test pattern): they adapt before they hand a frame on.
-- Viewer window: `media_viewer_open` shows a remote video in a native
-  window (`app/src/viewer.rs`), for web clients from before the views in the
-  page and as a pop-out for newer ones: winit on its own thread next to the
-  webview's GTK loop, wgpu drawing the decoded I420 planes (BT.601, as the
-  views in the page), turned by the frame's rotation (CVO, a phone held
-  upright) and letterboxed. It shares the consumer's sink with the page views and
-  shows the stream unscaled, so while a window is open the views of that
-  consumer get full-size frames too, whatever size they asked for; only a
-  view's own `maxFps` still holds. The web client therefore keeps no view
-  next to a window: it closes its views of the consumer before it opens the
-  window and draws the stream in the page again once the window is closed.
-  The window's Wayland app id and X11
-  class are `gelabber-viewer` for compositor rules. CI draws a frame through
-  lavapipe under Xvfb and checks the colors on a screenshot.
+- Own window: a video in a window of its own, for a second monitor or a
+  tiling compositor (`ui/src/screens/voice/window.rs`).
 - Voice: libwebrtc's audio device module (Linux: PulseAudio API, served by
   pipewire-pulse) with its APM for echo cancellation, noise suppression and
   AGC. The web client's modes carry over: `enhanced` runs RNNoise (same
@@ -649,11 +494,10 @@ separate decision.
   (each with an Electron of its own, all "Chromium"): their entries are
   shown as `name (binary)`, and the name is an entry as well, which selects
   them all as it did when it was the id. No two entries share a name.
-  Gelabber's own process and the ones it started (the webview's helpers) are
-  never captured, whatever is selected: the stream would carry the call. A
-  helper in a pid namespace of its own is only recognized as a native
-  PipeWire client (`pipewire.sec.pid`); pipewire-pulse passes on the pid the
-  client reports.
+  Gelabber's own process and the ones it started are never captured,
+  whatever is selected: the stream would carry the call. A helper in a pid
+  namespace of its own is only recognized as a native PipeWire client
+  (`pipewire.sec.pid`); pipewire-pulse passes on the pid the client reports.
   The playback stream of a virtual device is no application's either: an
   echo canceller, an equaliser or virtual surround (filter chain), a combined
   or remapped sink and a loopback play on what was played into them, which
@@ -699,7 +543,7 @@ separate decision.
   `native/src/app_audio_win.cc`), mixed by the same code as on Linux
   (`native/src/app_audio_mix.h`) to the same `sa`/`la` track. "" (every
   application) is one loopback client that excludes Gelabber's own process
-  tree, so the call's playout and the webview's processes stay out. An
+  tree, so the call's playout stays out. An
   application is chosen by its binary (`firefox.exe`, lowercased): one
   client per process tree of that binary, each including its tree, looked
   for again every second so processes that start playing later are picked

@@ -1,5 +1,5 @@
 //! The tray icon with "Gelabber öffnen" and "Beenden" and a dot for unread
-//! messages (desktop/app/src/shell.rs): a StatusNotifierItem on Linux
+//! messages (the Tauri app's shell.rs): a StatusNotifierItem on Linux
 //! (`sni.rs`), the notification area on Windows (`win.rs`). Without a tray
 //! the app runs as before and closing ends it.
 

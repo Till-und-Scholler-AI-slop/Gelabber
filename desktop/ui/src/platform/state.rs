@@ -75,7 +75,7 @@ pub struct Window {
     pub maximized: bool,
 }
 
-/// Smallest window the Tauri app allows (tauri.conf.json/main.rs).
+/// Smallest window the Tauri app allowed.
 pub const MIN_SIZE: [f32; 2] = [480.0, 360.0];
 pub const DEFAULT_SIZE: [f32; 2] = [1280.0, 800.0];
 

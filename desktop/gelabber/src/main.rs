@@ -98,7 +98,7 @@ fn main() -> eframe::Result {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Gelabber")
         .with_app_id(platform::APP_ID)
-        // The Tauri window's sizes (desktop/app/src/main.rs).
+        // The Tauri window's sizes.
         .with_inner_size(state::DEFAULT_SIZE)
         .with_min_inner_size(state::MIN_SIZE);
     if let Some(window) = state::window() {

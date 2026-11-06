@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use rules::{Dedupe, Pacing, Setting};
 
-/// Longest tag and text, as desktop/app/src/notify.rs caps them.
+/// Longest tag and text, as the Tauri app's notify.rs capped them.
 const TAG_MAX: usize = 200;
 const TEXT_MAX: usize = 400;
 /// Events kept while the UI thread is busy; a flood beyond is dropped.
