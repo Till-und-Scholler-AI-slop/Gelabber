@@ -1,0 +1,230 @@
+//! The web client's local settings for the native app of 0.9: [`EXPORT`]
+//! hands the server page's localStorage entries that the native app takes
+//! over to [`settings_export`], which keeps them in `legacy-settings.json` of
+//! the config directory. The native app's first start reads them from there.
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+
+use tauri::{AppHandle, Manager};
+
+/// The entries the native app takes: voice settings, Live sound, interface.
+pub const KEYS: &[&str] = &[
+    "gelabber.media",
+    "gelabber.media.source-audio-share",
+    "gelabber.interface",
+];
+/// Per account (volumes) and per account and channel (drafts).
+pub const PREFIXES: &[&str] = &["gelabber.user-volumes:", "gelabber:chat-draft:"];
+/// More than any real set of drafts; a page cannot fill the disk.
+const MAX_BYTES: usize = 2 * 1024 * 1024;
+const FILE: &str = "legacy-settings.json";
+
+/// On the server's pages: the entries on load, when the window is hidden
+/// and every minute, only when they changed. Errors stay quiet; the setup
+/// page has no grant and gets refused.
+pub const EXPORT: &str = r#"(() => {
+  if (window.top !== window || !window.__TAURI_INTERNALS__) return;
+  const keys = ["gelabber.media", "gelabber.media.source-audio-share", "gelabber.interface"];
+  const prefixes = ["gelabber.user-volumes:", "gelabber:chat-draft:"];
+  let last = null;
+  const send = () => {
+    const entries = {};
+    try {
+      const names = [];
+      for (let i = 0; i < localStorage.length; i++) names.push(localStorage.key(i));
+      for (const key of names.sort()) {
+        if (key && (keys.includes(key) || prefixes.some((p) => key.startsWith(p)))) {
+          entries[key] = localStorage.getItem(key);
+        }
+      }
+    } catch {
+      return;
+    }
+    const text = JSON.stringify(entries);
+    if (text === last) return;
+    last = text;
+    window.__TAURI_INTERNALS__.invoke("settings_export", { entries }).catch(() => {
+      last = null;
+    });
+  };
+  addEventListener("load", send, { once: true });
+  addEventListener("pagehide", send);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") send();
+  });
+  setInterval(send, 60_000);
+})();
+"#;
+
+fn wanted(key: &str) -> bool {
+    KEYS.contains(&key) || PREFIXES.iter().any(|prefix| key.starts_with(prefix))
+}
+
+/// The file the native app reads: `{"version": 1, "localStorage": {key: value}}`
+/// with the wanted entries only.
+fn document(entries: BTreeMap<String, String>) -> Result<Vec<u8>, String> {
+    let kept: BTreeMap<String, String> = entries.into_iter().filter(|(k, _)| wanted(k)).collect();
+    let bytes = serde_json::to_vec_pretty(&serde_json::json!({
+        "version": 1,
+        "localStorage": kept,
+    }))
+    .map_err(|e| e.to_string())?;
+    if bytes.len() > MAX_BYTES {
+        return Err(format!(
+            "{FILE}: {} bytes, more than {MAX_BYTES}",
+            bytes.len()
+        ));
+    }
+    Ok(bytes)
+}
+
+/// Keeps the page's entries for the native app, whole or not at all.
+#[tauri::command]
+pub fn settings_export(app: AppHandle, entries: BTreeMap<String, String>) -> Result<(), String> {
+    let bytes = document(entries)?;
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    write_private(&dir.join(FILE), &bytes).map_err(|e| e.to_string())
+}
+
+/// Unsent drafts are in it: readable by the user only, as the native app's
+/// own files, and replaced whole.
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let partial = path.with_extension("json.partial");
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut out = options.open(&partial)?;
+    // A partial file left by an older run may have wider rights.
+    #[cfg(unix)]
+    out.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+    out.write_all(bytes)?;
+    out.sync_all()?;
+    fs::rename(&partial, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_entries_the_native_app_takes_are_kept() {
+        let entries = BTreeMap::from([
+            ("gelabber.media".to_owned(), r#"{"state":{}}"#.to_owned()),
+            (
+                "gelabber.media.source-audio-share".to_owned(),
+                "off".to_owned(),
+            ),
+            ("gelabber.interface".to_owned(), "{}".to_owned()),
+            ("gelabber.user-volumes:a".to_owned(), "{}".to_owned()),
+            ("gelabber:chat-draft:a:c".to_owned(), "{}".to_owned()),
+            ("gelabber.theme.paint".to_owned(), "{}".to_owned()),
+            ("session".to_owned(), "secret".to_owned()),
+        ]);
+        let doc: serde_json::Value = serde_json::from_slice(&document(entries).unwrap()).unwrap();
+        assert_eq!(doc["version"], 1);
+        let kept = doc["localStorage"].as_object().unwrap();
+        assert_eq!(kept.len(), 5);
+        assert!(!kept.contains_key("gelabber.theme.paint") && !kept.contains_key("session"));
+        assert_eq!(kept["gelabber.media.source-audio-share"], "off");
+    }
+
+    #[test]
+    fn the_file_is_replaced_whole_and_private() {
+        let dir = std::env::temp_dir().join(format!("gelabber-export-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(FILE);
+        fs::write(path.with_extension("json.partial"), "left over").unwrap();
+        fs::write(&path, "older").unwrap();
+        write_private(&path, b"{}").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{}");
+        assert!(!path.with_extension("json.partial").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_page_cannot_write_more_than_the_cap() {
+        let big = BTreeMap::from([("gelabber:chat-draft:a:c".to_owned(), "x".repeat(MAX_BYTES))]);
+        assert!(document(big).is_err());
+    }
+
+    /// Handled, and granted to the server origin only.
+    #[test]
+    fn the_export_command_is_handled_and_granted_to_the_server() {
+        // media.rs takes commands.rs in for its tests.
+        let main = include_str!("main.rs");
+        let setup = include_str!("../capabilities/setup.json");
+        for command in crate::media::EXPORT_COMMANDS {
+            assert!(main.contains(&format!("export::{command},")), "{command}");
+            let permission = format!("\"allow-{}\"", command.replace('_', "-"));
+            assert!(
+                main.contains(&format!(".permission({permission})")),
+                "{command}"
+            );
+            assert!(!setup.contains(&permission), "{command}");
+        }
+        assert!(main.contains(".initialization_script(export::EXPORT)"));
+    }
+
+    /// The web client's own names (web/src): a renamed entry fails here
+    /// instead of staying behind when users switch to the native app.
+    #[test]
+    fn the_entries_are_the_web_clients_storage_keys() {
+        let web = [
+            (
+                include_str!("../../../web/src/voice/settings.ts"),
+                "SETTINGS_KEY",
+                "gelabber.media",
+            ),
+            (
+                include_str!("../../../web/src/voice/settings.ts"),
+                "SOURCE_AUDIO_SHARE_KEY",
+                "gelabber.media.source-audio-share",
+            ),
+            (
+                include_str!("../../../web/src/interface/preferences.ts"),
+                "STORAGE_KEY",
+                "gelabber.interface",
+            ),
+            (
+                include_str!("../../../web/src/voice/userVolume.ts"),
+                "STORAGE_PREFIX",
+                "gelabber.user-volumes:",
+            ),
+            (
+                include_str!("../../../web/src/messages/drafts.ts"),
+                "prefix",
+                "gelabber:chat-draft:",
+            ),
+        ];
+        for (source, name, key) in web {
+            // Line by line: the Windows runner checks out with CRLF (core.autocrlf).
+            let declaration = format!("const {name} = \"{key}\";");
+            assert!(
+                source.lines().any(|line| line == declaration),
+                "web/src: {declaration:?}"
+            );
+        }
+        let exported: Vec<&str> = KEYS.iter().chain(PREFIXES).copied().collect();
+        let named: Vec<&str> = web.iter().map(|(_, _, key)| *key).collect();
+        assert_eq!(exported, named);
+    }
+
+    /// The script asks for what the command keeps.
+    #[test]
+    fn the_script_names_the_same_entries() {
+        for key in KEYS.iter().chain(PREFIXES) {
+            assert!(EXPORT.contains(&format!("\"{key}\"")), "{key}");
+        }
+    }
+}
