@@ -11,6 +11,7 @@
 //! Only the server's origin counts: the one `desktop.json` names, or else the
 //! only origin that holds wanted entries. Nothing is written to the store.
 
+#[cfg(any(windows, target_os = "linux", test))]
 use std::collections::BTreeMap;
 use std::path::Path;
 #[cfg(any(windows, test))]
@@ -24,8 +25,10 @@ pub(super) mod leveldb;
 pub(super) mod webkit;
 
 /// localStorage areas: origin to key to value.
+#[cfg(any(windows, target_os = "linux", test))]
 pub(super) type Areas = BTreeMap<String, BTreeMap<String, String>>;
 
+#[cfg(any(windows, target_os = "linux", test))]
 #[derive(Debug)]
 pub(super) enum Failure {
     /// May pass by the next start: I/O and sharing errors, a busy database.
