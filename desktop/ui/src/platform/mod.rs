@@ -4,6 +4,7 @@
 //! global push-to-talk key, and the update check. The binary owns one
 //! [`Platform`] and calls it every pass; parity runs go without one.
 
+pub mod aumid;
 pub mod files;
 pub mod instance;
 pub mod legacy;
@@ -20,9 +21,9 @@ pub mod update;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
-use egui::{Context, Id, Ui, ViewportCommand};
+use egui::{Context, Id, ViewportCommand};
 use gelabber_client::Client;
 use parking_lot::Mutex;
 use uuid::Uuid;
@@ -122,7 +123,7 @@ pub struct Platform {
     restored_for: Option<Uuid>,
     volumes: Volumes,
     ptt: PttLink,
-    updates: Updates,
+    updates: update::Updater,
     /// The window title last sent (`titleWith`).
     title: String,
     /// The title bar's theme last sent.
@@ -156,7 +157,7 @@ impl Platform {
             restored_for: None,
             volumes: Volumes::default(),
             ptt: PttLink::default(),
-            updates: Updates::default(),
+            updates: update::Updater::default(),
             title: "Gelabber".into(),
             title_bar: None,
             #[cfg(target_os = "linux")]
@@ -202,7 +203,7 @@ impl Platform {
             instance.set_wake(waker(&self.wake));
         }
         self.tray = tray::Tray::start(self.tray_events.clone(), waker(&self.wake));
-        self.updates.next = ctx.input(|i| i.time) + update::FIRST_CHECK.as_secs_f64();
+        self.updates.start(ctx.input(|i| i.time));
     }
 
     fn show_window(&mut self, ctx: &Context) {
@@ -319,7 +320,12 @@ impl Platform {
             self.next_tick = now + 0.5;
             self.tick(ctx, &client, &call, in_front);
         }
-        self.updates.tick(&client, now);
+        // An accepted update: the window closes, main.rs runs the installer.
+        if self.updates.tick(&client, now, update::call_busy(&call)) {
+            self.quitting = true;
+            ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(ViewportCommand::Close);
+        }
         if !self.hidden {
             ctx.request_repaint_after(Duration::from_millis(500));
         } else {
@@ -452,12 +458,8 @@ impl Platform {
     }
 
     /// Over the page: the update notice.
-    pub fn paint(&mut self, ui: &mut Ui, app: Option<&GelabberApp>) {
-        let in_call = app.is_some_and(|a| {
-            a.call()
-                .with_state(|s| s.status != gelabber_call::CallStatus::Idle)
-        });
-        self.updates.paint(ui, in_call);
+    pub fn paint(&mut self, ctx: &Context) {
+        self.updates.paint(ctx);
     }
 
     /// The app ends: what it showed goes, what it remembers is written.
@@ -611,104 +613,6 @@ impl PttLink {
     }
 }
 
-type Check = Arc<Mutex<Option<Result<Option<update::Found>, String>>>>;
-
-#[derive(Default)]
-struct Updates {
-    /// `ctx` time of the next look.
-    next: f64,
-    last: Option<SystemTime>,
-    running: Option<Check>,
-    found: Option<update::Found>,
-    /// "Später": no notice for this version until the next start.
-    dismissed: Option<String>,
-}
-
-impl Updates {
-    fn tick(&mut self, client: &Client, now: f64) {
-        if let Some(slot) = &self.running {
-            let done = slot.lock().take();
-            if let Some(result) = done {
-                self.running = None;
-                self.last = Some(SystemTime::now());
-                match result {
-                    Ok(found) => self.found = found,
-                    Err(e) => tracing::info!("update check: {e}"),
-                }
-            }
-            return;
-        }
-        if now < self.next {
-            return;
-        }
-        self.next = now + 60.0;
-        if !update::auto_check() || !update::due(self.last, SystemTime::now()) {
-            return;
-        }
-        let slot: Check = Arc::default();
-        self.running = Some(slot.clone());
-        let http = client.http().reqwest().clone();
-        client.spawn(async move {
-            *slot.lock() = Some(update::check(http).await);
-        });
-    }
-
-    fn paint(&mut self, ui: &mut Ui, in_call: bool) {
-        let Some(found) = self.found.clone() else {
-            return;
-        };
-        // Not over a call, as the Tauri app's notice.
-        if in_call || self.dismissed.as_deref() == Some(found.version.as_str()) {
-            return;
-        }
-        let ctx = ui.ctx().clone();
-        let theme = crate::theme::Theme::of(&ctx);
-        let c = &theme.c;
-        let screen = ctx.content_rect();
-        let width = (screen.width() - 32.0).min(560.0);
-        egui::Area::new(Id::unique("gelabber-update-notice"))
-            .order(egui::Order::Foreground)
-            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 12.0))
-            .show(&ctx, |ui| {
-                egui::Frame::new()
-                    .fill(c.panel)
-                    .stroke(egui::Stroke::new(1.0, c.border))
-                    .corner_radius(12.0)
-                    .inner_margin(egui::Margin::symmetric(12, 10))
-                    .show(ui, |ui| {
-                        ui.set_max_width(width);
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 10.0;
-                            let line = format!("Gelabber {} ist da.", found.version);
-                            let block =
-                                crate::text::Block::single(ui, &line, crate::text::BODY, c.text);
-                            let (rect, _) =
-                                ui.allocate_exact_size(block.size(), egui::Sense::hover());
-                            block.paint(ui.painter(), rect.min);
-                            if ui
-                                .add(
-                                    crate::widgets::Button::new("Herunterladen")
-                                        .primary()
-                                        .small(),
-                                )
-                                .clicked()
-                            {
-                                ctx.open_url(egui::OpenUrl::new_tab(update::release_page(
-                                    &found.version,
-                                )));
-                            }
-                            if ui
-                                .add(crate::widgets::Button::new("Später").small())
-                                .clicked()
-                            {
-                                self.dismissed = Some(found.version.clone());
-                            }
-                        });
-                    });
-            });
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -790,7 +694,7 @@ mod tests {
         for _ in 0..2 {
             let mut out = ctx.run_ui(input.clone(), |ui| {
                 platform.logic(ui.ctx(), Some(&mut app));
-                platform.paint(ui, Some(&app));
+                platform.paint(ui.ctx());
             });
             out.textures_delta.clear();
         }

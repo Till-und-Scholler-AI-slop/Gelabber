@@ -31,6 +31,12 @@ start the app takes over the Tauri app's exported settings
 (legacy-settings.json there) and those of earlier native builds
 (~/.config/gelabber/); the sign-in is not taken over.
 
+Updates: shortly after the start and every 6 hours the app looks for a
+newer release. From the tarball it shows "Gelabber <version> ist da." with
+"Herunterladen" (the release page); unpack the new tarball over this one.
+Installed from the package it says that pacman updates it
+(pacman -Syu); the app does not replace its own files.
+
 Push-to-talk: choose "Push-to-Talk" in the voice settings. In a call the
 app takes the key through the desktop's GlobalShortcuts portal. On Hyprland
 bind it yourself in hyprland.conf:

@@ -2,14 +2,15 @@
 //! `GELABBER_SERVER` or `server` in `desktop.json` of the Tauri app's config
 //! directory (first match wins), else the setup screen asks. The desktop
 //! around the window (sign-in kept, notifications, tray, one instance,
-//! push-to-talk, updates) is `gelabber_ui::platform`.
+//! push-to-talk, updates) is `gelabber_ui::platform`. An update accepted
+//! in the window installs once it has closed (`update::run_pending`).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod smoke;
 
 use eframe::egui;
-use gelabber_ui::platform::{self, Platform, instance, legacy, settings, state};
-use gelabber_ui::{GelabberApp, Launcher};
+use gelabber_ui::Launcher;
+use gelabber_ui::platform::{self, Platform, aumid, instance, legacy, settings, state, update};
 use tracing_subscriber::EnvFilter;
 
 /// The launcher and the desktop around it.
@@ -50,8 +51,7 @@ impl eframe::App for Desktop {
             test.frame();
         }
         eframe::App::ui(&mut self.launcher, ui, frame);
-        let app: Option<&GelabberApp> = self.launcher.app().map(|a| &*a);
-        self.platform.paint(ui, app);
+        self.platform.paint(ui.ctx());
     }
 
     fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
@@ -75,6 +75,10 @@ fn main() -> eframe::Result {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
         )
         .init();
+    // Before any window: taskbar grouping and toasts go by the shortcuts' id.
+    if let Err(e) = aumid::set_for_process() {
+        eprintln!("gelabber: {e}");
+    }
     // A second start shows the running app and ends before it opens a window.
     let instance = match instance::claim() {
         instance::Claim::First(instance) => instance,
@@ -129,6 +133,11 @@ fn main() -> eframe::Result {
             }))
         }),
     );
+    // The app has ended (instance and files released): the setup replaces it
+    // and starts the new version.
+    if let Err(e) = update::run_pending() {
+        eprintln!("gelabber: update: {e}");
+    }
     if let Some(code) = smoke::exit_code() {
         std::process::exit(code);
     }
