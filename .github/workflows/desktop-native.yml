@@ -678,22 +678,49 @@ jobs:
               throw "the uninstaller removed the installer's note of the folder without being asked"
             }
           }
+          function Listening($port) {
+            $client = [Net.Sockets.TcpClient]::new()
+            try { $client.Connect('127.0.0.1', $port); $true } catch { $false } finally { $client.Dispose() }
+          }
+          # Whether a live WebView2 log holds $text yet; Chromium has the logs open for writing.
+          function Committed($text) {
+            $store = Join-Path $data 'EBWebView\Default\Local Storage\leveldb'
+            foreach ($log in @(Get-ChildItem -LiteralPath $store -Filter '*.log' -File -ErrorAction SilentlyContinue)) {
+              try {
+                $stream = [IO.File]::Open($log.FullName, 'Open', 'Read', 'ReadWrite, Delete')
+                $memory = [IO.MemoryStream]::new()
+                try { $stream.CopyTo($memory) } finally { $stream.Dispose() }
+                if ([Text.Encoding]::Latin1.GetString($memory.ToArray()).Contains($text)) { return $true }
+              } catch [IO.IOException] {}
+            }
+            $false
+          }
           # The Tauri app on the fixture page of one server until the page is done, then closed.
-          function Fill($port, [string[]]$serveArgs) {
+          function Fill($port, [string[]]$serveArgs, $phase2) {
             Set-Content -LiteralPath (Join-Path $config 'desktop.json') -Value "{`"server`":`"http://127.0.0.1:$port`"}" -NoNewline
             $done = Join-Path $env:RUNNER_TEMP "webview-done-$port"
             Remove-Item -LiteralPath $done -ErrorAction SilentlyContinue
             $server = Start-Process -FilePath python -ArgumentList (@('-I', (Join-Path $fixtures 'page\serve.py'), $port, $done) + $serveArgs) -PassThru -NoNewWindow
             try {
+              # A page that fails to load leaves 0.8.9 on an error page, not its setup.
+              $deadline = (Get-Date).AddSeconds(30)
+              while (-not (Listening $port) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
+              if (-not (Listening $port)) { throw "the fixture server did not listen on port $port" }
               $app = Start-Process -FilePath (Join-Path $install 'gelabber-desktop.exe') -PassThru
               $deadline = (Get-Date).AddMinutes(2)
               while (-not (Test-Path -LiteralPath $done) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
               if (-not (Test-Path -LiteralPath $done)) { throw "the Tauri app did not run the fixture page on port $port" }
-              # A graceful close: Chromium commits the page's last writes then.
-              Start-Sleep -Seconds 8
+              # Chromium rate-limits commits to one a minute, so phase 2 lands about a minute later.
+              $deadline = (Get-Date).AddMinutes(2)
+              while (-not (Committed $phase2) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
+              if (-not (Committed $phase2)) { Write-Warning "phase 2 of port $port is in no log after 2 minutes; the close has to commit it" }
               $null = $app.CloseMainWindow()
               if (-not $app.WaitForExit(60 * 1000)) { $app.Kill(); throw 'the Tauri app did not close' }
-              Get-Process msedgewebview2 -ErrorAction SilentlyContinue | Wait-Process -Timeout 60
+              # Only this app's WebView2 processes: their command line names its data folder.
+              $webview = { @(Get-CimInstance Win32_Process -Filter "Name = 'msedgewebview2.exe'" | Where-Object { $_.CommandLine -like "*$data*" }) }
+              $deadline = (Get-Date).AddMinutes(1)
+              while ((& $webview) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
+              if (& $webview) { throw "the Tauri app's WebView2 did not end" }
             } finally {
               Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
             }
@@ -712,8 +739,8 @@ jobs:
             if ($tauriShortcuts -notcontains $lnk) { throw 'the Tauri setup made no Start menu shortcut' }
             # 8124 first: a server the user left, with other values.
             $null = New-Item -ItemType Directory -Force $config
-            Fill 8124 @('fixed')
-            Fill 8123 @()
+            Fill 8124 @('fixed') '"inputGain":0.75'
+            Fill 8123 @() '"inputGain":1.5'
             $store = Join-Path $data 'EBWebView\Default\Local Storage\leveldb'
             $files = @(Get-ChildItem -LiteralPath $store -File | Where-Object { $_.Name -eq 'CURRENT' -or $_.Name -like 'MANIFEST-*' -or $_.Extension -in '.log', '.ldb' })
             if (-not ($files | Where-Object { Select-String -LiteralPath $_.FullName -Pattern 'gelabber.media' -SimpleMatch -Quiet })) {
