@@ -32,8 +32,9 @@ into `settings.json`, `gelabber.user-volumes:<account>` and
 `gelabber:chat-draft:<account>:<channel>` into `native-state.json`). Without
 a readable `legacy-settings.json` (0.8.9 and older) it reads the same entries
 from the Tauri app's WebView storage (`webview.rs`: WebView2's LevelDB on
-Windows, WebKitGTK's SQLite on Linux); a busy store leaves `settings.json`
-unwritten, so the next start tries again. It also takes the
+Windows, WebKitGTK's SQLite on Linux); a failure that may pass (an I/O or
+sharing error, a busy database) leaves `settings.json` unwritten, so the next
+start tries again, while an unknown format or a damaged store counts as none. It also takes the
 files of native builds before 0.9 (`<config base>/gelabber/settings.json`
 and `…/server`, the latter only where `desktop.json` has no server). It
 overwrites nothing (a `desktop.json` or `native-state.json` it cannot read
