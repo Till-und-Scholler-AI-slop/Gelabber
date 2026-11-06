@@ -173,8 +173,12 @@ mod tests {
             ),
         ];
         for (source, name, key) in web {
-            let declaration = format!("\nconst {name} = \"{key}\";\n");
-            assert!(source.contains(&declaration), "web/src: {declaration:?}");
+            // Line by line: the Windows runner checks out with CRLF (core.autocrlf).
+            let declaration = format!("const {name} = \"{key}\";");
+            assert!(
+                source.lines().any(|line| line == declaration),
+                "web/src: {declaration:?}"
+            );
         }
         let exported: Vec<&str> = KEYS.iter().chain(PREFIXES).copied().collect();
         let named: Vec<&str> = web.iter().map(|(_, _, key)| *key).collect();
