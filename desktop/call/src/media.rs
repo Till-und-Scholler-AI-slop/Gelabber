@@ -194,7 +194,10 @@ pub(crate) fn set_muted(inner: &Arc<Inner>, muted: bool) {
     let Some(session) = inner.media.current() else {
         return;
     };
-    let deafened = inner.read(|s| s.deafened) && muted;
+    let Some((muted, deafened)) = inner.read(|s| logic::mute_change(s.muted, s.deafened, muted))
+    else {
+        return;
+    };
     if !deafened {
         session.st.lock().pre_deafen_muted = muted;
     }
@@ -378,6 +381,22 @@ fn list_devices(engine: &core::Engine) -> Devices {
     }
 }
 
+/// `selectInput`: the chosen microphone, else the system's when that one
+/// does not open; returns the one in use ("" the system's).
+fn select_input(engine: &core::Engine, id: &str) -> Result<String, String> {
+    match engine.configure_audio(&json!({ "input": id })) {
+        Ok(()) => Ok(id.to_owned()),
+        Err(e) if id.is_empty() => Err(e.to_string()),
+        Err(e) => {
+            tracing::debug!("microphone {id}: {e}");
+            engine
+                .configure_audio(&json!({ "input": "" }))
+                .map_err(|e| e.to_string())?;
+            Ok(String::new())
+        }
+    }
+}
+
 pub(crate) fn retry_microphone(inner: &Arc<Inner>) {
     if let Some(session) = inner.media.current() {
         spawn(inner, async move { session.retry_microphone().await });
@@ -406,22 +425,38 @@ pub(crate) fn start_mic_test(inner: &Arc<Inner>, turn: u64) {
             "inputGain": settings.input_gain.clamp(0.0, 2.0),
         });
         let call2 = call.clone();
+        let chosen = settings.input.clone();
+        let fake = crate::fake_media();
         let started = blocking(move || {
             let inner = call2.upgrade()?;
             let engine = inner.media.engine().ok()?;
-            Some(engine.monitor_audio(Some(&options)).map(|()| engine))
+            // The chosen microphone first, as a call takes it.
+            let input = if fake {
+                Ok(chosen)
+            } else {
+                select_input(&engine, &chosen)
+            };
+            Some(input.and_then(|input| {
+                engine
+                    .monitor_audio(Some(&options))
+                    .map(|()| (engine, input))
+                    .map_err(|e| e.to_string())
+            }))
         })
         .await
         .flatten();
-        let engine = match started {
-            Some(Ok(engine)) => engine,
+        let (engine, device) = match started {
+            Some(Ok(started)) => started,
             _ => return fail(&inner, logic::MIC_TEST_FAILED),
         };
         if inner.mic_test_turn() != turn {
             let _ = blocking(move || engine.monitor_audio(None)).await;
             return;
         }
-        inner.set_mic_test(|t| t.phase = MicTestPhase::Active);
+        inner.set_mic_test(|t| {
+            t.phase = MicTestPhase::Active;
+            t.device = Some(device);
+        });
         drop(inner);
         let mut blocks = None;
         let mut moved = Instant::now();
@@ -500,9 +535,6 @@ pub(crate) fn settings_changed(inner: &Arc<Inner>, previous: &CallSettings, next
             || previous.input_gain != next.input_gain
         {
             let mut options = json!({ "inputGain": next.input_gain.clamp(0.0, 2.0) });
-            if previous.input != next.input {
-                options["input"] = next.input.clone().into();
-            }
             if previous.output != next.output {
                 options["output"] = next.output.clone().into();
             }
@@ -513,9 +545,27 @@ pub(crate) fn settings_changed(inner: &Arc<Inner>, previous: &CallSettings, next
                 .and_then(|e| e.as_ref().ok())
                 .cloned();
             if let Some(engine) = engine {
-                let result = blocking(move || engine.configure_audio(&options)).await;
-                if let Some(Err(e)) = result {
-                    tracing::debug!("audio devices: {e}");
+                let input = (previous.input != next.input && !crate::fake_media())
+                    .then(|| next.input.clone());
+                let result = blocking(move || {
+                    let selected = input.map(|id| select_input(&engine, &id));
+                    (selected, engine.configure_audio(&options))
+                })
+                .await;
+                if let Some((selected, configured)) = result {
+                    if let Err(e) = configured {
+                        tracing::debug!("audio devices: {e}");
+                    }
+                    match selected {
+                        // A running capture moves along with the engine.
+                        Some(Ok(input)) => inner.write(|s| {
+                            if s.mic_input.is_some() {
+                                s.mic_input = Some(input);
+                            }
+                        }),
+                        Some(Err(e)) => tracing::debug!("microphone: {e}"),
+                        None => {}
+                    }
                 }
             }
             inner.write(|s| {
@@ -545,6 +595,12 @@ pub(crate) fn settings_changed(inner: &Arc<Inner>, previous: &CallSettings, next
             || previous.screen_profile != next.screen_profile;
         if limits_changed && let Some(seat) = session.seat() {
             seat.apply_parameters().await;
+        }
+        let app_changed = previous.source_audio_app != next.source_audio_app;
+        if previous.share_source_audio != next.share_source_audio || app_changed {
+            session
+                .apply_source_audio_choice(next.share_source_audio, app_changed)
+                .await;
         }
     });
 }
@@ -597,7 +653,11 @@ struct St {
     /// answers late knows it is no longer wanted.
     camera_turn: u64,
     screen_turn: u64,
+    /// Bumped by every change of the Live's sound while it runs.
+    sound_turn: u64,
     seat: Option<Arc<Seat>>,
+    /// The media connection under way until it holds its seat.
+    connecting: Option<u64>,
     attempts: u32,
     rebuilding: bool,
     watching: HashSet<Uuid>,
@@ -627,6 +687,25 @@ pub(crate) struct Session {
     st: Mutex<St>,
     stopped: AtomicBool,
     seats: AtomicU64,
+}
+
+/// Marks [`St::connecting`] for one `run_seat` until it returns.
+struct Connecting<'a>(&'a Session, u64);
+
+impl<'a> Connecting<'a> {
+    fn start(session: &'a Session, generation: u64) -> Self {
+        session.st.lock().connecting = Some(generation);
+        Self(session, generation)
+    }
+}
+
+impl Drop for Connecting<'_> {
+    fn drop(&mut self) {
+        let mut st = self.0.st.lock();
+        if st.connecting == Some(self.1) {
+            st.connecting = None;
+        }
+    }
 }
 
 enum Leave {
@@ -706,11 +785,11 @@ impl Session {
         if inner.read(|s| s.devices.inputs.is_empty() && s.devices.cameras.is_empty()) {
             refresh_devices(&inner);
         }
-        // The input and output chosen in the settings, before capture starts.
+        // The output chosen in the settings; the microphone picks its input
+        // as it starts.
         let settings = inner.settings();
-        if !self.fake && (!settings.input.is_empty() || !settings.output.is_empty()) {
+        if !self.fake && !settings.output.is_empty() {
             let options = json!({
-                "input": settings.input,
                 "output": settings.output,
                 "inputGain": settings.input_gain.clamp(0.0, 2.0),
             });
@@ -730,6 +809,7 @@ impl Session {
         let Some(inner) = self.inner() else { return };
         let Some(engine) = self.engine() else { return };
         let generation = self.seats.fetch_add(1, Ordering::AcqRel) + 1;
+        let _connecting = Connecting::start(self, generation);
         let client = inner.client().clone();
         let ticket = match client.http().media_ticket(self.channel).await {
             Ok(ticket) => ticket,
@@ -832,6 +912,7 @@ impl Session {
             if let Some(old) = st.seat.replace(seat.clone()) {
                 old.close(false);
             }
+            st.connecting = None;
         }
         tokio::spawn(seat.clone().pump(events));
         let capabilities = logic::receivable_capabilities(&rtp, av1_decoding);
@@ -923,16 +1004,14 @@ impl Session {
     /// Captures the microphone; without one the call goes on listening
     /// (`reportJoinMicFailure`): the bar says so and offers to retry.
     async fn capture_microphone(self: &Arc<Self>) -> Option<Local> {
-        let engine = self.engine()?;
-        let options = self.microphone_options();
-        let source = match blocking(move || core::Source::microphone(&engine, &options)).await? {
-            Ok(source) => source,
+        let (source, input) = match self.open_microphone().await? {
+            Ok(opened) => opened,
             Err(e) => {
                 tracing::warn!("microphone: {e}");
                 if self.live()
                     && let Some(inner) = self.inner()
                 {
-                    let denied = logic::mic_refused(&e.to_string());
+                    let denied = logic::mic_refused(&e);
                     inner.write(|s| {
                         s.mic = if denied {
                             MicStatus::Denied
@@ -961,9 +1040,33 @@ impl Session {
         st.mic = Some(local.clone());
         drop(st);
         if let Some(inner) = self.inner() {
-            inner.write(|s| s.mic = MicStatus::Live);
+            inner.write(|s| {
+                s.mic = MicStatus::Live;
+                s.mic_input = Some(input);
+            });
         }
         Some(local)
+    }
+
+    /// The chosen input (else the system's), then the capture on it; the
+    /// source and the input it runs on.
+    async fn open_microphone(&self) -> Option<Result<(core::Source, String), String>> {
+        let engine = self.engine()?;
+        let options = self.microphone_options();
+        let chosen = self.inner().map(|i| i.settings().input).unwrap_or_default();
+        let fake = self.fake;
+        blocking(move || {
+            // Fake media's dummy audio has no devices to pick.
+            let input = if fake {
+                chosen
+            } else {
+                select_input(&engine, &chosen)?
+            };
+            core::Source::microphone(&engine, &options)
+                .map(|source| (source, input))
+                .map_err(|e| e.to_string())
+        })
+        .await
     }
 
     /// `retryMicrophone`: capture again and send it on the seat there is.
@@ -987,10 +1090,8 @@ impl Session {
 
     /// The microphone again with new processing; the producer keeps its id.
     async fn restart_microphone(self: &Arc<Self>) {
-        let Some(engine) = self.engine() else { return };
-        let options = self.microphone_options();
-        let source = match blocking(move || core::Source::microphone(&engine, &options)).await {
-            Some(Ok(source)) => source,
+        let (source, input) = match self.open_microphone().await {
+            Some(Ok(opened)) => opened,
             Some(Err(e)) => {
                 tracing::warn!("microphone switch: {e}");
                 // The old capture keeps sending; without one this is a retry.
@@ -1000,7 +1101,7 @@ impl Session {
                     if self.st.lock().mic.is_some() {
                         inner.notify(logic::MIC_SWITCH_FAILED);
                     } else {
-                        let denied = logic::mic_refused(&e.to_string());
+                        let denied = logic::mic_refused(&e);
                         inner.write(|s| {
                             s.mic = if denied {
                                 MicStatus::Denied
@@ -1030,6 +1131,12 @@ impl Session {
             st.mic = Some(local.clone());
             local
         };
+        if let Some(inner) = self.inner() {
+            inner.write(|s| {
+                s.mic = MicStatus::Live;
+                s.mic_input = Some(input);
+            });
+        }
         self.apply_local_audio();
         if let Some(seat) = self.seat() {
             let paused = self
@@ -1239,16 +1346,141 @@ impl Session {
         }
     }
 
+    /// `applySourceAudioChoice`: during a Live, "Ton mitsenden" and the
+    /// chosen application take effect at once, the video untouched.
+    async fn apply_source_audio_choice(self: &Arc<Self>, wanted: bool, app_changed: bool) {
+        let Some(inner) = self.inner() else { return };
+        let (live, running, turn) = {
+            let mut st = self.st.lock();
+            st.sound_turn += 1;
+            (
+                st.screen.is_some(),
+                st.screen_audio.is_some(),
+                st.sound_turn,
+            )
+        };
+        if !live {
+            return;
+        }
+        let (stop, start) = logic::source_audio_change(wanted, running, app_changed);
+        if stop {
+            self.stop_live_sound(LiveSound::Off).await;
+        } else if !wanted {
+            inner.write(|s| s.live_sound = LiveSound::Off);
+        }
+        if start {
+            self.add_live_sound(turn).await;
+        }
+    }
+
+    /// The Live's sound leaves, its video stays.
+    async fn stop_live_sound(self: &Arc<Self>, status: LiveSound) {
+        let Some(inner) = self.inner() else { return };
+        let local = self.st.lock().screen_audio.take();
+        inner.write(|s| {
+            s.live_audio = false;
+            s.live_sound = status;
+        });
+        if let Some(local) = local {
+            self.announce(Kind::Sa, false);
+            if let Some(seat) = self.seat() {
+                seat.close_source(Kind::Sa).await;
+            }
+            let _ = blocking(move || drop(local)).await;
+        }
+        self.publish_participants();
+    }
+
+    /// `addLocalSourceAudio`: the chosen application's sound joins the
+    /// running Live, under its epoch.
+    async fn add_live_sound(self: &Arc<Self>, turn: u64) {
+        let Some(inner) = self.inner() else { return };
+        let Some(engine) = self.engine() else { return };
+        let (screen_turn, epoch) = {
+            let st = self.st.lock();
+            let Some(screen) = &st.screen else { return };
+            (st.screen_turn, screen.epoch)
+        };
+        let current =
+            |st: &St| st.sound_turn == turn && st.screen_turn == screen_turn && st.screen.is_some();
+        // The test pattern has no sound to give, as when a Live starts.
+        let made = if self.fake {
+            None
+        } else {
+            let app = inner.settings().source_audio_app;
+            blocking(move || core::Source::app_audio(&engine, &json!({ "app": app }))).await
+        };
+        let source = match made {
+            Some(Ok(source)) => source,
+            other => {
+                let reason = match other {
+                    Some(Err(e)) => Some(e.to_string()).filter(|e| !e.is_empty()),
+                    _ => None,
+                };
+                if let Some(reason) = &reason {
+                    tracing::warn!("Live sound: {reason}");
+                }
+                if current(&self.st.lock()) {
+                    inner.write(|s| s.live_sound = LiveSound::Unavailable(reason));
+                }
+                return;
+            }
+        };
+        let audio = {
+            let mut st = self.st.lock();
+            if !current(&st) || !self.live() {
+                drop(st);
+                std::thread::spawn(move || drop(source));
+                return;
+            }
+            let local = Local {
+                source,
+                epoch,
+                height: 0,
+            };
+            st.screen_audio = Some(local.clone());
+            local
+        };
+        inner.write(|s| {
+            s.live_audio = true;
+            s.live_sound = LiveSound::Sharing;
+        });
+        self.publish_participants();
+        // Before the Live is on the wire, `publish_all` sends both.
+        let Some(seat) = self.seat() else { return };
+        if !seat.producers.lock().contains_key(&Kind::S) {
+            return;
+        }
+        match seat.publish(Kind::Sa, &audio, None, false).await {
+            Ok(()) => self.announce(Kind::Sa, true),
+            // The seat went: its next one publishes the sound with the video.
+            Err(e) if e.code() == "connection_closed" => {}
+            Err(e) => {
+                tracing::warn!("Live sound: {e}");
+                if current(&self.st.lock()) {
+                    self.stop_live_sound(LiveSound::Unavailable(Some(e.code().to_owned())))
+                        .await;
+                }
+            }
+        }
+    }
+
     /// Ends the Live when its capture stops (the person ended it in the
     /// desktop, the window closed).
     async fn watch_screen(self: Arc<Self>, turn: u64) {
-        let app = self
-            .inner()
-            .map(|i| i.settings().source_audio_app)
-            .unwrap_or_default();
+        let mut app = String::new();
         let mut quiet = 0;
         loop {
             tokio::time::sleep(SCREEN_POLL).await;
+            // The application may change during the Live.
+            let now = self
+                .inner()
+                .map(|i| i.settings().source_audio_app)
+                .unwrap_or_default();
+            if now != app {
+                app = now;
+                quiet = 0;
+            }
             let source = {
                 let st = self.st.lock();
                 if st.screen_turn != turn || !self.live() {
@@ -1473,7 +1705,10 @@ impl Session {
     fn on_ready(self: &Arc<Self>) {
         let Some(inner) = self.inner() else { return };
         inner.stop_sounds();
-        let keep_media = self.seat().is_some_and(|s| s.sock.is_open());
+        // A media connection still being made goes on: a rebuild would
+        // only take a second seat after it.
+        let connecting = self.st.lock().connecting.is_some();
+        let keep_media = connecting || self.seat().is_some_and(|s| s.sock.is_open());
         {
             let mut st = self.st.lock();
             st.sound_on_join = false;
@@ -2173,6 +2408,9 @@ fn frame_sink(call: &Weak<Inner>, key: VideoKey, flag: Arc<AtomicBool>) -> core:
                 serial,
             },
         );
+        // The app may have let go of the call meanwhile: its teardown frees
+        // the engine, which waits for this delivery to return.
+        crate::release_elsewhere(inner);
     })
 }
 
@@ -2982,6 +3220,10 @@ impl Seat {
         if media != k.media() || (k == Kind::Sa && event["parent"].as_str().is_none()) {
             return self.consumer_failed(&id, &generation).await;
         }
+        // A Live no longer watched: the server closes it after the `w`.
+        if !self.wanted(k, owner) {
+            return;
+        }
         let Some(recv) = self.recv.lock().clone() else {
             return;
         };
@@ -2998,7 +3240,10 @@ impl Seat {
                 if let Some(Err(e)) = other {
                     tracing::debug!("consume {id}: {e}");
                 }
-                return self.consumer_failed(&id, &generation).await;
+                if logic::reports_consumer_failure(self.wanted(k, owner), None) {
+                    self.consumer_failed(&id, &generation).await;
+                }
+                return;
             }
         };
         let settings = inner.settings();
@@ -3029,7 +3274,9 @@ impl Seat {
             paused,
             sink,
         };
-        let gone = self.closed.load(Ordering::Acquire) || self.removed.lock().contains(&key);
+        let gone = !self.wanted(k, owner)
+            || self.closed.load(Ordering::Acquire)
+            || self.removed.lock().contains(&key);
         if gone {
             std::thread::spawn(move || drop(received));
             return;
@@ -3044,8 +3291,15 @@ impl Seat {
             .await;
         if let Err(e) = ready {
             tracing::debug!("consumerReady {id}: {e}");
+            // Dropped here meanwhile (a watch switched off) or closed by the
+            // server: no failure of this client's to count.
+            let wanted = self.wanted(k, owner)
+                && self.consumers.lock().contains_key(&id)
+                && !self.removed.lock().contains(&key);
             self.remove_consumer(&id);
-            if !self.closed.load(Ordering::Acquire) {
+            if !self.closed.load(Ordering::Acquire)
+                && logic::reports_consumer_failure(wanted, Some(e.code()))
+            {
                 self.consumer_failed(&id, &generation).await;
             }
             return;
@@ -3062,6 +3316,17 @@ impl Seat {
         for event in later {
             self.clone().handle_event(event);
         }
+    }
+
+    /// Whether this client still wants `owner`'s `k`: a Live and its sound
+    /// only while watched.
+    fn wanted(&self, k: Kind, owner: Uuid) -> bool {
+        if !matches!(k, Kind::S | Kind::Sa) {
+            return true;
+        }
+        self.session
+            .upgrade()
+            .is_some_and(|s| s.st.lock().watching.contains(&owner))
     }
 
     async fn consumer_failed(&self, id: &str, generation: &str) {
@@ -3174,5 +3439,69 @@ fn forward(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Call;
+    use crate::synth::Cue;
+
+    fn offline() -> Call {
+        Call::new(Client::new("http://127.0.0.1:9").expect("client"))
+    }
+
+    /// A session as `join` leaves it, without its media connection.
+    fn session(call: &Call) -> Arc<Session> {
+        let session = Arc::new(Session {
+            call: Arc::downgrade(&call.inner),
+            server: Uuid::new_v4(),
+            channel: Uuid::new_v4(),
+            me: Uuid::new_v4(),
+            fake: true,
+            st: Mutex::new(St::default()),
+            stopped: AtomicBool::new(false),
+            seats: AtomicU64::new(0),
+        });
+        *call.inner.media.session.lock() = Some(session.clone());
+        session
+    }
+
+    #[test]
+    fn muting_what_is_muted_plays_no_cue() {
+        let call = offline();
+        let session = session(&call);
+        call.set_muted(true);
+        call.set_muted(true);
+        call.set_muted(false);
+        call.set_muted(false);
+        assert_eq!(
+            call.inner.player.played(),
+            vec![Cue::MuteSelf, Cue::UnmuteSelf]
+        );
+        session.stop();
+    }
+
+    #[test]
+    fn a_gateway_reconnect_during_the_first_connect_takes_no_second_seat() {
+        let call = offline();
+        let session = session(&call);
+        session.seats.store(1, Ordering::Release);
+        let connecting = Connecting::start(&session, 1);
+        session.on_ready();
+        {
+            let st = session.st.lock();
+            assert!(!st.rebuilding, "no rebuild next to the connect");
+            assert_eq!(st.attempts, 0);
+            // The connect's announcements follow the gateway's new seat.
+            assert!(st.republish_on_join);
+        }
+        drop(connecting);
+        assert_eq!(session.st.lock().connecting, None);
+        // Without a connect under way, a lost media socket is rebuilt.
+        session.on_ready();
+        assert_eq!(session.st.lock().attempts, 1);
+        session.stop();
     }
 }

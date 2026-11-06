@@ -37,6 +37,9 @@ pub(crate) struct Player {
     rendered: Mutex<HashMap<Cue, std::sync::Arc<Vec<f32>>>>,
     deafened: Mutex<bool>,
     output: Mutex<Output>,
+    /// Tests: the cues that played.
+    #[cfg(test)]
+    played: Mutex<Vec<Cue>>,
 }
 
 impl Player {
@@ -62,12 +65,19 @@ impl Player {
         self.output.lock().stop();
     }
 
+    #[cfg(test)]
+    pub(crate) fn played(&self) -> Vec<Cue> {
+        self.played.lock().clone()
+    }
+
     /// `remote`: an event of the call, as [`Cue::remote`] says by default.
     pub(crate) fn play(&self, cue: Cue, remote: Option<bool>, settings: SoundSettings) {
         let remote = remote.unwrap_or(cue.remote());
         if !wanted(settings, cue) || (*self.deafened.lock() && remote) {
             return;
         }
+        #[cfg(test)]
+        self.played.lock().push(cue);
         let samples = self.samples(cue);
         let wav = synth::wave(&samples, cue.rate(), volume(settings));
         self.output.lock().play(wav);

@@ -727,6 +727,31 @@ pub fn silent_app(app: &str, streams: Option<u64>, quiet: &mut u32) -> Option<Op
     Some((*quiet >= SILENT_POLLS).then(|| app.to_owned()))
 }
 
+/// Mute and deafen after "mute `want`" (unmuting also undeafens); `None`
+/// when that changes nothing, so no cue plays and nothing is sent.
+pub fn mute_change(muted: bool, deafened: bool, want: bool) -> Option<(bool, bool)> {
+    let next = (want, deafened && want);
+    (next != (muted, deafened)).then_some(next)
+}
+
+/// `applySourceAudioChoice` of the desktop app, for a running Live whose
+/// "Ton mitsenden" or application changed: whether its sound stops, and
+/// whether a new capture starts.
+pub fn source_audio_change(wanted: bool, running: bool, app_changed: bool) -> (bool, bool) {
+    (
+        running && (!wanted || app_changed),
+        wanted && (!running || app_changed),
+    )
+}
+
+/// Whether a consumer that failed here is reported (`consumerFailed`),
+/// which counts against the server's retries for its producer: not one
+/// this client let go of meanwhile (a watch switched off), nor one the
+/// server already took back (`forbidden`).
+pub fn reports_consumer_failure(wanted: bool, code: Option<&str>) -> bool {
+    wanted && code != Some("forbidden")
+}
+
 /// Whether the core's microphone error is a refused permission rather
 /// than a missing or busy device (`micRefused`).
 pub fn mic_refused(error: &str) -> bool {
@@ -1025,6 +1050,37 @@ mod tests {
         assert_eq!(voice_volume(1.0, 1.0, false, true), 0.0);
         assert_eq!(stream_volume(0.5, false, false), 0.5);
         assert_eq!(stream_volume(0.5, true, false), 0.0);
+    }
+
+    #[test]
+    fn muting_again_changes_nothing() {
+        assert_eq!(mute_change(false, false, true), Some((true, false)));
+        assert_eq!(mute_change(true, false, true), None);
+        assert_eq!(mute_change(false, false, false), None);
+        // Deafened is muted: muting again is no change, unmuting undeafens.
+        assert_eq!(mute_change(true, true, true), None);
+        assert_eq!(mute_change(true, true, false), Some((false, false)));
+    }
+
+    #[test]
+    fn the_live_sound_follows_its_switch_and_application() {
+        // Off during a Live: the sound stops, nothing new.
+        assert_eq!(source_audio_change(false, true, false), (true, false));
+        // On during a Live without sound: a capture starts.
+        assert_eq!(source_audio_change(true, false, false), (false, true));
+        // Another application: the sound is replaced.
+        assert_eq!(source_audio_change(true, true, true), (true, true));
+        // Another application while off: nothing to do.
+        assert_eq!(source_audio_change(false, false, true), (false, false));
+    }
+
+    #[test]
+    fn only_wanted_consumers_count_against_the_retries() {
+        assert!(reports_consumer_failure(true, None));
+        assert!(reports_consumer_failure(true, Some("sdk_failed")));
+        // The watch went off while it was made, or the server took it back.
+        assert!(!reports_consumer_failure(false, None));
+        assert!(!reports_consumer_failure(true, Some("forbidden")));
     }
 
     #[test]
