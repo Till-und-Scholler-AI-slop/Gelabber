@@ -413,11 +413,18 @@ fn table_entries(path: &Path, bytes: &[u8], merge: &mut Merge) -> Result<usize, 
         .map_err(|kind| damaged(&format!("compression type {kind}")))?
         .ok_or_else(|| damaged("index block"))?;
     let mut snappy_blocks = 0;
+    // Where the previous data block's trailer ended: a table's blocks follow
+    // each other, so an index that names one twice is crafted.
+    let mut next = 0;
     for (_, handle) in block_entries(&index).ok_or_else(|| damaged("index block"))? {
         let mut pos = 0;
         let Some(handle) = varint(&handle, &mut pos).zip(varint(&handle, &mut pos)) else {
             return Err(damaged("index entry"));
         };
+        if handle.0 < next {
+            return Err(damaged("index entries out of order"));
+        }
+        next = handle.0.saturating_add(handle.1).saturating_add(5);
         let Some((data, snappy)) =
             block(bytes, handle).map_err(|kind| damaged(&format!("compression type {kind}")))?
         else {
@@ -478,6 +485,8 @@ fn block_entries(block: &[u8]) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
     let mut out = Vec::new();
     let mut key: Vec<u8> = Vec::new();
     let mut pos = 0;
+    // Shared prefixes repeat a long key per entry: bounded like a block.
+    let mut total = 0usize;
     while pos < entries.len() {
         let shared = usize::try_from(varint(entries, &mut pos)?).ok()?;
         let own = usize::try_from(varint(entries, &mut pos)?).ok()?;
@@ -490,6 +499,10 @@ fn block_entries(block: &[u8]) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
         pos += own;
         let value_bytes = entries.get(pos..pos.checked_add(value)?)?;
         pos += value;
+        total = total.checked_add(key.len() + value)?;
+        if total > MAX_BLOCK {
+            return None;
+        }
         out.push((key.clone(), value_bytes.to_vec()));
     }
     Some(out)
@@ -842,6 +855,65 @@ mod tests {
                 ],
             )
         }
+
+        /// A block: prefix-compressed entries, one restart.
+        pub fn block(entries: &[(usize, &[u8], &[u8])]) -> Vec<u8> {
+            let mut out = Vec::new();
+            for (shared, own, value) in entries {
+                out.extend(varint(*shared as u64));
+                out.extend(varint(own.len() as u64));
+                out.extend(varint(value.len() as u64));
+                out.extend_from_slice(own);
+                out.extend_from_slice(value);
+            }
+            out.extend_from_slice(&0u32.to_le_bytes());
+            out.extend_from_slice(&1u32.to_le_bytes());
+            out
+        }
+
+        fn trailer(out: &mut Vec<u8>, data: &[u8]) {
+            out.extend_from_slice(data);
+            out.push(0);
+            out.extend_from_slice(&mask(crc32c(&[data, &[0]])).to_le_bytes());
+        }
+
+        /// A table of `blocks` whose index names them in the order of
+        /// `index` (positions in `blocks`).
+        pub fn table(blocks: &[Vec<u8>], index: &[usize]) -> Vec<u8> {
+            let mut out = Vec::new();
+            let mut handles = Vec::new();
+            for block in blocks {
+                handles.push([varint(out.len() as u64), varint(block.len() as u64)].concat());
+                trailer(&mut out, block);
+            }
+            let entries: Vec<_> = index
+                .iter()
+                .map(|&i| (0, b"z".as_slice(), handles[i].as_slice()))
+                .collect();
+            let index = block(&entries);
+            let at = out.len();
+            trailer(&mut out, &index);
+            let mut footer = [
+                varint(0),
+                varint(0),
+                varint(at as u64),
+                varint(index.len() as u64),
+            ]
+            .concat();
+            footer.resize(40, 0);
+            footer.extend_from_slice(&TABLE_MAGIC.to_le_bytes());
+            out.extend(footer);
+            out
+        }
+
+        /// A data block entry: `gelabber.media` of http://a at `seq`.
+        pub fn internal(seq: u64) -> Vec<u8> {
+            [
+                b"_http://a\0\x01gelabber.media".as_slice(),
+                &(seq << 8 | 1).to_le_bytes(),
+            ]
+            .concat()
+        }
     }
 
     fn media_of_a(dir: &Path) -> String {
@@ -910,5 +982,46 @@ mod tests {
             &mut merge,
         );
         assert_eq!(merge[key].0, MAX_SEQUENCE);
+    }
+
+    #[test]
+    fn a_block_of_one_long_key_shared_many_times_is_damaged() {
+        let key = vec![b'k'; 1 << 20];
+        let mut entries = vec![(0, key.as_slice(), b"".as_slice())];
+        entries.extend(std::iter::repeat_n(
+            (key.len(), b"".as_slice(), b"".as_slice()),
+            100,
+        ));
+        // 100 MiB of keys out of a block of 1 MiB.
+        assert_eq!(block_entries(&write::block(&entries)), None);
+        assert_eq!(
+            block_entries(&write::block(&entries[..60])).map(|e| e.len()),
+            Some(60)
+        );
+    }
+
+    #[test]
+    fn an_index_that_names_a_block_twice_is_damaged() {
+        let (one, two) = (write::internal(1), write::internal(2));
+        let blocks = [
+            write::block(&[(0, &one, &[1, b'1'])]),
+            write::block(&[(0, &two, &[1, b'2'])]),
+        ];
+        let copy = Copy::new("fan-out");
+        for entry in std::fs::read_dir(&copy.0).unwrap() {
+            std::fs::remove_file(entry.unwrap().path()).unwrap();
+        }
+        let table = copy.0.join("000003.ldb");
+        std::fs::write(&table, write::table(&blocks, &[0, 1])).unwrap();
+        let mut merge = Merge::new();
+        table_entries(&table, &std::fs::read(&table).unwrap(), &mut merge).unwrap();
+        assert_eq!(merge.values().next().unwrap(), &(2, Some(vec![1, b'2'])));
+        for index in [[0, 0], [1, 0]] {
+            let bytes = write::table(&blocks, &index);
+            assert!(matches!(
+                table_entries(&table, &bytes, &mut Merge::new()),
+                Err(Failure::Permanent(_))
+            ));
+        }
     }
 }
