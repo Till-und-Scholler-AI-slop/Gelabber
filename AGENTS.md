@@ -24,11 +24,17 @@ The **shipped line** is the latest release tag on `main`.
   to the development line that keeps the hotfix commits, so ancestry proves the
   sync.
 - **Each fix** gets its own reviewed PR before a release PR bundles it.
-- **Protection:** the `Version branches` ruleset covers `refs/heads/v[0-9]*`
-  (PR required, same reviews as `main`); every change reaches `main` and `v*`
-  through a PR. A new version branch name must match that pattern, or gets the
-  same protection by hand before its first commit.
-- **Review:** SilasSch reviews product PRs.
+- **Protection:** the `Version branches` ruleset covers `refs/heads/v[0-9]*`;
+  every change reaches `main` and `v*` through a PR. A new version branch name
+  must match that pattern, or gets the same protection by hand before its
+  first commit.
+- **Review:** a PR to `v*` merges on the checks `ci-ok` and `ai-review`
+  (`.github/workflows/ai-review.yml`, docs/ai-review.md). The AI review runs
+  when a PR is ready for review: push to a draft, mark it ready when done;
+  after a later push, set it to draft and back. A PR to `main` also needs a
+  human approval. Paths in `.github/CODEOWNERS` (CI, review rules, update
+  key) always need an owner's approval. Only the owners merge past a check
+  by bypass; agents never use it, also not with an owner's token.
 
 ## Commands
 
