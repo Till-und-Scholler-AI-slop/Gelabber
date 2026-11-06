@@ -26,10 +26,10 @@ Starten
 
 Einstellungen und Daten
   %APPDATA%\io.github.till-und-scholler-ai-slop.gelabber\
-  (desktop.json mit der Serveradresse stammt von der Tauri-App). Beim
-  ersten Start übernimmt die App die von der Tauri-App exportierten
-  Einstellungen (legacy-settings.json dort). Die Anmeldung wird nicht
-  übernommen: einmal neu anmelden.
+  (desktop.json mit der Serveradresse stammt von der Tauri-App). Hat die
+  Tauri-App ihre Einstellungen exportiert (legacy-settings.json dort, ab
+  0.8.10), übernimmt die App sie beim ersten Start. Die Anmeldung wird
+  nicht übernommen: einmal neu anmelden.
 
 Aktualisieren
   Die App sucht kurz nach dem Start und danach alle 6 Stunden nach einer

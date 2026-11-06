@@ -6,10 +6,13 @@ with a native media core instead of a browser's WebRTC, and no web view.
 
 Status: the native app replaces the Tauri app from 0.9 on. The Tauri app
 (a Tauri 2 window around the web client, released from v0.5.0 to 0.8.x) was
-removed in 0.9 without a fallback; its last release, 0.8.10, exports the web
-client's settings to `legacy-settings.json`, and its installs update into
-the native app (Windows: its updater runs the native installer; Arch: the
-package `gelabber-desktop` is the native app from 0.9 on). The web client's
+removed in 0.9 without a fallback; its installs update into the native app
+(Windows: its updater runs the native installer; Arch: the package
+`gelabber-desktop` is the native app from 0.9 on). The web client's settings
+come along only in `legacy-settings.json`, which only a Tauri app with the
+export of commit f466bc2 writes. No release has that yet; it is meant for
+0.8.10, before 0.9.0. An update from 0.8.9 or older keeps only the server
+address (`desktop.json`). The web client's
 code for the Tauri app (`web/src/voice/native/`, the desktop shell and
 notification bridges) is still there and goes in a later change.
 

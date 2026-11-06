@@ -28,7 +28,7 @@ VP8.
 
 Settings: ~/.config/io.github.till-und-scholler-ai-slop.gelabber/, the
 Tauri app's directory (desktop.json with the server is shared). On the first
-start the app takes over the Tauri app's exported settings
+start the app takes over the settings a Tauri app from 0.8.10 on exported
 (legacy-settings.json there) and those of earlier native builds
 (~/.config/gelabber/); the sign-in is not taken over.
 
