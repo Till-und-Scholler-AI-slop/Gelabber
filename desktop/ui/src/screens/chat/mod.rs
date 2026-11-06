@@ -288,9 +288,13 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
             chat.dm_asked = None;
         }
         chat.dm_shown = Some((channel, frame));
-        // Once the list is in, and again after the account data was reset,
-        // which drops the answer to an earlier ask.
-        let (ready, epoch) = app.client.with_state(|s| (s.dms_loaded, s.epoch()));
+        // Once the list is in (it would replace a DM fetched before it) or
+        // failed, and again after the account data was reset, which drops
+        // the answer to an earlier ask.
+        let (ready, epoch) = app.client.with_state(|s| {
+            let failed = matches!(s.op("bootstrap"), Some(gelabber_client::OpState::Failed(_)));
+            (s.dms_loaded || failed, s.epoch())
+        });
         let ask = ready && chat.dm_asked != Some((channel, epoch));
         if ask {
             chat.dm_asked = Some((channel, epoch));
@@ -1303,6 +1307,31 @@ mod page_tests {
         assert!(api.saw(&format!("GET /dms/{DM}")));
         // The list still has Jonas.
         harness.get_by_label("Jonas");
+    }
+
+    /// The list did not load: the page fetches its DM anyway and shows the
+    /// conversation (`useDm` does not wait for the list).
+    #[test]
+    fn a_dm_opens_when_the_list_failed() {
+        let _config = TempConfig::new("dm-list-failed");
+        let api = FakeApi::start(true, |method, path, _| match (method, path) {
+            ("GET", "/dms") => Some(Reply::error(503, "internal")),
+            ("GET", p) if p == format!("/dms/{DM}") => {
+                let reply = dms("GET", "/dms")?;
+                Some(Reply::json(reply.body[0].clone()))
+            }
+            _ => dms(method, path),
+        });
+        let mut harness = launcher(&api, &format!("/d/{DM}"));
+        wait_for(&mut harness, "the conversation", |h| {
+            h.query_by_label_contains("Nachricht an").is_some()
+        });
+        assert!(api.saw(&format!("GET /dms/{DM}")));
+        assert!(
+            harness
+                .query_by_label("Diese Unterhaltung konnte nicht geladen werden.")
+                .is_none()
+        );
     }
 
     /// A picker left open closes with its page: back (Alt+←) and forward
