@@ -156,7 +156,7 @@ fn entries(dir: &Path) -> Result<(Entries, Stats), Failure> {
         stats.tables += 1;
     }
     for log in &logs {
-        for record in log_records(&read_file(log)?) {
+        for record in log_records(&read_file(log)?, Damage::SkipBlock) {
             write_batch(&record, &mut merge);
         }
         stats.logs += 1;
@@ -236,7 +236,7 @@ fn live_files(dir: &Path) -> Result<Option<Live>, Failure> {
         log: 0,
         prev_log: 0,
     };
-    for edit in log_records(&manifest) {
+    for edit in log_records(&manifest, Damage::Stop) {
         if version_edit(&edit, &mut live).is_none() {
             return Ok(None);
         }
@@ -282,10 +282,21 @@ fn version_edit(edit: &[u8], live: &mut Live) -> Option<()> {
     Some(())
 }
 
-/// The records of a log file (32 KiB blocks of fragments). Reading stops at
-/// a bad checksum or a torn tail, as LevelDB's recovery does: the write in
-/// flight when the app was killed is lost, everything before it is kept.
-fn log_records(bytes: &[u8]) -> Vec<Vec<u8>> {
+/// What a damaged record of a log costs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Damage {
+    /// The rest of its block, as LevelDB's log reader recovers a write-ahead
+    /// log: a log reused after a kill holds the next session's writes
+    /// behind a torn record.
+    SkipBlock,
+    /// The rest of the file: LevelDB does not open a store whose MANIFEST
+    /// is damaged, and a torn tail of it is the edit in flight.
+    Stop,
+}
+
+/// The records of a log file (32 KiB blocks of fragments); a torn tail
+/// loses the write in flight when the app was killed, as in LevelDB.
+fn log_records(bytes: &[u8], damage: Damage) -> Vec<Vec<u8>> {
     let mut records = Vec::new();
     let mut partial: Option<Vec<u8>> = None;
     for block in bytes.chunks(BLOCK) {
@@ -297,14 +308,19 @@ fn log_records(bytes: &[u8]) -> Vec<Vec<u8>> {
             let kind = header[6];
             // Zeroes: the rest of the block is padding (preallocated space).
             if kind == 0 && length == 0 {
+                partial = None;
                 break;
             }
-            let Some(data) = block.get(pos + HEADER..pos + HEADER + length) else {
-                return records;
+            let data = block
+                .get(pos + HEADER..pos + HEADER + length)
+                .filter(|data| unmask(checksum) == crc32c(&[&[kind], data]));
+            let Some(data) = data else {
+                if damage == Damage::Stop {
+                    return records;
+                }
+                partial = None;
+                break;
             };
-            if unmask(checksum) != crc32c(&[&[kind], data]) {
-                return records;
-            }
             match kind {
                 1 => {
                     partial = None;
@@ -322,7 +338,9 @@ fn log_records(bytes: &[u8]) -> Vec<Vec<u8>> {
                         records.push(whole);
                     }
                 }
-                _ => return records,
+                // An unknown type costs that fragment and its record.
+                _ if damage == Damage::Stop => return records,
+                _ => partial = None,
             }
             pos += HEADER + length;
         }
@@ -762,5 +780,112 @@ mod tests {
         );
         assert_eq!(decode_dom(&[0, 0x41]), None);
         assert_eq!(decode_dom(&[2, 0x41]), None);
+    }
+
+    /// What LevelDB writes, for stores no WebView would leave.
+    mod write {
+        use super::super::*;
+
+        pub fn varint(mut n: u64) -> Vec<u8> {
+            let mut out = Vec::new();
+            while n >= 0x80 {
+                out.push(n as u8 | 0x80);
+                n >>= 7;
+            }
+            out.push(n as u8);
+            out
+        }
+
+        fn mask(crc: u32) -> u32 {
+            crc.rotate_right(15).wrapping_add(0xa282_ead8)
+        }
+
+        /// One fragment of a log with its header.
+        pub fn record(kind: u8, data: &[u8]) -> Vec<u8> {
+            let mut out = mask(crc32c(&[&[kind], data])).to_le_bytes().to_vec();
+            out.extend_from_slice(&u16::try_from(data.len()).unwrap().to_le_bytes());
+            out.push(kind);
+            out.extend_from_slice(data);
+            out
+        }
+
+        /// A WriteBatch of puts (`Some`) and deletions.
+        pub fn batch(seq: u64, ops: &[(&[u8], Option<&[u8]>)]) -> Vec<u8> {
+            let mut out = seq.to_le_bytes().to_vec();
+            out.extend_from_slice(&u32::try_from(ops.len()).unwrap().to_le_bytes());
+            for (key, value) in ops {
+                out.push(u8::from(value.is_some()));
+                out.extend(varint(key.len() as u64));
+                out.extend_from_slice(key);
+                if let Some(value) = value {
+                    out.extend(varint(value.len() as u64));
+                    out.extend_from_slice(value);
+                }
+            }
+            out
+        }
+
+        /// `gelabber.media` of http://a set to `value` (Latin-1).
+        pub fn media(seq: u64, value: &str) -> Vec<u8> {
+            let value = [&[1], value.as_bytes()].concat();
+            batch(
+                seq,
+                &[
+                    (b"VERSION", Some(b"1")),
+                    (b"_http://a\0\x01gelabber.media", Some(&value)),
+                ],
+            )
+        }
+    }
+
+    fn media_of_a(dir: &Path) -> String {
+        let areas = areas(dir).unwrap();
+        areas["http://a"]["gelabber.media"].clone()
+    }
+
+    #[test]
+    fn a_torn_record_costs_only_the_rest_of_its_block() {
+        // A session killed after a record's header, then a reused log that
+        // the next session appended to: its writes behind the torn record
+        // are lost with that block, the next block's are not.
+        let mut log = write::record(1, &write::media(1, "old"));
+        log.extend_from_slice(&0x1234_5678u32.to_le_bytes());
+        log.extend_from_slice(&200u16.to_le_bytes());
+        log.push(1);
+        log.extend_from_slice(&[0; 20]);
+        log.extend(write::record(1, &write::media(3, "mid")));
+        log.resize(BLOCK, 0);
+        log.extend(write::record(1, &write::media(4, "new")));
+        let copy = Copy::new("torn-mid");
+        for entry in std::fs::read_dir(&copy.0).unwrap() {
+            std::fs::remove_file(entry.unwrap().path()).unwrap();
+        }
+        std::fs::write(copy.0.join("000003.log"), &log).unwrap();
+        assert_eq!(media_of_a(&copy.0), "new");
+        // A MANIFEST ends there.
+        assert_eq!(log_records(&log, Damage::Stop).len(), 1);
+    }
+
+    #[test]
+    fn an_unknown_record_type_costs_only_that_record() {
+        let [old, unknown, new, first, last] = [
+            write::media(1, "old"),
+            b"neu".to_vec(),
+            write::media(2, "new"),
+            write::media(3, "half"),
+            b"rest".to_vec(),
+        ];
+        let log = [
+            write::record(1, &old),
+            write::record(9, &unknown),
+            write::record(1, &new),
+            // A FIRST, then an unknown type: the record is lost whole.
+            write::record(2, &first),
+            write::record(9, &unknown),
+            write::record(4, &last),
+        ]
+        .concat();
+        assert_eq!(log_records(&log, Damage::SkipBlock), [old.clone(), new]);
+        assert_eq!(log_records(&log, Damage::Stop), [old]);
     }
 }
