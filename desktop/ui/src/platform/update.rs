@@ -671,6 +671,8 @@ pub struct Updater {
     requested: bool,
     lock: CallLock,
     locked: bool,
+    /// The key a download must be signed with: [`pubkey`], a test's own.
+    key: &'static str,
 }
 
 impl Default for Updater {
@@ -695,6 +697,7 @@ impl Updater {
             requested: false,
             lock: CallLock::default(),
             locked: false,
+            key: pubkey(),
         }
     }
 
@@ -778,6 +781,7 @@ impl Updater {
         self.downloading = Some(slot.clone());
         let progress = self.progress.clone();
         let wake = client.clone();
+        let key = self.key;
         client.spawn(async move {
             let result = match download_client() {
                 Ok(http) => {
@@ -785,7 +789,7 @@ impl Updater {
                         &http,
                         &url,
                         &signature,
-                        pubkey(),
+                        key,
                         &version,
                         &download_dir(&version),
                         |done, total| {
@@ -1356,8 +1360,48 @@ mod tests {
         );
     }
 
+    /// Ticks until the download is over, at most 10 s; whether the last
+    /// tick asked the app to end.
+    fn until_downloaded(updater: &mut Updater, client: &Client) -> bool {
+        let start = Instant::now();
+        let mut end = false;
+        while matches!(updater.phase, Phase::Downloading { .. }) {
+            assert!(start.elapsed() < Duration::from_secs(10), "download hangs");
+            std::thread::sleep(Duration::from_millis(10));
+            end = updater.tick(client, 0.0, false);
+        }
+        end
+    }
+
     #[test]
     fn restart_downloads_checks_and_then_asks_the_app_to_end() {
+        let _pending = PENDING_TESTS.lock();
+        let (addr, _) = serve(vec![("application/octet-stream", INSTALLER.to_vec())]);
+        let client = gelabber_client::Client::new("http://127.0.0.1:9").unwrap();
+        let dir = temp_dir("install");
+        let mut updater = Updater::new(Install::Setup { dir: dir.clone() });
+        updater.key = KEY_A;
+        updater.next = f64::MAX;
+        updater.set_found(Some(Found {
+            version: "0.9.1".into(),
+            notes: None,
+            package: Some((format!("http://{addr}/setup.exe"), SIG_A.into())),
+        }));
+        updater.requested = true;
+        assert!(!updater.tick(&client, 0.0, false));
+        // The pass that sees it checked ends the app and leaves the
+        // installer to main.rs.
+        assert!(until_downloaded(&mut updater, &client));
+        assert_eq!(updater.phase, Phase::Installing);
+        let (installer, into) = PENDING.lock().take().unwrap();
+        assert_eq!(into, dir);
+        assert_eq!(installer, download_dir("0.9.1").join("setup.exe"));
+        assert_eq!(std::fs::read(&installer).unwrap(), INSTALLER);
+        let _ = std::fs::remove_dir_all(download_dir("0.9.1"));
+    }
+
+    #[test]
+    fn an_installer_of_another_key_is_refused_and_can_be_tried_again() {
         let _pending = PENDING_TESTS.lock();
         let (addr, _) = serve(vec![("application/octet-stream", INSTALLER.to_vec())]);
         let client = gelabber_client::Client::new("http://127.0.0.1:9").unwrap();
@@ -1376,12 +1420,7 @@ mod tests {
         assert!(!updater.notice().unwrap().enabled());
         // The releases' key refuses the test installer: the notice says so
         // and can be tried again.
-        let start = Instant::now();
-        while matches!(updater.phase, Phase::Downloading { .. }) {
-            assert!(start.elapsed() < Duration::from_secs(10), "download hangs");
-            std::thread::sleep(Duration::from_millis(10));
-            assert!(!updater.tick(&client, 0.0, false));
-        }
+        assert!(!until_downloaded(&mut updater, &client));
         let Phase::Failed(reason) = &updater.phase else {
             panic!("{:?}", updater.phase)
         };
