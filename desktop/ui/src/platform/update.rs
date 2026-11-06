@@ -1,19 +1,20 @@
-//! Updates as the Tauri app (desktop/app/src/update.rs) does them: shortly
-//! after the start and every six hours the manifest of the latest release is
-//! read, and a newer version shows the notice of its `BANNER` ([`Notice`]).
-//! Never during a call ([`CallLock`]).
+//! Updates as the Tauri app (up to 0.8) did them: shortly after the start
+//! and every six hours the manifest of the latest release is read, and a
+//! newer version shows the notice of its `BANNER` ([`Notice`];
+//! desktop/parity/reference/update-banner.js). Never during a call
+//! ([`CallLock`]).
 //!
 //! What the notice offers depends on how the app was installed ([`Install`]):
 //! the Windows setup downloads the installer named in the manifest, checks its
-//! minisign signature by `desktop/app/updater.pub` made for the announced
+//! minisign signature by `desktop/packaging/updater.pub` made for the announced
 //! version ([`verify`], `requireSignedVersion`) and runs it passively with
 //! `/UPDATE` once the app has ended ([`run_pending`]), as the updater plugin
 //! does with `installMode: passive`. The tarball links the release page; the
 //! pacman package says that pacman updates it.
 //!
-//! The manifest is this app's own, `latest-native.json` (desktop-release.yml
-//! writes it in the format of the Tauri app's `latest.json`): the Tauri
-//! releases' file names the Tauri installer, which this app must not run.
+//! The manifest is this app's own, `latest-native.json`. desktop-release.yml
+//! writes the same into `latest.json`, which installed Tauri apps read, so
+//! they install this app; 0.8 releases' `latest.json` names their installer.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -27,7 +28,7 @@ use serde::Deserialize;
 use crate::text::{Block, TextStyle};
 
 const REPOSITORY: &str = "https://github.com/Till-und-Scholler-AI-slop/Gelabber";
-/// The native app's manifest; `latest.json` stays the Tauri app's.
+/// The native app's manifest; `latest.json` is the Tauri apps'.
 pub const MANIFEST: &str = "latest-native.json";
 /// `releases/latest` leaves pre-releases out, as for the Tauri app.
 const ENDPOINT: &str = "https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/latest/download/latest-native.json";
@@ -55,10 +56,10 @@ pub const IN_CALL: &str =
     "Während eines Anrufs startet Gelabber nicht neu. Das Update kommt nach dem Auflegen.";
 
 /// The releases' key, or the build's own (`GELABBER_UPDATER_PUBKEY`, CI
-/// test builds), as desktop/app/build.rs picks it.
+/// test builds); the 0.8 Tauri apps check their updates with the same key.
 const PUBKEY: &str = match option_env!("GELABBER_UPDATER_PUBKEY") {
     Some(key) => key,
-    None => include_str!("../../../app/updater.pub"),
+    None => include_str!("../../../packaging/updater.pub"),
 };
 
 pub fn pubkey() -> &'static str {
@@ -185,7 +186,7 @@ pub fn set_auto_check(enabled: bool) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-/// The setup screen's update section (`#updates` of desktop/app/setup), only
+/// The setup screen's update section (`#updates` of the setup page), only
 /// where the app updates itself, as the Tauri page's `update_state`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetupView {
@@ -540,8 +541,8 @@ pub enum Click {
     Later,
 }
 
-/// The update notice of the Tauri app (`BANNER` in desktop/app/src/update.rs),
-/// with its texts, buttons and look.
+/// The update notice of the Tauri app (its `BANNER`, kept as
+/// desktop/parity/reference/update-banner.js), with its texts, buttons and look.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Notice {
     pub version: String,
@@ -1030,7 +1031,7 @@ mod tests {
     static PENDING_TESTS: Mutex<()> = Mutex::new(());
 
     // `tauri signer sign --app-version 0.7.0` of b"gelabber", the test key
-    // of desktop/app/src/update.rs.
+    // of the Tauri app's update tests.
     const KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVBNjEyRDkzOEVDOTk3MjgKUldRb2w4bU9reTFoNmswZldrczNPK1kveENldW5IVGo4Qm9XQ3lqdzZFL2hhZlB2SFRZdmxrLzEK";
     const SIGNATURE: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRb2w4bU9reTFoNm1ibm9XSmovRi9QNFBMcjdVZVQ3a1ozYVd3NFRxc2N1a3ExTmZHMkxWNUhuTDczS04vZm4wNG5EemhtWXg0NHphaXRxWUZoMWpDZnZPRFlaMzFlWUE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMTk0NjY2CWZpbGU6Zml4dHVyZQl2ZXJzaW9uOjAuNy4wCkN4KzVxdTlBaEg3Nzc0SmU0L0tnZGJPaVFNemJ4aUQ3VmpqMFRaaTQ5dEVrZ2V5dGtzT0N6YjZFcXlncFNlTXJtVVZVdlN4VGdMUGR0WGV4NFcwa0NnPT0K";
 
@@ -1415,7 +1416,7 @@ mod tests {
 
     #[test]
     fn the_notice_says_what_the_tauri_banner_says() {
-        let banner = include_str!("../../../app/src/update.rs");
+        let banner = include_str!("../../../parity/reference/update-banner.js");
         let mut notice = Notice::new("0.9.1", Offer::Restart);
         assert_eq!(
             notice.text(),

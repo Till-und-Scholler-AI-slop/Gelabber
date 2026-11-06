@@ -1,11 +1,11 @@
-//! The app's config directory: the one the Tauri app uses
-//! (`app_config_dir()` of the bundle identifier), so both share
-//! `desktop.json`. `GELABBER_CONFIG_DIR` replaces it (tests, parity runs).
+//! The app's config directory: the one the Tauri app used up to 0.8
+//! (`app_config_dir()` of the bundle identifier), so its `desktop.json` and
+//! `legacy-settings.json` are found. `GELABBER_CONFIG_DIR` replaces it (tests, parity runs).
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-/// desktop/app/tauri.conf.json `identifier`.
+/// The Tauri app's bundle `identifier` (up to 0.8); fixed for its installs.
 pub const IDENTIFIER: &str = "io.github.till-und-scholler-ai-slop.gelabber";
 
 /// `<config>/io.github.till-und-scholler-ai-slop.gelabber`, per platform as

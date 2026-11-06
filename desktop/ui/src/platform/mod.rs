@@ -1,4 +1,4 @@
-//! The desktop around the window, what the Tauri app (desktop/app) does
+//! The desktop around the window, what the Tauri app (up to 0.8) did
 //! outside its page: persistence in its config directory, system
 //! notifications, the tray with close-to-tray, one app per user, the
 //! global push-to-talk key, and the update check. The binary owns one

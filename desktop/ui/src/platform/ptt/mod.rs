@@ -1,4 +1,4 @@
-//! Global push-to-talk (desktop/app/src/ptt.rs): the bound key held
+//! Global push-to-talk (as the Tauri app had it): the bound key held
 //! anywhere on the desktop, not only while the window has the focus. This
 //! only reports the key going down and up; the call keeps the gate.
 //!

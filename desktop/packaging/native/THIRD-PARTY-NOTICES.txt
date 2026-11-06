@@ -107,7 +107,7 @@ Open points
 2. Native media core: libwebrtc and the libraries built with it
 ##############################################################################
 
-[the script keeps this part while its inputs have the digest 360be55dfd039d63
+[the script keeps this part while its inputs have the digest c4ea1fadf036e779
  and its text has the digest 037b9fea0af8f5421a96e250616dd6b7]
 
 libwebrtc is built from source at the pinned commit and linked statically into

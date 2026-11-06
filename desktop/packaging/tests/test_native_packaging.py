@@ -1,11 +1,11 @@
-"""The native app's packages against what the app and the Tauri app say:
-python3 -m unittest discover -s desktop/packaging/tests
+"""The app's packages against what the app says and what the Tauri app's
+installs (up to 0.8) have: python3 -m unittest discover -s desktop/packaging/tests
 
 The names only meet at run time (the desktop entry and the window's app id,
-the installer and the Tauri app's folder and AppUserModelId), so a rename on
-one side is caught here rather than on a user's desktop. makepkg is not
-needed; makensis compiles the installer where it is installed (CI)."""
-import json
+the installer and the Tauri app's folder and AppUserModelId, the pacman
+package it upgrades), so a rename on one side is caught here rather than on
+a user's desktop. makepkg is not needed; makensis compiles the installer
+where it is installed (CI)."""
 import os
 from pathlib import Path
 import re
@@ -47,22 +47,24 @@ class Installer(unittest.TestCase):
         self.defined = defines(self.text)
 
     def test_it_takes_the_tauri_apps_place(self):
-        tauri = json.loads((DESKTOP / 'app/tauri.conf.json').read_text())
-        bundle = json.loads((DESKTOP / 'app/tauri.bundle.windows.json').read_text())['bundle']
-        self.assertEqual(self.defined['BUNDLEID'], tauri['identifier'])
-        self.assertEqual(self.defined['PRODUCTNAME'], tauri['productName'])
-        self.assertEqual(self.defined['MANUFACTURER'], tauri['bundle']['publisher'])
+        # The Tauri app's identifier, productName and publisher, which its
+        # installs carry; the app keeps the identifier for its config folder.
+        paths = (DESKTOP / 'ui/src/platform/paths.rs').read_text()
+        identifier = re.search(r'pub const IDENTIFIER: &str = "([^"]+)";', paths).group(1)
+        self.assertEqual(identifier, 'io.github.till-und-scholler-ai-slop.gelabber')
+        self.assertEqual(self.defined['BUNDLEID'], identifier)
+        self.assertEqual(self.defined['PRODUCTNAME'], 'Gelabber')
+        self.assertEqual(self.defined['MANUFACTURER'], 'Gelabber')
         # Tauri's currentUser mode: the account's folder, no administrator.
-        self.assertEqual(bundle['windows']['nsis']['installMode'], 'currentUser')
         self.assertIn('InstallDir "$LOCALAPPDATA\\${PRODUCTNAME}"', self.text)
         self.assertIn('RequestExecutionLevel user', self.text)
         self.assertIn('Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${PRODUCTNAME}',
                       self.defined['UNINSTKEY'])
         self.assertIn('Delete "$INSTDIR\\${TAURIBINARY}"', self.text)
         self.assertEqual(self.defined['TAURIBINARY'], 'gelabber-desktop.exe')
-        # hooks.nsh: the toasts' entry goes with the app.
-        hooks = (DESKTOP / 'app/windows/hooks.nsh').read_text()
-        self.assertIn('Software\\Classes\\AppUserModelId\\${BUNDLEID}', hooks)
+        self.assertIn('!insertmacro CLOSE_ONE ${TAURIBINARY}', self.text)
+        # The toasts' entry the app writes at every start goes with the app.
+        self.assertEqual(self.defined['AUMIDKEY'], 'Software\\Classes\\AppUserModelId\\${BUNDLEID}')
         self.assertIn('DeleteRegKey HKCU "${AUMIDKEY}"', self.text)
 
     def test_it_accepts_the_tauri_updaters_arguments(self):
@@ -107,7 +109,7 @@ class Installer(unittest.TestCase):
             for name in ('gelabber.exe', 'gelabber_media.dll', 'README.txt', 'THIRD-PARTY-NOTICES.txt'):
                 (stage / name).write_text(name)
             for name in ('icon.ico', 'icon.png'):
-                shutil.copy(DESKTOP / 'app/icons' / name, stage / name)
+                shutil.copy(DESKTOP / 'packaging/icons' / name, stage / name)
             # The release's name: makensis warns about a bare setup.exe.
             setup = stage / 'gelabber-native-windows-x64-setup.exe'
             subprocess.run([makensis, '-V2', '-WX', '-DVERSION=0.9.0-beta.1', '-DFILEVERSION=0.9.0.0',

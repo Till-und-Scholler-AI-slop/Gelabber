@@ -267,23 +267,40 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// The Tauri app writes the file these entries come from
-    /// (desktop/app/src/export.rs): it asks for every one taken here.
+    /// The Tauri app's export holds the web client's localStorage: every
+    /// key taken here is one the web client stores under that name.
     #[test]
-    fn the_tauri_app_exports_what_is_taken_here() {
-        let export = include_str!("../../../app/src/export.rs");
+    fn the_keys_taken_here_are_the_web_clients() {
         let this = include_str!("legacy.rs");
-        for key in [
-            "\"gelabber.media\"",
-            "\"gelabber.media.source-audio-share\"",
-            "\"gelabber.interface\"",
-            "\"gelabber.user-volumes:\"",
-            "\"gelabber:chat-draft:\"",
+        for (key, web) in [
+            (
+                "\"gelabber.media\"",
+                include_str!("../../../../web/src/voice/settings.ts"),
+            ),
+            (
+                "\"gelabber.media.source-audio-share\"",
+                include_str!("../../../../web/src/voice/settings.ts"),
+            ),
+            (
+                "\"gelabber.interface\"",
+                include_str!("../../../../web/src/interface/preferences.ts"),
+            ),
+            (
+                "\"gelabber.user-volumes:\"",
+                include_str!("../../../../web/src/voice/userVolume.ts"),
+            ),
+            (
+                "\"gelabber:chat-draft:\"",
+                include_str!("../../../../web/src/messages/drafts.ts"),
+            ),
         ] {
             assert!(this.contains(key), "{key} is not taken here");
-            assert!(export.contains(key), "{key} is not exported");
+            assert!(
+                web.contains(&format!("= {key};")),
+                "{key} is not the web client's"
+            );
         }
-        assert!(export.contains("const FILE: &str = \"legacy-settings.json\";"));
+        assert_eq!(LEGACY_FILE, "legacy-settings.json");
     }
 
     const ACCOUNT: &str = "0f9a4c1e-8f1b-4f3e-9d55-2b7a1c3e5d01";

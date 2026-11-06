@@ -1,6 +1,6 @@
 //! Video tiles on the GPU: an I420 [`Frame`] of the call is uploaded as
 //! three R8 planes and turned into RGB by the shader of the Tauri app's
-//! viewer (desktop/app/src/viewer.rs: BT.601/709 limited range, clockwise
+//! viewer (viewer.rs: BT.601/709 limited range, clockwise
 //! quarter turns), drawn by an egui_wgpu paint callback inside the egui
 //! pass. A camera covers its tile, a Live is contained in it; the tile's
 //! rounded corners are cut in the shader.

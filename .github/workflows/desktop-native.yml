@@ -1,5 +1,5 @@
 # Desktop app for Linux and Windows: libwebrtc builds (cached), the native
-# core with a loopback call against mediasoup and the packaged apps. ci.yml
+# core with a loopback call against mediasoup and the packaged app. ci.yml
 # calls it for pull requests and pushes, desktop-release.yml for a release.
 name: Desktop native core
 
@@ -104,28 +104,23 @@ jobs:
           cargo build --manifest-path desktop/Cargo.toml -p gelabber-media-core
           build=$(ls -d desktop/target/debug/build/gelabber-media-core-*/out/build | head -n 1)
           python3 desktop/packaging/third-party-notices.py --webrtc-src /mnt/webrtc/src --core-build "$build"
-          # The native app's file takes its core parts from the Tauri app's.
-          python3 desktop/packaging/third-party-notices.py --app native
-          for notices in desktop/app/package/THIRD-PARTY-NOTICES.txt desktop/packaging/native/THIRD-PARTY-NOTICES.txt; do
-            if git diff --quiet -- "$notices"; then
-              echo "Third-party notices ($notices): unchanged." >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "Third-party notices ($notices): renewed, $(git diff --numstat -- "$notices" | awk '{print "+" $1 " -" $2}') lines; commit the artifact third-party-notices." >> "$GITHUB_STEP_SUMMARY"
-              echo "::group::diff of $notices (gzip, base64)"
-              git diff -- "$notices" | gzip -9 | base64 -w 0
-              echo
-              echo "::endgroup::"
-            fi
-          done
+          notices=desktop/packaging/native/THIRD-PARTY-NOTICES.txt
+          if git diff --quiet -- "$notices"; then
+            echo "Third-party notices ($notices): unchanged." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Third-party notices ($notices): renewed, $(git diff --numstat -- "$notices" | awk '{print "+" $1 " -" $2}') lines; commit the artifact third-party-notices." >> "$GITHUB_STEP_SUMMARY"
+            echo "::group::diff of $notices (gzip, base64)"
+            git diff -- "$notices" | gzip -9 | base64 -w 0
+            echo
+            echo "::endgroup::"
+          fi
 
       - name: Upload the renewed notices
         if: steps.notices.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: third-party-notices
-          path: |
-            desktop/app/package/THIRD-PARTY-NOTICES.txt
-            desktop/packaging/native/THIRD-PARTY-NOTICES.txt
+          path: desktop/packaging/native/THIRD-PARTY-NOTICES.txt
 
   libwebrtc-windows:
     name: libwebrtc (Windows x64)
@@ -212,15 +207,14 @@ jobs:
           key: ${{ needs.libwebrtc-linux.outputs.key }}
           fail-on-cache-miss: true
 
-      # WebKitGTK for the Tauri app; Xvfb for the smoke tests of both apps.
-      # A stalled Ubuntu mirror fails the step fast instead of the whole job.
+      # Xvfb and lavapipe for the app's smoke test, gdb for the voice test's
+      # backtrace. A stalled Ubuntu mirror fails the step fast, not the job.
       - name: Build tools
         timeout-minutes: 15
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build python3-venv \
-            libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev xvfb xauth \
-            mesa-vulkan-drivers imagemagick gdb
+            xvfb xauth mesa-vulkan-drivers gdb
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
@@ -342,23 +336,6 @@ jobs:
           desktop/native/scripts/fake-desktop-session.sh \
             cargo test --manifest-path desktop/Cargo.toml --test voice -- --nocapture || true
 
-      # The Tauri app on a stand-in server origin: the page must reach the
-      # media commands through IPC (real audio devices from the test
-      # session), must not reach the setup page's command, and must get the
-      # frames of a test-pattern view (smoke.sh switches the pattern on).
-      - name: Desktop app smoke test
-        timeout-minutes: 10
-        run: |
-          cargo build --manifest-path desktop/Cargo.toml -p gelabber-desktop
-          abi="$(sed -n 's/^#define GM_ABI_VERSION \([0-9]*\)$/\1/p' desktop/native/include/gelabber_media.h)"
-          desktop/native/scripts/fake-desktop-session.sh \
-            desktop/app/scripts/smoke.sh desktop/target/debug/gelabber-desktop "$abi"
-
-      # Software Vulkan (lavapipe) under Xvfb; the screenshot checks colors.
-      - name: Native video viewer
-        timeout-minutes: 10
-        run: xvfb-run -a cargo test --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --ignored viewer --nocapture
-
       # The native app (desktop/gelabber) on lavapipe under Xvfb, no server and
       # empty settings: it must paint its setup screen and end by itself.
       - name: Native app smoke test
@@ -368,31 +345,6 @@ jobs:
           desktop/packaging/native/smoke.sh desktop/target/debug/gelabber 10
 
       # Packaging runs after merge (main/v*) and for releases, not per PR.
-      - name: Package the app
-        if: github.event_name != 'pull_request'
-        run: |
-          set -euo pipefail
-          # Absolute: cargo runs rustc from the workspace, not from here.
-          lib="$(realpath "$(find desktop/target -name libgelabber_media.so -path '*/out/build/*' | head -n1)")"
-          test -f "$lib"
-          GELABBER_MEDIA_LIB_DIR="$(dirname "$lib")" \
-            cargo build --release --manifest-path desktop/Cargo.toml -p gelabber-desktop
-          pkg=gelabber-desktop-linux-x64
-          mkdir -p "$pkg"
-          strip --strip-unneeded -o "$pkg/gelabber-desktop" desktop/target/release/gelabber-desktop
-          strip --strip-unneeded -o "$pkg/libgelabber_media.so" "$lib"
-          cp desktop/app/package/README.txt desktop/app/package/THIRD-PARTY-NOTICES.txt "$pkg/"
-          cp desktop/packaging/arch/gelabber-desktop.desktop desktop/app/icons/icon.png "$pkg/"
-          tar -czf "$pkg.tar.gz" "$pkg"
-
-      - name: Upload the app
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: gelabber-desktop-linux-x64
-          path: gelabber-desktop-linux-x64.tar.gz
-          retention-days: 14
-
       # The script also checks both files (C++ runtime, exports, rpath).
       - name: Package the native app
         if: github.event_name != 'pull_request'
@@ -448,9 +400,9 @@ jobs:
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
-  # Windows side of the Rust code, type-checked and linted on Linux in minutes
-  # (an empty directory stands in for the core). Nothing waits for it, and it
-  # has no Rust cache: short without one.
+  # The core's Windows side, type-checked and linted on Linux in minutes (an
+  # empty directory stands in for the C++). The app's crates need a Windows C
+  # compiler (aws-lc-sys) and are linted in core-windows. No Rust cache.
   rust-windows:
     name: Rust for Windows (type check on Linux)
     runs-on: ubuntu-24.04
@@ -458,12 +410,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # llvm-rc compiles the app's resource file.
-      - name: Build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends llvm
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
@@ -477,13 +423,11 @@ jobs:
           GELABBER_MEDIA_LIB_DIR="$(mktemp -d)"
           export GELABBER_MEDIA_LIB_DIR
           cargo clippy --locked --manifest-path desktop/Cargo.toml --target x86_64-pc-windows-msvc \
-            -p gelabber-desktop --all-targets -- -D warnings
-          cargo clippy --locked --manifest-path desktop/Cargo.toml --target x86_64-pc-windows-msvc \
             -p gelabber-media-core --lib -- -D warnings
 
-  # Both apps' THIRD-PARTY-NOTICES.txt must match desktop/Cargo.lock and the
+  # The app's THIRD-PARTY-NOTICES.txt must match desktop/Cargo.lock and the
   # build configuration (desktop/packaging/third-party-notices.py writes
-  # them). The release uploads wait for this job.
+  # it). The release uploads wait for this job.
   notices:
     name: Third-party notices
     runs-on: ubuntu-24.04
@@ -496,9 +440,7 @@ jobs:
         uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
 
       - name: Notices are current
-        run: |
-          python3 desktop/packaging/third-party-notices.py --check
-          python3 desktop/packaging/third-party-notices.py --app native --check
+        run: python3 desktop/packaging/third-party-notices.py --check
 
       # The native installer is built after merge only; its script compiles here.
       - name: NSIS for the installer test
@@ -512,10 +454,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 -m unittest discover -s desktop/packaging/tests -v
 
-  # Windows: core DLL, app and installer, installed, started and removed like
-  # a user would, then the checks. Release profile throughout, so the tests
-  # run against the DLL that ships. PowerShell scripts with several commands
-  # set $PSNativeCommandUseErrorActionPreference.
+  # Windows: core DLL and app; after merge also the installer, installed over
+  # the Tauri app, started and removed like a user would; then the checks.
+  # Release profile throughout, so the tests run against the DLL that ships.
+  # PowerShell scripts with several commands set
+  # $PSNativeCommandUseErrorActionPreference.
   core-windows:
     name: Native core and app (Windows x64)
     needs: libwebrtc-windows
@@ -547,7 +490,7 @@ jobs:
           key: ${{ needs.libwebrtc-windows.outputs.key }}
           fail-on-cache-miss: true
 
-      # For the mediasoup worker's build (Meson) and the smoke test's server.
+      # For the mediasoup worker's build (Meson).
       - name: Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -591,8 +534,8 @@ jobs:
           env-vars: MESON_ARGS
           save-if: ${{ github.event_name == 'push' }}
 
-      # Release runs use desktop/app/updater.pub; every other run makes its own
-      # key, so its installer is signed and checked the same way.
+      # Release runs use desktop/packaging/updater.pub; every other run makes
+      # its own key, so its installer is signed and checked the same way.
       - name: Updater key
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
@@ -602,7 +545,7 @@ jobs:
             if ($env:GITHUB_REF -ne "refs/tags/$($env:RELEASE_TAG)") {
               throw "release $($env:RELEASE_TAG) must be built from its tag, not $($env:GITHUB_REF)"
             }
-            $pub = 'desktop\app\updater.pub'
+            $pub = 'desktop\packaging\updater.pub'
             if (-not (Test-Path $pub) -or -not (Get-Content -Raw $pub).Trim()) {
               throw "release $($env:RELEASE_TAG): $pub is missing, and with it the key the app checks updates with (desktop/README.md, Updates)"
             }
@@ -621,189 +564,11 @@ jobs:
         id: core
         run: cargo build --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core
 
-      # The app's build script puts gelabber_media.dll next to the binary.
-      - name: Desktop app (gelabber-desktop.exe)
-        id: app
-        run: cargo build --release --locked --manifest-path desktop/Cargo.toml -p gelabber-desktop
-
-      # The native app (desktop/gelabber); its build script puts the DLL next
-      # to it as well.
+      # The app (desktop/gelabber); its build script puts gelabber_media.dll
+      # next to the binary.
       - name: Native app (gelabber.exe)
         id: native
         run: cargo build --release --locked --manifest-path desktop/Cargo.toml -p gelabber
-
-      # The inputs as desktop/app/tauri.bundle.windows.json names them: the
-      # core in bundle-input/, the notices of the libraries in package/. The
-      # pinned Tauri CLI only bundles what cargo built above.
-      - name: Installer
-        id: installer
-        timeout-minutes: 20
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          $notices = 'desktop\app\package\THIRD-PARTY-NOTICES.txt'
-          if (-not (Test-Path $notices)) {
-            throw "$notices is missing: the installer ships the notices of the libraries in the app and is not built without them"
-          }
-          $release = Join-Path $env:CARGO_TARGET_DIR 'release'
-          $staged = New-Item -ItemType Directory -Force desktop\app\bundle-input
-          Copy-Item (Join-Path $release 'gelabber_media.dll') $staged.FullName
-          Push-Location desktop\app
-          try {
-            # Quoted: a bare @ would start a splatted variable.
-            npx.cmd --yes '@tauri-apps/cli@2.12.1' bundle --bundles nsis --config tauri.bundle.windows.json
-          } finally {
-            Pop-Location
-          }
-          $built = @(Get-ChildItem (Join-Path $release 'bundle\nsis') -Filter '*-setup.exe')
-          if ($built.Count -ne 1) { throw "expected one installer in bundle\nsis, found $($built.Count)" }
-          # The version of the desktop workspace is the app's: in the name
-          # Tauri gives the installer, among the installed apps, in the file
-          # properties and in media_info. A release must have its tag there,
-          # and release.yml only holds the server's workspace to the tag.
-          $version = Select-String -Path desktop\Cargo.toml -Pattern '^version = "(.+)"\s*$' | Select-Object -First 1
-          if (-not $version) { throw 'no version in desktop\Cargo.toml' }
-          $version = $version.Matches[0].Groups[1].Value
-          if ($built[0].Name -ne "Gelabber_${version}_x64-setup.exe") {
-            throw "the installer is $($built[0].Name): not version $version of desktop\Cargo.toml"
-          }
-          if ($env:RELEASE_TAG -and $env:RELEASE_TAG -ne "v$version") {
-            throw "release $($env:RELEASE_TAG): desktop\Cargo.toml, and with it the app, says $version"
-          }
-          $name = 'gelabber-desktop-windows-x64-setup.exe'
-          Copy-Item $built[0].FullName $name
-          $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLowerInvariant()
-          # A line as sha256sum writes it; checked again before the release upload.
-          [IO.File]::WriteAllText((Join-Path $PWD "$name.sha256"), "$hash  $name`n")
-          @(
-            '### Desktop app (Windows x64)', '',
-            '| file | size | sha256 |', '|---|---|---|',
-            "| $name ($($built[0].Name)) | $([math]::Round((Get-Item $name).Length / 1MB, 1)) MiB | $hash |"
-          ) | Add-Content $env:GITHUB_STEP_SUMMARY
-
-      # The updater signature (<installer>.sig, bound to the version). Only
-      # release runs from the release's tag see the release key.
-      - name: Sign update
-        id: sign
-        timeout-minutes: 10
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.release_tag != '' && github.ref == format('refs/tags/{0}', inputs.release_tag) && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.release_tag != '' && github.ref == format('refs/tags/{0}', inputs.release_tag) && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          $name = 'gelabber-desktop-windows-x64-setup.exe'
-          $version = (Select-String -Path desktop\Cargo.toml -Pattern '^version = "(.+)"\s*$' | Select-Object -First 1).Matches[0].Groups[1].Value
-          if ($env:RELEASE_TAG) {
-            if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
-              throw "release $($env:RELEASE_TAG): the secret TAURI_SIGNING_PRIVATE_KEY is not set, so the update cannot be signed (desktop/README.md, Updates)"
-            }
-            npx.cmd --yes '@tauri-apps/cli@2.12.3' signer sign --app-version $version $name
-          } else {
-            Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY, Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
-            npx.cmd --yes '@tauri-apps/cli@2.12.3' signer sign --app-version $version --private-key-path $env:GELABBER_UPDATER_TEST_KEY --password test $name
-          }
-          if (-not (Test-Path "$name.sig")) { throw "no signature $name.sig" }
-
-      # Silent, into the account's own folders: the setup asks for no
-      # administrator rights. It brings the WebView2 Runtime where the image
-      # has none.
-      - name: Install like a user
-        id: install
-        timeout-minutes: 20
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          function WebView2Runtime {
-            $client = 'Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-            foreach ($key in "HKLM:\SOFTWARE\WOW6432Node\$client", "HKLM:\SOFTWARE\$client", "HKCU:\SOFTWARE\$client") {
-              $version = (Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue).pv
-              if ($version -and $version -ne '0.0.0.0') { return $version }
-            }
-          }
-          $before = WebView2Runtime
-          "WebView2 Runtime before the install: $(if ($before) { $before } else { 'none' })"
-          $install = Join-Path $env:LOCALAPPDATA 'Gelabber'
-          $setup = Start-Process -FilePath (Resolve-Path gelabber-desktop-windows-x64-setup.exe).Path -ArgumentList '/S' -PassThru
-          # Without the handle taken now, the exit code is gone once the process ends.
-          $null = $setup.Handle
-          if (-not $setup.WaitForExit(15 * 60 * 1000)) {
-            $setup.Kill()
-            throw 'the setup did not finish within 15 minutes'
-          }
-          if ($setup.ExitCode -ne 0) { throw "the setup ended with exit code $($setup.ExitCode)" }
-          foreach ($file in 'gelabber-desktop.exe', 'gelabber_media.dll', 'icon.png', 'README.txt', 'THIRD-PARTY-NOTICES.txt', 'uninstall.exe') {
-            if (-not (Test-Path (Join-Path $install $file))) { throw "missing after the install: $file" }
-          }
-          # The core that was built here, not another copy.
-          $built = Get-FileHash (Join-Path $env:CARGO_TARGET_DIR 'release\gelabber_media.dll')
-          if ((Get-FileHash (Join-Path $install 'gelabber_media.dll')).Hash -ne $built.Hash) {
-            throw 'the installed gelabber_media.dll is not the one built here'
-          }
-          $entry = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Gelabber' -ErrorAction SilentlyContinue
-          if (-not $entry) { throw 'no entry among the installed apps (uninstall key of the account)' }
-          "installed: $($entry.DisplayName) $($entry.DisplayVersion) in $install"
-          $after = WebView2Runtime
-          if (-not $after) { throw 'no WebView2 Runtime after the install: the app cannot open its window' }
-          "WebView2 Runtime: $after"
-
-      # The installed app on a stand-in server, as on Linux: media commands
-      # through IPC only, frames of a test-pattern view, dummy audio.
-      - name: Desktop app smoke test
-        timeout-minutes: 10
-        env:
-          GELABBER_VIDEO_TEST_PATTERN: "1"
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          $define = Select-String -Path desktop\native\include\gelabber_media.h -Pattern '^#define GM_ABI_VERSION (\d+)\s*$' | Select-Object -First 1
-          if (-not $define) { throw 'no GM_ABI_VERSION in gelabber_media.h' }
-          $abi = $define.Matches[0].Groups[1].Value
-          $app = Join-Path $env:LOCALAPPDATA 'Gelabber\gelabber-desktop.exe'
-          pwsh -NoProfile -File desktop\app\scripts\smoke.ps1 -App $app -Abi $abi
-
-      # NSIS goes on from a copy of the uninstaller in the temporary
-      # directory: the process started here ends long before the files are
-      # gone. Settings and login (the app data folders, and the installer's
-      # note of where the app was) stay unless a user ticks their removal.
-      - name: Remove like a user
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        timeout-minutes: 10
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          $install = Join-Path $env:LOCALAPPDATA 'Gelabber'
-          Start-Process -FilePath (Join-Path $install 'uninstall.exe') -ArgumentList '/S'
-          $left = {
-            @(
-              $install,
-              (Join-Path ([Environment]::GetFolderPath('Programs')) 'Gelabber.lnk'),
-              (Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Gelabber.lnk'),
-              'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Gelabber',
-              # Written by the app for its toasts at the smoke test's start.
-              'HKCU:\Software\Classes\AppUserModelId\io.github.till-und-scholler-ai-slop.gelabber'
-            ) | Where-Object { Test-Path -LiteralPath $_ }
-          }
-          $deadline = (Get-Date).AddMinutes(3)
-          while ((& $left) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
-          $rest = @(& $left)
-          if ($rest) {
-            Get-ChildItem -LiteralPath $install -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object FullName
-            throw "left behind by the uninstaller: $($rest -join ', ')"
-          }
-          $id = 'io.github.till-und-scholler-ai-slop.gelabber'
-          foreach ($kept in (Join-Path $env:APPDATA $id), (Join-Path $env:LOCALAPPDATA $id), 'HKCU:\Software\Gelabber\Gelabber') {
-            "kept on purpose: $kept ($(if (Test-Path -LiteralPath $kept) { 'present' } else { 'never written' }))"
-          }
-
-      # Also from a run whose later steps fail, to look at the setup by hand;
-      # a release only takes it from a run in which every step passed.
-      - name: Upload the app
-        if: ${{ !cancelled() && steps.installer.outcome == 'success' && steps.sign.outcome == 'success' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: gelabber-desktop-windows-x64
-          path: |
-            gelabber-desktop-windows-x64-setup.exe
-            gelabber-desktop-windows-x64-setup.exe.sha256
-            gelabber-desktop-windows-x64-setup.exe.sig
-          if-no-files-found: error
-          retention-days: 14
 
       # The native app's installer from its own NSIS script, after merge and
       # for releases only (as the Linux packages); NSIS of the image.
@@ -827,7 +592,7 @@ jobs:
           $release = Join-Path $env:CARGO_TARGET_DIR 'release'
           $stage = (New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'native-installer')).FullName
           Copy-Item (Join-Path $release 'gelabber.exe'), (Join-Path $release 'gelabber_media.dll') $stage
-          Copy-Item desktop\app\icons\icon.ico, desktop\app\icons\icon.png, desktop\packaging\native\THIRD-PARTY-NOTICES.txt $stage
+          Copy-Item desktop\packaging\icons\icon.ico, desktop\packaging\icons\icon.png, desktop\packaging\native\THIRD-PARTY-NOTICES.txt $stage
           Copy-Item desktop\packaging\native\README-windows.txt (Join-Path $stage 'README.txt')
           $name = 'gelabber-native-windows-x64-setup.exe'
           # Windows wants four numbers in the file version: no pre-release part.
@@ -841,7 +606,8 @@ jobs:
             "| $name | $([math]::Round((Get-Item $name).Length / 1MB, 1)) MiB | $hash |"
           ) | Add-Content $env:GITHUB_STEP_SUMMARY
 
-      # Signed as the Tauri installer above, with the same key.
+      # The updater signature (<installer>.sig, bound to the version), with the
+      # key the 0.8 Tauri apps check too. Only release runs from the tag see it.
       - name: Sign the native update
         id: native-sign
         if: ${{ !cancelled() && steps.native-installer.outcome == 'success' }}
@@ -873,12 +639,15 @@ jobs:
           GELABBER_NATIVE_UPDATE_TEST_INSTALLER: ${{ format('{0}\gelabber-native-windows-x64-setup.exe', github.workspace) }}
         run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber -- the_installer_built_here --test-threads=1
 
-      # Into the Tauri app's folder (removed above), with its shortcuts and
-      # AppUserModelId; then over itself as the updater runs it, and removed.
-      - name: Install and remove the native app like a user
+      # An installed 0.8 app's switch: the Tauri release, then this setup with
+      # its updater's passive arguments; a fresh install, one over it, removal.
+      - name: Install over the Tauri app and remove like a user
         id: native-install
         if: ${{ !cancelled() && steps.native-installer.outcome == 'success' }}
-        timeout-minutes: 15
+        timeout-minutes: 20
+        env:
+          # The Tauri release whose installs this one updates.
+          TAURI_RELEASE: v0.8.9
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           $id = 'io.github.till-und-scholler-ai-slop.gelabber'
@@ -886,6 +655,7 @@ jobs:
           $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'Gelabber.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Gelabber.lnk'
           $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Gelabber'
+          $version = (Select-String -Path desktop\Cargo.toml -Pattern '^version = "(.+)"\s*$' | Select-Object -First 1).Matches[0].Groups[1].Value
           function Run($file, [string[]]$arguments, $minutes) {
             $process = Start-Process -FilePath $file -ArgumentList $arguments -PassThru
             # Without the handle taken now, the exit code is gone once the process ends.
@@ -896,44 +666,72 @@ jobs:
             }
             if ($process.ExitCode -ne 0) { throw "$file $arguments ended with exit code $($process.ExitCode)" }
           }
+          # The app this setup installed, with the shortcuts that lead to it.
+          function Installed($shortcuts) {
+            foreach ($file in 'gelabber.exe', 'gelabber_media.dll', 'icon.png', 'icon.ico', 'README.txt', 'THIRD-PARTY-NOTICES.txt', 'uninstall.exe') {
+              if (-not (Test-Path (Join-Path $install $file))) { throw "missing after the install: $file" }
+            }
+            if (Test-Path (Join-Path $install 'gelabber-desktop.exe')) { throw 'the Tauri app is still installed' }
+            $built = Get-FileHash (Join-Path $env:CARGO_TARGET_DIR 'release\gelabber.exe')
+            if ((Get-FileHash (Join-Path $install 'gelabber.exe')).Hash -ne $built.Hash) {
+              throw 'the installed gelabber.exe is not the one built here'
+            }
+            $entry = Get-ItemProperty -LiteralPath $uninstallKey -ErrorAction SilentlyContinue
+            if (-not $entry) { throw 'no entry among the installed apps (uninstall key of the account)' }
+            if ($entry.DisplayVersion -ne $version) { throw "the installed apps list version $($entry.DisplayVersion), not $version" }
+            "installed: $($entry.DisplayName) $($entry.DisplayVersion) in $install"
+            foreach ($shortcut in $shortcuts) {
+              if (-not (Test-Path $shortcut)) { throw "no shortcut $shortcut" }
+              $target = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut).TargetPath
+              if ($target -ne (Join-Path $install 'gelabber.exe')) { throw "$shortcut leads to $target" }
+              $item = (New-Object -ComObject Shell.Application).NameSpace((Split-Path $shortcut)).ParseName((Split-Path $shortcut -Leaf))
+              $aumid = $item.ExtendedProperty('System.AppUserModel.ID')
+              if ($aumid -ne $id) { throw "$shortcut has the AppUserModelId '$aumid', not $id" }
+            }
+          }
+          function Removed {
+            Start-Process -FilePath (Join-Path $install 'uninstall.exe') -ArgumentList '/S'
+            $left = {
+              @($install, $lnk, $desktop, $uninstallKey, "HKCU:\Software\Classes\AppUserModelId\$id") |
+                Where-Object { Test-Path -LiteralPath $_ }
+            }
+            $deadline = (Get-Date).AddMinutes(3)
+            while ((& $left) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
+            $rest = @(& $left)
+            if ($rest) { throw "left behind by the uninstaller: $($rest -join ', ')" }
+            if (-not (Test-Path -LiteralPath 'HKCU:\Software\Gelabber\Gelabber')) {
+              throw "the uninstaller removed the installer's note of the folder without being asked"
+            }
+          }
           $setup = (Resolve-Path gelabber-native-windows-x64-setup.exe).Path
+
+          $tauri = Join-Path $env:RUNNER_TEMP 'gelabber-desktop-windows-x64-setup.exe'
+          $base = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:TAURI_RELEASE"
+          Invoke-WebRequest "$base/gelabber-desktop-windows-x64-setup.exe" -OutFile $tauri
+          Invoke-WebRequest "$base/gelabber-desktop-windows-x64-setup.exe.sha256" -OutFile "$tauri.sha256"
+          if ((Get-FileHash $tauri -Algorithm SHA256).Hash -ne ((Get-Content -Raw "$tauri.sha256") -split '\s+')[0]) {
+            throw "the Tauri installer of $env:TAURI_RELEASE does not match its .sha256"
+          }
+          Run $tauri '/S' 15
+          if (-not (Test-Path (Join-Path $install 'gelabber-desktop.exe'))) { throw "the Tauri app is not in $install" }
+          $tauriShortcuts = @($lnk, $desktop | Where-Object { Test-Path $_ })
+          if ($tauriShortcuts -notcontains $lnk) { throw 'the Tauri setup made no Start menu shortcut' }
+          # The restarted app ends by itself once it painted (GELABBER_SMOKE).
+          $env:GELABBER_CONFIG_DIR = (New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'native-update')).FullName
+          $env:GELABBER_SMOKE = '10'
+          Run $setup '/P', '/UPDATE', '/R', '/ARGS', '--server', '"https://gelabber.invalid"' 10
+          $restarted = Get-Process -Name gelabber -ErrorAction SilentlyContinue
+          if (-not $restarted) { throw 'the update did not start gelabber.exe (/R)' }
+          $restarted | Wait-Process -Timeout 120
+          Remove-Item Env:GELABBER_SMOKE, Env:GELABBER_CONFIG_DIR
+          Installed $tauriShortcuts
+          Removed
+
           Run $setup '/S' 10
-          foreach ($file in 'gelabber.exe', 'gelabber_media.dll', 'icon.png', 'icon.ico', 'README.txt', 'THIRD-PARTY-NOTICES.txt', 'uninstall.exe') {
-            if (-not (Test-Path (Join-Path $install $file))) { throw "missing after the install: $file" }
-          }
-          $built = Get-FileHash (Join-Path $env:CARGO_TARGET_DIR 'release\gelabber.exe')
-          if ((Get-FileHash (Join-Path $install 'gelabber.exe')).Hash -ne $built.Hash) {
-            throw 'the installed gelabber.exe is not the one built here'
-          }
-          $entry = Get-ItemProperty -LiteralPath $uninstallKey -ErrorAction SilentlyContinue
-          if (-not $entry) { throw 'no entry among the installed apps (uninstall key of the account)' }
-          "installed: $($entry.DisplayName) $($entry.DisplayVersion) in $install"
-          foreach ($shortcut in $lnk, $desktop) {
-            if (-not (Test-Path $shortcut)) { throw "no shortcut $shortcut" }
-            $item = (New-Object -ComObject Shell.Application).NameSpace((Split-Path $shortcut)).ParseName((Split-Path $shortcut -Leaf))
-            $aumid = $item.ExtendedProperty('System.AppUserModel.ID')
-            if ($aumid -ne $id) { throw "$shortcut has the AppUserModelId '$aumid', not $id" }
-          }
-
-          # As the Tauri app's updater starts a setup (silent here instead of /P).
+          Installed @($lnk, $desktop)
           Run $setup '/S', '/UPDATE' 10
-          if (-not (Test-Path $lnk)) { throw 'the update removed the Start menu shortcut' }
-          if ((Get-ItemProperty -LiteralPath $uninstallKey).DisplayVersion -ne $entry.DisplayVersion) {
-            throw 'the update changed the version among the installed apps'
-          }
-
-          Start-Process -FilePath (Join-Path $install 'uninstall.exe') -ArgumentList '/S'
-          $left = {
-            @($install, $lnk, $desktop, $uninstallKey, "HKCU:\Software\Classes\AppUserModelId\$id") |
-              Where-Object { Test-Path -LiteralPath $_ }
-          }
-          $deadline = (Get-Date).AddMinutes(3)
-          while ((& $left) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
-          $rest = @(& $left)
-          if ($rest) { throw "left behind by the uninstaller: $($rest -join ', ')" }
-          if (-not (Test-Path -LiteralPath 'HKCU:\Software\Gelabber\Gelabber')) {
-            throw "the uninstaller removed the installer's note of the folder without being asked"
-          }
+          Installed @($lnk)
+          Removed
 
       - name: Upload the native app
         if: ${{ !cancelled() && steps.native-installer.outcome == 'success' && steps.native-sign.outcome == 'success' }}
@@ -966,14 +764,14 @@ jobs:
       # What ships, read with dumpbin: the DLL exports gm_* only, holds no
       # OpenH264/FFmpeg H264 code, and no binary needs more than a clean
       # Windows 10/11 has (System32 DLLs, API sets, UCRT; no VC++ runtime, no
-      # debug CRT, no WebView2Loader.dll).
+      # debug CRT).
       - name: Check and measure the binaries
-        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.native.outcome == 'success' }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           $release = Join-Path $env:CARGO_TARGET_DIR 'release'
           $dll = Get-Item (Join-Path $release 'gelabber_media.dll')
-          $exe = Get-Item (Join-Path $release 'gelabber-desktop.exe')
+          $exe = Get-Item (Join-Path $release 'gelabber.exe')
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
           $dumpbin = & $vswhere -latest -products '*' -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' |
             Sort-Object | Select-Object -Last 1
@@ -1011,11 +809,6 @@ jobs:
           # core loads it only when it looks for H264 (/DELAYLOAD).
           $delayed = (& $dumpbin /nologo /dependents $dll.FullName | Out-String) -match '(?s)delay load dependencies:.*\bmfplat\.dll'
           $exeMissing = @(Missing $exeNeeds @('gelabber_media.dll'))
-          # The native app, where its build ran.
-          $native = Join-Path $release 'gelabber.exe'
-          $nativeBuilt = Test-Path $native
-          $nativeNeeds = @(if ($nativeBuilt) { Needs $native })
-          $nativeMissing = @(Missing $nativeNeeds @('gelabber_media.dll'))
 
           $content = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($dll.FullName))
           # Names from OpenH264, from libwebrtc's wrappers around it and FFmpeg,
@@ -1029,8 +822,7 @@ jobs:
             '### Native core and app (Windows x64)', '',
             '| file | size | needs |', '|---|---|---|',
             "| gelabber_media.dll | $([math]::Round($dll.Length / 1MB, 1)) MiB | $($dllNeeds -join ', ') |",
-            "| gelabber-desktop.exe | $([math]::Round($exe.Length / 1MB, 1)) MiB | $($exeNeeds -join ', ') |",
-            $(if ($nativeBuilt) { "| gelabber.exe | $([math]::Round((Get-Item $native).Length / 1MB, 1)) MiB | $($nativeNeeds -join ', ') |" }), '',
+            "| gelabber.exe | $([math]::Round($exe.Length / 1MB, 1)) MiB | $($exeNeeds -join ', ') |", '',
             "Exports of gelabber_media.dll: $($exports.Count)"
           ) | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
@@ -1040,9 +832,7 @@ jobs:
             if (-not $dllNeeds -or $exeNeeds -notcontains 'gelabber_media.dll') { 'could not read the dependencies with dumpbin' }
             if ($dllMissing) { "gelabber_media.dll needs what a clean Windows lacks: $($dllMissing -join ', ')" }
             if (-not $delayed) { 'gelabber_media.dll does not delay-load mfplat.dll' }
-            if ($exeMissing) { "gelabber-desktop.exe needs what a clean Windows lacks: $($exeMissing -join ', ')" }
-            if ($nativeBuilt -and -not $nativeNeeds) { 'could not read the dependencies of gelabber.exe with dumpbin' }
-            if ($nativeMissing) { "gelabber.exe needs what a clean Windows lacks: $($nativeMissing -join ', ')" }
+            if ($exeMissing) { "gelabber.exe needs what a clean Windows lacks: $($exeMissing -join ', ')" }
           )
           if ($problems) {
             # One annotation each: PowerShell folds a long error message.
@@ -1063,7 +853,7 @@ jobs:
       # From here on both long builds exist, so a failing run still saves its
       # cache (rust-cache's post step reads this variable).
       - name: Rust cache also from a run that fails from here on
-        if: ${{ !cancelled() && steps.app.outcome == 'success' && steps.worker.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.native.outcome == 'success' && steps.worker.outcome == 'success' }}
         run: Add-Content $env:GITHUB_ENV 'CACHE_ON_FAILURE=true'
 
       # libwebrtc sends from the machine's address, which Windows may not route
@@ -1154,17 +944,7 @@ jobs:
           cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --test mediasoup_loopback --test screen_capture -- --nocapture --test-threads=1
           exit 0
 
-      # With the installer signed above: its signature must hold for the key
-      # the app was built with, as the installed app checks it.
-      - name: App unit tests
-        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
-        timeout-minutes: 20
-        env:
-          RUST_BACKTRACE: "1"
-          GELABBER_UPDATE_TEST_INSTALLER: ${{ steps.sign.outcome == 'success' && format('{0}\gelabber-desktop-windows-x64-setup.exe', github.workspace) || '' }}
-        run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-desktop -- --test-threads=1
-
-      # Package by package, as above: a workspace-wide call would unify other
+      # The core alone, as above: a call with the app would unify other
       # features and rebuild the worker. The empty core directory keeps Clippy's
       # build scripts from compiling the C++ again.
       - name: Clippy
@@ -1174,7 +954,7 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           $env:GELABBER_MEDIA_LIB_DIR = (New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'no-core')).FullName
           cargo clippy --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --all-targets -- -D warnings
-          cargo clippy --release --locked --manifest-path desktop/Cargo.toml -p gelabber-desktop --all-targets -- -D warnings
+          cargo clippy --release --locked --manifest-path desktop/Cargo.toml -p gelabber -p gelabber-ui -p gelabber-call -p gelabber-client --all-targets -- -D warnings
 
       - name: Format
         if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}

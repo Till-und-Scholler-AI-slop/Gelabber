@@ -1,4 +1,4 @@
-"""How desktop-release.yml attaches the apps to a release: python3 -m unittest
+"""How desktop-release.yml attaches the app to a release: python3 -m unittest
 discover -s desktop/packaging/tests
 
 Both uploads wait for the whole build of desktop-native.yml, the third-party
@@ -42,7 +42,7 @@ class ReleaseWiring(unittest.TestCase):
         sample = 'on: {}\njobs:\n  a:\n    runs-on: x\n  b:\n    needs: a\n  c:\n    needs: [a, b]\n'
         self.assertEqual(jobs(sample), {'a': set(), 'b': {'a'}, 'c': {'a', 'b'}})
 
-    def test_the_build_holds_the_notices_and_both_apps(self):
+    def test_the_build_holds_the_notices_and_both_packages(self):
         self.assertIn('    uses: ./.github/workflows/desktop-native.yml\n', WORKFLOW.read_text())
         build = jobs(BUILD.read_text())
         for job in ('notices', 'arch-repo', 'core-windows'):
@@ -66,8 +66,8 @@ def job_text(text, name):
 
 
 class NativeWiring(unittest.TestCase):
-    """The native app's assets go out next to the Tauri app's, under their
-    own names, with its own update manifest."""
+    """The native app's assets go out under their own names; both update
+    manifests name its installer, so installed Tauri apps update into it."""
 
     def setUp(self):
         self.release = WORKFLOW.read_text()
@@ -92,23 +92,29 @@ class NativeWiring(unittest.TestCase):
             block = job.split('- name: Native app smoke test\n', 1)[1].split('\n      - name:', 1)[0]
             self.assertNotIn('pull_request', block)
 
-    def test_the_release_uploads_the_native_assets_and_their_manifest(self):
+    def test_the_release_uploads_the_native_assets_and_their_manifests(self):
         linux = job_text(self.release, 'release-asset')
         windows = job_text(self.release, 'release-asset-windows')
         self.assertIn('name: gelabber-native-linux-x64\n', linux)
         self.assertIn('gelabber-native-linux-x64.tar.gz', linux.split('gh release upload', 1)[1])
         self.assertIn('name: gelabber-native-windows-x64\n', windows)
+        self.assertIn('setup=gelabber-native-windows-x64-setup.exe\n', windows)
         upload = windows.split('gh release upload', 1)[1]
-        for asset in ('gelabber-native-windows-x64-setup.exe', 'gelabber-native-windows-x64-setup.exe.sig',
-                      'latest-native.json', 'gelabber-desktop-windows-x64-setup.exe', 'latest.json'):
+        for asset in ('"$setup"', '"$setup.sha256"', '"$setup.sig"', 'latest-native.json', 'latest.json'):
             with self.subTest(asset=asset):
                 self.assertRegex(upload, rf'(^|\s){re.escape(asset)}(\s|$)')
+        # No Tauri app any more: no asset of its own.
+        for job in (linux, windows):
+            self.assertNotIn('gelabber-desktop-', job)
 
-    def test_each_manifest_names_only_its_own_installer(self):
+    def test_both_manifests_name_the_native_installer(self):
+        # Installed Tauri apps (0.8) read latest.json: the same manifest.
         windows = job_text(self.release, 'release-asset-windows')
-        self.assertIn('manifest gelabber-desktop-windows-x64-setup.exe latest.json\n', windows)
-        self.assertIn('manifest gelabber-native-windows-x64-setup.exe latest-native.json\n', windows)
-        self.assertEqual(len(re.findall(r'> "?\$2"?', windows)), 1, 'one jq program writes both')
+        self.assertIn('--rawfile signature "$setup.sig"', windows)
+        self.assertIn('/releases/download/${TAG}/$setup"', windows)
+        self.assertEqual(windows.count('> latest-native.json\n'), 1)
+        self.assertIn('cp latest-native.json latest.json\n', windows)
+        self.assertNotIn('> latest.json', windows)
 
     def test_the_native_app_reads_the_manifest_the_release_writes(self):
         update = (Path(__file__).parents[2] / 'ui/src/platform/update.rs').read_text()

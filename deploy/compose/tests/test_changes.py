@@ -28,7 +28,7 @@ def changed_areas(*paths):
 class Areas(unittest.TestCase):
     def test_each_folder_starts_its_area(self):
         for path, area in (('backend/api/src/main.rs', 'backend'), ('web/src/main.tsx', 'web'),
-                           ('desktop/app/src/main.rs', 'desktop'), ('deploy/backup.sh', 'deploy'),
+                           ('desktop/gelabber/src/main.rs', 'desktop'), ('deploy/backup.sh', 'deploy'),
                            ('deploy/compose/minio/Dockerfile', 'minio')):
             with self.subTest(path=path):
                 self.assertIn(area, changes.areas([path]))

@@ -87,10 +87,10 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
-      # The desktop apps carry the version of their own workspace, and
-      # desktop-release.yml attaches them only to a release whose tag is that
+      # The desktop app carries the version of its own workspace, and
+      # desktop-release.yml attaches it only to a release whose tag is that
       # version. Found out here, before the tag and the release exist.
-      - name: Desktop apps have the release's version
+      - name: Desktop app has the release's version
         if: ${{ !inputs.refresh_latest_only }}
         env:
           RELEASE_TAG: ${{ needs.decide.outputs.tag }}
@@ -101,17 +101,17 @@ jobs:
             echo "::error::desktop/Cargo.toml says $app, the release is $RELEASE_TAG: the version there (and in desktop/Cargo.lock) comes first"
             exit 1
           fi
-      # The Windows app updates itself from the release (desktop/app/src/
-      # update.rs): desktop-native.yml signs the installer and fails without
-      # the key. Found out here, before the tag and the release exist.
+      # The Windows app updates itself from the release (desktop/ui/src/
+      # platform/update.rs): desktop-native.yml signs the installer and fails
+      # without the key. Found out here, before the tag and the release exist.
       - name: Desktop updater key
         if: ${{ !inputs.refresh_latest_only }}
         env:
           HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
         run: |
           set -euo pipefail
-          if [ ! -s desktop/app/updater.pub ]; then
-            echo "::error::desktop/app/updater.pub is missing: the public key the app checks updates with (desktop/README.md, Updates)"
+          if [ ! -s desktop/packaging/updater.pub ]; then
+            echo "::error::desktop/packaging/updater.pub is missing: the public key the app checks updates with (desktop/README.md, Updates)"
             exit 1
           fi
           if [ "$HAS_SIGNING_KEY" != true ]; then
@@ -147,7 +147,7 @@ jobs:
             python3 .github/workflows/scripts/image_set.py release
           fi
       # A release created with the workflow token raises no release event, so
-      # the desktop app (Linux tarball, pacman repository) is dispatched here.
+      # the desktop app (installer, tarball, pacman repository) is dispatched here.
       - name: Desktop app for the release
         if: ${{ !inputs.refresh_latest_only }}
         env:

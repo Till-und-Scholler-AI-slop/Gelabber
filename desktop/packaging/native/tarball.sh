@@ -4,9 +4,9 @@
 #   tarball.sh [--binary <gelabber>] <libgelabber_media.so> [<out-dir>]
 #
 # Builds desktop/gelabber in release against the given media core (unless
-# --binary names a built one), strips both, checks them as the Tauri app's
-# package is checked (no shared C++ runtime, only gm_* exported, the core
-# found next to the binary, no WebKitGTK, libsoup or GTK) and writes
+# --binary names a built one), strips both, checks them (no shared C++
+# runtime, only gm_* exported, the core found next to the binary, no
+# WebKitGTK, libsoup or GTK) and writes
 # <out-dir>/gelabber-native-linux-x64.tar.gz (default: the current directory).
 # Respects CARGO_TARGET_DIR and CARGO_BUILD_JOBS.
 set -euo pipefail
@@ -45,7 +45,7 @@ mkdir "$pkg"
 strip --strip-unneeded -o "$pkg/gelabber" "$binary"
 strip --strip-unneeded -o "$pkg/libgelabber_media.so" "$lib"
 install -m644 "$here/README.txt" "$notices" "$here/gelabber.desktop" "$pkg/"
-install -m644 "$repo/desktop/app/icons/icon.png" "$pkg/gelabber.png"
+install -m644 "$repo/desktop/packaging/icons/icon.png" "$pkg/gelabber.png"
 
 fail() {
   echo "tarball: $*" >&2

@@ -1,5 +1,5 @@
-//! The desktop app's setup screen, as the Tauri app bundles it
-//! (desktop/app/setup: index.html, setup.css, setup.js): asks for the
+//! The desktop app's setup screen, as the Tauri app bundled it
+//! (desktop/parity/reference/setup, the parity reference): asks for the
 //! server address, checks that it answers, then hands the window over to
 //! [`GelabberApp`]. "Server wechseln …" in the user menu and Ctrl+Shift+S
 //! come back here with the way back to the current server; a stored server
