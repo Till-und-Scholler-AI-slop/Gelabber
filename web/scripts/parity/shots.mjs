@@ -4,7 +4,8 @@
 // Run in web/ against a seeded stack (seed.mjs):
 //   node scripts/parity/shots.mjs [out-dir] [scene,…]
 // GELABBER_PARITY_BROWSER names the Chromium binary (default /usr/bin/chromium).
-/* global process, console, document, window, URL, setTimeout */
+// GELABBER_PARITY_LOG_INVOKE=1 prints the app commands `desktop` scenes call.
+/* global process, console, document, window, URL, setTimeout, structuredClone */
 import { execFileSync, spawn } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
@@ -63,6 +64,46 @@ function stopCall(child) {
     child.kill("SIGTERM");
   });
 }
+
+// Scenes with `desktop`: the web client as the Tauri desktop app loads it
+// (isDesktopApp()), each command answered as desktop/app's would here.
+const desktopToml = await readFile(join(repo, "desktop/Cargo.toml"), "utf8");
+const ffi = await readFile(join(repo, "desktop/core/src/ffi.rs"), "utf8");
+const DESKTOP = {
+  // media.rs media_info: FEATURES on Linux; this machine's codecs, no hardware.
+  media_info: {
+    abi: Number(ffi.match(/GM_ABI_VERSION: u32 = (\d+)/)[1]),
+    version: desktopToml.match(/^version = "(.+)"$/m)[1],
+    platform: "linux",
+    features: [
+      "screen",
+      "camera",
+      "app-audio",
+      "app-audio-excludes-self",
+      "video-frames",
+      "vp9-svc",
+    ],
+    videoCodecs: Object.fromEntries(
+      ["av1", "h264"].map((codec) => [
+        codec,
+        { decoder: null, encoder: null, hardwareDecoder: false, hardwareEncoder: false },
+      ]),
+    ),
+  },
+  // The core's dummy audio, as the native render runs it (GELABBER_FAKE_MEDIA).
+  media_audio_devices: { input: "", inputs: [], output: "", outputs: [] },
+  media_video_devices: [],
+  // notify.rs: the system shows them, as in the native app.
+  notify_info: { available: true },
+  notify_close: null,
+  // shell.rs: no tray here.
+  shell_info: { tray: false, close_to_tray: false },
+  shell_unread: null,
+};
+// What the commands fail with here; every other command is not found.
+const DESKTOP_ERRORS = {
+  media_audio_apps: "native media core: application sound needs PipeWire (libpipewire-0.3)",
+};
 
 await mkdir(OUT, { recursive: true });
 const launch = (extra) =>
@@ -134,6 +175,33 @@ for (const scene of scenes) {
       waitUntil: "networkidle",
     });
   } else {
+    if (scene.desktop)
+      await page.addInitScript(
+        ({ answers, errors, log }) => {
+          // @tauri-apps/api/core's contract: invoke, and ids for a Channel,
+          // to which no answered command sends.
+          let next = 0;
+          window.__TAURI_INTERNALS__ = {
+            transformCallback: () => ++next,
+            unregisterCallback: () => {},
+            invoke(command, args) {
+              if (log) console.log(`invoke ${command} ${JSON.stringify(args)}`);
+              if (Object.hasOwn(answers, command))
+                return Promise.resolve(structuredClone(answers[command]));
+              return Promise.reject(errors[command] ?? `Command ${command} not found`);
+            },
+          };
+        },
+        {
+          answers: DESKTOP,
+          errors: DESKTOP_ERRORS,
+          log: Boolean(process.env.GELABBER_PARITY_LOG_INVOKE),
+        },
+      );
+    if (process.env.GELABBER_PARITY_LOG_INVOKE)
+      page.on("console", (message) => {
+        if (message.text().startsWith("invoke ")) console.log(`${scene.name}: ${message.text()}`);
+      });
     await page.goto(fill(scene.path), { waitUntil: "networkidle" });
   }
   await page.evaluate(() => document.fonts.ready);

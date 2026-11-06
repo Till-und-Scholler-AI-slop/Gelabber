@@ -47,7 +47,8 @@
     {
       "name": "settings",
       "path": "/settings",
-      "user": "lena"
+      "user": "lena",
+      "desktop": true
     },
     {
       "name": "server-settings",
@@ -57,47 +58,56 @@
     {
       "name": "settings-profil",
       "path": "/settings/profil",
-      "user": "lena"
+      "user": "lena",
+      "desktop": true
     },
     {
       "name": "settings-profilkarte",
       "path": "/settings/profilkarte",
-      "user": "lena"
+      "user": "lena",
+      "desktop": true
     },
     {
       "name": "settings-konto",
       "path": "/settings/konto",
-      "user": "lena"
+      "user": "lena",
+      "desktop": true
     },
     {
       "name": "settings-darstellung",
       "path": "/settings/darstellung",
-      "user": "lena"
+      "user": "lena",
+      "desktop": true
     },
     {
       "name": "settings-themes",
       "path": "/settings/themes",
-      "user": "lena"
+      "user": "lena",
+      "desktop": true
     },
     {
       "name": "settings-audio",
       "path": "/settings/audio",
-      "user": "lena"
+      "user": "lena",
+      "desktop": true
     },
     {
       "name": "settings-video",
       "path": "/settings/video",
-      "user": "lena"
+      "user": "lena",
+      "desktop": true
     },
     {
       "name": "settings-benachrichtigungen",
       "path": "/settings/benachrichtigungen",
-      "user": "lena"
+      "user": "lena",
+      "desktop": true
     },
     {
       "name": "settings-app",
       "path": "/settings/app",
-      "user": "lena"
+      "user": "lena",
+      "desktop": true
     },
     {
       "name": "server-settings-member",
@@ -966,6 +976,7 @@
       "name": "light-settings-darstellung",
       "path": "/settings/darstellung",
       "user": "lena",
+      "desktop": true,
       "before": "theme lena light"
     },
     {
@@ -1048,6 +1059,7 @@
       "name": "settings-darstellung-tab",
       "path": "/settings/darstellung",
       "user": "lena",
+      "desktop": true,
       "actions": [
         {
           "key": "Tab"
@@ -1211,6 +1223,7 @@
       "name": "mic-test",
       "path": "/s/{home}/c/{Kino}",
       "user": "lena",
+      "desktop": true,
       "actions": [
         {
           "click": "Mikrofon testen"
@@ -1221,6 +1234,7 @@
       "name": "mic-test-settings",
       "path": "/settings/audio",
       "user": "lena",
+      "desktop": true,
       "actions": [
         {
           "click": "/^Mikrofon testen( und vergleichen)?$/"
@@ -1231,15 +1245,9 @@
       "name": "voice-settings-dialog",
       "path": "/s/{home}/c/{Sofa}",
       "user": "lena",
+      "desktop": true,
       "call": "Sofa jonas,mira:muted",
-      "media": true,
       "actions": [
-        {
-          "click": "Beitreten"
-        },
-        {
-          "wait": 3000
-        },
         {
           "click": "Voice-Einstellungen"
         },
@@ -1252,15 +1260,9 @@
       "name": "voice-settings-video",
       "path": "/s/{home}/c/{Sofa}",
       "user": "lena",
+      "desktop": true,
       "call": "Sofa jonas,mira:muted",
-      "media": true,
       "actions": [
-        {
-          "click": "Beitreten"
-        },
-        {
-          "wait": 3000
-        },
         {
           "click": "Voice-Einstellungen"
         },
@@ -1294,6 +1296,7 @@
       "name": "voice-diagnostics-idle",
       "path": "/s/{home}/c/{Kino}",
       "user": "lena",
+      "desktop": true,
       "actions": [
         {
           "click": "Voice-Einstellungen"

@@ -1013,7 +1013,7 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 "Höhere Werte brauchen mehr Rechenleistung und Upload. Die erreichbare Qualität hängt von Quelle, Gerät und Verbindung ab.",
             );
         });
-        setting_row(ui, "Ton mitsenden", true, |ui| {
+        setting_row(ui, "Ton mitsenden", false, |ui| {
             // `sharesSourceAudio` where "every application" leaves Gelabber
             // out: unchosen means on, so off is a choice to keep.
             let mut on = p.source_audio_share != "off";
@@ -1025,6 +1025,37 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 false,
             ) {
                 p.source_audio_share = if on { "on" } else { "off" }.into();
+            }
+        });
+        // `SourceAudioApp`: whose sound a Live carries; a saved application
+        // that is quiet now stays selectable.
+        setting_row(ui, "Ton von", true, |ui| {
+            let apps = &listed.apps;
+            let saved = &p.source_audio_app;
+            let listed_id = |id: &str| apps.iter().any(|a| a.id == id);
+            // Apps before v0.6 saved the name as the id; the list shows the app.
+            let mut chosen = if listed_id(saved) {
+                saved.clone()
+            } else {
+                apps.iter()
+                    .find(|a| &a.label == saved)
+                    .map_or_else(|| saved.clone(), |a| a.id.clone())
+            };
+            let quiet = (!chosen.is_empty() && !listed_id(&chosen))
+                .then(|| (chosen.clone(), format!("{chosen} (gerade still)")));
+            let options: Vec<(String, String)> =
+                std::iter::once((String::new(), "Alle Anwendungen außer Gelabber".to_owned()))
+                    .chain(quiet)
+                    .chain(apps.iter().map(|a| (a.id.clone(), a.label.clone())))
+                    .collect();
+            if controls::select(
+                ui,
+                "source-audio-app",
+                &options,
+                &mut chosen,
+                field_fill(ui),
+            ) {
+                p.source_audio_app = chosen;
             }
         });
         ui.add_space(20.0);
