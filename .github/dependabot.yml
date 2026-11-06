@@ -1,12 +1,18 @@
-# The workflows pin every action to a commit SHA with its version as a
-# comment (#299, checked by the deployment tests in ci.yml). Dependabot moves the pins and
-# comments to new releases, all actions in one weekly pull request.
+# Version updates go to the development line (AGENTS.md), security updates to
+# main as hotfixes. A new version branch moves every target-branch below.
+# Major versions move by hand: the pins rule keeps locked versions, and
+# Postgres, mediasoup and the toolchain need their own migration.
 version: 2
 updates:
+  # The workflows pin every action to a commit SHA with its version as a
+  # comment (#299, checked by the deployment tests in ci.yml).
   - package-ecosystem: github-actions
     directory: /
+    target-branch: v0.9
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
@@ -14,3 +20,67 @@ updates:
       # Pinned to the branch of the toolchain rust-toolchain.toml names; its
       # only tag is v1. It moves by hand with rust-toolchain.toml.
       - dependency-name: dtolnay/rust-toolchain
+
+  - package-ecosystem: cargo
+    directories: [/backend, /desktop]
+    target-branch: v0.9
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      cargo-patch:
+        update-types: [patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+      # The one SFU, moved with docs/v0.4-mediasoup-migration.md.
+      - dependency-name: mediasoup*
+      # The Tauri app is gone in 0.9.
+      - dependency-name: tauri*
+
+  - package-ecosystem: npm
+    directory: /web
+    target-branch: v0.9
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      npm-patch:
+        update-types: [patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: docker
+    directories: [/backend/api, /backend/media, /web, /deploy/compose/minio, /deploy/compose/mc]
+    target-branch: v0.9
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      images:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+      # The Rust image follows rust-toolchain.toml, by hand.
+      - dependency-name: rust
+
+  - package-ecosystem: docker-compose
+    directory: /deploy/compose
+    target-branch: v0.9
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      compose:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+      # Gelabber's own images move with each release PR.
+      - dependency-name: ghcr.io/till-und-scholler-ai-slop/*
