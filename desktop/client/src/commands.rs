@@ -493,27 +493,47 @@ impl Client {
         });
         match server {
             Some(server) => self.open_conversation(server, channel),
-            None => {
-                // Unknown yet: a DM not in the list, or a server not loaded.
-                // Op key `dm_load:<id>` (the DM page's load error).
-                let this = self.clone();
-                self.spawn(async move {
-                    let epoch = this.epoch();
-                    let http = this.http().clone();
-                    let key = format!("dm_load:{channel}");
-                    if let Some(dm) = this.op(&key, http.dm(channel)).await {
-                        let current = this.write_in(epoch, |s| {
-                            if s.dm(dm.id).is_none() {
+            // Unknown yet: a DM not in the list, or a server not loaded.
+            None => self.load_dm(channel),
+        }
+    }
+
+    /// The DM page's own fetch of its conversation (`useDm`), also for one
+    /// the list has: op key `dm_load:<id>`, whose failure the page shows.
+    /// A gone DM leaves the list.
+    pub fn load_dm(&self, channel: Uuid) {
+        let this = self.clone();
+        self.spawn(async move {
+            let epoch = this.epoch();
+            let http = this.http().clone();
+            let key = format!("dm_load:{channel}");
+            match this.op(&key, http.dm(channel)).await {
+                Some(dm) => {
+                    let added =
+                        this.write_in(epoch, |s| match s.dms.iter_mut().find(|d| d.id == dm.id) {
+                            Some(known) => {
+                                *known = dm;
+                                false
+                            }
+                            None => {
                                 s.dms.insert(0, dm);
+                                true
                             }
                         });
-                        if current.is_some() {
-                            this.open_conversation(None, channel);
-                        }
+                    if added == Some(true) {
+                        this.open_conversation(None, channel);
                     }
-                });
+                }
+                None => {
+                    let gone = this.with_state(|s| {
+                        matches!(s.op(&key), Some(crate::store::OpState::Failed(e)) if e.is_gone())
+                    });
+                    if gone {
+                        this.write_in(epoch, |s| s.dms.retain(|d| d.id != channel));
+                    }
+                }
             }
-        }
+        });
     }
 
     /// `/s/{server}/c/{channel}`.
@@ -769,7 +789,10 @@ impl Client {
                 }
                 ids.push(presigned.attachment.id);
                 let uploaded = ids.clone();
-                self.update_pending(epoch, channel, nonce, |p| p.uploaded = uploaded);
+                self.update_pending(epoch, channel, nonce, |p| {
+                    p.arrived = p.arrived.max(uploaded.len());
+                    p.uploaded = uploaded;
+                });
             }
         }
         let result = match failure {

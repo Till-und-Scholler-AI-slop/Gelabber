@@ -200,11 +200,51 @@ pub fn show(
         vec2(kbd.width() + 12.0, 18.5),
     );
     let input_left = field.left() + 11.0 + 16.0 + 8.0;
+    // Chromium's search input while it is focused and holds text: its box
+    // in the page colour over the frame's edge, and the clear control.
+    let filled = focused && !search.is_empty();
+    let clear = Rect::from_center_size(pos2(field.right() - 18.5, mid - 0.5), vec2(14.0, 14.0));
     let input_right = if search.is_empty() {
         kbd_rect.left()
+    } else if filled {
+        clear.left() - 4.0
     } else {
         field.right() - 11.0
     };
+    if filled {
+        let frame = Rect::from_min_max(
+            pos2(field.left() + 33.0, field.top()),
+            pos2(field.right() - 9.0, field.bottom()),
+        );
+        ui.painter().rect_filled(frame, 0.0, c.bg);
+        ui.painter()
+            .rect_filled(frame.shrink2(vec2(2.0, 1.0)), 0.0, c.panel);
+        let ink = if theme.is_dark() {
+            Color32::WHITE
+        } else {
+            Color32::from_gray(0x55)
+        };
+        let center = clear.center();
+        for (a, b) in [(-1.0, -1.0), (-1.0, 1.0)] {
+            ui.painter().line_segment(
+                [
+                    center + vec2(3.6 * a, 3.6 * b),
+                    center - vec2(3.6 * a, 3.6 * b),
+                ],
+                Stroke::new(2.2, ink),
+            );
+        }
+        // `::-webkit-search-cancel-button`: not in the accessibility tree.
+        let hit = ui.interact(clear, id.with("clear"), Sense::CLICK);
+        if hit.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
+        }
+        if hit.clicked() {
+            search.clear();
+            out.search_changed = true;
+            ui.memory_mut(|m| m.request_focus(id));
+        }
+    }
     let input = Rect::from_min_max(
         pos2(input_left, field.top() + 1.0),
         pos2(input_right, field.bottom() - 1.0),

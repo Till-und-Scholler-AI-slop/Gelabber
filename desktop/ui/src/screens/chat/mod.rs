@@ -20,7 +20,7 @@ mod row;
 mod search;
 pub mod time;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use egui::{Rect, Ui, pos2, vec2};
@@ -52,7 +52,11 @@ struct ChatState {
     gif: gif::GifState,
     requests: Vec<ChatRequest>,
     bootstrapped: bool,
-    requested_dm: HashSet<Uuid>,
+    /// The DM page shown last and the frame it was shown in.
+    dm_shown: Option<(Uuid, u64)>,
+    /// The DM the page fetched in this opening, and the account data's
+    /// epoch it asked in.
+    dm_asked: Option<(Uuid, u64)>,
     gifs_requested: bool,
     /// The conversation shown last and the frame it was shown in.
     shown: Option<(Uuid, u64)>,
@@ -272,26 +276,45 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
             muted: s.read.get(&channel).is_some_and(|r| r.is_muted(now)),
         })
     });
-    match found {
-        Some(c) => {
+    // Each opening fetches the conversation itself (`useDm`), also one the
+    // list already shows.
+    let frame = ui.ctx().cumulative_frame_nr();
+    let ask = {
+        let mut chat = chat.lock();
+        if chat
+            .dm_shown
+            .is_none_or(|(c, f)| c != channel || f + 1 < frame)
+        {
+            chat.dm_asked = None;
+        }
+        chat.dm_shown = Some((channel, frame));
+        // Once the list is in, and again after the account data was reset,
+        // which drops the answer to an earlier ask.
+        let (ready, epoch) = app.client.with_state(|s| (s.dms_loaded, s.epoch()));
+        let ask = ready && chat.dm_asked != Some((channel, epoch));
+        if ask {
+            chat.dm_asked = Some((channel, epoch));
+        }
+        ask
+    };
+    if ask {
+        app.client.load_dm(channel);
+    }
+    let gone = app.client.with_state(|s| notice::dm_gone(s, channel));
+    let error = app.client.with_state(|s| notice::dm_error(s, channel));
+    match (found, error) {
+        (Some(c), None) if !gone => {
             app.client.open_dm(channel);
             show_conversation(ui, app, c);
         }
-        None => {
-            // Not in the list (yet): ask for this one DM once.
-            let loaded = app.client.with_state(|s| s.dms_loaded);
-            let mut chat = chat.lock();
-            if loaded && chat.requested_dm.insert(channel) {
-                drop(chat);
-                app.client.open_channel(channel);
-            }
+        _ => {
             let theme = Theme::of(ui.ctx());
             let page = ui.max_rect();
             ui.painter().rect_filled(page, 0.0, theme.c.bg);
             // Gone: back to the list. Else the error, centred in `p-8`.
-            if app.client.with_state(|s| notice::dm_gone(s, channel)) {
+            if gone {
                 app.nav.replace("/d");
-            } else if let Some(pending) = app.client.with_state(|s| notice::dm_error(s, channel)) {
+            } else if let Some(pending) = error {
                 let message = "Diese Unterhaltung konnte nicht geladen werden.";
                 let width =
                     (crate::text::Block::single(ui, message, crate::text::BODY, theme.c.text)
@@ -300,7 +323,7 @@ pub fn dm_page(ui: &mut Ui, app: &mut AppCtx, channel: Uuid) {
                         .min(page.width() - 64.0);
                 let at = pos2(page.center().x - width / 2.0, page.center().y - 40.0);
                 if notice::load_error(ui, at, width, message, pending) {
-                    app.client.open_channel(channel);
+                    app.client.load_dm(channel);
                 }
             }
         }
@@ -326,6 +349,14 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
     {
         chat.panes.insert(channel, PaneState::default());
         chat.contexts.remove(&channel);
+        // The composer's pickers close with the page that had them, as on
+        // the web (a route change, back with Alt+←); the draft stays.
+        if let Some(composer) = chat.composers.get_mut(&channel) {
+            composer.emoji_open = false;
+            composer.gif_open = false;
+        }
+        chat.picker = Default::default();
+        chat.gif = Default::default();
     }
     chat.shown = Some((channel, frame));
     let me = client
@@ -1230,5 +1261,97 @@ mod tests {
         input.events = vec![enter(egui::Modifiers::NONE)];
         assert!(consume_plain(&mut input, egui::Key::Enter));
         assert!(input.events.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod page_tests {
+    use egui_kittest::kittest::Queryable;
+    use serde_json::json;
+
+    use crate::app::testkit::{FakeApi, Reply, launcher, wait_for, wait_for_label, workspace};
+    use crate::platform::paths::testing::TempConfig;
+
+    const DM: &str = "00000000-0000-4000-8000-0000000000d1";
+
+    fn dms(method: &str, path: &str) -> Option<Reply> {
+        let dm = json!({
+            "id": DM, "kind": "dm", "created_at": "2026-01-01T00:00:00Z",
+            "peer": {"id": "00000000-0000-4000-8000-00000000007c", "name": "Jonas", "avatar_url": null}
+        });
+        match (method, path) {
+            ("GET", "/dms") => Some(Reply::json(json!([dm]))),
+            ("GET", p) if p == format!("/dms/{DM}") => Some(Reply::error(503, "internal")),
+            ("GET", p) if p.starts_with("/channels/") && p.ends_with("/messages") => {
+                Some(Reply::json(json!({"messages": [], "has_more": false})))
+            }
+            _ => workspace(method, path),
+        }
+    }
+
+    /// `DmChannelPage`: the conversation's own fetch failed, so the page
+    /// says so even though the list knows the DM.
+    #[test]
+    fn a_listed_dm_shows_its_load_error() {
+        let _config = TempConfig::new("dm-load-error");
+        let api = FakeApi::start(true, |method, path, _| dms(method, path));
+        let mut harness = launcher(&api, &format!("/d/{DM}"));
+        wait_for_label(
+            &mut harness,
+            "Diese Unterhaltung konnte nicht geladen werden.",
+        );
+        assert!(api.saw(&format!("GET /dms/{DM}")));
+        // The list still has Jonas.
+        harness.get_by_label("Jonas");
+    }
+
+    /// A picker left open closes with its page: back (Alt+←) and forward
+    /// again find the composer without it, the draft kept.
+    #[test]
+    fn a_picker_closes_when_the_route_changes() {
+        let _config = TempConfig::new("picker-route");
+        // Lena may write: the composer is there.
+        let api = FakeApi::start(true, |method, path, _| {
+            let mut reply = workspace(method, path)?;
+            if let Some(list) = reply
+                .body
+                .get_mut("permissions")
+                .and_then(|p| p.as_array_mut())
+            {
+                list.push(json!("send_messages"));
+                list.push(json!("send_files"));
+            }
+            if let Some(list) = reply.body.as_array_mut() {
+                for server in list {
+                    if let Some(list) = server["permissions"].as_array_mut() {
+                        list.push(json!("send_messages"));
+                    }
+                }
+            }
+            Some(reply)
+        });
+        let spiele = "00000000-0000-4000-8000-0000000000c3";
+        let home = crate::app::testkit::HOME;
+        let mut harness = launcher(&api, &format!("/s/{home}/c/{spiele}"));
+        wait_for_label(&mut harness, "Nachricht an #spiele");
+        harness.get_by_label("allgemein").click();
+        wait_for_label(&mut harness, "Nachricht an #allgemein");
+        harness.run_steps(4);
+        harness.get_by_label("Emoji einfügen").click();
+        wait_for(&mut harness, "the picker", |h| {
+            h.query_all_by_label("Emoji einfügen").count() > 1
+        });
+        harness.key_press_modifiers(egui::Modifiers::ALT, egui::Key::ArrowLeft);
+        wait_for_label(&mut harness, "Nachricht an #spiele");
+        harness.run_steps(4);
+        assert_eq!(harness.query_all_by_label("Emoji einfügen").count(), 1);
+        harness.key_press_modifiers(egui::Modifiers::ALT, egui::Key::ArrowRight);
+        wait_for_label(&mut harness, "Nachricht an #allgemein");
+        harness.run_steps(4);
+        assert_eq!(
+            harness.query_all_by_label("Emoji einfügen").count(),
+            1,
+            "closed with its page"
+        );
     }
 }
