@@ -2,7 +2,8 @@
 //! with the real app against the seeded stack (headless, egui_kittest on
 //! wgpu) and compares it with the web screenshot of the same scene (SSIM).
 //! A scene passes when SSIM, pixel match and edge match all reach 0.90
-//! (see pixels.rs for the two stricter measures).
+//! (see pixels.rs for the two stricter measures). A render fails a scene
+//! whose controls (buttons, links, fields, …) include one without a name.
 //!
 //!   gelabber-parity render <out-dir> [scene,…]
 //!   gelabber-parity compare <web-dir> <native-dir> <report-dir> [--only a,b] [--crop x,y,w,h]
@@ -559,6 +560,16 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                 .unwrap_or_else(|e| panic!("render {}: {e}", scene.name));
             let path = out.join(format!("{}.png", scene.name));
             image.save(&path).expect("save png");
+            // M5 of docs/v0.9-plan.md: every control a screen reader reaches
+            // has a name.
+            let (controls, nameless) = unnamed(&harness);
+            assert!(
+                nameless.is_empty(),
+                "{}: controls without a name: {}",
+                scene.name,
+                nameless.join(", ")
+            );
+            println!("{}: {controls} controls, all named", scene.name);
             drop(undo);
             drop(calls);
             println!("{}: {route} -> {}", scene.name, path.display());
@@ -575,6 +586,52 @@ fn render(out: &Path, only: Option<Vec<String>>) {
 }
 
 type App<'a> = egui_kittest::Harness<'a, Shell>;
+
+/// The controls a screen reader reaches, and those without a name (role
+/// and place).
+fn unnamed(harness: &App<'_>) -> (usize, Vec<String>) {
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::{NodeT, Queryable};
+    const CONTROLS: &[Role] = &[
+        Role::Button,
+        Role::CheckBox,
+        Role::RadioButton,
+        Role::Switch,
+        Role::Link,
+        Role::MenuItem,
+        Role::MenuItemCheckBox,
+        Role::MenuItemRadio,
+        Role::Tab,
+        Role::TextInput,
+        Role::MultilineTextInput,
+        Role::SearchInput,
+        Role::Slider,
+        Role::SpinButton,
+        Role::ComboBox,
+        Role::DisclosureTriangle,
+        Role::ListBoxOption,
+        Role::TreeItem,
+    ];
+    let controls = harness
+        .query_all_by(|n| CONTROLS.contains(&n.role()) && !n.is_hidden())
+        .count();
+    let nameless = harness
+        .query_all_by(|n| {
+            CONTROLS.contains(&n.role())
+                && !n.is_hidden()
+                && n.label().is_none_or(|l| l.trim().is_empty())
+        })
+        .map(|n| {
+            let node = n.accesskit_node();
+            let at = node
+                .bounding_box()
+                .map(|b| format!("{:.0},{:.0}", b.x0, b.y0))
+                .unwrap_or_default();
+            format!("{:?}@{at}", node.role())
+        })
+        .collect();
+    (controls, nameless)
+}
 
 /// The Launcher on a bundled page: the setup page with its `?server=` (the
 /// way back) and `?error=` (why it shows).
