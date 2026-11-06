@@ -1,0 +1,7 @@
+# What the AI review stands on: a change here needs a human owner's approval,
+# also on v* where the checks replace it otherwise (docs/ai-review.md).
+/.github/ @SilasSch @rafiistcool
+/AGENTS.md @SilasSch @rafiistcool
+/docs/ai-review.md @SilasSch @rafiistcool
+/desktop/app/updater.pub @SilasSch @rafiistcool
+/desktop/packaging/updater.pub @SilasSch @rafiistcool
