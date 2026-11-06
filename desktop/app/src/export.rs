@@ -61,7 +61,7 @@ fn wanted(key: &str) -> bool {
     KEYS.contains(&key) || PREFIXES.iter().any(|prefix| key.starts_with(prefix))
 }
 
-/// The file legacy.rs reads: `{"version": 1, "localStorage": {key: value}}`
+/// The file the native app reads: `{"version": 1, "localStorage": {key: value}}`
 /// with the wanted entries only.
 fn document(entries: BTreeMap<String, String>) -> Result<Vec<u8>, String> {
     let kept: BTreeMap<String, String> = entries.into_iter().filter(|(k, _)| wanted(k)).collect();
