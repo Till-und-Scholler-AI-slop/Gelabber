@@ -30,7 +30,7 @@ pub(super) fn areas(dir: &Path) -> Result<Areas, Failure> {
         else {
             continue;
         };
-        let entries = read_copy(&path)?;
+        let entries = read_copy(&path, &std::env::temp_dir())?;
         if !entries.is_empty() {
             areas.insert(origin, entries);
         }
@@ -77,13 +77,13 @@ fn transient(path: &Path, e: io::Error) -> Failure {
 }
 
 /// The database at `path` read through a copy of it and its WAL (not the
-/// `-shm` index, which SQLite rebuilds).
-fn read_copy(path: &Path) -> Result<std::collections::BTreeMap<String, String>, Failure> {
-    static COPIES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let n = COPIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!("gelabber-webview-{}-{n}", std::process::id()));
+/// `-shm` index, which SQLite rebuilds) in a new directory under `base`.
+fn read_copy(
+    path: &Path,
+    base: &Path,
+) -> Result<std::collections::BTreeMap<String, String>, Failure> {
+    let dir = private_dir(base).map_err(|e| transient(base, e))?;
     let copied = (|| {
-        std::fs::create_dir_all(&dir)?;
         let copy = dir.join("copy.localstorage");
         std::fs::copy(path, &copy)?;
         let mut wal = path.as_os_str().to_owned();
@@ -99,6 +99,27 @@ fn read_copy(path: &Path) -> Result<std::collections::BTreeMap<String, String>, 
         .and_then(|copy| query(&copy).map_err(|e| sqlite(path, e)));
     let _ = std::fs::remove_dir_all(&dir);
     read
+}
+
+static COPIES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+const ATTEMPTS: usize = 100;
+
+/// A directory this call made, readable by this user only. The names in
+/// /tmp can be guessed, so one that exists (another user's) is passed by.
+fn private_dir(base: &Path) -> io::Result<PathBuf> {
+    use std::os::unix::fs::DirBuilderExt;
+    for _ in 0..ATTEMPTS {
+        let n = COPIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = base.join(format!("gelabber-webview-{}-{n}", std::process::id()));
+        match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            made => return made.map(|()| dir),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "no free name for the copy",
+    ))
 }
 
 fn query(copy: &Path) -> rusqlite::Result<std::collections::BTreeMap<String, String>> {
@@ -248,5 +269,32 @@ mod tests {
         std::fs::remove_file(dir.join("http_127.0.0.1_8123.localstorage-wal")).unwrap();
         assert!(matches!(areas(&dir), Err(Failure::Permanent(_))));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_copy_goes_only_to_a_directory_it_made() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = copy("traps");
+        let victim = base.join("notes.txt");
+        std::fs::write(&victim, "notes").unwrap();
+        // Another user's directories where the next copies would go, with a
+        // link where the copy is written.
+        let next = COPIES.load(std::sync::atomic::Ordering::Relaxed);
+        let trap = |n: u64| base.join(format!("gelabber-webview-{}-{n}", std::process::id()));
+        for n in next..next + 32 {
+            std::fs::create_dir(trap(n)).unwrap();
+            std::os::unix::fs::symlink(&victim, trap(n).join("copy.localstorage")).unwrap();
+        }
+        let read = read_copy(&base.join("http_127.0.0.1_8123.localstorage"), &base);
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "notes");
+        assert!(read.unwrap()["gelabber.media"].contains("\"inputGain\":1.5"));
+        for n in next..next + 32 {
+            assert!(trap(n).join("copy.localstorage").is_symlink());
+        }
+        // Its own, so nobody else reads the drafts in the copy.
+        let dir = private_dir(&base).unwrap();
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
