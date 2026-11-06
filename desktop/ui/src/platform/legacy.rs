@@ -267,6 +267,25 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// The Tauri app writes the file these entries come from
+    /// (desktop/app/src/export.rs): it asks for every one taken here.
+    #[test]
+    fn the_tauri_app_exports_what_is_taken_here() {
+        let export = include_str!("../../../app/src/export.rs");
+        let this = include_str!("legacy.rs");
+        for key in [
+            "\"gelabber.media\"",
+            "\"gelabber.media.source-audio-share\"",
+            "\"gelabber.interface\"",
+            "\"gelabber.user-volumes:\"",
+            "\"gelabber:chat-draft:\"",
+        ] {
+            assert!(this.contains(key), "{key} is not taken here");
+            assert!(export.contains(key), "{key} is not exported");
+        }
+        assert!(export.contains("const FILE: &str = \"legacy-settings.json\";"));
+    }
+
     const ACCOUNT: &str = "0f9a4c1e-8f1b-4f3e-9d55-2b7a1c3e5d01";
     const FRIEND: &str = "6b0e2a77-3c44-4d0a-a1c2-9e8f7d6c5b4a";
     const CHANNEL: &str = "c2d3e4f5-a6b7-4c8d-9e0f-1a2b3c4d5e6f";

@@ -70,7 +70,7 @@ fn main() {
     }
     // `allow-<command>` permissions for the app's own commands; the server
     // origin gets the `media`, `shell`, `notify`, `ptt` and `update` sets (permissions/) plus
-    // `allow-open-setup`, the bundled setup page `allow-set-server` and the
+    // `allow-open-setup` and `allow-settings-export`, the bundled setup page `allow-set-server` and the
     // update commands (capabilities/setup.json).
     let commands: Vec<&'static str> = MEDIA_COMMANDS
         .iter()
@@ -78,6 +78,7 @@ fn main() {
         .chain(NOTIFY_COMMANDS)
         .chain(PTT_COMMANDS)
         .chain(UPDATE_COMMANDS)
+        .chain(EXPORT_COMMANDS)
         .copied()
         .chain(["set_server", "open_setup"])
         .collect();
