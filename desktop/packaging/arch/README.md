@@ -69,11 +69,13 @@ always holds only the newest release.
 - `repo.sh build`: builds and signs the package, then the signed repository
   database (`repo-add --sign`), plus `gelabber.asc` with the public key.
 - `repo.sh test`: adds that repository to pacman with `SigLevel = Required`,
-  installs the Tauri package of a 0.8 release (its PKGBUILD at the tag and
-  its release tarball, `TAURI_RELEASE` in the workflow) with its
-  dependencies, upgrades it with `-Syu` into this package, starts the app
-  under Xvfb (`../native/smoke.sh`), upgrades to a newer build, removes with
-  `-Rns` and fails if a library is missing or a file is left behind.
+  installs the Tauri package of each 0.8 release in `TAURI_RELEASES` (its
+  PKGBUILD at the tag and its release tarball) with its dependencies, lets
+  it run the fixture page, upgrades it with `-Syu` into this package and
+  checks the import: from WebKitGTK for 0.8.9, only from
+  `legacy-settings.json` for 0.8.10. It starts the app under Xvfb
+  (`../native/smoke.sh`), upgrades to a newer build, removes with `-Rns` and
+  fails if a library is missing or a file is left behind.
 - `.github/workflows/desktop-native.yml` (run by `ci.yml` and
   `desktop-release.yml`): job "Arch package and repository" builds with a
   throwaway key and runs the test, except for pull requests; the repository
