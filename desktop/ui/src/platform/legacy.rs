@@ -640,6 +640,18 @@ mod tests {
         assert_taken(&dirs, &imported, "bis gleich 👋");
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_damaged_database_of_another_server_leaves_the_servers() {
+        let dirs = Dirs::new("origin-damaged");
+        let store = Store::WebKit.fill(&dirs);
+        std::fs::write(store.join("http_127.0.0.1_8124.localstorage"), [7u8; 8192]).unwrap();
+        std::fs::write(store.join("https_old.example_0.localstorage"), b"").unwrap();
+        dirs.server("http://127.0.0.1:8123");
+        let imported = Store::WebKit.import(&dirs).unwrap().unwrap();
+        assert_taken(&dirs, &imported, "bis gleich 👋");
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_store_that_cannot_be_read_now_writes_nothing() {

@@ -30,9 +30,14 @@ pub(super) fn areas(dir: &Path) -> Result<Areas, Failure> {
         else {
             continue;
         };
-        let entries = read_copy(&path, &std::env::temp_dir())?;
-        if !entries.is_empty() {
-            areas.insert(origin, entries);
+        // One database per origin: a damaged one hides no other.
+        match read_copy(&path, &std::env::temp_dir()) {
+            Ok(entries) if !entries.is_empty() => {
+                areas.insert(origin, entries);
+            }
+            Ok(_) => {}
+            Err(Failure::Permanent(e)) => tracing::warn!("WebKitGTK localStorage left out: {e}"),
+            Err(transient) => return Err(transient),
         }
     }
     Ok(areas)
@@ -259,15 +264,20 @@ mod tests {
     }
 
     #[test]
-    fn a_file_that_is_no_database_is_a_permanent_failure() {
+    fn a_file_that_is_no_database_is_left_out_alone() {
         let dir = copy("damaged");
-        std::fs::write(
-            dir.join("http_127.0.0.1_8123.localstorage"),
-            vec![7u8; 8192],
-        )
-        .unwrap();
-        std::fs::remove_file(dir.join("http_127.0.0.1_8123.localstorage-wal")).unwrap();
-        assert!(matches!(areas(&dir), Err(Failure::Permanent(_))));
+        let other = dir.join("http_127.0.0.1_8124.localstorage");
+        std::fs::write(&other, vec![7u8; 8192]).unwrap();
+        std::fs::remove_file(dir.join("http_127.0.0.1_8124.localstorage-wal")).unwrap();
+        assert!(matches!(
+            read_copy(&other, &std::env::temp_dir()),
+            Err(Failure::Permanent(_))
+        ));
+        // An empty file has no ItemTable.
+        std::fs::write(dir.join("https_old.example_0.localstorage"), b"").unwrap();
+        let areas = areas(&dir).unwrap();
+        assert_eq!(areas.keys().collect::<Vec<_>>(), [ORIGIN]);
+        assert!(areas[ORIGIN]["gelabber.media"].contains("\"inputGain\":1.5"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
