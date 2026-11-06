@@ -38,6 +38,23 @@ pub(super) fn base_dir() -> Option<PathBuf> {
     }
 }
 
+/// The directory of per-app local data (`%LOCALAPPDATA%`, `~/.local/share`),
+/// Tauri's `data_local_dir`, where the Tauri app's WebView kept its profile;
+/// none on macOS, where WKWebView keeps it elsewhere.
+pub(super) fn local_data_base() -> Option<PathBuf> {
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+    if cfg!(windows) {
+        var("LOCALAPPDATA").map(PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        None
+    } else {
+        var("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| var("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+    }
+}
+
 /// A file in the config directory.
 pub fn file(name: &str) -> Option<PathBuf> {
     config_dir().map(|dir| dir.join(name))

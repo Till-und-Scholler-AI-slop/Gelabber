@@ -42,6 +42,9 @@ tokio = { version = "1.53.2", features = ["rt"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
 ksni = { version = "0.3.7", default-features = false, features = ["blocking", "async-io"] }
+# The Tauri app's WebKitGTK localStorage (src/platform/webview/webkit.rs);
+# bundled, so the package needs no libsqlite3 of its own.
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 
 # Toasts, tray, the push-to-talk hook and the update's installer, as the Tauri app had them.
 [target.'cfg(windows)'.dependencies]

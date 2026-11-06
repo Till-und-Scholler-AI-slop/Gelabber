@@ -18,6 +18,7 @@ pub mod settings;
 pub mod state;
 pub mod tray;
 pub mod update;
+pub mod webview;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

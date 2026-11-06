@@ -229,6 +229,13 @@ REVIEWED = {
         "feature prebuilt-nasm (on here) the build links them into {exe} when the "
         "Windows build machine has no NASM assembler.",
     ),
+    ("libsqlite3-sys", "sqlcipher/"): (
+        "note",
+        "SQLCipher's licence; the crate builds SQLCipher only with its sqlcipher "
+        "features (off here). With its feature bundled (on here) it compiles SQLite "
+        "3.53.2 (sqlite3/sqlite3.c) into {app} on Linux; SQLite's authors disclaim "
+        "copyright in it (public domain, sqlite.org/copyright.html).",
+    ),
     ("windows_x86_64_msvc", "lib/"): (
         "skip",
         "The import library for Windows system DLLs that the crate consists of, built by "

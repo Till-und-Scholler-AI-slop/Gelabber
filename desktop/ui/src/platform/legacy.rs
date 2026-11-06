@@ -5,7 +5,9 @@
 //! - `legacy-settings.json` in the config directory, which the Tauri app's
 //!   `settings_export` writes (docs/v0.9-plan.md, M1): the web client's
 //!   localStorage entries as `{"version": 1, "localStorage": {key: value}}`,
-//!   values as the page stored them (strings) or already parsed. Taken:
+//!   values as the page stored them (strings) or already parsed. Without a
+//!   readable one (0.8.9 and older), the same entries straight from the
+//!   WebView's storage ([`super::webview`]). Taken ([`KEYS`], [`PREFIXES`]):
 //!   `gelabber.media` (voice/settings.ts, zustand's `{"state": …}`),
 //!   `gelabber.media.source-audio-share`, `gelabber.interface`
 //!   (interface/preferences.ts), `gelabber.user-volumes:<account>`
@@ -27,11 +29,26 @@ use uuid::Uuid;
 
 use super::paths::write_atomic;
 use super::state::{DRAFT_MAX_AGE_MS, Draft, Stored, UserVolume};
+use super::webview::{self, Found};
 
 pub const LEGACY_FILE: &str = "legacy-settings.json";
 const SETTINGS: &str = "settings.json";
 const DESKTOP: &str = "desktop.json";
 const STATE: &str = "native-state.json";
+
+/// The web client's localStorage keys taken whole, and the prefixes of
+/// those taken per account.
+pub const KEYS: [&str; 3] = [
+    "gelabber.media",
+    "gelabber.media.source-audio-share",
+    "gelabber.interface",
+];
+pub const PREFIXES: [&str; 2] = ["gelabber.user-volumes:", "gelabber:chat-draft:"];
+
+/// Whether the import takes the localStorage entry `key`.
+pub fn wanted(key: &str) -> bool {
+    KEYS.contains(&key) || PREFIXES.iter().any(|p| key.starts_with(p))
+}
 
 /// What one import took over, for the log.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -40,6 +57,8 @@ pub struct Imported {
     pub server: bool,
     pub volumes: usize,
     pub drafts: usize,
+    /// Where the web client's entries came from: the export or a WebView.
+    pub from: Option<&'static str>,
 }
 
 impl fmt::Display for Imported {
@@ -51,7 +70,11 @@ impl fmt::Display for Imported {
             if self.server { "the" } else { "no" },
             self.volumes,
             self.drafts
-        )
+        )?;
+        match self.from {
+            Some(from) => write!(f, " from {from}"),
+            None => Ok(()),
+        }
     }
 }
 
@@ -64,12 +87,15 @@ pub fn import() -> Result<Option<Imported>, String> {
     // Tests and parity runs choose their directory; the user's stays out.
     let replaced =
         cfg!(test) || std::env::var_os("GELABBER_CONFIG_DIR").is_some_and(|d| !d.is_empty());
-    let old = if replaced {
-        None
+    let (old, webview) = if replaced {
+        (None, None)
     } else {
-        super::paths::base_dir().as_deref().map(old_dir)
+        (
+            super::paths::base_dir().as_deref().map(old_dir),
+            super::paths::local_data_base().map(|b| b.join(super::paths::IDENTIFIER)),
+        )
     };
-    import_into(&config, old.as_deref(), now_ms())
+    import_into(&config, old.as_deref(), webview.as_deref(), now_ms())
 }
 
 fn now_ms() -> i64 {
@@ -177,17 +203,54 @@ fn account_data(entries: &Map<String, Value>, now: i64) -> HashMap<Uuid, Taken> 
 }
 
 /// The import into `config`, with `old` the directory of native builds
-/// before 0.9; `now` in milliseconds since 1970 (drafts expire).
+/// before 0.9 and `webview` the Tauri app's data directory; `now` in
+/// milliseconds since 1970 (drafts expire).
 pub fn import_into(
     config: &Path,
     old: Option<&Path>,
+    webview: Option<&Path>,
+    now: i64,
+) -> Result<Option<Imported>, String> {
+    import_from(
+        config,
+        old,
+        |server| match webview {
+            Some(dir) => webview::local_storage(dir, server),
+            None => Ok(Found::Absent),
+        },
+        now,
+    )
+}
+
+/// The server the Tauri app's `desktop.json` names, whose origin the
+/// WebView's storage is read for.
+fn desktop_server(config: &Path) -> Option<String> {
+    let desktop = read_json(&config.join(DESKTOP))?;
+    desktop.get("server")?.as_str().map(str::to_owned)
+}
+
+fn import_from(
+    config: &Path,
+    old: Option<&Path>,
+    webview: impl FnOnce(Option<&str>) -> Result<Found, String>,
     now: i64,
 ) -> Result<Option<Imported>, String> {
     let settings_path = config.join(SETTINGS);
     if settings_path.exists() {
         return Ok(None);
     }
-    let legacy = read_json(&config.join(LEGACY_FILE));
+    // The export is a filtered snapshot of the same storage, so it wins
+    // whole; an Err here returns before anything is written.
+    let (legacy, from) = match read_json(&config.join(LEGACY_FILE)) {
+        Some(legacy) => (Some(legacy), Some(LEGACY_FILE)),
+        None => match webview(desktop_server(config).as_deref())? {
+            Found::Entries(entries, source) => (
+                Some(serde_json::json!({ "localStorage": entries })),
+                Some(source),
+            ),
+            Found::Absent => (None, None),
+        },
+    };
     let old_settings = old.and_then(|dir| read_json(&dir.join(SETTINGS)));
     let old_server = old
         .and_then(|dir| std::fs::read_to_string(dir.join("server")).ok())
@@ -196,7 +259,10 @@ pub fn import_into(
     if legacy.is_none() && old_settings.is_none() && old_server.is_none() {
         return Ok(None);
     }
-    let mut imported = Imported::default();
+    let mut imported = Imported {
+        from,
+        ..Imported::default()
+    };
 
     let entries = legacy.as_ref().map(entries).unwrap_or_default();
     // The Tauri app's export is the newer one: it goes over the older build's.
@@ -333,6 +399,123 @@ mod tests {
         fn json(&self, name: &str) -> Value {
             read_json(&self.config.join(name)).unwrap_or(Value::Null)
         }
+
+        /// The Tauri app's data directory (`<local data>/<identifier>`).
+        fn local(&self) -> PathBuf {
+            self.root.join("local")
+        }
+
+        fn server(&self, server: &str) {
+            write_json(
+                &self.config.join(DESKTOP),
+                &json!({ "server": server }),
+                false,
+            )
+            .unwrap();
+        }
+    }
+
+    /// The WebView stores of the fixtures (tests/fixtures/webview): WebView2's
+    /// format everywhere, WebKitGTK's on Linux, where its reader is built.
+    #[derive(Clone, Copy, Debug)]
+    enum Store {
+        Chromium,
+        #[cfg(target_os = "linux")]
+        WebKit,
+    }
+
+    const STORES: &[Store] = &[
+        Store::Chromium,
+        #[cfg(target_os = "linux")]
+        Store::WebKit,
+    ];
+
+    impl Store {
+        /// Where the store goes in the Tauri app's data directory.
+        fn dir(self, dirs: &Dirs) -> PathBuf {
+            match self {
+                Store::Chromium => dirs.local().join("EBWebView/Default/Local Storage/leveldb"),
+                #[cfg(target_os = "linux")]
+                Store::WebKit => dirs.local().join("localstorage"),
+            }
+        }
+
+        fn fill(self, dirs: &Dirs) -> PathBuf {
+            let name = match self {
+                Store::Chromium => "chromium",
+                #[cfg(target_os = "linux")]
+                Store::WebKit => "webkitgtk",
+            };
+            let from = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/webview")
+                .join(name);
+            let to = self.dir(dirs);
+            std::fs::create_dir_all(&to).unwrap();
+            for entry in std::fs::read_dir(from).unwrap() {
+                let entry = entry.unwrap();
+                if entry.file_name() != ".gitignore" {
+                    std::fs::copy(entry.path(), to.join(entry.file_name())).unwrap();
+                }
+            }
+            to
+        }
+
+        fn source(self) -> &'static str {
+            match self {
+                Store::Chromium => "WebView2",
+                #[cfg(target_os = "linux")]
+                Store::WebKit => "WebKitGTK",
+            }
+        }
+
+        /// The import with this store as the WebView's, as the platform's
+        /// `local_storage` would read it.
+        fn import(self, dirs: &Dirs) -> Result<Option<Imported>, String> {
+            let local = dirs.local();
+            import_from(
+                &dirs.config,
+                Some(&dirs.old),
+                |server| match self {
+                    Store::Chromium => webview::chromium(&local, server),
+                    #[cfg(target_os = "linux")]
+                    Store::WebKit => webview::webkitgtk(&local, server),
+                },
+                NOW,
+            )
+        }
+    }
+
+    /// What the export of [`export`] and the stores of the fixture page
+    /// (port 8123) give, `draft` the text of the fresh draft.
+    fn assert_taken(dirs: &Dirs, imported: &Imported, draft: &str) {
+        assert_eq!(imported.volumes, 1);
+        assert_eq!(imported.drafts, 1);
+        assert!(!imported.server);
+
+        let settings = dirs.json(SETTINGS);
+        assert_eq!(settings["inputGain"], 1.5);
+        assert_eq!(settings["voiceInput"], "ptt");
+        assert_eq!(settings["pttKey"], "F13");
+        assert_eq!(settings["sourceAudioShare"], "off");
+        assert_eq!(settings["uiScale"], "large");
+        assert_eq!(settings["compactRooms"], true);
+        assert!(settings.get("theme").is_none());
+
+        let state: Stored = serde_json::from_value(dirs.json(STATE)).unwrap();
+        let account = &state.accounts[&Uuid::parse_str(ACCOUNT).unwrap()];
+        let friend = Uuid::parse_str(FRIEND).unwrap();
+        assert_eq!(
+            account.volumes[&friend],
+            UserVolume {
+                volume: 0.5,
+                muted: true
+            }
+        );
+        assert_eq!(
+            account.drafts[&Uuid::parse_str(CHANNEL).unwrap()].text,
+            draft
+        );
+        assert!(!account.drafts.contains_key(&friend));
     }
 
     impl Drop for Dirs {
@@ -363,46 +546,134 @@ mod tests {
     fn the_tauri_apps_export_becomes_settings_volumes_and_drafts() {
         let dirs = Dirs::new("export");
         write_json(&dirs.config.join(LEGACY_FILE), &export(), false).unwrap();
-        let imported = import_into(&dirs.config, Some(&dirs.old), NOW)
+        let imported = import_into(&dirs.config, Some(&dirs.old), None, NOW)
             .unwrap()
             .unwrap();
-        assert_eq!(imported.volumes, 1);
-        assert_eq!(imported.drafts, 1);
-        assert!(!imported.server);
-
-        let settings = dirs.json(SETTINGS);
-        assert_eq!(settings["inputGain"], 1.5);
-        assert_eq!(settings["voiceInput"], "ptt");
-        assert_eq!(settings["pttKey"], "F13");
-        assert_eq!(settings["sourceAudioShare"], "off");
-        assert_eq!(settings["uiScale"], "large");
-        assert_eq!(settings["compactRooms"], true);
-        assert!(settings.get("theme").is_none());
-
-        let state: Stored = serde_json::from_value(dirs.json(STATE)).unwrap();
-        let account = &state.accounts[&Uuid::parse_str(ACCOUNT).unwrap()];
-        let friend = Uuid::parse_str(FRIEND).unwrap();
-        assert_eq!(
-            account.volumes[&friend],
-            UserVolume {
-                volume: 0.5,
-                muted: true
-            }
-        );
-        assert_eq!(
-            account.drafts[&Uuid::parse_str(CHANNEL).unwrap()].text,
-            "bis gleich"
-        );
-        assert!(!account.drafts.contains_key(&friend));
+        assert_taken(&dirs, &imported, "bis gleich");
+        assert_eq!(imported.from, Some(LEGACY_FILE));
         // The source stays for the Tauri app.
         assert!(dirs.config.join(LEGACY_FILE).exists());
+    }
+
+    #[test]
+    fn the_webview_store_becomes_settings_volumes_and_drafts() {
+        for &store in STORES {
+            let dirs = Dirs::new("webview");
+            store.fill(&dirs);
+            dirs.server("http://127.0.0.1:8123/");
+            let imported = store.import(&dirs).unwrap().unwrap();
+            assert_taken(&dirs, &imported, "bis gleich 👋");
+            assert_eq!(imported.from, Some(store.source()), "{store:?}");
+            assert_eq!(
+                imported.to_string(),
+                format!(
+                    "7 device settings, no server, 1 volumes, 1 drafts from {}",
+                    store.source()
+                )
+            );
+            // Nothing in the store that the import does not take.
+            let settings = dirs.json(SETTINGS);
+            assert!(settings.get("greeting").is_none(), "{store:?}");
+        }
+    }
+
+    #[test]
+    fn the_export_goes_before_the_webview() {
+        for &store in STORES {
+            let dirs = Dirs::new("export-first");
+            store.fill(&dirs);
+            // 8124's store has inputGain 0.75, the export 1.5.
+            dirs.server("http://127.0.0.1:8124");
+            write_json(&dirs.config.join(LEGACY_FILE), &export(), false).unwrap();
+            let imported = store.import(&dirs).unwrap().unwrap();
+            assert_taken(&dirs, &imported, "bis gleich");
+            assert_eq!(imported.from, Some(LEGACY_FILE));
+        }
+    }
+
+    #[test]
+    fn an_unreadable_export_falls_back_to_the_webview() {
+        for &store in STORES {
+            let dirs = Dirs::new("export-damaged");
+            store.fill(&dirs);
+            dirs.server("http://127.0.0.1:8123");
+            std::fs::write(dirs.config.join(LEGACY_FILE), "{halb").unwrap();
+            let imported = store.import(&dirs).unwrap().unwrap();
+            assert_taken(&dirs, &imported, "bis gleich 👋");
+            assert_eq!(imported.from, Some(store.source()));
+        }
+    }
+
+    #[test]
+    fn only_the_configured_servers_origin() {
+        for &store in STORES {
+            let dirs = Dirs::new("origin");
+            store.fill(&dirs);
+            dirs.server("http://127.0.0.1:8124");
+            store.import(&dirs).unwrap().unwrap();
+            let settings = dirs.json(SETTINGS);
+            assert_eq!(settings["inputGain"], 0.75, "{store:?}");
+            assert_eq!(settings["uiScale"], "small");
+            assert_eq!(settings["sourceAudioShare"], "on");
+
+            // Two servers in the store and none configured: nothing.
+            let dirs = Dirs::new("origin-none");
+            store.fill(&dirs);
+            assert_eq!(store.import(&dirs).unwrap(), None, "{store:?}");
+            assert!(!dirs.config.join(SETTINGS).exists());
+            // Neither of them the configured one: nothing either.
+            dirs.server("https://chat.example.org");
+            assert_eq!(store.import(&dirs).unwrap(), None, "{store:?}");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_only_server_in_the_store_is_taken_without_one_configured() {
+        let dirs = Dirs::new("origin-one");
+        let store = Store::WebKit.fill(&dirs);
+        for wal in ["", "-wal"] {
+            std::fs::remove_file(store.join(format!("http_127.0.0.1_8124.localstorage{wal}")))
+                .unwrap();
+        }
+        let imported = Store::WebKit.import(&dirs).unwrap().unwrap();
+        assert_taken(&dirs, &imported, "bis gleich 👋");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_store_that_cannot_be_read_now_writes_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+        for &store in STORES {
+            let dirs = Dirs::new("locked");
+            let dir = store.fill(&dirs);
+            dirs.server("http://127.0.0.1:8123");
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let locked = std::fs::read_dir(&dir).is_err();
+            let first = store.import(&dirs);
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+            if !locked {
+                eprintln!("{store:?}: mode 000 does not lock this user (root) out; skipped");
+                continue;
+            }
+            assert!(first.is_err(), "{store:?}: {first:?}");
+            assert!(!dirs.config.join(SETTINGS).exists());
+            assert!(!dirs.config.join(STATE).exists());
+            // The next start takes it.
+            let imported = store.import(&dirs).unwrap().unwrap();
+            assert_taken(&dirs, &imported, "bis gleich 👋");
+        }
     }
 
     #[test]
     fn only_once_and_never_over_the_apps_own_settings() {
         let dirs = Dirs::new("once");
         write_json(&dirs.config.join(LEGACY_FILE), &export(), false).unwrap();
-        assert!(import_into(&dirs.config, None, NOW).unwrap().is_some());
+        assert!(
+            import_into(&dirs.config, None, None, NOW)
+                .unwrap()
+                .is_some()
+        );
         // A setting changed in this app afterwards stays.
         write_json(
             &dirs.config.join(SETTINGS),
@@ -410,7 +681,7 @@ mod tests {
             false,
         )
         .unwrap();
-        assert_eq!(import_into(&dirs.config, None, NOW).unwrap(), None);
+        assert_eq!(import_into(&dirs.config, None, None, NOW).unwrap(), None);
         assert_eq!(dirs.json(SETTINGS)["inputGain"], 0.7);
     }
 
@@ -430,7 +701,7 @@ mod tests {
             false,
         )
         .unwrap();
-        let imported = import_into(&dirs.config, Some(&dirs.old), NOW)
+        let imported = import_into(&dirs.config, Some(&dirs.old), None, NOW)
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -439,7 +710,8 @@ mod tests {
                 settings: 2,
                 server: true,
                 volumes: 0,
-                drafts: 0
+                drafts: 0,
+                from: None
             }
         );
         assert_eq!(dirs.json(SETTINGS)["outputVolume"], 2.0);
@@ -472,7 +744,7 @@ mod tests {
             },
         );
         write_json(&dirs.config.join(STATE), &state, true).unwrap();
-        let imported = import_into(&dirs.config, Some(&dirs.old), NOW)
+        let imported = import_into(&dirs.config, Some(&dirs.old), None, NOW)
             .unwrap()
             .unwrap();
         assert!(!imported.server);
@@ -501,7 +773,7 @@ mod tests {
         write_json(&dirs.config.join(LEGACY_FILE), &export(), false).unwrap();
         std::fs::write(dirs.config.join(DESKTOP), "{halb").unwrap();
         std::fs::write(dirs.config.join(STATE), r#"{"accounts": 3}"#).unwrap();
-        let imported = import_into(&dirs.config, Some(&dirs.old), NOW)
+        let imported = import_into(&dirs.config, Some(&dirs.old), None, NOW)
             .unwrap()
             .unwrap();
         assert!(!imported.server);
@@ -521,13 +793,13 @@ mod tests {
     fn nothing_to_take_writes_nothing() {
         let dirs = Dirs::new("none");
         assert_eq!(
-            import_into(&dirs.config, Some(&dirs.old), NOW).unwrap(),
+            import_into(&dirs.config, Some(&dirs.old), None, NOW).unwrap(),
             None
         );
         assert!(!dirs.config.join(SETTINGS).exists());
         // A damaged export counts as none.
         std::fs::write(dirs.config.join(LEGACY_FILE), "{kaputt").unwrap();
-        assert_eq!(import_into(&dirs.config, None, NOW).unwrap(), None);
+        assert_eq!(import_into(&dirs.config, None, None, NOW).unwrap(), None);
         // A flat object of entries, without the wrapper, is read too.
         write_json(
             &dirs.config.join(LEGACY_FILE),
@@ -535,7 +807,7 @@ mod tests {
             false,
         )
         .unwrap();
-        let imported = import_into(&dirs.config, None, NOW).unwrap().unwrap();
+        let imported = import_into(&dirs.config, None, None, NOW).unwrap().unwrap();
         assert_eq!(imported.settings, 1);
         assert_eq!(dirs.json(SETTINGS)["reducedMotion"], true);
     }
