@@ -1,16 +1,57 @@
-# The workflows pin every action to a commit SHA with its version as a
-# comment (#299, checked by the deployment tests in ci.yml). Dependabot moves the pins and
-# comments to new releases, all actions in one weekly pull request.
+# Dependabot keeps dependencies current with small, weekly PRs per ecosystem.
+# The config lives on main (where GitHub discovers it). Actions PRs target
+# main; npm and Cargo PRs target the development line (v0.9). When a new
+# version branch (e.g. v0.10) becomes the development line, update target-branch
+# here and merge main into the new line so it receives the PRs.
 version: 2
 updates:
+  # --- GitHub Actions (workflows on main) ---
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 5
     groups:
-      actions:
+      actions-minor-patch:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
     ignore:
       # Pinned to the branch of the toolchain rust-toolchain.toml names; its
       # only tag is v1. It moves by hand with rust-toolchain.toml.
       - dependency-name: dtolnay/rust-toolchain
+
+  # --- npm (web/) ---
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    target-branch: v0.9
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # --- Cargo (backend/) ---
+  - package-ecosystem: cargo
+    directory: /backend
+    schedule:
+      interval: weekly
+    target-branch: v0.9
+    open-pull-requests-limit: 3
+    groups:
+      cargo-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # --- Cargo (desktop/) ---
+  - package-ecosystem: cargo
+    directory: /desktop
+    schedule:
+      interval: weekly
+    target-branch: v0.9
+    open-pull-requests-limit: 3
+    groups:
+      cargo-desktop-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
