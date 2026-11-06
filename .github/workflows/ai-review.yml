@@ -147,8 +147,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RESULT: ${{ steps.review.outputs.structured_output }}
+          EXECUTION: ${{ steps.review.outputs.execution_file }}
         run: |
           verdict=$(printf '%s' "$RESULT" | jq -r '.verdict // empty' 2>/dev/null || true)
+          # The action hides Claude's output; without a verdict, its result says why.
+          if [ -z "$verdict" ] && [ -f "$EXECUTION" ]; then
+            jq -r '.[] | select(.type == "result") | "Claude: \(.subtype), is_error \(.is_error): \(.result // "")"' \
+              "$EXECUTION" | cut -c1-2000 || true
+          fi
           url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           case "$verdict" in
             pass) state=success; text="Keine blockierenden Befunde" ;;
