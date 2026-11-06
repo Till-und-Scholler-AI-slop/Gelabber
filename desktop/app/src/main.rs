@@ -13,6 +13,7 @@
 //! page opens in a new tab (chat links) go to the system browser.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod export;
 mod frames;
 mod media;
 mod notify;
@@ -153,7 +154,8 @@ fn allow_server(app: &AppHandle, origin: &Url) -> tauri::Result<()> {
             .permission("notify")
             .permission("ptt")
             .permission("update")
-            .permission("allow-open-setup"),
+            .permission("allow-open-setup")
+            .permission("allow-settings-export"),
     )?;
     if let Ok(mut server) = SERVER.lock() {
         *server = Some(origin.clone());
@@ -610,6 +612,7 @@ fn main() {
             update::update_dismiss,
             update::update_check,
             update::update_set_auto_check,
+            export::settings_export,
         ]))
         .on_page_load(|webview, payload| {
             // A reload or navigation leaves the old page's calls and
@@ -648,6 +651,7 @@ fn main() {
                 .min_inner_size(480.0, 360.0)
                 .initialization_script(SHORTCUTS)
                 .initialization_script(update::BANNER)
+                .initialization_script(export::EXPORT)
                 // Ctrl/Cmd + plus, minus and 0 zoom like in a browser, on
                 // top of the in-app Textgröße.
                 .zoom_hotkeys_enabled(true)

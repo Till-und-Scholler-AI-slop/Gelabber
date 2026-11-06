@@ -1,0 +1,14 @@
+{
+ "channel_id": "e0325764-662e-4dac-9763-ca8c561b4b1d",
+ "server_id": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+ "read_message_id": "ef23b60f-2828-4d7c-985e-9c75cc875f79",
+ "read_at": "2026-11-05T15:54:14.861899Z",
+ "read_order": 17,
+ "membership_at": "2026-11-05T15:54:14.020275Z",
+ "latest_order": 17,
+ "unread_count": 0,
+ "mention_count": 0,
+ "level": "all",
+ "muted": false,
+ "muted_until": null
+}

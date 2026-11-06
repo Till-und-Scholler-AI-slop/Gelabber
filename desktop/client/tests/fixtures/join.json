@@ -1,0 +1,20 @@
+{
+ "id": "a0010e95-f791-4f3c-b6bc-046a464f02f7",
+ "name": "Capture",
+ "owner_id": "3796349f-6f8f-4bcf-826f-d2237e2fe9d3",
+ "icon_url": null,
+ "created_at": "2026-11-05T15:54:14.020275Z",
+ "role": "member",
+ "permissions": [
+  "send_messages",
+  "send_files",
+  "join_voice",
+  "go_live"
+ ],
+ "member_permissions": [
+  "send_messages",
+  "send_files",
+  "join_voice",
+  "go_live"
+ ]
+}

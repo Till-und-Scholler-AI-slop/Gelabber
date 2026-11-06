@@ -63,3 +63,6 @@ pub const UPDATE_COMMANDS: &[&str] = &[
     "update_check",
     "update_set_auto_check",
 ];
+/// The web client's local settings for the native app (src/export.rs),
+/// granted to the server origin.
+pub const EXPORT_COMMANDS: &[&str] = &["settings_export"];
