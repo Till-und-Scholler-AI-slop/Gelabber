@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:26.8.2-trixie AS build
+FROM node:26.12.1-trixie AS build
 WORKDIR /src
 # `.npmrc` has `legacy-peer-deps=true` (TS 7 vs typescript-eslint 8.70).
 # Copy it before `npm ci` — Node 26's npm otherwise fails the peer check.
@@ -8,7 +8,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM nginx:1.31.5-alpine
+FROM nginx:1.31.7-alpine
 ARG OCI_REVISION=unknown
 ARG OCI_VERSION=unknown
 ARG OCI_CREATED=unknown
