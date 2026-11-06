@@ -808,4 +808,36 @@ mod tests {
         nav.navigate("/forgot-password");
         assert!(!nav.forward());
     }
+
+    /// The window shows the shell on its own session check, so the page can
+    /// load a server before the client's check answers. That answer names
+    /// the same account: what was loaded stays (no "Navigation wird geladen").
+    #[test]
+    fn the_clients_session_check_keeps_what_the_page_loaded() {
+        use std::time::{Duration, Instant};
+        use testkit::{FakeApi, HOME, workspace};
+        let _config = crate::platform::paths::testing::TempConfig::new("app-session");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let client = gelabber_client::Client::new(&api.origin).unwrap();
+        let home: uuid::Uuid = HOME.parse().unwrap();
+        let wait = |what: &str, done: &dyn Fn() -> bool| {
+            let start = Instant::now();
+            while !done() {
+                assert!(start.elapsed() < Duration::from_secs(10), "{what}");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        client.open_server(home);
+        wait("the server", &|| {
+            client.with_state(|s| s.detail(home).is_some())
+        });
+        client.restore_session();
+        wait("the workspace", &|| {
+            client.with_state(|s| s.servers_loaded && s.me().is_some())
+        });
+        assert!(
+            client.with_state(|s| s.detail(home).is_some()),
+            "the loaded server was thrown away"
+        );
+    }
 }
