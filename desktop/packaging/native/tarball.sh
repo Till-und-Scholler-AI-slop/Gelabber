@@ -24,7 +24,7 @@ out="${2:-.}"
 test -f "$lib" || { echo "no media core at $lib" >&2; exit 1; }
 notices="$here/THIRD-PARTY-NOTICES.txt"
 test -f "$notices" || {
-  echo "$notices is missing: run desktop/packaging/third-party-notices.py --app native" >&2
+  echo "$notices is missing: run desktop/packaging/third-party-notices.py" >&2
   exit 1
 }
 
