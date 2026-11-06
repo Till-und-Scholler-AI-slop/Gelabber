@@ -178,10 +178,16 @@ the reason and a retry button. **Strg+Umschalt+S** and "Server wechseln …" in
 the web client's user menu lead back to that page at any time; **F5** or
 **Strg+R** reload the current page.
 Only the configured origin gets the `media`, `shell` and `update` permission sets
-(`app/permissions/`) plus `allow-open-setup`; every page load closes the previous page's
+(`app/permissions/`) plus `allow-open-setup` and `allow-settings-export`; every page load closes the previous page's
 transports, producers and sources. Tauri cannot take such a grant back, so
 after a change of server the app itself refuses every command that does not
 come from the setup page or the current server's pages.
+
+For the native app of 0.9, the server's pages keep the web client's voice
+settings, Live sound, interface choices, volumes and drafts in
+`legacy-settings.json` next to `desktop.json` (`app/src/export.rs`): on load,
+when the window is hidden and once a minute, only when they changed. The
+native app takes them over on its first start.
 
 The `shell` commands (`app/src/shell.rs`) carry the web client's unread state
 out of the window: a number on the launcher (Linux, where the desktop shows
