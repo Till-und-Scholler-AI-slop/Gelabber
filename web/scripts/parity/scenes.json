@@ -1008,6 +1008,89 @@
       "before": "theme lena light"
     },
     {
+      "name": "light-voice-joined",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        }
+      ],
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-voice-camera",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        }
+      ],
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-voice-focus",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "clicktext": "Fokus"
+        }
+      ],
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-voice-kino",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "key": "k"
+        }
+      ],
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-settings-audio",
+      "path": "/settings/audio",
+      "user": "lena",
+      "desktop": true,
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-server-settings",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "before": "theme lena light"
+    },
+    {
       "name": "theme-flexoki-light",
       "path": "/s/{home}/c/{allgemein}",
       "user": "lena",
