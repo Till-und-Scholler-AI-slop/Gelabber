@@ -101,9 +101,8 @@ jobs:
             echo "::error::desktop/Cargo.toml says $app, the release is $RELEASE_TAG: the version there (and in desktop/Cargo.lock) comes first"
             exit 1
           fi
-      # The Windows app updates itself from the release (desktop/ui/src/
-      # platform/update.rs): desktop-native.yml signs the installer and fails
-      # without the key. Found out here, before the tag and the release exist.
+      # desktop-native.yml signs the installer the Windows app updates from and
+      # fails without the key: found out here, before the tag and release exist.
       - name: Desktop updater key
         if: ${{ !inputs.refresh_latest_only }}
         env:

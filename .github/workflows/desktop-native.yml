@@ -400,31 +400,6 @@ jobs:
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
-  # The core's Windows side, type-checked and linted on Linux in minutes (an
-  # empty directory stands in for the C++). The app's crates need a Windows C
-  # compiler (aws-lc-sys) and are linted in core-windows. No Rust cache.
-  rust-windows:
-    name: Rust for Windows (type check on Linux)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@18f0487477426dce244608110aa2660c2893deb7 # 1.98.1 (branch)
-        with:
-          components: clippy
-          targets: x86_64-pc-windows-msvc
-
-      - name: Clippy for Windows
-        run: |
-          set -euo pipefail
-          GELABBER_MEDIA_LIB_DIR="$(mktemp -d)"
-          export GELABBER_MEDIA_LIB_DIR
-          cargo clippy --locked --manifest-path desktop/Cargo.toml --target x86_64-pc-windows-msvc \
-            -p gelabber-media-core --lib -- -D warnings
-
   # The app's THIRD-PARTY-NOTICES.txt must match desktop/Cargo.lock and the
   # build configuration (desktop/packaging/third-party-notices.py writes
   # it). The release uploads wait for this job.
@@ -454,11 +429,8 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 -m unittest discover -s desktop/packaging/tests -v
 
-  # Windows: core DLL and app; after merge also the installer, installed over
-  # the Tauri app, started and removed like a user would; then the checks.
-  # Release profile throughout, so the tests run against the DLL that ships.
-  # PowerShell scripts with several commands set
-  # $PSNativeCommandUseErrorActionPreference.
+  # Windows in the release profile (the DLL that ships): core, app and checks;
+  # after merge also the installer, over the Tauri app, started and removed.
   core-windows:
     name: Native core and app (Windows x64)
     needs: libwebrtc-windows
@@ -720,9 +692,13 @@ jobs:
           $env:GELABBER_CONFIG_DIR = (New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'native-update')).FullName
           $env:GELABBER_SMOKE = '10'
           Run $setup '/P', '/UPDATE', '/R', '/ARGS', '--server', '"https://gelabber.invalid"' 10
-          $restarted = Get-Process -Name gelabber -ErrorAction SilentlyContinue
+          $restarted = @(Get-Process -Name gelabber -ErrorAction SilentlyContinue)
           if (-not $restarted) { throw 'the update did not start gelabber.exe (/R)' }
-          $restarted | Wait-Process -Timeout 120
+          foreach ($process in $restarted) { $null = $process.Handle }
+          foreach ($process in $restarted) {
+            if (-not $process.WaitForExit(120 * 1000)) { throw 'the restarted gelabber.exe did not end within 2 minutes' }
+            if ($process.ExitCode -ne 0) { throw "the restarted gelabber.exe ended with exit code $($process.ExitCode), not 0 (painted)" }
+          }
           Remove-Item Env:GELABBER_SMOKE, Env:GELABBER_CONFIG_DIR
           Installed $tauriShortcuts
           Removed
@@ -960,9 +936,8 @@ jobs:
         if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
         run: cargo fmt --manifest-path desktop/Cargo.toml --all -- --check
 
-  # The pacman repository (Arch/Omarchy): the package, signed database, and a
-  # user's upgrade from the Tauri package, upgrade and removal against it.
-  # Publishing is separate.
+  # The pacman repository (Arch/Omarchy): package, signed database, a user's
+  # upgrade from the Tauri package, upgrade and removal. Publishing is separate.
   arch-repo:
     name: Arch package and repository
     if: github.event_name != 'pull_request'
