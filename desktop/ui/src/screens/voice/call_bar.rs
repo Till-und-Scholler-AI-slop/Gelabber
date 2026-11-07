@@ -889,11 +889,7 @@ fn connection_popover(ui: &mut Ui, app: &mut AppCtx, button: &egui::Response, st
             );
             ui.add_space(12.0);
             let top = ui.cursor().min;
-            ui.painter().hline(
-                top.x..=top.x + width,
-                top.y + 0.5,
-                Stroke::new(1.0, c.border),
-            );
+            hairline_h(ui.painter(), &theme, top.x..=top.x + width, top.y);
             ui.add_space(1.0);
             let rate = |bps: Option<f64>| {
                 bps.map_or("–".to_owned(), |b| {
@@ -920,11 +916,7 @@ fn connection_popover(ui: &mut Ui, app: &mut AppCtx, button: &egui::Response, st
                     row.center().y,
                 );
                 paint_mid(ui.painter(), &v, row.right() - v.width(), row.center().y);
-                ui.painter().hline(
-                    row.left()..=row.right(),
-                    row.bottom() + 0.5,
-                    Stroke::new(1.0, c.border),
-                );
+                hairline_h(ui.painter(), &theme, row.x_range(), row.bottom());
                 ui.add_space(1.0);
             }
             ui.add_space(14.0);
@@ -1075,11 +1067,7 @@ fn live_menu(
             }
             ui.add_space(4.0);
             let top = ui.cursor().min;
-            ui.painter().hline(
-                top.x..=top.x + 320.0 - 18.0,
-                top.y + 0.5,
-                Stroke::new(1.0, c.border),
-            );
+            hairline_h(ui.painter(), &theme, top.x..=top.x + 320.0 - 18.0, top.y);
             ui.add_space(1.0 + 4.0);
             // "Ton mitsenden" with its switch track.
             let hint = if p.source_audio_app.is_empty() {

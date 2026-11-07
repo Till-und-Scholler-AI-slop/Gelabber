@@ -147,11 +147,7 @@ fn setting_row(ui: &mut Ui, label: &str, last: bool, content: impl FnOnce(&mut U
     let h = child.min_rect().height().max(25.5);
     let bottom = top.y + 12.0 + h + 12.0;
     if !last {
-        ui.painter().hline(
-            top.x..=top.x + width,
-            bottom + 0.5,
-            Stroke::new(1.0, c.border),
-        );
+        crate::widgets::rule_h(ui.painter(), c.border, top.x..=top.x + width, bottom);
     }
     ui.advance_cursor_after_rect(Rect::from_min_max(
         top,

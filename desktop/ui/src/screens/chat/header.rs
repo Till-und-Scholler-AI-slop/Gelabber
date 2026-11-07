@@ -61,11 +61,7 @@ pub fn show(
     let rect = Rect::from_min_size(page.min, vec2(page.width(), HEIGHT));
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, c.bg);
-    painter.rect_filled(
-        Rect::from_min_max(pos2(rect.left(), rect.bottom() - 1.0), rect.max),
-        0.0,
-        c.border,
-    );
+    crate::widgets::rule_h(&painter, c.border, rect.x_range(), rect.bottom() - 1.0);
     let mid = rect.top() + (HEIGHT - 1.0) / 2.0;
     let mut out = HeaderOut {
         search_changed: false,

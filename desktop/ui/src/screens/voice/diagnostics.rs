@@ -296,11 +296,7 @@ pub fn status(
 
     // Figures.
     if !compact {
-        painter.hline(
-            inner_left..=inner_left + inner_w,
-            y + 0.5,
-            Stroke::new(1.0, c.border),
-        );
+        crate::widgets::rule_h(&painter, c.border, inner_left..=inner_left + inner_w, y);
         y += 1.0 + 14.0;
     }
     let cols = if compact { 2 } else { 3 };
@@ -395,11 +391,7 @@ pub fn status(
         );
     }
     y += bars_area;
-    painter.hline(
-        inner_left..=inner_left + inner_w,
-        y + 0.5,
-        Stroke::new(1.0, c.border),
-    );
+    crate::widgets::rule_h(&painter, c.border, inner_left..=inner_left + inner_w, y);
     y += 1.0 + 5.0;
     let from = Block::single(ui, &format!("vor {seconds} s"), text::META, c.subtle);
     let now = Block::single(ui, "jetzt", text::META, c.subtle);
@@ -466,8 +458,7 @@ fn facts(ui: &mut Ui, rows: &[(&str, String, bool)], width: f32, style: TextStyl
             );
             label.paint(ui.painter(), pos2(x, *y + pad));
             value.paint(ui.painter(), pos2(x + w - value.width(), *y + pad));
-            ui.painter()
-                .hline(x..=x + w, *y + row_h - 0.5, Stroke::new(1.0, c.border));
+            crate::widgets::rule_h(ui.painter(), c.border, x..=x + w, *y + row_h - 1.0);
         }
         *y += row_h;
     };
@@ -807,7 +798,7 @@ fn flows_table(ui: &mut Ui, groups: &[FlowGroup], width: f32) {
     let mut y = top.y + head_h;
     for (row, g) in groups.iter().enumerate() {
         if row > 0 {
-            painter.hline(top.x..=top.x + width, y + 0.5, Stroke::new(1.0, c.border));
+            crate::widgets::rule_h(&painter, c.border, top.x..=top.x + width, y);
             y += 1.0;
         }
         let count = if g.count < 2 {
@@ -982,10 +973,11 @@ fn lines(ui: &mut Ui, items: &[String], width: f32) {
         let b = Block::wrapped(ui, item, text::META, theme.c.text, width);
         let (r, _) = ui.allocate_exact_size(vec2(width, b.height() + 10.0), Sense::hover());
         b.paint(ui.painter(), r.min + vec2(0.0, 5.0));
-        ui.painter().hline(
+        crate::widgets::rule_h(
+            ui.painter(),
+            theme.c.border,
             r.left()..=r.right(),
-            r.bottom() - 0.5,
-            Stroke::new(1.0, theme.c.border),
+            r.bottom() - 1.0,
         );
     }
 }
