@@ -124,10 +124,14 @@ FetchContent_Declare(
   URL_HASH SHA256=975488a6b6ed404b176f9e7a72b418470e50b1e7596f875eb7799f5b785e3ebf
   DOWNLOAD_NAME rnnoise-904a876d.tar.gz
 )
+# The repo's build-deps release mirrors the model: xiph.org was down on
+# 2026-11-07. CMake tries the URLs in turn; TIMEOUT moves on from a dead host.
 FetchContent_Declare(
   rnnoise_model
   URL https://media.xiph.org/rnnoise/models/rnnoise_data-0b50c45.tar.gz
+      https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/download/build-deps/rnnoise_data-0b50c45.tar.gz
   URL_HASH SHA256=4ac81c5c0884ec4bd5907026aaae16209b7b76cd9d7f71af582094a2f98f4b43
+  TIMEOUT 120
 )
 FetchContent_MakeAvailable(rnnoise rnnoise_model)
 # The model archive holds src/rnnoise_data.{c,h}; extraction may strip src/.
