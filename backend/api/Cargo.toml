@@ -35,7 +35,7 @@ url = "2.5.8"
 p256 = { version = "0.14.0", default-features = false, features = ["ecdh", "ecdsa", "std"] }
 hkdf = "0.13.0"
 aes-gcm = "0.11.1"
-base64 = "0.22.1"
+base64 = "0.23.1"
 # Page charsets for link previews (#254).
 encoding_rs = "0.8.35"
 # Account mail (#195): SMTP submission to the operator's relay, rustls with
