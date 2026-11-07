@@ -53,7 +53,8 @@ Web (`web/`, Node from `engines` in `package.json`): `npm run lint`,
 `npm test`, `npm run test:checks`, `npm run build`.
 
 Desktop (`desktop/`) is its own Cargo workspace and needs a prebuilt libwebrtc
-package; see `desktop/README.md`.
+package; see `desktop/README.md` ("Native app" for the 0.9 app's build,
+smoke test, parity and packages).
 
 ## CI workflows (`.github/workflows`)
 

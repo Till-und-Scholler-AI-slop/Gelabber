@@ -1,0 +1,15 @@
+{
+ "id": "575812d0-f920-4486-98ae-64ad0e573eaf",
+ "upload_url": "http://127.0.0.1:59000/gelabber/att/575812d0-f920-4486-98ae-64ad0e573eaf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=gelabber%2F20261105%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20261105T155414Z&X-Amz-Expires=600&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost&X-Amz-Signature=0",
+ "headers": {
+  "Content-Length": "5",
+  "Content-Type": "text/plain"
+ },
+ "expires_in": 600,
+ "attachment": {
+  "id": "575812d0-f920-4486-98ae-64ad0e573eaf",
+  "filename": "a.txt",
+  "content_type": "text/plain",
+  "size": 5
+ }
+}

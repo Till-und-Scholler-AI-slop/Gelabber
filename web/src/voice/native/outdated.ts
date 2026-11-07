@@ -1,6 +1,5 @@
-// A desktop app older than the web client it loads. The server serves one
-// client to every installed app; an old app does not report the hardware
-// codecs, so the client quietly sends VP8. Say so once, so the user updates.
+// A desktop app older than the web client it loads. From 0.9 every such app
+// is the Tauri app, which 0.9 replaces; say once where its successor comes from.
 
 import { ERROR_MS, notify } from "../../components/toasts.ts";
 import { APP_VERSION } from "../../version.ts";
@@ -32,7 +31,7 @@ export async function warnIfDesktopOutdated(): Promise<void> {
   warned = true;
   const versions = app === null ? "" : ` (v${app}, Server v${APP_VERSION})`;
   notify(
-    `Die Desktop-App ist veraltet${versions}. Aktualisiere sie, damit Hardware-Codecs wie AV1 und H.264 genutzt werden.`,
+    `Die Desktop-App ist veraltet${versions}. Ab 0.9 gibt es eine neue Desktop-App: unter Windows ab v0.7 über das App-Update, unter Arch mit pacman -Syu, sonst gelabber-native-* aus dem GitHub-Release.`,
     { duration: ERROR_MS },
   );
 }

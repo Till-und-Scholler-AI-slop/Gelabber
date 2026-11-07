@@ -1,4 +1,4 @@
-"""How desktop-release.yml attaches the apps to a release: python3 -m unittest
+"""How desktop-release.yml attaches the app to a release: python3 -m unittest
 discover -s desktop/packaging/tests
 
 Both uploads wait for the whole build of desktop-native.yml, the third-party
@@ -42,7 +42,7 @@ class ReleaseWiring(unittest.TestCase):
         sample = 'on: {}\njobs:\n  a:\n    runs-on: x\n  b:\n    needs: a\n  c:\n    needs: [a, b]\n'
         self.assertEqual(jobs(sample), {'a': set(), 'b': {'a'}, 'c': {'a', 'b'}})
 
-    def test_the_build_holds_the_notices_and_both_apps(self):
+    def test_the_build_holds_the_notices_and_both_packages(self):
         self.assertIn('    uses: ./.github/workflows/desktop-native.yml\n', WORKFLOW.read_text())
         build = jobs(BUILD.read_text())
         for job in ('notices', 'arch-repo', 'core-windows'):
@@ -56,6 +56,84 @@ class ReleaseWiring(unittest.TestCase):
 
     def test_the_repository_is_published_after_the_tarball(self):
         self.assertIn('release-asset', self.jobs.get('arch-repo-publish', set()))
+
+
+def job_text(text, name):
+    """The lines of one job, up to the next one."""
+    body = text.split('\njobs:\n', 1)[1]
+    found = re.search(rf'^  {re.escape(name)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)', body, re.M | re.S)
+    return found.group(1) if found else ''
+
+
+class NativeWiring(unittest.TestCase):
+    """The native app's assets go out under their own names; both update
+    manifests name its installer, so installed Tauri apps update into it."""
+
+    def setUp(self):
+        self.release = WORKFLOW.read_text()
+        self.build = BUILD.read_text()
+
+    def test_the_build_makes_the_native_artifacts_outside_pull_requests(self):
+        linux, windows = job_text(self.build, 'core-linux'), job_text(self.build, 'core-windows')
+        self.assertIn('name: gelabber-native-linux-x64\n', linux)
+        self.assertIn('desktop/packaging/native/tarball.sh', linux)
+        self.assertIn('name: gelabber-native-windows-x64\n', windows)
+        self.assertIn('desktop\\packaging\\native\\windows\\installer.nsi', windows)
+        for job, step in ((linux, 'Package the native app'), (windows, 'Native installer')):
+            with self.subTest(step=step):
+                block = job.split(f'- name: {step}\n', 1)[1].split('\n      - name:', 1)[0]
+                self.assertIn("github.event_name != 'pull_request'", block)
+
+    def test_pull_requests_build_and_start_the_native_app(self):
+        linux, windows = job_text(self.build, 'core-linux'), job_text(self.build, 'core-windows')
+        self.assertIn('desktop/packaging/native/smoke.sh desktop/target/debug/gelabber', linux)
+        self.assertIn('-p gelabber\n', windows)
+        for job in (linux, windows):
+            block = job.split('- name: Native app smoke test\n', 1)[1].split('\n      - name:', 1)[0]
+            self.assertNotIn('pull_request', block)
+
+    def test_the_release_uploads_the_native_assets_and_their_manifests(self):
+        linux = job_text(self.release, 'release-asset')
+        windows = job_text(self.release, 'release-asset-windows')
+        self.assertIn('name: gelabber-native-linux-x64\n', linux)
+        self.assertIn('gelabber-native-linux-x64.tar.gz', linux.split('gh release upload', 1)[1])
+        self.assertIn('name: gelabber-native-windows-x64\n', windows)
+        self.assertIn('setup=gelabber-native-windows-x64-setup.exe\n', windows)
+        upload = windows.split('gh release upload', 1)[1]
+        for asset in ('"$setup"', '"$setup.sha256"', '"$setup.sig"', 'latest-native.json', 'latest.json'):
+            with self.subTest(asset=asset):
+                self.assertRegex(upload, rf'(^|\s){re.escape(asset)}(\s|$)')
+        # No Tauri app any more: no asset of its own.
+        for job in (linux, windows):
+            self.assertNotIn('gelabber-desktop-', job)
+
+    def test_both_manifests_name_the_native_installer(self):
+        # Installed Tauri apps (0.8) read latest.json: the same manifest.
+        windows = job_text(self.release, 'release-asset-windows')
+        self.assertIn('--rawfile signature "$setup.sig"', windows)
+        self.assertIn('/releases/download/${TAG}/$setup"', windows)
+        self.assertEqual(windows.count('> latest-native.json\n'), 1)
+        self.assertIn('cp latest-native.json latest.json\n', windows)
+        self.assertNotIn('> latest.json', windows)
+
+    def test_the_native_app_reads_the_manifest_the_release_writes(self):
+        update = (Path(__file__).parents[2] / 'ui/src/platform/update.rs').read_text()
+        self.assertIn('pub const MANIFEST: &str = "latest-native.json";', update)
+        endpoint = re.search(r'const ENDPOINT: &str =\s*"([^"]+)";', update).group(1)
+        self.assertTrue(endpoint.endswith('/releases/latest/download/latest-native.json'), endpoint)
+        self.assertIn('latest-native.json', job_text(self.release, 'release-asset-windows'))
+
+    def test_the_pacman_repository_carries_the_native_package(self):
+        arch = job_text(self.build, 'arch-repo')
+        self.assertIn('name: gelabber-native-linux-x64\n', arch)
+        self.assertNotIn('name: gelabber-desktop-linux-x64\n', arch)
+        self.assertEqual(arch.count('repo.sh build "'), 2, 'test build and release rebuild')
+        self.assertEqual(arch.count('gelabber-native-linux-x64.tar.gz site'), 2)
+        # The upgrade test starts from the Tauri package of each release: 0.8.9 without, 0.8.10 with the export.
+        test = arch.split('repo.sh test site', 1)[1].split('\n      - name:', 1)[0]
+        self.assertIn('"tauri/$release/PKGBUILD" "tauri/$release/gelabber-desktop-linux-x64.tar.gz" "$release"', test)
+        self.assertIn('for release in $TAURI_RELEASES; do', arch.split('repo.sh test site', 1)[0].rsplit('\n      - name:', 1)[1])
+        self.assertIn('\n      TAURI_RELEASES: v0.8.9 v0.8.10\n', arch)
 
 
 if __name__ == '__main__':

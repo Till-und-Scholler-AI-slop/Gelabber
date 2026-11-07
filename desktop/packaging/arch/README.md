@@ -3,9 +3,9 @@
 The AUR is closed to new accounts, so Gelabber ships its own pacman
 repository on GitHub Pages. `yay` (and `pacman`) install from it like from
 any other repository: `yay -S` once, updates with `yay -Syu`, removal with
-`yay -Rns`. The package is a binary package of the release's
-`gelabber-desktop-linux-x64.tar.gz`; nothing is compiled on the user's
-machine.
+`yay -Rns`. The package `gelabber-desktop` is a binary package of the
+release's `gelabber-native-linux-x64.tar.gz`; nothing is compiled on the
+user's machine.
 
 Status: **published** since v0.5.0. Every release from `main` updates the
 repository after a maintainer approves the `github-pages` deployment. The
@@ -44,19 +44,37 @@ choice stay in `~/.config/io.github.till-und-scholler-ai-slop.gelabber` and
 `~/.local/share/io.github.till-und-scholler-ai-slop.gelabber` (pacman never
 touches home directories); delete them by hand for a clean slate.
 
+From 0.9 on `gelabber-desktop` is the native app (no web view); up to 0.8 it
+was the Tauri app. `yay -Syu` upgrades a Tauri install into it like any
+other update: files in `/opt/gelabber` instead of `/opt/gelabber-desktop`,
+the command `gelabber` (and `gelabber-desktop`, which keybinds and autostarts
+of the Tauri app call), the same settings. Push-to-talk registers with the
+desktop as `gelabber` instead of `gelabber-desktop`: a Hyprland bind becomes
+`bind = , F13, global, gelabber:push-to-talk`, and KDE or GNOME may ask for
+the key again. WebKitGTK, libsoup and GTK are no longer needed; pacman keeps
+them as orphans when nothing else needs them (`pacman -Qdt` lists them). The
+beta package `gelabber-desktop-native` of test builds before 0.9 is replaced
+by `gelabber-desktop`.
+
 Pre-releases (alpha, beta, rc) are published too and sort before the final
 release: `0.5.0alpha.1 < 0.5.0beta.1 < 0.5.0rc.1 < 0.5.0`. The repository
 always holds only the newest release.
 
 ## How it works
 
-- `PKGBUILD` / `.SRCINFO`: the package. `update-pkgbuild.sh` sets version,
-  download URL and SHA-256 for one build and regenerates `.SRCINFO`; CI
-  checks that the committed `.SRCINFO` matches the `PKGBUILD`.
+- `native/PKGBUILD` / `native/.SRCINFO`: the package. `update-pkgbuild.sh`
+  sets version, download URL and SHA-256 for one build and regenerates
+  `.SRCINFO`; CI checks that the committed `.SRCINFO` matches the
+  `PKGBUILD`.
 - `repo.sh build`: builds and signs the package, then the signed repository
   database (`repo-add --sign`), plus `gelabber.asc` with the public key.
 - `repo.sh test`: adds that repository to pacman with `SigLevel = Required`,
-  installs, upgrades to a newer build with `-Syu`, removes with `-Rns` and
+  installs the Tauri package of each 0.8 release in `TAURI_RELEASES` (its
+  PKGBUILD at the tag and its release tarball) with its dependencies, lets
+  it run the fixture page, upgrades it with `-Syu` into this package and
+  checks the import: from WebKitGTK for 0.8.9, only from
+  `legacy-settings.json` for 0.8.10. It starts the app under Xvfb
+  (`../native/smoke.sh`), upgrades to a newer build, removes with `-Rns` and
   fails if a library is missing or a file is left behind.
 - `.github/workflows/desktop-native.yml` (run by `ci.yml` and
   `desktop-release.yml`): job "Arch package and repository" builds with a
@@ -64,7 +82,7 @@ always holds only the newest release.
   is the `arch-repo` artifact.
 - `.github/workflows/desktop-release.yml`, on a published GitHub release
   (pre-releases included; releases made by `release.yml` dispatch it on
-  their tag instead): attaches `gelabber-desktop-linux-x64.tar.gz` to the
+  their tag instead): attaches `gelabber-native-linux-x64.tar.gz` to the
   release, builds the repository with the real key, and, only if publishing
   is on, deploys it to GitHub Pages. The package takes its version from the
   tag, the app in it from `desktop/Cargo.toml`: the job fails unless the two
@@ -100,8 +118,8 @@ never from a feature branch.
 
 ## If the AUR opens again
 
-The build also leaves `PKGBUILD` and `.SRCINFO` with the release's version,
-URL and checksum in the `arch-repo` artifact. Publishing them as
+The build also leaves `native/PKGBUILD` and `native/.SRCINFO` with the
+release's version, URL and checksum in the `arch-repo` artifact. Publishing them as
 `gelabber-desktop-bin` needs an AUR account, an SSH key registered there
 (secret for CI), and a push to `ssh://aur@aur.archlinux.org/gelabber-desktop-bin.git`.
 The package then has to be renamed to `gelabber-desktop-bin`; it already

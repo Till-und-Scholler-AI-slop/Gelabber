@@ -1,0 +1,1634 @@
+{
+  "size": [
+    1280,
+    800
+  ],
+  "scenes": [
+    {
+      "name": "login",
+      "path": "/login",
+      "user": null
+    },
+    {
+      "name": "register",
+      "path": "/register",
+      "user": null
+    },
+    {
+      "name": "server-overview",
+      "path": "/s/{home}",
+      "user": "lena"
+    },
+    {
+      "name": "channel-allgemein",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena"
+    },
+    {
+      "name": "channel-spiele",
+      "path": "/s/{home}/c/{spiele}",
+      "user": "lena"
+    },
+    {
+      "name": "other-server",
+      "path": "/s/{evening}",
+      "user": "lena"
+    },
+    {
+      "name": "dm-list",
+      "path": "/d",
+      "user": "lena"
+    },
+    {
+      "name": "dm",
+      "path": "/d/{dm}",
+      "user": "lena"
+    },
+    {
+      "name": "settings",
+      "path": "/settings",
+      "user": "lena",
+      "desktop": true
+    },
+    {
+      "name": "server-settings",
+      "path": "/s/{home}/settings",
+      "user": "lena"
+    },
+    {
+      "name": "settings-profil",
+      "path": "/settings/profil",
+      "user": "lena",
+      "desktop": true
+    },
+    {
+      "name": "settings-profilkarte",
+      "path": "/settings/profilkarte",
+      "user": "lena",
+      "desktop": true
+    },
+    {
+      "name": "settings-konto",
+      "path": "/settings/konto",
+      "user": "lena",
+      "desktop": true
+    },
+    {
+      "name": "settings-darstellung",
+      "path": "/settings/darstellung",
+      "user": "lena",
+      "desktop": true
+    },
+    {
+      "name": "settings-themes",
+      "path": "/settings/themes",
+      "user": "lena",
+      "desktop": true
+    },
+    {
+      "name": "settings-audio",
+      "path": "/settings/audio",
+      "user": "lena",
+      "desktop": true
+    },
+    {
+      "name": "settings-video",
+      "path": "/settings/video",
+      "user": "lena",
+      "desktop": true
+    },
+    {
+      "name": "settings-benachrichtigungen",
+      "path": "/settings/benachrichtigungen",
+      "user": "lena",
+      "desktop": true
+    },
+    {
+      "name": "settings-app",
+      "path": "/settings/app",
+      "user": "lena",
+      "desktop": true
+    },
+    {
+      "name": "server-settings-member",
+      "path": "/s/{evening}/settings",
+      "user": "lena"
+    },
+    {
+      "name": "home",
+      "path": "/",
+      "user": "lena"
+    },
+    {
+      "name": "voice-sofa",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted"
+    },
+    {
+      "name": "voice-overview",
+      "path": "/s/{home}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted"
+    },
+    {
+      "name": "voice-joined",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        }
+      ]
+    },
+    {
+      "name": "voice-empty",
+      "path": "/s/{home}/c/{Kino}",
+      "user": "lena"
+    },
+    {
+      "name": "quick-switcher",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Control+k"
+        }
+      ]
+    },
+    {
+      "name": "quick-switcher-search",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Control+k"
+        },
+        {
+          "type": "s"
+        },
+        {
+          "key": "ArrowDown"
+        }
+      ]
+    },
+    {
+      "name": "quick-switcher-empty",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Control+k"
+        },
+        {
+          "type": "xyz"
+        }
+      ]
+    },
+    {
+      "name": "shortcuts",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Control+/"
+        }
+      ]
+    },
+    {
+      "name": "member-profile",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Tom"
+        }
+      ]
+    },
+    {
+      "name": "member-profile-self",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Lena"
+        }
+      ]
+    },
+    {
+      "name": "member-moderation",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Ada"
+        },
+        {
+          "clicktext": "Moderation"
+        }
+      ]
+    },
+    {
+      "name": "kick-confirm",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Ada"
+        },
+        {
+          "clicktext": "Moderation"
+        },
+        {
+          "click": "Vom Server entfernen"
+        }
+      ]
+    },
+    {
+      "name": "ban-confirm",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Ada"
+        },
+        {
+          "clicktext": "Moderation"
+        },
+        {
+          "click": "Sperren"
+        }
+      ]
+    },
+    {
+      "name": "member-profile-owner",
+      "path": "/s/{evening}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Tom"
+        }
+      ]
+    },
+    {
+      "name": "dm-profile",
+      "path": "/d/{dm}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Offline Jonas"
+        }
+      ]
+    },
+    {
+      "name": "notify-channel",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Benachrichtigungen für #allgemein"
+        }
+      ]
+    },
+    {
+      "name": "notify-dm",
+      "path": "/d/{dm}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Benachrichtigungen für Jonas"
+        }
+      ]
+    },
+    {
+      "name": "notify-server",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "Wohnzimmer"
+        }
+      ]
+    },
+    {
+      "name": "notify-all-dms",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "Direktnachrichten"
+        }
+      ]
+    },
+    {
+      "name": "new-message",
+      "path": "/d",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Neue Nachricht"
+        }
+      ]
+    },
+    {
+      "name": "new-message-search",
+      "path": "/d",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Neue Nachricht"
+        },
+        {
+          "type": "o"
+        }
+      ]
+    },
+    {
+      "name": "quick-switcher-enter",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Control+k"
+        },
+        {
+          "type": "musik"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
+      "name": "member-profile-escape",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Tom"
+        },
+        {
+          "key": "Escape"
+        }
+      ]
+    },
+    {
+      "name": "member-profile-tab",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Tom"
+        },
+        {
+          "key": "Tab"
+        }
+      ]
+    },
+    {
+      "name": "kick-escape",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Profil von Ada"
+        },
+        {
+          "clicktext": "Moderation"
+        },
+        {
+          "click": "Vom Server entfernen"
+        },
+        {
+          "key": "Escape"
+        }
+      ]
+    },
+    {
+      "name": "notify-enter",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Benachrichtigungen für #allgemein"
+        },
+        {
+          "key": "Enter"
+        }
+      ]
+    },
+    {
+      "name": "new-message-arrows",
+      "path": "/d",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Neue Nachricht"
+        },
+        {
+          "key": "ArrowDown"
+        },
+        {
+          "key": "ArrowDown"
+        }
+      ]
+    },
+    {
+      "name": "message-toast",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "say": "jonas dm Hast du kurz Zeit? Ich würde gern die Fotos fürs Album aussuchen."
+        },
+        {
+          "wait": 1500
+        }
+      ]
+    },
+    {
+      "name": "message-toast-stack",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "say": "jonas dm Hallo?"
+        },
+        {
+          "say": "jonas dm Bist du da?"
+        },
+        {
+          "wait": 1500
+        }
+      ]
+    },
+    {
+      "name": "message-toast-mention",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "say": "jonas musik {lena} kommst du heute Abend?"
+        },
+        {
+          "wait": 1500
+        }
+      ]
+    },
+    {
+      "name": "server-settings-member-menu",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Aktionen für Ada"
+        }
+      ]
+    },
+    {
+      "name": "server-settings-kick",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Aktionen für Ada"
+        },
+        {
+          "click": "Vom Server entfernen"
+        }
+      ]
+    },
+    {
+      "name": "lightbox",
+      "path": "/s/{home}/c/{musik}",
+      "user": "lena",
+      "actions": [
+        {
+          "say": "jonas musik image=community-banner.png Unser neues Banner"
+        },
+        {
+          "wait": 2000
+        },
+        {
+          "link": "community-banner.png vergrößern"
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
+      "name": "lightbox-escape",
+      "path": "/s/{home}/c/{musik}",
+      "user": "lena",
+      "actions": [
+        {
+          "say": "jonas musik image=community-banner.png Unser neues Banner"
+        },
+        {
+          "wait": 2000
+        },
+        {
+          "link": "community-banner.png vergrößern"
+        },
+        {
+          "wait": 500
+        },
+        {
+          "key": "Escape"
+        }
+      ]
+    },
+    {
+      "name": "invite",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Einladen"
+        },
+        {
+          "wait": 500
+        }
+      ],
+      "after": "revoke-unused lena home"
+    },
+    {
+      "name": "invite-terms",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Einladen"
+        },
+        {
+          "wait": 500
+        },
+        {
+          "clicktext": "Ablauf & Limit ändern"
+        }
+      ],
+      "after": "revoke-unused lena home"
+    },
+    {
+      "name": "add-server",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Server hinzufügen"
+        }
+      ]
+    },
+    {
+      "name": "add-server-tab",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Server hinzufügen"
+        },
+        {
+          "key": "Tab"
+        }
+      ]
+    },
+    {
+      "name": "add-server-join",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Server hinzufügen"
+        },
+        {
+          "clicktext": "Server beitreten"
+        }
+      ]
+    },
+    {
+      "name": "toast-server-missing",
+      "path": "/s/00000000-0000-4000-8000-000000000001",
+      "user": "lena",
+      "actions": [
+        {
+          "wait": 1000
+        }
+      ]
+    },
+    {
+      "name": "quick-switcher-escape",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Control+k"
+        },
+        {
+          "key": "Escape"
+        }
+      ]
+    },
+    {
+      "name": "notify-escape",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Benachrichtigungen für #allgemein"
+        },
+        {
+          "key": "Escape"
+        }
+      ]
+    },
+    {
+      "name": "toast-hover",
+      "path": "/s/00000000-0000-4000-8000-000000000001",
+      "user": "lena",
+      "actions": [
+        {
+          "wait": 1000
+        },
+        {
+          "hover": "Schließen"
+        },
+        {
+          "wait": 4000
+        }
+      ]
+    },
+    {
+      "name": "member-profile-back",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Control+k"
+        },
+        {
+          "type": "musik"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "wait": 500
+        },
+        {
+          "click": "Profil von Tom"
+        },
+        {
+          "back": true
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
+      "name": "notify-back",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Control+k"
+        },
+        {
+          "type": "musik"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "wait": 500
+        },
+        {
+          "click": "Benachrichtigungen für #musik"
+        },
+        {
+          "back": true
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
+      "name": "create-server",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Server hinzufügen"
+        },
+        {
+          "clicktext": "Server erstellen"
+        }
+      ]
+    },
+    {
+      "name": "create-channel",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "clicktext": "Wohnzimmer"
+        },
+        {
+          "clicktext": "Kanal erstellen"
+        }
+      ]
+    },
+    {
+      "name": "create-category",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "clicktext": "Wohnzimmer"
+        },
+        {
+          "clicktext": "Kategorie erstellen"
+        }
+      ]
+    },
+    {
+      "name": "edit-channel",
+      "path": "/s/{home}/c/{spiele}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Kanal bearbeiten"
+        }
+      ]
+    },
+    {
+      "name": "delete-channel-confirm",
+      "path": "/s/{home}/c/{spiele}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Kanal löschen"
+        }
+      ]
+    },
+    {
+      "name": "notify-muted",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Benachrichtigungen für #allgemein"
+        },
+        {
+          "clicktext": "Bis ich es wieder einschalte"
+        },
+        {
+          "wait": 500
+        }
+      ],
+      "after": "unmute lena allgemein"
+    },
+    {
+      "name": "member-profile-leave",
+      "path": "/d/{dm}",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "Wohnzimmer"
+        },
+        {
+          "wait": 500
+        },
+        {
+          "click": "Profil von Tom"
+        },
+        {
+          "back": true
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
+      "name": "search-hits",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "placeholder": "Suchen"
+        },
+        {
+          "type": "Snacks"
+        },
+        {
+          "wait": 600
+        }
+      ]
+    },
+    {
+      "name": "search-context",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "placeholder": "Suchen"
+        },
+        {
+          "type": "zusammen"
+        },
+        {
+          "wait": 600
+        },
+        {
+          "click": "Zur Nachricht von Jonas: Hallo zusammen! 👋"
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
+      "name": "toast-error",
+      "path": "/s/{home}/c/{musik}",
+      "user": "lena",
+      "actions": [
+        {
+          "say": "jonas musik ghost=👍 Wer legt heute auf?"
+        },
+        {
+          "wait": 1500
+        },
+        {
+          "click": "👍: 1 Reaktion"
+        },
+        {
+          "wait": 1500
+        },
+        {
+          "hover": "Schließen"
+        }
+      ]
+    },
+    {
+      "name": "attachment-text",
+      "path": "/s/{home}/c/{musik}",
+      "user": "lena",
+      "actions": [
+        {
+          "say": "jonas musik file=playlist.txt Die Liste für Samstag"
+        },
+        {
+          "wait": 2000
+        },
+        {
+          "clicktext": "playlist.txt"
+        },
+        {
+          "wait": 1000
+        }
+      ]
+    },
+    {
+      "name": "channel-live-hint",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "call": "Sofa jonas:live"
+    },
+    {
+      "name": "live-toast",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "call": "Sofa jonas:live"
+        },
+        {
+          "wait": 2000
+        }
+      ]
+    },
+    {
+      "name": "rail-hover",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "hover": "Spieleabend"
+        }
+      ]
+    },
+    {
+      "name": "theme-terminal",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "before": "theme lena kanagawa"
+    },
+    {
+      "name": "setup",
+      "page": "desktop/parity/reference/setup/index.html"
+    },
+    {
+      "name": "setup-dark",
+      "page": "desktop/parity/reference/setup/index.html",
+      "scheme": "dark"
+    },
+    {
+      "name": "setup-switch",
+      "page": "desktop/parity/reference/setup/index.html",
+      "query": "?server=http%3A%2F%2F127.0.0.1%3A5180"
+    },
+    {
+      "name": "setup-error",
+      "page": "desktop/parity/reference/setup/index.html",
+      "query": "?server=http%3A%2F%2F127.0.0.1%3A1&error=127.0.0.1%3A1%20ist%20nicht%20erreichbar%20(Connection%20refused%20(os%20error%20111)).",
+      "scheme": "dark"
+    },
+    {
+      "name": "setup-updates",
+      "page": "desktop/parity/reference/setup/index.html",
+      "updates": {
+        "current": "0.9.0",
+        "autoCheck": true,
+        "available": null,
+        "lastCheck": 1800000000
+      }
+    },
+    {
+      "name": "setup-updates-dark",
+      "page": "desktop/parity/reference/setup/index.html",
+      "scheme": "dark",
+      "updates": {
+        "current": "0.9.0",
+        "autoCheck": false,
+        "available": "0.9.1",
+        "lastCheck": 1800000000
+      }
+    },
+    {
+      "name": "light-channel",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-overview",
+      "path": "/s/{home}",
+      "user": "lena",
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-dm",
+      "path": "/d/{dm}",
+      "user": "lena",
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-settings-darstellung",
+      "path": "/settings/darstellung",
+      "user": "lena",
+      "desktop": true,
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-voice-sofa",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-voice-joined",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        }
+      ],
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-voice-camera",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        }
+      ],
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-voice-focus",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "clicktext": "Fokus"
+        }
+      ],
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-voice-kino",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "key": "k"
+        }
+      ],
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-settings-audio",
+      "path": "/settings/audio",
+      "user": "lena",
+      "desktop": true,
+      "before": "theme lena light"
+    },
+    {
+      "name": "light-server-settings",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "before": "theme lena light"
+    },
+    {
+      "name": "theme-flexoki-light",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "before": "theme lena flexoki-light"
+    },
+    {
+      "name": "theme-system-light",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "before": "theme lena system"
+    },
+    {
+      "name": "theme-custom",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "before": "theme lena {\"version\":1,\"id\":\"custom-7a1c3e52-9d4b-4f0e-8a6d-2b5c9e1f3a70\",\"name\":\"Flieder\",\"mode\":\"light\",\"style\":\"soft\",\"colors\":{\"background\":\"#f6f3fb\",\"panel\":\"#efeaf7\",\"surface\":\"#e6dff2\",\"rail\":\"#e9e3f4\",\"text\":\"#2a2433\",\"muted\":\"#5d566a\",\"accent\":\"#8a5cf6\",\"border\":\"#d9d0e8\"}}"
+    },
+    {
+      "name": "sidebar-draft",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "focus": "Nachricht an #allgemein"
+        },
+        {
+          "type": "Hallo"
+        },
+        {
+          "key": "Control+k"
+        },
+        {
+          "type": "spiele"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
+      "name": "skip-link",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Tab"
+        }
+      ]
+    },
+    {
+      "name": "skip-link-enter",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "Tab"
+        }
+      ]
+    },
+    {
+      "name": "settings-darstellung-tab",
+      "path": "/settings/darstellung",
+      "user": "lena",
+      "desktop": true,
+      "actions": [
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        }
+      ]
+    },
+    {
+      "name": "rail-arrows",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "ArrowDown"
+        }
+      ]
+    },
+    {
+      "name": "sidebar-arrows",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "ArrowDown"
+        },
+        {
+          "key": "ArrowRight"
+        }
+      ]
+    },
+    {
+      "name": "dm-sidebar-tab",
+      "path": "/d/{dm}",
+      "user": "lena",
+      "actions": [
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        },
+        {
+          "key": "Tab"
+        }
+      ]
+    },
+    {
+      "name": "forgot-password",
+      "path": "/forgot-password",
+      "user": null
+    },
+    {
+      "name": "reset-password",
+      "path": "/reset-password",
+      "user": null
+    },
+    {
+      "name": "verify-email",
+      "path": "/verify-email",
+      "user": null
+    },
+    {
+      "name": "invite-page",
+      "path": "/invite/{invite}",
+      "user": null
+    },
+    {
+      "name": "invite-invalid",
+      "path": "/invite/xyz",
+      "user": null
+    },
+    {
+      "name": "not-found",
+      "path": "/gibt-es-nicht",
+      "user": "lena"
+    },
+    {
+      "name": "login-expired",
+      "path": "/login?reason=expired",
+      "user": null
+    },
+    {
+      "name": "login-error",
+      "path": "/login",
+      "user": null,
+      "actions": [
+        {
+          "focus": "E-Mail-Adresse"
+        },
+        {
+          "type": "niemand@example.test"
+        },
+        {
+          "focus": "Passwort"
+        },
+        {
+          "type": "kein-richtiges-passwort"
+        },
+        {
+          "click": "Anmelden"
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
+      "name": "mic-test",
+      "path": "/s/{home}/c/{Kino}",
+      "user": "lena",
+      "desktop": true,
+      "actions": [
+        {
+          "click": "Mikrofon testen"
+        }
+      ]
+    },
+    {
+      "name": "mic-test-settings",
+      "path": "/settings/audio",
+      "user": "lena",
+      "desktop": true,
+      "actions": [
+        {
+          "click": "/^Mikrofon testen( und vergleichen)?$/"
+        }
+      ]
+    },
+    {
+      "name": "voice-settings-dialog",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "desktop": true,
+      "call": "Sofa jonas,mira:muted",
+      "actions": [
+        {
+          "click": "Voice-Einstellungen"
+        },
+        {
+          "clicktext": "Alle Einstellungen …"
+        }
+      ]
+    },
+    {
+      "name": "voice-settings-video",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "desktop": true,
+      "call": "Sofa jonas,mira:muted",
+      "actions": [
+        {
+          "click": "Voice-Einstellungen"
+        },
+        {
+          "clicktext": "Alle Einstellungen …"
+        },
+        {
+          "clicktext": "Video & Stream"
+        }
+      ]
+    },
+    {
+      "name": "voice-connection",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "/^Verbindung: .* – Details anzeigen$/"
+        }
+      ]
+    },
+    {
+      "name": "voice-diagnostics-idle",
+      "path": "/s/{home}/c/{Kino}",
+      "user": "lena",
+      "desktop": true,
+      "actions": [
+        {
+          "click": "Voice-Einstellungen"
+        },
+        {
+          "clicktext": "Alle Einstellungen …"
+        },
+        {
+          "clicktext": "Diagnose"
+        }
+      ]
+    },
+    {
+      "name": "voice-avatar-profile",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "actions": [
+        {
+          "click": "Profil von Jonas"
+        }
+      ]
+    },
+    {
+      "name": "voice-menu-profile",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "actions": [
+        {
+          "click": "Optionen für Jonas"
+        },
+        {
+          "clicktext": "Profil ansehen"
+        }
+      ]
+    },
+    {
+      "name": "voice-camera",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        }
+      ]
+    },
+    {
+      "name": "voice-kino",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "key": "k"
+        }
+      ]
+    },
+    {
+      "name": "voice-focus",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "clicktext": "Fokus"
+        }
+      ]
+    },
+    {
+      "name": "voice-overview-camera",
+      "path": "/s/{home}",
+      "user": "lena",
+      "call": "Sofa jonas:camera,mira:muted"
+    },
+    {
+      "name": "voice-overview-camera-joined",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "link": "Übersicht"
+        },
+        {
+          "wait": 3000
+        }
+      ]
+    },
+    {
+      "name": "voice-live-own",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Live gehen"
+        },
+        {
+          "clicktext": "Ton mitsenden"
+        },
+        {
+          "menuitem": "Live gehen"
+        },
+        {
+          "wait": 3000
+        }
+      ],
+      "mask": [
+        [
+          312,
+          116,
+          944,
+          554
+        ]
+      ]
+    },
+    {
+      "name": "voice-fullscreen",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted:live",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Zuschauen"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Vollbild"
+        }
+      ]
+    },
+    {
+      "name": "voice-compact",
+      "path": "/settings/darstellung",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "actions": [
+        {
+          "clicktext": "/^Kompakte Sprachkanäle/"
+        },
+        {
+          "key": "Control+k"
+        },
+        {
+          "type": "sofa"
+        },
+        {
+          "wait": 500
+        },
+        {
+          "key": "Enter"
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
+      "name": "update-notice",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "desktop": true,
+      "update": {
+        "available": "0.9.1"
+      }
+    },
+    {
+      "name": "update-downloading",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "desktop": true,
+      "update": {
+        "available": "0.9.1",
+        "phase": "downloading",
+        "downloaded": 18874368,
+        "total": 47185920
+      },
+      "actions": [
+        {
+          "click": "Neu starten"
+        },
+        {
+          "wait": 1500
+        }
+      ]
+    }
+  ]
+}
