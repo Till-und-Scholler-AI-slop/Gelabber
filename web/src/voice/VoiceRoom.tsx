@@ -39,7 +39,6 @@ import { useMediaQuery } from "../components/useMediaQuery.ts";
 import { setMemberPanelVideo } from "../components/memberPanelState.ts";
 import { useSession } from "../auth/session.ts";
 import { joinVoice, useVoice, toggleSourceWatch } from "./session.ts";
-import { isDesktopApp } from "./native/bridge.ts";
 import {
   EMPTY_LIVE_PEOPLE,
   EMPTY_OCCUPANCY,
@@ -212,21 +211,15 @@ export function VoiceRoom({
     const kind = tile.source;
     if (tile.userId === me && here) {
       const status = voice.sourceAudio.s;
-      // The reason stands next to the call controls. A picker withholds
-      // sound in a browser only; the desktop app captures it by itself.
-      const silent = voice.sourceAudioNote.s?.silent;
+      // The reason stands next to the call controls.
       return {
         sourceAudioNotice:
           status === "unavailable"
-            ? isDesktopApp()
-              ? "Stream-Ton nicht aufgenommen · Video läuft weiter"
-              : "Kein Stream-Ton freigegeben · Video läuft weiter"
+            ? "Kein Stream-Ton freigegeben · Video läuft weiter"
             : status === "ended"
               ? "Stream-Ton beendet · Video läuft weiter"
               : status === "sharing"
-                ? silent
-                  ? `Kein Ton von „${silent}“`
-                  : "Ton wird mitgesendet"
+                ? "Ton wird mitgesendet"
                 : undefined,
       };
     }

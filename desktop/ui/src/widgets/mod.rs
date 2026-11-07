@@ -23,7 +23,7 @@ pub use field::{FieldOutput, TextField};
 pub use link::Link;
 pub use modal::{Modal, ModalOutput, ModalWidth};
 pub use popover::{Popover, menu_item};
-pub use separator::{hairline_h, hairline_v};
+pub use separator::{hairline_h, hairline_v, rule_h, rule_v};
 pub use status::{FormError, InlineStatus, StatusTone, load_error};
 pub use switch::{Checkbox, Switch};
 pub use tooltip::Tooltip;

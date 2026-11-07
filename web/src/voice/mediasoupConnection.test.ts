@@ -8,7 +8,6 @@ import type {
   RtpParameters,
   TransportOptions,
 } from "mediasoup-client/types";
-import { setNativeBridgeForTests } from "./native/bridge.ts";
 import {
   MediasoupConnection,
   preloadMediaSdk,
@@ -1851,7 +1850,6 @@ describe("the browser SDK's chunk", () => {
   };
   afterEach(() => {
     setBrowserSdkImportForTests(undefined);
-    setNativeBridgeForTests(undefined);
   });
 
   it("waits for a slow download outside the SDK operations' budget", async () => {
@@ -1907,16 +1905,9 @@ describe("the browser SDK's chunk", () => {
     await expect(started).rejects.toMatchObject({ code: "connection_closed" });
   });
 
-  it("is preloaded in a browser and never in the desktop app", () => {
+  it("is preloaded once", () => {
     const load = vi.fn(() => new Promise<Sdk>(() => {}));
     setBrowserSdkImportForTests(load);
-    setNativeBridgeForTests({
-      invoke: () => Promise.reject(new Error("unused")),
-      channel: () => Promise.reject(new Error("unused")),
-    });
-    preloadMediaSdk();
-    expect(load).not.toHaveBeenCalled();
-    setNativeBridgeForTests(null);
     preloadMediaSdk();
     preloadMediaSdk();
     expect(load).toHaveBeenCalledOnce();

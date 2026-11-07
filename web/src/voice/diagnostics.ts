@@ -147,8 +147,6 @@ export type VideoChoice = {
   roomCodecs: string[] | null;
   encoders: HardwareVideo | null;
   decodesAv1: boolean | null;
-  /** The desktop app's version; `null` in a browser. */
-  desktopApp?: string | null;
 };
 
 export type Caps = {

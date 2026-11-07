@@ -7,11 +7,8 @@ import {
   type ComparisonState,
   type ComparisonClips,
 } from "./microphoneComparison.ts";
-import { isDesktopApp } from "./native/bridge.ts";
-import { createNativeMicrophoneTest } from "./native/microphoneTest.ts";
 import {
   AUDIO_PROCESSING,
-  AUDIO_PROCESSING_DESKTOP,
   useMediaSettings,
   type AudioProcessingMode,
 } from "./settings.ts";
@@ -35,15 +32,12 @@ export function MicrophoneTest({ onClose }: { onClose: () => void }) {
   const [recording, setRecording] = useState(false);
   const processingMode = useMediaSettings((s) => s.processingMode);
   const patch = useMediaSettings((s) => s.patch);
-  const modes = isDesktopApp() ? AUDIO_PROCESSING_DESKTOP : AUDIO_PROCESSING;
+  const modes = AUDIO_PROCESSING;
   const running = state.phase === "active" || state.phase === "pending";
   useEffect(() => () => session.current?.stop(), []);
   function start() {
     session.current?.stop();
-    const create = isDesktopApp()
-      ? createNativeMicrophoneTest
-      : createMicrophoneComparison;
-    session.current = create(useMediaSettings.getState(), {
+    session.current = createMicrophoneComparison(useMediaSettings.getState(), {
       state: setState,
       levels: setLevels,
       clips: setClips,
@@ -68,9 +62,8 @@ export function MicrophoneTest({ onClose }: { onClose: () => void }) {
       <div className="voice-microphone-test">
         <MicIcon size={36} />
         <p className="voice-room-muted">
-          {isDesktopApp()
-            ? "Der Test läuft lokal, ohne Aufnahme oder Übertragung."
-            : "Der Test läuft lokal, ohne Übertragung. Aufnahmen dauern höchstens acht Sekunden und werden beim Schließen gelöscht."}
+          Der Test läuft lokal, ohne Übertragung. Aufnahmen dauern höchstens
+          acht Sekunden und werden beim Schließen gelöscht.
         </p>
         <label htmlFor={`${id}-before`}>Eingangspegel</label>
         <meter id={`${id}-before`} min={0} max={100} value={levels.before}>
@@ -113,7 +106,7 @@ export function MicrophoneTest({ onClose }: { onClose: () => void }) {
               Test starten
             </Button>
           )}
-          {state.phase === "active" && !isDesktopApp() && (
+          {state.phase === "active" && (
             <Button
               onClick={() =>
                 recording
@@ -154,12 +147,10 @@ export function MicrophoneTest({ onClose }: { onClose: () => void }) {
             </Button>
           </section>
         )}
-        {isDesktopApp() ? null : (
-          <p className="voice-room-muted">
-            Ein Wechsel der Verarbeitung startet den Test neu und löscht die
-            Aufnahmen.
-          </p>
-        )}
+        <p className="voice-room-muted">
+          Ein Wechsel der Verarbeitung startet den Test neu und löscht die
+          Aufnahmen.
+        </p>
       </div>
     </Modal>
   );

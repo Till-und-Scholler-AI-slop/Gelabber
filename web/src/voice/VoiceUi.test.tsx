@@ -148,7 +148,6 @@ beforeEach(() => {
     sharing: false,
     sourceWatchSupported: true,
     sourceAudio: { s: "off" },
-    sourceAudioNote: { s: null },
     sourceSubscriptions: {},
     localCamera: null,
     localScreen: null,

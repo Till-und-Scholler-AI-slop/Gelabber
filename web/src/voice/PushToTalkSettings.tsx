@@ -4,15 +4,11 @@ import { useEffect, useState } from "react";
 
 import { Button } from "../components/ui/Button.tsx";
 import { ChipGroup } from "../components/ui/ChipGroup.tsx";
-import { isDesktopApp } from "./native/bridge.ts";
 import {
-  globalKeyNote,
-  onWindows,
   PTT_RELEASE_DELAY_MAX,
   pushToTalkCode,
   pushToTalkKeyLabel,
   pushToTalkMouseCode,
-  usePushToTalk,
   type VoiceInputMode,
 } from "./pushToTalk.ts";
 import { useMediaSettings } from "./settings.ts";
@@ -35,9 +31,7 @@ export function PushToTalkSettings() {
   const pttKeyLabel = useMediaSettings((s) => s.pttKeyLabel);
   const releaseDelay = useMediaSettings((s) => s.pttReleaseDelay);
   const patch = useMediaSettings((s) => s.patch);
-  const global = usePushToTalk((s) => s.global);
   const [recording, setRecording] = useState(false);
-  const desktop = isDesktopApp();
 
   useEffect(() => {
     if (!recording) return;
@@ -106,9 +100,7 @@ export function PushToTalkSettings() {
           <p role="status" className="media-hint">
             {!pttKey
               ? "Ohne Taste bleibt dein Mikrofon im Gespräch stumm."
-              : desktop
-                ? globalKeyNote(global, onWindows())
-                : "Im Browser wirkt die Taste nur, solange Gelabber im Vordergrund ist. Die Desktop-App hört sie auch im Hintergrund."}
+              : "Im Browser wirkt die Taste nur, solange Gelabber im Vordergrund ist. Die Desktop-App hört sie auch im Hintergrund."}
           </p>
         </SettingRow>
       )}

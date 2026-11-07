@@ -89,11 +89,7 @@ fn header(ui: &mut Ui, app: &mut AppCtx, page: Rect, name: &str, server: Uuid, c
     let rect = Rect::from_min_size(page.min, vec2(page.width(), HEADER));
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, c.bg);
-    painter.rect_filled(
-        Rect::from_min_max(pos2(rect.left(), rect.bottom() - 1.0), rect.max),
-        0.0,
-        c.border,
-    );
+    crate::widgets::rule_h(&painter, c.border, rect.x_range(), rect.bottom() - 1.0);
     let mid = rect.top() + (HEADER - 1.0) / 2.0;
     let x = rect.left() + 20.0;
     icons::paint(
@@ -789,9 +785,11 @@ fn watch_strip(
     common::paint_mid(&painter, &label, x, cy);
     x += label.width() + 4.0 + 8.0;
     if toggles {
-        painter.line_segment(
-            [pos2(x, cy - 18.0), pos2(x, cy + 18.0)],
-            Stroke::new(1.0, Color32::from_white_alpha(36)),
+        crate::widgets::rule_v(
+            &painter,
+            Color32::from_white_alpha(36),
+            x,
+            cy - 18.0..=cy + 18.0,
         );
         x += 9.0;
         let off_mic = state.muted || state.deafened;
@@ -837,9 +835,11 @@ fn watch_strip(
         x += 4.0;
     }
     if stream_sound {
-        painter.line_segment(
-            [pos2(x, cy - 18.0), pos2(x, cy + 18.0)],
-            Stroke::new(1.0, Color32::from_white_alpha(36)),
+        crate::widgets::rule_v(
+            &painter,
+            Color32::from_white_alpha(36),
+            x,
+            cy - 18.0..=cy + 18.0,
         );
         x += 9.0;
         let mut p = crate::screens::settings::prefs::get(ui.ctx());

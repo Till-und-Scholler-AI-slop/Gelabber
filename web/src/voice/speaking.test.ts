@@ -23,7 +23,6 @@ vi.mock("./session.ts", async () => {
   };
 });
 
-import { setNativeBridgeForTests } from "./native/bridge.ts";
 import { useVoice } from "./session.ts";
 import {
   SPEAKING_HOLD_MS,
@@ -136,7 +135,6 @@ describe("watchSpeaking", () => {
   let stop: () => void = () => {};
   beforeEach(() => {
     vi.useFakeTimers();
-    setNativeBridgeForTests(null);
     fixture.microphones = { self: "self", sender: undefined, received: [] };
     useVoice.setState({
       status: "idle",
@@ -149,7 +147,6 @@ describe("watchSpeaking", () => {
   afterEach(() => {
     stop();
     vi.useRealTimers();
-    setNativeBridgeForTests(undefined);
   });
 
   async function poll() {
@@ -194,70 +191,6 @@ describe("watchSpeaking", () => {
       channelId: null,
     } as never);
     expect(useSpeakingStore.getState()).toEqual({ call: null, users: {} });
-  });
-
-  it("reads the desktop app's meters, never the own one while muted", async () => {
-    const invoke = vi.fn(async (command: string) => {
-      if (command === "media_audio_levels")
-        return { processed: 30, blocks: invoke.mock.calls.length };
-      if (command === "media_consumer_stats")
-        return { audioLevel: 20, samplesPlayed: invoke.mock.calls.length };
-      throw new Error(command);
-    });
-    setNativeBridgeForTests({ invoke, channel: async () => null } as never);
-    fixture.microphones.received = [
-      {
-        owner: "u1",
-        kind: "audio",
-        k: "a",
-        consumer: {
-          closed: false,
-          paused: false,
-          playoutLevel: async () => {
-            const stats = (await invoke("media_consumer_stats")) as {
-              audioLevel: number;
-              samplesPlayed: number;
-            };
-            return { level: stats.audioLevel, samples: stats.samplesPlayed };
-          },
-        },
-      },
-    ];
-    stop = watchSpeaking();
-    join();
-    await vi.advanceTimersByTimeAsync(260);
-    expect(useSpeakingStore.getState().users).toEqual({
-      self: true,
-      u1: true,
-    });
-    join({ muted: true });
-    await vi.advanceTimersByTimeAsync(260);
-    expect(useSpeakingStore.getState().users).toEqual({ u1: true });
-  });
-
-  it("does not take a frozen native playout meter for speech", async () => {
-    setNativeBridgeForTests({
-      invoke: async () => ({ processed: 0, blocks: 1 }),
-      channel: async () => null,
-    } as never);
-    fixture.microphones.received = [
-      {
-        owner: "u1",
-        kind: "audio",
-        k: "a",
-        consumer: {
-          closed: false,
-          paused: false,
-          playoutLevel: async () => ({ level: 40, samples: 4800 }),
-        },
-      },
-    ];
-    stop = watchSpeaking();
-    join();
-    await vi.advanceTimersByTimeAsync(260);
-    expect(useSpeakingStore.getState().users).toEqual({ u1: true });
-    await vi.advanceTimersByTimeAsync(SPEAKING_HOLD_MS + 300);
-    expect(useSpeakingStore.getState().users).toEqual({});
   });
 
   it("keeps asking the browser for the send level after a single miss", async () => {

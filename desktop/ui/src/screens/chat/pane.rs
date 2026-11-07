@@ -838,18 +838,12 @@ fn paint_day(ui: &Ui, label: &str, at: egui::Pos2, width: f32) {
     let text_x = at.x + (width - block.width()) / 2.0;
     let left = at.x + 20.0;
     let right = at.x + width - 20.0;
-    ui.painter().rect_filled(
-        Rect::from_min_max(pos2(left, line_y), pos2(text_x - 12.0, line_y + 1.0)),
-        0.0,
+    crate::widgets::rule_h(ui.painter(), c.border, left..=text_x - 12.0, line_y);
+    crate::widgets::rule_h(
+        ui.painter(),
         c.border,
-    );
-    ui.painter().rect_filled(
-        Rect::from_min_max(
-            pos2(text_x + block.width() + 12.0, line_y),
-            pos2(right, line_y + 1.0),
-        ),
-        0.0,
-        c.border,
+        text_x + block.width() + 12.0..=right,
+        line_y,
     );
     block.paint(ui.painter(), pos2(text_x, at.y + 14.0));
 }

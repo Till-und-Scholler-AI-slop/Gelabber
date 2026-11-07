@@ -263,11 +263,7 @@ fn tabs(ui: &mut Ui, current: Tab, width: f32, focus: bool) -> Option<Tab> {
         }
         x = rect.right() + 4.0;
     }
-    ui.painter().hline(
-        top.x..=top.x + width,
-        top.y + 36.0 + 0.5,
-        Stroke::new(1.0, c.border),
-    );
+    crate::widgets::rule_h(ui.painter(), c.border, top.x..=top.x + width, top.y + 36.0);
     ui.allocate_rect(Rect::from_min_size(top, vec2(width, 37.0)), Sense::hover());
     chosen
 }

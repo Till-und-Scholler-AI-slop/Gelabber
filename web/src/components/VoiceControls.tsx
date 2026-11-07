@@ -20,7 +20,6 @@ import {
   CameraIcon,
   CameraOffIcon,
   ChevronIcon,
-  GearIcon,
   HeadsetIcon,
   HeadsetOffIcon,
   LiveIcon,
@@ -37,12 +36,11 @@ import {
   toggleShare,
   useVoice,
 } from "../voice/session.ts";
-import { useCapabilities, type Capabilities } from "../voice/capabilities.ts";
+import { useCapabilities } from "../voice/capabilities.ts";
 import {
   CallSoundButton,
   QuickCallSettingsButton,
 } from "../voice/QuickCallSettings.tsx";
-import { isDesktopApp } from "../voice/native/bridge.ts";
 import {
   callShortcutKeys,
   callShortcutLabel,
@@ -50,14 +48,10 @@ import {
   usePushToTalk,
 } from "../voice/pushToTalk.ts";
 import {
-  SOURCE_AUDIO_CARRIES_CALL,
   sharesSourceAudio,
-  sourceAudioCarriesCall,
   sourceAudioChoice,
-  sourceAudioScope,
   useMediaSettings,
 } from "../voice/settings.ts";
-import { notify } from "./toasts.ts";
 import "../voice/room.css";
 
 const BUTTON = "voice-control voice-control-compact";
@@ -153,9 +147,7 @@ function MicProblem({
         <p>
           {!denied
             ? "Mikrofon nicht gefunden oder belegt."
-            : isDesktopApp()
-              ? "Kein Zugriff auf das Mikrofon. Erlaube ihn in den Systemeinstellungen."
-              : "Der Browser blockiert das Mikrofon. Erlaube den Zugriff in den Website-Einstellungen."}
+            : "Der Browser blockiert das Mikrofon. Erlaube den Zugriff in den Website-Einstellungen."}
         </p>
         <div className="voice-mic-problem-actions">
           <Button
@@ -180,33 +172,6 @@ function MicProblem({
         </div>
       </Popover>
     </>
-  );
-}
-
-/** A capture the desktop app does not have: the control stays in its place,
- * dimmed, and says why on hover and on press. */
-function Unavailable({
-  label,
-  reason,
-  className,
-  children,
-}: {
-  label: string;
-  reason: string;
-  className: string;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-disabled="true"
-      aria-label={label}
-      title={reason}
-      onClick={() => notify(reason)}
-      className={`${className} opacity-50`}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -239,14 +204,6 @@ export function VoiceControls({
         >
           {camera ? <CameraIcon size={17} /> : <CameraOffIcon size={17} />}
         </button>
-      ) : capable.desktop ? (
-        <Unavailable
-          label="Kamera"
-          reason="Diese Desktop-App kann keine Kamera nutzen."
-          className={BUTTON}
-        >
-          <CameraOffIcon size={17} />
-        </Unavailable>
       ) : null}
       <LiveControl canLive={canLive} />
       {streamSound ? <CallSoundButton className={BUTTON} /> : null}
@@ -258,13 +215,8 @@ export function VoiceControls({
 const LIVE_HINT = "Sehen alle im Sprachkanal";
 
 /** Why going live is not on offer here, if it is not. */
-function liveUnavailable(
-  canLive: boolean,
-  capable: Capabilities,
-): string | null {
-  if (!capable.screen) return "Diese Desktop-App kann nicht live gehen.";
-  if (!canLive) return "In diesem Server darfst du nicht live gehen.";
-  return null;
+function liveUnavailable(canLive: boolean): string | null {
+  return canLive ? null : "In diesem Server darfst du nicht live gehen.";
 }
 
 /** "Live gehen": a screen or window, seen by everyone in the voice channel,
@@ -277,9 +229,9 @@ function LiveControl({ canLive = false }: LiveProps) {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
   // A phone browser cannot capture a screen: nothing to offer, nothing to
-  // explain. The desktop app explains what it lacks.
-  if (!live && !capable.screen && !capable.desktop) return null;
-  const reason = live ? null : liveUnavailable(canLive, capable);
+  // explain.
+  if (!live && !capable.screen) return null;
+  const reason = live ? null : liveUnavailable(canLive);
   const className = `${BUTTON}${live ? " voice-control-live" : ""}`;
   const face = (
     <>
@@ -287,13 +239,8 @@ function LiveControl({ canLive = false }: LiveProps) {
       <span className="voice-control-text">Live</span>
     </>
   );
+  // Only a Live that runs gets here: it can always be ended.
   if (!capable.appAudio) {
-    if (reason)
-      return (
-        <Unavailable label="Live gehen" reason={reason} className={BUTTON}>
-          {face}
-        </Unavailable>
-      );
     return (
       <button
         type="button"
@@ -404,29 +351,17 @@ export function LiveMenuItems({
   const localScreen = useVoice((s) => s.localScreen);
   const sourceAudio = useVoice((s) => s.sourceAudio);
   const sourceAudioShare = useMediaSettings((s) => s.sourceAudioShare);
-  const sourceAudioApp = useMediaSettings((s) => s.sourceAudioApp);
   const patch = useMediaSettings((s) => s.patch);
-  const openSettings = useMediaSettings((s) => s.openDialog);
   const capable = useCapabilities();
   const soundHintId = useId();
-  const desktop = isDesktopApp();
   const sound = sharesSourceAudio({ sourceAudioShare });
-  const reason = liveUnavailable(canLive, capable);
+  const reason = liveUnavailable(canLive);
   // A browser hands sound over in its picker only: switched on during a
   // Live, it comes with the next one.
-  const nextLive = sound && !desktop && localScreen && sourceAudio.s === "off";
-  // The desktop app captures the sound without a picker, so the entry says
-  // whose it is, before a Live and while one runs.
-  const soundHint = [
-    sourceAudioScope({ sourceAudioApp }) ??
-      "Wähle den Ton im Freigabedialog des Browsers aus.",
-    nextLive ? "Ab dem nächsten Live." : null,
-    sourceAudioCarriesCall({ sourceAudioShare, sourceAudioApp })
-      ? SOURCE_AUDIO_CARRIES_CALL
-      : null,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const nextLive = sound && localScreen && sourceAudio.s === "off";
+  const soundHint = nextLive
+    ? "Wähle den Ton im Freigabedialog des Browsers aus. Ab dem nächsten Live."
+    : "Wähle den Ton im Freigabedialog des Browsers aus.";
   const done = (action: () => void) => () => {
     onDone();
     action();
@@ -470,13 +405,6 @@ export function LiveMenuItems({
             </span>
             <span className="voice-menu-switch-track" aria-hidden="true" />
           </button>
-          {desktop ? (
-            <MenuEntry
-              icon={<GearIcon size={17} />}
-              label="Anwendung für den Ton wählen …"
-              onSelect={done(() => openSettings())}
-            />
-          ) : null}
         </>
       ) : null}
     </div>

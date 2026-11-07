@@ -985,10 +985,11 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
                     if resp.clicked() {
                         chosen = Some(MenuChoice::Picker);
                     }
-                    ui.painter().rect_filled(
-                        Rect::from_min_size(pos2(row.left(), row.bottom() - 1.0), vec2(280.0, 1.0)),
-                        0.0,
+                    crate::widgets::rule_h(
+                        ui.painter(),
                         c.border,
+                        row.left()..=row.left() + 280.0,
+                        row.bottom() - 1.0,
                     );
                     ui.add_space(4.0);
                 }
@@ -1010,7 +1011,7 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
                     ui.add_space(4.0);
                     let (line, _) = ui
                         .allocate_exact_size(vec2(ui.available_width(), 1.0), egui::Sense::hover());
-                    ui.painter().rect_filled(line, 0.0, c.border);
+                    crate::widgets::rule_h(ui.painter(), c.border, line.x_range(), line.top());
                     ui.add_space(4.0);
                     if item(ui, crate::icons::Icon::Trash, "Löschen", true) {
                         let shift = ui.input(|i| i.modifiers.shift);

@@ -1,8 +1,7 @@
 // Voice/video + in-app notification prefs. Persisted per browser.
 // Capture quality and microphone processing are independent of bandwidth.
 // No application bitrate limit unless the user explicitly selects economy/custom.
-// Capture devices are the browser's own list (the native engine's in the
-// desktop app).
+// Capture devices are the browser's own list.
 
 import { create } from "zustand";
 import {
@@ -10,9 +9,6 @@ import {
   persist,
   type PersistStorage,
 } from "zustand/middleware";
-import { isDesktopApp } from "./native/bridge.ts";
-import { listNativeDevices } from "./native/capture.ts";
-import { hasNativeFeature } from "./native/features.ts";
 import {
   asVoiceInputMode,
   clampReleaseDelay,
@@ -55,22 +51,6 @@ export const AUDIO_PROCESSING = {
     hint: "Stereo sofern unterstützt, ohne Rauschfilter, Auto-Gain oder Sprechpausen-Erkennung",
   },
 } as const;
-/** The same modes as the desktop app words them: its native core does the
- * filtering, no browser is involved. */
-export const AUDIO_PROCESSING_DESKTOP: Record<
-  AudioProcessingMode,
-  { label: string; hint: string }
-> = {
-  enhanced: {
-    label: AUDIO_PROCESSING.enhanced.label,
-    hint: "Lokale Rauschunterdrückung",
-  },
-  browser: {
-    label: "WebRTC-Filter",
-    hint: "Rauschunterdrückung und Auto-Gain von WebRTC",
-  },
-  original: AUDIO_PROCESSING.original,
-};
 export function asProcessingMode(value: unknown): AudioProcessingMode {
   return value === "browser" || value === "original" ? value : "enhanced";
 }
@@ -167,8 +147,8 @@ export type MediaSettings = {
   inputGain: number;
   /** Whether a share carries sound; `sharesSourceAudio` reads it. */
   sourceAudioShare: SourceAudioShare;
-  /** Desktop app: application whose sound is shared ("" = every application
-   * but Gelabber). The browser picks the source in its own dialog. */
+  /** The Tauri app's choice of application sound. Unused here, but kept, as
+   * the native app imports these settings from that app's storage. */
   sourceAudioApp: string;
   /** Screen/Live audio, 0–2 like `outputVolume`. */
   sourceAudioVolume: number;
@@ -446,10 +426,6 @@ export const useMediaSettings = create<MediaSettingsState>()(
   persist(
     (set, get) => ({
       ...DEFAULT_MEDIA_SETTINGS,
-      // The desktop app announces messages while its window is not in
-      // front from the start, as chat apps do; a browser tab waits to be
-      // asked. A choice made before stays as it is.
-      desktopNotify: isDesktopApp(),
       dialogOpen: false,
       dialogSection: null,
       cameraProfileApply: "idle",
@@ -644,60 +620,21 @@ export function sourceAudioBitrate(
   return settings.economyMode ? 128_000 : null;
 }
 
-/** Whether a Live carries sound. Without a choice of his own
- * the user gets it where the call stays out of it: in a desktop app whose
- * "every application" leaves out Gelabber itself. A browser captures whatever
- * its picker hands over, the call included, so there it stays off. */
+/** Whether a Live carries sound: only when the user asked for it. A browser
+ * captures whatever its picker hands over, the call included. */
 export function sharesSourceAudio(
   settings: Pick<
     MediaSettings,
     "sourceAudioShare"
   > = useMediaSettings.getState(),
 ): boolean {
-  if (isDesktopApp() && !hasNativeFeature("app-audio")) return false;
-  if (settings.sourceAudioShare !== "auto")
-    return settings.sourceAudioShare === "on";
-  return hasNativeFeature("app-audio-excludes-self");
+  return settings.sourceAudioShare === "on";
 }
 
-/** What the switch stores. Off where a share carries no sound unasked is no
- * choice to keep: remembered, it would hold the sound back in a desktop app
- * that leaves the call out, once the user has updated to one. */
+/** What the switch stores. Here "auto" is off, so off stays "auto": no
+ * choice to remember. */
 export function sourceAudioChoice(on: boolean): SourceAudioShare {
-  if (on) return "on";
-  return sharesSourceAudio({ sourceAudioShare: "auto" }) ? "off" : "auto";
-}
-
-/** A desktop app before v0.6 captures its own playout with "every
- * application": switched on there, a share also carries the call. */
-export const SOURCE_AUDIO_CARRIES_CALL =
-  "Diese App-Version sendet mit dem Stream-Ton auch den Ton des Anrufs; ein Update der Desktop-App behebt das.";
-export function sourceAudioCarriesCall(
-  settings: Pick<
-    MediaSettings,
-    "sourceAudioShare" | "sourceAudioApp"
-  > = useMediaSettings.getState(),
-): boolean {
-  return (
-    hasNativeFeature("app-audio") &&
-    !hasNativeFeature("app-audio-excludes-self") &&
-    settings.sourceAudioShare === "on" &&
-    settings.sourceAudioApp === ""
-  );
-}
-
-/** Whose sound a share carries in the desktop app, for the controls to name:
- * the chosen application's, or every application's. The app captures it by
- * itself, so no picker has told the user; a browser's own picker has, and
- * there is nothing to name. */
-export function sourceAudioScope(
-  settings: Pick<MediaSettings, "sourceAudioApp"> = useMediaSettings.getState(),
-): string | null {
-  if (!hasNativeFeature("app-audio")) return null;
-  if (settings.sourceAudioApp) return `Ton von „${settings.sourceAudioApp}“`;
-  return hasNativeFeature("app-audio-excludes-self")
-    ? "Ton aller Anwendungen außer Gelabber"
-    : "Ton aller Anwendungen";
+  return on ? "on" : "auto";
 }
 
 export function resetMediaSettingsForTests(): void {
@@ -924,7 +861,6 @@ export type DeviceList = {
 
 export async function listMediaDevices(): Promise<DeviceList> {
   const empty: DeviceList = { audioinput: [], audiooutput: [], videoinput: [] };
-  if (isDesktopApp()) return listNativeDevices();
   if (
     typeof navigator === "undefined" ||
     !navigator.mediaDevices?.enumerateDevices

@@ -57,11 +57,7 @@ pub fn header(ui: &Ui, page: Rect, title: &str, context: Option<&str>) {
     let painter = ui.painter();
     let bar = Rect::from_min_size(page.min, vec2(page.width(), 52.0));
     painter.rect_filled(bar, 0.0, c.bg);
-    painter.hline(
-        page.x_range(),
-        page.top() + 51.5,
-        Stroke::new(1.0, c.border),
-    );
+    crate::widgets::rule_h(painter, c.border, page.x_range(), page.top() + 51.0);
     let top = page.top() + 14.25;
     let block = paint(ui, pos2(page.left() + 20.0, top), title, HEADER, c.text);
     if let Some(context) = context {
@@ -262,11 +258,7 @@ pub fn switch_row(
             pos2(rect.left(), inner_top + label_block.height() + 4.0),
         );
     }
-    painter.hline(
-        rect.x_range(),
-        rect.bottom() - 0.5,
-        Stroke::new(1.0, c.border),
-    );
+    crate::widgets::rule_h(painter, c.border, rect.x_range(), rect.bottom() - 1.0);
     let switch_rect = Rect::from_min_size(
         pos2(
             rect.right() - 38.0,

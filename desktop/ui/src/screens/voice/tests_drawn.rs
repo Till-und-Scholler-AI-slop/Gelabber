@@ -35,10 +35,21 @@ impl eframe::App for Probe {
 type H = Harness<'static, Probe>;
 
 /// `draw` with an `AppCtx` each frame.
-fn harness(client: Client, call: Call, mut draw: impl FnMut(&mut Ui, &mut AppCtx) + 'static) -> H {
+fn harness(client: Client, call: Call, draw: impl FnMut(&mut Ui, &mut AppCtx) + 'static) -> H {
+    harness_at(1.0, client, call, draw)
+}
+
+/// The same at `ppp` device pixels per point (desktop scale × text size).
+fn harness_at(
+    ppp: f32,
+    client: Client,
+    call: Call,
+    mut draw: impl FnMut(&mut Ui, &mut AppCtx) + 'static,
+) -> H {
     let images = Images::new(client.clone());
     Harness::builder()
         .with_size(vec2(1280.0, 800.0))
+        .with_pixels_per_point(ppp)
         .build_eframe(move |cc| {
             crate::fonts::install(&cc.egui_ctx);
             crate::theme::set(&cc.egui_ctx, crate::theme::Theme::dark());
@@ -530,4 +541,40 @@ fn popovers_open_with_the_focus_where_the_web_puts_it() {
     h.get_by_label("Mikrofon wählen …").focus();
     h.run_steps(4);
     assert_eq!(focused(&h).as_deref(), Some("Mikrofon wählen …"));
+}
+
+/// The sidebar column's right border runs on down between the user panel
+/// and the call bar (`.user-panel` sits inside `.channel-sidebar`), and
+/// every separator is one whole device pixel, as Chromium draws `1px`, at
+/// the standard text size (1.125) and at 150 % too.
+#[test]
+fn separators_run_through_the_bottom_strip_one_device_pixel_wide() {
+    let border = crate::theme::Theme::dark().c.border;
+    for ppp in [1.0f32, 1.125, 1.5] {
+        let (client, call) = offline();
+        call.set_state(in_sofa(MicStatus::Live));
+        let mut h = harness_at(ppp, client, call, crate::screens::shell::show);
+        h.run_steps(6);
+        let image = h.render().expect("render");
+        let is_border = |x: u32, y: u32| image.get_pixel(x, y).0[..3] == border.to_array()[..3];
+        let device = |v: f32| (v * ppp).round() as u32;
+        // The column 287: in the sidebar, the user panel's strip, and only there.
+        let x = device(287.0);
+        for y in [device(400.0), device(772.0), device(799.0)] {
+            assert!(is_border(x, y), "{ppp}: border at {x},{y}");
+            assert!(
+                !is_border(x - 1, y) && !is_border(x + 1, y),
+                "{ppp}: one pixel at {x},{y}"
+            );
+        }
+        // The bottom strip's top line, over the user panel and the call bar.
+        let y = device(744.0);
+        for x in [device(150.0), device(600.0)] {
+            assert!(is_border(x, y), "{ppp}: line at {x},{y}");
+            assert!(
+                !is_border(x, y - 1) && !is_border(x, y + 1),
+                "{ppp}: one pixel at {x},{y}"
+            );
+        }
+    }
 }

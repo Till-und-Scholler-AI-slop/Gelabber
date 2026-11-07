@@ -39,8 +39,11 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let painter = ui.painter().clone();
-    painter.rect_filled(rect, 0.0, c.panel);
-    hairline_h(&painter, &theme, rect.left()..=rect.right(), rect.top());
+    // `.user-panel` sits inside `.channel-sidebar`: the column's right
+    // border (the shell's) runs on past it down to the window's edge.
+    let inner = Rect::from_min_max(rect.min, pos2(rect.right() - 1.0, rect.bottom()));
+    painter.rect_filled(inner, 0.0, c.panel);
+    hairline_h(&painter, &theme, inner.left()..=inner.right(), inner.top());
 
     let (name, avatar_url, status_text, presence) = app.client.with_state(|s| {
         let me = s.me();

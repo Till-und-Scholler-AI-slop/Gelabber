@@ -166,10 +166,11 @@ impl<'a> Modal<'a> {
             });
             let mut bottom = used_bottom;
             if let Some(footer) = footer {
-                painter.hline(
+                crate::widgets::rule_h(
+                    &painter,
+                    c.border,
                     card.left() + 1.0..=card.right() - 1.0,
-                    bottom + 0.5,
-                    Stroke::new(1.0, c.border),
+                    bottom,
                 );
                 let footer_rect = Rect::from_min_max(
                     pos2(card.left() + 25.0, bottom + 1.0 + 12.0),

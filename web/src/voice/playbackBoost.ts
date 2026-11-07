@@ -4,8 +4,7 @@
 // one shared graph instead:
 //   track sources -> gain per element -> limiter -> output element.
 // The output element keeps output-device selection and autoplay handling on
-// the element path the session already uses. The desktop app's native
-// outputs scale playout themselves and never come here.
+// the element path the session already uses.
 
 /** Peaks above this are compressed 20:1, so a boost cannot clip. */
 const LIMIT_THRESHOLD_DB = -6;
