@@ -494,21 +494,11 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
         }
     }
     let typing_somewhere = ui.memory(|m| m.focused().is_some());
-    if !typing_somewhere {
-        let page = viewport * 0.9;
-        let step = ui.input(|i| {
-            if i.key_pressed(egui::Key::PageUp) {
-                -page
-            } else if i.key_pressed(egui::Key::PageDown) {
-                page
-            } else {
-                0.0
-            }
-        });
-        if step != 0.0 {
-            pane.offset = (pane.offset + step).clamp(0.0, max_offset);
-            pane.stick = pane.offset >= max_offset - 0.5;
-        }
+    if !typing_somewhere
+        && let Some(offset) = ui.input(|i| key_scroll(i, pane.offset, max_offset, viewport))
+    {
+        pane.offset = offset;
+        pane.stick = pane.offset >= max_offset - 0.5;
     }
     let at_latest = pane.offset >= max_offset - LATEST_SLACK;
     pane.at_latest = at_latest;
@@ -728,6 +718,29 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
         pane.offset = max_offset;
     }
     actions
+}
+
+/// Where a list key takes the reader: a page of 90% of the view, or Home
+/// and End to the oldest loaded and newest row (End sticks to the end).
+fn key_scroll(
+    input: &egui::InputState,
+    offset: f32,
+    max_offset: f32,
+    viewport: f32,
+) -> Option<f32> {
+    let page = viewport * 0.9;
+    let target = if input.key_pressed(egui::Key::PageUp) {
+        offset - page
+    } else if input.key_pressed(egui::Key::PageDown) {
+        offset + page
+    } else if input.key_pressed(egui::Key::Home) {
+        0.0
+    } else if input.key_pressed(egui::Key::End) {
+        max_offset
+    } else {
+        return None;
+    };
+    Some(target.clamp(0.0, max_offset))
 }
 
 fn paint_state(ui: &mut Ui, rect: Rect, message: &str, actions: &mut Vec<ListAction>) {
@@ -1156,6 +1169,33 @@ mod tests {
         assert!(!is_continued(Some(&a), &message(1, 5)));
         assert!(!is_continued(Some(&a), &message(2, 1)));
         assert!(!is_continued(None, &a));
+    }
+
+    fn pressed(key: egui::Key) -> egui::InputState {
+        let mut input = egui::InputState::default();
+        input.events = vec![egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }];
+        input
+    }
+
+    #[test]
+    fn list_keys() {
+        let at = |key| key_scroll(&pressed(key), 500.0, 2000.0, 400.0);
+        assert_eq!(at(egui::Key::PageUp), Some(140.0));
+        assert_eq!(at(egui::Key::PageDown), Some(860.0));
+        // Home goes to the oldest loaded row, End to the newest.
+        assert_eq!(at(egui::Key::Home), Some(0.0));
+        assert_eq!(at(egui::Key::End), Some(2000.0));
+        assert_eq!(at(egui::Key::ArrowUp), None);
+        assert_eq!(
+            key_scroll(&pressed(egui::Key::PageUp), 100.0, 2000.0, 400.0),
+            Some(0.0)
+        );
     }
 
     #[test]

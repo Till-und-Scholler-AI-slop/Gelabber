@@ -12,12 +12,13 @@
 #     the Tauri app's package gelabber-desktop (PKGBUILD and tarball of a
 #     release up to 0.8) and lets it run the WebView fixture page
 #     (desktop/ui/tests/fixtures/webview, so python must be installed),
-#     upgrades it with -Syu into the native app, checks what that took over,
+#     upgrades it with -Syu into the native app, checks what that took over
+#     (from 0.8.10 on only its legacy-settings.json export, else WebKitGTK),
 #     starts it (../native/smoke.sh, so xvfb-run and a Vulkan driver must be
 #     installed), upgrades to a newer pkgrel, removes with -Rns, and checks
 #     what is left. Runs after build in the same container (same signing key)
-#     and as root; the Tauri app's WebKitGTK store lands in
-#     ./webview-fixture-arch.
+#     and as root, once per Tauri release; the Tauri app's WebKitGTK store
+#     lands in ./webview-fixture-arch/<tauri-version>.
 #
 # Signing key: ARCH_REPO_GPG_KEY (ASCII-armored private key without
 # passphrase). Without it a throwaway key signs the test build.
@@ -28,6 +29,7 @@ package=gelabber-desktop
 id=io.github.till-und-scholler-ai-slop.gelabber
 fixtures="$here/../../ui/tests/fixtures/webview"
 config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/$id"
+data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/$id"
 
 as_builder() {
   sudo -u "$builder" -H env GNUPGHOME=/home/$builder/.gnupg "$@"
@@ -133,9 +135,11 @@ nothing_left() {
 }
 
 # The Tauri app on the fixture page of 127.0.0.1:8124, then of 8123 (the
-# server it keeps): its WebKitGTK storage as a user's, without an export.
+# server it keeps): its WebKitGTK storage as a user's, and from 0.8.10 on
+# its export, which then is all the native app may read.
 tauri_fills_storage() {
-  local store="${XDG_DATA_HOME:-$HOME/.local/share}/$id/localstorage" port server app
+  local version="$1" exports="$2"
+  local store="$data_dir/localstorage" export="$config_dir/legacy-settings.json" port server app
   mkdir -p "$config_dir"
   for port in 8124 8123; do
     printf '{"server":"http://127.0.0.1:%s"}' "$port" >"$config_dir/desktop.json"
@@ -147,6 +151,10 @@ tauri_fills_storage() {
     app=$!
     for _ in $(seq 120); do [ -e "/tmp/webview-done-$port" ] && break; sleep 1; done
     sleep 2
+    # The kill gives no pagehide: phase 2 (inputGain 1.5) reaches the export by its minute timer.
+    if [ "$exports" = 1 ] && [ "$port" = 8123 ]; then
+      for _ in $(seq 120); do grep -qF 'inputGain\":1.5' "$export" 2>/dev/null && break; sleep 1; done
+    fi
     kill -TERM -- "-$app" 2>/dev/null || true
     wait "$app" || true
     kill "$server" 2>/dev/null || true
@@ -158,16 +166,24 @@ tauri_fills_storage() {
     fi
   done
   test -f "$store/http_127.0.0.1_8123.localstorage"
-  test ! -e "$config_dir/legacy-settings.json"
-  mkdir -p webview-fixture-arch
-  cp "$store"/http_127.0.0.1_812[34].localstorage* webview-fixture-arch/
-  rm -f webview-fixture-arch/*-shm
+  mkdir -p "webview-fixture-arch/$version"
+  cp "$store"/http_127.0.0.1_812[34].localstorage* "webview-fixture-arch/$version/"
+  rm -f "webview-fixture-arch/$version"/*-shm
+  if [ "$exports" = 1 ]; then
+    grep -qF 'inputGain\":1.5' "$export" || {
+      echo "the Tauri app $version exported no phase 2 of port 8123" >&2
+      exit 1
+    }
+    rm -rf "$store"
+  else
+    test ! -e "$export"
+  fi
 }
 
 # The native app's first start as the user who had the Tauri app (no
-# GELABBER_CONFIG_DIR): it takes the WebView's settings, volumes and drafts.
+# GELABBER_CONFIG_DIR): it takes the settings, volumes and drafts from <source>.
 native_takes_over() {
-  local work status=0
+  local source="$1" work status=0
   work="$(mktemp -d)"
   mkdir -m 700 "$work/run"
   timeout --kill-after=10 70 env -u GELABBER_CONFIG_DIR -u GELABBER_SERVER -u WAYLAND_DISPLAY \
@@ -175,23 +191,23 @@ native_takes_over() {
     xvfb-run -a -s "-screen 0 1280x800x24" /usr/bin/gelabber --server https://gelabber.invalid \
     >"$work/log" 2>&1 || status=$?
   cat "$work/log"
-  if [ "$status" -ne 0 ] || ! grep -q '^gelabber: took over .* from WebKitGTK$' "$work/log"; then
-    echo "the native app's first start took nothing from WebKitGTK (exit status $status)" >&2
+  if [ "$status" -ne 0 ] || ! grep -q "^gelabber: took over .* from $source\$" "$work/log"; then
+    echo "the native app's first start took nothing from $source (exit status $status)" >&2
     exit 1
   fi
   rm -rf "$work"
   python3 -I "$fixtures/check_import.py" "$config_dir"
 }
 
-# An update shows up like a new release: same version, pkgrel 2.
+# An update shows up like a new release: same version, the next pkgrel.
 upgrade() {
   local site="$1" tarball="$2"
-  local version
+  local version pkgrel
   version="$(pacman -Q "$package" | awk '{print $2}')"
-  version="${version%-*}"
-  build_one "$version" "$tarball" "$site" "" 2
+  pkgrel=$((${version##*-} + 1))
+  build_one "${version%-*}" "$tarball" "$site" "" "$pkgrel"
   pacman -Syu --noconfirm
-  pacman -Q "$package" | grep -- '-2$'
+  pacman -Q "$package" | grep -- "-$pkgrel\$"
 }
 
 case "${1:-}" in
@@ -211,6 +227,8 @@ case "${1:-}" in
     tauri_version="${6:?tauri-version}"
     setup_builder
     use_site "$site"
+    # A user who never ran Gelabber, also on a second run.
+    rm -rf "$config_dir" "$data_dir"
     pacman -Syu --noconfirm
     # The Tauri app as its users have it, with its dependencies (WebKitGTK).
     tauri="$(make_package "$tauri_pkgbuild" "$tauri_version" "$tauri_tarball" "" 1)"
@@ -218,7 +236,12 @@ case "${1:-}" in
     test -x /usr/bin/gelabber-desktop
     test -x /opt/gelabber-desktop/gelabber-desktop
     test -f /usr/share/applications/gelabber-desktop.desktop
-    tauri_fills_storage
+    if [ "$(vercmp "${tauri_version#v}" 0.8.10)" -ge 0 ]; then
+      exports=1 source=legacy-settings.json
+    else
+      exports=0 source=WebKitGTK
+    fi
+    tauri_fills_storage "$tauri_version" "$exports"
     old="$(pacman -Q "$package" | awk '{print $2}')"
     new="$(pacman -Sl gelabber | awk -v p="$package" '$2 == p {print $3}')"
     if [ "$(vercmp "$new" "$old")" -le 0 ]; then
@@ -237,7 +260,7 @@ case "${1:-}" in
     nothing_left /opt/gelabber-desktop /usr/share/applications/gelabber-desktop.desktop \
       /usr/share/icons/hicolor/256x256/apps/gelabber-desktop.png
     libraries_found /opt/gelabber/gelabber /opt/gelabber/libgelabber_media.so
-    native_takes_over
+    native_takes_over "$source"
     # The installed app starts and paints (needs xvfb-run and a Vulkan
     # driver), through the command the Tauri package had.
     "$here/../native/smoke.sh" /usr/bin/gelabber-desktop

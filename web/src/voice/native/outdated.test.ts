@@ -24,7 +24,8 @@ function app(
 }
 
 const ADVICE =
-  "Aktualisiere sie, damit Hardware-Codecs wie AV1 und H.264 genutzt werden.";
+  "Ab 0.9 gibt es eine neue Desktop-App: unter Windows ab v0.7 über das App-Update, " +
+  "unter Arch mit pacman -Syu, sonst gelabber-native-* aus dem GitHub-Release.";
 
 describe("olderVersion", () => {
   it("compares the dotted parts as numbers", async () => {

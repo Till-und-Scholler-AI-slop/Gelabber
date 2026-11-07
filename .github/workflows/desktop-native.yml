@@ -1031,8 +1031,8 @@ jobs:
       # Releases sign with the repository key; everything else with a
       # throwaway key that only this job trusts.
       ARCH_REPO_GPG_KEY: ${{ inputs.release_tag != '' && secrets.ARCH_REPO_GPG_KEY || '' }}
-      # The Tauri release whose package this one upgrades; 0.8.9 leaves no export.
-      TAURI_RELEASE: v0.8.9
+      # 0.8.9 leaves no export (WebKitGTK is read), 0.8.10 exports (only that is read).
+      TAURI_RELEASES: v0.8.9 v0.8.10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1047,11 +1047,13 @@ jobs:
       - name: Download the Tauri package's sources
         run: |
           set -euo pipefail
-          mkdir tauri
-          curl -fsSL --retry 3 -o tauri/PKGBUILD \
-            "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${TAURI_RELEASE}/desktop/packaging/arch/PKGBUILD"
-          curl -fsSL --retry 3 -o tauri/gelabber-desktop-linux-x64.tar.gz \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAURI_RELEASE}/gelabber-desktop-linux-x64.tar.gz"
+          for release in $TAURI_RELEASES; do
+            mkdir -p "tauri/$release"
+            curl -fsSL --retry 3 -o "tauri/$release/PKGBUILD" \
+              "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${release}/desktop/packaging/arch/PKGBUILD"
+            curl -fsSL --retry 3 -o "tauri/$release/gelabber-desktop-linux-x64.tar.gz" \
+              "https://github.com/${GITHUB_REPOSITORY}/releases/download/${release}/gelabber-desktop-linux-x64.tar.gz"
+          done
 
       # Xvfb, lavapipe and the X11 libraries winit loads, for the native app's
       # start after its install; Python serves the Tauri app's fixture page.
@@ -1097,8 +1099,11 @@ jobs:
 
       - name: Upgrade from the Tauri package, upgrade and remove like a user
         run: |
-          desktop/packaging/arch/repo.sh test site gelabber-native-linux-x64.tar.gz \
-            tauri/PKGBUILD tauri/gelabber-desktop-linux-x64.tar.gz "$TAURI_RELEASE"
+          set -euo pipefail
+          for release in $TAURI_RELEASES; do
+            desktop/packaging/arch/repo.sh test site gelabber-native-linux-x64.tar.gz \
+              "tauri/$release/PKGBUILD" "tauri/$release/gelabber-desktop-linux-x64.tar.gz" "$release"
+          done
 
       # The Tauri app's WebKitGTK storage from the step above (repo.sh test).
       - name: Upload the WebKitGTK store
@@ -1110,7 +1115,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      # The repository as built before the upgrade test added a pkgrel 2.
+      # The repository as built before the upgrade tests added newer pkgrels.
       - name: Rebuild the repository for upload
         if: inputs.release_tag != ''
         env:

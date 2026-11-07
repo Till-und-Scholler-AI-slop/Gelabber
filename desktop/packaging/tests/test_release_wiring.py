@@ -129,10 +129,11 @@ class NativeWiring(unittest.TestCase):
         self.assertNotIn('name: gelabber-desktop-linux-x64\n', arch)
         self.assertEqual(arch.count('repo.sh build "'), 2, 'test build and release rebuild')
         self.assertEqual(arch.count('gelabber-native-linux-x64.tar.gz site'), 2)
-        # The upgrade test starts from the Tauri package of a release.
+        # The upgrade test starts from the Tauri package of each release: 0.8.9 without, 0.8.10 with the export.
         test = arch.split('repo.sh test site', 1)[1].split('\n      - name:', 1)[0]
-        self.assertIn('tauri/PKGBUILD tauri/gelabber-desktop-linux-x64.tar.gz "$TAURI_RELEASE"', test)
-        self.assertRegex(arch, r'\n      TAURI_RELEASE: v0\.8\.\d+\n')
+        self.assertIn('"tauri/$release/PKGBUILD" "tauri/$release/gelabber-desktop-linux-x64.tar.gz" "$release"', test)
+        self.assertIn('for release in $TAURI_RELEASES; do', arch.split('repo.sh test site', 1)[0].rsplit('\n      - name:', 1)[1])
+        self.assertIn('\n      TAURI_RELEASES: v0.8.9 v0.8.10\n', arch)
 
 
 if __name__ == '__main__':
