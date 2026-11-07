@@ -97,8 +97,7 @@ jobs:
       - name: Native build tools (Ubuntu)
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential python3-venv
+          .github/workflows/scripts/apt-install.sh build-essential python3-venv
           python3 - <<'PY'
           import json, subprocess
           commands = {"gcc": ["gcc", "--version"], "g++": ["g++", "--version"],
@@ -136,8 +135,7 @@ jobs:
       - name: Install real browsers and SQL fixture client
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
+          .github/workflows/scripts/apt-install.sh postgresql-client
           npm ci --prefix web
           cd web
           npx playwright install --with-deps chromium firefox

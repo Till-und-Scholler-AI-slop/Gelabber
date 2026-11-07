@@ -99,8 +99,7 @@ jobs:
           GELABBER_LIBWEBRTC_DIR: /mnt/libwebrtc-package
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build python3-venv
+          .github/workflows/scripts/apt-install.sh ninja-build python3-venv
           cargo build --manifest-path desktop/Cargo.toml -p gelabber-media-core
           build=$(ls -d desktop/target/debug/build/gelabber-media-core-*/out/build | head -n 1)
           python3 desktop/packaging/third-party-notices.py --webrtc-src /mnt/webrtc/src --core-build "$build"
@@ -208,12 +207,11 @@ jobs:
           fail-on-cache-miss: true
 
       # Xvfb and lavapipe for the app's smoke test, gdb for the voice test's
-      # backtrace. A stalled Ubuntu mirror fails the step fast, not the job.
+      # backtrace. apt-install.sh leaves a slow Ubuntu mirror for another one.
       - name: Build tools
         timeout-minutes: 15
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build python3-venv \
+          .github/workflows/scripts/apt-install.sh ninja-build python3-venv \
             xvfb xauth mesa-vulkan-drivers gdb
 
       - name: Rust toolchain
@@ -244,7 +242,7 @@ jobs:
       - name: Test packages
         timeout-minutes: 15
         run: |
-          sudo apt-get install -y --no-install-recommends pipewire wireplumber pipewire-pulse \
+          .github/workflows/scripts/apt-install.sh pipewire wireplumber pipewire-pulse \
             pulseaudio-utils xdg-desktop-portal \
             libpipewire-0.3-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-bad \
             gstreamer1.0-plugins-ugly gstreamer1.0-libav python3-gi
@@ -420,7 +418,7 @@ jobs:
       # The native installer is built after merge only; its script compiles here.
       - name: NSIS for the installer test
         timeout-minutes: 5
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nsis
+        run: .github/workflows/scripts/apt-install.sh nsis
 
       # After the check, which has fetched the crates of the lock file: one
       # of the tests runs the script again without the network and, in CI,
