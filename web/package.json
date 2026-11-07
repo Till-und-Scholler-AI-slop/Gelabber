@@ -39,7 +39,7 @@
     "@tanstack/react-router": "1.170.46",
     "@tanstack/react-virtual": "3.14.24",
     "@tauri-apps/api": "2.12.4",
-    "mediasoup-client": "3.24.1",
+    "mediasoup-client": "3.26.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "zustand": "5.0.16"

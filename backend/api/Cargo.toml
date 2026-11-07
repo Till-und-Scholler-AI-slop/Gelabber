@@ -26,7 +26,7 @@ rand = "0.10.2"
 sha2 = "0.11.0"
 subtle = "2.6.1"
 # S3-compatible presign for MinIO (issue #7). Sans-IO; reqwest sends Head/Put.
-rusty-s3 = "0.10.2"
+rusty-s3 = "0.11.0"
 # rusty-s3's own clock type, for download links signed per window (issue #201).
 jiff = { version = "0.2.37", default-features = false, features = ["std"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "stream"] }
@@ -35,7 +35,7 @@ url = "2.5.8"
 p256 = { version = "0.14.0", default-features = false, features = ["ecdh", "ecdsa", "std"] }
 hkdf = "0.13.0"
 aes-gcm = "0.11.1"
-base64 = "0.22.1"
+base64 = "0.23.1"
 # Page charsets for link previews (#254).
 encoding_rs = "0.8.35"
 # Account mail (#195): SMTP submission to the operator's relay, rustls with
