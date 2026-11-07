@@ -253,11 +253,7 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
         }
         ui.add_space(14.0);
         let top = ui.cursor().min;
-        ui.painter().hline(
-            top.x..=top.x + width,
-            top.y + 0.5,
-            egui::Stroke::new(1.0, c.border),
-        );
+        crate::widgets::rule_h(ui.painter(), c.border, top.x..=top.x + width, top.y);
         // Full width under a rule, square, the label at the start.
         if super::chips::ghost_row(ui, "Alle Einstellungen …", top.x, width).clicked() {
             more = true;

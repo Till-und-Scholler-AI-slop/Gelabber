@@ -217,11 +217,7 @@ impl Dialog {
                 }
                 ui.add_space(12.0 + 4.0);
                 let top = ui.cursor().min;
-                ui.painter().hline(
-                    top.x..=top.x + width,
-                    top.y + 0.5,
-                    Stroke::new(1.0, c.border),
-                );
+                crate::widgets::rule_h(ui.painter(), c.border, top.x..=top.x + width, top.y);
                 ui.add_space(13.0);
                 let label = "Ablauf & Limit ändern";
                 let lb = Block::single(ui, label, text::UI, c.muted);

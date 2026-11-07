@@ -574,11 +574,7 @@ fn paint_preview(ui: &Ui, rect: Rect, def: &Definition, small: bool, clip: Rect)
         },
         c.panel,
     );
-    painter.vline(
-        side.right() - 0.5,
-        side.y_range(),
-        Stroke::new(1.0, c.border),
-    );
+    crate::widgets::rule_v(&painter, c.border, side.right() - 1.0, side.y_range());
     let f = |px: f32, small_px: f32| if small { small_px } else { px };
     let style = |size: f32, weight: f32| TextStyle::new(size, weight, 1.5);
     let clip = painter.with_clip_rect(side.shrink2(vec2(0.0, 0.0)).intersect(painter.clip_rect()));
@@ -720,7 +716,7 @@ fn paint_preview(ui: &Ui, rect: Rect, def: &Definition, small: bool, clip: Rect)
             },
             c.panel,
         );
-        painter.hline(foot.x_range(), foot.top() + 0.5, Stroke::new(1.0, c.border));
+        crate::widgets::rule_h(&painter, c.border, foot.x_range(), foot.top());
         let fs = style(10.0, 400.0);
         let cy = foot.top() + 1.0 + 10.0 + 12.5;
         painter.circle_filled(pos2(foot.left() + 10.0 + 3.0, cy), 3.0, c.online);
@@ -1134,10 +1130,11 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
                     Rect::from_min_size(rect.min + vec2(1.0, 1.0), vec2(card_w - 2.0, 115.0));
                 paint_preview_clipped(ui, prev, d, rect);
                 let desc_top = prev.bottom();
-                ui.painter().hline(
+                crate::widgets::rule_h(
+                    ui.painter(),
+                    c.border_strong,
                     rect.left() + 1.0..=rect.right() - 1.0,
-                    desc_top + 0.5,
-                    Stroke::new(1.0, c.border_strong),
+                    desc_top,
                 );
                 let x = rect.left() + 13.0;
                 Block::single(ui, &d.name, TextStyle::new(13.0, 700.0, 1.5), c.text)

@@ -13,7 +13,7 @@ pub mod themes;
 
 use std::sync::Arc;
 
-use egui::{Color32, Id, Rect, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
+use egui::{Color32, Id, Rect, Sense, Ui, UiBuilder, pos2, vec2};
 use gelabber_client::{OpState, User};
 use parking_lot::Mutex;
 
@@ -225,10 +225,11 @@ pub fn sidebar(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
     );
     ui.painter().rect_filled(fill, 0.0, c.panel);
     let painter = ui.painter();
-    painter.hline(
+    crate::widgets::rule_h(
+        painter,
+        c.border,
         column.left()..=column.right() - 1.0,
-        column.top() + 51.5,
-        Stroke::new(1.0, c.border),
+        column.top() + 51.0,
     );
     controls::paint(
         ui,
