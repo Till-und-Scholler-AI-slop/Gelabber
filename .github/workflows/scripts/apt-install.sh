@@ -60,6 +60,8 @@ for attempt in "${!limits[@]}"; do
   limit=${limits[attempt]}
   if [ "$attempt" -gt 0 ]; then
     mirror=${fallbacks[attempt - 1]}
+    # A killed apt-get can leave its line open; the annotation needs its own.
+    printf '\n'
     echo "::warning::apt-install: attempt $attempt failed or ran past its ${limits[attempt - 1]} s; switching to $mirror"
     use_mirror "$mirror"
   fi
