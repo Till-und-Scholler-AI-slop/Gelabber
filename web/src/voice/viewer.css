@@ -34,13 +34,6 @@
   color: var(--lr-on-danger);
   font: var(--lr-type-caps);
 }
-.voice-video-limit {
-  padding: 2px 6px;
-  border-radius: var(--lr-radius-xs);
-  background: rgb(0 0 0 / 0.6);
-  font: var(--lr-type-caps);
-  text-transform: none;
-}
 .voice-video-placeholder,
 .voice-video-overlay {
   position: absolute;
@@ -257,16 +250,6 @@
 }
 .voice-watch-button:hover {
   background: rgb(255 255 255 / 0.2);
-}
-.voice-fullscreen-error {
-  position: absolute;
-  bottom: 28px;
-  inset-inline: 12px;
-  padding: 10px;
-  border-radius: var(--lr-radius-sm);
-  background: #16191bf2;
-  color: #fff;
-  font: var(--lr-type-ui);
 }
 @media (max-width: 640px) {
   .stream-viewer {

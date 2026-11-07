@@ -14,8 +14,7 @@
 //
 // AV1 goes out as one stream, never in simulcast layers, so every receiver
 // decodes the whole picture. A device that cannot decode 4K AV1 smoothly
-// (hardware or not; the desktop app says so with `av1-hardware-decode`)
-// leaves AV1 out of the codecs it tells the server it receives
+// (hardware or not) leaves AV1 out of the codecs it tells the server it receives
 // (`receivableCapabilities`): the room then has no AV1, and senders stay on
 // H.264 or VP8 with layers. Sending AV1 still needs a hardware encoder.
 
@@ -23,8 +22,6 @@ import type {
   RtpCapabilities,
   RtpCodecCapability,
 } from "mediasoup-client/types";
-import { isDesktopApp } from "./native/bridge.ts";
-import { loadNativeFeatures, type NativeFeature } from "./native/features.ts";
 
 const H264 = "video/h264";
 const AV1 = "video/av1";
@@ -133,19 +130,8 @@ export function receivableCapabilities(
   return { ...capabilities, codecs };
 }
 
-/** The desktop app's features when its core encodes, or decodes, in
- * hardware. */
-export const H264_HARDWARE_FEATURE: NativeFeature = "h264-hardware";
-export const AV1_HARDWARE_FEATURE: NativeFeature = "av1-hardware";
-export const AV1_HARDWARE_DECODE_FEATURE: NativeFeature = "av1-hardware-decode";
-/** The desktop app's feature when its core encodes VP9 in spatial layers. */
-export const VP9_SVC_FEATURE: NativeFeature = "vp9-svc";
-
 /** How long the browser may take to say; past it, software is assumed. */
 const PROBE_TIMEOUT_MS = 1000;
-
-/** The desktop app may be busy starting its media core. */
-const DESKTOP_PROBE_TIMEOUT_MS = 10_000;
 
 type Probed = HardwareVideo & { av1Decoding: boolean };
 
@@ -183,20 +169,6 @@ export async function decodesAv1(): Promise<boolean> {
 }
 
 async function probe(): Promise<Probed & { timedOut: boolean }> {
-  if (isDesktopApp()) {
-    const [features, timedOut] = await withTimeout(
-      loadNativeFeatures(),
-      new Set<string>(),
-      DESKTOP_PROBE_TIMEOUT_MS,
-    );
-    return {
-      av1: features.has(AV1_HARDWARE_FEATURE),
-      h264: features.has(H264_HARDWARE_FEATURE),
-      vp9Svc: features.has(VP9_SVC_FEATURE),
-      av1Decoding: features.has(AV1_HARDWARE_DECODE_FEATURE),
-      timedOut,
-    };
-  }
   const answers = await Promise.all([
     withTimeout(powerEfficient("video/AV1"), false),
     withTimeout(powerEfficient("video/H264"), false),

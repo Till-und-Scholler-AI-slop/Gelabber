@@ -9,7 +9,6 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import { serverNow } from "../api/client.ts";
 import { scopeGeneration, stampHolds } from "../auth/scope.ts";
 import { useSession } from "../auth/session.ts";
-import { focusDesktopWindow } from "../messages/desktopShell.ts";
 import {
   hidesContent,
   privacyKey,
@@ -116,7 +115,6 @@ export function useLiveNotices(): void {
         sound: playLiveSound,
         open: (serverId, channelId) => {
           window.focus();
-          focusDesktopWindow();
           void navigate({
             to: "/s/$serverId/c/$channelId",
             params: { serverId, channelId },

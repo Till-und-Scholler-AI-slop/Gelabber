@@ -206,12 +206,12 @@ body,
   background: var(--lr-bg);
 }
 /* Pulling down must neither reload the app, which would drop a call, nor
-   stretch its chrome. Not in the desktop app (main.tsx marks its root): on
+   stretch its chrome. Not in the old Tauri app (main.tsx marks its root): on
    the root element, WebKitGTK then ignores mouse wheels, so pages scrolled
    by the document (the settings) froze in the Linux app. A browser keeps it
    whatever its pointers are, touch laptops included. */
-html:not([data-desktop]),
-html:not([data-desktop]) body {
+html:not([data-tauri]),
+html:not([data-tauri]) body {
   overscroll-behavior-y: none;
 }
 html {

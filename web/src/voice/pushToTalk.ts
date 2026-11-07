@@ -1,13 +1,10 @@
 // Push-to-talk (issue #165): in this mode the microphone sends only while
 // the bound key is held, and for the release delay after. A browser tab
-// hears the key only while it has the focus; the desktop app also hears it
-// with the window in the background (desktop/app/src/ptt.rs). The session
-// configures this while it is in a call, asks `pushToTalkOpen()` whether the
+// hears the key only while it has the focus. The session configures this while it is in a call, asks `pushToTalkOpen()` whether the
 // microphone may send and is told through `onPushToTalkGate` when that
 // changes. Mute and deafen stay the session's own and win over the key.
 
 import { create } from "zustand";
-import { isDesktopApp, nativeBridge } from "./native/bridge.ts";
 
 export type VoiceInputMode = "activity" | "ptt";
 
@@ -24,7 +21,7 @@ export function clampReleaseDelay(value: unknown): number {
   return Math.round(Math.min(PTT_RELEASE_DELAY_MAX, Math.max(0, value)));
 }
 
-/** The side buttons of a mouse, as the desktop app names them. */
+/** The side buttons of a mouse, as the native app names them too. */
 const MOUSE_BUTTONS: Record<string, number> = { Mouse4: 3, Mouse5: 4 };
 
 /** The key as the settings show it, when no label was kept. */
@@ -55,41 +52,6 @@ export function pushToTalkMouseCode(button: number): string | null {
   );
 }
 
-/** The global key of the desktop app. */
-export type GlobalKey =
-  | { state: "off" }
-  | { state: "pending" }
-  | { state: "bound"; trigger: string | null }
-  | { state: "failed"; reason: string };
-
-const HYPRLAND_BIND = "bind = , <Taste>, global, gelabber-desktop:push-to-talk";
-
-export function onWindows(): boolean {
-  return (
-    typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent)
-  );
-}
-
-/** What the desktop app does with the key, in a call and before one. */
-export function globalKeyNote(global: GlobalKey, windows: boolean): string {
-  const linuxBinding = `Unter Linux bestimmt der Desktop die Taste: KDE und GNOME fragen beim ersten Mal nach, unter Hyprland gehört „${HYPRLAND_BIND}“ in die hyprland.conf.`;
-  switch (global.state) {
-    case "off":
-      return windows
-        ? "Im Gespräch hört die App die Taste auch, wenn ein anderes Fenster vorne ist."
-        : `Im Gespräch hört die App die Taste auch, wenn ein anderes Fenster vorne ist. ${linuxBinding}`;
-    case "pending":
-      return "Die globale Taste wird eingerichtet …";
-    case "bound":
-      if (global.trigger) return `Global aktiv: ${global.trigger}.`;
-      return windows
-        ? "Global aktiv, auch wenn ein anderes Fenster vorne ist."
-        : `Global aktiv. ${linuxBinding}`;
-    case "failed":
-      return `Die Taste wirkt nur, solange Gelabber im Vordergrund ist: ${global.reason}`;
-  }
-}
-
 type PushToTalkState = {
   /** Push-to-talk is on in a running call. */
   active: boolean;
@@ -98,38 +60,24 @@ type PushToTalkState = {
   /** The microphone may send: the key is down or was released within the
    * delay. */
   open: boolean;
-  global: GlobalKey;
 };
 
 const off: PushToTalkState = {
   active: false,
   held: false,
   open: false,
-  global: { state: "off" },
 };
 
 export const usePushToTalk = create<PushToTalkState>(() => ({ ...off }));
 
 export type PushToTalkBinding = { key: string; releaseDelay: number };
 
-type NativeEvent =
-  | { type: "bound"; trigger: string | null }
-  | { type: "failed"; reason: string }
-  | { type: "press" }
-  | { type: "release" };
-
 let binding: PushToTalkBinding | null = null;
 let gateListener: (() => void) | null = null;
 let pageHeld = false;
-let nativeHeld = false;
 let touchHeld = false;
 let releaseTimer: ReturnType<typeof setTimeout> | null = null;
-/** Moves with every binding; events of an older one are dropped. */
-let generation = 0;
 let detachPage: (() => void) | null = null;
-/** Native binds and unbinds in the order they were asked for. */
-let nativeQueue: Promise<void> = Promise.resolve();
-let nativeBound = false;
 
 /** Whether the microphone may send as far as push-to-talk goes. */
 export function pushToTalkOpen(): boolean {
@@ -155,19 +103,13 @@ export function configurePushToTalk(next: PushToTalkBinding | null): void {
 }
 
 function end(): void {
-  generation += 1;
   detachPage?.();
   detachPage = null;
   if (releaseTimer !== null) clearTimeout(releaseTimer);
   releaseTimer = null;
   pageHeld = false;
-  nativeHeld = false;
   touchHeld = false;
   binding = null;
-  if (nativeBound) {
-    nativeBound = false;
-    queueNative(() => nativeBridge().invoke("ptt_unbind"));
-  }
   usePushToTalk.setState({ ...off });
 }
 
@@ -176,69 +118,13 @@ function begin(next: PushToTalkBinding): void {
   usePushToTalk.setState({ ...off, active: true });
   if (!next.key) return;
   detachPage = listenInPage(next.key);
-  if (isDesktopApp()) bindNative(next.key, generation);
 }
 
-function queueNative(job: () => Promise<unknown>): void {
-  nativeQueue = nativeQueue.then(job).then(
-    () => undefined,
-    () => undefined,
-  );
-}
-
-function bindNative(key: string, bound: number): void {
-  usePushToTalk.setState({ global: { state: "pending" } });
-  nativeBound = true;
-  queueNative(async () => {
-    if (bound !== generation) return;
-    try {
-      const events = await nativeBridge().channel<NativeEvent>((event) => {
-        if (bound === generation) onNativeEvent(event);
-      });
-      await nativeBridge().invoke("ptt_bind", { key, events });
-    } catch (error) {
-      if (bound !== generation) return;
-      usePushToTalk.setState({
-        global: {
-          state: "failed",
-          reason: error instanceof Error ? error.message : String(error),
-        },
-      });
-    }
-  });
-}
-
-function onNativeEvent(event: NativeEvent): void {
-  switch (event.type) {
-    case "bound":
-      usePushToTalk.setState({
-        global: { state: "bound", trigger: event.trigger ?? null },
-      });
-      return;
-    case "failed":
-      usePushToTalk.setState({
-        global: { state: "failed", reason: event.reason },
-      });
-      setHeld("native", false);
-      return;
-    case "press":
-      // The app hears the key in every window, its own too: typed into a
-      // field of this page, it is text, as for the page's own listener.
-      if (binding && typingInFocusedPage(binding.key)) return;
-      setHeld("native", true);
-      return;
-    case "release":
-      setHeld("native", false);
-      return;
-  }
-}
-
-function setHeld(source: "page" | "native" | "touch", down: boolean): void {
+function setHeld(source: "page" | "touch", down: boolean): void {
   if (!binding) return;
   if (source === "page") pageHeld = down;
-  else if (source === "native") nativeHeld = down;
   else touchHeld = down;
-  const held = pageHeld || nativeHeld || touchHeld;
+  const held = pageHeld || touchHeld;
   const state = usePushToTalk.getState();
   if (held === state.held) return;
   if (releaseTimer !== null) clearTimeout(releaseTimer);
@@ -339,14 +225,7 @@ function typingHere(key: string, target: EventTarget | null): boolean {
   return typingInto(target) && !writesNothing(key);
 }
 
-function typingInFocusedPage(key: string): boolean {
-  if (typeof document === "undefined") return false;
-  return (
-    (document.hasFocus?.() ?? false) && typingHere(key, document.activeElement)
-  );
-}
-
-/** The key while this page has the focus, in a browser and in the app. */
+/** The key while this page has the focus. */
 function listenInPage(key: string): () => void {
   if (typeof window === "undefined") return () => {};
   const button = MOUSE_BUTTONS[key];
@@ -394,5 +273,4 @@ function listenInPage(key: string): () => void {
 export function resetPushToTalkForTests(): void {
   gateListener = null;
   end();
-  nativeQueue = Promise.resolve();
 }

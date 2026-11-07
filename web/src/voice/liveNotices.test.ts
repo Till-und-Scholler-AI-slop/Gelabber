@@ -310,7 +310,7 @@ describe("whether a new Live is announced", () => {
 describe("the cue", () => {
   it("sounds with a notification this desktop window showed, never deafened", () => {
     const desk = { mobile: false, deafened: false };
-    for (const shown of ["worker", "page", "app"] as const)
+    for (const shown of ["worker", "page"] as const)
       expect(liveSoundWanted(shown, desk)).toBe(true);
     expect(liveSoundWanted("viewed", desk)).toBe(false);
     expect(liveSoundWanted("none", desk)).toBe(false);

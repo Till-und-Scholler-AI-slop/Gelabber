@@ -22,6 +22,7 @@ import { getGateway } from "../ws/client.ts";
 import type { ErrFrame, SigEvent, TrackKind } from "../ws/protocol.ts";
 import { applyVoiceJoin, applyVoiceLeave } from "./roster.ts";
 import {
+  createStream,
   type IceServer,
   type MediaServerFrame,
   mediaWsUrl,
@@ -31,8 +32,6 @@ import {
   MediaError,
 } from "./media.ts";
 import { MediaPeer } from "./mediaPeer.ts";
-import { nativeAppVersion } from "./native/features.ts";
-import { createStream } from "./native/tracks.ts";
 import { resetPlaybackBoostForTests } from "./playbackBoost.ts";
 import { useUserVolumes } from "./userVolume.ts";
 import {
@@ -130,7 +129,6 @@ export {
   useVoice,
   type LostCall,
   type RemoteVideo,
-  type SourceAudioNote,
   type SourceAudioStatus,
   type VoiceConnection,
   type VoiceMic,
@@ -689,7 +687,6 @@ function voiceCaps(): Caps {
       encoders: null,
       decodesAv1: null,
       ...voice.seat.connection?.videoChoice(),
-      desktopApp: nativeAppVersion(),
     },
   };
 }
@@ -868,9 +865,6 @@ function stopPeer(preserveCapture = false): void {
     sourceAudio: preserveCapture
       ? useVoice.getState().sourceAudio
       : { s: "off" },
-    sourceAudioNote: preserveCapture
-      ? useVoice.getState().sourceAudioNote
-      : { s: null },
     ...(preserveCapture
       ? {
           camera: !!voice.cameraStream || open.has("v"),
@@ -997,9 +991,8 @@ function handleSettingsChange(prev: MediaSettings, next: MediaSettings): void {
     void applySendBitrate();
     void refreshAudioCodecs();
   }
-  const sourceAppChanged = prev.sourceAudioApp !== next.sourceAudioApp;
-  if (sharesSourceAudio(prev) !== sharesSourceAudio(next) || sourceAppChanged)
-    applySourceAudioChoice(sourceAppChanged);
+  if (sharesSourceAudio(prev) !== sharesSourceAudio(next))
+    applySourceAudioChoice();
 }
 
 async function refreshAudioCodecs(): Promise<void> {

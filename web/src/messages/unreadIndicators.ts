@@ -1,12 +1,17 @@
-// Unread state outside the page: the tab title, the favicon, the installed
-// app's badge and the desktop app's taskbar and tray (issues #239, #240,
-// #246). One summary drives all of them.
+// Unread state outside the page: the tab title, the favicon and the
+// installed app's badge (issues #239, #240, #246). One summary drives all.
 import { useEffect } from "react";
 
-import { reportDesktopUnread, type UnreadMark } from "./desktopShell.ts";
 import { badgeOf, sumBadges } from "./notifyLevel.ts";
 import { useMuteClock } from "./notificationSettings.ts";
 import { useReadState, useReadingChannel } from "./readState.ts";
+
+export type UnreadMark = {
+  /** The number for badges; 0 shows none. */
+  count: number;
+  /** Something is unread at all, counted or not. */
+  any: boolean;
+};
 
 /** What is unread, without the conversation being read right now: the
  * number counts mentions and direct messages, `any` also the conversations
@@ -119,7 +124,6 @@ function apply(mark: UnreadMark): void {
   document.title = titleWith(document.title, mark);
   showIconDot(mark.any);
   setAppBadge(mark.count);
-  reportDesktopUnread(mark);
 }
 
 /** Mounted once per signed-in account; signing out clears everything. */

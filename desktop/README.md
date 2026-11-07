@@ -12,9 +12,9 @@ removed in 0.9 without a fallback; its installs update into the native app
 come along in `legacy-settings.json`, which the Tauri app's export of 0.8.10
 writes; an update from 0.8.9 or older reads the same
 entries from the Tauri app's WebView storage instead (WebView2 on Windows,
-WebKitGTK on Linux). The web client's
-code for the Tauri app (`web/src/voice/native/`, the desktop shell and
-notification bridges) is still there and goes in a later change.
+WebKitGTK on Linux). The web client has dropped its Tauri code; a Tauri
+app that still loads it only gets the notice to update
+(`web/src/tauriApp.ts`).
 
 ## Layout
 

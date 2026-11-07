@@ -6,7 +6,6 @@ import {
   callSoundWave,
   playLiveSound,
 } from "./callSounds.ts";
-import { setNativeBridgeForTests } from "./native/bridge.ts";
 import {
   DEFAULT_MEDIA_SETTINGS,
   resetMediaSettingsForTests,
@@ -32,7 +31,6 @@ function harness() {
 }
 
 afterEach(() => {
-  setNativeBridgeForTests(undefined);
   vi.unstubAllGlobals();
   resetMediaSettingsForTests();
 });
@@ -233,28 +231,6 @@ describe("call sounds", () => {
     player.play("muteSelf");
     await vi.waitFor(() => expect(audio.play).toHaveBeenCalledTimes(3));
     expect(routed.setSinkId).toHaveBeenCalledTimes(3);
-  });
-
-  it("does not hand the desktop app's device ids to the webview", () => {
-    const { settings, audio } = harness();
-    const routed = {
-      ...audio,
-      // What Chromium answers to an id it never issued.
-      setSinkId: vi.fn().mockRejectedValue(new DOMException("SecurityError")),
-    };
-    const player = new CallSoundPlayer(
-      () => settings,
-      () => routed,
-    );
-    setNativeBridgeForTests({
-      invoke: async () => null as never,
-      channel: async () => null,
-    });
-    settings.audioOutputId =
-      "{0.0.0.00000000}.{6f1f0e4a-9a36-4f0c-8f0e-1c2d3e4f5a6b}";
-    player.play("joinSelf");
-    expect(audio.play).toHaveBeenCalledTimes(1);
-    expect(routed.setSinkId).not.toHaveBeenCalled();
   });
 
   it("unlocks silently and tolerates blocked autoplay or missing browser APIs", async () => {

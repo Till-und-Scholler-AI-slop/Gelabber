@@ -236,7 +236,7 @@ describe("fullscreen route", () => {
 
   it("falls back to the large view where neither exists", () => {
     expect(fullscreenRoute(false, {})).toBe("viewer");
-    // A drawn picture of the desktop app has no video element.
+    // No video element at all.
     expect(fullscreenRoute(false, null)).toBe("viewer");
   });
 });

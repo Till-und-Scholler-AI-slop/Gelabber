@@ -4,12 +4,7 @@
 
 import type { AudioSource } from "./diagnostics.ts";
 import type { ReceivedSource } from "./mediasoupConnection.ts";
-import { isDesktopApp } from "./native/bridge.ts";
-import {
-  createAudioOutput,
-  createStream,
-  isNativeAudioOutput,
-} from "./native/tracks.ts";
+import { createAudioOutput, createStream } from "./media.ts";
 import {
   boost,
   boostOutput,
@@ -238,7 +233,7 @@ export class ReceivedAudio {
     if (
       !allowed ||
       parsed.userId === this.hooks.self() ||
-      (typeof Audio === "undefined" && !isDesktopApp())
+      typeof Audio === "undefined"
     )
       return true;
     if (sameSource) return true;
@@ -337,12 +332,7 @@ export class ReceivedAudio {
     muted: boolean,
     volume: number,
   ): void {
-    if (
-      !muted &&
-      volume > 1 &&
-      !this.boostBlocked &&
-      !isNativeAudioOutput(el)
-    ) {
+    if (!muted && volume > 1 && !this.boostBlocked) {
       const wasBoosted = isBoosted(el);
       if (boost(el, volume)) {
         // Still playing, so Chromium keeps feeding the boost; heard through it.
@@ -354,7 +344,7 @@ export class ReceivedAudio {
     }
     releaseBoost(el);
     el.muted = muted;
-    el.volume = isNativeAudioOutput(el) ? volume : Math.min(1, volume);
+    el.volume = Math.min(1, volume);
   }
 
   /** Stops an element the session no longer plays. */
