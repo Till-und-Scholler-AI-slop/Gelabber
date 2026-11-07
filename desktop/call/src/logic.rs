@@ -612,22 +612,34 @@ pub fn transport_rtt_ms(stats: &Value) -> Option<f64> {
     pair["currentRoundTripTime"].as_f64().map(|s| s * 1000.0)
 }
 
-/// Packets lost and received of the audio streams in `stats`, for a loss
-/// ratio between two samples.
+/// Packets lost and received of the audio streams in `stats`, both
+/// directions, for a loss ratio between two samples.
 pub fn audio_packets(stats: &Value) -> (u64, u64) {
     let mut lost = 0;
     let mut received = 0;
+    let mut sent = 0;
+    let mut lost_sent = 0;
     for e in stats_entries(stats) {
         let audio = e["kind"] == "audio" || e["mediaType"] == "audio";
         if e["type"] == "inbound-rtp" && audio {
             lost += e["packetsLost"].as_i64().unwrap_or(0).max(0) as u64;
             received += e["packetsReceived"].as_u64().unwrap_or(0);
         }
+        if e["type"] == "outbound-rtp" && audio {
+            sent += e["packetsSent"].as_u64().unwrap_or(0);
+        }
         if e["type"] == "remote-inbound-rtp" && audio {
-            lost += e["packetsLost"].as_i64().unwrap_or(0).max(0) as u64;
+            lost_sent += e["packetsLost"].as_i64().unwrap_or(0).max(0) as u64;
         }
     }
-    (lost, received)
+    // What the far end got of ours; without it any sent loss reads as 100 %.
+    (lost + lost_sent, received + sent.saturating_sub(lost_sent))
+}
+
+/// The entries of several stats answers as one, in the order given, as
+/// the web's `getStats` merges both transports.
+pub fn merge_stats(answers: &[Value]) -> Value {
+    Value::Array(answers.iter().flat_map(stats_entries).cloned().collect())
 }
 
 // --------------------------------------------------------------- volumes
@@ -1066,6 +1078,28 @@ mod tests {
         ]);
         assert_eq!(transport_rtt_ms(&stats), Some(42.0));
         assert_eq!(audio_packets(&stats), (2, 98));
+    }
+
+    #[test]
+    fn quality_bars_when_alone() {
+        // Alone the receive transport never connects: no pair, no inbound.
+        let recv = json!({ "rtc": [
+            { "type": "candidate-pair", "state": "waiting", "nominated": false },
+        ]});
+        let send = json!({ "rtc": [
+            { "id": "p", "type": "candidate-pair", "state": "succeeded", "nominated": true, "currentRoundTripTime": 0.031 },
+            { "id": "o", "type": "outbound-rtp", "kind": "audio", "packetsSent": 500, "remoteId": "r" },
+            { "id": "r", "type": "remote-inbound-rtp", "kind": "audio", "packetsLost": 5 },
+            { "id": "v", "type": "outbound-rtp", "kind": "video", "packetsSent": 9000 },
+        ]});
+        assert_eq!(transport_rtt_ms(&recv), None);
+        assert_eq!(audio_packets(&recv), (0, 0));
+        let stats = merge_stats(&[send, recv]);
+        let rtt = transport_rtt_ms(&stats);
+        assert_eq!(rtt, Some(31.0));
+        // Sent packets count against the far end's loss, not as 100 % loss.
+        assert_eq!(audio_packets(&stats), (5, 495));
+        assert_eq!(quality_level(rtt, Some(5.0 / 500.0)), 4);
     }
 
     #[test]
