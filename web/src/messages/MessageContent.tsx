@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CopyLabel } from "../components/ui/CopyButton.tsx";
 import { COPIED_MS, useCopied } from "../components/ui/useCopied.ts";
 import { copyText } from "../servers/clipboard.ts";
-import { isDesktopApp } from "../voice/native/bridge.ts";
+import { isTauriApp } from "../tauriApp.ts";
 import { parseMessage, type Block, type Inline } from "./markdown.ts";
 
 export type MentionPart =
@@ -116,11 +116,11 @@ function renderInline(nodes: Inline[], ctx: Ctx): ReactNode[] {
 }
 
 /** Web links open in a new tab. A mail link would leave an empty one in the
- * browser; the desktop app only hands links in new windows to the system. */
+ * browser; the old Tauri app only hands links in new windows to the system. */
 function newTab(href: string) {
   if (/^https?:/i.test(href))
     return { target: "_blank", rel: "noopener noreferrer nofollow" };
-  return isDesktopApp() ? { target: "_blank", rel: "noopener noreferrer" } : {};
+  return isTauriApp() ? { target: "_blank", rel: "noopener noreferrer" } : {};
 }
 
 function Spoiler({

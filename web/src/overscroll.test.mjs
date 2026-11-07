@@ -1,4 +1,4 @@
-// The root's pull-to-refresh guard and the desktop app's wheel (#224).
+// The root's pull-to-refresh guard and the Tauri app's wheel (#224).
 /* global URL */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -11,12 +11,12 @@ describe("overscroll on the root (index.css)", () => {
     ([, selector, body]) => ({ selector: selector.trim(), body }),
   );
 
-  it("guards pull-to-refresh outside the desktop app only", () => {
+  it("guards pull-to-refresh outside the Tauri app only", () => {
     const root = rules.filter((rule) =>
       /overscroll-behavior(-y)?\s*:\s*none/.test(rule.body),
     );
     expect(root.map((rule) => rule.selector.split(/\s*,\s*/))).toEqual([
-      ["html:not([data-desktop])", "html:not([data-desktop]) body"],
+      ["html:not([data-tauri])", "html:not([data-tauri]) body"],
     ]);
   });
 

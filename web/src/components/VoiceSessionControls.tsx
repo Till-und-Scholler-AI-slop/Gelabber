@@ -36,12 +36,7 @@ import { useSpeakingUsers } from "../voice/speaking.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import { Avatar } from "./Avatar.tsx";
 import { useUserId } from "../auth/scope.ts";
-import { isDesktopApp } from "../voice/native/bridge.ts";
-import {
-  sharesSourceAudio,
-  sourceAudioCarriesCall,
-  useMediaSettings,
-} from "../voice/settings.ts";
+import { sharesSourceAudio, useMediaSettings } from "../voice/settings.ts";
 import {
   callAnnouncement,
   dockNotices,
@@ -56,7 +51,6 @@ export function VoiceSessionControls() {
   const dockRef = useRef<HTMLElement>(null);
   const session = useVoice();
   const sourceAudioShare = useMediaSettings((s) => s.sourceAudioShare);
-  const sourceAudioApp = useMediaSettings((s) => s.sourceAudioApp);
   const capable = useCapabilities();
   const pushToTalk = usePushToTalk((s) => s.active);
   const touch = useMediaQuery("(pointer: coarse)");
@@ -92,14 +86,10 @@ export function VoiceSessionControls() {
       ? { serverId: voice.serverId, channelId: voice.channelId }
       : null;
   const notices = dockNotices(voice, {
-    desktop: isDesktopApp(),
-    appAudio: capable.appAudio,
     sharesSound:
       joined !== null &&
       capable.appAudio &&
       sharesSourceAudio({ sourceAudioShare }),
-    carriesCall: sourceAudioCarriesCall({ sourceAudioShare, sourceAudioApp }),
-    sourceAudioApp,
   });
   // A dismissed notice that went away may come back with the next share.
   const current = new Set(notices.map((notice) => notice.key));

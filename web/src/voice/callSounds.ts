@@ -1,5 +1,4 @@
 import { renderCue, type CueName } from "./callSoundSynth.ts";
-import { isDesktopApp } from "./native/bridge.ts";
 import { useMediaSettings, type MediaSettings } from "./settings.ts";
 
 /** A call cue: every call event has its own (callSoundSynth.ts). */
@@ -173,10 +172,7 @@ export class CallSoundPlayer {
         latest.callSoundVolume * Math.min(1, latest.outputVolume),
       );
     };
-    // The desktop app's output ids belong to its native engine. The webview
-    // does not know them and would reject them, so cues stay on its default
-    // output there.
-    if (audio.setSinkId && !isDesktopApp()) {
+    if (audio.setSinkId) {
       // Serialize routing too: a late old sink promise must not override a new one.
       this.routing = this.routing
         .then(async () => {

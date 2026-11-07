@@ -168,7 +168,7 @@ export function liveNoticeDecision(input: {
 }
 
 /** Who showed a system notification (pwa/notifications.ts). */
-export type Shown = "worker" | "page" | "app" | "viewed" | "none";
+export type Shown = "worker" | "page" | "viewed" | "none";
 
 /** As with a message: a desktop plays the cue with a notification this
  * window showed, a phone's notification sounds as the phone is set. Never
@@ -178,7 +178,7 @@ export function liveSoundWanted(
   device: { mobile: boolean; deafened: boolean },
 ): boolean {
   return (
-    (shown === "worker" || shown === "page" || shown === "app") &&
+    (shown === "worker" || shown === "page") &&
     !device.mobile &&
     !device.deafened
   );

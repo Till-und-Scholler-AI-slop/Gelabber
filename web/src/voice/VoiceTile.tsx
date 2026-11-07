@@ -13,17 +13,14 @@ import {
   useEffect,
   useRef,
   useState,
-  useSyncExternalStore,
   type CSSProperties,
   type KeyboardEvent,
-  type ReactNode,
 } from "react";
 
 import {
   CollapseIcon,
   ExpandIcon,
   EyeOffIcon,
-  MoreIcon,
   PinIcon,
   SpeakerIcon,
   SpeakerOffIcon,
@@ -31,28 +28,6 @@ import {
 import { VoiceAudioToggles } from "../components/VoiceControls.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { IconButton } from "../components/ui/IconButton.tsx";
-import { Popover } from "../components/ui/Popover.tsx";
-import {
-  hasNativeFeature,
-  subscribeNativeFeatures,
-} from "./native/features.ts";
-import { NativeVideoCanvas } from "./native/NativeVideoCanvas.tsx";
-import { isNativeStream, type NativeTrack } from "./native/tracks.ts";
-import {
-  nativeDisplayTrack,
-  nativeVideoLimit,
-  nativeVideoSuspended,
-  subscribeNativeVideoLimit,
-  subscribeNativeVideoSuspensions,
-} from "./native/videoFeed.ts";
-import {
-  closeNativeViewer,
-  nativeVideoTrack,
-  nativeViewerOpen,
-  nativeViewersVersion,
-  openNativeViewer,
-  subscribeNativeViewers,
-} from "./native/viewer.ts";
 import { toggleMute, useVoice } from "./session.ts";
 import {
   PLAYBACK_SLIDER_MAX,
@@ -179,7 +154,7 @@ function lockLandscape(lock: boolean): void {
 }
 
 function VideoSurface({
-  stream: given,
+  stream,
   label,
   mirror,
   screen: isScreen,
@@ -201,47 +176,9 @@ function VideoSurface({
   onExit?: () => void;
   viewer?: boolean;
 }) {
-  // Native streams (desktop app) are decoded by the native core and cannot
-  // feed a <video>. An app that hands frames to the page has them drawn on
-  // a canvas in its place; an app up to 0.5.x keeps the placeholder.
-  const nativeVideo = isNativeStream(given);
-  const stream = nativeVideo ? null : given;
-  const inPage = useSyncExternalStore(
-    subscribeNativeFeatures,
-    videoFrames,
-    videoFrames,
-  );
-  const track = nativeVideo && inPage ? nativeDisplayTrack(given) : null;
-  // A stream that plays in its viewer window is not drawn here as well: the
-  // page has no frames of it meanwhile (videoFeed.ts).
-  const consumer = track?.handle.consumer;
-  const suspended = () =>
-    consumer !== undefined && nativeVideoSuspended(consumer);
-  const inWindow = useSyncExternalStore(
-    subscribeNativeVideoSuspensions,
-    suspended,
-    suspended,
-  );
-  const drawn = inWindow ? null : track;
-  useSyncExternalStore(
-    subscribeNativeViewers,
-    nativeViewersVersion,
-    nativeViewersVersion,
-  );
-  // Closed, a window lets go of the stream a moment later.
-  const windowOpen = consumer !== undefined && nativeViewerOpen(consumer);
-  const [painted, setPainted] = useState<NativeTrack | null>(null);
   const [framed, setFramed] = useState<MediaStream | null>(null);
-  const picture =
-    (stream !== null && framed === stream) ||
-    (drawn !== null && painted === drawn);
-  const limit = useSyncExternalStore(
-    subscribeNativeVideoLimit,
-    nativeVideoLimit,
-    nativeVideoLimit,
-  );
+  const picture = stream !== null && framed === stream;
   const joined = useVoice((s) => s.status === "joined");
-  const [windowFailed, setWindowFailed] = useState<NativeTrack | null>(null);
   const figureRef = useRef<HTMLElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [awake, wake] = useWake(viewer);
@@ -354,19 +291,10 @@ function VideoSurface({
   }, [stream, play]);
 
   const blocked = stream !== null && blockedStream === stream;
-  // A picture is due unless the app shows none in the page, it plays in its
-  // own window, or the source is not watched.
-  const due =
-    !picture &&
-    !blocked &&
-    !(nativeVideo && !inPage) &&
-    !inWindow &&
-    !(sourceWatch && !sourceWatch.watching);
+  // A picture is due unless the source is not watched.
+  const due = !picture && !blocked && !(sourceWatch && !sourceWatch.watching);
   const [reloads, setReloads] = useState(0);
-  const wait = useFrameWait(
-    `${stream?.id ?? drawn?.id ?? "none"}:${reloads}`,
-    due,
-  );
+  const wait = useFrameWait(`${stream?.id ?? "none"}:${reloads}`, due);
   const canReload = Boolean(sourceWatch?.watching || stream);
   const reload = () => {
     if (sourceWatch?.watching) {
@@ -465,40 +393,23 @@ function VideoSurface({
         .filter(Boolean)
         .join(" ")}
     >
-      {drawn ? (
-        <NativeVideoCanvas
-          key={drawn.id}
-          track={drawn}
-          onDoubleClick={() =>
-            immersive ? exitFullscreen() : void enterFullscreen()
-          }
-          onPainted={(done) => setPainted(done ? drawn : null)}
-          className={[
-            "size-full",
-            fit ? "object-contain" : "object-cover",
-            mirror ? "-scale-x-100" : "",
-            painted === drawn ? "" : "opacity-0",
-          ].join(" ")}
-        />
-      ) : (
-        <video
-          ref={ref}
-          autoPlay
-          playsInline
-          muted
-          onLoadedData={() => setFramed(stream)}
-          onPlaying={() => setFramed(stream)}
-          onDoubleClick={() =>
-            immersive ? exitFullscreen() : void enterFullscreen()
-          }
-          className={[
-            "size-full",
-            fit ? "object-contain" : "object-cover",
-            mirror ? "-scale-x-100" : "",
-            stream ? "" : "opacity-0",
-          ].join(" ")}
-        />
-      )}
+      <video
+        ref={ref}
+        autoPlay
+        playsInline
+        muted
+        onLoadedData={() => setFramed(stream)}
+        onPlaying={() => setFramed(stream)}
+        onDoubleClick={() =>
+          immersive ? exitFullscreen() : void enterFullscreen()
+        }
+        className={[
+          "size-full",
+          fit ? "object-contain" : "object-cover",
+          mirror ? "-scale-x-100" : "",
+          stream ? "" : "opacity-0",
+        ].join(" ")}
+      />
       {blocked ? (
         <div className="voice-video-overlay">
           <p role="status">Die Videowiedergabe ist blockiert.</p>
@@ -543,54 +454,12 @@ function VideoSurface({
               ) : null}
             </>
           ) : null}
-          {nativeVideo && !inPage ? (
-            <NativeVideo stream={given} label={label} />
-          ) : null}
-          {inWindow ? (
-            <span role="status" className="text-xs">
-              Läuft im eigenen Fenster.
-            </span>
-          ) : null}
-          {inWindow && windowOpen ? (
-            <Button
-              size="sm"
-              onClick={(event) => {
-                // The button goes with the window. In the large view focus
-                // stays in it, on its way out; on a tile it moves to the
-                // menu the window was opened from.
-                const button = event.currentTarget;
-                (
-                  button
-                    .closest("dialog")
-                    ?.querySelector<HTMLElement>("[data-viewer-close]") ??
-                  button
-                    .closest("figure")
-                    ?.querySelector<HTMLElement>('[aria-haspopup="menu"]')
-                )?.focus();
-                closeNativeViewer(consumer);
-              }}
-            >
-              Fenster schließen
-            </Button>
-          ) : null}
         </div>
       ) : null}
       {caption && !immersive ? (
         <figcaption className="voice-video-caption">{label}</figcaption>
       ) : null}
       {live ? <span className="voice-video-live">Live</span> : null}
-      {drawn && limit ? (
-        <span
-          role="status"
-          title={LIMIT_REASON[limit]}
-          className={[
-            "voice-video-limit absolute left-2",
-            live ? "top-8" : "top-2",
-          ].join(" ")}
-        >
-          Geringe Bildqualität
-        </span>
-      ) : null}
       {immersive ? (
         <>
           <WatchStrip
@@ -646,56 +515,10 @@ function VideoSurface({
               onClick={() => void enterFullscreen()}
               className="voice-video-action"
             />
-            {track && consumer !== undefined ? (
-              <TileMenu label={label}>
-                <OwnWindow
-                  track={track}
-                  label={label}
-                  onFailed={(failed) => setWindowFailed(failed ? track : null)}
-                />
-              </TileMenu>
-            ) : null}
           </div>
         </>
       )}
-      {track && windowFailed === track ? (
-        <p role="status" className="voice-fullscreen-error">
-          Das Videofenster konnte nicht geöffnet werden.
-        </p>
-      ) : null}
     </figure>
-  );
-}
-
-/** The tile's rarely used actions, behind "…". */
-function TileMenu({ label, children }: { label: string; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
-  const anchor = useRef<HTMLButtonElement>(null);
-  return (
-    <>
-      <IconButton
-        ref={anchor}
-        size="sm"
-        label="Weitere Aktionen"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        icon={<MoreIcon size={16} />}
-        onClick={() => setOpen((value) => !value)}
-        className="voice-video-action"
-      />
-      <Popover
-        open={open}
-        onClose={() => setOpen(false)}
-        anchor={anchor}
-        label={label}
-        role="menu"
-        placement="bottom-end"
-      >
-        <div role="none" className="voice-menu" onClick={() => setOpen(false)}>
-          {children}
-        </div>
-      </Popover>
-    </>
   );
 }
 
@@ -810,101 +633,5 @@ function StreamVolume() {
         className="lr-range"
       />
     </div>
-  );
-}
-
-const videoFrames = () => hasNativeFeature("video-frames");
-
-const LIMIT_REASON = {
-  transport:
-    "Der Server blockiert die schnelle Bildübertragung der Desktop-App (Content-Security-Policy). Das Bild bleibt deshalb klein.",
-  renderer: "WebGL ist hier nicht verfügbar. Das Bild bleibt deshalb klein.",
-};
-
-/** Someone's stream in a window of its own instead of in its tiles: for a
- * second monitor or a tiling compositor. An entry of the tile's "…" menu. */
-function OwnWindow({
-  track,
-  label,
-  onFailed,
-}: {
-  track: NativeTrack;
-  label: string;
-  onFailed: (failed: boolean) => void;
-}) {
-  useSyncExternalStore(
-    subscribeNativeViewers,
-    nativeViewersVersion,
-    nativeViewersVersion,
-  );
-  const consumer = track.handle.consumer;
-  if (consumer === undefined) return null;
-  const open = nativeViewerOpen(consumer);
-  return (
-    <button
-      type="button"
-      role="menuitemcheckbox"
-      aria-checked={open}
-      className="voice-menu-item"
-      onClick={() => {
-        onFailed(false);
-        if (open) closeNativeViewer(consumer);
-        else
-          openNativeViewer(track, `${label} – Gelabber`).catch(() =>
-            onFailed(true),
-          );
-      }}
-    >
-      {open ? "Fenster schließen" : "Eigenes Fenster"}
-    </button>
-  );
-}
-
-/** Desktop apps up to 0.5.x: remote video only in a native window, no
- * picture of the own camera or screen. */
-function NativeVideo({
-  stream,
-  label,
-}: {
-  stream: MediaStream | null;
-  label: string;
-}) {
-  useSyncExternalStore(
-    subscribeNativeViewers,
-    nativeViewersVersion,
-    nativeViewersVersion,
-  );
-  const [failed, setFailed] = useState(false);
-  const track = nativeVideoTrack(stream);
-  const consumer = track?.handle.consumer;
-  if (!track || consumer === undefined)
-    return (
-      <span role="status" className="text-xs">
-        Keine Vorschau in der Desktop-App.
-      </span>
-    );
-  const open = nativeViewerOpen(consumer);
-  return (
-    <>
-      <Button
-        size="sm"
-        variant="primary"
-        onClick={() => {
-          setFailed(false);
-          if (open) closeNativeViewer(consumer);
-          else
-            openNativeViewer(track, `${label} – Gelabber`).catch(() =>
-              setFailed(true),
-            );
-        }}
-      >
-        {open ? "Fenster schließen" : "Im Fenster ansehen"}
-      </Button>
-      {failed ? (
-        <span role="status" className="text-xs">
-          Das Videofenster konnte nicht geöffnet werden.
-        </span>
-      ) : null}
-    </>
   );
 }

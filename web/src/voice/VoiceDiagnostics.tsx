@@ -8,7 +8,6 @@ import { Button } from "../components/ui/Button.tsx";
 import { useAudioProcessing } from "./audioProcessing.ts";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { flowGroups, lossTone, type FlowGroup } from "./connectionSummary.ts";
-import { isDesktopApp } from "./native/bridge.ts";
 import {
   audioBitrate,
   VIDEO_MAX_FPS,
@@ -215,7 +214,6 @@ function FlowRow({ group }: { group: FlowGroup }) {
 
 function Microphone() {
   const processing = useAudioProcessing();
-  const desktop = isDesktopApp();
   const format = [
     processing.sampleRate === null
       ? null
@@ -247,13 +245,11 @@ function Microphone() {
           <dd>{onOff(processing.echoCancellation)}</dd>
         </div>
         <div>
-          <dt>
-            {desktop ? "Rauschfilter (WebRTC)" : "Rauschfilter (Browser)"}
-          </dt>
+          <dt>Rauschfilter (Browser)</dt>
           <dd>{onOff(processing.noiseSuppression)}</dd>
         </div>
         <div>
-          <dt>{desktop ? "Auto-Gain (WebRTC)" : "Auto-Gain (Browser)"}</dt>
+          <dt>Auto-Gain (Browser)</dt>
           <dd>{onOff(processing.autoGainControl)}</dd>
         </div>
         <div>
@@ -438,12 +434,6 @@ function VideoFacts({ video }: { video: VideoChoice }) {
         <dt>AV1 empfangen</dt>
         <dd>{yesNo(video.decodesAv1)}</dd>
       </div>
-      {video.desktopApp ? (
-        <div>
-          <dt>Desktop-App</dt>
-          <dd>v{video.desktopApp}</dd>
-        </div>
-      ) : null}
     </dl>
   );
 }

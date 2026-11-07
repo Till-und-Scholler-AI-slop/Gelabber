@@ -25,7 +25,6 @@ import {
   useMediaDevices,
 } from "./devices.ts";
 import { createMicrophoneSession } from "./microphone.ts";
-import { isDesktopApp } from "./native/bridge.ts";
 import type { VoiceInputMode } from "./pushToTalk.ts";
 import { useVoice, voiceMicrophones } from "./session.ts";
 import {
@@ -154,7 +153,6 @@ export function QuickCallSettings({ onMore }: { onMore: () => void }) {
   const joined = useVoice((s) => s.status === "joined");
   const micLive = useVoice((s) => s.mic === "live" || s.mic === "ptt-idle");
   const { devices, loaded, reveal } = useMediaDevices();
-  const desktop = isDesktopApp();
   const microphone = deviceChoices(devices.audioinput, settings.audioInputId);
   const speaker = deviceChoices(devices.audiooutput, settings.audioOutputId);
   const camera = deviceChoices(devices.videoinput, settings.videoInputId);
@@ -176,8 +174,8 @@ export function QuickCallSettings({ onMore }: { onMore: () => void }) {
             </option>
           ))}
         </Select>
-        {joined && micLive && !desktop ? <SendLevel /> : null}
-        {loaded && !desktop && needsDeviceLabels(devices.audioinput) ? (
+        {joined && micLive ? <SendLevel /> : null}
+        {loaded && needsDeviceLabels(devices.audioinput) ? (
           <div className="voice-quick-reveal">
             <span>
               {denied
@@ -228,7 +226,7 @@ export function QuickCallSettings({ onMore }: { onMore: () => void }) {
               </option>
             ))}
           </Select>
-          {loaded && !desktop && needsDeviceLabels(devices.videoinput) ? (
+          {loaded && needsDeviceLabels(devices.videoinput) ? (
             <Button
               size="sm"
               variant="ghost"
