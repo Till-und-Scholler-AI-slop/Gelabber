@@ -1,7 +1,7 @@
 {
   "name": "gelabber-web",
   "private": true,
-  "version": "0.8.10",
+  "version": "0.9.0",
   "type": "module",
   "engines": {
     "node": ">=26.8.2"
@@ -37,7 +37,7 @@
     "@tanstack/react-query": "5.105.0",
     "@tanstack/react-router": "1.170.46",
     "@tanstack/react-virtual": "3.14.24",
-    "mediasoup-client": "3.24.1",
+    "mediasoup-client": "3.26.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "zustand": "5.0.16"
