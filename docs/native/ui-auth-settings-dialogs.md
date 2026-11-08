@@ -31,7 +31,7 @@ Default theme preference is **"dark"** when nothing stored (`theme/theme.ts:11-2
 | `--lr-elevated` | modals, popovers, toasts | `#252829` | `#fcfbf9` |
 | `--lr-text` | primary text | `#eef0ee` | `#252829` |
 | `--lr-muted` | secondary text | `#a4abb1` | `#5c646b` |
-| `--lr-subtle` | tertiary text, disabled text, placeholders | `#8c9295` | `#65696c` |
+| `--lr-subtle` | tertiary text, disabled text, placeholders | `#93989b` | `#616467` |
 | `--lr-border` | hairlines | `#2c3032` | `#dcd6cc` |
 | `--lr-border-strong` | input/control borders | `#717475` | `#86837e` |
 | `--lr-accent` | fills (primary button, switch on, markers) | `#f3b752` | `#e8a638` |

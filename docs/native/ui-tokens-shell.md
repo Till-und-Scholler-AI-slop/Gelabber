@@ -53,7 +53,7 @@ presets the port must re-implement `derivedColors` + `themeVariables` 1:1.
 | `--lr-elevated` | dark: mix(panel,text,.04); light: mix(bg,#fff,.6) | `#252829` | `#fcfbf9` |
 | `--lr-text` | `text` | `#eef0ee` | `#252829` |
 | `--lr-muted` | ensureContrast(muted,[panel,surface,hover]) | `#a4abb1` | `#5c646b` |
-| `--lr-subtle` | ensureContrast(mix(muted,bg,.25),[bg,panel,surface,elevated]) | `#8c9295` | `#65696c` |
+| `--lr-subtle` | ensureContrast(mix(muted,bg,.25),[bg,panel,surface,elevated,hover]) | `#93989b` | `#616467` |
 | `--lr-border` | `border` | `#2c3032` | `#dcd6cc` |
 | `--lr-border-strong` | ensureContrast(mix(border,text,.35), …, 3) | `#717475` | `#86837e` |
 | `--lr-accent` | `accent` (fill colour) | `#f3b752` | `#e8a638` |

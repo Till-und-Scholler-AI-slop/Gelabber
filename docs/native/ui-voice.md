@@ -23,7 +23,7 @@ Conventions for implementers:
 | `--lr-elevated` | `#252829` | `#fcfbf9` | popovers, modal |
 | `--lr-text` | `#eef0ee` | `#252829` | |
 | `--lr-muted` | `#a4abb1` | `#5c646b` | |
-| `--lr-subtle` | `#8c9295` | `#65696c` | |
+| `--lr-subtle` | `#93989b` | `#616467` | |
 | `--lr-border` | `#2c3032` | `#dcd6cc` | |
 | `--lr-border-strong` | `#717475` | `#86837e` | |
 | `--lr-accent` | `#f3b752` | `#e8a638` | |

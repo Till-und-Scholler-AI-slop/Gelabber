@@ -147,7 +147,11 @@ describe("derived interface colours", () => {
       );
       atLeast(d.onlineText, [c.panel, c.surface], 4.5);
       atLeast(d.muted, [c.panel, c.surface, d.hover], 4.5);
-      atLeast(d.subtle, [c.background, c.panel, c.surface, d.elevated], 4.5);
+      atLeast(
+        d.subtle,
+        [c.background, c.panel, c.surface, d.elevated, d.hover],
+        4.5,
+      );
       atLeast(d.danger, [c.background, c.panel, c.surface], 4.5);
       atLeast("#ffffff", [d.dangerBg], 4.5);
       for (const tile of d.tiles) atLeast(c.text, [tile], 4.5);
