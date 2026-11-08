@@ -732,7 +732,6 @@ fn person_row(
         Id::unique(("voice-person", occupant.channel_id, user)),
     )
     .on_hover_text(title);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
     // A click or a right click: the profile with its volume controls.
     if response.clicked() || response.secondary_clicked() {
         super::overlays::open_member(ui.ctx(), detail.server.id, user);
@@ -748,6 +747,24 @@ fn person_row(
     );
     let speaking = app.call.with_state(|call| {
         crate::screens::voice::session::speaking(call, user, occupant.muted, occupant.deafened)
+    });
+    // The web row's hidden texts after the name.
+    response.widget_info(|| {
+        let state = if occupant.deafened {
+            Some("taub")
+        } else if occupant.muted {
+            Some("stumm")
+        } else {
+            None
+        };
+        let parts = [
+            Some(name),
+            speaking.then_some("spricht"),
+            live.then_some("Live"),
+            state,
+        ];
+        let label = parts.into_iter().flatten().collect::<Vec<_>>().join(", ");
+        egui::WidgetInfo::labeled(egui::Role::Button, true, label)
     });
     if speaking {
         crate::screens::voice::look::speaking_ring(ui, &painter, avatar, true);
@@ -783,6 +800,11 @@ fn person_row(
         );
         right -= 8.0;
     }
+    if speaking {
+        right -= SPEAKING_BARS_WIDTH;
+        speaking_bars(ui, &painter, theme, pos2(right, row.center().y));
+        right -= 8.0;
+    }
     let left = avatar.right() + 8.0;
     let block = line(
         ui,
@@ -792,6 +814,42 @@ fn person_row(
         right - left,
     );
     paint_mid(&painter, &block, left, row.center().y);
+}
+
+/// `.speaking-bars`: three 3px bars, 2px apart.
+const SPEAKING_BARS_WIDTH: f32 = 13.0;
+
+/// `.speaking-bars` (index.css) from `left_mid`, its left edge at mid
+/// height: three 12px level bars beside a speaking name, so speaking is not
+/// told by the green ring alone. Each scales 35 % → 100 % and back over
+/// 0.9s, 0.3s apart; with less motion they rest at 50, 100 and 70 %.
+fn speaking_bars(ui: &Ui, painter: &egui::Painter, theme: &Theme, left_mid: egui::Pos2) {
+    let reduced = crate::screens::settings::prefs::get(ui.ctx()).reduced_motion;
+    let time = ui.input(|i| i.time);
+    for (i, rest) in [0.5_f32, 1.0, 0.7].into_iter().enumerate() {
+        let scale = if reduced {
+            rest
+        } else {
+            // `animation-delay: -0.3s × i`, `alternate`, `ease-in-out`.
+            let k = (time + 0.3 * i as f64) / 0.9;
+            let f = k.fract() as f32;
+            let x = if (k.floor() as i64) % 2 == 0 {
+                f
+            } else {
+                1.0 - f
+            };
+            0.35 + 0.65 * x * x * (3.0 - 2.0 * x)
+        };
+        let h = 12.0 * scale;
+        let bar = Rect::from_center_size(
+            pos2(left_mid.x + 1.5 + 5.0 * i as f32, left_mid.y),
+            Vec2::new(3.0, h),
+        );
+        painter.rect_filled(bar, corner(1.5), theme.c.speaking);
+    }
+    if !reduced {
+        ui.ctx().request_repaint();
+    }
 }
 
 /// `.shell-icon-button`: transparent, muted, hover fill and text colour.

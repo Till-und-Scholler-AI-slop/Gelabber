@@ -2160,6 +2160,57 @@ dialog:not(.gel-modal, .ui-sheet),
   flex-shrink: 0;
   color: var(--lr-danger);
 }
+.sidebar-participant-speaking {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+/* Three level bars beside a speaking name. With less motion (the kill
+   switches below stop the animation) they rest at three heights. */
+.speaking-bars {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 12px;
+}
+.speaking-bars > span {
+  width: 3px;
+  height: 100%;
+  border-radius: 1.5px;
+  background: var(--lr-speaking);
+  scale: 1 0.35;
+  animation: lr-speaking-bars 0.9s ease-in-out infinite alternate;
+}
+.speaking-bars > span:nth-child(2) {
+  animation-delay: -0.3s;
+}
+.speaking-bars > span:nth-child(3) {
+  animation-delay: -0.6s;
+}
+@keyframes lr-speaking-bars {
+  to {
+    scale: 1 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .speaking-bars > span {
+    scale: 1 0.5;
+  }
+  .speaking-bars > span:nth-child(2) {
+    scale: 1 1;
+  }
+  .speaking-bars > span:nth-child(3) {
+    scale: 1 0.7;
+  }
+}
+html[data-reduced-motion="true"] .speaking-bars > span {
+  scale: 1 0.5;
+}
+html[data-reduced-motion="true"] .speaking-bars > span:nth-child(2) {
+  scale: 1 1;
+}
+html[data-reduced-motion="true"] .speaking-bars > span:nth-child(3) {
+  scale: 1 0.7;
+}
 .sidebar-participant-live {
   display: inline-flex;
   flex-shrink: 0;
