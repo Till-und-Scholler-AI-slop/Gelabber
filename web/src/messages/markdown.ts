@@ -396,3 +396,37 @@ export function previewUrls(blocks: Block[], max = 3): string[] {
     if (block.type !== "codeblock") walk(block.children);
   return found;
 }
+
+/** The message as one line of plain text, for a reply line, a preview or a
+ *  notification: the formatting marks go, a spoiler stays hidden as `▒▒▒`
+ *  and mentions stay tokens for `readableMentions`. */
+export function plainText(src: string): string {
+  const inline = (nodes: Inline[]): string =>
+    nodes
+      .map((node) => {
+        switch (node.type) {
+          case "text":
+          case "code":
+          case "link":
+            return node.text;
+          case "mention":
+            return `<@${node.userId}>`;
+          case "everyone":
+          case "here":
+            return `@${node.type}`;
+          case "spoiler":
+            return "▒▒▒";
+          default:
+            return inline(node.children);
+        }
+      })
+      .join("");
+  return parseMessage(src)
+    .map((block) =>
+      block.type === "codeblock" ? block.text : inline(block.children),
+    )
+    .join(" ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(" ");
+}

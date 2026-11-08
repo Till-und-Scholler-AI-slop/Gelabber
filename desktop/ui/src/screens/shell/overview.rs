@@ -925,7 +925,8 @@ fn message_preview(
         };
         return (None, text);
     }
-    let mut text = readable_mentions(&gelabber_client::store::excerpt(&message.content), members);
+    let plain = crate::screens::chat::markdown::plain_text(&message.content);
+    let mut text = readable_mentions(&gelabber_client::store::excerpt(&plain), members);
     if text.is_empty() {
         text = if message.gif.is_some() {
             "GIF".into()

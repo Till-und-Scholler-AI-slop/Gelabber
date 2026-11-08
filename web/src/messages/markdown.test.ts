@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseInline,
   parseMessage,
+  plainText,
   previewUrls,
   safeHref,
   type Inline,
@@ -300,5 +301,29 @@ describe("preview URLs", () => {
     expect(previewUrls(parseMessage("(http://a.b/(c)))]"))).toEqual([
       "http://a.b/(c)",
     ]);
+  });
+});
+
+describe("plain text", () => {
+  it("drops the marks and keeps what they mark", () => {
+    expect(plainText("Ich bin dabei. **Film oder Spiel?**")).toBe(
+      "Ich bin dabei. Film oder Spiel?",
+    );
+    expect(plainText("*a* __b__ ~~c~~ `d` \\*e\\*")).toBe("a b c d *e*");
+    expect(plainText("> zitiert\nund ```rs\nfn x() {}\n``` danach")).toBe(
+      "zitiert und fn x() {} danach",
+    );
+  });
+
+  it("hides spoilers and keeps mentions and links as text", () => {
+    expect(plainText("sag ||Snape stirbt|| nicht")).toBe("sag ▒▒▒ nicht");
+    const id = "0b9e4a9c-58e2-4f4e-9d65-9b3b0b8c7d11";
+    expect(plainText(`hi <@${id}> @here <https://a.b/>`)).toBe(
+      `hi <@${id}> @here https://a.b/`,
+    );
+  });
+
+  it("leaves an unclosed mark of a cut excerpt as typed", () => {
+    expect(plainText("so **halb…")).toBe("so **halb…");
   });
 });

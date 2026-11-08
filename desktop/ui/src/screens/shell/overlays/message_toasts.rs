@@ -322,7 +322,8 @@ fn incoming(app: &AppCtx, server: Uuid, message: &Message) -> Option<Incoming> {
         }
         let (label, names) = match dm {
             Some(dm) => (
-                dm.peer.name.clone(),
+                // The author already names a DM: the place says what it is.
+                "Direktnachricht".to_owned(),
                 vec![
                     (me, s.me().map(|m| m.name.clone()).unwrap_or_default()),
                     (dm.peer.id, dm.peer.name.clone()),
@@ -345,7 +346,12 @@ fn incoming(app: &AppCtx, server: Uuid, message: &Message) -> Option<Incoming> {
             }
         };
         let preview = preview_text(
-            &system_text(message).unwrap_or_else(|| readable(&message.content, &names)),
+            &system_text(message).unwrap_or_else(|| {
+                readable(
+                    &crate::screens::chat::markdown::plain_text(&message.content),
+                    &names,
+                )
+            }),
             !message.attachments.is_empty(),
             message.gif.is_some(),
         );

@@ -447,7 +447,10 @@ impl Notifier {
             }
         });
         let text = system.unwrap_or_else(|| {
-            rules::readable_mentions(&message.content, &names(state, event.s, channel, dm))
+            rules::readable_mentions(
+                &crate::screens::chat::markdown::plain_text(&message.content),
+                &names(state, event.s, channel, dm),
+            )
         });
         let preview = rules::preview_text(
             &text,
@@ -479,15 +482,10 @@ fn hides_content(state: &State) -> bool {
     state.notification_privacy.is_none_or(|p| p.hide_content)
 }
 
-/// `channelLabel`.
+/// `channelLabel`: the author already names a DM, the place says what it is.
 fn label(state: &State, server: Uuid, channel: Uuid, dm: bool) -> String {
     if dm {
-        return state
-            .dms
-            .iter()
-            .find(|d| d.id == channel)
-            .map(|d| d.peer.name.clone())
-            .unwrap_or_else(|| "DM".into());
+        return "Direktnachricht".into();
     }
     state
         .server_details

@@ -547,9 +547,64 @@ pub fn safe_href(raw: &str) -> Option<String> {
     }
 }
 
+/// `plainText`: the message as one line for a reply line, a preview or a
+/// notification. The formatting marks go, a spoiler stays hidden as `▒▒▒`
+/// and mentions stay tokens for `readable_mentions`.
+pub fn plain_text(src: &str) -> String {
+    fn inline(nodes: &[Inline], out: &mut String) {
+        for node in nodes {
+            match node {
+                Inline::Text(t) | Inline::Code(t) | Inline::Link { text: t, .. } => {
+                    out.push_str(t);
+                }
+                Inline::Mention(id) => {
+                    out.push_str("<@");
+                    out.push_str(id);
+                    out.push('>');
+                }
+                Inline::Everyone => out.push_str("@everyone"),
+                Inline::Here => out.push_str("@here"),
+                Inline::Spoiler(_) => out.push_str("▒▒▒"),
+                Inline::Strong(c) | Inline::Em(c) | Inline::Underline(c) | Inline::Strike(c) => {
+                    inline(c, out);
+                }
+            }
+        }
+    }
+    let mut out = String::with_capacity(src.len());
+    for block in parse_message(src) {
+        out.push(' ');
+        match block {
+            Block::Paragraph(nodes) | Block::Quote(nodes) => inline(&nodes, &mut out),
+            Block::CodeBlock { text, .. } => out.push_str(&text),
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plain_text_drops_the_marks() {
+        assert_eq!(
+            plain_text("Ich bin dabei. **Film oder Spiel?**"),
+            "Ich bin dabei. Film oder Spiel?"
+        );
+        assert_eq!(plain_text("*a* __b__ ~~c~~ `d` \\*e\\*"), "a b c d *e*");
+        assert_eq!(
+            plain_text("> zitiert\nund ```rs\nfn x() {}\n``` danach"),
+            "zitiert und fn x() {} danach"
+        );
+        assert_eq!(plain_text("sag ||Snape stirbt|| nicht"), "sag ▒▒▒ nicht");
+        let id = "0b9e4a9c-58e2-4f4e-9d65-9b3b0b8c7d11";
+        assert_eq!(
+            plain_text(&format!("hi <@{id}> @here <https://a.b/>")),
+            format!("hi <@{id}> @here https://a.b/")
+        );
+        assert_eq!(plain_text("so **halb…"), "so **halb…");
+    }
 
     fn text(s: &str) -> Inline {
         Inline::Text(s.into())
