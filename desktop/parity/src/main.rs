@@ -83,6 +83,13 @@ struct SetupState {
     auto_check: bool,
     available: Option<String>,
     last_check: Option<u64>,
+    /// "downloading" (`downloaded` of `total` bytes) or "installing": an
+    /// install at work; otherwise the update is offered.
+    #[serde(default)]
+    phase: String,
+    #[serde(default)]
+    downloaded: u64,
+    total: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -421,10 +428,17 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                                 error: None,
                                 // The Windows setup's, as the Tauri app's.
                                 installs: true,
-                                notice: u
-                                    .available
-                                    .as_deref()
-                                    .map(|v| Notice::new(v, Offer::Restart)),
+                                notice: u.available.as_deref().map(|v| Notice {
+                                    phase: match u.phase.as_str() {
+                                        "downloading" => Phase::Downloading {
+                                            downloaded: u.downloaded,
+                                            total: u.total,
+                                        },
+                                        "installing" => Phase::Installing,
+                                        _ => Phase::Offer,
+                                    },
+                                    ..Notice::new(v, Offer::Restart)
+                                }),
                             });
                     shell
                 });

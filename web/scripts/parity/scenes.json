@@ -982,6 +982,20 @@
       }
     },
     {
+      "name": "setup-update-downloading",
+      "page": "desktop/parity/reference/setup/index.html",
+      "scheme": "dark",
+      "updates": {
+        "current": "0.9.0",
+        "autoCheck": true,
+        "available": "0.9.1",
+        "lastCheck": 1800000000,
+        "phase": "downloading",
+        "downloaded": 19,
+        "total": 47
+      }
+    },
+    {
       "name": "light-channel",
       "path": "/s/{home}/c/{allgemein}",
       "user": "lena",

@@ -60,7 +60,17 @@ form.addEventListener("submit", (event) => {
 const updates = document.getElementById("updates");
 const action = document.getElementById("update-action");
 const updateStatus = document.getElementById("update-status");
+const progress = document.getElementById("update-progress");
 let installable = false;
+
+// An install at work: its line (the notice's) and how far the download is.
+function installing(state) {
+  if (state.phase === "installing") return ["Update wird installiert, Gelabber startet neu …", 1];
+  if (state.phase !== "downloading") return null;
+  const share = state.total ? state.downloaded / state.total : null;
+  const percent = share === null ? "" : ` ${Math.floor(100 * share)} %`;
+  return [`Update wird geladen …${percent}`, share];
+}
 
 function showUpdates(state) {
   let line = `Installiert: ${state.current}.`;
@@ -68,10 +78,18 @@ function showUpdates(state) {
   else if (state.available) line += ` Verfügbar: ${state.available}.`;
   else if (state.lastCheck) line += " Das ist die neueste Version.";
   if (state.error) line += ` Letzte Suche: ${state.error}`;
-  updateStatus.textContent = line;
+  const work = installing(state);
+  updateStatus.textContent = work ? work[0] : line;
+  progress.hidden = work?.[1] == null;
+  progress.firstElementChild.style.width = `${100 * Math.min(1, work?.[1] ?? 0)}%`;
   installable = Boolean(state.available);
-  action.textContent = installable ? "Jetzt installieren" : "Nach Updates suchen";
+  action.textContent = work
+    ? "Wird installiert…"
+    : installable
+      ? "Jetzt installieren"
+      : "Nach Updates suchen";
   action.className = installable ? "secondary" : "ghost";
+  action.disabled = Boolean(work);
 }
 
 async function updateCommand(command) {

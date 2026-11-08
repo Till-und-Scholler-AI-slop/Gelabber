@@ -191,3 +191,15 @@ h2 {
 #update-action {
   margin-top: 12px;
 }
+/* How far the update's download is: a 3px bar under the status line. */
+.progress {
+  height: 3px;
+  margin-top: 6px;
+  border-radius: 2px;
+  background: var(--border);
+}
+.progress > div {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+}
