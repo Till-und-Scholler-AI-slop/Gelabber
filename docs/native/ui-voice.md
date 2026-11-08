@@ -35,7 +35,8 @@ Conventions for implementers:
 | `--lr-online-text` | `#85d69b` | `#277643` | |
 | `--lr-warning` | `#d8a657` | `#a27e44` | |
 | `--lr-danger` | `#f39b98` | `#a12b29` | |
-| `--lr-danger-bg` | `#8f302d` | `#b33b38` | Live badge, leave button |
+| `--lr-danger-bg` | `#8f302d` | `#b33b38` | leave button |
+| `--lr-live` / `--lr-on-live` | `#ff7b5c` / `#111111` | `#df5a3b` / `#111111` | Live badge, Live button |
 | `--lr-on-danger` | `#ffffff` | `#ffffff` | |
 | `--lr-backdrop` | `rgba(9,12,13,0.72)` | `rgba(37,40,41,0.45)` | modal backdrop |
 | `--lr-tile-1..8` (avatar tints) | `#634336 #635636 #4e6336 #366349 #365d63 #364963 #433663 #633653` | `#ead2c8 #eae0c8 #daeac8 #c8ead6 #c8e5ea #c8d6ea #d2c8ea #eac8dd` | picked by `personTint(name)` (`components/initials.ts:43-53`, FNV-1a 32-bit, `0x45d9f3b` scramble, `% 8 + 1`) |

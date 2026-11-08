@@ -597,12 +597,12 @@ fn channel_row(
         name_right = r.left() - 10.0;
     } else if live && voice {
         let chip_style = text::TextStyle::new(10.0, 700.0, 1.5).tracking(0.04);
-        let block = Block::single(ui, "LIVE", chip_style, Color32::WHITE);
+        let block = Block::single(ui, "LIVE", chip_style, c.on_live);
         let chip = Rect::from_min_max(
             pos2(name_right - block.width() - 10.0, row.center().y - 8.5),
             pos2(name_right, row.center().y + 8.5),
         );
-        painter.rect_filled(chip, corner(theme.radius.sm), c.danger_bg);
+        painter.rect_filled(chip, corner(theme.radius.sm), c.live);
         paint_mid(&painter, &block, chip.left() + 5.0, chip.center().y);
         name_right = chip.left() - 10.0;
     }
@@ -765,7 +765,7 @@ fn person_row(
     let mut right = row.right() - 8.0;
     let mut marks: Vec<(Icon, f32, Color32)> = Vec::new();
     if live {
-        marks.push((Icon::Live, 13.0, c.danger));
+        marks.push((Icon::Live, 13.0, c.live_text));
     }
     if occupant.deafened {
         marks.push((Icon::HeadsetOff, 13.0, c.danger));

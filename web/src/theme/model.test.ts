@@ -150,9 +150,46 @@ describe("derived interface colours", () => {
       atLeast(d.subtle, [c.panel, d.elevated], 4.5);
       atLeast(d.danger, [c.background, c.panel, c.surface], 4.5);
       atLeast("#ffffff", [d.dangerBg], 4.5);
+      atLeast(d.onLive, [d.live], 4.5);
+      atLeast(d.live, [c.background, c.panel, c.surface], 3);
+      atLeast(d.liveText, [c.background, c.panel, c.surface], 4.5);
       for (const tile of d.tiles) atLeast(c.text, [tile], 4.5);
     },
   );
+
+  it("keeps Live apart from danger and the accent", () => {
+    for (const theme of BUILTIN_THEMES.slice(0, 2)) {
+      const d = derivedColors(theme);
+      expect(d.live).not.toBe(d.dangerBg);
+      expect(d.live).not.toBe(theme.colors.accent);
+      // Dark ink on the coral, white on the danger red: never the same pair.
+      expect(d.onLive).toBe("#111111");
+    }
+    expect(themeVariables(BUILTIN_THEMES[0])["--lr-live"]).toBe("#ff7b5c");
+    expect(themeVariables(BUILTIN_THEMES[1])["--lr-live"]).toBe("#df5a3b");
+  });
+
+  it("derives a readable Live for custom themes", () => {
+    // A light theme on a coral-ish surface: the fill gives way to keep its
+    // ink, the text colour still reads.
+    const odd = {
+      ...BUILTIN_THEMES[1],
+      colors: {
+        ...BUILTIN_THEMES[1].colors,
+        background: "#f08a70",
+        panel: "#f29a84",
+        surface: "#e9806a",
+      },
+    };
+    const d = derivedColors(odd);
+    expect(contrast(d.onLive, d.live)).toBeGreaterThanOrEqual(4.5);
+    for (const bg of [
+      odd.colors.background,
+      odd.colors.panel,
+      odd.colors.surface,
+    ])
+      expect(contrast(d.liveText, bg)).toBeGreaterThanOrEqual(4.5);
+  });
 
   it("keeps the accent fill as designed, light amber included", () => {
     const light = BUILTIN_THEMES.find((theme) => theme.id === "light")!;

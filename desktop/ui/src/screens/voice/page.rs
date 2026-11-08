@@ -712,12 +712,12 @@ fn fullscreen(ui: &mut Ui, app: &mut AppCtx, room: &Room) {
             if pic.id.kind == Kind::Live {
                 let theme = Theme::of(ui.ctx());
                 let style = TextStyle::new(11.0, 600.0, 1.3);
-                let label = Block::single(ui, "Live", style, Color32::WHITE);
+                let label = Block::single(ui, "Live", style, theme.c.on_live);
                 let badge = Rect::from_min_size(
                     screen.min + vec2(8.0, 8.0),
                     vec2(label.width() + 12.0, label.height() + 4.0),
                 );
-                painter.rect_filled(badge, corner(theme.radius.xs), theme.c.danger_bg);
+                painter.rect_filled(badge, corner(theme.radius.xs), theme.c.live);
                 label.paint(&painter, badge.min + vec2(6.0, 2.0));
             }
             leave |= watch_strip(ui, app, room, &pic, screen, &state);

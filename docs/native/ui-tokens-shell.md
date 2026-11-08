@@ -68,6 +68,9 @@ presets the port must re-implement `derivedColors` + `themeVariables` 1:1.
 | `--lr-danger` | ensureContrast(#f39b98 / #a12b29) | `#f39b98` | `#a12b29` |
 | `--lr-danger-bg` | fixed | `#8f302d` | `#b33b38` |
 | `--lr-on-danger` | fixed | `#ffffff` | `#ffffff` |
+| `--lr-live` | ensureContrast(#ff7b5c / #df5a3b, [bg,panel,surface], 3) unless its ink drops under 4.5 | `#ff7b5c` | `#df5a3b` |
+| `--lr-on-live` | readableInk(live) | `#111111` | `#111111` |
+| `--lr-live-text` | ensureContrast(live,[bg,panel,surface]) | `#ff7b5c` | `#ae4831` |
 | `--lr-backdrop` | fixed | `rgba(9,12,13,0.72)` | `rgba(37,40,41,0.45)` |
 | `--lr-speaking` | `var(--lr-online)` (`index.css:95`) | `#85d69b` | `#287a45` |
 
@@ -378,7 +381,7 @@ Shown only when the mention/DM count > 0 (plain unread shows only the pill, no d
 |---|---|
 | Position | absolute, right −5px, bottom −5px of the 44px tile (or 44×40 home button) |
 | Size | min 18×18, padding 0 5px, radius 999px (pill grows with digits) |
-| Fill / text | bg `--lr-danger-bg` (#8f302d dark / #b33b38 light), text `--lr-on-danger` #ffffff |
+| Fill / text | bg `--lr-accent`, text `--lr-accent-ink` (unread marks are the accent) |
 | Font | `700 11px / 1`, letter-spacing 0, no uppercase |
 | Ring | `box-shadow: 0 0 0 2px --lr-rail` |
 | Text | count, `"99+"` when > 99 |
@@ -509,7 +512,7 @@ radius 7) › `a.channel-row-link` (flex 1, padding 0 10px, gap 10px, full heigh
 | Pending (optimistic) | whole row `opacity .5`, not clickable |
 | Draft mark (text, not active) | `PencilIcon` 13px `--lr-muted`, title "Entwurf" |
 | Mention/DM count | the pill of 4.6 without ring/offset: `margin-left:auto` at the right end of the link (right edge = row right − 13px) |
-| LIVE chip (voice channel with someone live) | `margin-left:auto`; padding 1px 5px; radius `--lr-radius-small` 5px; bg `--lr-danger-bg`; text `#fff` `700 10px`, letter-spacing .4px, UPPERCASE "LIVE"; line box 15 → chip 17 tall; title = `liveSentence(...)` |
+| LIVE chip (voice channel with someone live) | `margin-left:auto`; padding 1px 5px; radius `--lr-radius-small` 5px; bg `--lr-live`; text `--lr-on-live` `700 10px`, letter-spacing .4px, UPPERCASE "LIVE"; line box 15 → chip 17 tall; title = `liveSentence(...)` |
 | Hover actions (`manage_channels`) | absolute (`@media (hover:hover)`, `index.css:1965-1975`), right 3px, vertically centred, padding-left 6, radius 7, `background: inherit` = row's current bg (covers the name/count end); total 6 + 26 + 26 = 58 wide → x = row right − 61 .. row right − 3, y = row top + 4 .. + 30; opacity 0 → 1 on hover/focus-within (150ms cubic-bezier(0.4,0,0.2,1)): two 26×26 buttons `PencilIcon` 14 "Kanal bearbeiten", `TrashIcon` 14 "Kanal löschen". Takes no room while hidden |
 | Right-click | row menu popover (`ChannelSidebar.tsx:613-714`), items `.shell-menu-item` (min-height 36, padding 0 10, gap 10, radius 5, `--lr-type-ui`, icon `--lr-muted`, hover `--lr-hover`) with 18px icons, list gap 2 (`shell.css:15-19`). Channel: `PencilIcon` "Kanal bearbeiten"; only for TEXT channels `BellIcon` "Benachrichtigungen…"; separator (`hr`, 1px top `--lr-border`, margin 4px 6px); danger `TrashIcon` "Kanal löschen" (text AND icon `--lr-danger`). Category: `PlusIcon` "Kanal in dieser Kategorie", `PencilIcon` "Kategorie umbenennen", separator, `TrashIcon` "Kategorie löschen" (danger). Popover label (a11y): `#name` / `name` / `Kategorie <name>`. For members without manage rights: right-click on a text channel opens notification settings; voice: nothing |
 | Popover box (`ui/ui.css:635-660`, `ui/popoverPosition.ts:9-10`) | `.ui-popover`: fixed, z 60, min-width 180, max-width min(360, 100vw−16), padding 8, border 1px `--lr-border`, radius `--lr-radius-lg` 10, bg `--lr-elevated`, shadow `--lr-shadow-1`. Default placement `bottom-start`: top = anchor bottom + 6 (GAP), left = anchor left; flips above (anchor top − 6 − height) when it does not fit; kept 8px (MARGIN) inside the viewport. Anchor = the row link (channel) or the category row. Opens opacity 0→1 + scale .96→1 from the anchor side (180ms ease-enter), closes 130ms ease-exit |
@@ -577,7 +580,7 @@ There is NO channel topic: the `Channel` type has no topic field and no header s
 | Channel icon | `HashIcon` / `SpeakerIcon` 18px, `--lr-muted`; gap 10 to the name |
 | Name `h1` | 15px weight 650, letter-spacing −0.1px, line box 22.5, ellipsis |
 | Server name line | hidden on desktop (`index.css:350-352`; shown only ≤800px) |
-| Live pill (when someone in the server is live) | after the title, `margin-left:auto`; height 30, padding 0 4 0 6, gap 8, radius 15, border 1px (1.3 table), bg (1.3), 12px; contains "LIVE" badge (18 tall, padding 0 6, radius 9, `--lr-danger-bg`, #fff 700 10px, letter-spacing .4px, `chat.css:1689-1703`) + link `"<names> in <channel> +<more>"` (`--lr-text`, ellipsis, underline on hover) + optional button "Beitreten" (not in a call) / "Zum Kanal" (padding 3px 10px, radius 12, `--lr-danger-bg`, #fff, 650) (`voice/LiveHint.tsx:72-90`). Then the search loses its auto margin (`chat.css:2009-2045`) |
+| Live pill (when someone in the server is live) | after the title, `margin-left:auto`; height 30, padding 0 4 0 6, gap 8, radius 15, border 1px (1.3 table), bg (1.3), 12px; contains "LIVE" badge (18 tall, padding 0 6, radius 9, `--lr-live`, `--lr-on-live` 700 10px, letter-spacing .4px) + link `"<names> in <channel> +<more>"` (`--lr-text`, ellipsis, underline on hover) + optional button "Beitreten" (not in a call) / "Zum Kanal" (padding 3px 10px, radius 12, `--lr-danger-bg`, #fff, 650) (`voice/LiveHint.tsx:72-90`). Then the search loses its auto margin (`chat.css:2009-2045`) |
 | Search field (text channels and DMs) | `margin-left:auto`; 200×30 (260 wide when focused or holding text, width animates 100ms); padding 0 10; gap 8; border 1px `--lr-border`; radius 7; bg `--lr-panel`; text 13px `--lr-muted`; `SearchIcon` 16px; input text `--lr-text`; placeholder "Suchen" in (1.3); hover/with text: icon/text `--lr-text`, border (1.3); focused: border (1.3); title "Wörter oder eine Phrase in Anführungszeichen" |
 | Shortcut hint | `kbd` "Strg F" (macOS "⌘ F"), right end of the field (margin-left auto), padding 0 5, border 1px `--lr-border`, radius 5, 11px weight 400 `--lr-muted` (stays muted on hover; `chat.css:1931-1939`; hidden ≤800px, `chat.css:1724`), line-height inherited 1.5 → 16.5 line box → kbd box 18.5 tall, centred in the 28px inner height; hidden while the field has text |
 | Bell (`NotificationSettingsDialog.tsx:311-329`) | `.lr-header-icon` 32×32, radius 7, `--lr-muted`; `BellIcon` 16 or `BellOffIcon` 16 when muted; title "Benachrichtigungen" / "Stummgeschaltet"; hover bg `--lr-hover` + `--lr-text` |
@@ -723,8 +726,8 @@ hover `--lr-hover`, bottom corners radius 5, bleeds −4px to the card edges.
   margins) → controls (`margin-left:auto`, gap 4) → "Verlassen" button.
 - Controls: 36 tall, min-width 36, padding 0 8, radius 7, transparent, `--lr-muted`;
   hover `--lr-hover` + `--lr-text`; on (camera/share) `--lr-selected` + `--lr-accent-text`;
-  off (mic/headset closed) `--lr-danger` text on `danger-bg@16%`; Live `--lr-danger-bg`
-  + #fff; leave: margin-left 4, padding 0 12, `--lr-danger-bg` + #fff, hover darker
+  off (mic/headset closed) `--lr-danger` text on `danger-bg@16%`; Live `--lr-live`
+  + `--lr-on-live`; leave: margin-left 4, padding 0 12, `--lr-danger-bg` + #fff, hover darker
   (1.3), label "Verlassen" (`--lr-type-ui`).
 - Joining slides the bar up from below (translateY 100% → 0, 240ms ease-enter);
   leaving slides down (170ms ease-exit).

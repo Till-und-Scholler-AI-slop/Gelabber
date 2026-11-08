@@ -646,7 +646,7 @@ fn control(
     let (fill, fg) = match tone {
         Tone::Off => (c.danger_bg.gamma_multiply(0.16), c.danger),
         Tone::On => (c.selected, c.accent_text),
-        Tone::Live => (c.danger_bg, c.on_danger),
+        Tone::Live => (c.live, c.on_live),
         Tone::Talking => (
             if hovered {
                 c.hover

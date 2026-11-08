@@ -30,8 +30,8 @@
   left: 8px;
   padding: 2px 6px;
   border-radius: var(--lr-radius-xs);
-  background: var(--lr-danger-bg);
-  color: var(--lr-on-danger);
+  background: var(--lr-live);
+  color: var(--lr-on-live);
   font: var(--lr-type-caps);
 }
 .voice-video-placeholder,

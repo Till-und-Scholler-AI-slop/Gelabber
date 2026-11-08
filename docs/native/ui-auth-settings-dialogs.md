@@ -44,7 +44,7 @@ Default theme preference is **"dark"** when nothing stored (`theme/theme.ts:11-2
 | `--lr-online-text` | success text | `#85d69b` | `#277643` |
 | `--lr-warning` | away dot, caps-lock hint | `#d8a657` | `#a27e44` |
 | `--lr-danger` | error text, danger outline | `#f39b98` | `#a12b29` |
-| `--lr-danger-bg` | danger fill, count badge | `#8f302d` | `#b33b38` |
+| `--lr-danger-bg` | danger fill | `#8f302d` | `#b33b38` |
 | `--lr-on-danger` | text on danger fill | `#ffffff` | `#ffffff` |
 | `--lr-backdrop` | modal backdrop | `rgb(9 12 13 / .72)` | `rgb(37 40 41 / .45)` |
 | `--lr-tile-1…8` | server/avatar initials tints | `#634336 #635636 #4e6336 #366349 #365d63 #364963 #433663 #633653` | `#ead2c8 #eae0c8 #daeac8 #c8ead6 #c8e5ea #c8d6ea #d2c8ea #eac8dd` |

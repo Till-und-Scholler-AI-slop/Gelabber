@@ -454,8 +454,8 @@
     justify-content: center;
     padding: 0 5px;
     border-radius: var(--lr-radius-full);
-    background: var(--lr-danger-bg);
-    color: var(--lr-on-danger);
+    background: var(--lr-accent);
+    color: var(--lr-accent-ink);
     font: 700 11px / 1 var(--lr-font);
     letter-spacing: 0;
     text-transform: none;

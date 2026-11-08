@@ -816,13 +816,13 @@ pub fn picture(
     // The Live badge, top left.
     if live && !kino_focus {
         let style = TextStyle::new(11.0, 600.0, 1.3);
-        let label = Block::single(ui, "Live", style, Color32::WHITE);
+        let label = Block::single(ui, "Live", style, c.on_live);
         let inset = if strip { 6.0 } else { 8.0 };
         let badge = Rect::from_min_size(
             rect.min + vec2(inset, inset),
             vec2(label.width() + 12.0, label.height() + 4.0),
         );
-        painter.rect_filled(badge, corner(theme.radius.xs), c.danger_bg);
+        painter.rect_filled(badge, corner(theme.radius.xs), c.live);
         label.paint(&painter, badge.min + vec2(6.0, 2.0));
     }
     // The own Live says what becomes of its sound, under the name pill

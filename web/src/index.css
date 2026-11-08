@@ -905,8 +905,8 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   flex-shrink: 0;
   padding: 1px 5px;
   border-radius: var(--lr-radius-small);
-  background: var(--lr-danger-bg);
-  color: #fff;
+  background: var(--lr-live);
+  color: var(--lr-on-live);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.4px;
@@ -1833,8 +1833,8 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     height: 18px;
     padding: 0 5px;
     border-radius: var(--lr-radius-full);
-    background: var(--lr-danger-bg);
-    color: var(--lr-on-danger);
+    background: var(--lr-accent);
+    color: var(--lr-accent-ink);
     box-shadow: 0 0 0 2px var(--lr-bg);
     font: 700 11px / 1 var(--lr-font);
   }
@@ -2167,7 +2167,7 @@ dialog:not(.gel-modal, .ui-sheet),
 .sidebar-participant-live {
   display: inline-flex;
   flex-shrink: 0;
-  color: var(--lr-danger);
+  color: var(--lr-live-text);
 }
 /* Per-participant volume in the profile dialog (#252). */
 .user-volume {

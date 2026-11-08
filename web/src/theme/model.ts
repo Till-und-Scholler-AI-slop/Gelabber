@@ -204,6 +204,12 @@ export function derivedColors(theme: ThemeDefinition) {
     selected,
   ]);
   const muted = ensureContrast(c.muted, [c.panel, c.surface, hover]);
+  // On air: a warm coral, apart from the danger red and the accent. The
+  // fill stands out from the surfaces it sits on (3:1) unless that costs
+  // its ink 4.5:1; `liveText` is the coral for text and icons.
+  const coral = dark ? "#ff7b5c" : "#df5a3b";
+  const raised = ensureContrast(coral, [c.background, c.panel, c.surface], 3);
+  const live = contrast(readableInk(raised), raised) >= 4.5 ? raised : coral;
   return {
     elevated,
     selected,
@@ -226,6 +232,9 @@ export function derivedColors(theme: ThemeDefinition) {
       c.surface,
     ]),
     dangerBg: dark ? "#8f302d" : "#b33b38",
+    live,
+    onLive: readableInk(live),
+    liveText: ensureContrast(live, [c.background, c.panel, c.surface]),
     tiles: TILE_HUES.map((hue) => {
       const tile = dark ? hsl(hue, 0.3, 0.3) : hsl(hue, 0.45, 0.85);
       for (let step = 0; step <= 100; step += 5) {
@@ -366,6 +375,9 @@ export function themeVariables(theme: ThemeDefinition): Record<string, string> {
     "--lr-danger": d.danger,
     "--lr-danger-bg": d.dangerBg,
     "--lr-on-danger": "#ffffff",
+    "--lr-live": d.live,
+    "--lr-on-live": d.onLive,
+    "--lr-live-text": d.liveText,
     "--lr-backdrop": dark ? "rgb(9 12 13 / 0.72)" : "rgb(37 40 41 / 0.45)",
     "--lr-font":
       theme.style === "terminal"
