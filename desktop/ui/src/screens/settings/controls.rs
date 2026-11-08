@@ -21,6 +21,9 @@ use crate::widgets::{
     keyboard_focus, snap,
 };
 
+/// The width of a settings area's rows and forms (`--settings-measure`).
+pub const MEASURE: f32 = 720.0;
+
 // ------------------------------------------------------------------ text
 
 /// Paints one line of text with its line box's top-left at `pos`.
