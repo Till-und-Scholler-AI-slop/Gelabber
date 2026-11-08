@@ -39,6 +39,16 @@ export type Badge = {
   dot: boolean;
 };
 
+/** What a screen reader hears for a badge: always the word "ungelesen",
+ * since the dot or the bold row alone says nothing to it. The native app
+ * says the same (desktop/ui/src/screens/shell/common.rs). */
+export function unreadLabel({ count, dot }: Badge): string | null {
+  if (count > 99) return "Mehr als 99 ungelesene Benachrichtigungen";
+  if (count === 1) return "1 ungelesene Benachrichtigung";
+  if (count > 0) return `${count} ungelesene Benachrichtigungen`;
+  return dot ? "Ungelesene Nachrichten" : null;
+}
+
 /**
  * Discord's rules. In a server channel ordinary unread messages are a dot
  * and only mentions get a number; a direct message always counts. A mute

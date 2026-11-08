@@ -520,7 +520,6 @@ fn channel_row(
     let link_id = Id::unique(("channel-row", ch.id));
     let stop = keys.stop == Some(0) || ui.memory(|m| m.has_focus(link_id));
     let response = common::click_stop(ui, row, link_id, stop);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, &ch.name));
     let voice = ch.kind == ChannelKind::Voice;
     if response.secondary_clicked() {
         if can_manage {
@@ -572,6 +571,14 @@ fn channel_row(
         color
     };
     let unread = !voice && (badge.count > 0 || badge.dot);
+    response.widget_info(|| {
+        let name = if voice {
+            ch.name.clone()
+        } else {
+            common::with_unread(&ch.name, badge)
+        };
+        egui::WidgetInfo::labeled(egui::Role::Link, true, name)
+    });
     if unread {
         common::edge_bar(&painter, theme, row.left() - 8.0, row.center().y);
         color = c.text;

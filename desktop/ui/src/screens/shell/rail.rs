@@ -47,6 +47,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
     let response =
         common::click(ui, home, Id::unique("rail-home")).on_hover_text("Direktnachrichten");
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, "Direktnachrichten"));
+    common::describe_unread(ui, &response, dm_badge);
     if response.secondary_clicked() {
         super::overlays::open_notifications(ui.ctx(), super::overlays::Target::all_dms());
     }
@@ -185,6 +186,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
                     ui.scroll_to_rect(tile, None);
                 }
                 response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, name));
+                common::describe_unread(ui, &response, *badge);
                 if response.secondary_clicked() {
                     super::overlays::open_notifications(
                         ui.ctx(),
