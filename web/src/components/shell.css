@@ -80,6 +80,21 @@
 .shell-menu-item[aria-expanded="true"] {
   background: var(--lr-hover);
 }
+/* Nothing to do now (nothing unread): dimmed, no hover. */
+.shell-menu-item[aria-disabled="true"],
+.shell-menu-item[aria-disabled="true"] > svg {
+  color: var(--lr-subtle);
+  cursor: default;
+}
+.shell-menu-item[aria-disabled="true"]:hover {
+  background: none;
+}
+/* A scaled popover would hold its fixed submenu and clip it: while one is
+   open the menu stands at full size at once (its grow transition ends). */
+.shell-row-menu:has(.shell-submenu:not(.is-inline)) {
+  scale: none;
+  transition-property: opacity;
+}
 .shell-submenu {
   position: fixed;
   z-index: 61;

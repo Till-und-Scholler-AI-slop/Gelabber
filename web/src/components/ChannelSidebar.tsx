@@ -38,7 +38,7 @@ import {
 import { liveSentence } from "../voice/roomSummary.ts";
 import { can } from "../servers/permissions.ts";
 import { useHoldMenu } from "./useHoldMenu.ts";
-import { isMenuKey, menuKeys } from "./rowMenuTrigger.ts";
+import { rowMenuKeys } from "./rowMenuTrigger.ts";
 import { NotificationRowMenu, RowMenu } from "./RowMenu.tsx";
 import type { MenuEntry } from "./rowMenuEntries.ts";
 import {
@@ -821,28 +821,15 @@ function CategoryRow({
         pending ? "opacity-50" : "",
         menuOpen ? "is-menu-open" : "",
       ].join(" ")}
-      onContextMenu={
-        actions
-          ? (event) => {
-              event.preventDefault();
-              onMenu(event.currentTarget);
-            }
-          : undefined
-      }
       {...hold}
       {...roving.keys}
-      onKeyDown={(event) => {
-        if (actions && isMenuKey(event)) {
-          event.preventDefault();
-          onMenu(event.target as HTMLElement);
-        } else roving.keys.onKeyDown(event);
-      }}
+      {...(actions ? rowMenuKeys(onMenu, roving.keys.onKeyDown) : {})}
     >
       <h3 className="sidebar-category-name">{category.name}</h3>
       {!actions ? null : coarse ? (
         <span className={TOUCH_ACTIONS}>
           <IconButton
-            label={`Aktionen für Kategorie ${category.name}`}
+            label={`Aktionen für Kategorie „${category.name}“`}
             onClick={(event) => onMenu(event.currentTarget)}
             small
             describedBy={hintId}
@@ -857,7 +844,7 @@ function CategoryRow({
         // menu.
         <span className={HOVER_ACTIONS}>
           <IconButton
-            label={`Kanal in ${category.name} erstellen`}
+            label={`Kanal in „${category.name}“ erstellen`}
             onClick={onAdd}
             small
             describedBy={hintId}
@@ -866,7 +853,7 @@ function CategoryRow({
             <PlusIcon size={14} />
           </IconButton>
           <IconButton
-            label={`Aktionen für Kategorie ${category.name}`}
+            label={`Aktionen für Kategorie „${category.name}“`}
             onClick={(event) => onMenu(event.currentTarget)}
             small
             expanded={menuOpen}
@@ -955,7 +942,11 @@ export function ChannelRow({
   const hold = useHoldMenu(actions ? onMenu : undefined);
 
   return (
-    <div className={rowClass} {...roving.keys}>
+    <div
+      className={rowClass}
+      {...roving.keys}
+      {...(actions ? rowMenuKeys(onMenu, roving.keys.onKeyDown) : {})}
+    >
       {pending ? (
         <span className="channel-row-link">{body}</span>
       ) : (
@@ -967,7 +958,6 @@ export function ChannelRow({
           title={inVoice ? `${channel.name} · verbunden` : undefined}
           tabIndex={roving.tabIndex(0)}
           className="channel-row-link"
-          {...(actions ? menuKeys(onMenu) : {})}
           {...hold}
           {...ROW_ITEM}
         >

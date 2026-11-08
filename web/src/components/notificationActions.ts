@@ -8,7 +8,7 @@ import {
   useNotificationSettings,
 } from "../messages/notificationSettings.ts";
 import { isMuted, type NotifyLevel } from "../messages/notifyLevel.ts";
-import { useMarkManyRead } from "../messages/readState.ts";
+import { useMarkManyRead, useReadState } from "../messages/readState.ts";
 import {
   minutesUntil,
   openNotificationSettings,
@@ -42,15 +42,6 @@ export const LEVELS: { level: NotifyLevel; label: string; hint: string }[] = [
 export const levelName = (level: NotifyLevel) =>
   LEVELS.find((row) => row.level === level)!.label;
 
-/** "Als gelesen markieren" in the dialog, which names what it marks. */
-export function markReadLabel(target: NotificationTarget): string {
-  return target.allDms
-    ? "Alle Direktnachrichten als gelesen markieren"
-    : target.scope === "server"
-      ? "Server als gelesen markieren"
-      : "Als gelesen markieren";
-}
-
 /** "14:30 Uhr" today, else "Mi., 5. Nov., 14:30 Uhr". */
 export function formatUntil(until: string): string {
   const date = new Date(until);
@@ -75,6 +66,7 @@ export function useNotificationActions(target: NotificationTarget) {
   const { data: settings } = useNotificationSettings();
   const change = useChangeNotificationSetting();
   const markMany = useMarkManyRead();
+  const { data: reads } = useReadState();
   const now = useMuteClock();
   const own = settingOf(settings, target.scope, target.id);
   const server = target.serverId
@@ -83,6 +75,16 @@ export function useNotificationActions(target: NotificationTarget) {
   return {
     own,
     muted: isMuted(own, now),
+    /** Something to mark read, muted or not. */
+    unread: (reads ?? []).some(
+      (row) =>
+        row.unread_count > 0 &&
+        (target.allDms
+          ? row.server_id === null
+          : target.scope === "server"
+            ? row.server_id === target.id
+            : row.channel_id === target.id),
+    ),
     serverMuted: server ? isMuted(server, now) : false,
     /** What "Wie der Server" means for a channel. */
     inherited: (server?.level ?? "all") as NotifyLevel,

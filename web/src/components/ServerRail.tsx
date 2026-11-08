@@ -302,54 +302,55 @@ function ServerTile({
   // the tooltip also ends when the finger leaves.
   const menu = useRowMenu(onTipEnd);
   const { onPointerLeave: endHold, ...trigger } = menu.trigger;
+  const tile = (
+    <Link
+      to={channelId ? "/s/$serverId/c/$channelId" : "/s/$serverId"}
+      params={
+        channelId ? { serverId: server.id, channelId } : { serverId: server.id }
+      }
+      // Picked inside the phone drawer: the drawer stays open on this
+      // server's channels.
+      state={drawer.keepOpen}
+      replace={drawer.open}
+      aria-label={server.name}
+      aria-describedby={unreadId}
+      aria-current={active ? "page" : undefined}
+      tabIndex={tabStop ? 0 : -1}
+      onPointerEnter={(event) => {
+        if (event.pointerType === "mouse")
+          onTip(event.currentTarget, server.name, summary, false);
+        if (userId) prefetchServer(client, userId, server.id);
+      }}
+      onPointerLeave={() => {
+        onTipEnd();
+        endHold?.();
+      }}
+      onFocus={(event) => {
+        if (event.currentTarget.matches(":focus-visible"))
+          onTip(event.currentTarget, server.name, summary, true);
+        if (userId) prefetchServer(client, userId, server.id);
+      }}
+      onBlur={onTipEnd}
+      className={[
+        "server-tile",
+        active ? "is-active" : "",
+        muted ? "is-muted" : "",
+        badge.count > 0 || badge.dot ? "is-unread" : "",
+      ].join(" ")}
+      style={{ "--server-tile": tileTint(server.id) } as CSSProperties}
+      {...trigger}
+      {...ROW_ITEM}
+    >
+      <ServerIconFace
+        url={server.icon_url}
+        fallback={tileInitials(server.name)}
+      />
+      <UnreadBadge id={unreadId} serverId={server.id} rail showDot={false} />
+    </Link>
+  );
   return (
     <>
-      <Link
-        to={channelId ? "/s/$serverId/c/$channelId" : "/s/$serverId"}
-        params={
-          channelId
-            ? { serverId: server.id, channelId }
-            : { serverId: server.id }
-        }
-        // Picked inside the phone drawer: the drawer stays open on this
-        // server's channels.
-        state={drawer.keepOpen}
-        replace={drawer.open}
-        aria-label={server.name}
-        aria-describedby={unreadId}
-        aria-current={active ? "page" : undefined}
-        tabIndex={tabStop ? 0 : -1}
-        onPointerEnter={(event) => {
-          if (event.pointerType === "mouse")
-            onTip(event.currentTarget, server.name, summary, false);
-          if (userId) prefetchServer(client, userId, server.id);
-        }}
-        onPointerLeave={() => {
-          onTipEnd();
-          endHold?.();
-        }}
-        onFocus={(event) => {
-          if (event.currentTarget.matches(":focus-visible"))
-            onTip(event.currentTarget, server.name, summary, true);
-          if (userId) prefetchServer(client, userId, server.id);
-        }}
-        onBlur={onTipEnd}
-        className={[
-          "server-tile",
-          active ? "is-active" : "",
-          muted ? "is-muted" : "",
-          badge.count > 0 || badge.dot ? "is-unread" : "",
-        ].join(" ")}
-        style={{ "--server-tile": tileTint(server.id) } as CSSProperties}
-        {...trigger}
-        {...ROW_ITEM}
-      >
-        <ServerIconFace
-          url={server.icon_url}
-          fallback={tileInitials(server.name)}
-        />
-        <UnreadBadge id={unreadId} serverId={server.id} rail showDot={false} />
-      </Link>
+      {tile}
       {menu.open ? (
         <NotificationRowMenu
           target={{ scope: "server", id: server.id, name: server.name }}

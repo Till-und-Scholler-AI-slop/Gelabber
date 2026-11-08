@@ -13,6 +13,7 @@ function actions(
 ): NotificationMenuActions {
   return {
     muted: false,
+    unread: true,
     own: { muted_until: null },
     inherited: "mentions",
     isLevel: (level: NotifyLevel | null) => level === null,
@@ -81,8 +82,22 @@ describe("row menu entries", () => {
     ]);
     const all = { ...dm, id: "dms", name: "Direktnachrichten", allDms: true };
     expect(outline(notificationEntries(all, actions(), noReport))).toEqual([
-      "Alle als gelesen markieren",
+      "Alle Direktnachrichten als gelesen markieren",
     ]);
+  });
+
+  it("marks read only with something unread", () => {
+    const [read] = notificationEntries(
+      channel,
+      actions({ unread: false }),
+      noReport,
+    );
+    expect(read).toMatchObject({
+      label: "Als gelesen markieren",
+      disabled: true,
+    });
+    const [unread] = notificationEntries(channel, actions(), noReport);
+    expect(unread).toMatchObject({ disabled: false, icon: "check-check" });
   });
 
   it("ends a running mute in one step and says until when", () => {
@@ -92,6 +107,7 @@ describe("row menu entries", () => {
       kind: "item",
       label: "Stummschaltung aufheben",
       hint: "Stumm, bis du es aufhebst",
+      icon: "bell-off",
     });
     if (unmute?.kind === "item") unmute.onSelect();
     expect(muted.unmute).toHaveBeenCalled();

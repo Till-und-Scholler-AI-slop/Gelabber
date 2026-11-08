@@ -21,7 +21,7 @@ import {
   TOUCH_ACTIONS,
 } from "./RowActionButton.tsx";
 import { NotificationRowMenu } from "./RowMenu.tsx";
-import { useRowMenu } from "./rowMenuTrigger.ts";
+import { rowMenuKeys, useRowMenu } from "./rowMenuTrigger.ts";
 import {
   LIST_ROW,
   ROW_ITEM,
@@ -174,6 +174,7 @@ export function DmRow({
     <div
       className={`group dm-row-item${menu.open ? " is-menu-open" : ""}`}
       {...roving.keys}
+      {...rowMenuKeys(menu.show, roving.keys.onKeyDown)}
     >
       <Link
         to="/d/$channelId"
@@ -186,7 +187,7 @@ export function DmRow({
           muted ? "is-muted" : "",
           badge.count > 0 || badge.dot ? "is-unread" : "",
         ].join(" ")}
-        {...menu.trigger}
+        {...menu.hold}
         {...ROW_ITEM}
       >
         <PresenceAvatar

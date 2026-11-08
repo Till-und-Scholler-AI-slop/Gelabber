@@ -1971,8 +1971,15 @@ html[data-reduced-motion="true"] *::after {
   :is(.channel-row, .dm-row-item):not(:hover, :focus-within, .is-menu-open)
     > .sidebar-row-actions {
     visibility: hidden;
+    /* Hidden only once faded out, so they fade both ways. */
+    transition:
+      opacity var(--lr-dur-fast) var(--lr-ease-exit),
+      visibility 0s linear var(--lr-dur-fast);
   }
   :is(.channel-row, .dm-row-item) > .sidebar-row-actions {
+    transition:
+      opacity var(--lr-dur-fast) var(--lr-ease-enter),
+      visibility 0s;
     position: absolute;
     top: 50%;
     right: 3px;

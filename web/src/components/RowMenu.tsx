@@ -17,6 +17,7 @@ import { notifyError } from "./toasts.ts";
 import {
   BellIcon,
   BellOffIcon,
+  CheckCheckIcon,
   CheckIcon,
   ChevronIcon,
   GearIcon,
@@ -38,7 +39,7 @@ import { useMediaQuery } from "./useMediaQuery.ts";
 import "./shell.css";
 
 const ICONS = {
-  check: CheckIcon,
+  "check-check": CheckCheckIcon,
   bell: BellIcon,
   "bell-off": BellOffIcon,
   gear: GearIcon,
@@ -253,20 +254,27 @@ function Entry({
         <span className="shell-menu-label">{entry.label}</span>
       </button>
     );
+  // A disabled entry stays in the arrow keys' way, as menus do, but does
+  // nothing. The hint is its description, not part of its name.
   return (
     <button
       type="button"
       role="menuitem"
       aria-describedby={entry.hint ? hintId : undefined}
+      aria-disabled={entry.disabled || undefined}
       className={`shell-menu-item${entry.danger ? " is-danger" : ""}`}
-      onClick={choose(entry.onSelect)}
+      onClick={entry.disabled ? undefined : choose(entry.onSelect)}
       onPointerEnter={onPointerEnter}
       {...{ [ITEM]: "" }}
     >
       <EntryIcon icon={entry.icon} />
       <span className="shell-menu-label">
         {entry.label}
-        {entry.hint ? <small id={hintId}>{entry.hint}</small> : null}
+        {entry.hint ? (
+          <small id={hintId} aria-hidden="true">
+            {entry.hint}
+          </small>
+        ) : null}
       </span>
     </button>
   );
@@ -291,7 +299,10 @@ function Submenu({
     // Right after the entry that opened it.
     const trigger = element?.previousElementSibling;
     if (!element || !trigger) return;
-    if (!inline) {
+    if (focusFirst) levelItems(element)[0]?.focus();
+    if (inline) return;
+    // Beside the menu, again after the menu moves (Popover places it first).
+    const place = () => {
       const menu = trigger.closest(".ui-popover") ?? trigger;
       const position = submenuPosition(
         menu.getBoundingClientRect(),
@@ -303,8 +314,14 @@ function Submenu({
       );
       element.style.top = `${position.top}px`;
       element.style.left = `${position.left}px`;
-    }
-    if (focusFirst) levelItems(element)[0]?.focus();
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
   }, [inline, focusFirst]);
   return (
     <div

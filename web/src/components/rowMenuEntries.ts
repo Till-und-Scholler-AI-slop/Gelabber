@@ -5,7 +5,7 @@ import { LEVELS, MUTES, levelName, mutedLine } from "./notificationActions.ts";
 import type { NotificationTarget } from "./notificationTarget.ts";
 
 export type MenuIcon =
-  "check" | "bell" | "bell-off" | "gear" | "pencil" | "plus" | "trash";
+  "check-check" | "bell" | "bell-off" | "gear" | "pencil" | "plus" | "trash";
 
 export type LeafEntry =
   | {
@@ -15,6 +15,9 @@ export type LeafEntry =
       /** A second line, e.g. how long a mute still holds. */
       hint?: string;
       danger?: boolean;
+      /** Shown dimmed and does nothing, e.g. marking read with nothing
+       * unread. */
+      disabled?: boolean;
       onSelect: () => void;
     }
   | { kind: "radio"; label: string; checked: boolean; onSelect: () => void }
@@ -28,6 +31,8 @@ export type MenuEntry =
 /** The part of `useNotificationActions` the entries call. */
 export type NotificationMenuActions = {
   muted: boolean;
+  /** Whether anything is unread to mark read. */
+  unread: boolean;
   own: { muted_until: string | null };
   inherited: NotifyLevel;
   isLevel: (level: NotifyLevel | null) => boolean;
@@ -41,7 +46,8 @@ export type NotificationMenuActions = {
 /**
  * The notification entries of a server, channel or conversation: mark it
  * read, mute it (or end the mute), its level, and the dialog with all of
- * it. All direct messages together can only be marked read. `failed`
+ * it. All direct messages together can only be marked read; marking read
+ * waits for something unread. `failed`
  * reports a save that did not go through, naming what did not happen.
  */
 export function notificationEntries(
@@ -55,9 +61,10 @@ export function notificationEntries(
     {
       kind: "item",
       label: target.allDms
-        ? "Alle als gelesen markieren"
+        ? "Alle Direktnachrichten als gelesen markieren"
         : "Als gelesen markieren",
-      icon: "check",
+      icon: "check-check",
+      disabled: !actions.unread,
       onSelect: () =>
         void actions.markRead().catch(failed("Nicht als gelesen markiert.")),
     },
@@ -69,7 +76,9 @@ export function notificationEntries(
           kind: "item",
           label: "Stummschaltung aufheben",
           hint: mutedLine(actions.own.muted_until),
-          icon: "bell",
+          // Where "Stummschalten" was, with its icon: the levels keep the
+          // bell.
+          icon: "bell-off",
           onSelect: () => saving(actions.unmute()),
         }
       : {

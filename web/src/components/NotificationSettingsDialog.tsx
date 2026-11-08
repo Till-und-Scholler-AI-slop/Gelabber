@@ -13,7 +13,6 @@ import {
   LEVELS,
   MUTES,
   levelName,
-  markReadLabel,
   mutedLine,
   useNotificationActions,
 } from "./notificationActions.ts";
@@ -34,14 +33,7 @@ export function NotificationSettingsHost() {
         target ? `Benachrichtigungen: ${target.name}` : "Benachrichtigungen"
       }
     >
-      {target?.allDms ? (
-        <div className="notify-footer">
-          <MarkRead target={target} onDone={close} />
-          <GhostButton onClick={close} initialFocus>
-            Fertig
-          </GhostButton>
-        </div>
-      ) : target ? (
+      {target ? (
         <NotificationSettingsForm
           key={`${target.scope}:${target.id}`}
           target={target}
@@ -100,14 +92,19 @@ function NotificationSettingsForm({
             </Button>
           </div>
         ) : (
-          // One row of chips: how long, in short.
-          <div className="notify-mute-row">
+          // One row of chips: how long, in short; named in full.
+          <div
+            role="group"
+            aria-labelledby="notify-mute"
+            className="notify-mute-row"
+          >
             {MUTES.map((mute) => (
               <button
                 key={mute.label}
                 type="button"
                 disabled={saving}
                 title={mute.label}
+                aria-label={mute.label}
                 className="ui-chip"
                 onClick={() => void save(actions.mute(mute.minutes))}
               >
@@ -163,8 +160,8 @@ function NotificationSettingsForm({
   );
 }
 
-/** "Als gelesen markieren" (#245): the conversation, the whole server or
- * every direct message, then the dialog closes. */
+/** "Als gelesen markieren" (#245): the conversation or the whole server,
+ * then the dialog closes. */
 function MarkRead({
   target,
   onDone,
@@ -190,7 +187,7 @@ function MarkRead({
             .finally(() => setBusy(false));
         }}
       >
-        {markReadLabel(target)}
+        Als gelesen markieren
       </Button>
       {failed ? (
         <p role="alert" className="ui-field-error">
