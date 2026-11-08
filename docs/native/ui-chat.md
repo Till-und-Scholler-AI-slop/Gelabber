@@ -30,7 +30,7 @@ Source: `theme/defaults.json`, `theme/presets.ts:5-21,227` (presets pass through
 | `--lr-elevated` | `#252829` | `#fcfbf9` | dark: mix(panel, text 4%); light: mix(bg, #fff 60%) |
 | `--lr-text` | `#eef0ee` | `#252829` | text |
 | `--lr-muted` | `#a4abb1` | `#5c646b` | ensureContrast(muted) |
-| `--lr-subtle` | `#8a8f93` | `#6a6e71` | |
+| `--lr-subtle` | `#8c9295` | `#65696c` | |
 | `--lr-border` | `#2c3032` | `#dcd6cc` | border |
 | `--lr-border-strong` | `#717475` | `#86837e` | |
 | `--lr-accent` | `#f3b752` | `#e8a638` | accent (fill) |

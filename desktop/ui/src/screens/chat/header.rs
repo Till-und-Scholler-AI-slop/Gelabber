@@ -289,7 +289,7 @@ pub fn show(
     out.search_changed |= edit_response.changed();
     out.search_focused = edit_response.has_focus();
     if search.is_empty() {
-        let hint = Block::single(ui, "Suchen", SEARCH, mix(c.panel, c.subtle, 0.8));
+        let hint = Block::single(ui, "Suchen", SEARCH, c.subtle);
         hint.paint(ui.painter(), pos2(input_left, mid - SEARCH.line_px() / 2.0));
         ui.painter().rect(
             kbd_rect,
