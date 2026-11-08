@@ -675,7 +675,10 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         || pane_state.confirm_delete.is_some()
         || chat.composers.get(&channel).is_some_and(|c| c.emoji_open)
         // A dialog over the page (quick switcher, profile…) owns Esc.
-        || ui.ctx().memory(|m| m.top_modal_layer().is_some());
+        || ui.ctx().memory(|m| m.top_modal_layer().is_some())
+        // So does a menu or popover, also one drawn after the page (the
+        // call bar's), as Popover.tsx stops the key on the web.
+        || crate::widgets::popover::any_open(ui.ctx());
     overlays(ui, app, &conv, chat, me);
     // Esc nobody else used marks the conversation read; Shift+Esc the server.
     // Not while the search hits are shown, as on the web.

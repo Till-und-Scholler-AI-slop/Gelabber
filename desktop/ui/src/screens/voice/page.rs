@@ -576,9 +576,12 @@ fn people_rows(ui: &Ui, people: &[Person], width: f32) -> Vec<Vec<(Person, f32)>
 /// K and Esc for Kino, unless a field has the keys or a dialog is open.
 fn kino_keys(ui: &Ui, kino: bool) {
     let ctx = ui.ctx();
+    // A dialog over the page owns the keys: also the quick switcher, the
+    // shortcut sheet and the profile (`modalOpen` on the web).
     if ctx.egui_wants_keyboard_input()
         || crate::screens::shell::dialog_open(ctx)
         || super::dialogs::open(ctx)
+        || ctx.memory(|m| m.top_modal_layer().is_some())
     {
         return;
     }
@@ -588,6 +591,8 @@ fn kino_keys(ui: &Ui, kino: bool) {
             .then(|| ptt_key(&p.ptt_key))
             .flatten()
     };
+    // An open menu or popover (the call bar's too) closes on Esc first.
+    let popover = crate::widgets::popover::any_open(ctx);
     let mut action = None;
     ctx.input_mut(|i| {
         i.events.retain(|e| {
@@ -602,6 +607,7 @@ fn kino_keys(ui: &Ui, kino: bool) {
                 return true;
             };
             match stage::kino_key(*key, *modifiers, *repeat, kino, ptt) {
+                Some(KinoKey::Leave) if popover => true,
                 Some(a) => {
                     action = Some(a);
                     false
