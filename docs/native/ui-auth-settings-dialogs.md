@@ -735,7 +735,7 @@ Modal **"Benachrichtigungen: {name}"**; column gap 20:
 3. (not DMs) fieldset (column gap 8, disabled while saving) with legend **"Benachrichtigen bei"** (600 14px/20px, mb 4), RadioCards: channel only "Wie der Server ({level})"; "Alle Nachrichten" / "Jede neue Nachricht"; "Nur @Erwähnungen" / "Wenn dich jemand erwähnt oder @everyone/@here schreibt"; "Nichts" / "Keine Benachrichtigungen, kein Zähler".
 4. Error 12px danger "Nicht gespeichert. Versuch es noch einmal." / "Nicht mehr verfügbar.".
 Saving (`messages/notificationSettings.ts:26-56`): `PUT /servers/{id}/notification-settings` or `PUT /channels/{id}/notification-settings` (DMs are channels) with `{level: "all"|"mentions"|"none"|null, muted: bool, mute_minutes?: number}` — a mute chip sends `mute_minutes` 15/60/480/1440 (none for "Bis ich es wieder einschalte"); "Aufheben" sends `muted:false`; a channel's "Wie der Server" is `level:null`, a server's "Alle Nachrichten" is also sent as `null`. List: `GET /notification-settings` → `[{scope:"server"|"channel", id, level, muted, muted_until}]`. The `{level}` in "Wie der Server ({level})" is the inherited level's label ("Alle Nachrichten", "Nur @Erwähnungen", "Nichts"). Time format: today `HH:MM Uhr`, else `de-DE {weekday:short, day:numeric, month:short}` + ", HH:MM Uhr" (`NotificationSettingsDialog.tsx:300-308`).
-5. Footer (`.notify-footer`, space-between, gap 8): sm secondary **"Als gelesen markieren"** / **"Server als gelesen markieren"** / **"Alle Direktnachrichten als gelesen markieren"** (left), ghost **"Fertig"** (right, initial focus).
+5. Footer (`.notify-footer`, space-between, gap 8): sm secondary **"Als gelesen markieren"** (left, vertically centred with "Fertig"), ghost **"Fertig"** (right, initial focus).
 
 ---
 

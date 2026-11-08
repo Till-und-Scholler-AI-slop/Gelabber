@@ -336,15 +336,15 @@ mod tests {
         assert_eq!(
             keys,
             [
-                "Kanal in Sprachkanäle erstellen",
-                "Aktionen für Kategorie Sprachkanäle",
-                "Aktionen für Kategorie Sprachkanäle",
-                "Aktionen für Kategorie Sprachkanäle",
-                "Kanal in Sprachkanäle erstellen",
-                "Aktionen für Kategorie Sprachkanäle",
-                "Kanal in Sprachkanäle erstellen",
+                "Kanal in „Sprachkanäle“ erstellen",
+                "Aktionen für Kategorie „Sprachkanäle“",
+                "Aktionen für Kategorie „Sprachkanäle“",
+                "Aktionen für Kategorie „Sprachkanäle“",
+                "Kanal in „Sprachkanäle“ erstellen",
+                "Aktionen für Kategorie „Sprachkanäle“",
+                "Kanal in „Sprachkanäle“ erstellen",
                 "Wohnzimmer",
-                "Kanal in Sprachkanäle erstellen",
+                "Kanal in „Sprachkanäle“ erstellen",
                 "allgemein"
             ]
         );
@@ -357,7 +357,7 @@ mod tests {
         harness.run_steps(2);
         assert_eq!(
             focused_label(&harness).as_deref(),
-            Some("Kanal in Sprachkanäle erstellen")
+            Some("Kanal in „Sprachkanäle“ erstellen")
         );
     }
 

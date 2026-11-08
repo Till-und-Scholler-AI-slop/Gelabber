@@ -29,7 +29,8 @@ pub struct Target {
     /// A server channel inherits from this server.
     pub server: Option<Uuid>,
     pub dm: bool,
-    /// The rail's DM button: only "mark as read".
+    /// Every conversation (the rail's home tile, whose menu only marks
+    /// them read).
     pub all_dms: bool,
 }
 
@@ -202,26 +203,30 @@ pub(crate) fn muted_line(until: Option<DateTime<Utc>>) -> String {
     }
 }
 
-/// "Als gelesen markieren" in the dialog, naming what it marks.
-fn mark_read_label(target: &Target) -> &'static str {
-    if target.all_dms {
-        "Alle Direktnachrichten als gelesen markieren"
-    } else if target.scope == SettingScope::Server {
-        "Server als gelesen markieren"
-    } else {
-        "Als gelesen markieren"
-    }
-}
-
-/// Marks the target read: a conversation, a server or every DM.
+/// Marks the target read: a conversation, a server or every DM. A failure
+/// is a toast (op keys `read:<id>`, `read_all`).
 pub(crate) fn mark_read(app: &AppCtx, target: &Target) {
     if target.all_dms {
         app.client.mark_all_read(ReadScope::Dms);
     } else if target.scope == SettingScope::Server {
         app.client.mark_server_read(target.id);
     } else {
-        app.client.mark_read(target.id);
+        app.client.mark_conversation_read(target.id);
     }
+}
+
+/// Whether the target has anything unread to mark read, muted or not.
+pub(crate) fn has_unread(s: &gelabber_client::State, target: &Target) -> bool {
+    s.read.values().any(|r| {
+        r.unread_count > 0
+            && if target.all_dms {
+                r.server_id.is_none()
+            } else if target.scope == SettingScope::Server {
+                r.server_id == Some(target.id)
+            } else {
+                r.channel_id == target.id
+            }
+    })
 }
 
 pub(crate) fn setting_target(target: &Target) -> SettingTarget {
@@ -288,84 +293,82 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, d: &mut NotifyDialog) -> bool {
         &ctx,
         |ui| {
             ui.spacing_mut().item_spacing.y = 20.0;
-            if !target.all_dms {
-                ui.scope(|ui| {
-                    ui.spacing_mut().item_spacing.y = 8.0;
-                    text::label(ui, "Stummschalten", HEAD, c.text);
-                    if muted {
-                        if muted_box(ui, &muted_line(own.until), saving) {
-                            save = Some(own.unmute());
-                        }
-                    } else {
-                        // `.notify-mute-row`: one row of chips that share
-                        // its width (`flex: 1 0 auto`).
-                        let gap = 8.0;
-                        let natural: Vec<f32> = MUTES
-                            .iter()
-                            .map(|(_, short, _)| Block::single(ui, short, text::UI, c.text).width() + 26.0)
-                            .collect();
-                        let total = natural.iter().sum::<f32>() + gap * (natural.len() - 1) as f32;
-                        let extra = ((ui.available_width() - total) / natural.len() as f32).max(0.0);
-                        super::row(ui, 32.0, gap, |ui| {
-                            for ((label, short, minutes), w) in MUTES.iter().zip(&natural) {
-                                if chip(ui, short, label, w + extra, saving).clicked() {
-                                    save = Some(own.mute(*minutes));
-                                }
-                            }
-                        });
+            ui.scope(|ui| {
+                ui.spacing_mut().item_spacing.y = 8.0;
+                text::label(ui, "Stummschalten", HEAD, c.text);
+                if muted {
+                    if muted_box(ui, &muted_line(own.until), saving) {
+                        save = Some(own.unmute());
                     }
-                    let mut hint = if target.dm {
-                        "Stumm: kein Zähler, keine Benachrichtigung und kein Ton.".to_owned()
-                    } else {
-                        "Stumm: kein Punkt, keine Benachrichtigung und kein Ton. @Erwähnungen zählen weiter."
-                            .to_owned()
-                    };
-                    if server_muted {
-                        hint.push_str(" Der ganze Server ist gerade stumm.");
-                    }
-                    let w = ui.available_width();
-                    let block = Block::wrapped(ui, &hint, text::META, c.muted, w);
-                    text::show(ui, &block);
-                });
-                if !target.dm {
-                    ui.scope(|ui| {
-                        ui.spacing_mut().item_spacing.y = 8.0;
-                        // The legend's own 4px margin before the first card.
-                        let legend = Block::single(ui, "Benachrichtigen bei", HEAD, c.text);
-                        let (r, _) = ui.allocate_exact_size(
-                            Vec2::new(ui.available_width(), legend.height() + 4.0 - 8.0),
-                            Sense::hover(),
-                        );
-                        legend.paint(ui.painter(), r.min);
-                        let server_scope = target.server.is_none();
-                        if target.server.is_some() {
-                            let label = format!("Wie der Server ({})", level_name(inherited));
-                            if radio_card(ui, &label, None, own.level.is_none(), saving) {
-                                save = Some(own.with_level(None, false, now));
-                            }
-                        }
-                        for (level, label, hint) in LEVELS {
-                            let checked = if target.server.is_some() {
-                                own.level == Some(level)
-                            } else {
-                                own.level.unwrap_or_default() == level
-                            };
-                            if radio_card(ui, label, Some(hint), checked, saving) {
-                                save = Some(own.with_level(Some(level), server_scope, now));
+                } else {
+                    // `.notify-mute-row`: one row of chips that share
+                    // its width (`flex: 1 0 auto`).
+                    let gap = 8.0;
+                    let natural: Vec<f32> = MUTES
+                        .iter()
+                        .map(|(_, short, _)| Block::single(ui, short, text::UI, c.text).width() + 26.0)
+                        .collect();
+                    let total = natural.iter().sum::<f32>() + gap * (natural.len() - 1) as f32;
+                    let extra = ((ui.available_width() - total) / natural.len() as f32).max(0.0);
+                    super::row(ui, 32.0, gap, |ui| {
+                        for ((label, short, minutes), w) in MUTES.iter().zip(&natural) {
+                            if chip(ui, short, label, w + extra, saving).clicked() {
+                                save = Some(own.mute(*minutes));
                             }
                         }
                     });
                 }
-                if let Some(error) = d.error {
-                    let w = ui.available_width();
-                    let block = Block::wrapped(ui, error, text::META, c.danger, w);
-                    text::show(ui, &block);
+                let mut hint = if target.dm {
+                    "Stumm: kein Zähler, keine Benachrichtigung und kein Ton.".to_owned()
+                } else {
+                    "Stumm: kein Punkt, keine Benachrichtigung und kein Ton. @Erwähnungen zählen weiter."
+                        .to_owned()
+                };
+                if server_muted {
+                    hint.push_str(" Der ganze Server ist gerade stumm.");
                 }
+                let w = ui.available_width();
+                let block = Block::wrapped(ui, &hint, text::META, c.muted, w);
+                text::show(ui, &block);
+            });
+            if !target.dm {
+                ui.scope(|ui| {
+                    ui.spacing_mut().item_spacing.y = 8.0;
+                    // The legend's own 4px margin before the first card.
+                    let legend = Block::single(ui, "Benachrichtigen bei", HEAD, c.text);
+                    let (r, _) = ui.allocate_exact_size(
+                        Vec2::new(ui.available_width(), legend.height() + 4.0 - 8.0),
+                        Sense::hover(),
+                    );
+                    legend.paint(ui.painter(), r.min);
+                    let server_scope = target.server.is_none();
+                    if target.server.is_some() {
+                        let label = format!("Wie der Server ({})", level_name(inherited));
+                        if radio_card(ui, &label, None, own.level.is_none(), saving) {
+                            save = Some(own.with_level(None, false, now));
+                        }
+                    }
+                    for (level, label, hint) in LEVELS {
+                        let checked = if target.server.is_some() {
+                            own.level == Some(level)
+                        } else {
+                            own.level.unwrap_or_default() == level
+                        };
+                        if radio_card(ui, label, Some(hint), checked, saving) {
+                            save = Some(own.with_level(Some(level), server_scope, now));
+                        }
+                    }
+                });
+            }
+            if let Some(error) = d.error {
+                let w = ui.available_width();
+                let block = Block::wrapped(ui, error, text::META, c.danger, w);
+                text::show(ui, &block);
             }
             // `.notify-footer`: marking read is an action, beside "Fertig".
             super::row(ui, 36.0, 8.0, |ui| {
                 if ui
-                    .add(Button::new(mark_read_label(&target)).size(ButtonSize::Sm))
+                    .add(Button::new("Als gelesen markieren").size(ButtonSize::Sm))
                     .clicked()
                 {
                     mark = true;
@@ -397,7 +400,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, d: &mut NotifyDialog) -> bool {
 }
 
 /// `.notify-mute-row .ui-chip`: a 32px pill, centred label; `title` the
-/// whole length, as its hover text.
+/// whole length, as its hover text and its name (`aria-label`).
 fn chip(ui: &mut Ui, label: &str, title: &str, width: f32, disabled: bool) -> egui::Response {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
@@ -409,7 +412,7 @@ fn chip(ui: &mut Ui, label: &str, title: &str, width: f32, disabled: bool) -> eg
         Sense::click()
     };
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 32.0), sense);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, !disabled, label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, !disabled, title));
     let response = response.on_hover_text(title);
     let rect = snap(ui.ctx(), rect);
     let fill = eased(

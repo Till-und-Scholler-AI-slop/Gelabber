@@ -139,6 +139,8 @@ enum Leaf {
         /// A second line: how long a mute still holds.
         hint: Option<String>,
         danger: bool,
+        /// Dimmed and does nothing (nothing unread to mark read).
+        disabled: bool,
         act: Act,
     },
     Radio {
@@ -165,6 +167,7 @@ fn item(label: &str, icon: Icon, act: Act) -> Entry {
         icon: Some(icon),
         hint: None,
         danger: false,
+        disabled: false,
         act,
     })
 }
@@ -175,33 +178,46 @@ fn danger(label: &str, act: Act) -> Entry {
         icon: Some(Icon::Trash),
         hint: None,
         danger: true,
+        disabled: false,
         act,
     })
 }
 
 /// `notificationEntries`: what the menu offers for `target` with `own` and
-/// (for a channel) its server's setting.
+/// (for a channel) its server's setting; marking read waits for something
+/// `unread`.
 fn notification_entries(
     target: &Target,
     own: notify::Setting,
     server: Option<notify::Setting>,
+    unread: bool,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Vec<Entry> {
     let label = if target.all_dms {
-        "Alle als gelesen markieren"
+        "Alle Direktnachrichten als gelesen markieren"
     } else {
         "Als gelesen markieren"
     };
-    let mut entries = vec![item(label, Icon::Check, Act::MarkRead)];
+    let mut entries = vec![Entry::Leaf(Leaf::Item {
+        label: label.to_owned(),
+        icon: Some(Icon::CheckCheck),
+        hint: None,
+        danger: false,
+        disabled: !unread,
+        act: Act::MarkRead,
+    })];
     if target.all_dms {
         return entries;
     }
     entries.push(if own.is_muted(now) {
         Entry::Leaf(Leaf::Item {
             label: "Stummschaltung aufheben".into(),
-            icon: Some(Icon::Bell),
+            // Where "Stummschalten" was, with its icon: the levels keep
+            // the bell.
+            icon: Some(Icon::BellOff),
             hint: Some(notify::muted_line(own.until)),
             danger: false,
+            disabled: false,
             act: Act::Unmute,
         })
     } else {
@@ -215,6 +231,7 @@ fn notification_entries(
                     icon: None,
                     hint: None,
                     danger: false,
+                    disabled: false,
                     act: Act::Mute(*minutes),
                 })
                 .collect(),
@@ -271,15 +288,16 @@ fn entries(app: &AppCtx, owner: &Owner) -> Vec<Entry> {
     };
     let mut out = match owner.target() {
         Some(target) => {
-            let (own, server) = app.client.with_state(|s| {
+            let (own, server, unread) = app.client.with_state(|s| {
                 (
                     notify::setting_of(s, target.scope, target.id),
                     target
                         .server
                         .map(|id| notify::setting_of(s, SettingScope::Server, id)),
+                    notify::has_unread(s, &target),
                 )
             });
-            notification_entries(&target, own, server, now)
+            notification_entries(&target, own, server, unread, now)
         }
         None => Vec::new(),
     };
@@ -435,6 +453,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
                 icon: None,
                 hint: None,
                 danger: false,
+                disabled: false,
                 act: Act::Settings,
             },
         })
@@ -506,6 +525,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
                                 icon: Some(*icon),
                                 hint: None,
                                 danger: false,
+                                disabled: false,
                                 checked: None,
                                 expanded: Some(expanded),
                             },
@@ -528,11 +548,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
             picked
         });
     let Some(picked) = shown else {
-        // A press outside; the right press that opens another row's menu
-        // replaces it instead.
-        if !ui.input(|i| i.pointer.secondary_pressed()) {
-            close(&ctx, &open, false);
-        }
+        // A press outside, a right one too: a row opens its own menu once
+        // the button is released (`secondary_clicked`).
+        close(&ctx, &open, false);
         return;
     };
     pick = pick.or(picked);
@@ -616,10 +634,11 @@ fn close(ctx: &egui::Context, open: &Open, refocus: bool) {
     }
 }
 
+/// What picking `leaf` does; a disabled entry does nothing.
 fn leaf_act(leaf: &Leaf) -> Option<Act> {
     match leaf {
+        Leaf::Item { disabled: true, .. } | Leaf::Separator => None,
         Leaf::Item { act, .. } | Leaf::Radio { act, .. } => Some(*act),
-        Leaf::Separator => None,
     }
 }
 
@@ -674,6 +693,7 @@ struct RowLook<'a> {
     icon: Option<Icon>,
     hint: Option<&'a str>,
     danger: bool,
+    disabled: bool,
     /// A radio entry: whether it is the one set.
     checked: Option<bool>,
     /// A submenu's entry: whether it is open.
@@ -699,6 +719,7 @@ fn leaf_row(ui: &mut Ui, id: Id, leaf: &Leaf, width: f32) -> Option<egui::Respon
             icon,
             hint,
             danger,
+            disabled,
             ..
         } => Some(row(
             ui,
@@ -708,6 +729,7 @@ fn leaf_row(ui: &mut Ui, id: Id, leaf: &Leaf, width: f32) -> Option<egui::Respon
                 icon: *icon,
                 hint: hint.as_deref(),
                 danger: *danger,
+                disabled: *disabled,
                 checked: None,
                 expanded: None,
             },
@@ -721,6 +743,7 @@ fn leaf_row(ui: &mut Ui, id: Id, leaf: &Leaf, width: f32) -> Option<egui::Respon
                 icon: None,
                 hint: None,
                 danger: false,
+                disabled: false,
                 checked: Some(*checked),
                 expanded: None,
             },
@@ -731,11 +754,18 @@ fn leaf_row(ui: &mut Ui, id: Id, leaf: &Leaf, width: f32) -> Option<egui::Respon
 
 /// `.shell-menu-item`: 36 high (more with a hint: padding 6 around two
 /// lines), radius 5, 18px icon at 10, label at 38, hover fill; a radio's
-/// check in the accent's text colour, a submenu's chevron at the end.
+/// check in the accent's text colour, a submenu's chevron at the end. A
+/// disabled one is subtle, without hover, and still takes the arrow keys.
 fn row(ui: &mut Ui, id: Id, look: RowLook<'_>, width: f32) -> egui::Response {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
-    let color = if look.danger { c.danger } else { c.text };
+    let color = if look.disabled {
+        c.subtle
+    } else if look.danger {
+        c.danger
+    } else {
+        c.text
+    };
     let label = Block::single(ui, look.label, text::UI, color);
     let hint = look.hint.map(|h| Block::single(ui, h, text::META, c.muted));
     let height = match &hint {
@@ -749,20 +779,27 @@ fn row(ui: &mut Ui, id: Id, look: RowLook<'_>, width: f32) -> egui::Response {
         _ => egui::Role::MenuItem,
     };
     response.widget_info(|| {
-        let mut info = egui::WidgetInfo::labeled(role, true, look.label);
+        let mut info = egui::WidgetInfo::labeled(role, !look.disabled, look.label);
         info.selected = look.checked;
         info
     });
+    // The hint is the entry's description (`aria-describedby`), not its name.
+    if let Some(hint) = look.hint {
+        ui.ctx()
+            .accesskit_node_builder(id, |node| node.set_description(hint));
+    }
     popover::focus_first(&response);
     let painter = ui.painter();
-    if response.hovered() || look.expanded == Some(true) {
+    if (response.hovered() && !look.disabled) || look.expanded == Some(true) {
         common::fill(painter, rect, theme.radius.sm, c.hover);
     }
-    if response.hovered() {
+    if response.hovered() && !look.disabled {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     common::focus_visible(ui, &response, rect, theme.radius.sm);
-    let icon_color = if look.danger {
+    let icon_color = if look.disabled {
+        c.subtle
+    } else if look.danger {
         c.danger
     } else if look.checked == Some(true) {
         c.accent_text
@@ -896,6 +933,7 @@ mod tests {
                 &channel,
                 notify::Setting::default(),
                 Some(inherited),
+                true,
                 now
             )),
             [
@@ -911,6 +949,7 @@ mod tests {
                 &home,
                 notify::Setting::default(),
                 None,
+                true,
                 now
             ))[2],
             "Benachrichtigungen ▸ (•) Alle Nachrichten | ( ) Nur @Erwähnungen | ( ) Nichts"
@@ -921,6 +960,7 @@ mod tests {
                 &dm,
                 notify::Setting::default(),
                 None,
+                true,
                 now
             )),
             [
@@ -934,10 +974,36 @@ mod tests {
                 &Target::all_dms(),
                 notify::Setting::default(),
                 None,
+                true,
                 now
             )),
-            ["Alle als gelesen markieren"]
+            ["Alle Direktnachrichten als gelesen markieren"]
         );
+    }
+
+    /// Marking read waits for something unread, and then does nothing.
+    #[test]
+    fn mark_read_waits_for_something_unread() {
+        let now = chrono::Utc::now();
+        let dm = Target::dm(Uuid::from_u128(3), "Jonas".into());
+        let read = |unread| {
+            notification_entries(&dm, notify::Setting::default(), None, unread, now)
+                .into_iter()
+                .next()
+        };
+        let Some(Entry::Leaf(leaf @ Leaf::Item { disabled: true, .. })) = read(false) else {
+            panic!("a disabled entry expected");
+        };
+        assert_eq!(leaf_act(&leaf), None);
+        let Some(Entry::Leaf(
+            leaf @ Leaf::Item {
+                disabled: false, ..
+            },
+        )) = read(true)
+        else {
+            panic!("an entry expected");
+        };
+        assert_eq!(leaf_act(&leaf), Some(Act::MarkRead));
     }
 
     #[test]
@@ -948,14 +1014,19 @@ mod tests {
             ..Default::default()
         };
         let dm = Target::dm(Uuid::from_u128(3), "Jonas".into());
-        let entries = notification_entries(&dm, muted, None, now);
+        let entries = notification_entries(&dm, muted, None, true, now);
         let Entry::Leaf(Leaf::Item {
-            label, hint, act, ..
+            label,
+            hint,
+            act,
+            icon,
+            ..
         }) = &entries[1]
         else {
             panic!("an entry expected");
         };
         assert_eq!(label, "Stummschaltung aufheben");
+        assert_eq!(*icon, Some(Icon::BellOff));
         assert_eq!(hint.as_deref(), Some("Stumm, bis du es aufhebst"));
         assert_eq!(*act, Act::Unmute);
     }

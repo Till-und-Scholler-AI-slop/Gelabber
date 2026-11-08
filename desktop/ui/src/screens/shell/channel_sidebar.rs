@@ -485,8 +485,8 @@ fn category_row(
     }
     let top = slot.top() + 3.0;
     let x0 = slot.right() - 3.0 - 52.0;
-    let add = format!("Kanal in {} erstellen", category.name);
-    let more = format!("Aktionen für Kategorie {}", category.name);
+    let add = format!("Kanal in „{}“ erstellen", category.name);
+    let more = format!("Aktionen für Kategorie „{}“", category.name);
     let actions = [(Icon::Plus, add.as_str()), (Icon::More, more.as_str())];
     // The row's only way in from the keyboard: these stay focusable (only
     // faded) while out of sight. Renaming and deleting are in the menu.

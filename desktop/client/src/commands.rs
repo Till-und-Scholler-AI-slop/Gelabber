@@ -986,6 +986,23 @@ impl Client {
         });
     }
 
+    /// "Als gelesen markieren" on one conversation (a row menu, the
+    /// notification dialog): op key `read:<id>`, whose failure is a toast,
+    /// as the web's `notifyError` there. Reading it marks it by itself.
+    pub fn mark_conversation_read(&self, channel: Uuid) {
+        let http = self.http().clone();
+        self.run(
+            format!("read:{channel}"),
+            async move { http.mark_read(channel, None).await },
+            move |s, row| {
+                s.apply_read_states(vec![row]);
+                if s.channels.contains_key(&channel) {
+                    s.channel_mut(channel).read_failed = false;
+                }
+            },
+        );
+    }
+
     /// "Als gelesen markieren" on a server.
     pub fn mark_server_read(&self, server: Uuid) {
         let http = self.http().clone();
