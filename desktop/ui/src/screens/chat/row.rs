@@ -655,7 +655,7 @@ pub fn paint(
     // `.lr-message-row:focus-within` looks hovered: the editor has the keyboard.
     let hovered = hovered || (edit.is_some() && ui.memory(|m| m.has_focus(editor_id(msg.id))));
     let mut actions = Vec::new();
-    // The selectable text: message, code and link preview text.
+    // The selectable text: message, code, link previews and text files.
     let mut text: Option<egui::Response> = None;
     if let Some(fill) = background(&theme, cx, hovered) {
         ui.painter().rect_filled(rect, 0.0, fill);
@@ -807,7 +807,7 @@ pub fn paint(
     if let Some((y, media)) = &layout.media {
         let origin = pos2(x, top + y);
         fade(ui, &mut |ui| {
-            if let Some(a) = media.paint(ui, cx.images, origin, id) {
+            if let Some(a) = media.paint(ui, cx.images, origin, id, &mut text) {
                 actions.push(RowAction::Media(a));
             }
         });
