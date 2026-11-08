@@ -30,6 +30,8 @@ fn text_transfer(theme: &Theme) -> egui::epaint::FontColorTransferFunction {
 }
 
 pub fn apply(ctx: &egui::Context, theme: &Theme) {
+    // Message text selects across blocks; what it copies follows the browser.
+    crate::selection::install(ctx);
     ctx.all_styles_mut(|style| {
         style.text_styles = [
             (
