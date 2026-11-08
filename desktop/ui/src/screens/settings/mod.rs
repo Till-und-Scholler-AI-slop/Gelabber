@@ -412,7 +412,11 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
         let take = std::mem::take(&mut st.focus_heading);
         let heading = Id::unique("gelabber-settings-heading");
         crate::app::focus_anchor(&child, heading, child.cursor().min, take);
-        controls::area_heading(&mut child, info.label, info.scope, info.description);
+        let description = match info.id {
+            "app" => desktop_app::description(child.ctx()),
+            _ => info.description,
+        };
+        controls::area_heading(&mut child, info.label, info.scope, description);
         match info.id {
             "profil" => profile::profile(&mut child, app, &user, &mut st.profile),
             "profilkarte" => card::area(&mut child, app, &user, &mut st.card, viewport),

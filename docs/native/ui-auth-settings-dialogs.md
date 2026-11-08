@@ -565,7 +565,7 @@ Area heading (margin-bottom 24): title row flex wrap gap 8/12: h2 label 600 **20
 | Audio | Nur dieses Gerät | Mikrofon, Lautsprecher und Lautstärke. |
 | Video | Nur dieses Gerät | Kamera, Live gehen und Stream-Qualität. |
 | Benachrichtigungen | — (per group) | Hinweise auf neue Nachrichten. |
-| App | — | Gelabber als App installieren. (Native app: "Updates und was beim Schließen des Fensters passiert.", with the update switch, state and install, and close-to-tray.) |
+| App | — | Gelabber als App installieren. (Native app: listed when it has content; subtitle "Updates und was beim Schließen des Fensters passiert.", without a tray "Updates dieser App."; the update switch, state and install, and close-to-tray with a tray.) |
 
 Shared building blocks (`settings.css:129-270`): `.settings-form` column gap 20, max-width 560. Group (`components/SettingsGroup.tsx`): fieldset, legend flex wrap gap 6/10, margin-bottom 8, 600 16px/1.3 + scope badge; consecutive groups 32px apart. `.settings-row` (a Switch row): min-height 64, padding-y 12, border-bottom 1 border, gap 18; description small line-height 1.5, margin-top 2. `.settings-hint` 12px/1.5 muted. `.settings-actions` flex wrap centre gap 8/12. `.settings-note`: margin-top 24 (32 after a group), padding 14/16, border, radius 7, bg panel, 14px/1.5. `.settings-danger`: max 560, margin-top 40, padding-top 24, border-top. Loading area body: 4 skeleton rows; load failure "Dieser Bereich konnte nicht geladen werden.".
 

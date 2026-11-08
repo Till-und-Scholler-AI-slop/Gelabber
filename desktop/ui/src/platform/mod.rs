@@ -57,6 +57,12 @@ pub fn desktop_info(ctx: &Context) -> Option<DesktopInfo> {
         .flatten()
 }
 
+/// Tests: the desktop app's facts as [`Platform::logic`] publishes them.
+#[cfg(test)]
+pub(crate) fn show_desktop_info(ctx: &Context, info: Option<DesktopInfo>) {
+    ctx.data_mut(|d| d.insert_temp(info_id(), info));
+}
+
 /// `close_to_tray` of desktop.json, as the window's close reads it.
 static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(false);
 
