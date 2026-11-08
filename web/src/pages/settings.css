@@ -105,7 +105,10 @@
   padding: 32px 40px 48px;
   color: var(--lr-text);
 }
-.settings-area:not(.settings-area--profilkarte, .settings-area--themes) > * {
+/* No specificity, so narrower forms (.settings-form, .settings-danger) keep
+   their own width inside the measure. */
+:where(.settings-area:not(.settings-area--profilkarte, .settings-area--themes))
+  > * {
   max-width: var(--settings-measure);
 }
 .settings-area-heading {
