@@ -804,4 +804,35 @@ describe("active media UI", () => {
       resetUserVolumesForTests();
     }
   });
+
+  it("asks for company under a room nobody else is in", () => {
+    fixture.live = {};
+    const page = () =>
+      renderToStaticMarkup(
+        <VoiceRoom server={server} channelId="stage" channelName="Stage" />,
+      );
+    const empty = page();
+    expect(empty).toMatch(
+      /<div class="voice-room-invite"><p>Fehlt noch jemand\?<\/p><button[^>]*>(?:<svg.*?<\/svg>)?Einladen<\/button>/,
+    );
+    // Under the way in, not between the seats and it.
+    expect(empty.indexOf("voice-room-invite")).toBeGreaterThan(
+      empty.indexOf("voice-room-actions"),
+    );
+
+    // Alone in the call: still asking.
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+    });
+    expect(page()).toContain("Nur du bist im Kanal.");
+    expect(page()).toContain('class="voice-room-invite"');
+
+    // Someone else is here: the room has its company.
+    fixture.roster = {
+      a: { alice: { channelId: "stage", muted: false, deafened: false } },
+    };
+    expect(page()).not.toContain("voice-room-invite");
+  });
 });

@@ -778,6 +778,18 @@ html[data-compact-rooms="true"] .voice-room-seat {
 .voice-room-muted {
   color: var(--lr-muted);
 }
+/* Nobody else in the room: a quiet way to bring someone, under the rest. */
+.voice-room-invite {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-top: 24px;
+}
+.voice-room-invite p {
+  color: var(--lr-muted);
+  font: var(--lr-type-body);
+}
 .voice-room-switch-note {
   font: var(--lr-type-meta);
   margin-top: 16px;
@@ -894,7 +906,12 @@ html[data-compact-rooms="true"] .voice-room-seat {
   .voice-room[data-page]:not([data-joined]) .voice-room-participants {
     margin-bottom: 20px;
   }
+  .voice-room[data-page]:not([data-joined]) .voice-room-invite {
+    margin-top: 0;
+    margin-bottom: 20px;
+  }
   .voice-room[data-page]:not([data-joined]) .voice-room-actions {
+    order: 1;
     position: sticky;
     bottom: 0;
     z-index: 5;

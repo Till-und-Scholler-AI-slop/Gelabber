@@ -152,6 +152,20 @@
       "user": "lena"
     },
     {
+      "name": "voice-alone",
+      "path": "/s/{home}/c/{Kino}",
+      "user": "lena",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        }
+      ]
+    },
+    {
       "name": "quick-switcher",
       "path": "/s/{home}/c/{allgemein}",
       "user": "lena",

@@ -23,10 +23,12 @@ import {
 
 import { can } from "../servers/permissions.ts";
 import type { ServerDetail } from "../servers/types.ts";
+import { InviteDialog } from "../components/InviteDialog.tsx";
 import { MemberProfileDialog } from "../components/MemberProfileDialog.tsx";
 import {
   FocusIcon,
   GridIcon,
+  LinkIcon,
   MicIcon,
   SpeakerIcon,
   TheaterExitIcon,
@@ -126,6 +128,7 @@ export function VoiceRoom({
     serverId: string;
     memberId: string;
   } | null>(null);
+  const [inviting, setInviting] = useState(false);
   const choices = useStageChoices((state) => choicesFor(state, roomKey));
   const pinned = choices.pinned;
   // A phone keeps its column of pictures; Fokus and its row are for wider
@@ -383,6 +386,8 @@ export function VoiceRoom({
       : occupants.length === 0 && !overview
         ? FREE_SEATS_EMPTY
         : 1;
+  // Nobody else here: the space under the room asks for company.
+  const askCompany = !overview && !staged && others.length === 0;
 
   const person = (id: string, flags: { muted: boolean; deafened: boolean }) => {
     const camera = cameras.get(id);
@@ -676,6 +681,23 @@ export function VoiceRoom({
             onClick={() => setTestingMicrophone(roomKey)}
           />
           <QuickCallSettingsButton variant="secondary" />
+        </div>
+      ) : null}
+      {askCompany ? (
+        <div className="voice-room-invite">
+          <p>Fehlt noch jemand?</p>
+          <Button
+            size="sm"
+            icon={<LinkIcon size={16} />}
+            onClick={() => setInviting(true)}
+          >
+            Einladen
+          </Button>
+          <InviteDialog
+            server={server}
+            open={inviting}
+            onClose={() => setInviting(false)}
+          />
         </div>
       ) : null}
       {profile?.serverId === server.id ? (
