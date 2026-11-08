@@ -16,6 +16,7 @@ use crate::screens::settings::prefs;
 use crate::screens::shell::common::{self, line, paint_mid};
 use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner, mix};
+use crate::widgets::tooltip::{Side, Tooltip};
 use crate::widgets::{Button, IconButton, Popover, eased, hairline_h};
 
 /// `SHOWN_PEOPLE`.
@@ -199,7 +200,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     let leave = Rect::from_min_size(pos2(right - leave_w, cy - 18.0), vec2(leave_w, 36.0));
     let response = common::click(ui, leave, Id::unique("gelabber-call-leave"));
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Verlassen"));
-    let response = response.on_hover_text("Verlassen");
+    Tooltip::new("Verlassen").on_hover_or_focus(&response, Side::Above);
     let fill = eased(
         ui.ctx(),
         response.id.with("hover"),
@@ -236,6 +237,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         Tone::Plain,
         "Voice-Einstellungen",
         "Voice-Einstellungen",
+        None,
     );
     let gear_rect = gear.rect;
     quick::button(ui, app, gear, gear_rect);
@@ -260,6 +262,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
             if stream_muted { Tone::Off } else { Tone::Plain },
             "Lautstärke",
             "Lautstärke",
+            None,
         );
         let rect = sound.rect;
         quick::sound_button(ui, sound, rect, state.deafened);
@@ -279,6 +282,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         if state.live { Tone::Live } else { Tone::Plain },
         "Live gehen",
         live_title,
+        None,
     );
     live_menu(ui, app, &live, &state, can_live);
     let camera = control(
@@ -299,10 +303,14 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         } else {
             "Kamera einschalten"
         },
+        None,
     );
     if camera.clicked() {
         app.call.set_camera(!state.camera);
     }
+    // Closed, the headset says "Taub" and the microphone "Stumm" beside
+    // their icons, as "Kein Mikrofon" does (`VoiceAudioToggles`); narrow,
+    // only the icons.
     let deafen = control(
         ui,
         &mut x,
@@ -312,7 +320,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         } else {
             Icon::Headset
         },
-        None,
+        (state.deafened && !narrow).then_some("Taub"),
         false,
         if state.deafened {
             Tone::Off
@@ -321,10 +329,11 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         },
         "Taubschalten",
         if state.deafened {
-            "Taubschaltung aufheben (Strg+Umschalt+D)"
+            "Taubschaltung aufheben"
         } else {
-            "Taubschalten (Strg+Umschalt+D)"
+            "Taubschalten"
         },
+        Some("Strg+Umschalt+D"),
     );
     if deafen.clicked() {
         app.call.set_deafened(!state.deafened);
@@ -341,6 +350,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
             Tone::Problem,
             "Kein Mikrofon",
             "Kein Mikrofon",
+            None,
         );
         // The warning dot over the icon's corner, ringed in the panel.
         let dot = pos2(mic.rect.left() + 20.0 + 4.0, mic.rect.top() + 6.0 + 4.0);
@@ -350,25 +360,23 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     } else {
         let ptt = prefs::get(ui.ctx()).voice_input == "ptt";
         let held = push_to_talk(ui, app, ptt && !muted);
-        let mic_title = format!(
-            "{}{}",
-            if muted {
-                "Stummschaltung aufheben (Strg+Umschalt+M)"
-            } else {
-                "Stummschalten (Strg+Umschalt+M)"
-            },
-            if ptt && !muted {
-                " · Push-to-Talk"
-            } else {
-                ""
-            }
-        );
+        // `callTip`: what a press does, the shortcut beneath, with the
+        // push-to-talk key while that holds the open microphone.
+        let detail = match crate::screens::settings::media::push_to_talk_key_name(ui.ctx()) {
+            Some(key) if ptt && !muted => format!("Strg+Umschalt+M · Push-to-Talk: {key}"),
+            _ => "Strg+Umschalt+M".to_owned(),
+        };
+        let word = if state.muted && !state.deafened && !narrow {
+            Some("Stumm")
+        } else {
+            (ptt && !muted).then_some("PTT")
+        };
         let mic = control(
             ui,
             &mut x,
             cy,
             if muted { Icon::MicOff } else { Icon::Mic },
-            (ptt && !muted).then_some("PTT"),
+            word,
             false,
             if muted {
                 Tone::Off
@@ -380,7 +388,12 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
                 Tone::Plain
             },
             "Stummschalten",
-            &mic_title,
+            if muted {
+                "Stummschaltung aufheben"
+            } else {
+                "Stummschalten"
+            },
+            Some(&detail),
         );
         if mic.clicked() {
             app.call.set_muted(!muted);
@@ -427,7 +440,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Im Anruf: {names}"))
         });
-        let response = response.on_hover_text(&names);
+        if !crate::widgets::popover::open_at(ui.ctx(), button) {
+            Tooltip::new(&names).on_hover_or_focus(&response, Side::Above);
+        }
         if response.hovered() {
             painter.rect_filled(button, corner(theme.radius.md), c.hover);
         }
@@ -608,6 +623,8 @@ fn push_to_talk(ui: &Ui, app: &AppCtx, active: bool) -> bool {
 }
 
 /// A `.voice-control-compact` button ending at `*x`; moves `*x` left.
+/// `title` and `detail` are its tooltip (`Tooltip`), which makes way
+/// while the control's own popover is open.
 #[allow(clippy::too_many_arguments)]
 fn control(
     ui: &mut Ui,
@@ -619,6 +636,7 @@ fn control(
     tone: Tone,
     name: &str,
     title: &str,
+    detail: Option<&str>,
 ) -> egui::Response {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
@@ -641,7 +659,11 @@ fn control(
     *x -= w + 4.0;
     let response = common::click(ui, rect, Id::unique(("gelabber-call-control", name)));
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
-    let response = response.on_hover_text(title);
+    if !crate::widgets::popover::open_at(ui.ctx(), rect) {
+        Tooltip::new(title)
+            .detail(detail)
+            .on_hover_or_focus(&response, Side::Above);
+    }
     let hovered = response.hovered();
     let (fill, fg) = match tone {
         Tone::Off => (c.danger_bg.gamma_multiply(0.16), c.danger),
@@ -747,7 +769,9 @@ fn status(
                     format!("{label} – Details anzeigen"),
                 )
             });
-            let response = response.on_hover_text(&label);
+            if !crate::widgets::popover::open_at(ui.ctx(), bars) {
+                Tooltip::new(&label).on_hover_or_focus(&response, Side::Above);
+            }
             connection_popover(ui, app, &response, state);
             if response.hovered() {
                 painter.rect_filled(bars, corner(theme.radius.md), c.hover);

@@ -327,7 +327,12 @@ for (const scene of scenes) {
     await page.addStyleTag({ content: "*{caret-color:transparent !important}" });
     // Let lists settle and late images decode.
     await page.waitForTimeout(800);
-    if (!hovered) await page.mouse.move(size[0] - 1, size[1] - 1);
+    if (!hovered) {
+      await page.mouse.move(size[0] - 1, size[1] - 1);
+      // Long enough for hover fades and a tooltip's grace time to end, as
+      // the native render waits too.
+      await page.waitForTimeout(300);
+    }
     await page.screenshot({ path: join(OUT, `${scene.name}.png`) });
   } finally {
     for (const [who, id] of said)

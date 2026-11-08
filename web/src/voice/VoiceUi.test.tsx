@@ -516,17 +516,41 @@ describe("active media UI", () => {
     });
     for (const tag of tags()) expect(tag).toContain('aria-pressed="true"');
     const [mic, deafen, camera, live] = tags();
-    // What a press does stays in the tooltip, with its shortcut.
-    expect(mic).toContain("Stummschaltung aufheben (Strg+Umschalt+M)");
-    expect(deafen).toContain("Taubschaltung aufheben (Strg+Umschalt+D)");
+    // The shortcut is the control's; what a press does is in its styled
+    // tooltip (callTip), not in a browser `title`.
     expect(mic).toContain('aria-keyshortcuts="Control+Shift+M"');
     expect(deafen).toContain('aria-keyshortcuts="Control+Shift+D"');
-    expect(camera).toContain('title="Kamera ausschalten"');
+    for (const tag of tags()) expect(tag).not.toContain("title=");
     // A camera that is on wears the accent pill, a Live the red one.
     expect(camera).toContain("is-on");
     expect(live).toContain("voice-control-live");
-    expect(live).toContain('title="Du bist live"');
     expect(live).toContain('aria-haspopup="menu"');
+  });
+  it("says Stumm or Taub beside a closed microphone or headset", () => {
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+    });
+    const words = () => {
+      const html = renderToStaticMarkup(<VoiceControls />);
+      return ["Stummschalten", "Taubschalten"].map(
+        (label) =>
+          html
+            .match(
+              new RegExp(
+                `<button[^>]*aria-label="${label}"[^>]*>([\\s\\S]*?)</button>`,
+              ),
+            )?.[1]
+            .match(/class="voice-control-text"[^>]*>([^<]*)</)?.[1] ?? null,
+      );
+    };
+    expect(words()).toEqual([null, null]);
+    fixture.voice.muted = true;
+    expect(words()).toEqual(["Stumm", null]);
+    // Deafened, the headset says it for both, as a participant's state does.
+    fixture.voice.deafened = true;
+    expect(words()).toEqual([null, "Taub"]);
   });
   it("offers going live and its sound in the Live menu", () => {
     Object.assign(fixture.voice, {

@@ -193,6 +193,32 @@ export function callShortcutLabel(action: CallShortcut): string {
   return `${applePlatform() ? "⌘" : "Strg"}+Umschalt+${key}`;
 }
 
+/** The tooltip of the microphone or headset button: what a press does,
+ * and beneath it the shortcut, with push-to-talk's key while that holds
+ * the open microphone. */
+export function callTip(
+  action: CallShortcut,
+  off: boolean,
+  pushToTalkKey: string | null = null,
+): { label: string; detail: string } {
+  const label =
+    action === "mute"
+      ? off
+        ? "Stummschaltung aufheben"
+        : "Stummschalten"
+      : off
+        ? "Taubschaltung aufheben"
+        : "Taubschalten";
+  const shortcut = callShortcutLabel(action);
+  return {
+    label,
+    detail:
+      action === "mute" && !off && pushToTalkKey
+        ? `${shortcut} · Push-to-Talk: ${pushToTalkKey}`
+        : shortcut,
+  };
+}
+
 /** The same shortcut for `aria-keyshortcuts`: "Control+Shift+M". */
 export function callShortcutKeys(action: CallShortcut): string {
   const key = action === "mute" ? "M" : "D";

@@ -1,8 +1,10 @@
 // The call's controls: microphone, headset, camera, "Live gehen", the
 // volumes while a Live plays and the settings, as icon buttons. Each toggle keeps one name and says its state
 // through aria-pressed; the icon shows the state, and media that is on
-// sits on a pill: the camera accent, a Live red. The click flips local
-// state first. Leaving is the session's own button.
+// sits on a pill: the camera accent, a Live red. A closed microphone or
+// headset also says "Stumm" or "Taub". The tooltips (ui/Tooltip.tsx) say
+// what a press does, with its shortcut. The click flips local state
+// first. Leaving is the session's own button.
 //
 // Camera and Live start only where this client can capture
 // (voice/capabilities.ts), Live only with the server's go_live. Stopping is
@@ -28,6 +30,7 @@ import {
 } from "./Icons.tsx";
 import { Button } from "./ui/Button.tsx";
 import { Popover } from "./ui/Popover.tsx";
+import { useTooltip } from "./ui/Tooltip.tsx";
 import {
   retryMicrophone,
   toggleCamera,
@@ -43,7 +46,7 @@ import {
 } from "../voice/QuickCallSettings.tsx";
 import {
   callShortcutKeys,
-  callShortcutLabel,
+  callTip,
   holdToTalk,
   usePushToTalk,
 } from "../voice/pushToTalk.ts";
@@ -51,6 +54,7 @@ import {
   sharesSourceAudio,
   sourceAudioChoice,
   useMediaSettings,
+  usePushToTalkKeyName,
 } from "../voice/settings.ts";
 import "../voice/room.css";
 
@@ -71,39 +75,61 @@ export function VoiceAudioToggles({
   // the microphone, dimmed while it holds it closed.
   const talking = usePushToTalk((s) => s.active && s.open) && !micOff;
   const idle = mic === "ptt-idle" && !micOff;
+  const pttKey = usePushToTalkKeyName();
+  const muteTip = useTooltip(
+    callTip("mute", micOff, pushToTalk ? pttKey : null),
+  );
+  const deafenTip = useTooltip(callTip("deafen", deafened));
+  // Closed, each says so in a word beside its icon, as "Kein Mikrofon"
+  // does: "Stumm", or "Taub" for both (Participant's order). The name
+  // stays; aria-pressed carries the state.
   return (
     <>
       {mic === "unavailable" || mic === "denied" ? (
         <MicProblem className={className} denied={mic === "denied"} />
       ) : (
-        <button
-          type="button"
-          aria-pressed={micOff}
-          aria-label="Stummschalten"
-          aria-keyshortcuts={callShortcutKeys("mute")}
-          title={`${micOff ? "Stummschaltung aufheben" : "Stummschalten"} (${callShortcutLabel("mute")})${pushToTalk && !micOff ? " · Push-to-Talk" : ""}`}
-          onClick={() => toggleMute()}
-          className={`${className}${micOff ? " is-off" : ""}${talking ? " is-talking" : ""}${idle ? " is-ptt-idle" : ""}`}
-        >
-          {micOff ? <MicOffIcon size={17} /> : <MicIcon size={17} />}
-          {pushToTalk && !micOff ? (
-            <span className="voice-control-badge" aria-hidden="true">
-              PTT
-            </span>
-          ) : null}
-        </button>
+        <>
+          <button
+            {...muteTip.trigger}
+            type="button"
+            aria-pressed={micOff}
+            aria-label="Stummschalten"
+            aria-keyshortcuts={callShortcutKeys("mute")}
+            onClick={() => toggleMute()}
+            className={`${className}${micOff ? " is-off" : ""}${talking ? " is-talking" : ""}${idle ? " is-ptt-idle" : ""}`}
+          >
+            {micOff ? <MicOffIcon size={17} /> : <MicIcon size={17} />}
+            {muted && !deafened ? (
+              <span className="voice-control-text" aria-hidden="true">
+                Stumm
+              </span>
+            ) : null}
+            {pushToTalk && !micOff ? (
+              <span className="voice-control-badge" aria-hidden="true">
+                PTT
+              </span>
+            ) : null}
+          </button>
+          {muteTip.tooltip}
+        </>
       )}
       <button
+        {...deafenTip.trigger}
         type="button"
         aria-pressed={deafened}
         aria-label="Taubschalten"
         aria-keyshortcuts={callShortcutKeys("deafen")}
-        title={`${deafened ? "Taubschaltung aufheben" : "Taubschalten"} (${callShortcutLabel("deafen")})`}
         onClick={() => toggleDeafen()}
         className={`${className}${deafened ? " is-off" : ""}`}
       >
         {deafened ? <HeadsetOffIcon size={17} /> : <HeadsetIcon size={17} />}
+        {deafened ? (
+          <span className="voice-control-text" aria-hidden="true">
+            Taub
+          </span>
+        ) : null}
       </button>
+      {deafenTip.tooltip}
     </>
   );
 }
@@ -120,15 +146,16 @@ function MicProblem({
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
   const openSettings = useMediaSettings((s) => s.openDialog);
+  const tip = useTooltip({ label: "Kein Mikrofon", disabled: open });
   return (
     <>
       <button
+        {...tip.trigger}
         ref={anchor}
         type="button"
         aria-label="Kein Mikrofon"
         aria-haspopup="dialog"
         aria-expanded={open}
-        title="Kein Mikrofon"
         onClick={() => setOpen((value) => !value)}
         className={`${className} voice-control-mic-problem`}
       >
@@ -136,6 +163,7 @@ function MicProblem({
         <span className="voice-control-dot" aria-hidden="true" />
         <span className="voice-control-text">Kein Mikrofon</span>
       </button>
+      {tip.tooltip}
       <Popover
         open={open}
         onClose={() => setOpen(false)}
@@ -189,21 +217,27 @@ export function VoiceControls({
 }) {
   const camera = useVoice((s) => s.camera);
   const capable = useCapabilities();
+  const cameraTip = useTooltip({
+    label: camera ? "Kamera ausschalten" : "Kamera einschalten",
+  });
 
   return (
     <div className="voice-controls voice-controls-compact">
       <VoiceAudioToggles />
       {camera || capable.camera ? (
-        <button
-          type="button"
-          aria-pressed={camera}
-          aria-label="Kamera"
-          title={camera ? "Kamera ausschalten" : "Kamera einschalten"}
-          onClick={() => toggleCamera()}
-          className={`${BUTTON}${camera ? " is-on" : ""}`}
-        >
-          {camera ? <CameraIcon size={17} /> : <CameraOffIcon size={17} />}
-        </button>
+        <>
+          <button
+            {...cameraTip.trigger}
+            type="button"
+            aria-pressed={camera}
+            aria-label="Kamera"
+            onClick={() => toggleCamera()}
+            className={`${BUTTON}${camera ? " is-on" : ""}`}
+          >
+            {camera ? <CameraIcon size={17} /> : <CameraOffIcon size={17} />}
+          </button>
+          {cameraTip.tooltip}
+        </>
       ) : null}
       <LiveControl canLive={canLive} />
       {streamSound ? <CallSoundButton className={BUTTON} /> : null}
@@ -228,6 +262,16 @@ function LiveControl({ canLive = false }: LiveProps) {
   const capable = useCapabilities();
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
+  // Where a Live can carry sound the button opens a menu; otherwise it
+  // toggles, and says what everyone sees.
+  const tip = useTooltip(
+    capable.appAudio
+      ? { label: live ? "Du bist live" : "Live gehen", disabled: open }
+      : {
+          label: live ? "Live beenden" : "Live gehen",
+          detail: live ? null : LIVE_HINT,
+        },
+  );
   // A phone browser cannot capture a screen: nothing to offer, nothing to
   // explain.
   if (!live && !capable.screen) return null;
@@ -242,34 +286,38 @@ function LiveControl({ canLive = false }: LiveProps) {
   // Only a Live that runs gets here: it can always be ended.
   if (!capable.appAudio) {
     return (
-      <button
-        type="button"
-        aria-pressed={live}
-        aria-label="Live gehen"
-        title={live ? "Live beenden" : "Live gehen – sehen alle im Sprachkanal"}
-        onClick={() => toggleShare()}
-        className={className}
-      >
-        {face}
-      </button>
+      <>
+        <button
+          {...tip.trigger}
+          type="button"
+          aria-pressed={live}
+          aria-label="Live gehen"
+          onClick={() => toggleShare()}
+          className={className}
+        >
+          {face}
+        </button>
+        {tip.tooltip}
+      </>
     );
   }
   return (
     <>
       <button
+        {...tip.trigger}
         ref={anchor}
         type="button"
         aria-pressed={live}
         aria-label="Live gehen"
         aria-haspopup="menu"
         aria-expanded={open}
-        title={live ? "Du bist live" : "Live gehen"}
         onClick={() => setOpen((value) => !value)}
         className={`${className}${reason ? " opacity-50" : ""}`}
       >
         {face}
         <ChevronIcon size={12} className="voice-control-caret" />
       </button>
+      {tip.tooltip}
       <Popover
         open={open}
         onClose={() => setOpen(false)}

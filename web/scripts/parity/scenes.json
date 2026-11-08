@@ -147,6 +147,51 @@
       ]
     },
     {
+      "name": "voice-muted",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Stummschalten"
+        },
+        {
+          "hover": "Stummschalten"
+        },
+        {
+          "wait": 600
+        }
+      ]
+    },
+    {
+      "name": "voice-deafened",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Taubschalten"
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
       "name": "voice-empty",
       "path": "/s/{home}/c/{Kino}",
       "user": "lena"
