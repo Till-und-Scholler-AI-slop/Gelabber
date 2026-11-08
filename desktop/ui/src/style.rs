@@ -14,8 +14,10 @@ use egui::{
 
 use crate::theme::{Theme, corner, mix};
 
-/// Chromium's default selection highlight (Linux, both colour schemes).
-const SELECTION: Color32 = Color32::from_rgb(0x33, 0x90, 0xff);
+/// Chromium's default selection highlight (Linux, both colour schemes),
+/// drawn at 80% under white text: measured on the parity shots'
+/// `text-select` scenes over the dark and the light background.
+const SELECTION: Color32 = Color32::from_rgb(0x00, 0x41, 0xc5);
 
 /// How glyph coverage becomes alpha. Calibrated against Chromium/Skia
 /// (`--disable-lcd-text`, no hinting) on the auth pages.
