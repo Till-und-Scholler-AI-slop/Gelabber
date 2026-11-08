@@ -1825,8 +1825,8 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
      tile's top right corner, clear of its initials. */
   .workspace-navigation-count {
     position: absolute;
-    top: -3px;
-    right: -3px;
+    top: -2px;
+    right: -2px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
