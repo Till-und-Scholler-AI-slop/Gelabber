@@ -826,7 +826,7 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   color: var(--lr-muted);
   font-size: 14px;
 }
-.channel-row:hover {
+.channel-row:is(:hover, .is-menu-open) {
   background: var(--lr-hover);
   color: var(--lr-text);
 }
@@ -1016,7 +1016,10 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   background: var(--lr-selected);
   color: var(--lr-text);
 }
-.dm-row:hover {
+.dm-row-item {
+  position: relative;
+}
+:is(.dm-row:hover, .dm-row-item:is(:hover, .is-menu-open) > .dm-row) {
   background: var(--lr-hover);
   color: var(--lr-text);
 }
@@ -1963,7 +1966,13 @@ html[data-reduced-motion="true"] *::after {
    while they show, and take no room otherwise: two invisible buttons cut a
    name with an unread count short ("allgem…"). */
 @media (hover: hover) {
-  .channel-row > .sidebar-row-actions {
+  /* Out of sight they are out of the accessibility tree and the Tab order
+     too; the row's link is its way in, and its menu holds the rest. */
+  :is(.channel-row, .dm-row-item):not(:hover, :focus-within, .is-menu-open)
+    > .sidebar-row-actions {
+    visibility: hidden;
+  }
+  :is(.channel-row, .dm-row-item) > .sidebar-row-actions {
     position: absolute;
     top: 50%;
     right: 3px;
@@ -1971,6 +1980,17 @@ html[data-reduced-motion="true"] *::after {
     padding-left: 6px;
     border-radius: var(--lr-radius);
     background: inherit;
+  }
+  /* A conversation's link carries the fill; its "…" covers the badge in
+     the same colour. */
+  .dm-row-item > .sidebar-row-actions {
+    background: var(--lr-panel);
+  }
+  .dm-row-item > .dm-row.is-active + .sidebar-row-actions {
+    background: var(--lr-selected);
+  }
+  .dm-row-item:is(:hover, .is-menu-open) > .dm-row + .sidebar-row-actions {
+    background: var(--lr-hover);
   }
 }
 @media (pointer: coarse) {

@@ -18,8 +18,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type MouseEvent,
-  type ReactNode,
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
@@ -40,6 +38,14 @@ import {
 import { liveSentence } from "../voice/roomSummary.ts";
 import { can } from "../servers/permissions.ts";
 import { useHoldMenu } from "./useHoldMenu.ts";
+import { isMenuKey, menuKeys } from "./rowMenuTrigger.ts";
+import { NotificationRowMenu, RowMenu } from "./RowMenu.tsx";
+import type { MenuEntry } from "./rowMenuEntries.ts";
+import {
+  HOVER_ACTIONS,
+  RowActionButton as IconButton,
+  TOUCH_ACTIONS,
+} from "./RowActionButton.tsx";
 import { useMenuDetails } from "./menuDetails.ts";
 import { useNavigationDrawer } from "./navigationDrawer.ts";
 import {
@@ -78,10 +84,8 @@ import {
   PencilIcon,
   PlusIcon,
   SpeakerIcon,
-  TrashIcon,
   UsersIcon,
 } from "./Icons.tsx";
-import { Popover } from "./ui/Popover.tsx";
 import { UserPanel } from "./UserPanel.tsx";
 import { MemberProfileDialog } from "./MemberProfileDialog.tsx";
 import { LocallyMutedIcon } from "./UserVolumeControl.tsx";
@@ -392,6 +396,7 @@ export function ChannelList({
   onCreateChannel: (categoryId: string | null) => void;
   onEditCategory: (category: Category) => void;
   onOpenProfile: (memberId: string) => void;
+  /** The notification dialog of a text channel, from its menu. */
   onChannelNotifications: (channel: Channel) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -423,11 +428,14 @@ export function ChannelList({
     menuAnchor.current = anchor;
     setMenu(next);
   };
-  // What a held finger opens: the row menu, or for members a text
-  // channel's notifications.
+  // What a held finger opens: the row menu, which for members holds a text
+  // channel's notifications only.
+  const hasText = rows.some(
+    (row) => row.kind === "channel" && row.channel.kind === "text",
+  );
   const holdHint = manageChannels
     ? "Gedrückt halten für Bearbeiten, Benachrichtigungen oder Löschen."
-    : rows.some((row) => row.kind === "channel" && row.channel.kind === "text")
+    : hasText
       ? "Gedrückt halten für Benachrichtigungen."
       : null;
   // The key hint is read once, on the list's first row, not on every Tab
@@ -499,7 +507,7 @@ export function ChannelList({
   return (
     <div ref={scrollRef} className="sidebar-list-scroll">
       <p id={rowHintId} className="sr-only">
-        {manageChannels
+        {manageChannels || hasText
           ? "Pfeiltasten hoch und runter wechseln zwischen den Einträgen, links und rechts zwischen einem Eintrag und seinen Aktionen. Pos1 und Ende springen an den Anfang und das Ende der Zeile."
           : "Pfeiltasten hoch und runter wechseln zwischen den Einträgen."}
       </p>
@@ -538,9 +546,11 @@ export function ChannelList({
                   coarse={touch}
                   stop={row.key === stop}
                   hintId={hintId}
+                  menuOpen={
+                    menu?.kind === "category" &&
+                    menu.category.id === row.category.id
+                  }
                   onAdd={() => onCreateChannel(row.category.id)}
-                  onEdit={() => onEditCategory(row.category)}
-                  onDelete={() => void removeCategory(row.category)}
                   onMenu={(anchor) =>
                     openMenu(anchor, {
                       kind: "category",
@@ -564,8 +574,11 @@ export function ChannelList({
                   coarse={touch}
                   stop={row.key === stop}
                   hintId={hintId}
+                  menuOpen={
+                    menu?.kind === "channel" &&
+                    menu.channel.id === row.channel.id
+                  }
                   onEdit={() => onEditChannel(row.channel)}
-                  onDelete={() => void removeChannel(row.channel)}
                   onMenu={(anchor) =>
                     openMenu(anchor, { kind: "channel", channel: row.channel })
                   }
@@ -591,27 +604,33 @@ export function ChannelList({
           {holdHint}
         </p>
       ) : null}
-      <RowMenuPopover
-        menu={menu}
-        anchor={menuAnchor}
-        onClose={() => setMenu(null)}
-        onAdd={(category) => onCreateChannel(category.id)}
-        onEditCategory={onEditCategory}
-        onDeleteCategory={(category) => void removeCategory(category)}
-        onEditChannel={onEditChannel}
-        onDeleteChannel={(channel) => void removeChannel(channel)}
-        onNotifications={onChannelNotifications}
-      />
+      {menu ? (
+        <SidebarRowMenu
+          key={menu.kind === "channel" ? menu.channel.id : menu.category.id}
+          menu={menu}
+          manage={manageChannels}
+          anchor={menuAnchor}
+          onClose={() => setMenu(null)}
+          onAdd={(category) => onCreateChannel(category.id)}
+          onEditCategory={onEditCategory}
+          onDeleteCategory={(category) => void removeCategory(category)}
+          onEditChannel={onEditChannel}
+          onDeleteChannel={(channel) => void removeChannel(channel)}
+          onNotifications={onChannelNotifications}
+        />
+      ) : null}
     </div>
   );
 }
 
 /**
- * A row's actions in one place: on touch screens from a long press, with a
- * mouse from a right click. Deleting comes last.
+ * A row's menu: from its "…" button, a right click, a long press or
+ * Umschalt+F10. A text channel's notifications first, then what managers
+ * may do; deleting comes last.
  */
-function RowMenuPopover({
+function SidebarRowMenu({
   menu,
+  manage,
   anchor,
   onClose,
   onAdd,
@@ -621,7 +640,8 @@ function RowMenuPopover({
   onDeleteChannel,
   onNotifications,
 }: {
-  menu: RowMenu | null;
+  menu: RowMenu;
+  manage: boolean;
   anchor: RefObject<HTMLElement | null>;
   onClose: () => void;
   onAdd: (category: Category) => void;
@@ -631,85 +651,79 @@ function RowMenuPopover({
   onDeleteChannel: (channel: Channel) => void;
   onNotifications: (channel: Channel) => void;
 }) {
-  const choose = (action: () => void) => () => {
-    onClose();
-    action();
-  };
-  if (!menu) return null;
-  const label =
-    menu.kind === "category"
-      ? `Kategorie ${menu.category.name}`
-      : menu.channel.kind === "text"
-        ? `#${menu.channel.name}`
-        : menu.channel.name;
-  return (
-    <Popover
+  if (menu.kind === "category") {
+    const { category } = menu;
+    return (
+      <RowMenu
+        open
+        onClose={onClose}
+        anchor={anchor}
+        label={`Kategorie ${category.name}`}
+        entries={[
+          {
+            kind: "item",
+            label: "Kanal hier erstellen",
+            icon: "plus",
+            onSelect: () => onAdd(category),
+          },
+          {
+            kind: "item",
+            label: "Kategorie umbenennen",
+            icon: "pencil",
+            onSelect: () => onEditCategory(category),
+          },
+          { kind: "separator" },
+          {
+            kind: "item",
+            label: "Kategorie löschen",
+            icon: "trash",
+            danger: true,
+            onSelect: () => onDeleteCategory(category),
+          },
+        ]}
+      />
+    );
+  }
+  const { channel } = menu;
+  const managing: MenuEntry[] = manage
+    ? [
+        {
+          kind: "item",
+          label: "Kanal bearbeiten",
+          icon: "pencil",
+          onSelect: () => onEditChannel(channel),
+        },
+        { kind: "separator" },
+        {
+          kind: "item",
+          label: "Kanal löschen",
+          icon: "trash",
+          danger: true,
+          onSelect: () => onDeleteChannel(channel),
+        },
+      ]
+    : [];
+  return channel.kind === "text" ? (
+    <NotificationRowMenu
+      target={{
+        scope: "channel",
+        id: channel.id,
+        name: `#${channel.name}`,
+        serverId: channel.server_id,
+      }}
+      anchor={anchor}
+      onClose={onClose}
+      extra={managing}
+      onSettings={() => onNotifications(channel)}
+    />
+  ) : (
+    <RowMenu
       open
       onClose={onClose}
       anchor={anchor}
-      label={label}
-      className="shell-row-menu"
-    >
-      {menu.kind === "category" ? (
-        <>
-          <button
-            type="button"
-            className="shell-menu-item"
-            onClick={choose(() => onAdd(menu.category))}
-          >
-            <PlusIcon size={18} />
-            Kanal in dieser Kategorie
-          </button>
-          <button
-            type="button"
-            className="shell-menu-item"
-            onClick={choose(() => onEditCategory(menu.category))}
-          >
-            <PencilIcon size={18} />
-            Kategorie umbenennen
-          </button>
-          <hr className="shell-menu-separator" />
-          <button
-            type="button"
-            className="shell-menu-item is-danger"
-            onClick={choose(() => onDeleteCategory(menu.category))}
-          >
-            <TrashIcon size={18} />
-            Kategorie löschen
-          </button>
-        </>
-      ) : (
-        <>
-          <button
-            type="button"
-            className="shell-menu-item"
-            onClick={choose(() => onEditChannel(menu.channel))}
-          >
-            <PencilIcon size={18} />
-            Kanal bearbeiten
-          </button>
-          {menu.channel.kind === "text" ? (
-            <button
-              type="button"
-              className="shell-menu-item"
-              onClick={choose(() => onNotifications(menu.channel))}
-            >
-              <BellIcon size={18} />
-              Benachrichtigungen…
-            </button>
-          ) : null}
-          <hr className="shell-menu-separator" />
-          <button
-            type="button"
-            className="shell-menu-item is-danger"
-            onClick={choose(() => onDeleteChannel(menu.channel))}
-          >
-            <TrashIcon size={18} />
-            Kanal löschen
-          </button>
-        </>
-      )}
-    </Popover>
+      label={channel.name}
+      entries={managing}
+    />
   );
 }
 
@@ -782,9 +796,8 @@ function CategoryRow({
   coarse,
   stop,
   hintId,
+  menuOpen,
   onAdd,
-  onEdit,
-  onDelete,
   onMenu,
 }: {
   category: Category;
@@ -792,9 +805,9 @@ function CategoryRow({
   coarse: boolean;
   stop: boolean;
   hintId: string | undefined;
+  /** Its menu is open: the actions stay in sight for the "…" it hangs on. */
+  menuOpen: boolean;
   onAdd: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
   onMenu: (anchor: HTMLElement) => void;
 }) {
   const pending = isPendingId(category.id);
@@ -806,6 +819,7 @@ function CategoryRow({
       className={[
         "group sidebar-category-row",
         pending ? "opacity-50" : "",
+        menuOpen ? "is-menu-open" : "",
       ].join(" ")}
       onContextMenu={
         actions
@@ -817,6 +831,12 @@ function CategoryRow({
       }
       {...hold}
       {...roving.keys}
+      onKeyDown={(event) => {
+        if (actions && isMenuKey(event)) {
+          event.preventDefault();
+          onMenu(event.target as HTMLElement);
+        } else roving.keys.onKeyDown(event);
+      }}
     >
       <h3 className="sidebar-category-name">{category.name}</h3>
       {!actions ? null : coarse ? (
@@ -832,9 +852,12 @@ function CategoryRow({
           </IconButton>
         </span>
       ) : (
-        <span className="sidebar-row-actions flex shrink-0 items-center opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100">
+        // The row's only way in from the keyboard: these stay focusable
+        // (only faded) while out of sight. Renaming and deleting are in the
+        // menu.
+        <span className={HOVER_ACTIONS}>
           <IconButton
-            label="Kanal in dieser Kategorie"
+            label={`Kanal in ${category.name} erstellen`}
             onClick={onAdd}
             small
             describedBy={hintId}
@@ -843,20 +866,13 @@ function CategoryRow({
             <PlusIcon size={14} />
           </IconButton>
           <IconButton
-            label="Kategorie umbenennen"
-            onClick={onEdit}
+            label={`Aktionen für Kategorie ${category.name}`}
+            onClick={(event) => onMenu(event.currentTarget)}
             small
+            expanded={menuOpen}
             tabIndex={roving.tabIndex(1)}
           >
-            <PencilIcon size={14} />
-          </IconButton>
-          <IconButton
-            label="Kategorie löschen"
-            onClick={onDelete}
-            small
-            tabIndex={roving.tabIndex(2)}
-          >
-            <TrashIcon size={14} />
+            <MoreIcon size={14} />
           </IconButton>
         </span>
       )}
@@ -873,8 +889,8 @@ export function ChannelRow({
   coarse,
   stop,
   hintId,
+  menuOpen = false,
   onEdit,
-  onDelete,
   onMenu,
 }: {
   channel: Channel;
@@ -888,8 +904,9 @@ export function ChannelRow({
   /** Whether this row holds the list's Tab stop. */
   stop: boolean;
   hintId: string | undefined;
+  /** Its menu is open: the actions stay in sight for the "…" it hangs on. */
+  menuOpen?: boolean;
   onEdit: () => void;
-  onDelete: () => void;
   onMenu: (anchor: HTMLElement) => void;
 }) {
   const pending = isPendingId(channel.id);
@@ -926,26 +943,16 @@ export function ChannelRow({
     pending ? "opacity-50" : "",
     muted && text ? "is-muted" : "",
     inVoice ? "is-in-voice" : "",
+    menuOpen ? "is-menu-open" : "",
   ]
     .filter(Boolean)
     .join(" ");
-  const actions = manage && !pending;
-  const roving = useRovingRow(actions, stop);
+  // Its menu: a text channel's notifications for everyone, editing and
+  // deleting for those who manage channels.
+  const actions = (manage || text) && !pending;
+  const roving = useRovingRow(actions, stop, true);
   const label = text ? `#${channel.name}` : channel.name;
-  // A right click or a held finger: the row's actions, or for members a
-  // text channel's notifications.
-  const menuAt = actions
-    ? onMenu
-    : text
-      ? () =>
-          openNotificationSettings({
-            scope: "channel",
-            id: channel.id,
-            name: label,
-            serverId: channel.server_id,
-          })
-      : undefined;
-  const hold = useHoldMenu(menuAt);
+  const hold = useHoldMenu(actions ? onMenu : undefined);
 
   return (
     <div className={rowClass} {...roving.keys}>
@@ -960,14 +967,7 @@ export function ChannelRow({
           title={inVoice ? `${channel.name} · verbunden` : undefined}
           tabIndex={roving.tabIndex(0)}
           className="channel-row-link"
-          onContextMenu={
-            menuAt
-              ? (event) => {
-                  event.preventDefault();
-                  menuAt(event.currentTarget);
-                }
-              : undefined
-          }
+          {...(actions ? menuKeys(onMenu) : {})}
           {...hold}
           {...ROW_ITEM}
         >
@@ -980,71 +980,37 @@ export function ChannelRow({
             label={`Aktionen für ${label}`}
             onClick={(event) => onMenu(event.currentTarget)}
             small
+            expanded={menuOpen}
             tabIndex={roving.tabIndex(1)}
           >
             <MoreIcon size={18} />
           </IconButton>
         </span>
       ) : (
-        <span className="sidebar-row-actions flex shrink-0 items-center opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100">
+        // Out of sight (index.css) they are out of the accessibility tree
+        // and the Tab order too: the link is the row's way in.
+        <span className={HOVER_ACTIONS}>
+          {manage ? (
+            <IconButton
+              label={`${label} bearbeiten`}
+              onClick={onEdit}
+              small
+              tabIndex={roving.tabIndex(1)}
+            >
+              <PencilIcon size={14} />
+            </IconButton>
+          ) : null}
           <IconButton
-            label="Kanal bearbeiten"
-            onClick={onEdit}
+            label={`Aktionen für ${label}`}
+            onClick={(event) => onMenu(event.currentTarget)}
             small
-            tabIndex={roving.tabIndex(1)}
+            expanded={menuOpen}
+            tabIndex={roving.tabIndex(manage ? 2 : 1)}
           >
-            <PencilIcon size={14} />
-          </IconButton>
-          <IconButton
-            label="Kanal löschen"
-            onClick={onDelete}
-            small
-            tabIndex={roving.tabIndex(2)}
-          >
-            <TrashIcon size={14} />
+            <MoreIcon size={14} />
           </IconButton>
         </span>
       )}
     </div>
-  );
-}
-
-// On a touch screen a row's actions open with a long press, as the hint
-// under the list says; the "…" button stays for screen readers and shows
-// once a keyboard reaches it.
-const TOUCH_ACTIONS = "sr-only focus-within:not-sr-only";
-
-function IconButton({
-  label,
-  onClick,
-  children,
-  small,
-  tabIndex,
-  describedBy,
-}: {
-  label: string;
-  onClick: (event: MouseEvent<HTMLButtonElement>) => void;
-  children: ReactNode;
-  small?: boolean;
-  /** -1 for a row item that is not its row's Tab stop right now. */
-  tabIndex?: number;
-  describedBy?: string;
-}) {
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      aria-describedby={describedBy}
-      tabIndex={tabIndex}
-      onClick={onClick}
-      {...ROW_ITEM}
-      className={[
-        "shell-icon-button",
-        small ? "sidebar-action-small" : "",
-      ].join(" ")}
-    >
-      {children}
-    </button>
   );
 }

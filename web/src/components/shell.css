@@ -48,6 +48,73 @@
   border: 0;
   border-top: 1px solid var(--lr-border);
 }
+/* RowMenu: entries with a second line, radios and submenus. */
+.shell-row-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.shell-menu-label {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  padding-block: 6px;
+  white-space: nowrap;
+}
+.shell-menu-label > small {
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+.shell-menu-icon-space {
+  flex-shrink: 0;
+  width: 18px;
+}
+.shell-menu-item[aria-checked="true"] > svg {
+  color: var(--lr-accent-text);
+}
+.shell-menu-item > .shell-menu-chevron {
+  margin-right: -4px;
+  rotate: -90deg;
+}
+.shell-menu-item[aria-expanded="true"] {
+  background: var(--lr-hover);
+}
+.shell-submenu {
+  position: fixed;
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+  padding: var(--lr-space-2);
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-lg);
+  background: var(--lr-elevated);
+  color: var(--lr-text);
+  box-shadow: var(--lr-shadow-1);
+  transition: opacity var(--lr-dur-fast) var(--lr-ease-enter);
+}
+@starting-style {
+  .shell-submenu {
+    opacity: 0;
+  }
+}
+/* In the phone's bottom sheet the entries open under their opener. */
+.shell-submenu.is-inline {
+  position: static;
+  min-width: 0;
+  padding: 0 0 0 28px;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+.ui-sheet .shell-menu-item > .shell-menu-chevron {
+  rotate: none;
+}
+.ui-sheet .shell-menu-item[aria-expanded="true"] > .shell-menu-chevron {
+  rotate: 180deg;
+}
 @media (pointer: coarse) {
   .shell-menu-item {
     min-height: 48px;

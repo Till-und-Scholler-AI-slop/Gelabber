@@ -1,6 +1,5 @@
 import { UnreadBadge } from "../messages/UnreadBadge.tsx";
 import { useBadge } from "../messages/useBadge.ts";
-import { useNotificationMenu } from "./notificationTarget.ts";
 import { useChannelMuted } from "../messages/notificationSettings.ts";
 import { Link } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -11,12 +10,26 @@ import { useUserId } from "../auth/scope.ts";
 import type { DirectMessage } from "../dms/types.ts";
 import { useHasDraft } from "../messages/drafts.ts";
 import { presenceOf, usePresenceStore } from "../ws/live.ts";
-import { PencilIcon, PlusIcon } from "./Icons.tsx";
+import { MoreIcon, PencilIcon, PlusIcon } from "./Icons.tsx";
 import { NewMessageDialog } from "./NewMessageDialog.tsx";
 import { PresenceAvatar } from "./PresenceAvatar.tsx";
 import { UserPanel } from "./UserPanel.tsx";
 import { useNavigationDrawer } from "./navigationDrawer.ts";
-import { LIST_ROW, ROW_ITEM, listStop, moveWithinList } from "./rowKeys.ts";
+import {
+  HOVER_ACTIONS,
+  RowActionButton,
+  TOUCH_ACTIONS,
+} from "./RowActionButton.tsx";
+import { NotificationRowMenu } from "./RowMenu.tsx";
+import { useRowMenu } from "./rowMenuTrigger.ts";
+import {
+  LIST_ROW,
+  ROW_ITEM,
+  listStop,
+  moveWithinList,
+  useRovingRow,
+} from "./rowKeys.ts";
+import { useMediaQuery } from "./useMediaQuery.ts";
 import { Button } from "./ui/Button.tsx";
 import { IconButton } from "./ui/IconButton.tsx";
 
@@ -152,40 +165,67 @@ export function DmRow({
   const badge = useBadge({ channelId: dm.id });
   // The open conversation shows its draft in the composer already.
   const draft = useHasDraft(useUserId(), dm.id) && !active;
-  const menu = useNotificationMenu({
-    scope: "channel",
-    id: dm.id,
-    name: dm.peer.name,
-    dm: true,
-  });
+  // Its menu: mark read, mute, the notification dialog.
+  const menu = useRowMenu();
+  const roving = useRovingRow(true, tabStop, true);
+  const coarse = useMediaQuery("(pointer: coarse)");
+  const label = `Aktionen für ${dm.peer.name}`;
   return (
-    <Link
-      to="/d/$channelId"
-      params={{ channelId: dm.id }}
-      aria-current={active ? "page" : undefined}
-      tabIndex={tabStop ? 0 : -1}
-      className={[
-        "dm-row",
-        active ? "is-active" : "",
-        muted ? "is-muted" : "",
-        badge.count > 0 || badge.dot ? "is-unread" : "",
-      ].join(" ")}
-      {...menu}
-      {...ROW_ITEM}
+    <div
+      className={`group dm-row-item${menu.open ? " is-menu-open" : ""}`}
+      {...roving.keys}
     >
-      <PresenceAvatar
-        name={dm.peer.name}
-        url={dm.peer.avatar_url}
-        status={status}
-      />
-      <span className="dm-row-name">{dm.peer.name}</span>
-      {draft ? (
-        <span className="channel-row-draft" title="Entwurf">
-          <PencilIcon size={13} />
-          <span className="sr-only">Entwurf</span>
-        </span>
+      <Link
+        to="/d/$channelId"
+        params={{ channelId: dm.id }}
+        aria-current={active ? "page" : undefined}
+        tabIndex={roving.tabIndex(0)}
+        className={[
+          "dm-row",
+          active ? "is-active" : "",
+          muted ? "is-muted" : "",
+          badge.count > 0 || badge.dot ? "is-unread" : "",
+        ].join(" ")}
+        {...menu.trigger}
+        {...ROW_ITEM}
+      >
+        <PresenceAvatar
+          name={dm.peer.name}
+          url={dm.peer.avatar_url}
+          status={status}
+        />
+        <span className="dm-row-name">{dm.peer.name}</span>
+        {draft ? (
+          <span className="channel-row-draft" title="Entwurf">
+            <PencilIcon size={13} />
+            <span className="sr-only">Entwurf</span>
+          </span>
+        ) : null}
+        <UnreadBadge channelId={dm.id} showDot={false} />
+      </Link>
+      <span className={coarse ? TOUCH_ACTIONS : HOVER_ACTIONS}>
+        <RowActionButton
+          label={label}
+          onClick={(event) => menu.show(event.currentTarget)}
+          small={!coarse}
+          expanded={menu.open}
+          tabIndex={roving.tabIndex(1)}
+        >
+          <MoreIcon size={coarse ? 18 : 14} />
+        </RowActionButton>
+      </span>
+      {menu.open ? (
+        <NotificationRowMenu
+          target={{
+            scope: "channel",
+            id: dm.id,
+            name: dm.peer.name,
+            dm: true,
+          }}
+          anchor={menu.anchor}
+          onClose={menu.close}
+        />
       ) : null}
-      <UnreadBadge channelId={dm.id} showDot={false} />
-    </Link>
+    </div>
   );
 }

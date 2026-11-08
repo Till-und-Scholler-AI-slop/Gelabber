@@ -10,7 +10,11 @@ import { fieldDescription } from "./fieldDescription.ts";
 import { IconButton } from "./IconButton.tsx";
 import { InlineStatus } from "./InlineStatus.tsx";
 import { Input } from "./Input.tsx";
-import { popoverOrigin, popoverPosition } from "./popoverPosition.ts";
+import {
+  popoverOrigin,
+  popoverPosition,
+  submenuPosition,
+} from "./popoverPosition.ts";
 import { MainSkeleton, SkeletonRows } from "./Skeleton.tsx";
 import { Switch } from "./Switch.tsx";
 
@@ -220,6 +224,37 @@ describe("popover placement", () => {
     const wide = { top: 100, right: 900, bottom: 132, left: 100 };
     const position = popoverPosition(wide, size, viewport, "bottom-start");
     expect(popoverOrigin(wide, position, size)).toBe("200px 0px");
+  });
+});
+
+describe("submenu placement", () => {
+  const viewport = { width: 1000, height: 800 };
+  const size = { width: 200, height: 150 };
+  const entry = { top: 140, right: 476, bottom: 176, left: 309 };
+
+  it("opens right of its menu, its first entry level with the opener", () => {
+    const menu = { top: 100, right: 485, bottom: 400, left: 300 };
+    expect(submenuPosition(menu, entry, size, viewport, 9)).toEqual({
+      top: 131,
+      left: 489,
+    });
+  });
+
+  it("opens left when the right has no room, and stays on screen", () => {
+    const menu = { top: 100, right: 900, bottom: 400, left: 715 };
+    const low = { top: 760, right: 890, bottom: 796, left: 724 };
+    expect(submenuPosition(menu, low, size, viewport, 9)).toEqual({
+      top: 642,
+      left: 511,
+    });
+  });
+
+  it("places in the page's pixels when the Textgröße zooms it", () => {
+    const menu = { top: 100, right: 500, bottom: 400, left: 300 };
+    expect(submenuPosition(menu, entry, size, viewport, 9, 1.25)).toEqual({
+      top: 140 / 1.25 - 9,
+      left: 404,
+    });
   });
 });
 
