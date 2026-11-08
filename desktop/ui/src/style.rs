@@ -94,12 +94,17 @@ fn spacing() -> Spacing {
     }
 }
 
-/// `scrollbar-width: thin` in Chromium: an 11px gutter with a rounded
-/// thumb inside, always visible while the area can scroll.
+/// `scrollbar-width: thin`: a rounded 7px thumb in an 11px gutter, hidden
+/// until it is needed, as the overlay scrollbars of Firefox and GTK: it
+/// shows under the pointer while the area scrolls (`scroll_activity`) and
+/// while the pointer is on the bar itself. The gutter stays reserved, so
+/// nothing moves when it shows.
 fn scrollbars() -> ScrollStyle {
     ScrollStyle {
-        floating: false,
+        floating: true,
         bar_width: 7.0,
+        floating_width: 7.0,
+        floating_allocated_width: 11.0,
         handle_min_length: 24.0,
         bar_inner_margin: 2.0,
         bar_outer_margin: 2.0,
@@ -107,10 +112,31 @@ fn scrollbars() -> ScrollStyle {
         dormant_background_opacity: 0.0,
         active_background_opacity: 0.0,
         interact_background_opacity: 0.0,
-        dormant_handle_opacity: 1.0,
-        active_handle_opacity: 1.0,
+        dormant_handle_opacity: 0.0,
+        active_handle_opacity: 0.0,
         interact_handle_opacity: 1.0,
         ..ScrollStyle::solid()
+    }
+}
+
+/// How long a scrollbar stays after the last scroll, then how long it
+/// fades out (seconds).
+const SCROLLBAR_LINGER: f64 = 1.0;
+const SCROLLBAR_FADE: f64 = 0.3;
+
+/// Once per frame, before the screens: a scroll (wheel or touchpad) shows
+/// the scrollbar of the area under the pointer, which fades out a second
+/// after the last one.
+pub fn scroll_activity(ctx: &egui::Context) {
+    let since = f64::from(ctx.input(|i| i.time_since_last_scroll()));
+    let opacity = (1.0 - (since - SCROLLBAR_LINGER) / SCROLLBAR_FADE).clamp(0.0, 1.0) as f32;
+    if ctx.global_style().spacing.scroll.active_handle_opacity != opacity {
+        ctx.all_styles_mut(|s| s.spacing.scroll.active_handle_opacity = opacity);
+    }
+    if since < SCROLLBAR_LINGER {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(SCROLLBAR_LINGER - since));
+    } else if opacity > 0.0 {
+        ctx.request_repaint();
     }
 }
 

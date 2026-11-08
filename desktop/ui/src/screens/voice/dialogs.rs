@@ -108,11 +108,7 @@ fn settings_dialog(ui: &mut Ui, app: &mut AppCtx, tab: Tab, on_top: bool) {
     };
     // The body scrolls without a gutter of its own, as in the browser.
     let saved = ctx.global_style().spacing.scroll;
-    ctx.all_styles_mut(|s| {
-        s.spacing.scroll.floating = true;
-        s.spacing.scroll.floating_allocated_width = 0.0;
-        s.spacing.scroll.dormant_handle_opacity = 0.0;
-    });
+    ctx.all_styles_mut(|s| s.spacing.scroll.floating_allocated_width = 0.0);
     let output = Modal::new("voice-settings", "Voice & Video")
         .width(ModalWidth::Large)
         .show(
