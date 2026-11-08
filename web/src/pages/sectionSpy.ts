@@ -38,3 +38,42 @@ export function scrolledToEnd(
 ): boolean {
   return scrollTop > 0 && scrollTop + clientHeight >= scrollHeight - 2;
 }
+
+/** A click on an anchor link: its section, and the scroll offset it left. */
+export type SectionJump<T extends string> = { id: T; scrollTop: number };
+
+export type SectionView<T extends string> = {
+  headings: readonly SectionTop<T>[];
+  scrollTop: number;
+  clientHeight: number;
+  scrollHeight: number;
+  jump: SectionJump<T> | null;
+};
+
+/**
+ * The section to mark, and the jump that still holds. A jump keeps its
+ * section marked, even where the page cannot bring that heading up to the
+ * line (the short last ones), until the reader scrolls on, or until content
+ * loading above moves the heading away while the page could scroll further.
+ */
+export function sectionInView<T extends string>(
+  view: SectionView<T>,
+): { current: T | undefined; jump: SectionJump<T> | null } {
+  const { headings, scrollTop, clientHeight, scrollHeight, jump } = view;
+  if (jump && Math.abs(scrollTop - jump.scrollTop) < 2) {
+    const top = headings.find((heading) => heading.id === jump.id)?.top;
+    const bottomed = scrollTop + clientHeight >= scrollHeight - 2;
+    if (
+      top !== undefined &&
+      (bottomed || (top > -SECTION_LINE && top <= SECTION_LINE))
+    )
+      return { current: jump.id, jump };
+  }
+  return {
+    current: currentSection(
+      headings,
+      scrolledToEnd(scrollTop, clientHeight, scrollHeight),
+    ),
+    jump: null,
+  };
+}

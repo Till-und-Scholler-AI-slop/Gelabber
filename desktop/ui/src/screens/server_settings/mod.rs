@@ -144,6 +144,40 @@ fn current_section(headings: &[(&'static str, f32)], at_end: bool) -> Option<&'s
     current
 }
 
+/// Where the page's scroll area stands.
+#[derive(Clone, Copy)]
+struct Scroll {
+    offset: f32,
+    view: f32,
+    content: f32,
+}
+
+/// A click on an anchor link: its section, and the offset it left.
+type Jump = (&'static str, f32);
+
+/// The section to mark, and the jump that still holds (web
+/// `sectionInView`). A jump keeps its section marked, even where the page
+/// cannot bring that heading up to the line, until the reader scrolls on, or
+/// until content loading above moves the heading away while the page could
+/// scroll further.
+fn section_in_view(
+    headings: &[(&'static str, f32)],
+    scroll: Scroll,
+    jump: Option<Jump>,
+) -> (Option<&'static str>, Option<Jump>) {
+    if let Some((id, at)) = jump
+        && (scroll.offset - at).abs() < 2.0
+        && let Some(top) = headings.iter().find(|(h, _)| *h == id).map(|(_, t)| *t)
+    {
+        let bottomed = scroll.offset + scroll.view >= scroll.content - 2.0;
+        if bottomed || (top > -SECTION_LINE && top <= SECTION_LINE) {
+            return (Some(id), jump);
+        }
+    }
+    let at_end = scroll.offset > 0.0 && scroll.offset + scroll.view >= scroll.content - 2.0;
+    (current_section(headings, at_end), None)
+}
+
 fn state(ctx: &egui::Context) -> Arc<Mutex<State>> {
     let id = Id::unique("gelabber-server-settings");
     ctx.data_mut(|d| {
@@ -308,25 +342,24 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
         ));
     });
 
-    // The section in view (web `useCurrentSection`): a jump marks its
-    // section until the reader scrolls on.
+    // The section in view (web `useCurrentSection`).
     if let Some(id) = jump {
         st.jumped = Some((id, scrolled));
     }
-    if st
-        .jumped
-        .is_some_and(|(_, at)| (scrolled - at).abs() >= 2.0)
-    {
-        st.jumped = None;
-    }
-    let current = st.jumped.map(|(id, _)| id).or_else(|| {
-        let at_end = scrolled > 0.0 && scrolled + body.height() >= st.content_height - 2.0;
-        let tops: Vec<(&'static str, f32)> = ids
-            .iter()
-            .filter_map(|(id, _)| st.anchors.get(id).map(|y| (*id, y - scrolled)))
-            .collect();
-        current_section(&tops, at_end)
-    });
+    let tops: Vec<(&'static str, f32)> = ids
+        .iter()
+        .filter_map(|(id, _)| st.anchors.get(id).map(|y| (*id, y - scrolled)))
+        .collect();
+    let (current, held) = section_in_view(
+        &tops,
+        Scroll {
+            offset: scrolled,
+            view: body.height(),
+            content: st.content_height,
+        },
+        st.jumped,
+    );
+    st.jumped = held;
     ui.painter().rect_filled(nav, 0.0, c.bg);
     crate::widgets::rule_h(ui.painter(), c.border, nav.x_range(), nav.bottom() - 1.0);
     for (id, b, response) in &links {
@@ -1231,5 +1264,69 @@ mod tests {
         );
         assert_eq!(current_section(&[], false), None);
         assert_eq!(current_section(&[], true), None);
+    }
+
+    /// The cases of pages/sectionSpy.test.ts "section in view".
+    #[test]
+    fn a_jump_holds_until_the_reader_scrolls_on() {
+        let at = |tops: &[f32]| -> Vec<(&'static str, f32)> {
+            ["s0", "s1", "s2"]
+                .into_iter()
+                .zip(tops.iter().copied())
+                .collect()
+        };
+        let page = |offset: f32| Scroll {
+            offset,
+            view: 700.0,
+            content: 2000.0,
+        };
+        // Without a jump the headings decide.
+        assert_eq!(
+            section_in_view(&at(&[15.0, 400.0, 900.0]), page(0.0), None),
+            (Some("s0"), None)
+        );
+        // A short last-but-one section at the end keeps its jump.
+        let jump = Some(("s1", 1300.0));
+        let end = at(&[-900.0, 200.0, 400.0]);
+        assert_eq!(
+            section_in_view(&end, page(1300.0), jump),
+            (Some("s1"), jump)
+        );
+        assert_eq!(section_in_view(&end, page(1300.0), None).0, Some("s2"));
+        // A page too short to scroll keeps it too.
+        let short = Scroll {
+            offset: 0.0,
+            view: 700.0,
+            content: 700.0,
+        };
+        let jump = Some(("s1", 0.0));
+        assert_eq!(
+            section_in_view(&at(&[15.0, 300.0]), short, jump).0,
+            Some("s1")
+        );
+        // Scrolling on drops it.
+        let jump = Some(("s2", 600.0));
+        assert_eq!(
+            section_in_view(&at(&[-600.0, -300.0, 15.0]), page(601.0), jump).1,
+            jump
+        );
+        assert_eq!(
+            section_in_view(&at(&[-640.0, -340.0, -25.0]), page(640.0), jump),
+            (Some("s2"), None)
+        );
+        assert_eq!(
+            section_in_view(&at(&[-400.0, -100.0, 215.0]), page(400.0), jump),
+            (Some("s1"), None)
+        );
+        // Content loading above pushes the heading away: dropped.
+        assert_eq!(
+            section_in_view(&at(&[-600.0, 0.0, 315.0]), page(600.0), jump),
+            (Some("s1"), None)
+        );
+        // A section that is gone.
+        assert_eq!(
+            section_in_view(&at(&[15.0, 400.0]), page(0.0), Some(("s5", 0.0))).1,
+            None
+        );
     }
 }

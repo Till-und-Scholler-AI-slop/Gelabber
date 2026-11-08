@@ -66,7 +66,7 @@ import {
 import { validateName } from "../servers/rules.ts";
 import type { Invite, Permission, ServerDetail } from "../servers/types.ts";
 import { presenceOf, usePresenceStore } from "../ws/live.ts";
-import { currentSection, scrolledToEnd } from "./sectionSpy.ts";
+import { sectionInView, type SectionJump } from "./sectionSpy.ts";
 import "./settings.css";
 
 const NOT_SAVED = {
@@ -135,7 +135,7 @@ function useCurrentSection(
   nav: RefObject<HTMLElement | null>,
 ) {
   const [current, setCurrent] = useState(sections[0]);
-  const jumped = useRef<{ id: SectionId; top: number } | null>(null);
+  const jumped = useRef<SectionJump<SectionId> | null>(null);
   const key = sections.join(" ");
 
   useEffect(() => {
@@ -143,12 +143,6 @@ function useCurrentSection(
     if (!element) return;
     const ids = key.split(" ") as SectionId[];
     const update = () => {
-      const jump = jumped.current;
-      if (jump && Math.abs(element.scrollTop - jump.top) < 2) {
-        setCurrent(jump.id);
-        return;
-      }
-      jumped.current = null;
       const line = nav.current?.getBoundingClientRect().bottom ?? 0;
       const headings = ids.flatMap((id) => {
         const heading = document.getElementById(sectionId(id));
@@ -156,12 +150,15 @@ function useCurrentSection(
           ? [{ id, top: heading.getBoundingClientRect().top - line }]
           : [];
       });
-      const atEnd = scrolledToEnd(
-        element.scrollTop,
-        element.clientHeight,
-        element.scrollHeight,
-      );
-      setCurrent((before) => currentSection(headings, atEnd) ?? before);
+      const view = sectionInView({
+        headings,
+        scrollTop: element.scrollTop,
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        jump: jumped.current,
+      });
+      jumped.current = view.jump;
+      setCurrent((before) => view.current ?? before);
     };
     update();
     element.addEventListener("scroll", update, { passive: true });
@@ -175,6 +172,19 @@ function useCurrentSection(
       resized?.disconnect();
     };
   }, [key, scroller, nav]);
+
+  // On a narrow window the row scrolls sideways: keep the marked link in it.
+  useEffect(() => {
+    const row = nav.current;
+    const link = row?.querySelector('[aria-current="location"]');
+    if (!row || !link || row.scrollWidth <= row.clientWidth) return;
+    const bounds = row.getBoundingClientRect();
+    const box = link.getBoundingClientRect();
+    if (box.left < bounds.left)
+      row.scrollBy({ left: box.left - bounds.left - 32 });
+    else if (box.right > bounds.right)
+      row.scrollBy({ left: box.right - bounds.right + 32 });
+  }, [current, nav]);
 
   const jump = (id: SectionId) => {
     const element = scroller.current;
@@ -190,7 +200,7 @@ function useCurrentSection(
         margin,
     });
     heading.focus({ preventScroll: true });
-    jumped.current = { id, top: element.scrollTop };
+    jumped.current = { id, scrollTop: element.scrollTop };
     setCurrent(id);
   };
   return [current, jump] as const;
