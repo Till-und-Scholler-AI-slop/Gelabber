@@ -1170,12 +1170,15 @@ pub fn layout_previews(ui: &Ui, previews: &[LinkPreview], width: f32) -> Option<
 }
 
 impl Previews {
+    /// Paints the cards; their site and description are selectable text,
+    /// added to `text`.
     pub fn paint(
         &self,
         ui: &mut Ui,
         images: &Images,
         origin: Pos2,
         id: egui::Id,
+        text: &mut Option<egui::Response>,
     ) -> Option<MediaAction> {
         let theme = Theme::of(ui.ctx());
         let c = theme.c;
@@ -1202,7 +1205,10 @@ impl Previews {
             );
             let x = rect.left() + 3.0 + 12.0;
             let mut ty = rect.top() + 11.0;
-            card.site.paint(painter, pos2(x, ty));
+            let at = pos2(x, ty);
+            let site = card.site.select(ui, id.with(("preview-site", n)), at);
+            card.site.paint_selectable(ui, &site, at);
+            crate::text::join(text, site);
             ty += card.site.height() + 2.0;
             if let Some(title) = &card.title {
                 let title_rect = Rect::from_min_size(pos2(x, ty), title.size());
@@ -1226,7 +1232,10 @@ impl Previews {
                 ty += title.height() + 2.0;
             }
             if let Some(d) = &card.description {
-                d.paint(ui.painter(), pos2(x, ty));
+                let at = pos2(x, ty);
+                let description = d.select(ui, id.with(("preview-description", n)), at);
+                d.paint_selectable(ui, &description, at);
+                crate::text::join(text, description);
             }
             if let Some((url, large)) = &card.image {
                 let inner_w = card.size.x - 3.0 - 1.0 - 24.0;

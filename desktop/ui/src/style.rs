@@ -58,9 +58,11 @@ pub fn apply(ctx: &egui::Context, theme: &Theme) {
         style.url_in_tooltip = false;
         style.always_scroll_the_only_direction = true;
         style.spacing = spacing();
+        // Labels (buttons, names, the shell) stay unselectable; message text
+        // opts in through `Block::select` and selects across its blocks.
         style.interaction = Interaction {
             selectable_labels: false,
-            multi_widget_text_select: false,
+            multi_widget_text_select: true,
             tooltip_delay: 0.2,
             tooltip_grace_time: 0.4,
             show_tooltips_only_when_still: false,

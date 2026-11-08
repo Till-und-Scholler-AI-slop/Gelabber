@@ -11,7 +11,9 @@ use std::sync::Arc;
 
 use egui::epaint::text::VariationCoords;
 use egui::text::{LayoutJob, TextFormat};
-use egui::{Align, Color32, FontFamily, FontId, Galley, Painter, Pos2, Rect, Stroke, Ui, Vec2};
+use egui::{
+    Align, Color32, FontFamily, FontId, Galley, Painter, Pos2, Rect, Sense, Stroke, Ui, Vec2,
+};
 
 use crate::fonts;
 
@@ -277,7 +279,43 @@ impl Block {
 
     /// Paints in one colour, ignoring the runs' own colours.
     pub fn paint_tinted(&self, painter: &Painter, top_left: Pos2, color: Option<Color32>) {
-        let ppp = painter.ctx().pixels_per_point();
+        let (pos, galley) = self.placed(painter.ctx(), top_left);
+        match color {
+            Some(color) => painter.galley_with_override_text_color(pos, galley, color),
+            None => painter.galley(pos, galley, Color32::PLACEHOLDER),
+        }
+    }
+
+    /// Senses the block's box at `top_left` for selecting its text, like
+    /// selectable text in the browser: press, drag and click, never the
+    /// keyboard focus. Sense it before the links and buttons over the
+    /// text, so they stay on top; paint with [`Self::paint_selectable`].
+    pub fn select(&self, ui: &Ui, id: egui::Id, top_left: Pos2) -> egui::Response {
+        let rect = Rect::from_min_size(top_left, self.size());
+        let response = ui.interact(rect, id, Sense::click_and_drag() - Sense::FOCUSABLE);
+        let text = self.galley.text();
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, text));
+        response
+    }
+
+    /// Paints like [`Self::paint`] with the selection from `response`
+    /// ([`Self::select`]): a drag selects on into the next selectable
+    /// block, a double click a word, Ctrl+C copies.
+    pub fn paint_selectable(&self, ui: &Ui, response: &egui::Response, top_left: Pos2) {
+        let (pos, galley) = self.placed(ui.ctx(), top_left);
+        egui::text_selection::LabelSelectionState::label_text_selection(
+            ui,
+            response,
+            pos,
+            galley,
+            Color32::PLACEHOLDER,
+            Stroke::NONE,
+        );
+    }
+
+    /// The galley and where it goes for `top_left`: on Blink's pixel rows.
+    fn placed(&self, ctx: &egui::Context, top_left: Pos2) -> (Pos2, Arc<Galley>) {
+        let ppp = ctx.pixels_per_point();
         // A fractional x goes into the layout as leading space, so glyphs
         // keep their sub-pixel positions instead of being resampled.
         let x_px = top_left.x * ppp;
@@ -285,7 +323,7 @@ impl Block {
         let galley = if frac.abs() > 0.01 && !self.job.sections.is_empty() {
             let mut job = self.job.clone();
             job.sections[0].leading_space += frac;
-            painter.ctx().fonts_mut(|f| f.layout_job(job))
+            ctx.fonts_mut(|f| f.layout_job(job))
         } else {
             self.galley.clone()
         };
@@ -295,11 +333,10 @@ impl Block {
             .and_then(|r| r.glyphs.first().map(|g| r.pos.y + g.pos.y))
             .unwrap_or(0.0);
         let baseline = ((top_left.y + self.style.baseline()) * ppp).round() / ppp;
-        let pos = Pos2::new(x_px.floor() / ppp, baseline - first_baseline);
-        match color {
-            Some(color) => painter.galley_with_override_text_color(pos, galley, color),
-            None => painter.galley(pos, galley, Color32::PLACEHOLDER),
-        }
+        (
+            Pos2::new(x_px.floor() / ppp, baseline - first_baseline),
+            galley,
+        )
     }
 
     /// The rect of section `index` in the first row it appears in, relative
@@ -343,6 +380,30 @@ pub fn show(ui: &mut Ui, block: &Block) -> egui::Response {
         block.paint(ui.painter(), rect.min);
     }
     response
+}
+
+/// Senses and paints `block` at `top_left` as selectable text, clipped to
+/// `clip` (a code block's box): only what shows can be pressed on.
+pub fn selectable_in(
+    ui: &mut Ui,
+    block: &Block,
+    id: egui::Id,
+    top_left: Pos2,
+    clip: Rect,
+) -> egui::Response {
+    let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(clip));
+    inner.set_clip_rect(clip.intersect(ui.clip_rect()));
+    let response = block.select(&inner, id, top_left);
+    block.paint_selectable(&inner, &response, top_left);
+    response
+}
+
+/// Adds `one` to the union of selectable text responses in `all`.
+pub fn join(all: &mut Option<egui::Response>, one: egui::Response) {
+    *all = Some(match all.take() {
+        Some(all) => all | one,
+        None => one,
+    });
 }
 
 #[cfg(test)]

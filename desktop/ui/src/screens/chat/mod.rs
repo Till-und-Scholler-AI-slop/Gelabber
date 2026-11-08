@@ -1214,6 +1214,7 @@ fn menu_row(ui: &mut Ui, icon: crate::icons::Icon, label: &str, danger: bool) ->
     let c = theme.c;
     let width = ui.available_width().max(220.0);
     let (rect, response) = ui.allocate_exact_size(vec2(width, 32.0), egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::MenuItem, true, label));
     if response.hovered() {
         ui.painter()
             .rect_filled(rect, crate::theme::corner(5.0), c.hover);
@@ -1333,6 +1334,81 @@ mod page_tests {
                 .query_by_label("Diese Unterhaltung konnte nicht geladen werden.")
                 .is_none()
         );
+    }
+
+    /// Message text selects like the browser's: a drag from one message
+    /// into the next and Ctrl+C copy both; names and times stay out, and a
+    /// right click on the text still opens the row's menu.
+    #[test]
+    fn message_text_selects_across_rows() {
+        use crate::app::testkit::{ALLGEMEIN, HOME};
+        let _config = TempConfig::new("text-select");
+        let message = |n: u8, author: (&str, &str), content: &str| {
+            json!({
+                "id": format!("00000000-0000-4000-8000-0000000000e{n}"),
+                "channel_id": ALLGEMEIN,
+                "author": {"id": author.0, "name": author.1, "avatar_url": null},
+                "content": content,
+                "created_at": format!("2026-11-05T16:2{n}:00Z"),
+                "edited_at": null,
+                "revision": 0,
+                "created_order": n,
+            })
+        };
+        let jonas = ("00000000-0000-4000-8000-00000000007c", "Jonas");
+        let mira = ("00000000-0000-4000-8000-00000000007d", "Mira");
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", p) if p == format!("/channels/{ALLGEMEIN}/messages") => {
+                Some(Reply::json(json!({
+                    "messages": [
+                        message(1, jonas, "Film oder Spiel heute?"),
+                        message(2, mira, "Erst Film, dann **Spiel**.")
+                    ],
+                    "has_more": false
+                })))
+            }
+            _ => workspace(method, path),
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for_label(&mut harness, "Film oder Spiel heute?");
+        harness.run_steps(4);
+        let first = harness.get_by_label("Film oder Spiel heute?").rect();
+        let second = harness.get_by_label("Erst Film, dann Spiel.").rect();
+        assert!(first.bottom() < second.top());
+
+        harness.hover_at(first.left_center() + egui::vec2(1.0, 0.0));
+        harness.drag_at(first.left_center() + egui::vec2(1.0, 0.0));
+        harness.hover_at(first.center());
+        harness.hover_at(second.center());
+        harness.hover_at(second.right_center());
+        harness.event(egui::Event::PointerButton {
+            pos: second.right_center(),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+        harness.event(egui::Event::Copy);
+        harness.step();
+        let copied: Vec<String> = harness
+            .output()
+            .platform_output
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            copied,
+            vec!["Film oder Spiel heute?\n\nErst Film, dann Spiel.".to_owned()]
+        );
+
+        harness
+            .get_by_label("Erst Film, dann Spiel.")
+            .click_secondary();
+        wait_for_label(&mut harness, "Text kopieren");
     }
 
     /// A picker left open closes with its page: back (Alt+←) and forward

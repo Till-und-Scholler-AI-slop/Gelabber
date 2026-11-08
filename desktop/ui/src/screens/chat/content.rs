@@ -106,6 +106,15 @@ pub enum ContentAction {
     CopyCode(usize, String),
 }
 
+/// What [`Laid::paint`] gave back.
+pub struct Painted {
+    /// What a click on a link, spoiler or copy button asked for.
+    pub action: Option<ContentAction>,
+    /// All of its selectable text: a click or right click on the text
+    /// lands here, not on what lies under it.
+    pub text: Option<egui::Response>,
+}
+
 struct Builder<'a> {
     job: LayoutJob,
     sections: Vec<SectionInfo>,
@@ -539,7 +548,8 @@ fn extents(block: &Block, range: (usize, usize)) -> Vec<(usize, f32, f32)> {
 }
 
 impl Laid {
-    /// Paints at `origin` (content box top-left); returns what a click asked for.
+    /// Paints at `origin` (content box top-left), its text selectable;
+    /// returns what a click asked for.
     pub fn paint(
         &self,
         ui: &mut Ui,
@@ -547,16 +557,20 @@ impl Laid {
         id: egui::Id,
         interactive: bool,
         copied: Option<(usize, bool)>,
-    ) -> Option<ContentAction> {
+    ) -> Painted {
         let theme = Theme::of(ui.ctx());
         let c = theme.c;
         let mut action = None;
+        let mut text: Option<egui::Response> = None;
         let ppp = ui.ctx().pixels_per_point();
         for (p, part) in self.parts.iter().enumerate() {
             let top = origin.y + part.y;
             match &part.kind {
                 PartKind::Text(t) => {
                     let left = origin.x + t.inset;
+                    // Under the spoilers and links sensed below.
+                    let selection = t.block.select(ui, id.with(("text", p)), pos2(left, top));
+                    crate::text::join(&mut text, selection.clone());
                     if t.inset > 0.0 {
                         ui.painter().rect_filled(
                             crate::widgets::snap(
@@ -638,30 +652,47 @@ impl Laid {
                             }
                         }
                     }
+                    // Shown spoilers tint under the glyphs; hidden ones cover
+                    // them, so a selection cannot reveal what they hide.
+                    let mut covers = Vec::new();
+                    let mut spoiler_hot = false;
                     for (sid, (shown, rects)) in &spoiler_rects {
-                        let fill = if *shown {
-                            Color32::from_rgba_unmultiplied(c.text.r(), c.text.g(), c.text.b(), 20)
-                        } else {
-                            mix(c.bg, c.text, 0.22)
-                        };
                         for rect in rects {
-                            ui.painter().rect_filled(*rect, CornerRadius::same(5), fill);
-                            if interactive && !shown {
+                            if *shown {
+                                let fill = Color32::from_rgba_unmultiplied(
+                                    c.text.r(),
+                                    c.text.g(),
+                                    c.text.b(),
+                                    20,
+                                );
+                                ui.painter().rect_filled(*rect, CornerRadius::same(5), fill);
+                                continue;
+                            }
+                            covers.push(*rect);
+                            if interactive {
                                 let response = ui.interact(
                                     *rect,
                                     id.with(("spoiler", p, *sid, rect.top() as i32)),
                                     Sense::click(),
                                 );
-                                if response.hovered() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                }
+                                spoiler_hot |= response.hovered();
                                 if response.clicked() {
                                     action = Some(ContentAction::RevealSpoiler(*sid));
                                 }
                             }
                         }
                     }
-                    t.block.paint(ui.painter(), pos2(left, top));
+                    t.block.paint_selectable(ui, &selection, pos2(left, top));
+                    for rect in covers {
+                        ui.painter().rect_filled(
+                            rect,
+                            CornerRadius::same(5),
+                            mix(c.bg, c.text, 0.22),
+                        );
+                    }
+                    if spoiler_hot {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
                     // Links: underline in alpha accent, currentColor on hover.
                     for section in &t.sections {
                         let Span::Link(index) = section.span else {
@@ -736,11 +767,14 @@ impl Laid {
                     );
                     if self.hit {
                         // `span.lr-md-codeblock`: padding 6 8, clipped at 8em.
-                        let clip = ui
-                            .painter()
-                            .with_clip_rect(rect.shrink(1.0).intersect(ui.clip_rect()));
-                        code.lines
-                            .paint(&clip, pos2(rect.left() + 9.0, rect.top() + 1.0 + 6.0));
+                        let lines = crate::text::selectable_in(
+                            ui,
+                            &code.lines,
+                            id.with(("code", code.index)),
+                            pos2(rect.left() + 9.0, rect.top() + 1.0 + 6.0),
+                            rect.shrink(1.0),
+                        );
+                        crate::text::join(&mut text, lines);
                         continue;
                     }
                     if let Some(lang) = &code.lang {
@@ -796,14 +830,17 @@ impl Laid {
                     }
                     label_block.paint_tinted(ui.painter(), pos2(x, button.top() + 2.0), Some(fg));
                     let pre_top = rect.top() + 1.0 + 22.5 + 2.0;
-                    let clip = ui
-                        .painter()
-                        .with_clip_rect(rect.shrink(1.0).intersect(ui.clip_rect()));
-                    code.lines
-                        .paint(&clip, pos2(rect.left() + 11.0, pre_top - 3.0));
+                    let lines = crate::text::selectable_in(
+                        ui,
+                        &code.lines,
+                        id.with(("code", code.index)),
+                        pos2(rect.left() + 11.0, pre_top - 3.0),
+                        rect.shrink(1.0),
+                    );
+                    crate::text::join(&mut text, lines);
                 }
             }
         }
-        action
+        Painted { action, text }
     }
 }
