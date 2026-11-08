@@ -4,7 +4,6 @@ import {
   notificationPermissionText,
   type NotificationPermissionState,
 } from "../messages/notify.ts";
-import { desktopNotifications } from "../messages/desktopNotifications.ts";
 import { useInstallation } from "../pwa/install.ts";
 import { syncPush, type PushResult } from "../pwa/push.ts";
 import { Button } from "./ui/Button.tsx";
@@ -15,38 +14,7 @@ function permission(): NotificationPermissionState {
     : Notification.permission;
 }
 
-/** In the desktop app the system shows the notifications, no browser
- * permission involved; an older app keeps the webview's. */
-function useSystemNotifications(): boolean {
-  const [system, setSystem] = useState(false);
-  useEffect(() => {
-    let live = true;
-    void desktopNotifications().then((available) => {
-      if (live) setSystem(available);
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
-  return system;
-}
-
 export function NotificationPermissionStatus() {
-  const system = useSystemNotifications();
-  if (system) {
-    return (
-      <div className="settings-note">
-        <p role="status">
-          Benachrichtigungen laufen über dein System. Sperrbildschirm und „Nicht
-          stören“ stellst du dort ein.
-        </p>
-      </div>
-    );
-  }
-  return <BrowserNotificationPermission />;
-}
-
-function BrowserNotificationPermission() {
   const [state, setState] = useState(permission);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -91,7 +59,7 @@ function BrowserNotificationPermission() {
     <div className="settings-note">
       <p role="status">
         {notificationPermissionText(state, {
-          // The desktop app is not bound by the browser's HTTPS rule.
+          // The Tauri app is not bound by the browser's HTTPS rule.
           secure: device.secure || device.native,
           ios: device.ios,
           standalone: device.standalone,

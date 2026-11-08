@@ -28,7 +28,6 @@ import {
   messageNotificationDecision,
   previewText,
 } from "./notify.ts";
-import { focusDesktopWindow, requestDesktopAttention } from "./desktopShell.ts";
 import {
   mentionsMe,
   readableMentions,
@@ -146,9 +145,8 @@ export function useMessageToastsBridge(): void {
     generation: number;
     first: ReturnType<typeof createNotificationDedupe>;
     pacing: ReturnType<typeof createNotificationPacing>;
-    /** One sound, one flash for a burst across conversations. */
+    /** One sound for a burst across conversations. */
     sound: ReturnType<typeof createNotificationPacing>;
-    attention: ReturnType<typeof createNotificationPacing>;
   } | null>(null);
 
   useEffect(() => {
@@ -164,7 +162,6 @@ export function useMessageToastsBridge(): void {
         first: createNotificationDedupe(),
         pacing: createNotificationPacing(),
         sound: createNotificationPacing(),
-        attention: createNotificationPacing(),
       };
     }
     const firstDelivery = deliveries.current.first;
@@ -196,17 +193,6 @@ export function useMessageToastsBridge(): void {
           serverNow(),
         );
       if (!wantsNotification(row, { dm, mentioned }, serverNow())) return;
-      // The desktop app's taskbar button flashes for a direct message while
-      // the window is not in front, whatever the toast and desktop settings
-      // say (a mute or the level "nothing" returned above), once for a burst.
-      if (
-        dm &&
-        !own &&
-        (hidden || !focused) &&
-        serverNow() - Date.parse(message.created_at) < 30_000 &&
-        deliveries.current!.attention.take("", Date.now())
-      )
-        requestDesktopAttention();
       const decision = messageNotificationDecision({
         toastEnabled: settings.messageToasts,
         desktopEnabled: settings.desktopNotify,
@@ -270,7 +256,6 @@ export function useMessageToastsBridge(): void {
           () => {
             if (!stampHolds({ userId, generation })) return;
             window.focus();
-            focusDesktopWindow();
             if (dm) {
               void navigate({ to: "/d/$channelId", params: { channelId } });
             } else {
@@ -288,7 +273,7 @@ export function useMessageToastsBridge(): void {
           // desktop it is silent; this window showed it, so it plays the
           // cue, once for a burst and never into a deafened call.
           if (
-            (shown === "worker" || shown === "page" || shown === "app") &&
+            (shown === "worker" || shown === "page") &&
             !useInstallation.getState().mobile &&
             !useVoice.getState().deafened &&
             stampHolds({ userId, generation }) &&

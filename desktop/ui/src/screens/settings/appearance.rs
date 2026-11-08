@@ -55,19 +55,18 @@ fn swatch(ui: &Ui, rect: Rect, colors: &BaseColors, radius: egui::CornerRadius, 
     );
     painter.rect_filled(accent, corner(3.0), colors.accent);
     // The border, only on the sides that keep it.
-    let stroke = Stroke::new(1.0, colors.border);
-    let r = rect.shrink(0.5);
+    let border = colors.border;
     if edges[0] {
-        painter.hline(r.left()..=r.right(), r.top(), stroke);
+        crate::widgets::rule_h(painter, border, rect.x_range(), rect.top());
     }
     if edges[2] {
-        painter.hline(r.left()..=r.right(), r.bottom(), stroke);
+        crate::widgets::rule_h(painter, border, rect.x_range(), rect.bottom() - 1.0);
     }
     if edges[1] {
-        painter.vline(r.right(), r.top()..=r.bottom(), stroke);
+        crate::widgets::rule_v(painter, border, rect.right() - 1.0, rect.y_range());
     }
     if edges[3] {
-        painter.vline(r.left(), r.top()..=r.bottom(), stroke);
+        crate::widgets::rule_v(painter, border, rect.left(), rect.y_range());
     }
 }
 
@@ -278,10 +277,11 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     }
     ui.add_space(12.0);
     let bottom = ui.cursor().min.y;
-    ui.painter().hline(
+    crate::widgets::rule_h(
+        ui.painter(),
+        c.border,
         row_top.x..=row_top.x + ui.available_width(),
-        bottom + 0.5,
-        Stroke::new(1.0, c.border),
+        bottom,
     );
     ui.add_space(1.0);
     controls::switch_row(

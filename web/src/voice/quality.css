@@ -31,11 +31,6 @@
   border-color: var(--lr-accent);
   background: var(--lr-selected);
 }
-/* --lr-warning is drawn for icons (3:1); text takes it a step towards the
-   text colour, for 4.5:1. */
-.stream-source-audio-warning {
-  color: color-mix(in srgb, var(--lr-warning) 70%, var(--lr-text));
-}
 .media-settings-reveal {
   display: flex;
   flex-wrap: wrap;

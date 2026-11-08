@@ -1,14 +1,10 @@
-import { isDesktopApp } from "../voice/native/bridge.ts";
 import { useMediaSettings } from "../voice/settings.ts";
-import { CloseToTray } from "./CloseToTray.tsx";
 import { SettingsGroup } from "./SettingsGroup.tsx";
 import { Switch } from "./ui/Switch.tsx";
 
 /** How new messages reach this device: popups, system notifications, sound. */
 export function MessageAlertSettings() {
   const settings = useMediaSettings();
-  // The desktop app's notifications come from its window, not a browser tab.
-  const desktop = isDesktopApp();
   return (
     <SettingsGroup title="Nachrichten" scope="device">
       <Switch
@@ -23,11 +19,7 @@ export function MessageAlertSettings() {
       <Switch
         id="desktop-notify"
         className="settings-row"
-        label={
-          desktop
-            ? "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist"
-            : "Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist"
-        }
+        label="Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist"
         checked={settings.desktopNotify}
         onChange={(event) => {
           const desktopNotify = event.target.checked;
@@ -48,7 +40,6 @@ export function MessageAlertSettings() {
           settings.patch({ messageSound: event.target.checked })
         }
       />
-      {desktop && <CloseToTray />}
     </SettingsGroup>
   );
 }

@@ -8,10 +8,6 @@ import type { TrackKind } from "../ws/protocol.ts";
 
 export type SourceAudioStatus =
   "off" | "sharing" | "unavailable" | "ended" | "unsupported";
-/** What the status alone does not say: the desktop capture's own reason for
- * "unavailable", or the chosen application that plays nothing while
- * "sharing". */
-export type SourceAudioNote = { failed?: string; silent?: string };
 
 export type VoiceStatus = "idle" | "joined";
 /** What the call's media connection is doing, for the call bar to say.
@@ -55,7 +51,6 @@ export type VoiceState = {
   sourceWatchSupported: boolean;
   /** The own Live's sound. */
   sourceAudio: Record<"s", SourceAudioStatus>;
-  sourceAudioNote: Record<"s", SourceAudioNote | null>;
   /** Whose Live plays here. */
   sourceSubscriptions: Record<string, Partial<Record<"s", boolean>>>;
   localCamera: MediaStream | null;
@@ -79,7 +74,6 @@ export const IDLE_VOICE: VoiceState = {
   sharing: false,
   sourceWatchSupported: false,
   sourceAudio: { s: "off" },
-  sourceAudioNote: { s: null },
   sourceSubscriptions: {},
   localCamera: null,
   localScreen: null,

@@ -7,7 +7,7 @@ mod invite;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use egui::{Color32, Id, Rect, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
+use egui::{Color32, Id, Rect, Sense, Ui, UiBuilder, pos2, vec2};
 use gelabber_client::{
     ApiError, Ban, Invite, Member, OpState, Permission, PresenceStatus, Role, ServerDetail,
     ServerPatch,
@@ -172,11 +172,7 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
         vec2(rect.width(), 49.0),
     );
     ui.painter().rect_filled(nav, 0.0, c.bg);
-    ui.painter().hline(
-        nav.x_range(),
-        nav.bottom() - 0.5,
-        Stroke::new(1.0, c.border),
-    );
+    crate::widgets::rule_h(ui.painter(), c.border, nav.x_range(), nav.bottom() - 1.0);
     let mut x = nav.left() + 32.0;
     let ids: Vec<(&'static str, &'static str)> = SECTIONS
         .iter()
@@ -669,10 +665,11 @@ fn general(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
 fn list_top(ui: &mut Ui) {
     let theme = Theme::of(ui.ctx());
     let top = ui.cursor().min;
-    ui.painter().hline(
+    crate::widgets::rule_h(
+        ui.painter(),
+        theme.c.border,
         top.x..=top.x + ui.available_width(),
-        top.y + 0.5,
-        Stroke::new(1.0, theme.c.border),
+        top.y,
     );
     ui.add_space(1.0);
 }
@@ -716,10 +713,11 @@ fn row_frame(ui: &mut Ui) -> Rect {
     let theme = Theme::of(ui.ctx());
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(vec2(width, 56.0), Sense::hover());
-    ui.painter().hline(
+    crate::widgets::rule_h(
+        ui.painter(),
+        theme.c.border,
         rect.x_range(),
-        rect.bottom() - 0.5,
-        Stroke::new(1.0, theme.c.border),
+        rect.bottom() - 1.0,
     );
     rect
 }

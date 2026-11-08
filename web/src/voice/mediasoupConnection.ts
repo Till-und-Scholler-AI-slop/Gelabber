@@ -11,6 +11,7 @@ import type {
 import type { TrackKind } from "../ws/protocol.ts";
 import {
   MediaError,
+  createStream,
   isVideoCodecs,
   type ConsumerAnnouncement,
   type IceServer,
@@ -20,9 +21,6 @@ import {
 } from "./media.ts";
 import { statsEntriesFromReport, type StatsEntry } from "./diagnostics.ts";
 import type { MediaPriority } from "./mediaPriority.ts";
-import { isDesktopApp } from "./native/bridge.ts";
-import { createNativeDevice } from "./native/device.ts";
-import { createStream } from "./native/tracks.ts";
 import {
   chooseVideoCodec,
   decodesAv1,
@@ -90,9 +88,9 @@ export type MediaConnectionOptions = {
    * and have none of the old ones' parameters. */
   onRepublished?(): void;
   deviceFactory?: () => Promise<Device>;
-  /** Test injection; production asks the browser or the desktop app. */
+  /** Test injection; production asks the browser. */
   hardwareVideo?: () => Promise<HardwareVideo>;
-  /** Test injection; production asks the browser or the desktop app. */
+  /** Test injection; production asks the browser. */
   decodesAv1?: () => Promise<boolean>;
   /** Test injection; production SDK operations are bounded to ten seconds. */
   sdkTimeoutMs?: number;
@@ -140,7 +138,7 @@ const loadBrowserSdk = (): Promise<BrowserSdk> => {
 export const SDK_LOAD_TIMEOUT_MS = 60_000;
 /** Starts fetching the browser SDK, e.g. while a call's ticket is requested. */
 export const preloadMediaSdk = (): void => {
-  if (!isDesktopApp()) void loadBrowserSdk().catch(() => {});
+  void loadBrowserSdk().catch(() => {});
 };
 /** Tests: replaces the SDK's import (`undefined` restores it) and forgets
  * what was loaded. */
@@ -151,15 +149,9 @@ export function setBrowserSdkImportForTests(
   browserSdk = null;
 }
 
-/** In the desktop app the native core stands in for the browser's WebRTC. */
 export const createMediaConnection = (
   options: MediaConnectionOptions,
-): MediaConnection =>
-  new MediasoupConnection(
-    isDesktopApp() && !options.deviceFactory
-      ? { ...options, deviceFactory: createNativeDevice }
-      : options,
-  );
+): MediaConnection => new MediasoupConnection(options);
 
 const consumerKey = (source: { consumerId: string; generation: string }) =>
   `${source.consumerId}:${source.generation}`;
@@ -329,20 +321,11 @@ export class MediasoupConnection implements MediaConnection {
     }
     const device = await this.sdk(factory, "recv");
     this.live();
-    // The desktop app's native device holds a handle until closed.
-    const release = () => (device as { close?: () => void }).close?.();
-    try {
-      await this.sdk(
-        () => device.load({ routerRtpCapabilities: capabilities }),
-        "recv",
-        true,
-        release,
-      );
-      this.live();
-    } catch (error) {
-      release();
-      throw error;
-    }
+    await this.sdk(
+      () => device.load({ routerRtpCapabilities: capabilities }),
+      "recv",
+    );
+    this.live();
     this.device = device;
     // AV1 comes as one stream: only a device that decodes it smoothly
     // offers to receive it (issue #318).
@@ -597,7 +580,7 @@ export class MediasoupConnection implements MediaConnection {
     }
     const transport = await this.sendTransport();
     this.checkPublication(input);
-    // Three simulcast layers where browsers and the native core encode them.
+    // Three simulcast layers where browsers encode them.
     // mediasoup takes VP9 and AV1 as one stream or SVC only, not simulcast:
     // VP9 carries its three layers inside one stream.
     const layered = mime === "video/vp8" || mime === "video/h264";
@@ -778,7 +761,7 @@ export class MediasoupConnection implements MediaConnection {
     const vp9Svc =
       hardware.vp9Svc &&
       !this.vp9SvcRefused &&
-      (isDesktopApp() || device.handlerName?.startsWith("Chrome") === true);
+      device.handlerName?.startsWith("Chrome") === true;
     const gated = { ...hardware, vp9Svc };
     if (asked) this.probedEncoders = gated;
     return {
@@ -1279,9 +1262,6 @@ export class MediasoupConnection implements MediaConnection {
     for (const id of [...this.received.keys()]) this.removeConsumer(id);
     for (const transport of this.ownedTransports) transport.close();
     this.ownedTransports.clear();
-    // The desktop app's native device holds a handle; browser devices have
-    // nothing to release.
-    (this.device as { close?: () => void } | null)?.close?.();
     this.device = null;
     this.send = null;
     this.recv = null;

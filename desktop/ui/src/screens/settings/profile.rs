@@ -422,11 +422,7 @@ pub fn security(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut SecurityStat
         // `.settings-danger`: margin-top 40, border-top, padding-top 24.
         ui.add_space(32.0);
         let top = ui.cursor().min.y;
-        ui.painter().hline(
-            ui.max_rect().x_range(),
-            top + 0.5,
-            egui::Stroke::new(1.0, c.border),
-        );
+        crate::widgets::rule_h(ui.painter(), c.border, ui.max_rect().x_range(), top);
         ui.add_space(25.0);
         controls::paint(
             ui,

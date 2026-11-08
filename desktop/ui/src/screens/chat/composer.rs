@@ -440,10 +440,11 @@ pub fn show(
             }
         }
         fy += list_h;
-        ui.painter().rect_filled(
-            Rect::from_min_size(pos2(field.left() + 1.0, fy), vec2(field.width() - 2.0, 1.0)),
-            0.0,
+        crate::widgets::rule_h(
+            ui.painter(),
             c.border,
+            field.left() + 1.0..=field.right() - 1.0,
+            fy,
         );
         fy += 1.0;
         // Keys belong to the list while it is open.

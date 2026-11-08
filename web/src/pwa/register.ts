@@ -19,7 +19,7 @@ export function registerServiceWorker(): void {
 }
 
 /**
- * The worker this page registered, once it is active. Vite dev and the desktop
+ * The worker this page registered, once it is active. Vite dev and the Tauri
  * app never register one and get `undefined` without asking the browser, so
  * everything built on the worker keeps its previous behaviour there.
  */

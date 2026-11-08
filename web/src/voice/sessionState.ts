@@ -12,8 +12,6 @@ import type { IceServer, OpenMedia } from "./media.ts";
 import { MediaPeer, MediaRetry } from "./mediaPeer.ts";
 import { ReceivedAudio } from "./receivedAudio.ts";
 import { VideoLimits } from "./videoLimits.ts";
-import { isDesktopApp } from "./native/bridge.ts";
-import { nativeGetDisplayMedia, nativeGetUserMedia } from "./native/capture.ts";
 import type {
   MediaConnection,
   MediaConnectionOptions,
@@ -135,11 +133,8 @@ export type VoiceSession = {
   pendingDisplayStreams: Set<MediaStream>;
   /** Epoch of the start whose picker or camera prompt has not answered yet. */
   openCaptures: Map<LocalVideo, number>;
-  /** Whether a display capture was asked for sound, and the desktop app's
-   * reason when it could not give it. */
-  displaySound: WeakMap<MediaStream, { asked: boolean; failed?: string }>;
-  /** Latest change of the sound of a running Live; older ones give way. */
-  sourceAudioChange: number;
+  /** Whether a display capture was asked for sound. */
+  displaySound: WeakMap<MediaStream, { asked: boolean }>;
 
   receivedIdentity: WeakMap<MediaStreamTrack, ReceivedSource>;
   receivedAudio: ReceivedAudio;
@@ -156,7 +151,6 @@ export const VOICE_EPOCHS = [
   "screenEpoch",
   "cameraProfileEpoch",
   "screenProfileEpoch",
-  "sourceAudioChange",
 ] as const;
 
 export function createVoiceSession(previous?: VoiceSession): VoiceSession {
@@ -207,7 +201,6 @@ export function createVoiceSession(previous?: VoiceSession): VoiceSession {
     pendingDisplayStreams: new Set(),
     openCaptures: new Map(),
     displaySound: new WeakMap(),
-    sourceAudioChange: 0,
 
     receivedIdentity,
     receivedAudio: new ReceivedAudio({
@@ -270,14 +263,12 @@ export function currentUserId(): string | null {
 export async function defaultGetUserMedia(
   constraints: MediaStreamConstraints,
 ): Promise<MediaStream> {
-  if (isDesktopApp()) return nativeGetUserMedia(constraints);
   return navigator.mediaDevices.getUserMedia(constraints);
 }
 
 export async function defaultGetDisplayMedia(
   constraints: MediaStreamConstraints,
 ): Promise<MediaStream> {
-  if (isDesktopApp()) return nativeGetDisplayMedia(constraints);
   return navigator.mediaDevices.getDisplayMedia(constraints);
 }
 

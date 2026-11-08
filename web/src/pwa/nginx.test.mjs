@@ -323,7 +323,7 @@ describe("production nginx config", () => {
       expect(policy.get(name), name).toEqual(sources);
     expect(policy.get("default-src")).toEqual(["'self'"]);
     // Presigned uploads, text attachments (fetched through the redirect),
-    // the gateway and media WebSockets ('self'), the desktop app's IPC.
+    // the gateway and media WebSockets ('self'), the Tauri app's IPC.
     expect(policy.get("connect-src")).toEqual([
       "'self'",
       storage,

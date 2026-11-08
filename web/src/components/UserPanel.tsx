@@ -14,7 +14,6 @@ import {
   useSession,
 } from "../auth/session.ts";
 import type { User } from "../auth/types.ts";
-import { invokeNative, isDesktopApp } from "../voice/native/bridge.ts";
 import { usePresenceStore } from "../ws/live.ts";
 import type { PresenceStatus } from "../ws/protocol.ts";
 import { ChevronIcon, GearIcon } from "./Icons.tsx";
@@ -97,18 +96,6 @@ export function UserPanel({ contextId }: { contextId?: string }) {
             <Link to="/settings/$area" params={{ area: "darstellung" }}>
               Einstellungen
             </Link>
-            {isDesktopApp() ? (
-              <button
-                type="button"
-                title="Strg+Umschalt+S"
-                onClick={() => {
-                  // Older desktop builds lack the command; nothing to do then.
-                  invokeNative("open_setup").catch(() => undefined);
-                }}
-              >
-                Server wechseln …
-              </button>
-            ) : null}
             <button
               type="button"
               onClick={async () => {

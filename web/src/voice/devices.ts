@@ -5,7 +5,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { isDesktopApp } from "./native/bridge.ts";
 import {
   listMediaDevices,
   type DeviceList,
@@ -43,13 +42,8 @@ export function deviceChoices(
   options: readonly DeviceOption[],
   value: string,
 ): { value: string; options: { id: string; label: string }[] } {
-  const desktop = isDesktopApp();
   const named = defaultDeviceName(options);
-  const standard = desktop
-    ? "Systemstandard"
-    : named
-      ? `Standard – ${named}`
-      : "Standard";
+  const standard = named ? `Standard – ${named}` : "Standard";
   const devices = options.filter((option) => option.id !== DEFAULT_ID);
   const current = value === DEFAULT_ID ? "" : value;
   return {
@@ -117,7 +111,6 @@ export function useMediaDevices(): {
   useEffect(() => watchMediaDevices(mediaDevices(), refresh), [refresh]);
   const reveal = useCallback(
     async (kind: "audio" | "video") => {
-      if (isDesktopApp()) return false;
       const ok = await revealDeviceNames(mediaDevices(), kind);
       if (ok) refresh();
       return ok;

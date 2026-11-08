@@ -70,11 +70,8 @@ vi.mock("./settings.ts", async (original) => {
 import { LiveMenuItems } from "../components/VoiceControls.tsx";
 import { VoiceSessionControls } from "../components/VoiceSessionControls.tsx";
 import { dockNotices } from "./callBar.ts";
-import { setNativeBridgeForTests, type NativeBridge } from "./native/bridge.ts";
-import { loadNativeFeatures } from "./native/features.ts";
 import {
   resetMediaSettingsForTests,
-  SOURCE_AUDIO_CARRIES_CALL,
   useMediaSettings,
   type MediaSettings,
 } from "./settings.ts";
@@ -84,42 +81,16 @@ import type { ServerDetail } from "../servers/types.ts";
 
 const capture = () => {};
 
-/** The desktop app, answering `media_info` with `info`. */
-async function desktopApp(info: unknown, webview: object = {}) {
-  vi.stubGlobal("navigator", webview);
-  setNativeBridgeForTests({
-    invoke: async (command: string) =>
-      command === "media_info" ? info : Promise.reject(new Error(command)),
-    channel: async () => null,
-  } as unknown as NativeBridge);
-  await loadNativeFeatures();
-}
-
 function browser(mediaDevices: object | undefined) {
-  setNativeBridgeForTests(null);
   vi.stubGlobal("navigator", { mediaDevices });
 }
 
-const LINUX_06 = ["screen", "camera", "app-audio", "video-frames"];
 const cases = {
   desktopBrowser: async () =>
     browser({ getUserMedia: capture, getDisplayMedia: capture }),
   /** No display capture on a phone, so no share and no sound for one. */
   phoneBrowser: async () => browser({ getUserMedia: capture }),
   insecureOrigin: async () => browser(undefined),
-  /** Released 0.5.x: no feature list; "every application" includes itself. */
-  linuxApp05: () => desktopApp({ abi: 7, version: "0.5.2", platform: "linux" }),
-  /** A v0.6 build whose core still captures itself. */
-  linuxApp06CapturesItself: () => desktopApp({ features: LINUX_06 }),
-  linuxApp06: () =>
-    desktopApp({ features: [...LINUX_06, "app-audio-excludes-self"] }),
-  /** First Windows build; WebView2's own getDisplayMedia must not count. */
-  windowsApp: () =>
-    desktopApp(
-      { features: ["camera", "video-frames"] },
-      { mediaDevices: { getDisplayMedia: capture, getUserMedia: capture } },
-    ),
-  screenWithoutSound: () => desktopApp({ features: ["screen", "camera"] }),
 };
 type Case = keyof typeof cases;
 
@@ -135,7 +106,6 @@ beforeEach(() => {
     sharing: false,
     live: false,
     sourceAudio: { s: "off" },
-    sourceAudioNote: { s: null },
     sourceSubscriptions: {},
     localScreen: null,
     participants: {},
@@ -144,7 +114,6 @@ beforeEach(() => {
   } as unknown as VoiceState;
 });
 afterEach(() => {
-  setNativeBridgeForTests(undefined);
   resetMediaSettingsForTests();
   vi.unstubAllGlobals();
 });
@@ -225,13 +194,7 @@ function setSoundSetting(on: boolean): void {
 }
 
 describe("stream sound switch", () => {
-  it.each([
-    ["desktopBrowser", "off"],
-    ["linuxApp05", "off"],
-    ["linuxApp06CapturesItself", "off"],
-    // The only client that keeps the call out of it shares sound unasked.
-    ["linuxApp06", "on"],
-  ] as const)(
+  it.each([["desktopBrowser", "off"]] as const)(
     "%s: in the Live menu and in the settings, %s by default",
     async (name: Case, byDefault) => {
       await cases[name]();
@@ -246,13 +209,7 @@ describe("stream sound switch", () => {
     },
   );
 
-  it.each([
-    ["desktopBrowser", "auto"],
-    ["linuxApp05", "auto"],
-    ["linuxApp06CapturesItself", "auto"],
-    // Only here is off something the app would not do by itself.
-    ["linuxApp06", "off"],
-  ] as const)(
+  it.each([["desktopBrowser", "auto"]] as const)(
     "%s: pressed on and off again, either switch leaves %s behind",
     async (name: Case, left) => {
       await cases[name]();
@@ -262,8 +219,6 @@ describe("stream sound switch", () => {
         () => setSoundSetting(soundSetting() !== "on"),
       ]) {
         choose({ sourceAudioShare: "auto" });
-        // Where the app shares unasked, off comes first: "on" is a press too.
-        if (soundControl() === "on") flip();
         expect(soundControl()).toBe("off");
         flip();
         expect(stored()).toBe("on");
@@ -277,30 +232,7 @@ describe("stream sound switch", () => {
     },
   );
 
-  it("an app before v0.6 keeps no off that would hold back the updated app's sound", async () => {
-    await cases.linuxApp05();
-    pressSoundControl();
-    expect(menu()).toContain(SOURCE_AUDIO_CARRIES_CALL);
-    pressSoundControl();
-    expect(menu()).not.toContain(SOURCE_AUDIO_CARRIES_CALL);
-    expect(soundControl()).toBe("off");
-    // The update the warning asked for.
-    await cases.linuxApp06();
-    expect(soundControl()).toBe("on");
-    expect(soundSetting()).toBe("on");
-    // Switched off there, it stays off.
-    setSoundSetting(false);
-    expect(soundControl()).toBe("off");
-    await cases.linuxApp06();
-    expect(soundControl()).toBe("off");
-  });
-
-  it.each([
-    "phoneBrowser",
-    "insecureOrigin",
-    "windowsApp",
-    "screenWithoutSound",
-  ] as const)(
+  it.each(["phoneBrowser", "insecureOrigin"] as const)(
     "%s: no switch where a Live cannot carry sound",
     async (name: Case) => {
       await cases[name]();
@@ -310,20 +242,18 @@ describe("stream sound switch", () => {
         expect(soundControl()).toBeNull();
         expect(soundSetting()).toBeNull();
         expect(form()).not.toContain("Ton im Live");
-        expect(form()).not.toContain('id="source-audio-app"');
       }
       // Listening to someone else's stream sound is another matter.
       expect(form()).toContain('id="source-audio-volume"');
     },
   );
 
-  it("is absent until the desktop app has said what it can do", () => {
-    setNativeBridgeForTests({
-      invoke: () => new Promise(() => {}),
-      channel: async () => null,
-    } as unknown as NativeBridge);
-    expect(soundControl()).toBeNull();
-    expect(soundSetting()).toBeNull();
+  it("leaves the choice of sound to the browser's picker", async () => {
+    await cases.desktopBrowser();
+    expect(soundControlHint()).toBe(
+      "Wähle den Ton im Freigabedialog des Browsers aus.",
+    );
+    expect(form()).toContain("im Browserdialog aus");
   });
 
   it("follows Live gehen in the Live menu", async () => {
@@ -339,160 +269,10 @@ describe("stream sound switch", () => {
       menu().indexOf("<strong>"),
     );
   });
-
-  it("says whose sound it is where the app captures it without a picker", async () => {
-    const EVERY = "Ton aller Anwendungen außer Gelabber";
-    await cases.linuxApp06();
-    // Unasked, and before any share: every application's.
-    expect(soundControl()).toBe("on");
-    expect(soundControlHint()).toBe(EVERY);
-    choose({ sourceAudioShare: "off" });
-    expect(soundControlHint()).toBe(EVERY);
-    choose({ sourceAudioShare: "on", sourceAudioApp: "spotify" });
-    expect(soundControlHint()).toBe("Ton von „spotify“");
-    // The choice itself is in the settings.
-    expect(menu()).toContain("<strong>Anwendung für den Ton wählen …</strong>");
-
-    // An app that captures itself leaves nothing out.
-    choose({ sourceAudioApp: "", sourceAudioShare: "off" });
-    for (const name of ["linuxApp05", "linuxApp06CapturesItself"] as const) {
-      await cases[name]();
-      expect(soundControlHint()).toBe("Ton aller Anwendungen");
-    }
-
-    // A browser's own picker says what it hands over.
-    await cases.desktopBrowser();
-    expect(soundControlHint()).toBe(
-      "Wähle den Ton im Freigabedialog des Browsers aus.",
-    );
-    expect(menu()).not.toContain("Anwendung für den Ton wählen");
-  });
-
-  it("offers the application choice in the desktop app only", async () => {
-    await cases.desktopBrowser();
-    expect(form()).not.toContain('id="source-audio-app"');
-    expect(form()).toContain("im Browserdialog aus");
-    await cases.linuxApp06();
-    const html = form();
-    expect(html).toContain('id="source-audio-app"');
-    expect(html).toContain("Alle Anwendungen außer Gelabber");
-    expect(html).toContain("nie dein Mikrofon oder der Ton des Anrufs");
-    expect(html).toContain("auch während du live bist");
-    expect(html).not.toMatch(/Browser/);
-  });
-});
-
-describe("stream sound that also carries the call", () => {
-  const warned = () => ({
-    menu: menu().includes(SOURCE_AUDIO_CARRIES_CALL),
-    settings: form().includes(SOURCE_AUDIO_CARRIES_CALL),
-  });
-  const both = (value: boolean) => ({ menu: value, settings: value });
-
-  it.each(["linuxApp05", "linuxApp06CapturesItself"] as const)(
-    "%s: says so once every application is switched on",
-    async (name: Case) => {
-      await cases[name]();
-      expect(warned()).toEqual(both(false));
-      choose({ sourceAudioShare: "on" });
-      expect(warned()).toEqual(both(true));
-      // One short sentence: what happens, and what helps.
-      expect(SOURCE_AUDIO_CARRIES_CALL).toMatch(/Ton des Anrufs.*Update/);
-      expect(SOURCE_AUDIO_CARRIES_CALL).not.toMatch(/Browser/);
-      // A single application is not the call.
-      choose({ sourceAudioApp: "firefox" });
-      expect(warned()).toEqual(both(false));
-      choose({ sourceAudioApp: "", sourceAudioShare: "off" });
-      expect(warned()).toEqual(both(false));
-    },
-  );
-
-  it("is said in the call bar only while a share sends it", async () => {
-    await cases.linuxApp05();
-    choose({ sourceAudioShare: "on" });
-    expect(session()).not.toContain(SOURCE_AUDIO_CARRIES_CALL);
-    Object.assign(fixture.voice, {
-      sharing: true,
-      localScreen: { id: "capture" } as MediaStream,
-    });
-    expect(session()).not.toContain(SOURCE_AUDIO_CARRIES_CALL);
-    fixture.voice.sourceAudio = { s: "sharing" };
-    expect(session()).toContain(SOURCE_AUDIO_CARRIES_CALL);
-  });
-
-  it("promises a call-free share only to an app that leaves itself out", async () => {
-    for (const name of ["linuxApp05", "linuxApp06CapturesItself"] as const) {
-      await cases[name]();
-      expect(form()).not.toContain("Ton des Anrufs");
-      expect(form()).toContain("nie dein Mikrofon.");
-      // Nor does the application choice: every application is all of them.
-      expect(form()).toContain(">Alle Anwendungen</option>");
-      expect(form()).not.toContain("außer Gelabber");
-    }
-    await cases.linuxApp06();
-    expect(form()).toContain("nie dein Mikrofon oder der Ton des Anrufs");
-    expect(form()).toContain(">Alle Anwendungen außer Gelabber</option>");
-  });
-
-  it.each(["linuxApp06", "desktopBrowser"] as const)(
-    "%s: nothing to warn about",
-    async (name: Case) => {
-      await cases[name]();
-      choose({ sourceAudioShare: "on" });
-      expect(warned()).toEqual(both(false));
-    },
-  );
-
-  it("is no topic outside a call", async () => {
-    await cases.linuxApp05();
-    choose({ sourceAudioShare: "on" });
-    Object.assign(fixture.voice, { status: "idle" });
-    expect(session()).not.toContain(SOURCE_AUDIO_CARRIES_CALL);
-  });
 });
 
 describe("whose sound a running share sends", () => {
-  const EVERY = "Dein Stream sendet den Ton aller Anwendungen außer Gelabber.";
   const running = { id: "capture" } as MediaStream;
-
-  it("v0.6 app: every application's, said while the share runs with it", async () => {
-    await cases.linuxApp06();
-    // The switch is on unasked, but nothing is sent yet.
-    expect(session()).not.toContain("Dein Stream sendet");
-    Object.assign(fixture.voice, { sharing: true, localScreen: running });
-    expect(session()).not.toContain("Dein Stream sendet");
-    fixture.voice.sourceAudio = { s: "sharing" };
-    expect(session()).toContain(EVERY);
-    // Chosen or not: it is the same sound.
-    choose({ sourceAudioShare: "on" });
-    expect(session()).toContain(EVERY);
-    // Gone with the sound.
-    fixture.voice.sourceAudio = { s: "off" };
-    expect(session()).not.toContain("Dein Stream sendet");
-    fixture.voice.sourceAudio = { s: "unavailable" };
-    expect(session()).not.toContain("Dein Stream sendet");
-  });
-
-  it("names no scope for one chosen application", async () => {
-    await cases.linuxApp06();
-    choose({ sourceAudioApp: "spotify" });
-    Object.assign(fixture.voice, { sharing: true, localScreen: running });
-    fixture.voice.sourceAudio = { s: "sharing" };
-    expect(session()).not.toContain("Dein Stream sendet");
-  });
-
-  it.each(["linuxApp05", "linuxApp06CapturesItself"] as const)(
-    "%s: every application's, with the warning that the call is among them",
-    async (name: Case) => {
-      await cases[name]();
-      choose({ sourceAudioShare: "on" });
-      Object.assign(fixture.voice, { sharing: true, localScreen: running });
-      fixture.voice.sourceAudio = { s: "sharing" };
-      const html = session();
-      expect(html).toContain("Dein Stream sendet den Ton aller Anwendungen.");
-      expect(html).toContain(SOURCE_AUDIO_CARRIES_CALL);
-    },
-  );
 
   it("browser: its picker has said what it hands over", async () => {
     await cases.desktopBrowser();
@@ -510,68 +290,22 @@ describe("why a share has no sound", () => {
     const html = session();
     expect(html).toContain("Der Browser hat keinen Stream-Ton freigegeben.");
     expect(html.match(/voice-session-notice/g)).toHaveLength(1);
-    // Sound that is missing for a reason outranks a hint about scope.
     expect(
       dockNotices(
-        {
-          sourceAudio: { s: "ended" },
-          sourceAudioNote: { s: { silent: "spotify" } },
-          localScreen: null,
-        },
-        {
-          desktop: true,
-          appAudio: true,
-          sharesSound: true,
-          carriesCall: false,
-          sourceAudioApp: "spotify",
-        },
+        { sourceAudio: { s: "ended" }, localScreen: null },
+        { sharesSound: true },
       ).map((notice) => notice.text),
-    ).toEqual([
-      "Der Stream-Ton wurde beendet. Das Video läuft weiter.",
-      "Kein Ton von „spotify“.",
-    ]);
+    ).toEqual(["Der Stream-Ton wurde beendet. Das Video läuft weiter."]);
     // The call bar speaks of Live, never of a share.
     expect(
       dockNotices(
         {
           sourceAudio: { s: "off" },
-          sourceAudioNote: { s: null },
           localScreen: { id: "screen" } as MediaStream,
         },
-        {
-          desktop: false,
-          appAudio: true,
-          sharesSound: true,
-          carriesCall: false,
-          sourceAudioApp: "",
-        },
+        { sharesSound: true },
       ).map((notice) => notice.text),
     ).toEqual(["Stream-Ton ab dem nächsten Live."]);
-  });
-
-  it("gives the desktop app's own reason", async () => {
-    await cases.linuxApp06();
-    fixture.voice.sourceAudio = { s: "unavailable" };
-    fixture.voice.sourceAudioNote = {
-      s: { failed: "cannot connect to PipeWire" },
-    };
-    const html = session();
-    expect(html).toContain(
-      "Der Stream-Ton konnte nicht aufgenommen werden (cannot connect to PipeWire). Das Video läuft weiter.",
-    );
-    expect(html).not.toContain("Browser");
-  });
-
-  it("names the chosen application that plays nothing", async () => {
-    await cases.linuxApp06();
-    choose({ sourceAudioApp: "spotify" });
-    fixture.voice.sourceAudio = { s: "sharing" };
-    expect(session()).not.toContain("Kein Ton von");
-    fixture.voice.sourceAudioNote = { s: { silent: "spotify" } };
-    const html = session();
-    expect(html).toContain("Kein Ton von „spotify“.");
-    expect(html).not.toContain("Das Video läuft weiter");
-    expect(html).not.toContain("Dein Stream sendet");
   });
 
   it("browser: sound switched on during a Live comes with the next one", async () => {
@@ -591,16 +325,6 @@ describe("why a share has no sound", () => {
     fixture.voice.sourceAudio = { s: "off" };
     Object.assign(fixture.voice, { localScreen: null });
     expect(session()).not.toContain(note);
-  });
-
-  it("desktop app: nothing waits for the next Live", async () => {
-    await cases.linuxApp06();
-    Object.assign(fixture.voice, {
-      sharing: true,
-      localScreen: { id: "screen" } as MediaStream,
-    });
-    expect(session()).not.toContain("nächsten Live");
-    expect(form()).not.toContain("nächsten Live");
   });
 });
 
@@ -632,28 +356,5 @@ describe("the own Live's tile", () => {
     expect(tile(LIVE)).toBe("Ton wird mitgesendet");
     fixture.voice.sourceAudio = { s: "unavailable" };
     expect(tile(LIVE)).toBe("Kein Stream-Ton freigegeben · Video läuft weiter");
-  });
-
-  it("desktop app: blames no picker for sound the app could not capture", async () => {
-    await cases.linuxApp06();
-    Object.assign(fixture.voice, { sharing: true, localScreen: running });
-    fixture.voice.sourceAudio = { s: "unavailable" };
-    fixture.voice.sourceAudioNote = {
-      s: { failed: "cannot connect to PipeWire" },
-    };
-    expect(tile(LIVE)).toBe(
-      "Stream-Ton nicht aufgenommen · Video läuft weiter",
-    );
-    // The reason itself stands next to the controls.
-    expect(session()).toContain("(cannot connect to PipeWire)");
-  });
-
-  it("claims no sound while the chosen application is silent", async () => {
-    await cases.linuxApp06();
-    Object.assign(fixture.voice, { sharing: true, localScreen: running });
-    fixture.voice.sourceAudio = { s: "sharing" };
-    expect(tile(LIVE)).toBe("Ton wird mitgesendet");
-    fixture.voice.sourceAudioNote = { s: { silent: "spotify" } };
-    expect(tile(LIVE)).toBe("Kein Ton von „spotify“");
   });
 });

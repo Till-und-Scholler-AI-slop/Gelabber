@@ -278,11 +278,7 @@ pub fn strip(ui: &mut Ui, app: &mut AppCtx, server: Uuid, rect: Rect) {
     let c = theme.c;
     let painter = ui.painter().clone();
     painter.rect_filled(rect, 0.0, mix(c.bg, c.danger_bg, 0.09));
-    painter.rect_filled(
-        Rect::from_min_max(pos2(rect.left(), rect.bottom() - 1.0), rect.max),
-        0.0,
-        c.border,
-    );
+    crate::widgets::rule_h(&painter, c.border, rect.x_range(), rect.bottom() - 1.0);
     let badge_style = TextStyle::new(10.0, 700.0, 1.5).tracking(0.04);
     let mut y = rect.top() + 6.0;
     for entry in list {

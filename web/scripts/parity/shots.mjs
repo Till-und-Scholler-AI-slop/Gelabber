@@ -65,8 +65,9 @@ function stopCall(child) {
   });
 }
 
-// Scenes with `desktop`: the web client as the Tauri desktop app loads it
-// (isDesktopApp()), each command answered as the Tauri app's would here.
+// Scenes with `desktop`: the page inside the Tauri app, each command answered
+// as that app's would. The web client now renders its browser branches there
+// and asks only `media_info` (tauriApp.ts); the update banner asks `update_*`.
 const desktopToml = await readFile(join(repo, "desktop/Cargo.toml"), "utf8");
 const ffi = await readFile(join(repo, "desktop/core/src/ffi.rs"), "utf8");
 const DESKTOP = {

@@ -62,7 +62,7 @@ describe("app shell", () => {
   it("loads the entry point that starts worker and notification taps", () => {
     expect(html).toContain('<script type="module" src="/src/main.tsx">');
     const entry = read("src/main.tsx").toString("utf8");
-    // The whole call: the desktop app keeps out of the worker, taps reach
+    // The whole call: the Tauri app keeps out of the worker, taps reach
     // the signed-in account, and the router changes route without a reload.
     expect(entry).toContain(
       [
@@ -74,7 +74,7 @@ describe("app shell", () => {
       ].join("\n"),
     );
     expect(entry.match(/startPwa\(/g)).toHaveLength(1);
-    expect(entry).toMatch(/^const desktop = isDesktopApp\(\);$/m);
+    expect(entry).toMatch(/^const desktop = isTauriApp\(\);$/m);
   });
 });
 

@@ -3,9 +3,6 @@
 
 import type { TrackKind } from "../ws/protocol.ts";
 import { playCallSound } from "./callSounds.ts";
-import { isDesktopApp } from "./native/bridge.ts";
-import { loadNativeFeatures } from "./native/features.ts";
-import { isNativeTrack } from "./native/tracks.ts";
 import type { MediaConnection } from "./mediasoupConnection.ts";
 import { MediaError } from "./media.ts";
 import { noteDiagnosticEvent } from "./diagnostics.ts";
@@ -20,11 +17,7 @@ import {
   videoConstraintsFor,
 } from "./settings.ts";
 import { useVoice } from "./voiceStore.ts";
-import {
-  bindSourceAudio,
-  captureNativeSourceAudio,
-  setSourceAudio,
-} from "./localSourceAudio.ts";
+import { bindSourceAudio, setSourceAudio } from "./localSourceAudio.ts";
 import {
   applySendBitrate,
   captureEpoch,
@@ -148,31 +141,15 @@ async function captureVideo(kind: LocalVideo): Promise<MediaStream> {
       ? (voice.deps?.getUserMedia ?? defaultGetUserMedia)
       : (voice.deps?.getDisplayMedia ?? defaultGetDisplayMedia);
   if (kind !== "v") {
-    const desktop = isDesktopApp();
-    // The app's features decide the default. It answered while the page
-    // loaded; a browser must reach its picker within the click.
-    if (desktop) await loadNativeFeatures();
     // One browser picker supplies both tracks; profile fallback never reopens it.
-    const asked = !desktop && sharesSourceAudio();
+    const asked = sharesSourceAudio();
     const stream = await getMedia({
       audio: asked ? { ...SOURCE_AUDIO_CONSTRAINTS } : false,
       video: ladder[0] ?? true,
     });
     voice.pendingDisplayStreams.add(stream);
     if (!asked) stream.getAudioTracks().forEach((track) => track.stop());
-    // The desktop's picker gives no sound; the app captures it by itself,
-    // by the choice as it is now that the picker has closed.
-    const sound: { asked: boolean; failed?: string } = {
-      asked: desktop ? sharesSourceAudio() : asked,
-    };
-    voice.displaySound.set(stream, sound);
-    if (desktop && sound.asked) {
-      const captured = await captureNativeSourceAudio(stream);
-      if ("failed" in captured) sound.failed = captured.failed;
-      // Stopped while the sound was being captured: nothing may outlive it.
-      else if (!hasLiveTrack(stream, "video")) captured.track.stop();
-      else stream.addTrack(captured.track);
-    }
+    voice.displaySound.set(stream, { asked });
     const track = stream.getVideoTracks()[0];
     if (track?.applyConstraints) {
       for (let index = 0; index < ladder.length; index += 1) {
@@ -344,14 +321,6 @@ function bindEnded(stream: MediaStream, kind: LocalVideo): void {
   const onEnded = endedListener(kind);
   for (const track of stream.getVideoTracks()) {
     track.addEventListener("ended", onEnded);
-    // A native capture learns its size after the first frame; the ceilings
-    // were set from the profile's nominal size until then.
-    if (isNativeTrack(track))
-      track.addEventListener("settingschange", () => {
-        const connection = voice.seat.connection;
-        if (connection && track.readyState === "live")
-          void voice.videoBudget.enqueue(connection).catch(() => {});
-      });
   }
 }
 
@@ -370,29 +339,17 @@ export function captureOpen(kind: LocalVideo): boolean {
 }
 
 /** A camera that is missing, busy or broken: `NotFoundError` and
- * `NotReadableError` of getUserMedia, the latter also what the desktop app's
- * capture reports. A refused permission or a closed prompt is the user's
- * own answer and gets no message. */
+ * `NotReadableError` of getUserMedia. A refused permission or a closed
+ * prompt is the user's own answer and gets no message. */
 function cameraUnavailable(error: unknown): boolean {
   const name = (error as { name?: unknown } | null)?.name;
   return name === "NotFoundError" || name === "NotReadableError";
 }
 
-/** A display capture the user called off: a browser's picker and the
- * desktop's own both answer that with `NotAllowedError`. Everything else is
- * a capture that could not start. */
+/** A display capture the user called off: a browser's picker answers that
+ * with `NotAllowedError`. Everything else is a capture that could not start. */
 function displayCancelled(error: unknown): boolean {
   return (error as { name?: unknown } | null)?.name === "NotAllowedError";
-}
-
-/** What the user is told then. The desktop app's core refuses with its own
- * reason as a plain string ("screen capture needs a Wayland session with
- * PipeWire"); nothing else in the app would show it. */
-function displayFailure(error: unknown): Error {
-  const reason = typeof error === "string" ? error.trim() : "";
-  return new Error(
-    `Die Bildschirmaufnahme konnte nicht gestartet werden${reason ? ` (${reason})` : ""}.`,
-  );
 }
 
 export async function startLocalVideo(kind: LocalVideo): Promise<void> {
@@ -427,7 +384,9 @@ export async function startLocalVideo(kind: LocalVideo): Promise<void> {
             ? `${error.name}: ${error.message}`
             : String(error),
       });
-      voice.deps?.onError?.(displayFailure(error));
+      voice.deps?.onError?.(
+        new Error("Die Bildschirmaufnahme konnte nicht gestartet werden."),
+      );
     }
     if (kind === "v" && newest()) {
       useVoice.setState({ camera: false });
@@ -460,11 +419,7 @@ export async function startLocalVideo(kind: LocalVideo): Promise<void> {
       stream.getAudioTracks().forEach((track) => track.stop());
       setSourceAudio("off");
     } else if (hasLiveTrack(stream, "audio")) setSourceAudio("sharing");
-    else if (sound?.asked)
-      setSourceAudio(
-        "unavailable",
-        sound.failed ? { failed: sound.failed } : null,
-      );
+    else if (sound?.asked) setSourceAudio("unavailable");
     else setSourceAudio("off");
     for (const track of stream.getAudioTracks()) bindSourceAudio(stream, track);
   }

@@ -2,15 +2,8 @@
 // itself (`new Notification()` throws there), so with an active service worker
 // the notification goes through its registration and public/sw.js handles the
 // tap. Where no worker runs (vite dev, plain HTTP) the page shows it directly,
-// as it always did. The desktop app shows its own, the system's
-// (messages/desktopNotifications.ts); an older app leaves it to the page.
-// Either way this only works while the page is alive; delivery to a closed
-// app would need Web Push.
-import {
-  closeDesktopNotifications,
-  desktopNotifications,
-  showDesktopNotification,
-} from "../messages/desktopNotifications.ts";
+// as it always did. Either way this only works while the page is alive;
+// delivery to a closed app would need Web Push.
 import { isConversationPath } from "../messages/notify.ts";
 import { chronological } from "../messages/pages.ts";
 import { useInstallation } from "./install.ts";
@@ -154,9 +147,9 @@ async function announced(
  * conversation or another window has already shown this message. Apart from
  * that the caller has decided that it is wanted; permission is only ever
  * requested from a button, never from here.
- * `onClick` runs for a notification the page or the desktop app showed. A tap
- * on one the worker showed arrives through `followNotificationTaps`.
- * The result names who showed it: the worker, the page, the desktop `app`,
+ * `onClick` runs for a notification the page showed. A tap on one the
+ * worker showed arrives through `followNotificationTaps`.
+ * The result names who showed it: the worker, the page,
  * nobody because the conversation is `viewed` in a visible window, or nobody
  * for another reason.
  *
@@ -168,20 +161,7 @@ async function announced(
 export async function showMessageNotification(
   message: MessageNotification,
   onClick: () => void,
-): Promise<"worker" | "page" | "app" | "viewed" | "none"> {
-  if (await desktopNotifications()) {
-    const shown = await alone(message.user, async () => {
-      if (await onScreen(message.user, message.channelId)) return "viewed";
-      const notice = {
-        tag: tagOf(message.user, message.channelId),
-        title: message.title,
-        body: message.body,
-      };
-      return (await showDesktopNotification(notice, onClick)) ? "app" : "none";
-    }).catch(() => "none" as const);
-    // Refused by the app: the webview's notification below instead.
-    if (shown !== "none") return shown;
-  }
+): Promise<"worker" | "page" | "viewed" | "none"> {
   const api = (globalThis as { Notification?: NotificationApi }).Notification;
   if (!api || api.permission !== "granted") return "none";
   return alone(message.user, async () => {
@@ -250,7 +230,6 @@ export function closeMessageNotifications(of: {
     notification.close();
     shownByPage.delete(shown);
   }
-  void closeDesktopNotifications(tag, of.channelId === undefined);
   return alone(of.user, async () => {
     const registration: Registration | undefined = await activeServiceWorker();
     for (const shown of (await registration?.getNotifications()) ?? [])

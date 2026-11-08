@@ -2286,35 +2286,44 @@ impl Session {
             self.publish_participants();
         }
         if quality {
+            // Both transports, as the web's stats: the receive one connects only
+            // with a first consumer, so alone only the send one is measured.
+            let send = seat.send_tp.lock().clone();
             let recv = seat.recv.lock().clone();
-            if let Some(recv) = recv
-                && let Ok(stats) = recv.native.stats()
-            {
-                let rtt = logic::transport_rtt_ms(&stats);
-                let (lost, received) = logic::audio_packets(&stats);
-                let loss = {
-                    let mut st = self.st.lock();
-                    let (lost0, received0) = std::mem::replace(&mut st.packets, (lost, received));
-                    let dl = lost.saturating_sub(lost0);
-                    let dr = received.saturating_sub(received0);
-                    (dl + dr > 0).then(|| dl as f64 / (dl + dr) as f64)
-                };
-                let level = logic::quality_level(rtt, loss);
-                let mut connection = self.sample(&inner, seat, &stats);
-                // The bars' own loss counts both directions since the last round.
-                connection.loss = loss.or(connection.loss);
-                connection.rtt_ms = rtt.or(connection.rtt_ms);
-                inner.write(|s| {
-                    s.quality = level;
-                    s.connection = Some(connection);
-                });
+            let answers: Vec<Value> = [send, recv]
+                .into_iter()
+                .flatten()
+                .filter_map(|tp| tp.native.stats().ok())
+                .collect();
+            if answers.is_empty() {
+                return;
             }
+            let stats = logic::merge_stats(&answers);
+            let rtt = logic::transport_rtt_ms(&stats);
+            let (lost, received) = logic::audio_packets(&stats);
+            let loss = {
+                let mut st = self.st.lock();
+                let (lost0, received0) = std::mem::replace(&mut st.packets, (lost, received));
+                let dl = lost.saturating_sub(lost0);
+                let dr = received.saturating_sub(received0);
+                (dl + dr > 0).then(|| dl as f64 / (dl + dr) as f64)
+            };
+            let mut connection = self.sample(&inner, seat, &stats);
+            // The bars' own loss counts both directions since the last round.
+            connection.loss = loss.or(connection.loss);
+            connection.rtt_ms = rtt.or(connection.rtt_ms);
+            // The bars and their tooltip read the same figures (`callQuality`).
+            let level = logic::quality_level(connection.rtt_ms, connection.loss);
+            inner.write(|s| {
+                s.quality = level;
+                s.connection = Some(connection);
+            });
         }
     }
 
-    /// One diagnostics sample (`sampleConnection`): the receive transport's
-    /// pair, each producer's and consumer's flows.
-    fn sample(&self, inner: &Inner, seat: &Seat, recv_stats: &Value) -> crate::Connection {
+    /// One diagnostics sample (`sampleConnection`): the transports' pair,
+    /// each producer's and consumer's flows.
+    fn sample(&self, inner: &Inner, seat: &Seat, transport_stats: &Value) -> crate::Connection {
         use crate::diagnostics::{self, Sample};
         let at_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2372,7 +2381,7 @@ impl Session {
             } else {
                 "voice-only"
             },
-            transport: diagnostics::transport(recv_stats),
+            transport: diagnostics::transport(transport_stats),
             flows,
         };
         let connection = sample.connection();

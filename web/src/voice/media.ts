@@ -264,3 +264,17 @@ export function openMediaSocket(url: string): MediaSocket {
     },
   };
 }
+
+/** `new MediaStream(tracks)`; null where there is none (Node in tests). */
+export function createStream(
+  tracks: MediaStreamTrack[] = [],
+): MediaStream | null {
+  if (typeof MediaStream === "undefined") return null;
+  return new MediaStream(tracks);
+}
+
+/** `new Audio()`; null where there is none (Node in tests). */
+export function createAudioOutput(): HTMLAudioElement | null {
+  if (typeof Audio === "undefined") return null;
+  return new Audio();
+}

@@ -1,11 +1,9 @@
 // Who is speaking in the joined call, from audio levels the media stack
-// already keeps: RTP audio levels (RFC 6464) of received microphones in a
-// browser, the native core's playout and capture meters in the desktop app,
-// and an analyser on the own send track. Levels never leave this page.
+// already keeps: RTP audio levels (RFC 6464) of received microphones, and
+// an analyser on the own send track. Levels never leave this page.
 
 import { create } from "zustand";
 
-import { invokeNative, isDesktopApp } from "./native/bridge.ts";
 import type { MediaSender, ReceivedSource } from "./mediasoupConnection.ts";
 import { useVoice, voiceMicrophones } from "./session.ts";
 
@@ -20,16 +18,12 @@ export const SPEAKING_HOLD_MS = 400;
 /** A received level this old belongs to a source that went quiet (DTX). */
 const STALE_MS = 500;
 const POLL_MS = 120;
-/** Each received level costs the native core a stats walk. */
-const NATIVE_POLL_MS = 250;
 /** The decoder's level (no audio-level header extension) costs a stats
  * walk per received microphone; it is read at most this often. */
 const DECODER_LEVEL_MS = 360;
 /** Polls in a row without a send-track level before the analyser takes
  * over for that track. */
 const SENDER_MISSES = 3;
-/** The native meters: min(100, round(RMS * 350)), see capture_dsp.h. */
-const NATIVE_METER_SCALE = 350;
 
 type SpeakingState = {
   /** `serverId/channelId` of the call the levels belong to. */
@@ -120,23 +114,7 @@ function clocks() {
   return { epoch: performance.timeOrigin + page, page };
 }
 
-type NativeConsumerLevel = {
-  playoutLevel?: () => Promise<{ level: number; samples: number } | null>;
-};
-
-/** Samples each native consumer had played at the last poll. */
-const playedSamples = new WeakMap<object, number>();
-
 async function receivedLevel(source: ReceivedSource): Promise<number | null> {
-  const consumer = source.consumer as unknown as NativeConsumerLevel;
-  if (typeof consumer.playoutLevel === "function") {
-    const meter = await consumer.playoutLevel();
-    if (meter === null) return null;
-    // The meter keeps its last window while playout pulls no audio.
-    const moved = playedSamples.get(consumer) !== meter.samples;
-    playedSamples.set(consumer, meter.samples);
-    return moved ? meter.level / NATIVE_METER_SCALE : 0;
-  }
   return source.rtpReceiver ? receiverLevel(source.rtpReceiver) : null;
 }
 
@@ -251,22 +229,12 @@ export function watchSpeaking(): () => void {
   let call: string | null = null;
   const lastLoud = new Map<string, number>();
   const meter = new TrackMeter();
-  let nativeBlocks = -1;
   /** The send track the browser was last asked about, and how many polls
    * in a row it reported no level for it. */
   let senderTrack: MediaStreamTrack | null = null;
   let senderMisses = 0;
 
   async function selfLevel(sender: MediaSender | undefined, mine: number) {
-    if (isDesktopApp()) {
-      const levels = await invokeNative<{ processed: number; blocks: number }>(
-        "media_audio_levels",
-      );
-      // A capture that delivers no blocks keeps its last meter reading.
-      const moved = levels.blocks !== nativeBlocks;
-      nativeBlocks = levels.blocks;
-      return moved ? levels.processed / NATIVE_METER_SCALE : 0;
-    }
     const track = sender?.track;
     if (!track || track.readyState !== "live") return null;
     if (track !== senderTrack) {
@@ -361,7 +329,7 @@ export function watchSpeaking(): () => void {
   function sync() {
     const state = useVoice.getState();
     if (state.status === "joined") {
-      timer ??= setInterval(tick, isDesktopApp() ? NATIVE_POLL_MS : POLL_MS);
+      timer ??= setInterval(tick, POLL_MS);
       return;
     }
     if (timer !== null) clearInterval(timer);
@@ -369,7 +337,6 @@ export function watchSpeaking(): () => void {
     session++;
     call = null;
     lastLoud.clear();
-    nativeBlocks = -1;
     senderTrack = null;
     senderMisses = 0;
     meter.dispose();
