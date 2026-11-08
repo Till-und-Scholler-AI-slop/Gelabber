@@ -778,6 +778,24 @@ mod tests {
         );
     }
 
+    /// The author names a DM once; the place says what it is, and the
+    /// preview is plain text.
+    #[test]
+    fn a_direct_message_names_its_author_once() {
+        let fake = Arc::new(Fake::default());
+        let backend: Arc<dyn Backend> = fake.clone();
+        let mut notifier = Notifier::new(move |_| Some(backend), Arc::new(|| {}));
+        let (me, anna, dm) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let st = state(me);
+        let tap = notifier.tap(Arc::new(|| {}));
+        tap(&created(dm, dm, anna, "**Film** oder ||Spiel||?", &[]));
+        notifier.pass(&st, cx(false));
+        let shown = fake.shown.lock().clone();
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].title, "Anna · Direktnachricht");
+        assert_eq!(shown[0].body, "Film oder ▒▒▒?");
+    }
+
     #[test]
     fn notices_need_a_tag_and_long_texts_are_cut() {
         assert!(Notice::new(String::new(), "t".into(), "b".into()).is_none());

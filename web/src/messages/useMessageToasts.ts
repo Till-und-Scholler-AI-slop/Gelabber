@@ -79,7 +79,8 @@ function asCreated(delta: unknown): Message | null {
   };
 }
 
-function channelLabel(
+/** Where a toast says the message landed. */
+export function channelLabel(
   client: ReturnType<typeof useQueryClient>,
   userId: string,
   generation: number,
