@@ -551,11 +551,14 @@ Participant rows (directly under the channel, sorted by name `localeCompare(…,
 | Row (button) | flex, align center, gap 8, width 100%, height 28 (virtual row 28), padding 0 8 0 36, 13px muted, radius 7; hover bg hover; focus 2px focus outline inset; tooltip `Dein Profil` / `Profil und Lautstärke`; click/right-click → profile dialog |
 | Avatar | 20px, initials 9px 600; speaking ring+glow (§1.5) |
 | Name | flex 1, ellipsis; speaking → text colour |
+| Speaking | `.speaking-bars` only while speaking, between name and Live: 3 bars 3 wide, gap 2, 12 high, radius 1.5, `--lr-speaking`; each scales 35 % → 100 % over 0.9 s ease-in-out, alternate, offsets 0 / -0.3 / -0.6 s; reduced motion rests at 50 / 100 / 70 %. Hidden text `spricht` (title too) |
 | Live | `LiveIcon 13`, danger |
 | Locally muted | `SpeakerOffIcon 16` muted (others only) |
 | Mute state | `HeadsetOffIcon 13` if deafened else `MicOffIcon 13` if muted, danger; title `taub` / `stumm` |
 
 Speaking here = detector && not muted/deafened.
+
+Accessible name (the web's hidden texts in order; native accesskit label): `{name}`, then `spricht`, `Live`, `taub` or `stumm` as they apply, joined by `, ` (e.g. `Bob, spricht, Live`).
 
 ---
 

@@ -11,6 +11,7 @@ import { resetUserVolumesForTests } from "../voice/userVolume.ts";
 const fixture = vi.hoisted(() => ({
   badges: {} as Record<string, Badge>,
   drafts: [] as string[],
+  speaking: [] as string[],
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -32,6 +33,11 @@ vi.mock("../messages/useBadge.ts", () => ({
     fixture.badges[channelId ?? ""] ?? { count: 0, dot: false },
   useBadges: () => new Map(),
 }));
+vi.mock("../voice/speaking.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../voice/speaking.ts")>()),
+  useSpeaking: (_server: string, _channel: string, userId: string) =>
+    fixture.speaking.includes(userId),
+}));
 vi.mock("../messages/drafts.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../messages/drafts.ts")>()),
   useHasDraft: (_userId: string | null, channelId: string) =>
@@ -47,6 +53,7 @@ import {
 beforeEach(() => {
   fixture.badges = {};
   fixture.drafts = [];
+  fixture.speaking = [];
 });
 afterEach(() => resetUserVolumesForTests());
 
@@ -269,5 +276,33 @@ describe("sidebar voice participant", () => {
     expect(html).toContain("Bob");
     expect(html).toContain('<span class="sr-only">stumm</span>');
     expect(html).not.toContain("Lokal stummgeschaltet");
+  });
+
+  const speaker = (flags: Partial<typeof participant.flags>) => {
+    fixture.speaking = ["u-bob"];
+    return renderToStaticMarkup(
+      <ParticipantRowView
+        row={{ ...participant, flags: { ...participant.flags, ...flags } }}
+        serverId="srv"
+        onOpenProfile={() => {}}
+      />,
+    );
+  };
+
+  it("says speaking in shape and in words, not by the ring alone", () => {
+    const html = speaker({ muted: false });
+    expect(html).toContain('class="sidebar-participant is-speaking"');
+    expect(html).toMatch(
+      /<span class="speaking-bars" aria-hidden="true"><span><\/span><span><\/span><span><\/span><\/span><span class="sr-only">spricht<\/span>/,
+    );
+  });
+
+  it("says nobody speaks who is muted or deafened", () => {
+    for (const flags of [{ muted: true }, { muted: false, deafened: true }]) {
+      const html = speaker(flags);
+      expect(html).not.toContain("speaking-bars");
+      expect(html).not.toContain("spricht");
+      expect(html).not.toContain("is-speaking");
+    }
   });
 });

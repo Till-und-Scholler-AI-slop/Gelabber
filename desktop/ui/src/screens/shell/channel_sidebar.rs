@@ -755,22 +755,8 @@ fn person_row(
     let speaking = app.call.with_state(|call| {
         crate::screens::voice::session::speaking(call, user, occupant.muted, occupant.deafened)
     });
-    // The web row's hidden texts after the name.
     response.widget_info(|| {
-        let state = if occupant.deafened {
-            Some("taub")
-        } else if occupant.muted {
-            Some("stumm")
-        } else {
-            None
-        };
-        let parts = [
-            Some(name),
-            speaking.then_some("spricht"),
-            live.then_some("Live"),
-            state,
-        ];
-        let label = parts.into_iter().flatten().collect::<Vec<_>>().join(", ");
+        let label = participant_label(name, speaking, live, occupant.muted, occupant.deafened);
         egui::WidgetInfo::labeled(egui::Role::Button, true, label)
     });
     if speaking {
@@ -821,6 +807,34 @@ fn person_row(
         right - left,
     );
     paint_mid(&painter, &block, left, row.center().y);
+}
+
+/// A voice member row's accessible name: the web row's hidden texts after
+/// the name, in its order. Deafened wins over muted, as in the row's icon.
+fn participant_label(
+    name: &str,
+    speaking: bool,
+    live: bool,
+    muted: bool,
+    deafened: bool,
+) -> String {
+    let state = if deafened {
+        Some("taub")
+    } else if muted {
+        Some("stumm")
+    } else {
+        None
+    };
+    [
+        Some(name),
+        speaking.then_some("spricht"),
+        live.then_some("Live"),
+        state,
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(", ")
 }
 
 /// `.speaking-bars`: three 3px bars, 2px apart.
@@ -1198,4 +1212,32 @@ pub fn brand(ui: &Ui, rect: Rect) {
         rect.left()..=rect.right() - 1.0,
         rect.top() + 51.0,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::participant_label;
+
+    // The web row's hidden texts (ParticipantRowView): screen readers hear
+    // who speaks, not only a green ring.
+    #[test]
+    fn participant_names_say_the_voice_state() {
+        assert_eq!(participant_label("Bob", false, false, false, false), "Bob");
+        assert_eq!(
+            participant_label("Bob", true, false, false, false),
+            "Bob, spricht"
+        );
+        assert_eq!(
+            participant_label("Bob", true, true, false, false),
+            "Bob, spricht, Live"
+        );
+        assert_eq!(
+            participant_label("Bob", false, false, true, false),
+            "Bob, stumm"
+        );
+        assert_eq!(
+            participant_label("Bob", false, true, true, true),
+            "Bob, Live, taub"
+        );
+    }
 }
