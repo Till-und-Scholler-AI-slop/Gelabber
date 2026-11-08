@@ -32,7 +32,7 @@ export const SETTINGS_AREAS = [
     scope: "account",
     group: "konto",
     label: "Sicherheit",
-    description: "Passwort und angemeldete Geräte.",
+    description: "Passwort ändern und überall abmelden.",
   },
   {
     id: "darstellung",

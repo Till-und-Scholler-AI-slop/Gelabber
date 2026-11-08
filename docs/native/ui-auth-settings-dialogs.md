@@ -559,7 +559,7 @@ Area heading (margin-bottom 24): title row flex wrap gap 8/12: h2 label 600 **20
 |---|---|---|
 | Profil | Für dein Konto | Name und Profilbild. |
 | Profilkarte | Für dein Konto | So sehen dich andere. |
-| Sicherheit | Für dein Konto | Passwort und angemeldete Geräte. |
+| Sicherheit | Für dein Konto | Passwort ändern und überall abmelden. |
 | Darstellung | — (per group) | Farbschema, Textgröße und Bewegung. |
 | Themes | Für dein Konto | Farbpaletten und eigene Themes. |
 | Audio | Nur dieses Gerät | Mikrofon, Lautsprecher und Lautstärke. |
@@ -598,7 +598,7 @@ Leaving the area while dirty → confirm (§2.2).
 
 ### 6.4 Sicherheit (`ProfilePage.tsx:297-408`)
 
-Form: hint "Angemeldet als **{email}**" (email 600 text colour); PasswordField **"Aktuelles Passwort"**; PasswordField **"Neues Passwort"** (hint "Andere Geräte werden dabei abgemeldet."); FormError; primary **"Passwort ändern"** (pending "Ändern…") + InlineStatus "Geändert. Andere Geräte sind abgemeldet.". Danger section: h3 **"Überall abmelden"** (600 16px) + danger-outline **"Auf allen Geräten abmelden"** (confirm §2.2).
+Form: hint "Angemeldet als **{email}**" (email 600 text colour); PasswordField **"Aktuelles Passwort"**; PasswordField **"Neues Passwort"** (hint "Andere Geräte werden dabei abgemeldet."); FormError; primary **"Passwort ändern"** (pending "Ändern…") + InlineStatus "Geändert. Andere Geräte sind abgemeldet.". Danger section: h3 **"Überall abmelden"** (600 16px), hint "Beendet jede Anmeldung, auch auf diesem Gerät." (margin 4 0 12) + danger-outline **"Auf allen Geräten abmelden"** (confirm §2.2).
 
 ### 6.5 Darstellung (`pages/AppearanceSettings.tsx:16-154`, `settings.css:272-364`)
 

@@ -397,6 +397,9 @@ function AccountSecurity({ email }: { email: string }) {
         <h3 id="logout-everywhere-heading" className="settings-group-title">
           Überall abmelden
         </h3>
+        <p className="settings-hint">
+          Beendet jede Anmeldung, auch auf diesem Gerät.
+        </p>
         <div className="settings-actions">
           <Button variant="danger-outline" onClick={onLogoutEverywhere}>
             Auf allen Geräten abmelden

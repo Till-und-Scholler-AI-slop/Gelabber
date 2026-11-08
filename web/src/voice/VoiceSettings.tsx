@@ -74,6 +74,7 @@ export function MediaSettingsForm({
   const [microphoneTest, setMicrophoneTest] = useState(false);
   const { devices, loaded, reveal } = useMediaDevices();
   const [revealFailed, setRevealFailed] = useState(false);
+  const [cameraRevealFailed, setCameraRevealFailed] = useState(false);
   const chooseSpeaker = canChooseSpeaker();
   const capable = useCapabilities();
   const processingModes = AUDIO_PROCESSING;
@@ -329,14 +330,23 @@ export function MediaSettingsForm({
               onChange={(value) => settings.patch({ videoInputId: value })}
             />
             {loaded && needsDeviceLabels(devices.videoinput) && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="self-start"
-                onClick={() => void reveal("video")}
-              >
-                Kameranamen anzeigen
-              </Button>
+              <div className="media-settings-reveal">
+                <p className="text-xs text-lr-muted">
+                  {cameraRevealFailed
+                    ? "Der Browser gibt die Kameranamen ohne Kamerazugriff nicht heraus."
+                    : "Die Kameranamen zeigt der Browser erst, wenn du den Kamerazugriff erlaubst."}
+                </p>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    void reveal("video").then((ok) =>
+                      setCameraRevealFailed(!ok),
+                    )
+                  }
+                >
+                  Kameranamen anzeigen
+                </Button>
+              </div>
             )}
           </SettingRow>
           <SettingRow label="Qualität">

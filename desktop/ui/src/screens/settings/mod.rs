@@ -53,7 +53,7 @@ pub const AREAS: [Area; 9] = [
         id: "konto",
         group: "konto",
         label: "Sicherheit",
-        description: "Passwort und angemeldete Geräte.",
+        description: "Passwort ändern und überall abmelden.",
         scope: Some(Scope::Account),
     },
     Area {
