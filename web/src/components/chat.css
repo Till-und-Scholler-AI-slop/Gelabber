@@ -184,8 +184,10 @@
 .lr-button-secondary:hover:not(:disabled) {
   background: var(--lr-hover);
 }
+/* Disabled like .ui-button: a readable subtle label, not half opacity. */
 .lr-button-secondary:disabled {
-  opacity: 0.5;
+  color: var(--lr-subtle);
+  cursor: not-allowed;
 }
 
 .lr-jump-latest {
@@ -954,7 +956,9 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   color: var(--lr-accent-ink);
 }
 .lr-message-edit-actions > button:disabled {
-  opacity: 0.5;
+  background: var(--lr-surface);
+  color: var(--lr-subtle);
+  cursor: not-allowed;
 }
 .lr-field-error {
   color: var(--lr-danger);

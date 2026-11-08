@@ -83,8 +83,8 @@ pub enum SearchAction {
     Open(Uuid),
 }
 
-/// `.lr-button-secondary`: 13px, padding 5 12, the panel fill, half
-/// opacity while disabled.
+/// `.lr-button-secondary`: 13px, padding 5 12, the panel fill; disabled
+/// like the shared button, a readable subtle label.
 fn secondary(ui: &mut Ui, at: egui::Pos2, label: &str, enabled: bool, id: egui::Id) -> bool {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
@@ -101,7 +101,9 @@ fn secondary(ui: &mut Ui, at: egui::Pos2, label: &str, enabled: bool, id: egui::
         },
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
-    let alpha = if enabled { 1.0 } else { 0.5 };
+    if !enabled && response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed);
+    }
     let fill = if enabled && response.hovered() {
         c.hover
     } else {
@@ -110,14 +112,14 @@ fn secondary(ui: &mut Ui, at: egui::Pos2, label: &str, enabled: bool, id: egui::
     ui.painter().rect(
         rect,
         corner(theme.radius.md),
-        fill.gamma_multiply(alpha),
-        Stroke::new(1.0, c.border.gamma_multiply(alpha)),
+        fill,
+        Stroke::new(1.0, c.border),
         StrokeKind::Inside,
     );
     block.paint_tinted(
         ui.painter(),
         pos2(rect.left() + 13.0, rect.top() + 6.0),
-        (!enabled).then(|| c.text.gamma_multiply(alpha)),
+        (!enabled).then_some(c.subtle),
     );
     enabled && response.clicked()
 }
