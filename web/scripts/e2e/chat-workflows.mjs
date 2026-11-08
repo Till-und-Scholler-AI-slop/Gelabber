@@ -52,6 +52,11 @@ const channelState = async (who, id) =>
   (await api(who, "/messages/unread")).body.find(
     (row) => row.channel_id === id,
   );
+// A sidebar row whose accessible name says it is unread, dot or count.
+const unreadRow = (who, path) =>
+  who.page
+    .locator(`.channel-sidebar a[href="${path}"]`)
+    .and(who.page.getByRole("link", { name: /ungelesen/i }));
 const send = async (who, id, content) => {
   const r = await api(who, `/channels/${id}/messages`, "POST", { content });
   assert.equal(r.status, 201);
@@ -86,11 +91,9 @@ try {
       await send(owner, channel, `history ${i} searchneedle`);
     await send(member, channel, "own excluded");
     assert.equal((await channelState(member, channel)).unread_count, 36);
-    await member.page
-      .locator(
-        `.channel-sidebar a[href="${path}"] [aria-label="36 ungelesene Nachrichten"]`,
-      )
-      .waitFor();
+    // Plain messages in a server channel show a dot; the row's name says
+    // "ungelesen" either way (unreadLabel in notifyLevel.ts).
+    await unreadRow(member, path).waitFor();
   });
   await check(
     "read follows visible latest, preserves history and hidden unread",
@@ -271,12 +274,7 @@ try {
     await member.page.bringToFront();
     await member.page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await until(
-      () =>
-        member.page
-          .locator(
-            `.channel-sidebar a[href="${path}"] [aria-label*="ungelesene Nachrichten"]`,
-          )
-          .count(),
+      () => unreadRow(member, path).count(),
       (count) => count === 0,
       "badge-device-convergence",
       // The focus refresh waits until the previous snapshot is 10 s old.
