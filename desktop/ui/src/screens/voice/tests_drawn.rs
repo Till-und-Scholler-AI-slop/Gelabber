@@ -390,7 +390,7 @@ fn the_voice_dialog_opens_on_its_tab_and_moves_with_the_arrows() {
     assert!(selected(&h, "Diagnose"));
     h.key_press(egui::Key::ArrowLeft);
     h.run_steps(6);
-    assert!(selected(&h, "Video & Stream"));
+    assert!(selected(&h, "Video & Live"));
     h.get_by_label("Fertig").click();
     h.run_steps(6);
     assert!(!dialogs::open(&h.ctx));

@@ -285,10 +285,10 @@ try {
     .getByRole("button", { name: "Beitreten", exact: true })
     .click();
   await a.page
-    .getByRole("button", { name: "Voice-Einstellungen" })
+    .getByRole("button", { name: "Anrufeinstellungen" })
     .first()
     .click();
-  const settings = a.page.getByRole("dialog", { name: "Voice & Video" });
+  const settings = a.page.getByRole("dialog", { name: "Audio & Video" });
   await settings
     .locator("#camera-stream-profile-resolution")
     .selectOption("480");

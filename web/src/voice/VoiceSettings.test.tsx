@@ -105,7 +105,7 @@ describe("settings dialog", () => {
     expect(audio).not.toContain('id="video-input"');
     expect(audio).not.toContain("Sprachdiagnose");
     const video = tabs("video");
-    expect(video).toMatch(/aria-selected="true"[^>]*>Video &amp; Stream</);
+    expect(video).toMatch(/aria-selected="true"[^>]*>Video &amp; Live</);
     expect(video).toContain('id="video-input"');
     expect(video).toContain('id="economy-mode"');
     expect(video).not.toContain('id="audio-input"');

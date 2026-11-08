@@ -1353,7 +1353,7 @@
       "call": "Sofa jonas,mira:muted",
       "actions": [
         {
-          "click": "Voice-Einstellungen"
+          "click": "Anrufeinstellungen"
         },
         {
           "clicktext": "Alle Einstellungen …"
@@ -1368,13 +1368,13 @@
       "call": "Sofa jonas,mira:muted",
       "actions": [
         {
-          "click": "Voice-Einstellungen"
+          "click": "Anrufeinstellungen"
         },
         {
           "clicktext": "Alle Einstellungen …"
         },
         {
-          "clicktext": "Video & Stream"
+          "clicktext": "Video & Live"
         }
       ]
     },
@@ -1403,7 +1403,7 @@
       "desktop": true,
       "actions": [
         {
-          "click": "Voice-Einstellungen"
+          "click": "Anrufeinstellungen"
         },
         {
           "clicktext": "Alle Einstellungen …"

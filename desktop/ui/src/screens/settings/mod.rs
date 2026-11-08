@@ -81,7 +81,7 @@ pub const AREAS: [Area; 9] = [
         id: "video",
         group: "app",
         label: "Video",
-        description: "Kamera, Live gehen und Stream-Qualität.",
+        description: "Kamera, Live gehen und Bildqualität.",
         scope: Some(Scope::Device),
     },
     Area {

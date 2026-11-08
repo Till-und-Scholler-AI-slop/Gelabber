@@ -951,7 +951,7 @@ try {
   );
   stage = "device and DSP changes with four sources";
   await dock(owner)
-    .getByRole("button", { name: "Voice-Einstellungen", exact: true })
+    .getByRole("button", { name: "Anrufeinstellungen", exact: true })
     .click();
   const input = owner.page.locator("#audio-input");
   await input.waitFor();

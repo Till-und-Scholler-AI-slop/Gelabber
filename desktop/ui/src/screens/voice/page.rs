@@ -305,7 +305,7 @@ pub fn actions(ui: &mut Ui, app: &mut AppCtx, room: &Room, left: f32, top: f32) 
     let gear = mic.translate(Vec2::new(36.0 + 8.0, 0.0));
     let response = ui.put(
         gear,
-        IconButton::new(Icon::Gear, "Voice-Einstellungen")
+        IconButton::new(Icon::Gear, "Anrufeinstellungen")
             .secondary()
             .icon_size(17.0),
     );

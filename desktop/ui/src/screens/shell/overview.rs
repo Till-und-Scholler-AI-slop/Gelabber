@@ -695,7 +695,7 @@ fn voice_room(
     let gear = mic.translate(Vec2::new(36.0 + 8.0, 0.0));
     let response = ui.put(
         gear,
-        IconButton::new(Icon::Gear, "Voice-Einstellungen")
+        IconButton::new(Icon::Gear, "Anrufeinstellungen")
             .secondary()
             .icon_size(17.0),
     );

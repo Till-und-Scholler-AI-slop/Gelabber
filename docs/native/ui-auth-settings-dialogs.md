@@ -437,7 +437,7 @@ Voice card (the chosen room: current call → last visited → occupied → firs
 | participants | margin-top 12, flex wrap gap 12; each tile **168×136**, padding 12, border 1 border, radius 10, bg surface, column centred: avatar **56×56** (initials 20px on tint, else panel), name margin-top 8 600 13px/1.35, status line only for "Kamera an"/"Live" (12px muted). Speaking: border + 1px ring in online colour. Mute icons top-left 8/8 (muted); "…" button top-right 6/6 visible on hover. Connection dot and speaker icon hidden here. |
 | live/camera stage | above participants: spotlight full width + filmstrip (see voice spec) |
 | switch note | when in another room: 12px muted "Du verlässt dabei {Raum}." |
-| actions (not joined) | margin-top 16, flex wrap gap 8: primary lg (44px, min-width 180) `SpeakerIcon 20` + **"Beitreten"** / **"Hierher wechseln"**; or text **"Keine Berechtigung für Sprachkanäle."** (500 13px muted); then IconButton secondary 36 `MicIcon 18` "Mikrofon testen"; IconButton secondary 36 `GearIcon 17` "Voice-Einstellungen" |
+| actions (not joined) | margin-top 16, flex wrap gap 8: primary lg (44px, min-width 180) `SpeakerIcon 20` + **"Beitreten"** / **"Hierher wechseln"**; or text **"Keine Berechtigung für Sprachkanäle."** (500 13px muted); then IconButton secondary 36 `MicIcon 18` "Mikrofon testen"; IconButton secondary 36 `GearIcon 17` "Anrufeinstellungen" |
 
 "Ungelesen" list (only when ≥1 unread text channel; max 5; newest first) (`CommunityOverview.tsx:112-220`, `overview.css:160-245`):
 
@@ -563,7 +563,7 @@ Area heading (margin-bottom 24): title row flex wrap gap 8/12: h2 label 600 **20
 | Darstellung | — (per group) | Farbschema, Textgröße und Bewegung. |
 | Themes | Für dein Konto | Farbpaletten und eigene Themes. |
 | Audio | Nur dieses Gerät | Mikrofon, Lautsprecher und Lautstärke. |
-| Video | Nur dieses Gerät | Kamera, Live gehen und Stream-Qualität. |
+| Video | Nur dieses Gerät | Kamera, Live gehen und Bildqualität. |
 | Benachrichtigungen | — (per group) | Hinweise auf neue Nachrichten. |
 | App | — | Gelabber als App installieren. |
 
@@ -655,7 +655,7 @@ Video area content:
 - **Upload** [pill "ohne Limit" or bitrate]: "Sparmodus" SwitchLine ("Für wenig Upload: Sprache 64 kbit/s, Live-Ton 128 kbit/s, Video gemeinsam …"); "Video-Limit" two bordered radio pills (flex wrap gap 10; each min-height 36, padding 0 12, border 1 border, radius 7, 500 13px; checked border accent + bg selected) **"Ohne Limit"** (or "Sparmodus (2,5 Mbit/s)") and **"Eigenes Limit"**; custom: number input 8rem right-aligned + "Mbit/s für alle Videos zusammen"; hint "Die Desktop-App passt die tatsächliche Bitrate an die Verbindung an. Das Limit ist eine Obergrenze, keine feste Datenrate."
 - Footer line 12px subtle "Änderungen gelten beim nächsten Start und werden, soweit unterstützt, auch auf laufende Streams angewendet."
 
-In-call dialog variant (`components/VoiceSettingsDialog.tsx:12-90`, `quality.css:52-90`): Modal **"Voice & Video"** large (640), footer ghost **"Fertig"**; sticky tab row (gap 4, border-bottom, bg elevated, margin-bottom 20) with tabs **"Audio"**, **"Video & Stream"**, **"Diagnose"**: min-height 36, padding 0 12, 500 13px muted, 2px transparent bottom border; selected text colour, 600, accent bottom border; hover text.
+In-call dialog variant (`components/VoiceSettingsDialog.tsx:12-90`, `quality.css:52-90`): Modal **"Audio & Video"** large (640), footer ghost **"Fertig"**; sticky tab row (gap 4, border-bottom, bg elevated, margin-bottom 20) with tabs **"Audio"**, **"Video & Live"**, **"Diagnose"**: min-height 36, padding 0 12, 500 13px muted, 2px transparent bottom border; selected text colour, 600, accent bottom border; hover text.
 
 ### 6.8 Benachrichtigungen (`components/MessageAlertSettings.tsx`, `NotificationPrivacy.tsx`, `NotificationPermission.tsx`)
 
@@ -674,7 +674,7 @@ Sidebar = the server's channel sidebar (shell spec). Header h1 **"Servereinstell
 | Section | Content |
 |---|---|
 | Allgemein | icon row (flex centre gap 16): server tile **64×64**, radius 22 (`calc(lg×2.2)`), tint bg, initials 600 **20px**/1, ls .01em (`tileInitials`) or image (`index.css:523-537`, `settings.css:228-232`). It reuses the rail's `.server-tile` rules, so on **hover** the radius animates to 10px and a 4×16 muted pill appears 10px left of the tile (`index.css:474-541`); actions column gap 8 holds a `.settings-actions` row; sm "Bild hochladen" (pending "Lädt hoch…"), sm ghost "Entfernen" (pending "Entfernt…"), status "Gespeichert."; form: field **"Servername"** (max 100) + primary "Speichern" (pending "Speichert…", disabled unchanged) + status |
-| Rechte für Mitglieder | hint "Gilt für alle Mitglieder außer dem Inhaber. Änderungen wirken sofort." Switch rows (§6.1 row style) — Server verwalten / "Umbenennen, Rechte ändern, Einladungen, Kick und Ban."; Kanäle verwalten / "Kategorien und Kanäle anlegen, umbenennen, löschen."; Nachrichten löschen / "Fremde Nachrichten im Chat löschen."; @everyone und @here / "Alle Mitglieder auf einmal erwähnen und benachrichtigen."; Nachrichten schreiben / "In Textkanälen schreiben."; Dateien senden / "Anhänge hochladen."; Voice beitreten / "Sprachkanälen beitreten."; Live gehen / "Im Sprachkanal einen Bildschirm oder ein Fenster für alle dort zeigen." (`servers/permissions.ts:6-51`) |
+| Rechte für Mitglieder | hint "Gilt für alle Mitglieder außer dem Inhaber. Änderungen wirken sofort." Switch rows (§6.1 row style) — Server verwalten / "Umbenennen, Rechte ändern, Einladungen, Kick und Ban."; Kanäle verwalten / "Kategorien und Kanäle anlegen, umbenennen, löschen."; Nachrichten löschen / "Fremde Nachrichten im Chat löschen."; @everyone und @here / "Alle Mitglieder auf einmal erwähnen und benachrichtigen."; Nachrichten schreiben / "In Textkanälen schreiben."; Dateien senden / "Anhänge hochladen."; Sprachkanälen beitreten / "In Sprachkanälen reden, zuhören und die Kamera zeigen."; Live gehen / "Im Sprachkanal einen Bildschirm oder ein Fenster für alle dort zeigen." (`servers/permissions.ts:6-51`) |
 | Einladungen | hint "Alle aktiven Links. Jedes Mitglied kann Links erstellen."; secondary **"Neuen Link erstellen"** (opens §5.6); "Lade Einladungen…" / "Keine aktiven Einladungen."; row: code (monospace 13px) over hint "{uses}/{max or ∞} benutzt · läuft in 6 Tagen ab / läuft nie ab / abgelaufen" (`servers/inviteText.ts`), actions sm CopyButton **"Kopieren"** + sm danger-outline **"Widerrufen"**; copy failure "Kopieren ging nicht. Der Code ist {code}." |
 | Mitglieder ({n}) | rows: PresenceAvatar 32 + name + badge **"INHABER"** (accent) / **"MITGLIED"** (neutral) + member "…" menu (§9.2) |
 | Gesperrte Konten | hint "Gesperrte User können auch mit einem Einladungslink nicht wieder beitreten."; "Lade Sperren…" / "Niemand ist gesperrt."; rows: avatar (offline dot) + name + sm secondary **"Entsperren"** |

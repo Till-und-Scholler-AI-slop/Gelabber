@@ -51,7 +51,7 @@ export function QuickCallSettingsButton({
       <IconButton
         ref={anchor}
         variant={variant}
-        label="Voice-Einstellungen"
+        label="Anrufeinstellungen"
         aria-haspopup="dialog"
         aria-expanded={open}
         icon={<GearIcon size={17} />}
@@ -62,7 +62,7 @@ export function QuickCallSettingsButton({
         open={open}
         onClose={() => setOpen(false)}
         anchor={anchor}
-        label="Voice-Einstellungen"
+        label="Anrufeinstellungen"
         placement="top-end"
         className="voice-quick-settings"
       >

@@ -681,13 +681,13 @@ try {
       );
       await page.keyboard.press("Enter");
       const settings = dock.getByRole("button", {
-        name: "Voice-Einstellungen",
+        name: "Anrufeinstellungen",
         exact: true,
       });
       await tabTo(settings);
       await page.keyboard.press("Enter");
       const dialog = page.getByRole("dialog", {
-        name: "Voice & Video",
+        name: "Audio & Video",
         exact: true,
       });
       await dialog.waitFor();

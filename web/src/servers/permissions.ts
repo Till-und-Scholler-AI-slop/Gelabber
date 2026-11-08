@@ -40,8 +40,8 @@ export const PERMISSIONS: ReadonlyArray<{
   },
   {
     id: "join_voice",
-    label: "Voice beitreten",
-    hint: "Sprachkanälen beitreten.",
+    label: "Sprachkanälen beitreten",
+    hint: "In Sprachkanälen reden, zuhören und die Kamera zeigen.",
   },
   {
     id: "go_live",

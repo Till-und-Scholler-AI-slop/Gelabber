@@ -352,7 +352,7 @@ Actions row (`VoiceRoom.tsx:661-686`, `room.css:738-751`): flex wrap, gap 8, mar
 | Join | Button primary lg: min-height 44, padding 0 20, radius 5, bg accent, ink `#111111`, 600 14px, gap 8, `SpeakerIcon 20`, min-width 180; text `Beitreten` or (in another call) `Hierher wechseln`; hover `brightness(1.07)`, active scale .97 (`components/ui/ui.css:12-56`) |
 | Denied (no `join_voice`) | `Keine Berechtigung für Sprachkanäle.` 400 13px muted instead of the button |
 | Mic test | IconButton secondary md: 36x36, radius 5, border 1 border-strong, bg surface, text colour, `MicIcon 18`, tooltip `Mikrofon testen`; hover bg hover → opens MicrophoneTest modal |
-| Quick settings | `QuickCallSettingsButton variant=secondary` (same 36x36 secondary look, `GearIcon 17`, label `Voice-Einstellungen`) → popover §6.2 |
+| Quick settings | `QuickCallSettingsButton variant=secondary` (same 36x36 secondary look, `GearIcon 17`, label `Anrufeinstellungen`) → popover §6.2 |
 
 Join behaviour (`session.ts:1206-1279`): state flips to joined immediately (connection "connecting"), sends `{op:"sig",t:"j",s,c}` (+ `t:"m"`/`"d"` with `on:true` if carried over), then media starts in background. Switching calls sends `t:"l"` for the old one.
 
@@ -466,7 +466,7 @@ Base (`room.css:752-777, 1161-1179`): inline flex centred, gap 4, min-width 36, 
 | 3 | Camera (if capable or on) | `CameraOffIcon 17` | on: `CameraIcon 17`, is-on → bg selected, accent-text | `Kamera`; title `Kamera einschalten` / `Kamera ausschalten`. Desktop without camera: opacity .5, title+toast `Diese Desktop-App kann keine Kamera nutzen.` | `VoiceControls.tsx:231-250` |
 | 4 | Live | `LiveIcon 17` + text `Live` (+ `ChevronIcon 12` rotated 180°, opacity .75, when it is a menu) | live: bg danger-bg, white | `Live gehen`; title `Du bist live` / `Live gehen` (menu) or `Live beenden` / `Live gehen – sehen alle im Sprachkanal` (plain toggle). Unavailable: opacity .5, reason `Diese Desktop-App kann nicht live gehen.` / `In diesem Server darfst du nicht live gehen.` | `VoiceControls.tsx:258-339` |
 | 5 | Stream sound (while watching someone's Live) | `SpeakerIcon 17` / `SpeakerOffIcon 17` (is-off) | | `Lautstärke` → popover §6.3 | `QuickCallSettings.tsx:78-105` |
-| 6 | Settings | `GearIcon 17` | | `Voice-Einstellungen` → popover §6.2 | |
+| 6 | Settings | `GearIcon 17` | | `Anrufeinstellungen` → popover §6.2 | |
 | 7 | Leave | `HangUpIcon 18` + `Verlassen` (500 13px) | margin-left 4, padding 0 12, bg danger-bg, white; hover mix §1.1 | aria/title `Verlassen` | `VoiceSessionControls.tsx:468-481`; `room.css:1231-1240` |
 
 Live menu (`Live gehen`, role menu, placement top-end, width 320) (`VoiceControls.tsx:399-484`, `room.css:1308-1500`): entries 100% wide, flex, gap 10, min-height 36, padding 8 10, radius 5; icon 17 muted, margin-top 1; title 500 13px; hint 400 12px muted, margin-top 2; hover bg hover; disabled title+icon subtle; danger (Live beenden) title+icon danger. Keys ↑ ↓ Home End.
@@ -501,7 +501,7 @@ Toggle semantics (`session.ts:1312-1356`): mute toggles `muted = !(muted||deafen
 ### 6.1 Popover base (`components/ui/ui.css:636-666`)
 Fixed, z 60, min-width 180, max-width min(360, 100vw-16), max-height 100vh-16 (784 @800, 884 @900) with `overflow:auto`, padding 8, border 1 border, radius 10, bg elevated, text colour, shadow-1, 6 px from anchor, 8 px from window edges (`popoverPosition.ts:9-10`); flips above/below to fit. Enter 180ms `--lr-ease` (opacity 0→1, scale .96→1, origin at the anchor); exit 130ms exit ease.
 
-### 6.2 Quick settings `Voice-Einstellungen` (width 312, placement top-end) (`QuickCallSettings.tsx:149-284`, `room.css:1317-1413`)
+### 6.2 Quick settings `Anrufeinstellungen` (width 312, placement top-end) (`QuickCallSettings.tsx:149-284`, `room.css:1317-1413`)
 Column gap 14, padding 6 6 2. Fields (label 600 12px/1.4 muted, gap 6): `Mikrofon` select; (browser only, while joined and mic live) send-level meter 6px high, radius full, track `--lr-border`, fill `--lr-online-text`; `Lautsprecher` select (desktop always, `capabilities.ts:44-50`); `Kamera` select (if camera capable); volume `Gespräche`; volume `Live-Ton` (disabled when stream muted); ChipGroup (aria `Sprachübertragung`) `Sprachaktivierung` / `Push-to-Talk` in the default chip look (`ui.css:463-498`: flex wrap gap 8; chip min-height 32, padding 0 12, border 1 border-strong, radius full, transparent, text colour, 500 13px/1.35; hover bg hover; checked border accent + bg selected + 600; active scale .97); note `Keine Taste festgelegt. Das Mikrofon bleibt stumm.` if PTT without key (400 12px/1.4 muted, margin-top -6); ghost sm full-width button `Alle Einstellungen …` (left aligned, 32 high, padding 0 12, 500 13px, border-top 1 border, radius 0) → closes popover, opens dialog (`room.css:1322-1412`, `QuickCallSettings.tsx:149-284`).
 Volume row (`room.css:1373-1395`): grid `1fr auto`, align center, gap 6 (row) 8 (column): label, output `{pct} %` 400 12px/1.4 tabular (text colour), slider (§6.4) spans both columns. With a mute action (`Lautstärke` popover): grid `1fr auto auto`, the button 30x30, padding 0, margin-block -6, `voice-control-compact` look (transparent, muted, radius 7; is-off danger + 16% danger-bg), icon 16.
 
@@ -511,15 +511,15 @@ Volume row (`room.css:1373-1395`): grid `1fr auto`, align center, gap 6 (row) 8 
 `MAX_PLAYBACK_VOLUME = 4`, slider 0..200, half = 100:
 `position(v) = round(v<=1 ? v*100 : 100 + (v-1)/3*100)`; `volume(p) = round100(p<=100 ? p/100 : 1 + (p-100)/100*3)`; fill % = position/2. Range look (`index.css:2071-2121`): height 20, track 4px radius 2, filled accent, rest text@18%; thumb 14px accent with 3px accent@22% ring; disabled opacity .45.
 
-### 6.5 VoiceSettingsDialog `Voice & Video` (`components/VoiceSettingsDialog.tsx`, `components/Modal.tsx`, `ui.css:740-858`, `voice/quality.css`)
+### 6.5 VoiceSettingsDialog `Audio & Video` (`components/VoiceSettingsDialog.tsx`, `components/Modal.tsx`, `ui.css:740-858`, `voice/quality.css`)
 
 | Part | Spec |
 |---|---|
 | Modal | width calc(100%-32), max-width 640 (`large`), max-height 100vh-32 (768 @800, 868 @900), radius 14, border 1, bg elevated, shadow-2; backdrop `--lr-backdrop`; enter 240ms opacity+scale .97 |
-| Header | padding 20 64 12 24; h2 600 16/1.3 `Voice & Video`; close IconButton md 36 top 12 right 12 `CloseIcon 18` (`Schließen`) |
+| Header | padding 20 64 12 24; h2 600 16/1.3 `Audio & Video`; close IconButton md 36 top 12 right 12 `CloseIcon 18` (`Schließen`) |
 | Body | column, gap 20, padding 8 24 24, 400 14/1.5, scrolls |
 | Footer | border-top 1, padding 12 24 16, right aligned: ghost button `Fertig` |
-| Tabs | sticky top, flex gap 4, margin -8 0 20, padding-top 8, border-bottom 1, bg elevated. Tab: min-height 36, padding 0 12, 2px transparent bottom border (overlapping by 1), 500 13px muted; hover text; selected: accent bottom border, text, 600. Tabs `Audio`, `Video & Stream`, `Diagnose`; ←/→ move |
+| Tabs | sticky top, flex gap 4, margin -8 0 20, padding-top 8, border-bottom 1, bg elevated. Tab: min-height 36, padding 0 12, 2px transparent bottom border (overlapping by 1), 500 13px muted; hover text; selected: accent bottom border, text, 600. Tabs `Audio`, `Video & Live`, `Diagnose`; ←/→ move |
 | Group head | flex baseline, space-between, padding-top 6; h3 600 12px subtle; optional badge padding 2 8, radius 5, bg selected, accent-text 12px |
 | Row | grid `136px | 1fr`, column gap 16, row gap 6, padding 12 0, border-bottom 1 (none on last); label padding-top 8, 500 13px text; stacks when the form is ≤480 wide (not at 592) |
 | Hints | 400 12px/1.4 muted |

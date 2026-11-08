@@ -65,8 +65,8 @@ const PERMISSIONS: [(Permission, &str, &str); 8] = [
     ),
     (
         Permission::JoinVoice,
-        "Voice beitreten",
-        "Sprachkanälen beitreten.",
+        "Sprachkanälen beitreten",
+        "In Sprachkanälen reden, zuhören und die Kamera zeigen.",
     ),
     (
         Permission::GoLive,

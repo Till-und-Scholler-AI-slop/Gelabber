@@ -50,7 +50,7 @@ fn dialog_id() -> Id {
     Id::unique("gelabber-media-form-in-dialog")
 }
 
-/// The forms inside the Voice & Video dialog: fields on the page colour,
+/// The forms inside the Audio & Video dialog: fields on the page colour,
 /// buttons and chips without the settings page's accent text.
 pub fn set_in_dialog(ctx: &egui::Context, on: bool) {
     ctx.data_mut(|d| d.insert_temp(dialog_id(), on));

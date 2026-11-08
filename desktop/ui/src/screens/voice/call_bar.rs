@@ -234,8 +234,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         None,
         false,
         Tone::Plain,
-        "Voice-Einstellungen",
-        "Voice-Einstellungen",
+        "Anrufeinstellungen",
+        "Anrufeinstellungen",
     );
     let gear_rect = gear.rect;
     quick::button(ui, app, gear, gear_rect);

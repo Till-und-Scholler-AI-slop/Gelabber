@@ -11,7 +11,7 @@ import { SkeletonRows } from "./ui/Skeleton.tsx";
 
 const TABS: readonly { id: MediaDialogSection; label: string }[] = [
   { id: "audio", label: "Audio" },
-  { id: "video", label: "Video & Stream" },
+  { id: "video", label: "Video & Live" },
   { id: "diagnostics", label: "Diagnose" },
 ];
 
@@ -23,7 +23,7 @@ export function VoiceSettingsDialog() {
     <Modal
       open={open}
       onClose={close}
-      title="Voice & Video"
+      title="Audio & Video"
       large
       footer={<GhostButton onClick={close}>Fertig</GhostButton>}
     >
