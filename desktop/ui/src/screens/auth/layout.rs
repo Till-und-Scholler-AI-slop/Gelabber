@@ -27,13 +27,20 @@ const BRAND: TextStyle = TextStyle::new(20.0, 700.0, 1.2).tracking(-0.02);
 /// The page: artwork, brand and a card whose content `card` lays out in a
 /// 318px column (the card's padding is 32px, its border 1px).
 pub fn frame(ui: &mut Ui, app: &mut AppCtx, id: &str, card: impl FnOnce(&mut Ui, &mut AppCtx)) {
-    let artwork = match app.images.get(ui.ctx(), ARTWORK) {
-        ImageState::Ready(texture) => Some(texture),
+    // Loaded only where it shows.
+    let artwork = match wide(ui.ctx()).then(|| app.images.get(ui.ctx(), ARTWORK)) {
+        Some(ImageState::Ready(texture)) => Some(texture),
         _ => None,
     };
     if page(ui, id, artwork.as_ref(), true, |ui| card(ui, app)) {
         app.nav.navigate("/");
     }
+}
+
+/// Whether the window is wide enough for the artwork (auth.css `@media
+/// (min-width: 800px)`).
+pub fn wide(ctx: &egui::Context) -> bool {
+    ctx.content_rect().width() >= 800.0
 }
 
 /// The app's own copy of the artwork (a JPEG of public/images/living-room)
@@ -58,7 +65,7 @@ pub fn page(
     let theme = Theme::of(&ctx);
     let c = theme.c;
     let screen = ctx.content_rect();
-    if screen.width() >= 800.0 {
+    if wide(&ctx) {
         backdrop(ui, artwork, screen);
     }
 

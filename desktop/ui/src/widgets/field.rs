@@ -269,6 +269,9 @@ impl<'a> TextField<'a> {
             .map(|e| (e, c.danger))
             .or(self.hint.map(|h| (h, c.muted)));
         if let Some((note, color)) = note {
+            // The field's description, as aria-describedby on the web.
+            ui.ctx()
+                .accesskit_node_builder(response.id, |node| node.set_description(note));
             y += space::S1_5;
             let block = Block::wrapped(ui, note, text::META, color, width);
             block.paint(ui.painter(), pos2(top.x, y));

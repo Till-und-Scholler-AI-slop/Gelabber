@@ -70,12 +70,13 @@ impl Failure {
 }
 
 const REFUSED: &str = "Server antwortet nicht – stimmen Adresse und Port?";
-const TIMED_OUT: &str = "Keine Antwort vom Server – ist er an, und stimmt die Adresse?";
+const TIMED_OUT: &str = "Keine Antwort vom Server – läuft er und stimmt die Adresse?";
 const OFFLINE: &str = "Kein Netzwerk – ist dein Computer online?";
 const HOST_UNREACHABLE: &str =
     "Der Server ist von hier aus nicht erreichbar – bist du im richtigen Netz?";
 const UNREACHABLE: &str = "Der Server ist nicht erreichbar.";
 const NOT_GELABBER: &str = "Unter dieser Adresse läuft kein Gelabber-Server.";
+const SERVER_TROUBLE: &str = "Der Server hat gerade ein Problem – versuch es gleich noch einmal.";
 const TLS: &str = "Keine sichere Verbindung zum Server möglich.";
 const TLS_CERTIFICATE: &str =
     "Keine sichere Verbindung zum Server möglich – sein Zertifikat wird nicht anerkannt.";
@@ -394,27 +395,25 @@ fn check_gelabber(origin: &str) -> Result<String, Failure> {
             .map_err(|e| request_failure(&e))?;
         let status = response.status();
         let landed = response.url().origin().ascii_serialization();
+        let detail = Some(format!("HTTP {status}"));
         if status.is_server_error() {
-            return Err(Failure::new(
-                format!(
-                    "Der Server hat gerade ein Problem (HTTP {}) – versuch es gleich noch einmal.",
-                    status.as_u16()
-                ),
-                None,
-            ));
-        }
-        // Too many tries: that is Gelabber's rate limit answering.
-        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Ok(landed);
+            return Err(Failure::new(SERVER_TROUBLE, detail));
         }
         let body = response.bytes().await.map_err(|e| request_failure(&e))?;
-        let gelabber = status.is_success()
-            && serde_json::from_slice::<serde_json::Value>(&body)
-                .is_ok_and(|v| v.get("enabled").is_some_and(serde_json::Value::is_boolean));
-        if gelabber {
+        let json = serde_json::from_slice::<serde_json::Value>(&body).unwrap_or_default();
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            // Gelabber's rate limit answers in its own error shape; another
+            // 429 (a proxy in front of it) is trouble for now, not proof.
+            return if json["error"] == "rate_limited" {
+                Ok(landed)
+            } else {
+                Err(Failure::new(SERVER_TROUBLE, detail))
+            };
+        }
+        if status.is_success() && json["enabled"].is_boolean() {
             Ok(landed)
         } else {
-            Err(Failure::new(NOT_GELABBER, Some(format!("HTTP {status}"))))
+            Err(Failure::new(NOT_GELABBER, detail))
         }
     })
 }
@@ -422,26 +421,38 @@ fn check_gelabber(origin: &str) -> Result<String, Failure> {
 /// A request that got no answer: a certificate or TLS failure, no answer
 /// in time, a refused connection, or something that does not speak HTTP.
 fn request_failure(error: &reqwest::Error) -> Failure {
-    let mut chain = Vec::new();
-    let mut source: Option<&dyn std::error::Error> = Some(error);
+    // Its causes only: reqwest's own line names the URL, whose host may
+    // well contain "ssl" or "tls".
+    let mut causes = Vec::new();
+    let mut source = std::error::Error::source(error);
     while let Some(e) = source {
-        chain.push(e.to_string());
+        causes.push(e.to_string());
         source = e.source();
     }
-    let detail = chain.last().cloned().unwrap_or_else(|| error.to_string());
-    let lower = chain.join(" ").to_lowercase();
+    classify(
+        &causes,
+        error.to_string(),
+        error.is_timeout(),
+        error.is_connect(),
+    )
+}
+
+/// [`request_failure`] by the error's causes (outermost first) and kind;
+/// `fallback` is the detail when there are no causes.
+fn classify(causes: &[String], fallback: String, timeout: bool, connect: bool) -> Failure {
+    let lower = causes.join(" ").to_lowercase();
     let message = if lower.contains("certificate") {
         TLS_CERTIFICATE
     } else if lower.contains("tls") || lower.contains("handshake") || lower.contains("ssl") {
         TLS
-    } else if error.is_timeout() {
+    } else if timeout {
         TIMED_OUT
-    } else if error.is_connect() {
+    } else if connect {
         REFUSED
     } else {
         NOT_GELABBER
     };
-    Failure::new(message, Some(detail))
+    Failure::new(message, Some(causes.last().cloned().unwrap_or(fallback)))
 }
 
 impl eframe::App for Launcher {
@@ -520,7 +531,9 @@ enum Action {
 /// default one on the first start, the account's when switching servers).
 fn setup_page(ui: &mut Ui, setup: &mut Setup, checking: bool) -> Option<Action> {
     let ctx = ui.ctx().clone();
-    let artwork = layout::bundled_artwork(&ctx);
+    let artwork = layout::wide(&ctx)
+        .then(|| layout::bundled_artwork(&ctx))
+        .flatten();
     let mut action = None;
     layout::page(ui, "setup", artwork.as_ref(), false, |ui| {
         let theme = Theme::of(ui.ctx());
@@ -644,7 +657,10 @@ fn updates_section(ui: &mut Ui, view: &SetupView) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Launcher, NO_ADDRESS, NOT_GELABBER, REFUSED, host_of, server_origin};
+    use super::{
+        Failure, Launcher, NO_ADDRESS, NOT_GELABBER, REFUSED, SERVER_TROUBLE, TIMED_OUT, TLS,
+        TLS_CERTIFICATE, check_gelabber, classify, host_of, request_failure, server_origin,
+    };
     use crate::app::testkit::{FakeApi, Reply, launcher, wait_for, wait_for_label};
     use crate::platform::paths::testing::TempConfig;
     use egui::accesskit::Role;
@@ -836,6 +852,99 @@ mod tests {
         harness.get_by_label("Update wird geladen … 40 %");
         let busy = harness.get_by_role_and_label(Role::Button, "Wird installiert…");
         assert!(busy.accesskit_node().is_disabled());
+    }
+
+    /// What the server answers decides: Gelabber's mail status or its rate
+    /// limit pass; a server error or a foreign 429 is trouble for now, with
+    /// the status in the details only.
+    #[test]
+    fn the_answer_tells_gelabber_from_trouble() {
+        let api = FakeApi::start(true, |method, path, _| {
+            if method != "GET" {
+                return None;
+            }
+            match path {
+                "/auth/mail" => None,
+                "/limited/api/auth/mail" => Some(Reply::error(429, "rate_limited")),
+                "/proxy/api/auth/mail" => Some(Reply::status(429, serde_json::json!("slow"))),
+                "/broken/api/auth/mail" => Some(Reply::error(502, "upstream")),
+                _ => Some(Reply::error(404, "not_found")),
+            }
+        });
+        let origin = api.origin.clone();
+        assert_eq!(check_gelabber(&origin), Ok(origin.clone()));
+        // Under a path, so one fake server answers each way.
+        let at = |prefix: &str| check_gelabber(&format!("{origin}/{prefix}"));
+        assert_eq!(at("limited"), Ok(origin.clone()));
+        let trouble = |status: &str| Err(Failure::new(SERVER_TROUBLE, Some(status.into())));
+        assert_eq!(at("proxy"), trouble("HTTP 429 Too Many Requests"));
+        assert_eq!(at("broken"), trouble("HTTP 502 Bad Gateway"));
+    }
+
+    /// TLS words count in the causes only, not in the URL reqwest names.
+    #[test]
+    fn request_errors_read_as_words() {
+        let causes = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let tls = classify(
+            &causes(&[
+                "client error (Connect)",
+                "invalid peer certificate: UnknownIssuer",
+            ]),
+            String::new(),
+            false,
+            true,
+        );
+        assert_eq!(tls.message, TLS_CERTIFICATE);
+        assert_eq!(
+            tls.detail.as_deref(),
+            Some("invalid peer certificate: UnknownIssuer")
+        );
+        let handshake = classify(
+            &causes(&[
+                "client error (Connect)",
+                "received fatal alert: HandshakeFailure",
+            ]),
+            String::new(),
+            false,
+            true,
+        );
+        assert_eq!(handshake.message, TLS);
+        let slow = classify(
+            &causes(&["operation timed out"]),
+            String::new(),
+            true,
+            false,
+        );
+        assert_eq!(slow.message, TIMED_OUT);
+        let refused = classify(
+            &causes(&["tcp connect error", "Connection refused (os error 111)"]),
+            String::new(),
+            false,
+            true,
+        );
+        assert_eq!(refused.message, REFUSED);
+        assert_eq!(
+            classify(&[], "error decoding response".into(), false, false),
+            Failure::new(NOT_GELABBER, Some("error decoding response".into()))
+        );
+
+        // A real refused request at a URL full of TLS words.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let error = runtime
+            .block_on(reqwest::get(format!(
+                "http://127.0.0.1:{port}/ssl/tls/handshake"
+            )))
+            .unwrap_err();
+        assert!(error.to_string().contains("ssl/tls"), "{error}");
+        assert_eq!(request_failure(&error).message, REFUSED);
     }
 
     #[test]
