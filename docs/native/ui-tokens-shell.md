@@ -68,9 +68,9 @@ presets the port must re-implement `derivedColors` + `themeVariables` 1:1.
 | `--lr-danger` | ensureContrast(#f39b98 / #a12b29) | `#f39b98` | `#a12b29` |
 | `--lr-danger-bg` | fixed | `#8f302d` | `#b33b38` |
 | `--lr-on-danger` | fixed | `#ffffff` | `#ffffff` |
-| `--lr-live` | ensureContrast(#ff7b5c / #df5a3b, [bg,panel,surface], 3) unless its ink drops under 4.5 | `#ff7b5c` | `#df5a3b` |
+| `--lr-live` | liveApartFrom(#ff7b5c / #db5b24, accent): turned 22° past an accent within 15° of its hue (Ristretto: `#ff5c74`); then ensureContrast(…, [bg,panel,surface], 3) unless its ink drops under 4.5 | `#ff7b5c` | `#db5b24` |
 | `--lr-on-live` | readableInk(live) | `#111111` | `#111111` |
-| `--lr-live-text` | ensureContrast(live,[bg,panel,surface]) | `#ff7b5c` | `#ae4831` |
+| `--lr-live-text` | ensureContrast(live,[bg,panel,surface]) | `#ff7b5c` | `#ad4a20` |
 | `--lr-backdrop` | fixed | `rgba(9,12,13,0.72)` | `rgba(37,40,41,0.45)` |
 | `--lr-speaking` | `var(--lr-online)` (`index.css:95`) | `#85d69b` | `#287a45` |
 
@@ -113,8 +113,9 @@ values above; ignore them.
 | Header search placeholder (`components/chat.css:78-80`) | subtle 80% + panel | `#74797c` | `#868889` |
 | Header search border on hover / with text (`chat.css:81-86`) | border 82% + text 18% | `#4f5354` | `#bbb7af` |
 | Header search border focused (`chat.css:91-93`) | accent 70% + border | `#b78f48` | `#e4b464` |
-| Header Live pill bg (`chat.css:2020`) | danger-bg 10% + bg | `#231b1c` | `#f1e2de` |
-| Header Live pill border (`chat.css:2017-2018`) | danger-bg 45% + border | `#593030` | `#ca9089` |
+| Header Live pill bg (`chat.css:2020`) | live 10% + bg | `#2e2321` | `#f5e6dc` |
+| Header Live pill border (`chat.css:2017-2018`) | live 45% + border | `#8b5245` | `#dc9f80` |
+| Live hint strip bg (`.lr-live-hint`) | live 9% + bg | `#2c2220` | `#f5e7de` |
 | Call-bar control "off" bg on panel (`voice/room.css:1189-1191`) | danger-bg 16% over panel | `#2f2323` | `#ead3cd` |
 | Call-bar Verlassen hover (`room.css:1238-1240`) | danger-bg + 12% black | `#7e2a28` | `#9e3431` |
 | Speaking glow (`index.css:1270-1272`) | speaking @30% / @45% alpha | `rgba(133,214,155,.30)` / `.45` | `rgba(40,122,69,.30)` / `.45` |
@@ -525,7 +526,7 @@ radius 7) › `a.channel-row-link` (flex 1, padding 0 10px, gap 10px, full heigh
 | Avatar | 20×20 circle, initials 600 9px (5.x), on `personTint` tile; image cover |
 | Name | flex 1, ellipsis; speaking → `--lr-text` |
 | Speaking avatar | ring `0 0 0 2px --lr-speaking` + glow (`0 0 0 4px speaking@30%`, `0 0 8px 4px speaking@45%`) pulsing opacity .45↔1 over 1.2s ease-in-out (`index.css:1258-1288`). Only when not muted/deafened |
-| Live | `LiveIcon` 13px, `--lr-danger`, title "Live" |
+| Live | `LiveIcon` 13px, `--lr-live-text`, title "Live" |
 | Locally muted (not self) | `SpeakerOffIcon` 16px, `--lr-muted`, title "Lokal stummgeschaltet" (`UserVolumeControl.tsx:98-105`, `index.css:2213-2217`) |
 | Muted / deafened | `MicOffIcon` 13px or `HeadsetOffIcon` 13px (deafened wins), `--lr-danger`, title "stumm" / "taub" |
 | Unknown member name | "Jemand" |
@@ -788,7 +789,7 @@ The file has 49 icons (`Icons.tsx:21-460`); the rest belong to other areas.
 | Home sidebar | Gelabber; Keine Server. Erstelle einen über + in der Serverleiste oder öffne einen Einladungslink. |
 | Placeholder | Navigation wird geladen, Erneut versuchen, Wird geladen…, Die Kanäle konnten nicht geladen werden., Die Unterhaltungen konnten nicht geladen werden. |
 | DM sidebar | Nachrichten, Neue Nachricht, Noch keine Unterhaltungen., Unterhaltungen |
-| Header | Suchen, In dieser Unterhaltung suchen, Wörter oder eine Phrase in Anführungszeichen, Strg F, Benachrichtigungen, Stummgeschaltet, `Benachrichtigungen für <x>`, `… (stumm)`, Mitgliederliste, Mitgliederliste einblenden, Mitgliederliste ausblenden, Live, Beitreten, Zum Kanal |
+| Header | Suchen, In dieser Unterhaltung suchen, Wörter oder eine Phrase in Anführungszeichen, Strg F, Benachrichtigungen, Stummgeschaltet, `Benachrichtigungen für <x>`, `… (stumm)`, Mitgliederliste, Mitgliederliste einblenden, Mitgliederliste ausblenden, Live, Zuschauen, Zum Kanal |
 | Member panel | Mitglieder, Online, Abwesend, Offline, ` — ` (em dash between label and count), ` · Du`, `Profil von <Name>`, Live, `Live in <channel>`, einem Sprachkanal, Im Sprachkanal, `In <ch>`, `Stumm in <ch>`, `Taub in <ch>`, Stumm, Taub |
 | User panel | Online, Abwesend, Offline, `<presence> · <status>`, Einstellungen, Benutzermenü, Benutzerkonto, Profil bearbeiten, Server wechseln …, Abmelden, Dein Status, Status, Speichern, Speichert…, Gespeichert., Nicht gespeichert – erneut versuchen |
 

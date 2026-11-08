@@ -36,7 +36,7 @@ Conventions for implementers:
 | `--lr-warning` | `#d8a657` | `#a27e44` | |
 | `--lr-danger` | `#f39b98` | `#a12b29` | |
 | `--lr-danger-bg` | `#8f302d` | `#b33b38` | leave button |
-| `--lr-live` / `--lr-on-live` | `#ff7b5c` / `#111111` | `#df5a3b` / `#111111` | Live badge, Live button |
+| `--lr-live` / `--lr-on-live` | `#ff7b5c` / `#111111` | `#db5b24` / `#111111` | Live badge, Live button |
 | `--lr-on-danger` | `#ffffff` | `#ffffff` | |
 | `--lr-backdrop` | `rgba(9,12,13,0.72)` | `rgba(37,40,41,0.45)` | modal backdrop |
 | `--lr-tile-1..8` (avatar tints) | `#634336 #635636 #4e6336 #366349 #365d63 #364963 #433663 #633653` | `#ead2c8 #eae0c8 #daeac8 #c8ead6 #c8e5ea #c8d6ea #d2c8ea #eac8dd` | picked by `personTint(name)` (`components/initials.ts:43-53`, FNV-1a 32-bit, `0x45d9f3b` scramble, `% 8 + 1`) |
@@ -276,7 +276,7 @@ Staged, not Kino: `.voice-stage-bar` (`VoiceRoom.tsx:438-488`, `room.css:70-86, 
 | View switch (ChipGroup radiogroup "Ansicht", hidden ≤640) | container: inline flex, nowrap, gap 2, padding 3, border 1 `--lr-border`, radius 7, bg panel → outer 36 high. Chip: height 28, padding 0 10, no border, radius 5, gap 6, 500 13px, muted; icon 15px. Options: `GridIcon` "Raster", `FocusIcon` "Fokus". Hover (unchecked): text colour + bg `--lr-hover` (from `ui.css:487`). Checked: bg surface, inset 1px `--lr-border` shadow, text colour, weight 500. Focus: 2px focus outline offset 2. Arrow keys move+select. Click → `chooseView` |
 | Kino button (only `canKino` = staged && width >800) | inline flex, gap 6, height 34, padding 0 12, border 1 `--lr-border`, radius 7, transparent, text colour, 500 13px, `TheaterIcon` 15 + "Kino"; hover bg `--lr-hover` (120ms); tooltip `Kino (K)` |
 
-Overview variant (`overview=true`, community overview page): heading row `SpeakerIcon 18` + `<h2>` 600 16/1.3 + optional pill "Verbunden" (22 high, padding 0 8, radius full, bg online@14%, online-text, 500 12px, 6px dot before) + optional badge "Live" (radius 3, bg danger-bg, white, padding 2 6, 600 11px) (`VoiceRoom.tsx:428-436`, `room.css:27-33`, `pages/overview.css:78-117`). Overview tiles: spotlight max-height min(50vh,520), filmstrip 192 wide, wrap gap 8, max-width 1100 (`room.css:36-56`). Detailed overview layout belongs to the overview spec.
+Overview variant (`overview=true`, community overview page): heading row `SpeakerIcon 18` + `<h2>` 600 16/1.3 + optional pill "Verbunden" (22 high, padding 0 8, radius full, bg online@14%, online-text, 500 12px, 6px dot before) + optional badge "Live" (radius 3, bg `--lr-live`, ink `--lr-on-live`, padding 2 6, 600 11px) (`VoiceRoom.tsx:428-436`, `room.css:27-33`, `pages/overview.css:78-117`). Overview tiles: spotlight max-height min(50vh,520), filmstrip 192 wide, wrap gap 8, max-width 1100 (`room.css:36-56`). Detailed overview layout belongs to the overview spec.
 
 ### 3.5 Stage items
 
@@ -371,7 +371,7 @@ Join behaviour (`session.ts:1206-1279`): state flips to joined immediately (conn
 | Idle | `awake` true for 3000 ms after pointer move/down, key, focus (`useWake.ts`); when not awake: thumbs not hovered/focused → opacity 0 & no pointer events; focus actions (unless focused) opacity 0 |
 | Kino bar | absolute top 24 left 16, z 3, flex gap 10, max-width 100%-160 |
 | Exit chip | inline flex, gap 8, height 34, padding 0 12, radius 7, bg `rgba(10,12,13,.72)` (hover .88), white 500 13px: `TheaterExitIcon 15` + `Kino verlassen` + `<kbd>Esc</kbd>` (padding 1 5, border 1 `rgba(255,255,255,.25)`, radius 3, colour `#c9cdd0`, 400 11px/1.4) |
-| Label chip | same chip box, weight 600, ellipsis: optional mini badge `Live` (padding 1 5, radius 3, danger-bg, white, 600 10px/1.3) + `<strong>{nameOf(focus.userId)}</strong>` (no own font rule, so Tailwind preflight `font-weight: bolder` turns the inherited 600 into **900**) + `· {channelName}` (`#c9cdd0`, 400). Kino exit chip text and label chip text are 13px/1.35 (`--lr-type-ui`). `nameOf` for self is `"{name} (du)"` |
+| Label chip | same chip box, weight 600, ellipsis: optional mini badge `Live` (padding 1 5, radius 3, `--lr-live`, ink `--lr-on-live`, 600 10px/1.3) + `<strong>{nameOf(focus.userId)}</strong>` (no own font rule, so Tailwind preflight `font-weight: bolder` turns the inherited 600 into **900**) + `· {channelName}` (`#c9cdd0`, 400). Kino exit chip text and label chip text are 13px/1.35 (`--lr-type-ui`). `nameOf` for self is `"{name} (du)"` |
 | Focus moves | after entering by button, focus goes to the exit chip; after leaving, back to the Kino button |
 
 ### 3.8 Participant menu (`Participant.tsx:236-276`, `room.css:712-728`)
@@ -395,10 +395,10 @@ Native path (desktop app): frames come from `media_view_*` (§12); a tile draws 
 |---|---|---|
 | Blocked overlay | browser refused autoplay | full cover, bg `rgba(0,0,0,.65)`, column centred, gap 8, padding 12, 500 13px: `Die Videowiedergabe ist blockiert.` + primary sm button `Wiedergabe starten` (`VoiceTile.tsx:502-509`, `viewer.css:44-62`) |
 | Watch overlay | Live with source-watch support and not watching | centred button `Zuschauen`: padding 9 14, radius 5, bg accent, ink, 600 13px (`viewer.css:331-347`) |
-| Own-Live sound notice | own Live | strip bottom 28, left/right 12, padding 5 8, radius 6, bg `#151819df`, white (`viewer.css:349-356`), font inherited = 400 16px with line-height 1.4 (no font rule on the tile or its ancestors; root size 16), z above video, below the Live badge. Texts (`VoiceRoom.tsx:213-231`): desktop `Stream-Ton nicht aufgenommen · Video läuft weiter` / browser `Kein Stream-Ton freigegeben · Video läuft weiter` (unavailable); `Stream-Ton beendet · Video läuft weiter` (ended); `Kein Ton von „{app}“` (silent); `Ton wird mitgesendet` (sharing) |
+| Own-Live sound tag | own Live | `.voice-video-sound` beside the Live badge in `.voice-video-tags` (top 8 left 8, flex gap 4, z 1): inline-flex gap 4, padding 2 6, radius 3, bg `--lr-bg` 82%, colour `--lr-text`, caps 11px, nowrap. `SpeakerIcon 12` + `Mit Ton` while sharing; else `SpeakerOffIcon 12` in `--lr-warning` + `Ohne Ton` (`.voice-video-sound--off`). The full sentence is its tooltip and screen-reader text (role status). Hidden in the strip and on Kino's focus, like the Live badge (`room.css`). Sentences (`VoiceRoom.tsx:213-231`): desktop `Stream-Ton nicht aufgenommen · Video läuft weiter` / browser `Kein Stream-Ton freigegeben · Video läuft weiter` (unavailable); `Stream-Ton beendet · Video läuft weiter` (ended); `Kein Ton von „{app}“` (silent); `Ton wird mitgesendet` (sharing) |
 | Placeholder | no picture yet | column centred, gap 8, padding 12, 500 13px, `rgba(255,255,255,.72)`. idle (stream null): the label; after 300 ms: spinner (16px ring, 2px `rgba(255,255,255,.25)`, top `#fff`, 0.9s linear) + `Video wird geladen …`; after 8 s: `Kein Bild empfangen` + sm button `Neu laden` (re-watch or reattach). Native window: `Läuft im eigenen Fenster.` (12px) + sm `Fenster schließen` |
 | Caption (non-stage) | `caption && !immersive` | bottom strip, padding 4 8, bg `rgba(0,0,0,.5)`, 400 12px/1.4, ellipsis. On the stage it becomes the pill of §3.5 |
-| Live badge | `live` | top 8 left 8, padding 2 6, radius 3, bg danger-bg, white, 600 11px/1.3, text `Live` |
+| Live badge | `live` | in `.voice-video-tags` (top 8 left 8), padding 2 6, radius 3, bg `--lr-live`, ink `--lr-on-live`, 600 11px/1.3, text `Live` |
 | Low quality | native frames limited | `Geringe Bildqualität`, left 8, top 8 (32 when Live), padding 2 6, radius 3, bg `rgba(0,0,0,.6)`, 600 11px; tooltip per reason (`VoiceTile.tsx:818-822`) |
 | Speaking ring | §1.5 | |
 | Scrim (non-stage) | hover | top 56px gradient `rgba(0,0,0,.55)`→transparent; hidden on the stage (`room.css:196-198`) |
@@ -465,7 +465,7 @@ Base (`room.css:752-777, 1161-1179`): inline flex centred, gap 4, min-width 36, 
 | 1' | Mic problem (mic unavailable/denied) | `MicOffIcon 17` + 8px warning dot (top 6, left 20, 1.5px panel border) + text `Kein Mikrofon` (500 13px); colour text | — | title/aria `Kein Mikrofon`; popover `Kein Mikrofon` (placement top-start, max-width 320): `<p>` 400 14px/1.5, margin-bottom 12: unavailable `Mikrofon nicht gefunden oder belegt.`; denied: desktop `Kein Zugriff auf das Mikrofon. Erlaube ihn in den Systemeinstellungen.` / browser `Der Browser blockiert das Mikrofon. Erlaube den Zugriff in den Website-Einstellungen.`; actions flex wrap gap 8: sm (secondary) `Erneut versuchen` → `retryMicrophone()`, ghost sm `Mikrofon wählen …` → settings dialog | `VoiceControls.tsx:119-184`; `room.css:1488-1499` |
 | 2 | Deafen | `HeadsetIcon 17` | deafened: `HeadsetOffIcon 17`, is-off | `Taubschalten`; title `Taubschalten (Strg+Umschalt+D)` / `Taubschaltung aufheben (…)` | |
 | 3 | Camera (if capable or on) | `CameraOffIcon 17` | on: `CameraIcon 17`, is-on → bg selected, accent-text | `Kamera`; title `Kamera einschalten` / `Kamera ausschalten`. Desktop without camera: opacity .5, title+toast `Diese Desktop-App kann keine Kamera nutzen.` | `VoiceControls.tsx:231-250` |
-| 4 | Live | `LiveIcon 17` + text `Live` (+ `ChevronIcon 12` rotated 180°, opacity .75, when it is a menu) | live: bg danger-bg, white | `Live gehen`; title `Du bist live` / `Live gehen` (menu) or `Live beenden` / `Live gehen – sehen alle im Sprachkanal` (plain toggle). Unavailable: opacity .5, reason `Diese Desktop-App kann nicht live gehen.` / `In diesem Server darfst du nicht live gehen.` | `VoiceControls.tsx:258-339` |
+| 4 | Live | `LiveIcon 17` + text `Live` (+ `ChevronIcon 12` rotated 180°, opacity .75, when it is a menu) | live: bg `--lr-live`, ink `--lr-on-live` | `Live gehen`; title `Du bist live` / `Live gehen` (menu) or `Live beenden` / `Live gehen – sehen alle im Sprachkanal` (plain toggle). Unavailable: opacity .5, reason `Diese Desktop-App kann nicht live gehen.` / `In diesem Server darfst du nicht live gehen.` | `VoiceControls.tsx:258-339` |
 | 5 | Stream sound (while watching someone's Live) | `SpeakerIcon 17` / `SpeakerOffIcon 17` (is-off) | | `Lautstärke` → popover §6.3 | `QuickCallSettings.tsx:78-105` |
 | 6 | Settings | `GearIcon 17` | | `Voice-Einstellungen` → popover §6.2 | |
 | 7 | Leave | `HangUpIcon 18` + `Verlassen` (500 13px) | margin-left 4, padding 0 12, bg danger-bg, white; hover mix §1.1 | aria/title `Verlassen` | `VoiceSessionControls.tsx:468-481`; `room.css:1231-1240` |
@@ -543,7 +543,7 @@ Default modal width 448. Column gap 14: `MicIcon 36` accent-text; muted text `De
 
 ## 7. Voice channel occupants in the sidebar (`components/ChannelSidebar.tsx:98-147, 723-777, 862-1000`; `index.css:819-937, 2124-2171`)
 
-Voice channel row (36 px virtual row; row box 34 high, radius 7, 14px, muted; hover bg hover + text; active bg selected + text, icon accent-text): `SpeakerIcon` drawn 17x17, gap 10, padding 0 10, name ellipsis. In own call (`is-in-voice`): text colour, icon online-text, tooltip `{name} · verbunden`. Live: badge right-aligned `LIVE` (text "Live" uppercase), padding 1 5, radius 5, danger-bg, white, 700 10px, letter-spacing .4px; tooltip `liveSentence` (e.g. `Mia ist live`).
+Voice channel row (36 px virtual row; row box 34 high, radius 7, 14px, muted; hover bg hover + text; active bg selected + text, icon accent-text): `SpeakerIcon` drawn 17x17, gap 10, padding 0 10, name ellipsis. In own call (`is-in-voice`): text colour, icon online-text, tooltip `{name} · verbunden`. Live: badge right-aligned `LIVE` (text "Live" uppercase), padding 1 5, radius 5, `--lr-live`, ink `--lr-on-live`, 700 10px, letter-spacing .4px; tooltip `liveSentence` (e.g. `Mia ist live`).
 
 Participant rows (directly under the channel, sorted by name `localeCompare(…,"de")`, name fallback `Jemand`):
 
@@ -552,7 +552,7 @@ Participant rows (directly under the channel, sorted by name `localeCompare(…,
 | Row (button) | flex, align center, gap 8, width 100%, height 28 (virtual row 28), padding 0 8 0 36, 13px muted, radius 7; hover bg hover; focus 2px focus outline inset; tooltip `Dein Profil` / `Profil und Lautstärke`; click/right-click → profile dialog |
 | Avatar | 20px, initials 9px 600; speaking ring+glow (§1.5) |
 | Name | flex 1, ellipsis; speaking → text colour |
-| Live | `LiveIcon 13`, danger |
+| Live | `LiveIcon 13`, `--lr-live-text` |
 | Locally muted | `SpeakerOffIcon 16` muted (others only) |
 | Mute state | `HeadsetOffIcon 13` if deafened else `MicOffIcon 13` if muted, danger; title `taub` / `stumm` |
 
@@ -573,7 +573,7 @@ Speaking here = detector && not muted/deafened.
 Camera: `toggleCamera` → `media_source_camera {options:{width,height,fps,device}}` (falls back to `device:""` unless exact); errors → toast `Die Kamera ist nicht verfügbar.` / `Die Kamera unterstützt das Streamprofil nicht.`; on air `cameraOn`, off `cameraOff`.
 
 ## 9. Watch (someone else's Live inside the call)
-- Lives are only watched in the call's own room; outside, the room/sidebar/LiveHint only say who is live. `LiveHint` pill in channel headers: `Live` badge + names + `in {channel}` + action `Beitreten` / `Zum Kanal` (`voice/LiveHint.tsx`).
+- Lives are only watched in the call's own room; outside, the room/sidebar/LiveHint only say who is live. `LiveHint` pill in channel headers: `Live` badge + names + `in {channel}` + neutral action `Zuschauen` (joins and watches the Lives there; in that call it watches them) / `Zum Kanal` (in another call: only opens the channel). The live toast has the same button and rule (`voice/LiveHint.tsx`, `voice/watchLive.ts`).
 - Once the media connection is up, `sourceWatchSupported = true` (`session.ts:1590`). A Live tile then shows the `Zuschauen` overlay until the user watches; `toggleSourceWatch(uid,"s")` (`session.ts:1426-1447`) flips local state and sends seat request `"w" {u, k:"s", on}`; turning off drops the remote stream and its sound. Subscriptions are re-sent after reconnects (`session.ts:1591-1595`).
 - While any watched Live plays, the call bar shows the stream-sound button (§5.3 #5) and the focused tile its mute action.
 

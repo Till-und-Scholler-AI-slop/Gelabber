@@ -564,7 +564,7 @@ enum Tone {
     Off,
     /// Camera on: accent text on the selected fill.
     On,
-    /// Live: white on danger.
+    /// Live: dark ink on the on-air coral (`--lr-live`).
     Live,
     /// Push-to-talk held: the speaking colour.
     Talking,
