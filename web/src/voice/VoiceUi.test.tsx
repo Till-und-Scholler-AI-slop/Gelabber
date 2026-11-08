@@ -493,7 +493,7 @@ describe("active media UI", () => {
     expect(html.match(/<input[^>]*disabled=""/g)).toHaveLength(2);
     expect(html).toContain("Taubgeschaltet.");
     // The stream's mute stays in reach for after.
-    expect(control(html, "Stream-Ton stummschalten")).not.toContain("disabled");
+    expect(control(html, "Live-Ton stummschalten")).not.toContain("disabled");
   });
   it("keeps one name per toggle and says its state with aria-pressed", () => {
     Object.assign(fixture.voice, {

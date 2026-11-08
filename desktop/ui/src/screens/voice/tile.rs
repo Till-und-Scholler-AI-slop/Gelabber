@@ -550,10 +550,8 @@ pub fn live_sound_notice(sound: &gelabber_call::LiveSound) -> Option<String> {
         LiveSound::Off => None,
         LiveSound::Sharing => Some("Ton wird mitgesendet".into()),
         LiveSound::Silent(app) => Some(format!("Kein Ton von „{app}“")),
-        LiveSound::Unavailable(_) => {
-            Some("Stream-Ton nicht aufgenommen · Video läuft weiter".into())
-        }
-        LiveSound::Ended => Some("Stream-Ton beendet · Video läuft weiter".into()),
+        LiveSound::Unavailable(_) => Some("Live-Ton nicht aufgenommen · Video läuft weiter".into()),
+        LiveSound::Ended => Some("Live-Ton beendet · Video läuft weiter".into()),
     }
 }
 
@@ -904,7 +902,7 @@ pub fn picture(
             } else {
                 Icon::Speaker
             },
-            "Stream-Ton stummschalten",
+            "Live-Ton stummschalten",
             stream_muted,
             3,
         ));

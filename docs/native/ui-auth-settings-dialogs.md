@@ -232,7 +232,7 @@ All confirm texts in this area:
 | Dirty modal (`modalClose.ts:25`) | Änderungen verwerfen? | Deine Eingaben gehen verloren. | Verwerfen | danger |
 | Profilkarte leave (`pages/ProfileCardForm.tsx:72-81`) | Ungespeicherte Änderungen verwerfen? | Deine Änderungen an der Profilkarte gehen verloren. | Verwerfen | danger |
 | Theme draft (`theme/discardDraft.ts:5-7`) | Ungespeicherten Theme-Entwurf verwerfen? | Deine Änderungen an diesem Theme gehen verloren. | Verwerfen | danger |
-| Theme pending (`theme/ThemesPanel.tsx:287-292`) | Lokale Änderung verwerfen? | Gelabber lädt dann wieder den Theme-Stand deines Accounts. | Account-Stand laden | danger |
+| Theme pending (`theme/ThemesPanel.tsx:287-292`) | Lokale Änderung verwerfen? | Gelabber lädt dann wieder den Theme-Stand deines Kontos. | Gespeicherten Stand laden | danger |
 | Theme delete (`ThemesPanel.tsx:548-551`) | Theme „{name}“ löschen? | — | Löschen | danger |
 | Logout all (`pages/ProfilePage.tsx:331-336`) | Auf allen Geräten abmelden? | Auch dieses Gerät. Danach musst du dich überall neu anmelden. | Überall abmelden | danger |
 | Revoke invite (`pages/ServerSettingsPage.tsx:443-450`) | Link widerrufen? | Der Link funktioniert danach nicht mehr. Bestehende Mitglieder bleiben. | Widerrufen | danger |
@@ -553,15 +553,15 @@ Areas (order; `settingsAreas.ts:15-76`): Konto → **Profil** (`profil`), **Prof
 
 Main: `.settings-screen` column: header `.lr-channel-header` with h1 **"Einstellungen"** (gap 4), then a scroll area containing `.settings-area`: max-width **1040**, padding **32 40 48** (left-aligned). Content width **912 @1280**, **960 @1600** (1312 − 80 > 1040 − 80).
 
-Area heading (margin-bottom 24): title row flex wrap gap 8/12: h2 label 600 **20px**/1.25 ls −0.01em + scope badge (§1.11; accent tone **"FÜR DEINEN ACCOUNT"** or neutral **"NUR DIESES GERÄT"**); description p margin-top 6, max 60ch, 14px/1.5 muted.
+Area heading (margin-bottom 24): title row flex wrap gap 8/12: h2 label 600 **20px**/1.25 ls −0.01em + scope badge (§1.11; accent tone **"FÜR DEIN KONTO"** or neutral **"NUR DIESES GERÄT"**); description p margin-top 6, max 60ch, 14px/1.5 muted.
 
 | Area | Badge | Description |
 |---|---|---|
-| Profil | Für deinen Account | Name und Profilbild. |
-| Profilkarte | Für deinen Account | So sehen dich andere. |
-| Sicherheit | Für deinen Account | Passwort und angemeldete Geräte. |
+| Profil | Für dein Konto | Name und Profilbild. |
+| Profilkarte | Für dein Konto | So sehen dich andere. |
+| Sicherheit | Für dein Konto | Passwort und angemeldete Geräte. |
 | Darstellung | — (per group) | Farbschema, Textgröße und Bewegung. |
-| Themes | Für deinen Account | Farbpaletten und eigene Themes. |
+| Themes | Für dein Konto | Farbpaletten und eigene Themes. |
 | Audio | Nur dieses Gerät | Mikrofon, Lautsprecher und Lautstärke. |
 | Video | Nur dieses Gerät | Kamera, Live gehen und Stream-Qualität. |
 | Benachrichtigungen | — (per group) | Hinweise auf neue Nachrichten. |
@@ -602,7 +602,7 @@ Form: hint "Angemeldet als **{email}**" (email 600 text colour); PasswordField *
 
 ### 6.5 Darstellung (`pages/AppearanceSettings.tsx:16-154`, `settings.css:272-364`)
 
-Group **"Farbschema"** [FÜR DEINEN ACCOUNT]:
+Group **"Farbschema"** [FÜR DEIN KONTO]:
 - Three mode cards in a grid of 3 equal columns, gap 12, max-width 640, margin-top 4 → each **205.3px** wide. Card: grid `auto 1fr`, gap 10, padding 10/12/12, border 1 border-strong, radius 7, bg panel; hover bg hover; checked: border accent + inset 1px accent (2px total); keyboard focus outline 2px focus offset 2.
   - Row 1 (spans both columns): swatch 56px tall, border 1 (preset border colour), radius 5, bg preset background; left 30% strip in preset panel; text bar at top 14, left 40%, 40%×6, radius 3, opacity .8 in preset text; accent bar at bottom 12, left 40%, 24%×10, radius 3 in preset accent. Colours come from the built-in presets (dark: bg `#17191a`, panel `#1d2021`, text `#eef0ee`, accent `#f3b752`, border `#2c3032`; light: `#f8f5f0`, `#f4f0e9`, `#252829`, `#e8a638`, `#dcd6cc`). "System" swatch = left half light swatch, right half dark swatch (inner borders removed).
   - Row 2: radio (§1.8, margin-top 1) + label/hint: **"Hell"** / "Gelabber Hell"; **"Dunkel"** / "Gelabber Dunkel"; **"System"** / "Folgt dem Gerät".
@@ -619,7 +619,7 @@ Group **"Ansicht"** [NUR DIESES GERÄT] (groups sit directly in `.settings-area`
 Vertical order: toolbar → (sync box) → notice → filter chips → two-column layout → (preview bar) → footnote.
 
 - Toolbar (flex space-between wrap gap 12/16): sm secondary **"+ Eigenes Theme"**, sm secondary **"Importieren"** (accepts `.json`; max 64 KiB; errors "Die Datei darf höchstens 64 KiB groß sein.", "Die Datei enthält kein gültiges JSON.", "Das Theme-Format ist ungültig oder wird noch nicht unterstützt.").
-- Sync box (`themes.css:404-416`; margin-top 16, padding 12/14, bg panel, border, radius 5, 13px/1.5): "Wird mit deinem Account synchronisiert …" or the error; buttons sm "Erneut versuchen"/"Erneut anwenden" and "Account-Stand laden".
+- Sync box (`themes.css:404-416`; margin-top 16, padding 12/14, bg panel, border, radius 5, 13px/1.5): "Wird mit deinem Konto synchronisiert …" or the error; buttons sm "Erneut versuchen"/"Erneut anwenden" and "Gespeicherten Stand laden".
 - Notice: InlineStatus, margin-top 12 when not empty ("„{name}“ angewendet.", "Theme gespeichert und angewendet.", "Theme gelöscht.", "Nicht gespeichert – erneut versuchen").
 - Filter ChipGroup (margin 20 0 16): **"Alle"**, **"Hell"**, **"Dunkel"**, **"Eigene"**.
 - Layout (viewport > 1180px — true at 1280/1600): grid `minmax(0,1fr) minmax(280px,340px)`, gap 24 → workbench **340px**; gallery **548px @1280** / **596px @1600**. ≤1180px: one column, workbench below, not sticky.
@@ -636,7 +636,7 @@ Vertical order: toolbar → (sync box) → notice → filter chips → two-colum
   - Footer (spans, panel, border-top, padding 10, 10px, space-between): 6px online dot + "Verbunden · Wohnzimmer"; pill "Mikrofon an" (accent bg, accent-ink, radius 5, padding 5/8, 500).
   - Small variant (gallery, 115px fixed height, no border/radius): sidebar padding 10/6 gap 7, "Gelabber" 8px, spans 5px, selected 6px padding 4/2, icons 7px; chat padding 8 gap 7, header 7px (subtitle hidden), messages 6px gap 4 (only the first message; times hidden), avatar 5px padding 4, composer 5px padding 5; footer hidden.
 - Preview bar while a card is only "tried on" (sticky bottom 0, margin-top 20, padding 12/16, border, radius 10, elevated, shadow-2, 500 13px, flex space-between wrap): "**„{name}“** wird angezeigt" + primary **"Behalten"** + ghost **"Zurück zu {active name}"**. Esc reverts. Clicking a card previews it app-wide immediately.
-- Footnote (margin-top 24, 13px/1.6 muted): "Mit deinem Account synchronisiert." (or "Deine Themes gehören zu deinem Account.") + " Paletten nach " + underlined link "Omarchy" + ", für Gelabber angepasst."
+- Footnote (margin-top 24, 13px/1.6 muted): "Mit deinem Konto synchronisiert." (or "Deine Themes gehören zu deinem Konto.") + " Paletten nach " + underlined link "Omarchy" + ", für Gelabber angepasst."
 
 ### 6.7 Audio / Video (`voice/VoiceSettings.tsx:69-516`, `voice/settingsLayout.tsx`, `voice/quality.css:92-289`, overrides `pages/settings.css:584-614`)
 
@@ -645,14 +645,14 @@ Form: column gap 20, max-width **720** (container 720 > 480 → two-column rows 
 - Row (`.media-row`): grid `136px 1fr`, column gap 16, row gap 6, padding 12/0, border-bottom (none on a group's last row); label 500 13px text, padding-top 8; control column gap 8. Hints 12px/1.4 muted. SwitchLine: hint text left, switch right, min-height 36, gap 16.
 
 Audio area content (strings verbatim; desktop-app variants where they differ):
-- **Eingabe**: "Mikrofon" device select (first option = system default); "Mic-Gain" slider 0–200 %, scale "0 %"/"100 %"/"200 %", hint "100 % fügt keine Verstärkung hinzu."; "Senden" ChipGroup **"Sprachaktivierung"** / **"Push-to-Talk"** + hint "Das Mikrofon sendet, sobald du sprichst." / "Das Mikrofon sendet nur, solange du die Taste hältst."; (PTT) "Taste" sm button "Taste festlegen" / key name / "Taste oder Maustaste drücken … (Esc bricht ab)", hint "Ohne Taste bleibt dein Mikrofon im Gespräch stumm."; (PTT) "Nachlaufzeit" slider "{n} ms", hint "So lange sendet das Mikrofon nach dem Loslassen weiter."; "Filter" RadioCards (column gap 6; `voice/settings.ts:44-73`): desktop **"Verbesserte Sprache"** / "Lokale Rauschunterdrückung", **"WebRTC-Filter"** / "Rauschunterdrückung und Auto-Gain von WebRTC", **"Original / Musik"** / "Stereo sofern unterstützt, ohne Rauschfilter, Auto-Gain oder Sprechpausen-Erkennung" (web reference screenshots instead show "Verbesserte Sprache" / "Lokale Rauschunterdrückung und Auto-Gain; Browserfilter als Ersatz" and **"Browserfilter"** / "Rauschunterdrückung und Auto-Gain deines Browsers"); then status line + sm button **"Mikrofon testen"**.
-- **Ausgabe**: "Lautsprecher" select; "Gespräche" slider (0 % … 100 % middle … max), hint "Über 100 % wird der Ton digital verstärkt."; "Stream-Ton" slider + Switch "Stream-Ton stummschalten", hint "Der Ton von Lives hat eine eigene Lautstärke. Taub schaltet auch diesen Ton aus."; "Signaltöne" SwitchLine "Töne für Beitreten, Verlassen, Stumm, Taub, Kamera und Live.", Switch "Töne, wenn andere sich stumm schalten", field label (12px subtle) "Lautstärke der Signaltöne" + slider (default 35 %), hint "Nutzt die Wiedergabelautstärke. Signaltöne spielen auf dem Standard-Ausgabegerät des Systems.", sm button **"Testton abspielen"**.
+- **Eingabe**: "Mikrofon" device select (first option = system default); "Mikrofonverstärkung" slider 0–200 %, scale "0 %"/"100 %"/"200 %", hint "100 % fügt keine Verstärkung hinzu."; "Senden" ChipGroup **"Sprachaktivierung"** / **"Push-to-Talk"** + hint "Das Mikrofon sendet, sobald du sprichst." / "Das Mikrofon sendet nur, solange du die Taste hältst."; (PTT) "Taste" sm button "Taste festlegen" / key name / "Taste oder Maustaste drücken … (Esc bricht ab)", hint "Ohne Taste bleibt dein Mikrofon im Gespräch stumm."; (PTT) "Nachlaufzeit" slider "{n} ms", hint "So lange sendet das Mikrofon nach dem Loslassen weiter."; "Filter" RadioCards (column gap 6; `voice/settings.ts:44-73`): desktop **"Verbesserte Sprache"** / "Lokale Rauschunterdrückung", **"WebRTC-Filter"** / "Rauschunterdrückung und Auto-Gain von WebRTC", **"Original / Musik"** / "Stereo sofern unterstützt, ohne Rauschfilter, Auto-Gain oder Sprechpausen-Erkennung" (web reference screenshots instead show "Verbesserte Sprache" / "Lokale Rauschunterdrückung und Auto-Gain; Browserfilter als Ersatz" and **"Browserfilter"** / "Rauschunterdrückung und Auto-Gain deines Browsers"); then status line + sm button **"Mikrofon testen"**.
+- **Ausgabe**: "Lautsprecher" select; "Gespräche" slider (0 % … 100 % middle … max), hint "Über 100 % wird der Ton digital verstärkt."; "Live-Ton" slider + Switch "Live-Ton stummschalten", hint "Der Ton von Lives hat eine eigene Lautstärke. Taub schaltet auch diesen Ton aus."; "Signaltöne" SwitchLine "Töne für Beitreten, Verlassen, Stumm, Taub, Kamera und Live.", Switch "Töne, wenn andere sich stumm schalten", field label (12px subtle) "Lautstärke der Signaltöne" + slider (default 35 %), hint "Nutzt die Wiedergabelautstärke. Signaltöne spielen auf dem Standard-Ausgabegerät des Systems.", sm button **"Testton abspielen"**.
 - Disclosure (`quality.css:226-280`; in settings it is collapsed; border 1 border, radius 7; summary flex centre gap 12, min-height 44, padding 0 14, 600 13px text, hover bg hover; **leading** chevron = 6×6 box with 2px right+bottom borders in currentColor, rotated −45° (points right) closed / 45° (points down) open, 180ms; then title; then right-aligned (margin-left auto) small "Für Musik oder Lautsprecher" 12px/1.4 subtle; body padding 0 14, last row no border): title **"Echo und WebRTC-Filter"** (web: "Echo und Browserfilter"); rows "Echo" ("Echo-Unterdrückung (AEC). Bei Lautsprechern empfohlen. Für Musik mit Kopfhörern kannst du sie ausschalten."), "Rauschfilter" (only in WebRTC-filter mode: "Rauschunterdrückung von WebRTC."), "Auto-Gain" (not in Original: "Auto-Gain von WebRTC. Gleicht leise und laute Mikrofone auf einen hörbaren Pegel an.").
 
 Video area content:
 - **Kamera** [pill "Automatisch" or "1080p · 60 FPS"]: "Gerät" select; "Qualität": two selects side by side (grid 2 cols gap 12) with 12px subtle labels "Auflösung" ("Auto (bis 1080p)", "…p", "4K · 2160p") and "Bildrate" ("Auto (bis 30 FPS)", "{n} FPS"); apply note "Auf den laufenden Stream angewendet." / "Bitrate und FPS-Limit gelten sofort. Die Auflösung gilt ab dem nächsten Stream."
 - **Live** [pill]: "Qualität" as above + hint "Höhere Werte brauchen mehr Rechenleistung und Upload. Die erreichbare Qualität hängt von Quelle, Gerät und Verbindung ab."; (if app audio capable) "Ton mitsenden" SwitchLine + "Ton von" select (default "Alle Anwendungen außer Gelabber" / "Alle Anwendungen"; "(gerade still)" suffix).
-- **Upload** [pill "ohne Limit" or bitrate]: "Sparmodus" SwitchLine ("Für wenig Upload: Sprache 64 kbit/s, Stream-Ton 128 kbit/s, Video gemeinsam …"); "Video-Limit" two bordered radio pills (flex wrap gap 10; each min-height 36, padding 0 12, border 1 border, radius 7, 500 13px; checked border accent + bg selected) **"Ohne Limit"** (or "Sparmodus (2,5 Mbit/s)") and **"Eigenes Limit"**; custom: number input 8rem right-aligned + "Mbit/s für alle Videos zusammen"; hint "Die Desktop-App passt die tatsächliche Bitrate an die Verbindung an. Das Limit ist eine Obergrenze, keine feste Datenrate."
+- **Upload** [pill "ohne Limit" or bitrate]: "Sparmodus" SwitchLine ("Für wenig Upload: Sprache 64 kbit/s, Live-Ton 128 kbit/s, Video gemeinsam …"); "Video-Limit" two bordered radio pills (flex wrap gap 10; each min-height 36, padding 0 12, border 1 border, radius 7, 500 13px; checked border accent + bg selected) **"Ohne Limit"** (or "Sparmodus (2,5 Mbit/s)") and **"Eigenes Limit"**; custom: number input 8rem right-aligned + "Mbit/s für alle Videos zusammen"; hint "Die Desktop-App passt die tatsächliche Bitrate an die Verbindung an. Das Limit ist eine Obergrenze, keine feste Datenrate."
 - Footer line 12px subtle "Änderungen gelten beim nächsten Start und werden, soweit unterstützt, auch auf laufende Streams angewendet."
 
 In-call dialog variant (`components/VoiceSettingsDialog.tsx:12-90`, `quality.css:52-90`): Modal **"Voice & Video"** large (640), footer ghost **"Fertig"**; sticky tab row (gap 4, border-bottom, bg elevated, margin-bottom 20) with tabs **"Audio"**, **"Video & Stream"**, **"Diagnose"**: min-height 36, padding 0 12, 500 13px muted, 2px transparent bottom border; selected text colour, 600, accent bottom border; hover text.
@@ -660,7 +660,7 @@ In-call dialog variant (`components/VoiceSettingsDialog.tsx:12-90`, `quality.css
 ### 6.8 Benachrichtigungen (`components/MessageAlertSettings.tsx`, `NotificationPrivacy.tsx`, `NotificationPermission.tsx`)
 
 Group **"Nachrichten"** [NUR DIESES GERÄT] switch rows: "Popup bei neuen Nachrichten in anderen Chats" (default on); desktop: "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist" (web: "Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist"; default off); "Ton bei Benachrichtigungen am Computer" / "Ein Ton für mehrere Nachrichten kurz hintereinander, keiner, während du taubgeschaltet bist. Auf dem Handy gilt die Geräteeinstellung." (disabled while the previous is off); desktop only: "Fenster schließen minimiert in den Infobereich" / "Ein laufender Anruf geht weiter. Beenden über das Symbol im Infobereich." (`components/CloseToTray.tsx`).
-Group **"Sperrbildschirm"** [FÜR DEINEN ACCOUNT]: "Inhalt in Benachrichtigungen verbergen" / "Benachrichtigungen zeigen nur „Neue Nachricht von …“, ohne Text und ohne Chat. Gilt für alle Geräte deines Accounts."; error "Die Einstellung konnte nicht gespeichert werden. Versuche es erneut."
+Group **"Sperrbildschirm"** [FÜR DEIN KONTO]: "Inhalt in Benachrichtigungen verbergen" / "Benachrichtigungen zeigen nur „Neue Nachricht von …“, ohne Text und ohne Chat. Gilt für alle Geräte deines Kontos."; error "Die Einstellung konnte nicht gespeichert werden. Versuche es erneut."
 Note box (§6.1): desktop app with system notifications: "Benachrichtigungen laufen über dein System. Sperrbildschirm und „Nicht stören“ stellst du dort ein." (browser texts: `messages/notify.ts:86-100`).
 
 ---

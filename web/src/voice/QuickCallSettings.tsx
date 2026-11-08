@@ -119,7 +119,7 @@ export function CallSound() {
       />
       <Volume
         id={`${ids}-stream`}
-        label="Stream-Ton"
+        label="Live-Ton"
         value={settings.sourceAudioVolume}
         disabled={deafened || muted}
         onChange={(sourceAudioVolume) => settings.patch({ sourceAudioVolume })}
@@ -127,11 +127,11 @@ export function CallSound() {
           <button
             type="button"
             aria-pressed={muted}
-            aria-label="Stream-Ton stummschalten"
+            aria-label="Live-Ton stummschalten"
             title={
               muted
-                ? "Stream-Ton wieder einschalten"
-                : "Stream-Ton stummschalten"
+                ? "Live-Ton wieder einschalten"
+                : "Live-Ton stummschalten"
             }
             className={`voice-control voice-control-compact${muted ? " is-off" : ""}`}
             onClick={() => settings.patch({ sourceAudioMuted: !muted })}
@@ -246,7 +246,7 @@ export function QuickCallSettings({ onMore }: { onMore: () => void }) {
       />
       <Volume
         id={`${ids}-stream`}
-        label="Stream-Ton"
+        label="Live-Ton"
         value={settings.sourceAudioVolume}
         disabled={settings.sourceAudioMuted}
         onChange={(sourceAudioVolume) => settings.patch({ sourceAudioVolume })}

@@ -433,7 +433,7 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
                 ui.add_space(14.0);
                 controls::paragraph(
                     ui,
-                    "Übersteuerung erkannt. Verringere den Mic-Gain oder Gerätepegel.",
+                    "Übersteuerung erkannt. Verringere die Mikrofonverstärkung oder den Gerätepegel.",
                     text::BODY,
                     c.text,
                     width,

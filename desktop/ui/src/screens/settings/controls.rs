@@ -152,7 +152,7 @@ pub enum Scope {
 impl Scope {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Account => "Für deinen Account",
+            Self::Account => "Für dein Konto",
             Self::Device => "Nur dieses Gerät",
         }
     }

@@ -82,10 +82,10 @@ describe("tile actions", () => {
         />,
       );
     expect(tile(true, true)).toMatch(
-      /aria-label="Stream-Ton stummschalten" aria-pressed="false"/,
+      /aria-label="Live-Ton stummschalten" aria-pressed="false"/,
     );
-    expect(tile(false, true)).not.toContain("Stream-Ton");
-    expect(tile(true, false)).not.toContain("Stream-Ton");
+    expect(tile(false, true)).not.toContain("Live-Ton");
+    expect(tile(true, false)).not.toContain("Live-Ton");
   });
 
   it("names a camera in a participant's place without a second caption", () => {
@@ -115,8 +115,8 @@ describe("watching full size", () => {
     expect(html).toContain('aria-label="Steuerung: Mia — Live"');
     expect(html).toContain("<span>Vollbild beenden</span>");
     expect(html).toContain("<span>Nicht mehr zuschauen</span>");
-    expect(html).toContain('aria-label="Stream-Ton-Lautstärke"');
-    expect(html).toContain('aria-label="Stream-Ton stummschalten"');
+    expect(html).toContain('aria-label="Live-Ton-Lautstärke"');
+    expect(html).toContain('aria-label="Live-Ton stummschalten"');
     // Shown when it opens; it hides after a few idle seconds.
     expect(html).toContain("data-awake");
     // Not in a call: nothing to mute.
@@ -138,7 +138,7 @@ describe("watching full size", () => {
       <StreamViewer stream={null} label="Mia" onClose={() => undefined} />,
     );
     expect(html).toContain("<span>Vollbild beenden</span>");
-    expect(html).not.toContain("Stream-Ton");
+    expect(html).not.toContain("Live-Ton");
     expect(html).not.toContain("Nicht mehr zuschauen");
   });
 });

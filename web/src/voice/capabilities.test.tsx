@@ -190,7 +190,7 @@ describe("stream sound notice", () => {
   it("blames the browser", async () => {
     await cases.desktopBrowser();
     expect(notice()).toContain(
-      "Der Browser hat keinen Stream-Ton freigegeben. Das Video läuft weiter.",
+      "Der Browser hat keinen Live-Ton freigegeben. Das Video läuft weiter.",
     );
   });
 });

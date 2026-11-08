@@ -100,7 +100,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         "hide-content",
         "Inhalt in Benachrichtigungen verbergen",
         Some(
-            "Benachrichtigungen zeigen nur „Neue Nachricht von …“, ohne Text und ohne Chat. Gilt für alle Geräte deines Accounts.",
+            "Benachrichtigungen zeigen nur „Neue Nachricht von …“, ohne Text und ohne Chat. Gilt für alle Geräte deines Kontos.",
         ),
         &mut hide,
         busy,

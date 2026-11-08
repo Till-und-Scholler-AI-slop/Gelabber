@@ -583,7 +583,7 @@ function StreamSoundAction() {
   return (
     <IconButton
       size="sm"
-      label="Stream-Ton stummschalten"
+      label="Live-Ton stummschalten"
       pressed={muted}
       icon={muted ? <SpeakerOffIcon size={16} /> : <SpeakerIcon size={16} />}
       onClick={() => patch({ sourceAudioMuted: !muted })}
@@ -603,9 +603,9 @@ function StreamVolume() {
       <button
         type="button"
         aria-pressed={muted}
-        aria-label="Stream-Ton stummschalten"
+        aria-label="Live-Ton stummschalten"
         title={
-          muted ? "Stream-Ton wieder einschalten" : "Stream-Ton stummschalten"
+          muted ? "Live-Ton wieder einschalten" : "Live-Ton stummschalten"
         }
         className={`voice-control voice-control-compact${muted ? " is-off" : ""}`}
         onClick={() => patch({ sourceAudioMuted: !muted })}
@@ -622,7 +622,7 @@ function StreamVolume() {
             "--lr-range-value": playbackSliderFill(volume),
           } as CSSProperties
         }
-        aria-label="Stream-Ton-Lautstärke"
+        aria-label="Live-Ton-Lautstärke"
         aria-valuetext={`${Math.round(volume * 100)} %`}
         disabled={muted || deafened}
         onChange={(event) =>

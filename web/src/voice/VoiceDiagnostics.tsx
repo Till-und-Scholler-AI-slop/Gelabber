@@ -253,7 +253,7 @@ function Microphone() {
           <dd>{onOff(processing.autoGainControl)}</dd>
         </div>
         <div>
-          <dt>Mic-Gain</dt>
+          <dt>Mikrofonverstärkung</dt>
           <dd>{Math.round(processing.inputGain * 100)} %</dd>
         </div>
         <div>

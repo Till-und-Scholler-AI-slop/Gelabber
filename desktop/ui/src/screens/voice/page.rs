@@ -847,12 +847,12 @@ fn watch_strip(
         let r = Rect::from_min_size(pos2(x, cy - 18.0), Vec2::splat(36.0));
         let resp = common::click(ui, r, Id::unique("watch-strip-stream-mute"));
         resp.widget_info(|| {
-            egui::WidgetInfo::selected(egui::Role::Button, true, muted, "Stream-Ton stummschalten")
+            egui::WidgetInfo::selected(egui::Role::Button, true, muted, "Live-Ton stummschalten")
         });
         let resp = resp.on_hover_text(if muted {
-            "Stream-Ton wieder einschalten"
+            "Live-Ton wieder einschalten"
         } else {
-            "Stream-Ton stummschalten"
+            "Live-Ton stummschalten"
         });
         let fill = if muted {
             c.danger_bg.gamma_multiply(0.45)
@@ -886,7 +886,7 @@ fn watch_strip(
                 crate::screens::settings::controls::slider_named(
                     ui,
                     "watch-strip-stream-volume",
-                    "Stream-Ton-Lautstärke",
+                    "Live-Ton-Lautstärke",
                     &mut pos,
                     (0.0, 200.0, 1.0),
                     muted || state.deafened,
