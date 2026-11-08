@@ -46,9 +46,23 @@ export function buildRows(server: ServerDetail): Row[] {
 
 export type SectionRow = { kind: "section"; key: string; label: string };
 
+export const VOICE_HEADING = "Sprachkanäle";
+
+/** The category whose name the voice heading would repeat (the first). */
+export function voiceHeadingCategory(
+  categories: readonly Category[],
+): Category | undefined {
+  const name = VOICE_HEADING.toLocaleLowerCase("de");
+  return categories.find(
+    (category) => category.name.trim().toLocaleLowerCase("de") === name,
+  );
+}
+
 /**
  * The sidebar's order: uncategorised text channels, the uncategorised voice
  * rooms under a "Sprachkanäle" heading of their own, then the categories.
+ * A category of that name takes the rooms at its top instead, so the
+ * heading does not show twice.
  */
 export function sidebarRows(server: ServerDetail): (Row | SectionRow)[] {
   const base = buildRows(server);
@@ -60,6 +74,23 @@ export function sidebarRows(server: ServerDetail): (Row | SectionRow)[] {
         row.channel.kind === kind,
     );
   const voice = loose("voice");
+  const categorised = base.filter(
+    (row) => row.kind !== "channel" || row.channel.category_id !== null,
+  );
+  const home = voice.length
+    ? voiceHeadingCategory(server.categories)
+    : undefined;
+  if (home)
+    return [
+      ...loose("text"),
+      ...categorised.flatMap((row) =>
+        row.kind === "category" && row.category.id === home.id
+          ? [row, ...voice]
+          : row.kind === "empty" && row.categoryId === home.id
+            ? []
+            : [row],
+      ),
+    ];
   return [
     ...loose("text"),
     ...(voice.length
@@ -67,14 +98,12 @@ export function sidebarRows(server: ServerDetail): (Row | SectionRow)[] {
           {
             kind: "section" as const,
             key: "voice-heading",
-            label: "Sprachkanäle",
+            label: VOICE_HEADING,
           },
           ...voice,
         ]
       : []),
-    ...base.filter(
-      (row) => row.kind !== "channel" || row.channel.category_id !== null,
-    ),
+    ...categorised,
   ];
 }
 

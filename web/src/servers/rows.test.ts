@@ -119,4 +119,57 @@ describe("sidebar order", () => {
       "lounge",
     ]);
   });
+
+  it("puts them under a category of that name instead of a second heading", () => {
+    const named: ServerDetail = {
+      ...withLooseVoice,
+      categories: [
+        ...server.categories,
+        category("cat-rooms", " sprachkanäle "),
+        category("cat-rooms-2", "Sprachkanäle"),
+      ],
+      channels: [
+        ...withLooseVoice.channels,
+        channel("sofa", "cat-rooms", "Sofa", "voice"),
+      ],
+    };
+    const rows = sidebarRows(named).map((row) =>
+      row.kind === "section" ? `section:${row.label}` : row.key,
+    );
+    expect(rows).toEqual([
+      "loose",
+      "cat-text",
+      "allgemein",
+      "dev",
+      "cat-empty",
+      "empty:cat-empty",
+      "cat-voice",
+      "lounge",
+      "cat-rooms",
+      "zocken",
+      "sofa",
+      "cat-rooms-2",
+      "empty:cat-rooms-2",
+    ]);
+    expect(channelOrder(named).map((c) => c.id)).toEqual([
+      "loose",
+      "allgemein",
+      "dev",
+      "lounge",
+      "zocken",
+      "sofa",
+    ]);
+  });
+
+  it("drops the category's empty line once the rooms fill it", () => {
+    const empty: ServerDetail = {
+      ...withLooseVoice,
+      categories: [category("cat-rooms", "Sprachkanäle")],
+      channels: [channel("zocken", null, "Zocken", "voice")],
+    };
+    expect(sidebarRows(empty).map((row) => row.key)).toEqual([
+      "cat-rooms",
+      "zocken",
+    ]);
+  });
 });
