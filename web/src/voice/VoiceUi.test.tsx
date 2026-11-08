@@ -50,6 +50,12 @@ vi.mock("../servers/queries.ts", () => ({
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <a>{children}</a>,
 }));
+// The invite dialog as a mark: whether VoiceRoom keeps it mounted.
+vi.mock("../components/InviteDialog.tsx", () => ({
+  InviteDialog: ({ open }: { open: boolean }) => (
+    <i data-invite-dialog={open ? "open" : "closed"} />
+  ),
+}));
 vi.mock("./roster.ts", () => ({
   EMPTY_OCCUPANCY: {},
   EMPTY_LIVE_PEOPLE: {},
@@ -834,5 +840,8 @@ describe("active media UI", () => {
       a: { alice: { channelId: "stage", muted: false, deafened: false } },
     };
     expect(page()).not.toContain("voice-room-invite");
+    // The dialog does not hang on the prompt: whoever its link brings in
+    // must not close it under the hand that copies the link.
+    expect(page()).toContain('data-invite-dialog="closed"');
   });
 });

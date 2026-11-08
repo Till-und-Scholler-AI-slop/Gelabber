@@ -693,13 +693,15 @@ export function VoiceRoom({
           >
             Einladen
           </Button>
-          <InviteDialog
-            server={server}
-            open={inviting}
-            onClose={() => setInviting(false)}
-          />
         </div>
       ) : null}
+      {/* Its own lifetime: whoever the link brings in ends the prompt, not
+          the dialog, so the link can still be copied. */}
+      <InviteDialog
+        server={server}
+        open={inviting}
+        onClose={() => setInviting(false)}
+      />
       {profile?.serverId === server.id ? (
         <MemberProfileDialog
           server={server}
