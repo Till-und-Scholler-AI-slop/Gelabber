@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -11,6 +12,12 @@ import { createPortal } from "react-dom";
 
 import { pageZoom } from "../../interface/zoom.ts";
 import { TIP_GRACE_MS, TIP_WARM_MS, tipDelay } from "../tooltipTiming.ts";
+import {
+  claimTooltip,
+  releaseTooltip,
+  tooltipEscape,
+  tooltipHost,
+} from "./tooltipState.ts";
 import "./ui.css";
 
 /** What the control spreads onto itself so its tooltip follows it. */
@@ -21,8 +28,8 @@ export type TooltipTrigger = {
   onBlur: () => void;
 };
 
-// One tooltip at a time on the page: moving from one control to the next
-// moves it there at once (tooltipTiming.ts).
+// Once one is up, the next shows at once (tooltipTiming.ts); the one
+// before goes as it does (claimTooltip).
 let showing = 0;
 let warmUntil = 0;
 
@@ -37,9 +44,8 @@ type Shown = {
  * The tooltip of a control, in the look of the server rail's: the action
  * in bold, its shortcut or a detail muted beneath, above the control. A
  * pointer resting on it shows it after a moment, keyboard focus at once;
- * Esc puts it away, as does leaving. Shown for the focus, that is all the
- * Esc does (as in the server rail); under a resting pointer the Esc still
- * goes on to what it would do anyway, such as "als gelesen markieren".
+ * Esc puts it away (tooltipEscape), as does leaving. It is drawn where
+ * the control is seen: in its modal dialog or fullscreen (tooltipHost).
  * Screen readers get the same from the control's name and
  * `aria-keyshortcuts`, so the tooltip itself is hidden from them.
  *
@@ -61,24 +67,33 @@ export function useTooltip({
   const visible = shown !== null && !disabled;
   const byKeyboard = shown?.keyboard ?? false;
 
-  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const hideNow = useCallback(() => {
+    window.clearTimeout(timer.current);
+    setShown(null);
+  }, []);
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(timer.current);
+      releaseTooltip(hideNow);
+    },
+    [hideNow],
+  );
 
   useEffect(() => {
     if (!visible) return;
     showing += 1;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (byKeyboard && !event.defaultPrevented) event.preventDefault();
-      window.clearTimeout(timer.current);
-      setShown(null);
+      if (tooltipEscape(event, byKeyboard)) hideNow();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
       showing -= 1;
       warmUntil = Date.now() + TIP_WARM_MS;
+      releaseTooltip(hideNow);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [visible, byKeyboard]);
+  }, [visible, byKeyboard, hideNow]);
 
   // Above the control, centred, kept inside the window; below it where
   // there is no room above.
@@ -102,22 +117,28 @@ export function useTooltip({
 
   const show = (anchor: HTMLElement, keyboard: boolean) => {
     window.clearTimeout(timer.current);
-    const fullscreen = document.fullscreenElement;
-    // Inside a picture in fullscreen nothing else shows.
-    const host = fullscreen?.contains(anchor) ? fullscreen : document.body;
+    const host = tooltipHost<Element>(
+      anchor,
+      document.fullscreenElement,
+      document.body,
+    );
     const delay = tipDelay({
       showing: showing > 0,
       warm: Date.now() < warmUntil,
       keyboard,
     });
     const next = { anchor, host, keyboard };
-    if (delay === 0) setShown(next);
-    else timer.current = window.setTimeout(() => setShown(next), delay);
+    const appear = () => {
+      claimTooltip(hideNow);
+      setShown(next);
+    };
+    if (delay === 0) appear();
+    else timer.current = window.setTimeout(appear, delay);
   };
   const hide = (at: "once" | "soon") => {
     window.clearTimeout(timer.current);
-    if (at === "once") setShown(null);
-    else timer.current = window.setTimeout(() => setShown(null), TIP_GRACE_MS);
+    if (at === "once") hideNow();
+    else timer.current = window.setTimeout(hideNow, TIP_GRACE_MS);
   };
 
   return {
