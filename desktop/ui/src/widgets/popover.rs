@@ -16,7 +16,16 @@ pub struct Popover {
     align_end: bool,
     min_width: f32,
     takes_focus: bool,
+    /// A submenu: the menu it opens beside (`submenuPosition`).
+    beside: Option<Rect>,
+    /// Presses here are not outside (an open submenu).
+    inside: Option<Rect>,
 }
+
+/// `SUBMENU_INSET` of RowMenu.tsx: the submenu's padding and border, so its
+/// first entry meets the entry that opened it.
+const SUBMENU_INSET: f32 = 9.0;
+const SUBMENU_GAP: f32 = 4.0;
 
 impl Popover {
     pub fn new(id: impl std::hash::Hash + std::fmt::Debug, anchor: Rect) -> Self {
@@ -26,7 +35,29 @@ impl Popover {
             align_end: false,
             min_width: 180.0,
             takes_focus: true,
+            beside: None,
+            inside: None,
         }
+    }
+
+    /// A submenu of the menu at `menu`, opened by the entry at `anchor`:
+    /// right of the menu if it fits, else left, its first entry level with
+    /// the anchor.
+    pub fn beside(mut self, menu: Rect) -> Self {
+        self.beside = Some(menu);
+        self
+    }
+
+    /// A press in `rect` keeps it open, as one inside it does.
+    pub fn also_inside(mut self, rect: Option<Rect>) -> Self {
+        self.inside = rect;
+        self
+    }
+
+    /// Whether the first control drawn as it opens takes the focus.
+    pub fn takes_focus(mut self, takes: bool) -> Self {
+        self.takes_focus = takes;
+        self
     }
 
     /// `bottom-end`: right edges aligned.
@@ -58,12 +89,24 @@ impl Popover {
             .data(|d| d.get_temp(size_id))
             .unwrap_or(Vec2::new(self.min_width, 100.0));
         let below = self.anchor.bottom() + 6.0;
-        let top = if below + size.y > screen.bottom() - 8.0 {
+        let top = if self.beside.is_some() {
+            (self.anchor.top() - SUBMENU_INSET).clamp(
+                screen.top() + 8.0,
+                (screen.bottom() - 8.0 - size.y).max(screen.top() + 8.0),
+            )
+        } else if below + size.y > screen.bottom() - 8.0 {
             (self.anchor.top() - 6.0 - size.y).max(screen.top() + 8.0)
         } else {
             below
         };
-        let left = if self.align_end {
+        let left = if let Some(menu) = self.beside {
+            let right = menu.right() + SUBMENU_GAP;
+            if right + size.x <= screen.right() - 8.0 {
+                right
+            } else {
+                menu.left() - SUBMENU_GAP - size.x
+            }
+        } else if self.align_end {
             self.anchor.right() - size.x
         } else {
             self.anchor.left()
@@ -139,9 +182,11 @@ impl Popover {
         let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
         let outside = ctx.input(|i| {
             i.pointer.any_pressed()
-                && i.pointer
-                    .interact_pos()
-                    .is_some_and(|p| !area.response.rect.contains(p) && !self.anchor.contains(p))
+                && i.pointer.interact_pos().is_some_and(|p| {
+                    !area.response.rect.contains(p)
+                        && !self.anchor.contains(p)
+                        && !self.inside.is_some_and(|r| r.contains(p))
+                })
         });
         if escape || outside { None } else { out }
     }

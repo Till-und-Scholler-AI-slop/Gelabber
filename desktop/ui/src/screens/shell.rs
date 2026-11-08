@@ -15,6 +15,7 @@ mod members;
 pub mod overlays;
 pub(crate) mod overview;
 mod rail;
+mod row_menu;
 mod state;
 mod user_panel;
 
@@ -102,6 +103,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
         _ => (None, false, None),
     };
     rail::show(ui, app, rail, active_server, dm_active);
+    // Before the pages: an open row menu takes Esc and the arrows first.
+    row_menu::show(ui, app);
     // The navigation ends with the user panel; the page (`<main>`) follows.
     let main_at = pos2(column.right(), screen.top());
     let panel = |ui: &mut Ui, app: &mut AppCtx| {

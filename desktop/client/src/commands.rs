@@ -1598,7 +1598,27 @@ impl Client {
     }
 
     /// Op key `notifications`; settings and unread levels are refetched.
+    /// The dialog shows a failure itself.
     pub fn set_notifications(&self, target: SettingTarget, body: NotificationSettingBody) {
+        self.save_notifications("notifications", target, body);
+    }
+
+    /// Like `set_notifications`, from a row menu that is gone by the time
+    /// the answer comes: op key `notify_menu`, whose failure is a toast.
+    pub fn set_notifications_from_menu(
+        &self,
+        target: SettingTarget,
+        body: NotificationSettingBody,
+    ) {
+        self.save_notifications("notify_menu", target, body);
+    }
+
+    fn save_notifications(
+        &self,
+        op: &'static str,
+        target: SettingTarget,
+        body: NotificationSettingBody,
+    ) {
         let this = self.clone();
         self.spawn(async move {
             let http = this.http().clone();
@@ -1608,7 +1628,7 @@ impl Client {
                     SettingTarget::Channel(id) => http.set_channel_notifications(id, &body).await,
                 }
             };
-            if this.op("notifications", work).await.is_some() {
+            if this.op(op, work).await.is_some() {
                 this.reload_notification_settings().await;
             }
         });

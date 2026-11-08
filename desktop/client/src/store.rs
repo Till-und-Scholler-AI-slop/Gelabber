@@ -196,6 +196,9 @@ pub fn failure_text(op: &str) -> Option<&'static str> {
         "delete" => "Nachricht nicht gelöscht.",
         "react" => "Reaktion nicht gespeichert.",
         "dm" => "Unterhaltung nicht geöffnet.",
+        // A row menu's choices; the dialog shows its own failure.
+        "notify_menu" => "Nicht gespeichert.",
+        "read" | "read_all" => "Nicht als gelesen markiert.",
         _ => return None,
     })
 }
@@ -1530,6 +1533,9 @@ mod tests {
             Some("Kanal nicht gelöscht.")
         );
         assert_eq!(failure_text("dm"), Some("Unterhaltung nicht geöffnet."));
+        assert_eq!(failure_text("notify_menu"), Some("Nicht gespeichert."));
+        assert_eq!(failure_text("read:1"), Some("Nicht als gelesen markiert."));
+        assert_eq!(failure_text("notifications"), None);
         // Loads and form-only writes have their own error places.
         assert_eq!(failure_text("server:1"), None);
         assert_eq!(failure_text("login"), None);
