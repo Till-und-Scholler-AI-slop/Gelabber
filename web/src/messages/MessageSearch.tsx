@@ -42,7 +42,6 @@ export function MessageSearch({
   // The hit opened in its context, until the query changes underneath it.
   const [opened, setOpened] = useState<{ q: string; id: string } | null>(null);
   const selected = opened?.q === q ? opened.id : null;
-  const terms = useMemo(() => searchTerms(q), [q]);
   const resultButtons = useRef(new Map<string, HTMLButtonElement>());
   const lastSelected = useRef<string | null>(null);
   useLayoutEffect(() => {
@@ -52,8 +51,11 @@ export function MessageSearch({
   }, [selected]);
   const query = useInfiniteQuery({
     queryKey: ["user", userId, generation, "message-search", channelId, q],
-    queryFn: ({ pageParam, signal }) =>
-      searchMessages(channelId, q, pageParam, signal),
+    // Each page keeps the query it answers, for the words it marks.
+    queryFn: async ({ pageParam, signal }) => ({
+      ...(await searchMessages(channelId, q, pageParam, signal)),
+      q,
+    }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => {
       const oldest = page.messages[0];
@@ -69,6 +71,9 @@ export function MessageSearch({
   });
   const rows =
     query.data?.pages.flatMap((page) => [...page.messages].reverse()) ?? [];
+  // Typing on keeps the last hits: they mark the words they were found by.
+  const shownQ = query.data?.pages[0]?.q ?? q;
+  const terms = useMemo(() => searchTerms(shownQ), [shownQ]);
   if (selected)
     return (
       <MessageContextView

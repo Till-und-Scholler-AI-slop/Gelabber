@@ -854,3 +854,46 @@ impl Laid {
         action
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `MessageContent highlight`: the searched word is marked in plain
+    /// text, bold included, but not in a spoiler, code, a link or a longer
+    /// word.
+    #[test]
+    fn a_hit_marks_only_its_plain_text() {
+        let marked = std::cell::RefCell::new(Vec::new());
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            crate::fonts::install(ui.ctx());
+            let names = HashMap::new();
+            let mentions = Mentions {
+                names: &names,
+                me: None,
+                everyone: false,
+                mentions: &[],
+            };
+            let laid = layout_hit(
+                ui,
+                "**Snacks** ||snacks|| `snacks` https://snacks.example snacksbar",
+                600.0,
+                &mentions,
+                &["snacks".to_owned()],
+            );
+            let mut out = Vec::new();
+            for part in &laid.parts {
+                if let PartKind::Text(text) = &part.kind {
+                    let chars: Vec<char> = text.block.galley.text().chars().collect();
+                    for s in text.sections.iter().filter(|s| s.span == Span::Match) {
+                        out.push(chars[s.chars.0..s.chars.1].iter().collect::<String>());
+                    }
+                }
+            }
+            *marked.borrow_mut() = out;
+        });
+        harness.run();
+        drop(harness);
+        assert_eq!(marked.into_inner(), ["Snacks"]);
+    }
+}

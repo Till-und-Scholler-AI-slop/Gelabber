@@ -27,6 +27,9 @@ pub struct SearchState {
     pub text: String,
     changed_at: f64,
     query: String,
+    /// The query of the shown hits, whose words they mark (typing on keeps
+    /// the last hits until the new ones are there).
+    shown: String,
     request: Request,
     /// The first page's answer, or its error.
     result: Option<Result<(), String>>,
@@ -151,6 +154,7 @@ pub fn show(
         match result {
             Ok(page) => {
                 state.pages = vec![page];
+                state.shown = state.query.clone();
                 state.result = Some(Ok(()));
                 state.scroll = 0.0;
             }
@@ -256,7 +260,7 @@ pub fn show(
         state_line(ui, &mut y, "Keine Nachrichten gefunden.");
     }
     let width = body.width() - 24.0;
-    let terms = search_terms(&state.query);
+    let terms = search_terms(&state.shown);
     for m in hits {
         // `p:first-child`: the name and, 8 apart on its baseline, the time.
         let style = TextStyle::new(13.0, 400.0, 1.5);
