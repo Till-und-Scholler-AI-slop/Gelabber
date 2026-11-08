@@ -109,7 +109,12 @@ export function reactionMutationOptions(
     },
     onError: (error: Error, intent: ReactionIntent) => {
       if (!stampHolds(intent.scope)) return;
-      notifyError(error, "Reaktion nicht gespeichert.");
+      // The message, its conversation or your access to it is gone.
+      notifyError(
+        error,
+        "Reaktion nicht gespeichert.",
+        "Die Nachricht gibt es nicht mehr.",
+      );
       void client.invalidateQueries({
         queryKey: messageKeys.channel(
           intent.scope.userId,

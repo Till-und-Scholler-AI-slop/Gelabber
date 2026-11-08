@@ -89,6 +89,13 @@ pub fn error_text(error: &ApiError) -> Option<String> {
     Some(crate::rules::error_message(code).to_owned())
 }
 
+/// `notifyError(…, gone)`: what a `not_found` means for a failed change,
+/// instead of the generic "Das gibt es nicht (mehr)."
+fn gone_text(failed: &str) -> Option<&'static str> {
+    // The message, its conversation or your access to it is gone.
+    (failed == "Reaktion nicht gespeichert.").then_some("Die Nachricht gibt es nicht mehr.")
+}
+
 #[derive(Default)]
 pub struct Toasts {
     items: Vec<Toast>,
@@ -109,7 +116,11 @@ impl Toasts {
     /// `notifyError(error, failed)`: `failed` names the change that did not
     /// happen ("Nachricht nicht gelöscht."), the error says why.
     pub fn failure(&mut self, failed: &str, error: &ApiError) {
-        if let Some(text) = error_text(error) {
+        let text = gone_text(failed)
+            .filter(|_| error.code() == "not_found")
+            .map(str::to_owned)
+            .or_else(|| error_text(error));
+        if let Some(text) = text {
             self.error(format!("{failed} {text}"));
         }
     }
@@ -420,6 +431,26 @@ mod tests {
         t.error("d");
         t.notify("a");
         assert_eq!(t.texts(), ["a", "b", "c", "a"]);
+    }
+
+    #[test]
+    fn a_missing_message_is_named() {
+        let mut t = Toasts::default();
+        t.failure(
+            "Reaktion nicht gespeichert.",
+            &api("not_found", serde_json::Value::Null),
+        );
+        t.failure(
+            "Nachricht nicht gelöscht.",
+            &api("not_found", serde_json::Value::Null),
+        );
+        assert_eq!(
+            t.texts(),
+            [
+                "Reaktion nicht gespeichert. Die Nachricht gibt es nicht mehr.",
+                "Nachricht nicht gelöscht. Das gibt es nicht (mehr).",
+            ]
+        );
     }
 
     #[test]
