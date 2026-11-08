@@ -940,6 +940,8 @@ impl Updater {
     /// install asked for ("Jetzt installieren") runs at once; true when the
     /// app is to end for its installer.
     pub fn tick_setup(&mut self, ctx: &Context) -> bool {
+        // The way to setup left the call: its minute after does not hold.
+        self.lock = CallLock::default();
         let repaint = ctx.clone();
         self.advance(
             &(Arc::new(move || repaint.request_repaint()) as Wake),
@@ -1787,6 +1789,8 @@ mod tests {
             package: Some((format!("http://{addr}/setup.exe"), SIG_A.into())),
         }));
         updater.dismissed = Some("0.9.1".into());
+        // The call left on the way here ("Server wechseln …") ended just now.
+        assert!(updater.lock.locked(true, Instant::now()));
         ask(&ctx, SetupAsk::Install);
         updater.setup(&ctx);
         assert!(updater.requested);
@@ -1794,6 +1798,11 @@ mod tests {
         assert!(updater.notice().is_some());
         let start = Instant::now();
         while !updater.tick_setup(&ctx) {
+            assert!(
+                !matches!(updater.phase, Phase::Failed(_)),
+                "{:?}",
+                updater.phase
+            );
             assert!(start.elapsed() < Duration::from_secs(10), "download hangs");
             std::thread::sleep(Duration::from_millis(10));
         }

@@ -129,6 +129,8 @@ pub struct Platform {
     title: String,
     /// The title bar's theme last sent.
     title_bar: Option<egui::SystemTheme>,
+    /// The last pass showed the setup screen.
+    in_setup: bool,
     /// The unread count on the Linux launcher icon.
     #[cfg(target_os = "linux")]
     badge: Option<(tray::unity::Badge, u32)>,
@@ -161,6 +163,7 @@ impl Platform {
             updates: update::Updater::default(),
             title: "Gelabber".into(),
             title_bar: None,
+            in_setup: false,
             #[cfg(target_os = "linux")]
             badge: None,
             wake,
@@ -273,6 +276,7 @@ impl Platform {
             ctx.send_viewport_cmd(ViewportCommand::SetTheme(title_bar));
         }
         self.updates.setup(ctx);
+        self.in_setup = app.is_none();
         let Some(app) = app else {
             self.show_unread(ctx, tray::Unread::default());
             // "Jetzt installieren" on the setup screen: no call to wait for.
@@ -465,8 +469,12 @@ impl Platform {
         self.stored.window = Some(window);
     }
 
-    /// Over the page: the update notice.
+    /// Over the page: the update notice. Not over a setup screen whose card
+    /// shows the update and installs it already.
     pub fn paint(&mut self, ctx: &Context) {
+        if self.in_setup && update::setup_view(ctx).is_some_and(|v| v.installs) {
+            return;
+        }
         self.updates.paint(ctx);
     }
 

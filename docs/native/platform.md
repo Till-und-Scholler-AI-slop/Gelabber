@@ -145,7 +145,9 @@ suchen" and the state ("Installiert: x. Verfügbar: y."), for every install,
 with what the update found offers ("Jetzt installieren" in the Windows
 setup, "Herunterladen", or pacman's line). The setup screen shows the state
 and "Jetzt installieren" only where the app installs itself; installing
-from there needs no server (the download runs on a thread of its own).
+from there needs no server (the download runs on a thread of its own) and
+no call holds it (the way to setup left the call). There the card shows the
+install, so the notice does not.
 
 ## AppUserModelID (`aumid.rs`)
 
