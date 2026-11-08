@@ -308,9 +308,9 @@ for (const scene of scenes) {
       // The first button or link, else the first element, with this name.
       if (action.hover) {
         await page
-          .getByRole("button", { name: action.hover, exact: true })
-          .or(page.getByRole("link", { name: action.hover, exact: true }))
-          .or(page.getByText(action.hover, { exact: true }))
+          .getByRole("button", { name: named(action.hover), exact: true })
+          .or(page.getByRole("link", { name: named(action.hover), exact: true }))
+          .or(page.getByText(named(action.hover), { exact: true }))
           .first()
           .hover();
         hovered = true;
