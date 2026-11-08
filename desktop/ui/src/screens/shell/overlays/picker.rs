@@ -2,7 +2,7 @@
 //! field over a list to pick from. ↑ and ↓ move the highlight, Enter picks
 //! it, a click picks any row; the caller filters the rows by the query.
 
-use egui::{Color32, Id, Key, Modifiers, Rect, Sense, Stroke, Ui, Vec2, pos2};
+use egui::{Color32, Key, Modifiers, Rect, Sense, Ui, Vec2, pos2};
 
 use crate::icons::{self, Icon};
 use crate::images::{ImageState, Images};
@@ -95,26 +95,8 @@ pub fn show(
     if state.query != before {
         active = 0;
     }
-    // Chromium's search field: a ✕ that clears it while it has text.
-    if !state.query.is_empty() && field.response.has_focus() {
-        let field_rect = Rect::from_min_size(field.rect.min, Vec2::new(field.rect.width(), 37.0));
-        let center = pos2(field_rect.right() - 21.0, field_rect.center().y);
-        let hit = Rect::from_center_size(center, Vec2::splat(14.0));
-        let clear = ui.interact(hit, Id::unique((id, "clear")), Sense::click());
-        let r = 4.0;
-        let stroke = Stroke::new(2.0, c.text);
-        let p = ui.painter();
-        p.line_segment([center - Vec2::splat(r), center + Vec2::splat(r)], stroke);
-        p.line_segment(
-            [center + Vec2::new(-r, r), center + Vec2::new(r, -r)],
-            stroke,
-        );
-        if clear.clicked() {
-            state.query.clear();
-            active = 0;
-            field.response.request_focus();
-        }
-    }
+    // No ✕ in the field (`.shell-picker` hides Chromium's): next to the
+    // dialog's close button a second ✕ read as another way out.
 
     if rows.is_empty() {
         ui.add_space(8.0);

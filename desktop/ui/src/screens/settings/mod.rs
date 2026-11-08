@@ -361,7 +361,8 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
         app.nav.replace(&format!("/settings/{}", info.id));
     }
     let rect = ui.max_rect();
-    controls::header(ui, rect, "Einstellungen", None);
+    // The sidebar's title already names the page (UserSettingsPage).
+    controls::header(ui, rect, "", None);
     let Some(user) = me(app) else { return };
 
     let shared = page_state(&ctx);
