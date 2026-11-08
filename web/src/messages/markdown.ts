@@ -421,12 +421,22 @@ export function plainText(src: string): string {
         }
       })
       .join("");
-  return parseMessage(src)
+  const words = parseMessage(src)
     .map((block) =>
       block.type === "codeblock" ? block.text : inline(block.children),
     )
     .join(" ")
     .split(/\s+/)
-    .filter(Boolean)
-    .join(" ");
+    .filter(Boolean);
+  // The server cuts a reply's excerpt with "…", maybe inside a mark that
+  // then stays unclosed ("so **halb…"): what is left of it goes too.
+  return (src.endsWith("…") ? words.map(dropCutMarks) : words).join(" ");
+}
+
+const CUT_MARK = /^[*_~]{1,3}(?=[^*_~])|[*_~]+(?=…$)/g;
+
+/** A word of a cut excerpt without an unclosed mark run at its start, or
+ *  a half closing one before the "…". */
+function dropCutMarks(word: string): string {
+  return word.replace(CUT_MARK, "");
 }

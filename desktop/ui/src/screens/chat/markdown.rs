@@ -579,7 +579,30 @@ pub fn plain_text(src: &str) -> String {
             Block::CodeBlock { text, .. } => out.push_str(&text),
         }
     }
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
+    let words = out.split_whitespace();
+    // The server cuts a reply's excerpt with "…", maybe inside a mark that
+    // then stays unclosed ("so **halb…"): what is left of it goes too.
+    if src.ends_with('…') {
+        words.map(drop_cut_marks).collect::<Vec<_>>().join(" ")
+    } else {
+        words.collect::<Vec<_>>().join(" ")
+    }
+}
+
+/// `dropCutMarks`: a word of a cut excerpt without an unclosed mark run at
+/// its start, or a half closing one before the "…".
+fn drop_cut_marks(word: &str) -> String {
+    let mark = |c: char| matches!(c, '*' | '_' | '~');
+    let rest = word.trim_start_matches(mark);
+    let word = if (1..=3).contains(&(word.len() - rest.len())) && !rest.is_empty() {
+        rest
+    } else {
+        word
+    };
+    match word.strip_suffix('…') {
+        Some(body) => format!("{}…", body.trim_end_matches(mark)),
+        None => word.to_owned(),
+    }
 }
 
 #[cfg(test)]
@@ -603,7 +626,16 @@ mod tests {
             plain_text(&format!("hi <@{id}> @here <https://a.b/>")),
             format!("hi <@{id}> @here https://a.b/")
         );
-        assert_eq!(plain_text("so **halb…"), "so **halb…");
+    }
+
+    #[test]
+    fn plain_text_drops_the_marks_a_cut_leaves_unclosed() {
+        assert_eq!(plain_text("so **halb…"), "so halb…");
+        assert_eq!(plain_text("so **halb fertig*…"), "so halb fertig…");
+        assert_eq!(plain_text("~~weg__ und _da…"), "weg__ und da…");
+        // Only a cut excerpt: a whole message keeps what it typed.
+        assert_eq!(plain_text("so **halb"), "so **halb");
+        assert_eq!(plain_text("a * b…"), "a * b…");
     }
 
     fn text(s: &str) -> Inline {

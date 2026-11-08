@@ -323,7 +323,12 @@ describe("plain text", () => {
     );
   });
 
-  it("leaves an unclosed mark of a cut excerpt as typed", () => {
-    expect(plainText("so **halb…")).toBe("so **halb…");
+  it("drops the marks a cut excerpt leaves unclosed", () => {
+    expect(plainText("so **halb…")).toBe("so halb…");
+    expect(plainText("so **halb fertig*…")).toBe("so halb fertig…");
+    expect(plainText("~~weg__ und _da…")).toBe("weg__ und da…");
+    // Only a cut excerpt: a whole message keeps what it typed.
+    expect(plainText("so **halb")).toBe("so **halb");
+    expect(plainText("a * b…")).toBe("a * b…");
   });
 });
