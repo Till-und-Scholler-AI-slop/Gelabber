@@ -380,7 +380,9 @@ enum Listed<'a> {
 /// `sidebarRows`: uncategorised text channels, the uncategorised voice
 /// rooms under their own heading, then the categories. A category named
 /// like the heading takes the rooms at its top instead, so the heading
-/// does not show twice.
+/// does not show twice. Only the list merges: the rooms stay uncategorised,
+/// so a channel created from one of them is uncategorised too, and deleting
+/// that category leaves them under their own heading again.
 fn listed(detail: &gelabber_client::ServerDetail) -> Vec<Listed<'_>> {
     let loose = |kind: ChannelKind| {
         detail

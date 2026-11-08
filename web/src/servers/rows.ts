@@ -62,7 +62,9 @@ export function voiceHeadingCategory(
  * The sidebar's order: uncategorised text channels, the uncategorised voice
  * rooms under a "Sprachkanäle" heading of their own, then the categories.
  * A category of that name takes the rooms at its top instead, so the
- * heading does not show twice.
+ * heading does not show twice. Only the list merges: the rooms stay
+ * uncategorised, so a channel created from one of them is uncategorised too,
+ * and deleting that category leaves them under their own heading again.
  */
 export function sidebarRows(server: ServerDetail): (Row | SectionRow)[] {
   const base = buildRows(server);
