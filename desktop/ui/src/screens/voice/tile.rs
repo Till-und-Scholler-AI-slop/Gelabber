@@ -312,18 +312,25 @@ pub fn card(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid, p: &Person)
 
 /// A free seat (`.voice-room-seat`): a dashed 64px circle and "Platz frei".
 pub fn seat(ui: &Ui, rect: Rect) {
+    seat_sized(ui, rect, 64.0, 14.0, 12.0);
+}
+
+/// A free seat with a `diameter` circle, centred between the paddings
+/// `top` and `bottom` (the overview's compact seat: 56, 12, 12).
+pub fn seat_sized(ui: &Ui, rect: Rect, diameter: f32, top: f32, bottom: f32) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let label = Block::single(ui, "Platz frei", text::META, c.subtle);
-    let content = 64.0 + 6.0 + 2.0 + label.height();
-    let top = rect.top() + 14.0 + (rect.height() - 26.0 - content) / 2.0;
-    let center = pos2(rect.center().x, top + 32.0);
-    look::dashed_circle(ui.painter(), center, 32.0, 1.5, c.border_strong);
+    let content = diameter + 6.0 + 2.0 + label.height();
+    let y = rect.top() + top + (rect.height() - top - bottom - content) / 2.0;
+    let r = diameter / 2.0;
+    let center = pos2(rect.center().x, y + r);
+    look::dashed_circle(ui.painter(), center, r, 1.5, c.border_strong);
     label.paint(
         ui.painter(),
         pos2(
             rect.center().x - label.width() / 2.0,
-            top + 64.0 + 6.0 + 2.0,
+            y + diameter + 6.0 + 2.0,
         ),
     );
 }

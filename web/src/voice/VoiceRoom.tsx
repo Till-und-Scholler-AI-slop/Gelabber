@@ -85,7 +85,8 @@ type StageTile = {
   speaking?: boolean;
 };
 
-/** Empty seats before joining: a room with nobody in it shows a few. */
+/** Empty seats before joining: a room with nobody in it shows a few, the
+ * overview one. */
 const FREE_SEATS_EMPTY = 3;
 
 export function VoiceRoom({
@@ -98,8 +99,8 @@ export function VoiceRoom({
   channelId: string;
   channelName: string;
   /** The overview's room: its name heads it, with "Verbunden" while in the
-   * call, and the people are all it shows; no line about them, no free
-   * seats. The channel's page names the room itself. */
+   * call, then its people as compact cards and one free seat; no line
+   * about them. The channel's page names the room itself. */
   overview?: boolean;
 }) {
   const allowed = can(server, "join_voice");
@@ -377,9 +378,9 @@ export function VoiceRoom({
     .map(([id]) => members.get(id)?.name ?? "Jemand");
   const elsewhere = voice.status === "joined" && !here;
   const freeSeats =
-    here || !allowed || overview
+    here || !allowed
       ? 0
-      : occupants.length === 0
+      : occupants.length === 0 && !overview
         ? FREE_SEATS_EMPTY
         : 1;
 

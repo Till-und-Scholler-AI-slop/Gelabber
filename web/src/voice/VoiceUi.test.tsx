@@ -757,12 +757,12 @@ describe("active media UI", () => {
       );
     const empty = room();
     expect(empty).toContain('<h2 class="voice-room-name">Stage</h2>');
-    // No line about who is there and no free seats: an empty room is its
-    // name and the way in.
+    // No line about who is there: an empty room is its name, one free
+    // seat and the way in. The invite prompt is the channel page's.
     expect(empty).not.toContain("voice-room-summary");
-    expect(empty).not.toContain("voice-room-seat");
-    expect(empty).not.toContain("voice-room-participants");
+    expect(empty.match(/<li class="voice-room-seat"/g)).toHaveLength(1);
     expect(empty).not.toContain("Verbunden");
+    expect(empty).not.toContain("voice-room-invite");
     expect(empty).toContain("Beitreten</button>");
 
     fixture.roster = {
@@ -776,6 +776,9 @@ describe("active media UI", () => {
       const html = room();
       expect(html).not.toContain("Alice und Bob sind da.");
       expect(html.match(/<li class="voice-room-participant"/g)).toHaveLength(2);
+      // The channel's cards, compact: status line and a free seat.
+      expect(html.match(/>Im Raum</g)).toHaveLength(2);
+      expect(html.match(/<li class="voice-room-seat"/g)).toHaveLength(1);
       expect(html).toContain('aria-label="Optionen für Alice"');
       expect(html).toContain('aria-label="Optionen für Bob"');
       // Bob is quieter here: the card says so.
