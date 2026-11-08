@@ -1,10 +1,10 @@
 //! `LiveHint` (voice/LiveHint.tsx, chat.css `.lr-live-pill`, `.lr-live-hint`):
 //! who is live where on a server and the way to come along, as a pill in a
 //! channel header, or on a narrow window as a strip over the messages. A
-//! Live is watched in its voice channel, so the action joins it (or, in
-//! another call, opens it).
+//! Live is watched in its voice channel, so the action, "Zuschauen", joins
+//! it and watches (or, in another call, opens it).
 
-use egui::{Color32, Id, Rect, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Id, Rect, Stroke, StrokeKind, Ui, pos2, vec2};
 use uuid::Uuid;
 
 use super::{session, summary};
@@ -19,7 +19,8 @@ struct Entry {
     name: Option<String>,
     own: bool,
     who: Vec<String>,
-    others: bool,
+    /// The people live there besides me.
+    others: Vec<Uuid>,
     here: bool,
 }
 
@@ -54,7 +55,7 @@ fn entries(app: &AppCtx, server: Uuid) -> (Vec<Entry>, bool, bool) {
                             name: s.channel(*channel).map(|c| c.name.clone()),
                             own,
                             who,
-                            others: people.iter().any(|u| Some(*u) != me),
+                            others: people.iter().filter(|u| Some(**u) != me).copied().collect(),
                             here: joined == Some((server, *channel)),
                         }
                     })
@@ -72,12 +73,12 @@ fn entries(app: &AppCtx, server: Uuid) -> (Vec<Entry>, bool, bool) {
 /// The pill laid out: its blocks and width.
 struct Pill {
     channel: Uuid,
+    others: Vec<Uuid>,
     badge: Block,
     link: Block,
     link_text: String,
     title: String,
     action: Option<(&'static str, Block)>,
-    in_call: bool,
     width: f32,
 }
 
@@ -88,7 +89,7 @@ fn measure(ui: &Ui, app: &AppCtx, server: Uuid, max_width: f32) -> Option<Pill> 
     let c = theme.c;
     let badge_style = TextStyle::new(10.0, 700.0, 1.5).tracking(0.04);
     let style = TextStyle::new(12.0, 400.0, 1.5);
-    let badge = Block::single(ui, "LIVE", badge_style, Color32::WHITE);
+    let badge = Block::single(ui, "LIVE", badge_style, c.on_live);
     let more = list.len() - 1;
     let place = first
         .name
@@ -104,12 +105,9 @@ fn measure(ui: &Ui, app: &AppCtx, server: Uuid, max_width: f32) -> Option<Pill> 
             String::new()
         }
     );
-    let action = (!first.here && allowed && first.others).then_some(if in_call {
-        "Zum Kanal"
-    } else {
-        "Beitreten"
-    });
-    let action = action.map(|a| (a, Block::single(ui, a, style.weight(650.0), Color32::WHITE)));
+    let action =
+        (!first.here && allowed && !first.others.is_empty()).then_some(come_label(in_call));
+    let action = action.map(|a| (a, Block::single(ui, a, style.weight(650.0), c.text)));
     let fixed = 1.0
         + 6.0
         + badge.width()
@@ -123,12 +121,12 @@ fn measure(ui: &Ui, app: &AppCtx, server: Uuid, max_width: f32) -> Option<Pill> 
     let width = fixed + link.width();
     Some(Pill {
         channel: first.channel,
+        others: first.others.clone(),
         title: format!("{}{place}", summary::live_sentence(&first.who, first.own)),
         badge,
         link,
         link_text,
         action,
-        in_call,
         width,
     })
 }
@@ -142,13 +140,13 @@ fn paint_pill(ui: &mut Ui, app: &mut AppCtx, server: Uuid, pill: Pill, x: f32, m
     painter.rect(
         rect,
         corner(15.0),
-        mix(c.bg, c.danger_bg, 0.10),
-        Stroke::new(1.0, mix(c.border, c.danger_bg, 0.45)),
+        mix(c.bg, c.live, 0.10),
+        Stroke::new(1.0, mix(c.border, c.live, 0.45)),
         StrokeKind::Inside,
     );
     let mut cx = rect.left() + 1.0 + 6.0;
     let b = Rect::from_min_size(pos2(cx, mid - 9.0), vec2(pill.badge.width() + 12.0, 18.0));
-    painter.rect_filled(b, corner(9.0), c.danger_bg);
+    painter.rect_filled(b, corner(9.0), c.live);
     paint_mid(&painter, &pill.badge, b.left() + 6.0, mid);
     cx = b.right() + 8.0;
     let link_rect = Rect::from_min_size(pos2(cx, mid - 9.0), vec2(pill.link.width(), 18.0));
@@ -176,7 +174,7 @@ fn paint_pill(ui: &mut Ui, app: &mut AppCtx, server: Uuid, pill: Pill, x: f32, m
             app,
             server,
             channel,
-            pill.in_call,
+            &pill.others,
             label,
             &block,
             r,
@@ -186,15 +184,41 @@ fn paint_pill(ui: &mut Ui, app: &mut AppCtx, server: Uuid, pill: Pill, x: f32, m
     rect.right()
 }
 
-/// "Beitreten" / "Zum Kanal": into the voice channel, whose stage shows
-/// every Live; joining unless in another call, where the room asks first.
+/// The action's word: outside a call it joins and watches; in another
+/// call it only opens the channel, where the room asks before it switches.
+fn come_label(in_call: bool) -> &'static str {
+    if in_call { "Zum Kanal" } else { "Zuschauen" }
+}
+
+/// Into the voice channel of a Live, as `joinToWatch` (watchLive.ts):
+/// outside a call it joins and watches `people` from the start.
+pub fn join_to_watch(app: &mut AppCtx, server: Uuid, channel: Uuid, people: &[Uuid]) {
+    app.nav.navigate(&format!("/s/{server}/c/{channel}"));
+    match app.call.with_state(session::joined) {
+        None => {
+            app.call.join(server, channel);
+            for user in people {
+                app.call.watch(*user, true);
+            }
+        }
+        Some(here) if here == (server, channel) => {
+            for user in people {
+                app.call.watch(*user, true);
+            }
+        }
+        Some(_) => {}
+    }
+}
+
+/// "Zuschauen" / "Zum Kanal" (`.lr-live-pill > button`): a neutral
+/// button, watching is no alarm.
 #[allow(clippy::too_many_arguments)]
 fn come_button(
     ui: &mut Ui,
     app: &mut AppCtx,
     server: Uuid,
     channel: Uuid,
-    in_call: bool,
+    people: &[Uuid],
     label: &'static str,
     block: &Block,
     r: Rect,
@@ -205,17 +229,20 @@ fn come_button(
     let response = common::click(ui, r, Id::unique(("live-come", server, channel)));
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     let fill = if response.hovered() {
-        mix(c.danger_bg, Color32::WHITE, 0.1)
+        c.hover
     } else {
-        c.danger_bg
+        c.surface
     };
-    ui.painter().rect_filled(r, corner(r.height() / 2.0), fill);
+    ui.painter().rect(
+        r,
+        corner(r.height() / 2.0),
+        fill,
+        Stroke::new(1.0, c.border_strong),
+        StrokeKind::Inside,
+    );
     paint_mid(ui.painter(), block, r.left() + 10.0, mid);
     if response.clicked() {
-        app.nav.navigate(&format!("/s/{server}/c/{channel}"));
-        if !in_call {
-            app.call.join(server, channel);
-        }
+        join_to_watch(app, server, channel, people);
     }
 }
 
@@ -277,16 +304,16 @@ pub fn strip(ui: &mut Ui, app: &mut AppCtx, server: Uuid, rect: Rect) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let painter = ui.painter().clone();
-    painter.rect_filled(rect, 0.0, mix(c.bg, c.danger_bg, 0.09));
+    painter.rect_filled(rect, 0.0, mix(c.bg, c.live, 0.09));
     crate::widgets::rule_h(&painter, c.border, rect.x_range(), rect.bottom() - 1.0);
     let badge_style = TextStyle::new(10.0, 700.0, 1.5).tracking(0.04);
     let mut y = rect.top() + 6.0;
     for entry in list {
         let mid = y + 14.0;
         let mut x = rect.left() + 20.0;
-        let badge = Block::single(ui, "LIVE", badge_style, Color32::WHITE);
+        let badge = Block::single(ui, "LIVE", badge_style, c.on_live);
         let b = Rect::from_min_size(pos2(x, mid - 9.0 - 1.0), vec2(badge.width() + 12.0, 18.0));
-        painter.rect_filled(b, corner(9.0), c.danger_bg);
+        painter.rect_filled(b, corner(9.0), c.live);
         paint_mid(&painter, &badge, b.left() + 6.0, b.center().y);
         x = b.right() + 8.0;
         let sentence = summary::live_sentence(&entry.who, entry.own);
@@ -316,10 +343,10 @@ pub fn strip(ui: &mut Ui, app: &mut AppCtx, server: Uuid, rect: Rect) {
         }
         let stop = Block::single(ui, ".", STRIP, c.text);
         paint_mid(&painter, &stop, x, mid);
-        if !entry.here && allowed && entry.others {
-            let label = if in_call { "Zum Kanal" } else { "Beitreten" };
+        if !entry.here && allowed && !entry.others.is_empty() {
+            let label = come_label(in_call);
             let style = TextStyle::new(12.0, 650.0, 1.5);
-            let block = Block::single(ui, label, style, Color32::WHITE);
+            let block = Block::single(ui, label, style, c.text);
             let w = block.width() + 20.0;
             let r = Rect::from_min_size(pos2(rect.right() - 20.0 - w, mid - 12.0), vec2(w, 24.0));
             come_button(
@@ -327,7 +354,7 @@ pub fn strip(ui: &mut Ui, app: &mut AppCtx, server: Uuid, rect: Rect) {
                 app,
                 server,
                 entry.channel,
-                in_call,
+                &entry.others,
                 label,
                 &block,
                 r,

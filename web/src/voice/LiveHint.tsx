@@ -1,6 +1,6 @@
 // Hint in text channels when someone is live. Local state first; the
 // banner does not wait on the server. A Live is watched in its voice
-// channel, so the hint's action is to come along.
+// channel, so the hint's action, "Zuschauen", goes there (watchLive.ts).
 
 import { Link, useNavigate } from "@tanstack/react-router";
 
@@ -9,7 +9,8 @@ import type { ServerDetail } from "../servers/types.ts";
 import { useSession } from "../auth/session.ts";
 import { liveSentence, nameList } from "./roomSummary.ts";
 import { EMPTY_LIVE, useVoiceRoster } from "./roster.ts";
-import { joinVoice, useVoice } from "./session.ts";
+import { useVoice } from "./session.ts";
+import { joinToWatch } from "./watchLive.ts";
 
 export function LiveHint({
   server,
@@ -41,31 +42,32 @@ export function LiveHint({
         ...ids.filter((id) => id !== me).map((id) => names.get(id) ?? "Jemand"),
       ],
       // Only someone else's Live is worth coming along for.
-      others: ids.some((id) => id !== me),
+      others: ids.filter((id) => id !== me),
       here: call === `${server.id}/${channelId}`,
     };
   });
   const [first] = entries;
   if (!first) return null;
 
-  /** Into the voice channel: its stage shows every Live there. In another
-   * call, the room asks before it switches. */
-  const come = (channelId: string, channelName: string | null) => {
+  /** Into the voice channel: its stage shows every Live there. Outside a
+   * call this joins it and watches; in another call, the room asks before
+   * it switches, so the button only opens the channel. */
+  const come = (entry: (typeof entries)[number]) => {
     void navigate({
       to: "/s/$serverId/c/$channelId",
-      params: { serverId: server.id, channelId },
+      params: { serverId: server.id, channelId: entry.channelId },
     });
-    if (call === null)
-      joinVoice({
-        serverId: server.id,
-        channelId,
-        channelName: channelName ?? "Sprachkanal",
-      });
+    joinToWatch({
+      serverId: server.id,
+      channelId: entry.channelId,
+      channelName: entry.name,
+      people: entry.others,
+    });
   };
   const action = (entry: (typeof entries)[number]) =>
-    !entry.here && allowed && entry.others ? (
-      <button type="button" onClick={() => come(entry.channelId, entry.name)}>
-        {call === null ? "Beitreten" : "Zum Kanal"}
+    !entry.here && allowed && entry.others.length > 0 ? (
+      <button type="button" onClick={() => come(entry)}>
+        {call === null ? "Zuschauen" : "Zum Kanal"}
       </button>
     ) : null;
 
