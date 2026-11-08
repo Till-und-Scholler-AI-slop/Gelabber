@@ -6,6 +6,8 @@
 
 import { create } from "zustand";
 
+import { keyNames } from "../components/shellShortcuts.ts";
+
 export type VoiceInputMode = "activity" | "ptt";
 
 export function asVoiceInputMode(value: unknown): VoiceInputMode {
@@ -187,10 +189,12 @@ function applePlatform(): boolean {
   );
 }
 
-/** How the tooltips write the shortcut: "Strg+Umschalt+M" or "⌘+Umschalt+M". */
+/** How the tooltips write the shortcut, with the shortcut sheet's key
+ * names: "Strg+Umschalt+M", on a Mac "⌘⇧M". */
 export function callShortcutLabel(action: CallShortcut): string {
-  const key = action === "mute" ? "M" : "D";
-  return `${applePlatform() ? "⌘" : "Strg"}+Umschalt+${key}`;
+  const mac = applePlatform();
+  const { mod, shift } = keyNames(mac);
+  return [mod, shift, action === "mute" ? "M" : "D"].join(mac ? "" : "+");
 }
 
 /** The tooltip of the microphone or headset button: what a press does,

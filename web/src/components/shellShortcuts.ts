@@ -116,15 +116,15 @@ export function shortcutGroups(
     {
       title: "Im Sprachkanal",
       shortcuts: [
-        { keys: [mod, shift, "M"], label: "Stummschalten ein oder aus" },
-        { keys: [mod, shift, "D"], label: "Taubschalten ein oder aus" },
+        { keys: [mod, shift, "M"], label: "Stummschaltung ein oder aus" },
+        { keys: [mod, shift, "D"], label: "Taubschaltung ein oder aus" },
         ...(pushToTalk
           ? [{ keys: [pushToTalk], label: "Zum Sprechen gedrückt halten" }]
           : []),
         { keys: ["K"], label: "Kino ein oder aus" },
         {
           keys: ["M / Leertaste"],
-          label: "Im Vollbild: Stummschalten ein oder aus",
+          label: "Im Vollbild: Stummschaltung ein oder aus",
         },
       ],
     },

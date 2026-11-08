@@ -79,7 +79,7 @@ describe("quick switcher", () => {
       html.indexOf("Diese Übersicht"),
     );
     expect(html).toContain(
-      "<dt><kbd>Strg</kbd><kbd>Umschalt</kbd><kbd>M</kbd></dt><dd>Stummschalten ein oder aus</dd>",
+      "<dt><kbd>Strg</kbd><kbd>Umschalt</kbd><kbd>M</kbd></dt><dd>Stummschaltung ein oder aus</dd>",
     );
   });
 });

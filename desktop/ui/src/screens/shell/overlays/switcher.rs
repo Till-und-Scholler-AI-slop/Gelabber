@@ -249,11 +249,11 @@ pub fn shortcut_groups(push_to_talk: Option<&str>) -> Vec<(&'static str, Vec<Sho
     let mut voice = vec![
         (
             keys(&["Strg", "Umschalt", "M"]),
-            "Stummschalten ein oder aus",
+            "Stummschaltung ein oder aus",
         ),
         (
             keys(&["Strg", "Umschalt", "D"]),
-            "Taubschalten ein oder aus",
+            "Taubschaltung ein oder aus",
         ),
     ];
     if let Some(key) = push_to_talk {
@@ -262,7 +262,7 @@ pub fn shortcut_groups(push_to_talk: Option<&str>) -> Vec<(&'static str, Vec<Sho
     voice.push((keys(&["K"]), "Kino ein oder aus"));
     voice.push((
         keys(&["M / Leertaste"]),
-        "Im Vollbild: Stummschalten ein oder aus",
+        "Im Vollbild: Stummschaltung ein oder aus",
     ));
     vec![
         (
