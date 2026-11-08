@@ -10,7 +10,7 @@ import { useSession } from "../auth/session.ts";
 import { liveSentence, nameList } from "./roomSummary.ts";
 import { EMPTY_LIVE, useVoiceRoster } from "./roster.ts";
 import { useVoice } from "./session.ts";
-import { joinToWatch } from "./watchLive.ts";
+import { currentCall, joinToWatch, watchLabel } from "./watchLive.ts";
 
 export function LiveHint({
   server,
@@ -22,9 +22,7 @@ export function LiveHint({
 }) {
   const me = useSession((s) => s.user?.id);
   const lives = useVoiceRoster((s) => s.live[server.id] ?? EMPTY_LIVE);
-  const call = useVoice((s) =>
-    s.status === "joined" ? `${s.serverId}/${s.channelId}` : null,
-  );
+  const call = useVoice(currentCall);
   const navigate = useNavigate();
   const allowed = can(server, "join_voice");
   const names = new Map(server.members.map((m) => [m.user_id, m.name]));
@@ -67,7 +65,7 @@ export function LiveHint({
   const action = (entry: (typeof entries)[number]) =>
     !entry.here && allowed && entry.others.length > 0 ? (
       <button type="button" onClick={() => come(entry)}>
-        {call === null ? "Zuschauen" : "Zum Kanal"}
+        {watchLabel(call, server.id, entry.channelId)}
       </button>
     ) : null;
 

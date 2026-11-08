@@ -1,7 +1,8 @@
 import { useNavigate } from "@tanstack/react-router";
 
 import { useMessageToasts, type MessageToast } from "../messages/toasts.ts";
-import { joinToWatch } from "../voice/watchLive.ts";
+import { useVoice } from "../voice/session.ts";
+import { currentCall, joinToWatch, watchLabel } from "../voice/watchLive.ts";
 import { Avatar } from "./Avatar.tsx";
 import { CloseIcon } from "./Icons.tsx";
 import { Button } from "./ui/Button.tsx";
@@ -17,6 +18,7 @@ export function MessageToasts() {
   const hold = useMessageToasts((state) => state.hold);
   const release = useMessageToasts((state) => state.release);
   const navigate = useNavigate();
+  const call = useVoice(currentCall);
   // One that is opened, closed or runs out slides away before it goes.
   const { entries, ref } = usePresenceList(toasts, toastKey);
 
@@ -109,7 +111,7 @@ export function MessageToasts() {
                   });
                 }}
               >
-                Zuschauen
+                {watchLabel(call, toast.serverId, toast.channelId)}
               </Button>
             ) : null}
             <IconButton

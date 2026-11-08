@@ -14,6 +14,18 @@ vi.mock("../messages/toasts.ts", () => ({
     }),
 }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => () => {} }));
+const call = vi.hoisted(() => ({
+  state: {
+    status: "idle",
+    serverId: null as string | null,
+    channelId: null as string | null,
+  },
+}));
+vi.mock("../voice/session.ts", () => ({
+  useVoice: (select: (state: unknown) => unknown) => select(call.state),
+  joinVoice: () => {},
+  toggleSourceWatch: () => {},
+}));
 
 import { MessageToasts } from "./MessageToasts.tsx";
 
@@ -42,6 +54,20 @@ describe("message toasts", () => {
     expect(html).toContain(
       'aria-label="Öffnen: Runde, Ada ist live in Lounge."',
     );
+  });
+
+  it("in another call the button only goes to the channel", () => {
+    shown.toasts = [{ ...base, live: { userId: "ada", voice: "Lounge" } }];
+    call.state = { status: "joined", serverId: "srv", channelId: "sofa" };
+    expect(renderToStaticMarkup(<MessageToasts />)).toMatch(
+      /<button[^>]*>Zum Kanal<\/button>/,
+    );
+    // In that call it watches.
+    call.state = { status: "joined", serverId: "srv", channelId: "lounge" };
+    expect(renderToStaticMarkup(<MessageToasts />)).toMatch(
+      /<button[^>]*>Zuschauen<\/button>/,
+    );
+    call.state = { status: "idle", serverId: null, channelId: null };
   });
 
   it("a message has no watch button", () => {

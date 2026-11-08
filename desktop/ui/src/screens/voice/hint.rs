@@ -24,7 +24,8 @@ struct Entry {
     here: bool,
 }
 
-fn entries(app: &AppCtx, server: Uuid) -> (Vec<Entry>, bool, bool) {
+/// The voice channels with Lives, whether I may join, and my call.
+fn entries(app: &AppCtx, server: Uuid) -> (Vec<Entry>, bool, Option<(Uuid, Uuid)>) {
     let joined = app.call.with_state(session::joined);
     app.client.with_state(|s| {
         let me = s.me().map(|m| m.id);
@@ -66,7 +67,7 @@ fn entries(app: &AppCtx, server: Uuid) -> (Vec<Entry>, bool, bool) {
         if let Some(d) = detail {
             out.sort_by_key(|e| d.channels.iter().position(|c| c.id == e.channel));
         }
-        (out, allowed, joined.is_some())
+        (out, allowed, joined)
     })
 }
 
@@ -83,7 +84,7 @@ struct Pill {
 }
 
 fn measure(ui: &Ui, app: &AppCtx, server: Uuid, max_width: f32) -> Option<Pill> {
-    let (list, allowed, in_call) = entries(app, server);
+    let (list, allowed, joined) = entries(app, server);
     let first = list.first()?;
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
@@ -105,8 +106,11 @@ fn measure(ui: &Ui, app: &AppCtx, server: Uuid, max_width: f32) -> Option<Pill> 
             String::new()
         }
     );
-    let action =
-        (!first.here && allowed && !first.others.is_empty()).then_some(come_label(in_call));
+    let action = (!first.here && allowed && !first.others.is_empty()).then_some(watch_label(
+        joined,
+        server,
+        first.channel,
+    ));
     let action = action.map(|a| (a, Block::single(ui, a, style.weight(650.0), c.text)));
     let fixed = 1.0
         + 6.0
@@ -184,10 +188,18 @@ fn paint_pill(ui: &mut Ui, app: &mut AppCtx, server: Uuid, pill: Pill, x: f32, m
     rect.right()
 }
 
-/// The action's word: outside a call it joins and watches; in another
-/// call it only opens the channel, where the room asks before it switches.
-fn come_label(in_call: bool) -> &'static str {
-    if in_call { "Zum Kanal" } else { "Zuschauen" }
+/// The action's word for a Live in `channel` (watchLive.ts `watchLabel`):
+/// "Zuschauen" joins and watches, or watches in that call; in another call
+/// it only opens the channel, where the room asks before it switches.
+pub(crate) fn watch_label(
+    joined: Option<(Uuid, Uuid)>,
+    server: Uuid,
+    channel: Uuid,
+) -> &'static str {
+    match joined {
+        Some(here) if here != (server, channel) => "Zum Kanal",
+        _ => "Zuschauen",
+    }
 }
 
 /// Into the voice channel of a Live, as `joinToWatch` (watchLive.ts):
@@ -297,7 +309,7 @@ pub fn strip_height(app: &AppCtx, server: Uuid) -> f32 {
 /// `LiveHint` as a strip over the message pane (`.lr-live-hint`): per voice
 /// channel, "Mia ist live in Sofa." and the way to come along.
 pub fn strip(ui: &mut Ui, app: &mut AppCtx, server: Uuid, rect: Rect) {
-    let (list, allowed, in_call) = entries(app, server);
+    let (list, allowed, joined) = entries(app, server);
     if list.is_empty() {
         return;
     }
@@ -344,7 +356,7 @@ pub fn strip(ui: &mut Ui, app: &mut AppCtx, server: Uuid, rect: Rect) {
         let stop = Block::single(ui, ".", STRIP, c.text);
         paint_mid(&painter, &stop, x, mid);
         if !entry.here && allowed && !entry.others.is_empty() {
-            let label = come_label(in_call);
+            let label = watch_label(joined, server, entry.channel);
             let style = TextStyle::new(12.0, 650.0, 1.5);
             let block = Block::single(ui, label, style, c.text);
             let w = block.width() + 20.0;

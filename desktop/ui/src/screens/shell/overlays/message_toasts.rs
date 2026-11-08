@@ -13,6 +13,7 @@ use crate::icons::Icon;
 use crate::route::Route;
 use crate::screens::settings::prefs;
 use crate::screens::shell::common::{self, line};
+use crate::screens::voice::{hint, session};
 use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner, mix};
 use crate::widgets::{Button, IconButton};
@@ -399,6 +400,7 @@ pub fn show(ui: &Ui, app: &mut AppCtx, toasts: &mut MessageToasts) {
     let mut opened = None;
     let mut watched = None;
     let mut hovered_ids = Vec::new();
+    let joined = app.call.with_state(session::joined);
     egui::Area::new(Id::unique("gelabber-message-toasts"))
         .order(Order::Foreground)
         .fixed_pos(screen.min)
@@ -490,7 +492,7 @@ pub fn show(ui: &Ui, app: &mut AppCtx, toasts: &mut MessageToasts) {
                 // A Live: the name stands once, above; here the on-air tag,
                 // where, and a way to watch.
                 let watch = toast.live.as_ref().map(|live| {
-                    let label = "Zuschauen";
+                    let label = hint::watch_label(joined, toast.server, toast.channel);
                     let w = Block::single(ui, label, text::UI, c.text).width() + 2.0 * 12.0 + 2.0;
                     let r = Rect::from_min_size(
                         pos2(rect.right() - 13.0 - w, rect.bottom() - 13.0 - 32.0),
@@ -566,7 +568,7 @@ pub fn show(ui: &Ui, app: &mut AppCtx, toasts: &mut MessageToasts) {
         && let Some(live) = &t.live
     {
         toasts.items.retain(|x| x.id != t.id);
-        crate::screens::voice::hint::join_to_watch(app, t.server, t.channel, &[live.user]);
+        hint::join_to_watch(app, t.server, t.channel, &[live.user]);
     }
     if let Some(t) = opened {
         toasts.items.retain(|x| x.id != t.id);
@@ -640,5 +642,112 @@ mod tests {
             ),
             "hi @Lena @Unbekannt"
         );
+    }
+
+    /// The live toast drawn in egui_kittest against a hand-made call state
+    /// and an unreachable server.
+    mod drawn {
+        use egui::{Ui, vec2};
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+        use gelabber_call::{Call, CallState, CallStatus};
+        use gelabber_client::Client;
+        use uuid::Uuid;
+
+        use super::super::{Incoming, LiveToast, MessageToasts, show};
+        use crate::app::{AppCtx, Nav, Session};
+        use crate::images::Images;
+        use crate::toasts::Toasts;
+
+        const SERVER: Uuid = Uuid::from_u128(0x10);
+        const SOFA: Uuid = Uuid::from_u128(0x20);
+        const KINO: Uuid = Uuid::from_u128(0x21);
+        const JONAS: Uuid = Uuid::from_u128(0x7c);
+
+        struct Probe(Box<dyn FnMut(&mut Ui)>);
+
+        impl eframe::App for Probe {
+            fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+                (self.0)(ui);
+            }
+        }
+
+        /// Jonas went live in Sofa; the toast stack drawn each frame.
+        fn harness(call: Call) -> Harness<'static, Probe> {
+            let client = call.client().clone();
+            let images = Images::new(client.clone());
+            let mut toasts = MessageToasts::default();
+            toasts.push(
+                Incoming {
+                    channel: SOFA,
+                    server: SERVER,
+                    dm: false,
+                    label: "Wohnzimmer".into(),
+                    author: "Jonas".into(),
+                    avatar: None,
+                    mentioned: false,
+                    preview: "Jonas ist live in Sofa.".into(),
+                    live: Some(LiveToast {
+                        user: JONAS,
+                        voice: "Sofa".into(),
+                    }),
+                },
+                0.0,
+            );
+            Harness::builder()
+                .with_size(vec2(1280.0, 800.0))
+                .build_eframe(move |cc| {
+                    crate::fonts::install(&cc.egui_ctx);
+                    crate::theme::set(&cc.egui_ctx, crate::theme::Theme::dark());
+                    Probe(Box::new(move |ui| {
+                        let mut nav = Nav::new("/");
+                        let mut session = Session::new();
+                        let mut app_toasts = Toasts::default();
+                        let mut app = AppCtx {
+                            client: &client,
+                            call: &call,
+                            images: &images,
+                            nav: &mut nav,
+                            session: &mut session,
+                            account_mail: None,
+                            toasts: &mut app_toasts,
+                        };
+                        show(ui, &mut app, &mut toasts);
+                    }))
+                })
+        }
+
+        fn offline() -> Call {
+            Call::new(Client::new("http://127.0.0.1:9").expect("client"))
+        }
+
+        #[test]
+        fn outside_a_call_the_live_toast_joins_to_watch() {
+            let call = offline();
+            let mut h = harness(call.clone());
+            h.run_steps(4);
+            assert!(h.query_by_label("Zum Kanal").is_none());
+            h.get_by_label("Zuschauen").click();
+            h.run_steps(4);
+            assert_eq!(call.join_attempts(), 1);
+            assert!(h.query_by_label("Zuschauen").is_none(), "the toast goes");
+        }
+
+        #[test]
+        fn in_another_call_the_live_toast_only_goes_to_the_channel() {
+            let call = offline();
+            call.set_state(CallState {
+                status: CallStatus::Connected,
+                server: Some(SERVER),
+                channel: Some(KINO),
+                ..CallState::default()
+            });
+            let mut h = harness(call.clone());
+            h.run_steps(4);
+            assert!(h.query_by_label("Zuschauen").is_none());
+            h.get_by_label("Zum Kanal").click();
+            h.run_steps(4);
+            assert_eq!(call.join_attempts(), 0, "the room asks before it switches");
+        }
     }
 }
