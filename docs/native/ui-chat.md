@@ -301,11 +301,10 @@ If content is empty and there is no GIF, an empty `.lr-message-text` is still re
 
 | Function | Format | Example |
 |---|---|---|
-| `formatWhen` (next to name, unread bar) | today: `HH:mm`; other day: `dd.MM., HH:mm` | "14:02", "21.10., 14:02" |
+| `formatWhen` (next to name, unread bar, search hits) | today: `HH:mm`; other day: `dd.MM., HH:mm`; another year: `dd.MM.yyyy, HH:mm` | "14:02", "21.10., 14:02", "21.10.2025, 14:02" |
 | `formatClock` (continued gutter) | `HH:mm` (2-digit) | "09:05" |
 | `formatFull` (tooltips) | dateStyle full + timeStyle short | "Mittwoch, 21. Oktober 2026 um 14:02" |
 | `dayLabel` | §5 | "Heute", "Gestern", "Mittwoch, 21. Oktober", "Dienstag, 4. März 2025" |
-| Search hit time | `toLocaleString("de-DE")` | "21.10.2026, 14:02:00" |
 
 "today" in `formatWhen` = same local Y/M/D as now. Invalid dates render "".
 
@@ -601,7 +600,7 @@ GIF picker (`components/GifPicker.tsx:106-189`, title "GIF senden"): label "GIF 
 
 ## 24. Search overlay (header search)
 
-`messages/MessageSearch.tsx:73-152`, `chat.css:1854-1929`. After 250ms of typing, the list area is replaced (same box): summary line (padding 10 20 0, 12px muted, gap 8) "Treffer in dieser Unterhaltung" + right button "Zurück zum Chat" (padding 4 8, radius 7, 12px/600 muted, hover `--lr-hover`). Results (padding 10 12 16, 14px): hit button full width, padding 10 12, radius 7, hover `--lr-hover`; line 1 (13px, baseline, gap 8): bold author + time (11px muted, `toLocaleString`); line 2 message text (margin-top 2, pre-wrap, text colour; non-interactive markdown); line 3 "Nachricht im Kontext öffnen" 12px muted (accent-text on hover). States "Suche läuft…", "Keine Nachrichten gefunden.", "Die Suche konnte nicht geladen werden." + "Erneut laden" (state paragraphs padding 6 8, muted), "Ältere Treffer"/"Lädt…" (`.lr-button-secondary`). Non-interactive code block preview: padding 6 8, max-height 8em, clipped. Hits are listed newest first. The search overlay (and the context view below) covers the list area only; the unread bar and jump pill are hidden while it is open. Hit accessible label "Zur Nachricht von {author}: {text or "Datei"}".
+`messages/MessageSearch.tsx:73-152`, `chat.css:1854-1929`. After 250ms of typing, the list area is replaced (same box): summary line (padding 10 20 0, 12px muted, gap 8) "Treffer in dieser Unterhaltung" + right button "Zurück zum Chat" (padding 4 8, radius 7, 12px/600 muted, hover `--lr-hover`). Results (padding 10 12 16, 14px): hit button full width, padding 10 12, radius 7, hover `--lr-hover`; line 1 (13px, baseline, gap 8): bold author + time (11px muted, `formatWhen`, §8.5); line 2 message text (margin-top 2, pre-wrap, text colour; non-interactive markdown; the searched words (`searchTerms`: whole words, any case, `-word` and `or` left out) in `<mark class="lr-search-mark">`, warning at 30%, only in plain text, never in code, links or spoilers); line 3 "Nachricht im Kontext öffnen" 12px muted (accent-text on hover). States "Suche läuft…", "Keine Nachrichten gefunden.", "Die Suche konnte nicht geladen werden." + "Erneut laden" (state paragraphs padding 6 8, muted), "Ältere Treffer"/"Lädt…" (`.lr-button-secondary`). Non-interactive code block preview: padding 6 8, max-height 8em, clipped. Hits are listed newest first. The search overlay (and the context view below) covers the list area only; the unread bar and jump pill are hidden while it is open. Hit accessible label "Zur Nachricht von {author}: {text or "Datei"}".
 
 ### 24.1 Context view (a search hit opened, or a reply whose original is not loaded)
 

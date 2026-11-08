@@ -266,7 +266,7 @@ Missing from the shell/chat specs; shown for chat messages in a channel/DM you a
 | card hover | bg `color-mix(elevated 92%, text)` → dark **`#353839`**, light **`#ebeae8`** |
 | avatar | Avatar sm **32** (initials 12px on tint) of the author |
 | text column | the whole card is one button (column, gap 2, left-aligned, no bg/border); each line single-line ellipsis |
-| line 1 "where" | 400 12px/1.4 muted: channel label `#{channel}` (DM: peer name; fallbacks "Kanal"/"DM"); when stacked: `{label} · {n} neu` |
+| line 1 "where" | 400 12px/1.4 muted: channel label `#{channel}` (DM: **"Direktnachricht"**, the author line already names the person; fallback "Kanal"); when stacked: `{label} · {n} neu` |
 | line 2 "who" | 600 13px/1.35 text: author name; mention adds `<small>` " hat dich erwähnt" (400, muted, same size) |
 | line 3 preview | 400 14px/1.5 muted: whitespace-collapsed text, >140 chars → first 137 + "…"; empty → "GIF" / "Datei" (attachment) / "Neue Nachricht"; mentions shown as names; system messages as their sentence |
 | close | IconButton **xs 28×28**, `CloseIcon 14`, "Schließen", absolute top 6 / right 6, above the card button |
@@ -512,7 +512,7 @@ Title **"Kategorie erstellen"** / **"Kategorie umbenennen"**; field **"Name"** (
 ### 5.5 Channel dialog (`ServerDialogs.tsx:356-500`)
 
 Title **"Kanal erstellen"** / **"Kanal bearbeiten"**.
-1. (create only) fieldset: legend **"Kanaltyp"** (500 13px, margin-bottom 8) + grid 2 equal columns gap 8 of RadioCards (§1.9): `HashIcon 14` + **"Text"** / "Nachrichten, Dateien"; `SpeakerIcon 14` + **"Voice"** / "Sprache, Live" (icon–label gap 6).
+1. (create only) fieldset: legend **"Kanaltyp"** (500 13px, margin-bottom 8) + grid 2 equal columns gap 8 of RadioCards (§1.9): `HashIcon 14` + **"Text"** / "Nachrichten, Dateien"; `SpeakerIcon 14` + **"Sprache"** / "Reden, Kamera, Live" (icon–label gap 6).
 2. Field **"Name"** (autofocus, max 100); for text channels a live hint **"Wird gespeichert als #{slug}"** when the slug differs (lower-case, spaces/underscores → `-`, `#` dropped, runs collapsed).
 3. Select **"Kategorie"**: first option **"Ohne Kategorie"**, then categories.
 4. FormError, then buttons ghost "Abbrechen" + primary "Erstellen"/"Speichern" (no pending label; dialog closes optimistically). Create sends `POST /servers/{id}/channels` `{name, kind: "text"|"voice", category_id: string|null}` (`ServerDialogs.tsx:420`, `servers/api.ts:55-60`). The type fieldset is a column gap 8 whose legend (500 13px/1.35) has margin-bottom 8 (`ServerDialogs.tsx:428-456`).
@@ -551,7 +551,7 @@ Sidebar `.settings-sidebar` (224px, panel, border-right):
 
 Areas (order; `settingsAreas.ts:15-76`): Konto → **Profil** (`profil`), **Profilkarte** (`profilkarte`), **Sicherheit** (`konto`); App → **Darstellung** (`darstellung`, default for `/settings`), **Themes**, **Audio**, **Video**, **Benachrichtigungen**, **App** (only when installable — hidden in the desktop app). User panel at bottom (shell spec).
 
-Main: `.settings-screen` column: header `.lr-channel-header` with h1 **"Einstellungen"** (gap 4), then a scroll area containing `.settings-area`: max-width **1040**, padding **32 40 48** (left-aligned). Content width **912 @1280**, **960 @1600** (1312 − 80 > 1040 − 80).
+Main: `.settings-screen` column: header `.lr-channel-header` with h1 **"Einstellungen"** (gap 4); beside the sidebar the h1 is `sr-only` (the sidebar title names the page) and the header is an empty 52px bar with its bottom rule; on a phone (list first) it shows with the back button, then a scroll area containing `.settings-area`: max-width **1040**, padding **32 40 48** (left-aligned). Content width **912 @1280**, **960 @1600** (1312 − 80 > 1040 − 80).
 
 Area heading (margin-bottom 24): title row flex wrap gap 8/12: h2 label 600 **20px**/1.25 ls −0.01em + scope badge (§1.11; accent tone **"FÜR DEIN KONTO"** or neutral **"NUR DIESES GERÄT"**); description p margin-top 6, max 60ch, 14px/1.5 muted.
 
@@ -567,7 +567,7 @@ Area heading (margin-bottom 24): title row flex wrap gap 8/12: h2 label 600 **20
 | Benachrichtigungen | — (per group) | Hinweise auf neue Nachrichten. |
 | App | — | Gelabber als App installieren. |
 
-Shared building blocks (`settings.css:129-270`): `.settings-form` column gap 20, max-width 560. Group (`components/SettingsGroup.tsx`): fieldset, legend flex wrap gap 6/10, margin-bottom 8, 600 16px/1.3 + scope badge; consecutive groups 32px apart. `.settings-row` (a Switch row): min-height 64, padding-y 12, border-bottom 1 border, gap 18; description small line-height 1.5, margin-top 2. `.settings-hint` 12px/1.5 muted. `.settings-actions` flex wrap centre gap 8/12. `.settings-note`: margin-top 24 (32 after a group), padding 14/16, border, radius 7, bg panel, 14px/1.5. `.settings-danger`: max 560, margin-top 40, padding-top 24, border-top. Loading area body: 4 skeleton rows; load failure "Dieser Bereich konnte nicht geladen werden.".
+Shared building blocks (`settings.css:129-270`): `.settings-form` column gap 20, max-width 560. Group (`components/SettingsGroup.tsx`): fieldset, legend flex wrap gap 6/10, margin-bottom 8, 600 16px/1.3 + scope badge; consecutive groups 32px apart. `.settings-row` (a Switch row): min-height 64, padding-y 12, border-bottom 1 border, gap 18; description small line-height 1.5, margin-top 2. `.settings-hint` 12px/1.5 muted. `.settings-actions` flex wrap centre gap 8/12. `.settings-row-noted`: a switch row with a note boxed under it (padding-bottom 12, border-bottom 1 border; the switch row inside has no rule); `.settings-row-note`: padding 10/12, radius md, bg surface, muted meta 12px/1.5, and the switch is `aria-describedby` its status line. `.settings-danger`: max 560, margin-top 40, padding-top 24, border-top. Loading area body: 4 skeleton rows; load failure "Dieser Bereich konnte nicht geladen werden.".
 
 ### 6.2 Profil (`pages/ProfilePage.tsx:74-294`)
 
@@ -661,7 +661,7 @@ In-call dialog variant (`components/VoiceSettingsDialog.tsx:12-90`, `quality.css
 
 Group **"Nachrichten"** [NUR DIESES GERÄT] switch rows: "Popup bei neuen Nachrichten in anderen Chats" (default on); desktop: "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist" (web: "Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist"; default off); "Ton bei Benachrichtigungen am Computer" / "Ein Ton für mehrere Nachrichten kurz hintereinander, keiner, während du taubgeschaltet bist. Auf dem Handy gilt die Geräteeinstellung." (disabled while the previous is off); desktop only: "Fenster schließen minimiert in den Infobereich" / "Ein laufender Anruf geht weiter. Beenden über das Symbol im Infobereich." (`components/CloseToTray.tsx`).
 Group **"Sperrbildschirm"** [FÜR DEIN KONTO]: "Inhalt in Benachrichtigungen verbergen" / "Benachrichtigungen zeigen nur „Neue Nachricht von …“, ohne Text und ohne Chat. Gilt für alle Geräte deines Kontos."; error "Die Einstellung konnte nicht gespeichert werden. Versuche es erneut."
-Note box (§6.1): desktop app with system notifications: "Benachrichtigungen laufen über dein System. Sperrbildschirm und „Nicht stören“ stellst du dort ein." (browser texts: `messages/notify.ts:86-100`).
+Permission note (`.settings-row-note`, §6.1) boxed under the desktop-notify switch, in the same row, describing it: desktop app with system notifications: "Benachrichtigungen laufen über dein System. Sperrbildschirm und „Nicht stören“ stellst du dort ein." (browser texts: `messages/notify.ts:86-100`, e.g. "Browser-Benachrichtigungen sind blockiert …").
 
 ---
 
