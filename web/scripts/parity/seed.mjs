@@ -88,7 +88,9 @@ const home = await lena.call("POST", "/servers", { name: "Wohnzimmer" });
 const homeDetail = await lena.call("GET", `/servers/${home.id}`);
 const general = homeDetail.channels.find((c) => c.kind === "text");
 const textCat = await lena.call("POST", `/servers/${home.id}/categories`, { name: "Plaudern" });
-const voiceCat = await lena.call("POST", `/servers/${home.id}/categories`, { name: "Sprachkanäle" });
+// A new server comes with a "Sprachkanäle" category; Sofa and Kino join it
+// rather than a second category of the same name.
+const voiceCat = homeDetail.categories.find((c) => c.name === "Sprachkanäle");
 const games = await lena.call("POST", `/servers/${home.id}/channels`, {
   name: "spiele", kind: "text", category_id: textCat.id,
 });
