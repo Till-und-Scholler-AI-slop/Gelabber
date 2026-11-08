@@ -200,7 +200,7 @@ impl Theme {
         let muted = ensure_contrast(c.muted, &[c.panel, c.surface, hover], 4.5);
         // On air: a warm coral apart from the danger red and the accent; it
         // stands out from the surfaces (3:1) unless that costs its ink 4.5:1.
-        let coral = if dark { hex(0xff7b5c) } else { hex(0xdf5a3b) };
+        let coral = live_apart_from(if dark { hex(0xff7b5c) } else { hex(0xdb5b24) }, c.accent);
         let raised = ensure_contrast(coral, &[c.background, c.panel, c.surface], 3.0);
         let live = if contrast(readable_ink(raised), raised) >= 4.5 {
             raised
@@ -457,6 +457,39 @@ fn hsl(hue: f64, saturation: f64, lightness: f64) -> Color32 {
     Color32::from_rgb(ch(0.0), ch(8.0), ch(4.0))
 }
 
+/// Hue (degrees), saturation and lightness, as model.ts `toHsl`.
+fn to_hsl(c: Color32) -> (f64, f64, f64) {
+    let [r, g, b] = [c.r(), c.g(), c.b()].map(|v| f64::from(v) / 255.0);
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let (l, d) = ((max + min) / 2.0, max - min);
+    if d == 0.0 {
+        return (0.0, 0.0, l);
+    }
+    let sector = if max == r {
+        ((g - b) / d + 6.0) % 6.0
+    } else if max == g {
+        (b - r) / d + 2.0
+    } else {
+        (r - g) / d + 4.0
+    };
+    (sector * 60.0, d / (1.0 - (2.0 * l - 1.0).abs()), l)
+}
+
+/// The on-air coral, unless the accent shares its hue (Ristretto's salmon):
+/// then Live turns 22° past the accent, away from it (model.ts
+/// `liveApartFrom`), so an unread count or a primary button never reads as
+/// Live.
+fn live_apart_from(coral: Color32, accent: Color32) -> Color32 {
+    let (ah, as_, _) = to_hsl(accent);
+    let (kh, ks, kl) = to_hsl(coral);
+    let apart = (ah - kh + 540.0) % 360.0 - 180.0;
+    if as_ < 0.3 || apart.abs() >= 15.0 {
+        return coral;
+    }
+    let turn = if apart > 0.0 { -22.0 } else { 22.0 };
+    hsl((ah + turn + 360.0).round() % 360.0, ks, kl)
+}
+
 fn fix_contrast(mut definition: Definition) -> Definition {
     let c = &mut definition.colors;
     let backgrounds = [c.background, c.panel, c.surface, c.rail];
@@ -641,7 +674,7 @@ mod tests {
         let c = Theme::from_definition(light).c;
         assert_eq!(
             [c.live, c.on_live, c.live_text].map(h),
-            ["#823928", "#ffffff", "#55291f"]
+            ["#823a1c", "#ffffff", "#542917"]
         );
         let mut dark = Definition::dark();
         dark.colors.background = hex(0xffd0c0);
@@ -654,6 +687,30 @@ mod tests {
             [c.live, c.on_live, c.live_text].map(h),
             ["#ac5642", "#ffffff", "#824335"]
         );
+    }
+
+    // Ristretto's accent is a salmon: Live turns pinker, past it, as in
+    // model.ts. No preset's Live shares the accent's hue.
+    #[test]
+    fn live_keeps_apart_from_the_accent() {
+        let c = Theme::from_definition(crate::screens::settings::themes::preset("ristretto")).c;
+        assert_eq!(
+            [c.live, c.on_live, c.live_text].map(h),
+            ["#ff5c74", "#111111", "#ff667c"]
+        );
+        let hue_apart = |a: Color32, b: Color32| {
+            let d = (to_hsl(a).0 - to_hsl(b).0).abs() % 360.0;
+            d.min(360.0 - d)
+        };
+        for preset in crate::screens::settings::themes::presets() {
+            let accent = preset.colors.accent;
+            let c = Theme::from_definition(preset).c;
+            assert_ne!(c.live, c.danger_bg);
+            assert_eq!(c.on_live, INK_DARK);
+            if to_hsl(accent).1 >= 0.3 {
+                assert!(hue_apart(c.live, accent) > 15.0, "{}", h(c.live));
+            }
+        }
     }
 
     #[test]
@@ -689,7 +746,7 @@ mod tests {
         let want = [
             "#f8f5f0", "#f4f0e9", "#ece7df", "#eee9e1", "#fcfbf9", "#252829", "#5c646b", "#6a6e71",
             "#dcd6cc", "#86837e", "#e8a638", "#111111", "#836026", "#e3e0da", "#f2e3c9", "#287a45",
-            "#277643", "#a27e44", "#a12b29", "#b33b38", "#df5a3b", "#111111", "#ae4831",
+            "#277643", "#a27e44", "#a12b29", "#b33b38", "#db5b24", "#111111", "#ad4a20",
         ];
         assert_eq!(got, want);
         assert_eq!(

@@ -175,6 +175,36 @@ export function hsl(
       .join("")
   );
 }
+/** Hue (degrees), saturation and lightness of `#rrggbb`. */
+export function toHsl(hex: string): { h: number; s: number; l: number } {
+  const [r, g, b] = [1, 3, 5].map(
+    (i) => parseInt(hex.slice(i, i + 2), 16) / 255,
+  );
+  const max = Math.max(r, g, b),
+    min = Math.min(r, g, b),
+    l = (max + min) / 2,
+    d = max - min;
+  if (d === 0) return { h: 0, s: 0, l };
+  const sector =
+    max === r
+      ? ((g - b) / d + 6) % 6
+      : max === g
+        ? (b - r) / d + 2
+        : (r - g) / d + 4;
+  return { h: sector * 60, s: d / (1 - Math.abs(2 * l - 1)), l };
+}
+/**
+ * The on-air coral, unless the accent shares its hue (Ristretto's salmon):
+ * then Live turns 22° past the accent, away from it, so an unread count or
+ * a primary button never reads as Live.
+ */
+export function liveApartFrom(coral: string, accent: string): string {
+  const a = toHsl(accent),
+    k = toHsl(coral);
+  const apart = ((a.h - k.h + 540) % 360) - 180;
+  if (a.s < 0.3 || Math.abs(apart) >= 15) return coral;
+  return hsl(Math.round(a.h + (apart > 0 ? -22 : 22) + 360) % 360, k.s, k.l);
+}
 // Server tiles without artwork: muted hues that sit quietly next to the
 // accent. Dark themes use deep tints, light themes pale ones.
 const TILE_HUES = [18, 42, 88, 145, 188, 214, 258, 322];
@@ -207,7 +237,7 @@ export function derivedColors(theme: ThemeDefinition) {
   // On air: a warm coral, apart from the danger red and the accent. The
   // fill stands out from the surfaces it sits on (3:1) unless that costs
   // its ink 4.5:1; `liveText` is the coral for text and icons.
-  const coral = dark ? "#ff7b5c" : "#df5a3b";
+  const coral = liveApartFrom(dark ? "#ff7b5c" : "#db5b24", c.accent);
   const raised = ensureContrast(coral, [c.background, c.panel, c.surface], 3);
   const live = contrast(readableInk(raised), raised) >= 4.5 ? raised : coral;
   return {

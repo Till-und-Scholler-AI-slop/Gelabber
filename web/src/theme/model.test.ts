@@ -9,6 +9,7 @@ import {
   importTheme,
   isThemeDocument,
   themeVariables,
+  toHsl,
 } from "./model.ts";
 describe("theme catalogue and files", () => {
   it("ships twelve adapted Omarchy palettes plus both original modes", () => {
@@ -158,15 +159,32 @@ describe("derived interface colours", () => {
   );
 
   it("keeps Live apart from danger and the accent", () => {
-    for (const theme of BUILTIN_THEMES.slice(0, 2)) {
+    // Hue distance on the colour wheel, in degrees.
+    const apart = (a: string, b: string) => {
+      const d = Math.abs(toHsl(a).h - toHsl(b).h) % 360;
+      return Math.min(d, 360 - d);
+    };
+    for (const theme of BUILTIN_THEMES) {
       const d = derivedColors(theme);
-      expect(d.live).not.toBe(d.dangerBg);
-      expect(d.live).not.toBe(theme.colors.accent);
+      expect(d.live, theme.id).not.toBe(d.dangerBg);
       // Dark ink on the coral, white on the danger red: never the same pair.
-      expect(d.onLive).toBe("#111111");
+      expect(d.onLive, theme.id).toBe("#111111");
+      if (toHsl(theme.colors.accent).s >= 0.3)
+        expect(apart(d.live, theme.colors.accent), theme.id).toBeGreaterThan(
+          15,
+        );
     }
     expect(themeVariables(BUILTIN_THEMES[0])["--lr-live"]).toBe("#ff7b5c");
-    expect(themeVariables(BUILTIN_THEMES[1])["--lr-live"]).toBe("#df5a3b");
+    expect(themeVariables(BUILTIN_THEMES[1])["--lr-live"]).toBe("#db5b24");
+    // Ristretto's accent is a salmon: Live turns pinker, past it.
+    const ristretto = BUILTIN_THEMES.find((t) => t.id === "ristretto")!;
+    const r = derivedColors(ristretto);
+    // The same values as the native theme's test.
+    expect([r.live, r.onLive, r.liveText]).toEqual([
+      "#ff5c74",
+      "#111111",
+      "#ff667c",
+    ]);
   });
 
   it("derives a readable Live for custom themes", () => {
