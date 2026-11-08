@@ -1598,6 +1598,10 @@ a.voice-session-link:hover > span {
 .voice-microphone-test > svg {
   color: var(--lr-accent-text);
 }
+/* Each meter sits close under its label, apart from the next one. */
+.voice-microphone-test meter {
+  margin-top: -8px;
+}
 .voice-microphone-test-modes {
   display: flex;
   flex-wrap: wrap;

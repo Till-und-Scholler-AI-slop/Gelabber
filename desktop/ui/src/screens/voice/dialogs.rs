@@ -315,8 +315,9 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
                 ("Eingangspegel", test.input),
                 ("Nach Verarbeitung", test.processed),
             ] {
+                // Each meter sits close under its label (6px), apart from the next.
                 controls::paragraph(ui, label, text::BODY, c.text, width);
-                ui.add_space(14.0);
+                ui.add_space(6.0);
                 meter(ui, value, width);
                 ui.add_space(14.0);
             }
