@@ -1,8 +1,5 @@
 {
-  "size": [
-    1280,
-    800
-  ],
+  "size": [1280, 800],
   "scenes": [
     {
       "name": "login",
@@ -319,7 +316,7 @@
       ]
     },
     {
-      "name": "notify-all-dms",
+      "name": "row-menu-home",
       "path": "/s/{home}",
       "user": "lena",
       "actions": [
@@ -881,10 +878,36 @@
           "click": "Benachrichtigungen für #allgemein"
         },
         {
-          "clicktext": "Unbegrenzt"
+          "click": "Bis ich es wieder einschalte"
         },
         {
           "wait": 500
+        }
+      ],
+      "after": "unmute lena allgemein"
+    },
+    {
+      "name": "row-menu-muted",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Benachrichtigungen für #allgemein"
+        },
+        {
+          "click": "Bis ich es wieder einschalte"
+        },
+        {
+          "wait": 500
+        },
+        {
+          "click": "Fertig"
+        },
+        {
+          "wait": 300
+        },
+        {
+          "rightclick": "/^allgemein/"
         }
       ],
       "after": "unmute lena allgemein"
@@ -1633,14 +1656,7 @@
           "wait": 3000
         }
       ],
-      "mask": [
-        [
-          312,
-          116,
-          944,
-          554
-        ]
-      ]
+      "mask": [[312, 116, 944, 554]]
     },
     {
       "name": "voice-fullscreen",
