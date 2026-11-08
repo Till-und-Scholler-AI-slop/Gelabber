@@ -5,6 +5,7 @@
 pub mod appearance;
 pub mod card;
 pub mod controls;
+pub mod desktop_app;
 pub mod media;
 pub mod notifications;
 pub mod prefs;
@@ -95,7 +96,8 @@ pub const AREAS: [Area; 9] = [
         id: "app",
         group: "app",
         label: "App",
-        description: "Gelabber als App installieren.",
+        // The web's "Gelabber als App installieren." is for the browser.
+        description: "Updates und was beim Schließen des Fensters passiert.",
         scope: None,
     },
 ];
@@ -127,6 +129,7 @@ pub(crate) struct PageState {
     pub themes: themes::PanelState,
     pub media: media::State,
     pub notifications: notifications::State,
+    pub desktop_app: desktop_app::State,
     /// A navigation that waits for a "discard?" answer.
     pub leave_to: Option<String>,
     /// A new area moves focus to its heading (UserSettingsPage).
@@ -254,9 +257,10 @@ pub fn sidebar(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
             c.muted,
         );
         y += 34.0;
-        // `visibleSettingsAreas`: nothing to install in the desktop app, so
-        // "App" is listed only while it is open.
-        let shown = |a: &&Area| a.group == *group && (a.id != "app" || current == "app");
+        // "App" holds the desktop app's updates and window: listed whenever
+        // it has them (`visibleSettingsAreas` hid it in the Tauri app).
+        let app_area = current == "app" || desktop_app::has_content(ui.ctx());
+        let shown = |a: &&Area| a.group == *group && (a.id != "app" || app_area);
         for a in AREAS.iter().filter(shown) {
             let rect = Rect::from_min_size(pos2(x, y), vec2(width, 34.0));
             let id = Id::unique(("gelabber-settings-nav", a.id));
@@ -418,8 +422,7 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
             "audio" => media::audio(&mut child, app, &mut st.media),
             "video" => media::video(&mut child, app, &mut st.media),
             "benachrichtigungen" => notifications::area(&mut child, app, &mut st.notifications),
-            // "App": `InstallPanel` draws nothing in the desktop app, which
-            // is installed already.
+            "app" => desktop_app::area(&mut child, &mut st.desktop_app),
             _ => {}
         }
         let used = child.min_rect();

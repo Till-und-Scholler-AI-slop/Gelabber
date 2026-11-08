@@ -224,7 +224,7 @@ instance per user, global push-to-talk and the update check.
 
 The Windows app updates itself (`ui/src/platform/update.rs`,
 docs/native/platform.md). About 15 s after the start and then every 6 hours
-(unless switched off on the setup screen; `update.json` next to
+(unless switched off in Settings › App; `update.json` next to
 `desktop.json`) it reads
 `https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/latest/download/latest-native.json`.
 `release-asset-windows` in `desktop-release.yml` attaches it to every

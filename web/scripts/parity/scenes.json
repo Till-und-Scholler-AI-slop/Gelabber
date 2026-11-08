@@ -107,7 +107,13 @@
       "name": "settings-app",
       "path": "/settings/app",
       "user": "lena",
-      "desktop": true
+      "desktop": true,
+      "updates": {
+        "current": "0.9.0",
+        "autoCheck": true,
+        "available": "0.9.1",
+        "lastCheck": 1800000000
+      }
     },
     {
       "name": "server-settings-member",
