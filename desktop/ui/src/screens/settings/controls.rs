@@ -223,6 +223,44 @@ pub fn switch_row(
     on: &mut bool,
     disabled: bool,
 ) -> bool {
+    switch_row_ruled(ui, id, label, description, on, disabled, true)
+}
+
+/// `.settings-row-noted`: a switch row with a note boxed under it (what
+/// decides the switch), the hairline below both.
+pub fn switch_row_noted(
+    ui: &mut Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    label: &str,
+    on: &mut bool,
+    disabled: bool,
+    note: &str,
+) -> bool {
+    let changed = switch_row_ruled(ui, id, label, None, on, disabled, false);
+    let theme = Theme::of(ui.ctx());
+    let c = &theme.c;
+    // `.settings-row-note`: padding 10 12, radius md, surface, meta muted.
+    let width = ui.available_width();
+    let block = Block::wrapped(ui, note, HINT, c.muted, width - 24.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, block.height() + 20.0), Sense::hover());
+    ui.painter()
+        .rect_filled(rect, corner(theme.radius.md), c.surface);
+    block.paint(ui.painter(), rect.min + vec2(12.0, 10.0));
+    // Padding-bottom 12, then the row's hairline.
+    let (gap, _) = ui.allocate_exact_size(vec2(width, 13.0), Sense::hover());
+    crate::widgets::rule_h(ui.painter(), c.border, gap.x_range(), gap.bottom() - 1.0);
+    changed
+}
+
+fn switch_row_ruled(
+    ui: &mut Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    label: &str,
+    description: Option<&str>,
+    on: &mut bool,
+    disabled: bool,
+    rule: bool,
+) -> bool {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
     let width = ui.available_width();
@@ -258,7 +296,9 @@ pub fn switch_row(
             pos2(rect.left(), inner_top + label_block.height() + 4.0),
         );
     }
-    crate::widgets::rule_h(painter, c.border, rect.x_range(), rect.bottom() - 1.0);
+    if rule {
+        crate::widgets::rule_h(painter, c.border, rect.x_range(), rect.bottom() - 1.0);
+    }
     let switch_rect = Rect::from_min_size(
         pos2(
             rect.right() - 38.0,

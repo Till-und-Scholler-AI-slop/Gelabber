@@ -1,13 +1,13 @@
 //! "Benachrichtigungen" (components/MessageAlertSettings.tsx,
 //! NotificationPrivacy.tsx, NotificationPermission.tsx).
 
-use egui::{Rect, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::Ui;
 
 use super::controls::{self, Scope};
 use super::{op_pending, prefs, settled};
 use crate::app::AppCtx;
-use crate::text::{self, Block};
-use crate::theme::{Theme, corner};
+use crate::text;
+use crate::theme::Theme;
 
 #[derive(Default)]
 pub struct State {
@@ -34,13 +34,16 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     );
     // The desktop app's notifications come from its window, not a tab.
     let desktop = crate::platform::desktop_info(&ctx);
-    controls::switch_row(
+    // The permission note under its switch (NotificationPermission.tsx).
+    // The system shows the desktop app's notifications: there is no
+    // browser permission to ask for.
+    controls::switch_row_noted(
         ui,
         "desktop-notify",
         "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist",
-        None,
         &mut p.desktop_notify,
         false,
+        "Benachrichtigungen laufen über dein System. Sperrbildschirm und „Nicht stören“ stellst du dort ein.",
     );
     let off = !p.desktop_notify;
     controls::switch_row(
@@ -120,28 +123,4 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             w,
         );
     }
-
-    // The permission note (`.settings-note`). The system shows the desktop
-    // app's notifications: there is no browser permission to ask for.
-    ui.add_space(32.0);
-    let width = ui.available_width();
-    let block = Block::wrapped(
-        ui,
-        "Benachrichtigungen laufen über dein System. Sperrbildschirm und „Nicht stören“ stellst du dort ein.",
-        text::BODY,
-        c.text,
-        width - 34.0,
-    );
-    let h = 2.0 + 28.0 + block.height();
-    let top = ui.cursor().min;
-    let rect = Rect::from_min_size(top, vec2(width, h));
-    ui.painter().rect(
-        rect,
-        corner(theme.radius.md),
-        c.panel,
-        Stroke::new(1.0, c.border),
-        StrokeKind::Inside,
-    );
-    block.paint(ui.painter(), pos2(rect.left() + 17.0, rect.top() + 15.0));
-    ui.allocate_exact_size(vec2(width, h), egui::Sense::hover());
 }

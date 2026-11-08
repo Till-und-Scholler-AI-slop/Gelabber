@@ -56,7 +56,7 @@ export function NotificationPermissionStatus() {
     }
   };
   return (
-    <div className="settings-note">
+    <div className="settings-row-note">
       <p role="status">
         {notificationPermissionText(state, {
           // The Tauri app is not bound by the browser's HTTPS rule.
@@ -83,6 +83,7 @@ export function NotificationPermissionStatus() {
       )}
       {state === "default" && (
         <Button
+          size="sm"
           className="mt-2"
           pending={pending}
           onClick={() => void request()}
