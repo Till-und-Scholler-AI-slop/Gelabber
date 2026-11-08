@@ -810,6 +810,19 @@ fn key_code(key: egui::Key) -> Option<String> {
     }
 }
 
+/// `usePushToTalkKeyName`: the key push-to-talk holds, as the settings
+/// name it; `None` while push-to-talk is off or has no key.
+pub fn push_to_talk_key_name(ctx: &egui::Context) -> Option<String> {
+    let p = super::prefs::get(ctx);
+    (p.voice_input == "ptt" && !p.ptt_key.is_empty()).then(|| {
+        if p.ptt_key_label.is_empty() {
+            key_label(&p.ptt_key)
+        } else {
+            p.ptt_key_label.clone()
+        }
+    })
+}
+
 /// `pushToTalkKeyLabel`.
 fn key_label(code: &str) -> String {
     match code {

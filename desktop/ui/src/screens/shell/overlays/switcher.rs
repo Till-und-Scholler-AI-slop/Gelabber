@@ -237,80 +237,150 @@ fn go(ui: &Ui, app: &mut AppCtx, target: Target) {
     }
 }
 
-/// `shortcutList` with the key names of a non-Mac keyboard.
-const SHORTCUTS: [(&[&str], &str); 9] = [
-    (&["Strg", "K"], "Server, Kanal oder Unterhaltung öffnen"),
-    (&["Strg", "F"], "In der Unterhaltung suchen"),
-    (&["Alt", "↑ / ↓"], "Vorheriger oder nächster Kanal"),
-    (
-        &["Alt", "Umschalt", "↑ / ↓"],
-        "Vorheriger oder nächster ungelesener Kanal",
-    ),
-    (&["Strg", "Alt", "↑ / ↓"], "Vorheriger oder nächster Server"),
-    (&["Esc"], "Unterhaltung als gelesen markieren"),
-    (&["Umschalt", "Esc"], "Ganzen Server als gelesen markieren"),
-    (&["K"], "Kino im Sprachkanal ein oder aus"),
-    (&["Strg", "/"], "Diese Übersicht"),
-];
+/// One shortcut: its keys and what they do.
+pub type Shortcut = (Vec<String>, &'static str);
+
+/// `shortcutGroups` with the key names of a non-Mac keyboard: the
+/// workspace's keys, with the desktop app's Strg+Umschalt+S, then the
+/// call's (`call_bar::shortcuts`, `kino_key`, the large view's M and
+/// Leertaste). `push_to_talk` is the key push-to-talk holds, when on.
+pub fn shortcut_groups(push_to_talk: Option<&str>) -> Vec<(&'static str, Vec<Shortcut>)> {
+    let keys = |k: &[&str]| k.iter().map(|k| (*k).to_owned()).collect::<Vec<_>>();
+    let mut voice = vec![
+        (
+            keys(&["Strg", "Umschalt", "M"]),
+            "Stummschalten ein oder aus",
+        ),
+        (
+            keys(&["Strg", "Umschalt", "D"]),
+            "Taubschalten ein oder aus",
+        ),
+    ];
+    if let Some(key) = push_to_talk {
+        voice.push((vec![key.to_owned()], "Zum Sprechen gedrückt halten"));
+    }
+    voice.push((keys(&["K"]), "Kino ein oder aus"));
+    voice.push((
+        keys(&["M / Leertaste"]),
+        "Im Vollbild: Stummschalten ein oder aus",
+    ));
+    vec![
+        (
+            "Allgemein",
+            vec![
+                (
+                    keys(&["Strg", "K"]),
+                    "Server, Kanal oder Unterhaltung öffnen",
+                ),
+                (keys(&["Strg", "F"]), "In der Unterhaltung suchen"),
+                (keys(&["Alt", "↑ / ↓"]), "Vorheriger oder nächster Kanal"),
+                (
+                    keys(&["Alt", "Umschalt", "↑ / ↓"]),
+                    "Vorheriger oder nächster ungelesener Kanal",
+                ),
+                (
+                    keys(&["Strg", "Alt", "↑ / ↓"]),
+                    "Vorheriger oder nächster Server",
+                ),
+                // Whatever is open takes Esc first (chat `overlay_open`).
+                (
+                    keys(&["Esc"]),
+                    "Schließen, sonst Unterhaltung als gelesen markieren",
+                ),
+                (
+                    keys(&["Umschalt", "Esc"]),
+                    "Ganzen Server als gelesen markieren",
+                ),
+                // The desktop app's own (setup.rs), as "Server wechseln …".
+                (
+                    keys(&["Strg", "Umschalt", "S"]),
+                    "Mit einem anderen Gelabber-Server verbinden",
+                ),
+                (keys(&["Strg", "/"]), "Diese Übersicht"),
+            ],
+        ),
+        ("Im Sprachkanal", voice),
+    ]
+}
 
 const KBD: TextStyle = TextStyle::new(12.0, 600.0, 1.4);
 
-/// "Tastenkürzel": description left, keys right, a hairline between rows.
+/// "Tastenkürzel": each group under its caps heading (`.shortcut-group-title`,
+/// gap 20 between groups), description left, keys right, a hairline
+/// between rows.
 pub fn shortcut_sheet(ui: &mut Ui) -> bool {
     let ctx = ui.ctx().clone();
+    let push_to_talk = crate::screens::settings::media::push_to_talk_key_name(&ctx);
+    let groups = shortcut_groups(push_to_talk.as_deref());
     let output = Modal::new("shortcuts", "Tastenkürzel").show(
         &ctx,
         |ui| {
             let theme = Theme::of(ui.ctx());
             let c = theme.c;
             let width = ui.available_width();
-            for (i, (keys, label)) in SHORTCUTS.iter().enumerate() {
-                // The keys first: the description gets what is left.
-                let blocks: Vec<Block> = keys
-                    .iter()
-                    .map(|k| Block::single(ui, k, KBD, c.text))
-                    .collect();
-                let kbd_w: Vec<f32> = blocks
-                    .iter()
-                    .map(|b| (b.width() + 16.0).max(26.0))
-                    .collect();
-                let keys_w = kbd_w.iter().sum::<f32>() + 4.0 * (blocks.len() - 1) as f32;
-                let desc = Block::wrapped(ui, label, text::UI, c.text, width - keys_w - 16.0);
-                let kbd_h = KBD.line_px() + 4.0 + 3.0;
-                let h = 20.0 + desc.height().max(kbd_h);
-                let last = i + 1 == SHORTCUTS.len();
-                let (row, _) = ui.allocate_exact_size(
-                    Vec2::new(width, h + if last { 0.0 } else { 1.0 }),
+            for (g, (title, shortcuts)) in groups.iter().enumerate() {
+                if g > 0 {
+                    ui.add_space(20.0);
+                }
+                let heading = Block::single(ui, &title.to_uppercase(), text::CAPS, c.muted);
+                let (head, response) = ui.allocate_exact_size(
+                    Vec2::new(width, heading.height() + 2.0),
                     egui::Sense::hover(),
                 );
-                let mid = row.top() + h / 2.0;
-                let painter = ui.painter();
-                desc.paint(painter, pos2(row.left(), mid - desc.height() / 2.0));
-                let mut x = row.right() - keys_w;
-                for (b, w) in blocks.iter().zip(&kbd_w) {
-                    let r = Rect::from_min_size(pos2(x, mid - kbd_h / 2.0), Vec2::new(*w, kbd_h));
-                    let r = crate::widgets::snap(ui.ctx(), r);
-                    painter.rect(
-                        r,
-                        corner(theme.radius.xs),
-                        c.border_strong,
-                        Stroke::NONE,
-                        StrokeKind::Inside,
+                heading.paint(ui.painter(), head.min);
+                response
+                    .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Heading, true, *title));
+                for (i, (keys, label)) in shortcuts.iter().enumerate() {
+                    // The keys first: the description gets what is left.
+                    let blocks: Vec<Block> = keys
+                        .iter()
+                        .map(|k| Block::single(ui, k, KBD, c.text))
+                        .collect();
+                    let kbd_w: Vec<f32> = blocks
+                        .iter()
+                        .map(|b| (b.width() + 16.0).max(26.0))
+                        .collect();
+                    let keys_w = kbd_w.iter().sum::<f32>() + 4.0 * (blocks.len() - 1) as f32;
+                    let desc = Block::wrapped(ui, label, text::UI, c.text, width - keys_w - 16.0);
+                    let kbd_h = KBD.line_px() + 4.0 + 3.0;
+                    let h = 20.0 + desc.height().max(kbd_h);
+                    let last = i + 1 == shortcuts.len();
+                    let (row, _) = ui.allocate_exact_size(
+                        Vec2::new(width, h + if last { 0.0 } else { 1.0 }),
+                        egui::Sense::hover(),
                     );
-                    // 1px sides and top, a 2px bottom edge.
-                    let face =
-                        Rect::from_min_max(r.min + Vec2::splat(1.0), r.max - Vec2::new(1.0, 2.0));
-                    painter.rect_filled(face, corner(theme.radius.xs - 1.0), c.surface);
-                    b.paint(painter, pos2(r.center().x - b.width() / 2.0, r.top() + 3.0));
-                    x += w + 4.0;
-                }
-                if !last {
-                    hairline_h(
-                        painter,
-                        &theme,
-                        row.left()..=row.right(),
-                        row.bottom() - 1.0,
-                    );
+                    let mid = row.top() + h / 2.0;
+                    let painter = ui.painter();
+                    desc.paint(painter, pos2(row.left(), mid - desc.height() / 2.0));
+                    let mut x = row.right() - keys_w;
+                    for (b, w) in blocks.iter().zip(&kbd_w) {
+                        let r =
+                            Rect::from_min_size(pos2(x, mid - kbd_h / 2.0), Vec2::new(*w, kbd_h));
+                        let r = crate::widgets::snap(ui.ctx(), r);
+                        painter.rect(
+                            r,
+                            corner(theme.radius.xs),
+                            c.border_strong,
+                            Stroke::NONE,
+                            StrokeKind::Inside,
+                        );
+                        // 1px sides and top, a 2px bottom edge.
+                        let face = Rect::from_min_max(
+                            r.min + Vec2::splat(1.0),
+                            r.max - Vec2::new(1.0, 2.0),
+                        );
+                        painter.rect_filled(face, corner(theme.radius.xs - 1.0), c.surface);
+                        b.paint(painter, pos2(r.center().x - b.width() / 2.0, r.top() + 3.0));
+                        x += w + 4.0;
+                    }
+                    if !last {
+                        hairline_h(
+                            painter,
+                            &theme,
+                            row.left()..=row.right(),
+                            row.bottom() - 1.0,
+                        );
+                    }
                 }
             }
         },
@@ -332,6 +402,33 @@ mod tests {
             badge: Badge { count, dot },
             avatar: None,
         }
+    }
+
+    /// The sheet lists what the keys do: the call's in their own group,
+    /// push-to-talk only with a key, as `shortcutGroups` on the web.
+    #[test]
+    fn the_sheet_groups_the_call_keys() {
+        let groups = shortcut_groups(None);
+        let titles: Vec<&str> = groups.iter().map(|(t, _)| *t).collect();
+        assert_eq!(titles, ["Allgemein", "Im Sprachkanal"]);
+        let voice: Vec<String> = groups[1].1.iter().map(|(k, _)| k.join("+")).collect();
+        assert_eq!(
+            voice,
+            ["Strg+Umschalt+M", "Strg+Umschalt+D", "K", "M / Leertaste"]
+        );
+        assert!(
+            groups[0]
+                .1
+                .iter()
+                .any(|(k, _)| k.join("+") == "Strg+Umschalt+S")
+        );
+        let with_ptt = shortcut_groups(Some("F"));
+        assert!(
+            with_ptt[1]
+                .1
+                .iter()
+                .any(|(k, l)| k == &["F"] && *l == "Zum Sprechen gedrückt halten")
+        );
     }
 
     #[test]
