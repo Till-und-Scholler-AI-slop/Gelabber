@@ -40,8 +40,12 @@ pub struct Mentions<'a> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Span {
     Plain,
+    /// A searched word in a hit (`<mark class="lr-search-mark">`).
+    Match,
     Code,
-    Mention { me: bool },
+    Mention {
+        me: bool,
+    },
     Link(usize),
     Edited,
 }
@@ -119,6 +123,8 @@ struct Builder<'a> {
     color: Color32,
     theme: &'a Theme,
     body: TextStyle,
+    /// Words to mark, lower-cased (`search::search_terms`).
+    terms: &'a [String],
 }
 
 #[derive(Clone, Copy, Default)]
@@ -182,7 +188,14 @@ impl Builder<'_> {
             match node {
                 Inline::Text(t) => {
                     let format = self.style(marks).format(self.color);
-                    self.push(t, format, Span::Plain, marks);
+                    if self.terms.is_empty() || marks.spoiler.is_some() {
+                        self.push(t, format, Span::Plain, marks);
+                    } else {
+                        for (run, matched) in super::search::mark_matches(t, self.terms) {
+                            let span = if matched { Span::Match } else { Span::Plain };
+                            self.push(run, format.clone(), span, marks);
+                        }
+                    }
                 }
                 Inline::Strong(children) => self.inline(
                     children,
@@ -327,13 +340,28 @@ pub fn layout(
     revealed: &HashSet<usize>,
     edited: bool,
 ) -> Laid {
-    layout_as(ui, content, width, mentions, revealed, edited, false)
+    layout_as(ui, content, width, mentions, revealed, edited, None)
 }
 
 /// A search hit's content (`MessageContent interactive={false}` in
 /// `.lr-search-hit`): 14px in the text colour, code blocks without their bar.
-pub fn layout_hit(ui: &Ui, content: &str, width: f32, mentions: &Mentions) -> Laid {
-    layout_as(ui, content, width, mentions, &HashSet::new(), false, true)
+/// `terms` are the searched words, marked in the text (`highlight`).
+pub fn layout_hit(
+    ui: &Ui,
+    content: &str,
+    width: f32,
+    mentions: &Mentions,
+    terms: &[String],
+) -> Laid {
+    layout_as(
+        ui,
+        content,
+        width,
+        mentions,
+        &HashSet::new(),
+        false,
+        Some(terms),
+    )
 }
 
 fn layout_as(
@@ -343,9 +371,12 @@ fn layout_as(
     mentions: &Mentions,
     revealed: &HashSet<usize>,
     edited: bool,
-    hit: bool,
+    // A search hit, with the words to mark.
+    hit: Option<&[String]>,
 ) -> Laid {
     let theme = Theme::of(ui.ctx());
+    let terms = hit.unwrap_or_default();
+    let hit = hit.is_some();
     let body = if hit { HIT_BODY } else { BODY };
     let blocks = parse_message(content);
     let named = named_tokens(&blocks);
@@ -384,6 +415,7 @@ fn layout_as(
                     color,
                     theme: &theme,
                     body,
+                    terms,
                 };
                 b.inline(nodes, Marks::default());
                 if edited && last {
@@ -466,6 +498,7 @@ fn layout_as(
             color,
             theme: &theme,
             body,
+            terms,
         };
         push_edited(&mut b, &theme);
         b.job.wrap.max_width = width.max(1.0);
@@ -597,6 +630,20 @@ impl Laid {
                                     2.0,
                                 )
                             }
+                            // `.lr-search-mark`: warning at 30 %.
+                            Span::Match => (
+                                Color32::from_rgba_unmultiplied(
+                                    c.warning.r(),
+                                    c.warning.g(),
+                                    c.warning.b(),
+                                    77,
+                                ),
+                                Stroke::NONE,
+                                3.0,
+                                13.5,
+                                3.5,
+                                0.0,
+                            ),
                             _ => continue,
                         };
                         let _ = s;

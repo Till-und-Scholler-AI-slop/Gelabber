@@ -256,13 +256,14 @@ pub fn show(
         state_line(ui, &mut y, "Keine Nachrichten gefunden.");
     }
     let width = body.width() - 24.0;
+    let terms = search_terms(&state.query);
     for m in hits {
         // `p:first-child`: the name and, 8 apart on its baseline, the time.
         let style = TextStyle::new(13.0, 400.0, 1.5);
         let name = Block::single(ui, &m.author.name, style.weight(700.0), c.text);
         let when = Rich::new(style)
             .push(
-                &time::format_search(m.created_at),
+                &time::format_when(m.created_at, now),
                 TextStyle::new(11.0, 400.0, 1.5),
                 c.muted,
             )
@@ -274,7 +275,7 @@ pub fn show(
             everyone: m.mention_everyone,
             mentions: &m.mentions,
         };
-        let laid = content::layout_hit(ui, &m.content, width, &mentions);
+        let laid = content::layout_hit(ui, &m.content, width, &mentions, &terms);
         let open = Block::single(
             ui,
             "Nachricht im Kontext öffnen",
@@ -293,7 +294,7 @@ pub fn show(
                 egui::Id::unique(("gelabber-search-hit", m.id)),
                 Sense::click(),
             );
-            let text = readable_mentions(&m.content, names);
+            let text = readable_mentions(&super::markdown::plain_text(&m.content), names);
             let label = format!(
                 "Zur Nachricht von {}: {}",
                 m.author.name,
@@ -336,13 +337,97 @@ pub fn show(
             state.more = state.fetch(client, channel, state.next_cursor());
         }
     }
-    let _ = now;
     action
+}
+
+// messages/searchTerms.ts: the server searches with
+// `websearch_to_tsquery('simple', q)`: whole words in any case, `"…"` for a
+// phrase, `-word` to leave out, `or` between alternatives. A word is a run
+// of letters and digits.
+
+fn words(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    text.char_indices()
+        .filter(|&(i, c)| {
+            c.is_alphanumeric()
+                && !text[..i]
+                    .chars()
+                    .next_back()
+                    .is_some_and(char::is_alphanumeric)
+        })
+        .map(move |(start, _)| {
+            let len = text[start..]
+                .find(|c: char| !c.is_alphanumeric())
+                .unwrap_or(text.len() - start);
+            (start, &text[start..start + len])
+        })
+}
+
+/// `searchTerms`: the words of `q` a hit can contain, lower-cased.
+pub fn search_terms(q: &str) -> Vec<String> {
+    let mut terms: Vec<String> = Vec::new();
+    for token in q.replace('"', " ").split_whitespace() {
+        if token.starts_with('-') || token.eq_ignore_ascii_case("or") {
+            continue;
+        }
+        for (_, word) in words(token) {
+            let word = word.to_lowercase();
+            if !terms.contains(&word) {
+                terms.push(word);
+            }
+        }
+    }
+    terms
+}
+
+/// `markMatches`: `text` in runs, `true` where one of `terms` stands as a
+/// whole word.
+pub fn mark_matches<'t>(text: &'t str, terms: &[String]) -> Vec<(&'t str, bool)> {
+    let mut runs = Vec::new();
+    let mut at = 0;
+    for (start, word) in words(text) {
+        if !terms.contains(&word.to_lowercase()) {
+            continue;
+        }
+        if start > at {
+            runs.push((&text[at..start], false));
+        }
+        runs.push((word, true));
+        at = start + word.len();
+    }
+    if at < text.len() {
+        runs.push((&text[at..], false));
+    }
+    runs
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_terms_and_marks() {
+        assert_eq!(search_terms("Snacks"), ["snacks"]);
+        assert_eq!(
+            search_terms("\"Film oder\" -Spiel or Chips"),
+            ["film", "oder", "chips"]
+        );
+        assert!(search_terms("  ").is_empty());
+        let terms = vec!["snacks".to_owned()];
+        assert_eq!(
+            mark_matches("Bringst du die Snacks mit? snacksalat", &terms),
+            [
+                ("Bringst du die ", false),
+                ("Snacks", true),
+                (" mit? snacksalat", false)
+            ]
+        );
+        let terms = vec!["äpfel".to_owned()];
+        assert_eq!(
+            mark_matches("Äpfel und äpfel", &terms),
+            [("Äpfel", true), (" und ", false), ("äpfel", true)]
+        );
+        assert_eq!(mark_matches("nichts", &[]), [("nichts", false)]);
+    }
 
     fn page(ids: &[u128], has_more: bool) -> MessagePage {
         let messages: Vec<serde_json::Value> = ids

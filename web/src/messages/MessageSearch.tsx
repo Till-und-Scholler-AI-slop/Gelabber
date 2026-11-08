@@ -1,11 +1,20 @@
 import { keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { searchMessages } from "./search.ts";
 import { scopeGeneration, useUserId } from "../auth/scope.ts";
 import type { Message } from "./types.ts";
 import { MessageContent } from "./MessageContent.tsx";
 import { MessageContextView } from "./MessageContext.tsx";
 import { readableMentions } from "./mentions.ts";
+import { plainText } from "./markdown.ts";
+import { searchTerms } from "./searchTerms.ts";
+import { formatWhen } from "../components/messageTime.ts";
 import {
   mentionRenderer,
   messagePing,
@@ -33,6 +42,7 @@ export function MessageSearch({
   // The hit opened in its context, until the query changes underneath it.
   const [opened, setOpened] = useState<{ q: string; id: string } | null>(null);
   const selected = opened?.q === q ? opened.id : null;
+  const terms = useMemo(() => searchTerms(q), [q]);
   const resultButtons = useRef(new Map<string, HTMLButtonElement>());
   const lastSelected = useRef<string | null>(null);
   useLayoutEffect(() => {
@@ -111,13 +121,13 @@ export function MessageSearch({
                 else resultButtons.current.delete(message.id);
               }}
               onClick={() => setOpened({ q, id: message.id })}
-              aria-label={`Zur Nachricht von ${message.author.name}: ${readableMentions(message.content, members) || "Datei"}`}
+              aria-label={`Zur Nachricht von ${message.author.name}: ${readableMentions(plainText(message.content), members) || "Datei"}`}
               className="lr-search-hit"
             >
               <p>
                 <strong>{message.author.name}</strong>{" "}
                 <time dateTime={message.created_at}>
-                  {new Date(message.created_at).toLocaleString("de-DE")}
+                  {formatWhen(message.created_at)}
                 </time>
               </p>
               <p>
@@ -130,6 +140,7 @@ export function MessageSearch({
                     messagePing(message),
                   )}
                   interactive={false}
+                  highlight={terms}
                 />
               </p>
               <span>Nachricht im Kontext öffnen</span>
