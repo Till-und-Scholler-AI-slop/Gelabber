@@ -304,6 +304,9 @@ for (const scene of scenes) {
           .hover();
         hovered = true;
       }
+      // Selects the whole text of the first element with exactly this text.
+      if (action.select)
+        await page.getByText(action.select, { exact: true }).first().selectText();
       // A text field by its placeholder, such as the header's "Suchen".
       if (action.placeholder)
         await page.getByPlaceholder(action.placeholder, { exact: true }).first().click();
