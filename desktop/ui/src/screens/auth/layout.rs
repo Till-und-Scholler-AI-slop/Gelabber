@@ -27,12 +27,39 @@ const BRAND: TextStyle = TextStyle::new(20.0, 700.0, 1.2).tracking(-0.02);
 /// The page: artwork, brand and a card whose content `card` lays out in a
 /// 318px column (the card's padding is 32px, its border 1px).
 pub fn frame(ui: &mut Ui, app: &mut AppCtx, id: &str, card: impl FnOnce(&mut Ui, &mut AppCtx)) {
+    let artwork = match app.images.get(ui.ctx(), ARTWORK) {
+        ImageState::Ready(texture) => Some(texture),
+        _ => None,
+    };
+    if page(ui, id, artwork.as_ref(), true, |ui| card(ui, app)) {
+        app.nav.navigate("/");
+    }
+}
+
+/// The app's own copy of the artwork (a JPEG of public/images/living-room)
+/// for the setup screen, which has no server yet to load it from.
+const BUNDLED_ARTWORK: &[u8] = include_bytes!("../../../assets/images/community-banner.jpg");
+
+/// The bundled artwork, decoded once per window.
+pub fn bundled_artwork(ctx: &egui::Context) -> Option<egui::TextureHandle> {
+    images::bundled(ctx, "community-banner", BUNDLED_ARTWORK)
+}
+
+/// [`frame`] without an app: `artwork` behind it on wide screens, the
+/// brand a link only with `brand_link`. True when the brand was clicked.
+pub fn page(
+    ui: &mut Ui,
+    id: &str,
+    artwork: Option<&egui::TextureHandle>,
+    brand_link: bool,
+    card: impl FnOnce(&mut Ui),
+) -> bool {
     let ctx = ui.ctx().clone();
     let theme = Theme::of(&ctx);
     let c = theme.c;
     let screen = ctx.content_rect();
     if screen.width() >= 800.0 {
-        artwork(ui, app, screen);
+        backdrop(ui, artwork, screen);
     }
 
     let height_id = Id::unique(("gelabber-auth-column", id));
@@ -40,6 +67,7 @@ pub fn frame(ui: &mut Ui, app: &mut AppCtx, id: &str, card: impl FnOnce(&mut Ui,
     let padding_x = space::S4;
     let width = (screen.width() - 2.0 * padding_x).min(384.0);
     let page_h = (column_h + 2.0 * space::S8).max(screen.height());
+    let mut brand_clicked = false;
 
     egui::ScrollArea::vertical()
         .id_salt(("auth-page", id))
@@ -72,19 +100,20 @@ pub fn frame(ui: &mut Ui, app: &mut AppCtx, id: &str, card: impl FnOnce(&mut Ui,
                     brand.center().y - brand_text.height() / 2.0,
                 ),
             );
-            let brand_response =
-                Link::interact(ui, brand, Id::unique("gelabber-auth-brand"), "Gelabber");
-            if brand_response.clicked() {
-                app.nav.navigate("/");
+            if brand_link {
+                let brand_response =
+                    Link::interact(ui, brand, Id::unique("gelabber-auth-brand"), "Gelabber");
+                brand_clicked = brand_response.clicked();
             }
 
-            let card_rect = card_at(ui, app, pos2(left, brand.bottom() + space::S6), width, card);
+            let card_rect = card_box(ui, pos2(left, brand.bottom() + space::S6), width, card);
             let measured = 40.0 + space::S6 + card_rect.height();
             if (measured - column_h).abs() > 0.01 {
                 ctx.data_mut(|d| d.insert_temp(height_id, measured));
                 ctx.request_discard("auth column height");
             }
         });
+    brand_clicked
 }
 
 /// `.lr-auth-card` with its top-left at `min`: the panel box (painted
@@ -96,6 +125,11 @@ pub fn card_at(
     width: f32,
     content: impl FnOnce(&mut Ui, &mut AppCtx),
 ) -> Rect {
+    card_box(ui, min, width, |ui| content(ui, app))
+}
+
+/// [`card_at`] without an app.
+fn card_box(ui: &mut Ui, min: Pos2, width: f32, content: impl FnOnce(&mut Ui)) -> Rect {
     let ctx = ui.ctx().clone();
     let theme = Theme::of(&ctx);
     let background = ui.painter().add(Shape::Noop);
@@ -106,7 +140,7 @@ pub fn card_at(
     let content_h = ui
         .scope_builder(UiBuilder::new().max_rect(inner), |ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
-            content(ui, app);
+            content(ui);
             ui.min_rect().height()
         })
         .inner;
@@ -126,10 +160,10 @@ pub fn card_at(
 
 /// `.auth-layout::before/::after`: the artwork with `cover` at opacity
 /// .18, under `radial-gradient(ellipse at center, transparent 30%, bg 95%)`.
-fn artwork(ui: &Ui, app: &AppCtx, screen: Rect) {
+fn backdrop(ui: &Ui, artwork: Option<&egui::TextureHandle>, screen: Rect) {
     let theme = Theme::of(ui.ctx());
     let painter = ui.painter();
-    if let ImageState::Ready(texture) = app.images.get(ui.ctx(), ARTWORK) {
+    if let Some(texture) = artwork {
         let uv = images::cover_uv(texture.size_vec2(), screen.size());
         painter.image(texture.id(), screen, uv, Color32::from_white_alpha(46));
     }

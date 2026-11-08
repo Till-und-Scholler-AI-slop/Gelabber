@@ -1,134 +1,193 @@
-/* Same palette as the web client's default theme. */
+/* The sign-in pages' frame (web/src/pages/auth.css) in the default theme,
+   with the primitives of web/src/components/ui/ui.css. The fonts and the
+   artwork are the web client's (shots.mjs serves them from web/). */
+@font-face {
+  font-family: "Gelabber Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  src: url("/fonts/InterVariable-latin.woff2") format("woff2");
+}
 :root {
-  color-scheme: light dark;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --bg: #f8f5f0;
-  --panel: #f4f0e9;
-  --text: #252829;
-  --muted: #646d74;
-  --border: #dcd6cc;
-  --accent: #e8a638;
-  --accent-ink: #251e12;
-  --danger: #a12b29;
+  color-scheme: dark;
+  --bg: #17191a;
+  --panel: #1d2021;
+  --surface: #272b2d;
+  --text: #eef0ee;
+  --muted: #a4abb1;
+  --subtle: #8a8f93;
+  --border: #2c3032;
+  --border-strong: #717475;
+  --accent: #f3b752;
+  --accent-ink: #111111;
+  --danger: #f39b98;
+  --focus: #f3b752;
+  --hover: #2e3131;
+  --font: "Gelabber Inter", system-ui, sans-serif;
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
   background: var(--bg);
   color: var(--text);
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #17191a;
-    --panel: #1d2021;
-    --text: #eef0ee;
-    --muted: #a4abb1;
-    --border: #2c3032;
-    --accent: #f3b752;
-    --accent-ink: #191b1b;
-    --danger: #f39b98;
-  }
+* {
+  box-sizing: border-box;
 }
 body {
   margin: 0;
 }
-main {
-  max-width: 26rem;
-  margin: 18vh auto 0;
-  padding: 2rem;
+p,
+h1,
+h2 {
+  margin: 0;
+}
+.auth-layout {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 32px 16px;
+}
+@media (min-width: 800px) {
+  .auth-layout::before,
+  .auth-layout::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+  }
+  .auth-layout::before {
+    background: url("/images/living-room/community-banner.png") center / cover no-repeat;
+    opacity: 0.18;
+  }
+  .auth-layout::after {
+    background: radial-gradient(ellipse at center, transparent 30%, var(--bg) 95%);
+  }
+}
+.auth-column {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: min(100%, 24rem);
+}
+.auth-brand {
+  display: inline-flex;
+  align-self: center;
+  align-items: center;
+  gap: 10px;
+  font: 700 20px / 1.2 var(--font);
+  letter-spacing: -0.02em;
+}
+.auth-brand img {
+  border-radius: 7px;
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  padding: 32px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 10px;
   background: var(--panel);
 }
 h1 {
-  margin: 0 0 0.25rem;
-  font-size: 1.5rem;
-  letter-spacing: -0.02em;
+  font: 700 28px / 1.15 var(--font);
+  letter-spacing: -0.03em;
 }
-main > p {
-  margin: 0 0 1.5rem;
+.lead {
+  margin-top: 4px;
   color: var(--muted);
-  line-height: 1.5;
+  font: 400 14px / 1.5 var(--font);
 }
 form {
-  display: grid;
-  gap: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  margin-top: 24px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 20px;
 }
 label {
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-input,
-button {
-  font: inherit;
-  min-height: 2.6rem;
-  padding: 0 0.85rem;
-  border-radius: 8px;
-  border: 1px solid var(--border);
+  font: 500 13px / 1.35 var(--font);
 }
 input {
+  min-height: 37px;
+  padding: 7px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
   background: var(--bg);
   color: var(--text);
+  font: 400 14px / 1.5 var(--font);
+}
+input::placeholder {
+  color: var(--subtle);
 }
 input:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  border-color: var(--focus);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+.note,
+.detail,
+#update-status {
+  color: var(--muted);
+  font: 400 12px / 1.4 var(--font);
+}
+.note.error {
+  color: var(--danger);
+}
+.detail {
+  margin-top: -2px;
+}
+[hidden] {
+  display: none !important;
 }
 button {
-  background: var(--accent);
-  color: var(--accent-ink);
-  border-color: transparent;
-  font-weight: 650;
+  min-height: 36px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font: 500 13px / 1.35 var(--font);
   cursor: pointer;
 }
+button.primary {
+  min-height: 44px;
+  padding: 0 20px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+button.ghost {
+  margin-top: 8px;
+  background: transparent;
+  color: var(--text);
+}
+button.secondary {
+  margin-top: 8px;
+  border-color: var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+}
 button:disabled {
-  opacity: 0.6;
   cursor: progress;
 }
-#back {
-  background: transparent;
-  color: var(--text);
-  border-color: var(--border);
-  font-weight: 500;
-}
-#error {
-  margin: 0.25rem 0 0;
-  color: var(--danger);
-  font-size: 0.9rem;
-  line-height: 1.45;
-}
 #updates {
-  display: grid;
-  gap: 0.6rem;
-  margin-top: 1.5rem;
-  padding-top: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  margin-top: 24px;
+  padding-top: 20px;
   border-top: 1px solid var(--border);
 }
-#updates[hidden] {
-  display: none;
-}
 h2 {
-  margin: 0;
-  font-size: 1rem;
+  margin-bottom: 4px;
+  font: 600 13px / 1.35 var(--font);
 }
-.check {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  font-weight: 500;
-}
-.check input {
-  min-height: 0;
-  width: 1rem;
-  height: 1rem;
-  margin: 0;
-  accent-color: var(--accent);
-}
-#check-now {
-  background: transparent;
-  color: var(--text);
-  border-color: var(--border);
-  font-weight: 500;
-}
-#update-status {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.9rem;
-  line-height: 1.45;
+#update-action {
+  margin-top: 12px;
 }

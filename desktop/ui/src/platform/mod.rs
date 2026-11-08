@@ -261,12 +261,12 @@ impl Platform {
             )
         });
         let now = ctx.input(|i| i.time);
-        // Title bar and decorations in the theme's mode; the setup screen
-        // follows the system, as its page does.
-        let title_bar = match &app {
-            Some(_) if crate::theme::Theme::of(ctx).is_dark() => egui::SystemTheme::Dark,
-            Some(_) => egui::SystemTheme::Light,
-            None => egui::SystemTheme::SystemDefault,
+        // Title bar and decorations in the theme's mode, the setup screen's
+        // too (it shows in the active theme, as the sign-in pages).
+        let title_bar = if crate::theme::Theme::of(ctx).is_dark() {
+            egui::SystemTheme::Dark
+        } else {
+            egui::SystemTheme::Light
         };
         if self.title_bar != Some(title_bar) {
             self.title_bar = Some(title_bar);
@@ -275,6 +275,12 @@ impl Platform {
         self.updates.setup(ctx);
         let Some(app) = app else {
             self.show_unread(ctx, tray::Unread::default());
+            // "Jetzt installieren" on the setup screen: no call to wait for.
+            if self.updates.tick_setup(ctx) {
+                self.quitting = true;
+                ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(ViewportCommand::Close);
+            }
             return;
         };
         let client = app.client().clone();

@@ -419,6 +419,12 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                                 available: u.available.clone(),
                                 checked: u.last_check.is_some(),
                                 error: None,
+                                // The Windows setup's, as the Tauri app's.
+                                installs: true,
+                                notice: u
+                                    .available
+                                    .as_deref()
+                                    .map(|v| Notice::new(v, Offer::Restart)),
                             });
                     shell
                 });
@@ -635,7 +641,7 @@ fn unnamed(harness: &App<'_>) -> (usize, Vec<String>) {
 }
 
 /// The Launcher on a bundled page: the setup page with its `?server=` (the
-/// way back) and `?error=` (why it shows).
+/// way back), `?error=` (why it shows) and `?detail=` (what the system said).
 fn page_app(cc: &eframe::CreationContext<'_>, page: &str, query: &str) -> gelabber_ui::Launcher {
     assert_eq!(
         page, "desktop/parity/reference/setup/index.html",
@@ -645,7 +651,9 @@ fn page_app(cc: &eframe::CreationContext<'_>, page: &str, query: &str) -> gelabb
     gelabber_ui::Launcher::setup(
         cc,
         query.query("server").map(str::to_owned),
-        query.query("error").map(str::to_owned),
+        query.query("error").map(|message| {
+            gelabber_ui::setup::Failure::new(message, query.query("detail").map(str::to_owned))
+        }),
         Box::new(|_| {}),
     )
 }
