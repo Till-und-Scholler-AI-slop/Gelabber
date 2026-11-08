@@ -550,13 +550,11 @@ pub struct Notice {
     pub phase: Phase,
 }
 
-// The BANNER's colours, the same in every theme.
-const BG: Color32 = crate::theme::hex(0x1d2021);
-const BORDER: Color32 = crate::theme::hex(0x2c3032);
-const INK: Color32 = crate::theme::hex(0xeef0ee);
-const ACCENT: Color32 = crate::theme::hex(0xf3b752);
-const ACCENT_INK: Color32 = crate::theme::hex(0x191b1b);
-const LINE: Color32 = crate::theme::hex(0x3a3f42);
+/// The shell header's height: the notice sits below it, clear of the
+/// channel title and the search.
+const HEADER: f32 = 52.0;
+/// Disabled buttons while the update is at work: dimmed, as `opacity: .5`.
+const DIMMED: f32 = 0.5;
 
 impl Notice {
     pub fn new(version: &str, offer: Offer) -> Self {
@@ -609,16 +607,39 @@ impl Notice {
         matches!(self.phase, Phase::Offer | Phase::Failed(_))
     }
 
-    /// Over everything at the top centre, clear of the composer and the call
-    /// dock: the BANNER's box (14px/1.4 system-ui, padding 10px 12px, gap 10px).
+    /// How much of the download is in, 0 to 1; `None` before the size is
+    /// known and outside the download.
+    pub fn progress(&self) -> Option<f32> {
+        match self.phase {
+            Phase::Downloading {
+                downloaded,
+                total: Some(total),
+            } if total > 0 => Some((downloaded as f32 / total as f32).clamp(0.0, 1.0)),
+            Phase::Ready | Phase::Installing => Some(1.0),
+            _ => None,
+        }
+    }
+
+    /// Over everything at the top centre, below the header and clear of the
+    /// composer and the call dock: the BANNER's box (14px/1.4, padding
+    /// 10px 12px, gap 10px) in the theme's colours.
     pub fn paint(&self, ctx: &Context) -> Option<Click> {
-        crate::fonts::use_system_ui(ctx);
-        let style = TextStyle::new(14.0, 400.0, 1.4).system_ui();
+        let theme = crate::theme::Theme::of(ctx);
+        let c = theme.c;
+        let style = TextStyle::new(14.0, 400.0, 1.4);
         let enabled = self.enabled();
+        // While at work the buttons stay, dimmed, so the box keeps its place.
+        let dim = |color: Color32| {
+            if enabled {
+                color
+            } else {
+                color.gamma_multiply(DIMMED)
+            }
+        };
         let mut clicked = None;
         egui::Area::new(Id::unique("gelabber-update-notice"))
             .order(egui::Order::Foreground)
-            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 12.0))
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, HEADER + 8.0))
             .constrain(false)
             .show(ctx, |ui| {
                 let (pad_x, pad_y, gap, line) = (12.0, 10.0, 10.0, style.line_px());
@@ -629,12 +650,12 @@ impl Notice {
                     .map(|(i, (label, click))| {
                         let primary = i == 0 && *click != Click::Later;
                         let (weight, ink) = if primary {
-                            (600.0, ACCENT_INK)
+                            (600.0, c.accent_ink)
                         } else {
-                            (400.0, INK)
+                            (400.0, c.text)
                         };
                         (
-                            Block::single(ui, label, style.weight(weight), ink),
+                            Block::single(ui, label, style.weight(weight), dim(ink)),
                             *click,
                             primary,
                         )
@@ -653,9 +674,9 @@ impl Notice {
                 let screen = ctx.content_rect();
                 let room = (screen.width() - 32.0 - 2.0 * (pad_x + 1.0) - buttons_w).max(40.0);
                 let text = self.text();
-                let mut block = Block::single(ui, &text, style, INK);
+                let mut block = Block::single(ui, &text, style, c.text);
                 if block.width() > room {
-                    block = Block::wrapped(ui, &text, style, INK, room);
+                    block = Block::wrapped(ui, &text, style, c.text, room);
                 }
                 let row_h = buttons
                     .iter()
@@ -681,22 +702,37 @@ impl Notice {
                 painter.rect(
                     rect,
                     CornerRadius::same(12),
-                    BG,
-                    Stroke::new(1.0, BORDER),
+                    c.panel,
+                    Stroke::new(1.0, c.border),
                     StrokeKind::Inside,
                 );
                 let middle = rect.top() + 1.0 + pad_y + row_h / 2.0;
                 let mut x = rect.left() + 1.0 + pad_x;
-                block.paint(painter, pos2(x, middle - block.height() / 2.0));
+                let text_top = middle - block.height() / 2.0;
+                block.paint(painter, pos2(x, text_top));
+                // A thin bar under the line while the download runs.
+                if let Some(done) = self.progress() {
+                    let track = Rect::from_min_size(
+                        pos2(
+                            x,
+                            (text_top + block.height() + 3.0).min(rect.bottom() - 4.0),
+                        ),
+                        Vec2::new(block.width(), 3.0),
+                    );
+                    painter.rect_filled(track, CornerRadius::same(2), c.border);
+                    let mut bar = track;
+                    bar.set_width(track.width() * done);
+                    painter.rect_filled(bar, CornerRadius::same(2), c.accent);
+                }
                 x += block.width();
                 for (label, click, primary) in &buttons {
                     x += gap;
                     let size = button_size(label, *primary);
                     let button = Rect::from_min_size(pos2(x, middle - size.y / 2.0), size);
                     let (fill, stroke) = if *primary {
-                        (ACCENT, Stroke::NONE)
+                        (dim(c.accent), Stroke::NONE)
                     } else {
-                        (Color32::TRANSPARENT, Stroke::new(1.0, LINE))
+                        (Color32::TRANSPARENT, Stroke::new(1.0, dim(c.border_strong)))
                     };
                     painter.rect(
                         button,
@@ -1442,6 +1478,7 @@ mod tests {
         assert_eq!(notice.text(), "Update wird geladen … 40 %");
         assert!(banner.contains("`Update wird geladen …${percent}`"));
         assert!(!notice.enabled());
+        assert_eq!(notice.progress(), Some(19.0 / 47.0));
         notice.phase = Phase::Installing;
         assert_eq!(
             notice.text(),
@@ -1451,10 +1488,17 @@ mod tests {
         notice.phase = Phase::Failed("kaputt".into());
         assert_eq!(notice.text(), "kaputt");
         assert!(notice.enabled());
-        for color in [
-            "#1d2021", "#2c3032", "#eef0ee", "#f3b752", "#191b1b", "#3a3f42",
+        assert_eq!(notice.progress(), None);
+        // The theme's colours, as `paint` takes them from it.
+        for token in [
+            "--lr-panel",
+            "--lr-border",
+            "--lr-text",
+            "--lr-accent",
+            "--lr-accent-ink",
+            "--lr-border-strong",
         ] {
-            assert!(banner.contains(color), "{color}");
+            assert!(banner.contains(&format!("var({token})")), "{token}");
         }
 
         let link = Notice::new("0.9.1", Offer::Download);
@@ -1651,6 +1695,8 @@ mod tests {
         let mut harness = egui_kittest::Harness::builder()
             .with_size(egui::vec2(1280.0, 800.0))
             .build_ui(move |ui| {
+                // The app's fonts, which the notice is set in.
+                crate::fonts::install(ui.ctx());
                 if let Some(click) = n.lock().paint(ui.ctx()) {
                     c.lock().push(click);
                 }

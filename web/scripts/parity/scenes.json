@@ -1611,6 +1611,16 @@
       }
     },
     {
+      "name": "light-update-notice",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "desktop": true,
+      "before": "theme lena light",
+      "update": {
+        "available": "0.9.1"
+      }
+    },
+    {
       "name": "update-downloading",
       "path": "/s/{home}/c/{allgemein}",
       "user": "lena",

@@ -111,8 +111,10 @@ replaces it) is read. desktop-release.yml writes the same content into
 `latest.json`, which the installed Tauri apps (0.8) read, so their updater
 installs this app; `latest.json` of 0.8 releases names the Tauri installer.
 A newer version shows the notice of the Tauri app's `BANNER`
-(`desktop/parity/reference/update-banner.js`: same texts, colours and place,
-top centre); what it offers depends on the install:
+(`desktop/parity/reference/update-banner.js`: same texts, in the theme's
+colours, top centre below the 52px header; while the update is at work its
+buttons are dimmed and a thin bar shows the download); what it offers
+depends on the install:
 
 | Install | Detected by | Notice |
 |---|---|---|
