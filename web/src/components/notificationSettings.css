@@ -9,18 +9,23 @@
   background: var(--lr-surface);
   font: var(--lr-type-ui);
 }
-/* Two columns of equal chips: easy to hit with a thumb, none crowded. */
-.notify-mute-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+/* The mute lengths in one row of chips that share it; a narrow screen
+   wraps them. */
+.notify-mute-row {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
-.notify-mute-grid .ui-chip {
+.notify-mute-row .ui-chip {
+  flex: 1 0 auto;
   justify-content: center;
-  min-height: var(--lr-control-md);
-  border-radius: var(--lr-radius-sm);
-  text-align: center;
 }
-.notify-mute-grid .ui-chip:last-child:nth-child(odd) {
-  grid-column: 1 / -1;
+/* "Als gelesen markieren" is an action, not a setting: it sits beside
+   "Fertig" at the end. */
+.notify-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
 }
