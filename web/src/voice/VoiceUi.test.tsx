@@ -101,7 +101,11 @@ vi.mock("./userVolume.ts", async (original) => {
 });
 
 import { VoiceRoom } from "./VoiceRoom.tsx";
-import { LiveMenuItems, VoiceControls } from "../components/VoiceControls.tsx";
+import {
+  LiveMenuItems,
+  VoiceAudioToggles,
+  VoiceControls,
+} from "../components/VoiceControls.tsx";
 import { VoiceSessionControls } from "../components/VoiceSessionControls.tsx";
 import { callAnnouncement } from "./callBar.ts";
 import { CallSound } from "./QuickCallSettings.tsx";
@@ -532,8 +536,7 @@ describe("active media UI", () => {
       serverId: "a",
       channelId: "stage",
     });
-    const words = () => {
-      const html = renderToStaticMarkup(<VoiceControls />);
+    const words = (html = renderToStaticMarkup(<VoiceControls />)) => {
       return ["Stummschalten", "Taubschalten"].map(
         (label) =>
           html
@@ -551,6 +554,11 @@ describe("active media UI", () => {
     // Deafened, the headset says it for both, as a participant's state does.
     fixture.voice.deafened = true;
     expect(words()).toEqual([null, "Taub"]);
+    // The fullscreen strip keeps to its icons, as the desktop app's does.
+    expect(words(renderToStaticMarkup(<VoiceAudioToggles />))).toEqual([
+      null,
+      null,
+    ]);
   });
   it("offers going live and its sound in the Live menu", () => {
     Object.assign(fixture.voice, {

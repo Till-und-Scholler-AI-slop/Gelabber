@@ -821,6 +821,19 @@ fn watch_strip(
             x += 36.0 + 4.0;
             let resp = common::click(ui, r, Id::unique(("watch-strip", which)));
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+            // The call bar's tooltip, icons only (`VoiceAudioToggles`).
+            let (title, detail) = super::call_bar::call_tip(
+                ui.ctx(),
+                if which == 0 {
+                    super::call_bar::CallKey::Mute
+                } else {
+                    super::call_bar::CallKey::Deafen
+                },
+                off,
+            );
+            Tooltip::new(title)
+                .detail(Some(&detail))
+                .on_hover_or_focus(&resp, Side::Above);
             let fill = if off {
                 c.danger_bg.gamma_multiply(0.45)
             } else if resp.hovered() {

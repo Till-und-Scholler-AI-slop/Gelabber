@@ -63,8 +63,12 @@ const BUTTON = "voice-control voice-control-compact";
 /** Mute and deafen, for the call bar and wherever the call is watched. */
 export function VoiceAudioToggles({
   className = BUTTON,
+  words = false,
 }: {
   className?: string;
+  /** "Stumm" or "Taub" beside a closed one's icon: the call bar's. The
+   * fullscreen strip keeps to its icons, as the desktop app's does. */
+  words?: boolean;
 }) {
   const muted = useVoice((s) => s.muted);
   const deafened = useVoice((s) => s.deafened);
@@ -99,7 +103,7 @@ export function VoiceAudioToggles({
             className={`${className}${micOff ? " is-off" : ""}${talking ? " is-talking" : ""}${idle ? " is-ptt-idle" : ""}`}
           >
             {micOff ? <MicOffIcon size={17} /> : <MicIcon size={17} />}
-            {muted && !deafened ? (
+            {words && muted && !deafened ? (
               <span className="voice-control-text" aria-hidden="true">
                 Stumm
               </span>
@@ -123,7 +127,7 @@ export function VoiceAudioToggles({
         className={`${className}${deafened ? " is-off" : ""}`}
       >
         {deafened ? <HeadsetOffIcon size={17} /> : <HeadsetIcon size={17} />}
-        {deafened ? (
+        {words && deafened ? (
           <span className="voice-control-text" aria-hidden="true">
             Taub
           </span>
@@ -223,7 +227,7 @@ export function VoiceControls({
 
   return (
     <div className="voice-controls voice-controls-compact">
-      <VoiceAudioToggles />
+      <VoiceAudioToggles words />
       {camera || capable.camera ? (
         <>
           <button

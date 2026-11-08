@@ -1621,6 +1621,36 @@
       ]
     },
     {
+      "name": "voice-fullscreen-muted",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted:live",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Stummschalten"
+        },
+        {
+          "click": "Zuschauen"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Vollbild"
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
       "name": "voice-compact",
       "path": "/settings/darstellung",
       "user": "lena",

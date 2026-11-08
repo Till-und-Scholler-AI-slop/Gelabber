@@ -311,6 +311,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     // Closed, the headset says "Taub" and the microphone "Stumm" beside
     // their icons, as "Kein Mikrofon" does (`VoiceAudioToggles`); narrow,
     // only the icons.
+    let deafen_tip = call_tip(ui.ctx(), CallKey::Deafen, state.deafened);
     let deafen = control(
         ui,
         &mut x,
@@ -328,12 +329,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
             Tone::Plain
         },
         "Taubschalten",
-        if state.deafened {
-            "Taubschaltung aufheben"
-        } else {
-            "Taubschalten"
-        },
-        Some("Strg+Umschalt+D"),
+        deafen_tip.0,
+        Some(&deafen_tip.1),
     );
     if deafen.clicked() {
         app.call.set_deafened(!state.deafened);
@@ -360,12 +357,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     } else {
         let ptt = prefs::get(ui.ctx()).voice_input == "ptt";
         let held = push_to_talk(ui, app, ptt && !muted);
-        // `callTip`: what a press does, the shortcut beneath, with the
-        // push-to-talk key while that holds the open microphone.
-        let detail = match crate::screens::settings::media::push_to_talk_key_name(ui.ctx()) {
-            Some(key) if ptt && !muted => format!("Strg+Umschalt+M · Push-to-Talk: {key}"),
-            _ => "Strg+Umschalt+M".to_owned(),
-        };
+        let (title, detail) = call_tip(ui.ctx(), CallKey::Mute, muted);
         let word = if state.muted && !state.deafened && !narrow {
             Some("Stumm")
         } else {
@@ -388,11 +380,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
                 Tone::Plain
             },
             "Stummschalten",
-            if muted {
-                "Stummschaltung aufheben"
-            } else {
-                "Stummschalten"
-            },
+            title,
             Some(&detail),
         );
         if mic.clicked() {
@@ -620,6 +608,41 @@ fn push_to_talk(ui: &Ui, app: &AppCtx, active: bool) -> bool {
         ui.ctx().data_mut(|d| d.insert_temp(id, held));
     }
     held
+}
+
+/// The microphone's or the headset's toggle.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum CallKey {
+    Mute,
+    Deafen,
+}
+
+/// `callTip`: the tooltip of the microphone or headset toggle, in the call
+/// bar and the fullscreen strip. What a press does, and beneath it the
+/// shortcut, with the push-to-talk key while that holds the open
+/// microphone.
+pub(super) fn call_tip(ctx: &egui::Context, which: CallKey, off: bool) -> (&'static str, String) {
+    match which {
+        CallKey::Mute => (
+            if off {
+                "Stummschaltung aufheben"
+            } else {
+                "Stummschalten"
+            },
+            match crate::screens::settings::media::push_to_talk_key_name(ctx) {
+                Some(key) if !off => format!("Strg+Umschalt+M · Push-to-Talk: {key}"),
+                _ => "Strg+Umschalt+M".to_owned(),
+            },
+        ),
+        CallKey::Deafen => (
+            if off {
+                "Taubschaltung aufheben"
+            } else {
+                "Taubschalten"
+            },
+            "Strg+Umschalt+D".to_owned(),
+        ),
+    }
 }
 
 /// A `.voice-control-compact` button ending at `*x`; moves `*x` left.
