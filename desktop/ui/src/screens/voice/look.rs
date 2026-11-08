@@ -4,7 +4,7 @@
 //! on pictures.
 
 use egui::epaint::{CircleShape, Shadow};
-use egui::{Color32, Painter, Pos2, Rect, Stroke, Ui, Vec2, pos2};
+use egui::{Color32, Painter, Pos2, Rect, Stroke, StrokeKind, Ui, Vec2, pos2};
 
 use crate::icons::{self, Icon};
 use crate::images::Images;
@@ -66,6 +66,29 @@ pub fn speaking_ring(ui: &Ui, painter: &Painter, rect: Rect, own_ring: bool) {
     if own_ring {
         painter.circle_stroke(rect.center(), r - 1.0, Stroke::new(3.0, speaking));
     }
+}
+
+/// The edge of a speaking picture (`.voice-video-tile.is-speaking`): an
+/// inset 22px glow spread 6 at 50 %, breathing, under a 3px inset ring.
+/// No avatar shows on a picture, so this edge is its speaking cue.
+pub fn picture_speaking_edge(ui: &Ui, painter: &Painter, rect: Rect, radius: f32) {
+    let speaking = Theme::of(ui.ctx()).c.speaking;
+    let t = glow_opacity(ui);
+    for i in 0..6 {
+        let a = 0.5 * t * (1.0 - i as f32 / 6.0) * 0.35;
+        painter.rect_stroke(
+            rect.shrink(3.0 + i as f32 * 3.0),
+            corner((radius - 3.0 - i as f32 * 3.0).max(0.0)),
+            Stroke::new(3.0, speaking.gamma_multiply(a)),
+            StrokeKind::Inside,
+        );
+    }
+    painter.rect_stroke(
+        rect,
+        corner(radius),
+        Stroke::new(3.0, speaking),
+        StrokeKind::Inside,
+    );
 }
 
 /// An avatar circle: picture or initials (`font` px) on the person's

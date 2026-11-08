@@ -778,22 +778,7 @@ pub fn picture(
     }
     // The speaking ring lies over the picture, under the labels.
     if pic.speaking {
-        let t = look::glow_opacity(ui);
-        for i in 0..6 {
-            let a = 0.5 * t * (1.0 - i as f32 / 6.0) * 0.35;
-            painter.rect_stroke(
-                rect.shrink(3.0 + i as f32 * 3.0),
-                corner((radius - 3.0 - i as f32 * 3.0).max(0.0)),
-                Stroke::new(3.0, c.speaking.gamma_multiply(a)),
-                StrokeKind::Inside,
-            );
-        }
-        painter.rect_stroke(
-            rect,
-            corner(radius),
-            Stroke::new(3.0, c.speaking),
-            StrokeKind::Inside,
-        );
+        look::picture_speaking_edge(ui, &painter, rect, radius);
     }
     let kino_focus = place == Place::KinoFocus;
     let strip = place.strip();

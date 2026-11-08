@@ -530,6 +530,10 @@ fn voice_room(
                     me == Some(*user),
                     theme.radius.lg,
                 );
+                // No avatar shows over a picture: its edge says who speaks.
+                if speaking {
+                    voice::look::picture_speaking_edge(ui, ui.painter(), tile, theme.radius.lg);
+                }
                 // Name and status over a scrim at the bottom (padding 18 44 6 10).
                 let white = Color32::WHITE;
                 let soft = Color32::from_white_alpha((0.82 * 255.0) as u8);
