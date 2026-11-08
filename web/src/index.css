@@ -467,7 +467,9 @@ summary {
   color: var(--lr-accent-text);
 }
 /* The marker at the rail's edge: a short accent pill for something unread,
-   a tall pill in the text colour for where you are (the v0.8 design). A
+   a tall pill in the text colour for where you are (the v0.8 design). Only
+   the pill and the tile's corner mark the selection: an amber ring would
+   read as the keyboard focus ring. A
    mention keeps its red count. The hidden pill is muted, not accent: it
    grows from and shrinks to that colour, so a pill that comes or goes
    would otherwise flash yellow. */
@@ -538,12 +540,6 @@ summary {
 .server-tile:hover,
 .server-tile.is-active {
   border-radius: var(--lr-radius-lg);
-}
-/* The selected server keeps its accent ring beside the pill. */
-.server-tile.is-active {
-  box-shadow:
-    0 0 0 2px var(--lr-rail),
-    0 0 0 4px var(--lr-accent);
 }
 /* An uploaded icon fills the tile and follows its rounding. */
 .server-icon-img {

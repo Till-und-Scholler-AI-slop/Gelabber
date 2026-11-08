@@ -352,7 +352,7 @@ pinned to the bottom).
 | Background without icon | tile tint `--lr-tile-N`, N = `tileTone(server.id)` (see 4.8) |
 | Uploaded icon | image `object-fit: cover`, fills 44×44 with the same rounding (`index.css:549-555`) |
 | Letters | `tileInitials(name)` (4.8), `600 15px / 1` Inter, letter-spacing 0.01em (0.15px), colour `--lr-text`, centred |
-| Active (current server) | ring: `box-shadow: 0 0 0 2px --lr-rail, 0 0 0 4px --lr-accent` → 2px gap in rail colour then 2px accent ring; outer ring follows radius (10 + 4 = 14px) |
+| Active (current server) | no ring: the 28px edge pill (4.5) and the hover radius mark it, so the accent ring stays the keyboard focus |
 | Muted server | whole tile `opacity: 0.6` |
 
 ### 4.5 Edge pill / selected indicator (`index.css:469-498`)
