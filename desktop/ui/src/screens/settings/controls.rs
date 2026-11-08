@@ -223,7 +223,7 @@ pub fn switch_row(
     on: &mut bool,
     disabled: bool,
 ) -> bool {
-    switch_row_ruled(ui, id, label, description, on, disabled, true)
+    switch_row_ruled(ui, id, label, description, on, disabled, None)
 }
 
 /// `.settings-row-noted`: a switch row with a note boxed under it (what
@@ -236,7 +236,9 @@ pub fn switch_row_noted(
     disabled: bool,
     note: &str,
 ) -> bool {
-    let changed = switch_row_ruled(ui, id, label, None, on, disabled, false);
+    // The note describes the switch for screen readers too
+    // (`aria-describedby` on the web).
+    let changed = switch_row_ruled(ui, id, label, None, on, disabled, Some(note));
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
     // `.settings-row-note`: padding 10 12, radius md, surface, meta muted.
@@ -259,7 +261,8 @@ fn switch_row_ruled(
     description: Option<&str>,
     on: &mut bool,
     disabled: bool,
-    rule: bool,
+    // A noted row draws its hairline under the note, not here.
+    note: Option<&str>,
 ) -> bool {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
@@ -282,6 +285,7 @@ fn switch_row_ruled(
     let id = Id::unique(("gelabber-switch-row", id));
     // The row is the switch's label, as `<label>` around the web's input.
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, !disabled, *on, label));
+    describe(ui, response.id, note);
     let mut changed = false;
     if response.clicked() && !disabled {
         *on = !*on;
@@ -296,7 +300,7 @@ fn switch_row_ruled(
             pos2(rect.left(), inner_top + label_block.height() + 4.0),
         );
     }
-    if rule {
+    if note.is_none() {
         crate::widgets::rule_h(painter, c.border, rect.x_range(), rect.bottom() - 1.0);
     }
     let switch_rect = Rect::from_min_size(
@@ -314,6 +318,7 @@ fn switch_row_ruled(
     );
     // `<label>` of the switch input: the row's text names it.
     sw.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, !disabled, *on, label));
+    describe(ui, sw.id, note);
     if sw.changed() && !changed {
         *on = value;
         changed = true;
@@ -322,6 +327,14 @@ fn switch_row_ruled(
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     changed
+}
+
+/// The accessible description of the widget `id`, if there is one.
+fn describe(ui: &Ui, id: Id, note: Option<&str>) {
+    if let Some(note) = note {
+        ui.ctx()
+            .accesskit_node_builder(id, |node| node.set_description(note));
+    }
 }
 
 // ----------------------------------------------------------------- chips
@@ -1049,6 +1062,32 @@ pub const IMAGE_FILTER: [&str; 6] = ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.gi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The note under a switch describes it, as `aria-describedby` does on
+    /// the web; a plain switch row has no description.
+    #[test]
+    fn a_noted_switch_is_described_by_its_note() {
+        use egui_kittest::kittest::{By, NodeT, Queryable};
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            crate::fonts::install(ui.ctx());
+            let (mut a, mut b) = (false, false);
+            switch_row_noted(ui, "noted", "Mit Hinweis", &mut a, false, "Blockiert.");
+            switch_row(ui, "plain", "Ohne Hinweis", None, &mut b, false);
+        });
+        harness.run();
+        let switches = |label: &'static str| {
+            harness
+                .query_all(By::new().role(egui::accesskit::Role::Switch).label(label))
+                .map(|n| n.accesskit_node().description())
+                .collect::<Vec<_>>()
+        };
+        let noted = switches("Mit Hinweis");
+        assert!(!noted.is_empty());
+        assert!(noted.iter().all(|d| d.as_deref() == Some("Blockiert.")));
+        let plain = switches("Ohne Hinweis");
+        assert!(!plain.is_empty());
+        assert!(plain.iter().all(Option::is_none));
+    }
 
     #[test]
     fn crops_to_the_target_ratio() {
