@@ -469,10 +469,9 @@ summary {
 /* The marker at the rail's edge: a short accent pill for something unread,
    a tall pill in the text colour for where you are (the v0.8 design). Only
    the pill and the tile's corner mark the selection: an amber ring would
-   read as the keyboard focus ring. A
-   mention keeps its red count. The hidden pill is muted, not accent: it
-   grows from and shrinks to that colour, so a pill that comes or goes
-   would otherwise flash yellow. */
+   read as the keyboard focus ring. A mention keeps its red count. The
+   hidden pill is muted, not accent: it grows from and shrinks to that
+   colour, so a pill that comes or goes would otherwise flash yellow. */
 :is(.server-tile, .server-home-link)::before {
   content: "";
   position: absolute;
