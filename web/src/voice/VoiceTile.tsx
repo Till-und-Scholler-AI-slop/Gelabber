@@ -462,7 +462,7 @@ function VideoSurface({
           {sourceAudioNotice ? (
             <span
               role="status"
-              className="voice-video-sound"
+              className={`voice-video-sound${sourceAudioOn ? "" : " voice-video-sound--off"}`}
               title={sourceAudioNotice}
             >
               {sourceAudioOn ? (

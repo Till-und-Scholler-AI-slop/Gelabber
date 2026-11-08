@@ -59,6 +59,10 @@
 .voice-video-sound > svg {
   flex-shrink: 0;
 }
+/* Sound that should go out and does not: noticed, not an alarm. */
+.voice-video-sound--off > svg {
+  color: var(--lr-warning);
+}
 .voice-video-placeholder,
 .voice-video-overlay {
   position: absolute;

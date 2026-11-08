@@ -840,7 +840,8 @@ pub fn picture(
                 if on { Icon::Speaker } else { Icon::SpeakerOff },
                 pos2(chip.left() + 6.0, chip.center().y - 6.0),
                 12.0,
-                c.text,
+                // Sound that should go out and does not: noticed, no alarm.
+                if on { c.text } else { c.warning },
             );
             word.paint(&painter, pos2(chip.left() + 22.0, badge.top() + 2.0));
             // The full sentence for screen readers and on hover.
