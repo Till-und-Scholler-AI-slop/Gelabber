@@ -233,19 +233,12 @@ pub fn card(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid, p: &Person)
     let id = Id::unique(("voice-card", p.id));
     let hover = ui.rect_contains_pointer(shown);
     let body = ui.interact(shown, id, Sense::click());
-    if p.speaking {
-        painter.rect_stroke(
-            shown.expand(0.5),
-            corner(theme.radius.lg + 0.5),
-            Stroke::new(1.0, c.speaking),
-            StrokeKind::Middle,
-        );
-    }
+    // Who speaks is the avatar's ring and the status line; the border stays.
     painter.rect(
         shown,
         corner(theme.radius.lg),
         c.surface,
-        Stroke::new(1.0, if p.speaking { c.speaking } else { c.border }),
+        Stroke::new(1.0, c.border),
         StrokeKind::Inside,
     );
     let inner_w = shown.width() - 2.0 - 24.0;
@@ -386,19 +379,11 @@ pub fn chip(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid, p: &Person)
     let painter = ui.painter().clone();
     let id = Id::unique(("voice-chip", p.id));
     let body = ui.interact(shown, id, Sense::click());
-    if p.speaking {
-        painter.rect_stroke(
-            shown.expand(0.5),
-            corner(22.5),
-            Stroke::new(1.0, c.speaking),
-            StrokeKind::Middle,
-        );
-    }
     painter.rect(
         shown,
         corner(theme.radius.full),
         c.surface,
-        Stroke::new(1.0, if p.speaking { c.speaking } else { c.border }),
+        Stroke::new(1.0, c.border),
         StrokeKind::Inside,
     );
     let cy = shown.center().y;
@@ -472,14 +457,6 @@ pub fn strip_person(
         painter.add(shadow.as_shape(rect, corner(theme.radius.md)));
         c.panel.gamma_multiply(0.92)
     } else {
-        if p.speaking {
-            painter.rect_stroke(
-                rect.expand(0.5),
-                corner(theme.radius.md + 0.5),
-                Stroke::new(1.0, c.speaking),
-                StrokeKind::Middle,
-            );
-        }
         c.surface
     };
     painter.rect_filled(rect, corner(theme.radius.md), fill.gamma_multiply(opacity));

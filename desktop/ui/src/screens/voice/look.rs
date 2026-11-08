@@ -41,27 +41,31 @@ pub fn glow_opacity(ui: &Ui) -> f32 {
 
 /// The ring and glow around a speaking avatar circle in `rect`: a 2px
 /// ring, then a 4px ring at 30 % and an 8px blur spread 4 at 45 %, both
-/// breathing.
+/// breathing. Drawn before the avatar, which covers their inner edges.
 pub fn speaking_ring(ui: &Ui, painter: &Painter, rect: Rect, own_ring: bool) {
     let theme = Theme::of(ui.ctx());
     let speaking = theme.c.speaking;
     let r = rect.width() / 2.0;
     let opacity = glow_opacity(ui);
-    if own_ring {
-        painter.circle_stroke(rect.center(), r + 1.0, Stroke::new(2.0, speaking));
-    }
+    // CSS blurs with a Gaussian of σ = blur / 2; egui's blur is a linear
+    // ramp, which spreads as far at about 14px for the web's 8px.
     let glow = Shadow {
         offset: [0, 0],
-        blur: 8,
+        blur: 14,
         spread: 4,
         color: speaking.gamma_multiply(0.45 * opacity),
     };
     painter.add(glow.as_shape(rect, corner(r)));
+    // A circle's stroke lies outside its radius. Both rings start a pixel
+    // under the avatar: from its very edge they would leave a dark seam.
     painter.add(CircleShape::stroke(
         rect.center(),
-        r + 2.0,
-        Stroke::new(4.0, speaking.gamma_multiply(0.30 * opacity)),
+        r - 1.0,
+        Stroke::new(5.0, speaking.gamma_multiply(0.30 * opacity)),
     ));
+    if own_ring {
+        painter.circle_stroke(rect.center(), r - 1.0, Stroke::new(3.0, speaking));
+    }
 }
 
 /// An avatar circle: picture or initials (`font` px) on the person's

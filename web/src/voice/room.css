@@ -555,9 +555,6 @@ html[data-kino] .app-shell-workspace .voice-session-dock {
   border: 1px solid var(--lr-border);
   border-radius: var(--lr-radius-lg);
   background: var(--lr-surface);
-  transition:
-    border-color 0.15s ease-out,
-    box-shadow 0.15s ease-out;
 }
 /* A camera keeps its card's shape: everything on it lies over the picture. */
 html[data-compact-rooms="true"] .voice-room-participant:not(.has-video),
@@ -620,10 +617,8 @@ html[data-compact-rooms="true"] .voice-room-seat {
   color: var(--lr-muted);
   font: var(--lr-type-meta);
 }
-.voice-room-participant.is-speaking {
-  border-color: var(--lr-speaking);
-  box-shadow: 0 0 0 1px var(--lr-speaking);
-}
+/* Who speaks is one cue per tile: the avatar's ring (index.css) and the
+   green status line, or a camera's own edge; the card's border stays. */
 .voice-room-participant.is-speaking .voice-room-participant-status {
   color: var(--lr-online-text);
 }
@@ -669,9 +664,6 @@ html[data-compact-rooms="true"] .voice-room-seat {
   overflow: hidden;
   border-color: transparent;
   background: #0b0d0e;
-}
-.voice-room-participant.has-video.is-speaking {
-  box-shadow: none;
 }
 .voice-room-participant.has-video > .voice-video-tile {
   position: absolute;
@@ -816,9 +808,6 @@ html[data-compact-rooms="true"] .voice-room-seat {
     border: 0;
     border-radius: 0;
     background: transparent;
-  }
-  .voice-room-participant.is-speaking {
-    box-shadow: none;
   }
   .voice-room-avatar,
   .voice-room-seat-circle {
