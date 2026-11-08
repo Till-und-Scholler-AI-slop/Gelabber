@@ -1336,25 +1336,34 @@ a.voice-session-link:hover > span {
   font: var(--lr-type-meta);
   font-weight: 600;
 }
-.voice-quick-level {
+/* Every level meter (quick settings, microphone test): a thin track in
+   the border colour, the level in green; Chromium and Firefox alike. */
+.voice-quick-level,
+.voice-microphone-test meter {
+  display: block;
   width: 100%;
   height: 6px;
   appearance: none;
+  border: 0;
   border-radius: var(--lr-radius-full);
   background: var(--lr-border);
 }
-.voice-quick-level::-webkit-meter-bar {
+.voice-quick-level::-webkit-meter-bar,
+.voice-microphone-test meter::-webkit-meter-bar {
   height: 6px;
   border: 0;
   border-radius: var(--lr-radius-full);
   background: var(--lr-border);
 }
 .voice-quick-level::-webkit-meter-optimum-value,
-.voice-quick-level::-webkit-meter-suboptimum-value {
+.voice-quick-level::-webkit-meter-suboptimum-value,
+.voice-microphone-test meter::-webkit-meter-optimum-value,
+.voice-microphone-test meter::-webkit-meter-suboptimum-value {
   border-radius: var(--lr-radius-full);
   background: var(--lr-online-text);
 }
-.voice-quick-level::-moz-meter-bar {
+.voice-quick-level::-moz-meter-bar,
+.voice-microphone-test meter::-moz-meter-bar {
   border-radius: var(--lr-radius-full);
   background: var(--lr-online-text);
 }
@@ -1582,11 +1591,6 @@ a.voice-session-link:hover > span {
 }
 .voice-microphone-test > svg {
   color: var(--lr-accent-text);
-}
-.voice-microphone-test meter {
-  width: 100%;
-  height: 24px;
-  accent-color: var(--lr-accent);
 }
 .voice-microphone-test-modes {
   display: flex;
