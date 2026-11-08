@@ -578,3 +578,30 @@ fn separators_run_through_the_bottom_strip_one_device_pixel_wide() {
         }
     }
 }
+
+#[test]
+fn only_a_room_nobody_else_is_in_asks_for_company() {
+    let draw = |channel| {
+        let room = crate::screens::voice::session::build(
+            &super::state(),
+            &CallState::default(),
+            SERVER,
+            channel,
+        )
+        .expect("room");
+        let (client, call) = offline();
+        let mut h = harness(client, call, move |ui, app| {
+            crate::screens::voice::page::room_content(ui, app, &room, 288.0, 52.0, 992.0);
+        });
+        h.run_steps(4);
+        h
+    };
+    // Kino is empty: under the way in, "Einladen".
+    let empty = draw(super::KINO);
+    empty.get_by_label("Beitreten");
+    empty.get_by_label("Einladen");
+    // Jonas and Mira are on the Sofa: the room has its company.
+    let busy = draw(SOFA);
+    busy.get_by_label("Beitreten");
+    assert!(busy.query_by_label("Einladen").is_none());
+}
