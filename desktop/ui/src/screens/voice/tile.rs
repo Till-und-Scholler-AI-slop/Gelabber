@@ -601,8 +601,7 @@ fn paint_limit(ui: &Ui, painter: &Painter, rect: Rect, live: bool, id: Id, limit
     response.on_hover_text(reason);
 }
 
-/// A dark note over the picture's lower part (`.voice-source-audio-tile`,
-/// `.voice-fullscreen-error`).
+/// A dark note over the picture's lower part (`.voice-fullscreen-error`).
 fn tile_note(ui: &Ui, painter: &Painter, rect: Rect, text_s: &str, pad: Vec2, fill: Color32) {
     let width = rect.width() - 24.0;
     let block = Block::wrapped(
@@ -813,7 +812,8 @@ pub fn picture(
     }
     let kino_focus = place == Place::KinoFocus;
     let strip = place.strip();
-    // The Live badge, top left.
+    // The Live badge, top left; beside it, on the own Live, what becomes of
+    // its sound (`.voice-video-tags`).
     if live && !kino_focus {
         let style = TextStyle::new(11.0, 600.0, 1.3);
         let label = Block::single(ui, "Live", style, c.on_live);
@@ -824,22 +824,30 @@ pub fn picture(
         );
         painter.rect_filled(badge, corner(theme.radius.xs), c.live);
         label.paint(&painter, badge.min + vec2(6.0, 2.0));
-    }
-    // The own Live says what becomes of its sound, under the name pill
-    // (the caption's z-index 2).
-    if live
-        && pic.own
-        && !strip
-        && let Some(notice) = live_sound_notice(&app.call.with_state(|s| s.live_sound.clone()))
-    {
-        tile_note(
-            ui,
-            &painter,
-            rect,
-            &notice,
-            vec2(8.0, 5.0),
-            Color32::from_rgba_unmultiplied(21, 24, 25, 223),
-        );
+        let sound = (pic.own && !strip).then(|| app.call.with_state(|s| s.live_sound.clone()));
+        if let Some(sound) = sound
+            && let Some(notice) = live_sound_notice(&sound)
+        {
+            let on = matches!(sound, gelabber_call::LiveSound::Sharing);
+            let word = Block::single(ui, if on { "Mit Ton" } else { "Ohne Ton" }, style, c.text);
+            let chip = Rect::from_min_size(
+                pos2(badge.right() + 4.0, badge.top()),
+                vec2(6.0 + 12.0 + 4.0 + word.width() + 6.0, badge.height()),
+            );
+            painter.rect_filled(chip, corner(theme.radius.xs), c.bg.gamma_multiply(0.82));
+            icons::paint(
+                &painter,
+                if on { Icon::Speaker } else { Icon::SpeakerOff },
+                pos2(chip.left() + 6.0, chip.center().y - 6.0),
+                12.0,
+                c.text,
+            );
+            word.paint(&painter, pos2(chip.left() + 22.0, badge.top() + 2.0));
+            // The full sentence for screen readers and on hover.
+            ui.interact(chip, id.with("live-sound"), Sense::hover())
+                .on_hover_text(&notice)
+                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &notice));
+        }
     }
     // The name pill, bottom left.
     if !kino_focus {

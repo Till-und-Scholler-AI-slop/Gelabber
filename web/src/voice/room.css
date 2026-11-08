@@ -276,7 +276,7 @@ html[data-kino] .app-shell-workspace .voice-session-dock {
 }
 /* The corner names the picture in front instead. */
 .voice-room[data-kino] .is-focus .voice-video-caption,
-.voice-room[data-kino] .is-focus .voice-video-live,
+.voice-room[data-kino] .is-focus .voice-video-tags,
 .voice-room[data-kino] .is-focus > .voice-room-participant-text,
 .voice-room[data-kino] .is-focus > .voice-room-participant-more {
   display: none;
@@ -390,9 +390,12 @@ html[data-kino] .app-shell-workspace .voice-session-dock {
   font: var(--lr-type-caps);
   text-transform: none;
 }
-.voice-stage > .is-strip .voice-video-live {
+.voice-stage > .is-strip .voice-video-tags {
   top: 6px;
   left: 6px;
+}
+.voice-stage > .is-strip .voice-video-sound {
+  display: none;
 }
 .voice-stage > .is-strip .voice-video-actions {
   top: 4px;
@@ -1569,10 +1572,6 @@ a.voice-session-link:hover > span {
 }
 .voice-state-icons-speaker {
   color: var(--lr-online);
-}
-.voice-source-audio-notice {
-  color: var(--lr-muted);
-  line-height: 1.4;
 }
 .voice-microphone-test {
   display: flex;
