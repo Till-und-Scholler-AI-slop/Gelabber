@@ -578,3 +578,46 @@ fn separators_run_through_the_bottom_strip_one_device_pixel_wide() {
         }
     }
 }
+
+/// Esc with a call bar popover open only closes the popover, as
+/// Popover.tsx stops the key; Kino goes with the next Esc.
+#[test]
+fn an_open_popover_takes_the_esc_before_kino() {
+    use crate::screens::voice::{page, stage};
+
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call, |ui, app| {
+        let kino = stage::kino(ui.ctx());
+        page::kino_keys(ui, kino);
+        bar(ui, app);
+    });
+    h.run_steps(4);
+    stage::set_kino(&h.ctx, true);
+    // As after a click on the popover's background: no control has the
+    // focus (one that has keeps all keys from Kino anyway).
+    let unfocus = |h: &mut H| {
+        h.ctx.memory_mut(|m| {
+            if let Some(id) = m.focused() {
+                m.surrender_focus(id);
+            }
+        });
+        h.run_steps(2);
+    };
+    h.get_by_label("Verbindung: wird gemessen … – Details anzeigen")
+        .click();
+    h.run_steps(4);
+    h.get_by_label("Alle Details");
+    unfocus(&mut h);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+    assert!(
+        h.query_by_label("Alle Details").is_none(),
+        "the popover closed"
+    );
+    assert!(stage::kino(&h.ctx), "Kino stays");
+    unfocus(&mut h);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+    assert!(!stage::kino(&h.ctx), "the next Esc leaves Kino");
+}

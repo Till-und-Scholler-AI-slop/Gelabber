@@ -574,7 +574,7 @@ fn people_rows(ui: &Ui, people: &[Person], width: f32) -> Vec<Vec<(Person, f32)>
 }
 
 /// K and Esc for Kino, unless a field has the keys or a dialog is open.
-fn kino_keys(ui: &Ui, kino: bool) {
+pub(super) fn kino_keys(ui: &Ui, kino: bool) {
     let ctx = ui.ctx();
     // A dialog over the page owns the keys: also the quick switcher, the
     // shortcut sheet and the profile (`modalOpen` on the web).
