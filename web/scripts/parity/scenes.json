@@ -312,6 +312,9 @@
       "actions": [
         {
           "rightclick": "Wohnzimmer"
+        },
+        {
+          "menuitem": "Benachrichtigungseinstellungen…"
         }
       ]
     },
@@ -322,6 +325,88 @@
       "actions": [
         {
           "rightclick": "Direktnachrichten"
+        }
+      ]
+    },
+    {
+      "name": "channel-row-hover",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "hover": "spiele"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-channel",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "/^spiele/"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-keys",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "/^spiele/"
+        },
+        {
+          "key": "ArrowDown"
+        },
+        {
+          "key": "ArrowRight"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-level",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "/^spiele/"
+        },
+        {
+          "hover": "Benachrichtigungen"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-server",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "Wohnzimmer"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-dm",
+      "path": "/d/{dm}",
+      "user": "lena",
+      "actions": [
+        {
+          "hover": "Jonas"
+        },
+        {
+          "click": "Aktionen für Jonas"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-member",
+      "path": "/s/{evening}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "allgemein"
         }
       ]
     },
@@ -767,7 +852,10 @@
       "user": "lena",
       "actions": [
         {
-          "click": "Kanal bearbeiten"
+          "hover": "spiele"
+        },
+        {
+          "click": "#spiele bearbeiten"
         }
       ]
     },
@@ -777,7 +865,10 @@
       "user": "lena",
       "actions": [
         {
-          "click": "Kanal löschen"
+          "rightclick": "/^spiele/"
+        },
+        {
+          "menuitem": "Kanal löschen"
         }
       ]
     },
@@ -790,7 +881,7 @@
           "click": "Benachrichtigungen für #allgemein"
         },
         {
-          "clicktext": "Bis ich es wieder einschalte"
+          "clicktext": "Unbegrenzt"
         },
         {
           "wait": 500
