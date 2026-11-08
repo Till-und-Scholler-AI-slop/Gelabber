@@ -118,7 +118,30 @@ struct State {
     /// Section heading positions in the scroll content, for the nav.
     anchors: HashMap<&'static str, f32>,
     scroll_to: Option<&'static str>,
+    /// The section last jumped to, and the offset the jump left.
+    jumped: Option<(&'static str, f32)>,
+    content_height: f32,
     opened_at: f64,
+}
+
+/// How far below the anchor row a heading may sit and still count as
+/// reached (web pages/sectionSpy.ts `SECTION_LINE`).
+const SECTION_LINE: f32 = 32.0;
+
+/// The last section whose heading (its top from the anchor row's bottom)
+/// has reached the line; at the very end the last one (`currentSection`).
+fn current_section(headings: &[(&'static str, f32)], at_end: bool) -> Option<&'static str> {
+    if at_end {
+        return headings.last().map(|(id, _)| *id);
+    }
+    let mut current = headings.first().map(|(id, _)| *id);
+    for (id, top) in headings {
+        if *top > SECTION_LINE {
+            break;
+        }
+        current = Some(*id);
+    }
+    current
 }
 
 fn state(ctx: &egui::Context) -> Arc<Mutex<State>> {
@@ -167,55 +190,46 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     poll_loads(ui, app, &mut s, &detail, manage);
 
     // The anchor row: fixed under the header (sticky at the scroll top).
+    // Its links take input first, for the Tab order; they are painted after
+    // the body, with the section that is in view now.
     let nav = Rect::from_min_size(
         pos2(rect.left(), rect.top() + 52.0),
         vec2(rect.width(), 49.0),
     );
-    ui.painter().rect_filled(nav, 0.0, c.bg);
-    crate::widgets::rule_h(ui.painter(), c.border, nav.x_range(), nav.bottom() - 1.0);
     let mut x = nav.left() + 32.0;
     let ids: Vec<(&'static str, &'static str)> = SECTIONS
         .iter()
         .copied()
         .filter(|(id, _)| manage || matches!(*id, "mitglieder" | "gefahrenzone"))
         .collect();
+    let mut links = Vec::with_capacity(ids.len());
     for (id, label) in &ids {
         let b = Block::single(ui, label, text::UI, c.muted);
         let r = Rect::from_min_size(pos2(x, nav.top() + 8.0), vec2(b.width() + 24.0, 32.0));
         let wid = Id::unique(("gelabber-server-nav", *id));
         let response = ui.interact(r, wid, Sense::click());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, *label));
-        let fill = eased(&ctx, wid, response.hovered(), Color32::TRANSPARENT, c.hover);
-        ui.painter().rect_filled(r, corner(16.0), fill);
-        b.paint_tinted(
-            ui.painter(),
-            pos2(r.left() + 12.0, r.center().y - b.height() / 2.0),
-            Some(if response.hovered() { c.text } else { c.muted }),
-        );
-        if response.hovered() {
-            ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
         if response.clicked() {
             s.scroll_to = Some(id);
         }
-        x += r.width() + 4.0;
+        links.push((*id, b, response));
+        x += links.last().map_or(0.0, |(_, _, r)| r.rect.width()) + 4.0;
     }
 
     let body = Rect::from_min_max(pos2(rect.left(), nav.bottom()), rect.max);
-    let offset = s
-        .scroll_to
-        .take()
+    let jump = s.scroll_to.take();
+    let offset = jump
         .and_then(|id| s.anchors.get(id).copied())
         .map(|y| (y - 64.0 + 49.0).max(0.0));
     let st = &mut *s;
-    controls::scroll(ui, body, ("server", server), offset, |ui| {
+    let (_, scrolled) = controls::scroll(ui, body, ("server", server), offset, |ui| {
         let width = ui.available_width().min(1040.0);
         let left = ui.cursor().min.x;
         let content_top = ui.cursor().min.y;
         ui.add_space(32.0);
         let inner = Rect::from_min_size(
             pos2(left + 40.0, ui.cursor().min.y),
-            vec2((width - 80.0).min(720.0), f32::INFINITY),
+            vec2((width - 80.0).min(controls::MEASURE), f32::INFINITY),
         );
         let mut col = ui.new_child(
             UiBuilder::new()
@@ -240,7 +254,13 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
                 col.add_space(14.0);
             };
         if manage {
-            section(&mut col, "allgemein", "Allgemein", None, st);
+            section(
+                &mut col,
+                "allgemein",
+                "Allgemein",
+                Some("Ein neues Bild gilt sofort, den Namen übernimmst du mit Speichern."),
+                st,
+            );
             general(&mut col, app, st, &detail);
             section(
                 &mut col,
@@ -281,11 +301,71 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
         section(&mut col, "gefahrenzone", "Gefahrenzone", Some(hint), st);
         danger(&mut col, app, &detail);
         let used = col.min_rect();
+        st.content_height = used.bottom() + 48.0 - content_top;
         ui.advance_cursor_after_rect(Rect::from_min_max(
             pos2(left, inner.top()),
             pos2(left + width, used.bottom() + 48.0),
         ));
     });
+
+    // The section in view (web `useCurrentSection`): a jump marks its
+    // section until the reader scrolls on.
+    if let Some(id) = jump {
+        st.jumped = Some((id, scrolled));
+    }
+    if st
+        .jumped
+        .is_some_and(|(_, at)| (scrolled - at).abs() >= 2.0)
+    {
+        st.jumped = None;
+    }
+    let current = st.jumped.map(|(id, _)| id).or_else(|| {
+        let at_end = scrolled > 0.0 && scrolled + body.height() >= st.content_height - 2.0;
+        let tops: Vec<(&'static str, f32)> = ids
+            .iter()
+            .filter_map(|(id, _)| st.anchors.get(id).map(|y| (*id, y - scrolled)))
+            .collect();
+        current_section(&tops, at_end)
+    });
+    ui.painter().rect_filled(nav, 0.0, c.bg);
+    crate::widgets::rule_h(ui.painter(), c.border, nav.x_range(), nav.bottom() - 1.0);
+    for (id, b, response) in &links {
+        let r = response.rect;
+        let on = current == Some(*id);
+        if on {
+            ctx.accesskit_node_builder(response.id, |node| {
+                node.set_aria_current(egui::accesskit::AriaCurrent::Location);
+            });
+        }
+        let hover = eased(
+            &ctx,
+            response.id,
+            response.hovered(),
+            Color32::TRANSPARENT,
+            c.hover,
+        );
+        ui.painter()
+            .rect_filled(r, corner(16.0), if on { c.selected } else { hover });
+        if response.has_focus() && crate::widgets::keyboard_focus(&ctx) {
+            crate::widgets::focus_ring(ui.painter(), r, 16.0, &theme);
+        }
+        b.paint_tinted(
+            ui.painter(),
+            pos2(r.left() + 12.0, r.center().y - b.height() / 2.0),
+            Some(if on || response.hovered() {
+                c.text
+            } else {
+                c.muted
+            }),
+        );
+        if response.hovered() {
+            ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if response.clicked() {
+            ctx.request_repaint();
+        }
+    }
+
     if let Some(dialog) = &mut st.inviting
         && !dialog.show(&ctx, app, &detail.server)
     {
@@ -627,7 +707,18 @@ fn general(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
                         .pending(s.saving_name.then_some("Speichert…")),
                 )
                 .clicked();
-            if let Some((m, t)) = s.name_status.current(ui) {
+            let status = s.name_status.current(ui);
+            // As on Profil: why Speichern waits, next to it.
+            if !dirty && !s.saving_name && status.is_none() {
+                controls::paint(
+                    ui,
+                    pos2(ui.cursor().min.x, ui.max_rect().center().y - 9.0),
+                    "Keine Änderungen.",
+                    controls::HINT,
+                    Theme::of(ui.ctx()).c.muted,
+                );
+            }
+            if let Some((m, t)) = status {
                 ui.add(crate::widgets::InlineStatus::new(Some(&m), t));
             }
         });
@@ -1103,5 +1194,42 @@ mod tests {
             "läuft in 30 Minuten ab"
         );
         assert_eq!(expiry(Some(&at(3_600_000.0)), now), "läuft in 1 Stunde ab");
+    }
+
+    /// The cases of pages/sectionSpy.test.ts.
+    #[test]
+    fn the_section_in_view() {
+        let at = |tops: &[f32]| -> Vec<(&'static str, f32)> {
+            ["s0", "s1", "s2"]
+                .into_iter()
+                .zip(tops.iter().copied())
+                .collect()
+        };
+        assert_eq!(
+            current_section(&at(&[32.0, 400.0, 900.0]), false),
+            Some("s0")
+        );
+        assert_eq!(
+            current_section(&at(&[120.0, 400.0, 900.0]), false),
+            Some("s0")
+        );
+        assert_eq!(
+            current_section(&at(&[-500.0, 15.0, 600.0]), false),
+            Some("s1")
+        );
+        assert_eq!(
+            current_section(&at(&[-500.0, 33.0, 600.0]), false),
+            Some("s0")
+        );
+        assert_eq!(
+            current_section(&at(&[-900.0, -400.0, -2.0]), false),
+            Some("s2")
+        );
+        assert_eq!(
+            current_section(&at(&[-900.0, -100.0, 300.0]), true),
+            Some("s2")
+        );
+        assert_eq!(current_section(&[], false), None);
+        assert_eq!(current_section(&[], true), None);
     }
 }

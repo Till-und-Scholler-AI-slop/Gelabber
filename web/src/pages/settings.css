@@ -527,6 +527,11 @@
   background: var(--lr-hover);
   color: var(--lr-text);
 }
+/* The section in view (scroll-spy), styled like the open settings area. */
+.server-settings-nav a[aria-current="location"] {
+  background: var(--lr-selected);
+  color: var(--lr-text);
+}
 .server-settings {
   display: flex;
   flex-direction: column;
