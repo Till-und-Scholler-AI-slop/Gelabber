@@ -345,8 +345,16 @@ impl ChannelMessages {
 
     /// An older page goes in front; duplicates are skipped.
     pub fn prepend(&mut self, page: MessagePage) {
-        self.has_more = page.has_more;
         self.loading_older = false;
+        // Nothing in it could be read: the cursor would not move and the
+        // pane would ask for the same page again. The error row stops it.
+        if page.messages.is_empty() && page.has_more {
+            self.error = Some(ApiError::Decode(
+                "keine lesbare Nachricht auf der älteren Seite".into(),
+            ));
+            return;
+        }
+        self.has_more = page.has_more;
         for message in page.messages {
             if self.get(message.id).is_none() {
                 self.upsert(message);
@@ -1354,6 +1362,30 @@ mod tests {
         s.channel_mut(id(100))
             .merge_latest(page(vec![message(5, 50, 5)]));
         assert_eq!(ids(&s), vec![id(5)]);
+    }
+
+    /// An older page whose messages a newer server shaped beyond reading
+    /// stops paging with the error row instead of asking for it forever.
+    #[test]
+    fn an_unreadable_older_page_stops_paging() {
+        let mut c = ChannelMessages {
+            loaded: true,
+            has_more: true,
+            loading_older: true,
+            ..Default::default()
+        };
+        c.upsert(message(5, 50, 5));
+        c.prepend(MessagePage {
+            messages: vec![],
+            has_more: true,
+        });
+        assert!(!c.loading_older);
+        assert!(c.error.is_some());
+        // A readable page goes on as before.
+        c.error = None;
+        c.prepend(page(vec![message(1, 10, 1)]));
+        assert_eq!(c.oldest_cursor(), Some(message(1, 10, 1).cursor()));
+        assert!(c.error.is_none() && !c.has_more);
     }
 
     /// An edit of a message older than the loaded window stays out while
