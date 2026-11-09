@@ -171,6 +171,7 @@ impl Client {
     async fn adopt_session(&self, user: Option<User>) {
         match user {
             Some(user) => {
+                self.http().forget_sign_out();
                 let other = self.with_state(|s| s.me().is_some_and(|m| m.id != user.id));
                 if other {
                     self.stop_gateway();
@@ -225,7 +226,8 @@ impl Client {
     }
 
     /// Optimistic like the web: signed out at once, then the server is
-    /// told. Op key `logout` reports the server's answer.
+    /// told. Op key `logout` reports the server's answer; until it confirms,
+    /// this repeats a failed [`Self::logout_all`].
     pub fn logout(&self) {
         self.sign_out(false);
     }
@@ -245,14 +247,8 @@ impl Client {
                 s.session = Session::Anonymous;
             });
             let http = this.http().clone();
-            let work = async move {
-                if everywhere {
-                    http.logout_all().await
-                } else {
-                    http.logout().await
-                }
-            };
-            this.op("logout", work).await;
+            this.op("logout", async move { http.sign_out(everywhere).await })
+                .await;
         });
     }
 

@@ -12,6 +12,8 @@ use reqwest::{Method, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::models::CsrfResponse;
+
 /// Per REST request, as the web (`REQUEST_TIMEOUT_MS`).
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// Uploads of attachment bytes (web `messages/api.ts`).
@@ -193,6 +195,14 @@ pub struct Http {
     /// Server clock minus local clock in ms, from each `Date` header.
     clock_offset: Arc<AtomicI64>,
     unauthenticated: Arc<RwLock<Option<Hook>>>,
+    /// A sign-out the server has not confirmed yet; see [`Http::sign_out`].
+    held: Arc<RwLock<Option<HeldSignOut>>>,
+}
+
+#[derive(Clone)]
+struct HeldSignOut {
+    cookie: String,
+    everywhere: bool,
 }
 
 impl Http {
@@ -237,6 +247,7 @@ impl Http {
             csrf: Arc::new(RwLock::new(None)),
             clock_offset: Arc::new(AtomicI64::new(0)),
             unauthenticated: Arc::new(RwLock::new(None)),
+            held: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -348,6 +359,17 @@ impl Http {
         path: &str,
         body: Option<Body>,
     ) -> Result<Vec<u8>, ApiError> {
+        self.execute_as(method, path, body, None).await
+    }
+
+    /// [`Self::execute`] with a session cookie that is no longer in the jar.
+    async fn execute_as(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Body>,
+        session: Option<&str>,
+    ) -> Result<Vec<u8>, ApiError> {
         let write = method != Method::GET && method != Method::HEAD;
         if write && self.csrf.read().is_none() {
             self.refresh_csrf().await?;
@@ -359,6 +381,12 @@ impl Http {
                 .request(method.clone(), self.url(&format!("/api{path}")));
             if write && let Some(token) = self.csrf.read().clone() {
                 req = req.header("X-CSRF-Token", token);
+            }
+            if let Some(session) = session {
+                // A Cookie header of our own replaces the jar's: send both.
+                let jar = self.cookie_header().map(|c| format!("{c}; "));
+                let value = format!("{}gelabber_session={session}", jar.unwrap_or_default());
+                req = req.header(header::COOKIE, value);
             }
             match &body {
                 Some(Body::Json(json)) => {
@@ -498,6 +526,49 @@ impl Http {
             *self.csrf.write() = Some(token.to_owned());
         }
         Ok(session)
+    }
+
+    /// Signs out on the server. The session cookie leaves the jar at once
+    /// (so it is not kept across a restart either) and stays in memory only
+    /// until the server confirms; until then a retry, also a plain one,
+    /// repeats "everywhere" if that was asked for.
+    pub async fn sign_out(&self, everywhere: bool) -> Result<CsrfResponse, ApiError> {
+        let held = {
+            let mut held = self.held.write();
+            let everywhere = everywhere || held.as_ref().is_some_and(|h| h.everywhere);
+            match self.session_cookie() {
+                Some(cookie) => {
+                    self.jar
+                        .add_cookie_str("gelabber_session=; Path=/; Max-Age=0", &self.base);
+                    *held = Some(HeldSignOut { cookie, everywhere });
+                }
+                None => {
+                    if let Some(h) = held.as_mut() {
+                        h.everywhere = everywhere;
+                    }
+                }
+            }
+            held.clone()
+        };
+        let everywhere = everywhere || held.as_ref().is_some_and(|h| h.everywhere);
+        let path = if everywhere {
+            "/auth/logout-all"
+        } else {
+            "/auth/logout"
+        };
+        let cookie = held.as_ref().map(|h| h.cookie.as_str());
+        let bytes = self.execute_as(Method::POST, path, None, cookie).await?;
+        let mut current = self.held.write();
+        if current.as_ref().map(|h| &h.cookie) == held.as_ref().map(|h| &h.cookie) {
+            *current = None;
+        }
+        drop(current);
+        decode(path, &bytes)
+    }
+
+    /// A new sign-in: an old unconfirmed sign-out is not retried with it.
+    pub fn forget_sign_out(&self) {
+        *self.held.write() = None;
     }
 
     async fn refresh_csrf(&self) -> Result<(), ApiError> {
@@ -860,6 +931,57 @@ mod tests {
             .block_on(http.bytes(&format!("{api}/api/avatars/x"), Download::Image))
             .unwrap();
         assert!(api_seen.lock()[0].contains("gelabber_session=secret"));
+    }
+
+    /// "Sign out everywhere" that the server did not confirm: the cookie is
+    /// gone from the jar at once, and the retry (the strip's plain one) is
+    /// again "everywhere", with the old session.
+    #[test]
+    fn an_unconfirmed_sign_out_everywhere_is_retried_as_one() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let fail = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let failing = fail.clone();
+        let (base, seen) = serve(move |head| {
+            let json = |status: &str, body: &str| {
+                format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .into_bytes()
+            };
+            if head.starts_with("GET ") {
+                json("200 OK", r#"{"user":null,"csrf_token":"c"}"#)
+            } else if failing.load(Ordering::SeqCst) {
+                json("503 Service Unavailable", r#"{"error":"internal"}"#)
+            } else {
+                json("200 OK", r#"{"csrf_token":"d"}"#)
+            }
+        });
+        let posts = || -> Vec<String> {
+            seen.lock()
+                .iter()
+                .filter(|h| h.starts_with("POST"))
+                .cloned()
+                .collect()
+        };
+        let http = Http::new(&base).unwrap();
+        http.restore_session_cookie("tok");
+        assert!(runtime.block_on(http.sign_out(true)).is_err());
+        assert!(!http.has_session_cookie());
+        assert_eq!(http.session_cookie(), None);
+        fail.store(false, Ordering::SeqCst);
+        runtime.block_on(http.sign_out(false)).unwrap();
+        let sent = posts();
+        assert_eq!(sent.len(), 2);
+        for head in &sent {
+            assert!(head.starts_with("POST /api/auth/logout-all "), "{head}");
+            assert!(head.contains("gelabber_session=tok"), "{head}");
+        }
+        // Confirmed: nothing is held any more.
+        runtime.block_on(http.sign_out(false)).unwrap();
+        let last = posts().pop().unwrap();
+        assert!(last.starts_with("POST /api/auth/logout "), "{last}");
+        assert!(!last.contains("gelabber_session"), "{last}");
     }
 
     #[test]

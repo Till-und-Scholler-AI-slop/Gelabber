@@ -243,6 +243,7 @@ impl Client {
     pub fn login_blocking(&self, email: &str, password: &str) -> Result<(), ApiError> {
         let http = self.inner.http.clone();
         let session = self.block_on(async move { http.login(email, password).await })?;
+        self.inner.http.forget_sign_out();
         if let Some(user) = session
             .get("user")
             .cloned()
