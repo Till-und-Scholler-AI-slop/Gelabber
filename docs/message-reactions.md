@@ -17,8 +17,8 @@ or new-message notifications.
 
 The lazy picker and API use the same hash-checked Unicode Emoji 18.0 corpus,
 with German CLDR 48.2.3 annotations, search terms and categories. Sources and
-Unicode License v3 are checked in under `shared/data/emoji-sources`; generated
-copies must pass `python3 tools/generate-emoji-data.py --check`. No network emoji
+Unicode License v3 are checked in under `backend/shared/data/emoji-sources`; generated
+copies must pass `python3 web/scripts/generate-emoji-data.py --check`. No network emoji
 service is used. Rendering follows the device's emoji font; custom server emoji
 are deferred. Failed picker-module loading offers a page reload because failed
 ES modules may remain cached for the lifetime of the document.
