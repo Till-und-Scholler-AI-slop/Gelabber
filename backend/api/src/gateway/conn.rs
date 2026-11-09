@@ -341,11 +341,13 @@ async fn handle_text(
             Ok(FrameEffect::Liveness)
         }
         ClientFrame::Subscribe { s, c, n, ep } => {
-            let result = subscribe(state, db, user, conn, (s, c), (n, ep), sink).await;
-            if result.is_err() {
+            // The scope tells the client which subscribe to retry. A database
+            // error also fails the frame's commit, which ends the socket.
+            if let Err(err) = subscribe(state, db, user, conn, (s, c), (n, ep), sink).await {
                 state.gateway.unsubscribe(conn, Topic::of(s, c)).await;
+                warn!(error = err.code(), user_id = %user.id, "ws subscribe failed");
+                send(sink, ServerFrame::error("internal", Some(s), c)).await?;
             }
-            result?;
             Ok(FrameEffect::Activity)
         }
         ClientFrame::Unsubscribe { s, c } => {
@@ -454,12 +456,20 @@ async fn subscribe(
         .await;
 
     // Presence is ephemeral: announce after the sequenced `ok` so a snapshot
-    // never looks like catch-up and never bumps `n`.
-    state.gateway.announce_server(conn, server_id).await?;
-    let snap = state.gateway.presence_snapshot(server_id).await?;
-    send(sink, ServerFrame::presence_snap(server_id, snap)).await?;
-    let voice = state.gateway.voice_snapshot(server_id).await?;
-    send(sink, ServerFrame::voice_snap(server_id, voice)).await?;
+    // never looks like catch-up and never bumps `n`. A failure here leaves
+    // the chat subscription standing; the roster pass and later presence
+    // frames fill in.
+    if let Err(err) = state.gateway.announce_server(conn, server_id).await {
+        warn!(error = err.code(), "presence announce on subscribe failed");
+    }
+    match state.gateway.presence_snapshot(server_id).await {
+        Ok(snap) => send(sink, ServerFrame::presence_snap(server_id, snap)).await?,
+        Err(err) => warn!(error = err.code(), "presence snapshot on subscribe failed"),
+    }
+    match state.gateway.voice_snapshot(server_id).await {
+        Ok(voice) => send(sink, ServerFrame::voice_snap(server_id, voice)).await?,
+        Err(err) => warn!(error = err.code(), "voice snapshot on subscribe failed"),
+    }
     Ok(())
 }
 

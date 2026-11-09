@@ -417,6 +417,64 @@ async fn events_only_reach_matching_subscribers(pool: PgPool) {
     }
 }
 
+/// A subscribe that fails names its scope, and a presence or voice snapshot
+/// that fails after `ok` leaves the chat subscription standing.
+#[sqlx::test]
+async fn subscribe_failures_name_the_scope_and_spare_a_live_subscription(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Fail").await;
+    let (server_id, channel_id) = ids(&server);
+    let (addr, state) = common::serve_ws(pool).await;
+    let mut redis = state
+        .redis
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+
+    // The replay log cannot be read: nothing was subscribed, and the error
+    // says which subscribe failed.
+    let log = gelabber_api::gateway::Topic::Channel(channel_id).log_key();
+    redis::cmd("SET")
+        .arg(&log)
+        .arg("not a list")
+        .query_async::<()>(&mut redis)
+        .await
+        .unwrap();
+    send_json(
+        &mut ws,
+        json!({ "op": "s", "s": server_id, "c": channel_id }),
+    )
+    .await;
+    let err = recv_within(&mut ws, |f| f["op"] == "err").await;
+    assert_eq!(err["e"], "internal", "{err}");
+    assert_eq!(err["s"], server_id.to_string(), "{err}");
+    assert_eq!(err["c"], channel_id.to_string(), "{err}");
+    redis::cmd("DEL")
+        .arg(&log)
+        .query_async::<()>(&mut redis)
+        .await
+        .unwrap();
+
+    // The server's presence set cannot be written: the subscription stays.
+    redis::cmd("SET")
+        .arg(format!("gb:p:s:{server_id}"))
+        .arg("not a set")
+        .query_async::<()>(&mut redis)
+        .await
+        .unwrap();
+    send_json(
+        &mut ws,
+        json!({ "op": "s", "s": server_id, "c": channel_id }),
+    )
+    .await;
+    recv_within(&mut ws, |f| f["op"] == "ok").await;
+    let n = publish(&state, server_id, channel_id, EventKind::C, "still here").await;
+    let event = recv_within(&mut ws, |f| f["op"] == "e" || f["op"] == "err").await;
+    assert_eq!(event["op"], "e", "{event}");
+    assert_eq!(event["n"], n);
+}
+
 #[sqlx::test]
 async fn subscribe_is_membership_scoped(pool: PgPool) {
     let (mut owner, member) = two_users(pool.clone()).await;
