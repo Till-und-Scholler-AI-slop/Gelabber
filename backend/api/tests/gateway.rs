@@ -123,6 +123,13 @@ async fn recv_until(ws: &mut Ws, pred: impl Fn(&Value) -> bool) -> Value {
     }
 }
 
+/// [`recv_until`] that fails instead of waiting through heartbeats forever.
+async fn recv_within(ws: &mut Ws, pred: impl Fn(&Value) -> bool) -> Value {
+    tokio::time::timeout(Duration::from_secs(5), recv_until(ws, pred))
+        .await
+        .expect("expected frame within 5 s")
+}
+
 async fn send_json(ws: &mut Ws, value: Value) {
     ws.send(Message::Text(value.to_string().into()))
         .await
@@ -1239,6 +1246,49 @@ async fn dm_uses_the_same_subscribe_and_message_paths(pool: PgPool) {
     .await;
     let err = recv_until(&mut cara_ws, |f| f["op"] == "err").await;
     assert_eq!(err["e"], "not_found");
+}
+
+/// A DM peer's presence is published on the DM id and passes the dequeue
+/// check as a DM, not as a server that does not exist.
+#[sqlx::test]
+async fn dm_presence_arrives_live(pool: PgPool) {
+    let (addr, state) = common::serve_ws(pool.clone()).await;
+    let mut ada = Client::with_state(state.clone());
+    ada.bootstrap().await;
+    let res = ada
+        .register("ada-dmp@example.com", "password123", "Ada")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let mut bob = Client::with_state(state.clone());
+    bob.bootstrap().await;
+    let res = bob
+        .register("bob-dmp@example.com", "password123", "Bob")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let opened = ada
+        .send(
+            Method::POST,
+            "/api/dms",
+            Some(json!({ "user_id": bob.user_id() })),
+        )
+        .await;
+    assert_eq!(opened.status, StatusCode::CREATED, "{}", opened.body);
+    let dm = opened.body["id"].as_str().unwrap().to_owned();
+
+    let mut ada_ws = connect(addr, &session_cookie(&ada), None).await;
+    send_json(&mut ada_ws, json!({ "op": "s", "s": dm, "c": dm })).await;
+    recv_until(&mut ada_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+
+    let mut bob_ws = connect(addr, &session_cookie(&bob), None).await;
+    send_json(&mut bob_ws, json!({ "op": "s", "s": dm, "c": dm })).await;
+    recv_until(&mut bob_ws, |f| f["op"] == "ok").await;
+    let online = recv_within(&mut ada_ws, |f| f["op"] == "p" && f["u"] == bob.user_id()).await;
+    assert_eq!(online["s"], dm, "{online}");
+    assert_eq!(online["st"], "o", "{online}");
+
+    send_json(&mut bob_ws, json!({ "op": "p", "st": "i" })).await;
+    let idle = recv_within(&mut ada_ws, |f| f["op"] == "p" && f["u"] == bob.user_id()).await;
+    assert_eq!(idle["st"], "i", "{idle}");
 }
 
 #[sqlx::test]

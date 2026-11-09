@@ -909,6 +909,18 @@ impl Gateway {
         self.connections.socket_meta(id).await
     }
 
+    /// The DMs this socket subscribed to.
+    pub async fn socket_dms(&self, id: ConnId) -> HashSet<Uuid> {
+        self.connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .get(&id)
+            .map(|socket| socket.dms.clone())
+            .unwrap_or_default()
+    }
+
     pub async fn note_typing(&self, id: ConnId, server_id: Uuid, channel_id: Uuid, on: bool) {
         self.connections
             .note_typing(id, server_id, channel_id, on)

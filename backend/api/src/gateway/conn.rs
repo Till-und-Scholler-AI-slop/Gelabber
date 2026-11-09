@@ -1,7 +1,7 @@
 //! One WebSocket: session already checked, then subscribe / heartbeat /
 //! catch-up / presence / typing.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use axum::extract::ws::{Message, Utf8Bytes, WebSocket};
@@ -592,6 +592,7 @@ async fn deliver(
     batch: Vec<(ServerFrame, String)>,
 ) -> Result<bool, ApiError> {
     let mut checked = false;
+    let dms = state.gateway.socket_dms(conn).await;
     for run in server_runs(batch) {
         let mut db = tokio::time::timeout(
             std::time::Duration::from_secs(1),
@@ -608,7 +609,7 @@ async fn deliver(
             if !state.gateway.wants_frame(conn, &frame).await {
                 continue;
             }
-            let ok = match frame_scope(&frame) {
+            let ok = match dequeue_scope(&frame, &dms) {
                 None => true,
                 Some(scope) => match allowed.get(&scope) {
                     Some(&ok) => ok,
@@ -661,6 +662,19 @@ fn frame_scope(frame: &ServerFrame) -> Option<Scope> {
         ServerFrame::Presence { s, .. } => Some((*s, None)),
         ServerFrame::Typing { s, c, .. } => Some((*s, Some(*c))),
         _ => None,
+    }
+}
+
+/// [`frame_scope`] for the dequeue check. Presence on a DM is published on
+/// the DM id, which is no server row: it is checked as the DM it is.
+fn dequeue_scope(frame: &ServerFrame, dms: &HashSet<Uuid>) -> Option<Scope> {
+    match frame_scope(frame) {
+        Some((sid, None))
+            if matches!(frame, ServerFrame::Presence { .. }) && dms.contains(&sid) =>
+        {
+            Some((sid, Some(sid)))
+        }
+        scope => scope,
     }
 }
 
