@@ -696,7 +696,9 @@ pub const PEER_SETTLE: Duration = Duration::from_millis(2000);
 pub fn media_error_message(code: &str) -> &'static str {
     match code {
         "update_required" => "Bitte Gelabber aktualisieren und den Sprachkanal erneut betreten.",
-        "unauthorized" => "Bitte melde dich erneut an.",
+        // The seat, not the sign-in: the ticket endpoint answers for that.
+        "unauthorized" => "Der Sprachserver hat die Verbindung nicht zugelassen.",
+        "gone" => "Der Sprachserver ist gerade nicht erreichbar.",
         "unavailable" => "Kein freier Sprachplatz.",
         "forbidden" => "Dafür fehlt dir die Berechtigung.",
         _ => "Der Stream konnte nicht verbunden werden. Der Sprachkanal bleibt aktiv.",

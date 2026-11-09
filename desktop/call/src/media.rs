@@ -3830,10 +3830,11 @@ mod tests {
         // The seat on the new ticket is refused as well: the call ends.
         session.on_media_error(1, "unauthorized", logic::MediaStage::Join);
         assert!(call.inner.media.current().is_none());
-        assert!(matches!(
+        // The media server's no, not a sign-in error.
+        assert_eq!(
             call.inner.read(|s| s.status.clone()),
-            CallStatus::Failed(_)
-        ));
+            CallStatus::Failed("Der Sprachserver hat die Verbindung nicht zugelassen.".into())
+        );
     }
 
     #[test]
