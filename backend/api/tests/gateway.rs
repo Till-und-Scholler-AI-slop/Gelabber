@@ -527,6 +527,30 @@ async fn reconnect_signals_gap_when_the_buffer_cannot_fill_it(pool: PgPool) {
     assert_eq!(ok["n"], 10);
 }
 
+/// A client frame over 16 KiB is refused by the WebSocket layer before it is
+/// buffered, and the socket closes.
+#[sqlx::test]
+async fn an_oversized_client_frame_closes_the_socket(pool: PgPool) {
+    let (owner, _) = two_users(pool.clone()).await;
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+    let big = json!({ "op": "p", "x": "a".repeat(20 * 1024) }).to_string();
+    ws.send(Message::Text(big.into())).await.expect("ws send");
+    let closed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match ws.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                Some(Ok(Message::Text(text))) => {
+                    assert!(!text.contains("bad_request"), "socket stayed open: {text}");
+                }
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await;
+    assert!(closed.is_ok(), "socket stayed open");
+}
+
 #[sqlx::test]
 async fn heartbeat_keeps_the_socket_and_silence_closes_it(pool: PgPool) {
     let (owner, _) = two_users(pool.clone()).await;

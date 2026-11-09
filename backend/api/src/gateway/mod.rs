@@ -69,7 +69,10 @@ async fn upgrade(
             "Cross-origin WebSocket is not allowed.",
         ));
     }
-    Ok(ws.on_upgrade(move |socket| conn::run(socket, state, session)))
+    Ok(ws
+        .max_message_size(conn::MAX_CLIENT_BYTES)
+        .max_frame_size(conn::MAX_CLIENT_BYTES)
+        .on_upgrade(move |socket| conn::run(socket, state, session)))
 }
 
 /// Same-origin check when the browser sends `Origin`. Non-browser clients

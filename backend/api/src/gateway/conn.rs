@@ -19,7 +19,9 @@ use crate::servers::channel::{self, ChannelKind};
 use crate::servers::membership;
 use crate::state::AppState;
 
-const MAX_CLIENT_BYTES: usize = 16 * 1024;
+/// Largest client message and frame. The upgrade hands it to the WebSocket
+/// layer, which refuses a bigger one before buffering it and ends the socket.
+pub(super) const MAX_CLIENT_BYTES: usize = 16 * 1024;
 
 /// How long a socket without a voice seat goes without a session and access
 /// check while it sends and receives nothing. Revocations reach it at once
@@ -111,10 +113,6 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
                         last_client = Instant::now();
-                        if text.len() > MAX_CLIENT_BYTES {
-                            let _ = send(&mut sink, ServerFrame::error("bad_request", None, None)).await;
-                            continue;
-                        }
                         match handle_text(&state, &mut session_guard, user, conn, &text, &mut sink).await {
                             Ok(FrameEffect::Liveness) => {
                                 let _ = state.gateway.touch_presence(conn).await;
