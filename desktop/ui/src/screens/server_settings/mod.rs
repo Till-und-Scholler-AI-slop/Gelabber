@@ -577,6 +577,7 @@ fn poll_loads(ui: &Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, m
         }
     }
     if let Some(true) = controls::answer(ui.ctx(), &format!("drop-server:{id}")) {
+        crate::screens::shell::leave_server(ui.ctx(), app.client, id);
         if detail.server.role == Role::Owner {
             app.client.delete_server(id);
         } else {

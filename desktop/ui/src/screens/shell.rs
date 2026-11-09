@@ -44,6 +44,19 @@ pub fn restore_memory(ctx: &egui::Context, user: Uuid, memory: Memory) {
     });
 }
 
+/// The user leaves or deletes `server` (the request is on its way): "/"
+/// and the remembered places no longer lead there.
+pub fn leave_server(ctx: &egui::Context, client: &gelabber_client::Client, server: Uuid) {
+    let user = client.with_state(|s| s.me().map(|m| m.id));
+    state::remember(ctx, user, |m| {
+        m.channels.remove(&server);
+        if m.place == Some(Place::Server(server)) {
+            m.place = None;
+        }
+    });
+    state::with(ctx, |s| s.left.insert(server));
+}
+
 pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     let theme = Theme::of(ui.ctx());
     let screen = ui.ctx().content_rect();
@@ -316,6 +329,20 @@ fn effects(ui: &Ui, app: &mut AppCtx) {
             if first && app.client.with_state(|s| s.view != View::default()) {
                 app.client.close_view();
             }
+        }
+    }
+    // A left server is forgotten once its request ended; a failed one is
+    // a way back again.
+    let left = state::with(ui.ctx(), |s| s.left.clone());
+    for server in left {
+        let settled = app.client.with_state(|s| {
+            let failed = [format!("leave:{server}"), format!("delete_server:{server}")]
+                .iter()
+                .any(|key| matches!(s.op(key), Some(OpState::Failed(_))));
+            failed || !s.servers.iter().any(|v| v.id == server)
+        });
+        if settled {
+            state::with(ui.ctx(), |s| s.left.remove(&server));
         }
     }
     // SelectedServer: a server that is gone or forbidden leaves for "/".

@@ -3,7 +3,7 @@
 //! menu or dialog is open, and the overview's message previews. It lives
 //! in the egui context under the shell's own id.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use gelabber_client::{ApiError, Invite, Message};
@@ -119,6 +119,8 @@ pub struct ShellState {
     pub invite_prompt: Option<(Uuid, String)>,
     /// The menu of a channel, category, server or conversation row.
     pub row_menu: Option<super::row_menu::Open>,
+    /// Servers being left or deleted: still listed until the request ends.
+    pub left: HashSet<Uuid>,
 }
 
 #[derive(Clone, Default)]

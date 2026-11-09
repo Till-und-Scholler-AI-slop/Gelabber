@@ -25,6 +25,9 @@ pub fn redirect(ui: &Ui, app: &mut AppCtx) -> bool {
         // A failed load shows the welcome with its error.
         return !failed(ui.ctx(), app);
     }
+    // One being left stays listed until its request ends: not a way back.
+    let left = state::with(ui.ctx(), |s| s.left.clone());
+    let servers: Vec<_> = servers.into_iter().filter(|id| !left.contains(id)).collect();
     let remembered = state::memory(ui.ctx(), user).place;
     let target = match remembered {
         Some(Place::Server(id)) if servers.contains(&id) => Some(format!("/s/{id}")),
@@ -302,6 +305,64 @@ mod tests {
         wait_for(&mut harness, "the list", |h| {
             h.query_by_label(page).is_none()
         });
+    }
+
+    /// Leaving a server sends the user to "/" while the request runs: "/"
+    /// does not send them back into it, and its end shows no "not found".
+    #[test]
+    fn leaving_a_server_does_not_come_back_to_it() {
+        use crate::app::testkit::{HOME, workspace};
+        let _config = TempConfig::new("leave-server");
+        let release = Arc::new(AtomicBool::new(false));
+        let left = Arc::new(AtomicBool::new(false));
+        let (hold, gone) = (release.clone(), left.clone());
+        let api = FakeApi::start(true, move |method, path, _| {
+            if method == "POST" && path == format!("/servers/{HOME}/leave") {
+                while !hold.load(Ordering::SeqCst) {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                gone.store(true, Ordering::SeqCst);
+                return Some(Reply::json(serde_json::Value::Null));
+            }
+            if gone.load(Ordering::SeqCst) && path.starts_with(&format!("/servers/{HOME}")) {
+                return Some(Reply::error(403, "forbidden"));
+            }
+            workspace(method, path)
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        wait_for_label(&mut harness, "allgemein");
+        // What server settings does on "Server verlassen".
+        let ctx = harness.ctx.clone();
+        let home: uuid::Uuid = HOME.parse().expect("id");
+        {
+            let app = harness.state_mut().app().expect("app");
+            let client = app.client().clone();
+            crate::screens::shell::leave_server(&ctx, &client, home);
+            client.leave_server(home);
+            app.navigate("/");
+        }
+        let route = |h: &mut egui_kittest::Harness<'_, crate::Launcher>| {
+            h.state_mut().app().expect("app").nav().route().clone()
+        };
+        for _ in 0..30 {
+            harness.step();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            assert_eq!(route(&mut harness), crate::route::Route::Home);
+        }
+        release.store(true, Ordering::SeqCst);
+        wait_for(&mut harness, "the server to go", |h| {
+            h.query_by_label("allgemein").is_none() && h.query_by_label("Wohnzimmer").is_none()
+        });
+        for _ in 0..30 {
+            harness.step();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(route(&mut harness), crate::route::Route::Home);
+        assert!(
+            harness
+                .query_by_label_contains("Server nicht gefunden")
+                .is_none()
+        );
     }
 
     /// While the workspace loads: the sidebar's skeleton and the page's.
