@@ -343,6 +343,8 @@ pub struct GelabberApp {
     workspace: bool,
     /// The client's own session was signed in last frame.
     client_signed_in: bool,
+    /// The server ended the session: the way to the login page says so.
+    expired: bool,
     /// The video tiles' pipeline is installed in the renderer.
     video_ready: bool,
     /// The theme's page colour, for the window's clear colour.
@@ -384,6 +386,7 @@ impl GelabberApp {
             toasts: Toasts::default(),
             workspace: false,
             client_signed_in: false,
+            expired: false,
             video_ready: false,
             background: std::cell::Cell::new(Theme::dark().c.bg),
         }
@@ -431,8 +434,15 @@ impl GelabberApp {
             route if is_workspace(route) && !signed_in => {
                 let href = location.href();
                 let redirect = if href == "/" { String::new() } else { href };
-                self.nav
-                    .replace(&with_query("/login", &[("redirect", &redirect)]));
+                let reason = if std::mem::take(&mut self.expired) {
+                    "expired"
+                } else {
+                    ""
+                };
+                self.nav.replace(&with_query(
+                    "/login",
+                    &[("redirect", &redirect), ("reason", reason)],
+                ));
             }
             Route::Profile if signed_in => self.nav.replace("/settings/profil"),
             _ => {}
@@ -444,14 +454,19 @@ impl GelabberApp {
     /// and follows the client when the server ends the session.
     fn sync_workspace(&mut self) {
         let signed_in = matches!(self.session.status, SessionStatus::Authenticated(_));
-        let client_signed_in = self
-            .client
-            .with_state(|s| matches!(s.session, gelabber_client::Session::Authenticated(_)));
+        let (client_signed_in, expired) = self.client.with_state(|s| {
+            (
+                matches!(s.session, gelabber_client::Session::Authenticated(_)),
+                s.session_expired,
+            )
+        });
         if signed_in && self.client_signed_in && !client_signed_in {
             self.session.adopt(&Value::Null);
             self.workspace = false;
+            self.expired = expired;
         } else if signed_in && !self.workspace {
             self.workspace = true;
+            self.expired = false;
             if client_signed_in {
                 self.client.bootstrap();
             } else {
@@ -867,6 +882,47 @@ mod tests {
         call.set_state(gelabber_call::CallState::default());
         press(&mut harness);
         assert_ne!(path(&mut harness), page, "without a call it goes back");
+    }
+
+    /// A session the server ends leads to the login page with "Sitzung
+    /// abgelaufen" (RequireUser.tsx); signing out there does not.
+    #[test]
+    fn a_session_the_server_ends_says_so_on_the_login_page() {
+        use egui_kittest::kittest::Queryable;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use testkit::{FakeApi, HOME, Reply, launcher, wait_for, wait_for_label, workspace};
+        let _config = crate::platform::paths::testing::TempConfig::new("app-expired");
+        let ended = Arc::new(AtomicBool::new(false));
+        let gone = ended.clone();
+        let api = FakeApi::start(true, move |method, path, _| {
+            if gone.load(Ordering::SeqCst) {
+                return Some(Reply::error(401, "unauthenticated"));
+            }
+            workspace(method, path)
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        wait_for(&mut harness, "the shell", |h| {
+            h.query_all_by_label("Wohnzimmer").next().is_some()
+        });
+        ended.store(true, Ordering::SeqCst);
+        let app = harness.state_mut().app().expect("app");
+        // Any request now answers 401.
+        app.client.load_mail_status();
+        wait_for_label(&mut harness, "Sitzung abgelaufen. Melde dich erneut an.");
+        let app = harness.state_mut().app().expect("app");
+        assert_eq!(app.nav().route(), &Route::Login);
+        // The banner goes with the next page, as the query does.
+        app.navigate("/register");
+        harness.run_steps(2);
+        let app = harness.state_mut().app().expect("app");
+        app.navigate("/login");
+        harness.run_steps(4);
+        assert!(
+            harness
+                .query_by_label("Sitzung abgelaufen. Melde dich erneut an.")
+                .is_none()
+        );
     }
 
     /// The window shows the shell on its own session check, so the page can
