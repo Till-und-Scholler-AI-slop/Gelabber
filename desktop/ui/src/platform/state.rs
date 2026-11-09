@@ -153,6 +153,9 @@ fn move_old_volumes(stored: &mut Stored) {
             return;
         }
     };
+    // Only these lose the old field: an account whose entry in the store is
+    // no object keeps it, nothing went over.
+    let mut moved = Vec::new();
     for (id, account) in &stored.accounts {
         let Some(old) = &account.old_volumes else {
             continue;
@@ -185,14 +188,17 @@ fn move_old_volumes(stored: &mut Stored) {
         if people.is_empty() {
             all.remove(&key);
         }
+        moved.push(*id);
     }
     let written = serde_json::to_vec_pretty(&Value::Object(all))
         .map_err(std::io::Error::other)
         .and_then(|bytes| super::paths::write_atomic(&path, &bytes, false));
     match written {
         Ok(()) => {
-            for account in stored.accounts.values_mut() {
-                account.old_volumes = None;
+            for id in &moved {
+                if let Some(account) = stored.accounts.get_mut(id) {
+                    account.old_volumes = None;
+                }
             }
         }
         Err(e) => {
@@ -561,6 +567,29 @@ mod tests {
         std::fs::write(&volumes, "{}").unwrap();
         drop(super::super::Platform::new(None));
         assert_eq!(std::fs::read_to_string(&volumes).unwrap(), "{}");
+        drop(config);
+    }
+
+    /// An account whose entry in the sliders' store is no object keeps its
+    /// old volumes: nothing is dropped that was not moved.
+    #[test]
+    fn old_volumes_that_could_not_move_stay() {
+        let config = super::super::paths::testing::TempConfig::new("state-old-volumes-odd");
+        let (a, b, x) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(11));
+        let old = serde_json::json!({"accounts": {
+            a.to_string(): {"volumes": {x.to_string(): {"volume": 0.5}}},
+            b.to_string(): {"volumes": {x.to_string(): {"volume": 1.5}}},
+        }});
+        std::fs::write(config.dir.join(FILE), old.to_string()).unwrap();
+        let volumes = config.dir.join(crate::screens::voice::volume::FILE);
+        std::fs::write(&volumes, serde_json::json!({a.to_string(): 3}).to_string()).unwrap();
+        let stored = load();
+        assert!(stored.accounts[&a].old_volumes.is_some());
+        assert!(stored.accounts[&b].old_volumes.is_none());
+        let on_disk: Stored =
+            serde_json::from_slice(&std::fs::read(config.dir.join(FILE)).unwrap()).unwrap();
+        assert!(on_disk.accounts[&a].old_volumes.is_some());
+        assert!(on_disk.accounts[&b].old_volumes.is_none());
         drop(config);
     }
 }
