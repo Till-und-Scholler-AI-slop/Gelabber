@@ -486,6 +486,9 @@ pub enum ServerFrame {
         d: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         snap: Option<Vec<VoiceEntry>>,
+        /// See [`SigEvent::replay`]: clients stay quiet about these.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        replay: bool,
     },
     #[serde(rename = "err")]
     Err {
@@ -591,6 +594,7 @@ impl ServerFrame {
             m: event.m,
             d: event.d,
             snap: None,
+            replay: event.replay,
         }
     }
 
@@ -605,6 +609,7 @@ impl ServerFrame {
             m: None,
             d: None,
             snap: Some(snap),
+            replay: false,
         }
     }
 
@@ -746,17 +751,19 @@ pub fn plan_catch_up<T: Clone>(
 
 #[cfg(test)]
 mod tests {
+    /// The frame the socket writes, not only the event, carries `replay`.
     #[test]
     fn occupant_replay_is_explicit_and_legacy_events_default_to_live() {
         let id = uuid::Uuid::new_v4();
         let live = super::SigEvent::join(id, id, id);
-        let json = serde_json::to_value(&live).unwrap();
-        assert!(json.get("replay").is_none());
+        let json = serde_json::to_value(super::ServerFrame::sig(live.clone())).unwrap();
+        assert!(json.get("replay").is_none(), "{json}");
         let decoded: super::SigEvent = serde_json::from_value(json).unwrap();
         assert!(!decoded.replay);
         let mut replay = live;
         replay.replay = true;
-        assert_eq!(serde_json::to_value(replay).unwrap()["replay"], true);
+        let json = serde_json::to_value(super::ServerFrame::sig(replay)).unwrap();
+        assert_eq!(json["replay"], true, "{json}");
     }
 
     use super::*;
