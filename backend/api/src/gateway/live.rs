@@ -214,6 +214,51 @@ impl Gateway {
             .collect())
     }
 
+    /// Which of `users` have a socket on this process that is in front and
+    /// subscribed to `channel_id`, in one round trip. A page in front that
+    /// shows another server does not follow this channel and still gets the
+    /// push; a socket on another process counts as not in front.
+    pub async fn in_front_in(
+        &self,
+        users: &[Uuid],
+        channel_id: Uuid,
+    ) -> Result<HashSet<Uuid>, ApiError> {
+        let wanted: HashSet<Uuid> = users.iter().copied().collect();
+        let topic = super::protocol::Topic::Channel(channel_id);
+        let candidates: Vec<(Uuid, String)> = self
+            .connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .iter()
+            .filter(|(_, socket)| {
+                wanted.contains(&socket.user_id) && socket.topics.contains(&topic)
+            })
+            .map(|(id, socket)| (socket.user_id, id.redis_id().to_string()))
+            .collect();
+        if candidates.is_empty() {
+            return Ok(HashSet::new());
+        }
+        let now = chrono::Utc::now().timestamp_millis();
+        let scores: Vec<Option<f64>> = self
+            .with_conn(|mut conn| {
+                let mut pipe = redis::pipe();
+                for (user, member) in &candidates {
+                    pipe.cmd("ZSCORE").arg(focus_key(*user)).arg(member);
+                }
+                async move { pipe.query_async(&mut conn).await }
+            })
+            .await
+            .map_err(super::hub::redis_err)?;
+        Ok(candidates
+            .into_iter()
+            .zip(scores)
+            .filter(|(_, until)| until.is_some_and(|until| until > now as f64))
+            .map(|((user, _), _)| user)
+            .collect())
+    }
+
     /// Mark this connection online/idle and fan-out if the user aggregate changed.
     pub async fn set_conn_status(
         &self,

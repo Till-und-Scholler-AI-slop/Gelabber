@@ -112,7 +112,7 @@ pub(super) struct Socket {
     pub(super) voice_rosters: HashMap<Uuid, Vec<VoiceEntry>>,
     /// Channels this socket started typing in (`server`, `channel`).
     typing: HashSet<(Uuid, Uuid)>,
-    topics: HashSet<Topic>,
+    pub(super) topics: HashSet<Topic>,
     epochs: HashMap<Topic, Uuid>,
     closed: tokio::sync::watch::Sender<bool>,
     /// Wakes the socket for an immediate session and access check after a
