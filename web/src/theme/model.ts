@@ -245,7 +245,15 @@ export function derivedColors(theme: ThemeDefinition) {
     selected,
     hover,
     muted,
-    subtle: ensureContrast(mix(muted, c.background, 0.25), [c.panel, elevated]),
+    // Hints, timestamps and disabled labels sit on every surface: fields on
+    // the page colour, lists and disabled buttons on `surface`, rows on hover.
+    subtle: ensureContrast(mix(muted, c.background, 0.25), [
+      c.background,
+      c.panel,
+      c.surface,
+      elevated,
+      hover,
+    ]),
     borderStrong: ensureContrast(
       mix(c.border, c.text, 0.35),
       [c.background, c.panel, c.surface, elevated],

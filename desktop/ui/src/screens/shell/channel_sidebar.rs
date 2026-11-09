@@ -549,7 +549,6 @@ fn channel_row(
     let link_id = Id::unique(("channel-row", ch.id));
     let stop = keys.stop == Some(0) || ui.memory(|m| m.has_focus(link_id));
     let response = common::click_stop(ui, row, link_id, stop);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, &ch.name));
     let voice = ch.kind == ChannelKind::Voice;
     // Its menu: a text channel's notifications for everyone, editing and
     // deleting for those who manage channels.
@@ -600,6 +599,14 @@ fn channel_row(
         color
     };
     let unread = !voice && (badge.count > 0 || badge.dot);
+    response.widget_info(|| {
+        let name = if voice {
+            ch.name.clone()
+        } else {
+            common::with_unread(&ch.name, badge)
+        };
+        egui::WidgetInfo::labeled(egui::Role::Link, true, name)
+    });
     if unread {
         common::edge_bar(&painter, theme, row.left() - 8.0, row.center().y);
         color = c.text;
@@ -774,7 +781,6 @@ fn person_row(
         Id::unique(("voice-person", occupant.channel_id, user)),
     )
     .on_hover_text(title);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
     // A click or a right click: the profile with its volume controls.
     if response.clicked() || response.secondary_clicked() {
         super::overlays::open_member(ui.ctx(), detail.server.id, user);
@@ -790,6 +796,10 @@ fn person_row(
     );
     let speaking = app.call.with_state(|call| {
         crate::screens::voice::session::speaking(call, user, occupant.muted, occupant.deafened)
+    });
+    response.widget_info(|| {
+        let label = participant_label(name, speaking, live, occupant.muted, occupant.deafened);
+        egui::WidgetInfo::labeled(egui::Role::Button, true, label)
     });
     if speaking {
         crate::screens::voice::look::speaking_ring(ui, &painter, avatar, true);
@@ -825,6 +835,11 @@ fn person_row(
         );
         right -= 8.0;
     }
+    if speaking {
+        right -= SPEAKING_BARS_WIDTH;
+        speaking_bars(ui, &painter, theme, pos2(right, row.center().y));
+        right -= 8.0;
+    }
     let left = avatar.right() + 8.0;
     let block = line(
         ui,
@@ -834,6 +849,70 @@ fn person_row(
         right - left,
     );
     paint_mid(&painter, &block, left, row.center().y);
+}
+
+/// A voice member row's accessible name: the web row's hidden texts after
+/// the name, in its order. Deafened wins over muted, as in the row's icon.
+fn participant_label(
+    name: &str,
+    speaking: bool,
+    live: bool,
+    muted: bool,
+    deafened: bool,
+) -> String {
+    let state = if deafened {
+        Some("taub")
+    } else if muted {
+        Some("stumm")
+    } else {
+        None
+    };
+    [
+        Some(name),
+        speaking.then_some("spricht"),
+        live.then_some("Live"),
+        state,
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(", ")
+}
+
+/// `.speaking-bars`: three 3px bars, 2px apart.
+const SPEAKING_BARS_WIDTH: f32 = 13.0;
+
+/// `.speaking-bars` (index.css) from `left_mid`, its left edge at mid
+/// height: three 12px level bars beside a speaking name, so speaking is not
+/// told by the green ring alone. Each scales 35 % → 100 % and back over
+/// 0.9s, 0.3s apart; with less motion they rest at 50, 100 and 70 %.
+fn speaking_bars(ui: &Ui, painter: &egui::Painter, theme: &Theme, left_mid: egui::Pos2) {
+    let reduced = crate::screens::settings::prefs::get(ui.ctx()).reduced_motion;
+    let time = ui.input(|i| i.time);
+    for (i, rest) in [0.5_f32, 1.0, 0.7].into_iter().enumerate() {
+        let scale = if reduced {
+            rest
+        } else {
+            // `animation-delay: -0.3s × i`, `alternate`, `ease-in-out`.
+            let k = (time + 0.3 * i as f64) / 0.9;
+            let f = k.fract() as f32;
+            let x = if (k.floor() as i64) % 2 == 0 {
+                f
+            } else {
+                1.0 - f
+            };
+            0.35 + 0.65 * x * x * (3.0 - 2.0 * x)
+        };
+        let h = 12.0 * scale;
+        let bar = Rect::from_center_size(
+            pos2(left_mid.x + 1.5 + 5.0 * i as f32, left_mid.y),
+            Vec2::new(3.0, h),
+        );
+        painter.rect_filled(bar, corner(1.5), theme.c.speaking);
+    }
+    if !reduced {
+        ui.ctx().request_repaint();
+    }
 }
 
 /// `.shell-icon-button`: transparent, muted, hover fill and text colour.
@@ -1180,5 +1259,28 @@ mod tests {
 
         let empty = detail(&[(1, "Sprachkanäle")], &[(1, 0, "Zocken", "voice")]);
         assert_eq!(names(&empty), ["category:Sprachkanäle", "Zocken"]);
+    }
+
+    // The web row's hidden texts (ParticipantRowView): screen readers hear
+    // who speaks, not only a green ring.
+    #[test]
+    fn participant_names_say_the_voice_state() {
+        assert_eq!(participant_label("Bob", false, false, false, false), "Bob");
+        assert_eq!(
+            participant_label("Bob", true, false, false, false),
+            "Bob, spricht"
+        );
+        assert_eq!(
+            participant_label("Bob", true, true, false, false),
+            "Bob, spricht, Live"
+        );
+        assert_eq!(
+            participant_label("Bob", false, false, true, false),
+            "Bob, stumm"
+        );
+        assert_eq!(
+            participant_label("Bob", false, true, true, true),
+            "Bob, Live, taub"
+        );
     }
 }

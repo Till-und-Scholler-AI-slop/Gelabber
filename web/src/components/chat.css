@@ -74,9 +74,9 @@
   font: inherit;
 }
 /* A hint must not read as typed text: --lr-muted is close to --lr-text in
-   several themes. --lr-subtle (4.5:1) mixed 20% into the panel keeps ~3:1. */
+   several themes. --lr-subtle is fainter and still 4.5:1 (model.ts). */
 .lr-header-search > input::placeholder {
-  color: color-mix(in srgb, var(--lr-subtle) 80%, var(--lr-panel));
+  color: var(--lr-subtle);
 }
 .lr-header-search:hover,
 .lr-header-search:focus-within,
@@ -184,8 +184,10 @@
 .lr-button-secondary:hover:not(:disabled) {
   background: var(--lr-hover);
 }
+/* Disabled like .ui-button: a readable subtle label, not half opacity. */
 .lr-button-secondary:disabled {
-  opacity: 0.5;
+  color: var(--lr-subtle);
+  cursor: not-allowed;
 }
 
 .lr-jump-latest {
@@ -954,7 +956,9 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   color: var(--lr-accent-ink);
 }
 .lr-message-edit-actions > button:disabled {
-  opacity: 0.5;
+  background: var(--lr-surface);
+  color: var(--lr-subtle);
+  cursor: not-allowed;
 }
 .lr-field-error {
   color: var(--lr-danger);
@@ -1437,7 +1441,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 }
 /* Fainter than the draft, like the header search's hint. */
 .lr-composer-row textarea::placeholder {
-  color: color-mix(in srgb, var(--lr-subtle) 80%, var(--lr-panel));
+  color: var(--lr-subtle);
 }
 .lr-composer-row textarea:focus-visible {
   /* The field around it shows focus. */

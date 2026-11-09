@@ -769,6 +769,19 @@ export function ParticipantRowView({
         className={speaking ? "is-speaking" : ""}
       />
       <span className="sidebar-participant-name">{member.name}</span>
+      {/* The avatar ring alone is colour: the bars say it in shape, and
+          in words for screen readers. A speaker icon would read as "in
+          the channel", as in the member list. */}
+      {speaking ? (
+        <span className="sidebar-participant-speaking" title="spricht">
+          <span className="speaking-bars" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+          <span className="sr-only">spricht</span>
+        </span>
+      ) : null}
       {live ? (
         <span className="sidebar-participant-live" title="Live">
           <LiveIcon size={13} />

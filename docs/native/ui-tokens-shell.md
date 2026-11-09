@@ -53,7 +53,7 @@ presets the port must re-implement `derivedColors` + `themeVariables` 1:1.
 | `--lr-elevated` | dark: mix(panel,text,.04); light: mix(bg,#fff,.6) | `#252829` | `#fcfbf9` |
 | `--lr-text` | `text` | `#eef0ee` | `#252829` |
 | `--lr-muted` | ensureContrast(muted,[panel,surface,hover]) | `#a4abb1` | `#5c646b` |
-| `--lr-subtle` | ensureContrast(mix(muted,bg,.25),[panel,elevated]) | `#8a8f93` | `#6a6e71` |
+| `--lr-subtle` | ensureContrast(mix(muted,bg,.25),[bg,panel,surface,elevated,hover]) | `#93989b` | `#616467` |
 | `--lr-border` | `border` | `#2c3032` | `#dcd6cc` |
 | `--lr-border-strong` | ensureContrast(mix(border,text,.35), …, 3) | `#717475` | `#86837e` |
 | `--lr-accent` | `accent` (fill colour) | `#f3b752` | `#e8a638` |
@@ -356,7 +356,7 @@ pinned to the bottom).
 | Background without icon | tile tint `--lr-tile-N`, N = `tileTone(server.id)` (see 4.8) |
 | Uploaded icon | image `object-fit: cover`, fills 44×44 with the same rounding (`index.css:549-555`) |
 | Letters | `tileInitials(name)` (4.8), `600 15px / 1` Inter, letter-spacing 0.01em (0.15px), colour `--lr-text`, centred |
-| Active (current server) | ring: `box-shadow: 0 0 0 2px --lr-rail, 0 0 0 4px --lr-accent` → 2px gap in rail colour then 2px accent ring; outer ring follows radius (10 + 4 = 14px) |
+| Active (current server) | no ring: the 28px edge pill (4.5) and the hover radius mark it, so the accent ring stays the keyboard focus |
 | Muted server | whole tile `opacity: 0.6` |
 
 ### 4.5 Edge pill / selected indicator (`index.css:469-498`)

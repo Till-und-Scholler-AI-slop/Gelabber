@@ -408,7 +408,7 @@
       "user": "lena",
       "actions": [
         {
-          "hover": "spiele"
+          "hover": "/^spiele/"
         }
       ]
     },

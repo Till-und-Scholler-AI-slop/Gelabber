@@ -467,10 +467,11 @@ summary {
   color: var(--lr-accent-text);
 }
 /* The marker at the rail's edge: a short accent pill for something unread,
-   a tall pill in the text colour for where you are (the v0.8 design). A
-   mention keeps its red count. The hidden pill is muted, not accent: it
-   grows from and shrinks to that colour, so a pill that comes or goes
-   would otherwise flash yellow. */
+   a tall pill in the text colour for where you are (the v0.8 design). Only
+   the pill and the tile's corner mark the selection: an amber ring would
+   read as the keyboard focus ring. A mention keeps its red count. The
+   hidden pill is muted, not accent: it grows from and shrinks to that
+   colour, so a pill that comes or goes would otherwise flash yellow. */
 :is(.server-tile, .server-home-link)::before {
   content: "";
   position: absolute;
@@ -538,12 +539,6 @@ summary {
 .server-tile:hover,
 .server-tile.is-active {
   border-radius: var(--lr-radius-lg);
-}
-/* The selected server keeps its accent ring beside the pill. */
-.server-tile.is-active {
-  box-shadow:
-    0 0 0 2px var(--lr-rail),
-    0 0 0 4px var(--lr-accent);
 }
 /* An uploaded icon fills the tile and follows its rounding. */
 .server-icon-img {
@@ -2190,6 +2185,57 @@ dialog:not(.gel-modal, .ui-sheet),
   display: inline-flex;
   flex-shrink: 0;
   color: var(--lr-danger);
+}
+.sidebar-participant-speaking {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+/* Three level bars beside a speaking name. With less motion (the kill
+   switches below stop the animation) they rest at three heights. */
+.speaking-bars {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 12px;
+}
+.speaking-bars > span {
+  width: 3px;
+  height: 100%;
+  border-radius: 1.5px;
+  background: var(--lr-speaking);
+  scale: 1 0.35;
+  animation: lr-speaking-bars 0.9s ease-in-out infinite alternate;
+}
+.speaking-bars > span:nth-child(2) {
+  animation-delay: -0.3s;
+}
+.speaking-bars > span:nth-child(3) {
+  animation-delay: -0.6s;
+}
+@keyframes lr-speaking-bars {
+  to {
+    scale: 1 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .speaking-bars > span {
+    scale: 1 0.5;
+  }
+  .speaking-bars > span:nth-child(2) {
+    scale: 1 1;
+  }
+  .speaking-bars > span:nth-child(3) {
+    scale: 1 0.7;
+  }
+}
+html[data-reduced-motion="true"] .speaking-bars > span {
+  scale: 1 0.5;
+}
+html[data-reduced-motion="true"] .speaking-bars > span:nth-child(2) {
+  scale: 1 1;
+}
+html[data-reduced-motion="true"] .speaking-bars > span:nth-child(3) {
+  scale: 1 0.7;
 }
 .sidebar-participant-live {
   display: inline-flex;

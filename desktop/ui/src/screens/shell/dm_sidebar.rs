@@ -141,9 +141,6 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
                     ui.scroll_to_rect(row, None);
                 }
                 let response = common::click_stop(ui, row, item, stop);
-                response.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::Role::Link, true, &dm.peer.name)
-                });
                 let owner = || Owner::Dm(dm.id, dm.peer.name.clone());
                 if response.secondary_clicked() || row_menu::menu_key(ui, &response) {
                     row_menu::open(ui.ctx(), owner(), row, Some(item));
@@ -172,6 +169,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
                 } else {
                     fill
                 };
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::Role::Link,
+                        true,
+                        common::with_unread(&dm.peer.name, badge),
+                    )
+                });
                 let unread = badge.count > 0 || badge.dot;
                 if unread {
                     common::edge_bar(ui.painter(), &theme, row.left() - 8.0, row.center().y);

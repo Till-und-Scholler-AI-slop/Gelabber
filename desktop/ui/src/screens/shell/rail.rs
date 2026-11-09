@@ -48,6 +48,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
     let home_id = Id::unique("rail-home");
     let response = common::click(ui, home, home_id).on_hover_text("Direktnachrichten");
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, "Direktnachrichten"));
+    common::describe_unread(ui, &response, dm_badge);
     // Its menu marks every conversation read.
     if response.secondary_clicked() || row_menu::menu_key(ui, &response) {
         row_menu::open(ui.ctx(), Owner::AllDms, home, Some(home_id));
@@ -187,6 +188,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
                     ui.scroll_to_rect(tile, None);
                 }
                 response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, name));
+                common::describe_unread(ui, &response, *badge);
                 // Its menu: mark read, mute, notifications.
                 if response.secondary_clicked() || row_menu::menu_key(ui, &response) {
                     row_menu::open(ui.ctx(), Owner::Server(*id, name.clone()), tile, Some(item));
@@ -301,7 +303,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
 }
 
 /// One server tile: tint and letters (or the icon), round at rest and the
-/// theme's corner while hovered or active, the accent ring when active.
+/// theme's corner while hovered or active. The edge pill marks the active
+/// one; an accent ring would read as the keyboard focus ring.
 #[allow(clippy::too_many_arguments)]
 fn server_tile(
     ui: &Ui,
@@ -324,10 +327,6 @@ fn server_tile(
     );
     let round = theme.radius.lg * 2.2;
     let radius = round + (theme.radius.lg - round) * t;
-    if active {
-        painter.rect_filled(tile.expand(4.0), corner(radius + 4.0), c.accent);
-        painter.rect_filled(tile.expand(2.0), corner(radius + 2.0), c.rail);
-    }
     let opacity = if muted { 0.6 } else { 1.0 };
     let texture = icon.and_then(|url| match app.images.get(ui.ctx(), url) {
         ImageState::Ready(texture) => Some(texture),

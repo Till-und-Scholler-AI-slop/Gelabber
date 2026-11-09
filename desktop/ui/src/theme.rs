@@ -207,7 +207,13 @@ impl Theme {
         } else {
             coral
         };
-        let subtle = ensure_contrast(mix(muted, c.background, 0.25), &[c.panel, elevated], 4.5);
+        // Hints, timestamps and disabled labels sit on every surface: fields on
+        // the page colour, lists and disabled buttons on `surface`, rows on hover.
+        let subtle = ensure_contrast(
+            mix(muted, c.background, 0.25),
+            &[c.background, c.panel, c.surface, elevated, hover],
+            4.5,
+        );
         let border_strong = ensure_contrast(
             mix(c.border, c.text, 0.35),
             &[c.background, c.panel, c.surface, elevated],
@@ -614,6 +620,43 @@ mod tests {
         format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b())
     }
 
+    // Hints, timestamps and disabled labels read on every surface they sit
+    // on, in every preset and in a custom theme with a faint secondary
+    // colour (web model.test.ts "meets the contrast targets").
+    #[test]
+    fn subtle_reads_on_every_surface() {
+        let mut all = crate::screens::settings::themes::presets();
+        all.push(Definition {
+            id: "custom-faint".into(),
+            name: "Blass".into(),
+            mode: Mode::Dark,
+            style: Style::Clear,
+            colors: BaseColors {
+                background: hex(0x202428),
+                panel: hex(0x2a2f34),
+                surface: hex(0x353b41),
+                rail: hex(0x181b1e),
+                text: hex(0xe8e8e8),
+                muted: hex(0x50565c),
+                accent: hex(0x6aa0e0),
+                border: hex(0x3a4046),
+            },
+        });
+        for definition in all {
+            let c = Theme::from_definition(definition.clone()).c;
+            for bg in [c.bg, c.panel, c.surface, c.elevated, c.hover] {
+                let ratio = contrast(c.subtle, bg);
+                assert!(
+                    ratio >= 4.5,
+                    "{}: subtle {} on {} is {ratio:.2}",
+                    definition.id,
+                    h(c.subtle),
+                    h(bg)
+                );
+            }
+        }
+    }
+
     // The values themeVariables() produces for both defaults
     // (spec ui-tokens-shell §1.2).
     #[test]
@@ -647,7 +690,7 @@ mod tests {
         ]
         .map(h);
         let want = [
-            "#17191a", "#1d2021", "#272b2d", "#131617", "#252829", "#eef0ee", "#a4abb1", "#8a8f93",
+            "#17191a", "#1d2021", "#272b2d", "#131617", "#252829", "#eef0ee", "#a4abb1", "#93989b",
             "#2c3032", "#717475", "#f3b752", "#111111", "#f3b752", "#2e3131", "#443b2a", "#85d69b",
             "#85d69b", "#d8a657", "#f39b98", "#8f302d", "#ff7b5c", "#111111", "#ff7b5c",
         ];
@@ -744,7 +787,7 @@ mod tests {
         ]
         .map(h);
         let want = [
-            "#f8f5f0", "#f4f0e9", "#ece7df", "#eee9e1", "#fcfbf9", "#252829", "#5c646b", "#6a6e71",
+            "#f8f5f0", "#f4f0e9", "#ece7df", "#eee9e1", "#fcfbf9", "#252829", "#5c646b", "#616467",
             "#dcd6cc", "#86837e", "#e8a638", "#111111", "#836026", "#e3e0da", "#f2e3c9", "#287a45",
             "#277643", "#a27e44", "#a12b29", "#b33b38", "#db5b24", "#111111", "#ad4a20",
         ];

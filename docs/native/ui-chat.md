@@ -30,7 +30,7 @@ Source: `theme/defaults.json`, `theme/presets.ts:5-21,227` (presets pass through
 | `--lr-elevated` | `#252829` | `#fcfbf9` | dark: mix(panel, text 4%); light: mix(bg, #fff 60%) |
 | `--lr-text` | `#eef0ee` | `#252829` | text |
 | `--lr-muted` | `#a4abb1` | `#5c646b` | ensureContrast(muted) |
-| `--lr-subtle` | `#8a8f93` | `#6a6e71` | |
+| `--lr-subtle` | `#93989b` | `#616467` | |
 | `--lr-border` | `#2c3032` | `#dcd6cc` | border |
 | `--lr-border-strong` | `#717475` | `#86837e` | |
 | `--lr-accent` | `#f3b752` | `#e8a638` | accent (fill) |
@@ -191,7 +191,7 @@ No breakpoint in this spec changes between 1280 and 1600; all `max-width: 800/64
 - Stick to bottom: at the end it stays pinned as content grows; "at latest" = distance to end ≤ 16px (`useMessageScroll.ts:110-138`). Older page loads when the first rendered index ≤ 4 and the reader has scrolled up (`useMessageScroll.ts:347-356`).
 - Keys (not while typing in a field): PageUp/PageDown scroll by a page, Home to the oldest loaded row, End to the newest; ArrowUp, PageUp and Home release the stick to the bottom, End sets it again (`useMessageScroll.ts:397-413`).
 - Top loading row `.lr-list-loading` — always present (when there are items or older pages) so the list never shifts: min-height 32, padding 8 16, 12px / 16px line height, muted, centred; text "Ältere Nachrichten…" while loading, else empty (`MessagePane.tsx:802-808`, `chat.css:168-175`).
-- Load error block `.lr-list-state` (padding 12 16, centred, 13px, colour text): "Nachrichten konnten nicht geladen werden." or "Ältere Nachrichten konnten nicht geladen werden." + button "Erneut laden" `.lr-button-secondary` (margin-top 8, padding 5 12, border 1px `--lr-border`, radius 7, bg `--lr-panel`, 13px; hover bg `--lr-hover`; disabled opacity .5) (`MessagePane.tsx:785-801`, `chat.css:119-129,176-189`).
+- Load error block `.lr-list-state` (padding 12 16, centred, 13px, colour text): "Nachrichten konnten nicht geladen werden." or "Ältere Nachrichten konnten nicht geladen werden." + button "Erneut laden" `.lr-button-secondary` (margin-top 8, padding 5 12, border 1px `--lr-border`, radius 7, bg `--lr-panel`, 13px; hover bg `--lr-hover`; disabled: text `--lr-subtle`, not-allowed cursor) (`MessagePane.tsx:785-801`, `chat.css:119-129,176-189`).
 - First load skeleton: `SkeletonRows count=6 avatars`, container padding 8 20 16; rows column gap 16; each row: flex, align start, **gap 12** between the 32px circle and a column (flex 1, gap 8) of two 10px-high bars (row height 32; block = 6*32 + 5*16 = 272 + padding 24 = 296, sitting at the bottom of the list area), widths 22% and LINE_WIDTHS[(i+1)%6] with LINE_WIDTHS = 38%, 86%, 62%, 74%, 48%, 92%; bar radius 5, fill `--lr-surface` with a shimmer gradient of alpha text 6% moving over 1.4s linear; whole region fades in after 150ms over 180ms (`components/ui/Skeleton.tsx:27-50`, `ui.css:538-577`, `chat.css:138-140`). When loaded, the content fades in (opacity 0→1, 120ms ease-out, `ui.css:621-628`).
 - Jump-to-original highlight: row bg alpha accent 14% for 2000ms, fading out over 0.6s ease-out (`useMessageScroll.ts:330-344`, `chat.css:384-387`); scrolls the row to the centre.
 
