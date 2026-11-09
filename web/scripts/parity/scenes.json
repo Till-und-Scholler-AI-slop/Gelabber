@@ -107,7 +107,13 @@
       "name": "settings-app",
       "path": "/settings/app",
       "user": "lena",
-      "desktop": true
+      "desktop": true,
+      "updates": {
+        "current": "0.9.0",
+        "autoCheck": true,
+        "available": "0.9.1",
+        "lastCheck": 1800000000
+      }
     },
     {
       "name": "server-settings-member",
@@ -961,7 +967,7 @@
     {
       "name": "setup-error",
       "page": "desktop/parity/reference/setup/index.html",
-      "query": "?server=http%3A%2F%2F127.0.0.1%3A1&error=127.0.0.1%3A1%20ist%20nicht%20erreichbar%20(Connection%20refused%20(os%20error%20111)).",
+      "query": "?server=http%3A%2F%2F127.0.0.1%3A1&error=Server%20antwortet%20nicht%20%E2%80%93%20stimmen%20Adresse%20und%20Port%3F&detail=Connection%20refused%20(os%20error%20111)",
       "scheme": "dark"
     },
     {
@@ -983,6 +989,20 @@
         "autoCheck": false,
         "available": "0.9.1",
         "lastCheck": 1800000000
+      }
+    },
+    {
+      "name": "setup-update-downloading",
+      "page": "desktop/parity/reference/setup/index.html",
+      "scheme": "dark",
+      "updates": {
+        "current": "0.9.0",
+        "autoCheck": true,
+        "available": "0.9.1",
+        "lastCheck": 1800000000,
+        "phase": "downloading",
+        "downloaded": 19,
+        "total": 47
       }
     },
     {
@@ -1627,6 +1647,16 @@
       "path": "/s/{home}/c/{allgemein}",
       "user": "lena",
       "desktop": true,
+      "update": {
+        "available": "0.9.1"
+      }
+    },
+    {
+      "name": "light-update-notice",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "desktop": true,
+      "before": "theme lena light",
       "update": {
         "available": "0.9.1"
       }
