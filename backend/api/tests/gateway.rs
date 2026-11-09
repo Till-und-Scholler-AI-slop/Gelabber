@@ -1015,6 +1015,19 @@ async fn typing_broadcasts_fast_and_clears_on_stop(pool: PgPool) {
     );
     assert_eq!(seen["c"], channel_id.to_string());
     assert!(seen.get("n").is_none(), "{seen}");
+    // Typing is Pub/Sub only: clients expire it, detach stops it from the
+    // socket's own set. Nothing reads a Redis key for it.
+    let mut redis = state
+        .redis
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let keys: Vec<String> = redis::cmd("KEYS")
+        .arg(format!("gb:y:{channel_id}:*"))
+        .query_async(&mut redis)
+        .await
+        .unwrap();
+    assert!(keys.is_empty(), "{keys:?}");
 
     send_json(
         &mut member_ws,

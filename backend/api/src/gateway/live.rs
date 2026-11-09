@@ -126,10 +126,6 @@ fn user_servers_key(user_id: Uuid) -> String {
     format!("{REDIS_PREFIX}p:u:{user_id}:s")
 }
 
-fn typing_key(channel_id: Uuid, user_id: Uuid) -> String {
-    format!("{REDIS_PREFIX}y:{channel_id}:{user_id}")
-}
-
 /// Sockets of a user whose page is in front (focused and visible), as a
 /// sorted set: member the socket, score when its claim runs out (Unix ms).
 /// Web Push (#243) skips a user with one of them.
@@ -447,36 +443,6 @@ impl Gateway {
         on: bool,
     ) -> Result<(), ApiError> {
         self.note_typing(conn, server_id, channel_id, on).await;
-        let key = typing_key(channel_id, user_id);
-        let px = ttl_ms(self.typing_ttl());
-        if on {
-            self.with_conn(|mut conn| {
-                let key = key.clone();
-                async move {
-                    redis::cmd("SET")
-                        .arg(key)
-                        .arg("1")
-                        .arg("PX")
-                        .arg(px)
-                        .query_async::<String>(&mut conn)
-                        .await
-                }
-            })
-            .await
-            .map_err(super::hub::redis_err)?;
-        } else {
-            self.with_conn(|mut conn| {
-                let key = key.clone();
-                async move {
-                    redis::cmd("DEL")
-                        .arg(key)
-                        .query_async::<i64>(&mut conn)
-                        .await
-                }
-            })
-            .await
-            .map_err(super::hub::redis_err)?;
-        }
         self.publish_live(
             LiveTopic::Typing(channel_id),
             &ServerFrame::typing(server_id, channel_id, user_id, on),
@@ -542,18 +508,6 @@ impl Gateway {
         channel_id: Uuid,
         user_id: Uuid,
     ) -> Result<(), ApiError> {
-        let key = typing_key(channel_id, user_id);
-        self.with_conn(|mut conn| {
-            let key = key.clone();
-            async move {
-                redis::cmd("DEL")
-                    .arg(key)
-                    .query_async::<i64>(&mut conn)
-                    .await
-            }
-        })
-        .await
-        .map_err(super::hub::redis_err)?;
         self.publish_live(
             LiveTopic::Typing(channel_id),
             &ServerFrame::typing(server_id, channel_id, user_id, false),
