@@ -75,8 +75,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     effects(ui, app);
     voice::video::sweep(ui.ctx(), app.call);
     let route = app.nav.route().clone();
-    overlays::keys(ui, state::with(ui.ctx(), |s| s.dialog.is_some()));
-    shortcuts(ui, app, &route);
+    // A modal that is not the shell's (a voice or chat dialog, a settings
+    // confirm) holds the shortcuts too, as useShellShortcuts does.
+    let other_modal = ui.ctx().memory(|m| m.top_modal_layer().is_some())
+        && !dialog_open(ui.ctx())
+        && !overlays::is_open(ui.ctx());
+    overlays::keys(ui, dialog_open(ui.ctx()) || other_modal);
+    shortcuts(ui, app, &route, other_modal);
 
     // A running call's bar takes the bottom strip next to the user panel;
     // the page and the member panel end above it.
@@ -381,8 +386,8 @@ fn effects(ui: &Ui, app: &mut AppCtx) {
 
 /// shellShortcuts.ts: Alt+↑/↓ the previous or next channel, with Umschalt
 /// the previous or next unread one, with Strg the previous or next server.
-fn shortcuts(ui: &Ui, app: &mut AppCtx, route: &Route) {
-    if state::with(ui.ctx(), |s| s.dialog.is_some()) || overlays::is_open(ui.ctx()) {
+fn shortcuts(ui: &Ui, app: &mut AppCtx, route: &Route, other_modal: bool) {
+    if other_modal || dialog_open(ui.ctx()) || overlays::is_open(ui.ctx()) {
         return;
     }
     let mut step = 0i32;
@@ -558,6 +563,39 @@ mod tests {
             memory_of(&ctx, a).and_then(|m| m.place),
             Some(Place::Server(server))
         );
+    }
+
+    /// useShellShortcuts: while any modal dialog is open (here the settings'
+    /// confirm), Alt+↓ moves nowhere and Strg+K opens nothing over it.
+    #[test]
+    fn shortcuts_keep_off_under_a_modal_that_is_not_the_shells() {
+        use crate::app::testkit::{FakeApi, HOME, launcher, wait_for_label, workspace};
+        use crate::platform::paths::testing::TempConfig;
+        use crate::screens::settings::controls;
+
+        let _config = TempConfig::new("shortcuts-modal");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
+        wait_for_label(&mut harness, "allgemein");
+        controls::ask(
+            &harness.ctx.clone(),
+            controls::Confirm::danger("probe", "Wirklich?", None, "Ja"),
+        );
+        wait_for_label(&mut harness, "Wirklich?");
+        harness.run_steps(2);
+        harness.key_press_modifiers(Modifiers::ALT, Key::ArrowDown);
+        harness.key_press_modifiers(Modifiers::COMMAND, Key::K);
+        harness.run_steps(4);
+        let route = harness
+            .state_mut()
+            .app()
+            .expect("app")
+            .nav()
+            .route()
+            .clone();
+        assert_eq!(route, Route::ServerSettings(HOME.parse().expect("id")));
+        use egui_kittest::kittest::Queryable;
+        assert!(harness.query_by_label("Wechseln zu").is_none());
     }
 
     /// Steps in real time for `ms` (requests go to another thread).
