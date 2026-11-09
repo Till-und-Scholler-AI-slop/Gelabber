@@ -43,6 +43,7 @@ jobs:
           fetch-depth: 2
 
       # A pull request checks out its merge commit; the first parent is the base.
+      # --no-renames lists a move's source too; quotePath=false leaves non-ASCII paths unquoted.
       - name: Areas
         id: areas
         env:
@@ -50,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENT" = pull_request ]; then
-            git diff --name-only HEAD^1 HEAD | python3 .github/workflows/scripts/changes.py >> "$GITHUB_OUTPUT"
+            git -c core.quotePath=false diff --no-renames --name-only HEAD^1 HEAD | python3 .github/workflows/scripts/changes.py >> "$GITHUB_OUTPUT"
           else
             python3 .github/workflows/scripts/changes.py --all >> "$GITHUB_OUTPUT"
           fi
