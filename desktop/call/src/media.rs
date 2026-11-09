@@ -190,6 +190,18 @@ pub(crate) fn leave(inner: &Arc<Inner>) {
     });
 }
 
+/// Kicked or banned: the client let the gateway seat go, so the call goes
+/// too; the client's notice says why.
+fn end_taken(inner: &Arc<Inner>, session: &Arc<Session>) {
+    let current = inner
+        .media
+        .current()
+        .is_some_and(|s| Arc::ptr_eq(&s, session));
+    if current {
+        leave(inner);
+    }
+}
+
 pub(crate) fn set_muted(inner: &Arc<Inner>, muted: bool) {
     let Some(session) = inner.media.current() else {
         return;
@@ -609,6 +621,9 @@ pub(crate) fn on_gateway(inner: &Arc<Inner>, event: &GatewayEvent) {
     let Some(session) = inner.media.current() else {
         return;
     };
+    if session.seat_taken() {
+        return end_taken(inner, &session);
+    }
     match event {
         GatewayEvent::Ready => session.on_ready(),
         GatewayEvent::Frame(ServerFrame::Sig(sig)) => session.on_sig(sig),
@@ -729,6 +744,21 @@ impl Session {
 
     fn seat(&self) -> Option<Arc<Seat>> {
         self.st.lock().seat.clone()
+    }
+
+    /// The client no longer holds this call's gateway seat, which it took
+    /// before the own `j` came back (a kick or ban drops it).
+    fn seat_taken(&self) -> bool {
+        if self.st.lock().awaiting_join {
+            return false;
+        }
+        let Some(inner) = self.inner() else {
+            return false;
+        };
+        let held = inner
+            .client()
+            .with_state(|s| (s.voice_self.server, s.voice_self.channel));
+        held != (Some(self.server), Some(self.channel))
     }
 
     fn engine(&self) -> Option<core::Engine> {
@@ -2209,6 +2239,13 @@ impl Session {
             if !self.live() || self.seats.load(Ordering::Acquire) != generation {
                 return;
             }
+            // A kick that came as an event, which the voice hook does not see.
+            if self.seat_taken() {
+                if let Some(inner) = self.inner() {
+                    end_taken(&inner, &self);
+                }
+                return;
+            }
             let Some(seat) = self.seat() else { return };
             let session = self.clone();
             let measure = count.is_multiple_of(quality_every);
@@ -3555,6 +3592,43 @@ mod tests {
             call.inner.read(|s| s.status.clone()),
             CallStatus::Failed(_)
         ));
+    }
+
+    #[test]
+    fn a_kick_ends_the_call_without_a_sign_in_error() {
+        let call = offline();
+        let session = session(&call);
+        let client = call.client().clone();
+        client.voice_join(session.server, session.channel);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while client.with_state(|s| s.voice_self.channel) != Some(session.channel) {
+            assert!(Instant::now() < deadline, "the client took the seat");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        call.inner.write(|s| s.status = CallStatus::Connected);
+        // Another server's frame: the call stays.
+        let other = GatewayEvent::Frame(ServerFrame::Err {
+            e: "kicked".into(),
+            s: Some(Uuid::new_v4()),
+            c: None,
+        });
+        call.on_gateway(&other);
+        assert!(call.inner.media.current().is_some());
+        // The client dropped the seat (`removed_from`): the call leaves.
+        client.voice_leave();
+        while client.with_state(|s| s.voice_self.channel).is_some() {
+            assert!(Instant::now() < deadline, "the client left the seat");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let kicked = GatewayEvent::Frame(ServerFrame::Err {
+            e: "kicked".into(),
+            s: Some(session.server),
+            c: None,
+        });
+        call.on_gateway(&kicked);
+        assert!(call.inner.media.current().is_none());
+        assert_eq!(call.inner.read(|s| s.status.clone()), CallStatus::default());
+        assert!(session.stopped.load(Ordering::Acquire));
     }
 
     #[test]
