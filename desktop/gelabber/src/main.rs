@@ -173,8 +173,11 @@ fn main() -> eframe::Result {
         )),
     }
     let smoke = smoke::Smoke::from_env(std::env::var("GELABBER_SMOKE").ok().as_deref());
+    // args() would panic on an argument that is no Unicode.
     let server = settings::configured_server(
-        std::env::args().skip(1),
+        std::env::args_os()
+            .skip(1)
+            .map(|a| a.to_string_lossy().into_owned()),
         std::env::var("GELABBER_SERVER").ok(),
     );
     let mut viewport = egui::ViewportBuilder::default()
