@@ -960,14 +960,19 @@ impl Session {
                 return;
             }
         }
-        match seat.make_transport(core::Direction::Recv).await {
-            Ok(recv) => *seat.recv.lock() = Some(recv),
+        let recv = match seat.make_transport(core::Direction::Recv).await {
+            Ok(recv) => recv,
             Err(e) => {
                 self.on_media_error(generation, e.code(), logic::MediaStage::Building);
                 return;
             }
-        }
-        let queued = std::mem::take(&mut *seat.queued.lock());
+        };
+        // Under the queue's lock, so no event is queued after the drain.
+        let queued = {
+            let mut queued = seat.queued.lock();
+            *seat.recv.lock() = Some(recv);
+            std::mem::take(&mut *queued)
+        };
         for event in queued {
             seat.clone().handle_event(event);
         }
@@ -3433,18 +3438,21 @@ impl Seat {
         if self.removed.lock().contains(&key) {
             return;
         }
-        if self.recv.lock().is_none() {
+        {
+            // Decided under the queue's lock, which `run_seat` drains it under.
             let mut queued = self.queued.lock();
-            if let Some(slot) = queued.iter_mut().find(|q| {
-                q["op"] == op
-                    && q["consumerId"] == id.as_str()
-                    && q["generation"] == generation.as_str()
-            }) {
-                *slot = frame;
-            } else if queued.len() < 3 * 1024 {
-                queued.push(frame);
+            if self.recv.lock().is_none() {
+                if let Some(slot) = queued.iter_mut().find(|q| {
+                    q["op"] == op
+                        && q["consumerId"] == id.as_str()
+                        && q["generation"] == generation.as_str()
+                }) {
+                    *slot = frame;
+                } else if queued.len() < 3 * 1024 {
+                    queued.push(frame);
+                }
+                return;
             }
-            return;
         }
         if op == "consumer" {
             {
