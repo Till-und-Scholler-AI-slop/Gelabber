@@ -1,12 +1,10 @@
-import type { ErrorComponentProps } from "@tanstack/react-router";
-
 import { Button } from "../components/ui/Button.tsx";
 import { useVoice } from "../voice/session.ts";
 import "./auth.css";
 
 /** What a page shows when it throws: the router's default error component,
  * and the boundary around the page in the app shell. */
-export function RouteErrorPage(_props: ErrorComponentProps) {
+export function RouteErrorPage() {
   const inCall = useVoice((s) => s.status === "joined");
   return <RouteErrorView inCall={inCall} />;
 }
