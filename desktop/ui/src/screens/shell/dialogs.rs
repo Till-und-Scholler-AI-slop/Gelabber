@@ -1343,6 +1343,68 @@ mod tests {
         assert!(!api.saw("DELETE /invites/vierundzwanz"));
     }
 
+    /// modalClose.ts: Esc or "Schließen" on a dialog with input asks
+    /// "Änderungen verwerfen?" first; an empty one closes at once.
+    #[test]
+    fn a_dialog_with_input_asks_before_it_closes() {
+        use egui::accesskit::Role;
+        use egui_kittest::kittest::Queryable;
+
+        use crate::app::testkit::{FakeApi, launcher, wait_for_label};
+        use crate::platform::paths::testing::TempConfig;
+
+        let _config = TempConfig::new("dialog-discard");
+        let api = FakeApi::start(true, |_, _, _| None);
+        let mut harness = launcher(&api, "/");
+        wait_for_label(&mut harness, "Benutzermenü");
+        let question = "Änderungen verwerfen?";
+        // Empty: Esc closes it.
+        open_add(&harness.ctx.clone(), AddStep::Join);
+        wait_for_label(&mut harness, "Einladungslink oder Code");
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(4);
+        assert!(harness.query_by_label("Einladungslink oder Code").is_none());
+        assert!(harness.query_by_label(question).is_none());
+        // With a code typed: Esc asks, and Esc again keeps the dialog.
+        open_add(&harness.ctx.clone(), AddStep::Join);
+        wait_for_label(&mut harness, "Einladungslink oder Code");
+        fn field<'a>(h: &'a egui_kittest::Harness<'_, crate::Launcher>) -> egui_kittest::Node<'a> {
+            use egui_kittest::kittest::NodeT;
+            h.query_all_by_label("Einladungslink oder Code")
+                .find(|n| n.accesskit_node().role() == Role::TextInput)
+                .expect("the field")
+        }
+        field(&harness).focus();
+        harness.step();
+        field(&harness).type_text("abc");
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(4);
+        harness.get_by_label(question);
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(4);
+        assert!(harness.query_by_label(question).is_none());
+        assert!(harness.query_by_label("Einladungslink oder Code").is_some());
+        // "Schließen" asks too; "Verwerfen" closes it.
+        harness
+            .query_all_by_label("Schließen")
+            .find(|n| {
+                use egui_kittest::kittest::NodeT;
+                n.accesskit_node().role() == Role::Button
+            })
+            .expect("the close button")
+            .click();
+        harness.run_steps(4);
+        harness.get_by_label(question);
+        harness
+            .get_by_role_and_label(Role::Button, "Verwerfen")
+            .click();
+        harness.run_steps(4);
+        assert!(harness.query_by_label(question).is_none());
+        assert!(harness.query_by_label("Einladungslink oder Code").is_none());
+        assert!(!crate::screens::shell::dialog_open(&harness.ctx));
+    }
+
     #[test]
     fn invite_summaries() {
         assert_eq!(

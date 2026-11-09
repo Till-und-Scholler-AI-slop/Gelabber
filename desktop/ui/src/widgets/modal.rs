@@ -32,7 +32,8 @@ impl ModalWidth {
 
 pub struct ModalOutput<R> {
     pub inner: R,
-    /// Esc, "Schließen" or a backdrop click (unless `dirty`).
+    /// Esc, "Schließen" or a backdrop click; with `dirty` input only Esc or
+    /// "Schließen" once "Änderungen verwerfen?" was answered with yes.
     pub close_requested: bool,
 }
 
@@ -59,7 +60,8 @@ impl<'a> Modal<'a> {
         self
     }
 
-    /// With unsaved input a backdrop click does not close it.
+    /// With unsaved input a backdrop click does not close it, and Esc or
+    /// "Schließen" ask first (modalClose.ts `requestClose`).
     pub fn dirty(mut self, dirty: bool) -> Self {
         self.dirty = dirty;
         self
@@ -76,13 +78,16 @@ impl<'a> Modal<'a> {
         let theme = Theme::of(ctx);
         let c = theme.c;
         let screen = ctx.content_rect();
-        let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
         let mut inner = None;
         let height_id = self.id.with("height");
         let last_height: f32 = ctx.data(|d| d.get_temp(height_id)).unwrap_or(200.0);
         // Focus starts on the first focusable element, the close button,
         // unless the body asks for its own (`autoFocus`, `initialFocus`).
         let first = super::field::mounted(ctx, self.id.with("mounted"));
+        // "Änderungen verwerfen?" is open over it: the Esc is the question's.
+        let asking_id = self.id.with("discard");
+        let mut asking = !first && ctx.data(|d| d.get_temp::<bool>(asking_id)).unwrap_or(false);
+        let mut close = !asking && ctx.input(|i| i.key_pressed(egui::Key::Escape));
         let area = egui::Area::new(self.id)
             .order(Order::Foreground)
             .fixed_pos(screen.min);
@@ -206,6 +211,27 @@ impl<'a> Modal<'a> {
                 ctx.request_discard("modal height");
             }
         });
+        // Esc or "Schließen" with unsaved input (a backdrop click does not
+        // close then): asked first, with the web's DISCARD_CHANGES.
+        if close && self.dirty {
+            close = false;
+            asking = true;
+            ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        }
+        if asking
+            && let Some(discard) = crate::screens::shell::overlays::confirm::dialog(
+                ctx,
+                "Änderungen verwerfen?",
+                Some("Deine Eingaben gehen verloren."),
+                "Verwerfen",
+                false,
+                false,
+            )
+        {
+            asking = false;
+            close = discard;
+        }
+        ctx.data_mut(|d| d.insert_temp(asking_id, asking));
         ModalOutput {
             inner: inner.expect("modal body ran"),
             close_requested: close,
