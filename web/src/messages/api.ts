@@ -61,7 +61,16 @@ export const presignAttachment = (channelId: string, body: PresignRequest) =>
     body,
   });
 
-const UPLOAD_TIMEOUT_MS = 120_000;
+/** Slowest uplink an upload must still finish on: 256 kbit/s, in bytes/ms. */
+const UPLOAD_MIN_BYTES_PER_MS = 32;
+
+/**
+ * Two minutes plus the time `size` bytes take on a slow uplink: fetch
+ * reports no upload progress, so a stall cannot be told from a slow line.
+ */
+export function uploadTimeoutMs(size: number): number {
+  return 120_000 + Math.ceil(size / UPLOAD_MIN_BYTES_PER_MS);
+}
 
 /** PUT the file at the upload link from the presign answer, with every
  * header it lists. Usually a signed MinIO URL on another origin, so no
@@ -88,8 +97,11 @@ export async function putPresigned(
       headers: putHeaders,
       body: file,
       signal: signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(UPLOAD_TIMEOUT_MS)])
-        : AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+        ? AbortSignal.any([
+            signal,
+            AbortSignal.timeout(uploadTimeoutMs(file.size)),
+          ])
+        : AbortSignal.timeout(uploadTimeoutMs(file.size)),
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
