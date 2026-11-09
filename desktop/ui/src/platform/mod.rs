@@ -25,7 +25,7 @@ pub use open::{open_url, open_url_logged};
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use egui::{Context, Id, ViewportCommand};
 use gelabber_client::Client;
@@ -127,7 +127,8 @@ pub struct Platform {
     window_can_hide: bool,
     quitting: bool,
     front: Option<bool>,
-    next_tick: f64,
+    /// Its own clock: logic-only passes (hidden, not composited) keep egui's still.
+    next_tick: Option<Instant>,
     stored: state::Stored,
     saved: state::Stored,
     restored_for: Option<Uuid>,
@@ -163,7 +164,7 @@ impl Platform {
             window_can_hide: true,
             quitting: false,
             front: None,
-            next_tick: 0.0,
+            next_tick: None,
             saved: stored.clone(),
             stored,
             restored_for: None,
@@ -216,7 +217,7 @@ impl Platform {
             instance.set_wake(waker(&self.wake));
         }
         self.tray = tray::Tray::start(self.tray_events.clone(), waker(&self.wake));
-        self.updates.start(ctx.input(|i| i.time));
+        self.updates.start(Instant::now());
     }
 
     fn show_window(&mut self, ctx: &Context) {
@@ -272,7 +273,7 @@ impl Platform {
                 }),
             )
         });
-        let now = ctx.input(|i| i.time);
+        let now = Instant::now();
         // Title bar and decorations in the theme's mode, the setup screen's
         // too (it shows in the active theme, as the sign-in pages).
         let title_bar = if crate::theme::Theme::of(ctx).is_dark() {
@@ -337,8 +338,8 @@ impl Platform {
             call.play_sound(gelabber_call::Sound::LiveStart);
         }
         self.ptt.tick(ctx, &call, &p);
-        if now >= self.next_tick {
-            self.next_tick = now + 0.5;
+        if self.next_tick.is_none_or(|next| now >= next) {
+            self.next_tick = Some(now + Duration::from_millis(500));
             self.tick(ctx, &client, &call, in_front);
         }
         // An accepted update: the window closes, main.rs runs the installer.
@@ -730,6 +731,36 @@ mod tests {
         let stored = state::load();
         let window = stored.window.unwrap();
         assert_eq!((window.width, window.height), (900.0, 700.0));
+        drop(config);
+    }
+
+    /// A hidden or uncomposited window gets logic-only passes whose input
+    /// time stands still; the twice-a-second duties must go on regardless.
+    #[test]
+    fn the_tick_runs_on_passes_whose_input_time_stands_still() {
+        let config = paths::testing::TempConfig::new("platform-tick-clock");
+        let ctx = Context::default();
+        let client = Client::new("http://127.0.0.1:9").unwrap();
+        let mut platform = Platform::new(None);
+        let mut app = GelabberApp::with_context(&ctx, client, None);
+        let pass = |platform: &mut Platform, app: &mut GelabberApp, size: egui::Vec2| {
+            let mut input = egui::RawInput {
+                time: Some(10.0),
+                ..Default::default()
+            };
+            input
+                .viewports
+                .entry(egui::ViewportId::ROOT)
+                .or_default()
+                .inner_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size));
+            let mut out = ctx.run_ui(input, |ui| platform.logic(ui.ctx(), Some(app)));
+            out.textures_delta.clear();
+        };
+        pass(&mut platform, &mut app, egui::vec2(900.0, 700.0));
+        assert_eq!(platform.stored.window.unwrap().width, 900.0);
+        std::thread::sleep(Duration::from_millis(600));
+        pass(&mut platform, &mut app, egui::vec2(1000.0, 700.0));
+        assert_eq!(platform.stored.window.unwrap().width, 1000.0);
         drop(config);
     }
 }

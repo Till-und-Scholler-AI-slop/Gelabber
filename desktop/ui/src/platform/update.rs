@@ -807,8 +807,8 @@ type Wake = Arc<dyn Fn() + Send + Sync>;
 /// (Platform owns one).
 pub struct Updater {
     install: Install,
-    /// `ctx` time of the next look.
-    next: f64,
+    /// When to look next.
+    next: Instant,
     last: Option<SystemTime>,
     checking: Option<Slot<Result<Option<Found>, String>>>,
     found: Option<Found>,
@@ -840,7 +840,7 @@ impl Updater {
     pub fn new(install: Install) -> Self {
         Self {
             install,
-            next: 0.0,
+            next: Instant::now(),
             last: None,
             checking: None,
             found: None,
@@ -915,20 +915,20 @@ impl Updater {
     }
 
     /// The first look, [`FIRST_CHECK`] after `now`.
-    pub fn start(&mut self, now: f64) {
-        self.next = now + FIRST_CHECK.as_secs_f64();
+    pub fn start(&mut self, now: Instant) {
+        self.next = now + FIRST_CHECK;
     }
 
     /// Every pass with the app: checks when due, runs an accepted update and
     /// says when the app is to end for its installer. `busy`: [`call_busy`].
-    pub fn tick(&mut self, client: &Client, now: f64, busy: bool) -> bool {
+    pub fn tick(&mut self, client: &Client, now: Instant, busy: bool) -> bool {
         let repaint = client.clone();
         let wake: Wake = Arc::new(move || repaint.repaint());
         if self.advance(&wake, busy) {
             return true;
         }
         if self.checking.is_none() && self.at_rest() && now >= self.next {
-            self.next = now + 60.0;
+            self.next = now + Duration::from_secs(60);
             if auto_check() && due(self.last, SystemTime::now()) {
                 self.start_check(wake);
             }
@@ -1616,28 +1616,28 @@ mod tests {
             notes: None,
             package: Some(("http://127.0.0.1:9/setup.exe".into(), SIG_A.into())),
         }));
-        updater.next = f64::MAX;
-        assert!(!updater.tick(&client, 0.0, false));
+        updater.next = Instant::now() + Duration::from_secs(3600);
+        assert!(!updater.tick(&client, Instant::now(), false));
         assert_eq!(updater.notice().unwrap().offer, Offer::Restart);
         // In a call: no notice, and "Neu starten" cannot have been clicked.
-        assert!(!updater.tick(&client, 0.0, true));
+        assert!(!updater.tick(&client, Instant::now(), true));
         assert_eq!(updater.notice(), None);
         // The download was done when a call began: refused, not put off.
         updater.ready = Some(dir.join("setup.exe"));
         updater.phase = Phase::Ready;
-        assert!(!updater.tick(&client, 0.0, true));
+        assert!(!updater.tick(&client, Instant::now(), true));
         assert_eq!(*PENDING.lock(), None);
         assert_eq!(updater.phase, Phase::Failed(IN_CALL.into()));
         // A minute after the call the notice says so, and nothing installs.
         updater.lock.last_busy = Some(Instant::now() - BUSY_AFTER);
-        assert!(!updater.tick(&client, 0.0, false));
+        assert!(!updater.tick(&client, Instant::now(), false));
         assert_eq!(*PENDING.lock(), None);
         let notice = updater.notice().unwrap();
         assert_eq!(notice.text(), IN_CALL);
         assert!(notice.enabled());
         // "Neu starten" again: the loaded installer, into the same folder.
         updater.requested = true;
-        assert!(updater.tick(&client, 0.0, false));
+        assert!(updater.tick(&client, Instant::now(), false));
         assert_eq!(updater.phase, Phase::Installing);
         assert_eq!(
             PENDING.lock().take(),
@@ -1741,7 +1741,7 @@ mod tests {
         while matches!(updater.phase, Phase::Downloading { .. }) {
             assert!(start.elapsed() < Duration::from_secs(10), "download hangs");
             std::thread::sleep(Duration::from_millis(10));
-            end = updater.tick(client, 0.0, false);
+            end = updater.tick(client, Instant::now(), false);
         }
         end
     }
@@ -1754,14 +1754,14 @@ mod tests {
         let dir = temp_dir("install");
         let mut updater = Updater::new(Install::Setup { dir: dir.clone() });
         updater.key = KEY_A;
-        updater.next = f64::MAX;
+        updater.next = Instant::now() + Duration::from_secs(3600);
         updater.set_found(Some(Found {
             version: "0.9.1".into(),
             notes: None,
             package: Some((format!("http://{addr}/setup.exe"), SIG_A.into())),
         }));
         updater.requested = true;
-        assert!(!updater.tick(&client, 0.0, false));
+        assert!(!updater.tick(&client, Instant::now(), false));
         // The pass that sees it checked ends the app and leaves the
         // installer to main.rs.
         assert!(until_downloaded(&mut updater, &client));
@@ -1821,14 +1821,14 @@ mod tests {
         let mut updater = Updater::new(Install::Setup {
             dir: temp_dir("restart"),
         });
-        updater.next = f64::MAX;
+        updater.next = Instant::now() + Duration::from_secs(3600);
         updater.set_found(Some(Found {
             version: "0.9.1".into(),
             notes: None,
             package: Some((format!("http://{addr}/setup.exe"), SIG_A.into())),
         }));
         updater.requested = true;
-        assert!(!updater.tick(&client, 0.0, false));
+        assert!(!updater.tick(&client, Instant::now(), false));
         assert!(matches!(updater.phase, Phase::Downloading { .. }));
         assert!(!updater.notice().unwrap().enabled());
         // The releases' key refuses the test installer: the notice says so
