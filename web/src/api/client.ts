@@ -440,6 +440,8 @@ async function performAuthApi<T>(
       changing &&
       path === "/auth/password" &&
       previous?.phase === "settled" &&
+      // Without Web Locks another tab may have published since.
+      readCookieState()?.generation === changing.generation &&
       response.status >= 400 &&
       response.status < 500 &&
       response.status !== 401

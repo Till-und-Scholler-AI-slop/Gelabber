@@ -657,6 +657,36 @@ describe("password change across tabs", () => {
     expect(scopeGeneration()).toBe(generation);
   });
 
+  it("a refused change does not restore over another tab's newer sign-in", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "POST /api/auth/password": () => {
+        // Without Web Locks another tab can sign in meanwhile.
+        storage.set(
+          FENCE,
+          JSON.stringify({
+            generation: "g-bob",
+            phase: "settled",
+            userId: "u2",
+          }),
+        );
+        return json(422, {
+          error: "validation_failed",
+          message: "Some fields are invalid.",
+          fields: { current_password: "wrong" },
+        });
+      },
+    });
+    await login("ada@example.com", "password123");
+
+    await expect(
+      changePassword("nope", "battery staple"),
+    ).rejects.toMatchObject({ code: "validation_failed" });
+    const fence = JSON.parse(storage.get(FENCE)!);
+    expect(fence.userId).not.toBe(ada.id);
+    expect(fence.phase).not.toBe("settled");
+  });
+
   it("another tab's password change keeps this tab's account", async () => {
     fakeApi({
       "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
