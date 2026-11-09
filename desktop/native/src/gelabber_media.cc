@@ -1317,10 +1317,12 @@ void gm_producer_free(gm_producer* producer)
 	guarded<int>(0, [&] {
 		if (!producer)
 			return 0;
-		if (!producer->producer->IsClosed())
-			producer->producer->Close();
-		delete producer->producer;
-		delete producer;
+		// Freed even when Close() throws in its renegotiation: the transport
+		// has let go of the producer before that.
+		std::unique_ptr<gm_producer> owned(producer);
+		std::unique_ptr<mediasoupclient::Producer> inner(producer->producer);
+		if (!inner->IsClosed())
+			inner->Close();
 		return 0;
 	});
 }
@@ -1549,10 +1551,11 @@ void gm_consumer_free(gm_consumer* consumer)
 			std::erase(consumer->engine->audioConsumers, consumer);
 			ApplyPlaybackVolumes(*consumer->engine);
 		}
-		if (!consumer->consumer->IsClosed())
-			consumer->consumer->Close();
-		delete consumer->consumer;
-		delete consumer;
+		// As in gm_producer_free: freed even when Close() throws.
+		std::unique_ptr<gm_consumer> owned(consumer);
+		std::unique_ptr<mediasoupclient::Consumer> inner(consumer->consumer);
+		if (!inner->IsClosed())
+			inner->Close();
 		return 0;
 	});
 }
