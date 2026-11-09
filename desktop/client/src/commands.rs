@@ -37,6 +37,10 @@ const READY_SPREAD: Duration = Duration::from_millis(1_000);
 const UNREAD_DEBOUNCE: Duration = Duration::from_millis(750);
 const UNREAD_MAX_WAIT: Duration = Duration::from_secs(5);
 const TICK: Duration = Duration::from_millis(400);
+/// The server list and a server's detail are fetched again when shown or
+/// focused after this long (the web's `staleTime`): channels, members and
+/// permissions change without an event.
+const SERVER_STALE: Duration = Duration::from_secs(60);
 
 /// Which notification setting to change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -343,6 +347,7 @@ impl Client {
                 Ok(list) => {
                     s.servers = list;
                     s.servers_loaded = true;
+                    s.servers_fetched = Some(Instant::now());
                 }
                 Err(e) => failure = Some(e),
             }
@@ -406,6 +411,7 @@ impl Client {
                 }
                 s.servers = list;
                 s.servers_loaded = true;
+                s.servers_fetched = Some(Instant::now());
             });
             self.sync_topics();
         }
@@ -420,6 +426,7 @@ impl Client {
                         *entry = detail.server.clone();
                     }
                     s.server_details.insert(id, detail);
+                    s.server_fetched.insert(id, Instant::now());
                 });
                 self.sync_topics();
                 Ok(())
@@ -458,6 +465,7 @@ impl Client {
             server: Some(id),
             channel: None,
         };
+        self.refresh_if_stale(Some(id));
         // A failed load is not retried every frame; `refresh_server` does.
         let needed = self.with_state(|s| {
             s.view != view || (!s.server_details.contains_key(&id) && s.op(&key).is_none())
@@ -475,6 +483,40 @@ impl Client {
                 this.op(&key, work).await;
             }
             this.inner.opening.lock().remove(&view);
+        });
+    }
+
+    /// Fetches the list and `server`'s detail again in the background when
+    /// they are older than [`SERVER_STALE`]. Cheap to call every frame.
+    fn refresh_if_stale(&self, server: Option<Uuid>) {
+        let stale = |at: Option<&Instant>| at.is_some_and(|t| t.elapsed() >= SERVER_STALE);
+        let (list, detail) = self.with_state(|s| {
+            (
+                stale(s.servers_fetched.as_ref()),
+                server.filter(|id| stale(s.server_fetched.get(id))),
+            )
+        });
+        if !list && detail.is_none() {
+            return;
+        }
+        // Once per period, also when it fails.
+        self.write(|s| {
+            let now = Instant::now();
+            if list {
+                s.servers_fetched = Some(now);
+            }
+            if let Some(id) = detail {
+                s.server_fetched.insert(id, now);
+            }
+        });
+        let this = self.clone();
+        self.spawn(async move {
+            if list {
+                this.reload_servers().await;
+            }
+            if let Some(id) = detail {
+                let _ = this.reload_server(id).await;
+            }
         });
     }
 
@@ -560,6 +602,9 @@ impl Client {
     }
 
     fn open_conversation(&self, server: Option<Uuid>, channel: Uuid) {
+        if server.is_some() {
+            self.refresh_if_stale(server);
+        }
         let view = View {
             server,
             channel: Some(channel),
@@ -1132,10 +1177,15 @@ impl Client {
         self.update_front(front);
     }
 
-    /// The window gained or lost focus/visibility.
+    /// The window gained or lost focus/visibility. Gaining it refetches a
+    /// stale server list and detail, as the web does on focus.
     pub fn set_focused(&self, focused: bool) {
-        self.inner.local.lock().focused = focused;
+        let gained = !std::mem::replace(&mut self.inner.local.lock().focused, focused) && focused;
         self.update_front(focused);
+        if gained {
+            let server = self.with_state(|s| s.view.server);
+            self.refresh_if_stale(server);
+        }
     }
 
     fn update_front(&self, focused: bool) {
@@ -1913,6 +1963,7 @@ impl Client {
                     s.forget_server(id);
                 }
                 s.servers = list;
+                s.servers_fetched = Some(Instant::now());
             }
             if let Ok(list) = dms {
                 s.dms = list;

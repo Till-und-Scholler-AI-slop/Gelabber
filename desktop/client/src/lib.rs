@@ -459,6 +459,48 @@ mod tests {
         assert_eq!(loads, 1);
     }
 
+    /// A server shown longer than a minute after its detail came is
+    /// fetched again: channels and members change without an event.
+    #[test]
+    fn a_stale_server_detail_is_fetched_again_when_shown() {
+        let (url, seen) = recording_server("kaputt");
+        let client = Client::new(&url).unwrap();
+        let detail: ServerDetail =
+            serde_json::from_str(include_str!("../tests/fixtures/server_detail.json")).unwrap();
+        let id = detail.server.id;
+        let loads = || {
+            seen.lock()
+                .iter()
+                .filter(|l| l.starts_with(&format!("GET /api/servers/{id}")))
+                .count()
+        };
+        client.write(|s| {
+            s.server_details.insert(id, detail);
+            s.server_fetched.insert(id, Instant::now());
+            s.view = View {
+                server: Some(id),
+                channel: None,
+            };
+        });
+        client.open_server(id);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert_eq!(loads(), 0);
+        let old = Instant::now().checked_sub(std::time::Duration::from_secs(61));
+        let Some(old) = old else { return };
+        client.write(|s| s.server_fetched.insert(id, old));
+        for _ in 0..5 {
+            client.open_server(id);
+        }
+        let start = Instant::now();
+        while loads() == 0 && start.elapsed() < std::time::Duration::from_secs(5) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert_eq!(loads(), 1);
+        // A failed refetch keeps what was there.
+        assert!(client.with_state(|s| s.server_details.contains_key(&id)));
+    }
+
     /// Opening a conversation and a message arriving in it while the app
     /// is in front mark nothing read: the pane does, at the newest row.
     #[test]

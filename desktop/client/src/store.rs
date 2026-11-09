@@ -481,6 +481,10 @@ pub struct State {
     /// The newest Lives worth a notice, oldest first; each consumer keeps
     /// the last `seq` it handled.
     pub live_started: Vec<LiveStart>,
+    /// When the server list and each server's detail were last fetched
+    /// (or a background refetch began), for the stale refetch.
+    pub(crate) servers_fetched: Option<Instant>,
+    pub(crate) server_fetched: HashMap<Uuid, Instant>,
     /// Bumped by every account reset; answers started before are dropped.
     pub(crate) epoch: u64,
 }
@@ -683,6 +687,7 @@ impl State {
     /// Kicked, banned, left or deleted: drop everything of that server.
     pub fn forget_server(&mut self, server: Uuid) {
         self.ops.remove(&format!("server:{server}"));
+        self.server_fetched.remove(&server);
         self.servers.retain(|s| s.id != server);
         if let Some(detail) = self.server_details.remove(&server) {
             for channel in detail.channels {
