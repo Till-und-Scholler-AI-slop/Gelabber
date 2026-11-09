@@ -83,7 +83,9 @@ export type MediaConnectionOptions = {
   onConsumer(source: ReceivedSource): void;
   onConsumerClosed(source: ReceivedSource): void;
   onTransportState(direction: "send" | "recv", state: string): void;
-  onError(error: unknown): void;
+  /** `fatal`: the connection closed itself over it and reports "failed"
+   * next, which the owner answers by rebuilding. */
+  onError(error: unknown, fatal?: boolean): void;
   /** Video sources went out again in another codec: their senders are new
    * and have none of the old ones' parameters. */
   onRepublished?(): void;
@@ -952,7 +954,7 @@ export class MediasoupConnection implements MediaConnection {
 
   private fail(error: Error, direction: "send" | "recv"): void {
     if (this.closed) return;
-    this.options.onError(error);
+    this.options.onError(error, true);
     this.close();
     this.options.onTransportState(direction, "failed");
   }

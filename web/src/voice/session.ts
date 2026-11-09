@@ -770,8 +770,14 @@ function makeMediaConnection(
     onTransportState: (direction, state) => {
       if (current()) onTransportState(direction, state, mine);
     },
-    onError: (error) => {
-      if (current()) voice.deps?.onError?.(error);
+    onError: (error, fatal) => {
+      if (!current()) return;
+      // A fatal error is followed by "failed", and the rebuild handles it.
+      if (fatal)
+        logVoice("warn", "media-error", {
+          code: error instanceof MediaError ? error.code : String(error),
+        });
+      else voice.deps?.onError?.(error);
     },
     onRepublished: () => {
       // New senders: the upload budget and priorities go on them again.
@@ -1130,12 +1136,8 @@ function onTransportState(
       return;
     }
     slot.set(direction, setTimeout(rebuild, ICE_RECOVERY_DEADLINE_MS));
-    void peer.connection.restartIce(direction).catch((error) => {
-      if (peer.generation === mine) {
-        voice.deps?.onError?.(error);
-        rebuild();
-      }
-    });
+    // A failed restart needs no notice: the rebuild it starts is the answer.
+    void peer.connection.restartIce(direction).catch(() => rebuild());
   };
   if (state === "failed") restart();
   else
@@ -1638,7 +1640,10 @@ async function startPeer(
       await commitMicSend(pc, voice.localStream!, mine);
     } catch (error) {
       if (voice.seat.generation === mine && voice.seat.connection === pc) {
-        voice.deps?.onError?.(error);
+        // The rebuild publishes the microphone again; no notice for this one.
+        logVoice("warn", "media-error", {
+          code: error instanceof MediaError ? error.code : String(error),
+        });
         stopPeer(true);
         scheduleSeatRebuild();
       }

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../api/client.ts";
+import { MediaError } from "../voice/media.ts";
 import {
   ERROR_MS,
   INFO_MS,
@@ -24,6 +25,21 @@ describe("error toasts", () => {
     expect(useToasts.getState().toasts[0]?.message).toBe(
       "Der Stream konnte nicht verbunden werden.",
     );
+  });
+
+  it("says a media error in German, not its protocol code", () => {
+    notifyError(new MediaError("connection_closed"));
+    notifyError(new MediaError("some_future_code"));
+    expect(useToasts.getState().toasts.map((toast) => toast.message)).toEqual([
+      "Die Verbindung zum Sprachserver ist abgebrochen.",
+      "Die Sprachverbindung ist fehlgeschlagen.",
+    ]);
+  });
+
+  it("does not show a media error that a newer operation replaced", () => {
+    notifyError(new MediaError("publication_replaced"));
+    notifyError(new MediaError("publication_cancelled"));
+    expect(useToasts.getState().toasts).toEqual([]);
   });
 
   it("shows the field message when an upload is rejected", () => {

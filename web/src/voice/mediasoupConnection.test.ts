@@ -1577,6 +1577,7 @@ describe("public mediasoup connection lifecycle", () => {
     await vi.advanceTimersByTimeAsync(21);
     expect(f.onError).toHaveBeenCalledWith(
       expect.objectContaining({ code: "sdk_timeout" }),
+      true,
     );
     expect(f.device.transports[0].closed).toBe(true);
     expect(f.attached).toEqual([]);
@@ -1650,6 +1651,7 @@ describe("public mediasoup connection lifecycle", () => {
     expect(consumer.closed).toBe(true);
     expect(f.onError).toHaveBeenCalledWith(
       expect.objectContaining({ code: "sdk_timeout" }),
+      true,
     );
     expect(f.attached).toEqual([]);
     expect(f.calls("consumerReady")).toEqual([]);
@@ -1808,6 +1810,7 @@ describe("public mediasoup connection lifecycle", () => {
     await tick();
     expect(f.onError).toHaveBeenCalledWith(
       expect.objectContaining({ code: "event_overflow" }),
+      true,
     );
     expect(f.device.transports[0].closed).toBe(true);
     expect(f.attached).toEqual([]);
@@ -1829,6 +1832,7 @@ describe("public mediasoup connection lifecycle", () => {
     });
     expect(f.onError).toHaveBeenCalledWith(
       expect.objectContaining({ code: "event_overflow" }),
+      true,
     );
     expect(f.device.load).not.toHaveBeenCalled();
     expect(f.device.transports).toEqual([]);

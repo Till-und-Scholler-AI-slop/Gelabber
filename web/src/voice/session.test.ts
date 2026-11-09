@@ -3222,6 +3222,43 @@ describe("source and transport continuity", () => {
     );
   });
 
+  it("does not toast an ICE restart failure that the rebuild handles", async () => {
+    const env = await connected();
+    env.peers[0]!.restartIce = async () => {
+      throw new MediaError("connection_closed");
+    };
+    env.peers[0]!.setTransportState("send", "failed");
+    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    expect(env.errors).toEqual([]);
+  });
+
+  it("does not toast a fatal connection error that the rebuild handles", async () => {
+    const env = await connected();
+    // What the real connection does: report, close, then say "failed".
+    const peer = env.peers[0]!;
+    peer.restartIce = async () => {
+      throw new MediaError("connection_closed");
+    };
+    peer.options.onError(new MediaError("sdk_timeout"), true);
+    peer.close();
+    peer.setTransportState("recv", "failed");
+    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    expect(env.errors).toEqual([]);
+  });
+
+  it("does not toast a microphone publish failure that the rebuild retries", async () => {
+    let refusals = 0;
+    const env = await connected({
+      produceError: (kind) =>
+        kind === "a" && refusals++ === 1
+          ? new Error("produce_failed")
+          : undefined,
+    });
+    env.closeMedia();
+    await vi.waitFor(() => expect(env.peers[2]?.audio).toBeTruthy());
+    expect(env.errors).toEqual([]);
+  });
+
   it("does not toast each ICE failure but still rebuilds on unauthorized", async () => {
     const env = await connected();
     for (let i = 0; i < 12; i++) env.emitMedia({ op: "err", e: "ice_failed" });
