@@ -65,6 +65,23 @@ describe("router", () => {
     });
   });
 
+  it("lets a signed-in user ask for a new password", async () => {
+    // Expired reset links and the verify page link here signed in too.
+    useSession.setState({
+      status: "authenticated",
+      user: { id: "u1", name: "Ada", email: "ada@example.org" } as never,
+    });
+    try {
+      await expect(
+        router.routesById["/auth/forgot-password"].options.beforeLoad?.({
+          search: {},
+        } as never),
+      ).resolves.toBeUndefined();
+    } finally {
+      useSession.setState({ status: "anonymous", user: null });
+    }
+  });
+
   it("keeps only known auth search values", () => {
     expect(
       validateAuthSearch({

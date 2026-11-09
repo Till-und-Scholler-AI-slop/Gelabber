@@ -153,7 +153,9 @@ const forgotPasswordRoute = createRoute({
   getParentRoute: () => authLayout,
   path: "/forgot-password",
   validateSearch: validateAuthSearch,
-  beforeLoad: requireAnonymous,
+  // Open signed in too: expired reset links and the verify page link here,
+  // and "Sicherheit" needs the current password.
+  beforeLoad: () => ensureSession(),
   component: ForgotPasswordPage,
 });
 
