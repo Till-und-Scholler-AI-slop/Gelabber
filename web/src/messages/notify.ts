@@ -27,6 +27,9 @@ export function shouldToastMessage(input: {
   return true;
 }
 
+/** Older messages are replays (a resumed cursor), not news to announce. */
+export const LIVE_MESSAGE_MS = 30_000;
+
 /**
  * Desktop delivery has its own preference and includes the open chat while
  * the window is not in front: hidden, or visible but another window has the
@@ -42,10 +45,15 @@ export function messageNotificationDecision(input: {
   own: boolean;
   channelId: string;
   viewingChannelId: string | undefined;
+  /** Since the message was created, on the server clock. Absent is live. */
+  ageMs?: number;
 }): { toast: boolean; desktop: boolean } {
+  const live = input.ageMs === undefined || input.ageMs < LIVE_MESSAGE_MS;
   return {
-    toast: shouldToastMessage({ ...input, enabled: input.toastEnabled }),
+    toast:
+      live && shouldToastMessage({ ...input, enabled: input.toastEnabled }),
     desktop:
+      live &&
       input.desktopEnabled &&
       (input.hidden || input.focused === false) &&
       input.type === "c" &&
