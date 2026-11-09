@@ -152,6 +152,9 @@ services:
       TURN_EXTERNAL_IP: ${TURN_EXTERNAL_IP:-127.0.0.1}
       TURN_RELAY_MIN: ${TURN_RELAY_MIN:-49160}
       TURN_RELAY_MAX: ${TURN_RELAY_MAX:-49200}
+      # Private relay targets are refused; the SFU's address and this list stay allowed.
+      MEDIA_ADVERTISED_IP: ${MEDIA_ADVERTISED_IP:-127.0.0.1}
+      TURN_ALLOWED_PEER_IPS: ${TURN_ALLOWED_PEER_IPS:-}
     volumes:
       - ./coturn-entry.sh:/coturn-entry.sh:ro
     entrypoint: ["/bin/sh", "/coturn-entry.sh"]

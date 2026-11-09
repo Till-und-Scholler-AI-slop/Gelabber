@@ -33,7 +33,37 @@ common="
   --no-tls
   --listening-ip=0.0.0.0
   --external-ip=${external_ip}
+  --no-tcp-relay
+  --no-multicast-peers
 "
+
+# Clients only ever relay to the SFU. Without deny rules coturn relays to any
+# address, so a TURN user could reach Redis, the API, the host and the LAN.
+for range in \
+  0.0.0.0-0.255.255.255 \
+  10.0.0.0-10.255.255.255 \
+  100.64.0.0-100.127.255.255 \
+  127.0.0.0-127.255.255.255 \
+  169.254.0.0-169.254.255.255 \
+  172.16.0.0-172.31.255.255 \
+  192.168.0.0-192.168.255.255 \
+  ::1 \
+  fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff \
+  fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+do
+  common="$common --denied-peer-ip=$range"
+done
+
+# Allow rules win over deny rules: the SFU on a LAN address stays reachable,
+# plus what the operator lists (deploy/README.md, "TURN relay targets").
+media_ip=$(printf '%s' "${MEDIA_ADVERTISED_IP:-}" | tr -d '[:space:]')
+case "$media_ip" in
+  "" | 127.* | ::1) ;;
+  *) common="$common --allowed-peer-ip=$media_ip" ;;
+esac
+for range in $(printf '%s' "${TURN_ALLOWED_PEER_IPS:-}" | tr ',' ' '); do
+  common="$common --allowed-peer-ip=$range"
+done
 
 if [ -n "$secret" ]; then
   # REST credentials are still long-term (`expiry:user`). No static --user.
