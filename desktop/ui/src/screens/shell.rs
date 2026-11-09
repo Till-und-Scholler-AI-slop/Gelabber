@@ -68,6 +68,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
         voice::show(&mut main, app, s, c);
         call_bar(ui, app, screen, true);
         dialogs::show(ui, app);
+        // The switcher, profiles and toasts stay over Kino, and the
+        // client's notices (kicked, banned, failures) are taken meanwhile.
+        overlays::show(ui, app);
         return;
     }
 
