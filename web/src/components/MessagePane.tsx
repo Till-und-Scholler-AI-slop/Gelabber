@@ -66,6 +66,7 @@ import { isMuted } from "../messages/notifyLevel.ts";
 import "./chat.css";
 import { Composer } from "./Composer.tsx";
 import { MessageRow } from "./MessageRow.tsx";
+import { clearEditDrafts } from "./editDrafts.ts";
 import {
   AttemptActionsContext,
   JumpTo,
@@ -126,6 +127,9 @@ export function MessagePane({
   const user = useSession((s) => s.user);
   const query = useMessages(channelId, true);
   const searchScope = `${user?.id ?? "anonymous"}:${channelId}`;
+  // Open edits stay while their rows scroll out of view, not past the
+  // conversation or the account.
+  useEffect(() => () => clearEditDrafts(channelId), [channelId, user?.id]);
   // What the header's search field holds, per channel and account; the
   // list shows its hits as soon as typing pauses (#377).
   const [search, setSearch] = useState<{ scope: string; text: string }>({
