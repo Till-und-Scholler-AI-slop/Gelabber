@@ -36,6 +36,8 @@ const READY_SPREAD: Duration = Duration::from_millis(1_000);
 /// max, while the socket is wanted: missed events stay missing until then.
 const RECOVERY_RETRY: Duration = Duration::from_secs(1);
 const RECOVERY_RETRY_MAX: Duration = Duration::from_secs(30);
+/// Failed rounds retried in a row before waiting for the next event.
+const RECOVERY_RETRIES: u32 = 5;
 /// Unread counts are refetched this long after the last event (web 750 ms,
 /// at most 5 s while events keep coming).
 const UNREAD_DEBOUNCE: Duration = Duration::from_millis(750);
@@ -1918,14 +1920,23 @@ impl Client {
                 return;
             }
             r.running = true;
+            // A retry still waiting is replaced by this round.
+            r.retry += 1;
         }
+        self.recovery_rounds(spread, 0);
+    }
+
+    /// Runs rounds until one succeeds or nothing asks for another. A failed
+    /// one is retried after a wait that neither counts as `busy` nor keeps
+    /// the client alive, at most [`RECOVERY_RETRIES`] times in a row.
+    fn recovery_rounds(&self, spread: bool, failures: u32) {
         let this = self.clone();
         self.spawn(async move {
             if spread {
                 tokio::time::sleep(READY_SPREAD.mul_f64(crate::gateway::jitter())).await;
             }
-            let mut failures: u32 = 0;
-            loop {
+            let mut failures = failures;
+            let token = loop {
                 let gaps = this
                     .gateway()
                     .map(|g| g.gap_recoveries())
@@ -1936,21 +1947,40 @@ impl Client {
                         gateway.complete_gap(gap);
                     }
                 }
-                {
-                    let mut r = this.inner.recovery.lock();
-                    if r.rerun {
-                        r.rerun = false;
-                        continue;
-                    }
-                    if ok || this.gateway().is_none() {
-                        r.running = false;
-                        break;
-                    }
+                let mut r = this.inner.recovery.lock();
+                if r.rerun {
+                    r.rerun = false;
+                    failures = 0;
+                    continue;
                 }
-                let wait = RECOVERY_RETRY.saturating_mul(1 << failures.min(5));
-                failures += 1;
-                tokio::time::sleep(wait.min(RECOVERY_RETRY_MAX)).await;
-            }
+                r.running = false;
+                // Something that keeps failing (one server's detail) is not
+                // fetched with everything else for the whole session.
+                if ok || this.gateway().is_none() || failures >= RECOVERY_RETRIES {
+                    return;
+                }
+                r.retry += 1;
+                break r.retry;
+            };
+            let wait = RECOVERY_RETRY
+                .saturating_mul(1 << failures.min(5))
+                .min(RECOVERY_RETRY_MAX);
+            let weak = this.weak();
+            this.runtime().spawn(async move {
+                tokio::time::sleep(wait).await;
+                let Some(client) = Client::from_weak(&weak) else {
+                    return;
+                };
+                {
+                    let mut r = client.inner.recovery.lock();
+                    // A round started meanwhile, or the retry was replaced.
+                    if r.running || r.retry != token {
+                        return;
+                    }
+                    r.running = true;
+                }
+                client.recovery_rounds(false, failures + 1);
+            });
         });
     }
 
@@ -2121,6 +2151,32 @@ mod tests {
         let ok = client.block_on(client.recover());
         assert!(!ok);
         assert!(client.with_state(|s| s.channels[&dm].stale));
+    }
+
+    /// Waiting to retry a failed round is not `busy` (the sidebar's retry
+    /// button would read "Wird geladen…") and does not keep the client alive.
+    #[test]
+    fn a_recovery_retry_waits_idle_and_lets_the_client_go() {
+        let (url, seen) = broken_server();
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        client.ensure_gateway();
+        client.schedule_recovery(false);
+        let start = std::time::Instant::now();
+        while seen.lock().is_empty() || client.busy() {
+            assert!(start.elapsed() < Duration::from_secs(2), "still busy");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(client.inner.recovery.lock().retry > 1, "no retry waiting");
+        let weak = client.weak();
+        drop(client);
+        // The finished round's task lets go a moment after `busy` drops;
+        // the retry waits a whole second.
+        let start = std::time::Instant::now();
+        while weak.upgrade().is_some() {
+            assert!(start.elapsed() < Duration::from_millis(500), "still alive");
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// A failed round is tried again while the socket is wanted.

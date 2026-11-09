@@ -61,6 +61,8 @@ struct Local {
 struct Recovery {
     running: bool,
     rerun: bool,
+    /// The waiting retry's token; a new round makes it stale.
+    retry: u64,
 }
 
 struct Inner {
