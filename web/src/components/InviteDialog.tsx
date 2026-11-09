@@ -3,7 +3,7 @@
 // sit behind a disclosure.
 
 import { useRouterState } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { ApiError } from "../api/client.ts";
 import { useUserId } from "../auth/scope.ts";
@@ -25,6 +25,7 @@ import {
 import { useCreateInvite, useRevokeInvite } from "../servers/queries.ts";
 import type { Invite } from "../servers/types.ts";
 import { ChevronIcon, ShareIcon } from "./Icons.tsx";
+import { inviteSession, type InviteSession } from "./inviteSession.ts";
 import { LoadError } from "./LoadError.tsx";
 import { Modal } from "./Modal.tsx";
 import { Button } from "./ui/Button.tsx";
@@ -91,7 +92,8 @@ export function InvitePromptHost() {
 /**
  * Creates a link as it mounts and shows it ready to copy. Changing the
  * terms makes a new link; the previous one is revoked unless it was
- * already copied or shared, since someone may be holding it.
+ * already copied or shared, since someone may be holding it. Closing
+ * revokes a link nobody took (inviteSession.ts).
  */
 export function InviteLinkPanel({ server }: { server: InviteServer }) {
   const create = useCreateInvite(server.id);
@@ -104,62 +106,66 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
     terms: InviteTerms;
   } | null>(null);
   const invite = current?.invite ?? null;
-  const handedOut = useRef(false);
   const started = useRef(false);
-  const latest = useRef(0);
   const { status, show } = useInlineStatus();
+  const mutations = useRef({
+    create: create.mutateAsync,
+    revoke: revoke.mutate,
+  });
+  useLayoutEffect(() => {
+    mutations.current = { create: create.mutateAsync, revoke: revoke.mutate };
+  });
+  const session = useRef<InviteSession | null>(null);
 
-  const makeLink = (next: InviteTerms, previous: Invite | null) => {
-    const request = ++latest.current;
-    const previousTerms = current?.terms ?? DEFAULT_INVITE_TERMS;
-    create
-      .mutateAsync(inviteInput(next))
-      .then((created) => {
-        // Terms changed again while this one was made: nobody saw it.
-        if (request !== latest.current) {
-          revoke.mutate(created.code);
-          return;
-        }
+  // One link per opening; the ref also covers StrictMode's second mount.
+  useEffect(() => {
+    session.current ??= inviteSession({
+      create: (next) => mutations.current.create(inviteInput(next)),
+      revoke: (code) => mutations.current.revoke(code),
+      shown: (created, next, replaced) => {
         setCurrent({ invite: created, terms: next });
-        if (previous) {
-          if (!handedOut.current) revoke.mutate(previous.code);
+        if (replaced)
           show({
             tone: "neutral",
             message: `Neuer Link · ${termsSummary(next)}`,
           });
-        }
-        handedOut.current = false;
-      })
-      .catch(() => {
-        // Shown from `create.error`; the chips go back to the link shown.
-        if (request === latest.current && previous) setTerms(previousTerms);
-      });
-  };
-
-  // One link per opening; the ref also covers StrictMode's second mount.
-  useEffect(() => {
-    if (started.current) return;
-    started.current = true;
-    makeLink(DEFAULT_INVITE_TERMS, null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+      },
+      // Shown from `create.error`; the chips go back to the link shown.
+      failed: (shownTerms) => {
+        if (shownTerms) setTerms(shownTerms);
+      },
+    });
+    const links = session.current;
+    links.open();
+    if (!started.current) {
+      started.current = true;
+      links.request(DEFAULT_INVITE_TERMS, false);
+    }
+    return () => links.close();
+  }, [show]);
 
   const changeTerms = (next: InviteTerms) => {
     setTerms(next);
-    makeLink(next, invite);
+    session.current?.request(next, true);
   };
+  // A link for the chips' terms is still to come.
+  const making =
+    create.isPending ||
+    (current !== null &&
+      (current.terms.expiry !== terms.expiry ||
+        current.terms.uses !== terms.uses));
 
   const link = invite ? inviteUrl(invite.code) : "";
   const summary = termsSummary(current?.terms ?? terms);
 
   const copy = async (): Promise<boolean> => {
-    if (create.isPending) {
+    if (making) {
       show({ tone: "neutral", message: "Link wird erstellt…" });
       return false;
     }
     if (!link) return false;
     if (await copyText(link)) {
-      handedOut.current = true;
+      session.current?.handOut();
       show({ tone: "success", message: `Link kopiert · ${summary}` });
       return true;
     }
@@ -177,7 +183,7 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
           create.error instanceof ApiError ? create.error.code : "internal",
         )}`}
         pending={create.isPending}
-        onRetry={() => makeLink(terms, null)}
+        onRetry={() => session.current?.request(terms, false)}
       />
     );
   }
@@ -187,13 +193,11 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
       <div className="invite-panel__link">
         <input
           readOnly
-          value={create.isPending ? "Link wird erstellt…" : link}
+          value={making ? "Link wird erstellt…" : link}
           aria-label="Einladungslink"
-          aria-busy={create.isPending || undefined}
+          aria-busy={making || undefined}
           onFocus={(event) => event.currentTarget.select()}
-          onCopy={() => {
-            handedOut.current = true;
-          }}
+          onCopy={() => session.current?.handOut()}
           className="ui-field invite-panel__url"
         />
         {/* The status line below says it, with the link's terms. */}
@@ -215,13 +219,13 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
           icon={<ShareIcon size={16} />}
           onClick={() =>
             link &&
-            !create.isPending &&
+            !making &&
             void share({
               title: `Einladung zu ${server.name}`,
               text: `Tritt ${server.name} auf Gelabber bei:`,
               url: link,
             }).then((shared) => {
-              if (shared) handedOut.current = true;
+              if (shared) session.current?.handOut();
             })
           }
         >
