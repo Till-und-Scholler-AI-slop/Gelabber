@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -85,6 +86,13 @@ class Gates(unittest.TestCase):
         self.assertIn('deploy', changed_areas('deploy/compose/compose.yaml'))
         text = (ROOT / '.github/workflows/ci.yml').read_text()
         self.assertNotIn('paths:', text.split('\non:\n', 1)[1].split('concurrency:', 1)[0])
+
+    def test_only_version_releases_start_the_desktop_build(self):
+        # Publishing the build-deps mirror release once ran the whole desktop build.
+        text = (ROOT / '.github/workflows/desktop-release.yml').read_text()
+        build = re.split(r'\n  \S', text.split('\n  build:\n', 1)[1], maxsplit=1)[0]
+        self.assertIn("    if: github.event_name != 'release' || "
+                      "startsWith(github.event.release.tag_name, 'v')\n", build)
 
 
 class Promotion(unittest.TestCase):
