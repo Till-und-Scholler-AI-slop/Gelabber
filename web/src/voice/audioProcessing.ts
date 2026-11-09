@@ -48,30 +48,88 @@ export type MicProcessor = {
 };
 const ASSET_HASH =
   "e66d0eaef35d3774e86377efa8b9897e5b226284fb53059f0c1444881888b71c";
+/** A download that stops arriving gives up; a slow one that keeps arriving
+ * does not (the model is about 5.6 MB and sent uncompressed). */
+const MODEL_STALL_MS = 8_000;
+/** After a failed load, captures use the browser filters this long before
+ * the model is fetched again, longer after each failure. */
+const MODEL_RETRY_MS = [30_000, 120_000, 600_000];
 let wasm: Promise<WebAssembly.Module> | null = null;
+let modelFailure: { error: unknown; count: number; until: number } | null =
+  null;
+async function fetchModel(): Promise<ArrayBuffer> {
+  const abort = new AbortController();
+  let stall: ReturnType<typeof setTimeout> | undefined;
+  const arm = () => {
+    clearTimeout(stall);
+    stall = setTimeout(
+      () => abort.abort(new Error("Rauschfilter lädt nicht weiter")),
+      MODEL_STALL_MS,
+    );
+  };
+  arm();
+  try {
+    const response = await fetch(`/audio/rnnoise.wasm?sha256=${ASSET_HASH}`, {
+      cache: "force-cache",
+      signal: abort.signal,
+    });
+    if (!response.ok)
+      throw new Error("Rauschfilter konnte nicht geladen werden");
+    if (!response.body) return await response.arrayBuffer();
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      arm();
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      size += value.byteLength;
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return bytes.buffer;
+  } finally {
+    clearTimeout(stall);
+  }
+}
 async function loadModel(): Promise<WebAssembly.Module> {
+  if (modelFailure && Date.now() < modelFailure.until)
+    throw modelFailure.error;
   if (!wasm) {
     wasm = (async () => {
-      const response = await fetch(`/audio/rnnoise.wasm?sha256=${ASSET_HASH}`, {
-        cache: "force-cache",
-        signal: AbortSignal.timeout(8_000),
-      });
-      if (!response.ok)
-        throw new Error("Rauschfilter konnte nicht geladen werden");
-      const bytes = await response.arrayBuffer();
+      const bytes = await fetchModel();
       const digest = await crypto.subtle.digest("SHA-256", bytes);
       const hash = Array.from(new Uint8Array(digest), (byte) =>
         byte.toString(16).padStart(2, "0"),
       ).join("");
       if (hash !== ASSET_HASH)
         throw new Error("Rauschfilter-Prüfsumme stimmt nicht");
-      return WebAssembly.compile(bytes);
+      const model = await WebAssembly.compile(bytes);
+      modelFailure = null;
+      return model;
     })().catch((error: unknown) => {
       wasm = null;
+      const count = (modelFailure?.count ?? 0) + 1;
+      modelFailure = {
+        error,
+        count,
+        until:
+          Date.now() +
+          MODEL_RETRY_MS[Math.min(count, MODEL_RETRY_MS.length) - 1]!,
+      };
       throw error;
     });
   }
   return wasm;
+}
+export function resetNoiseModelForTests(): void {
+  wasm = null;
+  modelFailure = null;
 }
 function infoFor(
   raw: MediaStream,

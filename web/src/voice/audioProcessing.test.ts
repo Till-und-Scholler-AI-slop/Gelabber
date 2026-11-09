@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captureMicrophone, createProcessor } from "./audioProcessing.ts";
+import {
+  captureMicrophone,
+  createProcessor,
+  resetNoiseModelForTests,
+} from "./audioProcessing.ts";
 import { DEFAULT_MEDIA_SETTINGS } from "./settings.ts";
 function stream() {
   const track = {
@@ -23,6 +27,7 @@ function stream() {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  resetNoiseModelForTests();
 });
 describe("microphone processor ownership", () => {
   it.each(["enhanced", "browser", "original"] as const)(
@@ -381,4 +386,131 @@ it("does not lose processorerror synchronously after the worklet ready acknowled
   expect(result.processor.usable()).toBe(true);
   expect(result.processor.info.actual).toBe("browser");
   result.processor.dispose();
+});
+
+describe("noise model download", () => {
+  const MODEL = [0, 97, 115, 109, 1, 0, 0, 0];
+  function enhancedGraph() {
+    class Context {
+      state = "running";
+      sampleRate = 48_000;
+      audioWorklet = { addModule: async () => {} };
+      resume = async () => {};
+      close = async () => {
+        this.state = "closed";
+      };
+      createMediaStreamSource() {
+        return { connect() {}, disconnect() {} };
+      }
+      createGain() {
+        return { gain: { value: 1 }, connect() {}, disconnect() {} };
+      }
+      createMediaStreamDestination() {
+        return { stream: stream().raw };
+      }
+    }
+    class Worklet {
+      onprocessorerror: (() => void) | null = null;
+      port = {
+        onmessage: null as
+          | ((event: { data: { ready: boolean } }) => void)
+          | null,
+        postMessage() {},
+        close() {},
+      };
+      constructor() {
+        queueMicrotask(() => this.port.onmessage?.({ data: { ready: true } }));
+      }
+      connect() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("AudioContext", Context);
+    vi.stubGlobal("AudioWorkletNode", Worklet);
+    vi.stubGlobal("crypto", {
+      subtle: {
+        digest: async () =>
+          Uint8Array.from(
+            "e66d0eaef35d3774e86377efa8b9897e5b226284fb53059f0c1444881888b71c".match(
+              /../g,
+            )!,
+            (part) => parseInt(part, 16),
+          ).buffer,
+      },
+    });
+  }
+  /** A body that sends one byte every `everyMs`, and stops when aborted. */
+  function trickle(everyMs: number, bytes: number[], stallAfter = Infinity) {
+    return vi.fn(async (_url: string, init?: RequestInit) => {
+      let sent = 0;
+      let ended = false;
+      let wake = () => {};
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          init?.signal?.addEventListener("abort", () => {
+            if (ended) return;
+            ended = true;
+            controller.error(init.signal?.reason);
+            wake();
+          });
+        },
+        pull(controller) {
+          return new Promise<void>((resolve) => {
+            wake = resolve;
+            if (ended || sent >= stallAfter) return;
+            setTimeout(() => {
+              if (ended) return;
+              if (sent >= bytes.length) {
+                ended = true;
+                controller.close();
+              } else controller.enqueue(new Uint8Array([bytes[sent++]!]));
+              resolve();
+            }, everyMs);
+          });
+        },
+      });
+      return new Response(body);
+    });
+  }
+
+  it("keeps a slow download that keeps arriving", async () => {
+    vi.useFakeTimers();
+    enhancedGraph();
+    // A total deadline would run on the same clock as the download.
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const abort = new AbortController();
+      setTimeout(() => abort.abort(new DOMException("timeout", "TimeoutError")), ms);
+      return abort.signal;
+    });
+    // Eight bytes, three seconds apart: longer than any total limit of 8 s.
+    vi.stubGlobal("fetch", trickle(3_000, MODEL));
+    const getMedia = vi.fn(async () => stream().raw);
+    const result = captureMicrophone(getMedia, DEFAULT_MEDIA_SETTINGS);
+    await vi.advanceTimersByTimeAsync(40_000);
+    const { processor } = await result;
+    expect(getMedia).toHaveBeenCalledOnce();
+    expect(processor.info.actual).toBe("enhanced");
+    processor.dispose();
+  });
+
+  it("gives up on a stalled download and waits before fetching again", async () => {
+    vi.useFakeTimers();
+    enhancedGraph();
+    const fetchModel = trickle(100, MODEL, 2);
+    vi.stubGlobal("fetch", fetchModel);
+    const getMedia = vi.fn(async () => stream().raw);
+    const first = captureMicrophone(getMedia, DEFAULT_MEDIA_SETTINGS);
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect((await first).processor.info.actual).toBe("browser");
+    expect(fetchModel).toHaveBeenCalledOnce();
+    // The next capture right after does not pull the model again.
+    const second = await captureMicrophone(getMedia, DEFAULT_MEDIA_SETTINGS);
+    expect(second.processor.info.actual).toBe("browser");
+    expect(fetchModel).toHaveBeenCalledOnce();
+    // Later it tries again.
+    await vi.advanceTimersByTimeAsync(31_000);
+    vi.stubGlobal("fetch", trickle(1, MODEL));
+    const third = captureMicrophone(getMedia, DEFAULT_MEDIA_SETTINGS);
+    await vi.advanceTimersByTimeAsync(100);
+    expect((await third).processor.info.actual).toBe("enhanced");
+  });
 });
