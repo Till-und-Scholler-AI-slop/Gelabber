@@ -258,8 +258,8 @@ impl Client {
     }
 
     /// The state to draw. Hold the guard only while drawing: the runtime
-    /// waits for it to write. Commands never write on the calling thread,
-    /// so calling them while holding it is safe.
+    /// waits for it to write. `bootstrap` and the commands built on `run`
+    /// write on the calling thread: never call them while holding it.
     pub fn state(&self) -> RwLockReadGuard<'_, State> {
         self.inner.state.read()
     }
@@ -411,6 +411,22 @@ mod tests {
             }
         });
         (format!("http://{addr}"), seen)
+    }
+
+    /// A named operation is pending as soon as it was asked for, before
+    /// its task runs, so a frame in between does not start it again.
+    #[test]
+    fn an_op_is_pending_when_run_returns() {
+        let client = Client::new("http://127.0.0.1:9").unwrap();
+        client.run(
+            "waits",
+            std::future::pending::<Result<(), ApiError>>(),
+            |_, ()| {},
+        );
+        assert_eq!(
+            client.with_state(|s| s.op("waits").cloned()),
+            Some(OpState::Pending)
+        );
     }
 
     /// Opening a conversation and a message arriving in it while the app

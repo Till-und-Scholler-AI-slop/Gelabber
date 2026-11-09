@@ -49,20 +49,35 @@ pub enum SettingTarget {
 impl Client {
     // ------------------------------------------------------------ helpers
 
-    /// Runs `work` as the named operation: `State::ops[op]` is `Pending`,
-    /// then `Done` or `Failed`; `apply` gets the result on success.
+    /// Runs `work` as the named operation: `State::ops[op]` is `Pending`
+    /// when this returns, then `Done` or `Failed`; `apply` gets the result on
+    /// success, in the same write as `Done`, so no frame sees one without
+    /// the other. Writes on the calling thread: not while holding `state()`.
     pub fn run<T, F, A>(&self, op: impl Into<String>, work: F, apply: A)
     where
         T: Send + 'static,
         F: Future<Output = Result<T, ApiError>> + Send + 'static,
         A: FnOnce(&mut State, T) + Send + 'static,
     {
-        let this = self.clone();
         let op = op.into();
+        let epoch = self.write(|s| {
+            s.ops.insert(op.clone(), OpState::Pending);
+            s.epoch
+        });
+        let this = self.clone();
         self.spawn(async move {
-            let epoch = this.epoch();
-            if let Some(value) = this.op(&op, work).await {
-                this.write_in(epoch, |s| apply(s, value));
+            match work.await {
+                Ok(value) => {
+                    this.write_in(epoch, |s| {
+                        s.ops.insert(op, OpState::Done);
+                        apply(s, value);
+                    });
+                }
+                Err(error) => {
+                    if this.epoch() == epoch {
+                        this.fail_op(&op, error);
+                    }
+                }
             }
         });
     }
