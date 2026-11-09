@@ -60,6 +60,8 @@ pub(super) struct Inner {
     media_sessions: Mutex<HashMap<String, (Uuid, std::time::Instant)>>,
     /// Sockets per account on this process, upgrades in flight included.
     per_account: std::sync::Mutex<HashMap<Uuid, usize>>,
+    /// Set once the process shuts down ([`Gateway::drain`]).
+    shutdown: tokio::sync::watch::Sender<bool>,
 }
 
 /// One account's place among its sockets ([`Gateway::reserve_socket`]),
@@ -178,6 +180,7 @@ impl ConnTable {
                 voice_ops: Mutex::new(()),
                 media_sessions: Mutex::new(HashMap::new()),
                 per_account: std::sync::Mutex::new(HashMap::new()),
+                shutdown: tokio::sync::watch::channel(false).0,
             }),
         }
     }
@@ -582,6 +585,24 @@ impl Gateway {
             .is_some_and(|(owner, _)| *owner == generation)
         {
             sessions.remove(key);
+        }
+    }
+
+    /// Resolves once the process shuts down.
+    pub fn shutdown_signal(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.connections.inner.shutdown.subscribe()
+    }
+
+    /// Close every socket of this process with 1012 and wait, at most
+    /// `timeout`, until they ran their cleanup. HTTP graceful shutdown does
+    /// not wait for upgraded sockets, so the caller runs this first.
+    pub async fn drain(&self, timeout: Duration) {
+        self.connections.inner.shutdown.send_replace(true);
+        let deadline = tokio::time::Instant::now() + timeout;
+        while tokio::time::Instant::now() < deadline
+            && !self.connections.inner.sockets.read().await.is_empty()
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
 

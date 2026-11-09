@@ -585,6 +585,56 @@ async fn reconnect_signals_gap_when_the_buffer_cannot_fill_it(pool: PgPool) {
     assert_eq!(ok["n"], 10);
 }
 
+/// On shutdown every socket closes with 1012 (service restart) and runs its
+/// normal cleanup, so its presence goes with it instead of timing out.
+#[sqlx::test]
+async fn shutdown_closes_sockets_with_service_restart_and_cleans_up(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Restart").await;
+    let (server_id, _) = ids(&server);
+    let (addr, state) = common::serve_ws(pool).await;
+    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+    send_json(&mut ws, json!({ "op": "s", "s": server_id })).await;
+    recv_within(&mut ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    let mut redis = state
+        .redis
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let status = format!("gb:p:u:{}", owner.user_id());
+    let online: bool = redis::cmd("EXISTS")
+        .arg(&status)
+        .query_async(&mut redis)
+        .await
+        .unwrap();
+    assert!(online);
+
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        state.gateway.drain(Duration::from_secs(3)),
+    )
+    .await
+    .expect("drain returns");
+    let close = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match ws.next().await {
+                Some(Ok(Message::Close(frame))) => return frame,
+                Some(Ok(_)) => {}
+                other => panic!("expected a close frame, got {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("close frame");
+    assert_eq!(u16::from(close.expect("close code").code), 1012);
+    let online: bool = redis::cmd("EXISTS")
+        .arg(&status)
+        .query_async(&mut redis)
+        .await
+        .unwrap();
+    assert!(!online, "presence cleared on the way out");
+}
+
 /// One account holds a bounded number of sockets on a process; the upgrade
 /// beyond it is refused, and a closed socket frees its place.
 #[sqlx::test]

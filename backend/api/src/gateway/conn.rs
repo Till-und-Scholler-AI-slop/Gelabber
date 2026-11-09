@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use axum::extract::ws::{Message, Utf8Bytes, WebSocket};
+use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
@@ -91,11 +91,18 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
     security.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     let (mut sink, mut stream) = socket.split();
+    let mut shutdown = state.gateway.shutdown_signal();
+    let mut close = None;
 
     loop {
         tokio::select! {
             biased;
             _ = revoked.changed() => break,
+            _ = async { drop(shutdown.wait_for(|on| *on).await) } => {
+                // 1012 Service Restart: the client reconnects to the next process.
+                close = Some(CloseFrame { code: 1012, reason: Utf8Bytes::from_static("restart") });
+                break;
+            }
             _ = &mut expired => {
                 match current_expiry(&state, &session).await {
                     Some(at) if at > chrono::Utc::now() => {
@@ -207,7 +214,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
 
     let _ = tokio::time::timeout(
         std::time::Duration::from_secs(1),
-        sink.send(Message::Close(None)),
+        sink.send(Message::Close(close)),
     )
     .await;
     if focused {
