@@ -242,6 +242,12 @@ pub enum SessionStatus {
     Authenticated(Value),
 }
 
+/// GET /api/auth/mail: whether the server sends account mail.
+fn mail_check(client: &Client) -> Pending<Result<Value, ApiError>> {
+    let http = client.http().clone();
+    Pending::spawn(client, async move { http.get::<Value>("/auth/mail").await })
+}
+
 /// `SESSION_RETRY_MS` (session.ts).
 const RETRY: [f64; 4] = [2.0, 5.0, 15.0, 30.0];
 
@@ -337,6 +343,8 @@ pub struct GelabberApp {
     session: Session,
     screen: ScreenState,
     mail_check: Option<Pending<Result<Value, ApiError>>>,
+    /// A failed mail check is asked again then, on the session's backoff.
+    mail_retry: Option<(usize, f64)>,
     account_mail: Option<bool>,
     toasts: Toasts,
     /// The client's workspace (lists, gateway) was started for this sign-in.
@@ -370,10 +378,7 @@ impl GelabberApp {
         images.get(ctx, screens::auth::layout::ARTWORK);
         let mut session = Session::new();
         session.check(&client);
-        let http = client.http().clone();
-        let mail_check = Some(Pending::spawn(&client, async move {
-            http.get::<Value>("/auth/mail").await
-        }));
+        let mail_check = Some(mail_check(&client));
         Self {
             nav: Nav::new(route.as_deref().unwrap_or("/")),
             call: gelabber_call::Call::new(client.clone()),
@@ -382,6 +387,7 @@ impl GelabberApp {
             session,
             screen: ScreenState::None,
             mail_check,
+            mail_retry: None,
             account_mail: None,
             toasts: Toasts::default(),
             workspace: false,
@@ -483,13 +489,32 @@ impl GelabberApp {
         let now = ctx.input(|i| i.time);
         crate::style::scroll_activity(&ctx);
         self.session.poll(now);
-        if let Some(result) = poll(&mut self.mail_check) {
-            self.account_mail = Some(
-                result
-                    .ok()
-                    .and_then(|v| v.get("enabled").and_then(Value::as_bool))
-                    .unwrap_or(false),
-            );
+        match poll(&mut self.mail_check) {
+            // Unknown, not "no mail" (offline, server restarting): asked
+            // again on the session's backoff; "Passwort vergessen?" waits.
+            Some(Err(e)) if e.status().is_none_or(|s| s >= 500 || s == 429) => {
+                let failures = self.mail_retry.map_or(0, |(n, _)| n) + 1;
+                self.mail_retry = Some((failures, now + RETRY[failures.min(4) - 1]));
+            }
+            Some(result) => {
+                self.mail_retry = None;
+                self.account_mail = Some(
+                    result
+                        .ok()
+                        .and_then(|v| v.get("enabled").and_then(Value::as_bool))
+                        .unwrap_or(false),
+                );
+            }
+            None => {}
+        }
+        if let Some((_, at)) = self.mail_retry
+            && self.mail_check.is_none()
+        {
+            if now >= at {
+                self.mail_check = Some(mail_check(&self.client));
+            } else {
+                ctx.request_repaint_after(Duration::from_secs_f64((at - now).min(1.0)));
+            }
         }
         if let Some(wait) = self.session.retry_in(now) {
             if wait <= 0.0 {
