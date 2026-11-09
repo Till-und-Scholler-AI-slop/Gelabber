@@ -398,9 +398,15 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
         let width = ui.available_width().min(1040.0);
         let left = ui.cursor().min.x;
         ui.add_space(32.0);
+        // Rows and forms keep one measure; Profilkarte and Themes give the
+        // rest to their previews (`.settings-area > *`).
+        let column = match info.id {
+            "profilkarte" | "themes" => width - 80.0,
+            _ => (width - 80.0).min(controls::MEASURE),
+        };
         let inner = Rect::from_min_size(
             pos2(left + 40.0, ui.cursor().min.y),
-            vec2(width - 80.0, f32::INFINITY),
+            vec2(column, f32::INFINITY),
         );
         let mut child = ui.new_child(
             UiBuilder::new()

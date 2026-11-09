@@ -45,8 +45,9 @@
     const root = host.attachShadow({ mode: "closed" });
     const box = document.createElement("div");
     box.setAttribute("role", "status");
-    // Top centre: clear of the composer and the call dock at the bottom.
-    box.style.cssText = "position:fixed;top:12px;left:50%;transform:translateX(-50%);"
+    // Top centre, 12px under the 52px header: clear of its title and search,
+    // and of the composer and the call dock at the bottom.
+    box.style.cssText = "position:fixed;top:64px;left:50%;transform:translateX(-50%);"
       + "z-index:2147483647;display:flex;gap:10px;align-items:center;"
       + "width:max-content;max-width:calc(100vw - 32px);box-sizing:border-box;"
       + "padding:10px 12px;border-radius:12px;border:1px solid var(--lr-border);"

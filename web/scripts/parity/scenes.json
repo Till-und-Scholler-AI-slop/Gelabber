@@ -118,6 +118,32 @@
       "user": "lena"
     },
     {
+      "name": "server-settings-einladungen",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "Einladungen"
+        },
+        {
+          "wait": 300
+        }
+      ]
+    },
+    {
+      "name": "server-settings-gefahrenzone",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "Gefahrenzone"
+        },
+        {
+          "wait": 300
+        }
+      ]
+    },
+    {
       "name": "home",
       "path": "/",
       "user": "lena"
