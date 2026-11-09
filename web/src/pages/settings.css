@@ -142,8 +142,7 @@
   border: 0;
 }
 .settings-group + .settings-group,
-.settings-form + .settings-group,
-.settings-group + .settings-note {
+.settings-form + .settings-group {
   margin-top: 32px;
 }
 .settings-group-legend {
@@ -190,13 +189,22 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.settings-note {
-  margin-top: 24px;
-  padding: 14px 16px;
-  border: 1px solid var(--lr-border);
+/* A switch with a note on what decides it (the browser's permission):
+   one row, the note boxed under the switch like the device-name reveal. */
+.settings-row-noted {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--lr-border);
+}
+.settings-row-noted > .settings-row {
+  border-bottom: 0;
+}
+.settings-row-note {
+  padding: 10px 12px;
   border-radius: var(--lr-radius-md);
-  background: var(--lr-panel);
-  font: var(--lr-type-body);
+  background: var(--lr-surface);
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+  line-height: 1.5;
 }
 .settings-actions {
   display: flex;

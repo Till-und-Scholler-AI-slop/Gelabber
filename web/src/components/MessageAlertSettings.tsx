@@ -1,4 +1,5 @@
 import { useMediaSettings } from "../voice/settings.ts";
+import { NotificationPermissionStatus } from "./NotificationPermission.tsx";
 import { SettingsGroup } from "./SettingsGroup.tsx";
 import { Switch } from "./ui/Switch.tsx";
 
@@ -16,19 +17,24 @@ export function MessageAlertSettings() {
           settings.patch({ messageToasts: event.target.checked })
         }
       />
-      <Switch
-        id="desktop-notify"
-        className="settings-row"
-        label="Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist"
-        checked={settings.desktopNotify}
-        onChange={(event) => {
-          const desktopNotify = event.target.checked;
-          settings.patch({ desktopNotify });
-          if (desktopNotify && typeof Notification !== "undefined") {
-            void Notification.requestPermission();
-          }
-        }}
-      />
+      {/* What the browser allows sits under the switch it decides. */}
+      <div className="settings-row-noted">
+        <Switch
+          id="desktop-notify"
+          className="settings-row"
+          label="Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist"
+          aria-describedby="desktop-notify-note"
+          checked={settings.desktopNotify}
+          onChange={(event) => {
+            const desktopNotify = event.target.checked;
+            settings.patch({ desktopNotify });
+            if (desktopNotify && typeof Notification !== "undefined") {
+              void Notification.requestPermission();
+            }
+          }}
+        />
+        <NotificationPermissionStatus id="desktop-notify-note" />
+      </div>
       <Switch
         id="message-sound"
         className="settings-row"

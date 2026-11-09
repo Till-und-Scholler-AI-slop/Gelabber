@@ -65,8 +65,8 @@ const PERMISSIONS: [(Permission, &str, &str); 8] = [
     ),
     (
         Permission::JoinVoice,
-        "Voice beitreten",
-        "Sprachkanälen beitreten.",
+        "Sprachkanälen beitreten",
+        "In Sprachkanälen reden, zuhören und die Kamera zeigen.",
     ),
     (
         Permission::GoLive,
@@ -485,13 +485,13 @@ fn poll_loads(ui: &Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, m
         match r {
             Ok(()) => s.invites_status.success(ui, "Link widerrufen."),
             // useRevokeInvite: a toast, not the section's status.
-            Err(e) => app.toasts.failure("Einladung nicht widerrufen.", &e),
+            Err(e) => app.toasts.failure("Einladung nicht widerrufen.", None, &e),
         }
         reload_invites(app, s, id);
     }
     if let Some(r) = poll(&mut s.unban) {
         if let Err(e) = r {
-            app.toasts.failure("Mitglied nicht entsperrt.", &e);
+            app.toasts.failure("Mitglied nicht entsperrt.", None, &e);
         }
         reload_bans(app, s, id);
     }

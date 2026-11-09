@@ -176,6 +176,51 @@
       ]
     },
     {
+      "name": "voice-muted",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Stummschalten"
+        },
+        {
+          "hover": "Stummschalten"
+        },
+        {
+          "wait": 600
+        }
+      ]
+    },
+    {
+      "name": "voice-deafened",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Taubschalten"
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
       "name": "voice-empty",
       "path": "/s/{home}/c/{Kino}",
       "user": "lena"
@@ -1548,7 +1593,7 @@
       "call": "Sofa jonas,mira:muted",
       "actions": [
         {
-          "click": "Voice-Einstellungen"
+          "click": "Anrufeinstellungen"
         },
         {
           "clicktext": "Alle Einstellungen …"
@@ -1563,13 +1608,13 @@
       "call": "Sofa jonas,mira:muted",
       "actions": [
         {
-          "click": "Voice-Einstellungen"
+          "click": "Anrufeinstellungen"
         },
         {
           "clicktext": "Alle Einstellungen …"
         },
         {
-          "clicktext": "Video & Stream"
+          "clicktext": "Video & Live"
         }
       ]
     },
@@ -1598,7 +1643,7 @@
       "desktop": true,
       "actions": [
         {
-          "click": "Voice-Einstellungen"
+          "click": "Anrufeinstellungen"
         },
         {
           "clicktext": "Alle Einstellungen …"
@@ -1760,6 +1805,36 @@
         },
         {
           "click": "Vollbild"
+        }
+      ]
+    },
+    {
+      "name": "voice-fullscreen-muted",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted:live",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Stummschalten"
+        },
+        {
+          "click": "Zuschauen"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Vollbild"
+        },
+        {
+          "wait": 500
         }
       ]
     },

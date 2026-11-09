@@ -55,6 +55,7 @@ import {
   readableMentions,
   toWire,
 } from "../messages/mentions.ts";
+import { plainText } from "../messages/markdown.ts";
 import { AttemptActionsContext, JumpTo } from "./messagePaneContext.ts";
 import { formatClock, formatFull, formatWhen } from "./messageTime.ts";
 
@@ -610,7 +611,7 @@ function ReplyHeader({ reply }: { reply: Reply }) {
   const system = asSystem(reply.system);
   const summary =
     (system && systemText(system, reply.author.name)) ||
-    (reply.excerpt && readableMentions(reply.excerpt, members)) ||
+    (reply.excerpt && readableMentions(plainText(reply.excerpt), members)) ||
     (reply.has_gif ? "GIF" : reply.has_attachment ? "Anhang" : "");
   return (
     <button

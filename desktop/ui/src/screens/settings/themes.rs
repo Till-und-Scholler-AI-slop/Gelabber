@@ -489,7 +489,7 @@ fn retry(ctx: &egui::Context, app: &AppCtx) {
     ));
 }
 
-/// "Account-Stand laden": drop the local change and reload.
+/// "Gespeicherten Stand laden": drop the local change and reload.
 fn discard_pending(ctx: &egui::Context, app: &AppCtx) {
     {
         let shared = sync(ctx);
@@ -994,7 +994,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
     if sync_view.saving || sync_view.error.is_some() {
         ui.add_space(16.0);
         let msg = if sync_view.saving {
-            "Wird mit deinem Account synchronisiert …".to_owned()
+            "Wird mit deinem Konto synchronisiert …".to_owned()
         } else {
             sync_view.error.clone().unwrap_or_default()
         };
@@ -1047,15 +1047,17 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
                         retry(&ctx, app);
                     }
                     if sync_view.pending
-                        && ui.add(Button::new("Account-Stand laden").small()).clicked()
+                        && ui
+                            .add(Button::new("Gespeicherten Stand laden").small())
+                            .clicked()
                     {
                         controls::ask(
                             &ctx,
                             Confirm::danger(
                                 "theme-account",
                                 "Lokale Änderung verwerfen?",
-                                Some("Gelabber lädt dann wieder den Theme-Stand deines Accounts."),
-                                "Account-Stand laden",
+                                Some("Gelabber lädt dann wieder den Theme-Stand deines Kontos."),
+                                "Gespeicherten Stand laden",
                             ),
                         );
                     }
@@ -1348,9 +1350,9 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
     ui.add_space(24.0);
     let foot = TextStyle::new(13.0, 400.0, 1.6);
     let lead = if sync_view.ready && sync_view.error.is_none() {
-        "Mit deinem Account synchronisiert."
+        "Mit deinem Konto synchronisiert."
     } else {
-        "Deine Themes gehören zu deinem Account."
+        "Deine Themes gehören zu deinem Konto."
     };
     let rich = text::Rich::new(foot)
         .push(&format!("{lead} Paletten nach "), foot, c.muted)

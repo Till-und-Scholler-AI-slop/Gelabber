@@ -684,10 +684,10 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         // The gear's quick settings hold the call volume, Live or not.
         await f.watcher.page
           .getByRole("region", { name: "Aktive Medien", exact: true })
-          .getByRole("button", { name: "Voice-Einstellungen", exact: true })
+          .getByRole("button", { name: "Anrufeinstellungen", exact: true })
           .click();
         const volume = f.watcher.page
-          .getByRole("dialog", { name: "Voice-Einstellungen", exact: true })
+          .getByRole("dialog", { name: "Anrufeinstellungen", exact: true })
           .getByRole("slider", { name: "Gespräche", exact: true });
         await volume.press("Home");
         for (let i = 0; i < 35; i++) await volume.press("ArrowRight");

@@ -101,7 +101,11 @@ vi.mock("./userVolume.ts", async (original) => {
 });
 
 import { VoiceRoom } from "./VoiceRoom.tsx";
-import { LiveMenuItems, VoiceControls } from "../components/VoiceControls.tsx";
+import {
+  LiveMenuItems,
+  VoiceAudioToggles,
+  VoiceControls,
+} from "../components/VoiceControls.tsx";
 import { VoiceSessionControls } from "../components/VoiceSessionControls.tsx";
 import { callAnnouncement } from "./callBar.ts";
 import { CallSound } from "./QuickCallSettings.tsx";
@@ -321,7 +325,7 @@ describe("active media UI", () => {
     expect(html).toMatch(/<button[^>]*>(?:<svg.*?<\/svg>)?Beitreten<\/button>/);
     expect(html).not.toContain('aria-label="Beitreten"');
     expect(html).toContain('aria-label="Mikrofon testen"');
-    expect(html).toContain('aria-label="Voice-Einstellungen"');
+    expect(html).toContain('aria-label="Anrufeinstellungen"');
     expect(html).not.toContain("Bob");
     expect(html).not.toContain("Spricht gerade");
     expect(html).not.toContain("Zuschauen");
@@ -493,7 +497,7 @@ describe("active media UI", () => {
     expect(html.match(/<input[^>]*disabled=""/g)).toHaveLength(2);
     expect(html).toContain("Taubgeschaltet.");
     // The stream's mute stays in reach for after.
-    expect(control(html, "Stream-Ton stummschalten")).not.toContain("disabled");
+    expect(control(html, "Live-Ton stummschalten")).not.toContain("disabled");
   });
   it("keeps one name per toggle and says its state with aria-pressed", () => {
     Object.assign(fixture.voice, {
@@ -516,17 +520,45 @@ describe("active media UI", () => {
     });
     for (const tag of tags()) expect(tag).toContain('aria-pressed="true"');
     const [mic, deafen, camera, live] = tags();
-    // What a press does stays in the tooltip, with its shortcut.
-    expect(mic).toContain("Stummschaltung aufheben (Strg+Umschalt+M)");
-    expect(deafen).toContain("Taubschaltung aufheben (Strg+Umschalt+D)");
+    // The shortcut is the control's; what a press does is in its styled
+    // tooltip (callTip), not in a browser `title`.
     expect(mic).toContain('aria-keyshortcuts="Control+Shift+M"');
     expect(deafen).toContain('aria-keyshortcuts="Control+Shift+D"');
-    expect(camera).toContain('title="Kamera ausschalten"');
+    for (const tag of tags()) expect(tag).not.toContain("title=");
     // A camera that is on wears the accent pill, a Live the red one.
     expect(camera).toContain("is-on");
     expect(live).toContain("voice-control-live");
-    expect(live).toContain('title="Du bist live"');
     expect(live).toContain('aria-haspopup="menu"');
+  });
+  it("says Stumm or Taub beside a closed microphone or headset", () => {
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+    });
+    const words = (html = renderToStaticMarkup(<VoiceControls />)) => {
+      return ["Stummschalten", "Taubschalten"].map(
+        (label) =>
+          html
+            .match(
+              new RegExp(
+                `<button[^>]*aria-label="${label}"[^>]*>([\\s\\S]*?)</button>`,
+              ),
+            )?.[1]
+            .match(/class="voice-control-text"[^>]*>([^<]*)</)?.[1] ?? null,
+      );
+    };
+    expect(words()).toEqual([null, null]);
+    fixture.voice.muted = true;
+    expect(words()).toEqual(["Stumm", null]);
+    // Deafened, the headset says it for both, as a participant's state does.
+    fixture.voice.deafened = true;
+    expect(words()).toEqual([null, "Taub"]);
+    // The fullscreen strip keeps to its icons, as the desktop app's does.
+    expect(words(renderToStaticMarkup(<VoiceAudioToggles />))).toEqual([
+      null,
+      null,
+    ]);
   });
   it("offers going live and its sound in the Live menu", () => {
     Object.assign(fixture.voice, {

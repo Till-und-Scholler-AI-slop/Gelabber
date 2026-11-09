@@ -295,7 +295,7 @@ pub fn control(ui: &mut Ui, call: &gelabber_call::Call, user: Uuid) {
     ui.add_space(10.0);
     let hint = Block::wrapped(
         ui,
-        "Nur für dich hörbar. Stream-Ton bleibt unverändert.",
+        "Nur für dich hörbar. Live-Ton bleibt unverändert.",
         text::META,
         c.muted,
         width,

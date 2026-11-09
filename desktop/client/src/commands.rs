@@ -90,6 +90,7 @@ impl Client {
         if let Some(failed) = crate::store::failure_text(key) {
             self.notify(Notice::Failed {
                 failed,
+                gone: crate::store::gone_text(key),
                 error: error.clone(),
             });
         }

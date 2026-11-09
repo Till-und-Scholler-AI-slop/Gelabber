@@ -1,3 +1,4 @@
+import { plainText } from "../messages/markdown.ts";
 import { readableMentions, type MentionMember } from "../messages/mentions.ts";
 import type { Badge } from "../messages/notifyLevel.ts";
 import { asSystem, systemText } from "../messages/system.ts";
@@ -109,7 +110,7 @@ export function messagePreview(
   if (system)
     return { author: null, text: systemText(system, message.author.name) };
   const text =
-    readableMentions(replyExcerpt(message.content), members) ||
+    readableMentions(replyExcerpt(plainText(message.content)), members) ||
     (message.gif
       ? "GIF"
       : asAttachmentList(message.attachments).length > 0

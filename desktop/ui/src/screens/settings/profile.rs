@@ -432,6 +432,16 @@ pub fn security(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut SecurityStat
             c.text,
         );
         ui.allocate_exact_size(vec2(560.0, 20.8), egui::Sense::hover());
+        // `.settings-danger .settings-hint`: margin 4 0 12.
+        ui.add_space(4.0);
+        controls::paragraph(
+            ui,
+            "Beendet jede Anmeldung, auch auf diesem Gerät.",
+            controls::HINT,
+            c.muted,
+            560.0,
+        );
+        ui.add_space(12.0);
         if ui
             .add(Button::new("Auf allen Geräten abmelden").variant(ButtonVariant::DangerOutline))
             .clicked()

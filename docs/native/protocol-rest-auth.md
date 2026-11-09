@@ -317,7 +317,7 @@ German labels (`web/src/servers/permissions.ts:6-51`):
 | mention_everyone | @everyone und @here | Alle Mitglieder auf einmal erwähnen und benachrichtigen. |
 | send_messages | Nachrichten schreiben | In Textkanälen schreiben. |
 | send_files | Dateien senden | Anhänge hochladen. |
-| join_voice | Voice beitreten | Sprachkanälen beitreten. |
+| join_voice | Sprachkanälen beitreten | In Sprachkanälen reden, zuhören und die Kamera zeigen. |
 | go_live | Live gehen | Im Sprachkanal einen Bildschirm oder ein Fenster für alle dort zeigen. |
 
 `ServerView` (`servers/mod.rs:69-79`; web `Server`, `web/src/servers/types.ts:20-33`):

@@ -1936,6 +1936,12 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 .lr-search-hit:hover > span {
   color: var(--lr-accent-text);
 }
+/* The searched words, marked like a mention of you. */
+.lr-search-mark {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--lr-warning) 30%, transparent);
+  color: inherit;
+}
 
 .lr-header-search > kbd {
   margin-left: auto;

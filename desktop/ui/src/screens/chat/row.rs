@@ -326,7 +326,7 @@ pub fn layout(ui: &Ui, cx: &RowCx, width: f32) -> RowLayout {
                     .excerpt
                     .as_deref()
                     .filter(|e| !e.is_empty())
-                    .map(|e| readable_mentions(e, cx.names))
+                    .map(|e| readable_mentions(&super::markdown::plain_text(e), cx.names))
                     .unwrap_or_else(|| {
                         if r.has_gif {
                             "GIF".into()

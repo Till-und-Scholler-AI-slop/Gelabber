@@ -1,4 +1,4 @@
-//! The voice dialogs: "Voice & Video" (components/VoiceSettingsDialog.tsx,
+//! The voice dialogs: "Audio & Video" (components/VoiceSettingsDialog.tsx,
 //! the `openDialog` of voice/settings.ts) with the tabs Audio, "Video &
 //! Stream" and Diagnose, and "Mikrofon testen" (voice/MicrophoneTest.tsx,
 //! the desktop branch of voice/native/microphoneTest.ts: meters, no
@@ -28,7 +28,7 @@ impl Tab {
     fn label(self) -> &'static str {
         match self {
             Tab::Audio => "Audio",
-            Tab::Video => "Video & Stream",
+            Tab::Video => "Video & Live",
             Tab::Diagnose => "Diagnose",
         }
     }
@@ -54,7 +54,7 @@ fn with<R>(ctx: &egui::Context, f: impl FnOnce(&mut Open) -> R) -> R {
     ctx.data_mut(|d| f(d.get_temp_mut_or_default::<Open>(id())))
 }
 
-/// `openDialog(section)`: "Voice & Video" on `tab`.
+/// `openDialog(section)`: "Audio & Video" on `tab`.
 pub fn open_settings(ctx: &egui::Context, tab: Tab) {
     with(ctx, |o| {
         if o.settings.is_none() {
@@ -113,7 +113,7 @@ fn settings_dialog(ui: &mut Ui, app: &mut AppCtx, tab: Tab, on_top: bool) {
         s.spacing.scroll.floating_allocated_width = 0.0;
         s.spacing.scroll.dormant_handle_opacity = 0.0;
     });
-    let output = Modal::new("voice-settings", "Voice & Video")
+    let output = Modal::new("voice-settings", "Audio & Video")
         .width(ModalWidth::Large)
         .show(
             &ctx,
@@ -433,7 +433,7 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
                 ui.add_space(14.0);
                 controls::paragraph(
                     ui,
-                    "Übersteuerung erkannt. Verringere den Mic-Gain oder Gerätepegel.",
+                    "Übersteuerung erkannt. Verringere die Mikrofonverstärkung oder den Gerätepegel.",
                     text::BODY,
                     c.text,
                     width,
