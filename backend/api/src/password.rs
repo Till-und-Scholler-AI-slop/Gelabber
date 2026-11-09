@@ -34,17 +34,22 @@ fn concurrent_runs() -> &'static Semaphore {
 }
 
 /// Runs `work` on the blocking pool once `runs` has a permit, or refuses
-/// like a rate limit after `wait`.
+/// like a rate limit after `wait`. The run itself holds the permit: a caller
+/// that is dropped (client gone) must not free it while the hash goes on.
 async fn limited<T: Send + 'static>(
-    runs: &Semaphore,
+    runs: &'static Semaphore,
     wait: Duration,
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, ApiError> {
-    let Ok(Ok(_permit)) = tokio::time::timeout(wait, runs.acquire()).await else {
+    let Ok(Ok(permit)) = tokio::time::timeout(wait, runs.acquire()).await else {
         tracing::warn!("password hashing at capacity; request refused");
         return Err(ApiError::RateLimited { retry_after: 1 });
     };
-    Ok(spawn_blocking(work).await?)
+    Ok(spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    })
+    .await?)
 }
 
 /// Hashes `password` with a fresh random salt. Returns the PHC string that
@@ -121,16 +126,43 @@ mod tests {
 
     #[tokio::test]
     async fn a_full_pool_answers_rate_limited_after_the_wait() {
-        let pool = Semaphore::new(1);
+        let pool: &'static Semaphore = Box::leak(Box::new(Semaphore::new(1)));
         let held = pool.acquire().await.unwrap();
         let wait = Duration::from_millis(50);
-        let busy = limited(&pool, wait, || 1).await;
+        let busy = limited(pool, wait, || 1).await;
         assert!(
             matches!(busy, Err(ApiError::RateLimited { retry_after: 1 })),
             "{busy:?}"
         );
         drop(held);
-        assert_eq!(limited(&pool, wait, || 2).await.unwrap(), 2);
+        assert_eq!(limited(pool, wait, || 2).await.unwrap(), 2);
+    }
+
+    /// A caller that goes away (client disconnect) must not free the run's
+    /// permit while the hash is still running and holding its memory.
+    #[tokio::test]
+    async fn a_dropped_caller_keeps_the_permit_until_the_run_ends() {
+        let pool: &'static Semaphore = Box::leak(Box::new(Semaphore::new(1)));
+        let (finish, finished) = std::sync::mpsc::channel::<()>();
+        let caller = tokio::spawn(limited(pool, Duration::from_secs(1), move || {
+            finished.recv().ok();
+        }));
+        while pool.available_permits() != 0 {
+            tokio::task::yield_now().await;
+        }
+        caller.abort();
+        assert!(caller.await.unwrap_err().is_cancelled());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(pool.available_permits(), 0, "released while hashing");
+
+        finish.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while pool.available_permits() != 1 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("released once the run ended");
     }
 
     #[tokio::test]
