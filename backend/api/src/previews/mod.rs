@@ -235,7 +235,19 @@ pub fn request_host(headers: &HeaderMap) -> Option<String> {
 
 async fn process(state: &AppState, job: Job) {
     let deadline = tokio::time::Instant::now() + JOB_BUDGET;
+    // An edit keeps the card a link already has: it is not fetched again,
+    // and a slow site cannot take it away by spending the budget.
+    let existing: HashMap<String, Uuid> = sqlx::query_as(
+        "SELECT lp.url, mp.preview_id FROM message_previews mp \
+         JOIN link_previews lp ON lp.id = mp.preview_id WHERE mp.message_id = $1",
+    )
+    .bind(job.message_id)
+    .fetch_all(&state.db)
+    .await
+    .map(|rows: Vec<(String, Uuid)>| rows.into_iter().collect())
+    .unwrap_or_default();
     let mut ids = Vec::new();
+    let mut spent = false;
     for url in &job.urls {
         if job.own_host.as_deref().is_some_and(|own| {
             url.host_str().is_some_and(|host| {
@@ -246,13 +258,20 @@ async fn process(state: &AppState, job: Job) {
         }) {
             continue;
         }
+        if let Some(id) = existing.get(url.as_str()) {
+            ids.push(*id);
+            continue;
+        }
+        if spent {
+            continue;
+        }
         match tokio::time::timeout_at(deadline, preview_for(state, url)).await {
             Ok(Ok(Some(id))) => ids.push(id),
             Ok(Ok(None)) => {}
             Ok(Err(err)) => warn!(error = err.code(), "link preview failed"),
             // The budget is spent, not necessarily by this URL: no backoff
             // here (a host that timed out itself got one in the fetcher),
-            // and the rest of the message's links go without a card.
+            // and the rest of the message's new links go without a card.
             Err(_) => {
                 state.metrics.link_preview("budget");
                 info!(
@@ -261,7 +280,7 @@ async fn process(state: &AppState, job: Job) {
                     "link preview: no card, the message's time is spent"
                 );
                 debug!(url = %url, "link preview budget spent");
-                break;
+                spent = true;
             }
         }
     }
