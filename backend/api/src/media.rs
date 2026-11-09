@@ -227,8 +227,8 @@ pub async fn revoke_session(redis: &redis::Client, hash: &str) -> Result<(), Api
 
 /// A DB-backed session lease bounds missed logout notifications to 3 seconds.
 /// Refresh holds the same session row lock as ticket mint, so logout cannot race
-/// a successful check followed by a lease resurrection. Redis/DB errors stop
-/// renewal; 03b must fail closed when the lease disappears.
+/// a successful check followed by a lease resurrection. Redis/DB errors are
+/// retried until the lease has run out; 03b must fail closed when it disappears.
 const REFRESH_SESSION_LUA: &str = r#"
 if redis.call('GET', KEYS[3]) ~= ARGV[3] then return 'lost' end
 if redis.call('EXISTS', KEYS[2]) == 0 then return 'idle' end
@@ -239,6 +239,11 @@ redis.call('SET', KEYS[1], ARGV[1], 'PX', math.min(3000, remaining))
 redis.call('PEXPIRE', KEYS[3], 5000)
 return 'OK'
 "#;
+
+/// The lease's TTL (`PX 3000` in the Lua above).
+const SESSION_LEASE: Duration = Duration::from_secs(3);
+/// The pause before retrying a failed refresh: inside the lease's slack.
+const LEASE_RETRY: Duration = Duration::from_millis(250);
 
 const CLEANUP_OWNER_LUA: &str = r#"
 if redis.call('GET', KEYS[2]) ~= ARGV[1] then return 0 end
@@ -280,8 +285,12 @@ async fn maintain_session(state: &AppState, session: &CurrentSession) -> Result<
     let state = state.clone();
     let session = session.clone();
     tokio::spawn(async move {
+        // Mint set the lease just before this worker started.
+        let mut renewed_at = tokio::time::Instant::now();
+        let mut pause = Duration::from_secs(1);
         loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(pause).await;
+            let attempt = tokio::time::Instant::now();
             let refreshed = tokio::time::timeout(Duration::from_secs(1), async {
                 let Some(_guard) = session.lock_live(&state.db).await? else {
                     return Ok::<String, ApiError>("expired".into());
@@ -314,10 +323,20 @@ async fn maintain_session(state: &AppState, session: &CurrentSession) -> Result<
             })
             .await;
             match refreshed {
-                Ok(Ok(status)) if status == "OK" => {}
+                Ok(Ok(status)) if status == "OK" => {
+                    renewed_at = attempt;
+                    pause = Duration::from_secs(1);
+                }
                 Ok(Ok(status))
                     if status == "idle"
-                        && state.gateway.media_session_recent(&key, generation).await => {}
+                        && state.gateway.media_session_recent(&key, generation).await =>
+                {
+                    pause = Duration::from_secs(1);
+                }
+                // `expired`, `lost`, or idle without a recent mint: definite.
+                Ok(Ok(_)) => break,
+                // A failed or slow refresh is retried while the lease lives.
+                _ if renewed_at.elapsed() < SESSION_LEASE => pause = LEASE_RETRY,
                 _ => break,
             }
         }
@@ -381,6 +400,110 @@ mod tests {
         assert_eq!(code.len(), ticket::CODE_LEN);
         assert!(code.bytes().all(|b| ticket::ALPHABET.contains(&b)));
     }
+    async fn test_session(
+        pool: &sqlx::PgPool,
+        ttl_hours: &str,
+    ) -> (AppState, CurrentSession, redis::aio::MultiplexedConnection) {
+        let config = crate::Config::from_source(|key| match key {
+            "API_ALLOW_MEMORY_STORE" => Some("true".to_owned()),
+            "DATABASE_URL" => Some("postgres://unused:unused@127.0.0.1:1/unused".into()),
+            "REDIS_URL" => Some(std::env::var("REDIS_URL").unwrap()),
+            "API_SESSION_TTL_HOURS" => Some(ttl_hours.to_owned()),
+            "API_SESSION_IDLE_HOURS" => Some("1".to_owned()),
+            _ => None,
+        })
+        .unwrap();
+        let state = AppState::with_pool(&config, pool.clone()).unwrap();
+        let user = crate::auth::user::insert(pool, "media@example.test", "media", "unused")
+            .await
+            .unwrap();
+        let raw = crate::auth::session::create(pool, user.id, Duration::from_secs(3600))
+            .await
+            .unwrap();
+        let hash = crate::token::hash(&raw);
+        let (created_at, expires_at) =
+            sqlx::query_as::<_, (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>(
+                "SELECT created_at, expires_at FROM sessions WHERE token_hash = $1",
+            )
+            .bind(&hash)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        let conn = state
+            .redis
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
+        let session = CurrentSession {
+            user,
+            hash,
+            created_at,
+            expires_at,
+        };
+        (state, session, conn)
+    }
+
+    /// Holds the session row so the worker's `FOR SHARE` waits, for `hold`.
+    async fn block_session_row(pool: &sqlx::PgPool, session: &CurrentSession, hold: Duration) {
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM sessions WHERE token_hash = $1 FOR UPDATE")
+            .bind(&session.hash)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        tokio::time::sleep(hold).await;
+        tx.commit().await.unwrap();
+    }
+
+    #[sqlx::test]
+    async fn one_slow_refresh_keeps_the_lease_and_a_lasting_fault_ends_it(pool: sqlx::PgPool) {
+        let (state, session, mut conn) = test_session(&pool, "2").await;
+        let key = session.key();
+        let user = session.user.id.to_string();
+        // What a mint leaves behind: the 3 s lease and media's demand.
+        redis::cmd("SET")
+            .arg(session_authority_key(&key))
+            .arg(&user)
+            .arg("PX")
+            .arg(3000)
+            .query_async::<()>(&mut conn)
+            .await
+            .unwrap();
+        redis::cmd("SET")
+            .arg(media_demand_key(&key))
+            .arg("1")
+            .arg("EX")
+            .arg(35)
+            .query_async::<()>(&mut conn)
+            .await
+            .unwrap();
+        maintain_session(&state, &session).await.unwrap();
+        // The first refresh (at 1 s) times out at 2 s; the retry gets the row.
+        block_session_row(&pool, &session, Duration::from_millis(2300)).await;
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        let lease: Option<String> = redis::cmd("GET")
+            .arg(session_authority_key(&key))
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(
+            lease.as_deref(),
+            Some(user.as_str()),
+            "lease survives one miss"
+        );
+
+        // The worker untracks the session when it gives up, so a new mint
+        // would start another one.
+        let blocked = block_session_row(&pool, &session, Duration::from_secs(7));
+        let ended = tokio::time::timeout(Duration::from_secs(6), async {
+            while state.gateway.track_media_session(&key).await.is_none() {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
+        let (_, ended) = tokio::join!(blocked, ended);
+        ended.expect("the worker gives up once failures used the lease up");
+    }
+
     #[tokio::test]
     async fn old_owner_cleanup_cannot_delete_restarted_session_authority() {
         let redis = redis::Client::open(
