@@ -158,6 +158,49 @@ async fn login_finds_the_address_through_the_lower_case_index(pool: PgPool) {
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
 }
 
+/// Two spellings of one domain are one account: it is stored with the
+/// ASCII form of its domain, and either spelling signs in.
+#[sqlx::test]
+async fn a_domain_in_two_spellings_is_one_account(pool: PgPool) {
+    let mut client = Client::new(pool);
+    client.bootstrap().await;
+    let res = client
+        .register("victim@bücher.de", "password123", "Ada")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    assert_eq!(res.body["user"]["email"], "victim@xn--bcher-kva.de");
+    let res = client
+        .register("victim@xn--bcher-kva.de", "otherpassword", "Ada 2")
+        .await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+
+    for spelling in ["victim@bücher.de", "victim@xn--bcher-kva.de"] {
+        client.send(Method::POST, "/api/auth/logout", None).await;
+        let res = client.login(spelling, "password123").await;
+        assert_eq!(res.status, StatusCode::OK, "{spelling}: {}", res.body);
+    }
+}
+
+#[sqlx::test]
+async fn fullwidth_letters_name_the_same_domain(pool: PgPool) {
+    let mut client = Client::new(pool);
+    client.bootstrap().await;
+    let res = client
+        .register("victim@example.org", "password123", "Ada")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let res = client
+        .register("victim@ｅｘａｍｐｌｅ.org", "otherpassword", "Mallory")
+        .await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+
+    client.send(Method::POST, "/api/auth/logout", None).await;
+    let res = client
+        .login("victim@ｅｘａｍｐｌｅ.org", "password123")
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+}
+
 #[sqlx::test]
 async fn register_rejects_duplicate_email_case_insensitively(pool: PgPool) {
     let mut client = Client::new(pool);

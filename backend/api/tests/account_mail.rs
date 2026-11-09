@@ -400,6 +400,36 @@ async fn an_inbox_gets_at_most_five_mails_an_hour(pool: PgPool) {
     assert_eq!(mailer.outbox().len(), 6);
 }
 
+/// A reset asked for with the Unicode spelling of the domain reaches the
+/// account stored with its ASCII form.
+#[sqlx::test]
+async fn a_reset_finds_the_account_by_either_spelling(pool: PgPool) {
+    let (state, mailer) = mail_state(pool);
+    let mut client = client(&state).await;
+    let res = client.register("ada@bücher.de", PASSWORD, "Ada").await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 1).await;
+    assert_eq!(sent[0].to, "ada@xn--bcher-kva.de");
+    let res = post(
+        &mut client,
+        "/api/auth/verify-email",
+        json!({ "token": token(&sent[0]), "password": PASSWORD }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    let res = post(
+        &mut client,
+        "/api/auth/password-reset",
+        json!({ "email": "ada@bücher.de" }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 2).await;
+    assert_eq!(sent[1].to, "ada@xn--bcher-kva.de");
+    assert!(sent[1].body.contains("/reset-password#token="));
+}
+
 /// Registrations by strangers spend the address's registration mails, not
 /// the ones its owner needs for a reset.
 #[sqlx::test]

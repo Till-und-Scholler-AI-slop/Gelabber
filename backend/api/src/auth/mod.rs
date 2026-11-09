@@ -336,7 +336,11 @@ async fn login(
         errors.insert("password", "required");
     }
     validate::finish(errors)?;
-    let email = email.expect("validated");
+    let typed = email.expect("validated");
+    // Registration stores the ASCII form of the domain; an older account
+    // may still carry the spelling that was typed.
+    let ascii = validate::ascii_domain(&typed);
+    let email = ascii.clone().unwrap_or_else(|| typed.clone());
     limits::login_attempt(&state, &email)?;
 
     // Register never stores anything longer, so this cannot match; fail
@@ -348,7 +352,12 @@ async fn login(
 
     // Unknown address: `verify` runs Argon2 against a dummy hash anyway so
     // the response time does not reveal whether the account exists.
-    let found = user::credentials_by_email(&state.db, &email).await?;
+    let mut found = user::credentials_by_email(&state.db, &typed).await?;
+    if found.is_none()
+        && let Some(ascii) = &ascii
+    {
+        found = user::credentials_by_email(&state.db, ascii).await?;
+    }
     let stored = found.as_ref().map(|c| c.password_hash.clone());
     let ok = password::verify(body.password, stored).await?;
 
@@ -551,9 +560,18 @@ async fn request_password_reset(
     let mut errors = FieldErrors::new();
     let email = validate::email(&body.email, &mut errors);
     validate::finish(errors)?;
-    let email = email.expect("validated");
+    let typed = email.expect("validated");
+    // Either spelling of the domain, as at sign-in.
+    let ascii = validate::ascii_domain(&typed);
+    let mut found = user::verified_by_email(&state.db, &typed).await?;
+    if found.is_none()
+        && let Some(ascii) = &ascii
+    {
+        found = user::verified_by_email(&state.db, ascii).await?;
+    }
+    let email = ascii.unwrap_or(typed);
 
-    if let Some((user_id, _)) = user::verified_by_email(&state.db, &email).await?
+    if let Some((user_id, _)) = found
         && limits::mail_allowed(&state, MailBudget::Reset, &email)
     {
         send_mail(

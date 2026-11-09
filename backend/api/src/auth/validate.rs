@@ -48,8 +48,10 @@ pub fn email(raw: &str, errors: &mut FieldErrors) -> Option<String> {
 }
 
 /// [`email`] for an address about to be stored (registration): it must also
-/// be one bare address as the mailer reads it. Display names (`a<x@y>`) and
-/// quoted local parts (`"x"@y`, the same mailbox as `x@y`) would give one
+/// be one bare address as the mailer reads it, and is stored with the ASCII
+/// (IDNA) form of its domain. Display names (`a<x@y>`), quoted local parts
+/// (`"x"@y`, the same mailbox as `x@y`) and other spellings of a domain
+/// (`bücher.de` / `xn--bcher-kva.de`, fullwidth letters) would give one
 /// inbox any number of accounts and per-address mail budgets. Sign-in keeps
 /// the lenient [`email`], so older accounts stay reachable.
 pub fn new_email(raw: &str, errors: &mut FieldErrors) -> Option<String> {
@@ -62,7 +64,18 @@ pub fn new_email(raw: &str, errors: &mut FieldErrors) -> Option<String> {
         errors.insert("email", "invalid");
         return None;
     }
-    Some(value)
+    Some(ascii_domain(&value).unwrap_or(value))
+}
+
+/// `value` with its domain in ASCII (IDNA) form, if that differs from how
+/// it was typed. Sign-in and reset look an address up both ways, since
+/// registration stores the ASCII form.
+pub fn ascii_domain(value: &str) -> Option<String> {
+    let (local, domain) = value.rsplit_once('@')?;
+    match url::Host::parse(domain) {
+        Ok(url::Host::Domain(ascii)) if ascii != domain => Some(format!("{local}@{ascii}")),
+        _ => None,
+    }
 }
 
 /// Length is measured in characters. No composition rules: length is what
@@ -276,6 +289,27 @@ mod tests {
         }
         assert!(run(|e| email("a<victim@example.org>", e)).0.is_some());
         assert_eq!(run(|e| new_email("", e)).1.get("email"), Some(&"required"));
+    }
+
+    #[test]
+    fn a_new_address_keeps_its_domain_in_ascii_form() {
+        for (raw, stored) in [
+            ("victim@bücher.de", "victim@xn--bcher-kva.de"),
+            ("victim@xn--bcher-kva.de", "victim@xn--bcher-kva.de"),
+            ("victim@ｅｘａｍｐｌｅ.org", "victim@example.org"),
+            ("victim@EXAMPLE.org", "victim@example.org"),
+        ] {
+            assert_eq!(
+                run(|e| new_email(raw, e)).0.as_deref(),
+                Some(stored),
+                "{raw}"
+            );
+        }
+        assert_eq!(
+            ascii_domain("victim@ｅｘａｍｐｌｅ.org").as_deref(),
+            Some("victim@example.org")
+        );
+        assert_eq!(ascii_domain("victim@example.org"), None);
     }
 
     #[test]
