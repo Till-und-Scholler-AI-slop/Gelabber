@@ -686,7 +686,15 @@ async fn connect(http: Http) -> Option<Socket> {
     {
         request.headers_mut().insert("Cookie", value);
     }
-    let connect = tokio_tungstenite::connect_async(request);
+    let connector = match crate::http::ws_connector() {
+        Ok(connector) => connector,
+        Err(error) => {
+            tracing::warn!(%error, "gateway: no TLS configuration");
+            return None;
+        }
+    };
+    let connect =
+        tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector));
     match tokio::time::timeout(Duration::from_secs(10), connect).await {
         Ok(Ok((socket, _))) => Some(socket),
         Ok(Err(error)) => {

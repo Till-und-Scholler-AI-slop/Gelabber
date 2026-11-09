@@ -594,6 +594,28 @@ fn envelope(status: StatusCode, bytes: &[u8], header_wait: Option<f64>) -> ApiEr
     }
 }
 
+/// TLS for `/ws` and `/media/ws`, verified like REST (reqwest's
+/// `rustls-platform-verifier`): a private CA in the OS store works for both.
+pub fn ws_connector() -> Result<tokio_tungstenite::Connector, String> {
+    static CONFIG: std::sync::OnceLock<Result<Arc<rustls::ClientConfig>, String>> =
+        std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            use rustls_platform_verifier::BuilderVerifierExt;
+            let provider = rustls::crypto::CryptoProvider::get_default()
+                .cloned()
+                .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
+            rustls::ClientConfig::builder_with_provider(provider)
+                .with_safe_default_protocol_versions()
+                .map_err(|e| e.to_string())?
+                .with_platform_verifier()
+                .map(|b| Arc::new(b.with_no_client_auth()))
+                .map_err(|e| e.to_string())
+        })
+        .clone()
+        .map(tokio_tungstenite::Connector::Rustls)
+}
+
 /// `encodeURIComponent` for path segments (emoji, invite codes).
 pub fn encode_component(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len() * 3);
