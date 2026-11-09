@@ -616,6 +616,27 @@ pub fn push_to_talk_from(
     }
 }
 
+/// The side mouse button push-to-talk holds in a running call: it does not
+/// also go back or forward (pushToTalk.ts `onMouse`).
+pub fn ptt_side_button(
+    ctx: &egui::Context,
+    call: &gelabber_call::Call,
+) -> Option<egui::PointerButton> {
+    let p = prefs::get(ctx);
+    let button = match p.ptt_key.as_str() {
+        "Mouse4" => egui::PointerButton::Extra1,
+        "Mouse5" => egui::PointerButton::Extra2,
+        _ => return None,
+    };
+    let in_call = call.with_state(|s| {
+        matches!(
+            s.status,
+            CallStatus::Connecting | CallStatus::Connected | CallStatus::Reconnecting
+        )
+    });
+    (in_call && p.voice_input == "ptt").then_some(button)
+}
+
 /// Push-to-talk inside the window: the chosen key (or Maustaste 4/5)
 /// opens the microphone while held.
 fn push_to_talk(ui: &Ui, app: &AppCtx, active: bool) {

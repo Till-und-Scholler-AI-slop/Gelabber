@@ -484,11 +484,13 @@ impl GelabberApp {
             }
         }
         // The mouse's back and forward buttons and Alt+←/→, as in the browser.
+        let ptt = screens::voice::call_bar::ptt_side_button(&ctx, &self.call);
+        let side = |i: &egui::InputState, b| ptt != Some(b) && i.pointer.button_pressed(b);
         let (back, forward) = ctx.input(|i| {
             (
-                i.pointer.button_pressed(egui::PointerButton::Extra1)
+                side(i, egui::PointerButton::Extra1)
                     || (i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft)),
-                i.pointer.button_pressed(egui::PointerButton::Extra2)
+                side(i, egui::PointerButton::Extra2)
                     || (i.modifiers.alt && i.key_pressed(egui::Key::ArrowRight)),
             )
         });
@@ -816,6 +818,55 @@ mod tests {
         assert!(nav.back());
         nav.navigate("/forgot-password");
         assert!(!nav.forward());
+    }
+
+    /// Maustaste 4 bound to push-to-talk talks in a call and does not also
+    /// go back; outside the call it goes back as before.
+    #[test]
+    fn the_push_to_talk_side_button_does_not_go_back_in_a_call() {
+        use crate::screens::settings::prefs;
+        use egui_kittest::kittest::Queryable;
+        use testkit::{FakeApi, HOME, launcher, wait_for, workspace};
+        let _config = crate::platform::paths::testing::TempConfig::new("app-ptt-mouse");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, "/");
+        wait_for(&mut harness, "the shell", |h| {
+            h.query_all_by_label("Wohnzimmer").next().is_some()
+        });
+        let page = format!("/s/{HOME}/settings");
+        let app = harness.state_mut().app().expect("app");
+        app.navigate(&page);
+        let call = app.call().clone();
+        prefs::update(&harness.ctx, |p| {
+            p.voice_input = "ptt".into();
+            p.ptt_key = "Mouse4".into();
+        });
+        call.set_state(gelabber_call::CallState {
+            status: gelabber_call::CallStatus::Connected,
+            server: Some(HOME.parse().unwrap()),
+            channel: Some(uuid::Uuid::from_u128(0xb1)),
+            ..gelabber_call::CallState::default()
+        });
+        let press = |harness: &mut egui_kittest::Harness<'_, crate::setup::Launcher>| {
+            for pressed in [true, false] {
+                harness.event(egui::Event::PointerButton {
+                    pos: egui::pos2(640.0, 400.0),
+                    button: egui::PointerButton::Extra1,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.run_steps(2);
+            }
+        };
+        let path = |harness: &mut egui_kittest::Harness<'_, crate::setup::Launcher>| {
+            let app = harness.state_mut().app().expect("app");
+            app.nav().location().path.clone()
+        };
+        press(&mut harness);
+        assert_eq!(path(&mut harness), page, "talking, not going back");
+        call.set_state(gelabber_call::CallState::default());
+        press(&mut harness);
+        assert_ne!(path(&mut harness), page, "without a call it goes back");
     }
 
     /// The window shows the shell on its own session check, so the page can
