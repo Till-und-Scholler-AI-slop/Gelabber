@@ -54,12 +54,37 @@ do
   common="$common --denied-peer-ip=$range"
 done
 
+# coturn aborts on an allow entry it cannot parse (a hostname), and then
+# restarts in a loop: check the SFU address before starting it.
+is_ipv4() {
+  case "$1" in "" | *[!0-9.]* | .* | *. | *..*) return 1 ;; esac
+  old_ifs=$IFS; IFS=.
+  # shellcheck disable=SC2086
+  set -- $1
+  IFS=$old_ifs
+  [ "$#" -eq 4 ] || return 1
+  for octet in "$@"; do
+    # A leading zero would be octal in $(( )) and is refused by coturn.
+    case "$octet" in 0?*) return 1 ;; esac
+    [ "${#octet}" -le 3 ] && [ "$octet" -le 255 ] || return 1
+  done
+}
+is_ipv6() {
+  case "$1" in *:*) ;; *) return 1 ;; esac
+  case "$1" in *[!0-9A-Fa-f:.]* | *:::* | *::*::*) return 1 ;; esac
+}
+is_ip() { is_ipv4 "$1" || is_ipv6 "$1"; }
 # Allow rules win over deny rules: the SFU on a LAN address stays reachable,
 # plus what the operator lists (deploy/README.md, "TURN relay targets").
 media_ip=$(printf '%s' "${MEDIA_ADVERTISED_IP:-}" | tr -d '[:space:]')
 case "$media_ip" in
   "" | 127.* | ::1) ;;
-  *) common="$common --allowed-peer-ip=$media_ip" ;;
+  *)
+    if is_ip "$media_ip"; then
+      common="$common --allowed-peer-ip=$media_ip"
+    else
+      echo "MEDIA_ADVERTISED_IP=$media_ip is not an IP address, so coturn does not allow it as a relay target. If the SFU has a private address, put that address into TURN_ALLOWED_PEER_IPS (see deploy/README.md)." >&2
+    fi ;;
 esac
 for range in $(printf '%s' "${TURN_ALLOWED_PEER_IPS:-}" | tr ',' ' '); do
   common="$common --allowed-peer-ip=$range"

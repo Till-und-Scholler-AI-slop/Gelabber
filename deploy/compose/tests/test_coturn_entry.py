@@ -104,6 +104,17 @@ class CoturnEntry(unittest.TestCase):
                                    '--allowed-peer-ip=172.20.0.1-172.20.0.9',
                                    '--allowed-peer-ip=fd00::7'])
 
+    def test_a_hostname_sfu_address_is_skipped_with_a_warning(self):
+        """coturn aborts on a hostname in --allowed-peer-ip; media accepts one."""
+        for address in ('voice.example.org', 'my-sfu', '999.1.1.1'):
+            with self.subTest(address=address):
+                code, stderr, started = self.start(TURN_PASSWORD='x',
+                                                   MEDIA_ADVERTISED_IP=address)
+                self.assertEqual(code, 0, stderr)
+                self.assertIn('TURN_ALLOWED_PEER_IPS', stderr)
+                self.assertFalse([arg for arg in started
+                                  if arg.startswith('--allowed-peer-ip')], started)
+
     def test_public_default_secret_is_refused(self):
         for turn in ({}, {'TURN_PASSWORD': 'x'}):
             with self.subTest(**turn):
