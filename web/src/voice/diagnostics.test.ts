@@ -36,6 +36,9 @@ const caps: Caps = {
   videoMaxFps: 30,
 };
 
+const CHROME_UA =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
+
 function entry(partial: StatsEntry): StatsEntry {
   return partial;
 }
@@ -52,6 +55,7 @@ describe("voice diagnostics", () => {
     resetMediaSettingsForTests();
     resetSessionForTests();
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("computes bitrate and loss from counter deltas", () => {
@@ -560,6 +564,12 @@ describe("voice diagnostics", () => {
   });
 
   it("exports context without secrets and keeps history bounded", () => {
+    // Chromium's reduced user agent carries a dotted version like an address.
+    vi.stubGlobal("navigator", {
+      userAgent: CHROME_UA,
+      platform: "Linux x86_64",
+      language: "de-DE",
+    });
     useMediaSettings.getState().patch({
       audioInputId: "secret-device-id-xyz",
       quality: "high",
@@ -649,7 +659,7 @@ describe("voice diagnostics", () => {
     expect(exported.appVersion).toBe(APP_VERSION);
     expect(exported.appVersion).toBe(packageJson.version);
     expect(exported.exportedAt).toBe("2026-09-22T08:00:00.000Z");
-    expect(exported.browser.userAgent.length).toBeGreaterThan(0);
+    expect(exported.browser.userAgent).toBe(CHROME_UA);
     expect(exported.settings.audioQuality).toBe("high");
     expect(exported.settings.audioMaxBitrate).toBeNull();
     expect(exported.settings.customAudioInput).toBe(true);
