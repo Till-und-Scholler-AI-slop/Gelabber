@@ -1550,6 +1550,58 @@ async fn publish_substitutes_only_the_envelope_placeholders(pool: PgPool) {
     assert_eq!(log[0].d, Some(delta));
 }
 
+/// Subscribe with cursor 0 and collect the replayed `(n, t, body)` up to `ok`.
+async fn replay_from_zero(ws: &mut Ws, s: Uuid, c: Uuid) -> Vec<(u64, String, Option<String>)> {
+    send_json(ws, json!({ "op": "s", "s": s, "c": c, "n": 0 })).await;
+    let mut out = Vec::new();
+    loop {
+        let frame = recv_within(ws, |f| f["op"] == "e" || f["op"] == "ok").await;
+        if frame["op"] == "ok" {
+            return out;
+        }
+        out.push((
+            frame["n"].as_u64().unwrap(),
+            frame["t"].as_str().unwrap().to_owned(),
+            frame["d"]["b"].as_str().map(str::to_owned),
+        ));
+    }
+}
+
+/// A client that resumes from before a message was created gets a create
+/// with the current body after an edit, and only deletes once it is gone.
+#[sqlx::test]
+async fn resume_from_before_a_create_gets_the_current_create(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Resume").await;
+    let (s, c) = ids(&server);
+    let (addr, state) = common::serve_ws(pool).await;
+    let message = Uuid::new_v4();
+    let publish = |kind, body: Option<&str>| {
+        let state = state.clone();
+        let delta = body.map(|body| json!({ "b": body }));
+        async move {
+            publish_channel(&state, s, c, kind, Some(message), delta)
+                .await
+                .expect("publish")
+        }
+    };
+    publish(EventKind::C, Some("neu")).await;
+    publish(EventKind::E, Some("korrigiert")).await;
+    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+    assert_eq!(
+        replay_from_zero(&mut ws, s, c).await,
+        [
+            (1, "c".to_owned(), Some("korrigiert".to_owned())),
+            (2, "e".to_owned(), Some("korrigiert".to_owned())),
+        ]
+    );
+    publish(EventKind::D, None).await;
+    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+    let rows = replay_from_zero(&mut ws, s, c).await;
+    assert_eq!(rows.iter().map(|r| r.0).collect::<Vec<_>>(), [1, 2, 3]);
+    assert!(rows.iter().all(|r| r.1 == "d" && r.2.is_none()), "{rows:?}");
+}
+
 /// An edit or a delete leaves no earlier body of that message in the replay
 /// log: its entries become copies of the newest event under their own `n`,
 /// so a resume still replays a contiguous run.
@@ -1600,15 +1652,19 @@ async fn edit_and_delete_rewrite_the_messages_earlier_log_entries(pool: PgPool) 
         rows.sort();
         rows
     };
+    // The other message's body spells the searched patterns; only envelopes
+    // are searched, so it stays as it is.
+    let bleibt = format!(r#""i":"{message}","n":0,"d": %1 ,"t":"e""#);
     publish(EventKind::C, message, Some("geheim")).await;
-    publish(EventKind::C, other, Some("bleibt")).await;
+    publish(EventKind::C, other, Some(&bleibt)).await;
     publish(EventKind::E, message, Some("anders")).await;
     let log = state.gateway.load_log(topic).await.unwrap();
     assert_eq!(
         bodies(&log),
         [
-            (1, "e".into(), Some("anders".into())),
-            (2, "c".into(), Some("bleibt".into())),
+            // The create stays a create, with the current body.
+            (1, "c".into(), Some("anders".into())),
+            (2, "c".into(), Some(bleibt.clone())),
             (3, "e".into(), Some("anders".into())),
         ]
     );
@@ -1618,7 +1674,7 @@ async fn edit_and_delete_rewrite_the_messages_earlier_log_entries(pool: PgPool) 
         bodies(&log),
         [
             (1, "d".into(), None),
-            (2, "c".into(), Some("bleibt".into())),
+            (2, "c".into(), Some(bleibt.clone())),
             (3, "d".into(), None),
             (4, "d".into(), None),
         ]
