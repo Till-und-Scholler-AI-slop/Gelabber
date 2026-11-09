@@ -99,8 +99,9 @@ struct Inner {
     fetcher: Fetcher,
     /// oEmbed endpoint and thumbnail origin; tests use stand-ins.
     youtube: (String, String),
-    queue: mpsc::Sender<Job>,
-    receiver: Mutex<Option<mpsc::Receiver<Job>>>,
+    /// Each job with its message's author, who pays for stored images.
+    queue: mpsc::Sender<(Uuid, Job)>,
+    receiver: Mutex<Option<mpsc::Receiver<(Uuid, Job)>>>,
 }
 
 #[derive(Debug)]
@@ -168,13 +169,13 @@ pub fn start(state: AppState) {
     let workers = Arc::new(Semaphore::new(WORKERS));
     let jobs = state.clone();
     tokio::spawn(async move {
-        while let Some(job) = receiver.recv().await {
+        while let Some((author_id, job)) = receiver.recv().await {
             let Ok(permit) = workers.clone().acquire_owned().await else {
                 break;
             };
             let state = jobs.clone();
             tokio::spawn(async move {
-                process(&state, job).await;
+                process(&state, author_id, job).await;
                 drop(permit);
             });
         }
@@ -218,7 +219,7 @@ pub fn enqueue(state: &AppState, author_id: Uuid, job: Job) {
             return;
         }
     }
-    if let Err(err) = previews.inner.queue.try_send(job) {
+    if let Err(err) = previews.inner.queue.try_send((author_id, job)) {
         warn!(error = %err, "link preview queue full; previews skipped");
     }
 }
@@ -233,7 +234,7 @@ pub fn request_host(headers: &HeaderMap) -> Option<String> {
     (!name.is_empty()).then(|| name.trim_end_matches('.').to_ascii_lowercase())
 }
 
-async fn process(state: &AppState, job: Job) {
+async fn process(state: &AppState, author_id: Uuid, job: Job) {
     let deadline = tokio::time::Instant::now() + JOB_BUDGET;
     // An edit keeps the card a link already has: it is not fetched again,
     // and a slow site cannot take it away by spending the budget.
@@ -265,7 +266,7 @@ async fn process(state: &AppState, job: Job) {
         if spent {
             continue;
         }
-        match tokio::time::timeout_at(deadline, preview_for(state, url)).await {
+        match tokio::time::timeout_at(deadline, preview_for(state, author_id, url)).await {
             Ok(Ok(Some(id))) => ids.push(id),
             Ok(Ok(None)) => {}
             Ok(Err(err)) => warn!(error = err.code(), "link preview failed"),
@@ -307,7 +308,11 @@ struct Cached {
 /// The preview for `url`: the newest fetch while it is fresh, otherwise a
 /// new one. A failed fetch leaves the last good one in use; `None` when
 /// there never was one.
-async fn preview_for(state: &AppState, url: &Url) -> Result<Option<Uuid>, ApiError> {
+async fn preview_for(
+    state: &AppState,
+    author_id: Uuid,
+    url: &Url,
+) -> Result<Option<Uuid>, ApiError> {
     let hash = url_hash(url);
     let cached = sqlx::query_as::<_, Cached>(
         "SELECT fetched_at > now() - make_interval(hours => CASE WHEN status = 'ok' THEN $2 ELSE $3 END) AS fresh, \
@@ -365,10 +370,18 @@ async fn preview_for(state: &AppState, url: &Url) -> Result<Option<Uuid>, ApiErr
             );
             None
         }
-        Some(Ok(image)) => match store_image(state, id, &image).await {
+        Some(Ok(image)) => match store_image(state, author_id, id, &image).await {
             Ok(stored) => {
                 state.metrics.link_preview_image("stored");
                 Some(stored)
+            }
+            Err(ApiError::QuotaExceeded) => {
+                state.metrics.link_preview_image("quota");
+                info!(
+                    host = host_of(url),
+                    "link preview: card without its image, the author's upload quota is used up"
+                );
+                None
             }
             Err(err) => {
                 state.metrics.link_preview_image("store_failed");
@@ -551,11 +564,18 @@ fn object_key(id: Uuid, file: Uuid) -> String {
 }
 
 /// Stores the image with a pending cleanup row that [`save`] withdraws.
+/// Its bytes count against the author's daily upload quota, like a file
+/// they attached; never refunded, also not when storing fails afterwards.
 async fn store_image(
     state: &AppState,
+    author_id: Uuid,
     id: Uuid,
     image: &Image,
 ) -> Result<(String, u32, u32), ApiError> {
+    let mut db = state.db.acquire().await?;
+    crate::limits::consume_upload_quota(state, &mut db, author_id, image.bytes.len() as i64)
+        .await?;
+    drop(db);
     let key = object_key(id, Uuid::new_v4());
     sqlx::query(
         "INSERT INTO storage_cleanup (object_key, next_attempt, retain_until) \

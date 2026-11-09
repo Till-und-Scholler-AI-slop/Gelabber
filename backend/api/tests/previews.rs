@@ -344,6 +344,51 @@ async fn a_card_keeps_its_text_when_the_image_cannot_be_stored(pool: PgPool) {
     }
 }
 
+/// Stored preview images count against the author's daily upload quota:
+/// once it is used up, cards come without their image.
+#[sqlx::test]
+async fn preview_images_are_charged_to_the_authors_upload_quota(pool: PgPool) {
+    let (site, policy) = serve_site().await;
+    let mut state = common::state(pool.clone());
+    state.previews = Some(LinkPreviews::with_policy(policy));
+    let image = png().len() as u64;
+    state.limits.upload_bytes_per_day = image + image / 2;
+    let (mut client, channel) = signed_in_with(state).await;
+
+    let mut cards = Vec::new();
+    for query in ["eins", "zwei"] {
+        let sent = post(
+            &mut client,
+            &channel,
+            &format!("{}/page?{query}", site.origin),
+        )
+        .await;
+        let message = wait_previews(
+            &mut client,
+            &channel,
+            sent["id"].as_str().unwrap(),
+            Duration::from_secs(10),
+        )
+        .await;
+        cards.push(message["previews"][0].clone());
+    }
+    assert!(cards[0].get("image").is_some(), "{}", cards[0]);
+    assert_eq!(cards[1]["title"], "Kaffee & Kuchen");
+    assert!(cards[1].get("image").is_none(), "{}", cards[1]);
+    let consumed: i64 = sqlx::query_scalar("SELECT consumed FROM upload_daily_usage")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(consumed, image as i64);
+    let text = metrics(&mut client).await;
+    for line in [
+        "gelabber_link_preview_images_total{outcome=\"stored\"} 1",
+        "gelabber_link_preview_images_total{outcome=\"quota\"} 1",
+    ] {
+        assert!(text.contains(line), "{line}\n{text}");
+    }
+}
+
 /// A refetch is a new row: messages keep the card they got, and a failed
 /// refetch leaves the last good card for new messages.
 #[sqlx::test]
