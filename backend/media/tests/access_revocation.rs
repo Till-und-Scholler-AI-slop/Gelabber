@@ -190,6 +190,9 @@ async fn join(addr: std::net::SocketAddr, code: &str) -> (Socket, serde_json::Va
     (ws, value)
 }
 async fn revoked(ws: &mut Socket, budget: Duration) {
+    terminal(ws, budget, "unauthorized").await
+}
+async fn terminal(ws: &mut Socket, budget: Duration, expected: &str) {
     tokio::time::timeout(budget, async {
         loop {
             let msg = ws
@@ -200,7 +203,8 @@ async fn revoked(ws: &mut Socket, budget: Duration) {
             if msg.is_text() {
                 let value: serde_json::Value =
                     serde_json::from_str(msg.to_text().unwrap()).unwrap();
-                if value["e"] == "unauthorized" {
+                if let Some(code) = value["e"].as_str() {
+                    assert_eq!(code, expected, "terminal frame");
                     break;
                 }
             }
@@ -475,7 +479,8 @@ async fn absolute_session_expiry_revokes_even_while_lease_still_exists() {
 }
 
 #[tokio::test]
-async fn redis_failure_revokes_open_peer_and_rejects_new_ticket_without_affecting_control() {
+async fn redis_failure_removes_open_peer_and_refuses_new_ticket_as_gone_without_affecting_control()
+{
     let url = std::env::var("REDIS_URL").unwrap();
     let upstream = redis::Client::open(url.clone()).unwrap();
     let connection_info = upstream.get_connection_info();
@@ -515,9 +520,10 @@ async fn redis_failure_revokes_open_peer_and_rejects_new_ticket_without_affectin
     let (mut control_ws, value) = join(control_addr, &control.mint().await).await;
     assert_eq!(value["op"], "result");
     cut.send_replace(true);
-    revoked(&mut ws, Duration::from_millis(1700)).await;
+    // A check that could not be made is no revocation: the client rejoins.
+    terminal(&mut ws, Duration::from_millis(1700), "gone").await;
     let (_, value) = join(addr, &outstanding).await;
-    assert_eq!(value["e"], "unauthorized");
+    assert_eq!(value["e"], "gone");
     control_ws
         .send(tokio_tungstenite::tungstenite::Message::Text(
             json!({"op":"transport","id":2,"direction":"recv"})
@@ -565,18 +571,11 @@ async fn shutdown_delivers_gone_before_close_on_every_socket() {
         tokio::time::sleep(Duration::from_millis(13)).await;
     }
     sfu.shutdown().await;
-    let mut gone = 0;
     for (ws, _) in &mut peers {
-        let code = terminal_before_close(ws).await;
-        // A peer that shutdown has not reached yet can be revoked by its
-        // authority check, which sees the draining engine; also terminal.
-        assert!(
-            matches!(code.as_str(), "gone" | "unauthorized"),
-            "unexpected terminal frame: {code}"
-        );
-        gone += usize::from(code == "gone");
+        // A peer that shutdown has not reached yet may be removed by its own
+        // authority check, which sees the draining pool: also `gone`.
+        assert_eq!(terminal_before_close(ws).await, "gone");
     }
-    assert!(gone > 0, "shutdown must send gone");
     for (_, authority) in &peers {
         authority.cleanup().await;
     }

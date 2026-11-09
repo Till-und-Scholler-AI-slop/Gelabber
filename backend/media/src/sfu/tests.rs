@@ -932,6 +932,45 @@ async fn rooms_of_a_lost_worker_refuse_rpcs_while_the_pool_stays_ready() {
     assert!(sfu.ready());
 }
 
+#[tokio::test]
+async fn rpc_on_a_lost_workers_room_answers_gone() {
+    let sfu = pool(2).await;
+    let engine = first_engine(&sfu);
+    let (channel, peer, _rx) = seat(&sfu, &engine).await;
+    engine.lost.store(true, Ordering::SeqCst);
+    let rpc = sfu
+        .rpc(
+            peer.id,
+            channel,
+            ClientFrame::Capabilities {
+                id: 1,
+                rtp: json!({}),
+            },
+        )
+        .await;
+    assert!(matches!(rpc, Err(SfuError::Gone)), "{rpc:?}");
+    assert!(!sfu.peer_present(peer.id, channel).await);
+}
+
+#[tokio::test]
+async fn authority_watch_on_a_draining_pool_sends_gone() {
+    let sfu = pool(1).await;
+    let engine = first_engine(&sfu);
+    let (channel, peer, mut rx) = seat(&sfu, &engine).await;
+    // Draining, but shutdown has not reached this peer yet.
+    sfu.draining.store(true, Ordering::SeqCst);
+    Sfu::watch_authority(Arc::downgrade(&sfu), channel, Arc::downgrade(&peer));
+    let frame = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(&frame, ServerFrame::Err { e, .. } if e == "gone"),
+        "{frame:?}"
+    );
+    assert!(!sfu.peer_present(peer.id, channel).await);
+}
+
 #[test]
 fn fail_closed_terminates_child_process_with_exit_one() {
     const CHILD: &str = "GELABBER_TEST_FAIL_CLOSED_CHILD";

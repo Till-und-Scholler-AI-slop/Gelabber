@@ -596,12 +596,7 @@ impl Sfu {
         if !self.ready() {
             return Err(SfuError::Unavailable);
         }
-        if !crate::ticket::validate_authority(&self.redis, &authority)
-            .await
-            .unwrap_or(false)
-        {
-            return Err(SfuError::Revoked);
-        }
+        self.authorize(&authority).await?;
         let channel = authority.claim.c;
         let room = {
             let mut rooms = self.rooms.lock().await;
@@ -636,14 +631,16 @@ impl Sfu {
             self.remove_empty_room(channel, &room).await;
             return Err(err);
         }
-        if !crate::ticket::validate_authority(&self.redis, &authority)
-            .await
-            .unwrap_or(false)
-            || !self.room_ready(&room)
-        {
+        // Drain and a lost engine are recoverable: the client rejoins.
+        let ready = if self.room_ready(&room) {
+            self.authorize(&authority).await
+        } else {
+            Err(SfuError::Gone)
+        };
+        if let Err(error) = ready {
             room.joining.fetch_sub(1, Ordering::SeqCst);
             self.remove_empty_room(channel, &room).await;
-            return Err(SfuError::Revoked);
+            return Err(error);
         }
         let id = PeerId(Uuid::new_v4());
         let peer = Arc::new(Peer {
@@ -664,7 +661,7 @@ impl Sfu {
             drop(data);
             room.joining.fetch_sub(1, Ordering::SeqCst);
             self.remove_empty_room(channel, &room).await;
-            return Err(SfuError::Unavailable);
+            return Err(SfuError::Gone);
         }
         data.peers.insert(
             id,

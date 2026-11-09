@@ -342,9 +342,11 @@ async fn join(
     out: &mpsc::Sender<ServerFrame>,
     joined: &mut Option<(PeerId, Uuid)>,
 ) -> Result<Value, &'static str> {
+    // A ticket that could not be checked is not a refusal: the client takes
+    // a new one.
     let claim = ticket::consume(state.sfu.redis(), code)
         .await
-        .map_err(|_| "unauthorized")?
+        .map_err(|_| "gone")?
         .ok_or("unauthorized")?;
     let channel = claim.claim.c;
     let user = claim.claim.u;
