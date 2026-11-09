@@ -64,7 +64,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         state.session_ttl,
     )
     .await
-    .map_err(|err| format!("capping sessions failed: {}", err.code()))?;
+    .map_err(|err| {
+        error!(error = ?err, "capping sessions failed");
+        format!("capping sessions failed: {}", err.code())
+    })?;
     info!(
         sessions = capped,
         "sessions capped to the configured lifetime"

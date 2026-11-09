@@ -481,8 +481,9 @@ pub fn login_succeeded(state: &AppState, email: &str) {
 }
 
 /// Which hourly allowance an account mail draws on. Anyone can register an
-/// address or ask for its reset; with one shared allowance registrations by
-/// strangers would silence the owner's reset mails.
+/// address or ask for its reset, so either budget can be used up by a
+/// stranger; separate budgets keep registrations from silencing resets.
+/// Reset mails, however triggered, only ever reach the owner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MailBudget {
     /// Confirmation links and the "already registered" notice.
