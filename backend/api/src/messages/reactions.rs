@@ -126,6 +126,10 @@ async fn mutate(
             &mut current,
         )
         .await?;
+    } else {
+        // Unchanged, the reply is still the full message: a client applying
+        // it must not lose the link previews.
+        crate::previews::for_messages(&mut *tx, std::slice::from_mut(&mut current)).await?;
     }
     tx.commit().await?;
     if changed {
