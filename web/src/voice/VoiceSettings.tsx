@@ -113,6 +113,12 @@ export function MediaSettingsForm({
                 </Button>
               </div>
             )}
+            {/* Next to the microphone, in view when the dialog opens. */}
+            <div className="media-actions">
+              <Button size="sm" onClick={() => setMicrophoneTest(true)}>
+                Mikrofon testen und vergleichen
+              </Button>
+            </div>
           </SettingRow>
           <SettingRow label="Mic-Gain" htmlFor="input-gain">
             <Slider
@@ -144,14 +150,9 @@ export function MediaSettingsForm({
                 ),
               )}
             </div>
-            <div className="media-actions">
-              <p role="status" className="media-hint">
-                {processing.message}
-              </p>
-              <Button size="sm" onClick={() => setMicrophoneTest(true)}>
-                Mikrofon testen und vergleichen
-              </Button>
-            </div>
+            <p role="status" className="media-hint">
+              {processing.message}
+            </p>
           </SettingRow>
         </SettingsGroup>
       )}

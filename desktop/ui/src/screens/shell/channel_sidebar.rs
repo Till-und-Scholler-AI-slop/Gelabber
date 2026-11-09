@@ -308,7 +308,7 @@ pub fn show(
                 let keys = RowKeys { stop, within };
                 match row {
                     Row::Section => {
-                        caps(ui, slot, "Sprachkanäle", slot.width() - 11.0);
+                        caps(ui, slot, VOICE_HEADING, slot.width() - 11.0);
                     }
                     Row::Category(category) => {
                         category_row(ui, app, &theme, slot, server, category, can_manage, keys);
@@ -362,70 +362,87 @@ fn build_rows(app: &AppCtx, detail: &gelabber_client::ServerDetail) -> Vec<Row> 
         })
     };
     let mut rows = Vec::new();
-    let push = |rows: &mut Vec<Row>, ch: &Channel| {
-        let voice = ch.kind == ChannelKind::Voice;
-        rows.push(Row::Channel(ch.clone()));
-        if voice {
-            rows.extend(voice_of(ch.id));
-        }
-    };
-    for ch in detail
-        .channels
-        .iter()
-        .filter(|c| c.category_id.is_none() && c.kind == ChannelKind::Text)
-    {
-        push(&mut rows, ch);
-    }
-    let loose_voice: Vec<&Channel> = detail
-        .channels
-        .iter()
-        .filter(|c| c.category_id.is_none() && c.kind == ChannelKind::Voice)
-        .collect();
-    if !loose_voice.is_empty() {
-        rows.push(Row::Section);
-        for ch in loose_voice {
-            push(&mut rows, ch);
-        }
-    }
-    for category in &detail.categories {
-        rows.push(Row::Category(category.clone()));
-        let inside: Vec<&Channel> = detail
-            .channels
-            .iter()
-            .filter(|c| c.category_id == Some(category.id))
-            .collect();
-        if inside.is_empty() {
-            rows.push(Row::Empty);
-        }
-        for ch in inside {
-            push(&mut rows, ch);
+    for item in listed(detail) {
+        match item {
+            Listed::Section => rows.push(Row::Section),
+            Listed::Category(category) => rows.push(Row::Category(category.clone())),
+            Listed::Empty => rows.push(Row::Empty),
+            Listed::Channel(ch) => {
+                rows.push(Row::Channel(ch.clone()));
+                if ch.kind == ChannelKind::Voice {
+                    rows.extend(voice_of(ch.id));
+                }
+            }
         }
     }
     rows
 }
 
-/// `channelOrder`: the channels in the order the sidebar lists them.
-pub fn channel_order(detail: &gelabber_client::ServerDetail) -> Vec<Uuid> {
+/// The heading over the uncategorised voice rooms (`VOICE_HEADING`).
+const VOICE_HEADING: &str = "Sprachkanäle";
+
+/// What the sidebar lists, in order, without the people in the rooms.
+enum Listed<'a> {
+    Section,
+    Category(&'a Category),
+    Empty,
+    Channel(&'a Channel),
+}
+
+/// `sidebarRows`: uncategorised text channels, the uncategorised voice
+/// rooms under their own heading, then the categories. A category named
+/// like the heading takes the rooms at its top instead, so the heading
+/// does not show twice. Only the list merges: the rooms stay uncategorised,
+/// so a channel created from one of them is uncategorised too, and deleting
+/// that category leaves them under their own heading again.
+fn listed(detail: &gelabber_client::ServerDetail) -> Vec<Listed<'_>> {
     let loose = |kind: ChannelKind| {
         detail
             .channels
             .iter()
             .filter(move |c| c.category_id.is_none() && c.kind == kind)
-            .map(|c| c.id)
     };
-    let mut out: Vec<Uuid> = loose(ChannelKind::Text)
-        .chain(loose(ChannelKind::Voice))
-        .collect();
+    let voice: Vec<&Channel> = loose(ChannelKind::Voice).collect();
+    let heading = VOICE_HEADING.to_lowercase();
+    let home = detail
+        .categories
+        .iter()
+        .find(|c| c.name.trim().to_lowercase() == heading)
+        .filter(|_| !voice.is_empty())
+        .map(|c| c.id);
+    let mut out: Vec<Listed<'_>> = loose(ChannelKind::Text).map(Listed::Channel).collect();
+    if home.is_none() && !voice.is_empty() {
+        out.push(Listed::Section);
+        out.extend(voice.iter().map(|c| Listed::Channel(c)));
+    }
     for category in &detail.categories {
-        out.extend(
-            detail
-                .channels
-                .iter()
-                .filter(|c| c.category_id == Some(category.id))
-                .map(|c| c.id),
-        );
+        out.push(Listed::Category(category));
+        let rooms = voice.iter().copied().filter(|_| home == Some(category.id));
+        let inside: Vec<&Channel> = rooms
+            .chain(
+                detail
+                    .channels
+                    .iter()
+                    .filter(|c| c.category_id == Some(category.id)),
+            )
+            .collect();
+        if inside.is_empty() {
+            out.push(Listed::Empty);
+        }
+        out.extend(inside.into_iter().map(Listed::Channel));
     }
     out
+}
+
+/// `channelOrder`: the channels in the order the sidebar lists them.
+pub fn channel_order(detail: &gelabber_client::ServerDetail) -> Vec<Uuid> {
+    listed(detail)
+        .into_iter()
+        .filter_map(|item| match item {
+            Listed::Channel(c) => Some(c.id),
+            _ => None,
+        })
+        .collect()
 }
 
 /// A caps heading whose text box ends 7px above the slot's bottom.
@@ -1134,7 +1151,115 @@ pub fn brand(ui: &Ui, rect: Rect) {
 
 #[cfg(test)]
 mod tests {
-    use super::participant_label;
+    use super::*;
+
+    /// Wohnzimmer with `categories` as (n, name) and `channels` as
+    /// (n, category n or 0 for none, name, kind).
+    fn detail(
+        categories: &[(u8, &str)],
+        channels: &[(u8, u8, &str, &str)],
+    ) -> gelabber_client::ServerDetail {
+        let id = |kind: char, n: u8| format!("00000000-0000-4000-8000-0000000000{kind}{n}");
+        let categories: Vec<_> = categories
+            .iter()
+            .map(|(n, name)| {
+                serde_json::json!({
+                    "id": id('b', *n), "server_id": id('a', 0), "name": name,
+                    "created_at": "2026-01-01T00:00:00Z"
+                })
+            })
+            .collect();
+        let channels: Vec<_> = channels
+            .iter()
+            .map(|(n, category, name, kind)| {
+                serde_json::json!({
+                    "id": id('c', *n), "server_id": id('a', 0),
+                    "category_id": (*category > 0).then(|| id('b', *category)),
+                    "name": name, "kind": kind, "created_at": "2026-01-01T00:00:00Z"
+                })
+            })
+            .collect();
+        serde_json::from_value(serde_json::json!({
+            "id": id('a', 0), "name": "Wohnzimmer", "owner_id": id('d', 1), "icon_url": null,
+            "created_at": "2026-01-01T00:00:00Z", "role": "owner",
+            "permissions": [], "member_permissions": [],
+            "categories": categories, "channels": channels, "members": []
+        }))
+        .expect("server detail")
+    }
+
+    fn names(detail: &gelabber_client::ServerDetail) -> Vec<String> {
+        listed(detail)
+            .into_iter()
+            .map(|item| match item {
+                Listed::Section => format!("section:{VOICE_HEADING}"),
+                Listed::Category(c) => format!("category:{}", c.name),
+                Listed::Empty => "empty".to_owned(),
+                Listed::Channel(c) => c.name.clone(),
+            })
+            .collect()
+    }
+
+    /// The cases of servers/rows.test.ts "sidebar order".
+    #[test]
+    fn loose_voice_rooms_get_their_heading_once() {
+        let own = detail(
+            &[(1, "Textkanäle"), (2, "Voice")],
+            &[
+                (1, 0, "loose", "text"),
+                (2, 0, "Zocken", "voice"),
+                (3, 1, "allgemein", "text"),
+                (4, 2, "Lounge", "voice"),
+            ],
+        );
+        assert_eq!(
+            names(&own),
+            [
+                "loose",
+                "section:Sprachkanäle",
+                "Zocken",
+                "category:Textkanäle",
+                "allgemein",
+                "category:Voice",
+                "Lounge"
+            ]
+        );
+
+        let named = detail(
+            &[
+                (1, "Textkanäle"),
+                (2, " sprachkanäle "),
+                (3, "Sprachkanäle"),
+            ],
+            &[
+                (1, 0, "loose", "text"),
+                (2, 0, "Zocken", "voice"),
+                (3, 1, "allgemein", "text"),
+                (4, 2, "Sofa", "voice"),
+            ],
+        );
+        assert_eq!(
+            names(&named),
+            [
+                "loose",
+                "category:Textkanäle",
+                "allgemein",
+                "category: sprachkanäle ",
+                "Zocken",
+                "Sofa",
+                "category:Sprachkanäle",
+                "empty"
+            ]
+        );
+        let order: Vec<String> = channel_order(&named)
+            .into_iter()
+            .map(|id| id.to_string()[34..].to_owned())
+            .collect();
+        assert_eq!(order, ["c1", "c3", "c2", "c4"]);
+
+        let empty = detail(&[(1, "Sprachkanäle")], &[(1, 0, "Zocken", "voice")]);
+        assert_eq!(names(&empty), ["category:Sprachkanäle", "Zocken"]);
+    }
 
     // The web row's hidden texts (ParticipantRowView): screen readers hear
     // who speaks, not only a green ring.

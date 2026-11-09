@@ -380,6 +380,11 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             ) {
                 app.call.set_input(chosen(&p.audio_input_id));
             }
+            // Next to the microphone, in view when the dialog opens.
+            gap(ui);
+            if button(ui, "Mikrofon testen", false, false) {
+                crate::screens::voice::dialogs::open_mic_test(ui.ctx());
+            }
         });
         setting_row(ui, "Mic-Gain", false, |ui| {
             let mut v = (p.input_gain * 100.0).round();
@@ -492,34 +497,12 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 ui.add_space(6.0);
             }
             ui.add_space(2.0);
-            let top = ui.cursor().min;
-            let w = ui.available_width();
             let processing = crate::screens::voice::diagnostics::processing_message(
                 &app.call.state(),
                 &p.processing_mode,
                 &p.audio_input_id,
             );
-            let bw = button_width(ui, "Mikrofon testen");
-            // `.media-actions` wraps the button under the status once the
-            // status' 200px basis and the button no longer fit side by side.
-            let stacked = w < 200.0 + 12.0 + bw;
-            let status_h = if stacked { 16.8 + 8.0 } else { 0.0 };
-            let bh = if in_dialog(ui) { 32.0 } else { 36.0 };
-            controls::paint(
-                ui,
-                pos2(top.x, top.y + if stacked { 0.0 } else { 9.6 }),
-                &processing,
-                HINT,
-                c.muted,
-            );
-            let left = if stacked { top.x } else { top.x + w - bw };
-            let rect = Rect::from_min_size(pos2(left, top.y + status_h), vec2(bw, bh));
-            controls::place(ui, UiBuilder::new().max_rect(rect), |ui| {
-                if button(ui, "Mikrofon testen", false, false) {
-                    crate::screens::voice::dialogs::open_mic_test(ui.ctx());
-                }
-            });
-            ui.allocate_exact_size(vec2(w, status_h + bh), Sense::hover());
+            hint(ui, &processing);
         });
         ui.add_space(20.0);
 
