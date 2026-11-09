@@ -163,3 +163,81 @@ fn live_events_accept_cjson_empty_objects() {
     let message = event.message().unwrap();
     assert!(message.attachments.is_empty() && message.reactions.is_empty());
 }
+
+/// A newer server: an unknown role, channel kind, status or event kind, or
+/// one element the client cannot read, costs that element at most, never
+/// the whole answer.
+#[test]
+fn a_newer_server_degrades_per_element() {
+    let mut servers = fixture("servers");
+    let list = servers.as_array_mut().unwrap();
+    list[0]["role"] = "admin".into();
+    list.push(serde_json::json!({"id": "nope"}));
+    let count = list.len();
+    let Lenient(decoded) = serde_json::from_value::<Lenient<Server>>(servers).unwrap();
+    assert_eq!(decoded.len(), count - 1);
+    assert_eq!(decoded[0].role, Role::Member);
+
+    let mut detail = fixture("server_detail");
+    let channels = detail["channels"].as_array_mut().unwrap();
+    let count = channels.len();
+    channels[0]["kind"] = "forum".into();
+    let detail: ServerDetail = serde_json::from_value(detail).unwrap();
+    assert_eq!(detail.channels.len(), count - 1);
+
+    let mut unread = fixture("unread");
+    let count = unread.as_array().unwrap().len();
+    unread[0]["level"] = "digest".into();
+    let Lenient(rows) = serde_json::from_value::<Lenient<ReadState>>(unread).unwrap();
+    assert_eq!(rows.len(), count);
+    assert_eq!(rows[0].level, NotificationLevel::All);
+
+    let frame: ServerFrame = serde_json::from_value(serde_json::json!({
+        "op": "p", "s": "00000000-0000-0000-0000-000000000001",
+        "snap": [
+            {"u": "00000000-0000-0000-0000-000000000002", "st": "d"},
+            {"u": "00000000-0000-0000-0000-000000000003", "st": "o"},
+            {"u": 7, "st": "o"},
+        ],
+    }))
+    .unwrap();
+    let ServerFrame::Presence {
+        snap: Some(snap), ..
+    } = frame
+    else {
+        panic!("{frame:?}")
+    };
+    assert_eq!(snap.len(), 2);
+    assert_eq!(snap[0].st, PresenceStatus::Online);
+
+    let frame: ServerFrame = serde_json::from_value(serde_json::json!({
+        "op": "e", "t": "x", "s": "00000000-0000-0000-0000-000000000001", "n": 3,
+    }))
+    .unwrap();
+    assert!(matches!(
+        frame,
+        ServerFrame::Event(EventFrame {
+            t: EventKind::Unknown,
+            n: 3,
+            ..
+        })
+    ));
+    let frame: ServerFrame = serde_json::from_value(serde_json::json!({
+        "op": "sig", "t": "p", "s": "00000000-0000-0000-0000-000000000001",
+        "c": "00000000-0000-0000-0000-000000000002",
+        "u": "00000000-0000-0000-0000-000000000003", "k": "hologram",
+    }))
+    .unwrap();
+    assert!(matches!(frame, ServerFrame::Sig(SigFrame { k: None, .. })));
+    let frame: ServerFrame = serde_json::from_value(serde_json::json!({
+        "op": "sig", "t": "w", "s": "00000000-0000-0000-0000-000000000001",
+    }))
+    .unwrap();
+    assert!(matches!(
+        frame,
+        ServerFrame::Sig(SigFrame {
+            t: SigKind::Unknown,
+            ..
+        })
+    ));
+}
