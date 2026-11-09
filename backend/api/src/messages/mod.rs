@@ -660,7 +660,13 @@ async fn suppress_previews(
         return Ok(StatusCode::NO_CONTENT);
     }
     if removed {
-        let mut message = current;
+        // Read again under the lock: an edit may have landed since `current`.
+        let row = sqlx::query_as::<_, MessageRow>(MESSAGE_BY_ID_SQL)
+            .bind(message_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        let mut message = Message::from(row);
+        message.attachments = current.attachments;
         persist_event(
             &mut tx,
             access.event_server_id(),

@@ -531,6 +531,101 @@ async fn in_flight_moderator_delete_rechecks_manage_messages(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn preview_removal_publishes_an_edit_that_landed_before_its_lock(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let server_id: Uuid = server["id"].as_str().unwrap().parse().unwrap();
+    let channel_id = text_channel_id(&server);
+    let channel: Uuid = channel_id.parse().unwrap();
+    let posted = post_message(&mut owner, &channel_id, "https://example.org/").await;
+    let message: Uuid = posted["id"].as_str().unwrap().parse().unwrap();
+    sqlx::query(
+        "WITH p AS (INSERT INTO link_previews (url_hash, url, status, title) \
+         VALUES (sha256('https://example.org/'), 'https://example.org/', 'ok', 'Beispiel') RETURNING id) \
+         INSERT INTO message_previews (message_id, preview_id, position) SELECT $1, id, 0 FROM p",
+    )
+    .bind(message)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The same key as `delivery::lock_channel`.
+    let mut blocker = pool.acquire().await.unwrap();
+    sqlx::query("SELECT pg_advisory_lock(hashtextextended($1, 507))")
+        .bind(channel.to_string())
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+    let path = format!("/api/messages/{message}/previews");
+    let removal = tokio::spawn(async move { owner.send(Method::DELETE, &path, None).await });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_stat_activity \
+                 WHERE datname = current_database() AND wait_event = 'advisory'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            if waiting >= 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the removal waits on the channel lock");
+    // The author's edit from another device commits first.
+    sqlx::query(
+        "UPDATE messages SET content='https://example.org/ neu', edited_at=now() WHERE id=$1",
+    )
+    .bind(message)
+    .execute(&mut *blocker)
+    .await
+    .unwrap();
+    sqlx::query("SELECT pg_advisory_unlock(hashtextextended($1, 507))")
+        .bind(channel.to_string())
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+    drop(blocker);
+    let removal = removal.await.unwrap();
+    assert_eq!(removal.status, StatusCode::NO_CONTENT, "{}", removal.body);
+
+    let state = common::state(pool.clone());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let _ = delivery::deliver_pending(&state, 32).await;
+            let queued: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM gateway_outbox WHERE channel_id = $1")
+                    .bind(channel)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            if queued == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("outbox delivered");
+    let edit = state
+        .gateway
+        .load_log(Topic::of(server_id, Some(channel)))
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.t == EventKind::E && event.i == Some(message))
+        .max_by_key(|event| event.r)
+        .expect("edit event");
+    let delta = edit.d.expect("delta");
+    assert_eq!(delta["content"], "https://example.org/ neu", "{delta}");
+    assert!(!delta["edited_at"].is_null(), "{delta}");
+    assert!(delta.get("previews").is_none(), "{delta}");
+}
+
+#[sqlx::test]
 async fn foreign_or_voice_channel_is_not_found(pool: PgPool) {
     let (mut owner, mut stranger) = two_users(pool).await;
     let server = create_server(&mut owner, "Secret").await;
