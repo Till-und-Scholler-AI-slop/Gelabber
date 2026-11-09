@@ -161,12 +161,33 @@ pub fn error_message(code: &str) -> &'static str {
 
 type Hook = Arc<dyn Fn() + Send + Sync>;
 
+/// What a download is for; each kind has its own byte cap.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Download {
+    /// Avatars, icons, banners, picture attachments, GIFs.
+    Image,
+    /// A text attachment shown inline (`TEXT_PREVIEW_MAX`).
+    Text,
+}
+
+impl Download {
+    pub const fn max_bytes(self) -> usize {
+        match self {
+            // An attachment's limit (attachments/validate.rs `SIZE_MAX`).
+            Self::Image => 25 * 1024 * 1024,
+            Self::Text => 100 * 1024,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Http {
     base: url::Url,
     client: reqwest::Client,
     /// Without cookies: presigned uploads go to another origin (MinIO).
     plain: reqwest::Client,
+    /// Downloads from other origins: no cookies, no redirects.
+    foreign: reqwest::Client,
     jar: Arc<reqwest::cookie::Jar>,
     csrf: Arc<RwLock<Option<String>>>,
     /// Server clock minus local clock in ms, from each `Date` header.
@@ -201,10 +222,17 @@ impl Http {
             .timeout(UPLOAD_TIMEOUT)
             .build()
             .map_err(|e| ApiError::Transport(e.to_string()))?;
+        let foreign = reqwest::Client::builder()
+            .user_agent(user_agent)
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(UPLOAD_TIMEOUT)
+            .build()
+            .map_err(|e| ApiError::Transport(e.to_string()))?;
         Ok(Self {
             base,
             client,
             plain,
+            foreign,
             jar,
             csrf: Arc::new(RwLock::new(None)),
             clock_offset: Arc::new(AtomicI64::new(0)),
@@ -490,27 +518,46 @@ impl Http {
         self.session().await
     }
 
-    /// Raw bytes of a same-origin resource (avatars, attachments, images).
-    pub async fn bytes(&self, path_or_url: &str) -> Result<Vec<u8>, ApiError> {
-        let url = if path_or_url.starts_with("http://") || path_or_url.starts_with("https://") {
+    /// Raw bytes of a resource (avatars, attachments, images), at most
+    /// `kind`'s cap. Another origin (a member's avatar URL, a GIF CDN) gets
+    /// neither the session cookie nor a redirect followed.
+    pub async fn bytes(&self, path_or_url: &str, kind: Download) -> Result<Vec<u8>, ApiError> {
+        let absolute = path_or_url.starts_with("http://") || path_or_url.starts_with("https://");
+        let url = if absolute {
             path_or_url.to_owned()
         } else {
             self.url(path_or_url)
         };
+        let same_origin = url::Url::parse(&url).is_ok_and(|u| u.origin() == self.base.origin());
+        let client = if same_origin {
+            &self.client
+        } else {
+            &self.foreign
+        };
         // Attachments can be large: the upload timeout, not the REST one.
-        let res = self
-            .client
+        let mut res = client
             .get(url)
             .timeout(UPLOAD_TIMEOUT)
             .send()
             .await
             .map_err(ApiError::from_reqwest)?;
         let status = res.status();
-        let bytes = res.bytes().await.map_err(ApiError::from_reqwest)?;
+        let max = kind.max_bytes();
+        let too_large = || ApiError::Decode(format!("mehr als {max} Bytes"));
+        if res.content_length().is_some_and(|n| n > max as u64) {
+            return Err(too_large());
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = res.chunk().await.map_err(ApiError::from_reqwest)? {
+            if bytes.len() + chunk.len() > max {
+                return Err(too_large());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
         if !status.is_success() {
             return Err(envelope(status, &bytes, None));
         }
-        Ok(bytes.to_vec())
+        Ok(bytes)
     }
 
     /// Any successful body with a `csrf_token` string replaces the token
@@ -722,6 +769,97 @@ mod tests {
         );
         assert_eq!(header_only.retry_after(), Some(3.0));
         assert_eq!(ApiError::Transport("x".into()).retry_after(), None);
+    }
+
+    /// Serves each connection with `answer(request head)`; what came in is
+    /// kept in the returned list.
+    fn serve(
+        answer: impl Fn(&str) -> Vec<u8> + Send + Sync + 'static,
+    ) -> (String, Arc<parking_lot::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let answer = Arc::new(answer);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let (log, answer) = (log.clone(), answer.clone());
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+                    log.lock().push(head.clone());
+                    let _ = stream.write_all(&answer(&head));
+                });
+            }
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    fn ok_body(len: usize) -> Vec<u8> {
+        let mut out = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nConnection: close\r\nContent-Length: {len}\r\n\r\n"
+        )
+        .into_bytes();
+        out.resize(out.len() + len, b'x');
+        out
+    }
+
+    #[test]
+    fn downloads_stop_at_their_cap() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let cap = Download::Text.max_bytes();
+        let (base, _) = serve(move |head| {
+            if head.starts_with("GET /small") {
+                ok_body(cap)
+            } else {
+                // Declares nothing: the cap must hold while reading.
+                let mut out = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_vec();
+                out.resize(out.len() + cap + 1, b'x');
+                out
+            }
+        });
+        let http = Http::new(&base).unwrap();
+        let small = runtime.block_on(http.bytes("/small", Download::Text));
+        assert_eq!(small.unwrap().len(), cap);
+        let large = runtime.block_on(http.bytes("/large", Download::Text));
+        assert!(large.is_err(), "{large:?}");
+        // The same body is fine for a picture.
+        let image = runtime.block_on(http.bytes("/large", Download::Image));
+        assert_eq!(image.unwrap().len(), cap + 1);
+    }
+
+    #[test]
+    fn a_foreign_download_carries_no_cookie_and_follows_no_redirect() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (api, api_seen) = serve(|_| ok_body(1));
+        let target = format!("{api}/api/auth/logout");
+        let (foreign, foreign_seen) = serve(move |_| {
+            format!(
+                "HTTP/1.1 302 Found\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .into_bytes()
+        });
+        let http = Http::new(&api).unwrap();
+        http.restore_session_cookie("secret");
+        let answer =
+            runtime.block_on(http.bytes(&format!("{foreign}/avatar.png"), Download::Image));
+        assert!(answer.is_err(), "{answer:?}");
+        let heads = foreign_seen.lock().clone();
+        assert_eq!(heads.len(), 1);
+        assert!(
+            !heads[0].to_ascii_lowercase().contains("cookie"),
+            "{}",
+            heads[0]
+        );
+        assert!(api_seen.lock().is_empty());
+        // The own origin still gets the session.
+        runtime
+            .block_on(http.bytes(&format!("{api}/api/avatars/x"), Download::Image))
+            .unwrap();
+        assert!(api_seen.lock()[0].contains("gelabber_session=secret"));
     }
 
     #[test]

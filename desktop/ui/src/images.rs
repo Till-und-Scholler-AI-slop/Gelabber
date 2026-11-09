@@ -111,7 +111,7 @@ impl Images {
         let url = url.to_owned();
         let http = self.client.http().clone();
         self.client.spawn(async move {
-            let bytes = http.bytes(&url).await;
+            let bytes = http.bytes(&url, gelabber_client::Download::Image).await;
             // Decoding a large PNG takes tens of milliseconds: not on the
             // UI thread and not on the two runtime workers.
             decode_off_thread(Box::new(move || {
@@ -183,7 +183,7 @@ impl Images {
         let url = url.to_owned();
         let http = self.client.http().clone();
         self.client.spawn(async move {
-            let state = match http.bytes(&url).await {
+            let state = match http.bytes(&url, gelabber_client::Download::Text).await {
                 Ok(bytes) => TextState::Ready(decode_text(&bytes).into()),
                 Err(_) => TextState::Failed,
             };
