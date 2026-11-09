@@ -454,6 +454,19 @@ pub fn take_notices(ctx: &egui::Context) -> Vec<(String, bool)> {
 /// thread; without a dialog into the Downloads folder. A toast says where.
 pub fn save(ctx: &egui::Context, title: &str, name: &str, bytes: Vec<u8>) {
     let ctx = ctx.clone();
+    // Only the last part of `name`: a path in it must not leave the folder.
+    let Some(name) = Path::new(name)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+    else {
+        tracing::warn!("save: {name:?} is no file name");
+        notices(&ctx)
+            .lock()
+            .push(("Datei nicht gespeichert. Der Dateiname fehlt.".into(), true));
+        ctx.request_repaint();
+        return;
+    };
+    let name = name.as_str();
     let request = Request::new(
         title,
         &[],
@@ -806,6 +819,35 @@ mod tests {
             notices[0].0.starts_with("Datei nicht gespeichert."),
             "{notices:?}"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A suggested name is only a name: a path in it stays out of the folder.
+    #[test]
+    fn a_save_never_leaves_the_folder_by_its_name() {
+        let dir = temp("save-name");
+        let inner = dir.join("downloads");
+        std::fs::create_dir_all(&inner).unwrap();
+        let ctx = egui::Context::default();
+        set_choosers(
+            &ctx,
+            Choosers {
+                downloads: Some(inner.clone()),
+                ..nothing()
+            },
+        );
+        save(&ctx, "Export", "../evil.json", b"x".to_vec());
+        let target = inner.join("evil.json");
+        assert_eq!(
+            saved(&ctx),
+            vec![(format!("Gespeichert unter {}.", target.display()), false)]
+        );
+        assert!(!dir.join("evil.json").exists());
+        for bad in ["..", "", "/"] {
+            save(&ctx, "Export", bad, b"x".to_vec());
+            let notices = saved(&ctx);
+            assert!(notices[0].1, "{bad:?}: {notices:?}");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
