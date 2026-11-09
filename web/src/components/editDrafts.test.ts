@@ -1,6 +1,12 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { MutationObserver, QueryClient } from "@tanstack/react-query";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { clearEditDrafts, setEditDraft, useEditDrafts } from "./editDrafts.ts";
+import {
+  clearEditDrafts,
+  saveEdit,
+  setEditDraft,
+  useEditDrafts,
+} from "./editDrafts.ts";
 
 const draftOf = (id: string) => useEditDrafts.getState().byMessage[id]?.text;
 
@@ -28,5 +34,26 @@ describe("edit drafts", () => {
     clearEditDrafts("c1");
     expect(draftOf("m1")).toBeUndefined();
     expect(draftOf("m2")).toBe("zwei");
+  });
+});
+
+describe("saving edits", () => {
+  // One edit mutation serves every row; TanStack hands a call's own
+  // onError only to the latest call.
+  it("tells each row about its own failed save", async () => {
+    let rejectFirst: (error: Error) => void = () => {};
+    const first = new Promise((_, reject) => (rejectFirst = reject));
+    const observer = new MutationObserver(new QueryClient(), {
+      mutationFn: ({ id }: { id: string; content: string }) =>
+        id === "a" ? first : Promise.resolve(),
+    });
+    const edit = { mutateAsync: observer.mutate.bind(observer) };
+    const failedA = vi.fn();
+    const failedB = vi.fn();
+    saveEdit(edit, "a")("neu a", failedA);
+    saveEdit(edit, "b")("neu b", failedB);
+    rejectFirst(new Error("abgelehnt"));
+    await vi.waitFor(() => expect(failedA).toHaveBeenCalledOnce());
+    expect(failedB).not.toHaveBeenCalled();
   });
 });

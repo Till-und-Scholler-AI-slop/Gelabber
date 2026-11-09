@@ -66,7 +66,7 @@ import { isMuted } from "../messages/notifyLevel.ts";
 import "./chat.css";
 import { Composer } from "./Composer.tsx";
 import { MessageRow } from "./MessageRow.tsx";
-import { clearEditDrafts } from "./editDrafts.ts";
+import { clearEditDrafts, saveEdit } from "./editDrafts.ts";
 import {
   AttemptActionsContext,
   JumpTo,
@@ -547,12 +547,7 @@ export function MessagePane({
                           canDelete={
                             message.author.id === user?.id || canModerate
                           }
-                          onEdit={(content, failed) =>
-                            contextEdit.mutate(
-                              { id: message.id, content },
-                              { onError: failed },
-                            )
-                          }
+                          onEdit={saveEdit(contextEdit, message.id)}
                           onDelete={async (skipConfirm) => {
                             if (
                               skipConfirm ||
@@ -582,12 +577,7 @@ export function MessagePane({
                           canDelete={
                             message.author.id === user?.id || canModerate
                           }
-                          onEdit={(content, failed) =>
-                            contextEdit.mutate(
-                              { id: message.id, content },
-                              { onError: failed },
-                            )
-                          }
+                          onEdit={saveEdit(contextEdit, message.id)}
                           onDelete={async (skipConfirm) => {
                             if (
                               skipConfirm ||
@@ -860,9 +850,7 @@ function MessageList({
                 canSend={canSend}
                 canDelete={message.author.id === meId || canModerate}
                 attempt={attempts.get(message.id)}
-                onEdit={(content, failed) =>
-                  edit.mutate({ id: message.id, content }, { onError: failed })
-                }
+                onEdit={saveEdit(edit, message.id)}
                 onDelete={async (skipConfirm) => {
                   if (skipConfirm || (await confirmDelete(message, meId)))
                     remove.mutate(message.id);

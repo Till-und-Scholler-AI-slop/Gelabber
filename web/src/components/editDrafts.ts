@@ -39,3 +39,17 @@ export function clearEditDrafts(channelId: string): void {
     ),
   }));
 }
+
+type EditMutation = {
+  mutateAsync: (input: { id: string; content: string }) => Promise<unknown>;
+};
+
+/**
+ * A row's save, with `failed` run if the server turns it down. Not a per-call
+ * onError: one mutation serves every row, and TanStack hands that only to
+ * its latest call, so a second save would drop the first one's recovery.
+ */
+export function saveEdit(edit: EditMutation, id: string) {
+  return (content: string, failed: () => void): void =>
+    void edit.mutateAsync({ id, content }).catch(failed);
+}
