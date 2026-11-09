@@ -525,7 +525,14 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         let view = chat.contexts.get_mut(&channel).expect("context state");
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list_rect));
         child.set_clip_rect(list_rect.intersect(ui.clip_rect()));
-        context_actions = context::show(&mut child, list_rect, client, channel, view, &input);
+        let revealed = chat
+            .panes
+            .get(&channel)
+            .map(|p| p.revealed.clone())
+            .unwrap_or_default();
+        context_actions = context::show(
+            &mut child, list_rect, client, channel, view, &input, &revealed,
+        );
     } else if searching {
         let s = chat.searches.get_mut(&channel).expect("search state");
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list_rect));

@@ -259,6 +259,7 @@ fn make_cx<'a>(item: &'a Item<'a>, input: &'a ListInput<'a>, snap: &'a Snap) -> 
                 .http
                 .gif_media_url(g.still.as_deref().unwrap_or(&g.url))
         }),
+        actions: true,
     }
 }
 
@@ -1054,13 +1055,19 @@ pub fn context_rows(
     messages: &[Message],
     target: Uuid,
     scroll: &mut ContextScroll,
+    revealed: &HashMap<Uuid, HashSet<usize>>,
 ) -> Vec<RowAction> {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let now_t = ui.input(|i| i.time);
+    // Spoilers open as in the list; the rows are shown only (`RowCx::actions`).
+    let make_cx = |item, input, snap| RowCx {
+        actions: false,
+        ..make_cx(item, input, snap)
+    };
     let snap = Snap {
         intents: HashMap::new(),
-        revealed: HashMap::new(),
+        revealed: revealed.clone(),
         editing: None,
         copied: None,
         highlight: None,

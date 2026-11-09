@@ -120,6 +120,9 @@ pub struct RowCx<'a> {
     pub gif_url: Option<String>,
     /// My files' upload states while the message is on its way.
     pub uploads: Option<Vec<gelabber_client::store::UploadState>>,
+    /// False for a message's context: its rows are not in the loaded
+    /// history, so they have no bar and take no reactions.
+    pub actions: bool,
 }
 
 impl RowCx<'_> {
@@ -547,6 +550,9 @@ pub struct BarButton {
 
 /// The hover bar's buttons for this row (`MessageRow.tsx` actions).
 pub fn bar_buttons(cx: &RowCx) -> Vec<BarButton> {
+    if !cx.actions {
+        return Vec::new();
+    }
     let editing = cx.edit.is_some();
     let can_react = cx.can_send && !cx.pending() && !editing;
     let show_edit =
@@ -825,7 +831,11 @@ pub fn paint(
             pos2(x, top + y),
             id,
             cx.me,
-            cx.can_send,
+            match (cx.actions, cx.can_send) {
+                (false, _) => reactions::Toggle::None,
+                (true, true) => reactions::Toggle::Any,
+                (true, false) => reactions::Toggle::Mine,
+            },
             &name_of,
         ) {
             actions.push(RowAction::React(msg.id, emoji, add));
@@ -1071,6 +1081,57 @@ fn paint_editor(ui: &mut Ui, id: Uuid, rect: Rect, edit: Editing, actions: &mut 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A row of a message's context has no bar: its message is not in the
+    /// loaded history, where reply, edit and the menu look it up.
+    #[test]
+    fn a_context_row_has_no_bar() {
+        let me = Uuid::from_u128(1);
+        let msg: Message = serde_json::from_value(serde_json::json!({
+            "id": Uuid::from_u128(2),
+            "channel_id": Uuid::nil(),
+            "author": {"id": me, "name": "Lena", "avatar_url": null},
+            "content": "Hallo",
+            "created_at": "2026-11-05T16:21:00Z",
+            "edited_at": null,
+            "revision": 0,
+            "created_order": 1,
+        }))
+        .expect("message");
+        let names = HashMap::new();
+        let revealed = HashSet::new();
+        let images =
+            Images::new(gelabber_client::Client::new("http://127.0.0.1:9").expect("client"));
+        let cx = RowCx {
+            msg: &msg,
+            continued: false,
+            mine: true,
+            mentioned: false,
+            send: None,
+            can_send: true,
+            can_delete: true,
+            me,
+            names: &names,
+            now: chrono::Utc::now(),
+            revealed: &revealed,
+            copied: None,
+            images: &images,
+            reactions: Vec::new(),
+            edit: None,
+            highlight: 0.0,
+            gif_url: None,
+            uploads: None,
+            actions: true,
+        };
+        assert_eq!(bar_buttons(&cx).len(), 4);
+        let shown = RowCx {
+            actions: false,
+            ..cx
+        };
+        assert!(bar_buttons(&shown).is_empty());
+        let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 40.0));
+        assert!(bar_rect(&shown, rect).is_none());
+    }
 
     #[test]
     fn a_lost_answer_reads_as_unknown() {
