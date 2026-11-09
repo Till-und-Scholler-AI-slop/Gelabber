@@ -326,7 +326,11 @@ async fn create_message(
     };
 
     let mut tx = state.db.begin().await?;
-    delivery::lock_channel(&mut tx, channel_id).await?;
+    let access = lock_access(&mut tx, channel_id, user.id).await?;
+    access.require_send()?;
+    if !attachment_ids.is_empty() {
+        access.require_send_files()?;
+    }
     let row = sqlx::query_as::<_, MessageInsert>(
         "INSERT INTO messages (channel_id, author_id, content, gif, mentions, mentions_everyone, reply_to, here_users) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
@@ -453,7 +457,8 @@ async fn update_message(
     );
     let mentioned = mentions::resolve(&state, &access, user.id, &content, granted).await?;
     let mut tx = state.db.begin().await?;
-    delivery::lock_channel(&mut tx, current.channel_id).await?;
+    let access = lock_access(&mut tx, current.channel_id, user.id).await?;
+    access.require_send()?;
     let row = sqlx::query_as::<_, MessageInsert>(
         "UPDATE messages SET content = $2, edited_at = now(), mentions = $3, mentions_everyone = $4, here_users = $5 \
          WHERE id = $1 \
@@ -521,7 +526,10 @@ async fn delete_message(
     }
 
     let mut tx = state.db.begin().await?;
-    delivery::lock_channel(&mut tx, current.channel_id).await?;
+    let access = lock_access(&mut tx, current.channel_id, user.id).await?;
+    if current.author.id != user.id {
+        access.require_manage_messages()?;
+    }
     let deleted = sqlx::query("DELETE FROM messages WHERE id = $1")
         .bind(message_id)
         .execute(&mut *tx)
@@ -629,7 +637,10 @@ async fn suppress_previews(
         access.require_manage_messages()?;
     }
     let mut tx = state.db.begin().await?;
-    delivery::lock_channel(&mut tx, current.channel_id).await?;
+    let access = lock_access(&mut tx, current.channel_id, user.id).await?;
+    if current.author.id != user.id {
+        access.require_manage_messages()?;
+    }
     let changed = sqlx::query(
         "UPDATE messages SET suppress_embeds = true WHERE id = $1 AND NOT suppress_embeds",
     )
@@ -781,6 +792,44 @@ pub(crate) async fn messaging_channel(
     let server_id = channel.server_id.ok_or(ApiError::NotFound)?;
     let member = membership::load(db, server_id, user_id).await?;
     Ok(MessagingChannel::Server { member })
+}
+
+/// The writer step of every message write: share-lock the server row (kick,
+/// ban and permission changes take it exclusively), take the channel lock,
+/// then read access again, so it holds until commit. DM membership is held
+/// likewise. Slow outside work belongs before this.
+pub(crate) async fn lock_access(
+    tx: &mut sqlx::PgConnection,
+    channel_id: Uuid,
+    user_id: Uuid,
+) -> Result<MessagingChannel, ApiError> {
+    sqlx::query(
+        "SELECT s.id FROM servers s JOIN channels c ON c.server_id=s.id WHERE c.id=$1 FOR SHARE OF s",
+    )
+    .bind(channel_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    delivery::lock_channel(&mut *tx, channel_id).await?;
+    let channel = channel::get(&mut *tx, channel_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if !channel.kind.is_messaging() {
+        return Err(ApiError::NotFound);
+    }
+    if let Some(server) = channel.server_id {
+        return Ok(MessagingChannel::Server {
+            member: membership::load(&mut *tx, server, user_id).await?,
+        });
+    }
+    let participant: Option<Uuid> = sqlx::query_scalar(
+        "SELECT user_id FROM channel_members WHERE channel_id=$1 AND user_id=$2 FOR SHARE",
+    )
+    .bind(channel.id)
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    participant.ok_or(ApiError::NotFound)?;
+    Ok(MessagingChannel::Dm { channel })
 }
 
 const MESSAGE_BY_ID_SQL: &str = "SELECT m.id, m.channel_id, m.author_id, u.name AS author_name, \

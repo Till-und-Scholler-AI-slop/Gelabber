@@ -10,13 +10,12 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-use super::{Message, MessageRow, MessagingChannel, message_for, persist_event};
+use super::{Message, MessageRow, lock_access, message_for, persist_event};
 use crate::{
     AppState,
     auth::session::CurrentUser,
     error::{ApiError, FieldErrors},
     gateway::{EventKind, delivery},
-    servers::{channel, membership},
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -88,29 +87,7 @@ async fn mutate(
     let emoji = canonical(emoji)
         .ok_or_else(|| ApiError::Validation(FieldErrors::from([("emoji", "invalid")])))?;
     let mut tx = state.db.begin().await?;
-    // Membership writers serialize through the server row. Keep membership and
-    // permissions stable through this write; DM membership is held likewise.
-    sqlx::query("SELECT s.id FROM servers s JOIN channels c ON c.server_id=s.id WHERE c.id=$1 FOR SHARE OF s")
-        .bind(initial.channel_id).fetch_optional(&mut *tx).await?;
-    delivery::lock_channel(&mut tx, initial.channel_id).await?;
-    let channel = channel::get(&mut *tx, initial.channel_id)
-        .await?
-        .ok_or(ApiError::NotFound)?;
-    let access = if let Some(server) = channel.server_id {
-        MessagingChannel::Server {
-            member: membership::load(&mut *tx, server, user).await?,
-        }
-    } else {
-        let participant: Option<Uuid> = sqlx::query_scalar(
-            "SELECT user_id FROM channel_members WHERE channel_id=$1 AND user_id=$2 FOR SHARE",
-        )
-        .bind(channel.id)
-        .bind(user)
-        .fetch_optional(&mut *tx)
-        .await?;
-        participant.ok_or(ApiError::NotFound)?;
-        MessagingChannel::Dm { channel }
-    };
+    let access = lock_access(&mut tx, initial.channel_id, user).await?;
     if add {
         access.require_send()?;
     }

@@ -427,6 +427,109 @@ async fn cannot_edit_or_delete_someone_elses_message(pool: PgPool) {
     assert_eq!(still.body["messages"].as_array().unwrap().len(), 1);
 }
 
+/// Holds the server row as a kick, ban or permission change does.
+async fn hold_server_row(
+    pool: &PgPool,
+    server: Uuid,
+) -> sqlx::Transaction<'static, sqlx::Postgres> {
+    let mut writer = pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM servers WHERE id=$1 FOR UPDATE")
+        .bind(server)
+        .fetch_one(&mut *writer)
+        .await
+        .unwrap();
+    writer
+}
+
+#[sqlx::test]
+async fn in_flight_send_rechecks_membership_after_the_writer_lock(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let server_id: Uuid = server["id"].as_str().unwrap().parse().unwrap();
+    let channel_id = text_channel_id(&server);
+    let member_id: Uuid = member.user_id().parse().unwrap();
+
+    let mut ban = hold_server_row(&pool, server_id).await;
+    let path = format!("/api/channels/{channel_id}/messages");
+    let mut send = tokio::spawn(async move {
+        member
+            .send(
+                Method::POST,
+                &path,
+                Some(json!({ "content": "noch schnell" })),
+            )
+            .await
+    });
+    // A send that read its access before the ban must not slip past it.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut send)
+            .await
+            .is_err()
+    );
+    sqlx::query("DELETE FROM server_members WHERE server_id=$1 AND user_id=$2")
+        .bind(server_id)
+        .bind(member_id)
+        .execute(&mut *ban)
+        .await
+        .unwrap();
+    ban.commit().await.unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(5), send)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.status, StatusCode::NOT_FOUND, "{}", response.body);
+    let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM messages WHERE author_id=$1")
+        .bind(member_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, 0);
+}
+
+#[sqlx::test]
+async fn in_flight_moderator_delete_rechecks_manage_messages(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let server_id: Uuid = server["id"].as_str().unwrap().parse().unwrap();
+    let channel_id = text_channel_id(&server);
+    let granted = owner
+        .send(
+            Method::PATCH,
+            &format!("/api/servers/{server_id}"),
+            Some(json!({ "member_permissions": ["send_messages", "manage_messages"] })),
+        )
+        .await;
+    assert_eq!(granted.status, StatusCode::OK, "{}", granted.body);
+    let posted = post_message(&mut owner, &channel_id, "bleibt").await;
+    let message: Uuid = posted["id"].as_str().unwrap().parse().unwrap();
+
+    let mut revoke = hold_server_row(&pool, server_id).await;
+    let path = format!("/api/messages/{message}");
+    let mut delete = tokio::spawn(async move { member.send(Method::DELETE, &path, None).await });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut delete)
+            .await
+            .is_err()
+    );
+    sqlx::query("UPDATE servers SET member_permissions=0 WHERE id=$1")
+        .bind(server_id)
+        .execute(&mut *revoke)
+        .await
+        .unwrap();
+    revoke.commit().await.unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(5), delete)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.status, StatusCode::FORBIDDEN, "{}", response.body);
+    let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM messages WHERE id=$1")
+        .bind(message)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(kept, 1);
+}
+
 #[sqlx::test]
 async fn foreign_or_voice_channel_is_not_found(pool: PgPool) {
     let (mut owner, mut stranger) = two_users(pool).await;
