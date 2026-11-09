@@ -413,8 +413,7 @@ describe("noise model download", () => {
       onprocessorerror: (() => void) | null = null;
       port = {
         onmessage: null as
-          | ((event: { data: { ready: boolean } }) => void)
-          | null,
+          ((event: { data: { ready: boolean } }) => void) | null,
         postMessage() {},
         close() {},
       };
@@ -478,7 +477,10 @@ describe("noise model download", () => {
     // A total deadline would run on the same clock as the download.
     vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
       const abort = new AbortController();
-      setTimeout(() => abort.abort(new DOMException("timeout", "TimeoutError")), ms);
+      setTimeout(
+        () => abort.abort(new DOMException("timeout", "TimeoutError")),
+        ms,
+      );
       return abort.signal;
     });
     // Eight bytes, three seconds apart: longer than any total limit of 8 s.

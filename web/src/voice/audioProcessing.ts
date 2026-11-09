@@ -98,8 +98,7 @@ async function fetchModel(): Promise<ArrayBuffer> {
   }
 }
 async function loadModel(): Promise<WebAssembly.Module> {
-  if (modelFailure && Date.now() < modelFailure.until)
-    throw modelFailure.error;
+  if (modelFailure && Date.now() < modelFailure.until) throw modelFailure.error;
   if (!wasm) {
     wasm = (async () => {
       const bytes = await fetchModel();
