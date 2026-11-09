@@ -15,6 +15,9 @@ use crate::models::*;
 pub const TYPING_TTL: Duration = Duration::from_millis(6_000);
 /// First page and every older page (`messages/rules.ts`).
 pub const PAGE_SIZE: u32 = 50;
+/// Deleted ids kept per conversation, so a page read before the delete
+/// does not bring the message back (the web's revision floors).
+const TOMBSTONES: usize = 256;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum Session {
@@ -236,6 +239,8 @@ pub struct ChannelMessages {
     pub stale: bool,
     /// The last read mark was not saved ("Lesestatus nicht gespeichert.").
     pub read_failed: bool,
+    /// The newest deleted ids, oldest first; never shown again.
+    deleted: std::collections::VecDeque<Uuid>,
 }
 
 impl ChannelMessages {
@@ -248,6 +253,9 @@ impl ChannelMessages {
     pub fn upsert(&mut self, message: Message) {
         if let Some(nonce) = message.nonce {
             self.pending.retain(|p| p.nonce != nonce);
+        }
+        if self.deleted.contains(&message.id) {
+            return;
         }
         if let Some(existing) = self.messages.iter_mut().find(|m| m.id == message.id) {
             if message.is_newer_than(existing) {
@@ -263,6 +271,12 @@ impl ChannelMessages {
     }
 
     pub fn remove(&mut self, id: Uuid) -> bool {
+        if !self.deleted.contains(&id) {
+            self.deleted.push_back(id);
+            if self.deleted.len() > TOMBSTONES {
+                self.deleted.pop_front();
+            }
+        }
         let before = self.messages.len();
         self.messages.retain(|m| m.id != id);
         for message in &mut self.messages {
@@ -300,8 +314,9 @@ impl ChannelMessages {
     /// The first page (or a refetch after a gap) replaces what was loaded.
     /// Rows newer than the page came live while it was requested and stay;
     /// before the first load, every row held came that way.
-    pub fn replace(&mut self, page: MessagePage) {
+    pub fn replace(&mut self, mut page: MessagePage) {
         let first_load = !self.loaded;
+        page.messages.retain(|m| !self.deleted.contains(&m.id));
         let newest = page.messages.last().map(Message::order_key);
         let held = std::mem::replace(&mut self.messages, page.messages);
         for message in held {
@@ -1314,6 +1329,30 @@ mod tests {
         s.channel_mut(id(100))
             .merge_latest(page(vec![message(5, 50, 5)]));
         assert_eq!(ids(&s), vec![id(5)]);
+    }
+
+    /// A delete that came before the page holding the message (first page
+    /// or an older one in flight) keeps it away.
+    #[test]
+    fn a_deleted_message_does_not_come_back_with_a_page() {
+        let mut s = State::default();
+        s.channel_mut(id(100)).loading = true;
+        s.apply_delete(id(100), id(2));
+        let ids = |s: &State| {
+            s.channels[&id(100)]
+                .messages
+                .iter()
+                .map(|m| m.id)
+                .collect::<Vec<_>>()
+        };
+        s.channel_mut(id(100))
+            .replace(page(vec![message(2, 20, 2), message(3, 30, 3)]));
+        assert_eq!(ids(&s), vec![id(3)]);
+        s.apply_delete(id(100), id(1));
+        s.channel_mut(id(100))
+            .prepend(page(vec![message(1, 10, 1)]));
+        s.apply_message(message(2, 20, 4));
+        assert_eq!(ids(&s), vec![id(3)]);
     }
 
     #[test]
