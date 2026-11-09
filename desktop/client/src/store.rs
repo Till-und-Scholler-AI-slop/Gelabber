@@ -577,10 +577,25 @@ impl State {
             })
     }
 
+    /// Read rows from REST, by position like `rd` (`apply_sync`): an answer
+    /// read before a newer mark landed does not undo it.
     pub fn apply_read_states(&mut self, rows: Vec<ReadState>) {
         for row in rows {
-            self.read.insert(row.channel_id, row);
+            match self.read.get(&row.channel_id) {
+                Some(current) if row.position() < current.position() => {}
+                _ => {
+                    self.read.insert(row.channel_id, row);
+                }
+            }
         }
+    }
+
+    /// The whole `GET /messages/unread` list: conversations it lacks are
+    /// gone, the others are taken as [`Self::apply_read_states`] does.
+    pub fn replace_read_states(&mut self, rows: Vec<ReadState>) {
+        self.read
+            .retain(|id, _| rows.iter().any(|r| r.channel_id == *id));
+        self.apply_read_states(rows);
     }
 
     /// `rd` from another device; true when the counts must be refetched.
@@ -1699,6 +1714,35 @@ mod tests {
         );
         s.view.channel = Some(id(3));
         assert_eq!(s.dms_badge(now), Badge::default());
+    }
+
+    #[test]
+    fn read_rows_apply_by_position_not_arrival() {
+        let now = chrono::Utc::now();
+        let row = |channel: u128, read: i64, latest: i64, unread| ReadState {
+            channel_id: id(channel),
+            server_id: None,
+            read_message_id: None,
+            read_at: None,
+            read_order: Some(read),
+            membership_at: now,
+            latest_order: Some(latest),
+            unread_count: unread,
+            mention_count: 0,
+            level: NotificationLevel::All,
+            muted: false,
+            muted_until: None,
+        };
+        let mut s = State::default();
+        s.replace_read_states(vec![row(1, 3, 10, 7), row(2, 1, 1, 0)]);
+        // Marked read up to 10, then a list asked for before that answers.
+        s.apply_read_states(vec![row(1, 10, 10, 0)]);
+        s.replace_read_states(vec![row(1, 3, 10, 7)]);
+        assert_eq!(s.read[&id(1)].unread_count, 0);
+        // A newer message is taken; a conversation the list lacks is gone.
+        s.replace_read_states(vec![row(1, 10, 11, 1)]);
+        assert_eq!(s.read[&id(1)].unread_count, 1);
+        assert!(!s.read.contains_key(&id(2)));
     }
 
     #[test]

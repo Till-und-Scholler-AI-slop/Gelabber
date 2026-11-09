@@ -340,8 +340,7 @@ impl Client {
             }
             match unread {
                 Ok(rows) => {
-                    s.read.clear();
-                    s.apply_read_states(rows);
+                    s.replace_read_states(rows);
                 }
                 Err(e) => failure = failure.take().or(Some(e)),
             }
@@ -429,8 +428,7 @@ impl Client {
         let epoch = self.epoch();
         if let Ok(rows) = self.http().unread().await {
             self.write_in(epoch, |s| {
-                s.read.clear();
-                s.apply_read_states(rows);
+                s.replace_read_states(rows);
             });
         }
     }
@@ -479,8 +477,8 @@ impl Client {
         self.spawn(async move { this.load_latest(channel).await });
     }
 
-    /// Opens a text channel or DM: history (first page) once, then marks it
-    /// read like the web. The server is looked up; for a route with both
+    /// Opens a text channel or DM: history (first page) once. Marking it
+    /// read is the pane's (at the newest row, focused). The server is looked up; for a route with both
     /// ids use [`Self::open_server_channel`]. Cheap to call every frame.
     pub fn open_channel(&self, channel: Uuid) {
         let server = self.with_state(|s| {
@@ -564,7 +562,6 @@ impl Client {
         }
         let this = self.clone();
         self.spawn(async move {
-            let changed = this.with_state(|s| s.view != view);
             this.change_view(view);
             if let Some(id) = server
                 && !this.with_state(|s| {
@@ -582,9 +579,6 @@ impl Client {
             });
             if fetch {
                 this.load_latest(channel).await;
-            }
-            if changed || fetch {
-                this.mark_read_now(channel).await;
             }
             this.inner.opening.lock().remove(&view);
         });
@@ -1657,8 +1651,7 @@ impl Client {
                 s.notification_settings = list;
             }
             if let Ok(rows) = unread {
-                s.read.clear();
-                s.apply_read_states(rows);
+                s.replace_read_states(rows);
             }
         });
     }
@@ -1719,7 +1712,7 @@ impl Client {
         }
     }
 
-    fn on_gateway(&self, event: GatewayEvent) {
+    pub(crate) fn on_gateway(&self, event: GatewayEvent) {
         match event {
             GatewayEvent::Status(status) => self.write(|s| s.gateway = status),
             GatewayEvent::Ready => {
@@ -1736,16 +1729,14 @@ impl Client {
                 self.schedule_recovery(true);
             }
             GatewayEvent::Event(event) => {
-                let (removed, read_now, created) = self.write(|s| {
+                let (removed, created) = self.write(|s| {
                     let removed = s.apply_event(&event);
                     let me = s.me().map(|u| u.id);
                     let created = (event.t == EventKind::C)
                         .then(|| event.message())
                         .flatten()
                         .filter(|m| Some(m.author.id) != me);
-                    let read_now =
-                        created.is_some() && event.c.is_some() && event.c == s.view.channel;
-                    (removed, read_now, created)
+                    (removed, created)
                 });
                 if let Some((server, banned)) = removed {
                     self.removed_from(server, banned);
@@ -1755,9 +1746,6 @@ impl Client {
                         server: event.s,
                         message: Box::new(message),
                     });
-                }
-                if read_now && self.inner.local.lock().in_front {
-                    self.schedule_mark_read(event.c.unwrap_or_default());
                 }
                 self.schedule_unread_refresh();
                 let tap = self.inner.event_tap.read().clone();
@@ -1914,8 +1902,7 @@ impl Client {
                 s.dms = list;
             }
             if let Ok(rows) = unread {
-                s.read.clear();
-                s.apply_read_states(rows);
+                s.replace_read_states(rows);
             }
         });
         if current.is_none() {
@@ -1986,31 +1973,6 @@ impl Client {
             };
             if fire {
                 client.reload_unread().await;
-            }
-        });
-    }
-
-    /// A new message in the open conversation while the app is in front.
-    fn schedule_mark_read(&self, channel: Uuid) {
-        let generation = self
-            .inner
-            .read_generation
-            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
-            + 1;
-        let weak = self.weak();
-        self.runtime().spawn(async move {
-            tokio::time::sleep(UNREAD_DEBOUNCE).await;
-            let Some(client) = Client::from_weak(&weak) else {
-                return;
-            };
-            if client
-                .inner
-                .read_generation
-                .load(std::sync::atomic::Ordering::Acquire)
-                == generation
-                && client.with_state(|s| s.view.channel == Some(channel))
-            {
-                client.mark_read_now(channel).await;
             }
         });
     }

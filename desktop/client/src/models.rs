@@ -600,6 +600,11 @@ impl ReadState {
         }
     }
 
+    /// Where this row stands: a row behind another describes an older state.
+    pub fn position(&self) -> (Timestamp, Option<i64>, Option<i64>) {
+        (self.membership_at, self.read_order, self.latest_order)
+    }
+
     /// Takes a pushed read position unless it is behind ours (the web's
     /// `applyReadSync`). `Some(true)` = taken, but our row counted messages
     /// the push did not know yet, so the counts must be fetched again.
