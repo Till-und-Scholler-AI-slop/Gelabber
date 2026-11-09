@@ -44,7 +44,7 @@ Default theme preference is **"dark"** when nothing stored (`theme/theme.ts:11-2
 | `--lr-online-text` | success text | `#85d69b` | `#277643` |
 | `--lr-warning` | away dot, caps-lock hint | `#d8a657` | `#a27e44` |
 | `--lr-danger` | error text, danger outline | `#f39b98` | `#a12b29` |
-| `--lr-danger-bg` | danger fill, count badge | `#8f302d` | `#b33b38` |
+| `--lr-danger-bg` | danger fill | `#8f302d` | `#b33b38` |
 | `--lr-on-danger` | text on danger fill | `#ffffff` | `#ffffff` |
 | `--lr-backdrop` | modal backdrop | `rgb(9 12 13 / .72)` | `rgb(37 40 41 / .45)` |
 | `--lr-tile-1…8` | server/avatar initials tints | `#634336 #635636 #4e6336 #366349 #365d63 #364963 #433663 #633653` | `#ead2c8 #eae0c8 #daeac8 #c8ead6 #c8e5ea #c8d6ea #d2c8ea #eac8dd` |
@@ -433,7 +433,7 @@ Voice card (the chosen room: current call → last visited → occupied → firs
 | Element | Spec |
 |---|---|
 | section | padding 0 |
-| heading | flex wrap, centre, gap 10, min-height 28: `SpeakerIcon 18` (muted; **online** colour when you are in it), h2 room name 600 16px/1.3, pill **"Verbunden"** when joined (inline-flex gap 6, height 22, padding 0 8, radius full, bg online 14%, colour online-text, 500 12px, leading 6px dot), red **"Live"** badge when someone is live (radius 3, bg danger-bg, `#fff`, padding 2/6, caps 11px) |
+| heading | flex wrap, centre, gap 10, min-height 28: `SpeakerIcon 18` (muted; **online** colour when you are in it), h2 room name 600 16px/1.3, pill **"Verbunden"** when joined (inline-flex gap 6, height 22, padding 0 8, radius full, bg online 14%, colour online-text, 500 12px, leading 6px dot), coral **"Live"** badge when someone is live (radius 3, bg `--lr-live`, ink `--lr-on-live`, padding 2/6, caps 11px) |
 | participants | margin-top 12, flex wrap gap 12; each tile **168×136**, padding 12, border 1 border, radius 10, bg surface, column centred: avatar **56×56** (initials 20px on tint, else panel), name margin-top 8 600 13px/1.35, status line only for "Kamera an"/"Live" (12px muted). Speaking: border + 1px ring in online colour. Mute icons top-left 8/8 (muted); "…" button top-right 6/6 visible on hover. Connection dot and speaker icon hidden here. |
 | live/camera stage | above participants: spotlight full width + filmstrip (see voice spec) |
 | switch note | when in another room: 12px muted "Du verlässt dabei {Raum}." |

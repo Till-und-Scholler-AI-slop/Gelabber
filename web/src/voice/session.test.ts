@@ -861,6 +861,31 @@ describe("voice session", () => {
     expect(mediaSent.some((frame) => frame.op === "produce")).toBe(false);
   });
 
+  it("joins to watch: the Lives asked for are watched once media stands", async () => {
+    const { mediaSent } = install();
+    joinVoice({
+      serverId: "srv",
+      channelId: "voice",
+      channelName: "Lounge",
+      watch: ["ada", "u-self"],
+    });
+    // Watching at once, never oneself.
+    expect(useVoice.getState().sourceSubscriptions).toEqual({
+      ada: { s: true },
+    });
+    await vi.waitFor(() => {
+      expect(
+        mediaSent.some(
+          (frame) =>
+            frame.op === "w" &&
+            frame.u === "ada" &&
+            frame.k === "s" &&
+            frame.on === true,
+        ),
+      ).toBe(true);
+    });
+  });
+
   it("publishes via correlated v4 media WS and keeps presence on chat WS", async () => {
     const { sent, mediaSent, peers } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });

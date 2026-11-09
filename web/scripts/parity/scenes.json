@@ -935,6 +935,20 @@
       ]
     },
     {
+      "name": "light-live-toast",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "call": "Sofa jonas:live"
+        },
+        {
+          "wait": 2000
+        }
+      ],
+      "before": "theme lena light"
+    },
+    {
       "name": "rail-hover",
       "path": "/s/{home}",
       "user": "lena",

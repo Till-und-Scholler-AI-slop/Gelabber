@@ -72,8 +72,9 @@ impl Widget for Badge<'_> {
     }
 }
 
-/// The unread count pill: min 18×18, padding 0 5, 700 11px/1, `99+` above
-/// 99, with an optional `0 0 0 2px` ring in the surface colour.
+/// The unread count pill in the accent, as unread marks are: min 18×18,
+/// padding 0 5, 700 11px/1, `99+` above 99, with an optional `0 0 0 2px`
+/// ring in the surface colour.
 pub fn count_badge(
     painter: &Painter,
     ui: &Ui,
@@ -89,7 +90,7 @@ pub fn count_badge(
         count.to_string()
     };
     let style = text::TextStyle::new(11.0, 700.0, 1.0);
-    let block = Block::single(ui, &label, style, c.on_danger);
+    let block = Block::single(ui, &label, style, c.accent_ink);
     let width = (block.width() + 10.0).max(18.0);
     let rect = Rect::from_min_max(
         anchor_bottom_right - Vec2::new(width, 18.0),
@@ -103,7 +104,7 @@ pub fn count_badge(
             StrokeKind::Middle,
         );
     }
-    painter.rect_filled(rect, corner(9.0), c.danger_bg);
+    painter.rect_filled(rect, corner(9.0), c.accent);
     block.paint(
         painter,
         Pos2::new(
