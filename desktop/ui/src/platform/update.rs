@@ -48,6 +48,10 @@ pub fn release_page(version: &str) -> String {
 
 pub const FIRST_CHECK: Duration = Duration::from_secs(15);
 pub const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+/// After a failed check (offline, a release without its files yet).
+pub const RETRY_AFTER: Duration = Duration::from_secs(15 * 60);
+/// No installer of ours comes near it; an endless body stops here.
+const MAX_DOWNLOAD: u64 = 512 << 20;
 /// How long after a call (or the microphone test) the app still counts as
 /// in one, as media.rs `BUSY_AFTER`: a quick rejoin is not cut off.
 pub const BUSY_AFTER: Duration = Duration::from_secs(60);
@@ -368,14 +372,46 @@ pub async fn download(
     dir: &Path,
     progress: impl Fn(u64, Option<u64>),
 ) -> Result<PathBuf, String> {
+    download_capped(
+        http,
+        url,
+        signature,
+        pubkey,
+        version,
+        dir,
+        MAX_DOWNLOAD,
+        progress,
+    )
+    .await
+}
+
+/// [`download`] with at most `cap` bytes.
+#[allow(clippy::too_many_arguments)]
+async fn download_capped(
+    http: &reqwest::Client,
+    url: &str,
+    signature: &str,
+    pubkey: &str,
+    version: &str,
+    dir: &Path,
+    cap: u64,
+    progress: impl Fn(u64, Option<u64>),
+) -> Result<PathBuf, String> {
     let mut response = http.get(url).send().await.map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err(format!("{}: {}", file_name(url), response.status()));
     }
+    let too_big = || format!("{}: das Update ist zu groß", file_name(url));
     let total = response.content_length();
-    let mut bytes = Vec::with_capacity(total.unwrap_or(0).min(512 << 20) as usize);
+    if total.is_some_and(|total| total > cap) {
+        return Err(too_big());
+    }
+    let mut bytes = Vec::with_capacity(total.unwrap_or(0) as usize);
     progress(0, total);
     while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        if bytes.len() as u64 + chunk.len() as u64 > cap {
+            return Err(too_big());
+        }
         bytes.extend_from_slice(&chunk);
         progress(bytes.len() as u64, total);
     }
@@ -391,6 +427,32 @@ pub async fn download(
 /// updater plugin's `<app>-<version>-updater-…`.
 fn download_dir(version: &str) -> PathBuf {
     std::env::temp_dir().join(format!("gelabber-{version}-updater-{}", std::process::id()))
+}
+
+/// Removes the [`download_dir`]s in `root` older than `age`: the setup ran
+/// from there, or a call refused it and the app ended.
+fn clean_downloads(root: &Path, age: Duration) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let ours = name.starts_with("gelabber-") && name.contains("-updater-");
+        let old = entry
+            .metadata()
+            .ok()
+            .filter(std::fs::Metadata::is_dir)
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|elapsed| elapsed >= age);
+        if ours
+            && old
+            && let Err(e) = std::fs::remove_dir_all(entry.path())
+        {
+            tracing::info!("update: {}: {e}", entry.path().display());
+        }
+    }
 }
 
 /// The Tauri updater's quoting of an argument for `/ARGS`: also a `/`, so
@@ -809,7 +871,10 @@ pub struct Updater {
     install: Install,
     /// When to look next.
     next: Instant,
+    /// The last check that got an answer.
     last: Option<SystemTime>,
+    /// When the last check failed, unless one answered since.
+    failed: Option<Instant>,
     checking: Option<Slot<Result<Option<Found>, String>>>,
     found: Option<Found>,
     /// "Später": no notice for this version until the next start.
@@ -842,6 +907,7 @@ impl Updater {
             install,
             next: Instant::now(),
             last: None,
+            failed: None,
             checking: None,
             found: None,
             dismissed: None,
@@ -906,7 +972,7 @@ impl Updater {
                 auto_check: auto,
                 checking: self.checking.is_some(),
                 available: self.found.as_ref().map(|f| f.version.clone()),
-                checked: self.last.is_some(),
+                checked: self.last.is_some() || self.failed.is_some(),
                 error: self.error.clone(),
                 installs: self.updates_itself(),
                 notice,
@@ -917,6 +983,10 @@ impl Updater {
     /// The first look, [`FIRST_CHECK`] after `now`.
     pub fn start(&mut self, now: Instant) {
         self.next = now + FIRST_CHECK;
+        // A day old: another profile's app may be downloading right now.
+        let _ = std::thread::Builder::new()
+            .name("gelabber-update-clean".into())
+            .spawn(|| clean_downloads(&std::env::temp_dir(), Duration::from_secs(24 * 60 * 60)));
     }
 
     /// Every pass with the app: checks when due, runs an accepted update and
@@ -929,11 +999,19 @@ impl Updater {
         }
         if self.checking.is_none() && self.at_rest() && now >= self.next {
             self.next = now + Duration::from_secs(60);
-            if auto_check() && due(self.last, SystemTime::now()) {
+            if auto_check() && self.wants_check(SystemTime::now(), now) {
                 self.start_check(wake);
             }
         }
         false
+    }
+
+    /// Six hours after the last answer, [`RETRY_AFTER`] after a failure.
+    fn wants_check(&self, wall: SystemTime, now: Instant) -> bool {
+        due(self.last, wall)
+            && self
+                .failed
+                .is_none_or(|failed| now.saturating_duration_since(failed) >= RETRY_AFTER)
     }
 
     /// Every pass of the setup screen: no app and no call there, so an
@@ -1014,9 +1092,10 @@ impl Updater {
             return;
         };
         self.checking = None;
-        self.last = Some(SystemTime::now());
         match result {
             Ok(found) => {
+                self.last = Some(SystemTime::now());
+                self.failed = None;
                 if found.as_ref().map(|f| &f.version) != self.found.as_ref().map(|f| &f.version) {
                     self.phase = Phase::Offer;
                     self.ready = None;
@@ -1025,6 +1104,7 @@ impl Updater {
             }
             Err(e) => {
                 tracing::info!("update check: {e}");
+                self.failed = Some(Instant::now());
                 self.error = Some(e);
                 return;
             }
@@ -1283,6 +1363,86 @@ mod tests {
         assert!(!due(Some(now - Duration::from_secs(60)), now));
         assert!(due(Some(now - CHECK_EVERY), now));
         assert!(due(Some(now + Duration::from_secs(3600)), now));
+    }
+
+    /// Offline at start, or the 404 while a release has no assets yet: the
+    /// next try comes after [`RETRY_AFTER`], not six hours later.
+    #[test]
+    fn a_failed_check_is_tried_again_soon() {
+        let mut updater = Updater::new(Install::Manual);
+        updater.checking = Some(Arc::new(Mutex::new(Some(Err("offline".into())))));
+        updater.take_check();
+        assert_eq!(updater.error.as_deref(), Some("offline"));
+        let (wall, now) = (SystemTime::now(), Instant::now());
+        assert!(!updater.wants_check(wall, now));
+        assert!(updater.wants_check(wall, now + RETRY_AFTER));
+        // An answer: the next look in six hours.
+        updater.checking = Some(Arc::new(Mutex::new(Some(Ok(None)))));
+        updater.take_check();
+        let wall = SystemTime::now();
+        assert!(!updater.wants_check(wall, now + RETRY_AFTER));
+        let later = CHECK_EVERY + Duration::from_secs(1);
+        assert!(updater.wants_check(wall + later, now + later));
+    }
+
+    #[test]
+    fn old_download_folders_are_removed_and_nothing_else() {
+        let root = temp_dir("clean");
+        let old = root.join("gelabber-0.9.1-updater-4242");
+        let other = root.join("gelabber-ui-tests-4242");
+        for dir in [&old, &other] {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(dir.join("gelabber-setup.exe"), b"MZ").unwrap();
+        }
+        clean_downloads(&root, Duration::from_secs(3600));
+        assert!(old.exists(), "not old enough yet");
+        clean_downloads(&root, Duration::ZERO);
+        assert!(!old.exists());
+        assert!(other.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A manifest may name a body without end: the download stops at the cap.
+    #[test]
+    fn a_download_larger_than_the_cap_is_refused() {
+        use std::io::{Read as _, Write as _};
+        // With its length said, and without (read until the server closes).
+        let (addr, _) = serve(vec![("application/octet-stream", INSTALLER.to_vec())]);
+        let sized = format!("http://{addr}/gelabber-setup.exe");
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let unsized_ = format!(
+            "http://{}/gelabber-setup.exe",
+            listener.local_addr().unwrap()
+        );
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut request = [0u8; 4096];
+                let _ = stream.read(&mut request);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+                for _ in 0..64 {
+                    if stream.write_all(&[0u8; 1024]).is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+        let dir = temp_dir("capped");
+        let client = gelabber_client::Client::new("http://127.0.0.1:9").unwrap();
+        let http = download_client().unwrap();
+        for url in [sized, unsized_] {
+            let result = client.block_on(download_capped(
+                &http,
+                &url,
+                SIG_A,
+                KEY_A,
+                "0.9.1",
+                &dir,
+                16,
+                |_, _| {},
+            ));
+            assert!(result.unwrap_err().contains("zu groß"), "{url}");
+        }
+        assert!(!dir.exists());
     }
 
     #[test]
