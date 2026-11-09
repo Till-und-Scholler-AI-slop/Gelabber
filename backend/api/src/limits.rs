@@ -5,8 +5,8 @@
 //! address, IPv6 per /64; everything else by the account of the session,
 //! which the gate resolves once for the handler as well, or by the address
 //! when the cookie matches no live session.
-//! Failed logins are also counted per account ([`login_blocked`] /
-//! [`login_failed`]), so spreading guesses over many addresses does not
+//! Password guesses are also counted per account ([`login_attempt`] /
+//! [`login_succeeded`]), so spreading guesses over many addresses does not
 //! multiply them. Upload *bytes* are a durable daily quota in Postgres so
 //! a restart cannot reset them. Request windows live in process — v1 is a
 //! single node.
@@ -276,6 +276,19 @@ impl Limiter {
         })
     }
 
+    /// Takes back one hit [`Self::hit`] recorded in a window that is still
+    /// running.
+    pub fn refund(&self, bucket: &str, id: &str) {
+        let key = format!("{bucket}:{id}");
+        let now = Instant::now();
+        let mut inner = self.inner.lock().unwrap_or_else(|err| err.into_inner());
+        if let Some(slot) = inner.windows.get_mut(&key)
+            && now < slot.reset_at
+        {
+            slot.count = slot.count.saturating_sub(1);
+        }
+    }
+
     #[cfg(test)]
     fn len(&self) -> usize {
         self.inner
@@ -446,28 +459,25 @@ fn check(
         .map_err(|retry| (bucket, retry))
 }
 
-/// Refuses a login for an account with too many recent failures. Checked
-/// before the password hash, so a blocked guess costs no Argon2 run, and
-/// answered like every other limit (`429 rate_limited`, `Retry-After`).
-pub fn login_blocked(state: &AppState, email: &str) -> Result<(), ApiError> {
+/// Counts one password guess against `email`, known account or not, before
+/// the hash runs: guesses that arrive together cannot all pass a check made
+/// before the first failure is recorded. Refuses one past the limit like
+/// every other limit (`429 rate_limited`, `Retry-After`), at no Argon2 run.
+/// A guess that turns out right is taken back with [`login_succeeded`].
+pub fn login_attempt(state: &AppState, email: &str) -> Result<(), ApiError> {
     let max = state.limits.login_failures_per_account;
-    match state.limiter.blocked("login", &account_key(email), max) {
-        Some(retry_after) => {
+    state
+        .limiter
+        .hit("login", &account_key(email), max, LOGIN_FAILURE_WINDOW)
+        .map_err(|retry_after| {
             state.metrics.rate_limited("login");
-            Err(ApiError::RateLimited { retry_after })
-        }
-        None => Ok(()),
-    }
+            ApiError::RateLimited { retry_after }
+        })
 }
 
-/// Counts one failed login against `email`, known account or not, so the
-/// answer does not tell the two apart.
-pub fn login_failed(state: &AppState, email: &str) {
-    let max = state.limits.login_failures_per_account;
-    // Over the limit is already refused by `login_blocked` next time.
-    let _ = state
-        .limiter
-        .hit("login", &account_key(email), max, LOGIN_FAILURE_WINDOW);
+/// The password [`login_attempt`] counted was right: it is no failure.
+pub fn login_succeeded(state: &AppState, email: &str) {
+    state.limiter.refund("login", &account_key(email));
 }
 
 /// Counts one account mail to `email`; `false` once the hourly allowance of
@@ -791,6 +801,21 @@ mod tests {
                 .hit_at("login", "victim", 2, LOGIN_FAILURE_WINDOW, later)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn refund_takes_back_one_hit() {
+        let limiter = Limiter::new();
+        limiter.hit("login", "a", 2, MINUTE).unwrap();
+        limiter.hit("login", "a", 2, MINUTE).unwrap();
+        limiter.refund("login", "a");
+        assert!(limiter.hit("login", "a", 2, MINUTE).is_ok());
+        assert!(limiter.hit("login", "a", 2, MINUTE).is_err());
+        // Nothing to take back from an unknown key or below zero.
+        limiter.refund("login", "b");
+        limiter.refund("login", "b");
+        assert!(limiter.hit("login", "b", 1, MINUTE).is_ok());
+        assert!(limiter.hit("login", "b", 1, MINUTE).is_err());
     }
 
     #[test]

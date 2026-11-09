@@ -283,13 +283,12 @@ async fn login(
     }
     validate::finish(errors)?;
     let email = email.expect("validated");
-    limits::login_blocked(&state, &email)?;
+    limits::login_attempt(&state, &email)?;
 
     // Register never stores anything longer, so this cannot match; fail
     // before the lookup and the hash, with the same answer as a wrong
     // password.
     if body.password.chars().count() > validate::PASSWORD_MAX {
-        limits::login_failed(&state, &email);
         return Err(ApiError::InvalidCredentials);
     }
 
@@ -300,9 +299,9 @@ async fn login(
     let ok = password::verify(body.password, stored).await?;
 
     let Some(credentials) = found.filter(|_| ok) else {
-        limits::login_failed(&state, &email);
         return Err(ApiError::InvalidCredentials);
     };
+    limits::login_succeeded(&state, &email);
     // Only after the password matched, so the answer tells nothing to
     // someone who does not know it.
     if !credentials.email_verified
@@ -398,17 +397,18 @@ async fn change_password(
     let new_password = new_password.expect("validated");
 
     let user = current.user;
-    limits::login_blocked(&state, &user.email)?;
+    limits::login_attempt(&state, &user.email)?;
     let stored = user::password_hash_by_id(&state.db, user.id).await?;
     let ok = body.current_password.chars().count() <= validate::PASSWORD_MAX
         && password::verify(body.current_password, stored).await?;
     if !ok {
-        limits::login_failed(&state, &user.email);
         return Err(ApiError::Validation(FieldErrors::from([(
             "current_password",
             "wrong",
         )])));
     }
+
+    limits::login_succeeded(&state, &user.email);
 
     let hash = password::hash(new_password).await?;
     let revoked = user::set_password_hash(&state.db, user.id, &hash).await?;
@@ -459,16 +459,16 @@ async fn verify_email(
         )])));
     }
     let user = session::reload(&state.db, user_id).await?;
-    limits::login_blocked(&state, &user.email)?;
+    limits::login_attempt(&state, &user.email)?;
     let stored = user::password_hash_by_id(&state.db, user_id).await?;
     let ok = body.password.chars().count() <= validate::PASSWORD_MAX
         && password::verify(body.password, stored).await?;
     if !ok {
-        limits::login_failed(&state, &user.email);
         return Err(ApiError::Validation(FieldErrors::from([(
             "password", "wrong",
         )])));
     }
+    limits::login_succeeded(&state, &user.email);
 
     // Re-registering a pending address in the meantime replaced the token,
     // so this one may be gone already.
