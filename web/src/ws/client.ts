@@ -100,6 +100,7 @@ export class Gateway {
   /** A refused handshake was reported since the last socket that opened. */
   private refusedReported = false;
   private refusedListeners = new Set<() => void>();
+  private freshListeners = new Set<(topic: Topic) => void>();
   /** Bumped by `resetSession` so a frame already in hand cannot fan out. */
   private epoch = 0;
   private eventListeners = new Set<(event: ChatEvent) => void>();
@@ -268,6 +269,18 @@ export class Gateway {
     this.readyListeners.add(listener);
     return () => {
       this.readyListeners.delete(listener);
+    };
+  }
+
+  /**
+   * The first acknowledgement of a topic subscribed without a cursor. Its
+   * head may count an event a history read in flight did not see yet, and
+   * nothing replays it, so that history is worth reading again.
+   */
+  onFresh(listener: (topic: Topic) => void): () => void {
+    this.freshListeners.add(listener);
+    return () => {
+      this.freshListeners.delete(listener);
     };
   }
 
@@ -524,6 +537,13 @@ export class Gateway {
         const old = this.cursors.get(key);
         if (!old || frame.n > old.n || (frame.ep && !old.ep))
           this.cursors.set(key, { ep: frame.ep ?? old?.ep, n: frame.n });
+        if (!old) {
+          const topic = { s: frame.s, ...(frame.c ? { c: frame.c } : {}) };
+          for (const listener of this.freshListeners) {
+            if (!alive()) return;
+            listener(topic);
+          }
+        }
         return;
       }
       case "e": {
