@@ -1,6 +1,6 @@
 //! Server-side rate limits and upload quotas (issue #16).
 //!
-//! Mutations under `/api` go through [`gate`] before CSRF. Auth (sign-in,
+//! Mutations under `/api` go through [`gate`] once CSRF let them through. Auth (sign-in,
 //! registration, email verification, password reset) is keyed by client
 //! address, IPv6 per /64; everything else by the account of the session,
 //! which the gate resolves once for the handler as well, or by the address
@@ -305,8 +305,8 @@ impl Default for Limiter {
     }
 }
 
-/// Outer middleware: count mutating `/api` requests. GET/HEAD/OPTIONS
-/// pass. Health, ready, metrics and `/ws` are not on this router.
+/// Middleware after the CSRF check: count mutating `/api` requests.
+/// GET/HEAD/OPTIONS pass. Health, ready, metrics and `/ws` are not on this router.
 ///
 /// Outside the sign-in routes the session cookie is resolved here, once:
 /// its account is the key of the session buckets, so a user's sessions

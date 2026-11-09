@@ -273,7 +273,7 @@ async fn made_up_session_cookies_share_the_address_window(pool: PgPool) {
     let mut forger = Client::from_state(state);
     forger.bootstrap().await;
 
-    // `limits::gate` runs before CSRF, so the 429 comes first either way.
+    // The forger has a valid CSRF pair, so only the gate can refuse.
     let from_one_address = |builder: &mut axum::http::request::Builder| {
         builder
             .headers_mut()

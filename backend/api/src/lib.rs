@@ -65,8 +65,10 @@ pub fn app(state: AppState) -> Router {
         .merge(notifications::router())
         .merge(push::router())
         .merge(previews::router())
-        .layer(middleware::from_fn(csrf::require))
-        .layer(middleware::from_fn_with_state(state.clone(), limits::gate));
+        // CSRF runs first: a refused cross-site post must not use up the
+        // visitor's address window (the outer layer runs first).
+        .layer(middleware::from_fn_with_state(state.clone(), limits::gate))
+        .layer(middleware::from_fn(csrf::require));
 
     // `/ws` is a GET upgrade, not a JSON mutation — it stays outside the
     // CSRF layer and uses the session cookie the browser already sends.
