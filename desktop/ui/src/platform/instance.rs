@@ -272,8 +272,49 @@ fn listen_tcp(file: &std::path::Path) -> Claim {
     Claim::First(instance)
 }
 
+/// How long a start keeps asking an app that holds the guard but does not
+/// answer (one on its way out); each ask takes up to [`WAIT`].
+#[cfg(windows)]
+const WAIT_FOR_RUNNING: Duration = Duration::from_secs(6);
+
+/// What a start found while another app held the guard.
+#[cfg(any(windows, test))]
+#[derive(Debug, PartialEq, Eq)]
+enum Waited {
+    /// It answered and shows itself.
+    Shown,
+    /// It ended; the guard is this start's now.
+    Free,
+    /// Neither, until the deadline.
+    Silent,
+}
+
+/// Asks with `ask` until `deadline`; between tries `free` looks whether the
+/// other app ended and left the guard.
+#[cfg(any(windows, test))]
+fn wait_for_running(
+    mut ask: impl FnMut() -> bool,
+    mut free: impl FnMut() -> bool,
+    deadline: Instant,
+    pause: Duration,
+) -> Waited {
+    loop {
+        if ask() {
+            return Waited::Shown;
+        }
+        if free() {
+            return Waited::Free;
+        }
+        if Instant::now() + pause >= deadline {
+            return Waited::Silent;
+        }
+        std::thread::sleep(pause);
+    }
+}
+
 /// The named mutex decides whether an app runs, the port only carries
-/// "show": an app that is slow to answer does not get a second one beside it.
+/// "show": an app that is slow to answer does not get a second one beside
+/// it. One that never answers is named in a message box, not passed over silently.
 #[cfg(windows)]
 pub fn claim() -> Claim {
     let Some(file) = super::paths::file(&format!("{}.instance", name())) else {
@@ -282,10 +323,21 @@ pub fn claim() -> Claim {
     match first_by_mutex(&name()) {
         Ok(true) => listen_tcp(&file),
         Ok(false) => {
-            if !ask_tcp(&file) {
-                tracing::warn!("single instance: the running app does not answer");
+            let waited = wait_for_running(
+                || ask_tcp(&file),
+                || first_by_mutex(&name()).unwrap_or(false),
+                Instant::now() + WAIT_FOR_RUNNING,
+                Duration::from_millis(500),
+            );
+            match waited {
+                Waited::Shown => Claim::Running,
+                Waited::Free => listen_tcp(&file),
+                Waited::Silent => {
+                    tracing::warn!("single instance: the running app does not answer");
+                    not_responding();
+                    Claim::Running
+                }
             }
-            Claim::Running
         }
         Err(e) => {
             tracing::warn!("single instance: {e}");
@@ -294,11 +346,34 @@ pub fn claim() -> Claim {
     }
 }
 
-/// Creates the session's named mutex; true when no app held it. Its handle
-/// is never closed: the mutex lives as long as this process.
+/// Tells the user why nothing opens: a GUI process has no console to say it.
+#[cfg(windows)]
+fn not_responding() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONWARNING, MB_OK, MessageBoxW};
+    let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    let text = wide(
+        "Gelabber läuft schon, reagiert aber nicht. Beende Gelabber im Task-Manager \
+         und starte es dann noch einmal.",
+    );
+    let caption = wide("Gelabber");
+    // SAFETY: NUL-terminated UTF-16 strings that outlive the call; no owner.
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            caption.as_ptr(),
+            MB_OK | MB_ICONWARNING,
+        )
+    };
+}
+
+/// Creates the session's named mutex; true when no app held it, and its
+/// handle then stays open for the life of this process. When another app
+/// holds it, this start's handle is closed again, so the mutex goes with
+/// that app.
 #[cfg(windows)]
 fn first_by_mutex(name: &str) -> std::io::Result<bool> {
-    use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError};
     use windows_sys::Win32::System::Threading::CreateMutexW;
     let wide: Vec<u16> = format!("Local\\{name}").encode_utf16().chain([0]).collect();
     // SAFETY: a NUL-terminated name that outlives the call; no attributes.
@@ -307,7 +382,12 @@ fn first_by_mutex(name: &str) -> std::io::Result<bool> {
         return Err(std::io::Error::last_os_error());
     }
     // SAFETY: reads this thread's last error, set by CreateMutexW.
-    Ok(unsafe { GetLastError() } != ERROR_ALREADY_EXISTS)
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        // SAFETY: the handle CreateMutexW just returned, closed once.
+        unsafe { CloseHandle(handle) };
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -438,6 +518,41 @@ mod tests {
         assert_eq!(read_line(&mut stream, deadline), None);
         assert!(start.elapsed() < Duration::from_millis(600));
         writer.join().unwrap();
+    }
+
+    /// Another app holds the guard: asked again for a while; it may answer,
+    /// or end and leave the guard free, or neither.
+    #[test]
+    fn a_start_waits_for_the_running_app_before_giving_up() {
+        let pause = Duration::from_millis(5);
+        let soon = || Instant::now() + Duration::from_millis(200);
+        let mut tries = 0;
+        let answers = wait_for_running(
+            || {
+                tries += 1;
+                tries == 3
+            },
+            || false,
+            soon(),
+            pause,
+        );
+        assert_eq!(answers, Waited::Shown);
+        let mut looks = 0;
+        let ends = wait_for_running(
+            || false,
+            || {
+                looks += 1;
+                looks == 2
+            },
+            soon(),
+            pause,
+        );
+        assert_eq!(ends, Waited::Free);
+        let start = Instant::now();
+        let silent = wait_for_running(|| false, || false, soon(), pause);
+        assert_eq!(silent, Waited::Silent);
+        assert!(start.elapsed() >= Duration::from_millis(150));
+        assert!(start.elapsed() < Duration::from_secs(2));
     }
 
     /// Only a socket nobody listens on is stale; one whose app is slow to
