@@ -285,10 +285,12 @@ fn effects(ui: &Ui, app: &mut AppCtx) {
         Route::Channel(s, c) => {
             let kind = app.client.with_state(|st| st.channel(*c).map(|ch| ch.kind));
             match kind {
-                Some(ChannelKind::Text) => app.client.open_server_channel(*s, *c),
                 // A voice room has no history of its own; the server's view
                 // keeps its topics (the call subscribes the room).
-                _ => app.client.open_server(*s),
+                Some(ChannelKind::Voice) => app.client.open_server(*s),
+                // Unknown yet (the server still loads): the chat page draws
+                // and opens the channel, so the same view here, not a rival.
+                _ => app.client.open_server_channel(*s, *c),
             }
             if first || kind.is_some() {
                 state::remember(ui.ctx(), user, |m| {
@@ -480,5 +482,37 @@ mod tests {
         assert_eq!(step_index(3, Some(1), -1), Some(0));
         assert_eq!(next_unread(&[true, false, true], Some(2), 1), Some(0));
         assert_eq!(next_unread(&[false, false, true], Some(2), 1), None);
+    }
+
+    /// Steps in real time for `ms` (requests go to another thread).
+    fn settle(harness: &mut egui_kittest::Harness<'_, crate::Launcher>, ms: u64) {
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_millis(ms) {
+            harness.step();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    /// A channel of a server whose detail fails to load: the shell and the
+    /// chat page open the same view, so the failed load is not asked again
+    /// and again (each flip of the view refetched it).
+    #[test]
+    fn a_failed_server_under_a_channel_route_is_asked_once() {
+        use crate::app::testkit::{ALLGEMEIN, FakeApi, HOME, Reply, launcher, workspace};
+        use crate::platform::paths::testing::TempConfig;
+
+        let _config = TempConfig::new("channel-detail-failed");
+        let api = FakeApi::start(true, |method, path, _| {
+            if method == "GET" && path == format!("/servers/{HOME}") {
+                return Some(Reply::error(500, "internal"));
+            }
+            workspace(method, path)
+        });
+        let detail = format!("GET /servers/{HOME}");
+        let asked = || api.seen.lock().iter().filter(|r| **r == detail).count();
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        crate::app::testkit::wait_for(&mut harness, "the detail request", |_| asked() > 0);
+        settle(&mut harness, 1500);
+        assert_eq!(asked(), 1, "{:?}", api.seen.lock());
     }
 }
