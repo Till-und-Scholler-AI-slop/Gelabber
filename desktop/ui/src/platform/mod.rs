@@ -416,6 +416,7 @@ impl Platform {
             && self.restored_for != Some(user)
         {
             self.restored_for = Some(user);
+            chat::switch_account(ctx, user);
             if let Some(account) = self.stored.accounts.get(&user) {
                 shell::restore_memory(ctx, user, account.memory());
                 chat::restore_drafts(ctx, account.fresh_drafts(state::now_ms()));

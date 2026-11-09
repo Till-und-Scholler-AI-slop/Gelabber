@@ -62,6 +62,8 @@ struct ChatState {
     gifs_asked: Option<(u64, Option<std::time::Instant>)>,
     /// The conversation shown last and the frame it was shown in.
     shown: Option<(Uuid, u64)>,
+    /// The signed-in account all of this belongs to.
+    account: Option<Uuid>,
 }
 
 fn chat_state(ctx: &egui::Context) -> Arc<Mutex<ChatState>> {
@@ -145,6 +147,19 @@ fn ask_gifs(
             true
         }
         _ => false,
+    }
+}
+
+/// Another account signed in: the chat's drafts, files, hits and lists of
+/// the one before are dropped, not shown to it or stored as its own.
+pub fn switch_account(ctx: &egui::Context, user: Uuid) {
+    let state = chat_state(ctx);
+    let mut chat = state.lock();
+    if chat.account != Some(user) {
+        *chat = ChatState {
+            account: Some(user),
+            ..ChatState::default()
+        };
     }
 }
 
@@ -1380,6 +1395,30 @@ mod tests {
         assert!(!ask_gifs(&mut asked, 2, false, true, t0 + GIFS_RETRY / 2));
         assert!(ask_gifs(&mut asked, 2, false, true, t0 + GIFS_RETRY));
         assert!(!ask_gifs(&mut asked, 2, false, true, t0 + GIFS_RETRY));
+    }
+
+    #[test]
+    fn another_account_gets_none_of_the_chat_state() {
+        let ctx = egui::Context::default();
+        let (a, b, channel) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        switch_account(&ctx, a);
+        restore_drafts(&ctx, HashMap::from([(channel, "Geheim".to_owned())]));
+        chat_state(&ctx)
+            .lock()
+            .searches
+            .entry(channel)
+            .or_default()
+            .text = "Urlaub".into();
+        // The same account again keeps it.
+        switch_account(&ctx, a);
+        assert_eq!(
+            drafts(&ctx).get(&channel).map(String::as_str),
+            Some("Geheim")
+        );
+        switch_account(&ctx, b);
+        assert!(drafts(&ctx).is_empty());
+        assert!(with_drafts(&ctx).is_empty());
+        assert!(chat_state(&ctx).lock().searches.is_empty());
     }
 
     #[test]
