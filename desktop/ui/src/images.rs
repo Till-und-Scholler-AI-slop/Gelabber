@@ -82,6 +82,10 @@ pub const INLINE: [f32; 2] = [432.0, 240.0];
 const BUDGET: usize = 256 * 1024 * 1024;
 /// What one animation may hold; a larger one shows its first frame.
 const ANIMATION_MAX: usize = 64 * 1024 * 1024;
+/// Full-size frames one animation may make the decoder produce before it
+/// shows its first frame instead: a tiny file with a huge canvas and many
+/// frames must not keep a worker busy for minutes.
+const ANIMATION_WORK: usize = 1024 * 1024 * 1024;
 /// Larger pictures are not decoded at all (a 48 MP photo still is).
 const MAX_PIXELS: u64 = 50_000_000;
 /// The first wait before a failed picture is asked for again; it doubles
@@ -629,20 +633,27 @@ fn frame_delay(delay: image::Delay) -> f64 {
 }
 
 /// The frames of an animation, each scaled as it is decoded; `None` when
-/// it is no animation, broken, or holds more than [`ANIMATION_MAX`].
+/// it is no animation, broken, holds more than [`ANIMATION_MAX`], or has
+/// the decoder produce more than `work` bytes of full-size frames.
 fn decode_animation(
     frames: image::Frames<'_>,
     width: u32,
     height: u32,
     limit: &Limit,
+    work_max: usize,
 ) -> Option<Vec<(ColorImage, f64)>> {
     let [w, h] = fitted(width, height, limit);
     let mut out = Vec::new();
     let mut held = 0;
+    let mut work = 0;
     for frame in frames {
         let frame = frame.ok()?;
         let delay = frame_delay(frame.delay());
         let buffer = frame.into_buffer();
+        work += buffer.as_raw().len();
+        if work > work_max {
+            return None;
+        }
         let buffer = if [w, h] == [buffer.width(), buffer.height()] {
             buffer
         } else {
@@ -678,12 +689,12 @@ pub fn decode_fitted(bytes: &[u8], limit: &Limit) -> Vec<(ColorImage, f64)> {
         Ok(image::ImageFormat::Gif) => image::codecs::gif::GifDecoder::new(cursor())
             .ok()
             .and_then(|mut d| d.set_limits(limits()).ok().map(|()| d))
-            .and_then(|d| decode_animation(d.into_frames(), width, height, limit)),
+            .and_then(|d| decode_animation(d.into_frames(), width, height, limit, ANIMATION_WORK)),
         Ok(image::ImageFormat::WebP) => image::codecs::webp::WebPDecoder::new(cursor())
             .ok()
             .filter(|d| d.has_animation())
             .and_then(|mut d| d.set_limits(limits()).ok().map(|()| d))
-            .and_then(|d| decode_animation(d.into_frames(), width, height, limit)),
+            .and_then(|d| decode_animation(d.into_frames(), width, height, limit, ANIMATION_WORK)),
         _ => None,
     };
     match frames {
@@ -966,7 +977,7 @@ pub(crate) mod tests {
             Ok(image::Frame::new(buffer))
         });
         let frames = image::Frames::new(Box::new(frames));
-        assert!(decode_animation(frames, 2000, 2000, &ANY).is_none());
+        assert!(decode_animation(frames, 2000, 2000, &ANY, ANIMATION_WORK).is_none());
         // Scaled to fit, the same frames stay.
         let frames = image::Frames::new(Box::new(
             (0..5).map(|_| Ok(image::Frame::new(image::RgbaImage::new(2000, 2000)))),
@@ -975,9 +986,15 @@ pub(crate) mod tests {
             max_side: 8192,
             cover: Some([432, 240]),
         };
-        let kept = decode_animation(frames, 2000, 2000, &small).expect("frames");
+        let kept = decode_animation(frames, 2000, 2000, &small, ANIMATION_WORK).expect("frames");
         assert_eq!(kept.len(), 5);
         assert_eq!(kept[0].0.size, [432, 432]);
+        // Small once scaled, but more full-size frames than the decoder
+        // may produce (here 5 × 16 MB over 64 MB).
+        let frames = image::Frames::new(Box::new(
+            (0..5).map(|_| Ok(image::Frame::new(image::RgbaImage::new(2000, 2000)))),
+        ));
+        assert!(decode_animation(frames, 2000, 2000, &small, 64 << 20).is_none());
     }
 
     #[test]
