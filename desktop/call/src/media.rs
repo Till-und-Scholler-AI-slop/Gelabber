@@ -1040,32 +1040,24 @@ impl Session {
         }
         let camera = self.st.lock().camera.clone();
         if let Some(camera) = camera {
-            self.send_video(seat, Kind::V, &camera, true).await;
+            self.send_video(seat, Kind::V, &camera).await;
         }
         let screen = self.st.lock().screen.clone();
         if let Some(screen) = screen
-            && self.send_video(seat, Kind::S, &screen, true).await
+            && self.send_video(seat, Kind::S, &screen).await
         {
             self.send_live_sound(seat, screen.epoch).await;
         }
     }
 
-    /// Sends a camera or Live on `seat` and announces it unless `announce`
-    /// is off; whether it went out. A capture stopped meanwhile is taken
+    /// Sends a camera or Live on `seat` and announces it unless it is
+    /// already; whether it went out. A capture stopped meanwhile is taken
     /// back, one the server refuses stops with a word.
-    async fn send_video(
-        self: &Arc<Self>,
-        seat: &Arc<Seat>,
-        kind: Kind,
-        local: &Local,
-        announce: bool,
-    ) -> bool {
+    async fn send_video(self: &Arc<Self>, seat: &Arc<Seat>, kind: Kind, local: &Local) -> bool {
         match seat.publish(kind, local, None, false).await {
             Ok(()) => {
                 let kept = self.keep_published(seat, kind, local.epoch).await;
-                if kept && announce {
-                    self.announce(kind, true);
-                }
+                self.announce_once(kept, kind);
                 kept
             }
             Err(e) => {
@@ -1084,9 +1076,8 @@ impl Session {
         };
         match seat.publish(Kind::Sa, &audio, None, false).await {
             Ok(()) => {
-                if self.keep_published(seat, Kind::Sa, epoch).await {
-                    self.announce(Kind::Sa, true);
-                }
+                let kept = self.keep_published(seat, Kind::Sa, epoch).await;
+                self.announce_once(kept, Kind::Sa);
             }
             Err(e) if e.code() == "connection_closed" || seat.closed.load(Ordering::Acquire) => {}
             Err(e) => {
@@ -1102,6 +1093,14 @@ impl Session {
                         .await;
                 }
             }
+        }
+    }
+
+    /// `p` for a capture that went out and is not announced yet; decided on
+    /// what was announced, so overlapping starts neither skip nor repeat it.
+    fn announce_once(&self, kept: bool, kind: Kind) {
+        if kept && !self.st.lock().announced.contains(&kind) {
+            self.announce(kind, true);
         }
     }
 
@@ -1424,11 +1423,13 @@ impl Session {
                     if let Some(seat) = self.seat() {
                         seat.close_source(Kind::V).await;
                     }
-                    if released.is_some() {
+                    // Whichever start let the running camera go, its `p v`
+                    // is taken back here.
+                    if self.st.lock().announced.contains(&Kind::V) {
                         self.announce(Kind::V, false);
                         inner.play(Sound::CameraOff, Some(false));
-                        inner.drop_frame(VideoKey::camera(self.me));
                     }
+                    inner.drop_frame(VideoKey::camera(self.me));
                     self.publish_participants();
                     inner.notify(logic::CAMERA_UNAVAILABLE);
                 }
@@ -1462,7 +1463,7 @@ impl Session {
         self.publish_participants();
         let local = self.st.lock().camera.clone();
         if let (Some(seat), Some(local)) = (self.seat(), local) {
-            self.send_video(&seat, Kind::V, &local, !replacing).await;
+            self.send_video(&seat, Kind::V, &local).await;
         }
     }
 
@@ -1599,7 +1600,7 @@ impl Session {
         self.publish_participants();
         tokio::spawn(self.clone().watch_screen(turn));
         let Some(seat) = self.seat() else { return };
-        if self.send_video(&seat, Kind::S, &screen, true).await {
+        if self.send_video(&seat, Kind::S, &screen).await {
             self.send_live_sound(&seat, screen.epoch).await;
         }
     }
