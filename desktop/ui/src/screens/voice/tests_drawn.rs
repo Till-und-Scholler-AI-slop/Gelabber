@@ -123,6 +123,35 @@ fn without_a_microphone_the_bar_says_why_and_retries() {
     assert!(h.query_by_label("Kein Mikrofon").is_none());
 }
 
+/// Push-to-talk on `KeyA`, the call following the device settings.
+fn push_to_talk_on(ctx: &egui::Context, call: &Call) {
+    use crate::screens::settings::prefs;
+    prefs::update(ctx, |p| {
+        p.voice_input = "ptt".into();
+        p.ptt_key = "KeyA".into();
+    });
+    call.set_settings(crate::screens::voice::sync::settings(&prefs::get(ctx)));
+}
+
+/// Holding the key in the window opens the microphone; reading the
+/// keyboard focus inside the input lock once hung the UI thread.
+#[test]
+fn holding_the_push_to_talk_key_opens_the_microphone() {
+    let _config = crate::platform::paths::testing::TempConfig::new("ptt-held");
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call.clone(), bar);
+    push_to_talk_on(&h.ctx, &call);
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held());
+    h.key_down(egui::Key::A);
+    h.run_steps(2);
+    assert!(call.push_to_talk_held(), "held in the window");
+    h.key_up(egui::Key::A);
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held());
+}
+
 #[test]
 fn a_lost_call_offers_to_rejoin_and_goes_away() {
     let (client, call) = offline();

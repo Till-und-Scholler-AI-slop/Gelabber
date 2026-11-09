@@ -590,6 +590,8 @@ fn push_to_talk(ui: &Ui, app: &AppCtx, active: bool) -> bool {
         return false;
     }
     let code = prefs::get(ui.ctx()).ptt_key;
+    // Read outside `input`: the context's lock is not reentrant.
+    let typing = ui.ctx().egui_wants_keyboard_input();
     let held = ui.input(|i| match code.as_str() {
         "Mouse4" => i.pointer.button_down(egui::PointerButton::Extra1),
         "Mouse5" => i.pointer.button_down(egui::PointerButton::Extra2),
@@ -599,8 +601,7 @@ fn push_to_talk(ui: &Ui, app: &AppCtx, active: bool) -> bool {
                 .strip_prefix("Key")
                 .or_else(|| code.strip_prefix("Digit"))
                 .unwrap_or(code);
-            egui::Key::from_name(name).is_some_and(|k| i.key_down(k))
-                && !ui.ctx().egui_wants_keyboard_input()
+            egui::Key::from_name(name).is_some_and(|k| i.key_down(k)) && !typing
         }
     });
     if held != was {
