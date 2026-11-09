@@ -16,7 +16,7 @@ use parking_lot::Mutex;
 use uuid::Uuid;
 
 use crate::icons::{self, Icon};
-use crate::images::{ImageState, Images, TextState, cover_uv};
+use crate::images::{Fit, ImageState, Images, TextState, cover_uv};
 use crate::text::{Block, TextStyle};
 use crate::theme::{Theme, corner, mix};
 
@@ -196,15 +196,12 @@ pub fn image_box(natural: Option<Vec2>, width: f32) -> Vec2 {
 }
 
 fn natural(ui: &Ui, images: &Images, url: &str) -> Option<Vec2> {
-    match images.get(ui.ctx(), url) {
-        ImageState::Ready(t) => Some(t.size_vec2()),
-        _ => None,
-    }
+    images.natural(ui.ctx(), url, Fit::Inline)
 }
 
 /// A picture that failed, not one still on its way up (`isPendingId`).
 fn failed(ui: &Ui, images: &Images, att: &Attachment, url: &str) -> bool {
-    !att.id.is_nil() && matches!(images.get(ui.ctx(), url), ImageState::Failed)
+    !att.id.is_nil() && images.failed(ui.ctx(), url, Fit::Inline)
 }
 
 /// Lays out `attachments` in a column `width` wide; `uploads` are the
@@ -380,7 +377,7 @@ pub fn layout(
 fn paint_image(ui: &Ui, images: &Images, url: &str, rect: Rect, cover: bool, play: bool) {
     let theme = Theme::of(ui.ctx());
     let painter = ui.painter();
-    if let ImageState::Ready(texture) = images.frame(ui.ctx(), url, play) {
+    if let ImageState::Ready(texture) = images.frame(ui.ctx(), url, play, Fit::Inline) {
         let inner = rect.shrink(1.0);
         let uv = if cover {
             cover_uv(texture.size_vec2(), inner.size())
@@ -1015,7 +1012,7 @@ pub fn paint_gif(
     let played = images.client().http().gif_media_url(&gif.url);
     let url = if playing { played.as_str() } else { still };
     ui.painter().rect_filled(rect, corner(7.0), c.panel);
-    match images.frame(ui.ctx(), url, playing) {
+    match images.frame(ui.ctx(), url, playing, Fit::Inline) {
         ImageState::Ready(texture) => {
             ui.painter().add(
                 egui::epaint::RectShape::filled(
@@ -1272,7 +1269,7 @@ impl Previews {
                     ui.painter()
                         .rect_filled(img_rect, corner(5.0), Color32::BLACK);
                 }
-                if let ImageState::Ready(t) = images.get(ui.ctx(), url) {
+                if let ImageState::Ready(t) = images.shown(ui.ctx(), url, Fit::Inline) {
                     ui.painter().add(
                         egui::epaint::RectShape::filled(
                             img_rect,
