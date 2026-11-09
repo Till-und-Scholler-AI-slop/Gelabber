@@ -739,6 +739,10 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 			return 0;
 		if (!engine->adm)
 			throw std::runtime_error("no audio devices with dummy audio");
+		// Read here: a type error thrown on the worker would unwind through
+		// libwebrtc, which is built without exceptions.
+		const auto inputRequest  = input ? options["input"].get<std::string>() : std::string();
+		const auto outputRequest = output ? options["output"].get<std::string>() : std::string();
 
 		std::string error;
 		engine->worker->BlockingCall([&] {
@@ -755,7 +759,7 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 			}
 			if (input)
 			{
-				const auto id      = options["input"].get<std::string>();
+				const auto& id     = inputRequest;
 				const auto devices = RecordingDevices(adm);
 				const auto index   = FindAudioDevice(devices, id);
 				if (!index)
@@ -800,7 +804,7 @@ int gm_audio_configure(gm_engine* engine, const char* optionsJson)
 			}
 			if (output)
 			{
-				const auto id      = options["output"].get<std::string>();
+				const auto& id     = outputRequest;
 				const auto devices = PlayoutDevices(adm);
 				const auto index   = FindAudioDevice(devices, id);
 				if (!index)
