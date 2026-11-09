@@ -32,6 +32,10 @@ const PRESENCE_PULSE: Duration = Duration::from_millis(10_000);
 const CLIENT_IDLE: Duration = Duration::from_secs(300);
 /// Recovery after a reconnect waits up to this long so clients spread out.
 const READY_SPREAD: Duration = Duration::from_millis(1_000);
+/// A failed recovery round is tried again after this, doubling up to the
+/// max, while the socket is wanted: missed events stay missing until then.
+const RECOVERY_RETRY: Duration = Duration::from_secs(1);
+const RECOVERY_RETRY_MAX: Duration = Duration::from_secs(30);
 /// Unread counts are refetched this long after the last event (web 750 ms,
 /// at most 5 s while events keep coming).
 const UNREAD_DEBOUNCE: Duration = Duration::from_millis(750);
@@ -1920,6 +1924,7 @@ impl Client {
             if spread {
                 tokio::time::sleep(READY_SPREAD.mul_f64(crate::gateway::jitter())).await;
             }
+            let mut failures: u32 = 0;
             loop {
                 let gaps = this
                     .gateway()
@@ -1931,13 +1936,20 @@ impl Client {
                         gateway.complete_gap(gap);
                     }
                 }
-                let mut r = this.inner.recovery.lock();
-                if r.rerun {
-                    r.rerun = false;
-                    continue;
+                {
+                    let mut r = this.inner.recovery.lock();
+                    if r.rerun {
+                        r.rerun = false;
+                        continue;
+                    }
+                    if ok || this.gateway().is_none() {
+                        r.running = false;
+                        break;
+                    }
                 }
-                r.running = false;
-                break;
+                let wait = RECOVERY_RETRY.saturating_mul(1 << failures.min(5));
+                failures += 1;
+                tokio::time::sleep(wait.min(RECOVERY_RETRY_MAX)).await;
             }
         });
     }
@@ -2001,7 +2013,11 @@ impl Client {
                     self.write_in(epoch, |s| s.channel_mut(channel).merge_latest(page));
                 }
                 Err(e) if e.is_gone() => {}
-                Err(_) => ok = false,
+                Err(_) => {
+                    // Opening it fetches once more, then shows the error row.
+                    self.write_in(epoch, |s| s.channel_mut(channel).stale = true);
+                    ok = false;
+                }
             }
         }
         self.sync_topics();
@@ -2043,5 +2059,85 @@ impl Client {
                 client.reload_unread().await;
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Answers every request with a body nothing decodes from.
+    fn broken_server() -> (String, Arc<parking_lot::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let log = log.clone();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]);
+                    log.lock()
+                        .push(head.lines().next().unwrap_or("").to_owned());
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
+                });
+            }
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    fn signed_in(client: &Client, dm: Uuid) {
+        client.write(|s| {
+            s.session = Session::Authenticated(Box::new(
+                serde_json::from_value(serde_json::json!({
+                    "id": Uuid::from_u128(1), "email": "ich@example.test", "name": "Ich",
+                    "created_at": "2026-10-01T00:00:00Z",
+                }))
+                .unwrap(),
+            ));
+            s.view = View {
+                server: None,
+                channel: Some(dm),
+            };
+            let h = s.channel_mut(dm);
+            h.loaded = true;
+        });
+    }
+
+    /// The visible conversation's refetch failed: it is stale, so opening
+    /// it fetches again instead of keeping the hole.
+    #[test]
+    fn a_failed_recovery_leaves_the_visible_history_stale() {
+        let (url, _) = broken_server();
+        let client = Client::new(&url).unwrap();
+        let dm = Uuid::from_u128(5);
+        signed_in(&client, dm);
+        let ok = client.block_on(client.recover());
+        assert!(!ok);
+        assert!(client.with_state(|s| s.channels[&dm].stale));
+    }
+
+    /// A failed round is tried again while the socket is wanted.
+    #[test]
+    fn a_failed_recovery_round_is_retried() {
+        let (url, seen) = broken_server();
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        client.ensure_gateway();
+        client.schedule_recovery(false);
+        std::thread::sleep(Duration::from_millis(2_500));
+        client.stop_gateway();
+        let rounds = seen
+            .lock()
+            .iter()
+            .filter(|l| l.starts_with("GET /api/servers "))
+            .count();
+        assert!(rounds >= 2, "{rounds} rounds");
     }
 }
