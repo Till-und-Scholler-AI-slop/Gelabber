@@ -456,6 +456,82 @@ async fn consumed_grant_is_rechecked_before_sfu_attach() {
     authority.cleanup().await;
 }
 
+/// Joins `authority`'s claim straight into the SFU, without a ticket.
+async fn join_claim(
+    sfu: &std::sync::Arc<gelabber_media::sfu::Sfu>,
+    authority: &Authority,
+    held: &mut Vec<tokio::sync::mpsc::Receiver<gelabber_media::protocol::ServerFrame>>,
+) -> Result<gelabber_media::sfu::PeerId, gelabber_media::error::SfuError> {
+    let (out, rx) = tokio::sync::mpsc::channel(64);
+    held.push(rx);
+    sfu.join_authorized_version(authority.claim.clone(), 4, out)
+        .await
+}
+
+#[tokio::test]
+async fn one_user_holds_at_most_eight_peers_and_gets_them_back_on_leave() {
+    let (_, redis, sfu) = serve().await;
+    let first = Authority::new(&redis).await;
+    // A second channel of the same user counts towards the same share.
+    let mut second = Authority::new(&redis).await;
+    second.cleanup().await;
+    second.claim.claim.u = first.claim.claim.u;
+    second.claim.claim.s = first.claim.claim.s;
+    second.claim.auth.member = first.claim.auth.member;
+    second.install().await;
+    // Without the 3s session lease only the cap ends these joins.
+    for authority in [&first, &second] {
+        authority
+            .set(&authority.keys()[2], &authority.claim.claim.u.to_string())
+            .await;
+    }
+    let mut held = Vec::new();
+    let mut peers = Vec::new();
+    for _ in 0..4 {
+        peers.push(join_claim(&sfu, &first, &mut held).await.unwrap());
+        join_claim(&sfu, &second, &mut held).await.unwrap();
+    }
+    assert!(matches!(
+        join_claim(&sfu, &first, &mut held).await,
+        Err(gelabber_media::error::SfuError::Unavailable)
+    ));
+    sfu.leave(peers[0], first.claim.claim.c).await;
+    join_claim(&sfu, &first, &mut held).await.unwrap();
+    first.cleanup().await;
+    second.cleanup().await;
+}
+
+#[tokio::test]
+async fn a_room_holds_at_most_256_peers() {
+    let (_, redis, sfu) = serve().await;
+    let room = Authority::new(&redis).await;
+    // Without the 3s session lease only the cap ends these joins.
+    room.set(&room.keys()[2], &room.claim.claim.u.to_string())
+        .await;
+    let mut held = Vec::new();
+    let mut members = Vec::new();
+    for _ in 0..256 {
+        let mut member = Authority::new(&redis).await;
+        member.cleanup().await;
+        member.claim.claim.c = room.claim.claim.c;
+        member.claim.auth.channel = room.claim.auth.channel;
+        member.install().await;
+        member
+            .set(&member.keys()[2], &member.claim.claim.u.to_string())
+            .await;
+        join_claim(&sfu, &member, &mut held).await.unwrap();
+        members.push(member);
+    }
+    assert!(matches!(
+        join_claim(&sfu, &room, &mut held).await,
+        Err(gelabber_media::error::SfuError::Unavailable)
+    ));
+    for member in &members {
+        member.cleanup().await;
+    }
+    room.cleanup().await;
+}
+
 #[tokio::test]
 async fn absolute_session_expiry_revokes_even_while_lease_still_exists() {
     let (addr, redis, _) = serve().await;
