@@ -154,7 +154,7 @@ try {
     await page.locator(".lr-composer textarea").waitFor();
     const early = requested.filter(
       (p) =>
-        /VoiceRoom-|SettingsAreaContent-|ServerSettingsPage-|VoiceSettingsPanel-/.test(
+        /VoiceRoom-|SettingsAreaContent-|ServerSettingsPage-|VoiceSettingsPanel-|EmojiPicker-/.test(
           p,
         ) && p.endsWith(".js"),
     );
@@ -162,11 +162,11 @@ try {
     await page.waitForTimeout(6000);
     const late = requested.filter(
       (p) =>
-        /VoiceRoom-|SettingsAreaContent-|ServerSettingsPage-|VoiceSettingsPanel-/.test(
+        /VoiceRoom-|SettingsAreaContent-|ServerSettingsPage-|VoiceSettingsPanel-|EmojiPicker-/.test(
           p,
         ) && p.endsWith(".js"),
     );
-    assert.equal(late.length, 4, `idle preload fetched ${late}`);
+    assert.equal(late.length, 5, `idle preload fetched ${late}`);
     console.log(
       "PASS: idle preload fetched",
       late.map((p) => p.replace(/-.*/, "")).join(", "),
