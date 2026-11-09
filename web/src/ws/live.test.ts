@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   TYPING_BAR_PX,
+  TYPING_IDLE_MS,
+  TYPING_REFRESH_MS,
+  createTypingSender,
   isPresenceActivityEvent,
   applyPresence,
   applyPresenceSnap,
@@ -99,6 +102,36 @@ describe("typing store", () => {
     expect(
       typingUserIds(useTypingStore.getState().byChannel, "ch", 20, "me"),
     ).toEqual(["u1"]);
+  });
+});
+
+describe("typing sender", () => {
+  it("stops announcing once the keystrokes stop, and starts again on the next", () => {
+    vi.useFakeTimers();
+    try {
+      const sent: string[] = [];
+      const sender = createTypingSender((s, c, on) =>
+        sent.push(`${s}/${c}:${on ? "on" : "off"}`),
+      );
+      sender.input("s", "c", "h");
+      sender.input("s", "c", "ha");
+      expect(sent).toEqual(["s/c:on"]);
+      vi.advanceTimersByTime(TYPING_REFRESH_MS);
+      sender.input("s", "c", "hal");
+      expect(sent).toEqual(["s/c:on", "s/c:on"]);
+      // The caret stays in the field, nobody types.
+      vi.advanceTimersByTime(TYPING_IDLE_MS + TYPING_REFRESH_MS);
+      expect(sent.at(-1)).toBe("s/c:off");
+      const count = sent.length;
+      vi.advanceTimersByTime(TYPING_REFRESH_MS * 10);
+      expect(sent).toHaveLength(count);
+      sender.input("s", "c", "hall");
+      expect(sent.at(-1)).toBe("s/c:on");
+      sender.input("s", "c", "");
+      expect(sent.at(-1)).toBe("s/c:off");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

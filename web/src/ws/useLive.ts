@@ -8,10 +8,10 @@ import {
   CLIENT_IDLE_MS,
   PRESENCE_ACTIVITY_EVENTS,
   PRESENCE_PULSE_MS,
-  TYPING_REFRESH_MS,
   applyPresence,
   applyPresenceSnap,
   applyTyping,
+  createTypingSender,
   pruneTyping,
   resetLiveStores,
 } from "./live.ts";
@@ -141,42 +141,18 @@ export function useTypingInput(
   stop: () => void;
 } {
   const me = useSession((s) => s.user?.id);
-  const typing = useRef(false);
-  const refresh = useRef<ReturnType<typeof setInterval> | null>(null);
-  const sent = useRef<{ s: string; c: string } | null>(null);
-
-  const stop = () => {
-    if (!typing.current) return;
-    typing.current = false;
-    if (refresh.current) {
-      window.clearInterval(refresh.current);
-      refresh.current = null;
-    }
-    const target = sent.current;
-    sent.current = null;
-    if (target) {
-      getGateway().sendTyping(target.s, target.c, false);
-    }
-  };
+  const sender = useRef<ReturnType<typeof createTypingSender> | null>(null);
+  sender.current ??= createTypingSender((s, c, on) =>
+    getGateway().sendTyping(s, c, on),
+  );
+  const stop = () => sender.current?.stop();
 
   useEffect(() => () => stop(), [serverId, channelId]);
 
   return {
     onChange: (value: string) => {
       if (!enabled || !me) return;
-      if (value.length === 0) {
-        stop();
-        return;
-      }
-      if (!typing.current) {
-        typing.current = true;
-        sent.current = { s: serverId, c: channelId };
-        getGateway().sendTyping(serverId, channelId, true);
-        refresh.current = window.setInterval(() => {
-          const target = sent.current;
-          if (target) getGateway().sendTyping(target.s, target.c, true);
-        }, TYPING_REFRESH_MS);
-      }
+      sender.current?.input(serverId, channelId, value);
     },
     stop,
   };
