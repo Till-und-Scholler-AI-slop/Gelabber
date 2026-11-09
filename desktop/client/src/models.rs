@@ -600,12 +600,15 @@ pub struct GifPick {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NotificationLevel {
+    #[default]
+    All,
     Mentions,
     None,
-    /// Also a level this client does not know (`other` must come last).
-    #[default]
+    /// A level a newer server knows and this client does not: it notifies
+    /// like `All`, and a save never writes it back (`Client::set_notifications`
+    /// refuses), so the choice made elsewhere survives.
     #[serde(other)]
-    All,
+    Unknown,
 }
 
 /// One row of `GET /api/messages/unread`.

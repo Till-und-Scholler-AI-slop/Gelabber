@@ -190,7 +190,7 @@ fn a_newer_server_degrades_per_element() {
     unread[0]["level"] = "digest".into();
     let Lenient(rows) = serde_json::from_value::<Lenient<ReadState>>(unread).unwrap();
     assert_eq!(rows.len(), count);
-    assert_eq!(rows[0].level, NotificationLevel::All);
+    assert_eq!(rows[0].level, NotificationLevel::Unknown);
 
     let frame: ServerFrame = serde_json::from_value(serde_json::json!({
         "op": "p", "s": "00000000-0000-0000-0000-000000000001",

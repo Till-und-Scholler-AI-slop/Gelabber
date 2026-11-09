@@ -1703,6 +1703,16 @@ impl Client {
         self.spawn(async move {
             let http = this.http().clone();
             let work = async move {
+                // Would overwrite a newer server's level with a guess.
+                if body.level == Some(NotificationLevel::Unknown) {
+                    return Err(ApiError::Api {
+                        status: 0,
+                        code: "unknown_level".into(),
+                        message: "Diese Stufe kennt diese Version von Gelabber nicht. Bitte wähle zuerst eine Stufe.".into(),
+                        fields: serde_json::Value::Null,
+                        retry_after: None,
+                    });
+                }
                 match target {
                     SettingTarget::Server(id) => http.set_server_notifications(id, &body).await,
                     SettingTarget::Channel(id) => http.set_channel_notifications(id, &body).await,
@@ -2151,6 +2161,32 @@ mod tests {
         let ok = client.block_on(client.recover());
         assert!(!ok);
         assert!(client.with_state(|s| s.channels[&dm].stale));
+    }
+
+    /// A level this client does not know is never written back: muting a
+    /// conversation that has one fails instead of saving "all".
+    #[test]
+    fn an_unknown_level_is_not_saved_back() {
+        let (url, seen) = broken_server();
+        let client = Client::new(&url).unwrap();
+        client.set_notifications(
+            SettingTarget::Channel(Uuid::from_u128(5)),
+            NotificationSettingBody {
+                level: Some(NotificationLevel::Unknown),
+                muted: true,
+                mute_minutes: None,
+            },
+        );
+        let start = std::time::Instant::now();
+        while !client.with_state(|s| matches!(s.op("notifications"), Some(OpState::Failed(_)))) {
+            assert!(start.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            seen.lock().iter().all(|l| !l.starts_with("PUT")),
+            "{:?}",
+            seen.lock()
+        );
     }
 
     /// Waiting to retry a failed round is not `busy` (the sidebar's retry
