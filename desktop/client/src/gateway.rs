@@ -30,7 +30,9 @@ pub enum GatewayStatus {
 }
 
 /// Timers of the web client (`DEFAULT_*_MS`), matching the server's
-/// `API_WS_HEARTBEAT_MS`/`API_WS_DEAD_MS` defaults.
+/// `API_WS_HEARTBEAT_MS`/`API_WS_DEAD_MS` defaults; the reconnect cap is
+/// higher than the web's 2 s, so a server that keeps failing is not hit
+/// every 2 s by every client.
 #[derive(Clone, Copy, Debug)]
 pub struct GatewayConfig {
     pub heartbeat: Duration,
@@ -45,7 +47,7 @@ impl Default for GatewayConfig {
             heartbeat: Duration::from_millis(15_000),
             dead: Duration::from_millis(30_000),
             retry: Duration::from_millis(200),
-            max_retry: Duration::from_millis(2_000),
+            max_retry: Duration::from_millis(10_000),
         }
     }
 }
@@ -361,6 +363,7 @@ impl Gateway {
             shared: shared.clone(),
             rx,
             focus: false,
+            confirmed: false,
         };
         runtime.spawn(task.run());
         Self { tx, shared }
@@ -422,6 +425,8 @@ struct Task {
     shared: Arc<Shared>,
     rx: mpsc::UnboundedReceiver<Command>,
     focus: bool,
+    /// The open socket answered a subscribe (`ok`).
+    confirmed: bool,
 }
 
 enum Closed {
@@ -461,11 +466,18 @@ impl Task {
                 Err(Closed::Stopped) => break,
                 Err(Closed::Dropped) => {}
                 Ok(Ok(socket)) => {
-                    attempt = 0;
                     if std::mem::take(&mut refused) {
                         (self.handler)(GatewayEvent::Refused(None));
                     }
-                    if let Closed::Stopped = self.serve(socket).await {
+                    let opened = Instant::now();
+                    self.confirmed = false;
+                    let closed = self.serve(socket).await;
+                    // Only a socket that worked resets the backoff: one the
+                    // server accepts and drops at once is a failed connect.
+                    if self.confirmed || opened.elapsed() >= self.config.heartbeat {
+                        attempt = 0;
+                    }
+                    if let Closed::Stopped = closed {
                         break;
                     }
                 }
@@ -608,6 +620,7 @@ impl Task {
                             continue;
                         }
                     };
+                    self.confirmed |= matches!(frame, ServerFrame::Ok { .. });
                     let replies = self.on_frame(frame);
                     for reply in replies {
                         if send(&mut sink, &reply).await.is_err() {
@@ -814,14 +827,15 @@ mod tests {
     }
 
     #[test]
-    fn backoff_matches_the_web() {
+    fn backoff_doubles_up_to_the_cap() {
         let c = GatewayConfig::default();
         assert_eq!(backoff(&c, 0, 0.7), Duration::ZERO);
         assert_eq!(backoff(&c, 1, 0.0), Duration::from_millis(100));
         assert_eq!(backoff(&c, 1, 1.0), Duration::from_millis(200));
         assert_eq!(backoff(&c, 3, 1.0), Duration::from_millis(800));
-        assert_eq!(backoff(&c, 5, 1.0), Duration::from_millis(2000));
-        assert_eq!(backoff(&c, 40, 0.0), Duration::from_millis(1000));
+        assert_eq!(backoff(&c, 5, 1.0), Duration::from_millis(3200));
+        assert_eq!(backoff(&c, 7, 1.0), Duration::from_millis(10_000));
+        assert_eq!(backoff(&c, 40, 0.0), Duration::from_millis(5_000));
         let j = jitter();
         assert!((0.0..1.0).contains(&j));
     }
@@ -972,6 +986,39 @@ mod tests {
                 .any(|e| matches!(e, GatewayEvent::Refused(Some(reason)) if reason == "HTTP 401"))
         );
         gateway.stop();
+    }
+
+    /// A server that accepts the socket and drops it at once is retried
+    /// with a growing delay, not at once every time.
+    #[test]
+    fn an_accept_then_drop_server_is_backed_off() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let listener = runtime
+            .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let opens = Arc::new(AtomicUsize::new(0));
+        let count = opens.clone();
+        runtime.spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                if let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    let _ = socket.close(None).await;
+                }
+            }
+        });
+        let http = Http::new(&format!("http://{addr}")).unwrap();
+        let gateway = Gateway::start(
+            runtime.handle(),
+            http,
+            GatewayConfig::default(),
+            Arc::new(|_| {}),
+        );
+        std::thread::sleep(Duration::from_millis(1_500));
+        gateway.stop();
+        let opens = opens.load(Ordering::SeqCst);
+        assert!((2..10).contains(&opens), "{opens} opens in 1.5 s");
     }
 
     #[test]
