@@ -928,14 +928,42 @@ describe("voice session", () => {
     expect(sent.at(-1)).toEqual({ op: "sig", t: "l", s: "srv", c: "voice" });
   });
 
-  it("rolls back the seat on a media-path err", async () => {
-    const { emitMedia, errors, sent } = install();
+  it("asks for a new ticket when the media server revokes the seat", async () => {
+    const f = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(useVoice.getState().status).toBe("joined"));
-    emitMedia({ op: "err", e: "unauthorized" });
-    expect(useVoice.getState().status).toBe("idle");
-    expect(errors).toHaveLength(1);
-    expect(sent.at(-1)).toEqual({ op: "sig", t: "l", s: "srv", c: "voice" });
+    await vi.waitFor(() => expect(f.peers[0]?.audio).toBeTruthy());
+    f.emitMedia({ op: "err", e: "unauthorized" });
+    // The ticket endpoint decides: it grants, so the seat is rebuilt.
+    await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+    expect(f.ticketCalls()).toBe(2);
+    expect(useVoice.getState().status).toBe("joined");
+    expect(f.errors).toEqual([]);
+    expect(f.sent.some((frame) => frame.op === "sig" && frame.t === "l")).toBe(
+      false,
+    );
+  });
+
+  it("ends the call with the ticket endpoint's answer after a revoked seat", async () => {
+    const refused = new ApiError("forbidden", 403, "Forbidden.");
+    const f = install({
+      ticketError: (index) => (index === 1 ? refused : undefined),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(f.peers[0]?.audio).toBeTruthy());
+    f.emitMedia({ op: "err", e: "unauthorized" });
+    await vi.waitFor(() => expect(useVoice.getState().status).toBe("idle"));
+    expect(f.errors).toEqual([refused]);
+    expect(f.sent.at(-1)).toEqual({ op: "sig", t: "l", s: "srv", c: "voice" });
+  });
+
+  it("rebuilds the seat without a notice when the media server is gone", async () => {
+    const f = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(f.peers[0]?.audio).toBeTruthy());
+    f.emitMedia({ op: "err", e: "gone" });
+    await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+    expect(useVoice.getState().status).toBe("joined");
+    expect(f.errors).toEqual([]);
   });
 
   it("rolls back local join when the server forbids it", () => {
@@ -3162,14 +3190,16 @@ describe("source and transport continuity", () => {
     );
   });
 
-  it("does not toast each ICE failure but still leaves on unauthorized", async () => {
+  it("does not toast each ICE failure but still rebuilds on unauthorized", async () => {
     const env = await connected();
     for (let i = 0; i < 12; i++) env.emitMedia({ op: "err", e: "ice_failed" });
     expect(useVoice.getState().status).toBe("joined");
     expect(env.peers[0]?.closed).toBe(false);
     expect(env.errors).toHaveLength(0);
     env.emitMedia({ op: "err", e: "unauthorized" });
-    expect(useVoice.getState().status).toBe("idle");
+    expect(env.peers[0]?.closed).toBe(true);
+    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    expect(useVoice.getState().status).toBe("joined");
   });
 
   it("captures camera and screen with the selected profile constraints", async () => {

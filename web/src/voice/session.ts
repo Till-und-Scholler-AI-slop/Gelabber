@@ -1162,10 +1162,11 @@ function onMediaFrame(frame: MediaServerFrame): void {
     );
     return;
   }
-  if (frame.e === "unauthorized") {
-    rollbackSeat(
-      new ApiError("unauthenticated", 0, errorMessage("unauthenticated")),
-    );
+  if (frame.e === "unauthorized" || frame.e === "gone") {
+    // `gone`: the server lost the room. `unauthorized`: the seat lost its
+    // authority. Either way a new ticket decides: the endpoint's 401/403 ends
+    // the call with its own message, a granted ticket rebuilds the seat.
+    rebuildSeat();
     return;
   }
   if (frame.e === "unavailable") {
@@ -1484,6 +1485,14 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
       [parsed.userId]: { ...current, [parsed.k]: attached },
     },
   });
+}
+
+/** Drops the seat's media now and builds it again with a new ticket. The
+ * generation moves on so a start still in flight stops where it stands. */
+function rebuildSeat(): void {
+  voice.seat.generation += 1;
+  stopPeer(true);
+  scheduleSeatRebuild();
 }
 
 function scheduleSeatRebuild(): void {
