@@ -754,6 +754,8 @@ pub const LOST_CALL_MESSAGE: &str =
     "Die Sprachverbindung konnte nicht wiederhergestellt werden. Bitte erneut beitreten.";
 pub const LIVE_FORBIDDEN_MESSAGE: &str = "In diesem Server darfst du nicht live gehen.";
 pub const CAMERA_UNAVAILABLE: &str = "Die Kamera ist nicht verfügbar.";
+/// A Live the seat refused (`forbidden`): its ticket predates the grant.
+pub const LIVE_NEEDS_REJOIN: &str = "Betritt den Sprachkanal neu, um live zu gehen.";
 /// `microphoneFailure` for a join that goes on listening.
 pub const MIC_NOT_FOUND: &str = "Kein Mikrofon gefunden, du hörst nur zu.";
 pub const MIC_DENIED: &str = "Mikrofonzugriff nicht erlaubt, du hörst nur zu.";

@@ -604,6 +604,7 @@ pub(crate) fn settings_changed(inner: &Arc<Inner>, previous: &CallSettings, next
         }
         let limits_changed = previous.video_upload_limit != next.video_upload_limit
             || previous.economy_mode != next.economy_mode
+            || previous.camera_profile != next.camera_profile
             || previous.screen_profile != next.screen_profile;
         if limits_changed && let Some(seat) = session.seat() {
             seat.apply_parameters().await;
@@ -999,30 +1000,160 @@ impl Session {
                 .inner()
                 .is_some_and(|i| i.read(|s| s.muted || s.deafened));
             self.apply_local_audio();
-            if seat.publish(Kind::A, &mic, None, paused).await.is_ok() {
-                self.announce(Kind::A, true);
+            match seat.publish(Kind::A, &mic, None, paused).await {
+                Ok(()) => self.announce(Kind::A, true),
+                Err(e) => return self.mic_not_sent(seat, &e),
             }
         }
         let camera = self.st.lock().camera.clone();
-        if let Some(camera) = camera
-            && seat.publish(Kind::V, &camera, None, false).await.is_ok()
-        {
-            self.announce(Kind::V, true);
+        if let Some(camera) = camera {
+            self.send_video(seat, Kind::V, &camera, true).await;
         }
-        let (screen, audio) = {
-            let st = self.st.lock();
-            (st.screen.clone(), st.screen_audio.clone())
-        };
+        let screen = self.st.lock().screen.clone();
         if let Some(screen) = screen
-            && seat.publish(Kind::S, &screen, None, false).await.is_ok()
+            && self.send_video(seat, Kind::S, &screen, true).await
         {
-            self.announce(Kind::S, true);
-            if let Some(audio) = audio
-                && seat.publish(Kind::Sa, &audio, None, false).await.is_ok()
-            {
-                self.announce(Kind::Sa, true);
+            self.send_live_sound(seat, screen.epoch).await;
+        }
+    }
+
+    /// Sends a camera or Live on `seat` and announces it unless `announce`
+    /// is off; whether it went out. A capture stopped meanwhile is taken
+    /// back, one the server refuses stops with a word.
+    async fn send_video(
+        self: &Arc<Self>,
+        seat: &Arc<Seat>,
+        kind: Kind,
+        local: &Local,
+        announce: bool,
+    ) -> bool {
+        match seat.publish(kind, local, None, false).await {
+            Ok(()) => {
+                let kept = self.keep_published(seat, kind, local.epoch).await;
+                if kept && announce {
+                    self.announce(kind, true);
+                }
+                kept
+            }
+            Err(e) => {
+                self.video_not_sent(seat, kind, local.epoch, &e).await;
+                false
             }
         }
+    }
+
+    /// The Live's sound as it is now (it may have been switched on while
+    /// the picture went out), once the picture of `epoch` is on the seat.
+    async fn send_live_sound(self: &Arc<Self>, seat: &Arc<Seat>, epoch: Uuid) {
+        let audio = self.st.lock().screen_audio.clone();
+        let Some(audio) = audio.filter(|a| a.epoch == epoch) else {
+            return;
+        };
+        match seat.publish(Kind::Sa, &audio, None, false).await {
+            Ok(()) => {
+                if self.keep_published(seat, Kind::Sa, epoch).await {
+                    self.announce(Kind::Sa, true);
+                }
+            }
+            Err(e) if e.code() == "connection_closed" || seat.closed.load(Ordering::Acquire) => {}
+            Err(e) => {
+                tracing::warn!("Live sound: {e}");
+                let current = self
+                    .st
+                    .lock()
+                    .screen_audio
+                    .as_ref()
+                    .is_some_and(|a| a.epoch == epoch);
+                if current {
+                    self.stop_live_sound(LiveSound::Unavailable(Some(e.code().to_owned())))
+                        .await;
+                }
+            }
+        }
+    }
+
+    /// After a publication of `kind` under `epoch` came back: whether it is
+    /// still the capture wanted. One stopped meanwhile is closed here (its
+    /// stop found no producer yet); one replaced meanwhile stays for the
+    /// newer capture.
+    async fn keep_published(&self, seat: &Seat, kind: Kind, epoch: Uuid) -> bool {
+        let (now, newer) = {
+            let st = self.st.lock();
+            let local = match kind {
+                Kind::A => &st.mic,
+                Kind::V => &st.camera,
+                Kind::S => &st.screen,
+                Kind::Sa => &st.screen_audio,
+            };
+            (
+                local.as_ref().is_some_and(|l| l.epoch == epoch),
+                local.is_some(),
+            )
+        };
+        let ours = seat
+            .producers
+            .lock()
+            .get(&kind)
+            .is_some_and(|h| h.epoch == epoch);
+        match logic::published_sound(now && self.live(), newer, ours) {
+            logic::PublishedSound::Announce => true,
+            logic::PublishedSound::Close => {
+                seat.close_source(kind).await;
+                false
+            }
+            logic::PublishedSound::Keep => false,
+        }
+    }
+
+    /// The microphone could not be sent (`commitMicSend`): a word, then a
+    /// new seat. A seat that closed meanwhile has its next one send it.
+    fn mic_not_sent(self: &Arc<Self>, seat: &Seat, error: &MediaError) {
+        if error.code() == "connection_closed" || seat.closed.load(Ordering::Acquire) {
+            return;
+        }
+        tracing::warn!("microphone not sent: {error}");
+        if let Some(inner) = self.inner() {
+            let first = !std::mem::replace(&mut self.st.lock().stream_error_shown, true);
+            if first {
+                inner.notify(logic::media_error_message(error.code()));
+            }
+        }
+        self.schedule_rebuild(seat.generation);
+    }
+
+    /// A camera or Live the seat would not take: its capture stops with a
+    /// word, as the web's `publish` does.
+    async fn video_not_sent(
+        self: &Arc<Self>,
+        seat: &Seat,
+        kind: Kind,
+        epoch: Uuid,
+        error: &MediaError,
+    ) {
+        if error.code() == "connection_closed" || seat.closed.load(Ordering::Acquire) {
+            return;
+        }
+        let current = {
+            let st = self.st.lock();
+            let local = if kind == Kind::S {
+                &st.screen
+            } else {
+                &st.camera
+            };
+            local.as_ref().is_some_and(|l| l.epoch == epoch)
+        };
+        if !current || !self.live() {
+            return;
+        }
+        tracing::warn!("{kind:?} not sent: {error}");
+        let Some(inner) = self.inner() else { return };
+        self.stop_video(kind).await;
+        inner.notify(if kind == Kind::S && error.code() == "forbidden" {
+            // The seat's ticket predates a go-live grant: only a new one has it.
+            logic::LIVE_NEEDS_REJOIN
+        } else {
+            logic::media_error_message(error.code())
+        });
     }
 
     fn microphone_options(&self) -> Value {
@@ -1117,8 +1248,9 @@ impl Session {
             let paused = self
                 .inner()
                 .is_some_and(|i| i.read(|s| s.muted || s.deafened));
-            if seat.publish(Kind::A, &mic, None, paused).await.is_ok() {
-                self.announce(Kind::A, true);
+            match seat.publish(Kind::A, &mic, None, paused).await {
+                Ok(()) => self.announce(Kind::A, true),
+                Err(e) => self.mic_not_sent(&seat, &e),
             }
         }
     }
@@ -1177,7 +1309,9 @@ impl Session {
             let paused = self
                 .inner()
                 .is_some_and(|i| i.read(|s| s.muted || s.deafened));
-            let _ = seat.publish(Kind::A, &local, None, paused).await;
+            if let Err(e) = seat.publish(Kind::A, &local, None, paused).await {
+                self.mic_not_sent(&seat, &e);
+            }
         }
     }
 
@@ -1193,24 +1327,42 @@ impl Session {
         };
         let fake = self.fake || settings.camera == "test-pattern";
         let device = settings.camera.clone();
-        let captured = blocking(move || {
-            if fake {
-                return core::Source::test_pattern(&engine, size.width, size.height, size.fps);
-            }
-            let options = json!({
-                "width": size.width, "height": size.height, "fps": size.fps, "device": device,
-            });
-            core::Source::camera(&engine, &options).or_else(|e| {
-                if device.is_empty() {
-                    return Err(e);
+        let open = || {
+            let (engine, device) = (engine.clone(), device.clone());
+            blocking(move || {
+                if fake {
+                    return core::Source::test_pattern(&engine, size.width, size.height, size.fps);
                 }
-                let fallback = json!({
-                    "width": size.width, "height": size.height, "fps": size.fps, "device": "",
+                let options = json!({
+                    "width": size.width, "height": size.height, "fps": size.fps, "device": device,
                 });
-                core::Source::camera(&engine, &fallback)
+                core::Source::camera(&engine, &options).or_else(|e| {
+                    if device.is_empty() {
+                        return Err(e);
+                    }
+                    let fallback = json!({
+                        "width": size.width, "height": size.height, "fps": size.fps, "device": "",
+                    });
+                    core::Source::camera(&engine, &fallback)
+                })
             })
-        })
-        .await;
+        };
+        let mut captured = open().await;
+        // A running camera may hold the device (V4L2 opens it once): it lets
+        // go, and the new capture is tried once more.
+        let mut released = None;
+        if !matches!(captured, Some(Ok(_))) && self.st.lock().camera_turn == turn {
+            if let Some(Err(e)) = &captured {
+                tracing::debug!("camera beside the running one: {e}");
+            }
+            released = self.release_camera().await;
+            if released.is_some() {
+                if self.st.lock().camera_turn != turn {
+                    return;
+                }
+                captured = open().await;
+            }
+        }
         let source = match captured {
             Some(Ok(source)) => source,
             other => {
@@ -1218,7 +1370,17 @@ impl Session {
                     tracing::warn!("camera: {e}");
                 }
                 if self.st.lock().camera_turn == turn {
+                    // Nothing is captured any more: nothing may be sent.
                     inner.write(|s| s.camera = false);
+                    if let Some(seat) = self.seat() {
+                        seat.close_source(Kind::V).await;
+                    }
+                    if released.is_some() {
+                        self.announce(Kind::V, false);
+                        inner.play(Sound::CameraOff, Some(false));
+                        inner.drop_frame(VideoKey::camera(self.me));
+                    }
+                    self.publish_participants();
                     inner.notify(logic::CAMERA_UNAVAILABLE);
                 }
                 return;
@@ -1231,13 +1393,18 @@ impl Session {
                 std::thread::spawn(move || drop(source));
                 return;
             }
-            let epoch = st.camera.as_ref().map_or_else(Uuid::new_v4, |c| c.epoch);
+            let epoch = st
+                .camera
+                .as_ref()
+                .map(|c| c.epoch)
+                .or(released)
+                .unwrap_or_else(Uuid::new_v4);
             let local = Local {
                 source: source.clone(),
                 epoch,
                 height: size.height,
             };
-            st.camera.replace(local).is_some()
+            st.camera.replace(local).is_some() || released.is_some()
         };
         self.preview(Kind::V, &source);
         if !replacing {
@@ -1245,12 +1412,25 @@ impl Session {
         }
         self.publish_participants();
         let local = self.st.lock().camera.clone();
-        if let (Some(seat), Some(local)) = (self.seat(), local)
-            && seat.publish(Kind::V, &local, None, false).await.is_ok()
-            && !replacing
-        {
-            self.announce(Kind::V, true);
+        if let (Some(seat), Some(local)) = (self.seat(), local) {
+            self.send_video(&seat, Kind::V, &local, !replacing).await;
         }
+    }
+
+    /// Lets the camera's capture go with its producer, its `p v` kept, so
+    /// a new capture can open the device; the epoch it ran under.
+    async fn release_camera(self: &Arc<Self>) -> Option<Uuid> {
+        let local = self.st.lock().camera.take()?;
+        if let Some(seat) = self.seat() {
+            seat.close_source(Kind::V).await;
+        }
+        let epoch = local.epoch;
+        let _ = blocking(move || {
+            let _ = local.source.set_video_sink(None);
+            drop(local);
+        })
+        .await;
+        Some(epoch)
     }
 
     async fn start_screen(self: &Arc<Self>, with_audio: bool) {
@@ -1370,14 +1550,8 @@ impl Session {
         self.publish_participants();
         tokio::spawn(self.clone().watch_screen(turn));
         let Some(seat) = self.seat() else { return };
-        if seat.publish(Kind::S, &screen, None, false).await.is_err() {
-            return;
-        }
-        self.announce(Kind::S, true);
-        if let Some(audio) = screen_audio
-            && seat.publish(Kind::Sa, &audio, None, false).await.is_ok()
-        {
-            self.announce(Kind::Sa, true);
+        if self.send_video(&seat, Kind::S, &screen, true).await {
+            self.send_live_sound(&seat, screen.epoch).await;
         }
     }
 
@@ -1590,7 +1764,8 @@ impl Session {
                 (locals, had)
             } else {
                 st.camera_turn += 1;
-                let had = st.camera.is_some();
+                // A camera let go for its re-capture is still announced.
+                let had = st.camera.is_some() || st.announced.contains(&Kind::V);
                 (st.camera.take().into_iter().collect(), had)
             }
         };
@@ -2492,6 +2667,9 @@ struct Tp {
     direction: &'static str,
     open: Mutex<HashSet<u64>>,
     refused: AtomicBool,
+    /// The code of the last request answered with a refusal, so a failed
+    /// produce can tell the server's no from the SDK's.
+    refusal: Mutex<Option<String>>,
 }
 
 impl Tp {
@@ -2505,12 +2683,21 @@ impl Tp {
             refused
         };
         if refused {
-            let _ = self.native.respond(request, Err("transport closed".into()));
+            self.refuse(request, "connection_closed");
         }
         !refused
     }
 
+    /// Refuses `request`, noting why before the waiting call returns.
+    fn refuse(&self, request: u64, code: &str) {
+        *self.refusal.lock() = Some(code.to_owned());
+        let _ = self.native.respond(request, Err(code.to_owned()));
+    }
+
     fn answer(&self, request: u64, answer: Result<Value, String>) {
+        if let Err(code) = &answer {
+            *self.refusal.lock() = Some(code.clone());
+        }
         let _ = self.native.respond(request, answer);
         self.open.lock().remove(&request);
     }
@@ -2522,7 +2709,7 @@ impl Tp {
             std::mem::take(&mut *open)
         };
         for request in open {
-            let _ = self.native.respond(request, Err("transport closed".into()));
+            self.refuse(request, "connection_closed");
         }
     }
 }
@@ -2801,6 +2988,7 @@ impl Seat {
             direction: name,
             open: Mutex::new(HashSet::new()),
             refused: AtomicBool::new(self.closed.load(Ordering::Acquire)),
+            refusal: Mutex::new(None),
         });
         let weak = Arc::downgrade(&tp);
         let seat = Arc::downgrade(self);
@@ -2876,15 +3064,24 @@ impl Seat {
         } else {
             ("audio/opus".to_owned(), false)
         };
+        let settings = self
+            .session
+            .upgrade()
+            .and_then(|s| s.inner())
+            .map(|i| i.settings())
+            .unwrap_or_default();
         let replace = self.producers.lock().get(&kind).and_then(|h| {
             (h.mime == mime && h.epoch == local.epoch).then(|| (h.producer.clone(), h.id.clone()))
         });
         if let Some((producer, _)) = replace {
             let source = local.source.clone();
-            let replaced = blocking(move || producer.lock().replace_source(&source)).await;
+            let swapped = producer.clone();
+            let replaced = blocking(move || swapped.lock().replace_source(&source)).await;
             return match replaced {
                 Some(Ok(())) => {
                     drop(send);
+                    // The new capture's size and profile set the limits.
+                    self.apply_parameters_of(kind, &producer, local, &settings);
                     if kind == Kind::A {
                         // The new track took the old one's state: the gate's again.
                         if let Some(session) = self.session.upgrade()
@@ -2919,12 +3116,6 @@ impl Seat {
         }
         let tp = send.clone().expect("send transport");
         let old = self.producers.lock().get(&kind).map(|h| h.id.clone());
-        let settings = self
-            .session
-            .upgrade()
-            .and_then(|s| s.inner())
-            .map(|i| i.settings())
-            .unwrap_or_default();
         let mut app = json!({
             "k": kind.as_str(),
             "epoch": local.epoch,
@@ -2950,6 +3141,7 @@ impl Seat {
             options["encodings"] = encodings;
         }
         let source = local.source.clone();
+        tp.refusal.lock().take();
         let produced = {
             let tp = tp.clone();
             let options = options.clone();
@@ -2957,18 +3149,25 @@ impl Seat {
         };
         let producer = match produced {
             Some(Ok(producer)) => producer,
-            Some(Err(e)) if kind.video() && options.get("encodings").is_some() => {
-                // Layers refused: one stream instead.
+            // The SDK, not the server, refused the layers: one stream instead.
+            Some(Err(e))
+                if kind.video()
+                    && options.get("encodings").is_some()
+                    && !self.closed.load(Ordering::Acquire)
+                    && tp.refusal.lock().is_none() =>
+            {
                 tracing::debug!("produce {kind:?} in layers: {e}");
                 options.as_object_mut().map(|o| o.remove("encodings"));
                 let source = local.source.clone();
-                let tp = tp.clone();
-                match blocking(move || tp.native.produce(&source, &options)).await {
+                let retry = tp.clone();
+                match blocking(move || retry.native.produce(&source, &options)).await {
                     Some(Ok(producer)) => producer,
-                    _ => return Err(MediaError::new("sdk_failed")),
+                    Some(Err(e)) => return Err(self.produce_error(&tp, &e)),
+                    None => return Err(MediaError::new("connection_closed")),
                 }
             }
-            _ => return Err(MediaError::new("sdk_failed")),
+            Some(Err(e)) => return Err(self.produce_error(&tp, &e)),
+            None => return Err(MediaError::new("connection_closed")),
         };
         let id = producer.id().to_owned();
         if self.closed.load(Ordering::Acquire) {
@@ -3000,6 +3199,21 @@ impl Seat {
             self.sync_mic().await;
         }
         Ok(())
+    }
+
+    /// Why a produce failed: a closed seat, else the server's answer, else
+    /// the SDK.
+    fn produce_error(&self, tp: &Tp, error: &core::Error) -> MediaError {
+        if self.closed.load(Ordering::Acquire) {
+            return MediaError::new("connection_closed");
+        }
+        match tp.refusal.lock().take() {
+            Some(code) => MediaError(code),
+            None => {
+                tracing::debug!("produce: {error}");
+                MediaError::new("sdk_failed")
+            }
+        }
     }
 
     /// Bitrates, rates and priorities of every sender (`VideoLimits`).
@@ -3451,7 +3665,7 @@ fn forward(
             if let core::TransportEvent::Connect { request, .. }
             | core::TransportEvent::Produce { request, .. } = event
             {
-                let _ = transport.native.respond(request, Err("seat closed".into()));
+                transport.refuse(request, "connection_closed");
             }
             continue;
         };
