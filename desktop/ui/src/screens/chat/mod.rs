@@ -57,7 +57,9 @@ struct ChatState {
     /// The DM the page fetched in this opening, and the account data's
     /// epoch it asked in.
     dm_asked: Option<(Uuid, u64)>,
-    gifs_requested: bool,
+    /// The account data's epoch the GIF status was asked in, and when that
+    /// ask was seen to fail.
+    gifs_asked: Option<(u64, Option<std::time::Instant>)>,
     /// The conversation shown last and the frame it was shown in.
     shown: Option<(Uuid, u64)>,
 }
@@ -89,11 +91,60 @@ fn ensure_workspace(client: &Client, chat: &mut ChatState) {
             client.bootstrap();
         }
     }
-    if !chat.gifs_requested {
-        chat.gifs_requested = true;
-        if client.with_state(|s| s.gifs.is_none() && s.op("gifs").is_none()) {
-            client.load_gif_status();
+    let (epoch, unknown, failed) = client.with_state(|s| {
+        let unknown = s.gifs.is_none();
+        (
+            s.epoch(),
+            unknown && s.op("gifs").is_none(),
+            unknown && matches!(s.op("gifs"), Some(gelabber_client::OpState::Failed(_))),
+        )
+    });
+    if ask_gifs(
+        &mut chat.gifs_asked,
+        epoch,
+        unknown,
+        failed,
+        std::time::Instant::now(),
+    ) {
+        client.load_gif_status();
+    }
+}
+
+/// A failed GIF status is asked for again after this long.
+const GIFS_RETRY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Whether to ask for the GIF status (the composer's GIF button): once per
+/// account data (a sign-in drops it), and again a while after a failure.
+fn ask_gifs(
+    asked: &mut Option<(u64, Option<std::time::Instant>)>,
+    epoch: u64,
+    unknown: bool,
+    failed: bool,
+    now: std::time::Instant,
+) -> bool {
+    match asked {
+        Some((e, failed_at)) if *e == epoch => {
+            if !failed {
+                *failed_at = None;
+                return false;
+            }
+            match failed_at {
+                None => {
+                    *failed_at = Some(now);
+                    false
+                }
+                Some(at) if now.duration_since(*at) >= GIFS_RETRY => {
+                    *failed_at = None;
+                    true
+                }
+                Some(_) => false,
+            }
         }
+        _ if unknown || failed => {
+            *asked = Some((epoch, None));
+            true
+        }
+        _ => false,
     }
 }
 
@@ -1312,6 +1363,23 @@ mod tests {
             repeat: false,
             modifiers,
         }
+    }
+
+    #[test]
+    fn the_gif_status_is_asked_per_account_and_again_after_a_failure() {
+        let t0 = std::time::Instant::now();
+        let mut asked = None;
+        assert!(ask_gifs(&mut asked, 1, true, false, t0));
+        // Asked: not again while it runs or once it is in.
+        assert!(!ask_gifs(&mut asked, 1, true, false, t0));
+        assert!(!ask_gifs(&mut asked, 1, false, false, t0));
+        // Signed out and in: the status was dropped, it is asked again.
+        assert!(ask_gifs(&mut asked, 2, true, false, t0));
+        // A failed ask waits, then goes again.
+        assert!(!ask_gifs(&mut asked, 2, false, true, t0));
+        assert!(!ask_gifs(&mut asked, 2, false, true, t0 + GIFS_RETRY / 2));
+        assert!(ask_gifs(&mut asked, 2, false, true, t0 + GIFS_RETRY));
+        assert!(!ask_gifs(&mut asked, 2, false, true, t0 + GIFS_RETRY));
     }
 
     #[test]
