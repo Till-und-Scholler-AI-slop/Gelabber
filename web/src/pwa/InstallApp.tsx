@@ -1,4 +1,5 @@
 import { ChevronIcon } from "../components/Icons.tsx";
+import { DesktopApp } from "./DesktopApp.tsx";
 import {
   promptInstallation,
   useInstallation,
@@ -6,8 +7,14 @@ import {
 } from "./install.ts";
 import "./install.css";
 
+/** Settings → App: the desktop app where there is one, then the web app. */
 export function InstallApp() {
-  return <InstallPanel state={useInstallation()} />;
+  return (
+    <>
+      <DesktopApp />
+      <InstallPanel state={useInstallation()} />
+    </>
+  );
 }
 
 /** The same panel behind one line, where signing in comes first. */

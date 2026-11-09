@@ -37,11 +37,36 @@ import { notify } from "../components/toasts.ts";
 import { useMediaQuery } from "../components/useMediaQuery.ts";
 import { useShellShortcuts } from "../components/useShellShortcuts.ts";
 import { useDms } from "../dms/queries.ts";
+import { offerDesktopApp } from "../pwa/desktopApp.ts";
+import { useInstallation } from "../pwa/install.ts";
 import { useMuteClock } from "../messages/notificationSettings.ts";
 import { useReadState, useReadingChannel } from "../messages/readState.ts";
 import { unreadMark } from "../messages/unreadIndicators.ts";
 import { forgetServer, useServer, useServers } from "../servers/queries.ts";
 import { SettingsSidebar } from "./UserSettingsPage.tsx";
+
+// After the first screen has settled, so it does not land among the start's
+// own notices; not on the page it would lead to.
+const DESKTOP_OFFER_DELAY_MS = 3000;
+
+function useDesktopAppOffer(pathname: string) {
+  const navigate = useNavigate();
+  const platform = useInstallation((state) => state.desktop);
+  const onAppSettings = pathname === "/settings/app";
+  useEffect(() => {
+    if (!platform || onAppSettings) return;
+    const timer = setTimeout(
+      () =>
+        offerDesktopApp(
+          platform,
+          () =>
+            void navigate({ to: "/settings/$area", params: { area: "app" } }),
+        ),
+      DESKTOP_OFFER_DELAY_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [platform, onAppSettings, navigate]);
+}
 
 export function WorkspaceLayout() {
   return (
@@ -62,6 +87,7 @@ function Workspace() {
   // Voice room and settings load in the background once the first screen is
   // up, so a click does not wait for them and a deploy cannot take them away.
   useEffect(() => preloadPartsWhenIdle(), []);
+  useDesktopAppOffer(pathname);
 
   if (serverId)
     return <SelectedServer serverId={serverId} channelId={channelId} />;

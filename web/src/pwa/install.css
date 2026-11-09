@@ -74,3 +74,47 @@
     margin-block: -12px;
   }
 }
+
+/* Settings → App: the desktop app's steps. */
+.pwa-install h3 {
+  margin-top: 16px;
+  font-size: 14px;
+  font-weight: 650;
+}
+.pwa-install code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+.desktop-app-steps > :first-child {
+  margin-top: 0;
+}
+.desktop-app-steps > a + ol {
+  margin-top: 16px;
+}
+.desktop-app-command {
+  display: flex;
+  align-items: center;
+  gap: var(--lr-space-2);
+  margin-top: 8px;
+  padding: 8px 8px 8px 12px;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius);
+  background: var(--lr-surface);
+}
+.desktop-app-command code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.desktop-app-command + p {
+  margin-top: 12px;
+}
+.desktop-app-steps ol + p {
+  margin-top: 12px;
+}
+/* The other system's steps read like this system's, not like the summary. */
+.desktop-app-other .desktop-app-steps {
+  margin-top: var(--lr-space-3);
+  font: 400 14px / 1.6 var(--lr-font);
+  color: var(--lr-text);
+}
