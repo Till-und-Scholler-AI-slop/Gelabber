@@ -3266,6 +3266,22 @@ describe("source and transport continuity", () => {
     expect(env.errors).toEqual([]);
   });
 
+  it("ends the call when the media server keeps revoking each rebuilt seat", async () => {
+    const env = await connected();
+    for (let rebuilt = 1; rebuilt <= 3; rebuilt += 1) {
+      env.emitMedia({ op: "err", e: "unauthorized" });
+      await vi.waitFor(() => expect(env.peers[rebuilt]?.audio).toBeTruthy());
+      expect(useVoice.getState().status).toBe("joined");
+    }
+    // The fourth within a minute: the call ends with a way back.
+    env.emitMedia({ op: "err", e: "unauthorized" });
+    expect(useVoice.getState().status).toBe("idle");
+    expect(useVoice.getState().lostCall).not.toBeNull();
+    expect(env.errors).toEqual([new MediaError("unauthorized")]);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(env.peers).toHaveLength(4);
+  });
+
   it("does not toast each ICE failure but still rebuilds on unauthorized", async () => {
     const env = await connected();
     for (let i = 0; i < 12; i++) env.emitMedia({ op: "err", e: "ice_failed" });

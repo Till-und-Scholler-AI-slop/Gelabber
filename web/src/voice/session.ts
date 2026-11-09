@@ -808,6 +808,7 @@ function stopPeer(preserveCapture = false): void {
     voice.micJoin += 1;
   }
   if (!preserveCapture) voice.awaitingScreen = null;
+  if (!preserveCapture) voice.seatRevocations = [];
   voice.seatRetry.cancel(!preserveCapture);
   // A rebuild keeps what is captured, and with it a picker or camera prompt
   // that is still open: what the user answers there goes to the next
@@ -1172,6 +1173,10 @@ function onMediaFrame(frame: MediaServerFrame): void {
     // `gone`: the server lost the room. `unauthorized`: the seat lost its
     // authority. Either way a new ticket decides: the endpoint's 401/403 ends
     // the call with its own message, a granted ticket rebuilds the seat.
+    if (seatRevokedTooOften()) {
+      rollbackSeat(new MediaError(frame.e), true);
+      return;
+    }
     rebuildSeat();
     return;
   }
@@ -1491,6 +1496,25 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
       [parsed.userId]: { ...current, [parsed.k]: attached },
     },
   });
+}
+
+/** A seat that stayed up this long counts as working again. */
+const REVOCATION_CALM_MS = 30_000;
+const REVOCATION_WINDOW_MS = 60_000;
+const REVOCATION_LIMIT = 4;
+
+/** Notes an unasked revocation; true for the REVOCATION_LIMIT-th within
+ * REVOCATION_WINDOW_MS, when the servers disagree and rebuilding is futile. */
+function seatRevokedTooOften(): boolean {
+  const now = Date.now();
+  const last = voice.seatRevocations.at(-1);
+  if (last !== undefined && now - last >= REVOCATION_CALM_MS)
+    voice.seatRevocations = [];
+  voice.seatRevocations = voice.seatRevocations.filter(
+    (at) => now - at < REVOCATION_WINDOW_MS,
+  );
+  voice.seatRevocations.push(now);
+  return voice.seatRevocations.length >= REVOCATION_LIMIT;
 }
 
 /** Drops the seat's media now and builds it again with a new ticket. The

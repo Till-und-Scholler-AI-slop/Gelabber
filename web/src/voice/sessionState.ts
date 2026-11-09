@@ -85,6 +85,10 @@ export type VoiceSession = {
   seat: MediaPeer;
   seatRecoverySlot: RecoverySlot;
   seatRetry: MediaRetry;
+  /** When the media server revoked the seat unasked (`unauthorized`,
+   * `gone`). "connected" does not clear it: a server that revokes every
+   * rebuilt seat would otherwise loop for ever. */
+  seatRevocations: number[];
   /** Seat connections whose `start` is through. Before that a connection is
    * the seat's already, for the server's events, but its device has not
    * loaded and it turns every publication down. */
@@ -178,6 +182,7 @@ export function createVoiceSession(previous?: VoiceSession): VoiceSession {
     seat: new MediaPeer(),
     seatRecoverySlot: new Map(),
     seatRetry: new MediaRetry(),
+    seatRevocations: [],
     startedConnections: new WeakSet(),
     seatStarting: 0,
     videoBudget: new VideoLimits(() => session.seat, profileForVideoTrack),
