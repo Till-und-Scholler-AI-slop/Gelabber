@@ -1416,23 +1416,22 @@ impl Client {
 
     /// Op key `create_server`; the new server joins the list.
     pub fn create_server(&self, name: &str) {
-        let http = self.http().clone();
         let name = name.to_owned();
         let this = self.clone();
-        self.run(
-            "create_server",
-            async move {
-                let detail = http.create_server(&name).await?;
+        self.spawn(async move {
+            let epoch = this.epoch();
+            let http = this.http().clone();
+            if let Some(detail) = this.op("create_server", http.create_server(&name)).await {
+                this.write_in(epoch, |s| {
+                    if s.server(detail.server.id).is_none() {
+                        s.servers.push(detail.server.clone());
+                    }
+                    s.server_details.insert(detail.server.id, detail);
+                });
+                // Now that the state has it.
                 this.sync_topics();
-                Ok(detail)
-            },
-            |s, detail| {
-                if s.server(detail.server.id).is_none() {
-                    s.servers.push(detail.server.clone());
-                }
-                s.server_details.insert(detail.server.id, detail);
-            },
-        );
+            }
+        });
     }
 
     /// Op key `join`; refetches the list.
