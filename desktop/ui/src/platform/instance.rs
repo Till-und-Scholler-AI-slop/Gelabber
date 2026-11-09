@@ -349,20 +349,23 @@ pub fn claim() -> Claim {
 /// Tells the user why nothing opens: a GUI process has no console to say it.
 #[cfg(windows)]
 fn not_responding() {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONWARNING, MB_OK, MessageBoxW};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MessageBoxW,
+    };
     let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
     let text = wide(
         "Gelabber läuft schon, reagiert aber nicht. Beende Gelabber im Task-Manager \
          und starte es dann noch einmal.",
     );
     let caption = wide("Gelabber");
-    // SAFETY: NUL-terminated UTF-16 strings that outlive the call; no owner.
+    // No owner window: in front, or it may open behind other windows.
+    // SAFETY: NUL-terminated UTF-16 strings that outlive the call.
     unsafe {
         MessageBoxW(
             std::ptr::null_mut(),
             text.as_ptr(),
             caption.as_ptr(),
-            MB_OK | MB_ICONWARNING,
+            MB_OK | MB_ICONWARNING | MB_SETFOREGROUND,
         )
     };
 }
