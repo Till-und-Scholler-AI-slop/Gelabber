@@ -50,8 +50,8 @@ pub struct Draft {
     pub at: i64,
 }
 
-/// The window in logical points; no position where the desktop does not
-/// tell it (Wayland).
+/// The window in the desktop's logical pixels (egui points at zoom 1); no
+/// position where the desktop does not tell it (Wayland).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Window {
     pub width: f32,
@@ -123,7 +123,37 @@ pub fn save(stored: &Stored) {
 
 /// The stored window for the viewport builder.
 pub fn window() -> Option<Window> {
-    load().window.and_then(Window::sane)
+    let mut window = load().window.and_then(Window::sane)?;
+    // A monitor that is gone would open the window where nobody sees it.
+    if !on_screen(&window) {
+        window.x = None;
+        window.y = None;
+    }
+    Some(window)
+}
+
+/// Whether a monitor shows any part of the window at its stored place.
+#[cfg(windows)]
+fn on_screen(window: &Window) -> bool {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONULL, MonitorFromRect};
+    let (Some(x), Some(y)) = (window.x, window.y) else {
+        return true;
+    };
+    let rect = RECT {
+        left: x as i32,
+        top: y as i32,
+        right: (x + window.width) as i32,
+        bottom: (y + window.height) as i32,
+    };
+    // SAFETY: only reads the rectangle.
+    !unsafe { MonitorFromRect(&rect, MONITOR_DEFAULTTONULL) }.is_null()
+}
+
+/// X11 window managers keep a window on screen; Wayland ignores positions.
+#[cfg(not(windows))]
+fn on_screen(_: &Window) -> bool {
+    true
 }
 
 impl From<&Memory> for Account {

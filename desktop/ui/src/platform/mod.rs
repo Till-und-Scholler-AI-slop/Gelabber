@@ -462,16 +462,17 @@ impl Platform {
             return;
         }
         window.maximized = maximized == Some(true);
+        // egui's points shrink with the text size; the window opens before
+        // any zoom is set, so it is stored in the desktop's logical pixels.
+        let zoom = ctx.zoom_factor();
+        let (width, height) = (inner.width() * zoom, inner.height() * zoom);
         // A maximized window keeps the size it comes back to.
-        if !window.maximized
-            && inner.width() >= state::MIN_SIZE[0]
-            && inner.height() >= state::MIN_SIZE[1]
-        {
-            window.width = inner.width().round();
-            window.height = inner.height().round();
+        if !window.maximized && width >= state::MIN_SIZE[0] && height >= state::MIN_SIZE[1] {
+            window.width = width.round();
+            window.height = height.round();
             if let Some(outer) = outer {
-                window.x = Some(outer.min.x.round());
-                window.y = Some(outer.min.y.round());
+                window.x = Some((outer.min.x * zoom).round());
+                window.y = Some((outer.min.y * zoom).round());
             }
         }
         self.stored.window = Some(window);
@@ -665,6 +666,32 @@ mod tests {
         out.textures_delta.clear();
         assert_eq!(platform.ptt.key, None);
         assert_eq!(ptt_status(&ctx), None);
+        drop(config);
+    }
+
+    /// "Groß" zooms egui's points by 1.25; the window opens before any zoom,
+    /// so what is stored must be the window's own size, not the points.
+    #[test]
+    fn the_window_is_remembered_without_the_text_size() {
+        let config = paths::testing::TempConfig::new("platform-zoom");
+        let ctx = Context::default();
+        ctx.set_zoom_factor(1.25);
+        let mut platform = Platform::new(None);
+        let mut input = egui::RawInput::default();
+        let viewport = input.viewports.entry(egui::ViewportId::ROOT).or_default();
+        viewport.inner_rect = Some(egui::Rect::from_min_size(
+            egui::pos2(80.0, 40.0),
+            egui::vec2(800.0, 560.0),
+        ));
+        viewport.outer_rect = Some(egui::Rect::from_min_size(
+            egui::pos2(80.0, 16.0),
+            egui::vec2(800.0, 584.0),
+        ));
+        let mut out = ctx.run_ui(input, |ui| platform.track_window(ui.ctx()));
+        out.textures_delta.clear();
+        let window = platform.stored.window.unwrap();
+        assert_eq!((window.width, window.height), (1000.0, 700.0));
+        assert_eq!((window.x, window.y), (Some(100.0), Some(20.0)));
         drop(config);
     }
 }
