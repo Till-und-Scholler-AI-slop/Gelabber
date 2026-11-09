@@ -1,4 +1,4 @@
-import { ApiError, api } from "../api/client.ts";
+import { ApiError, api, timeoutSignal } from "../api/client.ts";
 import type { GifPick } from "../gifs/api.ts";
 import type {
   ListMessagesParams,
@@ -96,12 +96,7 @@ export async function putPresigned(
       method: "PUT",
       headers: putHeaders,
       body: file,
-      signal: signal
-        ? AbortSignal.any([
-            signal,
-            AbortSignal.timeout(uploadTimeoutMs(file.size)),
-          ])
-        : AbortSignal.timeout(uploadTimeoutMs(file.size)),
+      signal: timeoutSignal(uploadTimeoutMs(file.size), signal),
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {

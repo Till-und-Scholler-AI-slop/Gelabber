@@ -650,9 +650,7 @@ async function send(path: string, options: RequestOptions): Promise<Response> {
     headers.set("X-CSRF-Token", csrfToken);
   }
 
-  const signal = options.signal
-    ? AbortSignal.any([options.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
-    : AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const signal = timeoutSignal(REQUEST_TIMEOUT_MS, options.signal);
 
   try {
     const response = await fetch(`${API_BASE}${path}`, {
@@ -675,6 +673,30 @@ async function send(path: string, options: RequestOptions): Promise<Response> {
     }
     throw new ApiError("network", 0, "Network error.");
   }
+}
+
+/**
+ * Aborts with `signal` or after `ms`, whichever comes first. By hand where
+ * `AbortSignal.any` is missing (Safari < 17.4, Firefox < 124, Chrome < 116).
+ */
+export function timeoutSignal(ms: number, signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(ms);
+  if (!signal) return timeout;
+  if (typeof AbortSignal.any === "function")
+    return AbortSignal.any([signal, timeout]);
+  const controller = new AbortController();
+  const sources = [signal, timeout];
+  const abort = (source: AbortSignal) => {
+    for (const other of sources) other.removeEventListener("abort", onAbort);
+    controller.abort(source.reason);
+  };
+  function onAbort(this: AbortSignal) {
+    abort(this);
+  }
+  const fired = sources.find((source) => source.aborted);
+  if (fired) abort(fired);
+  else for (const source of sources) source.addEventListener("abort", onAbort);
+  return controller.signal;
 }
 
 function rememberCsrf(payload: unknown): void {

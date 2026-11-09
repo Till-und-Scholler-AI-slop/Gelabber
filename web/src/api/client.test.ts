@@ -6,6 +6,7 @@ import {
   getCsrfToken,
   serverNow,
   setCsrfToken,
+  timeoutSignal,
 } from "./client.ts";
 
 type Call = { url: string; init: RequestInit };
@@ -227,6 +228,33 @@ describe("api client", () => {
     expect(error.code).toBe("rate_limited");
     expect(error.status).toBe(429);
     expect(error.retryAfter).toBe(8);
+  });
+
+  it("combines the caller's signal and the timeout without AbortSignal.any", async () => {
+    // Safari before 17.4, Firefox before 124, Chrome before 116.
+    const any = Object.getOwnPropertyDescriptor(AbortSignal, "any");
+    Object.defineProperty(AbortSignal, "any", {
+      value: undefined,
+      configurable: true,
+    });
+    try {
+      const calls = install(() => jsonResponse(200, { ok: true }));
+      const controller = new AbortController();
+      await expect(api("/me", { signal: controller.signal })).resolves.toEqual({
+        ok: true,
+      });
+      const sent = calls[0]?.init.signal;
+      expect(sent?.aborted).toBe(false);
+      controller.abort();
+      expect(sent?.aborted).toBe(true);
+
+      const late = timeoutSignal(5, new AbortController().signal);
+      await new Promise((done) => setTimeout(done, 20));
+      expect(late.aborted).toBe(true);
+      expect((late.reason as DOMException).name).toBe("TimeoutError");
+    } finally {
+      if (any) Object.defineProperty(AbortSignal, "any", any);
+    }
   });
 
   it("turns a timeout into a timeout ApiError", async () => {
