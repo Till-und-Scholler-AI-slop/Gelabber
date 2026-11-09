@@ -100,6 +100,8 @@ pub enum Dialog {
         picker: super::overlays::picker::PickerState,
         /// The person picked; the dialog waits for their DM.
         waiting: Option<Uuid>,
+        /// The servers without a loaded member list were asked for.
+        loaded: bool,
     },
 }
 
@@ -113,6 +115,8 @@ pub struct Preview {
 
 #[derive(Default)]
 pub struct ShellState {
+    /// The account the rest belongs to; `memory` is kept per account.
+    pub account: Option<Uuid>,
     pub memory: HashMap<Uuid, Memory>,
     pub dialog: Option<Dialog>,
     pub server_menu: bool,
@@ -140,6 +144,20 @@ pub fn with<R>(ctx: &egui::Context, f: impl FnOnce(&mut ShellState) -> R) -> R {
     });
     let mut state = shared.0.lock();
     f(&mut state)
+}
+
+/// Another account signed in: its menus, dialogs and previews start
+/// empty; the remembered places stay, each under its own account.
+pub fn switch_account(ctx: &egui::Context, user: Uuid) {
+    with(ctx, |s| {
+        if s.account != Some(user) {
+            *s = ShellState {
+                account: Some(user),
+                memory: std::mem::take(&mut s.memory),
+                ..ShellState::default()
+            };
+        }
+    });
 }
 
 /// The memory of `user`.

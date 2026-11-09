@@ -134,6 +134,7 @@ pub fn open_new_message(ctx: &egui::Context) {
         s.dialog = Some(Dialog::NewMessage {
             picker: PickerState::default(),
             waiting: None,
+            loaded: false,
         });
     });
 }
@@ -167,7 +168,11 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
             name,
             error,
         } => category_dialog(ui, app, *server, *editing, name, error),
-        Dialog::NewMessage { picker, waiting } => new_message(ui, app, picker, waiting),
+        Dialog::NewMessage {
+            picker,
+            waiting,
+            loaded,
+        } => new_message(ui, app, picker, waiting, loaded),
     };
     if keep {
         state::with(ui.ctx(), |s| {
@@ -976,6 +981,7 @@ fn new_message(
     app: &mut AppCtx,
     picker: &mut PickerState,
     waiting: &mut Option<Uuid>,
+    loaded: &mut bool,
 ) -> bool {
     let ctx = ui.ctx().clone();
     if let Some(user) = *waiting {
@@ -1040,12 +1046,11 @@ fn new_message(
         recent.extend(people);
         (recent, missing)
     });
-    let opened = Id::unique("new-message-loaded");
-    if !ctx.data(|d| d.get_temp::<bool>(opened).unwrap_or(false)) {
+    if !*loaded {
         for id in &missing {
             app.client.refresh_server(*id);
         }
-        ctx.data_mut(|d| d.insert_temp(opened, true));
+        *loaded = true;
     }
     // filterCandidates: best match first, the list order among equals.
     let mut scored: Vec<(u8, usize)> = people
@@ -1104,7 +1109,6 @@ fn new_message(
         {
             Some(dm) => {
                 app.nav.navigate(&format!("/d/{dm}"));
-                ctx.data_mut(|d| d.remove::<bool>(opened));
                 return false;
             }
             None => {
@@ -1113,11 +1117,7 @@ fn new_message(
             }
         }
     }
-    let keep = !output.close_requested;
-    if !keep {
-        ctx.data_mut(|d| d.remove::<bool>(opened));
-    }
-    keep
+    !output.close_requested
 }
 
 /// `Select` (components/ui/Select.tsx): a `.ui-field` box with the chosen

@@ -44,6 +44,17 @@ pub fn restore_memory(ctx: &egui::Context, user: Uuid, memory: Memory) {
     });
 }
 
+/// Another account signed in (or the first one this run): the shell's
+/// menus, dialogs, overlays and drafts of the one before are dropped.
+pub fn switch_account(ctx: &egui::Context, user: Uuid) {
+    let changed = state::with(ctx, |s| s.account != Some(user));
+    state::switch_account(ctx, user);
+    overlays::switch_account(ctx, user);
+    if changed {
+        user_panel::switch_account(ctx);
+    }
+}
+
 /// The user leaves or deletes `server` (the request is on its way): "/"
 /// and the remembered places no longer lead there.
 pub fn leave_server(ctx: &egui::Context, client: &gelabber_client::Client, server: Uuid) {
@@ -512,6 +523,41 @@ mod tests {
         assert_eq!(step_index(3, Some(1), -1), Some(0));
         assert_eq!(next_unread(&[true, false, true], Some(2), 1), Some(0));
         assert_eq!(next_unread(&[false, false, true], Some(2), 1), None);
+    }
+
+    /// A dialog, menu or question of one account is not shown to the
+    /// next; the remembered places stay with their own account.
+    #[test]
+    fn another_account_gets_none_of_the_shell_state() {
+        let ctx = egui::Context::default();
+        let (a, b, server) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        switch_account(&ctx, a);
+        state::remember(&ctx, Some(a), |m| m.place = Some(Place::Server(server)));
+        dialogs::open_add(&ctx, state::AddStep::Join);
+        state::with(&ctx, |s| {
+            s.invite_prompt = Some((server, "Wohnzimmer".into()))
+        });
+        overlays::ask(
+            &ctx,
+            overlays::Question::danger(
+                "Lena sperren?",
+                None,
+                "Sperren",
+                overlays::ConfirmAction::Ban { server, user: b },
+            ),
+        );
+        // The same account again keeps it.
+        switch_account(&ctx, a);
+        assert!(dialog_open(&ctx));
+        assert!(overlays::is_open(&ctx));
+        switch_account(&ctx, b);
+        assert!(!dialog_open(&ctx));
+        assert!(!overlays::is_open(&ctx));
+        assert!(state::with(&ctx, |s| s.invite_prompt.is_none()));
+        assert_eq!(
+            memory_of(&ctx, a).and_then(|m| m.place),
+            Some(Place::Server(server))
+        );
     }
 
     /// Steps in real time for `ms` (requests go to another thread).
