@@ -81,6 +81,44 @@ describe("gateway client", () => {
     gateway.stop();
   });
 
+  it("re-announces idle after its subscribes on a reconnect and a resync", async () => {
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 10,
+      maxRetryMs: 10,
+      heartbeatMs: 10_000,
+      deadMs: 20_000,
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    gateway.setTopics([{ s: "srv", c: "ch" }]);
+    gateway.start();
+    sockets[0]?.emit("open");
+    gateway.sendPresence("i");
+    sockets[0]?.emit("close");
+    await vi.waitFor(() => {
+      expect(sockets.length).toBe(2);
+    });
+    sockets[1]?.emit("open");
+    // The server counts a subscribe as activity, so idle has to follow it.
+    expect(sockets[1]?.sent).toEqual([
+      '{"op":"s","s":"srv","c":"ch"}',
+      '{"op":"p","st":"i"}',
+    ]);
+    sockets[1]!.sent.length = 0;
+    sockets[1]?.emit("message", '{"op":"resync"}');
+    expect(sockets[1]?.sent.at(-1)).toBe('{"op":"p","st":"i"}');
+    gateway.sendPresence("o");
+    sockets[1]!.sent.length = 0;
+    sockets[1]?.emit("message", '{"op":"resync"}');
+    expect(sockets[1]?.sent).toEqual(['{"op":"s","s":"srv","c":"ch"}']);
+    gateway.stop();
+  });
+
   it("resubscribes with last seq after a drop and ignores duplicate events", async () => {
     const sockets: FakeSocket[] = [];
     const gateway = new Gateway({

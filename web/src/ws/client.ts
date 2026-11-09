@@ -95,6 +95,8 @@ export class Gateway {
   private lastServerAt = 0;
   private stopped = true;
   private inFront = false;
+  /** Last explicit presence; idle is re-announced on a new or resynced socket. */
+  private idle = false;
   /** Bumped by `resetSession` so a frame already in hand cannot fan out. */
   private epoch = 0;
   private eventListeners = new Set<(event: ChatEvent) => void>();
@@ -290,6 +292,7 @@ export class Gateway {
   }
 
   sendPresence(st?: "o" | "i"): void {
+    if (st) this.idle = st === "i";
     this.send(st ? { op: "p", st } : { op: "p" });
   }
 
@@ -351,6 +354,7 @@ export class Gateway {
     this.gaps.clear();
     this.discoveredDms.clear();
     this.completedResync = this.resyncVersion;
+    this.idle = false;
     this.stop();
   }
 
@@ -416,6 +420,8 @@ export class Gateway {
         );
       }
       if (this.inFront) this.send({ op: "f", on: true });
+      // The server counts the subscribes above as activity.
+      if (this.idle) this.send({ op: "p", st: "i" });
       for (const listener of this.readyListeners) {
         listener();
       }
@@ -554,6 +560,7 @@ export class Gateway {
             ),
           );
         }
+        if (this.idle) this.send({ op: "p", st: "i" });
         for (const listener of this.resyncListeners) {
           if (!alive()) return;
           listener();
