@@ -703,6 +703,53 @@ pub fn media_error_message(code: &str) -> &'static str {
     }
 }
 
+/// Where a media error came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaStage {
+    /// The `j` of a new seat.
+    Join,
+    /// A request of a seat still being built: capabilities, receive transport.
+    Building,
+    /// An `err` of a working seat.
+    Seat,
+}
+
+/// What a media error does to the call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaErrorAction {
+    Ignore,
+    /// A new seat with a new ticket, without a word.
+    Rebuild,
+    /// The server said no: one new ticket decides, the ticket endpoint
+    /// being the authority.
+    Renew,
+    /// The call ends with the code's message.
+    Leave,
+    /// A message; `once` only the first of the call. The seat goes on.
+    Notify {
+        once: bool,
+    },
+}
+
+/// `rebuilding`: an earlier seat of this call was lost.
+pub fn media_error_action(code: &str, stage: MediaStage, rebuilding: bool) -> MediaErrorAction {
+    use MediaErrorAction::*;
+    match (code, stage) {
+        ("ice_failed", _) => Ignore,
+        ("update_required", _) => Leave,
+        ("unauthorized", _) => Renew,
+        // A first join has no seat to wait for.
+        ("unavailable", MediaStage::Join) if !rebuilding => Leave,
+        // A half-built seat neither receives nor sends: a new one.
+        (_, MediaStage::Join | MediaStage::Building) => Rebuild,
+        ("connection_closed" | "network" | "request_timeout" | "connect_timeout" | "gone", _) => {
+            Rebuild
+        }
+        ("forbidden", _) => Notify { once: false },
+        _ => Notify { once: true },
+    }
+}
+
 pub const LOST_CALL_MESSAGE: &str =
     "Die Sprachverbindung konnte nicht wiederhergestellt werden. Bitte erneut beitreten.";
 pub const LIVE_FORBIDDEN_MESSAGE: &str = "In diesem Server darfst du nicht live gehen.";
@@ -1137,6 +1184,35 @@ mod tests {
         // Deafened is muted: muting again is no change, unmuting undeafens.
         assert_eq!(mute_change(true, true, true), None);
         assert_eq!(mute_change(true, true, false), Some((false, false)));
+    }
+
+    #[test]
+    fn media_errors_rebuild_a_half_built_seat_and_renew_a_refused_one() {
+        use MediaErrorAction::*;
+        use MediaStage::*;
+        for code in [
+            "unavailable",
+            "forbidden",
+            "negotiation_failed",
+            "bad_request",
+        ] {
+            assert_eq!(media_error_action(code, Building, false), Rebuild, "{code}");
+        }
+        assert_eq!(media_error_action("unauthorized", Seat, false), Renew);
+        assert_eq!(media_error_action("unauthorized", Building, false), Renew);
+        assert_eq!(media_error_action("gone", Seat, false), Rebuild);
+        assert_eq!(media_error_action("update_required", Seat, false), Leave);
+        assert_eq!(media_error_action("unavailable", Join, false), Leave);
+        assert_eq!(media_error_action("unavailable", Join, true), Rebuild);
+        assert_eq!(
+            media_error_action("forbidden", Seat, false),
+            Notify { once: false }
+        );
+        assert_eq!(
+            media_error_action("bad_request", Seat, false),
+            Notify { once: true }
+        );
+        assert_eq!(media_error_action("ice_failed", Seat, false), Ignore);
     }
 
     #[test]

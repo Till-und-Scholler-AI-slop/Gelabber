@@ -676,6 +676,9 @@ struct St {
     received: HashMap<String, (u64, Instant)>,
     packets: (u64, u64),
     stream_error_shown: bool,
+    /// A seat was refused (`unauthorized`) and the next one runs on a new
+    /// ticket.
+    renewed: bool,
 }
 
 pub(crate) struct Session {
@@ -845,7 +848,7 @@ impl Session {
             Ok(joined) => joined,
             Err(e) => {
                 sock.close();
-                self.on_media_error(generation, e.code(), false);
+                self.on_media_error(generation, e.code(), logic::MediaStage::Join);
                 return;
             }
         };
@@ -922,14 +925,14 @@ impl Session {
         {
             Ok(answer) => seat.note_codecs(&answer["codecs"]),
             Err(e) => {
-                self.on_media_error(generation, e.code(), true);
+                self.on_media_error(generation, e.code(), logic::MediaStage::Building);
                 return;
             }
         }
         match seat.make_transport(core::Direction::Recv).await {
             Ok(recv) => *seat.recv.lock() = Some(recv),
             Err(e) => {
-                self.on_media_error(generation, e.code(), true);
+                self.on_media_error(generation, e.code(), logic::MediaStage::Building);
                 return;
             }
         }
@@ -937,6 +940,8 @@ impl Session {
         for event in queued {
             seat.clone().handle_event(event);
         }
+        // The seat holds: a later refusal may renew its ticket once more.
+        self.st.lock().renewed = false;
         inner.write(|s| {
             s.status = CallStatus::Connected;
             s.watch_supported = true;
@@ -2124,32 +2129,30 @@ impl Session {
         });
     }
 
-    fn on_media_error(self: &Arc<Self>, generation: u64, code: &str, joined: bool) {
+    fn on_media_error(self: &Arc<Self>, generation: u64, code: &str, stage: logic::MediaStage) {
         let Some(inner) = self.inner() else { return };
         if self.seats.load(Ordering::Acquire) != generation {
             return;
         }
         tracing::debug!("media error {code}");
-        match code {
-            "ice_failed" => {}
-            "update_required" | "unauthorized" => {
+        let rebuilding = self.st.lock().attempts > 0;
+        match logic::media_error_action(code, stage, rebuilding) {
+            logic::MediaErrorAction::Ignore => {}
+            logic::MediaErrorAction::Rebuild => self.schedule_rebuild(generation),
+            logic::MediaErrorAction::Renew => {
+                // A seat with a renewed ticket that is refused again ends it.
+                if std::mem::replace(&mut self.st.lock().renewed, true) {
+                    self.give_up(Leave::Refused(logic::media_error_message(code).into()));
+                } else {
+                    self.schedule_rebuild(generation);
+                }
+            }
+            logic::MediaErrorAction::Leave => {
                 self.give_up(Leave::Refused(logic::media_error_message(code).into()));
             }
-            // A rebuild tries again; a first join has no seat to wait for.
-            "unavailable" if !joined && self.st.lock().attempts > 0 => {
-                self.schedule_rebuild(generation)
-            }
-            "unavailable" if !joined => {
-                self.give_up(Leave::Refused(logic::media_error_message(code).into()));
-            }
-            "forbidden" if joined => inner.notify(logic::media_error_message(code)),
-            "connection_closed" | "network" | "request_timeout" | "connect_timeout" | "gone" => {
-                self.schedule_rebuild(generation)
-            }
-            _ if !joined => self.schedule_rebuild(generation),
-            _ => {
+            logic::MediaErrorAction::Notify { once } => {
                 let first = !std::mem::replace(&mut self.st.lock().stream_error_shown, true);
-                if first {
+                if first || !once {
                     inner.notify(logic::media_error_message(code));
                 }
             }
@@ -2644,7 +2647,7 @@ impl Seat {
                 SocketEvent::Event(frame) => self.clone().handle_event(frame),
                 SocketEvent::Error(code) => {
                     if let Some(session) = self.session.upgrade() {
-                        session.on_media_error(self.generation, &code, true);
+                        session.on_media_error(self.generation, &code, logic::MediaStage::Seat);
                     }
                 }
                 SocketEvent::Closed => {
@@ -3522,6 +3525,36 @@ mod tests {
             vec![Cue::MuteSelf, Cue::UnmuteSelf]
         );
         session.stop();
+    }
+
+    #[test]
+    fn a_refused_request_of_a_half_built_seat_builds_a_new_one() {
+        let call = offline();
+        let session = session(&call);
+        session.seats.store(1, Ordering::Release);
+        session.on_media_error(1, "unavailable", logic::MediaStage::Building);
+        let st = session.st.lock();
+        assert!(st.rebuilding, "a rebuild is planned");
+        assert_eq!(st.attempts, 1);
+        drop(st);
+        session.stop();
+    }
+
+    #[test]
+    fn an_unauthorized_seat_gets_one_new_ticket() {
+        let call = offline();
+        let session = session(&call);
+        session.seats.store(1, Ordering::Release);
+        session.on_media_error(1, "unauthorized", logic::MediaStage::Seat);
+        assert!(session.st.lock().rebuilding, "a new seat, not the end");
+        assert!(call.inner.media.current().is_some());
+        // The seat on the new ticket is refused as well: the call ends.
+        session.on_media_error(1, "unauthorized", logic::MediaStage::Join);
+        assert!(call.inner.media.current().is_none());
+        assert!(matches!(
+            call.inner.read(|s| s.status.clone()),
+            CallStatus::Failed(_)
+        ));
     }
 
     #[test]
