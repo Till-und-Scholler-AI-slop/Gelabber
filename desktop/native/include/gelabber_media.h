@@ -16,8 +16,10 @@
  * - gm_transport_produce and gm_transport_consume block the calling thread
  *   until the matching events (CONNECT, PRODUCE) were answered with
  *   gm_transport_respond. Never call them from the thread that answers.
- * - Events are delivered on internal threads. The callback must not block and
- *   must not call back into gm_* synchronously.
+ * - CONNECT and PRODUCE are delivered on the thread that called
+ *   gm_transport_produce or gm_transport_consume, before it blocks;
+ *   CONNECTION_STATE on libwebrtc's signaling thread. The callback must not
+ *   block and must not call back into gm_* synchronously.
  */
 #ifndef GELABBER_MEDIA_H
 #define GELABBER_MEDIA_H
@@ -75,10 +77,11 @@ GM_API void gm_string_free(char* s);
 /* Route libwebrtc logs to stderr: 0 none, 1 error, 2 warning, 3 info, 4 verbose. */
 GM_API void gm_set_log_level(int level);
 /* The system's video codecs beside libwebrtc's own, as an engine would use
- * them: {"h264":{"encoder","hardwareEncoder","decoder"}}, encoder and decoder
- * being the GStreamer element (Linux) or the Media Foundation MFT's name
- * (Windows), or null; "h264" is null where the core has no such codecs. Needs
- * no engine; the first call may take a while (GStreamer scans its plugins). */
+ * them: {"h264":{"encoder","hardwareEncoder","decoder","hardwareDecoder"},
+ * "av1":{...the same}}, encoder and decoder being the GStreamer element
+ * (Linux) or the Media Foundation MFT's name (Windows), or null; a codec is
+ * null on other platforms. Needs no engine; the first call may take a while
+ * (GStreamer scans its plugins). */
 GM_API char* gm_video_codecs(void);
 
 /* Engine: libwebrtc threads, PeerConnectionFactory, audio device module and
@@ -110,7 +113,7 @@ GM_API int gm_audio_monitor(gm_engine* engine, const char* options_json);
  * {"input": before RNNoise and gain, "processed": as sent, "clipping": bool,
  *  "denoised": bool (RNNoise ran), "blocks": 10 ms blocks processed so far
  *  (stops growing while capture is idle), "channels": of the last block,
- *  "playout": {"gain": master gain of volumes above 1 (1..2), "peak": loudest
+ *  "playout": {"gain": master gain of volumes above 1 (1..4), "peak": loudest
  *  sample played in the last 100 ms (fraction of full scale), "reduction":
  *  the limiter's smallest gain in it (1 = untouched), "windows": 100 ms
  *  windows played so far}}. */
@@ -145,9 +148,11 @@ GM_API char* gm_transport_stats(gm_transport* transport);
  * {"processingMode": "enhanced|browser|original" (default enhanced),
  *  "echoCancellation": true, "noiseSuppression": true, "autoGainControl": true,
  *  "inputGain": 1.0}
- * enhanced: RNNoise, no WebRTC noise suppression/AGC; browser: WebRTC noise
- * suppression and AGC as configured; original: stereo, neither. Processing is
- * per engine (one capture path): the newest microphone source sets it. */
+ * enhanced: RNNoise instead of WebRTC noise suppression, AGC as configured;
+ * browser: WebRTC noise suppression and AGC as configured; original: neither,
+ * stereo when echo cancellation is off. Echo cancellation is as configured in
+ * every mode. Processing is per engine (one capture path): the newest
+ * microphone source sets it. */
 GM_API gm_source* gm_source_new_microphone(gm_engine* engine, const char* options_json);
 /* Synthetic moving test pattern (I420) for build/pipeline checks. */
 GM_API gm_source* gm_source_new_test_pattern(gm_engine* engine, int width, int height, int fps);
@@ -194,14 +199,15 @@ GM_API gm_source* gm_source_new_camera(gm_engine* engine, const char* options_js
 GM_API char* gm_source_state(gm_source* source);
 GM_API void gm_source_free(gm_source* source);
 /* Disabled tracks keep their producer and send silence (audio) or black
- * frames (video), like MediaStreamTrack.enabled. */
+ * frames (video), like MediaStreamTrack.enabled. This is the same flag that
+ * gm_producer_pause sets: whichever call came last decides. */
 GM_API int gm_source_set_enabled(gm_source* source, int enabled);
 
 /* Produce a source. options_json:
  * {"codec"?: "video/H264"|"video/VP8"|..., "encodings"?: [{"scaleResolutionDownBy":4},{...}],
  *  "codecOptions"?: {...}, "appData"?: {...}}
- * Without "codec", video prefers H264 and falls back to VP8. The Windows
- * build has no H264.
+ * Without "codec", video prefers H264 and falls back to VP8. On Windows the
+ * core has H264 only where Media Foundation has an H264 codec.
  * Simulcast layers ("encodings") are a picture divided by their
  * scaleResolutionDownBy, to the pixel: a video source crops its picture to
  * what divides. That is up to 3 columns and rows for factors of 1, 2 and 4,
@@ -216,6 +222,9 @@ GM_API int gm_producer_free_released(gm_producer* producer);
 GM_API const char* gm_producer_id(gm_producer* producer);
 /* RtpParameters the server accepted (as sent in PRODUCE). */
 GM_API char* gm_producer_rtp_parameters(gm_producer* producer);
+/* libmediasoupclient pauses by disabling the track it sends, the flag
+ * gm_source_set_enabled sets: a resume enables a source that was disabled,
+ * and enabling the source undoes a pause. Nothing is said to the server. */
 GM_API int gm_producer_pause(gm_producer* producer, int paused);
 GM_API char* gm_producer_stats(gm_producer* producer);
 /* Swap the source keeping the producer (mediasoup replaceTrack). The source
@@ -240,7 +249,7 @@ GM_API void gm_consumer_free(gm_consumer* consumer);
 GM_API int gm_consumer_free_released(gm_consumer* consumer);
 GM_API const char* gm_consumer_id(gm_consumer* consumer);
 GM_API int gm_consumer_pause(gm_consumer* consumer, int paused);
-/* Playback volume of an audio consumer, 0..2 (1 = as received; 0 = silent).
+/* Playback volume of an audio consumer, 0..4 (1 = as received; 0 = silent).
  * Above 1 the stream itself plays at 1 at most: the largest volume above 1
  * applies to the whole playout after the mix, through a limiter (see
  * gm_audio_levels), so a loud speaker is limited instead of clipped. */
