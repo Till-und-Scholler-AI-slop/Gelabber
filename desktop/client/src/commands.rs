@@ -468,7 +468,9 @@ impl Client {
         let this = self.clone();
         self.spawn(async move {
             this.change_view(view);
-            if !this.with_state(|s| s.server_details.contains_key(&id)) {
+            // Nor when only the view changed: the shell and a page that
+            // both open it would take turns forever.
+            if !this.with_state(|s| s.server_details.contains_key(&id) || s.op(&key).is_some()) {
                 let work = this.reload_server(id);
                 this.op(&key, work).await;
             }

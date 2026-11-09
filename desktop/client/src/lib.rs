@@ -429,6 +429,36 @@ mod tests {
         );
     }
 
+    /// A server whose detail failed to load is not fetched again because
+    /// the view moved away and back; `refresh_server` retries it.
+    #[test]
+    fn a_failed_server_load_is_not_retried_by_the_view() {
+        let (url, seen) = recording_server("kaputt");
+        let client = Client::new(&url).unwrap();
+        let id = uuid::Uuid::from_u128(3);
+        let key = format!("server:{id}");
+        let wait = |done: &dyn Fn() -> bool| {
+            let start = Instant::now();
+            while !done() && start.elapsed() < std::time::Duration::from_secs(5) {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+        client.open_server(id);
+        wait(&|| client.with_state(|s| matches!(s.op(&key), Some(OpState::Failed(_)))));
+        for _ in 0..3 {
+            client.close_view();
+            wait(&|| client.with_state(|s| s.view.server.is_none()));
+            client.open_server(id);
+            wait(&|| client.with_state(|s| s.view.server == Some(id)) && !client.busy());
+        }
+        let loads = seen
+            .lock()
+            .iter()
+            .filter(|l| l.starts_with(&format!("GET /api/servers/{id}")))
+            .count();
+        assert_eq!(loads, 1);
+    }
+
     /// Opening a conversation and a message arriving in it while the app
     /// is in front mark nothing read: the pane does, at the newest row.
     #[test]
