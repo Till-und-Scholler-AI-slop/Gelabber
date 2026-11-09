@@ -235,8 +235,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         None,
         false,
         Tone::Plain,
-        "Voice-Einstellungen",
-        "Voice-Einstellungen",
+        "Anrufeinstellungen",
+        "Anrufeinstellungen",
         None,
     );
     let gear_rect = gear.rect;
@@ -479,12 +479,12 @@ pub fn dock_notice(state: &CallState, app: &str) -> Option<String> {
     }
     match &state.live_sound {
         LiveSound::Unavailable(Some(reason)) => Some(format!(
-            "Der Stream-Ton konnte nicht aufgenommen werden ({reason}). Das Video läuft weiter."
+            "Der Live-Ton konnte nicht aufgenommen werden ({reason}). Das Video läuft weiter."
         )),
         LiveSound::Unavailable(None) => {
-            Some("Der Stream-Ton konnte nicht aufgenommen werden. Das Video läuft weiter.".into())
+            Some("Der Live-Ton konnte nicht aufgenommen werden. Das Video läuft weiter.".into())
         }
-        LiveSound::Ended => Some("Der Stream-Ton wurde beendet. Das Video läuft weiter.".into()),
+        LiveSound::Ended => Some("Der Live-Ton wurde beendet. Das Video läuft weiter.".into()),
         LiveSound::Silent(name) => Some(format!("Kein Ton von „{name}“.")),
         LiveSound::Sharing if app.is_empty() => {
             Some("Dein Stream sendet den Ton aller Anwendungen außer Gelabber.".into())

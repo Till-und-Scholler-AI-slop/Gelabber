@@ -264,7 +264,7 @@ try {
   await a.page.locator("summary.server-sidebar-menu-button").click();
   await a.page.getByRole("button", { name: "Kanal erstellen" }).click();
   const channelDialog = a.page.getByRole("dialog", { name: "Kanal erstellen" });
-  await channelDialog.getByText("Voice", { exact: true }).click();
+  await channelDialog.getByText("Sprache", { exact: true }).click();
   await channelDialog.getByLabel("Name").fill("Smoke Voice");
   await channelDialog.getByRole("button", { name: "Erstellen" }).click();
   await a.page.getByRole("link", { name: "Smoke Voice" }).click();
@@ -285,10 +285,10 @@ try {
     .getByRole("button", { name: "Beitreten", exact: true })
     .click();
   await a.page
-    .getByRole("button", { name: "Voice-Einstellungen" })
+    .getByRole("button", { name: "Anrufeinstellungen" })
     .first()
     .click();
-  const settings = a.page.getByRole("dialog", { name: "Voice & Video" });
+  const settings = a.page.getByRole("dialog", { name: "Audio & Video" });
   await settings
     .locator("#camera-stream-profile-resolution")
     .selectOption("480");

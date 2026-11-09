@@ -90,20 +90,20 @@ pub fn sound_button(ui: &mut Ui, response: Response, anchor: Rect, deafened: boo
                 let row_top = ui.cursor().min.y;
                 let off = deafened || stream_muted;
                 let stream = &mut p.source_audio_volume;
-                volume(ui, "sound-stream", "Stream-Ton", stream, off, width, 38.0);
+                volume(ui, "sound-stream", "Live-Ton", stream, off, width, 38.0);
                 // The 30px mute after the percentage, reaching into the gaps.
                 let toggle = Rect::from_min_size(
                     egui::pos2(rect.right() - 30.0, row_top + 16.8 / 2.0 - 15.0),
                     vec2(30.0, 30.0),
                 );
                 let label = if stream_muted {
-                    "Stream-Ton wieder einschalten"
+                    "Live-Ton wieder einschalten"
                 } else {
-                    "Stream-Ton stummschalten"
+                    "Live-Ton stummschalten"
                 };
                 let hit = ui.interact(toggle, Id::unique("sound-stream-mute"), Sense::click());
                 hit.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::Role::Button, true, "Stream-Ton stummschalten")
+                    egui::WidgetInfo::labeled(egui::Role::Button, true, "Live-Ton stummschalten")
                 });
                 let hit = hit.on_hover_text(label);
                 let (fill, fg) = if stream_muted {
@@ -221,7 +221,7 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
         volume(
             ui,
             "quick-stream",
-            "Stream-Ton",
+            "Live-Ton",
             &mut p.source_audio_volume,
             muted,
             width,

@@ -447,7 +447,10 @@ impl Notifier {
             }
         });
         let text = system.unwrap_or_else(|| {
-            rules::readable_mentions(&message.content, &names(state, event.s, channel, dm))
+            rules::readable_mentions(
+                &crate::screens::chat::markdown::plain_text(&message.content),
+                &names(state, event.s, channel, dm),
+            )
         });
         let preview = rules::preview_text(
             &text,
@@ -479,15 +482,10 @@ fn hides_content(state: &State) -> bool {
     state.notification_privacy.is_none_or(|p| p.hide_content)
 }
 
-/// `channelLabel`.
+/// `channelLabel`: the author already names a DM, the place says what it is.
 fn label(state: &State, server: Uuid, channel: Uuid, dm: bool) -> String {
     if dm {
-        return state
-            .dms
-            .iter()
-            .find(|d| d.id == channel)
-            .map(|d| d.peer.name.clone())
-            .unwrap_or_else(|| "DM".into());
+        return "Direktnachricht".into();
     }
     state
         .server_details
@@ -778,6 +776,24 @@ mod tests {
             fake.closed.lock().last().unwrap(),
             &(format!("gelabber:{me}:"), true)
         );
+    }
+
+    /// The author names a DM once; the place says what it is, and the
+    /// preview is plain text.
+    #[test]
+    fn a_direct_message_names_its_author_once() {
+        let fake = Arc::new(Fake::default());
+        let backend: Arc<dyn Backend> = fake.clone();
+        let mut notifier = Notifier::new(move |_| Some(backend), Arc::new(|| {}));
+        let (me, anna, dm) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let st = state(me);
+        let tap = notifier.tap(Arc::new(|| {}));
+        tap(&created(dm, dm, anna, "**Film** oder ||Spiel||?", &[]));
+        notifier.pass(&st, cx(false));
+        let shown = fake.shown.lock().clone();
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].title, "Anna · Direktnachricht");
+        assert_eq!(shown[0].body, "Film oder ▒▒▒?");
     }
 
     #[test]

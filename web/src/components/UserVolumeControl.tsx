@@ -83,7 +83,7 @@ export function UserVolumeView({
         </button>
       </div>
       <p className="user-volume__hint">
-        Nur für dich hörbar. Stream-Ton bleibt unverändert.
+        Nur für dich hörbar. Live-Ton bleibt unverändert.
       </p>
     </section>
   );

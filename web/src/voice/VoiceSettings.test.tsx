@@ -42,9 +42,9 @@ describe("stream settings form", () => {
     const html = renderToStaticMarkup(<MediaSettingsForm section="audio" />);
     for (const [id, name] of [
       ["audio-input", "Mikrofon"],
-      ["input-gain", "Mic-Gain"],
+      ["input-gain", "Mikrofonverstärkung"],
       ["output-volume", "Gespräche"],
-      ["source-audio-volume", "Stream-Ton"],
+      ["source-audio-volume", "Live-Ton"],
       ["call-sounds", "Signaltöne"],
     ])
       expect(html).toContain(
@@ -88,7 +88,7 @@ describe("source-audio form", () => {
     expect(html).toContain("im Browserdialog aus");
     expect(html).toContain('id="source-audio-volume"');
     expect(html).toContain("Gespräche");
-    expect(html).toContain("Stream-Ton stummschalten");
+    expect(html).toContain("Live-Ton stummschalten");
   });
 });
 
@@ -105,7 +105,7 @@ describe("settings dialog", () => {
     expect(audio).not.toContain('id="video-input"');
     expect(audio).not.toContain("Sprachdiagnose");
     const video = tabs("video");
-    expect(video).toMatch(/aria-selected="true"[^>]*>Video &amp; Stream</);
+    expect(video).toMatch(/aria-selected="true"[^>]*>Video &amp; Live</);
     expect(video).toContain('id="video-input"');
     expect(video).toContain('id="economy-mode"');
     expect(video).not.toContain('id="audio-input"');
@@ -138,7 +138,7 @@ describe("quick call settings", () => {
     expect(html).toContain(">Mikrofon</label>");
     expect(html).toContain(">Kamera</label>");
     expect(html).toContain(">Gespräche</label>");
-    expect(html).toContain(">Stream-Ton</label>");
+    expect(html).toContain(">Live-Ton</label>");
     expect(html).toContain('role="radiogroup" aria-label="Sprachübertragung"');
     expect(html).toContain("Alle Einstellungen …");
     // A browser that has named no device yet is asked on request only.
@@ -152,9 +152,9 @@ describe("call sound", () => {
   it("holds both volumes and the stream's mute", () => {
     const html = renderToStaticMarkup(<CallSound />);
     expect(html).toContain(">Gespräche</label>");
-    expect(html).toContain(">Stream-Ton</label>");
+    expect(html).toContain(">Live-Ton</label>");
     expect(html).toMatch(
-      /<button[^>]*aria-pressed="false"[^>]*aria-label="Stream-Ton stummschalten"/,
+      /<button[^>]*aria-pressed="false"[^>]*aria-label="Live-Ton stummschalten"/,
     );
     expect(html).not.toContain("disabled");
     expect(html).not.toContain("Taubgeschaltet");

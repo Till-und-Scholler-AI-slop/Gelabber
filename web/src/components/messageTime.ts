@@ -32,18 +32,26 @@ export function dayLabel(iso: string): string {
   }).format(date);
 }
 
-export function formatWhen(iso: string): string {
+/** "14:02" today, "21.10., 14:02" on another day of this year and
+ * "21.10.2025, 14:02" before it: the message list and search hits. */
+export function formatWhen(iso: string, now = new Date()): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
-  const now = new Date();
+  const thisYear = date.getFullYear() === now.getFullYear();
   const sameDay =
-    date.getFullYear() === now.getFullYear() &&
+    thisYear &&
     date.getMonth() === now.getMonth() &&
     date.getDate() === now.getDate();
   return new Intl.DateTimeFormat("de-DE", {
     hour: "2-digit",
     minute: "2-digit",
-    ...(sameDay ? {} : { day: "2-digit", month: "2-digit" }),
+    ...(sameDay
+      ? {}
+      : {
+          day: "2-digit",
+          month: "2-digit",
+          ...(thisYear ? {} : { year: "numeric" }),
+        }),
   }).format(date);
 }
 

@@ -84,7 +84,7 @@
   }
 }
 
-/* The Voice & Video forms (settingsLayout.tsx): groups under a small
+/* The Audio & Video forms (settingsLayout.tsx): groups under a small
    heading, rows with the name left and the control right. They stack when
    the form is narrow, in a phone's sheet or the settings page. */
 .media-settings-form {

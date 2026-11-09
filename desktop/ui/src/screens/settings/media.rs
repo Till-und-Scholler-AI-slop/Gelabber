@@ -50,7 +50,7 @@ fn dialog_id() -> Id {
     Id::unique("gelabber-media-form-in-dialog")
 }
 
-/// The forms inside the Voice & Video dialog: fields on the page colour,
+/// The forms inside the Audio & Video dialog: fields on the page colour,
 /// buttons and chips without the settings page's accent text.
 pub fn set_in_dialog(ctx: &egui::Context, on: bool) {
     ctx.data_mut(|d| d.insert_temp(dialog_id(), on));
@@ -381,7 +381,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 app.call.set_input(chosen(&p.audio_input_id));
             }
         });
-        setting_row(ui, "Mic-Gain", false, |ui| {
+        setting_row(ui, "Mikrofonverstärkung", false, |ui| {
             let mut v = (p.input_gain * 100.0).round();
             if slider(
                 ui,
@@ -553,7 +553,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 p.output_volume = playback_volume(pos);
             }
         });
-        setting_row(ui, "Stream-Ton", false, |ui| {
+        setting_row(ui, "Live-Ton", false, |ui| {
             let mut pos = playback_position(p.source_audio_volume);
             if slider(
                 ui,
@@ -575,7 +575,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             toggle(
                 ui,
                 "source-audio-muted",
-                "Stream-Ton stummschalten",
+                "Live-Ton stummschalten",
                 &mut p.source_audio_muted,
                 false,
             );
@@ -1057,7 +1057,7 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             if switch_line(
                 ui,
                 "share-source-audio",
-                "Gilt auch während du live bist. Mitgesendet wird der Ton anderer Anwendungen, nie dein Mikrofon oder der Ton des Anrufs. Der Stream-Ton wird als Stereo-Musik übertragen, ohne Mikrofonfilter.",
+                "Gilt auch während du live bist. Mitgesendet wird der Ton anderer Anwendungen, nie dein Mikrofon oder der Ton des Anrufs. Der Live-Ton wird als Stereo-Musik übertragen, ohne Mikrofonfilter.",
                 &mut on,
                 false,
             ) {
@@ -1114,11 +1114,11 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         setting_row(ui, "Sparmodus", false, |ui| {
             let text_s = if p.economy_mode {
                 format!(
-                    "Ausdrückliche Obergrenzen: Sprache 64 kbit/s, Stream-Ton 128 kbit/s, Video gemeinsam {}.",
+                    "Ausdrückliche Obergrenzen: Sprache 64 kbit/s, Live-Ton 128 kbit/s, Video gemeinsam {}.",
                     mbit(limit.unwrap_or(2_500_000.0))
                 )
             } else {
-                "Für wenig Upload: Sprache 64 kbit/s, Stream-Ton 128 kbit/s, Video gemeinsam 2,5 Mbit/s.".to_owned()
+                "Für wenig Upload: Sprache 64 kbit/s, Live-Ton 128 kbit/s, Video gemeinsam 2,5 Mbit/s.".to_owned()
             };
             switch_line(ui, "economy-mode", &text_s, &mut p.economy_mode, false);
         });

@@ -2,7 +2,6 @@
 // settings header and navigation (see UserSettingsPage).
 
 import { MessageAlertSettings } from "../components/MessageAlertSettings.tsx";
-import { NotificationPermissionStatus } from "../components/NotificationPermission.tsx";
 import { NotificationPrivacySetting } from "../components/NotificationPrivacy.tsx";
 import { InstallApp } from "../pwa/InstallApp.tsx";
 import { ThemesPanel } from "../theme/ThemesPanel.tsx";
@@ -31,7 +30,6 @@ export function SettingsAreaContent({ area }: { area: SettingsArea }) {
         <>
           <MessageAlertSettings />
           <NotificationPrivacySetting />
-          <NotificationPermissionStatus />
         </>
       );
     case "app":

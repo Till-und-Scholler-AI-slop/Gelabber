@@ -188,8 +188,8 @@ fn the_own_live_says_what_becomes_of_its_sound() {
     let notes = [
         "Ton wird mitgesendet",
         "Kein Ton von „Spotify“",
-        "Stream-Ton nicht aufgenommen · Video läuft weiter",
-        "Stream-Ton beendet · Video läuft weiter",
+        "Live-Ton nicht aufgenommen · Video läuft weiter",
+        "Live-Ton beendet · Video läuft weiter",
     ];
     for (sound, words) in [
         (LiveSound::Sharing, Some(notes[0])),
@@ -237,7 +237,7 @@ fn the_own_live_says_what_becomes_of_its_sound() {
     };
     assert_eq!(
         call_bar::dock_notice(&live(LiveSound::Ended), "").as_deref(),
-        Some("Der Stream-Ton wurde beendet. Das Video läuft weiter.")
+        Some("Der Live-Ton wurde beendet. Das Video läuft weiter.")
     );
     // Switched on during a Live, the sound joins it: nothing waits for
     // the next one, as the desktop text "Gilt auch während du live bist" says.
@@ -390,7 +390,7 @@ fn the_voice_dialog_opens_on_its_tab_and_moves_with_the_arrows() {
     assert!(selected(&h, "Diagnose"));
     h.key_press(egui::Key::ArrowLeft);
     h.run_steps(6);
-    assert!(selected(&h, "Video & Stream"));
+    assert!(selected(&h, "Video & Live"));
     h.get_by_label("Fertig").click();
     h.run_steps(6);
     assert!(!dialogs::open(&h.ctx));
@@ -458,7 +458,7 @@ fn the_notice_is_a_row_of_the_bar() {
     call.set_state(state);
     let mut h = harness(client, call.clone(), wide_bar);
     h.run_steps(4);
-    let text = "Der Stream-Ton wurde beendet. Das Video läuft weiter.";
+    let text = "Der Live-Ton wurde beendet. Das Video läuft weiter.";
     let notice = h.get_by_label(text).rect();
     let leave = h.get_by_label("Verlassen").rect();
     // Under the controls, 6px apart, inside the bar that grew by its row.

@@ -51,14 +51,14 @@ describe("user settings page", () => {
 
   it("tags where settings are kept instead of one footnote", () => {
     const appearance = page();
-    expect(appearance).toContain("Für deinen Account");
+    expect(appearance).toContain("Für dein Konto");
     expect(appearance).toContain("Nur dieses Gerät");
     expect(appearance).not.toContain("automatisch in diesem Browser");
 
     fixture.params = { area: "audio" };
     expect(page()).toContain("Nur dieses Gerät");
     fixture.params = { area: "themes" };
-    expect(page()).toContain("Für deinen Account");
+    expect(page()).toContain("Für dein Konto");
   });
 
   it("puts message notifications next to the account's lock-screen switch", () => {
@@ -67,7 +67,7 @@ describe("user settings page", () => {
     expect(html).toContain('id="message-toasts"');
     expect(html).toContain("Inhalt in Benachrichtigungen verbergen");
     expect(html.indexOf("Nur dieses Gerät")).toBeLessThan(
-      html.indexOf("Für deinen Account"),
+      html.indexOf("Für dein Konto"),
     );
   });
 

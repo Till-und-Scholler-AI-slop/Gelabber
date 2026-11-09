@@ -379,7 +379,7 @@ export async function captureMicrophone(
       processor.nativeFallback = true;
     if ((forceBrowser || unavailable) && settings.processingMode === "enhanced")
       processor.info.message = forceBrowser
-        ? `Audioprozessor ausgefallen; ${processor.info.message} (Mic-Gain 100 %)`
+        ? `Audioprozessor ausgefallen; ${processor.info.message} (Mikrofonverstärkung 100 %)`
         : `Lokaler Rauschfilter nicht unterstützt; ${processor.info.message}`;
     return { raw, processor };
   } catch (error) {
@@ -407,7 +407,7 @@ export async function captureMicrophone(
         throw new Error("Mikrofonanfrage abgebrochen", { cause: error });
       }
       processor.nativeFallback = true;
-      processor.info.message = `${actual === "enhanced" ? "Lokaler Rauschfilter" : "Audioverarbeitung"} nicht verfügbar; ${processor.info.message} (Mic-Gain 100 %)`;
+      processor.info.message = `${actual === "enhanced" ? "Lokaler Rauschfilter" : "Audioverarbeitung"} nicht verfügbar; ${processor.info.message} (Mikrofonverstärkung 100 %)`;
       return { raw, processor };
     } catch (fallbackError) {
       raw.getTracks().forEach((track) => track.stop());

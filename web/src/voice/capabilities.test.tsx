@@ -146,7 +146,7 @@ describe("capture controls", () => {
     expect(control(html, "Kamera")).toContain('aria-pressed="false"');
     expect(control(html, "Live gehen")).toBeNull();
     expect(html).not.toContain("aria-disabled");
-    expect(html).toContain('aria-label="Voice-Einstellungen"');
+    expect(html).toContain('aria-label="Anrufeinstellungen"');
   });
 
   it("desktop browser: camera and Live, no Go Live, no Teilen", async () => {
@@ -190,7 +190,7 @@ describe("stream sound notice", () => {
   it("blames the browser", async () => {
     await cases.desktopBrowser();
     expect(notice()).toContain(
-      "Der Browser hat keinen Stream-Ton freigegeben. Das Video läuft weiter.",
+      "Der Browser hat keinen Live-Ton freigegeben. Das Video läuft weiter.",
     );
   });
 });

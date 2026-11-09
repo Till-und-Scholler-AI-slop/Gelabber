@@ -29,7 +29,7 @@ export function NotificationPrivacySetting() {
       <Switch
         className="settings-row"
         label="Inhalt in Benachrichtigungen verbergen"
-        description="Benachrichtigungen zeigen nur „Neue Nachricht von …“, ohne Text und ohne Chat. Gilt für alle Geräte deines Accounts."
+        description="Benachrichtigungen zeigen nur „Neue Nachricht von …“, ohne Text und ohne Chat. Gilt für alle Geräte deines Kontos."
         checked={data?.hide_content ?? false}
         disabled={isPending || saving}
         onChange={(event) => void toggle(event.target.checked)}

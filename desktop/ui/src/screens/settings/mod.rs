@@ -54,7 +54,7 @@ pub const AREAS: [Area; 9] = [
         id: "konto",
         group: "konto",
         label: "Sicherheit",
-        description: "Passwort und angemeldete Geräte.",
+        description: "Passwort ändern und überall abmelden.",
         scope: Some(Scope::Account),
     },
     Area {
@@ -82,7 +82,7 @@ pub const AREAS: [Area; 9] = [
         id: "video",
         group: "app",
         label: "Video",
-        description: "Kamera, Live gehen und Stream-Qualität.",
+        description: "Kamera, Live gehen und Bildqualität.",
         scope: Some(Scope::Device),
     },
     Area {
@@ -365,7 +365,8 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
         app.nav.replace(&format!("/settings/{}", info.id));
     }
     let rect = ui.max_rect();
-    controls::header(ui, rect, "Einstellungen", None);
+    // The sidebar's title already names the page (UserSettingsPage).
+    controls::header(ui, rect, "", None);
     let Some(user) = me(app) else { return };
 
     let shared = page_state(&ctx);
