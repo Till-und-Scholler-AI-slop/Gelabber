@@ -22,10 +22,6 @@ env:
 jobs:
   libwebrtc-linux:
     name: libwebrtc (Linux x64)
-    # Never cancel: a libwebrtc build takes hours and is cached for later runs.
-    concurrency:
-      group: desktop-libwebrtc-linux-${{ github.ref }}
-      cancel-in-progress: false
     runs-on: ubuntu-24.04
     # GitHub's limit: the build plus the renewal of the notices after it.
     timeout-minutes: 360
@@ -123,10 +119,6 @@ jobs:
 
   libwebrtc-windows:
     name: libwebrtc (Windows x64)
-    # Never cancel: a libwebrtc build takes hours and is cached for later runs.
-    concurrency:
-      group: desktop-libwebrtc-windows-${{ github.ref }}
-      cancel-in-progress: false
     runs-on: windows-2022
     timeout-minutes: 330
     outputs:
@@ -180,8 +172,8 @@ jobs:
   core-linux:
     name: Native core (Linux x64)
     needs: libwebrtc-linux
-    # A newer push to a pull request cancels this job of the older run (not
-    # its libwebrtc build, see above). Runs of a branch are never cancelled.
+    # A newer push to a pull request cancels this job of the older run (ci.yml
+    # cancels the whole run, libwebrtc included). Branch runs are never cancelled.
     concurrency:
       group: desktop-core-linux-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
