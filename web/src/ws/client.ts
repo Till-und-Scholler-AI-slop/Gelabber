@@ -330,11 +330,15 @@ export class Gateway {
       return;
     }
     this.stopped = false;
+    if (typeof window !== "undefined")
+      window.addEventListener("online", this.onOnline);
     this.open();
   }
 
   stop(): void {
     this.stopped = true;
+    if (typeof window !== "undefined")
+      window.removeEventListener("online", this.onOnline);
     this.clearTimers();
     const socket = this.socket;
     this.unbindSocket();
@@ -396,6 +400,9 @@ export class Gateway {
     const url = this.opts.url ?? gatewayUrl();
     const socket = this.opts.open ? this.opts.open(url) : new WebSocket(url);
     this.socket = socket;
+    // The watchdog covers the handshake too: one that never answers is dropped.
+    this.lastServerAt = this.opts.now();
+    this.startWatchdog();
     // Captured here, not in `onFrame`: a close/open/message from the socket
     // we just replaced must not clear the new one or answer on it.
     const epoch = this.epoch;
@@ -604,19 +611,54 @@ export class Gateway {
   }
 
   private startHeartbeat(): void {
-    this.clearHeartbeat();
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = setInterval(() => {
       this.send({ op: "h" });
     }, this.opts.heartbeatMs);
+  }
+
+  private startWatchdog(): void {
+    if (this.watchdogTimer) clearInterval(this.watchdogTimer);
     this.watchdogTimer = setInterval(
       () => {
         if (this.opts.now() - this.lastServerAt >= this.opts.deadMs) {
-          this.socket?.close();
+          this.dropSocket();
         }
       },
       Math.min(1_000, this.opts.heartbeatMs),
     );
   }
+
+  /**
+   * Gives up on the current socket without waiting for its `close`: on a
+   * black-holed path the closing handshake can take a minute to fail.
+   */
+  private dropSocket(): void {
+    const socket = this.socket;
+    this.unbindSocket();
+    this.socket = null;
+    this.clearHeartbeat();
+    try {
+      socket?.close();
+    } catch {
+      // Already gone.
+    }
+    if (!this.stopped) this.scheduleReconnect();
+  }
+
+  /** Back online: a socket still waiting to (re)connect tries now. */
+  private readonly onOnline = (): void => {
+    if (this.stopped || this.currentStatus === "open") return;
+    const socket = this.socket;
+    this.unbindSocket();
+    this.socket = null;
+    try {
+      socket?.close();
+    } catch {
+      // Already gone.
+    }
+    this.open();
+  };
 
   private scheduleReconnect(): void {
     this.setStatus("reconnecting");

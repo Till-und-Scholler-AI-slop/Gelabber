@@ -5,6 +5,9 @@ import type { ChatEvent } from "./protocol.ts";
 
 class FakeSocket implements SocketLike {
   sent: string[] = [];
+  closed = false;
+  /** A black-holed path: `close()` never completes its handshake. */
+  holdClose = false;
   private listeners = new Map<
     string,
     Set<(event: { data?: string }) => void>
@@ -15,7 +18,8 @@ class FakeSocket implements SocketLike {
   }
 
   close(): void {
-    this.emit("close");
+    this.closed = true;
+    if (!this.holdClose) this.emit("close");
   }
 
   addEventListener(
@@ -202,6 +206,110 @@ describe("gateway client", () => {
     expect(sockets.length).toBe(2);
 
     gateway.stop();
+  });
+
+  it("reconnects after silence even when the dead socket never reports close", async () => {
+    vi.useFakeTimers();
+    let now = 0;
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 5,
+      maxRetryMs: 5,
+      heartbeatMs: 20,
+      deadMs: 40,
+      now: () => now,
+      open: () => {
+        const socket = new FakeSocket();
+        socket.holdClose = true;
+        sockets.push(socket);
+        return socket;
+      },
+    });
+
+    gateway.start();
+    sockets[0]?.emit("open");
+    now = 50;
+    await vi.advanceTimersByTimeAsync(25);
+    expect(sockets[0]?.closed).toBe(true);
+    expect(sockets.length).toBe(2);
+    // The old socket's close, if it ever comes, must not touch the new one.
+    sockets[0]?.emit("close");
+    sockets[1]?.emit("open");
+    expect(gateway.status).toBe("open");
+
+    gateway.stop();
+  });
+
+  it("gives up on a handshake that never answers", async () => {
+    vi.useFakeTimers();
+    let now = 0;
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 5,
+      maxRetryMs: 5,
+      heartbeatMs: 20,
+      deadMs: 40,
+      now: () => now,
+      open: () => {
+        const socket = new FakeSocket();
+        socket.holdClose = true;
+        sockets.push(socket);
+        return socket;
+      },
+    });
+
+    gateway.start();
+    now = 30;
+    await vi.advanceTimersByTimeAsync(30);
+    expect(sockets.length).toBe(1);
+    now = 45;
+    await vi.advanceTimersByTimeAsync(15);
+    expect(sockets[0]?.closed).toBe(true);
+    expect(sockets.length).toBe(2);
+
+    gateway.stop();
+  });
+
+  it("reconnects at once when the browser comes back online", async () => {
+    vi.useFakeTimers();
+    const target = new EventTarget();
+    vi.stubGlobal("window", target);
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 1_000,
+      maxRetryMs: 1_000,
+      heartbeatMs: 60_000,
+      deadMs: 120_000,
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    try {
+      gateway.start();
+      sockets[0]?.emit("open");
+      // The first retry is immediate; the second waits for the backoff.
+      sockets[0]?.emit("close");
+      await vi.advanceTimersByTimeAsync(0);
+      sockets[1]?.emit("close");
+      expect(sockets.length).toBe(2);
+      target.dispatchEvent(new Event("online"));
+      expect(sockets.length).toBe(3);
+      sockets[2]?.emit("open");
+      // An open socket is left alone.
+      target.dispatchEvent(new Event("online"));
+      expect(sockets.length).toBe(3);
+      gateway.stop();
+      target.dispatchEvent(new Event("online"));
+      expect(sockets.length).toBe(3);
+    } finally {
+      gateway.stop();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("tells subscribers where the socket stands", async () => {
