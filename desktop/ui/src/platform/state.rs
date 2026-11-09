@@ -219,22 +219,54 @@ pub fn window() -> Option<Window> {
     Some(window)
 }
 
+/// The stored window (logical pixels) in physical pixels at `scale`, as
+/// winit places it; `None` without a position.
+#[cfg(any(windows, test))]
+fn physical_rect(window: &Window, scale: f32) -> Option<[i32; 4]> {
+    let (x, y) = (window.x?, window.y?);
+    let px = |v: f32| (v * scale).round() as i32;
+    Some([px(x), px(y), px(x + window.width), px(y + window.height)])
+}
+
 /// Whether a monitor shows any part of the window at its stored place.
+/// Compared in physical pixels: winit turns the logical position into
+/// physical ones with the scale of the monitor it creates the window on
+/// (the primary one), and monitors are found by physical rectangles.
 #[cfg(windows)]
 fn on_screen(window: &Window) -> bool {
-    use windows_sys::Win32::Foundation::RECT;
-    use windows_sys::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONULL, MonitorFromRect};
-    let (Some(x), Some(y)) = (window.x, window.y) else {
-        return true;
+    use windows_sys::Win32::Foundation::{POINT, RECT};
+    use windows_sys::Win32::Graphics::Gdi::{
+        MONITOR_DEFAULTTONULL, MONITOR_DEFAULTTOPRIMARY, MonitorFromPoint, MonitorFromRect,
     };
-    let rect = RECT {
-        left: x as i32,
-        top: y as i32,
-        right: (x + window.width) as i32,
-        bottom: (y + window.height) as i32,
+    use windows_sys::Win32::UI::HiDpi::{
+        DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForMonitor, MDT_EFFECTIVE_DPI,
+        SetThreadDpiAwarenessContext,
     };
-    // SAFETY: only reads the rectangle.
-    !unsafe { MonitorFromRect(&rect, MONITOR_DEFAULTTONULL) }.is_null()
+    // SAFETY: plain calls with values on the stack; the thread's DPI
+    // awareness (physical coordinates from here on) is put back below.
+    unsafe {
+        let before = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        let primary = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
+        let (mut dpi_x, mut dpi_y) = (96u32, 96u32);
+        let scale = if GetDpiForMonitor(primary, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) == 0 {
+            dpi_x as f32 / 96.0
+        } else {
+            1.0
+        };
+        let shown = physical_rect(window, scale).is_none_or(|[left, top, right, bottom]| {
+            let rect = RECT {
+                left,
+                top,
+                right,
+                bottom,
+            };
+            !MonitorFromRect(&rect, MONITOR_DEFAULTTONULL).is_null()
+        });
+        if !before.is_null() {
+            SetThreadDpiAwarenessContext(before);
+        }
+        shown
+    }
 }
 
 /// X11 window managers keep a window on screen; Wayland ignores positions.
@@ -352,6 +384,21 @@ mod tests {
         assert!(!account.drafts.contains_key(&a));
         assert_eq!(account.fresh_drafts(4_000).len(), 1);
         assert!(account.fresh_drafts(2_000 + DRAFT_MAX_AGE_MS).is_empty());
+    }
+
+    /// The off-screen check compares physical pixels with physical pixels.
+    #[test]
+    fn the_stored_place_scales_to_physical_pixels() {
+        let w = Window {
+            width: 800.0,
+            height: 600.0,
+            x: Some(-100.0),
+            y: Some(50.0),
+            maximized: false,
+        };
+        assert_eq!(physical_rect(&w, 1.5), Some([-150, 75, 1050, 975]));
+        assert_eq!(physical_rect(&w, 1.0), Some([-100, 50, 700, 650]));
+        assert_eq!(physical_rect(&Window { x: None, ..w }, 1.5), None);
     }
 
     #[test]
