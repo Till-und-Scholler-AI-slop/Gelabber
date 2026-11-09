@@ -13,6 +13,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use lettre::Address;
 use lettre::message::Mailbox;
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
@@ -151,7 +152,7 @@ impl Mailer {
                 Ok(())
             }
             Transport::Smtp(transport) => {
-                let to: Mailbox = to.parse().map_err(|err| format!("recipient: {err}"))?;
+                let to = recipient(to)?;
                 let message = Message::builder()
                     .from(self.from.clone())
                     .to(to)
@@ -213,6 +214,13 @@ impl Mailer {
     }
 }
 
+/// The stored address as a bare mailbox. Parsing it as `Name <addr>` would
+/// deliver an older account's `a<victim@example.org>` to victim@example.org.
+fn recipient(to: &str) -> Result<Mailbox, String> {
+    let address: Address = to.parse().map_err(|err| format!("recipient: {err}"))?;
+    Ok(Mailbox::new(None, address))
+}
+
 impl Mail {
     fn kind(&self) -> &'static str {
         match self {
@@ -254,6 +262,16 @@ mod tests {
             sent[0].body
         );
         assert!(sent[0].body.contains("chat.example.org"));
+    }
+
+    #[test]
+    fn recipients_are_bare_addresses() {
+        let to = recipient("ada@example.org").unwrap();
+        assert_eq!(to.name, None);
+        assert_eq!(to.email.to_string(), "ada@example.org");
+        for stored in ["a<victim@example.org>", "<victim@example.org>"] {
+            assert!(recipient(stored).is_err(), "{stored}");
+        }
     }
 
     #[test]

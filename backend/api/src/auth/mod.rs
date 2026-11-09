@@ -207,7 +207,7 @@ async fn register(
 ) -> Result<Response, ApiError> {
     transport_allowed(&state, &headers)?;
     let mut errors = FieldErrors::new();
-    let email = validate::email(&body.email, &mut errors);
+    let email = validate::new_email(&body.email, &mut errors);
     let name = validate::name(&body.name, &mut errors);
     let pw = validate::password(&body.password, &mut errors);
     validate::finish(errors)?;

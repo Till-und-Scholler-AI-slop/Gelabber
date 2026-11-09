@@ -111,6 +111,33 @@ async fn register_validates_inline(pool: PgPool) {
     assert_eq!(res.body["fields"]["name"], "required");
 }
 
+/// Display-name and quoted forms all reach one inbox; registration takes
+/// only the bare address, sign-in still looks such a string up.
+#[sqlx::test]
+async fn register_takes_only_a_bare_address(pool: PgPool) {
+    let mut client = Client::new(pool);
+    client.bootstrap().await;
+
+    for email in ["a<victim@example.org>", "\"victim\"@example.org"] {
+        let res = client.register(email, "correct horse", "Ada").await;
+        assert_eq!(
+            res.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{email}: {}",
+            res.body
+        );
+        assert_eq!(res.body["fields"]["email"], "invalid", "{email}");
+
+        let res = client.login(email, "correct horse").await;
+        assert_eq!(
+            res.status,
+            StatusCode::UNAUTHORIZED,
+            "{email}: {}",
+            res.body
+        );
+    }
+}
+
 #[sqlx::test]
 async fn register_rejects_duplicate_email_case_insensitively(pool: PgPool) {
     let mut client = Client::new(pool);
