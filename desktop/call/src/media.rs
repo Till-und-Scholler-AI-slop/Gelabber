@@ -34,6 +34,12 @@ const DEFAULT_REQUEST: VideoRequest = VideoRequest {
     height: 720,
     fps: 0,
 };
+/// What a released key's sink gets: next to nothing, until a tile asks.
+pub(crate) const RELEASED: VideoRequest = VideoRequest {
+    width: 2,
+    height: 2,
+    fps: 1,
+};
 /// How often a Live's capture is asked whether it still runs.
 const SCREEN_POLL: Duration = Duration::from_millis(1000);
 /// How often an open desktop picker is asked for an answer.
@@ -1833,7 +1839,7 @@ impl Session {
             VideoKey::camera(self.me)
         };
         let Some(inner) = self.inner() else { return };
-        let request = inner.request_of(key).unwrap_or(DEFAULT_REQUEST);
+        let request = sink_request(&inner, key);
         let _ = source.set_video_sink_limits(limits(request));
         let flag = inner.open_sink(key);
         let _ = source.set_video_sink(Some(frame_sink(&self.call, key, flag)));
@@ -2622,6 +2628,15 @@ fn rand_unit() -> f32 {
     (nanos % 1000) as f32 / 1000.0
 }
 
+/// What a new sink of `key` gets: the tile's size, else a default.
+fn sink_request(inner: &Inner, key: VideoKey) -> VideoRequest {
+    match inner.request_of(key) {
+        Some(request) => request,
+        None if inner.released(key) => RELEASED,
+        None => DEFAULT_REQUEST,
+    }
+}
+
 fn limits(request: VideoRequest) -> core::VideoSinkLimits {
     core::VideoSinkLimits {
         max_width: request.width,
@@ -2640,6 +2655,11 @@ fn frame_sink(call: &Weak<Inner>, key: VideoKey, flag: Arc<AtomicBool>) -> core:
             return;
         }
         let Some(inner) = call.upgrade() else { return };
+        // Not copied while no tile shows it.
+        if inner.released(key) {
+            crate::release_elsewhere(inner);
+            return;
+        }
         serial += 1;
         inner.put_frame(
             key,
@@ -3559,7 +3579,7 @@ impl Seat {
         } else if let Some(video) = received_key(k, owner) {
             // The sink before `consumerReady` resumes it: the first key
             // frame reaches it.
-            let request = inner.request_of(video).unwrap_or(DEFAULT_REQUEST);
+            let request = sink_request(&inner, video);
             let _ = consumer.set_video_sink_limits(limits(request));
             let flag = inner.open_sink(video);
             sink = Some(flag.clone());
@@ -3851,6 +3871,53 @@ mod tests {
         assert!(call.inner.media.current().is_none());
         assert_eq!(call.inner.read(|s| s.status.clone()), CallStatus::default());
         assert!(session.stopped.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn a_released_video_is_neither_copied_nor_repainted() {
+        let call = offline();
+        let repaints = Arc::new(AtomicU64::new(0));
+        let counted = repaints.clone();
+        call.client().set_repaint(Arc::new(move || {
+            counted.fetch_add(1, Ordering::Relaxed);
+        }));
+        let key = VideoKey::camera(Uuid::new_v4());
+        let flag = call.inner.open_sink(key);
+        let mut sink = frame_sink(&Arc::downgrade(&call.inner), key, flag);
+        let (y, uv) = ([16u8; 4], [128u8; 1]);
+        let picture = core::VideoFrame {
+            width: 2,
+            height: 2,
+            y: &y,
+            u: &uv,
+            v: &uv,
+            stride_y: 2,
+            stride_u: 1,
+            stride_v: 1,
+            rotation: 0,
+            timestamp_us: 0,
+            source_width: 2,
+            source_height: 2,
+        };
+        let serial = || call.frame(key).map(|f| f.serial);
+        let repainted = || repaints.load(Ordering::Relaxed);
+        // The first picture repaints, so a view can ask for the key.
+        sink(&picture);
+        assert_eq!((serial(), repainted()), (Some(1), 1));
+        // Nobody asked: the picture is kept current without a repaint.
+        sink(&picture);
+        assert_eq!((serial(), repainted()), (Some(2), 1));
+        call.request_video(key, 640, 360, 30);
+        sink(&picture);
+        assert_eq!((serial(), repainted()), (Some(3), 2));
+        // Released: the last picture stays, no new one is copied.
+        call.release_video(key);
+        sink(&picture);
+        assert_eq!((serial(), repainted()), (Some(3), 2));
+        // Asked again: frames flow.
+        call.request_video(key, 640, 360, 30);
+        sink(&picture);
+        assert_eq!((serial(), repainted()), (Some(4), 3));
     }
 
     #[test]
