@@ -13,6 +13,7 @@ import {
   asVoiceInputMode,
   clampReleaseDelay,
   PTT_RELEASE_DELAY_DEFAULT,
+  pushToTalkKeyLabel,
   type VoiceInputMode,
 } from "./pushToTalk.ts";
 
@@ -884,4 +885,14 @@ export async function listMediaDevices(): Promise<DeviceList> {
     });
   }
   return out;
+}
+
+/** The key push-to-talk holds, as the settings name it; `null` while
+ * push-to-talk is off or has no key. */
+export function usePushToTalkKeyName(): string | null {
+  return useMediaSettings((s) =>
+    s.voiceInput === "ptt" && s.pttKey
+      ? s.pttKeyLabel || pushToTalkKeyLabel(s.pttKey)
+      : null,
+  );
 }

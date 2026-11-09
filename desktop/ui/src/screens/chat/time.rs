@@ -63,16 +63,25 @@ pub fn day_label(at: DateTime<Utc>, now: DateTime<Utc>) -> String {
     long_date(at, at.year() != now.year())
 }
 
-/// "14:02" today, "21.10., 14:02" on another day.
+/// "14:02" today, "21.10., 14:02" on another day of this year and
+/// "21.10.2025, 14:02" before it: the message list and search hits.
 pub fn format_when(at: DateTime<Utc>, now: DateTime<Utc>) -> String {
     let (at, now) = (local(at), local(now));
     if day_key(at) == day_key(now) {
         format_clock_local(at)
-    } else {
+    } else if at.year() == now.year() {
         format!(
             "{:02}.{:02}., {}",
             at.day(),
             at.month(),
+            format_clock_local(at)
+        )
+    } else {
+        format!(
+            "{:02}.{:02}.{}, {}",
+            at.day(),
+            at.month(),
+            at.year(),
             format_clock_local(at)
         )
     }
@@ -91,20 +100,6 @@ pub fn format_clock(at: DateTime<Utc>) -> String {
 pub fn format_full(at: DateTime<Utc>) -> String {
     let at = local(at);
     format!("{} um {}", long_date(at, true), format_clock_local(at))
-}
-
-/// `toLocaleString("de-DE")`: "21.10.2026, 14:02:00".
-pub fn format_search(at: DateTime<Utc>) -> String {
-    let at = local(at);
-    format!(
-        "{}.{}.{}, {:02}:{:02}:{:02}",
-        at.day(),
-        at.month(),
-        at.year(),
-        at.hour(),
-        at.minute(),
-        at.second()
-    )
 }
 
 #[cfg(test)]
@@ -138,5 +133,6 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc);
         assert_eq!(day_label(old, now), "Dienstag, 4. März 2025");
+        assert_eq!(format_when(old, now), "04.03.2025, 08:00");
     }
 }

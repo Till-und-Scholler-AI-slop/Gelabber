@@ -4,6 +4,7 @@ import {
   badgeOf,
   isMuted,
   sumBadges,
+  unreadLabel,
   wantsNotification,
 } from "./notifyLevel.ts";
 import {
@@ -182,5 +183,21 @@ describe("a conversation without an unread row", () => {
       muted: true,
       muted_until: soon,
     });
+  });
+});
+
+describe("unread label", () => {
+  it("says unread for a dot and for every count", () => {
+    expect(unreadLabel({ count: 0, dot: false })).toBeNull();
+    expect(unreadLabel({ count: 0, dot: true })).toBe("Ungelesene Nachrichten");
+    expect(unreadLabel({ count: 1, dot: true })).toBe(
+      "1 ungelesene Benachrichtigung",
+    );
+    expect(unreadLabel({ count: 7, dot: false })).toBe(
+      "7 ungelesene Benachrichtigungen",
+    );
+    expect(unreadLabel({ count: 120, dot: true })).toBe(
+      "Mehr als 99 ungelesene Benachrichtigungen",
+    );
   });
 });

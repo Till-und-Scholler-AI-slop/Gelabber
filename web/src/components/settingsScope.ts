@@ -2,6 +2,6 @@
 export type SettingsScope = "account" | "device";
 
 export const SCOPE_LABEL: Record<SettingsScope, string> = {
-  account: "Für deinen Account",
+  account: "Für dein Konto",
   device: "Nur dieses Gerät",
 };

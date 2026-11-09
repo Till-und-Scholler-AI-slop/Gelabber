@@ -50,6 +50,12 @@ vi.mock("../servers/queries.ts", () => ({
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <a>{children}</a>,
 }));
+// The invite dialog as a mark: whether VoiceRoom keeps it mounted.
+vi.mock("../components/InviteDialog.tsx", () => ({
+  InviteDialog: ({ open }: { open: boolean }) => (
+    <i data-invite-dialog={open ? "open" : "closed"} />
+  ),
+}));
 vi.mock("./roster.ts", () => ({
   EMPTY_OCCUPANCY: {},
   EMPTY_LIVE_PEOPLE: {},
@@ -101,7 +107,11 @@ vi.mock("./userVolume.ts", async (original) => {
 });
 
 import { VoiceRoom } from "./VoiceRoom.tsx";
-import { LiveMenuItems, VoiceControls } from "../components/VoiceControls.tsx";
+import {
+  LiveMenuItems,
+  VoiceAudioToggles,
+  VoiceControls,
+} from "../components/VoiceControls.tsx";
 import { VoiceSessionControls } from "../components/VoiceSessionControls.tsx";
 import { callAnnouncement } from "./callBar.ts";
 import { CallSound } from "./QuickCallSettings.tsx";
@@ -321,7 +331,7 @@ describe("active media UI", () => {
     expect(html).toMatch(/<button[^>]*>(?:<svg.*?<\/svg>)?Beitreten<\/button>/);
     expect(html).not.toContain('aria-label="Beitreten"');
     expect(html).toContain('aria-label="Mikrofon testen"');
-    expect(html).toContain('aria-label="Voice-Einstellungen"');
+    expect(html).toContain('aria-label="Anrufeinstellungen"');
     expect(html).not.toContain("Bob");
     expect(html).not.toContain("Spricht gerade");
     expect(html).not.toContain("Zuschauen");
@@ -493,7 +503,7 @@ describe("active media UI", () => {
     expect(html.match(/<input[^>]*disabled=""/g)).toHaveLength(2);
     expect(html).toContain("Taubgeschaltet.");
     // The stream's mute stays in reach for after.
-    expect(control(html, "Stream-Ton stummschalten")).not.toContain("disabled");
+    expect(control(html, "Live-Ton stummschalten")).not.toContain("disabled");
   });
   it("keeps one name per toggle and says its state with aria-pressed", () => {
     Object.assign(fixture.voice, {
@@ -516,17 +526,45 @@ describe("active media UI", () => {
     });
     for (const tag of tags()) expect(tag).toContain('aria-pressed="true"');
     const [mic, deafen, camera, live] = tags();
-    // What a press does stays in the tooltip, with its shortcut.
-    expect(mic).toContain("Stummschaltung aufheben (Strg+Umschalt+M)");
-    expect(deafen).toContain("Taubschaltung aufheben (Strg+Umschalt+D)");
+    // The shortcut is the control's; what a press does is in its styled
+    // tooltip (callTip), not in a browser `title`.
     expect(mic).toContain('aria-keyshortcuts="Control+Shift+M"');
     expect(deafen).toContain('aria-keyshortcuts="Control+Shift+D"');
-    expect(camera).toContain('title="Kamera ausschalten"');
+    for (const tag of tags()) expect(tag).not.toContain("title=");
     // A camera that is on wears the accent pill, a Live the red one.
     expect(camera).toContain("is-on");
     expect(live).toContain("voice-control-live");
-    expect(live).toContain('title="Du bist live"');
     expect(live).toContain('aria-haspopup="menu"');
+  });
+  it("says Stumm or Taub beside a closed microphone or headset", () => {
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+    });
+    const words = (html = renderToStaticMarkup(<VoiceControls />)) => {
+      return ["Stummschalten", "Taubschalten"].map(
+        (label) =>
+          html
+            .match(
+              new RegExp(
+                `<button[^>]*aria-label="${label}"[^>]*>([\\s\\S]*?)</button>`,
+              ),
+            )?.[1]
+            .match(/class="voice-control-text"[^>]*>([^<]*)</)?.[1] ?? null,
+      );
+    };
+    expect(words()).toEqual([null, null]);
+    fixture.voice.muted = true;
+    expect(words()).toEqual(["Stumm", null]);
+    // Deafened, the headset says it for both, as a participant's state does.
+    fixture.voice.deafened = true;
+    expect(words()).toEqual([null, "Taub"]);
+    // The fullscreen strip keeps to its icons, as the desktop app's does.
+    expect(words(renderToStaticMarkup(<VoiceAudioToggles />))).toEqual([
+      null,
+      null,
+    ]);
   });
   it("offers going live and its sound in the Live menu", () => {
     Object.assign(fixture.voice, {
@@ -757,12 +795,12 @@ describe("active media UI", () => {
       );
     const empty = room();
     expect(empty).toContain('<h2 class="voice-room-name">Stage</h2>');
-    // No line about who is there and no free seats: an empty room is its
-    // name and the way in.
+    // No line about who is there: an empty room is its name, one free
+    // seat and the way in. The invite prompt is the channel page's.
     expect(empty).not.toContain("voice-room-summary");
-    expect(empty).not.toContain("voice-room-seat");
-    expect(empty).not.toContain("voice-room-participants");
+    expect(empty.match(/<li class="voice-room-seat"/g)).toHaveLength(1);
     expect(empty).not.toContain("Verbunden");
+    expect(empty).not.toContain("voice-room-invite");
     expect(empty).toContain("Beitreten</button>");
 
     fixture.roster = {
@@ -776,6 +814,9 @@ describe("active media UI", () => {
       const html = room();
       expect(html).not.toContain("Alice und Bob sind da.");
       expect(html.match(/<li class="voice-room-participant"/g)).toHaveLength(2);
+      // The channel's cards, compact: status line and a free seat.
+      expect(html.match(/>Im Raum</g)).toHaveLength(2);
+      expect(html.match(/<li class="voice-room-seat"/g)).toHaveLength(1);
       expect(html).toContain('aria-label="Optionen für Alice"');
       expect(html).toContain('aria-label="Optionen für Bob"');
       // Bob is quieter here: the card says so.
@@ -800,5 +841,39 @@ describe("active media UI", () => {
     } finally {
       resetUserVolumesForTests();
     }
+  });
+
+  it("asks for company under a room nobody else is in", () => {
+    fixture.live = {};
+    const page = () =>
+      renderToStaticMarkup(
+        <VoiceRoom server={server} channelId="stage" channelName="Stage" />,
+      );
+    const empty = page();
+    expect(empty).toMatch(
+      /<div class="voice-room-invite"><p>Fehlt noch jemand\?<\/p><button[^>]*>(?:<svg.*?<\/svg>)?Einladen<\/button>/,
+    );
+    // Under the way in, not between the seats and it.
+    expect(empty.indexOf("voice-room-invite")).toBeGreaterThan(
+      empty.indexOf("voice-room-actions"),
+    );
+
+    // Alone in the call: still asking.
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+    });
+    expect(page()).toContain("Nur du bist im Kanal.");
+    expect(page()).toContain('class="voice-room-invite"');
+
+    // Someone else is here: the room has its company.
+    fixture.roster = {
+      a: { alice: { channelId: "stage", muted: false, deafened: false } },
+    };
+    expect(page()).not.toContain("voice-room-invite");
+    // The dialog does not hang on the prompt: whoever its link brings in
+    // must not close it under the hand that copies the link.
+    expect(page()).toContain('data-invite-dialog="closed"');
   });
 });

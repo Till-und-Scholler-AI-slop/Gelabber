@@ -1,26 +1,38 @@
-// Bundled setup page: checks and stores the server, then navigates the
-// window there. On Windows it also switches the automatic update check and
-// checks on request (src/update.rs); the notice of an update found is the
-// app's own, over every page. Opened via "Server wechseln" (Ctrl+Shift+S or the web
-// client's user menu), it carries the current server in ?server= and offers
-// the way back to it; when that server did not answer at start, ?error= says
-// why.
+// The setup page as the desktop app draws it (desktop/ui/src/setup.rs), in
+// the sign-in pages' frame: checks and stores the server, then opens it.
+// Opened via "Server wechseln" (Ctrl+Shift+S or the user menu), it carries
+// the current server in ?server= and offers the way back to it; when that
+// server did not answer at start, ?error= says why in words and ?detail=
+// what the system said. Where the app installs updates itself, it shows
+// their state and installs one that is there.
 const form = document.getElementById("server-form");
 const input = document.getElementById("server");
+const note = document.getElementById("server-note");
+const detail = document.getElementById("detail");
 const submit = form.querySelector('button[type="submit"]');
 const back = document.getElementById("back");
-const error = document.getElementById("error");
+const GUIDANCE = note.textContent.trim();
+
+function showError(message, why) {
+  input.setAttribute("aria-invalid", message ? "true" : "false");
+  note.textContent = message || GUIDANCE;
+  note.classList.toggle("error", Boolean(message));
+  note.setAttribute("role", message ? "alert" : "none");
+  detail.textContent = why ? `Details: ${why}` : "";
+  detail.hidden = !why;
+}
 
 async function connect(server) {
-  error.hidden = true;
+  showError(null);
   submit.disabled = back.disabled = true;
+  submit.textContent = "Verbinde…";
   try {
     await window.__TAURI_INTERNALS__.invoke("set_server", { server });
   } catch (failure) {
-    error.textContent = String(failure);
-    error.hidden = false;
+    showError("Der Server ist nicht erreichbar.", String(failure));
   } finally {
     submit.disabled = back.disabled = false;
+    submit.textContent = "Verbinden";
   }
 }
 
@@ -32,12 +44,13 @@ if (current) {
   back.querySelector("span").textContent = new URL(current).host;
   back.hidden = false;
   back.addEventListener("click", () => connect(current));
+  if (!failure) document.getElementById("title").textContent = "Server wechseln";
 }
 if (failure) {
-  error.textContent = failure;
-  error.hidden = false;
+  showError(failure, params.get("detail"));
   back.firstChild.textContent = "Erneut verbinden mit ";
 }
+input.addEventListener("input", () => showError(null));
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -45,38 +58,57 @@ form.addEventListener("submit", (event) => {
 });
 
 const updates = document.getElementById("updates");
-const autoCheck = document.getElementById("auto-check");
-const checkNow = document.getElementById("check-now");
+const action = document.getElementById("update-action");
 const updateStatus = document.getElementById("update-status");
+const progress = document.getElementById("update-progress");
+let installable = false;
+
+// An install at work: its line (the notice's) and how far the download is.
+function installing(state) {
+  if (state.phase === "installing") return ["Update wird installiert, Gelabber startet neu …", 1];
+  if (state.phase !== "downloading") return null;
+  const share = state.total ? state.downloaded / state.total : null;
+  const percent = share === null ? "" : ` ${Math.floor(100 * share)} %`;
+  return [`Update wird geladen …${percent}`, share];
+}
 
 function showUpdates(state) {
-  autoCheck.checked = state.autoCheck;
   let line = `Installiert: ${state.current}.`;
   if (state.phase === "checking") line += " Suche läuft …";
   else if (state.available) line += ` Verfügbar: ${state.available}.`;
   else if (state.lastCheck) line += " Das ist die neueste Version.";
   if (state.error) line += ` Letzte Suche: ${state.error}`;
-  updateStatus.textContent = line;
+  const work = installing(state);
+  updateStatus.textContent = work ? work[0] : line;
+  progress.hidden = work?.[1] == null;
+  progress.firstElementChild.style.width = `${100 * Math.min(1, work?.[1] ?? 0)}%`;
+  installable = Boolean(state.available);
+  action.textContent = work
+    ? "Wird installiert…"
+    : installable
+      ? "Jetzt installieren"
+      : "Nach Updates suchen";
+  action.className = installable ? "secondary" : "ghost";
+  action.disabled = Boolean(work);
 }
 
-async function updateCommand(command, args) {
-  checkNow.disabled = autoCheck.disabled = true;
+async function updateCommand(command) {
+  action.disabled = true;
   try {
-    showUpdates(await window.__TAURI_INTERNALS__.invoke(command, args));
+    showUpdates(await window.__TAURI_INTERNALS__.invoke(command));
   } catch (failure) {
     updateStatus.textContent = String(failure);
   } finally {
-    checkNow.disabled = autoCheck.disabled = false;
+    action.disabled = false;
   }
 }
 
 window.__TAURI_INTERNALS__.invoke("update_state").then((state) => {
-  // Linux: the package manager updates the app.
+  // Linux and the tarball: a package manager or the user updates the app.
   if (!state.supported) return;
   showUpdates(state);
   updates.hidden = false;
 }, () => {});
-autoCheck.addEventListener("change", () =>
-  updateCommand("update_set_auto_check", { enabled: autoCheck.checked }),
+action.addEventListener("click", () =>
+  updateCommand(installable ? "update_install" : "update_check"),
 );
-checkNow.addEventListener("click", () => updateCommand("update_check"));

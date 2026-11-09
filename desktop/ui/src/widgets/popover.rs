@@ -16,7 +16,16 @@ pub struct Popover {
     align_end: bool,
     min_width: f32,
     takes_focus: bool,
+    /// A submenu: the menu it opens beside (`submenuPosition`).
+    beside: Option<Rect>,
+    /// Presses here are not outside (an open submenu).
+    inside: Option<Rect>,
 }
+
+/// `SUBMENU_INSET` of RowMenu.tsx: the submenu's padding and border, so its
+/// first entry meets the entry that opened it.
+const SUBMENU_INSET: f32 = 9.0;
+const SUBMENU_GAP: f32 = 4.0;
 
 impl Popover {
     pub fn new(id: impl std::hash::Hash + std::fmt::Debug, anchor: Rect) -> Self {
@@ -26,7 +35,29 @@ impl Popover {
             align_end: false,
             min_width: 180.0,
             takes_focus: true,
+            beside: None,
+            inside: None,
         }
+    }
+
+    /// A submenu of the menu at `menu`, opened by the entry at `anchor`:
+    /// right of the menu if it fits, else left, its first entry level with
+    /// the anchor.
+    pub fn beside(mut self, menu: Rect) -> Self {
+        self.beside = Some(menu);
+        self
+    }
+
+    /// A press in `rect` keeps it open, as one inside it does.
+    pub fn also_inside(mut self, rect: Option<Rect>) -> Self {
+        self.inside = rect;
+        self
+    }
+
+    /// Whether the first control drawn as it opens takes the focus.
+    pub fn takes_focus(mut self, takes: bool) -> Self {
+        self.takes_focus = takes;
+        self
     }
 
     /// `bottom-end`: right edges aligned.
@@ -58,12 +89,24 @@ impl Popover {
             .data(|d| d.get_temp(size_id))
             .unwrap_or(Vec2::new(self.min_width, 100.0));
         let below = self.anchor.bottom() + 6.0;
-        let top = if below + size.y > screen.bottom() - 8.0 {
+        let top = if self.beside.is_some() {
+            (self.anchor.top() - SUBMENU_INSET).clamp(
+                screen.top() + 8.0,
+                (screen.bottom() - 8.0 - size.y).max(screen.top() + 8.0),
+            )
+        } else if below + size.y > screen.bottom() - 8.0 {
             (self.anchor.top() - 6.0 - size.y).max(screen.top() + 8.0)
         } else {
             below
         };
-        let left = if self.align_end {
+        let left = if let Some(menu) = self.beside {
+            let right = menu.right() + SUBMENU_GAP;
+            if right + size.x <= screen.right() - 8.0 {
+                right
+            } else {
+                menu.left() - SUBMENU_GAP - size.x
+            }
+        } else if self.align_end {
             self.anchor.right() - size.x
         } else {
             self.anchor.left()
@@ -99,6 +142,11 @@ impl Popover {
                     Focus::Shown
                 },
             );
+        });
+        ctx.data_mut(|d| {
+            let list = d.get_temp_mut_or_default::<Vec<(u64, Rect)>>(shown_id());
+            list.retain(|(at, _)| at + 1 >= frame);
+            list.push((frame, self.anchor));
         });
         let mut out = None;
         let area = egui::Area::new(self.id)
@@ -139,9 +187,11 @@ impl Popover {
         let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
         let outside = ctx.input(|i| {
             i.pointer.any_pressed()
-                && i.pointer
-                    .interact_pos()
-                    .is_some_and(|p| !area.response.rect.contains(p) && !self.anchor.contains(p))
+                && i.pointer.interact_pos().is_some_and(|p| {
+                    !area.response.rect.contains(p)
+                        && !self.anchor.contains(p)
+                        && !self.inside.is_some_and(|r| r.contains(p))
+                })
         });
         if escape || outside { None } else { out }
     }
@@ -161,6 +211,35 @@ enum Focus {
 
 fn opening_id() -> Id {
     Id::unique("gelabber-popover-opening")
+}
+
+fn shown_id() -> Id {
+    Id::unique("gelabber-popover-shown")
+}
+
+/// The anchors of the popovers drawn in this frame or the one before:
+/// open ones, wherever in the frame they are drawn.
+fn shown(ctx: &egui::Context) -> Vec<Rect> {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data(|d| d.get_temp::<Vec<(u64, Rect)>>(shown_id()))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(at, _)| at + 1 >= frame)
+        .map(|(_, anchor)| anchor)
+        .collect()
+}
+
+/// Whether a popover is open. Its Esc is its own to close it, as
+/// Popover.tsx stops the key: the page's Esc (als gelesen markieren, Kino
+/// verlassen) waits for the next.
+pub fn any_open(ctx: &egui::Context) -> bool {
+    !shown(ctx).is_empty()
+}
+
+/// Whether a popover anchored at `anchor` is open: that control's tooltip
+/// makes way for it.
+pub fn open_at(ctx: &egui::Context, anchor: Rect) -> bool {
+    shown(ctx).iter().any(|r| r.intersects(anchor))
 }
 
 fn focus_state(ctx: &egui::Context) -> Focus {
@@ -247,6 +326,44 @@ pub fn menu_item(ui: &mut Ui, icon: Option<Icon>, label: &str, danger: bool) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A popover counts as open in the frame after it was drawn too, so a
+    /// page drawn before it (the chat under the call bar) leaves it the
+    /// Esc; once it is gone, the Esc is the page's again.
+    #[test]
+    fn an_open_popover_is_known_before_it_is_drawn() {
+        let ctx = egui::Context::default();
+        let anchor = Rect::from_min_size(pos2(10.0, 10.0), Vec2::new(36.0, 36.0));
+        let elsewhere = Rect::from_min_size(pos2(300.0, 10.0), Vec2::new(36.0, 36.0));
+        let mut seen = Vec::new();
+        for draw in [true, false, false] {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                // As the frame starts: a popover sizing itself takes a
+                // second pass.
+                if ui.ctx().current_pass_index() == 0 {
+                    seen.push((
+                        any_open(ui.ctx()),
+                        open_at(ui.ctx(), anchor),
+                        open_at(ui.ctx(), elsewhere),
+                    ));
+                }
+                if draw {
+                    let _ = Popover::new("probe-open", anchor).show(ui.ctx(), |ui| {
+                        menu_item(ui, None, "Eins", false);
+                    });
+                }
+            });
+            output.textures_delta.clear();
+        }
+        assert_eq!(
+            seen,
+            [
+                (false, false, false),
+                (true, true, false),
+                (false, false, false)
+            ]
+        );
+    }
 
     /// A menu moves the focus to its first entry as it opens; a native
     /// `<select>`'s list leaves it on the field.

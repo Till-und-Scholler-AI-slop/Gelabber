@@ -53,6 +53,45 @@ describe("video tile in a browser", () => {
   });
 });
 
+describe("the own Live's sound", () => {
+  const tile = (notice: string, on: boolean) =>
+    renderToStaticMarkup(
+      <VoiceTile
+        stream={null}
+        label="Lena (du) — Live"
+        screen
+        live
+        sourceAudioNotice={notice}
+        sourceAudioOn={on}
+      />,
+    );
+
+  it("says it in a tag beside the Live tag, in full for screen readers", () => {
+    const html = tile("Ton wird mitgesendet", true);
+    expect(html).toMatch(
+      /<div class="voice-video-tags"><span class="voice-video-live">Live<\/span><span role="status" class="voice-video-sound" title="Ton wird mitgesendet">/,
+    );
+    expect(html).toContain('<span aria-hidden="true">Mit Ton</span>');
+    expect(html).toContain('<span class="sr-only">Ton wird mitgesendet</span>');
+  });
+
+  it("marks sound that does not go out", () => {
+    const html = tile("Live-Ton beendet · Video läuft weiter", false);
+    expect(html).toContain('class="voice-video-sound voice-video-sound--off"');
+    expect(html).toContain('<span aria-hidden="true">Ohne Ton</span>');
+    expect(html).toContain(
+      '<span class="sr-only">Live-Ton beendet · Video läuft weiter</span>',
+    );
+  });
+
+  it("has no tag without a notice", () => {
+    const html = renderToStaticMarkup(
+      <VoiceTile stream={null} label="Lena (du) — Live" screen live />,
+    );
+    expect(html).not.toContain("voice-video-sound");
+  });
+});
+
 describe("tile actions", () => {
   it("pins to the spotlight with a fixed name and its state", () => {
     const tile = (pinned: boolean) =>
@@ -82,10 +121,10 @@ describe("tile actions", () => {
         />,
       );
     expect(tile(true, true)).toMatch(
-      /aria-label="Stream-Ton stummschalten" aria-pressed="false"/,
+      /aria-label="Live-Ton stummschalten" aria-pressed="false"/,
     );
-    expect(tile(false, true)).not.toContain("Stream-Ton");
-    expect(tile(true, false)).not.toContain("Stream-Ton");
+    expect(tile(false, true)).not.toContain("Live-Ton");
+    expect(tile(true, false)).not.toContain("Live-Ton");
   });
 
   it("names a camera in a participant's place without a second caption", () => {
@@ -115,8 +154,8 @@ describe("watching full size", () => {
     expect(html).toContain('aria-label="Steuerung: Mia — Live"');
     expect(html).toContain("<span>Vollbild beenden</span>");
     expect(html).toContain("<span>Nicht mehr zuschauen</span>");
-    expect(html).toContain('aria-label="Stream-Ton-Lautstärke"');
-    expect(html).toContain('aria-label="Stream-Ton stummschalten"');
+    expect(html).toContain('aria-label="Live-Ton-Lautstärke"');
+    expect(html).toContain('aria-label="Live-Ton stummschalten"');
     // Shown when it opens; it hides after a few idle seconds.
     expect(html).toContain("data-awake");
     // Not in a call: nothing to mute.
@@ -138,7 +177,7 @@ describe("watching full size", () => {
       <StreamViewer stream={null} label="Mia" onClose={() => undefined} />,
     );
     expect(html).toContain("<span>Vollbild beenden</span>");
-    expect(html).not.toContain("Stream-Ton");
+    expect(html).not.toContain("Live-Ton");
     expect(html).not.toContain("Nicht mehr zuschauen");
   });
 });

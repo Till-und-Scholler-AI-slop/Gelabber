@@ -13,9 +13,10 @@ use crate::icons::Icon;
 use crate::route::Route;
 use crate::screens::settings::prefs;
 use crate::screens::shell::common::{self, line};
-use crate::text::{self, TextStyle};
+use crate::screens::voice::{hint, session};
+use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner, mix};
-use crate::widgets::IconButton;
+use crate::widgets::{Button, IconButton};
 
 /// `TOAST_HOLD_MS`, `TOAST_STACK_MS`, `TOAST_MAX`, `RELEASE_MIN_MS`.
 const HOLD: f64 = 6.0;
@@ -34,6 +35,7 @@ struct Toast {
     avatar: Option<String>,
     mentioned: bool,
     preview: String,
+    live: Option<LiveToast>,
     count: u32,
     /// When the last message of the burst came.
     at: f64,
@@ -50,6 +52,13 @@ pub struct MessageToasts {
     live_seen: u64,
 }
 
+/// Someone went live (`MessageToast.live`): who, in which voice channel.
+#[derive(Clone, Debug)]
+struct LiveToast {
+    user: Uuid,
+    voice: String,
+}
+
 /// The parts of a toast before it is stacked.
 struct Incoming {
     channel: Uuid,
@@ -60,6 +69,7 @@ struct Incoming {
     avatar: Option<String>,
     mentioned: bool,
     preview: String,
+    live: Option<LiveToast>,
 }
 
 impl MessageToasts {
@@ -77,6 +87,7 @@ impl MessageToasts {
             t.avatar = input.avatar;
             t.mentioned = input.mentioned;
             t.preview = input.preview;
+            t.live = input.live;
             match t.held.as_mut() {
                 Some(left) => *left = left.max(HOLD),
                 None => t.until = now + HOLD,
@@ -96,6 +107,7 @@ impl MessageToasts {
             avatar: input.avatar,
             mentioned: input.mentioned,
             preview: input.preview,
+            live: input.live,
             count: 1,
             at: now,
             until: now + HOLD,
@@ -189,7 +201,11 @@ pub fn collect(ctx: &egui::Context, app: &mut AppCtx, toasts: &mut MessageToasts
                 }
             }
             Notice::Error(text) => app.toasts.error(text),
-            Notice::Failed { failed, error } => app.toasts.failure(failed, &error),
+            Notice::Failed {
+                failed,
+                gone,
+                error,
+            } => app.toasts.failure(failed, gone, &error),
             Notice::Message { server, message } => {
                 if !prefs::get(ctx).message_toasts || viewing == Some(message.channel_id) {
                     continue;
@@ -268,6 +284,10 @@ fn live_toasts(
                 author,
                 avatar: member.and_then(|m| m.avatar_url.clone()),
                 mentioned: false,
+                live: Some(LiveToast {
+                    user: start.user,
+                    voice: voice.name.clone(),
+                }),
             })
         });
         out.extend(incoming);
@@ -322,7 +342,8 @@ fn incoming(app: &AppCtx, server: Uuid, message: &Message) -> Option<Incoming> {
         }
         let (label, names) = match dm {
             Some(dm) => (
-                dm.peer.name.clone(),
+                // The author already names a DM: the place says what it is.
+                "Direktnachricht".to_owned(),
                 vec![
                     (me, s.me().map(|m| m.name.clone()).unwrap_or_default()),
                     (dm.peer.id, dm.peer.name.clone()),
@@ -345,7 +366,12 @@ fn incoming(app: &AppCtx, server: Uuid, message: &Message) -> Option<Incoming> {
             }
         };
         let preview = preview_text(
-            &system_text(message).unwrap_or_else(|| readable(&message.content, &names)),
+            &system_text(message).unwrap_or_else(|| {
+                readable(
+                    &crate::screens::chat::markdown::plain_text(&message.content),
+                    &names,
+                )
+            }),
             !message.attachments.is_empty(),
             message.gif.is_some(),
         );
@@ -358,11 +384,14 @@ fn incoming(app: &AppCtx, server: Uuid, message: &Message) -> Option<Incoming> {
             avatar: message.author.avatar_url.clone(),
             mentioned,
             preview,
+            live: None,
         })
     })
 }
 
 const WHO: TextStyle = text::UI.weight(600.0);
+/// `.ui-message-toast__live > b`: the on-air tag.
+const LIVE_TAG: TextStyle = TextStyle::new(10.0, 600.0, 1.3).tracking(0.04);
 
 /// Paints the stack: top 64, right 16, 352 wide, newest at the bottom.
 pub fn show(ui: &Ui, app: &mut AppCtx, toasts: &mut MessageToasts) {
@@ -379,7 +408,9 @@ pub fn show(ui: &Ui, app: &mut AppCtx, toasts: &mut MessageToasts) {
     let right = screen.right() - 16.0;
     let mut closed = None;
     let mut opened = None;
+    let mut watched = None;
     let mut hovered_ids = Vec::new();
+    let joined = app.call.with_state(session::joined);
     egui::Area::new(Id::unique("gelabber-message-toasts"))
         .order(Order::Foreground)
         .fixed_pos(screen.min)
@@ -403,16 +434,20 @@ pub fn show(ui: &Ui, app: &mut AppCtx, toasts: &mut MessageToasts) {
                     egui::WidgetInfo::labeled(
                         egui::Role::Button,
                         true,
-                        format!(
-                            "Öffnen: {where_}, {}{}: {}",
-                            toast.author,
-                            if toast.mentioned {
-                                " hat dich erwähnt"
-                            } else {
-                                ""
-                            },
-                            toast.preview
-                        ),
+                        if toast.live.is_some() {
+                            format!("Öffnen: {where_}, {}", toast.preview)
+                        } else {
+                            format!(
+                                "Öffnen: {where_}, {}{}: {}",
+                                toast.author,
+                                if toast.mentioned {
+                                    " hat dich erwähnt"
+                                } else {
+                                    ""
+                                },
+                                toast.preview
+                            )
+                        },
                     )
                 });
                 let hover = ui.rect_contains_pointer(rect);
@@ -464,7 +499,45 @@ pub fn show(ui: &Ui, app: &mut AppCtx, toasts: &mut MessageToasts) {
                     small.paint(painter, pos2(left + who.width(), ty));
                 }
                 ty += WHO.line_px() + 2.0;
-                line(ui, &toast.preview, text::BODY, c.muted, max).paint(painter, pos2(left, ty));
+                // A Live: the name stands once, above; here the on-air tag,
+                // where, and a way to watch.
+                let watch = toast.live.as_ref().map(|live| {
+                    let label = hint::watch_label(joined, toast.server, toast.channel);
+                    let w = Block::single(ui, label, text::UI, c.text).width() + 2.0 * 12.0 + 2.0;
+                    let r = Rect::from_min_size(
+                        pos2(rect.right() - 13.0 - w, rect.bottom() - 13.0 - 32.0),
+                        Vec2::new(w, 32.0),
+                    );
+                    (live, label, r)
+                });
+                if let Some((live, _, r)) = &watch {
+                    let mid = ty + text::BODY.line_px() / 2.0;
+                    let tag = Block::single(ui, "LIVE", LIVE_TAG, c.on_live);
+                    let t = Rect::from_min_size(
+                        // `vertical-align: 1px`.
+                        pos2(left, mid - (tag.height() + 2.0) / 2.0 - 1.0),
+                        Vec2::new(tag.width() + 10.0, tag.height() + 2.0),
+                    );
+                    painter.rect_filled(t, corner(theme.radius.xs), c.live);
+                    tag.paint(painter, t.min + Vec2::new(5.0, 1.0));
+                    let x = t.right() + 4.0;
+                    let rest = (r.left() - 8.0 - x).max(0.0);
+                    line(
+                        ui,
+                        &format!(" in {}", live.voice),
+                        text::BODY,
+                        c.muted,
+                        rest,
+                    )
+                    .paint(painter, pos2(x, ty));
+                } else {
+                    line(ui, &toast.preview, text::BODY, c.muted, max)
+                        .paint(painter, pos2(left, ty));
+                }
+                let mut watch_clicked = false;
+                if let Some((_, label, r)) = watch {
+                    watch_clicked = ui.put(r, Button::new(label).small()).clicked();
+                }
                 let close = Rect::from_min_size(
                     pos2(rect.right() - 6.0 - 28.0, rect.top() + 6.0),
                     Vec2::splat(28.0),
@@ -479,6 +552,8 @@ pub fn show(ui: &Ui, app: &mut AppCtx, toasts: &mut MessageToasts) {
                     .clicked()
                 {
                     closed = Some(toast.id);
+                } else if watch_clicked {
+                    watched = Some(toast.clone());
                 } else if card.clicked() {
                     opened = Some(toast.clone());
                 }
@@ -498,6 +573,12 @@ pub fn show(ui: &Ui, app: &mut AppCtx, toasts: &mut MessageToasts) {
     }
     if let Some(id) = closed {
         toasts.items.retain(|t| t.id != id);
+    }
+    if let Some(t) = watched
+        && let Some(live) = &t.live
+    {
+        toasts.items.retain(|x| x.id != t.id);
+        hint::join_to_watch(app, t.server, t.channel, &[live.user]);
     }
     if let Some(t) = opened {
         toasts.items.retain(|x| x.id != t.id);
@@ -533,6 +614,7 @@ mod tests {
             avatar: None,
             mentioned: false,
             preview: "Hallo".into(),
+            live: None,
         }
     }
 
@@ -570,5 +652,112 @@ mod tests {
             ),
             "hi @Lena @Unbekannt"
         );
+    }
+
+    /// The live toast drawn in egui_kittest against a hand-made call state
+    /// and an unreachable server.
+    mod drawn {
+        use egui::{Ui, vec2};
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+        use gelabber_call::{Call, CallState, CallStatus};
+        use gelabber_client::Client;
+        use uuid::Uuid;
+
+        use super::super::{Incoming, LiveToast, MessageToasts, show};
+        use crate::app::{AppCtx, Nav, Session};
+        use crate::images::Images;
+        use crate::toasts::Toasts;
+
+        const SERVER: Uuid = Uuid::from_u128(0x10);
+        const SOFA: Uuid = Uuid::from_u128(0x20);
+        const KINO: Uuid = Uuid::from_u128(0x21);
+        const JONAS: Uuid = Uuid::from_u128(0x7c);
+
+        struct Probe(Box<dyn FnMut(&mut Ui)>);
+
+        impl eframe::App for Probe {
+            fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+                (self.0)(ui);
+            }
+        }
+
+        /// Jonas went live in Sofa; the toast stack drawn each frame.
+        fn harness(call: Call) -> Harness<'static, Probe> {
+            let client = call.client().clone();
+            let images = Images::new(client.clone());
+            let mut toasts = MessageToasts::default();
+            toasts.push(
+                Incoming {
+                    channel: SOFA,
+                    server: SERVER,
+                    dm: false,
+                    label: "Wohnzimmer".into(),
+                    author: "Jonas".into(),
+                    avatar: None,
+                    mentioned: false,
+                    preview: "Jonas ist live in Sofa.".into(),
+                    live: Some(LiveToast {
+                        user: JONAS,
+                        voice: "Sofa".into(),
+                    }),
+                },
+                0.0,
+            );
+            Harness::builder()
+                .with_size(vec2(1280.0, 800.0))
+                .build_eframe(move |cc| {
+                    crate::fonts::install(&cc.egui_ctx);
+                    crate::theme::set(&cc.egui_ctx, crate::theme::Theme::dark());
+                    Probe(Box::new(move |ui| {
+                        let mut nav = Nav::new("/");
+                        let mut session = Session::new();
+                        let mut app_toasts = Toasts::default();
+                        let mut app = AppCtx {
+                            client: &client,
+                            call: &call,
+                            images: &images,
+                            nav: &mut nav,
+                            session: &mut session,
+                            account_mail: None,
+                            toasts: &mut app_toasts,
+                        };
+                        show(ui, &mut app, &mut toasts);
+                    }))
+                })
+        }
+
+        fn offline() -> Call {
+            Call::new(Client::new("http://127.0.0.1:9").expect("client"))
+        }
+
+        #[test]
+        fn outside_a_call_the_live_toast_joins_to_watch() {
+            let call = offline();
+            let mut h = harness(call.clone());
+            h.run_steps(4);
+            assert!(h.query_by_label("Zum Kanal").is_none());
+            h.get_by_label("Zuschauen").click();
+            h.run_steps(4);
+            assert_eq!(call.join_attempts(), 1);
+            assert!(h.query_by_label("Zuschauen").is_none(), "the toast goes");
+        }
+
+        #[test]
+        fn in_another_call_the_live_toast_only_goes_to_the_channel() {
+            let call = offline();
+            call.set_state(CallState {
+                status: CallStatus::Connected,
+                server: Some(SERVER),
+                channel: Some(KINO),
+                ..CallState::default()
+            });
+            let mut h = harness(call.clone());
+            h.run_steps(4);
+            assert!(h.query_by_label("Zuschauen").is_none());
+            h.get_by_label("Zum Kanal").click();
+            h.run_steps(4);
+            assert_eq!(call.join_attempts(), 0, "the room asks before it switches");
+        }
     }
 }

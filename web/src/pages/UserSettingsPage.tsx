@@ -33,8 +33,11 @@ import { SettingsAreaPart } from "./settingsAreaPart.ts";
 import "./settings.css";
 
 function useInstallable() {
-  // Nothing to install inside the desktop app or the installed web app.
-  return useInstallation((state) => !state.native && !state.standalone);
+  // Nothing to install inside the Tauri app; the installed web app can
+  // still get the desktop app.
+  return useInstallation(
+    (state) => !state.native && (!state.standalone || state.desktop !== null),
+  );
 }
 
 /** The areas, grouped "Konto" and "App". `list` draws them as the phone's
@@ -158,7 +161,8 @@ export function UserSettingsPage() {
     <div className="settings-screen">
       <header className="lr-channel-header settings-header">
         {listFirst ? <BackToList /> : null}
-        <h1>Einstellungen</h1>
+        {/* Beside the sidebar, its title already names the page. */}
+        <h1 className={listFirst ? undefined : "sr-only"}>Einstellungen</h1>
       </header>
       <div ref={scroller} className="settings-scroll">
         <section

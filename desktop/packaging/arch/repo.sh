@@ -5,8 +5,8 @@
 #     Builds and signs the package gelabber-desktop (native/PKGBUILD) from
 #     the app tarball, then the signed repository database:
 #     <site>/x86_64/gelabber.db and the package, <site>/gelabber.asc (public
-#     key). Without a source URL the package records the local file (test
-#     builds).
+#     key), <site>/install.sh (install.sh, which sets that up for a user).
+#     Without a source URL the package records the local file (test builds).
 #   repo.sh test <site> <tarball> <tauri-pkgbuild> <tauri-tarball> <tauri-version>
 #     As a user would: adds the repository and its key to pacman, installs
 #     the Tauri app's package gelabber-desktop (PKGBUILD and tarball of a
@@ -16,9 +16,12 @@
 #     (from 0.8.10 on only its legacy-settings.json export, else WebKitGTK),
 #     starts it (../native/smoke.sh, so xvfb-run and a Vulkan driver must be
 #     installed), upgrades to a newer pkgrel, removes with -Rns, and checks
-#     what is left. Runs after build in the same container (same signing key)
-#     and as root, once per Tauri release; the Tauri app's WebKitGTK store
-#     lands in ./webview-fixture-arch/<tauri-version>.
+#     what is left. Then, without the repository and its key, installs with
+#     the site's install.sh piped into sh as from curl, twice, removes again
+#     and checks that a wrong key stops the script. Runs after build in the
+#     same container (same signing key) and as root, once per Tauri release;
+#     the Tauri app's WebKitGTK store lands in
+#     ./webview-fixture-arch/<tauri-version>.
 #
 # Signing key: ARCH_REPO_GPG_KEY (ASCII-armored private key without
 # passphrase). Without it a throwaway key signs the test build.
@@ -199,6 +202,40 @@ native_takes_over() {
   python3 -I "$fixtures/check_import.py" "$config_dir"
 }
 
+# A user's first install with the site's install.sh, piped into sh as from
+# curl, on a pacman without the repository; a second run adds nothing.
+install_script() {
+  local site="$1" script
+  sed -i '/^\[gelabber\]$/,$d' /etc/pacman.conf
+  pacman-key --delete "$fpr" >/dev/null
+  rm -f /var/lib/pacman/sync/gelabber.*
+  # The site's own address and key in place of the published ones.
+  script="$(sed -e "s|^repo_url=.*|repo_url=file://$site|" -e "s|^fingerprint=.*|fingerprint=$fpr|" \
+    "$site/install.sh")"
+  printf '%s\n' "$script" | grep -qx "repo_url=file://$site"
+  for _ in 1 2; do
+    printf '%s\n' "$script" | sh -s -- --noconfirm
+    pacman -Q "$package"
+    test "$(grep -c '^\[gelabber\]$' /etc/pacman.conf)" = 1
+    test -x /usr/bin/gelabber
+  done
+  pacman-key --list-keys "$fpr" >/dev/null
+  libraries_found /opt/gelabber/gelabber /opt/gelabber/libgelabber_media.so
+  pacman -Rns --noconfirm "$package"
+  # A wrong key stops it before pacman.conf is touched (use_site adds the
+  # repository again for the next run).
+  sed -i '/^\[gelabber\]$/,$d' /etc/pacman.conf
+  if printf '%s\n' "$script" | sed "s|^fingerprint=.*|fingerprint=$(printf '%040d' 0)|" |
+    sh -s -- --noconfirm; then
+    echo "install.sh accepted a key with another fingerprint" >&2
+    exit 1
+  fi
+  if grep -q '^\[gelabber\]' /etc/pacman.conf; then
+    echo "install.sh changed pacman.conf despite the wrong key" >&2
+    exit 1
+  fi
+}
+
 # An update shows up like a new release: same version, the next pkgrel.
 upgrade() {
   local site="$1" tarball="$2"
@@ -217,6 +254,8 @@ case "${1:-}" in
     site="$(realpath "$site")"
     setup_builder
     build_one "$version" "$tarball" "$site" "${5:-}" 1
+    install -m644 "$here/install.sh" "$site/install.sh"
+    chown "$builder" "$site/install.sh"
     ls -l "$site" "$site/x86_64"
     ;;
   test)
@@ -268,7 +307,9 @@ case "${1:-}" in
     pacman -Rns --noconfirm "$package"
     nothing_left /opt/gelabber /usr/bin/gelabber /usr/bin/gelabber-desktop \
       /usr/share/applications/gelabber.desktop /usr/share/icons/hicolor/256x256/apps/gelabber.png
-    echo "upgrade from the Tauri package $old to $new, upgrade and removal OK"
+    install_script "$site"
+    nothing_left /opt/gelabber /usr/bin/gelabber /usr/bin/gelabber-desktop
+    echo "upgrade from the Tauri package $old to $new, upgrade, removal and install.sh OK"
     ;;
   *)
     echo "usage: repo.sh build <version> <tarball> <site> [source-url] | test <site> <tarball> <tauri-pkgbuild> <tauri-tarball> <tauri-version>" >&2

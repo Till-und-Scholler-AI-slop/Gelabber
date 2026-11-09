@@ -1,4 +1,4 @@
-//! The voice dialogs: "Voice & Video" (components/VoiceSettingsDialog.tsx,
+//! The voice dialogs: "Audio & Video" (components/VoiceSettingsDialog.tsx,
 //! the `openDialog` of voice/settings.ts) with the tabs Audio, "Video &
 //! Stream" and Diagnose, and "Mikrofon testen" (voice/MicrophoneTest.tsx,
 //! the desktop branch of voice/native/microphoneTest.ts: meters, no
@@ -28,7 +28,7 @@ impl Tab {
     fn label(self) -> &'static str {
         match self {
             Tab::Audio => "Audio",
-            Tab::Video => "Video & Stream",
+            Tab::Video => "Video & Live",
             Tab::Diagnose => "Diagnose",
         }
     }
@@ -54,7 +54,7 @@ fn with<R>(ctx: &egui::Context, f: impl FnOnce(&mut Open) -> R) -> R {
     ctx.data_mut(|d| f(d.get_temp_mut_or_default::<Open>(id())))
 }
 
-/// `openDialog(section)`: "Voice & Video" on `tab`.
+/// `openDialog(section)`: "Audio & Video" on `tab`.
 pub fn open_settings(ctx: &egui::Context, tab: Tab) {
     with(ctx, |o| {
         if o.settings.is_none() {
@@ -108,12 +108,8 @@ fn settings_dialog(ui: &mut Ui, app: &mut AppCtx, tab: Tab, on_top: bool) {
     };
     // The body scrolls without a gutter of its own, as in the browser.
     let saved = ctx.global_style().spacing.scroll;
-    ctx.all_styles_mut(|s| {
-        s.spacing.scroll.floating = true;
-        s.spacing.scroll.floating_allocated_width = 0.0;
-        s.spacing.scroll.dormant_handle_opacity = 0.0;
-    });
-    let output = Modal::new("voice-settings", "Voice & Video")
+    ctx.all_styles_mut(|s| s.spacing.scroll.floating_allocated_width = 0.0);
+    let output = Modal::new("voice-settings", "Audio & Video")
         .width(ModalWidth::Large)
         .show(
             &ctx,
@@ -268,27 +264,19 @@ fn tabs(ui: &mut Ui, current: Tab, width: f32, focus: bool) -> Option<Tab> {
     chosen
 }
 
-/// `.voice-microphone-test meter`: Chromium's meter, 12px of a 24px box;
-/// the level in the accent over its track.
+/// `.voice-microphone-test meter`, styled as `.voice-quick-level`: a 6px
+/// round track in the border colour, the level in green over it.
 fn meter(ui: &mut Ui, value: f64, width: f32) {
     let theme = Theme::of(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(vec2(width, 24.0), Sense::hover());
-    // The track's rows, top to bottom, as Chromium paints them.
-    const ROWS: [u8; 12] = [225, 232, 237, 225, 215, 204, 204, 207, 210, 213, 217, 219];
-    let top = rect.top() + 6.0;
-    for (i, g) in ROWS.iter().enumerate() {
-        ui.painter().rect_filled(
-            Rect::from_min_size(pos2(rect.left(), top + i as f32), vec2(width, 1.0)),
-            0.0,
-            Color32::from_gray(*g),
-        );
-    }
+    let (rect, _) = ui.allocate_exact_size(vec2(width, 6.0), Sense::hover());
+    let round = corner(theme.radius.full);
+    ui.painter().rect_filled(rect, round, theme.c.border);
     let filled = (value.clamp(0.0, 100.0) / 100.0) as f32 * width;
     if filled > 0.0 {
         ui.painter().rect_filled(
-            Rect::from_min_size(pos2(rect.left(), top), vec2(filled, 12.0)),
-            0.0,
-            theme.c.accent,
+            Rect::from_min_size(rect.min, vec2(filled, rect.height())),
+            round,
+            theme.c.online_text,
         );
     }
 }
@@ -327,8 +315,9 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
                 ("Eingangspegel", test.input),
                 ("Nach Verarbeitung", test.processed),
             ] {
+                // Each meter sits close under its label (6px), apart from the next.
                 controls::paragraph(ui, label, text::BODY, c.text, width);
-                ui.add_space(14.0);
+                ui.add_space(6.0);
                 meter(ui, value, width);
                 ui.add_space(14.0);
             }
@@ -433,7 +422,7 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
                 ui.add_space(14.0);
                 controls::paragraph(
                     ui,
-                    "Übersteuerung erkannt. Verringere den Mic-Gain oder Gerätepegel.",
+                    "Übersteuerung erkannt. Verringere die Mikrofonverstärkung oder den Gerätepegel.",
                     text::BODY,
                     c.text,
                     width,

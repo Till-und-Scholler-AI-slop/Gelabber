@@ -50,7 +50,7 @@ fn dialog_id() -> Id {
     Id::unique("gelabber-media-form-in-dialog")
 }
 
-/// The forms inside the Voice & Video dialog: fields on the page colour,
+/// The forms inside the Audio & Video dialog: fields on the page colour,
 /// buttons and chips without the settings page's accent text.
 pub fn set_in_dialog(ctx: &egui::Context, on: bool) {
     ctx.data_mut(|d| d.insert_temp(dialog_id(), on));
@@ -113,13 +113,14 @@ fn group_head(ui: &mut Ui, title: &str, badge: Option<&str>) {
         c.subtle,
     );
     if let Some(b) = badge {
-        let block = Block::single(ui, b, HINT, c.accent_text);
+        // A quiet chip: the accent is for actions.
+        let block = Block::single(ui, b, HINT, c.muted);
         let rect = Rect::from_min_size(
             pos2(top.x + width - block.width() - 16.0, top.y + 6.0),
             vec2(block.width() + 16.0, 20.8),
         );
         ui.painter()
-            .rect_filled(rect, corner(theme.radius.sm), c.selected);
+            .rect_filled(rect, corner(theme.radius.sm), c.surface);
         block.paint(ui.painter(), pos2(rect.left() + 8.0, rect.top() + 2.0));
     }
     ui.allocate_exact_size(vec2(width, head_h), Sense::hover());
@@ -379,8 +380,13 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             ) {
                 app.call.set_input(chosen(&p.audio_input_id));
             }
+            // Next to the microphone, in view when the dialog opens.
+            gap(ui);
+            if button(ui, "Mikrofon testen", false, false) {
+                crate::screens::voice::dialogs::open_mic_test(ui.ctx());
+            }
         });
-        setting_row(ui, "Mic-Gain", false, |ui| {
+        setting_row(ui, "Mikrofonverstärkung", false, |ui| {
             let mut v = (p.input_gain * 100.0).round();
             if slider(
                 ui,
@@ -491,34 +497,12 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 ui.add_space(6.0);
             }
             ui.add_space(2.0);
-            let top = ui.cursor().min;
-            let w = ui.available_width();
             let processing = crate::screens::voice::diagnostics::processing_message(
                 &app.call.state(),
                 &p.processing_mode,
                 &p.audio_input_id,
             );
-            let bw = button_width(ui, "Mikrofon testen");
-            // `.media-actions` wraps the button under the status once the
-            // status' 200px basis and the button no longer fit side by side.
-            let stacked = w < 200.0 + 12.0 + bw;
-            let status_h = if stacked { 16.8 + 8.0 } else { 0.0 };
-            let bh = if in_dialog(ui) { 32.0 } else { 36.0 };
-            controls::paint(
-                ui,
-                pos2(top.x, top.y + if stacked { 0.0 } else { 9.6 }),
-                &processing,
-                HINT,
-                c.muted,
-            );
-            let left = if stacked { top.x } else { top.x + w - bw };
-            let rect = Rect::from_min_size(pos2(left, top.y + status_h), vec2(bw, bh));
-            controls::place(ui, UiBuilder::new().max_rect(rect), |ui| {
-                if button(ui, "Mikrofon testen", false, false) {
-                    crate::screens::voice::dialogs::open_mic_test(ui.ctx());
-                }
-            });
-            ui.allocate_exact_size(vec2(w, status_h + bh), Sense::hover());
+            hint(ui, &processing);
         });
         ui.add_space(20.0);
 
@@ -552,7 +536,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 p.output_volume = playback_volume(pos);
             }
         });
-        setting_row(ui, "Stream-Ton", false, |ui| {
+        setting_row(ui, "Live-Ton", false, |ui| {
             let mut pos = playback_position(p.source_audio_volume);
             if slider(
                 ui,
@@ -574,7 +558,7 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             toggle(
                 ui,
                 "source-audio-muted",
-                "Stream-Ton stummschalten",
+                "Live-Ton stummschalten",
                 &mut p.source_audio_muted,
                 false,
             );
@@ -810,6 +794,19 @@ fn key_code(key: egui::Key) -> Option<String> {
     }
 }
 
+/// `usePushToTalkKeyName`: the key push-to-talk holds, as the settings
+/// name it; `None` while push-to-talk is off or has no key.
+pub fn push_to_talk_key_name(ctx: &egui::Context) -> Option<String> {
+    let p = super::prefs::get(ctx);
+    (p.voice_input == "ptt" && !p.ptt_key.is_empty()).then(|| {
+        if p.ptt_key_label.is_empty() {
+            key_label(&p.ptt_key)
+        } else {
+            p.ptt_key_label.clone()
+        }
+    })
+}
+
 /// `pushToTalkKeyLabel`.
 fn key_label(code: &str) -> String {
     match code {
@@ -1043,7 +1040,7 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             if switch_line(
                 ui,
                 "share-source-audio",
-                "Gilt auch während du live bist. Mitgesendet wird der Ton anderer Anwendungen, nie dein Mikrofon oder der Ton des Anrufs. Der Stream-Ton wird als Stereo-Musik übertragen, ohne Mikrofonfilter.",
+                "Gilt auch während du live bist. Mitgesendet wird der Ton anderer Anwendungen, nie dein Mikrofon oder der Ton des Anrufs. Der Live-Ton wird als Stereo-Musik übertragen, ohne Mikrofonfilter.",
                 &mut on,
                 false,
             ) {
@@ -1100,11 +1097,11 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         setting_row(ui, "Sparmodus", false, |ui| {
             let text_s = if p.economy_mode {
                 format!(
-                    "Ausdrückliche Obergrenzen: Sprache 64 kbit/s, Stream-Ton 128 kbit/s, Video gemeinsam {}.",
+                    "Ausdrückliche Obergrenzen: Sprache 64 kbit/s, Live-Ton 128 kbit/s, Video gemeinsam {}.",
                     mbit(limit.unwrap_or(2_500_000.0))
                 )
             } else {
-                "Für wenig Upload: Sprache 64 kbit/s, Stream-Ton 128 kbit/s, Video gemeinsam 2,5 Mbit/s.".to_owned()
+                "Für wenig Upload: Sprache 64 kbit/s, Live-Ton 128 kbit/s, Video gemeinsam 2,5 Mbit/s.".to_owned()
             };
             switch_line(ui, "economy-mode", &text_s, &mut p.economy_mode, false);
         });

@@ -23,7 +23,7 @@ use crate::screens::shell::common;
 use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner};
 use crate::widgets::tooltip::{Side, Tooltip};
-use crate::widgets::{IconButton, eased};
+use crate::widgets::{Button, IconButton, eased};
 
 const HEADER: f32 = 52.0;
 const TITLE: TextStyle = TextStyle::new(15.0, 650.0, 1.5).tracking(-0.1 / 15.0);
@@ -170,7 +170,7 @@ fn plain_room(ui: &mut Ui, app: &mut AppCtx, room: &Room, body: Rect) {
 }
 
 /// The not-staged room from `top`; returns its bottom (padding included).
-fn room_content(
+pub(super) fn room_content(
     ui: &mut Ui,
     app: &mut AppCtx,
     room: &Room,
@@ -247,7 +247,45 @@ fn room_content(
         y += 20.0;
         y = actions(ui, app, room, left, y);
     }
+    if room.others.is_empty() {
+        y += 24.0;
+        y = invite_prompt(ui, app, room, left, y, w);
+    }
     y + if compact { 16.0 } else { 28.0 }
+}
+
+/// `.voice-room-invite`: nobody else in the room, so the space under it
+/// asks for company and opens the invite dialog. The button wraps under
+/// the question when the row is too narrow (flex-wrap, row gap 8).
+/// Returns the row's bottom.
+fn invite_prompt(ui: &mut Ui, app: &AppCtx, room: &Room, left: f32, top: f32, width: f32) -> f32 {
+    let theme = Theme::of(ui.ctx());
+    let row_h = 32.0;
+    let ask = Block::single(ui, "Fehlt noch jemand?", text::BODY, theme.c.muted);
+    // The small button: its label, the 16px icon and gap 8, padding 12.
+    let label = Block::single(ui, "Einladen", text::UI, theme.c.text);
+    let button_w = label.width() + 24.0 + 24.0;
+    let wraps = ask.width() + 16.0 + button_w > width;
+    common::paint_mid(ui.painter(), &ask, left, top + row_h / 2.0);
+    let (bx, by) = if wraps {
+        (left, top + row_h + 8.0)
+    } else {
+        (left + ask.width() + 16.0, top)
+    };
+    let mut child = ui.new_child(UiBuilder::new().max_rect(Rect::from_min_size(
+        pos2(bx, by),
+        vec2(button_w.max(200.0), row_h),
+    )));
+    let button = Button::new("Einladen").small().icon(Icon::Link);
+    if child.add(button).clicked() {
+        let name = app.client.with_state(|s| {
+            s.server(room.server)
+                .map(|v| v.name.clone())
+                .unwrap_or_default()
+        });
+        crate::screens::shell::dialogs::open_invite(ui.ctx(), room.server, &name);
+    }
+    by + row_h
 }
 
 /// A card's height without its 16:10 (`aspect-ratio: auto`): the 64px
@@ -305,7 +343,7 @@ pub fn actions(ui: &mut Ui, app: &mut AppCtx, room: &Room, left: f32, top: f32) 
     let gear = mic.translate(Vec2::new(36.0 + 8.0, 0.0));
     let response = ui.put(
         gear,
-        IconButton::new(Icon::Gear, "Voice-Einstellungen")
+        IconButton::new(Icon::Gear, "Anrufeinstellungen")
             .secondary()
             .icon_size(17.0),
     );
@@ -574,11 +612,14 @@ fn people_rows(ui: &Ui, people: &[Person], width: f32) -> Vec<Vec<(Person, f32)>
 }
 
 /// K and Esc for Kino, unless a field has the keys or a dialog is open.
-fn kino_keys(ui: &Ui, kino: bool) {
+pub(super) fn kino_keys(ui: &Ui, kino: bool) {
     let ctx = ui.ctx();
+    // A dialog over the page owns the keys: also the quick switcher, the
+    // shortcut sheet and the profile (`modalOpen` on the web).
     if ctx.egui_wants_keyboard_input()
         || crate::screens::shell::dialog_open(ctx)
         || super::dialogs::open(ctx)
+        || ctx.memory(|m| m.top_modal_layer().is_some())
     {
         return;
     }
@@ -588,6 +629,8 @@ fn kino_keys(ui: &Ui, kino: bool) {
             .then(|| ptt_key(&p.ptt_key))
             .flatten()
     };
+    // An open menu or popover (the call bar's too) closes on Esc first.
+    let popover = crate::widgets::popover::any_open(ctx);
     let mut action = None;
     ctx.input_mut(|i| {
         i.events.retain(|e| {
@@ -602,6 +645,7 @@ fn kino_keys(ui: &Ui, kino: bool) {
                 return true;
             };
             match stage::kino_key(*key, *modifiers, *repeat, kino, ptt) {
+                Some(KinoKey::Leave) if popover => true,
                 Some(a) => {
                     action = Some(a);
                     false
@@ -712,12 +756,12 @@ fn fullscreen(ui: &mut Ui, app: &mut AppCtx, room: &Room) {
             if pic.id.kind == Kind::Live {
                 let theme = Theme::of(ui.ctx());
                 let style = TextStyle::new(11.0, 600.0, 1.3);
-                let label = Block::single(ui, "Live", style, Color32::WHITE);
+                let label = Block::single(ui, "Live", style, theme.c.on_live);
                 let badge = Rect::from_min_size(
                     screen.min + vec2(8.0, 8.0),
                     vec2(label.width() + 12.0, label.height() + 4.0),
                 );
-                painter.rect_filled(badge, corner(theme.radius.xs), theme.c.danger_bg);
+                painter.rect_filled(badge, corner(theme.radius.xs), theme.c.live);
                 label.paint(&painter, badge.min + vec2(6.0, 2.0));
             }
             leave |= watch_strip(ui, app, room, &pic, screen, &state);
@@ -815,6 +859,19 @@ fn watch_strip(
             x += 36.0 + 4.0;
             let resp = common::click(ui, r, Id::unique(("watch-strip", which)));
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+            // The call bar's tooltip, icons only (`VoiceAudioToggles`).
+            let (title, detail) = super::call_bar::call_tip(
+                ui.ctx(),
+                if which == 0 {
+                    super::call_bar::CallKey::Mute
+                } else {
+                    super::call_bar::CallKey::Deafen
+                },
+                off,
+            );
+            Tooltip::new(title)
+                .detail(Some(&detail))
+                .on_hover_or_focus(&resp, Side::Above);
             let fill = if off {
                 c.danger_bg.gamma_multiply(0.45)
             } else if resp.hovered() {
@@ -847,12 +904,12 @@ fn watch_strip(
         let r = Rect::from_min_size(pos2(x, cy - 18.0), Vec2::splat(36.0));
         let resp = common::click(ui, r, Id::unique("watch-strip-stream-mute"));
         resp.widget_info(|| {
-            egui::WidgetInfo::selected(egui::Role::Button, true, muted, "Stream-Ton stummschalten")
+            egui::WidgetInfo::selected(egui::Role::Button, true, muted, "Live-Ton stummschalten")
         });
         let resp = resp.on_hover_text(if muted {
-            "Stream-Ton wieder einschalten"
+            "Live-Ton wieder einschalten"
         } else {
-            "Stream-Ton stummschalten"
+            "Live-Ton stummschalten"
         });
         let fill = if muted {
             c.danger_bg.gamma_multiply(0.45)
@@ -886,7 +943,7 @@ fn watch_strip(
                 crate::screens::settings::controls::slider_named(
                     ui,
                     "watch-strip-stream-volume",
-                    "Stream-Ton-Lautstärke",
+                    "Live-Ton-Lautstärke",
                     &mut pos,
                     (0.0, 200.0, 1.0),
                     muted || state.deafened,

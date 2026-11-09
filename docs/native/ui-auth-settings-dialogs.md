@@ -31,7 +31,7 @@ Default theme preference is **"dark"** when nothing stored (`theme/theme.ts:11-2
 | `--lr-elevated` | modals, popovers, toasts | `#252829` | `#fcfbf9` |
 | `--lr-text` | primary text | `#eef0ee` | `#252829` |
 | `--lr-muted` | secondary text | `#a4abb1` | `#5c646b` |
-| `--lr-subtle` | tertiary text, disabled text, placeholders | `#8a8f93` | `#6a6e71` |
+| `--lr-subtle` | tertiary text, disabled text, placeholders | `#93989b` | `#616467` |
 | `--lr-border` | hairlines | `#2c3032` | `#dcd6cc` |
 | `--lr-border-strong` | input/control borders | `#717475` | `#86837e` |
 | `--lr-accent` | fills (primary button, switch on, markers) | `#f3b752` | `#e8a638` |
@@ -44,7 +44,7 @@ Default theme preference is **"dark"** when nothing stored (`theme/theme.ts:11-2
 | `--lr-online-text` | success text | `#85d69b` | `#277643` |
 | `--lr-warning` | away dot, caps-lock hint | `#d8a657` | `#a27e44` |
 | `--lr-danger` | error text, danger outline | `#f39b98` | `#a12b29` |
-| `--lr-danger-bg` | danger fill, count badge | `#8f302d` | `#b33b38` |
+| `--lr-danger-bg` | danger fill | `#8f302d` | `#b33b38` |
 | `--lr-on-danger` | text on danger fill | `#ffffff` | `#ffffff` |
 | `--lr-backdrop` | modal backdrop | `rgb(9 12 13 / .72)` | `rgb(37 40 41 / .45)` |
 | `--lr-tile-1…8` | server/avatar initials tints | `#634336 #635636 #4e6336 #366349 #365d63 #364963 #433663 #633653` | `#ead2c8 #eae0c8 #daeac8 #c8ead6 #c8e5ea #c8d6ea #d2c8ea #eac8dd` |
@@ -232,7 +232,7 @@ All confirm texts in this area:
 | Dirty modal (`modalClose.ts:25`) | Änderungen verwerfen? | Deine Eingaben gehen verloren. | Verwerfen | danger |
 | Profilkarte leave (`pages/ProfileCardForm.tsx:72-81`) | Ungespeicherte Änderungen verwerfen? | Deine Änderungen an der Profilkarte gehen verloren. | Verwerfen | danger |
 | Theme draft (`theme/discardDraft.ts:5-7`) | Ungespeicherten Theme-Entwurf verwerfen? | Deine Änderungen an diesem Theme gehen verloren. | Verwerfen | danger |
-| Theme pending (`theme/ThemesPanel.tsx:287-292`) | Lokale Änderung verwerfen? | Gelabber lädt dann wieder den Theme-Stand deines Accounts. | Account-Stand laden | danger |
+| Theme pending (`theme/ThemesPanel.tsx:287-292`) | Lokale Änderung verwerfen? | Gelabber lädt dann wieder den Theme-Stand deines Kontos. | Gespeicherten Stand laden | danger |
 | Theme delete (`ThemesPanel.tsx:548-551`) | Theme „{name}“ löschen? | — | Löschen | danger |
 | Logout all (`pages/ProfilePage.tsx:331-336`) | Auf allen Geräten abmelden? | Auch dieses Gerät. Danach musst du dich überall neu anmelden. | Überall abmelden | danger |
 | Revoke invite (`pages/ServerSettingsPage.tsx:443-450`) | Link widerrufen? | Der Link funktioniert danach nicht mehr. Bestehende Mitglieder bleiben. | Widerrufen | danger |
@@ -266,7 +266,7 @@ Missing from the shell/chat specs; shown for chat messages in a channel/DM you a
 | card hover | bg `color-mix(elevated 92%, text)` → dark **`#353839`**, light **`#ebeae8`** |
 | avatar | Avatar sm **32** (initials 12px on tint) of the author |
 | text column | the whole card is one button (column, gap 2, left-aligned, no bg/border); each line single-line ellipsis |
-| line 1 "where" | 400 12px/1.4 muted: channel label `#{channel}` (DM: peer name; fallbacks "Kanal"/"DM"); when stacked: `{label} · {n} neu` |
+| line 1 "where" | 400 12px/1.4 muted: channel label `#{channel}` (DM: **"Direktnachricht"**, the author line already names the person; fallback "Kanal"); when stacked: `{label} · {n} neu` |
 | line 2 "who" | 600 13px/1.35 text: author name; mention adds `<small>` " hat dich erwähnt" (400, muted, same size) |
 | line 3 preview | 400 14px/1.5 muted: whitespace-collapsed text, >140 chars → first 137 + "…"; empty → "GIF" / "Datei" (attachment) / "Neue Nachricht"; mentions shown as names; system messages as their sentence |
 | close | IconButton **xs 28×28**, `CloseIcon 14`, "Schließen", absolute top 6 / right 6, above the card button |
@@ -433,11 +433,11 @@ Voice card (the chosen room: current call → last visited → occupied → firs
 | Element | Spec |
 |---|---|
 | section | padding 0 |
-| heading | flex wrap, centre, gap 10, min-height 28: `SpeakerIcon 18` (muted; **online** colour when you are in it), h2 room name 600 16px/1.3, pill **"Verbunden"** when joined (inline-flex gap 6, height 22, padding 0 8, radius full, bg online 14%, colour online-text, 500 12px, leading 6px dot), red **"Live"** badge when someone is live (radius 3, bg danger-bg, `#fff`, padding 2/6, caps 11px) |
+| heading | flex wrap, centre, gap 10, min-height 28: `SpeakerIcon 18` (muted; **online** colour when you are in it), h2 room name 600 16px/1.3, pill **"Verbunden"** when joined (inline-flex gap 6, height 22, padding 0 8, radius full, bg online 14%, colour online-text, 500 12px, leading 6px dot), coral **"Live"** badge when someone is live (radius 3, bg `--lr-live`, ink `--lr-on-live`, padding 2/6, caps 11px) |
 | participants | margin-top 12, flex wrap gap 12; each tile **168×136**, padding 12, border 1 border, radius 10, bg surface, column centred: avatar **56×56** (initials 20px on tint, else panel), name margin-top 8 600 13px/1.35, status line only for "Kamera an"/"Live" (12px muted). Speaking: border + 1px ring in online colour. Mute icons top-left 8/8 (muted); "…" button top-right 6/6 visible on hover. Connection dot and speaker icon hidden here. |
 | live/camera stage | above participants: spotlight full width + filmstrip (see voice spec) |
 | switch note | when in another room: 12px muted "Du verlässt dabei {Raum}." |
-| actions (not joined) | margin-top 16, flex wrap gap 8: primary lg (44px, min-width 180) `SpeakerIcon 20` + **"Beitreten"** / **"Hierher wechseln"**; or text **"Keine Berechtigung für Sprachkanäle."** (500 13px muted); then IconButton secondary 36 `MicIcon 18` "Mikrofon testen"; IconButton secondary 36 `GearIcon 17` "Voice-Einstellungen" |
+| actions (not joined) | margin-top 16, flex wrap gap 8: primary lg (44px, min-width 180) `SpeakerIcon 20` + **"Beitreten"** / **"Hierher wechseln"**; or text **"Keine Berechtigung für Sprachkanäle."** (500 13px muted); then IconButton secondary 36 `MicIcon 18` "Mikrofon testen"; IconButton secondary 36 `GearIcon 17` "Anrufeinstellungen" |
 
 "Ungelesen" list (only when ≥1 unread text channel; max 5; newest first) (`CommunityOverview.tsx:112-220`, `overview.css:160-245`):
 
@@ -512,7 +512,7 @@ Title **"Kategorie erstellen"** / **"Kategorie umbenennen"**; field **"Name"** (
 ### 5.5 Channel dialog (`ServerDialogs.tsx:356-500`)
 
 Title **"Kanal erstellen"** / **"Kanal bearbeiten"**.
-1. (create only) fieldset: legend **"Kanaltyp"** (500 13px, margin-bottom 8) + grid 2 equal columns gap 8 of RadioCards (§1.9): `HashIcon 14` + **"Text"** / "Nachrichten, Dateien"; `SpeakerIcon 14` + **"Voice"** / "Sprache, Live" (icon–label gap 6).
+1. (create only) fieldset: legend **"Kanaltyp"** (500 13px, margin-bottom 8) + grid 2 equal columns gap 8 of RadioCards (§1.9): `HashIcon 14` + **"Text"** / "Nachrichten, Dateien"; `SpeakerIcon 14` + **"Sprache"** / "Reden, Kamera, Live" (icon–label gap 6).
 2. Field **"Name"** (autofocus, max 100); for text channels a live hint **"Wird gespeichert als #{slug}"** when the slug differs (lower-case, spaces/underscores → `-`, `#` dropped, runs collapsed).
 3. Select **"Kategorie"**: first option **"Ohne Kategorie"**, then categories.
 4. FormError, then buttons ghost "Abbrechen" + primary "Erstellen"/"Speichern" (no pending label; dialog closes optimistically). Create sends `POST /servers/{id}/channels` `{name, kind: "text"|"voice", category_id: string|null}` (`ServerDialogs.tsx:420`, `servers/api.ts:55-60`). The type fieldset is a column gap 8 whose legend (500 13px/1.35) has margin-bottom 8 (`ServerDialogs.tsx:428-456`).
@@ -551,23 +551,23 @@ Sidebar `.settings-sidebar` (224px, panel, border-right):
 
 Areas (order; `settingsAreas.ts:15-76`): Konto → **Profil** (`profil`), **Profilkarte** (`profilkarte`), **Sicherheit** (`konto`); App → **Darstellung** (`darstellung`, default for `/settings`), **Themes**, **Audio**, **Video**, **Benachrichtigungen**, **App** (only when installable — hidden in the desktop app). User panel at bottom (shell spec).
 
-Main: `.settings-screen` column: header `.lr-channel-header` with h1 **"Einstellungen"** (gap 4), then a scroll area containing `.settings-area`: max-width **1040**, padding **32 40 48** (left-aligned). Content width **912 @1280**, **960 @1600** (1312 − 80 > 1040 − 80).
+Main: `.settings-screen` column: header `.lr-channel-header` with h1 **"Einstellungen"** (gap 4); beside the sidebar the h1 is `sr-only` (the sidebar title names the page) and the header is an empty 52px bar with its bottom rule; on a phone (list first) it shows with the back button, then a scroll area containing `.settings-area`: max-width **1040**, padding **32 40 48** (left-aligned). Content width **912 @1280**, **960 @1600** (1312 − 80 > 1040 − 80).
 
-Area heading (margin-bottom 24): title row flex wrap gap 8/12: h2 label 600 **20px**/1.25 ls −0.01em + scope badge (§1.11; accent tone **"FÜR DEINEN ACCOUNT"** or neutral **"NUR DIESES GERÄT"**); description p margin-top 6, max 60ch, 14px/1.5 muted.
+Area heading (margin-bottom 24): title row flex wrap gap 8/12: h2 label 600 **20px**/1.25 ls −0.01em + scope badge (§1.11; accent tone **"FÜR DEIN KONTO"** or neutral **"NUR DIESES GERÄT"**); description p margin-top 6, max 60ch, 14px/1.5 muted.
 
 | Area | Badge | Description |
 |---|---|---|
-| Profil | Für deinen Account | Name und Profilbild. |
-| Profilkarte | Für deinen Account | So sehen dich andere. |
-| Sicherheit | Für deinen Account | Passwort und angemeldete Geräte. |
+| Profil | Für dein Konto | Name und Profilbild. |
+| Profilkarte | Für dein Konto | So sehen dich andere. |
+| Sicherheit | Für dein Konto | Passwort ändern und überall abmelden. |
 | Darstellung | — (per group) | Farbschema, Textgröße und Bewegung. |
-| Themes | Für deinen Account | Farbpaletten und eigene Themes. |
+| Themes | Für dein Konto | Farbpaletten und eigene Themes. |
 | Audio | Nur dieses Gerät | Mikrofon, Lautsprecher und Lautstärke. |
-| Video | Nur dieses Gerät | Kamera, Live gehen und Stream-Qualität. |
+| Video | Nur dieses Gerät | Kamera, Live gehen und Bildqualität. |
 | Benachrichtigungen | — (per group) | Hinweise auf neue Nachrichten. |
-| App | — | Gelabber als App installieren. |
+| App | — | Gelabber als App installieren. (Native app: listed when it has content; subtitle "Updates und was beim Schließen des Fensters passiert.", without a tray "Updates dieser App."; the update switch, state and install, and close-to-tray with a tray.) |
 
-Shared building blocks (`settings.css:129-270`): `.settings-form` column gap 20, max-width 560. Group (`components/SettingsGroup.tsx`): fieldset, legend flex wrap gap 6/10, margin-bottom 8, 600 16px/1.3 + scope badge; consecutive groups 32px apart. `.settings-row` (a Switch row): min-height 64, padding-y 12, border-bottom 1 border, gap 18; description small line-height 1.5, margin-top 2. `.settings-hint` 12px/1.5 muted. `.settings-actions` flex wrap centre gap 8/12. `.settings-note`: margin-top 24 (32 after a group), padding 14/16, border, radius 7, bg panel, 14px/1.5. `.settings-danger`: max 560, margin-top 40, padding-top 24, border-top. Loading area body: 4 skeleton rows; load failure "Dieser Bereich konnte nicht geladen werden.".
+Shared building blocks (`settings.css:129-270`): `.settings-form` column gap 20, max-width 560. Group (`components/SettingsGroup.tsx`): fieldset, legend flex wrap gap 6/10, margin-bottom 8, 600 16px/1.3 + scope badge; consecutive groups 32px apart. `.settings-row` (a Switch row): min-height 64, padding-y 12, border-bottom 1 border, gap 18; description small line-height 1.5, margin-top 2. `.settings-hint` 12px/1.5 muted. `.settings-actions` flex wrap centre gap 8/12. `.settings-row-noted`: a switch row with a note boxed under it (padding-bottom 12, border-bottom 1 border; the switch row inside has no rule); `.settings-row-note`: padding 10/12, radius md, bg surface, muted meta 12px/1.5, and the switch is `aria-describedby` its status line. `.settings-danger`: max 560, margin-top 40, padding-top 24, border-top. Loading area body: 4 skeleton rows; load failure "Dieser Bereich konnte nicht geladen werden.".
 
 ### 6.2 Profil (`pages/ProfilePage.tsx:74-294`)
 
@@ -598,11 +598,11 @@ Leaving the area while dirty → confirm (§2.2).
 
 ### 6.4 Sicherheit (`ProfilePage.tsx:297-408`)
 
-Form: hint "Angemeldet als **{email}**" (email 600 text colour); PasswordField **"Aktuelles Passwort"**; PasswordField **"Neues Passwort"** (hint "Andere Geräte werden dabei abgemeldet."); FormError; primary **"Passwort ändern"** (pending "Ändern…") + InlineStatus "Geändert. Andere Geräte sind abgemeldet.". Danger section: h3 **"Überall abmelden"** (600 16px) + danger-outline **"Auf allen Geräten abmelden"** (confirm §2.2).
+Form: hint "Angemeldet als **{email}**" (email 600 text colour); PasswordField **"Aktuelles Passwort"**; PasswordField **"Neues Passwort"** (hint "Andere Geräte werden dabei abgemeldet."); FormError; primary **"Passwort ändern"** (pending "Ändern…") + InlineStatus "Geändert. Andere Geräte sind abgemeldet.". Danger section: h3 **"Überall abmelden"** (600 16px), hint "Beendet jede Anmeldung, auch auf diesem Gerät." (margin 4 0 12) + danger-outline **"Auf allen Geräten abmelden"** (confirm §2.2).
 
 ### 6.5 Darstellung (`pages/AppearanceSettings.tsx:16-154`, `settings.css:272-364`)
 
-Group **"Farbschema"** [FÜR DEINEN ACCOUNT]:
+Group **"Farbschema"** [FÜR DEIN KONTO]:
 - Three mode cards in a grid of 3 equal columns, gap 12, max-width 640, margin-top 4 → each **205.3px** wide. Card: grid `auto 1fr`, gap 10, padding 10/12/12, border 1 border-strong, radius 7, bg panel; hover bg hover; checked: border accent + inset 1px accent (2px total); keyboard focus outline 2px focus offset 2.
   - Row 1 (spans both columns): swatch 56px tall, border 1 (preset border colour), radius 5, bg preset background; left 30% strip in preset panel; text bar at top 14, left 40%, 40%×6, radius 3, opacity .8 in preset text; accent bar at bottom 12, left 40%, 24%×10, radius 3 in preset accent. Colours come from the built-in presets (dark: bg `#17191a`, panel `#1d2021`, text `#eef0ee`, accent `#f3b752`, border `#2c3032`; light: `#f8f5f0`, `#f4f0e9`, `#252829`, `#e8a638`, `#dcd6cc`). "System" swatch = left half light swatch, right half dark swatch (inner borders removed).
   - Row 2: radio (§1.8, margin-top 1) + label/hint: **"Hell"** / "Gelabber Hell"; **"Dunkel"** / "Gelabber Dunkel"; **"System"** / "Folgt dem Gerät".
@@ -619,7 +619,7 @@ Group **"Ansicht"** [NUR DIESES GERÄT] (groups sit directly in `.settings-area`
 Vertical order: toolbar → (sync box) → notice → filter chips → two-column layout → (preview bar) → footnote.
 
 - Toolbar (flex space-between wrap gap 12/16): sm secondary **"+ Eigenes Theme"**, sm secondary **"Importieren"** (accepts `.json`; max 64 KiB; errors "Die Datei darf höchstens 64 KiB groß sein.", "Die Datei enthält kein gültiges JSON.", "Das Theme-Format ist ungültig oder wird noch nicht unterstützt.").
-- Sync box (`themes.css:404-416`; margin-top 16, padding 12/14, bg panel, border, radius 5, 13px/1.5): "Wird mit deinem Account synchronisiert …" or the error; buttons sm "Erneut versuchen"/"Erneut anwenden" and "Account-Stand laden".
+- Sync box (`themes.css:404-416`; margin-top 16, padding 12/14, bg panel, border, radius 5, 13px/1.5): "Wird mit deinem Konto synchronisiert …" or the error; buttons sm "Erneut versuchen"/"Erneut anwenden" and "Gespeicherten Stand laden".
 - Notice: InlineStatus, margin-top 12 when not empty ("„{name}“ angewendet.", "Theme gespeichert und angewendet.", "Theme gelöscht.", "Nicht gespeichert – erneut versuchen").
 - Filter ChipGroup (margin 20 0 16): **"Alle"**, **"Hell"**, **"Dunkel"**, **"Eigene"**.
 - Layout (viewport > 1180px — true at 1280/1600): grid `minmax(0,1fr) minmax(280px,340px)`, gap 24 → workbench **340px**; gallery **548px @1280** / **596px @1600**. ≤1180px: one column, workbench below, not sticky.
@@ -636,7 +636,7 @@ Vertical order: toolbar → (sync box) → notice → filter chips → two-colum
   - Footer (spans, panel, border-top, padding 10, 10px, space-between): 6px online dot + "Verbunden · Wohnzimmer"; pill "Mikrofon an" (accent bg, accent-ink, radius 5, padding 5/8, 500).
   - Small variant (gallery, 115px fixed height, no border/radius): sidebar padding 10/6 gap 7, "Gelabber" 8px, spans 5px, selected 6px padding 4/2, icons 7px; chat padding 8 gap 7, header 7px (subtitle hidden), messages 6px gap 4 (only the first message; times hidden), avatar 5px padding 4, composer 5px padding 5; footer hidden.
 - Preview bar while a card is only "tried on" (sticky bottom 0, margin-top 20, padding 12/16, border, radius 10, elevated, shadow-2, 500 13px, flex space-between wrap): "**„{name}“** wird angezeigt" + primary **"Behalten"** + ghost **"Zurück zu {active name}"**. Esc reverts. Clicking a card previews it app-wide immediately.
-- Footnote (margin-top 24, 13px/1.6 muted): "Mit deinem Account synchronisiert." (or "Deine Themes gehören zu deinem Account.") + " Paletten nach " + underlined link "Omarchy" + ", für Gelabber angepasst."
+- Footnote (margin-top 24, 13px/1.6 muted): "Mit deinem Konto synchronisiert." (or "Deine Themes gehören zu deinem Konto.") + " Paletten nach " + underlined link "Omarchy" + ", für Gelabber angepasst."
 
 ### 6.7 Audio / Video (`voice/VoiceSettings.tsx:69-516`, `voice/settingsLayout.tsx`, `voice/quality.css:92-289`, overrides `pages/settings.css:584-614`)
 
@@ -645,23 +645,23 @@ Form: column gap 20, max-width **720** (container 720 > 480 → two-column rows 
 - Row (`.media-row`): grid `136px 1fr`, column gap 16, row gap 6, padding 12/0, border-bottom (none on a group's last row); label 500 13px text, padding-top 8; control column gap 8. Hints 12px/1.4 muted. SwitchLine: hint text left, switch right, min-height 36, gap 16.
 
 Audio area content (strings verbatim; desktop-app variants where they differ):
-- **Eingabe**: "Mikrofon" device select (first option = system default); "Mic-Gain" slider 0–200 %, scale "0 %"/"100 %"/"200 %", hint "100 % fügt keine Verstärkung hinzu."; "Senden" ChipGroup **"Sprachaktivierung"** / **"Push-to-Talk"** + hint "Das Mikrofon sendet, sobald du sprichst." / "Das Mikrofon sendet nur, solange du die Taste hältst."; (PTT) "Taste" sm button "Taste festlegen" / key name / "Taste oder Maustaste drücken … (Esc bricht ab)", hint "Ohne Taste bleibt dein Mikrofon im Gespräch stumm."; (PTT) "Nachlaufzeit" slider "{n} ms", hint "So lange sendet das Mikrofon nach dem Loslassen weiter."; "Filter" RadioCards (column gap 6; `voice/settings.ts:44-73`): desktop **"Verbesserte Sprache"** / "Lokale Rauschunterdrückung", **"WebRTC-Filter"** / "Rauschunterdrückung und Auto-Gain von WebRTC", **"Original / Musik"** / "Stereo sofern unterstützt, ohne Rauschfilter, Auto-Gain oder Sprechpausen-Erkennung" (web reference screenshots instead show "Verbesserte Sprache" / "Lokale Rauschunterdrückung und Auto-Gain; Browserfilter als Ersatz" and **"Browserfilter"** / "Rauschunterdrückung und Auto-Gain deines Browsers"); then status line + sm button **"Mikrofon testen"**.
-- **Ausgabe**: "Lautsprecher" select; "Gespräche" slider (0 % … 100 % middle … max), hint "Über 100 % wird der Ton digital verstärkt."; "Stream-Ton" slider + Switch "Stream-Ton stummschalten", hint "Der Ton von Lives hat eine eigene Lautstärke. Taub schaltet auch diesen Ton aus."; "Signaltöne" SwitchLine "Töne für Beitreten, Verlassen, Stumm, Taub, Kamera und Live.", Switch "Töne, wenn andere sich stumm schalten", field label (12px subtle) "Lautstärke der Signaltöne" + slider (default 35 %), hint "Nutzt die Wiedergabelautstärke. Signaltöne spielen auf dem Standard-Ausgabegerät des Systems.", sm button **"Testton abspielen"**.
+- **Eingabe**: "Mikrofon" device select (first option = system default); "Mikrofonverstärkung" slider 0–200 %, scale "0 %"/"100 %"/"200 %", hint "100 % fügt keine Verstärkung hinzu."; "Senden" ChipGroup **"Sprachaktivierung"** / **"Push-to-Talk"** + hint "Das Mikrofon sendet, sobald du sprichst." / "Das Mikrofon sendet nur, solange du die Taste hältst."; (PTT) "Taste" sm button "Taste festlegen" / key name / "Taste oder Maustaste drücken … (Esc bricht ab)", hint "Ohne Taste bleibt dein Mikrofon im Gespräch stumm."; (PTT) "Nachlaufzeit" slider "{n} ms", hint "So lange sendet das Mikrofon nach dem Loslassen weiter."; "Filter" RadioCards (column gap 6; `voice/settings.ts:44-73`): desktop **"Verbesserte Sprache"** / "Lokale Rauschunterdrückung", **"WebRTC-Filter"** / "Rauschunterdrückung und Auto-Gain von WebRTC", **"Original / Musik"** / "Stereo sofern unterstützt, ohne Rauschfilter, Auto-Gain oder Sprechpausen-Erkennung" (web reference screenshots instead show "Verbesserte Sprache" / "Lokale Rauschunterdrückung und Auto-Gain; Browserfilter als Ersatz" and **"Browserfilter"** / "Rauschunterdrückung und Auto-Gain deines Browsers"); then status line + sm button **"Mikrofon testen"**.
+- **Ausgabe**: "Lautsprecher" select; "Gespräche" slider (0 % … 100 % middle … max), hint "Über 100 % wird der Ton digital verstärkt."; "Live-Ton" slider + Switch "Live-Ton stummschalten", hint "Der Ton von Lives hat eine eigene Lautstärke. Taub schaltet auch diesen Ton aus."; "Signaltöne" SwitchLine "Töne für Beitreten, Verlassen, Stumm, Taub, Kamera und Live.", Switch "Töne, wenn andere sich stumm schalten", field label (12px subtle) "Lautstärke der Signaltöne" + slider (default 35 %), hint "Nutzt die Wiedergabelautstärke. Signaltöne spielen auf dem Standard-Ausgabegerät des Systems.", sm button **"Testton abspielen"**.
 - Disclosure (`quality.css:226-280`; in settings it is collapsed; border 1 border, radius 7; summary flex centre gap 12, min-height 44, padding 0 14, 600 13px text, hover bg hover; **leading** chevron = 6×6 box with 2px right+bottom borders in currentColor, rotated −45° (points right) closed / 45° (points down) open, 180ms; then title; then right-aligned (margin-left auto) small "Für Musik oder Lautsprecher" 12px/1.4 subtle; body padding 0 14, last row no border): title **"Echo und WebRTC-Filter"** (web: "Echo und Browserfilter"); rows "Echo" ("Echo-Unterdrückung (AEC). Bei Lautsprechern empfohlen. Für Musik mit Kopfhörern kannst du sie ausschalten."), "Rauschfilter" (only in WebRTC-filter mode: "Rauschunterdrückung von WebRTC."), "Auto-Gain" (not in Original: "Auto-Gain von WebRTC. Gleicht leise und laute Mikrofone auf einen hörbaren Pegel an.").
 
 Video area content:
 - **Kamera** [pill "Automatisch" or "1080p · 60 FPS"]: "Gerät" select; "Qualität": two selects side by side (grid 2 cols gap 12) with 12px subtle labels "Auflösung" ("Auto (bis 1080p)", "…p", "4K · 2160p") and "Bildrate" ("Auto (bis 30 FPS)", "{n} FPS"); apply note "Auf den laufenden Stream angewendet." / "Bitrate und FPS-Limit gelten sofort. Die Auflösung gilt ab dem nächsten Stream."
 - **Live** [pill]: "Qualität" as above + hint "Höhere Werte brauchen mehr Rechenleistung und Upload. Die erreichbare Qualität hängt von Quelle, Gerät und Verbindung ab."; (if app audio capable) "Ton mitsenden" SwitchLine + "Ton von" select (default "Alle Anwendungen außer Gelabber" / "Alle Anwendungen"; "(gerade still)" suffix).
-- **Upload** [pill "ohne Limit" or bitrate]: "Sparmodus" SwitchLine ("Für wenig Upload: Sprache 64 kbit/s, Stream-Ton 128 kbit/s, Video gemeinsam …"); "Video-Limit" two bordered radio pills (flex wrap gap 10; each min-height 36, padding 0 12, border 1 border, radius 7, 500 13px; checked border accent + bg selected) **"Ohne Limit"** (or "Sparmodus (2,5 Mbit/s)") and **"Eigenes Limit"**; custom: number input 8rem right-aligned + "Mbit/s für alle Videos zusammen"; hint "Die Desktop-App passt die tatsächliche Bitrate an die Verbindung an. Das Limit ist eine Obergrenze, keine feste Datenrate."
+- **Upload** [pill "ohne Limit" or bitrate]: "Sparmodus" SwitchLine ("Für wenig Upload: Sprache 64 kbit/s, Live-Ton 128 kbit/s, Video gemeinsam …"); "Video-Limit" two bordered radio pills (flex wrap gap 10; each min-height 36, padding 0 12, border 1 border, radius 7, 500 13px; checked border accent + bg selected) **"Ohne Limit"** (or "Sparmodus (2,5 Mbit/s)") and **"Eigenes Limit"**; custom: number input 8rem right-aligned + "Mbit/s für alle Videos zusammen"; hint "Die Desktop-App passt die tatsächliche Bitrate an die Verbindung an. Das Limit ist eine Obergrenze, keine feste Datenrate."
 - Footer line 12px subtle "Änderungen gelten beim nächsten Start und werden, soweit unterstützt, auch auf laufende Streams angewendet."
 
-In-call dialog variant (`components/VoiceSettingsDialog.tsx:12-90`, `quality.css:52-90`): Modal **"Voice & Video"** large (640), footer ghost **"Fertig"**; sticky tab row (gap 4, border-bottom, bg elevated, margin-bottom 20) with tabs **"Audio"**, **"Video & Stream"**, **"Diagnose"**: min-height 36, padding 0 12, 500 13px muted, 2px transparent bottom border; selected text colour, 600, accent bottom border; hover text.
+In-call dialog variant (`components/VoiceSettingsDialog.tsx:12-90`, `quality.css:52-90`): Modal **"Audio & Video"** large (640), footer ghost **"Fertig"**; sticky tab row (gap 4, border-bottom, bg elevated, margin-bottom 20) with tabs **"Audio"**, **"Video & Live"**, **"Diagnose"**: min-height 36, padding 0 12, 500 13px muted, 2px transparent bottom border; selected text colour, 600, accent bottom border; hover text.
 
 ### 6.8 Benachrichtigungen (`components/MessageAlertSettings.tsx`, `NotificationPrivacy.tsx`, `NotificationPermission.tsx`)
 
-Group **"Nachrichten"** [NUR DIESES GERÄT] switch rows: "Popup bei neuen Nachrichten in anderen Chats" (default on); desktop: "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist" (web: "Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist"; default off); "Ton bei Benachrichtigungen am Computer" / "Ein Ton für mehrere Nachrichten kurz hintereinander, keiner, während du taubgeschaltet bist. Auf dem Handy gilt die Geräteeinstellung." (disabled while the previous is off); desktop only: "Fenster schließen minimiert in den Infobereich" / "Ein laufender Anruf geht weiter. Beenden über das Symbol im Infobereich." (`components/CloseToTray.tsx`).
-Group **"Sperrbildschirm"** [FÜR DEINEN ACCOUNT]: "Inhalt in Benachrichtigungen verbergen" / "Benachrichtigungen zeigen nur „Neue Nachricht von …“, ohne Text und ohne Chat. Gilt für alle Geräte deines Accounts."; error "Die Einstellung konnte nicht gespeichert werden. Versuche es erneut."
-Note box (§6.1): desktop app with system notifications: "Benachrichtigungen laufen über dein System. Sperrbildschirm und „Nicht stören“ stellst du dort ein." (browser texts: `messages/notify.ts:86-100`).
+Group **"Nachrichten"** [NUR DIESES GERÄT] switch rows: "Popup bei neuen Nachrichten in anderen Chats" (default on); desktop: "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist" (web: "Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist"; default off); "Ton bei Benachrichtigungen am Computer" / "Ein Ton für mehrere Nachrichten kurz hintereinander, keiner, während du taubgeschaltet bist. Auf dem Handy gilt die Geräteeinstellung." (disabled while the previous is off); desktop only: "Fenster schließen minimiert in den Infobereich" / "Ein laufender Anruf geht weiter. Beenden über das Symbol im Infobereich." (`components/CloseToTray.tsx`; the native app has it in App).
+Group **"Sperrbildschirm"** [FÜR DEIN KONTO]: "Inhalt in Benachrichtigungen verbergen" / "Benachrichtigungen zeigen nur „Neue Nachricht von …“, ohne Text und ohne Chat. Gilt für alle Geräte deines Kontos."; error "Die Einstellung konnte nicht gespeichert werden. Versuche es erneut."
+Permission note (`.settings-row-note`, §6.1) boxed under the desktop-notify switch, in the same row, describing it: desktop app with system notifications: "Benachrichtigungen laufen über dein System. Sperrbildschirm und „Nicht stören“ stellst du dort ein." (browser texts: `messages/notify.ts:86-100`, e.g. "Browser-Benachrichtigungen sind blockiert …").
 
 ---
 
@@ -674,7 +674,7 @@ Sidebar = the server's channel sidebar (shell spec). Header h1 **"Servereinstell
 | Section | Content |
 |---|---|
 | Allgemein | icon row (flex centre gap 16): server tile **64×64**, radius 22 (`calc(lg×2.2)`), tint bg, initials 600 **20px**/1, ls .01em (`tileInitials`) or image (`index.css:523-537`, `settings.css:228-232`). It reuses the rail's `.server-tile` rules, so on **hover** the radius animates to 10px and a 4×16 muted pill appears 10px left of the tile (`index.css:474-541`); actions column gap 8 holds a `.settings-actions` row; sm "Bild hochladen" (pending "Lädt hoch…"), sm ghost "Entfernen" (pending "Entfernt…"), status "Gespeichert."; form: field **"Servername"** (max 100) + primary "Speichern" (pending "Speichert…", disabled unchanged) + status |
-| Rechte für Mitglieder | hint "Gilt für alle Mitglieder außer dem Inhaber. Änderungen wirken sofort." Switch rows (§6.1 row style) — Server verwalten / "Umbenennen, Rechte ändern, Einladungen, Kick und Ban."; Kanäle verwalten / "Kategorien und Kanäle anlegen, umbenennen, löschen."; Nachrichten löschen / "Fremde Nachrichten im Chat löschen."; @everyone und @here / "Alle Mitglieder auf einmal erwähnen und benachrichtigen."; Nachrichten schreiben / "In Textkanälen schreiben."; Dateien senden / "Anhänge hochladen."; Voice beitreten / "Sprachkanälen beitreten."; Live gehen / "Im Sprachkanal einen Bildschirm oder ein Fenster für alle dort zeigen." (`servers/permissions.ts:6-51`) |
+| Rechte für Mitglieder | hint "Gilt für alle Mitglieder außer dem Inhaber. Änderungen wirken sofort." Switch rows (§6.1 row style) — Server verwalten / "Umbenennen, Rechte ändern, Einladungen, Kick und Ban."; Kanäle verwalten / "Kategorien und Kanäle anlegen, umbenennen, löschen."; Nachrichten löschen / "Fremde Nachrichten im Chat löschen."; @everyone und @here / "Alle Mitglieder auf einmal erwähnen und benachrichtigen."; Nachrichten schreiben / "In Textkanälen schreiben."; Dateien senden / "Anhänge hochladen."; Sprachkanälen beitreten / "In Sprachkanälen reden, zuhören und die Kamera zeigen."; Live gehen / "Im Sprachkanal einen Bildschirm oder ein Fenster für alle dort zeigen." (`servers/permissions.ts:6-51`) |
 | Einladungen | hint "Alle aktiven Links. Jedes Mitglied kann Links erstellen."; secondary **"Neuen Link erstellen"** (opens §5.6); "Lade Einladungen…" / "Keine aktiven Einladungen."; row: code (monospace 13px) over hint "{uses}/{max or ∞} benutzt · läuft in 6 Tagen ab / läuft nie ab / abgelaufen" (`servers/inviteText.ts`), actions sm CopyButton **"Kopieren"** + sm danger-outline **"Widerrufen"**; copy failure "Kopieren ging nicht. Der Code ist {code}." |
 | Mitglieder ({n}) | rows: PresenceAvatar 32 + name + badge **"INHABER"** (accent) / **"MITGLIED"** (neutral) + member "…" menu (§9.2) |
 | Gesperrte Konten | hint "Gesperrte User können auch mit einem Einladungslink nicht wieder beitreten."; "Lade Sperren…" / "Niemand ist gesperrt."; rows: avatar (offline dot) + name + sm secondary **"Entsperren"** |
@@ -728,15 +728,14 @@ Arrow keys/Home/End move focus.
 
 IconButton sm 32 `MoreIcon 18` "Aktionen für {name}" → Popover `bottom-end`: column min-width 200; items min-height 36, padding 0 12, radius 5, 500 13px, hover bg hover: **"Vom Server entfernen"** (text), **"Sperren"** (danger). Each asks first (§2.2).
 
-### 9.3 Notification settings dialog (right-click a server/channel/DM, or header bell) (`components/NotificationSettingsDialog.tsx:53-296`, `components/notificationSettings.css`)
+### 9.3 Notification settings dialog (header bell, or "Benachrichtigungseinstellungen…" in a row menu) (`components/NotificationSettingsDialog.tsx:53-296`, `components/notificationSettings.css`)
 
 Modal **"Benachrichtigungen: {name}"**; column gap 20:
-1. sm secondary (left) **"Als gelesen markieren"** / **"Server als gelesen markieren"** / **"Alle Direktnachrichten als gelesen markieren"**.
-2. Section h3 **"Stummschalten"** (600 14px/20px), gap 8: not muted → 2-column grid (gap 8) of chips (min-height 36, radius 5, centred): "15 Minuten", "1 Stunde", "8 Stunden", "24 Stunden", "Bis ich es wieder einschalte" (last spans both columns). Muted → box (flex wrap, centre, gap 8, padding 8/12, radius 7, bg surface, 500 13px/1.35, space-between): inline-flex gap 8 `BellOffIcon 16` + "Stumm bis {14:30 Uhr | Mi., 5. Nov., 14:30 Uhr}" or "Stumm, bis du es aufhebst" + sm **"Aufheben"**. Hint 12px muted: DM "Stumm: kein Zähler, keine Benachrichtigung und kein Ton." else "Stumm: kein Punkt, keine Benachrichtigung und kein Ton. @Erwähnungen zählen weiter." (+ " Der ganze Server ist gerade stumm.").
+1. Section h3 **"Stummschalten"** (600 14px/20px), gap 8: not muted → one row (`.notify-mute-row`, flex-wrap, gap 8) of `.ui-chip` pills (32 tall, padding 0 12, `flex: 1 0 auto`, centred, `title` the full length): "15 Min.", "1 Std.", "8 Std.", "24 Std.", "Unbegrenzt". Muted → box (flex wrap, centre, gap 8, padding 8/12, radius 7, bg surface, 500 13px/1.35, space-between): inline-flex gap 8 `BellOffIcon 16` + "Stumm bis {14:30 Uhr | Mi., 5. Nov., 14:30 Uhr}" or "Stumm, bis du es aufhebst" + sm **"Aufheben"**. Hint 12px muted: DM "Stumm: kein Zähler, keine Benachrichtigung und kein Ton." else "Stumm: kein Punkt, keine Benachrichtigung und kein Ton. @Erwähnungen zählen weiter." (+ " Der ganze Server ist gerade stumm.").
 3. (not DMs) fieldset (column gap 8, disabled while saving) with legend **"Benachrichtigen bei"** (600 14px/20px, mb 4), RadioCards: channel only "Wie der Server ({level})"; "Alle Nachrichten" / "Jede neue Nachricht"; "Nur @Erwähnungen" / "Wenn dich jemand erwähnt oder @everyone/@here schreibt"; "Nichts" / "Keine Benachrichtigungen, kein Zähler".
 4. Error 12px danger "Nicht gespeichert. Versuch es noch einmal." / "Nicht mehr verfügbar.".
 Saving (`messages/notificationSettings.ts:26-56`): `PUT /servers/{id}/notification-settings` or `PUT /channels/{id}/notification-settings` (DMs are channels) with `{level: "all"|"mentions"|"none"|null, muted: bool, mute_minutes?: number}` — a mute chip sends `mute_minutes` 15/60/480/1440 (none for "Bis ich es wieder einschalte"); "Aufheben" sends `muted:false`; a channel's "Wie der Server" is `level:null`, a server's "Alle Nachrichten" is also sent as `null`. List: `GET /notification-settings` → `[{scope:"server"|"channel", id, level, muted, muted_until}]`. The `{level}` in "Wie der Server ({level})" is the inherited level's label ("Alle Nachrichten", "Nur @Erwähnungen", "Nichts"). Time format: today `HH:MM Uhr`, else `de-DE {weekday:short, day:numeric, month:short}` + ", HH:MM Uhr" (`NotificationSettingsDialog.tsx:300-308`).
-5. Right-aligned ghost **"Fertig"** (initial focus).
+5. Footer (`.notify-footer`, space-between, gap 8): sm secondary **"Als gelesen markieren"** (left, vertically centred with "Fertig"), ghost **"Fertig"** (right, initial focus).
 
 ---
 

@@ -1,4 +1,4 @@
-// The forms and diagnostics of the Voice & Video dialog load with its first
+// The forms and diagnostics of the Audio & Video dialog load with its first
 // opening (see VoiceSettingsDialog).
 
 import { lazyPart } from "../components/lazyPart.tsx";

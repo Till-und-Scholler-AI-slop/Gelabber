@@ -95,7 +95,7 @@ export function MicrophoneTest({ onClose }: { onClose: () => void }) {
         <p role="status">{state.message}</p>
         {levels.clipping && (
           <p role="status">
-            Übersteuerung erkannt. Verringere den Mic-Gain oder Gerätepegel.
+            Übersteuerung erkannt. Verringere die Mikrofonverstärkung oder den Gerätepegel.
           </p>
         )}
         <div className="voice-microphone-test-actions">

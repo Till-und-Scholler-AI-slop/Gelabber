@@ -23,7 +23,7 @@ Conventions for implementers:
 | `--lr-elevated` | `#252829` | `#fcfbf9` | popovers, modal |
 | `--lr-text` | `#eef0ee` | `#252829` | |
 | `--lr-muted` | `#a4abb1` | `#5c646b` | |
-| `--lr-subtle` | `#8a8f93` | `#6a6e71` | |
+| `--lr-subtle` | `#93989b` | `#616467` | |
 | `--lr-border` | `#2c3032` | `#dcd6cc` | |
 | `--lr-border-strong` | `#717475` | `#86837e` | |
 | `--lr-accent` | `#f3b752` | `#e8a638` | |
@@ -35,7 +35,8 @@ Conventions for implementers:
 | `--lr-online-text` | `#85d69b` | `#277643` | |
 | `--lr-warning` | `#d8a657` | `#a27e44` | |
 | `--lr-danger` | `#f39b98` | `#a12b29` | |
-| `--lr-danger-bg` | `#8f302d` | `#b33b38` | Live badge, leave button |
+| `--lr-danger-bg` | `#8f302d` | `#b33b38` | leave button |
+| `--lr-live` / `--lr-on-live` | `#ff7b5c` / `#111111` | `#db5b24` / `#111111` | Live badge, Live button |
 | `--lr-on-danger` | `#ffffff` | `#ffffff` | |
 | `--lr-backdrop` | `rgba(9,12,13,0.72)` | `rgba(37,40,41,0.45)` | modal backdrop |
 | `--lr-tile-1..8` (avatar tints) | `#634336 #635636 #4e6336 #366349 #365d63 #364963 #433663 #633653` | `#ead2c8 #eae0c8 #daeac8 #c8ead6 #c8e5ea #c8d6ea #d2c8ea #eac8dd` | picked by `personTint(name)` (`components/initials.ts:43-53`, FNV-1a 32-bit, `0x45d9f3b` scramble, `% 8 + 1`) |
@@ -275,7 +276,7 @@ Staged, not Kino: `.voice-stage-bar` (`VoiceRoom.tsx:438-488`, `room.css:70-86, 
 | View switch (ChipGroup radiogroup "Ansicht", hidden ≤640) | container: inline flex, nowrap, gap 2, padding 3, border 1 `--lr-border`, radius 7, bg panel → outer 36 high. Chip: height 28, padding 0 10, no border, radius 5, gap 6, 500 13px, muted; icon 15px. Options: `GridIcon` "Raster", `FocusIcon` "Fokus". Hover (unchecked): text colour + bg `--lr-hover` (from `ui.css:487`). Checked: bg surface, inset 1px `--lr-border` shadow, text colour, weight 500. Focus: 2px focus outline offset 2. Arrow keys move+select. Click → `chooseView` |
 | Kino button (only `canKino` = staged && width >800) | inline flex, gap 6, height 34, padding 0 12, border 1 `--lr-border`, radius 7, transparent, text colour, 500 13px, `TheaterIcon` 15 + "Kino"; hover bg `--lr-hover` (120ms); tooltip `Kino (K)` |
 
-Overview variant (`overview=true`, community overview page): heading row `SpeakerIcon 18` + `<h2>` 600 16/1.3 + optional pill "Verbunden" (22 high, padding 0 8, radius full, bg online@14%, online-text, 500 12px, 6px dot before) + optional badge "Live" (radius 3, bg danger-bg, white, padding 2 6, 600 11px) (`VoiceRoom.tsx:428-436`, `room.css:27-33`, `pages/overview.css:78-117`). Overview tiles: spotlight max-height min(50vh,520), filmstrip 192 wide, wrap gap 8, max-width 1100 (`room.css:36-56`). Detailed overview layout belongs to the overview spec.
+Overview variant (`overview=true`, community overview page): heading row `SpeakerIcon 18` + `<h2>` 600 16/1.3 + optional pill "Verbunden" (22 high, padding 0 8, radius full, bg online@14%, online-text, 500 12px, 6px dot before) + optional badge "Live" (radius 3, bg `--lr-live`, ink `--lr-on-live`, padding 2 6, 600 11px) (`VoiceRoom.tsx:428-436`, `room.css:27-33`, `pages/overview.css:78-117`). Overview tiles: spotlight max-height min(50vh,520), filmstrip 192 wide, wrap gap 8, max-width 1100 (`room.css:36-56`). Detailed overview layout belongs to the overview spec.
 
 ### 3.5 Stage items
 
@@ -352,7 +353,7 @@ Actions row (`VoiceRoom.tsx:661-686`, `room.css:738-751`): flex wrap, gap 8, mar
 | Join | Button primary lg: min-height 44, padding 0 20, radius 5, bg accent, ink `#111111`, 600 14px, gap 8, `SpeakerIcon 20`, min-width 180; text `Beitreten` or (in another call) `Hierher wechseln`; hover `brightness(1.07)`, active scale .97 (`components/ui/ui.css:12-56`) |
 | Denied (no `join_voice`) | `Keine Berechtigung für Sprachkanäle.` 400 13px muted instead of the button |
 | Mic test | IconButton secondary md: 36x36, radius 5, border 1 border-strong, bg surface, text colour, `MicIcon 18`, tooltip `Mikrofon testen`; hover bg hover → opens MicrophoneTest modal |
-| Quick settings | `QuickCallSettingsButton variant=secondary` (same 36x36 secondary look, `GearIcon 17`, label `Voice-Einstellungen`) → popover §6.2 |
+| Quick settings | `QuickCallSettingsButton variant=secondary` (same 36x36 secondary look, `GearIcon 17`, label `Anrufeinstellungen`) → popover §6.2 |
 
 Join behaviour (`session.ts:1206-1279`): state flips to joined immediately (connection "connecting"), sends `{op:"sig",t:"j",s,c}` (+ `t:"m"`/`"d"` with `on:true` if carried over), then media starts in background. Switching calls sends `t:"l"` for the old one.
 
@@ -370,14 +371,14 @@ Join behaviour (`session.ts:1206-1279`): state flips to joined immediately (conn
 | Idle | `awake` true for 3000 ms after pointer move/down, key, focus (`useWake.ts`); when not awake: thumbs not hovered/focused → opacity 0 & no pointer events; focus actions (unless focused) opacity 0 |
 | Kino bar | absolute top 24 left 16, z 3, flex gap 10, max-width 100%-160 |
 | Exit chip | inline flex, gap 8, height 34, padding 0 12, radius 7, bg `rgba(10,12,13,.72)` (hover .88), white 500 13px: `TheaterExitIcon 15` + `Kino verlassen` + `<kbd>Esc</kbd>` (padding 1 5, border 1 `rgba(255,255,255,.25)`, radius 3, colour `#c9cdd0`, 400 11px/1.4) |
-| Label chip | same chip box, weight 600, ellipsis: optional mini badge `Live` (padding 1 5, radius 3, danger-bg, white, 600 10px/1.3) + `<strong>{nameOf(focus.userId)}</strong>` (no own font rule, so Tailwind preflight `font-weight: bolder` turns the inherited 600 into **900**) + `· {channelName}` (`#c9cdd0`, 400). Kino exit chip text and label chip text are 13px/1.35 (`--lr-type-ui`). `nameOf` for self is `"{name} (du)"` |
+| Label chip | same chip box, weight 600, ellipsis: optional mini badge `Live` (padding 1 5, radius 3, `--lr-live`, ink `--lr-on-live`, 600 10px/1.3) + `<strong>{nameOf(focus.userId)}</strong>` (no own font rule, so Tailwind preflight `font-weight: bolder` turns the inherited 600 into **900**) + `· {channelName}` (`#c9cdd0`, 400). Kino exit chip text and label chip text are 13px/1.35 (`--lr-type-ui`). `nameOf` for self is `"{name} (du)"` |
 | Focus moves | after entering by button, focus goes to the exit chip; after leaving, back to the Kino button |
 
 ### 3.8 Participant menu (`Participant.tsx:236-276`, `room.css:712-728`)
 Popover (role dialog) anchored bottom-end of "…", 6 px gap, kept 8 px inside the window (`components/ui/popoverPosition.ts:9-10`): width 288, padding 12, radius 10, border 1 border, bg elevated, shadow-1; opens scale .96→1 + opacity over 180ms.
 Content: name 600 13px, margin-bottom 10 → `UserVolumeControl` → ghost sm button `Profil ansehen` (full width +24, margin 8 -12 0, left aligned).
 
-`UserVolumeControl` (`components/UserVolumeControl.tsx:28-90`, `index.css:2173-2217`): grid gap 10; row `Lautstärke` / `{pct} %` (14px, value muted tabular); range slider 0–200 positions (§6.4 mapping); row: checkbox `Lokal stummschalten` + text button `Zurücksetzen` (accent-text 13px; disabled muted when 100 % and not muted); hint `Nur für dich hörbar. Stream-Ton bleibt unverändert.` 12px muted.
+`UserVolumeControl` (`components/UserVolumeControl.tsx:28-90`, `index.css:2173-2217`): grid gap 10; row `Lautstärke` / `{pct} %` (14px, value muted tabular); range slider 0–200 positions (§6.4 mapping); row: checkbox `Lokal stummschalten` + text button `Zurücksetzen` (accent-text 13px; disabled muted when 100 % and not muted); hint `Nur für dich hörbar. Live-Ton bleibt unverändert.` 12px muted.
 
 ---
 
@@ -394,10 +395,10 @@ Native path (desktop app): frames come from `media_view_*` (§12); a tile draws 
 |---|---|---|
 | Blocked overlay | browser refused autoplay | full cover, bg `rgba(0,0,0,.65)`, column centred, gap 8, padding 12, 500 13px: `Die Videowiedergabe ist blockiert.` + primary sm button `Wiedergabe starten` (`VoiceTile.tsx:502-509`, `viewer.css:44-62`) |
 | Watch overlay | Live with source-watch support and not watching | centred button `Zuschauen`: padding 9 14, radius 5, bg accent, ink, 600 13px (`viewer.css:331-347`) |
-| Own-Live sound notice | own Live | strip bottom 28, left/right 12, padding 5 8, radius 6, bg `#151819df`, white (`viewer.css:349-356`), font inherited = 400 16px with line-height 1.4 (no font rule on the tile or its ancestors; root size 16), z above video, below the Live badge. Texts (`VoiceRoom.tsx:213-231`): desktop `Stream-Ton nicht aufgenommen · Video läuft weiter` / browser `Kein Stream-Ton freigegeben · Video läuft weiter` (unavailable); `Stream-Ton beendet · Video läuft weiter` (ended); `Kein Ton von „{app}“` (silent); `Ton wird mitgesendet` (sharing) |
+| Own-Live sound tag | own Live | `.voice-video-sound` beside the Live badge in `.voice-video-tags` (top 8 left 8, flex gap 4, z 1): inline-flex gap 4, padding 2 6, radius 3, bg `--lr-bg` 82%, colour `--lr-text`, caps 11px, nowrap. `SpeakerIcon 12` + `Mit Ton` while sharing; else `SpeakerOffIcon 12` in `--lr-warning` + `Ohne Ton` (`.voice-video-sound--off`). The full sentence is its tooltip and screen-reader text (role status). Hidden in the strip and on Kino's focus, like the Live badge (`room.css`). Sentences (`VoiceRoom.tsx:213-231`): desktop `Live-Ton nicht aufgenommen · Video läuft weiter` / browser `Kein Live-Ton freigegeben · Video läuft weiter` (unavailable); `Live-Ton beendet · Video läuft weiter` (ended); `Kein Ton von „{app}“` (silent); `Ton wird mitgesendet` (sharing) |
 | Placeholder | no picture yet | column centred, gap 8, padding 12, 500 13px, `rgba(255,255,255,.72)`. idle (stream null): the label; after 300 ms: spinner (16px ring, 2px `rgba(255,255,255,.25)`, top `#fff`, 0.9s linear) + `Video wird geladen …`; after 8 s: `Kein Bild empfangen` + sm button `Neu laden` (re-watch or reattach). Native window: `Läuft im eigenen Fenster.` (12px) + sm `Fenster schließen` |
 | Caption (non-stage) | `caption && !immersive` | bottom strip, padding 4 8, bg `rgba(0,0,0,.5)`, 400 12px/1.4, ellipsis. On the stage it becomes the pill of §3.5 |
-| Live badge | `live` | top 8 left 8, padding 2 6, radius 3, bg danger-bg, white, 600 11px/1.3, text `Live` |
+| Live badge | `live` | in `.voice-video-tags` (top 8 left 8), padding 2 6, radius 3, bg `--lr-live`, ink `--lr-on-live`, 600 11px/1.3, text `Live` |
 | Low quality | native frames limited | `Geringe Bildqualität`, left 8, top 8 (32 when Live), padding 2 6, radius 3, bg `rgba(0,0,0,.6)`, 600 11px; tooltip per reason (`VoiceTile.tsx:818-822`) |
 | Speaking ring | §1.5 | |
 | Scrim (non-stage) | hover | top 56px gradient `rgba(0,0,0,.55)`→transparent; hidden on the stage (`room.css:196-198`) |
@@ -409,7 +410,7 @@ Container: absolute top 6 right 6, gap 2 (stage: top 10 right 10, gap 6; strip: 
 | Order | Label (tooltip) | Icon | Shown when | Action |
 |---|---|---|---|---|
 | 1 | `Nicht mehr zuschauen` | EyeOff 16 | watching a Live (source watch) | toggle watch off |
-| 2 | `Stream-Ton stummschalten` (pressed = muted) | Speaker/SpeakerOff 16 | spotlight/focus, someone else's Live, watched | `sourceAudioMuted` toggle |
+| 2 | `Live-Ton stummschalten` (pressed = muted) | Speaker/SpeakerOff 16 | spotlight/focus, someone else's Live, watched | `sourceAudioMuted` toggle |
 | 3 | `Anheften` (pressed = pinned) | Pin 16 | `onTogglePin` (not on Kino focus) | `pinPicture(pinned==id ? null : id)` |
 | 4 | `Vollbild` (title `Vollbild (auch per Doppelklick)`) | Expand 16 | always | fullscreen (§4.4). Double-click on the picture toggles too |
 | 5 | `Weitere Aktionen` | More 16 | native consumer track | menu: `Eigenes Fenster` / `Fenster schließen` (`media_viewer_open/close`); failure text `Das Videofenster konnte nicht geöffnet werden.` (bottom 28, inset 12, padding 10, radius 5, bg `#16191bf2`) |
@@ -464,9 +465,9 @@ Base (`room.css:752-777, 1161-1179`): inline flex centred, gap 4, min-width 36, 
 | 1' | Mic problem (mic unavailable/denied) | `MicOffIcon 17` + 8px warning dot (top 6, left 20, 1.5px panel border) + text `Kein Mikrofon` (500 13px); colour text | — | title/aria `Kein Mikrofon`; popover `Kein Mikrofon` (placement top-start, max-width 320): `<p>` 400 14px/1.5, margin-bottom 12: unavailable `Mikrofon nicht gefunden oder belegt.`; denied: desktop `Kein Zugriff auf das Mikrofon. Erlaube ihn in den Systemeinstellungen.` / browser `Der Browser blockiert das Mikrofon. Erlaube den Zugriff in den Website-Einstellungen.`; actions flex wrap gap 8: sm (secondary) `Erneut versuchen` → `retryMicrophone()`, ghost sm `Mikrofon wählen …` → settings dialog | `VoiceControls.tsx:119-184`; `room.css:1488-1499` |
 | 2 | Deafen | `HeadsetIcon 17` | deafened: `HeadsetOffIcon 17`, is-off | `Taubschalten`; title `Taubschalten (Strg+Umschalt+D)` / `Taubschaltung aufheben (…)` | |
 | 3 | Camera (if capable or on) | `CameraOffIcon 17` | on: `CameraIcon 17`, is-on → bg selected, accent-text | `Kamera`; title `Kamera einschalten` / `Kamera ausschalten`. Desktop without camera: opacity .5, title+toast `Diese Desktop-App kann keine Kamera nutzen.` | `VoiceControls.tsx:231-250` |
-| 4 | Live | `LiveIcon 17` + text `Live` (+ `ChevronIcon 12` rotated 180°, opacity .75, when it is a menu) | live: bg danger-bg, white | `Live gehen`; title `Du bist live` / `Live gehen` (menu) or `Live beenden` / `Live gehen – sehen alle im Sprachkanal` (plain toggle). Unavailable: opacity .5, reason `Diese Desktop-App kann nicht live gehen.` / `In diesem Server darfst du nicht live gehen.` | `VoiceControls.tsx:258-339` |
+| 4 | Live | `LiveIcon 17` + text `Live` (+ `ChevronIcon 12` rotated 180°, opacity .75, when it is a menu) | live: bg `--lr-live`, ink `--lr-on-live` | `Live gehen`; title `Du bist live` / `Live gehen` (menu) or `Live beenden` / `Live gehen – sehen alle im Sprachkanal` (plain toggle). Unavailable: opacity .5, reason `Diese Desktop-App kann nicht live gehen.` / `In diesem Server darfst du nicht live gehen.` | `VoiceControls.tsx:258-339` |
 | 5 | Stream sound (while watching someone's Live) | `SpeakerIcon 17` / `SpeakerOffIcon 17` (is-off) | | `Lautstärke` → popover §6.3 | `QuickCallSettings.tsx:78-105` |
-| 6 | Settings | `GearIcon 17` | | `Voice-Einstellungen` → popover §6.2 | |
+| 6 | Settings | `GearIcon 17` | | `Anrufeinstellungen` → popover §6.2 | |
 | 7 | Leave | `HangUpIcon 18` + `Verlassen` (500 13px) | margin-left 4, padding 0 12, bg danger-bg, white; hover mix §1.1 | aria/title `Verlassen` | `VoiceSessionControls.tsx:468-481`; `room.css:1231-1240` |
 
 Live menu (`Live gehen`, role menu, placement top-end, width 320) (`VoiceControls.tsx:399-484`, `room.css:1308-1500`): entries 100% wide, flex, gap 10, min-height 36, padding 8 10, radius 5; icon 17 muted, margin-top 1; title 500 13px; hint 400 12px muted, margin-top 2; hover bg hover; disabled title+icon subtle; danger (Live beenden) title+icon danger. Keys ↑ ↓ Home End.
@@ -479,12 +480,12 @@ Below the main row (`VoiceSessionControls.tsx:144-196`):
 - Lost call row: `WarningIcon 16` + `Verbindung verloren` / channel name, button `Erneut versuchen`, IconButton `Schließen` (CloseIcon 16).
 - Playback blocked: row padding 6 8, radius 7, bg accent14%+panel, `Der Browser blockiert den Ton.` + primary compact button `Ton starten` (not in desktop app normally).
 - One notice: flex gap 8, padding-left 4, 400 12px/1.4 muted, `WarningIcon 15` warning + text (flex 1) + xs IconButton `Hinweis schließen` (CloseIcon 14). Only the first not-dismissed notice shows; a dismissed one comes back when its text changes. Texts from `dockNotices` in priority order (`voice/callBar.ts:20-96`):
-  1. `unavailable`: browser `Der Browser hat keinen Stream-Ton freigegeben. Das Video läuft weiter.`; desktop without app audio `Diese Desktop-App kann keinen Ton von Anwendungen teilen. Das Video läuft weiter.`; desktop `Der Stream-Ton konnte nicht aufgenommen werden ({failed}). Das Video läuft weiter.` or, without a reason, `Der Stream-Ton konnte nicht aufgenommen werden. Das Video läuft weiter.`
-  2. `Dieser Medienserver unterstützt Stream-Ton noch nicht. Das Video läuft weiter.`
-  3. `Der Stream-Ton wurde beendet. Das Video läuft weiter.`
+  1. `unavailable`: browser `Der Browser hat keinen Live-Ton freigegeben. Das Video läuft weiter.`; desktop without app audio `Diese Desktop-App kann keinen Ton von Anwendungen teilen. Das Video läuft weiter.`; desktop `Der Live-Ton konnte nicht aufgenommen werden ({failed}). Das Video läuft weiter.` or, without a reason, `Der Live-Ton konnte nicht aufgenommen werden. Das Video läuft weiter.`
+  2. `Dieser Medienserver unterstützt Live-Ton noch nicht. Das Video läuft weiter.`
+  3. `Der Live-Ton wurde beendet. Das Video läuft weiter.`
   4. `Kein Ton von „{silent}“.`
-  5. while sharing with no chosen app: `Dein Stream sendet den {scope}.` (scope = `Ton aller Anwendungen außer Gelabber` / `Ton aller Anwendungen`), plus, if the app version carries the call audio, ` Diese App-Version sendet mit dem Stream-Ton auch den Ton des Anrufs; ein Update der Desktop-App behebt das.` (`SOURCE_AUDIO_CARRIES_CALL`, `voice/settings.ts:673-674`)
-  6. browser only: `Stream-Ton ab dem nächsten Live.`
+  5. while sharing with no chosen app: `Dein Stream sendet den {scope}.` (scope = `Ton aller Anwendungen außer Gelabber` / `Ton aller Anwendungen`), plus, if the app version carries the call audio, ` Diese App-Version sendet mit dem Live-Ton auch den Ton des Anrufs; ein Update der Desktop-App behebt das.` (`SOURCE_AUDIO_CARRIES_CALL`, `voice/settings.ts:673-674`)
+  6. browser only: `Ton ab dem nächsten Live.`
 
 Screen-reader announcements (not visual): `Verbindung verloren`, `Getrennt`, `Verbindung wiederhergestellt`, `Mit {channel ?? "dem Sprachkanal"} verbunden`, `Verbindung wird wiederhergestellt` (`voice/callBar.ts:104-124`).
 
@@ -501,25 +502,25 @@ Toggle semantics (`session.ts:1312-1356`): mute toggles `muted = !(muted||deafen
 ### 6.1 Popover base (`components/ui/ui.css:636-666`)
 Fixed, z 60, min-width 180, max-width min(360, 100vw-16), max-height 100vh-16 (784 @800, 884 @900) with `overflow:auto`, padding 8, border 1 border, radius 10, bg elevated, text colour, shadow-1, 6 px from anchor, 8 px from window edges (`popoverPosition.ts:9-10`); flips above/below to fit. Enter 180ms `--lr-ease` (opacity 0→1, scale .96→1, origin at the anchor); exit 130ms exit ease.
 
-### 6.2 Quick settings `Voice-Einstellungen` (width 312, placement top-end) (`QuickCallSettings.tsx:149-284`, `room.css:1317-1413`)
-Column gap 14, padding 6 6 2. Fields (label 600 12px/1.4 muted, gap 6): `Mikrofon` select; (browser only, while joined and mic live) send-level meter 6px high, radius full, track `--lr-border`, fill `--lr-online-text`; `Lautsprecher` select (desktop always, `capabilities.ts:44-50`); `Kamera` select (if camera capable); volume `Gespräche`; volume `Stream-Ton` (disabled when stream muted); ChipGroup (aria `Sprachübertragung`) `Sprachaktivierung` / `Push-to-Talk` in the default chip look (`ui.css:463-498`: flex wrap gap 8; chip min-height 32, padding 0 12, border 1 border-strong, radius full, transparent, text colour, 500 13px/1.35; hover bg hover; checked border accent + bg selected + 600; active scale .97); note `Keine Taste festgelegt. Das Mikrofon bleibt stumm.` if PTT without key (400 12px/1.4 muted, margin-top -6); ghost sm full-width button `Alle Einstellungen …` (left aligned, 32 high, padding 0 12, 500 13px, border-top 1 border, radius 0) → closes popover, opens dialog (`room.css:1322-1412`, `QuickCallSettings.tsx:149-284`).
+### 6.2 Quick settings `Anrufeinstellungen` (width 312, placement top-end) (`QuickCallSettings.tsx:149-284`, `room.css:1317-1413`)
+Column gap 14, padding 6 6 2. Fields (label 600 12px/1.4 muted, gap 6): `Mikrofon` select; (browser only, while joined and mic live) send-level meter 6px high, radius full, track `--lr-border`, fill `--lr-online-text`; `Lautsprecher` select (desktop always, `capabilities.ts:44-50`); `Kamera` select (if camera capable); volume `Gespräche`; volume `Live-Ton` (disabled when stream muted); ChipGroup (aria `Sprachübertragung`) `Sprachaktivierung` / `Push-to-Talk` in the default chip look (`ui.css:463-498`: flex wrap gap 8; chip min-height 32, padding 0 12, border 1 border-strong, radius full, transparent, text colour, 500 13px/1.35; hover bg hover; checked border accent + bg selected + 600; active scale .97); note `Keine Taste festgelegt. Das Mikrofon bleibt stumm.` if PTT without key (400 12px/1.4 muted, margin-top -6); ghost sm full-width button `Alle Einstellungen …` (left aligned, 32 high, padding 0 12, 500 13px, border-top 1 border, radius 0) → closes popover, opens dialog (`room.css:1322-1412`, `QuickCallSettings.tsx:149-284`).
 Volume row (`room.css:1373-1395`): grid `1fr auto`, align center, gap 6 (row) 8 (column): label, output `{pct} %` 400 12px/1.4 tabular (text colour), slider (§6.4) spans both columns. With a mute action (`Lautstärke` popover): grid `1fr auto auto`, the button 30x30, padding 0, margin-block -6, `voice-control-compact` look (transparent, muted, radius 7; is-off danger + 16% danger-bg), icon 16.
 
-### 6.3 Stream sound popover `Lautstärke` (width 264): volumes `Gespräche` (disabled when deafened) and `Stream-Ton` with a 30x30 mute toggle after the percentage; note `Taubgeschaltet.` when deafened.
+### 6.3 Stream sound popover `Lautstärke` (width 264): volumes `Gespräche` (disabled when deafened) and `Live-Ton` with a 30x30 mute toggle after the percentage; note `Taubgeschaltet.` when deafened.
 
 ### 6.4 Playback slider mapping (`voice/settings.ts:347-387`)
 `MAX_PLAYBACK_VOLUME = 4`, slider 0..200, half = 100:
 `position(v) = round(v<=1 ? v*100 : 100 + (v-1)/3*100)`; `volume(p) = round100(p<=100 ? p/100 : 1 + (p-100)/100*3)`; fill % = position/2. Range look (`index.css:2071-2121`): height 20, track 4px radius 2, filled accent, rest text@18%; thumb 14px accent with 3px accent@22% ring; disabled opacity .45.
 
-### 6.5 VoiceSettingsDialog `Voice & Video` (`components/VoiceSettingsDialog.tsx`, `components/Modal.tsx`, `ui.css:740-858`, `voice/quality.css`)
+### 6.5 VoiceSettingsDialog `Audio & Video` (`components/VoiceSettingsDialog.tsx`, `components/Modal.tsx`, `ui.css:740-858`, `voice/quality.css`)
 
 | Part | Spec |
 |---|---|
 | Modal | width calc(100%-32), max-width 640 (`large`), max-height 100vh-32 (768 @800, 868 @900), radius 14, border 1, bg elevated, shadow-2; backdrop `--lr-backdrop`; enter 240ms opacity+scale .97 |
-| Header | padding 20 64 12 24; h2 600 16/1.3 `Voice & Video`; close IconButton md 36 top 12 right 12 `CloseIcon 18` (`Schließen`) |
+| Header | padding 20 64 12 24; h2 600 16/1.3 `Audio & Video`; close IconButton md 36 top 12 right 12 `CloseIcon 18` (`Schließen`) |
 | Body | column, gap 20, padding 8 24 24, 400 14/1.5, scrolls |
 | Footer | border-top 1, padding 12 24 16, right aligned: ghost button `Fertig` |
-| Tabs | sticky top, flex gap 4, margin -8 0 20, padding-top 8, border-bottom 1, bg elevated. Tab: min-height 36, padding 0 12, 2px transparent bottom border (overlapping by 1), 500 13px muted; hover text; selected: accent bottom border, text, 600. Tabs `Audio`, `Video & Stream`, `Diagnose`; ←/→ move |
+| Tabs | sticky top, flex gap 4, margin -8 0 20, padding-top 8, border-bottom 1, bg elevated. Tab: min-height 36, padding 0 12, 2px transparent bottom border (overlapping by 1), 500 13px muted; hover text; selected: accent bottom border, text, 600. Tabs `Audio`, `Video & Live`, `Diagnose`; ←/→ move |
 | Group head | flex baseline, space-between, padding-top 6; h3 600 12px subtle; optional badge padding 2 8, radius 5, bg selected, accent-text 12px |
 | Row | grid `136px | 1fr`, column gap 16, row gap 6, padding 12 0, border-bottom 1 (none on last); label padding-top 8, 500 13px text; stacks when the form is ≤480 wide (not at 592) |
 | Hints | 400 12px/1.4 muted |
@@ -527,22 +528,22 @@ Volume row (`room.css:1373-1395`): grid `1fr auto`, align center, gap 6 (row) 8 
 | Disclosure | border 1, radius 7; summary min-height 44, padding 0 14, 600 13px, 6px chevron (2px borders) rotating -45°→45°, small text right 12px subtle |
 
 Audio tab (`VoiceSettings.tsx:99-338`), desktop wording:
-- Group `Eingabe`: `Mikrofon` (select, first entry system default); `Mic-Gain` slider 0–200 %, scale `0 % / 100 % / 200 %`, hint `100 % fügt keine Verstärkung hinzu.`; `Senden` ChipGroup `Sprachaktivierung` / `Push-to-Talk` + hint `Das Mikrofon sendet, sobald du sprichst.` / `Das Mikrofon sendet nur, solange du die Taste hältst.`; (PTT) `Taste` button `Taste festlegen` / key label / `Taste oder Maustaste drücken … (Esc bricht ab)` + status; (PTT) `Nachlaufzeit` slider step 50 ms, hint `So lange sendet das Mikrofon nach dem Loslassen weiter.` (`PushToTalkSettings.tsx`); `Filter` radio cards: `Verbesserte Sprache` (`Lokale Rauschunterdrückung`), `WebRTC-Filter` (`Rauschunterdrückung und Auto-Gain von WebRTC`), `Original / Musik` (`Stereo sofern unterstützt, ohne Rauschfilter, Auto-Gain oder Sprechpausen-Erkennung`) + status (e.g. `Desktop-App: RNNoise im nativen Kern`) + sm button `Mikrofon testen`.
-- Group `Ausgabe`: `Lautsprecher` select; `Gespräche` slider (playback mapping, scale `0 % / 100 % / 400 %`, hint `Über 100 % wird der Ton digital verstärkt.`); `Stream-Ton` slider (hint `Der Ton von Lives hat eine eigene Lautstärke. Taub schaltet auch diesen Ton aus.`) + switch `Stream-Ton stummschalten`; `Signaltöne` switch line `Töne für Beitreten, Verlassen, Stumm, Taub, Kamera und Live.` + switch `Töne, wenn andere sich stumm schalten` + field `Lautstärke der Signaltöne` (0–1 step .05, hint `Nutzt die Wiedergabelautstärke. Signaltöne spielen auf dem Standard-Ausgabegerät des Systems.`) + sm button `Testton abspielen` (plays `joinSelf`; disabled if sounds off or a volume is 0).
+- Group `Eingabe`: `Mikrofon` (select, first entry system default); `Mikrofonverstärkung` slider 0–200 %, scale `0 % / 100 % / 200 %`, hint `100 % fügt keine Verstärkung hinzu.`; `Senden` ChipGroup `Sprachaktivierung` / `Push-to-Talk` + hint `Das Mikrofon sendet, sobald du sprichst.` / `Das Mikrofon sendet nur, solange du die Taste hältst.`; (PTT) `Taste` button `Taste festlegen` / key label / `Taste oder Maustaste drücken … (Esc bricht ab)` + status; (PTT) `Nachlaufzeit` slider step 50 ms, hint `So lange sendet das Mikrofon nach dem Loslassen weiter.` (`PushToTalkSettings.tsx`); `Filter` radio cards: `Verbesserte Sprache` (`Lokale Rauschunterdrückung`), `WebRTC-Filter` (`Rauschunterdrückung und Auto-Gain von WebRTC`), `Original / Musik` (`Stereo sofern unterstützt, ohne Rauschfilter, Auto-Gain oder Sprechpausen-Erkennung`) + status (e.g. `Desktop-App: RNNoise im nativen Kern`) + sm button `Mikrofon testen`.
+- Group `Ausgabe`: `Lautsprecher` select; `Gespräche` slider (playback mapping, scale `0 % / 100 % / 400 %`, hint `Über 100 % wird der Ton digital verstärkt.`); `Live-Ton` slider (hint `Der Ton von Lives hat eine eigene Lautstärke. Taub schaltet auch diesen Ton aus.`) + switch `Live-Ton stummschalten`; `Signaltöne` switch line `Töne für Beitreten, Verlassen, Stumm, Taub, Kamera und Live.` + switch `Töne, wenn andere sich stumm schalten` + field `Lautstärke der Signaltöne` (0–1 step .05, hint `Nutzt die Wiedergabelautstärke. Signaltöne spielen auf dem Standard-Ausgabegerät des Systems.`) + sm button `Testton abspielen` (plays `joinSelf`; disabled if sounds off or a volume is 0).
 - Disclosure `Echo und WebRTC-Filter` / small `Für Musik oder Lautsprecher`: `Echo` (`Echo-Unterdrückung (AEC). Bei Lautsprechern empfohlen. Für Musik mit Kopfhörern kannst du sie ausschalten.`), `Rauschfilter` (only mode browser: `Rauschunterdrückung von WebRTC.`), `Auto-Gain` (not in original: `Auto-Gain von WebRTC. Gleicht leise und laute Mikrofone auf einen hörbaren Pegel an.`).
 
-Video tab (`VoiceSettings.tsx:340-510`): group `Kamera` (badge `Automatisch` or `1080p · 60 FPS`, 2160 → `4K`): `Gerät`, `Qualität` (selects `Auflösung` [`Auto (bis 1080p)`, 480p…1440p, `4K · 2160p`] and `Bildrate` [`Auto (bis 30 FPS)` only when auto, 15/24/30/45/60 FPS], 2 columns gap 12; apply note `Auf den laufenden Stream angewendet.` / `Bitrate und FPS-Limit gelten sofort. Die Auflösung gilt ab dem nächsten Stream.`); group `Live` (same + hint `Höhere Werte brauchen mehr Rechenleistung und Upload. Die erreichbare Qualität hängt von Quelle, Gerät und Verbindung ab.`; `Ton mitsenden` switch line (desktop text with feature `app-audio-excludes-self`: `Gilt auch während du live bist. Mitgesendet wird der Ton anderer Anwendungen, nie dein Mikrofon oder der Ton des Anrufs. Der Stream-Ton wird als Stereo-Musik übertragen, ohne Mikrofonfilter.`), `Ton von` select (default `Alle Anwendungen außer Gelabber`; quiet saved app `{name} (gerade still)`; list from `media_audio_apps`, refreshed on focus)); group `Upload` (badge bitrate or `ohne Limit`): `Sparmodus` switch, `Video-Limit` radio pills (`Ohne Limit`/`Sparmodus (2,5 Mbit/s)`, `Eigenes Limit` + number field `Mbit/s für alle Videos zusammen`), hint; footer note `Änderungen gelten beim nächsten Start und werden, soweit unterstützt, auch auf laufende Streams angewendet.`
+Video tab (`VoiceSettings.tsx:340-510`): group `Kamera` (badge `Automatisch` or `1080p · 60 FPS`, 2160 → `4K`): `Gerät`, `Qualität` (selects `Auflösung` [`Auto (bis 1080p)`, 480p…1440p, `4K · 2160p`] and `Bildrate` [`Auto (bis 30 FPS)` only when auto, 15/24/30/45/60 FPS], 2 columns gap 12; apply note `Auf den laufenden Stream angewendet.` / `Bitrate und FPS-Limit gelten sofort. Die Auflösung gilt ab dem nächsten Stream.`); group `Live` (same + hint `Höhere Werte brauchen mehr Rechenleistung und Upload. Die erreichbare Qualität hängt von Quelle, Gerät und Verbindung ab.`; `Ton mitsenden` switch line (desktop text with feature `app-audio-excludes-self`: `Gilt auch während du live bist. Mitgesendet wird der Ton anderer Anwendungen, nie dein Mikrofon oder der Ton des Anrufs. Der Live-Ton wird als Stereo-Musik übertragen, ohne Mikrofonfilter.`), `Ton von` select (default `Alle Anwendungen außer Gelabber`; quiet saved app `{name} (gerade still)`; list from `media_audio_apps`, refreshed on focus)); group `Upload` (badge bitrate or `ohne Limit`): `Sparmodus` switch, `Video-Limit` radio pills (`Ohne Limit`/`Sparmodus (2,5 Mbit/s)`, `Eigenes Limit` + number field `Mbit/s für alle Videos zusammen`), hint; footer note `Änderungen gelten beim nächsten Start und werden, soweit unterstützt, auch auf laufende Streams angewendet.`
 
 Diagnose tab: `VoiceDiagnostics.tsx` (580 lines) — sections `Übertragung` (table), `Mikrofon`, disclosure with `Video auf diesem Gerät`, `Verbindungen`, `Spuren einzeln`, `Verlauf`, `Ereignisse`. NOT specified in detail here (gap).
 
 ### 6.6 MicrophoneTest modal `Mikrofon testen` (`voice/MicrophoneTest.tsx`, `room.css:1577-1614`)
-Default modal width 448. Column gap 14: `MicIcon 36` accent-text; muted text `Der Test läuft lokal, ohne Aufnahme oder Übertragung.` (desktop); `Eingangspegel` meter, `Nach Verarbeitung` meter (24 high, accent); fieldset `Verarbeitung` (legend 600 13px; radios 500→400 13px, min-height 32, gap 8 16) with the three modes; status line (`Prüfe dein Mikrofon und vergleiche die Verarbeitung.`, `Mikrofon wird gestartet.` …); clipping `Übersteuerung erkannt. Verringere den Mic-Gain oder Gerätepegel.`; buttons primary `Test starten` / `Test beenden`, ghost `Schließen`. Desktop: uses `media_audio_monitor` + polls `media_audio_levels` (§12).
+Default modal width 448. Column gap 14: `MicIcon 36` accent-text; muted text `Der Test läuft lokal, ohne Aufnahme oder Übertragung.` (desktop); `Eingangspegel` meter, `Nach Verarbeitung` meter (24 high, accent); fieldset `Verarbeitung` (legend 600 13px; radios 500→400 13px, min-height 32, gap 8 16) with the three modes; status line (`Prüfe dein Mikrofon und vergleiche die Verarbeitung.`, `Mikrofon wird gestartet.` …); clipping `Übersteuerung erkannt. Verringere die Mikrofonverstärkung oder den Gerätepegel.`; buttons primary `Test starten` / `Test beenden`, ghost `Schließen`. Desktop: uses `media_audio_monitor` + polls `media_audio_levels` (§12).
 
 ---
 
 ## 7. Voice channel occupants in the sidebar (`components/ChannelSidebar.tsx:98-147, 723-777, 862-1000`; `index.css:819-937, 2124-2171`)
 
-Voice channel row (36 px virtual row; row box 34 high, radius 7, 14px, muted; hover bg hover + text; active bg selected + text, icon accent-text): `SpeakerIcon` drawn 17x17, gap 10, padding 0 10, name ellipsis. In own call (`is-in-voice`): text colour, icon online-text, tooltip `{name} · verbunden`. Live: badge right-aligned `LIVE` (text "Live" uppercase), padding 1 5, radius 5, danger-bg, white, 700 10px, letter-spacing .4px; tooltip `liveSentence` (e.g. `Mia ist live`).
+Voice channel row (36 px virtual row; row box 34 high, radius 7, 14px, muted; hover bg hover + text; active bg selected + text, icon accent-text): `SpeakerIcon` drawn 17x17, gap 10, padding 0 10, name ellipsis. In own call (`is-in-voice`): text colour, icon online-text, tooltip `{name} · verbunden`. Live: badge right-aligned `LIVE` (text "Live" uppercase), padding 1 5, radius 5, `--lr-live`, ink `--lr-on-live`, 700 10px, letter-spacing .4px; tooltip `liveSentence` (e.g. `Mia ist live`).
 
 Participant rows (directly under the channel, sorted by name `localeCompare(…,"de")`, name fallback `Jemand`):
 
@@ -551,11 +552,14 @@ Participant rows (directly under the channel, sorted by name `localeCompare(…,
 | Row (button) | flex, align center, gap 8, width 100%, height 28 (virtual row 28), padding 0 8 0 36, 13px muted, radius 7; hover bg hover; focus 2px focus outline inset; tooltip `Dein Profil` / `Profil und Lautstärke`; click/right-click → profile dialog |
 | Avatar | 20px, initials 9px 600; speaking ring+glow (§1.5) |
 | Name | flex 1, ellipsis; speaking → text colour |
-| Live | `LiveIcon 13`, danger |
+| Speaking | `.speaking-bars` only while speaking, between name and Live: 3 bars 3 wide, gap 2, 12 high, radius 1.5, `--lr-speaking`; each scales 35 % → 100 % over 0.9 s ease-in-out, alternate, offsets 0 / -0.3 / -0.6 s; reduced motion rests at 50 / 100 / 70 %. Hidden text `spricht` (title too) |
+| Live | `LiveIcon 13`, `--lr-live-text` |
 | Locally muted | `SpeakerOffIcon 16` muted (others only) |
 | Mute state | `HeadsetOffIcon 13` if deafened else `MicOffIcon 13` if muted, danger; title `taub` / `stumm` |
 
 Speaking here = detector && not muted/deafened.
+
+Accessible name (the web's hidden texts in order; native accesskit label): `{name}`, then `spricht`, `Live`, `taub` or `stumm` as they apply, joined by `, ` (e.g. `Bob, spricht, Live`).
 
 ---
 
@@ -572,7 +576,7 @@ Speaking here = detector && not muted/deafened.
 Camera: `toggleCamera` → `media_source_camera {options:{width,height,fps,device}}` (falls back to `device:""` unless exact); errors → toast `Die Kamera ist nicht verfügbar.` / `Die Kamera unterstützt das Streamprofil nicht.`; on air `cameraOn`, off `cameraOff`.
 
 ## 9. Watch (someone else's Live inside the call)
-- Lives are only watched in the call's own room; outside, the room/sidebar/LiveHint only say who is live. `LiveHint` pill in channel headers: `Live` badge + names + `in {channel}` + action `Beitreten` / `Zum Kanal` (`voice/LiveHint.tsx`).
+- Lives are only watched in the call's own room; outside, the room/sidebar/LiveHint only say who is live. `LiveHint` pill in channel headers: `Live` badge + names + `in {channel}` + neutral action `Zuschauen` (joins and watches the Lives there; in that call it watches them) / `Zum Kanal` (in another call: only opens the channel). The live toast has the same button and rule (`voice/LiveHint.tsx`, `voice/watchLive.ts`).
 - Once the media connection is up, `sourceWatchSupported = true` (`session.ts:1590`). A Live tile then shows the `Zuschauen` overlay until the user watches; `toggleSourceWatch(uid,"s")` (`session.ts:1426-1447`) flips local state and sends seat request `"w" {u, k:"s", on}`; turning off drops the remote stream and its sound. Subscriptions are re-sent after reconnects (`session.ts:1591-1595`).
 - While any watched Live plays, the call bar shows the stream-sound button (§5.3 #5) and the focused tile its mute action.
 
@@ -652,7 +656,7 @@ The page invokes Tauri commands (`voice/native/bridge.ts:53-58`); each was a thi
 Notes for egui: limited-quality fallback (320x180 @15 fps, `videoFeed.ts:61`) is a webview transport issue and does not apply when drawing core frames directly; frame conversion matrices BT.601 `[1.402, .3441, .7141, 1.772]`, BT.709 `[1.5748, .1873, .4681, 1.8556]`, luma scale 255/219, chroma 255/224 (`frames.ts:78-81`) — or upload I420 to a wgpu texture and convert in a shader. Request view size = drawn tile size in physical pixels (HiDPI aware).
 
 ## 13. Strings (verbatim, not listed above)
-`Bühne` (stage aria), `Ohne Kamera`, `Teilnehmer im Sprachkanal`, `Übertragungen`, `Ansicht`, `Profil von {name}`, `Optionen für {name}`, `Profil ansehen`, `Lokale Lautstärke` (volume chip title), `Lokal stummgeschaltet`, `Vollbild: {label}`, `Steuerung: {label}`, `Stream-Ton-Lautstärke`, `Stream-Ton wieder einschalten`, `Keine Vorschau in der Desktop-App.`, `Im Fenster ansehen`, `Video wird geladen …`, `Hinweis schließen`, `Aktive Medien`, `Im Anruf`, `Verbindung`, `Du sendest`, `Du empfängst`, `Pegel, den die anderen hören`, `Zum Sprechen gedrückt halten` / `Du sprichst` (touch PTT), VoiceStateIcons titles `Taub in {channel}`, `Stumm in {channel}`, `In {channel}`.
+`Bühne` (stage aria), `Ohne Kamera`, `Teilnehmer im Sprachkanal`, `Übertragungen`, `Ansicht`, `Profil von {name}`, `Optionen für {name}`, `Profil ansehen`, `Lokale Lautstärke` (volume chip title), `Lokal stummgeschaltet`, `Vollbild: {label}`, `Steuerung: {label}`, `Live-Ton-Lautstärke`, `Live-Ton wieder einschalten`, `Keine Vorschau in der Desktop-App.`, `Im Fenster ansehen`, `Video wird geladen …`, `Hinweis schließen`, `Aktive Medien`, `Im Anruf`, `Verbindung`, `Du sendest`, `Du empfängst`, `Pegel, den die anderen hören`, `Zum Sprechen gedrückt halten` / `Du sprichst` (touch PTT), VoiceStateIcons titles `Taub in {channel}`, `Stumm in {channel}`, `In {channel}`.
 
 ## 14. Icon geometry (`components/Icons.tsx`, 24-unit viewBox, stroke 2 round)
 

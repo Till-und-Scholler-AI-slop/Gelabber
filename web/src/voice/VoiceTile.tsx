@@ -62,7 +62,11 @@ type VoiceTileProps = {
   /** False where the name is written next to the tile already. */
   caption?: boolean;
   sourceWatch?: { watching: boolean; toggle: () => void };
+  /** The own Live's sound, in words: a tag beside the Live tag, the full
+   * sentence for screen readers and on hover. */
   sourceAudioNotice?: string;
+  /** Whether that sound goes out. */
+  sourceAudioOn?: boolean;
   /** Watching this Live without being in the call: how to stop. */
   onStopWatching?: () => void;
 };
@@ -167,6 +171,7 @@ function VideoSurface({
   caption = true,
   sourceWatch,
   sourceAudioNotice,
+  sourceAudioOn = false,
   onStopWatching,
   onViewer,
   onExit,
@@ -425,14 +430,6 @@ function VideoSurface({
           </button>
         </div>
       ) : null}
-      {sourceAudioNotice ? (
-        <p
-          role="status"
-          className="voice-source-audio-notice voice-source-audio-tile"
-        >
-          {sourceAudioNotice}
-        </p>
-      ) : null}
       {/* A browser stream's first frame is a moment away: no name flashes
           up for it, only a spinner if it takes longer. */}
       {!picture && !blocked && (stream === null || wait !== "idle") ? (
@@ -459,7 +456,28 @@ function VideoSurface({
       {caption && !immersive ? (
         <figcaption className="voice-video-caption">{label}</figcaption>
       ) : null}
-      {live ? <span className="voice-video-live">Live</span> : null}
+      {live || sourceAudioNotice ? (
+        <div className="voice-video-tags">
+          {live ? <span className="voice-video-live">Live</span> : null}
+          {sourceAudioNotice ? (
+            <span
+              role="status"
+              className={`voice-video-sound${sourceAudioOn ? "" : " voice-video-sound--off"}`}
+              title={sourceAudioNotice}
+            >
+              {sourceAudioOn ? (
+                <SpeakerIcon size={12} />
+              ) : (
+                <SpeakerOffIcon size={12} />
+              )}
+              <span aria-hidden="true">
+                {sourceAudioOn ? "Mit Ton" : "Ohne Ton"}
+              </span>
+              <span className="sr-only">{sourceAudioNotice}</span>
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {immersive ? (
         <>
           <WatchStrip
@@ -583,7 +601,7 @@ function StreamSoundAction() {
   return (
     <IconButton
       size="sm"
-      label="Stream-Ton stummschalten"
+      label="Live-Ton stummschalten"
       pressed={muted}
       icon={muted ? <SpeakerOffIcon size={16} /> : <SpeakerIcon size={16} />}
       onClick={() => patch({ sourceAudioMuted: !muted })}
@@ -603,9 +621,9 @@ function StreamVolume() {
       <button
         type="button"
         aria-pressed={muted}
-        aria-label="Stream-Ton stummschalten"
+        aria-label="Live-Ton stummschalten"
         title={
-          muted ? "Stream-Ton wieder einschalten" : "Stream-Ton stummschalten"
+          muted ? "Live-Ton wieder einschalten" : "Live-Ton stummschalten"
         }
         className={`voice-control voice-control-compact${muted ? " is-off" : ""}`}
         onClick={() => patch({ sourceAudioMuted: !muted })}
@@ -622,7 +640,7 @@ function StreamVolume() {
             "--lr-range-value": playbackSliderFill(volume),
           } as CSSProperties
         }
-        aria-label="Stream-Ton-Lautstärke"
+        aria-label="Live-Ton-Lautstärke"
         aria-valuetext={`${Math.round(volume * 100)} %`}
         disabled={muted || deafened}
         onChange={(event) =>

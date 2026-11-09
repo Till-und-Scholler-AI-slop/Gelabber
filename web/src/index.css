@@ -467,10 +467,11 @@ summary {
   color: var(--lr-accent-text);
 }
 /* The marker at the rail's edge: a short accent pill for something unread,
-   a tall pill in the text colour for where you are (the v0.8 design). A
-   mention keeps its red count. The hidden pill is muted, not accent: it
-   grows from and shrinks to that colour, so a pill that comes or goes
-   would otherwise flash yellow. */
+   a tall pill in the text colour for where you are (the v0.8 design). Only
+   the pill and the tile's corner mark the selection: an amber ring would
+   read as the keyboard focus ring. A mention keeps its red count. The
+   hidden pill is muted, not accent: it grows from and shrinks to that
+   colour, so a pill that comes or goes would otherwise flash yellow. */
 :is(.server-tile, .server-home-link)::before {
   content: "";
   position: absolute;
@@ -538,12 +539,6 @@ summary {
 .server-tile:hover,
 .server-tile.is-active {
   border-radius: var(--lr-radius-lg);
-}
-/* The selected server keeps its accent ring beside the pill. */
-.server-tile.is-active {
-  box-shadow:
-    0 0 0 2px var(--lr-rail),
-    0 0 0 4px var(--lr-accent);
 }
 /* An uploaded icon fills the tile and follows its rounding. */
 .server-icon-img {
@@ -826,7 +821,7 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   color: var(--lr-muted);
   font-size: 14px;
 }
-.channel-row:hover {
+.channel-row:is(:hover, .is-menu-open) {
   background: var(--lr-hover);
   color: var(--lr-text);
 }
@@ -905,8 +900,8 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   flex-shrink: 0;
   padding: 1px 5px;
   border-radius: var(--lr-radius-small);
-  background: var(--lr-danger-bg);
-  color: #fff;
+  background: var(--lr-live);
+  color: var(--lr-on-live);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.4px;
@@ -1016,7 +1011,10 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   background: var(--lr-selected);
   color: var(--lr-text);
 }
-.dm-row:hover {
+.dm-row-item {
+  position: relative;
+}
+:is(.dm-row:hover, .dm-row-item:is(:hover, .is-menu-open) > .dm-row) {
   background: var(--lr-hover);
   color: var(--lr-text);
 }
@@ -1821,11 +1819,12 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     font: 600 12px / 1 var(--lr-font);
   }
   /* Every unread badge sits inside the closed drawer; its button sums them
-     up: a red count for mentions, a dot for anything else. */
+     up: a red count for mentions, a dot for anything else. Both sit on the
+     tile's top right corner, clear of its initials. */
   .workspace-navigation-count {
     position: absolute;
-    top: 2px;
-    right: 0;
+    top: -2px;
+    right: -2px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1833,15 +1832,15 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     height: 18px;
     padding: 0 5px;
     border-radius: var(--lr-radius-full);
-    background: var(--lr-danger-bg);
-    color: var(--lr-on-danger);
+    background: var(--lr-accent);
+    color: var(--lr-accent-ink);
     box-shadow: 0 0 0 2px var(--lr-bg);
     font: 700 11px / 1 var(--lr-font);
   }
   .workspace-navigation-unread {
     position: absolute;
-    top: 7px;
-    right: 6px;
+    top: 3px;
+    right: 3px;
     width: 10px;
     height: 10px;
     border-radius: 50%;
@@ -1963,7 +1962,20 @@ html[data-reduced-motion="true"] *::after {
    while they show, and take no room otherwise: two invisible buttons cut a
    name with an unread count short ("allgem…"). */
 @media (hover: hover) {
-  .channel-row > .sidebar-row-actions {
+  /* Out of sight they are out of the accessibility tree and the Tab order
+     too; the row's link is its way in, and its menu holds the rest. */
+  :is(.channel-row, .dm-row-item):not(:hover, :focus-within, .is-menu-open)
+    > .sidebar-row-actions {
+    visibility: hidden;
+    /* Hidden only once faded out, so they fade both ways. */
+    transition:
+      opacity var(--lr-dur-fast) var(--lr-ease-exit),
+      visibility 0s linear var(--lr-dur-fast);
+  }
+  :is(.channel-row, .dm-row-item) > .sidebar-row-actions {
+    transition:
+      opacity var(--lr-dur-fast) var(--lr-ease-enter),
+      visibility 0s;
     position: absolute;
     top: 50%;
     right: 3px;
@@ -1971,6 +1983,17 @@ html[data-reduced-motion="true"] *::after {
     padding-left: 6px;
     border-radius: var(--lr-radius);
     background: inherit;
+  }
+  /* A conversation's link carries the fill; its "…" covers the badge in
+     the same colour. */
+  .dm-row-item > .sidebar-row-actions {
+    background: var(--lr-panel);
+  }
+  .dm-row-item > .dm-row.is-active + .sidebar-row-actions {
+    background: var(--lr-selected);
+  }
+  .dm-row-item:is(:hover, .is-menu-open) > .dm-row + .sidebar-row-actions {
+    background: var(--lr-hover);
   }
 }
 @media (pointer: coarse) {
@@ -2164,10 +2187,61 @@ dialog:not(.gel-modal, .ui-sheet),
   flex-shrink: 0;
   color: var(--lr-danger);
 }
+.sidebar-participant-speaking {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+/* Three level bars beside a speaking name. With less motion (the kill
+   switches below stop the animation) they rest at three heights. */
+.speaking-bars {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 12px;
+}
+.speaking-bars > span {
+  width: 3px;
+  height: 100%;
+  border-radius: 1.5px;
+  background: var(--lr-speaking);
+  scale: 1 0.35;
+  animation: lr-speaking-bars 0.9s ease-in-out infinite alternate;
+}
+.speaking-bars > span:nth-child(2) {
+  animation-delay: -0.3s;
+}
+.speaking-bars > span:nth-child(3) {
+  animation-delay: -0.6s;
+}
+@keyframes lr-speaking-bars {
+  to {
+    scale: 1 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .speaking-bars > span {
+    scale: 1 0.5;
+  }
+  .speaking-bars > span:nth-child(2) {
+    scale: 1 1;
+  }
+  .speaking-bars > span:nth-child(3) {
+    scale: 1 0.7;
+  }
+}
+html[data-reduced-motion="true"] .speaking-bars > span {
+  scale: 1 0.5;
+}
+html[data-reduced-motion="true"] .speaking-bars > span:nth-child(2) {
+  scale: 1 1;
+}
+html[data-reduced-motion="true"] .speaking-bars > span:nth-child(3) {
+  scale: 1 0.7;
+}
 .sidebar-participant-live {
   display: inline-flex;
   flex-shrink: 0;
-  color: var(--lr-danger);
+  color: var(--lr-live-text);
 }
 /* Per-participant volume in the profile dialog (#252). */
 .user-volume {

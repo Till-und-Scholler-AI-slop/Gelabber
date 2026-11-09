@@ -57,6 +57,12 @@ pub fn desktop_info(ctx: &Context) -> Option<DesktopInfo> {
         .flatten()
 }
 
+/// Tests: the desktop app's facts as [`Platform::logic`] publishes them.
+#[cfg(test)]
+pub(crate) fn show_desktop_info(ctx: &Context, info: Option<DesktopInfo>) {
+    ctx.data_mut(|d| d.insert_temp(info_id(), info));
+}
+
 /// `close_to_tray` of desktop.json, as the window's close reads it.
 static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(false);
 
@@ -129,6 +135,8 @@ pub struct Platform {
     title: String,
     /// The title bar's theme last sent.
     title_bar: Option<egui::SystemTheme>,
+    /// The last pass showed the setup screen.
+    in_setup: bool,
     /// The unread count on the Linux launcher icon.
     #[cfg(target_os = "linux")]
     badge: Option<(tray::unity::Badge, u32)>,
@@ -161,6 +169,7 @@ impl Platform {
             updates: update::Updater::default(),
             title: "Gelabber".into(),
             title_bar: None,
+            in_setup: false,
             #[cfg(target_os = "linux")]
             badge: None,
             wake,
@@ -261,20 +270,27 @@ impl Platform {
             )
         });
         let now = ctx.input(|i| i.time);
-        // Title bar and decorations in the theme's mode; the setup screen
-        // follows the system, as its page does.
-        let title_bar = match &app {
-            Some(_) if crate::theme::Theme::of(ctx).is_dark() => egui::SystemTheme::Dark,
-            Some(_) => egui::SystemTheme::Light,
-            None => egui::SystemTheme::SystemDefault,
+        // Title bar and decorations in the theme's mode, the setup screen's
+        // too (it shows in the active theme, as the sign-in pages).
+        let title_bar = if crate::theme::Theme::of(ctx).is_dark() {
+            egui::SystemTheme::Dark
+        } else {
+            egui::SystemTheme::Light
         };
         if self.title_bar != Some(title_bar) {
             self.title_bar = Some(title_bar);
             ctx.send_viewport_cmd(ViewportCommand::SetTheme(title_bar));
         }
         self.updates.setup(ctx);
+        self.in_setup = app.is_none();
         let Some(app) = app else {
             self.show_unread(ctx, tray::Unread::default());
+            // "Jetzt installieren" on the setup screen: no call to wait for.
+            if self.updates.tick_setup(ctx) {
+                self.quitting = true;
+                ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(ViewportCommand::Close);
+            }
             return;
         };
         let client = app.client().clone();
@@ -459,8 +475,12 @@ impl Platform {
         self.stored.window = Some(window);
     }
 
-    /// Over the page: the update notice.
+    /// Over the page: the update notice. Not over a setup screen whose card
+    /// shows the update and installs it already.
     pub fn paint(&mut self, ctx: &Context) {
+        if self.in_setup && update::setup_view(ctx).is_some_and(|v| v.installs) {
+            return;
+        }
         self.updates.paint(ctx);
     }
 

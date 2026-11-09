@@ -23,10 +23,12 @@ import {
 
 import { can } from "../servers/permissions.ts";
 import type { ServerDetail } from "../servers/types.ts";
+import { InviteDialog } from "../components/InviteDialog.tsx";
 import { MemberProfileDialog } from "../components/MemberProfileDialog.tsx";
 import {
   FocusIcon,
   GridIcon,
+  LinkIcon,
   MicIcon,
   SpeakerIcon,
   TheaterExitIcon,
@@ -85,7 +87,8 @@ type StageTile = {
   speaking?: boolean;
 };
 
-/** Empty seats before joining: a room with nobody in it shows a few. */
+/** Empty seats before joining: a room with nobody in it shows a few, the
+ * overview one. */
 const FREE_SEATS_EMPTY = 3;
 
 export function VoiceRoom({
@@ -98,8 +101,8 @@ export function VoiceRoom({
   channelId: string;
   channelName: string;
   /** The overview's room: its name heads it, with "Verbunden" while in the
-   * call, and the people are all it shows; no line about them, no free
-   * seats. The channel's page names the room itself. */
+   * call, then its people as compact cards and one free seat; no line
+   * about them. The channel's page names the room itself. */
   overview?: boolean;
 }) {
   const allowed = can(server, "join_voice");
@@ -125,6 +128,7 @@ export function VoiceRoom({
     serverId: string;
     memberId: string;
   } | null>(null);
+  const [inviting, setInviting] = useState(false);
   const choices = useStageChoices((state) => choicesFor(state, roomKey));
   const pinned = choices.pinned;
   // A phone keeps its column of pictures; Fokus and its row are for wider
@@ -215,12 +219,13 @@ export function VoiceRoom({
       return {
         sourceAudioNotice:
           status === "unavailable"
-            ? "Kein Stream-Ton freigegeben · Video läuft weiter"
+            ? "Kein Live-Ton freigegeben · Video läuft weiter"
             : status === "ended"
-              ? "Stream-Ton beendet · Video läuft weiter"
+              ? "Live-Ton beendet · Video läuft weiter"
               : status === "sharing"
                 ? "Ton wird mitgesendet"
                 : undefined,
+        sourceAudioOn: status === "sharing",
       };
     }
     if (here && voice.sourceWatchSupported)
@@ -377,11 +382,13 @@ export function VoiceRoom({
     .map(([id]) => members.get(id)?.name ?? "Jemand");
   const elsewhere = voice.status === "joined" && !here;
   const freeSeats =
-    here || !allowed || overview
+    here || !allowed
       ? 0
-      : occupants.length === 0
+      : occupants.length === 0 && !overview
         ? FREE_SEATS_EMPTY
         : 1;
+  // Nobody else here: the space under the room asks for company.
+  const askCompany = !overview && !staged && others.length === 0;
 
   const person = (id: string, flags: { muted: boolean; deafened: boolean }) => {
     const camera = cameras.get(id);
@@ -677,6 +684,25 @@ export function VoiceRoom({
           <QuickCallSettingsButton variant="secondary" />
         </div>
       ) : null}
+      {askCompany ? (
+        <div className="voice-room-invite">
+          <p>Fehlt noch jemand?</p>
+          <Button
+            size="sm"
+            icon={<LinkIcon size={16} />}
+            onClick={() => setInviting(true)}
+          >
+            Einladen
+          </Button>
+        </div>
+      ) : null}
+      {/* Its own lifetime: whoever the link brings in ends the prompt, not
+          the dialog, so the link can still be copied. */}
+      <InviteDialog
+        server={server}
+        open={inviting}
+        onClose={() => setInviting(false)}
+      />
       {profile?.serverId === server.id ? (
         <MemberProfileDialog
           server={server}

@@ -18,6 +18,7 @@ import { ChipGroup } from "../components/ui/ChipGroup.tsx";
 import { IconButton } from "../components/ui/IconButton.tsx";
 import { Popover } from "../components/ui/Popover.tsx";
 import { Select } from "../components/ui/Select.tsx";
+import { useTooltip } from "../components/ui/Tooltip.tsx";
 import { canChooseSpeaker, useCapabilities } from "./capabilities.ts";
 import {
   deviceChoices,
@@ -46,23 +47,27 @@ export function QuickCallSettingsButton({
 }) {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
+  const tip = useTooltip({ label: "Anrufeinstellungen", disabled: open });
   return (
     <>
       <IconButton
+        {...tip.trigger}
         ref={anchor}
         variant={variant}
-        label="Voice-Einstellungen"
+        label="Anrufeinstellungen"
+        title={false}
         aria-haspopup="dialog"
         aria-expanded={open}
         icon={<GearIcon size={17} />}
         onClick={() => setOpen((value) => !value)}
         className={className}
       />
+      {tip.tooltip}
       <Popover
         open={open}
         onClose={() => setOpen(false)}
         anchor={anchor}
-        label="Voice-Einstellungen"
+        label="Anrufeinstellungen"
         placement="top-end"
         className="voice-quick-settings"
       >
@@ -78,17 +83,21 @@ export function CallSoundButton({ className }: { className?: string }) {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
   const muted = useMediaSettings((s) => s.sourceAudioMuted);
+  const tip = useTooltip({ label: "Lautstärke", disabled: open });
   return (
     <>
       <IconButton
+        {...tip.trigger}
         ref={anchor}
         label="Lautstärke"
+        title={false}
         aria-haspopup="dialog"
         aria-expanded={open}
         icon={muted ? <SpeakerOffIcon size={17} /> : <SpeakerIcon size={17} />}
         onClick={() => setOpen((value) => !value)}
         className={`${className ?? ""}${muted ? " is-off" : ""}`}
       />
+      {tip.tooltip}
       <Popover
         open={open}
         onClose={() => setOpen(false)}
@@ -119,7 +128,7 @@ export function CallSound() {
       />
       <Volume
         id={`${ids}-stream`}
-        label="Stream-Ton"
+        label="Live-Ton"
         value={settings.sourceAudioVolume}
         disabled={deafened || muted}
         onChange={(sourceAudioVolume) => settings.patch({ sourceAudioVolume })}
@@ -127,11 +136,11 @@ export function CallSound() {
           <button
             type="button"
             aria-pressed={muted}
-            aria-label="Stream-Ton stummschalten"
+            aria-label="Live-Ton stummschalten"
             title={
               muted
-                ? "Stream-Ton wieder einschalten"
-                : "Stream-Ton stummschalten"
+                ? "Live-Ton wieder einschalten"
+                : "Live-Ton stummschalten"
             }
             className={`voice-control voice-control-compact${muted ? " is-off" : ""}`}
             onClick={() => settings.patch({ sourceAudioMuted: !muted })}
@@ -246,7 +255,7 @@ export function QuickCallSettings({ onMore }: { onMore: () => void }) {
       />
       <Volume
         id={`${ids}-stream`}
-        label="Stream-Ton"
+        label="Live-Ton"
         value={settings.sourceAudioVolume}
         disabled={settings.sourceAudioMuted}
         onChange={(sourceAudioVolume) => settings.patch({ sourceAudioVolume })}

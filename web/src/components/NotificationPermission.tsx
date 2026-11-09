@@ -14,7 +14,8 @@ function permission(): NotificationPermissionState {
     : Notification.permission;
 }
 
-export function NotificationPermissionStatus() {
+/** `id` names the status line, for the switch it describes. */
+export function NotificationPermissionStatus({ id }: { id?: string }) {
   const [state, setState] = useState(permission);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -56,8 +57,8 @@ export function NotificationPermissionStatus() {
     }
   };
   return (
-    <div className="settings-note">
-      <p role="status">
+    <div className="settings-row-note">
+      <p id={id} role="status">
         {notificationPermissionText(state, {
           // The Tauri app is not bound by the browser's HTTPS rule.
           secure: device.secure || device.native,
@@ -83,6 +84,7 @@ export function NotificationPermissionStatus() {
       )}
       {state === "default" && (
         <Button
+          size="sm"
           className="mt-2"
           pending={pending}
           onClick={() => void request()}

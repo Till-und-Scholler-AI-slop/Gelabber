@@ -5,7 +5,8 @@ import { Badge } from "./ui/Badge.tsx";
 
 /**
  * A titled group of settings. The tag says where they are kept: on this
- * device only, or with the account on every device.
+ * device only, or with the account on every device. A quiet tag: the
+ * accent is for the page's actions.
  */
 export function SettingsGroup({
   title,
@@ -28,9 +29,5 @@ export function SettingsGroup({
 }
 
 export function ScopeTag({ scope }: { scope: SettingsScope }) {
-  return (
-    <Badge tone={scope === "account" ? "accent" : "neutral"}>
-      {SCOPE_LABEL[scope]}
-    </Badge>
-  );
+  return <Badge>{SCOPE_LABEL[scope]}</Badge>;
 }

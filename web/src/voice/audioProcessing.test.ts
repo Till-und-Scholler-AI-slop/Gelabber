@@ -64,7 +64,7 @@ describe("microphone processor ownership", () => {
       expect(result.processor.stream).toBe(second.raw);
       expect(result.processor.nativeFallback).toBe(true);
       expect(result.processor.info.inputGain).toBe(1);
-      expect(result.processor.info.message).toContain("Mic-Gain 100 %");
+      expect(result.processor.info.message).toContain("Mikrofonverstärkung 100 %");
       expect(result.processor.info.actual).toBe(
         mode === "original" ? "original" : "browser",
       );

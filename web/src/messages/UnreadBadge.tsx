@@ -2,10 +2,11 @@ import { useState } from "react";
 
 import { Badge as Pill } from "../components/ui/Badge.tsx";
 import { badgeSeen } from "./badgeEntrance.ts";
+import { unreadLabel } from "./notifyLevel.ts";
 import { useReadState } from "./readState.ts";
 import { useBadge, type BadgeScope } from "./useBadge.ts";
 
-/** A red number for mentions and direct messages, a dot for other unread
+/** An accent number for mentions and direct messages, a dot for other unread
  * messages (notifyLevel.ts). Lists that mark unread rows themselves pass
  * `showDot={false}`: the dot is then only read out. */
 export function UnreadBadge({
@@ -43,7 +44,7 @@ export function UnreadBadge({
         // A named, non-live element: rail links reference it as their
         // description, while a live region would announce every count change.
         role="img"
-        aria-label={`${count > 99 ? "Mehr als 99" : count} Benachrichtigungen`}
+        aria-label={unreadLabel({ count, dot }) ?? undefined}
       >
         {count > 99 ? "99+" : count}
       </Pill>
@@ -52,7 +53,7 @@ export function UnreadBadge({
   if (!showDot)
     return (
       <span id={id} className="sr-only">
-        Ungelesene Nachrichten
+        {unreadLabel({ count, dot })}
       </span>
     );
   return (
@@ -60,7 +61,7 @@ export function UnreadBadge({
       className={["unread-dot", fresh, className].filter(Boolean).join(" ")}
       id={id}
       role="img"
-      aria-label="Ungelesene Nachrichten"
+      aria-label={unreadLabel({ count, dot }) ?? undefined}
     />
   );
 }

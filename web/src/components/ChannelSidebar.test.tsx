@@ -11,6 +11,7 @@ import { resetUserVolumesForTests } from "../voice/userVolume.ts";
 const fixture = vi.hoisted(() => ({
   badges: {} as Record<string, Badge>,
   drafts: [] as string[],
+  speaking: [] as string[],
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -32,6 +33,11 @@ vi.mock("../messages/useBadge.ts", () => ({
     fixture.badges[channelId ?? ""] ?? { count: 0, dot: false },
   useBadges: () => new Map(),
 }));
+vi.mock("../voice/speaking.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../voice/speaking.ts")>()),
+  useSpeaking: (_server: string, _channel: string, userId: string) =>
+    fixture.speaking.includes(userId),
+}));
 vi.mock("../messages/drafts.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../messages/drafts.ts")>()),
   useHasDraft: (_userId: string | null, channelId: string) =>
@@ -47,6 +53,7 @@ import {
 beforeEach(() => {
   fixture.badges = {};
   fixture.drafts = [];
+  fixture.speaking = [];
 });
 afterEach(() => resetUserVolumesForTests());
 
@@ -139,7 +146,6 @@ function row({
       stop
       hintId={undefined}
       onEdit={noop}
-      onDelete={noop}
       onMenu={noop}
     />,
   );
@@ -219,27 +225,37 @@ describe("channel row", () => {
     expect(html).not.toContain("Entwurf");
   });
 
-  it("shows edit and delete beside the row for a mouse", () => {
+  it("shows edit and the menu beside the row for a mouse, named by the channel", () => {
     const html = row({ coarse: false });
-    expect(html).toContain('aria-label="Kanal bearbeiten"');
-    expect(html).toContain('aria-label="Kanal löschen"');
-    expect(html).not.toContain("Aktionen für");
+    expect(html).toContain('aria-label="#termine bearbeiten"');
+    expect(html).toMatch(
+      /aria-label="Aktionen für #termine" aria-haspopup="menu" aria-expanded="false"/,
+    );
+    // Deleting is in the menu only.
+    expect(html).not.toContain("löschen");
+    // The link is the row's way in; the actions take no Tab stop.
+    expect(html.match(/tabindex="0"/g)).toHaveLength(1);
+    expect(html).toMatch(/<a [^>]*tabindex="0"/);
   });
 
   it("opens the actions by a long press on a touch screen", () => {
     const html = row({ coarse: true });
-    expect(html).not.toContain('aria-label="Kanal bearbeiten"');
-    expect(html).not.toContain('aria-label="Kanal löschen"');
+    expect(html).not.toContain("bearbeiten");
     // One button stays for screen readers, shown once a keyboard reaches it.
     expect(html).toMatch(
       /<span class="sr-only focus-within:not-sr-only"><button [^>]*aria-label="Aktionen für #termine"/,
     );
   });
 
-  it("has no actions for members who cannot manage channels", () => {
-    const html = row({ coarse: true, manage: false });
+  it("gives members the menu of a text channel, without edit", () => {
+    const html = row({ coarse: false, manage: false });
+    expect(html).toContain('aria-label="Aktionen für #termine"');
+    expect(html).not.toContain("bearbeiten");
+  });
+
+  it("has no actions on a voice channel for members", () => {
+    const html = row({ coarse: false, manage: false, voice: true });
     expect(html).not.toContain("Aktionen für");
-    expect(html).not.toContain("Kanal löschen");
   });
 });
 
@@ -269,5 +285,33 @@ describe("sidebar voice participant", () => {
     expect(html).toContain("Bob");
     expect(html).toContain('<span class="sr-only">stumm</span>');
     expect(html).not.toContain("Lokal stummgeschaltet");
+  });
+
+  const speaker = (flags: Partial<typeof participant.flags>) => {
+    fixture.speaking = ["u-bob"];
+    return renderToStaticMarkup(
+      <ParticipantRowView
+        row={{ ...participant, flags: { ...participant.flags, ...flags } }}
+        serverId="srv"
+        onOpenProfile={() => {}}
+      />,
+    );
+  };
+
+  it("says speaking in shape and in words, not by the ring alone", () => {
+    const html = speaker({ muted: false });
+    expect(html).toContain('class="sidebar-participant is-speaking"');
+    expect(html).toMatch(
+      /<span class="speaking-bars" aria-hidden="true"><span><\/span><span><\/span><span><\/span><\/span><span class="sr-only">spricht<\/span>/,
+    );
+  });
+
+  it("says nobody speaks who is muted or deafened", () => {
+    for (const flags of [{ muted: true }, { muted: false, deafened: true }]) {
+      const html = speaker(flags);
+      expect(html).not.toContain("speaking-bars");
+      expect(html).not.toContain("spricht");
+      expect(html).not.toContain("is-speaking");
+    }
   });
 });

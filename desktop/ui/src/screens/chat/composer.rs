@@ -613,7 +613,7 @@ pub fn show(
             ui,
             &format!("Nachricht an {}", input.placeholder),
             DRAFT,
-            mix(c.panel, c.subtle, 0.8),
+            c.subtle,
         );
         let clip = ui.painter().with_clip_rect(text_rect);
         hint.paint(&clip, pos2(text_rect.left() + 6.0, text_rect.top() + 6.0));

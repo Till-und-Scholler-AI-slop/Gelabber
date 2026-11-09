@@ -38,6 +38,7 @@ pub struct TextField<'a> {
     autofocus: bool,
     disabled: bool,
     char_limit: Option<usize>,
+    alert: bool,
 }
 
 impl<'a> TextField<'a> {
@@ -53,6 +54,7 @@ impl<'a> TextField<'a> {
             autofocus: false,
             disabled: false,
             char_limit: None,
+            alert: false,
         }
     }
 
@@ -70,6 +72,13 @@ impl<'a> TextField<'a> {
     /// The error under the field; also turns the border red.
     pub fn error(mut self, error: Option<&'a str>) -> Self {
         self.error = error;
+        self
+    }
+
+    /// Announces the error as an alert: for a form whose one field carries
+    /// the form's error (there is no `FormError` summary to announce it).
+    pub fn alert(mut self, alert: bool) -> Self {
+        self.alert = alert;
         self
     }
 
@@ -260,9 +269,17 @@ impl<'a> TextField<'a> {
             .map(|e| (e, c.danger))
             .or(self.hint.map(|h| (h, c.muted)));
         if let Some((note, color)) = note {
+            // The field's description, as aria-describedby on the web.
+            ui.ctx()
+                .accesskit_node_builder(response.id, |node| node.set_description(note));
             y += space::S1_5;
             let block = Block::wrapped(ui, note, text::META, color, width);
             block.paint(ui.painter(), pos2(top.x, y));
+            if self.alert && self.error.is_some() {
+                let rect = Rect::from_min_size(pos2(top.x, y), block.size());
+                let alert = ui.interact(rect, self.id.with("alert"), Sense::hover());
+                super::announce(&alert, egui::Role::Alert, note);
+            }
             y += layout_unit(block.height());
         }
         let rect = Rect::from_min_max(top, pos2(top.x + width, y));

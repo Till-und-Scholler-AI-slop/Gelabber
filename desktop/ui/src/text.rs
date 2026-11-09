@@ -11,7 +11,9 @@ use std::sync::Arc;
 
 use egui::epaint::text::VariationCoords;
 use egui::text::{LayoutJob, TextFormat};
-use egui::{Align, Color32, FontFamily, FontId, Galley, Painter, Pos2, Rect, Stroke, Ui, Vec2};
+use egui::{
+    Align, Color32, FontFamily, FontId, Galley, Painter, Pos2, Rect, Sense, Stroke, Ui, Vec2,
+};
 
 use crate::fonts;
 
@@ -225,12 +227,46 @@ pub struct Block {
     pub galley: Arc<Galley>,
     pub style: TextStyle,
     job: LayoutJob,
+    /// Character ranges that are drawn covered (hidden spoilers): a
+    /// selection neither copies nor announces them.
+    hidden: Vec<(usize, usize)>,
 }
 
 impl Block {
     pub fn new(ui: &Ui, job: LayoutJob, style: TextStyle) -> Self {
         let galley = ui.fonts_mut(|f| f.layout_job(job.clone()));
-        Self { galley, style, job }
+        Self {
+            galley,
+            style,
+            job,
+            hidden: Vec::new(),
+        }
+    }
+
+    /// Keeps the characters `chars` (start, end) out of what a selection
+    /// copies and what screen readers read, like `aria-hidden` text.
+    pub fn hide(&mut self, chars: (usize, usize)) {
+        if chars.0 < chars.1 {
+            self.hidden.push(chars);
+        }
+    }
+
+    fn is_hidden(&self, index: usize) -> bool {
+        self.hidden.iter().any(|(a, b)| (*a..*b).contains(&index))
+    }
+
+    /// The text without its hidden characters.
+    pub fn visible_text(&self) -> std::borrow::Cow<'_, str> {
+        let text = self.galley.text();
+        if self.hidden.is_empty() {
+            return text.into();
+        }
+        text.chars()
+            .enumerate()
+            .filter(|(i, _)| !self.is_hidden(*i))
+            .map(|(_, c)| c)
+            .collect::<String>()
+            .into()
     }
 
     pub fn single(ui: &Ui, text: &str, style: TextStyle, color: Color32) -> Self {
@@ -277,7 +313,84 @@ impl Block {
 
     /// Paints in one colour, ignoring the runs' own colours.
     pub fn paint_tinted(&self, painter: &Painter, top_left: Pos2, color: Option<Color32>) {
-        let ppp = painter.ctx().pixels_per_point();
+        let (pos, galley) = self.placed(painter.ctx(), top_left);
+        match color {
+            Some(color) => painter.galley_with_override_text_color(pos, galley, color),
+            None => painter.galley(pos, galley, Color32::PLACEHOLDER),
+        }
+    }
+
+    /// Senses the block's box at `top_left` for selecting its text, like
+    /// selectable text in the browser: press, drag and click, never the
+    /// keyboard focus. Sense it before the links and buttons over the
+    /// text, so they stay on top; paint with [`Self::paint_selectable`].
+    pub fn select(&self, ui: &Ui, id: egui::Id, top_left: Pos2) -> egui::Response {
+        let rect = Rect::from_min_size(top_left, self.size());
+        let response = ui.interact(rect, id, Sense::click_and_drag() - Sense::FOCUSABLE);
+        let text = self.visible_text();
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &text));
+        response
+    }
+
+    /// Paints like [`Self::paint`] with the selection from `response`
+    /// ([`Self::select`]): a drag selects on into the next selectable
+    /// block, a double click a word, Ctrl+C copies.
+    pub fn paint_selectable(&self, ui: &Ui, response: &egui::Response, top_left: Pos2) {
+        let (pos, galley) = self.placed(ui.ctx(), top_left);
+        let galley = self.masked(galley);
+        egui::text_selection::LabelSelectionState::label_text_selection(
+            ui,
+            response,
+            pos,
+            galley.clone(),
+            Color32::PLACEHOLDER,
+            Stroke::NONE,
+        );
+        crate::selection::note(ui, &galley);
+    }
+
+    /// `galley` as a selection sees it: each hidden character is
+    /// [`crate::selection::HIDDEN`] in its text and a space to screen
+    /// readers, one for one, so cursors and glyphs keep their places.
+    fn masked(&self, galley: Arc<Galley>) -> Arc<Galley> {
+        if self.hidden.is_empty() {
+            return galley;
+        }
+        let mut masked = (*galley).clone();
+        let mut job = (*masked.job).clone();
+        job.text = job
+            .text
+            .chars()
+            .enumerate()
+            .map(|(i, c)| {
+                if self.is_hidden(i) {
+                    crate::selection::HIDDEN
+                } else {
+                    c
+                }
+            })
+            .collect();
+        masked.job = Arc::new(job);
+        // A row's glyphs are its characters; its newline follows them.
+        let mut start = 0;
+        for placed in &mut masked.rows {
+            let count = placed.char_count_including_newline().0;
+            if (start..start + placed.row.glyphs.len()).any(|i| self.is_hidden(i)) {
+                let row = Arc::make_mut(&mut placed.row);
+                for (n, glyph) in row.glyphs.iter_mut().enumerate() {
+                    if self.is_hidden(start + n) {
+                        glyph.chr = ' ';
+                    }
+                }
+            }
+            start += count;
+        }
+        Arc::new(masked)
+    }
+
+    /// The galley and where it goes for `top_left`: on Blink's pixel rows.
+    fn placed(&self, ctx: &egui::Context, top_left: Pos2) -> (Pos2, Arc<Galley>) {
+        let ppp = ctx.pixels_per_point();
         // A fractional x goes into the layout as leading space, so glyphs
         // keep their sub-pixel positions instead of being resampled.
         let x_px = top_left.x * ppp;
@@ -285,7 +398,7 @@ impl Block {
         let galley = if frac.abs() > 0.01 && !self.job.sections.is_empty() {
             let mut job = self.job.clone();
             job.sections[0].leading_space += frac;
-            painter.ctx().fonts_mut(|f| f.layout_job(job))
+            ctx.fonts_mut(|f| f.layout_job(job))
         } else {
             self.galley.clone()
         };
@@ -295,11 +408,10 @@ impl Block {
             .and_then(|r| r.glyphs.first().map(|g| r.pos.y + g.pos.y))
             .unwrap_or(0.0);
         let baseline = ((top_left.y + self.style.baseline()) * ppp).round() / ppp;
-        let pos = Pos2::new(x_px.floor() / ppp, baseline - first_baseline);
-        match color {
-            Some(color) => painter.galley_with_override_text_color(pos, galley, color),
-            None => painter.galley(pos, galley, Color32::PLACEHOLDER),
-        }
+        (
+            Pos2::new(x_px.floor() / ppp, baseline - first_baseline),
+            galley,
+        )
     }
 
     /// The rect of section `index` in the first row it appears in, relative
@@ -343,6 +455,38 @@ pub fn show(ui: &mut Ui, block: &Block) -> egui::Response {
         block.paint(ui.painter(), rect.min);
     }
     response
+}
+
+/// A child of `ui` that paints and senses only inside `clip` (a code
+/// block's box), for selectable text that overflows it: only what
+/// shows can be pressed on.
+pub fn clipped(ui: &mut Ui, clip: Rect) -> Ui {
+    let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(clip));
+    inner.set_clip_rect(clip.intersect(ui.clip_rect()));
+    inner
+}
+
+/// Senses and paints `block` at `top_left` as selectable text, clipped to
+/// `clip` (see [`clipped`]).
+pub fn selectable_in(
+    ui: &mut Ui,
+    block: &Block,
+    id: egui::Id,
+    top_left: Pos2,
+    clip: Rect,
+) -> egui::Response {
+    let inner = clipped(ui, clip);
+    let response = block.select(&inner, id, top_left);
+    block.paint_selectable(&inner, &response, top_left);
+    response
+}
+
+/// Adds `one` to the union of selectable text responses in `all`.
+pub fn join(all: &mut Option<egui::Response>, one: egui::Response) {
+    *all = Some(match all.take() {
+        Some(all) => all | one,
+        None => one,
+    });
 }
 
 #[cfg(test)]

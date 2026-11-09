@@ -288,14 +288,14 @@ describe("why a share has no sound", () => {
     await cases.desktopBrowser();
     fixture.voice.sourceAudio = { s: "unavailable" };
     const html = session();
-    expect(html).toContain("Der Browser hat keinen Stream-Ton freigegeben.");
+    expect(html).toContain("Der Browser hat keinen Live-Ton freigegeben.");
     expect(html.match(/voice-session-notice/g)).toHaveLength(1);
     expect(
       dockNotices(
         { sourceAudio: { s: "ended" }, localScreen: null },
         { sharesSound: true },
       ).map((notice) => notice.text),
-    ).toEqual(["Der Stream-Ton wurde beendet. Das Video läuft weiter."]);
+    ).toEqual(["Der Live-Ton wurde beendet. Das Video läuft weiter."]);
     // The call bar speaks of Live, never of a share.
     expect(
       dockNotices(
@@ -305,11 +305,11 @@ describe("why a share has no sound", () => {
         },
         { sharesSound: true },
       ).map((notice) => notice.text),
-    ).toEqual(["Stream-Ton ab dem nächsten Live."]);
+    ).toEqual(["Ton ab dem nächsten Live."]);
   });
 
   it("browser: sound switched on during a Live comes with the next one", async () => {
-    const note = "Stream-Ton ab dem nächsten Live.";
+    const note = "Ton ab dem nächsten Live.";
     await cases.desktopBrowser();
     const running = { id: "screen" } as MediaStream;
     Object.assign(fixture.voice, { sharing: true, localScreen: running });
@@ -355,6 +355,6 @@ describe("the own Live's tile", () => {
     fixture.voice.sourceAudio = { s: "sharing" };
     expect(tile(LIVE)).toBe("Ton wird mitgesendet");
     fixture.voice.sourceAudio = { s: "unavailable" };
-    expect(tile(LIVE)).toBe("Kein Stream-Ton freigegeben · Video läuft weiter");
+    expect(tile(LIVE)).toBe("Kein Live-Ton freigegeben · Video läuft weiter");
   });
 });

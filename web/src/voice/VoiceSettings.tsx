@@ -74,6 +74,7 @@ export function MediaSettingsForm({
   const [microphoneTest, setMicrophoneTest] = useState(false);
   const { devices, loaded, reveal } = useMediaDevices();
   const [revealFailed, setRevealFailed] = useState(false);
+  const [cameraRevealFailed, setCameraRevealFailed] = useState(false);
   const chooseSpeaker = canChooseSpeaker();
   const capable = useCapabilities();
   const processingModes = AUDIO_PROCESSING;
@@ -113,8 +114,14 @@ export function MediaSettingsForm({
                 </Button>
               </div>
             )}
+            {/* Next to the microphone, in view when the dialog opens. */}
+            <div className="media-actions">
+              <Button size="sm" onClick={() => setMicrophoneTest(true)}>
+                Mikrofon testen und vergleichen
+              </Button>
+            </div>
           </SettingRow>
-          <SettingRow label="Mic-Gain" htmlFor="input-gain">
+          <SettingRow label="Mikrofonverstärkung" htmlFor="input-gain">
             <Slider
               id="input-gain"
               min={0}
@@ -144,14 +151,9 @@ export function MediaSettingsForm({
                 ),
               )}
             </div>
-            <div className="media-actions">
-              <p role="status" className="media-hint">
-                {processing.message}
-              </p>
-              <Button size="sm" onClick={() => setMicrophoneTest(true)}>
-                Mikrofon testen und vergleichen
-              </Button>
-            </div>
+            <p role="status" className="media-hint">
+              {processing.message}
+            </p>
           </SettingRow>
         </SettingsGroup>
       )}
@@ -190,7 +192,7 @@ export function MediaSettingsForm({
               }
             />
           </SettingRow>
-          <SettingRow label="Stream-Ton" htmlFor="source-audio-volume">
+          <SettingRow label="Live-Ton" htmlFor="source-audio-volume">
             <Slider
               id="source-audio-volume"
               min={0}
@@ -208,7 +210,7 @@ export function MediaSettingsForm({
             />
             <Toggle
               id="source-audio-muted"
-              label="Stream-Ton stummschalten"
+              label="Live-Ton stummschalten"
               checked={settings.sourceAudioMuted}
               onChange={(sourceAudioMuted) =>
                 settings.patch({ sourceAudioMuted })
@@ -329,14 +331,23 @@ export function MediaSettingsForm({
               onChange={(value) => settings.patch({ videoInputId: value })}
             />
             {loaded && needsDeviceLabels(devices.videoinput) && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="self-start"
-                onClick={() => void reveal("video")}
-              >
-                Kameranamen anzeigen
-              </Button>
+              <div className="media-settings-reveal">
+                <p className="text-xs text-lr-muted">
+                  {cameraRevealFailed
+                    ? "Der Browser gibt die Kameranamen ohne Kamerazugriff nicht heraus."
+                    : "Die Kameranamen zeigt der Browser erst, wenn du den Kamerazugriff erlaubst."}
+                </p>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    void reveal("video").then((ok) =>
+                      setCameraRevealFailed(!ok),
+                    )
+                  }
+                >
+                  Kameranamen anzeigen
+                </Button>
+              </div>
             )}
           </SettingRow>
           <SettingRow label="Qualität">
@@ -382,7 +393,7 @@ export function MediaSettingsForm({
                 >
                   Gilt ab deinem nächsten Live; Ausschalten wirkt sofort. Wähle
                   den Ton im Browserdialog aus; je nach Browser und Quelle ist
-                  nur Video verfügbar. Der Stream-Ton wird als Stereo-Musik
+                  nur Video verfügbar. Der Live-Ton wird als Stereo-Musik
                   übertragen, ohne Mikrofonfilter.
                 </SwitchLine>
               </SettingRow>
@@ -404,8 +415,8 @@ export function MediaSettingsForm({
               }
             >
               {settings.economyMode
-                ? `Ausdrückliche Obergrenzen: Sprache ${audioLimit! / 1000} kbit/s, Stream-Ton 128 kbit/s, Video gemeinsam ${formatVideoBitrate(videoLimit!)}.`
-                : `Für wenig Upload: Sprache ${AUDIO_QUALITY.normal.bitrate / 1000} kbit/s, Stream-Ton 128 kbit/s, Video gemeinsam ${formatVideoBitrate(VIDEO_SEND_BUDGET)}.`}
+                ? `Ausdrückliche Obergrenzen: Sprache ${audioLimit! / 1000} kbit/s, Live-Ton 128 kbit/s, Video gemeinsam ${formatVideoBitrate(videoLimit!)}.`
+                : `Für wenig Upload: Sprache ${AUDIO_QUALITY.normal.bitrate / 1000} kbit/s, Live-Ton 128 kbit/s, Video gemeinsam ${formatVideoBitrate(VIDEO_SEND_BUDGET)}.`}
             </SwitchLine>
           </SettingRow>
           <SettingRow label="Video-Limit">

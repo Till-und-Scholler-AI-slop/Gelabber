@@ -192,13 +192,9 @@ export function Participant({
             {self ? <span className="voice-room-self"> (du)</span> : null}
           </button>
         </strong>
-        {/* `data-media`: the overview shows this line only for a camera or
-            a Live; the state is the corner's icons and the speaking ring.
-            A tile and a chip say it to a screen reader only. */}
-        <span
-          className="voice-room-participant-status"
-          data-media={media ? "" : undefined}
-        >
+        {/* The state, then a camera or a Live. A tile and a chip say it to
+            a screen reader only. */}
+        <span className="voice-room-participant-status">
           {status}
           {media ? ` · ${media}` : ""}
         </span>

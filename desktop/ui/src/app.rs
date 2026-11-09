@@ -466,6 +466,7 @@ impl GelabberApp {
     fn frame(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         let now = ctx.input(|i| i.time);
+        crate::style::scroll_activity(&ctx);
         self.session.poll(now);
         if let Some(result) = poll(&mut self.mail_check) {
             self.account_mail = Some(

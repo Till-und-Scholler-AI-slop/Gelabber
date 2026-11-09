@@ -47,6 +47,9 @@ type PopoverProps = {
   role?: "dialog" | "menu";
   children: ReactNode;
   className?: string;
+  /** Esc inside: true when the content took it (a submenu closed), so the
+   * popover stays open. */
+  onEscape?: () => boolean;
 };
 
 type SurfaceProps = PopoverProps & {
@@ -103,10 +106,12 @@ function AnchoredPopover({
   role = "dialog",
   children,
   className,
+  onEscape,
   onSurface,
   state,
 }: SurfaceProps) {
   const panel = useRef<HTMLDivElement>(null);
+  const escape = useLatest(onEscape);
   const attach = useCallback(
     (element: HTMLDivElement | null) => {
       panel.current = element;
@@ -162,6 +167,7 @@ function AnchoredPopover({
       // Handled here: an enclosing dialog must not close on the same Esc.
       event.preventDefault();
       event.stopPropagation();
+      if (escape.current?.()) return;
       opener.focus({ preventScroll: true });
       close.current();
     };
@@ -186,7 +192,7 @@ function AnchoredPopover({
       element.removeEventListener("focusout", onFocusOut);
       returnFocus(element, opener);
     };
-  }, [open, anchor, close, placement, host]);
+  }, [open, anchor, close, escape, placement, host]);
 
   return (
     <>

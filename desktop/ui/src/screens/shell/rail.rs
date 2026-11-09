@@ -6,6 +6,7 @@ use egui::{Color32, CornerRadius, Id, Rect, Shape, Stroke, Ui, Vec2, pos2};
 use uuid::Uuid;
 
 use super::common;
+use super::row_menu::{self, Owner};
 use super::state::{self, AddStep};
 use crate::app::AppCtx;
 use crate::icons::{self, Icon};
@@ -44,11 +45,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
         let last = memory.dm.filter(|id| s.dm(*id).is_some());
         (s.dms_badge(now), last)
     });
-    let response =
-        common::click(ui, home, Id::unique("rail-home")).on_hover_text("Direktnachrichten");
+    let home_id = Id::unique("rail-home");
+    let response = common::click(ui, home, home_id).on_hover_text("Direktnachrichten");
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, "Direktnachrichten"));
-    if response.secondary_clicked() {
-        super::overlays::open_notifications(ui.ctx(), super::overlays::Target::all_dms());
+    common::describe_unread(ui, &response, dm_badge);
+    // Its menu marks every conversation read.
+    if response.secondary_clicked() || row_menu::menu_key(ui, &response) {
+        row_menu::open(ui.ctx(), Owner::AllDms, home, Some(home_id));
     }
     let lit = response.hovered() || dm_active;
     if lit {
@@ -185,11 +188,10 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
                     ui.scroll_to_rect(tile, None);
                 }
                 response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, name));
-                if response.secondary_clicked() {
-                    super::overlays::open_notifications(
-                        ui.ctx(),
-                        super::overlays::Target::server(*id, name),
-                    );
+                common::describe_unread(ui, &response, *badge);
+                // Its menu: mark read, mute, notifications.
+                if response.secondary_clicked() || row_menu::menu_key(ui, &response) {
+                    row_menu::open(ui.ctx(), Owner::Server(*id, name.clone()), tile, Some(item));
                 }
                 let summary = if badge.count > 0 {
                     Some(if badge.count > 99 {
@@ -206,9 +208,12 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
                 } else {
                     None
                 };
-                Tooltip::new(name)
-                    .detail(summary.as_deref())
-                    .on_hover_or_focus(&response, Side::Right);
+                // The open menu takes the tooltip's place.
+                if !row_menu::is_open_for(ui.ctx(), *id) {
+                    Tooltip::new(name)
+                        .detail(summary.as_deref())
+                        .on_hover_or_focus(&response, Side::Right);
+                }
                 server_tile(
                     ui,
                     app,
@@ -298,7 +303,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
 }
 
 /// One server tile: tint and letters (or the icon), round at rest and the
-/// theme's corner while hovered or active, the accent ring when active.
+/// theme's corner while hovered or active. The edge pill marks the active
+/// one; an accent ring would read as the keyboard focus ring.
 #[allow(clippy::too_many_arguments)]
 fn server_tile(
     ui: &Ui,
@@ -321,10 +327,6 @@ fn server_tile(
     );
     let round = theme.radius.lg * 2.2;
     let radius = round + (theme.radius.lg - round) * t;
-    if active {
-        painter.rect_filled(tile.expand(4.0), corner(radius + 4.0), c.accent);
-        painter.rect_filled(tile.expand(2.0), corner(radius + 2.0), c.rail);
-    }
     let opacity = if muted { 0.6 } else { 1.0 };
     let texture = icon.and_then(|url| match app.images.get(ui.ctx(), url) {
         ImageState::Ready(texture) => Some(texture),

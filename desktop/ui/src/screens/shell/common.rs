@@ -11,6 +11,36 @@ use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, mix};
 use crate::widgets::Presence;
 
+/// What a screen reader hears for an unread badge (`unreadLabel` in
+/// messages/notifyLevel.ts): always the word "ungelesen", since the dot or
+/// the bold row alone says nothing to it.
+pub fn unread_label(badge: gelabber_client::Badge) -> Option<String> {
+    match badge.count {
+        n if n > 99 => Some("Mehr als 99 ungelesene Benachrichtigungen".to_owned()),
+        1 => Some("1 ungelesene Benachrichtigung".to_owned()),
+        n if n > 0 => Some(format!("{n} ungelesene Benachrichtigungen")),
+        _ => badge.dot.then(|| "Ungelesene Nachrichten".to_owned()),
+    }
+}
+
+/// A row's accessible name followed by its unread state, as the web's row
+/// links read their hidden badge text after the name.
+pub fn with_unread(name: &str, badge: gelabber_client::Badge) -> String {
+    match unread_label(badge) {
+        Some(unread) => format!("{name}, {unread}"),
+        None => name.to_owned(),
+    }
+}
+
+/// The unread state as the link's description (`aria-describedby` on the
+/// web's rail links): the name stays the server's own.
+pub fn describe_unread(ui: &Ui, response: &Response, badge: gelabber_client::Badge) {
+    if let Some(unread) = unread_label(badge) {
+        ui.ctx()
+            .accesskit_node_builder(response.id, |node| node.set_description(unread));
+    }
+}
+
 /// One line, cut with `…` at `max_width` (`text-overflow: ellipsis`).
 pub fn line(ui: &Ui, text: &str, style: TextStyle, color: Color32, max_width: f32) -> Block {
     let mut job = text::job(text, style, color, None);
@@ -336,15 +366,15 @@ mod tests {
         assert_eq!(
             keys,
             [
-                "Kanal in dieser Kategorie",
-                "Kategorie umbenennen",
-                "Kategorie löschen",
-                "Kategorie löschen",
-                "Kanal in dieser Kategorie",
-                "Kategorie löschen",
-                "Kategorie umbenennen",
+                "Kanal in „Sprachkanäle“ erstellen",
+                "Aktionen für Kategorie „Sprachkanäle“",
+                "Aktionen für Kategorie „Sprachkanäle“",
+                "Aktionen für Kategorie „Sprachkanäle“",
+                "Kanal in „Sprachkanäle“ erstellen",
+                "Aktionen für Kategorie „Sprachkanäle“",
+                "Kanal in „Sprachkanäle“ erstellen",
                 "Wohnzimmer",
-                "Kanal in dieser Kategorie",
+                "Kanal in „Sprachkanäle“ erstellen",
                 "allgemein"
             ]
         );
@@ -357,8 +387,39 @@ mod tests {
         harness.run_steps(2);
         assert_eq!(
             focused_label(&harness).as_deref(),
-            Some("Kanal in dieser Kategorie")
+            Some("Kanal in „Sprachkanäle“ erstellen")
         );
+    }
+
+    /// A channel's actions: → reaches them from the link, named by the
+    /// channel; out of the row they are gone, and Tab comes back to the
+    /// link, not to a hidden button.
+    #[test]
+    fn row_actions_show_with_focus_and_hide_after() {
+        use egui_kittest::kittest::Queryable;
+        let _config = TempConfig::new("shell-row-actions");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for_label(&mut harness, "allgemein");
+        for _ in 0..8 {
+            harness.key_press(egui::Key::Tab);
+            harness.run_steps(2);
+        }
+        assert_eq!(focused_label(&harness).as_deref(), Some("allgemein"));
+        let mut keys = Vec::new();
+        for key in [egui::Key::ArrowRight, egui::Key::ArrowRight] {
+            harness.key_press(key);
+            harness.run_steps(2);
+            keys.push(focused_label(&harness).unwrap_or_default());
+        }
+        assert_eq!(keys, ["#allgemein bearbeiten", "Aktionen für #allgemein"]);
+        harness.key_press(egui::Key::Tab);
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Aktionen für #allgemein").is_none());
+        assert!(harness.query_by_label("#allgemein bearbeiten").is_none());
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
+        harness.run_steps(2);
+        assert_eq!(focused_label(&harness).as_deref(), Some("allgemein"));
     }
 
     /// "Zum Inhalt springen" (AppShell.tsx): the next Tab is the page's,
@@ -386,5 +447,30 @@ mod tests {
         harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
         harness.run_steps(2);
         assert_eq!(focused_label(&harness).as_deref(), Some("Benutzermenü"));
+    }
+
+    /// notifyLevel.ts `unreadLabel`: every unread state says "ungelesen".
+    #[test]
+    fn unread_names_say_unread() {
+        use super::with_unread;
+        use gelabber_client::Badge;
+        let badge = |count, dot| Badge { count, dot };
+        assert_eq!(with_unread("spiele", badge(0, false)), "spiele");
+        assert_eq!(
+            with_unread("spiele", badge(0, true)),
+            "spiele, Ungelesene Nachrichten"
+        );
+        assert_eq!(
+            with_unread("Jonas", badge(1, true)),
+            "Jonas, 1 ungelesene Benachrichtigung"
+        );
+        assert_eq!(
+            with_unread("musik", badge(7, false)),
+            "musik, 7 ungelesene Benachrichtigungen"
+        );
+        assert_eq!(
+            with_unread("musik", badge(120, true)),
+            "musik, Mehr als 99 ungelesene Benachrichtigungen"
+        );
     }
 }

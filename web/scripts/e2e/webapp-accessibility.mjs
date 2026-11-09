@@ -368,6 +368,80 @@ try {
   );
 
   await check(
+    "row menu opens by keyboard, walks its submenu and Escape restores focus",
+    async () => {
+      // A mouse and keyboard: on a touch screen the menu is a bottom sheet.
+      const desk = await browser.newContext({
+        storageState: await member.context.storageState(),
+        viewport: { width: 1280, height: 720 },
+      });
+      contexts.push(desk);
+      const page = await desk.newPage();
+      page.setDefaultTimeout(12_000);
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto(`${base}${chatPath}`);
+      const link = page.locator(`a.channel-row-link[href="${chatPath}"]`);
+      const entry = (name) => page.getByRole("menuitem", { name, exact: true });
+      const menu = page.getByRole("menu", { name: /^#/ });
+      await link.focus();
+      await page.keyboard.press("Shift+F10");
+      await menu.waitFor();
+      await until(
+        () => focused(entry("Als gelesen markieren")),
+        Boolean,
+        "row-menu-first-entry",
+      );
+      await page.keyboard.press("ArrowDown");
+      const mute = entry("Stummschalten");
+      assert.ok(await focused(mute), "↓ did not reach Stummschalten");
+      await page.keyboard.press("ArrowRight");
+      await until(
+        () => focused(entry("15 Minuten")),
+        Boolean,
+        "row-submenu-first-entry",
+      );
+      await page.keyboard.press("ArrowDown");
+      assert.ok(await focused(entry("1 Stunde")), "↓ in the submenu");
+      // Beside the menu, not held and clipped by it while it still grows.
+      const [box, sub] = await Promise.all([
+        menu.boundingBox(),
+        page.getByRole("menu", { name: "Stummschalten" }).boundingBox(),
+      ]);
+      assert.ok(
+        box && sub && sub.x >= box.x + box.width,
+        "the submenu is not beside the menu",
+      );
+      await page.screenshot({ path: `${output}/06c-row-submenu-keyboard.png` });
+      // Esc closes the submenu first, back on its entry; Ende and ↓ wrap.
+      await page.keyboard.press("Escape");
+      await entry("15 Minuten").waitFor({ state: "hidden" });
+      assert.ok(await focused(mute), "Esc lost the submenu's entry");
+      await page.keyboard.press("End");
+      assert.ok(
+        await focused(entry("Benachrichtigungseinstellungen…")),
+        "Ende did not reach the last entry",
+      );
+      await page.keyboard.press("ArrowDown");
+      assert.ok(
+        await focused(entry("Als gelesen markieren")),
+        "↓ did not wrap to the first entry",
+      );
+      await page.keyboard.press("Escape");
+      await menu.waitFor({ state: "hidden" });
+      assert.ok(await focused(link), "Esc did not return focus to the row");
+      // From the row's "…" too: the menu keys work anywhere in the row.
+      await link.hover();
+      const more = page.getByRole("button", { name: /^Aktionen für #/ });
+      await more.focus();
+      await page.keyboard.press("Shift+F10");
+      await menu.waitFor();
+      await page.keyboard.press("Escape");
+      await menu.waitFor({ state: "hidden" });
+      assert.ok(await focused(more), "Esc did not return focus to the …");
+    },
+  );
+
+  await check(
     "search opens context by keyboard and closing restores its trigger",
     async () => {
       // Strg+F focuses the header field; typing filters in place (#377).
@@ -681,13 +755,13 @@ try {
       );
       await page.keyboard.press("Enter");
       const settings = dock.getByRole("button", {
-        name: "Voice-Einstellungen",
+        name: "Anrufeinstellungen",
         exact: true,
       });
       await tabTo(settings);
       await page.keyboard.press("Enter");
       const dialog = page.getByRole("dialog", {
-        name: "Voice & Video",
+        name: "Audio & Video",
         exact: true,
       });
       await dialog.waitFor();

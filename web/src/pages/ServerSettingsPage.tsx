@@ -5,12 +5,15 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
+  useEffect,
+  useId,
   useRef,
   useState,
   type ChangeEvent,
   type CSSProperties,
   type FormEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 
 import { useUserId } from "../auth/scope.ts";
@@ -63,6 +66,7 @@ import {
 import { validateName } from "../servers/rules.ts";
 import type { Invite, Permission, ServerDetail } from "../servers/types.ts";
 import { presenceOf, usePresenceStore } from "../ws/live.ts";
+import { sectionInView, type SectionJump } from "./sectionSpy.ts";
 import "./settings.css";
 
 const NOT_SAVED = {
@@ -120,9 +124,94 @@ function serverSettingsSections(manage: boolean): SectionId[] {
 
 const sectionId = (id: SectionId) => `server-settings-${id}`;
 
+/**
+ * The section in view, for the anchor row. A jump marks its section even
+ * where the page cannot scroll that heading up to the row (the short last
+ * ones), until the reader scrolls on.
+ */
+function useCurrentSection(
+  sections: readonly SectionId[],
+  scroller: RefObject<HTMLDivElement | null>,
+  nav: RefObject<HTMLElement | null>,
+) {
+  const [current, setCurrent] = useState(sections[0]);
+  const jumped = useRef<SectionJump<SectionId> | null>(null);
+  const key = sections.join(" ");
+
+  useEffect(() => {
+    const element = scroller.current;
+    if (!element) return;
+    const ids = key.split(" ") as SectionId[];
+    const update = () => {
+      const line = nav.current?.getBoundingClientRect().bottom ?? 0;
+      const headings = ids.flatMap((id) => {
+        const heading = document.getElementById(sectionId(id));
+        return heading
+          ? [{ id, top: heading.getBoundingClientRect().top - line }]
+          : [];
+      });
+      const view = sectionInView({
+        headings,
+        scrollTop: element.scrollTop,
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        jump: jumped.current,
+      });
+      jumped.current = view.jump;
+      setCurrent((before) => view.current ?? before);
+    };
+    update();
+    element.addEventListener("scroll", update, { passive: true });
+    // Invites and bans load later and move the sections below them.
+    const resized =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    resized?.observe(element);
+    if (element.lastElementChild) resized?.observe(element.lastElementChild);
+    return () => {
+      element.removeEventListener("scroll", update);
+      resized?.disconnect();
+    };
+  }, [key, scroller, nav]);
+
+  // On a narrow window the row scrolls sideways: keep the marked link in it.
+  useEffect(() => {
+    const row = nav.current;
+    const link = row?.querySelector('[aria-current="location"]');
+    if (!row || !link || row.scrollWidth <= row.clientWidth) return;
+    const bounds = row.getBoundingClientRect();
+    const box = link.getBoundingClientRect();
+    if (box.left < bounds.left)
+      row.scrollBy({ left: box.left - bounds.left - 32 });
+    else if (box.right > bounds.right)
+      row.scrollBy({ left: box.right - bounds.right + 32 });
+  }, [current, nav]);
+
+  const jump = (id: SectionId) => {
+    const element = scroller.current;
+    const heading = document.getElementById(sectionId(id));
+    if (!element || !heading) return;
+    // Only this scroller moves: scrollIntoView would also shift the shell
+    // around it (it scrolls clipped ancestors too).
+    const margin = parseFloat(getComputedStyle(heading).scrollMarginTop) || 0;
+    element.scrollBy({
+      top:
+        heading.getBoundingClientRect().top -
+        element.getBoundingClientRect().top -
+        margin,
+    });
+    heading.focus({ preventScroll: true });
+    jumped.current = { id, scrollTop: element.scrollTop };
+    setCurrent(id);
+  };
+  return [current, jump] as const;
+}
+
 function Settings({ server }: { server: ServerDetail }) {
   const manage = can(server, "manage_server");
   const sections = serverSettingsSections(manage);
+  const scroller = useRef<HTMLDivElement>(null);
+  const nav = useRef<HTMLElement>(null);
+  const [current, jump] = useCurrentSection(sections, scroller, nav);
   return (
     <div className="settings-screen">
       <header className="lr-channel-header settings-header">
@@ -131,18 +220,17 @@ function Settings({ server }: { server: ServerDetail }) {
           <span className="settings-header-context"> · {server.name}</span>
         </h1>
       </header>
-      <div className="settings-scroll">
-        <nav className="server-settings-nav" aria-label="Abschnitte">
+      <div ref={scroller} className="settings-scroll">
+        <nav ref={nav} className="server-settings-nav" aria-label="Abschnitte">
           {sections.map((id) => (
             <a
               key={id}
               href={`#${sectionId(id)}`}
+              aria-current={id === current ? "location" : undefined}
               onClick={(event) => {
                 // Scroll inside the page; the address stays the server's.
                 event.preventDefault();
-                const heading = document.getElementById(sectionId(id));
-                heading?.scrollIntoView({ block: "start" });
-                heading?.focus({ preventScroll: true });
+                jump(id);
               }}
             >
               {SECTION_LABEL[id]}
@@ -195,6 +283,9 @@ function NameSection({ server }: { server: ServerDetail }) {
   const update = useUpdateServer(server.id);
   const status = useInlineStatus();
   const dirty = name.trim() !== server.name;
+  // As on Profil: why Speichern waits, next to it.
+  const unchanged = !dirty && !update.isPending && !status.status;
+  const unchangedId = useId();
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -215,7 +306,10 @@ function NameSection({ server }: { server: ServerDetail }) {
   };
 
   return (
-    <Section id="allgemein">
+    <Section
+      id="allgemein"
+      hint="Ein neues Bild gilt sofort, den Namen übernimmst du mit Speichern."
+    >
       <IconRow server={server} />
       <form onSubmit={onSubmit} noValidate className="settings-form">
         <Field
@@ -236,9 +330,15 @@ function NameSection({ server }: { server: ServerDetail }) {
             pending={update.isPending}
             pendingLabel="Speichert…"
             disabled={!dirty}
+            aria-describedby={unchanged ? unchangedId : undefined}
           >
             Speichern
           </SubmitButton>
+          {unchanged ? (
+            <span id={unchangedId} className="settings-hint">
+              Keine Änderungen.
+            </span>
+          ) : null}
           <InlineStatus status={status.status} />
         </div>
       </form>

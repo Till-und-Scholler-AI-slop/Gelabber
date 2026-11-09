@@ -107,9 +107,14 @@ impl Toasts {
     }
 
     /// `notifyError(error, failed)`: `failed` names the change that did not
-    /// happen ("Nachricht nicht gelöscht."), the error says why.
-    pub fn failure(&mut self, failed: &str, error: &ApiError) {
-        if let Some(text) = error_text(error) {
+    /// happen ("Nachricht nicht gelöscht."), the error says why; `gone`
+    /// replaces the generic text for a `not_found`.
+    pub fn failure(&mut self, failed: &str, gone: Option<&str>, error: &ApiError) {
+        let text = gone
+            .filter(|_| error.code() == "not_found")
+            .map(str::to_owned)
+            .or_else(|| error_text(error));
+        if let Some(text) = text {
             self.error(format!("{failed} {text}"));
         }
     }
@@ -423,6 +428,36 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_message_is_named() {
+        let mut t = Toasts::default();
+        let gone = gelabber_client::store::gone_text("react:1");
+        t.failure(
+            "Reaktion nicht gespeichert.",
+            gone,
+            &api("not_found", serde_json::Value::Null),
+        );
+        // Another error keeps its own text.
+        t.failure(
+            "Reaktion nicht gespeichert.",
+            gone,
+            &api("forbidden", serde_json::Value::Null),
+        );
+        t.failure(
+            "Nachricht nicht gelöscht.",
+            None,
+            &api("not_found", serde_json::Value::Null),
+        );
+        assert_eq!(
+            t.texts(),
+            [
+                "Reaktion nicht gespeichert. Die Nachricht gibt es nicht mehr.",
+                "Reaktion nicht gespeichert. Dafür fehlt dir die Berechtigung.",
+                "Nachricht nicht gelöscht. Das gibt es nicht (mehr).",
+            ]
+        );
+    }
+
+    #[test]
     fn error_texts_follow_the_web() {
         assert_eq!(
             error_text(&api("forbidden", serde_json::Value::Null)).as_deref(),
@@ -486,8 +521,13 @@ mod tests {
                     crate::theme::set(ui.ctx(), Theme::dark());
                     let mut toasts = toasts.borrow_mut();
                     for notice in c.take_notices() {
-                        if let gelabber_client::Notice::Failed { failed, error } = notice {
-                            toasts.failure(failed, &error);
+                        if let gelabber_client::Notice::Failed {
+                            failed,
+                            gone,
+                            error,
+                        } = notice
+                        {
+                            toasts.failure(failed, gone, &error);
                         }
                     }
                     toasts.show(ui, true);
@@ -502,8 +542,13 @@ mod tests {
         client.fail_op("delete:2", api("unauthenticated", serde_json::Value::Null));
         let mut t = Toasts::default();
         for notice in client.take_notices() {
-            if let gelabber_client::Notice::Failed { failed, error } = notice {
-                t.failure(failed, &error);
+            if let gelabber_client::Notice::Failed {
+                failed,
+                gone,
+                error,
+            } = notice
+            {
+                t.failure(failed, gone, &error);
             }
         }
         assert!(t.texts().is_empty());

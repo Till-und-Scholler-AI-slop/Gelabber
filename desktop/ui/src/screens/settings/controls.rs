@@ -17,9 +17,12 @@ use crate::icons::{self, Icon};
 use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner, mix};
 use crate::widgets::{
-    Badge, BadgeTone, Checkbox, InlineStatus, Popover, StatusTone, Switch, eased, focus_ring,
-    keyboard_focus, snap,
+    Badge, Checkbox, InlineStatus, Popover, StatusTone, Switch, eased, focus_ring, keyboard_focus,
+    snap,
 };
+
+/// The width of a settings area's rows and forms (`--settings-measure`).
+pub const MEASURE: f32 = 720.0;
 
 // ------------------------------------------------------------------ text
 
@@ -67,8 +70,8 @@ pub fn header(ui: &Ui, page: Rect, title: &str, context: Option<&str>) {
     }
 }
 
-/// The scrolling body under the header. The scrollbar floats and shows
-/// only while the pointer is near, like the reference's hidden one.
+/// The scrolling body under the header. The app's scrollbar (style.rs),
+/// floating over the content without a gutter of its own.
 pub fn scroll<R>(
     ui: &mut Ui,
     rect: Rect,
@@ -78,14 +81,7 @@ pub fn scroll<R>(
 ) -> (R, f32) {
     let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
     child.set_clip_rect(rect);
-    {
-        let scroll = &mut child.spacing_mut().scroll;
-        scroll.floating = true;
-        scroll.bar_width = 8.0;
-        scroll.floating_width = 2.0;
-        scroll.dormant_handle_opacity = 0.0;
-        scroll.dormant_background_opacity = 0.0;
-    }
+    child.spacing_mut().scroll.floating_allocated_width = 0.0;
     let mut area = egui::ScrollArea::vertical()
         .id_salt(Id::unique(("gelabber-settings-scroll", id)))
         .auto_shrink([false, false]);
@@ -152,19 +148,15 @@ pub enum Scope {
 impl Scope {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Account => "Für deinen Account",
+            Self::Account => "Für dein Konto",
             Self::Device => "Nur dieses Gerät",
         }
     }
 }
 
-/// `ScopeTag`: the accent or neutral badge.
+/// `ScopeTag`: a quiet neutral badge, the accent is for the page's actions.
 pub fn scope_tag(ui: &mut Ui, scope: Scope) -> Response {
-    let tone = match scope {
-        Scope::Account => BadgeTone::Accent,
-        Scope::Device => BadgeTone::Neutral,
-    };
-    ui.add(Badge::new(scope.label()).tone(tone))
+    ui.add(Badge::new(scope.label()))
 }
 
 /// `.settings-area-heading`: title (+ tag) and description, then 24px.
@@ -223,6 +215,47 @@ pub fn switch_row(
     on: &mut bool,
     disabled: bool,
 ) -> bool {
+    switch_row_ruled(ui, id, label, description, on, disabled, None)
+}
+
+/// `.settings-row-noted`: a switch row with a note boxed under it (what
+/// decides the switch), the hairline below both.
+pub fn switch_row_noted(
+    ui: &mut Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    label: &str,
+    on: &mut bool,
+    disabled: bool,
+    note: &str,
+) -> bool {
+    // The note describes the switch for screen readers too
+    // (`aria-describedby` on the web).
+    let changed = switch_row_ruled(ui, id, label, None, on, disabled, Some(note));
+    let theme = Theme::of(ui.ctx());
+    let c = &theme.c;
+    // `.settings-row-note`: padding 10 12, radius md, surface, meta muted.
+    let width = ui.available_width();
+    let block = Block::wrapped(ui, note, HINT, c.muted, width - 24.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, block.height() + 20.0), Sense::hover());
+    ui.painter()
+        .rect_filled(rect, corner(theme.radius.md), c.surface);
+    block.paint(ui.painter(), rect.min + vec2(12.0, 10.0));
+    // Padding-bottom 12, then the row's hairline.
+    let (gap, _) = ui.allocate_exact_size(vec2(width, 13.0), Sense::hover());
+    crate::widgets::rule_h(ui.painter(), c.border, gap.x_range(), gap.bottom() - 1.0);
+    changed
+}
+
+fn switch_row_ruled(
+    ui: &mut Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    label: &str,
+    description: Option<&str>,
+    on: &mut bool,
+    disabled: bool,
+    // A noted row draws its hairline under the note, not here.
+    note: Option<&str>,
+) -> bool {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
     let width = ui.available_width();
@@ -244,6 +277,7 @@ pub fn switch_row(
     let id = Id::unique(("gelabber-switch-row", id));
     // The row is the switch's label, as `<label>` around the web's input.
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, !disabled, *on, label));
+    describe(ui, response.id, note);
     let mut changed = false;
     if response.clicked() && !disabled {
         *on = !*on;
@@ -258,7 +292,9 @@ pub fn switch_row(
             pos2(rect.left(), inner_top + label_block.height() + 4.0),
         );
     }
-    crate::widgets::rule_h(painter, c.border, rect.x_range(), rect.bottom() - 1.0);
+    if note.is_none() {
+        crate::widgets::rule_h(painter, c.border, rect.x_range(), rect.bottom() - 1.0);
+    }
     let switch_rect = Rect::from_min_size(
         pos2(
             rect.right() - 38.0,
@@ -274,6 +310,7 @@ pub fn switch_row(
     );
     // `<label>` of the switch input: the row's text names it.
     sw.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, !disabled, *on, label));
+    describe(ui, sw.id, note);
     if sw.changed() && !changed {
         *on = value;
         changed = true;
@@ -282,6 +319,14 @@ pub fn switch_row(
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     changed
+}
+
+/// The accessible description of the widget `id`, if there is one.
+fn describe(ui: &Ui, id: Id, note: Option<&str>) {
+    if let Some(note) = note {
+        ui.ctx()
+            .accesskit_node_builder(id, |node| node.set_description(note));
+    }
 }
 
 // ----------------------------------------------------------------- chips
@@ -1009,6 +1054,32 @@ pub const IMAGE_FILTER: [&str; 6] = ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.gi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The note under a switch describes it, as `aria-describedby` does on
+    /// the web; a plain switch row has no description.
+    #[test]
+    fn a_noted_switch_is_described_by_its_note() {
+        use egui_kittest::kittest::{By, NodeT, Queryable};
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            crate::fonts::install(ui.ctx());
+            let (mut a, mut b) = (false, false);
+            switch_row_noted(ui, "noted", "Mit Hinweis", &mut a, false, "Blockiert.");
+            switch_row(ui, "plain", "Ohne Hinweis", None, &mut b, false);
+        });
+        harness.run();
+        let switches = |label: &'static str| {
+            harness
+                .query_all(By::new().role(egui::accesskit::Role::Switch).label(label))
+                .map(|n| n.accesskit_node().description())
+                .collect::<Vec<_>>()
+        };
+        let noted = switches("Mit Hinweis");
+        assert!(!noted.is_empty());
+        assert!(noted.iter().all(|d| d.as_deref() == Some("Blockiert.")));
+        let plain = switches("Ohne Hinweis");
+        assert!(!plain.is_empty());
+        assert!(plain.iter().all(Option::is_none));
+    }
 
     #[test]
     fn crops_to_the_target_ratio() {

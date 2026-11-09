@@ -233,19 +233,12 @@ pub fn card(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid, p: &Person)
     let id = Id::unique(("voice-card", p.id));
     let hover = ui.rect_contains_pointer(shown);
     let body = ui.interact(shown, id, Sense::click());
-    if p.speaking {
-        painter.rect_stroke(
-            shown.expand(0.5),
-            corner(theme.radius.lg + 0.5),
-            Stroke::new(1.0, c.speaking),
-            StrokeKind::Middle,
-        );
-    }
+    // Who speaks is the avatar's ring and the status line; the border stays.
     painter.rect(
         shown,
         corner(theme.radius.lg),
         c.surface,
-        Stroke::new(1.0, if p.speaking { c.speaking } else { c.border }),
+        Stroke::new(1.0, c.border),
         StrokeKind::Inside,
     );
     let inner_w = shown.width() - 2.0 - 24.0;
@@ -319,18 +312,25 @@ pub fn card(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid, p: &Person)
 
 /// A free seat (`.voice-room-seat`): a dashed 64px circle and "Platz frei".
 pub fn seat(ui: &Ui, rect: Rect) {
+    seat_sized(ui, rect, 64.0, 14.0, 12.0);
+}
+
+/// A free seat with a `diameter` circle, centred between the paddings
+/// `top` and `bottom` (the overview's compact seat: 56, 12, 12).
+pub fn seat_sized(ui: &Ui, rect: Rect, diameter: f32, top: f32, bottom: f32) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let label = Block::single(ui, "Platz frei", text::META, c.subtle);
-    let content = 64.0 + 6.0 + 2.0 + label.height();
-    let top = rect.top() + 14.0 + (rect.height() - 26.0 - content) / 2.0;
-    let center = pos2(rect.center().x, top + 32.0);
-    look::dashed_circle(ui.painter(), center, 32.0, 1.5, c.border_strong);
+    let content = diameter + 6.0 + 2.0 + label.height();
+    let y = rect.top() + top + (rect.height() - top - bottom - content) / 2.0;
+    let r = diameter / 2.0;
+    let center = pos2(rect.center().x, y + r);
+    look::dashed_circle(ui.painter(), center, r, 1.5, c.border_strong);
     label.paint(
         ui.painter(),
         pos2(
             rect.center().x - label.width() / 2.0,
-            top + 64.0 + 6.0 + 2.0,
+            y + diameter + 6.0 + 2.0,
         ),
     );
 }
@@ -386,19 +386,11 @@ pub fn chip(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid, p: &Person)
     let painter = ui.painter().clone();
     let id = Id::unique(("voice-chip", p.id));
     let body = ui.interact(shown, id, Sense::click());
-    if p.speaking {
-        painter.rect_stroke(
-            shown.expand(0.5),
-            corner(22.5),
-            Stroke::new(1.0, c.speaking),
-            StrokeKind::Middle,
-        );
-    }
     painter.rect(
         shown,
         corner(theme.radius.full),
         c.surface,
-        Stroke::new(1.0, if p.speaking { c.speaking } else { c.border }),
+        Stroke::new(1.0, c.border),
         StrokeKind::Inside,
     );
     let cy = shown.center().y;
@@ -472,14 +464,6 @@ pub fn strip_person(
         painter.add(shadow.as_shape(rect, corner(theme.radius.md)));
         c.panel.gamma_multiply(0.92)
     } else {
-        if p.speaking {
-            painter.rect_stroke(
-                rect.expand(0.5),
-                corner(theme.radius.md + 0.5),
-                Stroke::new(1.0, c.speaking),
-                StrokeKind::Middle,
-            );
-        }
         c.surface
     };
     painter.rect_filled(rect, corner(theme.radius.md), fill.gamma_multiply(opacity));
@@ -550,10 +534,8 @@ pub fn live_sound_notice(sound: &gelabber_call::LiveSound) -> Option<String> {
         LiveSound::Off => None,
         LiveSound::Sharing => Some("Ton wird mitgesendet".into()),
         LiveSound::Silent(app) => Some(format!("Kein Ton von „{app}“")),
-        LiveSound::Unavailable(_) => {
-            Some("Stream-Ton nicht aufgenommen · Video läuft weiter".into())
-        }
-        LiveSound::Ended => Some("Stream-Ton beendet · Video läuft weiter".into()),
+        LiveSound::Unavailable(_) => Some("Live-Ton nicht aufgenommen · Video läuft weiter".into()),
+        LiveSound::Ended => Some("Live-Ton beendet · Video läuft weiter".into()),
     }
 }
 
@@ -601,8 +583,7 @@ fn paint_limit(ui: &Ui, painter: &Painter, rect: Rect, live: bool, id: Id, limit
     response.on_hover_text(reason);
 }
 
-/// A dark note over the picture's lower part (`.voice-source-audio-tile`,
-/// `.voice-fullscreen-error`).
+/// A dark note over the picture's lower part (`.voice-fullscreen-error`).
 fn tile_note(ui: &Ui, painter: &Painter, rect: Rect, text_s: &str, pad: Vec2, fill: Color32) {
     let width = rect.width() - 24.0;
     let block = Block::wrapped(
@@ -794,52 +775,47 @@ pub fn picture(
     }
     // The speaking ring lies over the picture, under the labels.
     if pic.speaking {
-        let t = look::glow_opacity(ui);
-        for i in 0..6 {
-            let a = 0.5 * t * (1.0 - i as f32 / 6.0) * 0.35;
-            painter.rect_stroke(
-                rect.shrink(3.0 + i as f32 * 3.0),
-                corner((radius - 3.0 - i as f32 * 3.0).max(0.0)),
-                Stroke::new(3.0, c.speaking.gamma_multiply(a)),
-                StrokeKind::Inside,
-            );
-        }
-        painter.rect_stroke(
-            rect,
-            corner(radius),
-            Stroke::new(3.0, c.speaking),
-            StrokeKind::Inside,
-        );
+        look::picture_speaking_edge(ui, &painter, rect, radius);
     }
     let kino_focus = place == Place::KinoFocus;
     let strip = place.strip();
-    // The Live badge, top left.
+    // The Live badge, top left; beside it, on the own Live, what becomes of
+    // its sound (`.voice-video-tags`).
     if live && !kino_focus {
         let style = TextStyle::new(11.0, 600.0, 1.3);
-        let label = Block::single(ui, "Live", style, Color32::WHITE);
+        let label = Block::single(ui, "Live", style, c.on_live);
         let inset = if strip { 6.0 } else { 8.0 };
         let badge = Rect::from_min_size(
             rect.min + vec2(inset, inset),
             vec2(label.width() + 12.0, label.height() + 4.0),
         );
-        painter.rect_filled(badge, corner(theme.radius.xs), c.danger_bg);
+        painter.rect_filled(badge, corner(theme.radius.xs), c.live);
         label.paint(&painter, badge.min + vec2(6.0, 2.0));
-    }
-    // The own Live says what becomes of its sound, under the name pill
-    // (the caption's z-index 2).
-    if live
-        && pic.own
-        && !strip
-        && let Some(notice) = live_sound_notice(&app.call.with_state(|s| s.live_sound.clone()))
-    {
-        tile_note(
-            ui,
-            &painter,
-            rect,
-            &notice,
-            vec2(8.0, 5.0),
-            Color32::from_rgba_unmultiplied(21, 24, 25, 223),
-        );
+        let sound = (pic.own && !strip).then(|| app.call.with_state(|s| s.live_sound.clone()));
+        if let Some(sound) = sound
+            && let Some(notice) = live_sound_notice(&sound)
+        {
+            let on = matches!(sound, gelabber_call::LiveSound::Sharing);
+            let word = Block::single(ui, if on { "Mit Ton" } else { "Ohne Ton" }, style, c.text);
+            let chip = Rect::from_min_size(
+                pos2(badge.right() + 4.0, badge.top()),
+                vec2(6.0 + 12.0 + 4.0 + word.width() + 6.0, badge.height()),
+            );
+            painter.rect_filled(chip, corner(theme.radius.xs), c.bg.gamma_multiply(0.82));
+            icons::paint(
+                &painter,
+                if on { Icon::Speaker } else { Icon::SpeakerOff },
+                pos2(chip.left() + 6.0, chip.center().y - 6.0),
+                12.0,
+                // Sound that should go out and does not: noticed, no alarm.
+                if on { c.text } else { c.warning },
+            );
+            word.paint(&painter, pos2(chip.left() + 22.0, badge.top() + 2.0));
+            // The full sentence for screen readers and on hover.
+            ui.interact(chip, id.with("live-sound"), Sense::hover())
+                .on_hover_text(&notice)
+                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &notice));
+        }
     }
     // The name pill, bottom left.
     if !kino_focus {
@@ -904,7 +880,7 @@ pub fn picture(
             } else {
                 Icon::Speaker
             },
-            "Stream-Ton stummschalten",
+            "Live-Ton stummschalten",
             stream_muted,
             3,
         ));

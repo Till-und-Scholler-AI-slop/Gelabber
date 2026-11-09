@@ -175,6 +175,36 @@ export function hsl(
       .join("")
   );
 }
+/** Hue (degrees), saturation and lightness of `#rrggbb`. */
+export function toHsl(hex: string): { h: number; s: number; l: number } {
+  const [r, g, b] = [1, 3, 5].map(
+    (i) => parseInt(hex.slice(i, i + 2), 16) / 255,
+  );
+  const max = Math.max(r, g, b),
+    min = Math.min(r, g, b),
+    l = (max + min) / 2,
+    d = max - min;
+  if (d === 0) return { h: 0, s: 0, l };
+  const sector =
+    max === r
+      ? ((g - b) / d + 6) % 6
+      : max === g
+        ? (b - r) / d + 2
+        : (r - g) / d + 4;
+  return { h: sector * 60, s: d / (1 - Math.abs(2 * l - 1)), l };
+}
+/**
+ * The on-air coral, unless the accent shares its hue (Ristretto's salmon):
+ * then Live turns 22° past the accent, away from it, so an unread count or
+ * a primary button never reads as Live.
+ */
+export function liveApartFrom(coral: string, accent: string): string {
+  const a = toHsl(accent),
+    k = toHsl(coral);
+  const apart = ((a.h - k.h + 540) % 360) - 180;
+  if (a.s < 0.3 || Math.abs(apart) >= 15) return coral;
+  return hsl(Math.round(a.h + (apart > 0 ? -22 : 22) + 360) % 360, k.s, k.l);
+}
 // Server tiles without artwork: muted hues that sit quietly next to the
 // accent. Dark themes use deep tints, light themes pale ones.
 const TILE_HUES = [18, 42, 88, 145, 188, 214, 258, 322];
@@ -204,12 +234,26 @@ export function derivedColors(theme: ThemeDefinition) {
     selected,
   ]);
   const muted = ensureContrast(c.muted, [c.panel, c.surface, hover]);
+  // On air: a warm coral, apart from the danger red and the accent. The
+  // fill stands out from the surfaces it sits on (3:1) unless that costs
+  // its ink 4.5:1; `liveText` is the coral for text and icons.
+  const coral = liveApartFrom(dark ? "#ff7b5c" : "#db5b24", c.accent);
+  const raised = ensureContrast(coral, [c.background, c.panel, c.surface], 3);
+  const live = contrast(readableInk(raised), raised) >= 4.5 ? raised : coral;
   return {
     elevated,
     selected,
     hover,
     muted,
-    subtle: ensureContrast(mix(muted, c.background, 0.25), [c.panel, elevated]),
+    // Hints, timestamps and disabled labels sit on every surface: fields on
+    // the page colour, lists and disabled buttons on `surface`, rows on hover.
+    subtle: ensureContrast(mix(muted, c.background, 0.25), [
+      c.background,
+      c.panel,
+      c.surface,
+      elevated,
+      hover,
+    ]),
     borderStrong: ensureContrast(
       mix(c.border, c.text, 0.35),
       [c.background, c.panel, c.surface, elevated],
@@ -226,6 +270,9 @@ export function derivedColors(theme: ThemeDefinition) {
       c.surface,
     ]),
     dangerBg: dark ? "#8f302d" : "#b33b38",
+    live,
+    onLive: readableInk(live),
+    liveText: ensureContrast(live, [c.background, c.panel, c.surface]),
     tiles: TILE_HUES.map((hue) => {
       const tile = dark ? hsl(hue, 0.3, 0.3) : hsl(hue, 0.45, 0.85);
       for (let step = 0; step <= 100; step += 5) {
@@ -366,6 +413,9 @@ export function themeVariables(theme: ThemeDefinition): Record<string, string> {
     "--lr-danger": d.danger,
     "--lr-danger-bg": d.dangerBg,
     "--lr-on-danger": "#ffffff",
+    "--lr-live": d.live,
+    "--lr-on-live": d.onLive,
+    "--lr-live-text": d.liveText,
     "--lr-backdrop": dark ? "rgb(9 12 13 / 0.72)" : "rgb(37 40 41 / 0.45)",
     "--lr-font":
       theme.style === "terminal"

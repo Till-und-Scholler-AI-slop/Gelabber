@@ -645,7 +645,7 @@ async function watch(receiver, kind) {
 async function playbackControls(receiver, publisher, kind) {
   const audioKind = `${kind}a`;
   await setVolume(receiver, "Gespräche", 25);
-  await setVolume(receiver, "Stream-Ton", 65);
+  await setVolume(receiver, "Live-Ton", 65);
   const expected = (state, muted = false, deafened = false) =>
     sourcePlayback(state, kind).length === 1 &&
     sourcePlayback(state, kind).every(
@@ -664,7 +664,7 @@ async function playbackControls(receiver, publisher, kind) {
   await (
     await soundPanel(receiver)
   )
-    .getByRole("button", { name: "Stream-Ton stummschalten", exact: true })
+    .getByRole("button", { name: "Live-Ton stummschalten", exact: true })
     .click();
   await until(
     () => snapshot(receiver),
@@ -675,7 +675,7 @@ async function playbackControls(receiver, publisher, kind) {
   await (
     await soundPanel(receiver)
   )
-    .getByRole("button", { name: "Stream-Ton stummschalten", exact: true })
+    .getByRole("button", { name: "Live-Ton stummschalten", exact: true })
     .click();
   await until(() => snapshot(receiver), expected, "Source unmute");
   await receiver.page.keyboard.press("Escape");
@@ -951,7 +951,7 @@ try {
   );
   stage = "device and DSP changes with four sources";
   await dock(owner)
-    .getByRole("button", { name: "Voice-Einstellungen", exact: true })
+    .getByRole("button", { name: "Anrufeinstellungen", exact: true })
     .click();
   const input = owner.page.locator("#audio-input");
   await input.waitFor();
@@ -1059,7 +1059,7 @@ try {
     .getByRole("status")
     .filter({
       hasText:
-        "Der Browser hat keinen Stream-Ton freigegeben. Das Video läuft weiter.",
+        "Der Browser hat keinen Live-Ton freigegeben. Das Video läuft weiter.",
     })
     .waitFor();
   const silentCapture = (await snapshot(owner)).capture;

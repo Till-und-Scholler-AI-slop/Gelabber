@@ -33,6 +33,7 @@ import {
   readableMentions,
   type MentionMember,
 } from "./mentions.ts";
+import { plainText } from "./markdown.ts";
 import { wantsNotification } from "./notifyLevel.ts";
 import {
   messageNotificationText,
@@ -78,20 +79,17 @@ function asCreated(delta: unknown): Message | null {
   };
 }
 
-function channelLabel(
+/** Where a toast says the message landed. */
+export function channelLabel(
   client: ReturnType<typeof useQueryClient>,
   userId: string,
   generation: number,
   event: ChatEvent,
   dm: boolean,
 ): string {
-  if (!event.c) return dm ? "DM" : "Kanal";
-  if (dm) {
-    const list = client.getQueryData<DirectMessage[]>(
-      dmKeys.list(userId, generation),
-    );
-    return list?.find((row) => row.id === event.c)?.peer.name ?? "DM";
-  }
+  // A DM's author already names the conversation: the place says what it is.
+  if (dm) return "Direktnachricht";
+  if (!event.c) return "Kanal";
   const server = client.getQueryData<ServerDetail>(
     serverKeys.detail(userId, generation, event.s),
   );
@@ -210,7 +208,7 @@ export function useMessageToastsBridge(): void {
         system
           ? systemText(system, message.author.name)
           : readableMentions(
-              message.content,
+              plainText(message.content),
               conversationMembers(client, userId, generation, event, dm),
             ),
         asAttachmentList(message.attachments).length > 0,

@@ -1195,12 +1195,15 @@ function onMediaFrame(frame: MediaServerFrame): void {
 
 /**
  * Join a voice channel. Local state flips first so the click feels instant;
- * the socket frame, ticket, and ICE run after.
+ * the socket frame, ticket, and ICE run after. `watch`: people whose Live
+ * to watch from the start ("Zuschauen" from outside the call); the media
+ * connection asks for them once it stands.
  */
 export function joinVoice(input: {
   serverId: string;
   channelId: string;
   channelName: string;
+  watch?: string[];
 }): void {
   installDiagnosticsLogoutReset();
   ensureBound();
@@ -1246,7 +1249,11 @@ export function joinVoice(input: {
     sharing: false,
     localCamera: null,
     localScreen: null,
-    sourceSubscriptions: {},
+    sourceSubscriptions: Object.fromEntries(
+      (input.watch ?? [])
+        .filter((id) => id !== self)
+        .map((id) => [id, { s: true }]),
+    ),
     sourceWatchSupported: false,
     remote: {},
     participants: { [self]: { pubs: [] } },

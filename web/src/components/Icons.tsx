@@ -422,6 +422,15 @@ export function CheckIcon(props: IconProps) {
   );
 }
 
+/** Two ticks: read, as "Als gelesen markieren". */
+export function CheckCheckIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M18 6 7 17l-5-5M22 10l-7.5 7.5L13 16" />
+    </svg>
+  );
+}
+
 export function WarningIcon(props: IconProps) {
   return (
     <svg {...base(props)}>

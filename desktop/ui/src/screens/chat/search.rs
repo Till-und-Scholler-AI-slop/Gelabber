@@ -27,6 +27,9 @@ pub struct SearchState {
     pub text: String,
     changed_at: f64,
     query: String,
+    /// The query of the shown hits, whose words they mark (typing on keeps
+    /// the last hits until the new ones are there).
+    shown: String,
     request: Request,
     /// The first page's answer, or its error.
     result: Option<Result<(), String>>,
@@ -83,8 +86,8 @@ pub enum SearchAction {
     Open(Uuid),
 }
 
-/// `.lr-button-secondary`: 13px, padding 5 12, the panel fill, half
-/// opacity while disabled.
+/// `.lr-button-secondary`: 13px, padding 5 12, the panel fill; disabled
+/// like the shared button, a readable subtle label.
 fn secondary(ui: &mut Ui, at: egui::Pos2, label: &str, enabled: bool, id: egui::Id) -> bool {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
@@ -101,7 +104,9 @@ fn secondary(ui: &mut Ui, at: egui::Pos2, label: &str, enabled: bool, id: egui::
         },
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
-    let alpha = if enabled { 1.0 } else { 0.5 };
+    if !enabled && response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed);
+    }
     let fill = if enabled && response.hovered() {
         c.hover
     } else {
@@ -110,14 +115,14 @@ fn secondary(ui: &mut Ui, at: egui::Pos2, label: &str, enabled: bool, id: egui::
     ui.painter().rect(
         rect,
         corner(theme.radius.md),
-        fill.gamma_multiply(alpha),
-        Stroke::new(1.0, c.border.gamma_multiply(alpha)),
+        fill,
+        Stroke::new(1.0, c.border),
         StrokeKind::Inside,
     );
     block.paint_tinted(
         ui.painter(),
         pos2(rect.left() + 13.0, rect.top() + 6.0),
-        (!enabled).then(|| c.text.gamma_multiply(alpha)),
+        (!enabled).then_some(c.subtle),
     );
     enabled && response.clicked()
 }
@@ -151,6 +156,7 @@ pub fn show(
         match result {
             Ok(page) => {
                 state.pages = vec![page];
+                state.shown = state.query.clone();
                 state.result = Some(Ok(()));
                 state.scroll = 0.0;
             }
@@ -256,13 +262,14 @@ pub fn show(
         state_line(ui, &mut y, "Keine Nachrichten gefunden.");
     }
     let width = body.width() - 24.0;
+    let terms = search_terms(&state.shown);
     for m in hits {
         // `p:first-child`: the name and, 8 apart on its baseline, the time.
         let style = TextStyle::new(13.0, 400.0, 1.5);
         let name = Block::single(ui, &m.author.name, style.weight(700.0), c.text);
         let when = Rich::new(style)
             .push(
-                &time::format_search(m.created_at),
+                &time::format_when(m.created_at, now),
                 TextStyle::new(11.0, 400.0, 1.5),
                 c.muted,
             )
@@ -274,7 +281,7 @@ pub fn show(
             everyone: m.mention_everyone,
             mentions: &m.mentions,
         };
-        let laid = content::layout_hit(ui, &m.content, width, &mentions);
+        let laid = content::layout_hit(ui, &m.content, width, &mentions, &terms);
         let open = Block::single(
             ui,
             "Nachricht im Kontext öffnen",
@@ -293,15 +300,20 @@ pub fn show(
                 egui::Id::unique(("gelabber-search-hit", m.id)),
                 Sense::click(),
             );
-            let text = readable_mentions(&m.content, names);
+            let text = readable_mentions(&super::markdown::plain_text(&m.content), names);
             let label = format!(
                 "Zur Nachricht von {}: {}",
                 m.author.name,
                 if text.is_empty() { "Datei" } else { &text }
             );
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
-            if resp.hovered() {
+            // The hit's text lies over it (selectable), so its hover is
+            // the pointer's place, and a click on the text opens it too.
+            let hot = ui.rect_contains_pointer(hit.intersect(body));
+            if hot {
                 clip.rect_filled(hit, corner(7.0), c.hover);
+            }
+            if resp.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
             let x = hit.left() + 12.0;
@@ -309,19 +321,15 @@ pub fn show(
             when.paint(&clip, pos2(x + name.width() + 8.0, y + 10.0));
             let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(body));
             inner.set_clip_rect(body.intersect(ui.clip_rect()));
-            let _ = laid.paint(
+            let painted = laid.paint(
                 &mut inner,
                 pos2(x, y + text_top),
                 egui::Id::unique(("gelabber-search-text", m.id)),
                 false,
                 None,
             );
-            open.paint_tinted(
-                &clip,
-                pos2(x, y + open_top),
-                resp.hovered().then_some(c.accent_text),
-            );
-            if resp.clicked() {
+            open.paint_tinted(&clip, pos2(x, y + open_top), hot.then_some(c.accent_text));
+            if resp.clicked() || painted.text.is_some_and(|t| t.clicked()) {
                 action = Some(SearchAction::Open(m.id));
             }
         }
@@ -336,13 +344,97 @@ pub fn show(
             state.more = state.fetch(client, channel, state.next_cursor());
         }
     }
-    let _ = now;
     action
+}
+
+// messages/searchTerms.ts: the server searches with
+// `websearch_to_tsquery('simple', q)`: whole words in any case, `"…"` for a
+// phrase, `-word` to leave out, `or` between alternatives. A word is a run
+// of letters and digits.
+
+fn words(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    text.char_indices()
+        .filter(|&(i, c)| {
+            c.is_alphanumeric()
+                && !text[..i]
+                    .chars()
+                    .next_back()
+                    .is_some_and(char::is_alphanumeric)
+        })
+        .map(move |(start, _)| {
+            let len = text[start..]
+                .find(|c: char| !c.is_alphanumeric())
+                .unwrap_or(text.len() - start);
+            (start, &text[start..start + len])
+        })
+}
+
+/// `searchTerms`: the words of `q` a hit can contain, lower-cased.
+pub fn search_terms(q: &str) -> Vec<String> {
+    let mut terms: Vec<String> = Vec::new();
+    for token in q.replace('"', " ").split_whitespace() {
+        if token.starts_with('-') || token.eq_ignore_ascii_case("or") {
+            continue;
+        }
+        for (_, word) in words(token) {
+            let word = word.to_lowercase();
+            if !terms.contains(&word) {
+                terms.push(word);
+            }
+        }
+    }
+    terms
+}
+
+/// `markMatches`: `text` in runs, `true` where one of `terms` stands as a
+/// whole word.
+pub fn mark_matches<'t>(text: &'t str, terms: &[String]) -> Vec<(&'t str, bool)> {
+    let mut runs = Vec::new();
+    let mut at = 0;
+    for (start, word) in words(text) {
+        if !terms.contains(&word.to_lowercase()) {
+            continue;
+        }
+        if start > at {
+            runs.push((&text[at..start], false));
+        }
+        runs.push((word, true));
+        at = start + word.len();
+    }
+    if at < text.len() {
+        runs.push((&text[at..], false));
+    }
+    runs
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_terms_and_marks() {
+        assert_eq!(search_terms("Snacks"), ["snacks"]);
+        assert_eq!(
+            search_terms("\"Film oder\" -Spiel or Chips"),
+            ["film", "oder", "chips"]
+        );
+        assert!(search_terms("  ").is_empty());
+        let terms = vec!["snacks".to_owned()];
+        assert_eq!(
+            mark_matches("Bringst du die Snacks mit? snacksalat", &terms),
+            [
+                ("Bringst du die ", false),
+                ("Snacks", true),
+                (" mit? snacksalat", false)
+            ]
+        );
+        let terms = vec!["äpfel".to_owned()];
+        assert_eq!(
+            mark_matches("Äpfel und äpfel", &terms),
+            [("Äpfel", true), (" und ", false), ("äpfel", true)]
+        );
+        assert_eq!(mark_matches("nichts", &[]), [("nichts", false)]);
+    }
 
     fn page(ids: &[u128], has_more: bool) -> MessagePage {
         let messages: Vec<serde_json::Value> = ids

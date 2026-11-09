@@ -2,7 +2,7 @@
 // of its name. With nothing typed it lists what is unread first.
 
 import { useNavigate } from "@tanstack/react-router";
-import { useMemo, useState, type CSSProperties } from "react";
+import { useId, useMemo, useState, type CSSProperties } from "react";
 
 import { useUserId } from "../auth/scope.ts";
 import { useDms } from "../dms/queries.ts";
@@ -15,6 +15,7 @@ import {
 } from "../servers/lastChannel.ts";
 import { useServerDetails, useServers } from "../servers/queries.ts";
 import { useVoiceRoster } from "../voice/roster.ts";
+import { usePushToTalkKeyName } from "../voice/settings.ts";
 import { Avatar } from "./Avatar.tsx";
 import { HashIcon, SpeakerIcon } from "./Icons.tsx";
 import { Modal } from "./Modal.tsx";
@@ -25,7 +26,7 @@ import {
   type SwitchEntry,
   type SwitchTarget,
 } from "./quickSwitch.ts";
-import { isMac, shortcutList } from "./shellShortcuts.ts";
+import { isMac, shortcutGroups } from "./shellShortcuts.ts";
 import { tileInitials, tileTint } from "./initials.ts";
 import { ServerIconFace } from "./ServerIcon.tsx";
 import "./shell.css";
@@ -167,7 +168,7 @@ function EntryBadge({ entry }: { entry: SwitchEntry }) {
   );
 }
 
-/** Strg/⌘+/: every shortcut of the workspace. */
+/** Strg/⌘+/: every shortcut of the workspace, then those of a call. */
 export function ShortcutSheet({
   open,
   onClose,
@@ -175,20 +176,34 @@ export function ShortcutSheet({
   open: boolean;
   onClose: () => void;
 }) {
+  const ids = useId();
+  // The push-to-talk key, only while push-to-talk is on and has one.
+  const pushToTalk = usePushToTalkKeyName();
   return (
     <Modal open={open} onClose={onClose} title="Tastenkürzel">
-      <dl className="shortcut-list">
-        {shortcutList(isMac()).map((shortcut) => (
-          <div key={shortcut.label}>
-            <dt>
-              {shortcut.keys.map((key) => (
-                <kbd key={key}>{key}</kbd>
-              ))}
-            </dt>
-            <dd>{shortcut.label}</dd>
-          </div>
-        ))}
-      </dl>
+      {shortcutGroups(isMac(), pushToTalk).map((group, index) => (
+        <section
+          key={group.title}
+          className="shortcut-group"
+          aria-labelledby={`${ids}-${index}`}
+        >
+          <h3 id={`${ids}-${index}`} className="shortcut-group-title">
+            {group.title}
+          </h3>
+          <dl className="shortcut-list">
+            {group.shortcuts.map((shortcut) => (
+              <div key={shortcut.label}>
+                <dt>
+                  {shortcut.keys.map((key) => (
+                    <kbd key={key}>{key}</kbd>
+                  ))}
+                </dt>
+                <dd>{shortcut.label}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ))}
     </Modal>
   );
 }

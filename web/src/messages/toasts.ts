@@ -21,6 +21,9 @@ export type MessageToast = {
   /** The message mentions the user. */
   mentioned?: boolean;
   preview: string;
+  /** Someone went live (liveNotices.ts): who, in which voice channel. Only
+   * Lives in channels I may join get a notice. */
+  live?: { userId: string; voice: string };
   count: number;
   at: number;
 };
@@ -92,6 +95,7 @@ export const useMessageToasts = create<MessageToastState>((set, get) => ({
             ? {
                 ...row,
                 ...input,
+                live: input.live,
                 count: row.count + 1,
                 at: now,
               }

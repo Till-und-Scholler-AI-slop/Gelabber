@@ -51,6 +51,23 @@ describe("error toasts", () => {
     ]);
   });
 
+  it("says what a missing target means for the change", () => {
+    notifyError(
+      new ApiError("not_found", 404, "Not found."),
+      "Reaktion nicht gespeichert.",
+      "Die Nachricht gibt es nicht mehr.",
+    );
+    notifyError(
+      new ApiError("network", 0, "Network error."),
+      "Reaktion nicht gespeichert.",
+      "Die Nachricht gibt es nicht mehr.",
+    );
+    expect(useToasts.getState().toasts.map((toast) => toast.message)).toEqual([
+      "Reaktion nicht gespeichert. Die Nachricht gibt es nicht mehr.",
+      "Reaktion nicht gespeichert. Keine Verbindung zum Server.",
+    ]);
+  });
+
   it("keeps the ApiError text and caps a stack of different errors", () => {
     notifyError(
       new ApiError("forbidden", 403, "Dafür fehlt dir die Berechtigung."),

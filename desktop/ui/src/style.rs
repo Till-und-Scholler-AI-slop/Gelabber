@@ -14,8 +14,10 @@ use egui::{
 
 use crate::theme::{Theme, corner, mix};
 
-/// Chromium's default selection highlight (Linux, both colour schemes).
-const SELECTION: Color32 = Color32::from_rgb(0x33, 0x90, 0xff);
+/// Chromium's default selection highlight (Linux, both colour schemes),
+/// drawn at 80% under white text: measured on the parity shots'
+/// `text-select` scenes over the dark and the light background.
+const SELECTION: Color32 = Color32::from_rgb(0x00, 0x41, 0xc5);
 
 /// How glyph coverage becomes alpha. Calibrated against Chromium/Skia
 /// (`--disable-lcd-text`, no hinting) on the auth pages.
@@ -28,6 +30,8 @@ fn text_transfer(theme: &Theme) -> egui::epaint::FontColorTransferFunction {
 }
 
 pub fn apply(ctx: &egui::Context, theme: &Theme) {
+    // Message text selects across blocks; what it copies follows the browser.
+    crate::selection::install(ctx);
     ctx.all_styles_mut(|style| {
         style.text_styles = [
             (
@@ -58,9 +62,11 @@ pub fn apply(ctx: &egui::Context, theme: &Theme) {
         style.url_in_tooltip = false;
         style.always_scroll_the_only_direction = true;
         style.spacing = spacing();
+        // Labels (buttons, names, the shell) stay unselectable; message text
+        // opts in through `Block::select` and selects across its blocks.
         style.interaction = Interaction {
             selectable_labels: false,
-            multi_widget_text_select: false,
+            multi_widget_text_select: true,
             tooltip_delay: 0.2,
             tooltip_grace_time: 0.4,
             show_tooltips_only_when_still: false,
@@ -94,12 +100,17 @@ fn spacing() -> Spacing {
     }
 }
 
-/// `scrollbar-width: thin` in Chromium: an 11px gutter with a rounded
-/// thumb inside, always visible while the area can scroll.
+/// `scrollbar-width: thin`: a rounded 7px thumb in an 11px gutter, hidden
+/// until it is needed, as the overlay scrollbars of Firefox and GTK: it
+/// shows under the pointer while the area scrolls (`scroll_activity`) and
+/// while the pointer is on the bar itself. The gutter stays reserved, so
+/// nothing moves when it shows.
 fn scrollbars() -> ScrollStyle {
     ScrollStyle {
-        floating: false,
+        floating: true,
         bar_width: 7.0,
+        floating_width: 7.0,
+        floating_allocated_width: 11.0,
         handle_min_length: 24.0,
         bar_inner_margin: 2.0,
         bar_outer_margin: 2.0,
@@ -107,10 +118,31 @@ fn scrollbars() -> ScrollStyle {
         dormant_background_opacity: 0.0,
         active_background_opacity: 0.0,
         interact_background_opacity: 0.0,
-        dormant_handle_opacity: 1.0,
-        active_handle_opacity: 1.0,
+        dormant_handle_opacity: 0.0,
+        active_handle_opacity: 0.0,
         interact_handle_opacity: 1.0,
         ..ScrollStyle::solid()
+    }
+}
+
+/// How long a scrollbar stays after the last scroll, then how long it
+/// fades out (seconds).
+const SCROLLBAR_LINGER: f64 = 1.0;
+const SCROLLBAR_FADE: f64 = 0.3;
+
+/// Once per frame, before the screens: a scroll (wheel or touchpad) shows
+/// the scrollbar of the area under the pointer, which fades out a second
+/// after the last one.
+pub fn scroll_activity(ctx: &egui::Context) {
+    let since = f64::from(ctx.input(|i| i.time_since_last_scroll()));
+    let opacity = (1.0 - (since - SCROLLBAR_LINGER) / SCROLLBAR_FADE).clamp(0.0, 1.0) as f32;
+    if ctx.global_style().spacing.scroll.active_handle_opacity != opacity {
+        ctx.all_styles_mut(|s| s.spacing.scroll.active_handle_opacity = opacity);
+    }
+    if since < SCROLLBAR_LINGER {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(SCROLLBAR_LINGER - since));
+    } else if opacity > 0.0 {
+        ctx.request_repaint();
     }
 }
 

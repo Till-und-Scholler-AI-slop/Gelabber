@@ -1,8 +1,5 @@
 {
-  "size": [
-    1280,
-    800
-  ],
+  "size": [1280, 800],
   "scenes": [
     {
       "name": "login",
@@ -107,12 +104,44 @@
       "name": "settings-app",
       "path": "/settings/app",
       "user": "lena",
-      "desktop": true
+      "desktop": true,
+      "updates": {
+        "current": "0.9.0",
+        "autoCheck": true,
+        "available": "0.9.1",
+        "lastCheck": 1800000000
+      }
     },
     {
       "name": "server-settings-member",
       "path": "/s/{evening}/settings",
       "user": "lena"
+    },
+    {
+      "name": "server-settings-einladungen",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "Einladungen"
+        },
+        {
+          "wait": 300
+        }
+      ]
+    },
+    {
+      "name": "server-settings-gefahrenzone",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "Gefahrenzone"
+        },
+        {
+          "wait": 300
+        }
+      ]
     },
     {
       "name": "home",
@@ -147,9 +176,68 @@
       ]
     },
     {
+      "name": "voice-muted",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Stummschalten"
+        },
+        {
+          "hover": "Stummschalten"
+        },
+        {
+          "wait": 600
+        }
+      ]
+    },
+    {
+      "name": "voice-deafened",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Taubschalten"
+        },
+        {
+          "wait": 500
+        }
+      ]
+    },
+    {
       "name": "voice-empty",
       "path": "/s/{home}/c/{Kino}",
       "user": "lena"
+    },
+    {
+      "name": "voice-alone",
+      "path": "/s/{home}/c/{Kino}",
+      "user": "lena",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        }
+      ]
     },
     {
       "name": "quick-switcher",
@@ -312,16 +400,101 @@
       "actions": [
         {
           "rightclick": "Wohnzimmer"
+        },
+        {
+          "menuitem": "Benachrichtigungseinstellungen…"
         }
       ]
     },
     {
-      "name": "notify-all-dms",
+      "name": "row-menu-home",
       "path": "/s/{home}",
       "user": "lena",
       "actions": [
         {
           "rightclick": "Direktnachrichten"
+        }
+      ]
+    },
+    {
+      "name": "channel-row-hover",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "hover": "/^spiele/"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-channel",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "/^spiele/"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-keys",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "/^spiele/"
+        },
+        {
+          "key": "ArrowDown"
+        },
+        {
+          "key": "ArrowRight"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-level",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "/^spiele/"
+        },
+        {
+          "hover": "Benachrichtigungen"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-server",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "Wohnzimmer"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-dm",
+      "path": "/d/{dm}",
+      "user": "lena",
+      "actions": [
+        {
+          "hover": "Jonas"
+        },
+        {
+          "click": "Aktionen für Jonas"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-member",
+      "path": "/s/{evening}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "allgemein"
         }
       ]
     },
@@ -767,7 +940,10 @@
       "user": "lena",
       "actions": [
         {
-          "click": "Kanal bearbeiten"
+          "hover": "spiele"
+        },
+        {
+          "click": "#spiele bearbeiten"
         }
       ]
     },
@@ -777,7 +953,10 @@
       "user": "lena",
       "actions": [
         {
-          "click": "Kanal löschen"
+          "rightclick": "/^spiele/"
+        },
+        {
+          "menuitem": "Kanal löschen"
         }
       ]
     },
@@ -790,10 +969,36 @@
           "click": "Benachrichtigungen für #allgemein"
         },
         {
-          "clicktext": "Bis ich es wieder einschalte"
+          "click": "Bis ich es wieder einschalte"
         },
         {
           "wait": 500
+        }
+      ],
+      "after": "unmute lena allgemein"
+    },
+    {
+      "name": "row-menu-muted",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Benachrichtigungen für #allgemein"
+        },
+        {
+          "click": "Bis ich es wieder einschalte"
+        },
+        {
+          "wait": 500
+        },
+        {
+          "click": "Fertig"
+        },
+        {
+          "wait": 300
+        },
+        {
+          "rightclick": "/^allgemein/"
         }
       ],
       "after": "unmute lena allgemein"
@@ -859,6 +1064,16 @@
       ]
     },
     {
+      "name": "text-select",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "select": "Spiel! Ich hätte Lust auf Brettspiele oder etwas Kooperatives."
+        }
+      ]
+    },
+    {
       "name": "toast-error",
       "path": "/s/{home}/c/{musik}",
       "user": "lena",
@@ -919,6 +1134,20 @@
       ]
     },
     {
+      "name": "light-live-toast",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "call": "Sofa jonas:live"
+        },
+        {
+          "wait": 2000
+        }
+      ],
+      "before": "theme lena light"
+    },
+    {
       "name": "rail-hover",
       "path": "/s/{home}",
       "user": "lena",
@@ -951,7 +1180,7 @@
     {
       "name": "setup-error",
       "page": "desktop/parity/reference/setup/index.html",
-      "query": "?server=http%3A%2F%2F127.0.0.1%3A1&error=127.0.0.1%3A1%20ist%20nicht%20erreichbar%20(Connection%20refused%20(os%20error%20111)).",
+      "query": "?server=http%3A%2F%2F127.0.0.1%3A1&error=Server%20antwortet%20nicht%20%E2%80%93%20stimmen%20Adresse%20und%20Port%3F&detail=Connection%20refused%20(os%20error%20111)",
       "scheme": "dark"
     },
     {
@@ -976,10 +1205,35 @@
       }
     },
     {
+      "name": "setup-update-downloading",
+      "page": "desktop/parity/reference/setup/index.html",
+      "scheme": "dark",
+      "updates": {
+        "current": "0.9.0",
+        "autoCheck": true,
+        "available": "0.9.1",
+        "lastCheck": 1800000000,
+        "phase": "downloading",
+        "downloaded": 19,
+        "total": 47
+      }
+    },
+    {
       "name": "light-channel",
       "path": "/s/{home}/c/{allgemein}",
       "user": "lena",
       "before": "theme lena light"
+    },
+    {
+      "name": "light-text-select",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "before": "theme lena light",
+      "actions": [
+        {
+          "select": "Spiel! Ich hätte Lust auf Brettspiele oder etwas Kooperatives."
+        }
+      ]
     },
     {
       "name": "light-overview",
@@ -1353,7 +1607,7 @@
       "call": "Sofa jonas,mira:muted",
       "actions": [
         {
-          "click": "Voice-Einstellungen"
+          "click": "Anrufeinstellungen"
         },
         {
           "clicktext": "Alle Einstellungen …"
@@ -1368,13 +1622,13 @@
       "call": "Sofa jonas,mira:muted",
       "actions": [
         {
-          "click": "Voice-Einstellungen"
+          "click": "Anrufeinstellungen"
         },
         {
           "clicktext": "Alle Einstellungen …"
         },
         {
-          "clicktext": "Video & Stream"
+          "clicktext": "Video & Live"
         }
       ]
     },
@@ -1403,7 +1657,7 @@
       "desktop": true,
       "actions": [
         {
-          "click": "Voice-Einstellungen"
+          "click": "Anrufeinstellungen"
         },
         {
           "clicktext": "Alle Einstellungen …"
@@ -1542,14 +1796,7 @@
           "wait": 3000
         }
       ],
-      "mask": [
-        [
-          312,
-          116,
-          944,
-          554
-        ]
-      ]
+      "mask": [[312, 116, 944, 554]]
     },
     {
       "name": "voice-fullscreen",
@@ -1572,6 +1819,36 @@
         },
         {
           "click": "Vollbild"
+        }
+      ]
+    },
+    {
+      "name": "voice-fullscreen-muted",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:camera:muted:live",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Stummschalten"
+        },
+        {
+          "click": "Zuschauen"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Vollbild"
+        },
+        {
+          "wait": 500
         }
       ]
     },
@@ -1606,6 +1883,16 @@
       "path": "/s/{home}/c/{allgemein}",
       "user": "lena",
       "desktop": true,
+      "update": {
+        "available": "0.9.1"
+      }
+    },
+    {
+      "name": "light-update-notice",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "desktop": true,
+      "before": "theme lena light",
       "update": {
         "available": "0.9.1"
       }

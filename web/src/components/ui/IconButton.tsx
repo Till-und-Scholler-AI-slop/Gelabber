@@ -4,10 +4,12 @@ import "./ui.css";
 
 export type IconButtonProps = Omit<
   ButtonHTMLAttributes<HTMLButtonElement>,
-  "children" | "aria-label" | "aria-pressed"
+  "children" | "aria-label" | "aria-pressed" | "title"
 > & {
   /** Accessible name; also the tooltip unless `title` says more. */
   label: string;
+  /** The browser's tooltip; `false` where a styled `Tooltip` shows one. */
+  title?: string | false;
   icon: ReactNode;
   /** `xs` 28px, `sm` 32px, `md` 36px; 44px under a finger. */
   size?: "xs" | "sm" | "md";
@@ -34,7 +36,7 @@ export function IconButton({
       type={type}
       aria-label={label}
       aria-pressed={pressed}
-      title={title ?? label}
+      title={title === false ? undefined : (title ?? label)}
       className={[
         "ui-icon-button",
         `ui-icon-button--${size}`,
