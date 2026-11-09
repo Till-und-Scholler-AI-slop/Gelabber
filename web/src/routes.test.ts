@@ -37,6 +37,18 @@ describe("router", () => {
     expect(html).toContain('<span role="status">Verbinde…</span>');
   });
 
+  it("shows a German error with a reload when a page throws", () => {
+    // TanStack's own fallback is an English "Something went wrong!".
+    const failed = router.options.defaultErrorComponent;
+    expect(failed).toBeDefined();
+    const html = renderToStaticMarkup(
+      createElement(failed!, { error: new Error("kaputt"), reset: () => {} }),
+    );
+    expect(html).toContain("Etwas ist schiefgelaufen");
+    expect(html).toContain("Seite neu laden");
+    expect(html).not.toContain("kaputt");
+  });
+
   it("sends a signed-out invitee to registration and back", async () => {
     useSession.setState({ status: "anonymous", user: null });
     const guard = router.routesById["/auth/invite/$code"].options.beforeLoad;

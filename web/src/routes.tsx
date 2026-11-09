@@ -27,6 +27,7 @@ import { LoginPage } from "./pages/LoginPage.tsx";
 import { NotFoundCard, NotFoundPage } from "./pages/NotFoundPage.tsx";
 import { RegisterPage } from "./pages/RegisterPage.tsx";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage.tsx";
+import { RouteErrorPage } from "./pages/RouteErrorPage.tsx";
 import { ServerPage } from "./pages/ServerPage.tsx";
 import {
   DEFAULT_SETTINGS_AREA,
@@ -296,6 +297,7 @@ export const router = createRouter({
   // left every cold start blank long after the bootstrap request finished.
   defaultPendingMinMs: 0,
   defaultNotFoundComponent: NotFoundPage,
+  defaultErrorComponent: RouteErrorPage,
 });
 
 // "/" reopens the server or DM the user was in last.
