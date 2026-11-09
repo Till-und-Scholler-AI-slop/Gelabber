@@ -287,6 +287,8 @@ impl Platform {
         self.in_setup = app.is_none();
         let Some(app) = app else {
             self.show_unread(ctx, tray::Unread::default());
+            // The call ended with the app: the global key goes with it.
+            self.ptt.stop(ctx);
             // "Jetzt installieren" on the setup screen: no call to wait for.
             if self.updates.tick_setup(ctx) {
                 self.quitting = true;
@@ -511,6 +513,19 @@ struct PttLink {
 }
 
 impl PttLink {
+    /// No app (the setup screen), so no call: the binding (Windows hook,
+    /// portal session) ends.
+    fn stop(&mut self, ctx: &Context) {
+        if self.key.is_some() || self.status.is_some() {
+            self.binding = None;
+            self.events.lock().clear();
+            self.down = false;
+            self.status = None;
+            self.key = None;
+            ctx.data_mut(|d| d.insert_temp::<Option<PttStatus>>(ptt_id(), None));
+        }
+    }
+
     fn tick(&mut self, ctx: &Context, call: &gelabber_call::Call, p: &prefs::Prefs) {
         let in_call = call.with_state(|s| {
             matches!(
@@ -631,6 +646,25 @@ mod tests {
         std::thread::sleep(Duration::from_millis(600));
         pass(&mut platform, &mut app, egui::vec2(1000.0, 700.0));
         assert_eq!(platform.stored.window.unwrap().width, 1000.0);
+        drop(config);
+    }
+
+    /// "Server wechseln …" in a push-to-talk call: the setup screen has no
+    /// call, so the global key (hook, portal session) is let go.
+    #[test]
+    fn the_setup_screen_lets_the_global_key_go() {
+        let config = paths::testing::TempConfig::new("platform-ptt-setup");
+        let ctx = Context::default();
+        let mut platform = Platform::new(None);
+        platform.ptt.key = Some("F13".into());
+        platform.ptt.status = Some(PttStatus::Bound { trigger: None });
+        ctx.data_mut(|d| d.insert_temp(ptt_id(), platform.ptt.status.clone()));
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            platform.logic(ui.ctx(), None);
+        });
+        out.textures_delta.clear();
+        assert_eq!(platform.ptt.key, None);
+        assert_eq!(ptt_status(&ctx), None);
         drop(config);
     }
 }
