@@ -54,8 +54,8 @@ do
   common="$common --denied-peer-ip=$range"
 done
 
-# coturn aborts on an allow entry it cannot parse (a hostname), and then
-# restarts in a loop: check the SFU address before starting it.
+# coturn aborts on an allow entry it cannot parse (a hostname, a CIDR), and
+# then restarts in a loop: check every entry here, before starting it.
 is_ipv4() {
   case "$1" in "" | *[!0-9.]* | .* | *. | *..*) return 1 ;; esac
   old_ifs=$IFS; IFS=.
@@ -74,8 +74,35 @@ is_ipv6() {
   case "$1" in *[!0-9A-Fa-f:.]* | *:::* | *::*::*) return 1 ;; esac
 }
 is_ip() { is_ipv4 "$1" || is_ipv6 "$1"; }
+ipv4_int() {
+  old_ifs=$IFS; IFS=.
+  # shellcheck disable=SC2086
+  set -- $1
+  IFS=$old_ifs
+  echo $(( ($1 << 24) + ($2 << 16) + ($3 << 8) + $4 ))
+}
+int_ipv4() {
+  echo "$(( ($1 >> 24) & 255 )).$(( ($1 >> 16) & 255 )).$(( ($1 >> 8) & 255 )).$(( $1 & 255 ))"
+}
+# An address, a range first-last, or an IPv4 CIDR (as the range coturn takes).
+peer_range() {
+  case "$1" in
+    */*)
+      address=${1%/*} bits=${1#*/}
+      case "$bits" in "" | *[!0-9]*) return 1 ;; esac
+      is_ipv4 "$address" && [ "$bits" -le 32 ] || return 1
+      mask=$(( (0xFFFFFFFF << (32 - bits)) & 0xFFFFFFFF ))
+      first=$(( $(ipv4_int "$address") & mask ))
+      echo "$(int_ipv4 "$first")-$(int_ipv4 $(( first | (~mask & 0xFFFFFFFF) )))" ;;
+    *-*) is_ip "${1%%-*}" && is_ip "${1#*-}" && echo "$1" ;;
+    *) is_ip "$1" && echo "$1" ;;
+  esac
+}
+
 # Allow rules win over deny rules: the SFU on a LAN address stays reachable,
 # plus what the operator lists (deploy/README.md, "TURN relay targets").
+# No pathname expansion: a `*` in the list must not become file names.
+set -f
 media_ip=$(printf '%s' "${MEDIA_ADVERTISED_IP:-}" | tr -d '[:space:]')
 case "$media_ip" in
   "" | 127.* | ::1) ;;
@@ -86,7 +113,11 @@ case "$media_ip" in
       echo "MEDIA_ADVERTISED_IP=$media_ip is not an IP address, so coturn does not allow it as a relay target. If the SFU has a private address, put that address into TURN_ALLOWED_PEER_IPS (see deploy/README.md)." >&2
     fi ;;
 esac
-for range in $(printf '%s' "${TURN_ALLOWED_PEER_IPS:-}" | tr ',' ' '); do
+for entry in $(printf '%s' "${TURN_ALLOWED_PEER_IPS:-}" | tr ',' ' '); do
+  if ! range=$(peer_range "$entry"); then
+    echo "TURN_ALLOWED_PEER_IPS: $entry is not an IP address, a range first-last or an IPv4 CIDR. Fix it in .env (see deploy/README.md, \"TURN relay targets\")." >&2
+    exit 1
+  fi
   common="$common --allowed-peer-ip=$range"
 done
 

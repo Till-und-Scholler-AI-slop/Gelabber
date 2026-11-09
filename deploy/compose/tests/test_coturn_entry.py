@@ -14,7 +14,7 @@ printf '%s\\n' "$@" > "$TURNSERVER_ARGS"
 
 
 class CoturnEntry(unittest.TestCase):
-    def start(self, **turn):
+    def start(self, cwd=None, **turn):
         """The script's exit code, its stderr and the arguments turnserver got
         (None if it was not started)."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -26,7 +26,7 @@ class CoturnEntry(unittest.TestCase):
                    if not name.startswith('TURN_') and name != 'MEDIA_ADVERTISED_IP'}
             env.update(turn, PATH=f'{tmp}:{os.environ["PATH"]}', TURNSERVER_ARGS=str(args))
             result = subprocess.run(['sh', str(SCRIPT)], env=env, capture_output=True,
-                                    text=True, timeout=30)
+                                    text=True, timeout=30, cwd=cwd)
             started = args.read_text().splitlines() if args.exists() else None
         return result.returncode, result.stderr, started
 
@@ -114,6 +114,28 @@ class CoturnEntry(unittest.TestCase):
                 self.assertIn('TURN_ALLOWED_PEER_IPS', stderr)
                 self.assertFalse([arg for arg in started
                                   if arg.startswith('--allowed-peer-ip')], started)
+
+    def test_operator_cidrs_become_ranges(self):
+        code, stderr, started = self.start(
+            TURN_PASSWORD='x', TURN_ALLOWED_PEER_IPS='10.0.0.0/8,192.168.1.77/24 172.20.0.5/32')
+        self.assertEqual(code, 0, stderr)
+        allowed = [arg for arg in started if arg.startswith('--allowed-peer-ip=')]
+        self.assertEqual(allowed, ['--allowed-peer-ip=10.0.0.0-10.255.255.255',
+                                   '--allowed-peer-ip=192.168.1.0-192.168.1.255',
+                                   '--allowed-peer-ip=172.20.0.5-172.20.0.5'])
+
+    def test_operator_entries_coturn_cannot_take_stop_the_start(self):
+        with tempfile.TemporaryDirectory() as cwd:
+            (Path(cwd) / 'file-in-cwd').write_text('')
+            for value in ('*', 'voice.example.org', 'fd00::/8', '10.0.0.0/33',
+                          '10.0.0.1-', '300.0.0.1', '10.0.0.1-10.0.0.x', '10.0.0.010'):
+                with self.subTest(value=value):
+                    code, stderr, started = self.start(cwd=cwd, TURN_PASSWORD='x',
+                                                       TURN_ALLOWED_PEER_IPS=value)
+                    self.assertEqual(code, 1)
+                    self.assertIn('TURN_ALLOWED_PEER_IPS', stderr)
+                    self.assertIn(value, stderr)
+                    self.assertIsNone(started)
 
     def test_public_default_secret_is_refused(self):
         for turn in ({}, {'TURN_PASSWORD': 'x'}):
