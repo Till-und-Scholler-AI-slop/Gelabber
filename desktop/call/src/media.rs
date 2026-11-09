@@ -1672,15 +1672,19 @@ impl Session {
 
     fn apply_local_audio(&self) {
         let Some(inner) = self.inner() else { return };
-        let (muted, deafened) = inner.read(|s| (s.muted, s.deafened));
-        let mic_off = muted || deafened;
-        let silent = mic_off || !inner.gate_open();
-        let mic = self.st.lock().mic.clone();
-        if let Some(mic) = &mic {
-            let _ = mic.source.set_enabled(!silent);
-        }
+        self.gate_mic(&inner);
         if let Some(seat) = self.seat() {
             inner.runtime().spawn(async move { seat.sync_mic().await });
+        }
+    }
+
+    /// The microphone's track on or off as mute, deafen and push-to-talk say.
+    fn gate_mic(&self, inner: &Inner) {
+        let (muted, deafened) = inner.read(|s| (s.muted, s.deafened));
+        let switches = logic::mic_switches(muted, deafened, inner.gate_open());
+        let mic = self.st.lock().mic.clone();
+        if let Some(mic) = &mic {
+            let _ = mic.source.set_enabled(switches.enabled);
         }
     }
 
@@ -2842,6 +2846,12 @@ impl Seat {
                 Some(Ok(())) => {
                     drop(send);
                     if kind == Kind::A {
+                        // The new track took the old one's state: the gate's again.
+                        if let Some(session) = self.session.upgrade()
+                            && let Some(inner) = session.inner()
+                        {
+                            session.gate_mic(&inner);
+                        }
                         self.sync_mic().await;
                     } else {
                         self.set_paused(kind, paused).await;
@@ -2941,7 +2951,7 @@ impl Seat {
             std::thread::spawn(move || drop(previous));
         }
         drop(send);
-        if paused {
+        if paused && kind != Kind::A {
             let _ = producer.lock().set_paused(true);
         }
         self.apply_parameters_of(kind, &producer, local, &settings);
@@ -3049,7 +3059,8 @@ impl Seat {
         let Some(inner) = self.session.upgrade().and_then(|s| s.inner()) else {
             return;
         };
-        let paused = inner.read(|s| s.muted || s.deafened);
+        let (muted, deafened) = inner.read(|s| (s.muted, s.deafened));
+        let paused = logic::mic_switches(muted, deafened, true).paused;
         self.set_paused(Kind::A, paused).await;
     }
 
@@ -3070,7 +3081,8 @@ impl Seat {
         });
     }
 
-    /// Pauses or resumes a producer here and on the server.
+    /// Pauses or resumes a producer here (not the microphone's) and on the
+    /// server.
     async fn set_paused(&self, kind: Kind, paused: bool) {
         let (producer, id, changed) = {
             let mut producers = self.producers.lock();
@@ -3081,7 +3093,11 @@ impl Seat {
             held.paused = paused;
             (held.producer.clone(), held.id.clone(), changed)
         };
-        let _ = producer.lock().set_paused(paused);
+        // The microphone's track belongs to its gate: libmediasoupclient's
+        // resume would enable it with push-to-talk closed.
+        if kind != Kind::A {
+            let _ = producer.lock().set_paused(paused);
+        }
         if !changed {
             return;
         }

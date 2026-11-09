@@ -746,6 +746,23 @@ pub fn mute_change(muted: bool, deafened: bool, want: bool) -> Option<(bool, boo
     (next != (muted, deafened)).then_some(next)
 }
 
+/// The microphone's two switches (`applyLocalAudio`): its track, which
+/// push-to-talk closes too, and the server's pause, which only mute and
+/// deafen set. The producer's own pause stays unused: it is the same track.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MicSwitches {
+    pub enabled: bool,
+    pub paused: bool,
+}
+
+pub fn mic_switches(muted: bool, deafened: bool, gate_open: bool) -> MicSwitches {
+    let off = muted || deafened;
+    MicSwitches {
+        enabled: !off && gate_open,
+        paused: off,
+    }
+}
+
 /// `applySourceAudioChoice` of the desktop app, for a running Live whose
 /// "Ton mitsenden" or application changed: whether its sound stops, and
 /// whether a new capture starts.
@@ -1120,6 +1137,17 @@ mod tests {
         // Deafened is muted: muting again is no change, unmuting undeafens.
         assert_eq!(mute_change(true, true, true), None);
         assert_eq!(mute_change(true, true, false), Some((false, false)));
+    }
+
+    #[test]
+    fn push_to_talk_closes_the_track_and_leaves_the_server_running() {
+        let open = |enabled, paused| MicSwitches { enabled, paused };
+        // Key up: silent here, but no server pause that would resume it.
+        assert_eq!(mic_switches(false, false, false), open(false, false));
+        assert_eq!(mic_switches(false, false, true), open(true, false));
+        // Mute and deafen close both, whatever the key.
+        assert_eq!(mic_switches(true, false, true), open(false, true));
+        assert_eq!(mic_switches(true, true, false), open(false, true));
     }
 
     #[test]
