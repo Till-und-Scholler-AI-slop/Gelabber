@@ -27,7 +27,10 @@ pub fn redirect(ui: &Ui, app: &mut AppCtx) -> bool {
     }
     // One being left stays listed until its request ends: not a way back.
     let left = state::with(ui.ctx(), |s| s.left.clone());
-    let servers: Vec<_> = servers.into_iter().filter(|id| !left.contains(id)).collect();
+    let servers: Vec<_> = servers
+        .into_iter()
+        .filter(|id| !left.contains(id))
+        .collect();
     let remembered = state::memory(ui.ctx(), user).place;
     let target = match remembered {
         Some(Place::Server(id)) if servers.contains(&id) => Some(format!("/s/{id}")),

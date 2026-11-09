@@ -5,11 +5,13 @@
 
 use egui::{Color32, Id, Rect, Stroke, StrokeKind, Ui, Vec2, pos2};
 use gelabber_client::{ApiError, Category, Channel, ChannelKind, ChannelPatch, Invite, OpState};
+use std::sync::atomic::Ordering;
+
 use uuid::Uuid;
 
 use super::common::{self, line, paint_mid};
 use super::overlays::picker::{PickerState, Row, RowIcon};
-use super::state::{self, AddStep, Dialog, InviteState, Terms};
+use super::state::{self, AddStep, Created, Dialog, InviteState, Terms};
 use crate::app::AppCtx;
 use crate::icons::{self, Icon};
 use crate::rules;
@@ -55,6 +57,7 @@ pub fn open_invite(ctx: &egui::Context, server: Uuid, name: &str) {
             terms: Terms::default(),
             invite: None,
             creating: None,
+            latest: Default::default(),
             error: None,
             handed_out: false,
             status: None,
@@ -446,12 +449,59 @@ fn summary(terms: Terms) -> String {
     format!("{expiry} · {uses}")
 }
 
-fn create_invite(app: &AppCtx, server: Uuid, terms: Terms) -> Pending<Result<Invite, ApiError>> {
+/// A link with `terms`; one that newer terms superseded while it was made
+/// is revoked at once, as nobody saw it (also after the dialog closed).
+fn create_invite(app: &AppCtx, s: &InviteState, terms: Terms) -> Pending<Created> {
     let http = app.client.http().clone();
     let (hours, uses) = (EXPIRY[terms.expiry].1, USES[terms.uses].1);
+    let (server, latest) = (s.server, s.latest.clone());
+    let request = latest.fetch_add(1, Ordering::SeqCst) + 1;
     Pending::spawn(app.client, async move {
-        http.create_invite(server, uses, hours).await
+        let result = http.create_invite(server, uses, hours).await;
+        if let Ok(invite) = &result
+            && latest.load(Ordering::SeqCst) != request
+        {
+            let _ = http.revoke_invite(&invite.code).await;
+        }
+        (terms, result)
     })
+}
+
+/// Takes a finished link request: the new link with its terms, or on a
+/// failure the chips go back to the link still shown. Returns the code of
+/// a replaced link to revoke.
+fn settle(s: &mut InviteState, terms: Terms, result: Result<Invite, ApiError>) -> Option<String> {
+    match result {
+        Ok(invite) => {
+            let mut revoke = None;
+            if let Some((old, _)) = s.invite.take() {
+                if !s.handed_out {
+                    revoke = Some(old.code);
+                }
+                s.status = Some((
+                    format!("Neuer Link · {}", summary(terms)),
+                    StatusTone::Neutral,
+                ));
+            }
+            s.invite = Some((invite, terms));
+            s.terms = terms;
+            s.handed_out = false;
+            s.error = None;
+            revoke
+        }
+        Err(e) => {
+            if let Some((_, shown)) = &s.invite {
+                s.terms = *shown;
+            }
+            s.error = Some(rules::error_message(e.code()).to_owned());
+            None
+        }
+    }
+}
+
+/// The terms of the link shown (the chosen ones before there is one).
+fn shown_terms(s: &InviteState) -> Terms {
+    s.invite.as_ref().map_or(s.terms, |(_, terms)| *terms)
 }
 
 fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
@@ -459,26 +509,12 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
     let theme = Theme::of(&ctx);
     let c = theme.c;
     if s.invite.is_none() && s.creating.is_none() && s.error.is_none() {
-        s.creating = Some(create_invite(app, s.server, s.terms));
+        s.creating = Some(create_invite(app, s, s.terms));
     }
-    if let Some(result) = crate::task::poll(&mut s.creating) {
-        match result {
-            Ok(invite) => {
-                if let Some((old, _)) = s.invite.take() {
-                    if !s.handed_out {
-                        app.client.revoke_invite(&old.code);
-                    }
-                    s.status = Some((
-                        format!("Neuer Link · {}", summary(s.terms)),
-                        StatusTone::Neutral,
-                    ));
-                }
-                s.invite = Some((invite, s.terms));
-                s.handed_out = false;
-                s.error = None;
-            }
-            Err(e) => s.error = Some(rules::error_message(e.code()).to_owned()),
-        }
+    if let Some((terms, result)) = crate::task::poll(&mut s.creating)
+        && let Some(code) = settle(s, terms, result)
+    {
+        app.client.revoke_invite(&code);
     }
     let creating = s.creating.is_some();
     let link = s
@@ -553,7 +589,7 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
                     let (message, tone, copied) = crate::screens::chat::clipboard::copy_link(
                         ui.ctx(),
                         &link,
-                        &summary(s.terms),
+                        &summary(shown_terms(s)),
                     );
                     s.handed_out |= copied;
                     s.status = Some((message, tone));
@@ -566,7 +602,7 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
                 None => {
                     let (r, _) =
                         ui.allocate_exact_size(Vec2::new(row_w, 20.0), egui::Sense::hover());
-                    let block = Block::single(ui, &summary(s.terms), text::META, c.muted);
+                    let block = Block::single(ui, &summary(shown_terms(s)), text::META, c.muted);
                     paint_mid(ui.painter(), &block, r.left(), r.center().y);
                 }
             }
@@ -637,7 +673,7 @@ fn invite_dialog(ui: &mut Ui, app: &mut AppCtx, s: &mut InviteState) -> bool {
                     } else {
                         s.terms.uses = i;
                     }
-                    s.creating = Some(create_invite(app, s.server, s.terms));
+                    s.creating = Some(create_invite(app, s, s.terms));
                 }
             }
         },
@@ -658,6 +694,7 @@ fn chip(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
     let block = Block::single(ui, label, style, c.text);
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(block.width() + 26.0, 32.0), egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
     let fill = if selected {
         c.selected
     } else if response.hovered() {
@@ -1186,6 +1223,124 @@ mod tests {
     fn slugs() {
         assert_eq!(slug("Mein  Kanal_neu"), "mein-kanal-neu");
         assert_eq!(slug("#spiele"), "spiele");
+    }
+
+    fn invite(code: &str) -> Invite {
+        serde_json::from_value(serde_json::json!({
+            "code": code, "server_id": Uuid::nil(), "created_by": Uuid::nil(),
+            "created_at": "2026-01-01T00:00:00Z", "expires_at": null,
+            "max_uses": null, "uses": 0
+        }))
+        .expect("invite")
+    }
+
+    /// InviteDialog: a failed change puts the chips back to the link shown,
+    /// whose terms the summary and "Link kopieren" name.
+    #[test]
+    fn a_failed_terms_change_keeps_the_terms_of_the_link_shown() {
+        let mut s = InviteState {
+            server: Uuid::nil(),
+            name: "Wohnzimmer".into(),
+            terms: Terms::default(),
+            invite: Some((invite("aaaaaaaaaaaa"), Terms::default())),
+            creating: None,
+            latest: Default::default(),
+            error: None,
+            handed_out: false,
+            status: None,
+            terms_open: true,
+        };
+        let hour = Terms { expiry: 0, uses: 0 };
+        s.terms = hour;
+        let failed = ApiError::Transport("offline".into());
+        assert_eq!(settle(&mut s, hour, Err(failed)), None);
+        assert_eq!(s.terms, Terms::default());
+        assert_eq!(shown_terms(&s), Terms::default());
+        assert!(s.error.is_some());
+        // The retry of the same chip works and replaces the unseen link.
+        s.terms = hour;
+        assert_eq!(
+            settle(&mut s, hour, Ok(invite("bbbbbbbbbbbb"))),
+            Some("aaaaaaaaaaaa".into())
+        );
+        assert_eq!(shown_terms(&s), hour);
+        assert!(s.error.is_none());
+        // A copied link stays valid.
+        s.handed_out = true;
+        assert_eq!(
+            settle(&mut s, Terms::default(), Ok(invite("cccccccccccc"))),
+            None
+        );
+    }
+
+    /// A link made for terms that changed again meanwhile is revoked: the
+    /// dialog never showed it (InviteDialog's `latest`).
+    #[test]
+    fn a_superseded_link_is_revoked() {
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
+
+        use egui_kittest::kittest::Queryable;
+
+        use crate::app::testkit::{FakeApi, HOME, Reply, launcher, wait_for, workspace};
+        use crate::platform::paths::testing::TempConfig;
+
+        let _config = TempConfig::new("invite-superseded");
+        let release = Arc::new(AtomicBool::new(false));
+        let served = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (hold, count) = (release.clone(), served.clone());
+        let api = FakeApi::start(true, move |method, path, body| {
+            if method == "POST" && path == format!("/servers/{HOME}/invites") {
+                let code = if body.contains("\"expires_in_hours\":1}") {
+                    while !hold.load(Ordering::SeqCst) {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    "einestunde22"
+                } else if body.contains("\"expires_in_hours\":24}") {
+                    "vierundzwanz"
+                } else {
+                    "siebentage22"
+                };
+                count.fetch_add(1, Ordering::SeqCst);
+                return Some(Reply::json(serde_json::json!({
+                    "code": code, "server_id": HOME, "created_by": HOME,
+                    "created_at": "2026-01-01T00:00:00Z", "expires_at": null,
+                    "max_uses": null, "uses": 0
+                })));
+            }
+            if method == "DELETE" && path.starts_with("/invites/") {
+                return Some(Reply::json(serde_json::Value::Null));
+            }
+            workspace(method, path)
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        crate::app::testkit::wait_for_label(&mut harness, "allgemein");
+        open_invite(
+            &harness.ctx.clone(),
+            HOME.parse().expect("id"),
+            "Wohnzimmer",
+        );
+        let posts = || {
+            let post = format!("POST /servers/{HOME}/invites");
+            api.seen.lock().iter().filter(|r| **r == post).count()
+        };
+        let served_now = || served.load(Ordering::SeqCst);
+        wait_for(&mut harness, "the first link", |_| served_now() == 1);
+        harness.run_steps(3);
+        harness.get_by_label("Ablauf & Limit ändern").click();
+        crate::app::testkit::wait_for_label(&mut harness, "1 Stunde");
+        harness.get_by_label("1 Stunde").click();
+        wait_for(&mut harness, "the held request", |_| posts() == 2);
+        harness.get_by_label("24 Stunden").click();
+        wait_for(&mut harness, "the newest link", |_| served_now() == 2);
+        harness.run_steps(5);
+        release.store(true, Ordering::SeqCst);
+        wait_for(&mut harness, "the unseen link's revoke", |_| {
+            api.saw("DELETE /invites/einestunde22")
+        });
+        // The link replaced by the shown one goes too; the shown one stays.
+        assert!(api.saw("DELETE /invites/siebentage22"));
+        assert!(!api.saw("DELETE /invites/vierundzwanz"));
     }
 
     #[test]

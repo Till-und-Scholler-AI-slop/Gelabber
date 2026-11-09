@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use gelabber_client::{ApiError, Invite, Message};
 use parking_lot::Mutex;
@@ -52,12 +53,17 @@ impl Default for Terms {
     }
 }
 
+/// A link request's answer with the terms it asked for.
+pub type Created = (Terms, Result<Invite, ApiError>);
+
 pub struct InviteState {
     pub server: Uuid,
     pub name: String,
     pub terms: Terms,
     pub invite: Option<(Invite, Terms)>,
-    pub creating: Option<Pending<Result<Invite, ApiError>>>,
+    pub creating: Option<Pending<Created>>,
+    /// The number of the newest link request; older ones revoke their link.
+    pub latest: Arc<AtomicU64>,
     pub error: Option<String>,
     /// The link was copied: it is not revoked when the terms change.
     pub handed_out: bool,
