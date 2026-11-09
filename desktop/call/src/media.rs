@@ -166,6 +166,7 @@ pub(crate) fn join(inner: &Arc<Inner>, server: Uuid, channel: Uuid) {
             ..St::default()
         }),
         stopped: AtomicBool::new(false),
+        gating: Mutex::new(()),
         seats: AtomicU64::new(0),
     });
     *inner.media.session.lock() = Some(session.clone());
@@ -713,6 +714,8 @@ pub(crate) struct Session {
     fake: bool,
     st: Mutex<St>,
     stopped: AtomicBool,
+    /// Held while the microphone's track flag is decided and set.
+    gating: Mutex<()>,
     seats: AtomicU64,
 }
 
@@ -1905,6 +1908,9 @@ impl Session {
 
     /// The microphone's track on or off as mute, deafen and push-to-talk say.
     fn gate_mic(&self, inner: &Inner) {
+        // Read and set as one step: push-to-talk calls this on the UI
+        // thread, a replaced microphone on the runtime.
+        let _gating = self.gating.lock();
         let (muted, deafened) = inner.read(|s| (s.muted, s.deafened));
         let switches = logic::mic_switches(muted, deafened, inner.gate_open());
         let mic = self.st.lock().mic.clone();
@@ -3797,6 +3803,7 @@ mod tests {
             fake: true,
             st: Mutex::new(St::default()),
             stopped: AtomicBool::new(false),
+            gating: Mutex::new(()),
             seats: AtomicU64::new(0),
         });
         *call.inner.media.session.lock() = Some(session.clone());
