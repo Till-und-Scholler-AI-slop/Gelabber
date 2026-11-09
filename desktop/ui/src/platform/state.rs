@@ -93,7 +93,8 @@ impl Window {
 }
 
 /// A file this build cannot read (a hand edit, a newer version's) is moved
-/// to `native-state.json.unreadable`, so the next save does not overwrite it.
+/// to `native-state.json.unreadable` (`-2` and on when that is taken), so
+/// the next save does not overwrite it.
 pub fn load() -> Stored {
     let Some(path) = super::paths::file(FILE) else {
         return Stored::default();
@@ -109,7 +110,14 @@ pub fn load() -> Stored {
         }
         Err((there, e)) => {
             if there {
-                let aside = path.with_file_name(format!("{FILE}.unreadable"));
+                // Each one kept: an earlier rescued copy is not replaced.
+                let aside = (1..)
+                    .map(|n| match n {
+                        1 => path.with_file_name(format!("{FILE}.unreadable")),
+                        n => path.with_file_name(format!("{FILE}.unreadable-{n}")),
+                    })
+                    .find(|p| !p.exists())
+                    .unwrap_or_else(|| path.with_file_name(format!("{FILE}.unreadable")));
                 tracing::warn!("state: {e}; kept as {}", aside.display());
                 if let Err(e) = std::fs::rename(&path, &aside) {
                     tracing::warn!("state: {e}");
@@ -384,7 +392,13 @@ mod tests {
         assert_eq!(load(), Stored::default());
         assert!(!path.exists());
         let aside = config.dir.join(format!("{FILE}.unreadable"));
-        assert_eq!(std::fs::read_to_string(aside).unwrap(), text);
+        assert_eq!(std::fs::read_to_string(&aside).unwrap(), text);
+        // A second one does not replace the first.
+        std::fs::write(&path, "{halb").unwrap();
+        assert_eq!(load(), Stored::default());
+        assert_eq!(std::fs::read_to_string(&aside).unwrap(), text);
+        let second = config.dir.join(format!("{FILE}.unreadable-2"));
+        assert_eq!(std::fs::read_to_string(second).unwrap(), "{halb");
         drop(config);
     }
 
