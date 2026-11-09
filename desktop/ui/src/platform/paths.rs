@@ -101,8 +101,11 @@ pub fn write_atomic(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> 
     done
 }
 
-/// Per file, the bytes still to write; a file in here has its writer running.
-static QUEUED: Mutex<Option<HashMap<PathBuf, Option<(Vec<u8>, bool)>>>> = Mutex::new(None);
+/// The bytes still to write and whether the file is private.
+type Job = (Vec<u8>, bool);
+
+/// Per file, the job still to do; a file in here has its writer running.
+static QUEUED: Mutex<Option<HashMap<PathBuf, Option<Job>>>> = Mutex::new(None);
 static WRITTEN: Condvar = Condvar::new();
 
 /// Writes `bytes` off the UI thread with [`write_atomic`]. One writer per
@@ -253,7 +256,7 @@ mod tests {
             write_latest(b.clone(), text.into_bytes(), true);
         }
         assert!(flush(std::time::Duration::from_secs(10)));
-        let expect = format!("299{}", " ".repeat(1));
+        let expect = "299 ";
         assert_eq!(std::fs::read_to_string(&a).unwrap(), expect);
         assert_eq!(std::fs::read_to_string(&b).unwrap(), expect);
         drop(config);
