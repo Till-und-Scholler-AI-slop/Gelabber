@@ -7,6 +7,7 @@ import {
   resetSharedSessionForTests,
   synchronizeSharedSession,
 } from "../api/client.ts";
+import { syncPush } from "../pwa/push.ts";
 import { scopeGeneration } from "./scope.ts";
 import {
   changePassword,
@@ -29,6 +30,10 @@ import {
   verifyEmail,
 } from "./session.ts";
 import type { User } from "./types.ts";
+
+vi.mock("../pwa/push.ts", () => ({
+  syncPush: vi.fn(() => Promise.resolve("off")),
+}));
 
 const ada: User = {
   id: "u1",
@@ -303,6 +308,7 @@ describe("session store", () => {
     });
     await login("ada@example.com", "password123");
 
+    vi.mocked(syncPush).mockClear();
     await expect(
       changePassword("password123", "battery staple"),
     ).resolves.toEqual(ada);
@@ -311,6 +317,8 @@ describe("session store", () => {
       user: ada,
     });
     expect(getCsrfToken()).toBe("c6");
+    // The change ended every session, and with them this browser's push row.
+    expect(syncPush).toHaveBeenCalledOnce();
   });
 
   it("changePassword surfaces a wrong current password as a field error", async () => {
@@ -324,6 +332,7 @@ describe("session store", () => {
         }),
     });
     await login("ada@example.com", "password123");
+    vi.mocked(syncPush).mockClear();
 
     await expect(
       changePassword("nope", "battery staple"),
@@ -332,6 +341,7 @@ describe("session store", () => {
       fields: { current_password: "wrong" },
     });
     expect(useSession.getState().status).toBe("authenticated");
+    expect(syncPush).not.toHaveBeenCalled();
   });
 
   it("keeps local logout but exposes failed server revocation for retry", async () => {

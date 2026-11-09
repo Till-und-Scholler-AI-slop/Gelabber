@@ -13,6 +13,7 @@ import {
   synchronizeSharedSession,
   type SessionSinkOptions,
 } from "../api/client.ts";
+import { syncPush } from "../pwa/push.ts";
 import { releaseUserScope } from "./release.ts";
 import {
   invalidateSessionRequests,
@@ -362,6 +363,10 @@ export async function changePassword(
   const session = await api<SessionResponse>("/auth/password", {
     method: "POST",
     body: { current_password: currentPassword, password },
+  });
+  // Ending the old sessions dropped this browser's push subscription too.
+  void syncPush().catch(() => {
+    // Push is extra; the next start subscribes again.
   });
   return session.user as User;
 }
