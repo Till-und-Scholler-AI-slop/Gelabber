@@ -247,6 +247,64 @@ async fn ban_blocks_invite_rejoin(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn ban_revokes_the_banned_members_invites(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let server_id = server["id"].as_str().unwrap().to_owned();
+    let member_id = me_id(&mut member).await;
+
+    let own = member
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server_id}/invites"),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(own.status, StatusCode::CREATED, "{}", own.body);
+    let own_code = own.body["code"].as_str().unwrap().to_owned();
+
+    let banned = owner
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server_id}/ban"),
+            Some(json!({ "user_id": member_id })),
+        )
+        .await;
+    assert_eq!(banned.status, StatusCode::NO_CONTENT, "{}", banned.body);
+
+    // A second account must not get back in through the banned user's link.
+    let mut second = Client::new(pool);
+    second.bootstrap().await;
+    let res = second
+        .register("second@example.com", "password123", "Bob2")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let join = second
+        .send(Method::POST, &format!("/api/invites/{own_code}/join"), None)
+        .await;
+    assert_eq!(join.status, StatusCode::NOT_FOUND, "{}", join.body);
+
+    // The owner's own invites stay.
+    let list = owner
+        .send(
+            Method::GET,
+            &format!("/api/servers/{server_id}/invites"),
+            None,
+        )
+        .await;
+    assert_eq!(list.status, StatusCode::OK);
+    let codes: Vec<&str> = list
+        .body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|invite| invite["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes.len(), 1, "{}", list.body);
+    assert_ne!(codes[0], own_code);
+}
+
+#[sqlx::test]
 async fn kick_and_ban_are_admin_only_and_cannot_target_owner(pool: PgPool) {
     let (mut owner, mut member) = two_users(pool).await;
     let server = server_with_member(&mut owner, &mut member).await;

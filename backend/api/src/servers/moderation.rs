@@ -116,6 +116,13 @@ async fn ban_member(
     .bind(user.id)
     .execute(&mut *tx)
     .await?;
+    // Their links would let a second account of theirs back in, and once
+    // banned they can no longer revoke them themselves.
+    sqlx::query("DELETE FROM invites WHERE server_id = $1 AND created_by = $2")
+        .bind(server_id)
+        .bind(target_id)
+        .execute(&mut *tx)
+        .await?;
     info!(server_id = %server_id, user_id = %target_id, "member banned");
     after_removal(&state, &mut tx, server_id, target_id, "banned").await?;
     tx.commit().await?;
