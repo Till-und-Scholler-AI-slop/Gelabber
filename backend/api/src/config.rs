@@ -15,6 +15,8 @@ pub const API_READY_TIMEOUT_MS: &str = "API_READY_TIMEOUT_MS";
 pub const API_DB_MAX_CONNECTIONS: &str = "API_DB_MAX_CONNECTIONS";
 pub const API_COOKIE_SECURE: &str = "API_COOKIE_SECURE";
 pub const API_ALLOW_PLAIN_HTTP: &str = "API_ALLOW_PLAIN_HTTP";
+/// Explicit opt-in for an in-memory object store when MinIO is not set.
+pub const API_ALLOW_MEMORY_STORE: &str = "API_ALLOW_MEMORY_STORE";
 pub const API_SESSION_TTL_HOURS: &str = "API_SESSION_TTL_HOURS";
 pub const API_SESSION_IDLE_HOURS: &str = "API_SESSION_IDLE_HOURS";
 pub const API_WS_HEARTBEAT_MS: &str = "API_WS_HEARTBEAT_MS";
@@ -79,6 +81,9 @@ const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
 const DEFAULT_DB_MAX_CONNECTIONS: u32 = 20;
 const DEFAULT_SESSION_TTL_HOURS: u64 = 24 * 30;
 const DEFAULT_SESSION_IDLE_HOURS: u64 = 24 * 14;
+/// Ten years. Far past any sensible lifetime, and small enough that the
+/// expiry arithmetic (`now + idle`, hours to seconds) cannot overflow.
+const MAX_SESSION_HOURS: u64 = 24 * 365 * 10;
 const DEFAULT_WS_HEARTBEAT_MS: u64 = 15_000;
 const DEFAULT_WS_DEAD_MS: u64 = 30_000;
 const DEFAULT_WS_REPLAY: usize = 256;
@@ -417,7 +422,17 @@ impl Config {
         };
 
         let session_ttl_hours = match get(API_SESSION_TTL_HOURS) {
-            Some(raw) => parse_positive::<u64>(API_SESSION_TTL_HOURS, &raw)?,
+            Some(raw) => {
+                let hours = parse_positive::<u64>(API_SESSION_TTL_HOURS, &raw)?;
+                if hours > MAX_SESSION_HOURS {
+                    return Err(invalid(
+                        API_SESSION_TTL_HOURS,
+                        &raw,
+                        "must be at most 87600 (ten years)",
+                    ));
+                }
+                hours
+            }
             None => DEFAULT_SESSION_TTL_HOURS,
         };
         // The default shrinks to a short configured TTL; an explicit idle
@@ -492,8 +507,8 @@ impl Config {
             None => DEFAULT_MEDIA_TICKET_TTL_SECS,
         };
         let minio = parse_minio(&get)?;
-        let allow_memory_store = match get("API_ALLOW_MEMORY_STORE") {
-            Some(raw) => parse_bool("API_ALLOW_MEMORY_STORE", &raw)?,
+        let allow_memory_store = match get(API_ALLOW_MEMORY_STORE) {
+            Some(raw) => parse_bool(API_ALLOW_MEMORY_STORE, &raw)?,
             None => false,
         };
         let limits = parse_limits(&get)?;
@@ -1377,6 +1392,37 @@ mod tests {
             ),
             "{err}"
         );
+    }
+
+    #[test]
+    fn rejects_session_lifetimes_past_ten_years() {
+        for (key, value) in [
+            (API_SESSION_TTL_HOURS, "87601"),
+            (API_SESSION_TTL_HOURS, "18446744073709551615"),
+            (API_SESSION_IDLE_HOURS, "87601"),
+        ] {
+            let mut pairs = vec![
+                (DATABASE_URL, "postgres://u:p@localhost/db"),
+                (REDIS_URL, "redis://localhost"),
+            ];
+            pairs.push((key, value));
+            if key == API_SESSION_IDLE_HOURS {
+                pairs.push((API_SESSION_TTL_HOURS, "87600"));
+            }
+            let err = Config::from_source(source(&pairs)).unwrap_err();
+            assert!(
+                matches!(err, ConfigError::Invalid { key: k, .. } if k == key),
+                "{key}={value}: {err}"
+            );
+        }
+        let config = Config::from_source(source(&[
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+            (API_SESSION_TTL_HOURS, "87600"),
+            (API_SESSION_IDLE_HOURS, "87600"),
+        ]))
+        .unwrap();
+        assert_eq!(config.session_ttl, Duration::from_secs(87600 * 3600));
     }
 
     #[test]
