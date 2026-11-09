@@ -247,6 +247,38 @@ async fn concurrent_password_change_guesses_stop_at_the_account_limit(pool: PgPo
     );
 }
 
+/// A row stored with capitals (before addresses were normalised) has one
+/// failure count, whether the guess comes through login or password change.
+#[sqlx::test]
+async fn guesses_share_one_count_for_an_address_stored_with_capitals(pool: PgPool) {
+    let mut client = signed_up(state_with(
+        pool.clone(),
+        &[("API_RATE_LOGIN_FAILURES_PER_ACCOUNT", "2")],
+    ))
+    .await;
+    sqlx::query("UPDATE users SET email = 'Ada@Example.com'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        let res = client
+            .send(
+                Method::POST,
+                "/api/auth/password",
+                Some(json!({ "current_password": "wrong guess", "password": "battery staple" })),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    }
+    let blocked = client.login("ada@example.com", "correct horse").await;
+    assert_eq!(
+        blocked.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        blocked.body
+    );
+}
+
 /// A right password leaves the failure count where it was, so a correct
 /// login never uses up the account's allowance.
 #[sqlx::test]

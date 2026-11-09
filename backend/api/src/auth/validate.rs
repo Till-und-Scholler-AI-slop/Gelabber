@@ -67,6 +67,13 @@ pub fn new_email(raw: &str, errors: &mut FieldErrors) -> Option<String> {
     Some(ascii_domain(&value).unwrap_or(value))
 }
 
+/// The form an address is counted under (failed guesses, mail budgets):
+/// lower case, domain in ASCII. A stored address may predate both rules.
+pub fn canonical(value: &str) -> String {
+    let lower = value.to_lowercase();
+    ascii_domain(&lower).unwrap_or(lower)
+}
+
 /// `value` with its domain in ASCII (IDNA) form, if that differs from how
 /// it was typed. Sign-in and reset look an address up both ways, since
 /// registration stores the ASCII form.

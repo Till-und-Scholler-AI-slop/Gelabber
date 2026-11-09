@@ -467,7 +467,8 @@ async fn change_password(
     let new_password = new_password.expect("validated");
 
     let user = current.user;
-    limits::login_attempt(&state, &user.email)?;
+    let key = validate::canonical(&user.email);
+    limits::login_attempt(&state, &key)?;
     let stored = user::password_hash_by_id(&state.db, user.id).await?;
     let ok = body.current_password.chars().count() <= validate::PASSWORD_MAX
         && password::verify(body.current_password, stored).await?;
@@ -478,7 +479,7 @@ async fn change_password(
         )])));
     }
 
-    limits::login_succeeded(&state, &user.email);
+    limits::login_succeeded(&state, &key);
 
     let hash = password::hash(new_password).await?;
     let revoked = user::set_password_hash(&state.db, user.id, &hash).await?;
@@ -529,7 +530,8 @@ async fn verify_email(
         )])));
     }
     let user = session::reload(&state.db, user_id).await?;
-    limits::login_attempt(&state, &user.email)?;
+    let key = validate::canonical(&user.email);
+    limits::login_attempt(&state, &key)?;
     let stored = user::password_hash_by_id(&state.db, user_id).await?;
     let ok = body.password.chars().count() <= validate::PASSWORD_MAX
         && password::verify(body.password, stored).await?;
@@ -538,7 +540,7 @@ async fn verify_email(
             "password", "wrong",
         )])));
     }
-    limits::login_succeeded(&state, &user.email);
+    limits::login_succeeded(&state, &key);
 
     // Re-registering a pending address in the meantime replaced the token,
     // so this one may be gone already.
