@@ -462,6 +462,9 @@ pub struct State {
     pub live: HashMap<Uuid, HashMap<Uuid, Vec<Uuid>>>,
     pub voice_self: VoiceSelf,
     pub gateway: GatewayStatus,
+    /// Why the gateway's upgrade is turned down (`HTTP 403`, `TLS: …`)
+    /// while it retries only slowly; `None` once it opens.
+    pub gateway_refused: Option<String>,
     pub view: View,
     pub ops: HashMap<String, OpState>,
     /// How often each op failed: a view that waits for an answer compares

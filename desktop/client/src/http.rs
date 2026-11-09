@@ -335,6 +335,15 @@ impl Http {
         *self.unauthenticated.write() = Some(hook);
     }
 
+    /// Runs the hook of [`Self::set_unauthenticated_hook`] (a 401 that did
+    /// not come over REST, e.g. on the gateway upgrade).
+    pub(crate) fn report_unauthenticated(&self) {
+        let hook = self.unauthenticated.read().clone();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+
     pub async fn request<B: Serialize, T: DeserializeOwned>(
         &self,
         method: Method,

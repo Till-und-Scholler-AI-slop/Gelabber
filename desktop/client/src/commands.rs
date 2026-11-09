@@ -1821,6 +1821,7 @@ impl Client {
             }
             GatewayEvent::Gap(_) => self.schedule_recovery(false),
             GatewayEvent::Resync => self.schedule_recovery(false),
+            GatewayEvent::Refused(reason) => self.write(|s| s.gateway_refused = reason),
             GatewayEvent::Frame(frame) => {
                 let voice = matches!(frame, ServerFrame::Sig(_) | ServerFrame::Err { .. });
                 let event = voice.then(|| GatewayEvent::Frame(frame.clone()));

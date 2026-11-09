@@ -50,6 +50,10 @@ impl Default for GatewayConfig {
     }
 }
 
+/// After a refused upgrade (403, 404, a certificate) the next try waits
+/// this long, not the reconnect backoff: retrying at once will not help.
+pub const REFUSED_RETRY: Duration = Duration::from_secs(60);
+
 /// What the socket reports to its owner, in arrival order.
 #[derive(Clone, Debug)]
 pub enum GatewayEvent {
@@ -62,6 +66,9 @@ pub enum GatewayEvent {
     Gap(Topic),
     /// The server lost its event stream: rediscover everything.
     Resync,
+    /// The server or TLS turned the upgrade down (not a network error):
+    /// why, until the next open (`None`). Retried only slowly meanwhile.
+    Refused(Option<String>),
     /// Every other frame: `sig`, `p`, `y`, `err`, `ns`, `rd`, `dm`.
     Frame(ServerFrame),
 }
@@ -441,6 +448,7 @@ impl Task {
     async fn run(mut self) {
         let mut attempt: u32 = 0;
         let mut first = true;
+        let mut refused = false;
         loop {
             self.set_status(if first {
                 GatewayStatus::Connecting
@@ -448,19 +456,37 @@ impl Task {
                 GatewayStatus::Reconnecting
             });
             first = false;
-            let socket = match self.connect().await {
-                Ok(socket) => socket,
+            let mut slow = false;
+            match self.connect().await {
                 Err(Closed::Stopped) => break,
-                Err(Closed::Dropped) => None,
-            };
-            if let Some(socket) = socket {
-                attempt = 0;
-                if let Closed::Stopped = self.serve(socket).await {
-                    break;
+                Err(Closed::Dropped) => {}
+                Ok(Ok(socket)) => {
+                    attempt = 0;
+                    if std::mem::take(&mut refused) {
+                        (self.handler)(GatewayEvent::Refused(None));
+                    }
+                    if let Closed::Stopped = self.serve(socket).await {
+                        break;
+                    }
+                }
+                Ok(Err(Failure::Network)) => {}
+                Ok(Err(failure)) => {
+                    tracing::warn!(?failure, "gateway upgrade refused");
+                    if let Failure::Unauthenticated = failure {
+                        // The session ended (sign-out elsewhere): as a 401 on REST.
+                        self.http.report_unauthenticated();
+                    }
+                    refused = true;
+                    (self.handler)(GatewayEvent::Refused(Some(failure.reason())));
+                    slow = true;
                 }
             }
             self.set_status(GatewayStatus::Reconnecting);
-            let delay = backoff(&self.config, attempt, jitter());
+            let delay = if slow {
+                REFUSED_RETRY.mul_f64(0.5 + jitter() * 0.5)
+            } else {
+                backoff(&self.config, attempt, jitter())
+            };
             attempt = attempt.saturating_add(1);
             if !self.wait(delay).await {
                 break;
@@ -471,7 +497,7 @@ impl Task {
 
     /// Connects while still taking commands, so a sign-out during a slow
     /// handshake never opens a socket afterwards. `Err(Stopped)` when stopped.
-    async fn connect(&mut self) -> Result<Option<Socket>, Closed> {
+    async fn connect(&mut self) -> Result<Result<Socket, Failure>, Closed> {
         let connecting = connect(self.http.clone());
         tokio::pin!(connecting);
         loop {
@@ -694,29 +720,70 @@ impl Task {
     }
 }
 
-async fn connect(http: Http) -> Option<Socket> {
-    let mut request = http.ws_url("/ws").into_client_request().ok()?;
+/// Why an upgrade did not open a socket.
+#[derive(Debug, PartialEq, Eq)]
+enum Failure {
+    /// Offline, a timeout, a 5xx: the reconnect backoff.
+    Network,
+    /// 401: the session is over.
+    Unauthenticated,
+    /// Another 4xx, or the certificate was not accepted.
+    Refused(String),
+}
+
+impl Failure {
+    fn of(error: &tokio_tungstenite::tungstenite::Error) -> Self {
+        use tokio_tungstenite::tungstenite::Error;
+        match error {
+            Error::Http(response) => {
+                let status = response.status();
+                if status == 401 {
+                    Self::Unauthenticated
+                } else if status.is_client_error() && status != 408 && status != 429 {
+                    Self::Refused(format!("HTTP {}", status.as_u16()))
+                } else {
+                    Self::Network
+                }
+            }
+            Error::Tls(error) => Self::Refused(format!("TLS: {error}")),
+            Error::Io(io) => match io.get_ref().and_then(|e| e.downcast_ref::<rustls::Error>()) {
+                Some(error) => Self::Refused(format!("TLS: {error}")),
+                None => Self::Network,
+            },
+            _ => Self::Network,
+        }
+    }
+
+    fn reason(&self) -> String {
+        match self {
+            Self::Network => "network".into(),
+            Self::Unauthenticated => "HTTP 401".into(),
+            Self::Refused(reason) => reason.clone(),
+        }
+    }
+}
+
+async fn connect(http: Http) -> Result<Socket, Failure> {
+    let mut request = http
+        .ws_url("/ws")
+        .into_client_request()
+        .map_err(|e| Failure::Refused(e.to_string()))?;
     if let Some(cookie) = http.cookie_header()
         && let Ok(value) = cookie.parse()
     {
         request.headers_mut().insert("Cookie", value);
     }
-    let connector = match crate::http::ws_connector() {
-        Ok(connector) => connector,
-        Err(error) => {
-            tracing::warn!(%error, "gateway: no TLS configuration");
-            return None;
-        }
-    };
+    let connector =
+        crate::http::ws_connector().map_err(|e| Failure::Refused(format!("TLS: {e}")))?;
     let connect =
         tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector));
     match tokio::time::timeout(Duration::from_secs(10), connect).await {
-        Ok(Ok((socket, _))) => Some(socket),
+        Ok(Ok((socket, _))) => Ok(socket),
         Ok(Err(error)) => {
             tracing::debug!(%error, "gateway connect failed");
-            None
+            Err(Failure::of(&error))
         }
-        Err(_) => None,
+        Err(_) => Err(Failure::Network),
     }
 }
 
@@ -859,6 +926,52 @@ mod tests {
         c.on_ok(topic, 6, None);
         c.on_gap(topic, None);
         assert_eq!(c.gap_recoveries().len(), 1);
+    }
+
+    /// A 401 on the upgrade (signed out elsewhere) ends the session as a
+    /// 401 on REST does, and is not retried every second meanwhile.
+    #[test]
+    fn a_refused_upgrade_signs_out_and_waits() {
+        use std::io::{Read, Write};
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let upgrades = Arc::new(AtomicUsize::new(0));
+        let count = upgrades.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                count.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+            }
+        });
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let http = Http::new(&format!("http://{addr}")).unwrap();
+        let signed_out = Arc::new(AtomicBool::new(false));
+        let flag = signed_out.clone();
+        http.set_unauthenticated_hook(Arc::new(move || flag.store(true, Ordering::SeqCst)));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let seen = events.clone();
+        let gateway = Gateway::start(
+            runtime.handle(),
+            http,
+            GatewayConfig::default(),
+            Arc::new(move |e| seen.lock().push(e)),
+        );
+        std::thread::sleep(Duration::from_millis(2_000));
+        assert!(signed_out.load(Ordering::SeqCst));
+        assert_eq!(upgrades.load(Ordering::SeqCst), 1);
+        assert!(
+            events
+                .lock()
+                .iter()
+                .any(|e| matches!(e, GatewayEvent::Refused(Some(reason)) if reason == "HTTP 401"))
+        );
+        gateway.stop();
     }
 
     #[test]
