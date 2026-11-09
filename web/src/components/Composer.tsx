@@ -332,174 +332,201 @@ export function Composer({
   }
 
   return (
-    <form
-      ref={composerForm}
-      onFocusCapture={revealComposerFocus}
-      onSubmit={submit}
-      className="lr-composer"
-    >
-      {unsent.length > 0 ? (
-        <div role="alert" className="lr-send-summary">
-          <WarningIcon size={14} />
-          <span>
-            {unsent.length === 1
-              ? "1 Nachricht nicht gesendet"
-              : `${unsent.length} Nachrichten nicht gesendet`}
-          </span>
-          <button type="button" onClick={() => onShowAttempt(unsent[0]!.id)}>
-            Anzeigen
-          </button>
-        </div>
-      ) : null}
-      <label className="sr-only" htmlFor={`compose-${channelId}`}>
-        Nachricht an {mention}
-        {channelName}
-      </label>
-      <div className="lr-composer-field">
-        {replyTarget ? (
-          <div className="lr-composer-reply">
-            <ReplyIcon size={14} />
-            <p>
-              Antwort an <strong>{replyTarget.author.name}</strong>
-              <span className="lr-composer-reply-hint"> · Esc bricht ab</span>
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                setReplyTarget(channelId, null);
-                composerInput.current?.focus();
-              }}
-              aria-label="Antworten abbrechen"
-              title="Antworten abbrechen"
-            >
-              <CloseIcon size={14} />
+    <>
+      <form
+        ref={composerForm}
+        onFocusCapture={revealComposerFocus}
+        onSubmit={submit}
+        className="lr-composer"
+      >
+        {unsent.length > 0 ? (
+          <div role="alert" className="lr-send-summary">
+            <WarningIcon size={14} />
+            <span>
+              {unsent.length === 1
+                ? "1 Nachricht nicht gesendet"
+                : `${unsent.length} Nachrichten nicht gesendet`}
+            </span>
+            <button type="button" onClick={() => onShowAttempt(unsent[0]!.id)}>
+              Anzeigen
             </button>
           </div>
         ) : null}
-        {dropping ? (
-          <p className="lr-composer-drop" aria-hidden="true">
-            Loslassen zum Anhängen
-          </p>
-        ) : null}
-        {files.length > 0 ? (
-          <ul className="lr-composer-attachments" aria-label="Anhänge">
-            {files.map((attached, index) => {
-              const preview = previews.get(attached);
-              return (
-                <li
-                  key={`${index}:${attached.name}:${attached.size}:${attached.lastModified}`}
-                  className="lr-composer-attachment"
-                >
-                  {preview ? <img src={preview} alt="" /> : null}
-                  <div>
-                    <p>{attached.name}</p>
-                    <p>{formatSize(attached.size)}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => removeFile(index)}
-                    aria-label={`${attached.name} entfernen`}
-                    title="Anhang entfernen"
-                  >
-                    <CloseIcon size={14} />
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        ) : null}
-        {suggestions.list}
-        <div className="lr-composer-row">
-          {canSendFiles ? (
-            <>
-              <input
-                ref={fileInput}
-                type="file"
-                accept={ACCEPT}
-                multiple
-                className="sr-only"
-                onChange={(event) => {
-                  const selected = Array.from(event.target.files ?? []);
-                  addFiles(selected);
-                  event.target.value = "";
-                  if (selected.length > 0) composerInput.current?.focus();
-                }}
-              />
+        <label className="sr-only" htmlFor={`compose-${channelId}`}>
+          Nachricht an {mention}
+          {channelName}
+        </label>
+        <div className="lr-composer-field">
+          {replyTarget ? (
+            <div className="lr-composer-reply">
+              <ReplyIcon size={14} />
+              <p>
+                Antwort an <strong>{replyTarget.author.name}</strong>
+                <span className="lr-composer-reply-hint"> · Esc bricht ab</span>
+              </p>
               <button
                 type="button"
-                title="Datei anhängen"
-                aria-label="Datei anhängen"
-                onClick={() => fileInput.current?.click()}
-                className="lr-composer-icon"
+                onClick={() => {
+                  setReplyTarget(channelId, null);
+                  composerInput.current?.focus();
+                }}
+                aria-label="Antworten abbrechen"
+                title="Antworten abbrechen"
               >
-                <PaperclipIcon size={18} />
+                <CloseIcon size={14} />
               </button>
-            </>
+            </div>
           ) : null}
-          <textarea
-            ref={composerInput}
-            id={`compose-${channelId}`}
-            value={draft}
-            {...suggestions.fieldProps}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              onDraftChange?.(e.target.value);
-              suggestions.track(e.target);
-            }}
-            onBlur={() => {
-              suggestions.fieldProps.onBlur();
-              onDraftStop?.();
-            }}
-            onKeyDown={onKeyDown}
-            onPaste={(event) => {
-              if (!canSendFiles) return;
-              const pasted = pastedFiles(event.clipboardData);
-              if (pasted.length === 0) return;
-              event.preventDefault();
-              addFiles(pasted);
-            }}
-            rows={1}
-            placeholder={`Nachricht an ${mention}${channelName}`}
-          />
-          <button
-            type="button"
-            title="Emoji einfügen"
-            aria-label="Emoji einfügen"
-            onClick={() => setEmojiOpen(true)}
-            className="lr-composer-icon"
-          >
-            <SmileIcon size={18} />
-          </button>
-          {gifsEnabled ? (
+          {dropping ? (
+            <p className="lr-composer-drop" aria-hidden="true">
+              Loslassen zum Anhängen
+            </p>
+          ) : null}
+          {files.length > 0 ? (
+            <ul className="lr-composer-attachments" aria-label="Anhänge">
+              {files.map((attached, index) => {
+                const preview = previews.get(attached);
+                return (
+                  <li
+                    key={`${index}:${attached.name}:${attached.size}:${attached.lastModified}`}
+                    className="lr-composer-attachment"
+                  >
+                    {preview ? <img src={preview} alt="" /> : null}
+                    <div>
+                      <p>{attached.name}</p>
+                      <p>{formatSize(attached.size)}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeFile(index)}
+                      aria-label={`${attached.name} entfernen`}
+                      title="Anhang entfernen"
+                    >
+                      <CloseIcon size={14} />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+          {suggestions.list}
+          <div className="lr-composer-row">
+            {canSendFiles ? (
+              <>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  accept={ACCEPT}
+                  multiple
+                  className="sr-only"
+                  onChange={(event) => {
+                    const selected = Array.from(event.target.files ?? []);
+                    addFiles(selected);
+                    event.target.value = "";
+                    if (selected.length > 0) composerInput.current?.focus();
+                  }}
+                />
+                <button
+                  type="button"
+                  title="Datei anhängen"
+                  aria-label="Datei anhängen"
+                  onClick={() => fileInput.current?.click()}
+                  className="lr-composer-icon"
+                >
+                  <PaperclipIcon size={18} />
+                </button>
+              </>
+            ) : null}
+            <textarea
+              ref={composerInput}
+              id={`compose-${channelId}`}
+              value={draft}
+              {...suggestions.fieldProps}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                onDraftChange?.(e.target.value);
+                suggestions.track(e.target);
+              }}
+              onBlur={() => {
+                suggestions.fieldProps.onBlur();
+                onDraftStop?.();
+              }}
+              onKeyDown={onKeyDown}
+              onPaste={(event) => {
+                if (!canSendFiles) return;
+                const pasted = pastedFiles(event.clipboardData);
+                if (pasted.length === 0) return;
+                event.preventDefault();
+                addFiles(pasted);
+              }}
+              rows={1}
+              placeholder={`Nachricht an ${mention}${channelName}`}
+            />
             <button
               type="button"
-              title="GIF senden"
-              aria-label="GIF senden"
-              onClick={() => setGifOpen(true)}
-              className="lr-composer-icon lr-composer-gif"
+              title="Emoji einfügen"
+              aria-label="Emoji einfügen"
+              onClick={() => setEmojiOpen(true)}
+              className="lr-composer-icon"
             >
-              <span aria-hidden="true">GIF</span>
+              <SmileIcon size={18} />
             </button>
-          ) : null}
-          <button
-            type="submit"
-            disabled={disabled}
-            aria-label="Senden"
-            title="Senden"
-            // A tap would move focus to the button and close the on-screen
-            // keyboard after every message.
-            onPointerDown={(event) => {
-              keepKeyboard.current =
-                event.pointerType !== "mouse" &&
-                document.activeElement === composerInput.current;
-              if (keepKeyboard.current) event.preventDefault();
-            }}
-            className="lr-composer-send"
-          >
-            <SendIcon size={17} />
-          </button>
+            {gifsEnabled ? (
+              <button
+                type="button"
+                title="GIF senden"
+                aria-label="GIF senden"
+                onClick={() => setGifOpen(true)}
+                className="lr-composer-icon lr-composer-gif"
+              >
+                <span aria-hidden="true">GIF</span>
+              </button>
+            ) : null}
+            <button
+              type="submit"
+              disabled={disabled}
+              aria-label="Senden"
+              title="Senden"
+              // A tap would move focus to the button and close the on-screen
+              // keyboard after every message.
+              onPointerDown={(event) => {
+                keepKeyboard.current =
+                  event.pointerType !== "mouse" &&
+                  document.activeElement === composerInput.current;
+                if (keepKeyboard.current) event.preventDefault();
+              }}
+              className="lr-composer-send"
+            >
+              <SendIcon size={17} />
+            </button>
+          </div>
         </div>
-      </div>
+        <div className="lr-composer-status" role="status">
+          {remaining < 200 ? (
+            <span
+              className={remaining < 0 ? "lr-field-error" : undefined}
+              // Read out only near the limit, not with every letter.
+              aria-live={remaining < 20 ? "polite" : "off"}
+            >
+              {remaining < 0
+                ? `${-remaining} Zeichen zu viel`
+                : `${remaining} Zeichen übrig`}
+            </span>
+          ) : null}
+          {error ? (
+            <span className="lr-field-error">
+              {fieldMessage("content", error)}
+            </span>
+          ) : null}
+        </div>
+        {fileError ? (
+          <p role="alert" className="lr-composer-file-error lr-field-error">
+            {fileError}
+          </p>
+        ) : null}
+      </form>
+      {/* Outside the form: Enter in a picker's search would submit it and
+          send the half-written draft. */}
       <Modal
         open={emojiOpen}
         onClose={() => setEmojiOpen(false)}
@@ -525,30 +552,7 @@ export function Composer({
           {gifOpen ? <GifPicker onSelect={sendGif} /> : null}
         </Modal>
       ) : null}
-      <div className="lr-composer-status" role="status">
-        {remaining < 200 ? (
-          <span
-            className={remaining < 0 ? "lr-field-error" : undefined}
-            // Read out only near the limit, not with every letter.
-            aria-live={remaining < 20 ? "polite" : "off"}
-          >
-            {remaining < 0
-              ? `${-remaining} Zeichen zu viel`
-              : `${remaining} Zeichen übrig`}
-          </span>
-        ) : null}
-        {error ? (
-          <span className="lr-field-error">
-            {fieldMessage("content", error)}
-          </span>
-        ) : null}
-      </div>
-      {fileError ? (
-        <p role="alert" className="lr-composer-file-error lr-field-error">
-          {fileError}
-        </p>
-      ) : null}
-    </form>
+    </>
   );
 }
 
