@@ -125,6 +125,12 @@ class Workflow(unittest.TestCase):
                          sorted(job for job in jobs if job != 'ci-ok'))
         self.assertIn('if: always()', block)
 
+    def test_every_deployment_test_suite_runs(self):
+        for suite in sorted((ROOT / 'deploy').glob('**/tests/test_*.py')):
+            folder = suite.parent.relative_to(ROOT).as_posix()
+            with self.subTest(folder=folder):
+                self.assertIn(f'python3 -m unittest discover -s {folder} ', self.ci)
+
     def test_moved_and_non_ascii_paths_start_their_areas(self):
         """The pull request's diff command, run on a scratch repository: a
         move names its source too, and a non-ASCII path stays unquoted."""

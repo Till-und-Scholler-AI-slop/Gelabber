@@ -262,6 +262,10 @@ jobs:
       - name: Test deployment config
         run: python3 -m unittest discover -s deploy/compose/tests -v
 
+      # The restore drill runs by hand; its own unit tests run here.
+      - name: Test deployment tools
+        run: python3 -m unittest discover -s deploy/tools/tests -v
+
   web:
     name: Frontend
     needs: changes
