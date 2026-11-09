@@ -31,12 +31,12 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{AppendHeaders, IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::cookies::{self, CSRF_COOKIE, SESSION_COOKIE, SetCookie};
 use crate::error::{ApiError, FieldErrors};
 use crate::json::Body;
-use crate::limits;
+use crate::limits::{self, MailBudget};
 use crate::mail::{Mail, Mailer};
 use crate::password;
 use crate::state::AppState;
@@ -229,19 +229,37 @@ async fn register(
     // now carries this registrant's credentials. Once the address had its
     // hourly mails nothing is written either: a takeover without a new
     // link would leave the owner without a working one.
-    if limits::mail_allowed(&state, &email) {
-        match user::insert_unverified(&state.db, &email, &name, &hash).await? {
-            Some(user_id) => {
+    if limits::mail_allowed(&state, MailBudget::Registration, &email) {
+        let outgoing = match user::insert_unverified(&state.db, &email, &name, &hash).await {
+            Ok(Some(user_id)) => {
                 info!(%user_id, "user registered, awaiting confirmation");
-                mail_confirmation(&state, mailer, user_id, &email).await?;
+                Ok(Some((user_id, Outgoing::Confirm)))
             }
-            None => match user::verified_by_email(&state.db, &email).await? {
-                Some((user_id, true)) => mailer.spawn(user_id, &email, Mail::AlreadyRegistered),
-                Some((user_id, false)) => {
-                    mail_confirmation(&state, mailer, user_id, &email).await?;
-                }
-                None => {}
-            },
+            Ok(None) => user::verified_by_email(&state.db, &email)
+                .await
+                .map(|found| match found {
+                    Some((user_id, true)) => Some((user_id, Outgoing::AlreadyRegistered)),
+                    Some((user_id, false)) => Some((user_id, Outgoing::Confirm)),
+                    None => None,
+                }),
+            Err(err) => Err(err),
+        };
+        match outgoing {
+            Ok(Some((user_id, outgoing))) => {
+                send_mail(
+                    &state,
+                    mailer,
+                    MailBudget::Registration,
+                    user_id,
+                    &email,
+                    outgoing,
+                );
+            }
+            Ok(None) => limits::mail_unsent(&state, MailBudget::Registration, &email),
+            Err(err) => {
+                limits::mail_unsent(&state, MailBudget::Registration, &email);
+                return Err(err);
+            }
         }
     }
 
@@ -257,17 +275,53 @@ async fn register(
     Ok((StatusCode::ACCEPTED, cookies, Json(body)).into_response())
 }
 
-/// Mails a fresh confirmation link; the caller counted it against the
-/// address's hourly mails ([`limits::mail_allowed`]).
-async fn mail_confirmation(
+/// An account mail before its link's token exists.
+#[derive(Debug, Clone, Copy)]
+enum Outgoing {
+    Confirm,
+    Reset,
+    AlreadyRegistered,
+}
+
+/// Sends a mail the caller reserved from `budget` ([`limits::mail_allowed`])
+/// after the response. The link's token is issued there as well: written
+/// before answering, it would make a known address answer slower than an
+/// unknown one. A mail that cannot be sent gives its reservation back.
+fn send_mail(
     state: &AppState,
     mailer: &Mailer,
+    budget: MailBudget,
     user_id: uuid::Uuid,
     email: &str,
-) -> Result<(), ApiError> {
-    let token = tokens::issue(&state.db, user_id, Purpose::VerifyEmail).await?;
-    mailer.spawn(user_id, email, Mail::ConfirmEmail { token });
-    Ok(())
+    outgoing: Outgoing,
+) {
+    let (state, mailer, email) = (state.clone(), mailer.clone(), email.to_owned());
+    tokio::spawn(async move {
+        let mail = match outgoing {
+            Outgoing::Confirm => tokens::issue(&state.db, user_id, Purpose::VerifyEmail)
+                .await
+                .map(|token| Mail::ConfirmEmail { token }),
+            Outgoing::Reset => tokens::issue(&state.db, user_id, Purpose::ResetPassword)
+                .await
+                .map(|token| Mail::ResetPassword { token }),
+            Outgoing::AlreadyRegistered => Ok(Mail::AlreadyRegistered),
+        };
+        let sent = match mail {
+            Ok(mail) => mailer
+                .send(&email, &mail)
+                .await
+                .map(|()| mail.kind())
+                .map_err(|err| (mail.kind(), err)),
+            Err(err) => Err(("token", format!("{err:?}"))),
+        };
+        match sent {
+            Ok(kind) => info!(%user_id, kind, "account mail sent"),
+            Err((kind, err)) => {
+                limits::mail_unsent(&state, budget, &email);
+                warn!(%user_id, kind, error = %err, "account mail failed");
+            }
+        }
+    });
 }
 
 async fn login(
@@ -307,8 +361,15 @@ async fn login(
     if !credentials.email_verified
         && let Some(mailer) = state.mail.as_ref()
     {
-        if limits::mail_allowed(&state, &email) {
-            mail_confirmation(&state, mailer, credentials.id, &email).await?;
+        if limits::mail_allowed(&state, MailBudget::Registration, &email) {
+            send_mail(
+                &state,
+                mailer,
+                MailBudget::Registration,
+                credentials.id,
+                &email,
+                Outgoing::Confirm,
+            );
         }
         return Err(ApiError::EmailUnverified);
     }
@@ -493,10 +554,16 @@ async fn request_password_reset(
     let email = email.expect("validated");
 
     if let Some((user_id, _)) = user::verified_by_email(&state.db, &email).await?
-        && limits::mail_allowed(&state, &email)
+        && limits::mail_allowed(&state, MailBudget::Reset, &email)
     {
-        let token = tokens::issue(&state.db, user_id, Purpose::ResetPassword).await?;
-        mailer.spawn(user_id, &email, Mail::ResetPassword { token });
+        send_mail(
+            &state,
+            mailer,
+            MailBudget::Reset,
+            user_id,
+            &email,
+            Outgoing::Reset,
+        );
         info!(%user_id, "password reset requested");
     }
     Ok((StatusCode::ACCEPTED, Json(serde_json::json!({}))).into_response())

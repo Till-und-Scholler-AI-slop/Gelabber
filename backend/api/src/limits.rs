@@ -50,9 +50,9 @@ pub const PREVIEW_PER_MIN: u32 = 10;
 pub const PREVIEW_SERVER_FACTOR: u32 = 6;
 /// Window of the per-account failure count, and so the longest wait.
 pub const LOGIN_FAILURE_WINDOW: Duration = Duration::from_secs(15 * 60);
-/// Account mails (confirmation, reset, "already registered") per address
-/// and hour. Past it the request is answered as usual and nothing is sent,
-/// so nobody can flood an inbox through the instance.
+/// Account mails per address, hour and [`MailBudget`]. Past it the request
+/// is answered as usual and nothing is sent, so nobody can flood an inbox
+/// through the instance.
 pub const MAIL_PER_ADDRESS_PER_HOUR: u32 = 5;
 
 pub(crate) const MINUTE: Duration = Duration::from_secs(60);
@@ -480,17 +480,44 @@ pub fn login_succeeded(state: &AppState, email: &str) {
     state.limiter.refund("login", &account_key(email));
 }
 
-/// Counts one account mail to `email`; `false` once the hourly allowance of
-/// that address is used up and the mail should be dropped.
-pub fn mail_allowed(state: &AppState, email: &str) -> bool {
+/// Which hourly allowance an account mail draws on. Anyone can register an
+/// address or ask for its reset; with one shared allowance registrations by
+/// strangers would silence the owner's reset mails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MailBudget {
+    /// Confirmation links and the "already registered" notice.
+    Registration,
+    /// Password reset links.
+    Reset,
+}
+
+impl MailBudget {
+    fn bucket(self) -> &'static str {
+        match self {
+            Self::Registration => "mail",
+            Self::Reset => "mail_reset",
+        }
+    }
+}
+
+/// Reserves one account mail to `email`; `false` once the hourly allowance
+/// of that address is used up and the mail should be dropped. A reserved
+/// mail that is not sent after all goes back with [`mail_unsent`].
+pub fn mail_allowed(state: &AppState, budget: MailBudget, email: &str) -> bool {
+    let bucket = budget.bucket();
     let allowed = state
         .limiter
-        .hit("mail", &account_key(email), MAIL_PER_ADDRESS_PER_HOUR, HOUR)
+        .hit(bucket, &account_key(email), MAIL_PER_ADDRESS_PER_HOUR, HOUR)
         .is_ok();
     if !allowed {
-        state.metrics.rate_limited("mail");
+        state.metrics.rate_limited(bucket);
     }
     allowed
+}
+
+/// Gives back a mail [`mail_allowed`] reserved: only sent mail counts.
+pub fn mail_unsent(state: &AppState, budget: MailBudget, email: &str) {
+    state.limiter.refund(budget.bucket(), &account_key(email));
 }
 
 /// The address is normalized by validation; hashed so the limiter's keys
@@ -501,7 +528,7 @@ fn account_key(email: &str) -> String {
 
 /// Limiter keys of the per-account counts above, which eviction spares.
 fn is_per_account(key: &str) -> bool {
-    key.starts_with("login:") || key.starts_with("mail:")
+    key.starts_with("login:") || key.starts_with("mail:") || key.starts_with("mail_reset:")
 }
 
 /// The client address the rate limits are keyed by, with IPv6 grouped per
@@ -725,12 +752,14 @@ mod tests {
                 .unwrap();
         }
         limiter.hit("mail", "victim", 1, HOUR).unwrap();
+        limiter.hit("mail_reset", "victim", 1, HOUR).unwrap();
         for i in 0..640 {
             limiter.hit("up", &i.to_string(), 5, HOUR).unwrap();
         }
         assert!(limiter.len() <= 64);
         assert!(limiter.blocked("login", "victim", 2).is_some());
         assert!(limiter.hit("mail", "victim", 1, HOUR).is_err());
+        assert!(limiter.hit("mail_reset", "victim", 1, HOUR).is_err());
     }
 
     #[test]

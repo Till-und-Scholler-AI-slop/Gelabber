@@ -394,10 +394,40 @@ async fn an_inbox_gets_at_most_five_mails_an_hour(pool: PgPool) {
         .await;
         assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
     }
-    // The confirmation counted too.
+    // Five resets on top of the confirmation, which has a budget of its own.
+    outbox(&mailer, 6).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(mailer.outbox().len(), 6);
+}
+
+/// Registrations by strangers spend the address's registration mails, not
+/// the ones its owner needs for a reset.
+#[sqlx::test]
+async fn strangers_registering_an_address_leave_its_reset_mails(pool: PgPool) {
+    let (state, mailer) = mail_state(pool);
+    confirmed_ada(&state, &mailer).await;
+    let mut stranger = client(&state).await;
+    for _ in 0..6 {
+        let res = stranger.register(ADA, "stranger password", "Mallory").await;
+        assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    }
     outbox(&mailer, 5).await;
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(mailer.outbox().len(), 5);
+
+    let res = post(
+        &mut stranger,
+        "/api/auth/password-reset",
+        json!({ "email": ADA }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 6).await;
+    assert!(
+        sent[5].body.contains("/reset-password#token="),
+        "{}",
+        sent[5].body
+    );
 }
 
 #[sqlx::test]
