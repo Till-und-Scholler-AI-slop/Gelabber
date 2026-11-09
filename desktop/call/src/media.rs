@@ -668,6 +668,10 @@ struct St {
     /// What each person publishes, from the gateway.
     pubs: HashMap<Uuid, Vec<Kind>>,
     mic: Option<Local>,
+    /// Microphones a switch replaces, per switch: still sending until the
+    /// producer took the new one, so gated with it.
+    replaced_mics: Vec<(u64, Local)>,
+    mic_switch: u64,
     mic_epoch: Uuid,
     camera: Option<Local>,
     screen: Option<Local>,
@@ -791,7 +795,7 @@ impl Session {
         }
         let (seat, locals) = {
             let mut st = self.st.lock();
-            let locals: Vec<Local> = [
+            let mut locals: Vec<Local> = [
                 st.mic.take(),
                 st.camera.take(),
                 st.screen.take(),
@@ -800,6 +804,7 @@ impl Session {
             .into_iter()
             .flatten()
             .collect();
+            locals.extend(st.replaced_mics.drain(..).map(|(_, l)| l));
             (st.seat.take(), locals)
         };
         if let Some(seat) = seat {
@@ -1300,7 +1305,7 @@ impl Session {
             }
             None => return,
         };
-        let local = {
+        let (local, switch) = {
             let mut st = self.st.lock();
             if !self.live() {
                 drop(st);
@@ -1313,8 +1318,12 @@ impl Session {
                 epoch,
                 height: 0,
             };
-            st.mic = Some(local.clone());
-            local
+            st.mic_switch += 1;
+            let switch = st.mic_switch;
+            if let Some(previous) = st.mic.replace(local.clone()) {
+                st.replaced_mics.push((switch, previous));
+            }
+            (local, switch)
         };
         if let Some(inner) = self.inner() {
             inner.write(|s| {
@@ -1330,6 +1339,18 @@ impl Session {
             if let Err(e) = seat.publish(Kind::A, &local, None, paused).await {
                 self.mic_not_sent(&seat, &e);
             }
+        }
+        // The producer sends the new one now (or none): the old one goes.
+        let replaced: Vec<Local> = {
+            let mut st = self.st.lock();
+            let (done, kept) = std::mem::take(&mut st.replaced_mics)
+                .into_iter()
+                .partition(|(s, _)| *s == switch);
+            st.replaced_mics = kept;
+            done.into_iter().map(|(_, l)| l).collect()
+        };
+        if !replaced.is_empty() {
+            std::thread::spawn(move || drop(replaced));
         }
     }
 
@@ -1913,9 +1934,17 @@ impl Session {
         let _gating = self.gating.lock();
         let (muted, deafened) = inner.read(|s| (s.muted, s.deafened));
         let switches = logic::mic_switches(muted, deafened, inner.gate_open());
-        let mic = self.st.lock().mic.clone();
-        if let Some(mic) = &mic {
-            let _ = mic.source.set_enabled(switches.enabled);
+        // A microphone being replaced may still be the one sending.
+        let mics: Vec<core::Source> = {
+            let st = self.st.lock();
+            st.mic
+                .iter()
+                .chain(st.replaced_mics.iter().map(|(_, l)| l))
+                .map(|l| l.source.clone())
+                .collect()
+        };
+        for mic in &mics {
+            let _ = mic.set_enabled(switches.enabled);
         }
     }
 
