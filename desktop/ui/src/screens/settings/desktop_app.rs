@@ -118,7 +118,7 @@ fn updates(ui: &mut Ui, view: &SetupView) {
             && let Some(n) = notice
             && ui.add(Button::new("Herunterladen").primary()).clicked()
         {
-            ctx.open_url(egui::OpenUrl::new_tab(update::release_page(&n.version)));
+            crate::platform::open_url_logged(&update::release_page(&n.version));
         }
         let check = Button::new("Nach Updates suchen")
             .pending(view.checking.then_some("Suche läuft…"))

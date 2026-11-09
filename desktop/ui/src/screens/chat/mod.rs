@@ -760,7 +760,7 @@ fn row_action(
         // Taken by `jump_to` before the rows' actions get here.
         RowAction::JumpTo(_) => {}
         RowAction::Content(id, content) => match content {
-            ContentAction::OpenLink(href) => open_external(ui.ctx(), &href),
+            ContentAction::OpenLink(href) => crate::platform::open_url_logged(&href),
             ContentAction::RevealSpoiler(n) => {
                 pane.revealed.entry(id).or_default().insert(n);
             }
@@ -777,7 +777,7 @@ fn row_action(
                 } else {
                     url
                 };
-                open_external(ui.ctx(), &full);
+                crate::platform::open_url_logged(&full);
             }
         },
         RowAction::Retry(nonce) => client.retry_send(conv.channel, nonce),
@@ -827,26 +827,6 @@ fn consume_plain(input: &mut egui::InputState, key: egui::Key) -> bool {
         )
     });
     input.events.len() != before
-}
-
-/// Opens a link in the system browser.
-pub fn open_external(ctx: &egui::Context, url: &str) {
-    ctx.open_url(egui::OpenUrl::new_tab(url));
-    #[cfg(target_os = "linux")]
-    let opener = Some("xdg-open");
-    #[cfg(target_os = "macos")]
-    let opener = Some("open");
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    let opener: Option<&str> = None;
-    if let Some(opener) = opener {
-        let _ = std::process::Command::new(opener).arg(url).spawn();
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let _ = std::process::Command::new("cmd")
-            .args(["/C", "start", "", url])
-            .spawn();
-    }
 }
 
 fn paint_typing(ui: &Ui, rect: Rect, text: &str) {
@@ -1158,7 +1138,7 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
             } else {
                 url.clone()
             };
-            open_external(&ctx, &format!("{full}?download=1"));
+            crate::platform::open_url_logged(&format!("{full}?download=1"));
         }
         if close {
             pane.lightbox = None;

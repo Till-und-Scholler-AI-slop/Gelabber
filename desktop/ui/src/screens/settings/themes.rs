@@ -1366,9 +1366,9 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
         // Under the baseline, not at the bottom of the 1.6 line box.
         link::underline(ui.painter(), foot, r.top(), r.left(), r.right(), c.muted);
         if Link::interact(ui, r, Id::unique("gelabber-omarchy"), "Omarchy").clicked() {
-            ctx.open_url(egui::OpenUrl::new_tab(
+            crate::platform::open_url_logged(
                 "https://github.com/omacom/omarchy/tree/quattro/themes",
-            ));
+            );
         }
     }
 }

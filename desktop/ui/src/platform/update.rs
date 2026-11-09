@@ -1125,7 +1125,7 @@ impl Updater {
         match notice.paint(ctx) {
             Some(Click::Later) => self.dismissed = Some(notice.version),
             Some(Click::Download) => {
-                ctx.open_url(egui::OpenUrl::new_tab(release_page(&notice.version)));
+                super::open_url_logged(&release_page(&notice.version));
             }
             Some(Click::Restart) => {
                 self.requested = true;

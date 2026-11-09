@@ -9,6 +9,7 @@ pub mod files;
 pub mod instance;
 pub mod legacy;
 pub mod notify;
+mod open;
 pub mod paths;
 pub mod ptt;
 #[cfg(target_os = "linux")]
@@ -19,6 +20,8 @@ pub mod state;
 pub mod tray;
 pub mod update;
 pub mod webview;
+
+pub use open::{open_url, open_url_logged};
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
