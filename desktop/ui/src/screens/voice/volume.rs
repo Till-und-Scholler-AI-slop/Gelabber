@@ -18,7 +18,8 @@ use crate::widgets::Checkbox;
 pub const MAX_PLAYBACK: f64 = 4.0;
 /// `SAVE_DELAY_MS`: a slider drag is written once it rests.
 const SAVE_DELAY: Duration = Duration::from_millis(400);
-const FILE: &str = "user-volumes.json";
+/// Per account; the Tauri import writes it too (platform/legacy.rs).
+pub(crate) const FILE: &str = "user-volumes.json";
 
 /// `playbackSliderPosition` (0..200).
 pub fn position(volume: f64) -> f64 {

@@ -132,7 +132,6 @@ pub struct Platform {
     stored: state::Stored,
     saved: state::Stored,
     restored_for: Option<Uuid>,
-    volumes: Volumes,
     ptt: PttLink,
     updates: update::Updater,
     /// The window title last sent (`titleWith`).
@@ -168,7 +167,6 @@ impl Platform {
             saved: stored.clone(),
             stored,
             restored_for: None,
-            volumes: Volumes::default(),
             ptt: PttLink::default(),
             updates: update::Updater::default(),
             title: "Gelabber".into(),
@@ -340,7 +338,7 @@ impl Platform {
         self.ptt.tick(ctx, &call, &p);
         if self.next_tick.is_none_or(|next| now >= next) {
             self.next_tick = Some(now + Duration::from_millis(500));
-            self.tick(ctx, &client, &call, in_front);
+            self.tick(ctx, &client, in_front);
         }
         // An accepted update: the window closes, main.rs runs the installer.
         if self.updates.tick(&client, now, update::call_busy(&call)) {
@@ -357,7 +355,7 @@ impl Platform {
     }
 
     /// Twice a second: the sign-in, the tray's dot, what is remembered.
-    fn tick(&mut self, ctx: &Context, client: &Client, call: &gelabber_call::Call, in_front: bool) {
+    fn tick(&mut self, ctx: &Context, client: &Client, in_front: bool) {
         if let Some(keeper) = self.keeper.lock().as_mut() {
             keeper.tick(client);
         }
@@ -386,7 +384,7 @@ impl Platform {
             tray::Unread::default()
         };
         self.show_unread(ctx, unread);
-        self.remember(ctx, me, call);
+        self.remember(ctx, me);
     }
 
     /// The tray's dot, the window title and the launcher's count.
@@ -416,7 +414,6 @@ impl Platform {
             && self.restored_for != Some(user)
         {
             self.restored_for = Some(user);
-            self.volumes = Volumes::default();
             if let Some(account) = self.stored.accounts.get(&user) {
                 shell::restore_memory(ctx, user, account.memory());
                 chat::restore_drafts(ctx, account.fresh_drafts(state::now_ms()));
@@ -424,7 +421,7 @@ impl Platform {
         }
     }
 
-    fn remember(&mut self, ctx: &Context, me: Option<Uuid>, call: &gelabber_call::Call) {
+    fn remember(&mut self, ctx: &Context, me: Option<Uuid>) {
         let now = state::now_ms();
         if let Some(user) = me.filter(|u| self.restored_for == Some(*u)) {
             let account = self.stored.accounts.entry(user).or_default();
@@ -432,7 +429,6 @@ impl Platform {
                 account.set_memory(&memory);
             }
             account.set_drafts(&chat::drafts(ctx), now);
-            self.volumes.tick(call, account);
         }
         self.track_window(ctx);
         if self.stored != self.saved {
@@ -501,75 +497,6 @@ impl Platform {
         {
             tracing::warn!("state: {e}");
         }
-    }
-}
-
-/// Per-person volumes: stored ones go to people who join the call, the
-/// user's changes are kept (voice/userVolume.ts).
-#[derive(Default)]
-struct Volumes {
-    channel: Option<Uuid>,
-    /// Per person: the volume last set or seen, and whether the call
-    /// reported it back (only then is a difference the user's change).
-    applied: std::collections::HashMap<Uuid, (f32, bool)>,
-}
-
-impl Volumes {
-    fn tick(&mut self, call: &impl VolumeSink, account: &mut state::Account) {
-        let (channel, people) = call.people();
-        if channel != self.channel {
-            self.channel = channel;
-            self.applied.clear();
-        }
-        let same = |a: f32, b: f32| (a - b).abs() <= 0.001;
-        for (user, volume) in people {
-            match self.applied.get(&user).copied() {
-                None => {
-                    let stored = account.volumes.get(&user).map_or(1.0, |v| v.volume);
-                    let confirmed = same(stored, volume);
-                    if !confirmed {
-                        call.set_volume(user, stored);
-                    }
-                    self.applied.insert(user, (stored, confirmed));
-                }
-                Some((target, false)) => {
-                    if same(target, volume) {
-                        self.applied.insert(user, (target, true));
-                    }
-                }
-                Some((applied, true)) if !same(applied, volume) => {
-                    account.set_volume(user, volume);
-                    self.applied.insert(user, (volume, true));
-                }
-                Some(_) => {}
-            }
-        }
-    }
-}
-
-/// The call as [`Volumes`] uses it.
-trait VolumeSink {
-    /// The call's channel and the others in it with their volumes.
-    fn people(&self) -> (Option<Uuid>, Vec<(Uuid, f32)>);
-    fn set_volume(&self, user: Uuid, volume: f32);
-}
-
-impl VolumeSink for gelabber_call::Call {
-    fn people(&self) -> (Option<Uuid>, Vec<(Uuid, f32)>) {
-        self.with_state(|s| {
-            (
-                s.channel,
-                s.participants
-                    .iter()
-                    .filter(|p| !p.me)
-                    .map(|p| (p.user, p.volume))
-                    .collect(),
-            )
-        })
-    }
-
-    fn set_volume(&self, user: Uuid, volume: f32) {
-        gelabber_call::Call::set_volume(self, user, volume);
     }
 }
 
@@ -642,61 +569,6 @@ impl PttLink {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A call whose volumes follow `set_volume` once `answers` is on.
-    struct FakeCall {
-        channel: Option<Uuid>,
-        people: Mutex<Vec<(Uuid, f32)>>,
-        answers: bool,
-        sent: Mutex<Vec<(Uuid, f32)>>,
-    }
-
-    impl VolumeSink for FakeCall {
-        fn people(&self) -> (Option<Uuid>, Vec<(Uuid, f32)>) {
-            (self.channel, self.people.lock().clone())
-        }
-        fn set_volume(&self, user: Uuid, volume: f32) {
-            self.sent.lock().push((user, volume));
-            if self.answers {
-                for p in self.people.lock().iter_mut().filter(|p| p.0 == user) {
-                    p.1 = volume;
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn stored_volumes_reach_who_joins_and_the_users_changes_are_kept() {
-        let (anna, tom) = (Uuid::new_v4(), Uuid::new_v4());
-        let mut account = state::Account::default();
-        account.set_volume(anna, 1.5);
-        let call = FakeCall {
-            channel: Some(Uuid::new_v4()),
-            people: Mutex::new(vec![(anna, 1.0), (tom, 1.0)]),
-            answers: true,
-            sent: Mutex::default(),
-        };
-        let mut volumes = Volumes::default();
-        volumes.tick(&call, &mut account);
-        assert_eq!(*call.sent.lock(), vec![(anna, 1.5)]);
-        volumes.tick(&call, &mut account);
-        // The user turns Tom down: kept.
-        call.people.lock()[1].1 = 0.5;
-        volumes.tick(&call, &mut account);
-        assert_eq!(account.volumes[&tom].volume, 0.5);
-        assert_eq!(account.volumes[&anna].volume, 1.5);
-        // A call that has not taken the stored volume yet changes nothing.
-        let slow = FakeCall {
-            channel: Some(Uuid::new_v4()),
-            people: Mutex::new(vec![(anna, 0.0)]),
-            answers: false,
-            sent: Mutex::default(),
-        };
-        let mut volumes = Volumes::default();
-        volumes.tick(&slow, &mut account);
-        volumes.tick(&slow, &mut account);
-        assert_eq!(account.volumes[&anna].volume, 1.5);
-    }
 
     /// Without a tray, a notification service or a call the passes run,
     /// remember the window and publish what the settings page shows.

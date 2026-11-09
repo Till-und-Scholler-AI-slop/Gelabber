@@ -1,8 +1,8 @@
 //! What the web keeps in localStorage per account and this app keeps in
 //! `native-state.json`: the last place, channel and DM (servers/lastPlace.ts,
 //! lastChannel.ts, dms/lastDm.ts), unsent texts for a week
-//! (messages/drafts.ts), per-person volumes (voice/userVolume.ts), and the
-//! window's size and position.
+//! (messages/drafts.ts), and the window's size and position. Per-person
+//! volumes are screens/voice/volume.rs's (`user-volumes.json`).
 
 use std::collections::HashMap;
 
@@ -33,8 +33,6 @@ pub struct Account {
     pub dm: Option<Uuid>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub drafts: HashMap<Uuid, Draft>,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub volumes: HashMap<Uuid, UserVolume>,
 }
 
 /// `Place` of lastPlace.ts, as it stores it.
@@ -50,15 +48,6 @@ pub struct Draft {
     pub text: String,
     /// Milliseconds since 1970 of the last change.
     pub at: i64,
-}
-
-/// `UserVolume` of voice/userVolume.ts; only values away from 100 % and
-/// unmuted are kept.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct UserVolume {
-    pub volume: f32,
-    #[serde(default)]
-    pub muted: bool,
 }
 
 /// The window in logical points; no position where the desktop does not
@@ -138,7 +127,6 @@ impl From<&Memory> for Account {
             channels: m.channels.clone(),
             dm: m.dm,
             drafts: HashMap::new(),
-            volumes: HashMap::new(),
         }
     }
 }
@@ -155,7 +143,7 @@ impl Account {
         }
     }
 
-    /// The places of `memory`, leaving drafts and volumes as they are.
+    /// The places of `memory`, leaving the drafts as they are.
     pub fn set_memory(&mut self, memory: &Memory) {
         let places = Account::from(memory);
         self.place = places.place;
@@ -183,21 +171,6 @@ impl Account {
                 text: text.clone(),
                 at: now,
             });
-        }
-    }
-
-    /// `sanitize` of userVolume.ts: 100 % and unmuted is not stored.
-    pub fn set_volume(&mut self, user: Uuid, volume: f32) {
-        let volume = if volume.is_finite() {
-            volume.clamp(0.0, 2.0)
-        } else {
-            1.0
-        };
-        let muted = self.volumes.get(&user).is_some_and(|v| v.muted);
-        if (volume - 1.0).abs() < 0.001 && !muted {
-            self.volumes.remove(&user);
-        } else {
-            self.volumes.insert(user, UserVolume { volume, muted });
         }
     }
 }
@@ -252,18 +225,6 @@ mod tests {
         assert!(!account.drafts.contains_key(&a));
         assert_eq!(account.fresh_drafts(4_000).len(), 1);
         assert!(account.fresh_drafts(2_000 + DRAFT_MAX_AGE_MS).is_empty());
-    }
-
-    #[test]
-    fn only_volumes_away_from_the_default_are_kept() {
-        let u = Uuid::new_v4();
-        let mut account = Account::default();
-        account.set_volume(u, 1.5);
-        assert_eq!(account.volumes[&u].volume, 1.5);
-        account.set_volume(u, 9.0);
-        assert_eq!(account.volumes[&u].volume, 2.0);
-        account.set_volume(u, 1.0);
-        assert!(account.volumes.is_empty());
     }
 
     #[test]
