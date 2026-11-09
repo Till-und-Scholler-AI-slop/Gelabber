@@ -752,6 +752,27 @@ pub fn media_error_action(code: &str, stage: MediaStage, rebuilding: bool) -> Me
     }
 }
 
+/// A seat that stayed up this long since the last revocation counts as
+/// working again.
+pub const REVOCATION_CALM: Duration = Duration::from_secs(30);
+pub const REVOCATION_WINDOW: Duration = Duration::from_secs(60);
+pub const REVOCATION_LIMIT: usize = 4;
+
+/// Notes a revocation nobody asked for (`unauthorized` or `gone` of a
+/// working seat) at `now`; true for the [`REVOCATION_LIMIT`]-th within
+/// [`REVOCATION_WINDOW`], when the servers disagree and rebuilding is futile.
+pub fn revoked_too_often(revocations: &mut Vec<Instant>, now: Instant) -> bool {
+    if revocations
+        .last()
+        .is_some_and(|last| now.saturating_duration_since(*last) >= REVOCATION_CALM)
+    {
+        revocations.clear();
+    }
+    revocations.retain(|at| now.saturating_duration_since(*at) < REVOCATION_WINDOW);
+    revocations.push(now);
+    revocations.len() >= REVOCATION_LIMIT
+}
+
 pub const LOST_CALL_MESSAGE: &str =
     "Die Sprachverbindung konnte nicht wiederhergestellt werden. Bitte erneut beitreten.";
 pub const LIVE_FORBIDDEN_MESSAGE: &str = "In diesem Server darfst du nicht live gehen.";
@@ -1217,6 +1238,29 @@ mod tests {
             Notify { once: true }
         );
         assert_eq!(media_error_action("ice_failed", Seat, false), Ignore);
+    }
+
+    #[test]
+    fn the_fourth_revocation_within_a_minute_ends_the_seat() {
+        let start = Instant::now();
+        let at = |s: u64| start + Duration::from_secs(s);
+        let mut seen = Vec::new();
+        assert!(!revoked_too_often(&mut seen, at(0)));
+        assert!(!revoked_too_often(&mut seen, at(10)));
+        assert!(!revoked_too_often(&mut seen, at(20)));
+        assert!(revoked_too_often(&mut seen, at(29)));
+        // A seat that stayed up 30 s starts the count again.
+        let mut seen = Vec::new();
+        for s in [0, 20, 40] {
+            assert!(!revoked_too_often(&mut seen, at(s)));
+        }
+        assert!(!revoked_too_often(&mut seen, at(70)));
+        // Older than a minute no longer counts, even without a calm spell.
+        let mut seen = Vec::new();
+        for s in [0, 25, 50, 75] {
+            assert!(!revoked_too_often(&mut seen, at(s)), "{s}");
+        }
+        assert!(revoked_too_often(&mut seen, at(80)));
     }
 
     #[test]

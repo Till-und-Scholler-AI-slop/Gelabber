@@ -701,6 +701,8 @@ struct St {
     /// A seat was refused (`unauthorized`) and the next one runs on a new
     /// ticket.
     renewed: bool,
+    /// When a working seat was revoked unasked, for the bound on rebuilds.
+    revocations: Vec<Instant>,
 }
 
 pub(crate) struct Session {
@@ -738,6 +740,8 @@ enum Leave {
     Refused(String),
     /// The connection could not be rebuilt: offer to join again.
     Lost,
+    /// Lost, with the media error's own message.
+    LostWith(String),
 }
 
 impl Session {
@@ -2352,6 +2356,13 @@ impl Session {
         }
         tracing::debug!("media error {code}");
         let rebuilding = self.st.lock().attempts > 0;
+        // Revoked again and again while the tickets keep coming: bounded
+        // apart from `attempts`, which every connected transport resets.
+        let revoked = stage == logic::MediaStage::Seat && matches!(code, "unauthorized" | "gone");
+        if revoked && logic::revoked_too_often(&mut self.st.lock().revocations, Instant::now()) {
+            self.give_up(Leave::LostWith(logic::media_error_message(code).into()));
+            return;
+        }
         match logic::media_error_action(code, stage, rebuilding) {
             logic::MediaErrorAction::Ignore => {}
             logic::MediaErrorAction::Rebuild => self.schedule_rebuild(generation),
@@ -2394,6 +2405,7 @@ impl Session {
                 logic::LOST_CALL_MESSAGE.to_owned(),
                 Some((self.server, self.channel)),
             ),
+            Leave::LostWith(message) => (message, Some((self.server, self.channel))),
         };
         inner.write(|s| {
             *s = CallState {
@@ -3817,6 +3829,27 @@ mod tests {
         assert_eq!(st.attempts, 1);
         drop(st);
         session.stop();
+    }
+
+    #[test]
+    fn a_seat_revoked_again_and_again_ends_with_a_retry_offer() {
+        let call = offline();
+        let session = session(&call);
+        session.seats.store(1, Ordering::Release);
+        // Each new seat would connect and reset `attempts`; the bound holds.
+        for _ in 0..3 {
+            session.on_media_error(1, "gone", logic::MediaStage::Seat);
+            session.st.lock().attempts = 0;
+            assert!(call.inner.media.current().is_some());
+        }
+        session.on_media_error(1, "unauthorized", logic::MediaStage::Seat);
+        assert!(call.inner.media.current().is_none());
+        let (status, lost) = call.inner.read(|s| (s.status.clone(), s.lost_call));
+        assert_eq!(
+            status,
+            CallStatus::Failed("Der Sprachserver hat die Verbindung nicht zugelassen.".into())
+        );
+        assert_eq!(lost, Some((session.server, session.channel)));
     }
 
     #[test]
