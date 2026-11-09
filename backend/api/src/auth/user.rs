@@ -177,12 +177,12 @@ pub async fn insert_unverified(
 
 /// The account behind `email` and whether its address is confirmed.
 pub async fn verified_by_email(db: &PgPool, email: &str) -> Result<Option<(Uuid, bool)>, ApiError> {
-    Ok(
-        sqlx::query_as("SELECT id, email_verified_at IS NOT NULL FROM users WHERE email = $1")
-            .bind(email)
-            .fetch_optional(db)
-            .await?,
+    Ok(sqlx::query_as(
+        "SELECT id, email_verified_at IS NOT NULL FROM users WHERE lower(email) = $1",
     )
+    .bind(email)
+    .fetch_optional(db)
+    .await?)
 }
 
 pub async fn credentials_by_email(
@@ -191,7 +191,7 @@ pub async fn credentials_by_email(
 ) -> Result<Option<Credentials>, ApiError> {
     Ok(sqlx::query_as::<_, Credentials>(
         "SELECT id, password_hash, email_verified_at IS NOT NULL AS email_verified \
-             FROM users WHERE email = $1",
+             FROM users WHERE lower(email) = $1",
     )
     .bind(email)
     .fetch_optional(db)

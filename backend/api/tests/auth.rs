@@ -138,6 +138,26 @@ async fn register_takes_only_a_bare_address(pool: PgPool) {
     }
 }
 
+/// Sign-in looks the address up through the `lower(email)` index, so a row
+/// stored with capitals (before addresses were normalised) is found too.
+#[sqlx::test]
+async fn login_finds_the_address_through_the_lower_case_index(pool: PgPool) {
+    let mut client = Client::new(pool.clone());
+    client.bootstrap().await;
+    let res = client
+        .register("ada@example.com", "password123", "Ada")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    client.send(Method::POST, "/api/auth/logout", None).await;
+    sqlx::query("UPDATE users SET email = 'Ada@Example.com'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let res = client.login("ada@example.com", "password123").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+}
+
 #[sqlx::test]
 async fn register_rejects_duplicate_email_case_insensitively(pool: PgPool) {
     let mut client = Client::new(pool);
