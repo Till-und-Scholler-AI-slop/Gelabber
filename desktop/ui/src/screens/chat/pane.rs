@@ -487,7 +487,12 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
     let pointer_in = ui.rect_contains_pointer(rect);
     if pointer_in {
         let delta = ui.input(|i| i.smooth_scroll_delta.y);
-        if delta != 0.0 {
+        // A text preview under the pointer scrolls first.
+        let inner = ui
+            .ctx()
+            .pointer_hover_pos()
+            .is_some_and(|p| super::attachments::takes_wheel(ui.ctx(), p, delta));
+        if delta != 0.0 && !inner {
             pane.offset = (pane.offset - delta).clamp(0.0, max_offset);
             pane.stick = pane.offset >= max_offset - 0.5;
             pane.scrolled_at = Some(now_t);
@@ -1102,7 +1107,13 @@ pub fn context_rows(
     }
     if ui.rect_contains_pointer(rect) {
         let delta = ui.input(|i| i.smooth_scroll_delta.y);
-        scroll.offset = (scroll.offset - delta).clamp(0.0, max_offset);
+        let inner = ui
+            .ctx()
+            .pointer_hover_pos()
+            .is_some_and(|p| super::attachments::takes_wheel(ui.ctx(), p, delta));
+        if !inner {
+            scroll.offset = (scroll.offset - delta).clamp(0.0, max_offset);
+        }
     }
     scroll.offset = scroll.offset.clamp(0.0, max_offset);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));

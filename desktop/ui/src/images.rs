@@ -719,7 +719,7 @@ pub fn cover_uv(image: egui::Vec2, target: egui::Vec2) -> egui::Rect {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     const ANY: Limit = Limit {
@@ -785,7 +785,7 @@ mod tests {
     }
 
     /// A server that answers `GET <path>` with the bytes for it, else 404.
-    fn serve(files: Vec<(&'static str, Vec<u8>)>) -> String {
+    pub(crate) fn serve(files: Vec<(&'static str, Vec<u8>)>) -> String {
         use std::io::{BufRead, BufReader, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let origin = format!("http://{}", listener.local_addr().expect("addr"));

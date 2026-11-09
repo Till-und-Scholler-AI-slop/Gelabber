@@ -601,6 +601,9 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
             context::ContextAction::Row(row) => list_actions.push(ListAction::Row(row)),
         }
     }
+    for text in attachments::take_download_errors(ui.ctx()) {
+        app.toasts.error(text);
+    }
     let now_t = ui.input(|i| i.time);
     for action in list_actions {
         match action {
@@ -778,6 +781,9 @@ fn row_action(
                     url
                 };
                 crate::platform::open_url_logged(&full);
+            }
+            attachments::MediaAction::Download { url, name } => {
+                attachments::download(ui.ctx(), client, &url, &name);
             }
         },
         RowAction::Retry(nonce) => client.retry_send(conv.channel, nonce),
@@ -1133,12 +1139,24 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
     if let Some((url, name)) = pane.lightbox.clone() {
         let (close, download) = attachments::lightbox(&ctx, app.images, &url, &name);
         if download {
-            let full = if url.starts_with('/') {
-                client.http().url(&url)
+            // An attachment as a download; a preview's picture as it is.
+            let fetch = if url.starts_with("/api/attachments/") {
+                format!("{url}?download=1")
             } else {
                 url.clone()
             };
-            crate::platform::open_url_logged(&format!("{full}?download=1"));
+            let name = if name.is_empty() {
+                url.rsplit('/')
+                    .next()
+                    .unwrap_or("")
+                    .split('?')
+                    .next()
+                    .unwrap_or("")
+                    .to_owned()
+            } else {
+                name.clone()
+            };
+            attachments::download(&ctx, client, &fetch, &name);
         }
         if close {
             pane.lightbox = None;
