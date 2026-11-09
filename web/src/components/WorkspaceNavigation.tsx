@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { CloseIcon } from "./Icons.tsx";
 import { IconButton } from "./ui/IconButton.tsx";
+import { backdropClicks } from "./modalClose.ts";
 
 /** Up to this width the workspace navigation is a closed drawer. */
 export const NAVIGATION_DRAWER_MAX_WIDTH = 800;
@@ -30,6 +31,7 @@ export function WorkspaceDrawer({
   );
   const dialogRef = useRef<HTMLDialogElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const [backdrop] = useState(backdropClicks);
   const openerRef = useRef<HTMLElement | null>(null);
   const modalRef = useRef(false);
   const onCloseRef = useRef(onClose);
@@ -106,9 +108,9 @@ export function WorkspaceDrawer({
         event.preventDefault();
         onClose();
       }}
+      onPointerDown={backdrop.press}
       onClick={(event) => {
-        if (!mobile) return;
-        if (event.target !== event.currentTarget) return;
+        if (!backdrop.onDialog(event) || !mobile) return;
         const bounds = event.currentTarget.getBoundingClientRect();
         if (
           event.clientX < bounds.left ||
