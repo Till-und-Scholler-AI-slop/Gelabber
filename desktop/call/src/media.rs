@@ -206,7 +206,17 @@ fn end_taken(inner: &Arc<Inner>, session: &Arc<Session>) {
         .is_some_and(|s| Arc::ptr_eq(&s, session));
     if current {
         leave(inner);
+        sync_push_to_talk(inner);
     }
+}
+
+/// The push-to-talk gate as the call now stands (off outside a call), as
+/// `Call::leave` sets it.
+fn sync_push_to_talk(inner: &Arc<Inner>) {
+    crate::Call {
+        inner: inner.clone(),
+    }
+    .sync_push_to_talk();
 }
 
 pub(crate) fn set_muted(inner: &Arc<Inner>, muted: bool) {
@@ -2170,6 +2180,7 @@ impl Session {
                     ..CallState::default()
                 }
             });
+            sync_push_to_talk(&inner);
             inner.notify(gelabber_client::error_message(code));
             return;
         }
@@ -2451,6 +2462,7 @@ impl Session {
                 ..CallState::default()
             }
         });
+        sync_push_to_talk(&inner);
         inner.notify(message);
     }
 
@@ -3872,6 +3884,11 @@ mod tests {
         let call = offline();
         let session = session(&call);
         session.seats.store(1, Ordering::Release);
+        call.inner.write(|s| s.channel = Some(session.channel));
+        let mut settings = call.settings();
+        settings.push_to_talk = true;
+        call.set_settings(settings);
+        assert!(!call.inner.read(|s| s.push_to_talk_open));
         // Each new seat would connect and reset `attempts`; the bound holds.
         for _ in 0..3 {
             session.on_media_error(1, "gone", logic::MediaStage::Seat);
@@ -3886,6 +3903,10 @@ mod tests {
             CallStatus::Failed("Der Sprachserver hat die Verbindung nicht zugelassen.".into())
         );
         assert_eq!(lost, Some((session.server, session.channel)));
+        assert!(
+            call.inner.read(|s| s.push_to_talk_open),
+            "no gate outside a call"
+        );
     }
 
     #[test]
@@ -3917,7 +3938,14 @@ mod tests {
             assert!(Instant::now() < deadline, "the client took the seat");
             std::thread::sleep(Duration::from_millis(10));
         }
-        call.inner.write(|s| s.status = CallStatus::Connected);
+        call.inner.write(|s| {
+            s.status = CallStatus::Connected;
+            s.channel = Some(session.channel);
+        });
+        let mut settings = call.settings();
+        settings.push_to_talk = true;
+        call.set_settings(settings);
+        assert!(!call.inner.read(|s| s.push_to_talk_open), "the key is up");
         // Another server's frame: the call stays.
         let other = GatewayEvent::Frame(ServerFrame::Err {
             e: "kicked".into(),
@@ -3941,6 +3969,8 @@ mod tests {
         assert!(call.inner.media.current().is_none());
         assert_eq!(call.inner.read(|s| s.status.clone()), CallStatus::default());
         assert!(session.stopped.load(Ordering::Acquire));
+        // Out of the call, push-to-talk no longer holds the microphone shut.
+        assert!(call.inner.read(|s| s.push_to_talk_open));
     }
 
     #[test]
