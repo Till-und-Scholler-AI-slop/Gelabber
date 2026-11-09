@@ -77,6 +77,7 @@ async fn issue_ticket(
         },
         &session,
         state.media_ticket_ttl,
+        state.session_ttl,
     )
     .await?;
 
@@ -103,11 +104,22 @@ async fn load_channel<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     .ok_or(ApiError::NotFound)
 }
 
+/// The session's absolute end (`created_at + ttl`). Its row's expiry slides
+/// with use (#195), so a copy of that taken at mint would end calls early.
+fn session_end(session: &CurrentSession, session_ttl: Duration) -> i64 {
+    chrono::Duration::from_std(session_ttl)
+        .ok()
+        .and_then(|ttl| session.created_at.checked_add_signed(ttl))
+        .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC)
+        .timestamp()
+}
+
 async fn mint(
     redis: &redis::Client,
     claim: TicketClaim,
     session: &CurrentSession,
     ttl: Duration,
+    session_ttl: Duration,
 ) -> Result<(String, u64), ApiError> {
     let mut conn = redis
         .get_multiplexed_async_connection()
@@ -121,7 +133,8 @@ async fn mint(
             .num_seconds()
             .max(0) as u64,
     );
-    if secs == 0 {
+    let ends_at = session_end(session, session_ttl);
+    if secs == 0 || ends_at <= chrono::Utc::now().timestamp() {
         return Err(ApiError::Unauthenticated);
     }
     let base = serde_json::to_string(&claim)
@@ -140,7 +153,7 @@ async fn mint(
             .arg(Uuid::new_v4().to_string())
             .arg(Uuid::new_v4().to_string())
             .arg(session.key())
-            .arg(session.expires_at.timestamp())
+            .arg(ends_at)
             .arg(claim.u.to_string())
             .invoke_async(&mut conn)
             .await
@@ -282,6 +295,7 @@ async fn maintain_session(state: &AppState, session: &CurrentSession) -> Result<
         state.gateway.untrack_media_session(&key, generation).await;
         return Err(ApiError::Internal("media session lease unavailable".into()));
     }
+    let ends_at = session_end(session, state.session_ttl);
     let state = state.clone();
     let session = session.clone();
     tokio::spawn(async move {
@@ -303,8 +317,7 @@ async fn maintain_session(state: &AppState, session: &CurrentSession) -> Result<
                             media_demand_key(&key),
                             session_owner_key(&key),
                         );
-                        let (user, expires_at) =
-                            (session.user.id.to_string(), session.expires_at.timestamp());
+                        let user = session.user.id.to_string();
                         let generation = generation.to_string();
                         async move {
                             redis::Script::new(REFRESH_SESSION_LUA)
@@ -312,7 +325,7 @@ async fn maintain_session(state: &AppState, session: &CurrentSession) -> Result<
                                 .key(demand)
                                 .key(owner)
                                 .arg(user)
-                                .arg(expires_at)
+                                .arg(ends_at)
                                 .arg(generation)
                                 .invoke_async::<String>(&mut conn)
                                 .await
@@ -502,6 +515,54 @@ mod tests {
         });
         let (_, ended) = tokio::join!(blocked, ended);
         ended.expect("the worker gives up once failures used the lease up");
+    }
+
+    #[sqlx::test]
+    async fn ticket_and_lease_end_with_the_session_not_its_expiry_at_mint(pool: sqlx::PgPool) {
+        let (state, mut session, mut conn) = test_session(&pool, "2").await;
+        let key = session.key();
+        let claim = TicketClaim {
+            u: session.user.id,
+            s: Uuid::new_v4(),
+            c: Uuid::new_v4(),
+            g: false,
+        };
+        let (code, _) = mint(
+            &state.redis,
+            claim,
+            &session,
+            state.media_ticket_ttl,
+            state.session_ttl,
+        )
+        .await
+        .unwrap();
+        let raw: String = redis::cmd("GET")
+            .arg(ticket::redis_key(&code))
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        let ticket: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let end = (session.created_at + chrono::Duration::hours(2)).timestamp();
+        assert_eq!(ticket["auth"]["expires_at"], end, "{ticket}");
+
+        // The worker's copy is from mint; the row has slid on since.
+        session.expires_at = chrono::Utc::now() + chrono::Duration::milliseconds(500);
+        redis::cmd("SET")
+            .arg(media_demand_key(&key))
+            .arg("1")
+            .arg("EX")
+            .arg(35)
+            .query_async::<()>(&mut conn)
+            .await
+            .unwrap();
+        maintain_session(&state, &session).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(3500)).await;
+        let lease: Option<String> = redis::cmd("GET")
+            .arg(session_authority_key(&key))
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(lease, Some(session.user.id.to_string()));
     }
 
     #[tokio::test]
