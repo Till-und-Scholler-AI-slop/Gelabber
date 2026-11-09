@@ -23,9 +23,11 @@ export function ThemeController() {
       if (document.visibilityState === "visible") void syncThemes();
     };
     window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => {
       window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
   }, [user, sessionStatus]);
