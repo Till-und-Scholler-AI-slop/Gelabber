@@ -37,7 +37,7 @@ pub struct ComposerState {
     pub picked: HashMap<String, Uuid>,
     pub focus: bool,
     /// Files chosen in the system's file dialog, once it closes.
-    chosen: Option<std::sync::Arc<parking_lot::Mutex<Option<Vec<std::path::PathBuf>>>>>,
+    chosen: Option<crate::platform::files::PickedMany>,
     /// Where the caret goes once the field shows the new draft.
     caret: Option<usize>,
     last_caret: Option<usize>,
@@ -503,7 +503,10 @@ pub fn show(
             edit_id.with("attach"),
         ) && state.chosen.is_none()
         {
-            state.chosen = Some(choose_files(ui.ctx()));
+            state.chosen = Some(crate::platform::files::pick_many(
+                ui.ctx(),
+                "Datei anhängen",
+            ));
         }
         x += 36.0;
     }
@@ -780,67 +783,6 @@ fn outgoing(path: &std::path::Path, data: Vec<u8>) -> OutgoingFile {
         filename,
         data: std::sync::Arc::new(data),
     }
-}
-
-/// Runs the desktop's file chooser on a thread; the slot fills with the
-/// chosen paths (none when cancelled or when there is no chooser).
-fn choose_files(
-    ctx: &egui::Context,
-) -> std::sync::Arc<parking_lot::Mutex<Option<Vec<std::path::PathBuf>>>> {
-    let slot = std::sync::Arc::new(parking_lot::Mutex::new(None));
-    let out = slot.clone();
-    let ctx = ctx.clone();
-    std::thread::spawn(move || {
-        let attempts: &[(&str, &[&str])] = if cfg!(target_os = "macos") {
-            &[(
-                "osascript",
-                &[
-                    "-e",
-                    "set f to choose file with multiple selections allowed",
-                    "-e",
-                    "set out to \"\"",
-                    "-e",
-                    "repeat with x in f",
-                    "-e",
-                    "set out to out & POSIX path of x & linefeed",
-                    "-e",
-                    "end repeat",
-                    "-e",
-                    "out",
-                ],
-            )]
-        } else {
-            &[
-                (
-                    "zenity",
-                    &[
-                        "--file-selection",
-                        "--multiple",
-                        "--separator=\n",
-                        "--title=Datei anhängen",
-                    ],
-                ),
-                (
-                    "kdialog",
-                    &["--getopenfilename", "--multiple", "--separate-output"],
-                ),
-            ]
-        };
-        let mut paths = Vec::new();
-        for (program, args) in attempts {
-            if let Ok(output) = std::process::Command::new(program).args(*args).output() {
-                paths = String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .filter(|l| !l.trim().is_empty())
-                    .map(std::path::PathBuf::from)
-                    .collect();
-                break;
-            }
-        }
-        *out.lock() = Some(paths);
-        ctx.request_repaint();
-    });
-    slot
 }
 
 fn composer_icon(ui: &mut Ui, rect: Rect, icon: Icon, label: &str, id: egui::Id) -> bool {

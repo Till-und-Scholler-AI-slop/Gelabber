@@ -557,6 +557,14 @@ impl GelabberApp {
         logout_failed(ui, &self.client, signed_in);
         // A file choice that no desktop chooser took: the path field.
         crate::platform::files::show_in_app(&ctx);
+        // Where a save went, or why it did not.
+        for (text, failed) in crate::platform::files::take_notices(&ctx) {
+            if failed {
+                self.toasts.error(text);
+            } else {
+                self.toasts.notify(text);
+            }
+        }
         self.toasts.show(ui, !is_workspace(self.nav.route()));
         crate::widgets::opener::restore(&ctx);
     }

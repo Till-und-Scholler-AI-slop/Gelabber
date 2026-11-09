@@ -936,8 +936,8 @@ pub fn show_confirm(ctx: &egui::Context) {
 /// A file chosen in the system dialog, read off the UI thread.
 pub use crate::platform::files::Picked;
 
-/// Opens the desktop's file chooser (platform/files.rs: the portal, zenity
-/// or kdialog, else a path field in the window); the slot fills with the
+/// Opens the desktop's file chooser (platform/files.rs: the portal, zenity,
+/// kdialog or the Windows dialog, else a path field in the window); the slot fills with the
 /// bytes and the file name, or `None` when nothing was chosen.
 pub fn pick_file(ctx: &egui::Context, title: &str, filter: &[&str]) -> Picked {
     let slot: Picked = Arc::new(Mutex::new(None));
@@ -946,60 +946,10 @@ pub fn pick_file(ctx: &egui::Context, title: &str, filter: &[&str]) -> Picked {
 }
 
 /// Saves `bytes` where the user chooses (the web's download); without a
-/// dialog program the file goes to the Downloads folder.
+/// dialog into the Downloads folder. A toast says where it went
+/// (platform/files.rs).
 pub fn save_file(ctx: &egui::Context, title: &str, name: &str, bytes: Vec<u8>) {
-    use std::process::Command;
-    let (title, name) = (title.to_owned(), name.to_owned());
-    let ctx = ctx.clone();
-    std::thread::spawn(move || {
-        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-        let downloads = home.map(|h| h.join("Downloads")).filter(|d| d.is_dir());
-        let suggested = downloads
-            .clone()
-            .map(|d| d.join(&name))
-            .unwrap_or_else(|| std::path::PathBuf::from(&name));
-        let suggested = suggested.to_string_lossy().into_owned();
-        let programs: [(&str, Vec<String>); 2] = [
-            (
-                "zenity",
-                vec![
-                    "--file-selection".into(),
-                    "--save".into(),
-                    "--confirm-overwrite".into(),
-                    format!("--title={title}"),
-                    format!("--filename={suggested}"),
-                ],
-            ),
-            (
-                "kdialog",
-                vec![
-                    "--title".into(),
-                    title.clone(),
-                    "--getsavefilename".into(),
-                    suggested.clone(),
-                ],
-            ),
-        ];
-        let mut target = None;
-        let mut ran = false;
-        for (program, args) in programs {
-            if let Ok(out) = Command::new(program).args(&args).output() {
-                ran = true;
-                if out.status.success() {
-                    let p = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-                    target = (!p.is_empty()).then_some(p);
-                }
-                break;
-            }
-        }
-        if !ran {
-            target = Some(suggested);
-        }
-        if let Some(path) = target {
-            let _ = std::fs::write(path, bytes);
-        }
-        ctx.request_repaint();
-    });
+    crate::platform::files::save(ctx, title, name, bytes);
 }
 
 /// Takes a dropped file from the window, if one was dropped this frame.
