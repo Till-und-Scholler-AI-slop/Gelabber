@@ -33,8 +33,11 @@ import { SettingsAreaPart } from "./settingsAreaPart.ts";
 import "./settings.css";
 
 function useInstallable() {
-  // Nothing to install inside the desktop app or the installed web app.
-  return useInstallation((state) => !state.native && !state.standalone);
+  // Nothing to install inside the Tauri app; the installed web app can
+  // still get the desktop app.
+  return useInstallation(
+    (state) => !state.native && (!state.standalone || state.desktop !== null),
+  );
 }
 
 /** The areas, grouped "Konto" and "App". `list` draws them as the phone's

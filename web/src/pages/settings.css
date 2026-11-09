@@ -616,6 +616,10 @@
   max-width: 640px;
   margin-top: 0;
 }
+/* The desktop app's card, then the web app's. */
+.settings-area .pwa-install + .pwa-install {
+  margin-top: var(--lr-space-4);
+}
 
 @media (max-width: 640px) {
   .settings-area {
