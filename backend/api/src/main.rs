@@ -57,6 +57,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|err| format!("database migration failed: {err}"))?;
     info!("database migrations applied");
 
+    // Lowered session settings apply to sessions that already exist too.
+    let capped = gelabber_api::auth::session::cap_to_settings(
+        &state.db,
+        state.session_idle,
+        state.session_ttl,
+    )
+    .await
+    .map_err(|err| format!("capping sessions failed: {}", err.code()))?;
+    info!(
+        sessions = capped,
+        "sessions capped to the configured lifetime"
+    );
+
     match state.store.ensure_ready().await {
         Ok(()) => info!("object store ready"),
         Err(err) => tracing::warn!(error = %err, "object store not ready; uploads will retry"),
