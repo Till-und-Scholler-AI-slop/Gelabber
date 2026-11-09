@@ -119,6 +119,10 @@ export type VoiceSession = {
   micCaptureJoin: number;
   /** Why the call has no microphone, until one is captured again. */
   micFailure: "unavailable" | "denied" | null;
+  /** The audio inputs when the microphone last failed, `null` if unknown.
+   * A device change retries only once these differ: a microphone busy in
+   * another app is not asked again for each speaker or webcam. */
+  micFailureInputs: string | null;
   /** The chosen microphone went away and the default one stands in: it comes
    * back when the chosen one does. */
   micFellBack: boolean;
@@ -197,6 +201,7 @@ export function createVoiceSession(previous?: VoiceSession): VoiceSession {
     micJoin: 0,
     micCaptureJoin: -1,
     micFailure: null,
+    micFailureInputs: null,
     micFellBack: false,
     micLossHandled: new WeakSet(),
     pendingMicRaw: new Set(),

@@ -274,6 +274,7 @@ function logMicFailure(error: unknown): void {
 export function reportJoinMicFailure(error: unknown): void {
   logMicFailure(error);
   voice.micFailure = micRefused(error) ? "denied" : "unavailable";
+  noteFailureInputs();
   syncMicState();
   voice.deps?.onError?.(microphoneFailure(error));
   noteAudioProcessing(null);
@@ -366,6 +367,28 @@ function noteMicLost(raw: MediaStream): void {
   );
 }
 
+/** The audio inputs as one comparable value. Without permission the ids are
+ * empty, and the count and groups still tell a change. */
+function audioInputsKey(devices: MediaDeviceInfo[]): string {
+  return devices
+    .filter((device) => device.kind === "audioinput")
+    .map((device) => `${device.deviceId}/${device.groupId ?? ""}`)
+    .sort()
+    .join(",");
+}
+
+function noteFailureInputs(): void {
+  voice.micFailureInputs = null;
+  const failure = voice.micFailure;
+  void navigator.mediaDevices
+    ?.enumerateDevices?.()
+    .then((devices) => {
+      if (voice.micFailure === failure)
+        voice.micFailureInputs = audioInputsKey(devices);
+    })
+    .catch(() => undefined);
+}
+
 /** A device came or went. The chosen microphone gone: fall back as if it
  * had ended (some browsers keep the track). There (again, or for the first
  * time since joining without it): use it. With the system default chosen, a
@@ -394,8 +417,12 @@ export async function onDeviceChange(): Promise<void> {
   )
     return;
   if (!live) {
-    // Joined, or left, without one that works: try a microphone that is there.
-    if (devices.length > 0) void refreshMic();
+    // Joined, or left, without one that works: try a microphone that is
+    // there, once the inputs differ from those at the failure.
+    const key = audioInputsKey(devices);
+    if (devices.length === 0 || key === voice.micFailureInputs) return;
+    voice.micFailureInputs = key;
+    void refreshMic();
     return;
   }
   const inputs = devices.map((device) => device.deviceId);

@@ -3984,6 +3984,35 @@ describe("authoritative mediasoup session lifecycle", () => {
     );
     expect(useVoice.getState().mic).toBe("live");
   });
+  it("retries a busy microphone only when the inputs change", async () => {
+    const devices = new EventTarget();
+    let inputs = ["default"];
+    vi.stubGlobal("navigator", {
+      mediaDevices: Object.assign(devices, {
+        enumerateDevices: async () =>
+          inputs.map((deviceId) => ({ kind: "audioinput", deviceId })),
+      }),
+    });
+    const env = install({
+      mediaError: (index) =>
+        index === 0 ? new DOMException("busy", "NotReadableError") : undefined,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    await vi.waitFor(() => expect(useVoice.getState().mic).toBe("unavailable"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Speakers or a webcam without a microphone: the same inputs, no retry.
+    devices.dispatchEvent(new Event("devicechange"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    devices.dispatchEvent(new Event("devicechange"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(env.getUserMediaCalls()).toBe(1);
+    expect(env.errors).toHaveLength(1);
+    inputs = ["default", "headset"];
+    devices.dispatchEvent(new Event("devicechange"));
+    await vi.waitFor(() =>
+      expect(env.peers[0]!.audio).toBe(env.streams[1]!.getAudioTracks()[0]),
+    );
+  });
   it("follows the system default microphone when it changes", async () => {
     const devices = new EventTarget();
     let defaultGroup = "laptop";
