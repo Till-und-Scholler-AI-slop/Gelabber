@@ -534,7 +534,9 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
             .rev()
             .find(|m| !history.pending.iter().any(|p| p.nonce == m.id))
             .map(|m| m.id);
-        if newest.is_some() && newest != pane.last_marked {
+        // Only a focused window marks; what arrived meanwhile is marked once
+        // the window has the focus again.
+        if newest.is_some() && newest != pane.last_marked && ui.input(|i| i.focused) {
             pane.last_marked = newest;
             actions.push(ListAction::MarkRead);
         }

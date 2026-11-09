@@ -1426,6 +1426,58 @@ mod page_tests {
         wait_for_label(&mut harness, "Text kopieren");
     }
 
+    /// A message that arrives while the window is in the background is
+    /// marked read once the window has the focus again.
+    #[test]
+    fn the_newest_message_is_marked_read_when_the_window_gets_the_focus() {
+        use crate::app::testkit::{ALLGEMEIN, HOME};
+        let _config = TempConfig::new("read-on-focus");
+        // The history arrives once the window is in the background.
+        let go = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let gate = go.clone();
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", p) if p == format!("/channels/{ALLGEMEIN}/messages") => {
+                while !gate.load(std::sync::atomic::Ordering::Acquire) {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Some(Reply::json(json!({
+                    "messages": [{
+                        "id": "00000000-0000-4000-8000-0000000000e1",
+                        "channel_id": ALLGEMEIN,
+                        "author": {"id": "00000000-0000-4000-8000-00000000007c", "name": "Jonas", "avatar_url": null},
+                        "content": "Kommt ihr heute?",
+                        "created_at": "2026-11-05T16:21:00Z",
+                        "edited_at": null,
+                        "revision": 0,
+                        "created_order": 1,
+                    }],
+                    "has_more": false
+                })))
+            }
+            ("PUT", p) if p == format!("/channels/{ALLGEMEIN}/read") => Some(Reply::json(json!({
+                "channel_id": ALLGEMEIN, "last_read_message_id": null, "mention_count": 0
+            }))),
+            _ => workspace(method, path),
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        harness.input_mut().focused = false;
+        harness.step();
+        go.store(true, std::sync::atomic::Ordering::Release);
+        wait_for_label(&mut harness, "Kommt ihr heute?");
+        // Opening marks once in the client core, focused or not; the pane
+        // marks nothing while the window is in the background.
+        let read = format!("PUT /channels/{ALLGEMEIN}/read");
+        let marks = || api.seen.lock().iter().filter(|r| **r == read).count();
+        for _ in 0..20 {
+            harness.step();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let before = marks();
+        assert!(before <= 1, "{before}");
+        harness.input_mut().focused = true;
+        wait_for(&mut harness, "the read mark", |_| marks() > before);
+    }
+
     /// A search hit's text is selectable and still opens the hit on a
     /// click, as the hit's button does around it.
     #[test]
