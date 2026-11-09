@@ -859,6 +859,16 @@
       ]
     },
     {
+      "name": "text-select",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "select": "Spiel! Ich hätte Lust auf Brettspiele oder etwas Kooperatives."
+        }
+      ]
+    },
+    {
       "name": "toast-error",
       "path": "/s/{home}/c/{musik}",
       "user": "lena",
@@ -980,6 +990,17 @@
       "path": "/s/{home}/c/{allgemein}",
       "user": "lena",
       "before": "theme lena light"
+    },
+    {
+      "name": "light-text-select",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "before": "theme lena light",
+      "actions": [
+        {
+          "select": "Spiel! Ich hätte Lust auf Brettspiele oder etwas Kooperatives."
+        }
+      ]
     },
     {
       "name": "light-overview",

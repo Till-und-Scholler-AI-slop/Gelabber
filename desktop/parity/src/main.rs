@@ -160,6 +160,9 @@ enum Action {
     /// Rest the pointer on the first button or link, else element, with this label;
     /// it stays there for the screenshot.
     Hover(String),
+    /// Select the whole text of the first text with exactly this label,
+    /// with a drag across it.
+    Select(String),
     /// Focus the text field with this accessible name.
     Focus(String),
     /// Press a key, Playwright style: "Control+k", "ArrowDown", "Escape".
@@ -506,6 +509,26 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                             .unwrap_or_else(|| panic!("{}: nothing labelled {label:?}", scene.name))
                             .hover();
                         hovered = true;
+                    }
+                    Action::Select(label) => {
+                        use egui::accesskit::Role;
+                        reveal(&mut harness, size.y, label, &[Role::Label]);
+                        let rect = find(&harness, label, &[Role::Label])
+                            .unwrap_or_else(|| panic!("{}: no text {label:?}", scene.name))
+                            .rect();
+                        // From before the first character to after the last.
+                        let from = rect.left_top() + egui::vec2(1.0, 4.0);
+                        let to = rect.right_bottom() - egui::vec2(1.0, 4.0);
+                        harness.hover_at(from);
+                        harness.drag_at(from);
+                        harness.hover_at(rect.center());
+                        harness.hover_at(to);
+                        harness.event(egui::Event::PointerButton {
+                            pos: to,
+                            button: egui::PointerButton::Primary,
+                            pressed: false,
+                            modifiers: egui::Modifiers::NONE,
+                        });
                     }
                     Action::Focus(label) => {
                         use egui::accesskit::Role;
