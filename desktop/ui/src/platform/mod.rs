@@ -487,15 +487,13 @@ impl Platform {
     /// The app ends: what it showed goes, what it remembers is written.
     pub fn on_exit(&mut self) {
         self.notifier.clear();
-        // Written here as well: the last background write may not finish.
-        if self.stored != state::Stored::default()
-            && let Err(e) = paths::write_json(
-                "native-state.json",
-                &serde_json::to_value(&self.stored).unwrap_or_default(),
-                true,
-            )
-        {
-            tracing::warn!("state: {e}");
+        if self.stored != self.saved {
+            state::save(&self.stored);
+            self.saved = self.stored.clone();
+        }
+        // The queued writes (state, settings, volumes) finish before the process ends.
+        if !paths::flush(Duration::from_secs(3)) {
+            tracing::warn!("state: writes still running at exit");
         }
     }
 }

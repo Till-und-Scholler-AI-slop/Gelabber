@@ -91,25 +91,13 @@ pub fn load() -> Stored {
     serde_json::from_value(super::paths::read_json(FILE)).unwrap_or_default()
 }
 
-/// Off the UI thread; a failed write only loses the newest change.
+/// Off the UI thread, in order; a failed write only loses the newest change.
 pub fn save(stored: &Stored) {
-    // The path is fixed now: the directory must not change under the thread.
     let (Ok(bytes), Some(path)) = (serde_json::to_vec_pretty(stored), super::paths::file(FILE))
     else {
         return;
     };
-    let write = move || {
-        if let Err(e) = super::paths::write_atomic(&path, &bytes, true) {
-            tracing::warn!("state: {e}");
-        }
-    };
-    if std::thread::Builder::new()
-        .name("gelabber-state".into())
-        .spawn(write)
-        .is_err()
-    {
-        tracing::warn!("state: no thread to write it");
-    }
+    super::paths::write_latest(path, bytes, true);
 }
 
 /// The stored window for the viewport builder.
