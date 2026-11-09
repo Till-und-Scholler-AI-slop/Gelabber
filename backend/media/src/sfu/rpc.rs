@@ -66,7 +66,7 @@ impl Sfu {
                 {
                     return Err(SfuError::BadAnnounce);
                 }
-                let opts = gateway_transport_options(room.engine.server.clone());
+                let opts = gateway_transport_options(room.engine.server()?);
                 let transport = room
                     .engine
                     .native(

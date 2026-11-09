@@ -166,14 +166,14 @@ async fn stopping_fixture() -> (
     .unwrap();
     let engine = first_engine(&sfu);
     let router = engine
-        .native(engine.worker.clone(), |worker| async move {
+        .native(engine.worker().unwrap(), |worker| async move {
             worker
                 .create_router(RouterOptions::new(router_codecs().unwrap()))
                 .await
         })
         .await
         .unwrap();
-    let mut options = WebRtcTransportOptions::new_with_server(engine.server.clone());
+    let mut options = WebRtcTransportOptions::new_with_server(engine.server().unwrap());
     options.app_data = AppData::new(AtomicU64::new(0));
     let transport = engine
         .native(router.clone(), move |router| async move {
@@ -318,7 +318,7 @@ impl Viewer {
             .await
             .unwrap();
         let router = room.router.get().unwrap();
-        let mut options = WebRtcTransportOptions::new_with_server(room.engine.server.clone());
+        let mut options = WebRtcTransportOptions::new_with_server(room.engine.server().unwrap());
         options.app_data = AppData::new(AtomicU64::new(0));
         let transport = room
             .engine
@@ -727,14 +727,14 @@ async fn seat(
     engine: &Arc<Engine>,
 ) -> (Uuid, Arc<Peer>, mpsc::Receiver<ServerFrame>) {
     let router = engine
-        .native(engine.worker.clone(), |worker| async move {
+        .native(engine.worker().unwrap(), |worker| async move {
             worker
                 .create_router(RouterOptions::new(router_codecs().unwrap()))
                 .await
         })
         .await
         .unwrap();
-    let mut options = WebRtcTransportOptions::new_with_server(engine.server.clone());
+    let mut options = WebRtcTransportOptions::new_with_server(engine.server().unwrap());
     options.app_data = AppData::new(AtomicU64::new(0));
     let transport = engine
         .native(router.clone(), move |router| async move {
@@ -889,6 +889,49 @@ async fn lost_worker_closes_only_its_rooms_and_is_replaced() {
     assert_eq!(sfu.counters.worker_failures.load(Ordering::Relaxed), 1);
     assert_eq!(sfu.counters.worker_restarts.load(Ordering::Relaxed), 1);
     assert_eq!(sfu.pick_engine().unwrap().slot, 0);
+}
+
+/// Two free consecutive UDP ports on loopback, for workers on fixed ports.
+fn free_udp_pair() -> u16 {
+    for _ in 0..50 {
+        let first = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = first.local_addr().unwrap().port();
+        if port < u16::MAX && std::net::UdpSocket::bind(("127.0.0.1", port + 1)).is_ok() {
+            return port;
+        }
+    }
+    panic!("no free UDP port pair");
+}
+
+#[tokio::test]
+async fn a_lost_but_responsive_worker_frees_its_port_for_the_replacement() {
+    let port = free_udp_pair();
+    let (bind, max) = (format!("127.0.0.1:{port}"), (port + 1).to_string());
+    let config = Config::from_source(|key| match key {
+        "REDIS_URL" => Some(std::env::var(key).expect("isolated REDIS_URL required")),
+        "MEDIA_ICE_BIND" => Some(bind.clone()),
+        "MEDIA_ICE_PORT_MAX" => Some(max.clone()),
+        "MEDIA_WORKERS" => Some("2".into()),
+        _ => None,
+    })
+    .unwrap();
+    let sfu = Sfu::with_redis(
+        &config,
+        redis::Client::open(config.redis_url.as_str()).unwrap(),
+    )
+    .await
+    .unwrap();
+    let lost = first_engine(&sfu);
+    // A worker that only missed the heartbeat still holds its UDP port.
+    sfu.engine_lost(&lost, "test: heartbeat missed").await;
+    drop(lost);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while sfu.workers().live < 2 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the replacement binds the same port");
 }
 
 #[tokio::test]
@@ -1051,7 +1094,7 @@ async fn video_consumers_start_on_the_highest_layer() {
 #[tokio::test]
 async fn gateway_transports_start_with_a_high_outgoing_estimate() {
     let (sfu, _owner, _publication, _owner_events) = stopping_fixture().await;
-    let options = gateway_transport_options(first_engine(&sfu).server.clone());
+    let options = gateway_transport_options(first_engine(&sfu).server().unwrap());
     assert_eq!(options.initial_available_outgoing_bitrate, 8_000_000);
     assert!(!options.enable_tcp);
     assert!(options.prefer_udp);

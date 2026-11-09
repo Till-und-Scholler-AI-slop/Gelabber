@@ -208,8 +208,9 @@ impl RoomData {
 /// port and command slots. A room stays on its engine for its lifetime.
 struct Engine {
     slot: usize,
-    worker: Worker,
-    server: WebRtcServer,
+    /// `engine_lost` takes these: the SDK closes a worker only when its last
+    /// handle drops, and a worker that was merely slow then frees its port.
+    handles: StdMutex<Option<(Worker, WebRtcServer)>>,
     /// Set when the worker died or missed its heartbeat; never cleared. The
     /// slot gets a new engine instead.
     lost: Arc<AtomicBool>,
@@ -256,8 +257,7 @@ impl Engine {
         .await?;
         Ok(Arc::new(Self {
             slot,
-            worker,
-            server,
+            handles: StdMutex::new(Some((worker, server))),
             lost,
             exited,
             lost_at: StdMutex::new(None),
@@ -268,7 +268,21 @@ impl Engine {
         }))
     }
     fn alive(&self) -> bool {
-        !self.lost.load(Ordering::SeqCst) && !self.worker.closed() && !self.server.closed()
+        !self.lost.load(Ordering::SeqCst)
+            && self
+                .handles
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|(worker, server)| !worker.closed() && !server.closed())
+    }
+    fn worker(&self) -> Result<Worker, SfuError> {
+        let handles = self.handles.lock().unwrap();
+        Ok(handles.as_ref().ok_or(SfuError::Gone)?.0.clone())
+    }
+    fn server(&self) -> Result<WebRtcServer, SfuError> {
+        let handles = self.handles.lock().unwrap();
+        Ok(handles.as_ref().ok_or(SfuError::Gone)?.1.clone())
     }
     /// How long this slot has been without a live worker; zero while alive.
     fn down_for(&self) -> Duration {
@@ -418,8 +432,11 @@ impl Sfu {
                 if engine.lost.load(Ordering::SeqCst) {
                     break "mediasoup worker unexpectedly exited";
                 }
+                let Ok(worker) = engine.worker() else {
+                    break "mediasoup worker released";
+                };
                 if !matches!(
-                    tokio::time::timeout(HEARTBEAT_TIMEOUT, engine.worker.dump()).await,
+                    tokio::time::timeout(HEARTBEAT_TIMEOUT, worker.dump()).await,
                     Ok(Ok(_))
                 ) {
                     break "native worker heartbeat unresponsive";
@@ -452,6 +469,8 @@ impl Sfu {
             fail_closed(reason);
         }
         self.close_engine_rooms(engine).await;
+        // Rooms and in-flight joins may still hold the router a moment longer.
+        drop(engine.handles.lock().unwrap().take());
         self.respawn(engine.slot);
     }
     async fn close_engine_rooms(self: &Arc<Self>, engine: &Arc<Engine>) {
@@ -626,7 +645,7 @@ impl Sfu {
             .router
             .get_or_try_init(|| async {
                 room.engine
-                    .native(room.engine.worker.clone(), |worker| async move {
+                    .native(room.engine.worker()?, |worker| async move {
                         worker
                             .create_router(RouterOptions::new(router_codecs()?))
                             .await
