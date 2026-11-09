@@ -318,9 +318,21 @@ impl ChannelMessages {
         let first_load = !self.loaded;
         page.messages.retain(|m| !self.deleted.contains(&m.id));
         let newest = page.messages.last().map(Message::order_key);
+        // With more history on the server, a row older than the page (an
+        // edit of an old message) would hide everything between.
+        let oldest = page
+            .messages
+            .first()
+            .filter(|_| page.has_more)
+            .map(Message::order_key);
         let held = std::mem::replace(&mut self.messages, page.messages);
         for message in held {
-            if first_load || newest.is_some_and(|n| message.order_key() > n) {
+            let keep = if first_load {
+                oldest.is_none_or(|o| message.order_key() >= o)
+            } else {
+                newest.is_some_and(|n| message.order_key() > n)
+            };
+            if keep {
                 self.upsert(message);
             }
         }
@@ -649,6 +661,19 @@ impl State {
             if let Some(nonce) = message.nonce {
                 channel.pending.retain(|p| p.nonce != nonce);
             }
+            return;
+        }
+        // An edit or reaction of a message older than the loaded window
+        // would hide everything between it and the window: paging fetches
+        // it (the web drops it too).
+        let below = channel.loaded
+            && channel.has_more
+            && channel.get(message.id).is_none()
+            && channel
+                .messages
+                .first()
+                .is_some_and(|oldest| message.order_key() < oldest.order_key());
+        if below {
             return;
         }
         channel.upsert(message);
@@ -1329,6 +1354,33 @@ mod tests {
         s.channel_mut(id(100))
             .merge_latest(page(vec![message(5, 50, 5)]));
         assert_eq!(ids(&s), vec![id(5)]);
+    }
+
+    /// An edit of a message older than the loaded window stays out while
+    /// older pages exist: paging would skip what lies between.
+    #[test]
+    fn an_edit_older_than_the_window_stays_out() {
+        let mut s = State::default();
+        let more = |messages| MessagePage {
+            messages,
+            has_more: true,
+        };
+        s.channel_mut(id(100)).loading = true;
+        // Arrives while the first page is on its way.
+        s.apply_message(message(1, 10, 2));
+        s.channel_mut(id(100))
+            .replace(more(vec![message(5, 50, 5), message(6, 60, 6)]));
+        s.apply_message(message(2, 20, 3));
+        let ids: Vec<Uuid> = s.channels[&id(100)].messages.iter().map(|m| m.id).collect();
+        assert_eq!(ids, vec![id(5), id(6)]);
+        assert_eq!(
+            s.channels[&id(100)].oldest_cursor(),
+            Some(message(5, 50, 5).cursor())
+        );
+        // Without older pages it is simply part of the history.
+        s.channel_mut(id(100)).has_more = false;
+        s.apply_message(message(2, 20, 3));
+        assert_eq!(s.channels[&id(100)].messages.len(), 3);
     }
 
     /// A delete that came before the page holding the message (first page
