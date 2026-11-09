@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+import { desktopPlatform, type DesktopPlatform } from "./desktopApp.ts";
+
 type InstallChoice = { outcome: "accepted" | "dismissed" };
 export interface InstallPromptEvent extends Event {
   prompt(): Promise<void>;
@@ -16,6 +18,9 @@ export type InstallState = {
   /** A phone or tablet: installing means the home screen, not an app window. */
   mobile: boolean;
   native: boolean;
+  /** The system whose desktop app this browser could run instead; null on
+   * phones, other systems and inside the Tauri app. */
+  desktop: DesktopPlatform | null;
   available: boolean;
   pending: boolean;
   accepted: boolean;
@@ -29,6 +34,7 @@ const initial: InstallState = {
   ios: false,
   mobile: false,
   native: false,
+  desktop: null,
   available: false,
   pending: false,
   accepted: false,
@@ -44,11 +50,15 @@ export function trackInstallation(target: Window, native: boolean): () => void {
   const current = ++generation;
   deferredPrompt = null;
   const display = target.matchMedia("(display-mode: standalone)");
-  const nav = target.navigator as Navigator & { standalone?: boolean };
+  const nav = target.navigator as Navigator & {
+    standalone?: boolean;
+    userAgentData?: { platform?: string; mobile?: boolean };
+  };
   const standalone = () => display.matches || nav.standalone === true;
   const ios =
     /iPad|iPhone|iPod/.test(nav.userAgent) ||
     (nav.platform === "MacIntel" && nav.maxTouchPoints > 1);
+  const mobile = ios || /Android/.test(nav.userAgent);
   useInstallation.setState({
     ...initial,
     secure: target.isSecureContext,
@@ -56,7 +66,8 @@ export function trackInstallation(target: Window, native: boolean): () => void {
     standalone: standalone(),
     native,
     ios,
-    mobile: ios || /Android/.test(nav.userAgent),
+    mobile,
+    desktop: mobile || native ? null : desktopPlatform(nav),
   });
   if (native) return () => {};
 

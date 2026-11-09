@@ -72,7 +72,7 @@ export const SETTINGS_AREAS = [
     id: "app",
     group: "app",
     label: "App",
-    description: "Gelabber als App installieren.",
+    description: "Desktop-App und Web-App installieren.",
   },
 ] as const satisfies readonly {
   id: string;
