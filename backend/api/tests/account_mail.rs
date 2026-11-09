@@ -380,11 +380,17 @@ async fn changing_the_password_kills_open_reset_links(pool: PgPool) {
     assert_eq!(res.status, StatusCode::GONE, "{}", res.body);
 }
 
+/// Registration mails and reset mails have five an hour each, so an inbox
+/// gets at most ten, however many requests name it.
 #[sqlx::test]
-async fn an_inbox_gets_at_most_five_mails_an_hour(pool: PgPool) {
+async fn an_inbox_gets_at_most_five_mails_an_hour_per_budget(pool: PgPool) {
     let (state, mailer) = mail_state(pool);
     confirmed_ada(&state, &mailer).await;
     let mut other = client(&state).await;
+    for _ in 0..8 {
+        let res = other.register(ADA, "stranger password", "Mallory").await;
+        assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    }
     for _ in 0..8 {
         let res = post(
             &mut other,
@@ -394,10 +400,14 @@ async fn an_inbox_gets_at_most_five_mails_an_hour(pool: PgPool) {
         .await;
         assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
     }
-    // Five resets on top of the confirmation, which has a budget of its own.
-    outbox(&mailer, 6).await;
+    let sent = outbox(&mailer, 10).await;
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(mailer.outbox().len(), 6);
+    assert_eq!(mailer.outbox().len(), 10);
+    let resets = sent
+        .iter()
+        .filter(|mail| mail.body.contains("/reset-password#token="))
+        .count();
+    assert_eq!(resets, 5, "{sent:?}");
 }
 
 /// A reset asked for with the Unicode spelling of the domain reaches the
