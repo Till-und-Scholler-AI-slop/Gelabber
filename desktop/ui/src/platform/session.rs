@@ -59,17 +59,29 @@ pub fn store(origin: &str, cookie: Option<&str>) -> Result<(), String> {
 }
 
 /// The file first, then the keyring: a file entry is only ever newer (an
-/// older run's, or written while the keyring was locked).
+/// older run's, or written while the keyring was locked). A `null` entry is a
+/// sign-out the keyring did not take; it wins until the keyring's item is gone.
 fn stored_in(keyring: Option<&dyn Keyring>, origin: &str) -> Option<String> {
-    let file = load()
-        .get(origin)
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    file.or_else(|| keyring.and_then(|k| k.get(origin).ok().flatten()))
+    let mut map = load();
+    match map.get(origin) {
+        Some(Value::String(cookie)) => Some(cookie.clone()),
+        Some(Value::Null) => {
+            if let Some(keyring) = keyring
+                && keyring.set(origin, None).is_ok()
+            {
+                map.remove(origin);
+                if let Err(e) = super::paths::write_json(FILE, &Value::Object(map), true) {
+                    tracing::warn!("session: {e}");
+                }
+            }
+            None
+        }
+        _ => keyring.and_then(|k| k.get(origin).ok().flatten()),
+    }
 }
 
 /// Into the keyring when it takes it (and out of the file then), else
-/// into the file.
+/// into the file; a sign-out the keyring refuses leaves a `null` there.
 fn store_in(
     keyring: Option<&dyn Keyring>,
     origin: &str,
@@ -88,6 +100,10 @@ fn store_in(
     match cookie {
         Some(value) if !kept => {
             map.insert(origin.to_owned(), Value::String(value.to_owned()));
+        }
+        // Forgotten only here: the keyring's cookie must not come back.
+        None if !kept => {
+            map.insert(origin.to_owned(), Value::Null);
         }
         _ => {
             map.remove(origin);
@@ -608,6 +624,53 @@ mod tests {
         // No service on the bus: no keyring at all.
         let (_empty, other) = crate::platform::testing::private_bus("secrets-none").unwrap();
         assert!(secret::SecretService::connect(Some(&other)).is_none());
+    }
+
+    /// A keyring whose items can be locked away, like the Secret Service.
+    #[derive(Default)]
+    struct FakeKeyring {
+        items: parking_lot::Mutex<std::collections::HashMap<String, String>>,
+        locked: std::sync::atomic::AtomicBool,
+    }
+
+    impl Keyring for FakeKeyring {
+        fn get(&self, origin: &str) -> Result<Option<String>, String> {
+            if self.locked.load(std::sync::atomic::Ordering::Relaxed) {
+                return Ok(None);
+            }
+            Ok(self.items.lock().get(origin).cloned())
+        }
+        fn set(&self, origin: &str, cookie: Option<&str>) -> Result<(), String> {
+            if self.locked.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err("the keyring is locked".into());
+            }
+            match cookie {
+                Some(c) => self.items.lock().insert(origin.into(), c.into()),
+                None => self.items.lock().remove(origin),
+            };
+            Ok(())
+        }
+    }
+
+    /// Signing out while the keyring is locked: its old cookie must not
+    /// come back at the next start, and goes once the keyring opens.
+    #[test]
+    fn a_sign_out_while_the_keyring_is_locked_stays_signed_out() {
+        let _config = TempConfig::new("session-tombstone");
+        let fake = FakeKeyring::default();
+        let keyring: Option<&dyn Keyring> = Some(&fake);
+        let origin = "https://chat.example";
+        store_in(keyring, origin, Some("abc")).unwrap();
+        fake.locked
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        store_in(keyring, origin, None).unwrap();
+        fake.locked
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(stored_in(keyring, origin), None);
+        assert!(fake.items.lock().is_empty(), "deleted once it opened");
+        // A later sign-in is kept again.
+        store_in(keyring, origin, Some("def")).unwrap();
+        assert_eq!(stored_in(keyring, origin).as_deref(), Some("def"));
     }
 
     #[test]
