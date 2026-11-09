@@ -24,6 +24,9 @@ use crate::widgets::{Button, ButtonVariant};
 /// "At the end" within this distance (`useMessageScroll.ts`).
 const LATEST_SLACK: f32 = 16.0;
 const LOADING_ROW: f32 = 32.0;
+/// "Ältere Nachrichten konnten nicht geladen werden." with its button:
+/// 12 + a 19.5 line + 8 + the 31.5 button + 9.
+const OLDER_FAILED: f32 = LOADING_ROW + 48.0;
 const DAY_DIVIDER: f32 = 38.0;
 const NEW_DIVIDER: f32 = 24.5;
 
@@ -86,6 +89,8 @@ pub struct PaneState {
     pub intent_failures: HashMap<Uuid, u64>,
     hover_bar: Option<(Uuid, Rect)>,
     pub last_marked: Option<Uuid>,
+    /// The oldest row older history was last asked before.
+    older_asked: Option<Uuid>,
     /// A scroll to the end was asked for (sent, jump pill).
     pub to_latest: bool,
     /// A loaded row to scroll to and highlight.
@@ -440,7 +445,9 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
         heights.push((pre_height(item, &input.start) + h).round());
     }
     let content_h: f32 = heights.iter().sum();
-    let top_row = if !items.is_empty() || has_more || loading_older {
+    let top_row = if error.is_some() && loaded {
+        OLDER_FAILED
+    } else if !items.is_empty() || has_more || loading_older {
         LOADING_ROW
     } else {
         0.0
@@ -532,14 +539,25 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
         .zip(&heights)
         .position(|(s, h)| s + h > view_top);
     pane.anchor = first_visible.map(|i| (items[i].msg.id, starts[i] - view_top));
-    // Older history when the top rows come into view.
-    if let Some(first) = first_visible
-        && first <= 4
+    // Older history when the top rows come into view; while the rows do
+    // not fill the list (nothing to scroll, so stuck at the end), or none
+    // are left, at once.
+    let top_in_view = first_visible.is_some_and(|first| first <= 4)
+        && (!pane.stick || max_offset <= 0.0)
+        || items.is_empty() && loaded;
+    // Once per oldest row: the client marks the page as loading only
+    // after this frame. A failure lets the next ask go again.
+    let oldest = items.first().map_or(Uuid::nil(), |it| it.msg.id);
+    if error.is_some() {
+        pane.older_asked = None;
+    }
+    if top_in_view
         && has_more
         && !loading_older
-        && !pane.stick
         && error.is_none()
+        && pane.older_asked != Some(oldest)
     {
+        pane.older_asked = Some(oldest);
         actions.push(ListAction::LoadOlder);
     }
     if at_latest && !items.is_empty() {
@@ -591,7 +609,7 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
     }
     if let Some(error) = error.filter(|_| loaded) {
         let _ = error;
-        let r = Rect::from_min_size(pos2(rect.left(), y0), vec2(width, LOADING_ROW + 40.0));
+        let r = Rect::from_min_size(pos2(rect.left(), y0), vec2(width, OLDER_FAILED));
         paint_state(
             &mut child,
             r,
@@ -732,7 +750,8 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(100));
     }
-    if items.is_empty() {
+    // With older history still to come, the list is not empty.
+    if items.is_empty() && !has_more {
         paint_empty(ui, rect, &input.start, input.images);
     }
 
@@ -794,6 +813,7 @@ fn paint_state(ui: &mut Ui, rect: Rect, message: &str, actions: &mut Vec<ListAct
         egui::Id::unique(("gelabber-list-retry", rect.top() as i32)),
         Sense::click(),
     );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Erneut laden"));
     let fill = if response.hovered() { c.hover } else { c.panel };
     ui.painter().rect(
         button,

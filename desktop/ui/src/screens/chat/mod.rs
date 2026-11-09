@@ -1444,6 +1444,20 @@ mod page_tests {
 
     const DM: &str = "00000000-0000-4000-8000-0000000000d1";
 
+    /// Jonas's message `n` in #allgemein, a minute after the one before.
+    fn history_message(n: u8, content: &str) -> serde_json::Value {
+        json!({
+            "id": format!("00000000-0000-4000-8000-0000000001{n:02}"),
+            "channel_id": crate::app::testkit::ALLGEMEIN,
+            "author": {"id": "00000000-0000-4000-8000-00000000007c", "name": "Jonas", "avatar_url": null},
+            "content": content,
+            "created_at": format!("2026-11-05T16:{n:02}:00Z"),
+            "edited_at": null,
+            "revision": 0,
+            "created_order": n,
+        })
+    }
+
     fn dms(method: &str, path: &str) -> Option<Reply> {
         let dm = json!({
             "id": DM, "kind": "dm", "created_at": "2026-01-01T00:00:00Z",
@@ -1712,6 +1726,68 @@ mod page_tests {
             api.saw(&format!("PATCH /messages/{id}")) && editing(h).is_some()
         });
         assert_eq!(editing(&harness).as_deref(), Some("Kommt ihr heute? Ja!"));
+    }
+
+    /// A first page shorter than the list: older history loads at once.
+    #[test]
+    fn older_history_fills_a_short_list() {
+        use crate::app::testkit::{ALLGEMEIN, HOME};
+        let _config = TempConfig::new("older-short");
+        let pages = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let asked = pages.clone();
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", p) if p == format!("/channels/{ALLGEMEIN}/messages") => {
+                let n = asked.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                let (content, more) = if n == 0 {
+                    ("Neueste", true)
+                } else {
+                    ("Ältere", false)
+                };
+                Some(Reply::json(json!({
+                    "messages": [history_message(10 - n as u8, content)],
+                    "has_more": more
+                })))
+            }
+            _ => workspace(method, path),
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for_label(&mut harness, "Neueste");
+        // Nothing to scroll: the older page comes by itself.
+        wait_for_label(&mut harness, "Ältere");
+    }
+
+    /// A failed older page says so above the first row, not over its day.
+    #[test]
+    fn a_failed_older_page_leaves_room_for_the_first_row() {
+        use crate::app::testkit::{ALLGEMEIN, HOME};
+        let _config = TempConfig::new("older-failed");
+        let pages = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let asked = pages.clone();
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", p) if p == format!("/channels/{ALLGEMEIN}/messages") => {
+                if asked.fetch_add(1, std::sync::atomic::Ordering::AcqRel) > 0 {
+                    return Some(Reply::error(503, "internal"));
+                }
+                let page: Vec<_> = (1..=30)
+                    .map(|n| history_message(n, &format!("Nachricht {n}")))
+                    .collect();
+                Some(Reply::json(json!({"messages": page, "has_more": true})))
+            }
+            _ => workspace(method, path),
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for_label(&mut harness, "Nachricht 30");
+        harness.run_steps(4);
+        harness.key_press(egui::Key::Home);
+        wait_for_label(&mut harness, "Erneut laden");
+        harness.run_steps(4);
+        let retry = harness.get_by_label("Erneut laden").rect();
+        let first = harness.get_by_label("Nachricht 1").rect();
+        // The day divider (38) and the name line lie between them.
+        assert!(
+            retry.bottom() <= first.top() - 38.0 - 19.0,
+            "{retry:?} {first:?}"
+        );
     }
 
     /// A search hit's text is selectable and still opens the hit on a
