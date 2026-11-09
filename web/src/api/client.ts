@@ -68,8 +68,8 @@ export class ApiError extends Error {
 
 export const REQUEST_TIMEOUT_MS = 10_000;
 
-const configuredBase: string | undefined = import.meta.env.VITE_API_BASE_URL;
-export const API_BASE = (configuredBase ?? "/api").replace(/\/+$/, "");
+// Same origin, fixed: attachment, GIF and image URLs name `/api` directly.
+export const API_BASE = "/api";
 
 let csrfToken: string | null = null;
 
