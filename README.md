@@ -36,7 +36,7 @@ PWA auf dem Handy: [Gelabber als PWA installieren](docs/v0.6-pwa.md).
 
 | Pfad | Rolle |
 |---|---|
-| `backend/api/` | Rust, Axum 0.8.9, sqlx 0.9.0, Tokio 1.53.1 |
+| `backend/api/` | Rust, Axum 0.8.9, sqlx 0.9.0, Tokio 1.54.1 |
 | `backend/media/` | Eigener Media-Gateway, offizielle Rust-Bindung mediasoup 0.29.0 als einzige SFU-Engine |
 | `backend/shared/` | Typen, auf die sich API und SFU einigen müssen (Media-Ticket, ICE-URLs, Client-Adresse) |
 | `web/` | React + Vite, mediasoup-client 3.26.0 (`node:26.12.1-trixie` → `nginx:1.31.7-alpine`) |
