@@ -13,8 +13,6 @@ use crate::theme::{Theme, corner};
 pub struct State {
     failed: bool,
     saving: bool,
-    /// desktop.json could not be written.
-    tray_failed: bool,
 }
 
 pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
@@ -33,7 +31,6 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         false,
     );
     // The desktop app's notifications come from its window, not a tab.
-    let desktop = crate::platform::desktop_info(&ctx);
     controls::switch_row(
         ui,
         "desktop-notify",
@@ -56,31 +53,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
     if p != before {
         prefs::update(&ctx, |x| *x = p);
     }
-    // CloseToTray.tsx: with a tray only.
-    if let Some(info) = desktop.filter(|d| d.tray) {
-        let mut on = info.close_to_tray;
-        if controls::switch_row(
-            ui,
-            "close-to-tray",
-            "Fenster schließen minimiert in den Infobereich",
-            Some("Ein laufender Anruf geht weiter. Beenden über das Symbol im Infobereich."),
-            &mut on,
-            false,
-        ) {
-            s.tray_failed = crate::platform::set_close_to_tray(&ctx, on).is_err();
-        }
-        if s.tray_failed {
-            ui.add_space(6.0);
-            let w = ui.available_width();
-            controls::paragraph(
-                ui,
-                "Die Einstellung konnte nicht gespeichert werden.",
-                text::META,
-                c.danger,
-                w,
-            );
-        }
-    }
+    // Closing into the tray (CloseToTray.tsx) is in "App".
 
     ui.add_space(32.0);
     controls::group_legend(ui, "Sperrbildschirm", Some(Scope::Account));

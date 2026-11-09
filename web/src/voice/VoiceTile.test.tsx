@@ -53,6 +53,45 @@ describe("video tile in a browser", () => {
   });
 });
 
+describe("the own Live's sound", () => {
+  const tile = (notice: string, on: boolean) =>
+    renderToStaticMarkup(
+      <VoiceTile
+        stream={null}
+        label="Lena (du) — Live"
+        screen
+        live
+        sourceAudioNotice={notice}
+        sourceAudioOn={on}
+      />,
+    );
+
+  it("says it in a tag beside the Live tag, in full for screen readers", () => {
+    const html = tile("Ton wird mitgesendet", true);
+    expect(html).toMatch(
+      /<div class="voice-video-tags"><span class="voice-video-live">Live<\/span><span role="status" class="voice-video-sound" title="Ton wird mitgesendet">/,
+    );
+    expect(html).toContain('<span aria-hidden="true">Mit Ton</span>');
+    expect(html).toContain('<span class="sr-only">Ton wird mitgesendet</span>');
+  });
+
+  it("marks sound that does not go out", () => {
+    const html = tile("Stream-Ton beendet · Video läuft weiter", false);
+    expect(html).toContain('class="voice-video-sound voice-video-sound--off"');
+    expect(html).toContain('<span aria-hidden="true">Ohne Ton</span>');
+    expect(html).toContain(
+      '<span class="sr-only">Stream-Ton beendet · Video läuft weiter</span>',
+    );
+  });
+
+  it("has no tag without a notice", () => {
+    const html = renderToStaticMarkup(
+      <VoiceTile stream={null} label="Lena (du) — Live" screen live />,
+    );
+    expect(html).not.toContain("voice-video-sound");
+  });
+});
+
 describe("tile actions", () => {
   it("pins to the spotlight with a fixed name and its state", () => {
     const tile = (pinned: boolean) =>

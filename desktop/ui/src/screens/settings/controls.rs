@@ -17,8 +17,8 @@ use crate::icons::{self, Icon};
 use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner, mix};
 use crate::widgets::{
-    Badge, BadgeTone, Checkbox, InlineStatus, Popover, StatusTone, Switch, eased, focus_ring,
-    keyboard_focus, snap,
+    Badge, Checkbox, InlineStatus, Popover, StatusTone, Switch, eased, focus_ring, keyboard_focus,
+    snap,
 };
 
 /// The width of a settings area's rows and forms (`--settings-measure`).
@@ -161,13 +161,9 @@ impl Scope {
     }
 }
 
-/// `ScopeTag`: the accent or neutral badge.
+/// `ScopeTag`: a quiet neutral badge, the accent is for the page's actions.
 pub fn scope_tag(ui: &mut Ui, scope: Scope) -> Response {
-    let tone = match scope {
-        Scope::Account => BadgeTone::Accent,
-        Scope::Device => BadgeTone::Neutral,
-    };
-    ui.add(Badge::new(scope.label()).tone(tone))
+    ui.add(Badge::new(scope.label()))
 }
 
 /// `.settings-area-heading`: title (+ tag) and description, then 24px.

@@ -636,12 +636,15 @@ fn paint_file_line(
 }
 
 impl Media {
+    /// Paints the attachments; a text file's shown text is selectable,
+    /// added to `text`.
     pub fn paint(
         &self,
         ui: &mut Ui,
         images: &Images,
         origin: Pos2,
         id: egui::Id,
+        text: &mut Option<egui::Response>,
     ) -> Option<MediaAction> {
         let theme = Theme::of(ui.ctx());
         let c = theme.c;
@@ -753,9 +756,9 @@ impl Media {
                         action = Some(MediaAction::External(download_url(att.id)));
                     }
                 }
-                Piece::Text(text) => {
-                    if let Some(a) = paint_text(ui, text, pos2(origin.x, top), id.with(("text", n)))
-                    {
+                Piece::Text(piece) => {
+                    let at = pos2(origin.x, top);
+                    if let Some(a) = paint_text(ui, piece, at, id.with(("text", n)), text) {
                         action = Some(a);
                     }
                 }
@@ -766,8 +769,15 @@ impl Media {
 }
 
 /// `AttachmentText`: a `<details>` whose summary is the file line; open,
-/// the text (or its state) and "Herunterladen".
-fn paint_text(ui: &mut Ui, piece: &TextPiece, at: Pos2, id: egui::Id) -> Option<MediaAction> {
+/// the text (or its state) and "Herunterladen". The file's text is a
+/// `<pre>`: selectable, added to `text`.
+fn paint_text(
+    ui: &mut Ui,
+    piece: &TextPiece,
+    at: Pos2,
+    id: egui::Id,
+    text: &mut Option<egui::Response>,
+) -> Option<MediaAction> {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let body_h = match &piece.body {
@@ -850,10 +860,14 @@ fn paint_text(ui: &mut Ui, piece: &TextPiece, at: Pos2, id: egui::Id) -> Option<
                 pos2(at.x + 1.0, line + 1.0),
                 vec2(piece.width - 2.0, 10.0 + shown_h + 10.0),
             );
-            block.paint(
-                &ui.painter().with_clip_rect(pre.intersect(ui.clip_rect())),
+            let lines = crate::text::selectable_in(
+                ui,
+                block,
+                id.with("preview"),
                 pos2(pre.left() + 12.0, pre.top() + 10.0),
+                pre,
             );
+            crate::text::join(text, lines);
             link(ui, pos2(at.x + 1.0 + 12.0, pre.bottom() + 6.0), &mut action);
         }
     }
@@ -1170,12 +1184,15 @@ pub fn layout_previews(ui: &Ui, previews: &[LinkPreview], width: f32) -> Option<
 }
 
 impl Previews {
+    /// Paints the cards; their site, title and description are selectable
+    /// text, added to `text`.
     pub fn paint(
         &self,
         ui: &mut Ui,
         images: &Images,
         origin: Pos2,
         id: egui::Id,
+        text: &mut Option<egui::Response>,
     ) -> Option<MediaAction> {
         let theme = Theme::of(ui.ctx());
         let c = theme.c;
@@ -1202,13 +1219,20 @@ impl Previews {
             );
             let x = rect.left() + 3.0 + 12.0;
             let mut ty = rect.top() + 11.0;
-            card.site.paint(painter, pos2(x, ty));
+            let at = pos2(x, ty);
+            let site = card.site.select(ui, id.with(("preview-site", n)), at);
+            card.site.paint_selectable(ui, &site, at);
+            crate::text::join(text, site);
             ty += card.site.height() + 2.0;
             if let Some(title) = &card.title {
                 let title_rect = Rect::from_min_size(pos2(x, ty), title.size());
-                title.paint(ui.painter(), title_rect.min);
+                // Selectable like a link in a message: the link on top.
+                let selection =
+                    title.select(ui, id.with(("preview-title-text", n)), title_rect.min);
                 let response =
                     ui.interact(title_rect, id.with(("preview-title", n)), Sense::click());
+                title.paint_selectable(ui, &selection, title_rect.min);
+                crate::text::join(text, selection);
                 if response.hovered() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     crate::widgets::link::underline(
@@ -1226,7 +1250,10 @@ impl Previews {
                 ty += title.height() + 2.0;
             }
             if let Some(d) = &card.description {
-                d.paint(ui.painter(), pos2(x, ty));
+                let at = pos2(x, ty);
+                let description = d.select(ui, id.with(("preview-description", n)), at);
+                d.paint_selectable(ui, &description, at);
+                crate::text::join(text, description);
             }
             if let Some((url, large)) = &card.image {
                 let inner_w = card.size.x - 3.0 - 1.0 - 24.0;
@@ -1325,7 +1352,14 @@ mod tests {
                 crate::theme::set(ui.ctx(), Theme::dark());
                 let media = layout(ui, &drawn, &attachments, 600.0, uploads.as_deref());
                 if let Some(media) = media {
-                    let _ = media.paint(ui, &drawn, pos2(10.0, 10.0), egui::Id::unique("t"));
+                    let mut text = None;
+                    let _ = media.paint(
+                        ui,
+                        &drawn,
+                        pos2(10.0, 10.0),
+                        egui::Id::unique("t"),
+                        &mut text,
+                    );
                 }
             });
         (harness, images)

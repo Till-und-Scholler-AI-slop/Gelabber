@@ -3,39 +3,49 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light dark" />
     <title>Gelabber</title>
     <link rel="stylesheet" href="setup.css" />
     <script type="module" src="setup.js"></script>
   </head>
   <body>
-    <main>
-      <h1>Gelabber</h1>
-      <p>Mit welchem Gelabber-Server soll sich die App verbinden?</p>
-      <form id="server-form">
-        <label for="server">Serveradresse</label>
-        <input
-          id="server"
-          name="server"
-          type="url"
-          required
-          placeholder="https://gelabber.example.org"
-          autocomplete="url"
-          autofocus
-        />
-        <button type="submit">Verbinden</button>
-        <button id="back" type="button" hidden>Zurück zu <span></span></button>
-        <p id="error" role="alert" hidden></p>
-      </form>
-      <section id="updates" hidden>
-        <h2>Updates</h2>
-        <label class="check">
-          <input id="auto-check" type="checkbox" />
-          Beim Start und alle 6 Stunden nach Updates suchen
-        </label>
-        <button id="check-now" type="button">Jetzt nach Updates suchen</button>
-        <p id="update-status" role="status"></p>
-      </section>
+    <main class="auth-layout">
+      <div class="auth-column">
+        <div class="auth-brand">
+          <img src="/icons/icon-192.png" alt="" width="40" height="40" />
+          Gelabber
+        </div>
+        <section class="card">
+          <h1 id="title">Server verbinden</h1>
+          <p class="lead">Mit welchem Gelabber-Server soll sich die App verbinden?</p>
+          <form id="server-form" novalidate>
+            <div class="field">
+              <label for="server">Serveradresse</label>
+              <input
+                id="server"
+                name="server"
+                type="url"
+                required
+                placeholder="https://gelabber.example.org"
+                autocomplete="url"
+                aria-describedby="server-note"
+                autofocus
+              />
+              <p id="server-note" class="note">
+                Die Adresse bekommst du von der Person, die den Server betreibt.
+              </p>
+              <p id="detail" class="detail" hidden></p>
+            </div>
+            <button type="submit" class="primary">Verbinden</button>
+            <button id="back" type="button" class="ghost" hidden>Zurück zu <span></span></button>
+          </form>
+          <section id="updates" hidden>
+            <h2>Updates</h2>
+            <p id="update-status" role="status"></p>
+            <div id="update-progress" class="progress" hidden><div></div></div>
+            <button id="update-action" type="button" class="ghost">Nach Updates suchen</button>
+          </section>
+        </section>
+      </div>
     </main>
   </body>
 </html>

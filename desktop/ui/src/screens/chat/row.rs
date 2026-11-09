@@ -632,6 +632,9 @@ pub struct Editing<'a> {
 
 pub struct Painted {
     pub actions: Vec<RowAction>,
+    /// A right click on the row's selectable text, which lies over the
+    /// row: it asks for the row's menu like a right click beside it.
+    pub text_menu: bool,
 }
 
 /// Paints the row into `rect` (its full width). `edit` is the editor's
@@ -652,6 +655,8 @@ pub fn paint(
     // `.lr-message-row:focus-within` looks hovered: the editor has the keyboard.
     let hovered = hovered || (edit.is_some() && ui.memory(|m| m.has_focus(editor_id(msg.id))));
     let mut actions = Vec::new();
+    // The selectable text: message, code, link previews and text files.
+    let mut text: Option<egui::Response> = None;
     if let Some(fill) = background(&theme, cx, hovered) {
         ui.painter().rect_filled(rect, 0.0, fill);
     }
@@ -685,7 +690,10 @@ pub fn paint(
             14.0,
             c.muted,
         );
-        system.paint(ui.painter(), pos2(x, top));
+        let at = pos2(x, top);
+        let response = system.select(ui, id.with("system"), at);
+        system.paint_selectable(ui, &response, at);
+        crate::text::join(&mut text, response);
     }
     if let Some(head) = &layout.head {
         paint_avatar(
@@ -779,8 +787,12 @@ pub fn paint(
     if let Some((y, laid)) = &layout.content {
         let origin = pos2(x, top + y);
         fade(ui, &mut |ui| {
-            if let Some(action) = laid.paint(ui, origin, id, true, cx.copied) {
+            let painted = laid.paint(ui, origin, id, true, cx.copied);
+            if let Some(action) = painted.action {
                 actions.push(RowAction::Content(msg.id, action));
+            }
+            if let Some(response) = painted.text {
+                crate::text::join(&mut text, response);
             }
         });
     }
@@ -795,13 +807,13 @@ pub fn paint(
     if let Some((y, media)) = &layout.media {
         let origin = pos2(x, top + y);
         fade(ui, &mut |ui| {
-            if let Some(a) = media.paint(ui, cx.images, origin, id) {
+            if let Some(a) = media.paint(ui, cx.images, origin, id, &mut text) {
                 actions.push(RowAction::Media(a));
             }
         });
     }
     if let Some((y, previews)) = &layout.previews
-        && let Some(a) = previews.paint(ui, cx.images, pos2(x, top + y), id)
+        && let Some(a) = previews.paint(ui, cx.images, pos2(x, top + y), id, &mut text)
     {
         actions.push(RowAction::Media(a));
     }
@@ -880,7 +892,10 @@ pub fn paint(
     {
         paint_bar(ui, cx, bar, id, menu_open, &mut actions);
     }
-    Painted { actions }
+    Painted {
+        actions,
+        text_menu: text.is_some_and(|r| r.secondary_clicked()),
+    }
 }
 
 fn paint_spinner(ui: &Ui, min: Pos2, color: Color32) {

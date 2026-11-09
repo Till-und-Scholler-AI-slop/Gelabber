@@ -84,7 +84,7 @@ without notifications; the settings page then shows the browser texts.
   `Gelabber: 2 neue Nachrichten`.
 - Close-to-tray: with a visible tray and `close_to_tray`, closing hides the
   window; a call keeps running. The switch "Fenster schließen minimiert in
-  den Infobereich" appears in Benachrichtigungen only with a tray. Not on
+  den Infobereich" appears in Settings › App only with a tray. Not on
   Wayland: winit 0.30 can neither hide the window there nor raise it again,
   so closing ends the app (the tray still shows the dot and "Beenden").
 - One instance: a Unix socket in `$XDG_RUNTIME_DIR` (0600), a loopback port
@@ -111,8 +111,10 @@ replaces it) is read. desktop-release.yml writes the same content into
 `latest.json`, which the installed Tauri apps (0.8) read, so their updater
 installs this app; `latest.json` of 0.8 releases names the Tauri installer.
 A newer version shows the notice of the Tauri app's `BANNER`
-(`desktop/parity/reference/update-banner.js`: same texts, colours and place,
-top centre); what it offers depends on the install:
+(`desktop/parity/reference/update-banner.js`: same texts, in the theme's
+colours, top centre below the 52px header; while the update is at work its
+buttons are dimmed and a thin bar shows the download); what it offers
+depends on the install:
 
 | Install | Detected by | Notice |
 |---|---|---|
@@ -137,6 +139,15 @@ connected, reconnecting, a channel held) or the microphone test, and for a
 minute after, no notice shows. An installer downloaded when a call began
 waits and installs once the lock lifts. "Später" hides the version until the
 next start.
+
+Settings › App holds the switch for the automatic check, "Nach Updates
+suchen" and the state ("Installiert: x. Verfügbar: y."), for every install,
+with what the update found offers ("Jetzt installieren" in the Windows
+setup, "Herunterladen", or pacman's line). The setup screen shows the state
+and "Jetzt installieren" only where the app installs itself; installing
+from there needs no server (the download runs on a thread of its own) and
+no call holds it (the way to setup left the call). There the card shows the
+install, so the notice does not.
 
 ## AppUserModelID (`aumid.rs`)
 
