@@ -25,7 +25,7 @@ import {
   needsDeviceLabels,
   useMediaDevices,
 } from "./devices.ts";
-import { createMicrophoneSession } from "./microphone.ts";
+import { createMicrophoneSession, sentLevelMeter } from "./microphone.ts";
 import type { VoiceInputMode } from "./pushToTalk.ts";
 import { useVoice, voiceMicrophones } from "./session.ts";
 import {
@@ -355,9 +355,9 @@ function SendLevel() {
   }, []);
   useEffect(() => {
     if (!track) return;
-    const copy = track.clone();
+    const { copy, level: sent } = sentLevelMeter(track);
     const meter = createMicrophoneSession(
-      { onState: () => {}, onLevel: setLevel },
+      { onState: () => {}, onLevel: (value) => setLevel(sent(value)) },
       {
         mediaDevices: {
           getUserMedia: async () => new MediaStream([copy]),

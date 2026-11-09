@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createMicrophoneSession,
+  sentLevelMeter,
   type MicrophoneTestState,
 } from "./microphone.ts";
 
@@ -200,5 +201,24 @@ describe("local microphone meter", () => {
     expect(f.track.stop).toHaveBeenCalledOnce();
     expect(f.contexts[0].state).toBe("closed");
     expect(f.states.some((state) => state.phase === "active")).toBe(false);
+  });
+});
+
+describe("the level the others hear", () => {
+  it("follows mute and push-to-talk on the call's track after it opens", () => {
+    const track = {
+      enabled: false,
+      clone() {
+        return { enabled: this.enabled } as MediaStreamTrack;
+      },
+    } as unknown as MediaStreamTrack;
+    // Opened while muted: the copy still hears the microphone.
+    const meter = sentLevelMeter(track);
+    expect(meter.copy.enabled).toBe(true);
+    expect(meter.level(40)).toBe(0);
+    track.enabled = true;
+    expect(meter.level(40)).toBe(40);
+    track.enabled = false;
+    expect(meter.level(40)).toBe(0);
   });
 });
