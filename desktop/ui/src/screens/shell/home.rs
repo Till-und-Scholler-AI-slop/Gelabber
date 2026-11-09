@@ -244,6 +244,25 @@ mod tests {
         });
     }
 
+    /// With the error shown nothing moves: the rail's placeholders do not
+    /// pulse, so the app does not draw frame after frame.
+    #[test]
+    fn a_failed_server_list_leaves_the_app_idle() {
+        let _config = TempConfig::new("home-failed-idle");
+        let api = failing(Arc::new(AtomicBool::new(true)));
+        let mut harness = launcher(&api, "/");
+        wait_for_label(&mut harness, "Die Server konnten nicht geladen werden.");
+        // Settled: the failure's toast and the window's first frames.
+        let start = std::time::Instant::now();
+        let mut idle = false;
+        while !idle && start.elapsed() < std::time::Duration::from_secs(10) {
+            harness.step();
+            idle = !harness.ctx.has_requested_repaint();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(idle, "still repainting");
+    }
+
     /// DmIndexPage and the DM sidebar's placeholder: LoadError and its text.
     #[test]
     fn a_failed_dm_list_says_so_twice() {

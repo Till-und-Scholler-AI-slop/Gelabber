@@ -597,6 +597,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
         }
     }
 
+    // Another frame only when something moved or was picked: the rects
+    // feed the next frame's hit tests, a pick changes the menu.
+    let changed = open.menu_rect != menu_rect || open.sub_rect != sub_rect || pick.is_some();
     state::with(&ctx, |s| {
         if let Some(m) = s.row_menu.as_mut() {
             m.menu_rect = menu_rect;
@@ -623,7 +626,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
             run(&ctx, app, &open.owner, act);
         }
     }
-    ctx.request_repaint();
+    if changed {
+        ctx.request_repaint();
+    }
 }
 
 /// Closes the menu; `refocus` gives the focus back to its opener.
@@ -1087,6 +1092,35 @@ mod tests {
             ]
         );
         assert!(harness.query_by_label("Kanal löschen").is_none());
+    }
+
+    /// An open menu that nothing happens in lets the app rest.
+    #[test]
+    fn an_open_menu_does_not_draw_frame_after_frame() {
+        use crate::app::testkit::{
+            ALLGEMEIN, FakeApi, HOME, focused_label, launcher, wait_for_label, workspace,
+        };
+        use crate::platform::paths::testing::TempConfig;
+        let _config = TempConfig::new("shell-row-menu-idle");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for_label(&mut harness, "allgemein");
+        for _ in 0..8 {
+            harness.key_press(egui::Key::Tab);
+            harness.run_steps(2);
+        }
+        assert_eq!(focused_label(&harness).as_deref(), Some("allgemein"));
+        harness.key_press_modifiers(Modifiers::SHIFT, Key::F10);
+        wait_for_label(&mut harness, "Kanal löschen");
+        let start = std::time::Instant::now();
+        let mut idle = false;
+        while !idle && start.elapsed() < std::time::Duration::from_secs(10) {
+            harness.step();
+            idle = !harness.ctx.has_requested_repaint();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(idle, "still repainting");
+        assert!(is_open_for(&harness.ctx, ALLGEMEIN.parse().expect("id")));
     }
 
     /// A level keeps a timed mute's end; a server's "all" is no row.
