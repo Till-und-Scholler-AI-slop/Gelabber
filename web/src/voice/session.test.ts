@@ -3939,6 +3939,65 @@ describe("authoritative mediasoup session lifecycle", () => {
       "Mikrofon getrennt – Standardgerät wird verwendet",
     ]);
   });
+  it("uses a microphone plugged in during a call that had none", async () => {
+    const devices = new EventTarget();
+    let inputs: string[] = [];
+    vi.stubGlobal("navigator", {
+      mediaDevices: Object.assign(devices, {
+        enumerateDevices: async () =>
+          inputs.map((deviceId) => ({ kind: "audioinput", deviceId })),
+      }),
+    });
+    const env = install({
+      mediaError: (index) =>
+        index === 0 ? new DOMException("none", "NotFoundError") : undefined,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    await vi.waitFor(() => expect(useVoice.getState().mic).toBe("unavailable"));
+    // Another device without a microphone changes nothing.
+    devices.dispatchEvent(new Event("devicechange"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(env.getUserMediaCalls()).toBe(1);
+    inputs = ["default"];
+    devices.dispatchEvent(new Event("devicechange"));
+    await vi.waitFor(() =>
+      expect(env.peers[0]!.audio).toBe(env.streams[1]!.getAudioTracks()[0]),
+    );
+    expect(useVoice.getState().mic).toBe("live");
+  });
+  it("follows the system default microphone when it changes", async () => {
+    const devices = new EventTarget();
+    let defaultGroup = "laptop";
+    vi.stubGlobal("navigator", {
+      mediaDevices: Object.assign(devices, {
+        enumerateDevices: async () => [
+          { kind: "audioinput", deviceId: "default", groupId: defaultGroup },
+          { kind: "audioinput", deviceId: "laptop-mic", groupId: "laptop" },
+          { kind: "audioinput", deviceId: "headset-mic", groupId: "headset" },
+        ],
+      }),
+    });
+    const env = await joined({
+      mediaStreamFor: (index) => {
+        const stream = fakeStream(`mic-${index}`);
+        const groupId = index === 0 ? "laptop" : "headset";
+        Object.assign(stream.getAudioTracks()[0]!, {
+          getSettings: () => ({ deviceId: "default", groupId }),
+        });
+        return stream;
+      },
+    });
+    // A device change that leaves the default where it is: no new capture.
+    devices.dispatchEvent(new Event("devicechange"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(env.getUserMediaCalls()).toBe(1);
+    defaultGroup = "headset";
+    devices.dispatchEvent(new Event("devicechange"));
+    await vi.waitFor(() =>
+      expect(env.peers[0]!.audio).toBe(env.streams[1]!.getAudioTracks()[0]),
+    );
+    expect(env.errors).toEqual([]);
+  });
   it("lets headset buttons mute and hang up while in a call", async () => {
     const handlers = new Map<string, (() => void) | null>();
     const active: boolean[] = [];

@@ -368,33 +368,58 @@ function noteMicLost(raw: MediaStream): void {
 
 /** A device came or went. The chosen microphone gone: fall back as if it
  * had ended (some browsers keep the track). There (again, or for the first
- * time since joining without it): use it. */
+ * time since joining without it): use it. With the system default chosen, a
+ * new default is used, and a call without a microphone takes one that came. */
 export async function onDeviceChange(): Promise<void> {
   const chosen = useMediaSettings.getState().audioInputId;
-  if (useVoice.getState().status !== "joined" || !chosen || !voice.rawMicStream)
-    return;
   const raw = voice.rawMicStream;
-  let inputs: string[];
+  const live = hasLiveTrack(raw, "audio");
+  if (
+    useVoice.getState().status !== "joined" ||
+    (!live && voice.micFailure !== "unavailable")
+  )
+    return;
+  let devices: MediaDeviceInfo[];
   try {
-    inputs = (await navigator.mediaDevices.enumerateDevices())
-      .filter((device) => device.kind === "audioinput")
-      .map((device) => device.deviceId);
+    devices = (await navigator.mediaDevices.enumerateDevices()).filter(
+      (device) => device.kind === "audioinput",
+    );
   } catch {
     return;
   }
-  // Without permission the list has no ids and says nothing about the chosen one.
   if (
-    inputs.every((id) => id === "") ||
+    useVoice.getState().status !== "joined" ||
     voice.rawMicStream !== raw ||
     useMediaSettings.getState().audioInputId !== chosen
   )
     return;
+  if (!live) {
+    // Joined, or left, without one that works: try a microphone that is there.
+    if (devices.length > 0) void refreshMic();
+    return;
+  }
+  const inputs = devices.map((device) => device.deviceId);
+  // Without permission the list has no ids and says nothing about the chosen one.
+  if (inputs.every((id) => id === "")) return;
+  const settings = raw!.getAudioTracks()[0]?.getSettings?.();
+  if (!chosen) {
+    // Chromium lists the default as its own entry, Firefox lists it first.
+    const fallback =
+      devices.find((device) => device.deviceId === "default") ?? devices[0];
+    if (
+      settings?.groupId &&
+      fallback?.groupId &&
+      fallback.groupId !== settings.groupId
+    )
+      void refreshMic();
+    return;
+  }
   const present = inputs.includes(chosen);
   // The capture names its device where the browser says: a chosen one that
   // was missing at joining is no loss when another device comes or goes.
-  const using = raw.getAudioTracks()[0]?.getSettings?.().deviceId;
+  const using = settings?.deviceId;
   const onChosen = using ? using === chosen : !voice.micFellBack;
-  if (!present && onChosen) fallBackToDefaultMic(raw);
+  if (!present && onChosen) fallBackToDefaultMic(raw!);
   else if (present && !onChosen) {
     voice.micFellBack = false;
     void refreshMic();
