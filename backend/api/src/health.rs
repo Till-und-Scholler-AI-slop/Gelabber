@@ -6,17 +6,19 @@
 //! `warn!` log line, which is where operators look for the cause.
 
 use std::future::Future;
-use std::time::Instant;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::Json;
 use axum::routing::get;
+use axum::{Extension, Router};
 use serde::Serialize;
 use sqlx::{Connection, PgConnection};
+use tokio::sync::Mutex;
 use tokio::time::timeout;
-use tracing::{info, warn};
+use tracing::{debug, warn};
 
 use crate::state::AppState;
 
@@ -24,6 +26,16 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
+        .layer(Extension(Arc::new(ReadyCache::default())))
+}
+
+/// `/ready` is public and unauthenticated, so one probe serves every request
+/// for a second; callers that arrive during a probe wait for its result.
+const READY_CACHE: Duration = Duration::from_secs(1);
+
+#[derive(Default)]
+struct ReadyCache {
+    last: Mutex<Option<(Instant, CheckResult, CheckResult)>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -43,7 +55,7 @@ pub struct Checks {
     pub redis: CheckResult,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CheckResult {
     Ok { latency_ms: u64 },
@@ -125,11 +137,25 @@ async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
 
-async fn ready(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse>) {
-    let (postgres, redis) = tokio::join!(
-        run_check("postgres", &state, check_postgres(&state)),
-        run_check("redis", &state, check_redis(&state)),
-    );
+async fn ready(
+    State(state): State<AppState>,
+    Extension(cache): Extension<Arc<ReadyCache>>,
+) -> (StatusCode, Json<ReadyResponse>) {
+    let mut last = cache.last.lock().await;
+    let (postgres, redis) = match &*last {
+        Some((at, postgres, redis)) if at.elapsed() < READY_CACHE => {
+            (postgres.clone(), redis.clone())
+        }
+        _ => {
+            let (postgres, redis) = tokio::join!(
+                run_check("postgres", &state, check_postgres(&state)),
+                run_check("redis", &state, check_redis(&state)),
+            );
+            *last = Some((Instant::now(), postgres.clone(), redis.clone()));
+            (postgres, redis)
+        }
+    };
+    drop(last);
 
     let all_ok = postgres.is_ok() && redis.is_ok();
     let status_code = if all_ok {
@@ -159,7 +185,7 @@ async fn run_check(
 
     let ProbeError { class, detail } = match outcome {
         Ok(Ok(())) => {
-            info!(check = name, latency_ms, "ready check passed");
+            debug!(check = name, latency_ms, "ready check passed");
             return CheckResult::Ok { latency_ms };
         }
         Ok(Err(err)) => err,
