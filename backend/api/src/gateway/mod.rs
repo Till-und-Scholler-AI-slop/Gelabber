@@ -39,6 +39,11 @@ use crate::error::ApiError;
 use crate::state::AppState;
 
 pub use hub::{ConnTable, EventLog, Gateway, Recheck, VoiceRoster};
+
+/// Sockets one account may hold on one API process: several tabs, a phone
+/// and the desktop app fit. Each socket can hold a pool connection while it
+/// writes, so an account must not be able to take the whole pool.
+pub const MAX_SOCKETS_PER_ACCOUNT: usize = 16;
 pub use protocol::{Event, EventDraft, EventKind, PresenceStatus, Topic};
 
 pub fn router() -> Router<AppState> {
@@ -69,10 +74,20 @@ async fn upgrade(
             "Cross-origin WebSocket is not allowed.",
         ));
     }
+    let Some(slot) = state
+        .gateway
+        .reserve_socket(session.user.id, MAX_SOCKETS_PER_ACCOUNT)
+    else {
+        tracing::warn!(user_id = %session.user.id, "refused WebSocket upgrade: socket limit");
+        return Err(ApiError::RateLimited { retry_after: 5 });
+    };
     Ok(ws
         .max_message_size(conn::MAX_CLIENT_BYTES)
         .max_frame_size(conn::MAX_CLIENT_BYTES)
-        .on_upgrade(move |socket| conn::run(socket, state, session)))
+        .on_upgrade(move |socket| async move {
+            conn::run(socket, state, session).await;
+            drop(slot);
+        }))
 }
 
 /// Same-origin check when the browser sends `Origin`. Non-browser clients

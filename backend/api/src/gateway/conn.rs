@@ -32,6 +32,12 @@ pub(super) const MAX_CLIENT_BYTES: usize = 16 * 1024;
 /// Seat holders are the few sockets in a call, so that poll stays cheap.
 const SECURITY_BACKSTOP: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// One subscribe's replay, gap and `ok` together, written while the frame's
+/// transaction holds the session and server rows. A client that reads too
+/// slowly for it loses the socket instead of keeping the rows and a pool
+/// connection for minutes.
+const REPLAY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+
 enum FrameEffect {
     /// Heartbeat: keep the socket and Redis TTL, do not reset idle.
     Liveness,
@@ -426,26 +432,26 @@ async fn subscribe(
         .events
         .catch_up_epoch(topic, resume.0, resume.1)
         .await?;
+    // The server row lock is held until these are written, so the whole
+    // replay shares one deadline rather than one per frame.
+    let mut texts = Vec::new();
     match plan {
         CatchUp::None => {}
         CatchUp::Replay(events) => {
             for event in events {
-                send(sink, ServerFrame::event(event)).await?;
+                texts.push(to_json(&ServerFrame::event(event))?);
             }
         }
         CatchUp::Gap => {
-            send(
-                sink,
-                ServerFrame::gap(server_id, channel_id).with_epoch(epoch),
-            )
-            .await?;
+            texts.push(to_json(
+                &ServerFrame::gap(server_id, channel_id).with_epoch(epoch),
+            )?);
         }
     }
-    send(
-        sink,
-        ServerFrame::subscribed(server_id, channel_id, current).with_epoch(epoch),
-    )
-    .await?;
+    texts.push(to_json(
+        &ServerFrame::subscribed(server_id, channel_id, current).with_epoch(epoch),
+    )?);
+    send_texts_within(sink, texts, REPLAY_DEADLINE).await?;
 
     // Live Pub/Sub frames that arrived while we were reading the log sit
     // in the per-socket queue. Flush them now (drop dups by `n`).
@@ -718,10 +724,18 @@ async fn send_texts(
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     texts: Vec<String>,
 ) -> Result<(), ApiError> {
+    send_texts_within(sink, texts, std::time::Duration::from_secs(1)).await
+}
+
+async fn send_texts_within(
+    sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    texts: Vec<String>,
+    deadline: std::time::Duration,
+) -> Result<(), ApiError> {
     if texts.is_empty() {
         return Ok(());
     }
-    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+    tokio::time::timeout(deadline, async {
         for text in texts {
             sink.feed(Message::Text(Utf8Bytes::from(text))).await?;
         }

@@ -58,6 +58,31 @@ pub(super) struct Inner {
     pub(super) sockets: RwLock<HashMap<ConnId, Socket>>,
     pub(super) voice_ops: Mutex<()>,
     media_sessions: Mutex<HashMap<String, (Uuid, std::time::Instant)>>,
+    /// Sockets per account on this process, upgrades in flight included.
+    per_account: std::sync::Mutex<HashMap<Uuid, usize>>,
+}
+
+/// One account's place among its sockets ([`Gateway::reserve_socket`]),
+/// given back on drop.
+pub struct SocketSlot {
+    inner: Arc<Inner>,
+    user_id: Uuid,
+}
+
+impl Drop for SocketSlot {
+    fn drop(&mut self) {
+        let mut counts = self
+            .inner
+            .per_account
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(count) = counts.get_mut(&self.user_id) {
+            *count -= 1;
+            if *count == 0 {
+                counts.remove(&self.user_id);
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -152,6 +177,7 @@ impl ConnTable {
                 sockets: RwLock::new(HashMap::new()),
                 voice_ops: Mutex::new(()),
                 media_sessions: Mutex::new(HashMap::new()),
+                per_account: std::sync::Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -557,6 +583,27 @@ impl Gateway {
         {
             sessions.remove(key);
         }
+    }
+
+    /// A place for one more socket of `user_id`, or `None` once the account
+    /// holds `limit` on this process. Held from the upgrade until the socket
+    /// ends, so concurrent upgrades cannot pass the limit together.
+    pub fn reserve_socket(&self, user_id: Uuid, limit: usize) -> Option<SocketSlot> {
+        let mut counts = self
+            .connections
+            .inner
+            .per_account
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let count = counts.entry(user_id).or_default();
+        if *count >= limit {
+            return None;
+        }
+        *count += 1;
+        Some(SocketSlot {
+            inner: self.connections.inner.clone(),
+            user_id,
+        })
     }
 
     pub async fn attach_session(

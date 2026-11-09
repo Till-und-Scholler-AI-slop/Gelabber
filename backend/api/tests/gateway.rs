@@ -585,6 +585,47 @@ async fn reconnect_signals_gap_when_the_buffer_cannot_fill_it(pool: PgPool) {
     assert_eq!(ok["n"], 10);
 }
 
+/// One account holds a bounded number of sockets on a process; the upgrade
+/// beyond it is refused, and a closed socket frees its place.
+#[sqlx::test]
+async fn sockets_per_account_are_capped(pool: PgPool) {
+    let (owner, member) = two_users(pool.clone()).await;
+    let (addr, _) = common::serve_ws(pool).await;
+    let cookie = session_cookie(&owner);
+    let mut open = Vec::new();
+    for _ in 0..gelabber_api::gateway::MAX_SOCKETS_PER_ACCOUNT {
+        open.push(connect(addr, &cookie, None).await);
+    }
+    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+    request
+        .headers_mut()
+        .insert(COOKIE, format!("{SESSION}={cookie}").parse().unwrap());
+    let err = tokio_tungstenite::connect_async(request)
+        .await
+        .expect_err("one socket over the cap");
+    assert!(err.to_string().contains("429"), "{err}");
+    // Another account is not affected.
+    let _other = connect(addr, &session_cookie(&member), None).await;
+
+    let mut first = open.remove(0);
+    first.close(None).await.ok();
+    while first.next().await.is_some() {}
+    let freed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+            request
+                .headers_mut()
+                .insert(COOKIE, format!("{SESSION}={cookie}").parse().unwrap());
+            if let Ok((ws, _)) = tokio_tungstenite::connect_async(request).await {
+                return ws;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    assert!(freed.is_ok(), "a closed socket gives its place back");
+}
+
 /// A client frame over 16 KiB is refused by the WebSocket layer before it is
 /// buffered, and the socket closes.
 #[sqlx::test]
