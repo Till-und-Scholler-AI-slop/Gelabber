@@ -40,6 +40,14 @@ namespace gelabber
 			return element == "x264enc" || element == "openh264enc" || element == "av1enc";
 		}
 
+		// av1enc never passes AOM_EFLAG_FORCE_KF to libaom (GStreamer 1.24's
+		// gstav1enc.c), so it drops the force-key-unit event. A new libaom
+		// starts with a key frame, so Encode() restarts its pipeline instead.
+		bool IgnoresKeyRequests(const std::string& element)
+		{
+			return element == "av1enc";
+		}
+
 		// openh264enc and av1enc take only I420; the others take NV12.
 		bool TakesI420(const std::string& element)
 		{
@@ -117,8 +125,9 @@ namespace gelabber
 			}
 			else if (element == "av1enc")
 			{
-				// libaom as a GStreamer element, for tests: it ignores requests
-				// for a key frame, so it puts one in every two seconds.
+				// libaom as a GStreamer element, for tests. Requested key frames
+				// come from a restart (see IgnoresKeyRequests); this distance in
+				// encoded frames is only a backstop.
 				SetArg(encoder, "usage-profile", "realtime");
 				SetArg(encoder, "cpu-used", "10");
 				SetArg(encoder, "end-usage", "cbr");
@@ -197,50 +206,7 @@ namespace gelabber
 				height = settings->height & ~1;
 				fps    = std::max<int>(1, settings->maxFramerate);
 				bitrate.store(std::max<uint32_t>(settings->startBitrate, 100) * 1000);
-
-				const std::string description =
-				  "appsrc name=src is-live=true format=time block=false max-buffers=3 "
-				  "caps=video/x-raw,format=" +
-				  std::string(TakesI420(element) ? "I420" : "NV12") + ",width=" +
-				  std::to_string(width) + ",height=" + std::to_string(height) + ",framerate=" +
-				  std::to_string(fps) + "/1 ! queue max-size-buffers=2 leaky=downstream ! " + element +
-				  " name=enc ! " + format.tail + " ! appsink name=sink sync=false max-buffers=8 drop=false";
-				const auto& gst = Gst();
-				GError* error   = nullptr;
-				pipeline        = gst.parse_launch(description.c_str(), &error);
-				if (!pipeline || error)
-				{
-					RTC_LOG(LS_WARNING) << "GStreamer " << element
-					                    << " pipeline: " << (error ? error->message : "?");
-					if (error)
-						g_error_free(error);
-					Release();
-					return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
-				}
-				src     = gst.bin_get_by_name(pipeline, "src");
-				encoder = gst.bin_get_by_name(pipeline, "enc");
-				sink    = gst.bin_get_by_name(pipeline, "sink");
-				bus     = gst.element_get_bus(pipeline);
-				if (!src || !encoder || !sink || !bus)
-				{
-					Release();
-					return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
-				}
-				ConfigureEncoder(encoder, element);
-				SetBitrate(encoder, element, bitrate.load());
-				appliedBitrate = bitrate.load();
-				if (gst.element_set_state(pipeline, kStatePlaying) == kStateChangeFailure || CheckBus())
-				{
-					RTC_LOG(LS_WARNING) << "GStreamer " << element << " did not start";
-					Release();
-					return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
-				}
-				failed  = false;
-				running = true;
-				puller  = std::thread([this] { Pull(); });
-				RTC_LOG(LS_INFO) << "GStreamer " << CodecName(codec) << " " << element << " " << width << "x"
-				                 << height << "@" << fps;
-				return WEBRTC_VIDEO_CODEC_OK;
+				return Start();
 			}
 
 			int32_t RegisterEncodeCompleteCallback(webrtc::EncodedImageCallback* callback) override
@@ -298,7 +264,12 @@ namespace gelabber
 				const bool key = types && std::any_of(types->begin(), types->end(), [](auto type) {
 					                 return type == webrtc::VideoFrameType::kVideoFrameKey;
 				                 });
-				if (key)
+				if (key && IgnoresKeyRequests(element))
+				{
+					if (const int32_t result = RestartForKeyFrame(); result != WEBRTC_VIDEO_CODEC_OK)
+						return result;
+				}
+				else if (key)
 					gst.element_send_event(
 					  encoder, gst.video_event_new_upstream_force_key_unit(kClockTimeNone, TRUE, ++keyCount));
 
@@ -412,6 +383,67 @@ namespace gelabber
 				std::optional<webrtc::ColorSpace> colorSpace;
 			};
 
+			// The pipeline for the size, rate and bitrate InitEncode set.
+			int32_t Start()
+			{
+				const std::string description =
+				  "appsrc name=src is-live=true format=time block=false max-buffers=3 "
+				  "caps=video/x-raw,format=" +
+				  std::string(TakesI420(element) ? "I420" : "NV12") + ",width=" +
+				  std::to_string(width) + ",height=" + std::to_string(height) + ",framerate=" +
+				  std::to_string(fps) + "/1 ! queue max-size-buffers=2 leaky=downstream ! " + element +
+				  " name=enc ! " + format.tail + " ! appsink name=sink sync=false max-buffers=8 drop=false";
+				const auto& gst = Gst();
+				GError* error   = nullptr;
+				pipeline        = gst.parse_launch(description.c_str(), &error);
+				if (!pipeline || error)
+				{
+					RTC_LOG(LS_WARNING) << "GStreamer " << element
+					                    << " pipeline: " << (error ? error->message : "?");
+					if (error)
+						g_error_free(error);
+					Release();
+					return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
+				}
+				src     = gst.bin_get_by_name(pipeline, "src");
+				encoder = gst.bin_get_by_name(pipeline, "enc");
+				sink    = gst.bin_get_by_name(pipeline, "sink");
+				bus     = gst.element_get_bus(pipeline);
+				if (!src || !encoder || !sink || !bus)
+				{
+					Release();
+					return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
+				}
+				ConfigureEncoder(encoder, element);
+				SetBitrate(encoder, element, bitrate.load());
+				appliedBitrate = bitrate.load();
+				if (gst.element_set_state(pipeline, kStatePlaying) == kStateChangeFailure || CheckBus())
+				{
+					RTC_LOG(LS_WARNING) << "GStreamer " << element << " did not start";
+					Release();
+					return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
+				}
+				failed       = false;
+				firstPending = true;
+				running      = true;
+				puller       = std::thread([this] { Pull(); });
+				RTC_LOG(LS_INFO) << "GStreamer " << CodecName(codec) << " " << element << " " << width << "x"
+				                 << height << "@" << fps;
+				return WEBRTC_VIDEO_CODEC_OK;
+			}
+
+			// For an encoder that ignores key frame requests: a new pipeline,
+			// whose first frame is a key frame. Requests until that frame is
+			// out are already answered, so they restart nothing.
+			int32_t RestartForKeyFrame()
+			{
+				if (firstPending)
+					return WEBRTC_VIDEO_CODEC_OK;
+				RTC_LOG(LS_INFO) << "GStreamer " << element << " restarts for a key frame";
+				Release();
+				return Start();
+			}
+
 			// True when the pipeline reported an error.
 			bool CheckBus()
 			{
@@ -442,6 +474,9 @@ namespace gelabber
 						gst.buffer_unmap(buffer, &map);
 					}
 					gst.mini_object_unref(sample);
+					// The encoder's first frame is out (delivered or not): the
+					// next key frame request needs a restart again.
+					firstPending = false;
 				}
 			}
 
@@ -513,6 +548,8 @@ namespace gelabber
 			guint keyCount{ 0 };
 			std::atomic<bool> running{ false };
 			std::atomic<bool> failed{ false };
+			// From Start() until the pipeline puts out its first frame.
+			std::atomic<bool> firstPending{ false };
 			std::thread puller;
 			std::mutex mutex;
 			webrtc::EncodedImageCallback* callback{ nullptr };
