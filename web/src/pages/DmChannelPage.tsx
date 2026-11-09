@@ -51,7 +51,8 @@ export function DmChannelPage() {
   }, [gone, client, channelId, forgetLast, navigate, userId]);
 
   if (gone) return null;
-  if (error) {
+  // A failed background refetch keeps the conversation that is shown.
+  if (error && !shown) {
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-center text-lr-muted">
         <LoadError
