@@ -345,6 +345,7 @@ describe("live notices from voice frames", () => {
       authorAvatar: "/avatars/ada.png",
       mentioned: false,
       preview: "Ada ist live in Lounge.",
+      live: { userId: "ada", voice: "Lounge" },
     });
     expect(h.notify).toHaveBeenCalledTimes(1);
     const [notification, onClick] = h.notify.mock.calls[0]!;

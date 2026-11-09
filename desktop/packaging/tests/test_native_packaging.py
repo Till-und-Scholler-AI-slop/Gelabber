@@ -18,6 +18,7 @@ DESKTOP = Path(__file__).parents[2]
 NATIVE = DESKTOP / 'packaging/native'
 NSIS = NATIVE / 'windows/installer.nsi'
 PKGBUILD = DESKTOP / 'packaging/arch/native/PKGBUILD'
+ARCH = DESKTOP / 'packaging/arch'
 
 
 def defines(text):
@@ -150,6 +151,36 @@ class ArchPackage(unittest.TestCase):
                 self.assertRegex(package, rf'install -D?m\d+ {re.escape(name)} ')
         self.assertIn('name=gelabber-native-linux-x64', script)
         self.assertIn('cd gelabber-native-linux-x64', package)
+
+
+class ArchInstallScript(unittest.TestCase):
+    """install.sh pins the key and address the README gives users; repo.sh
+    test runs it against a test build's own key, so a typo here would only
+    show on a user's machine."""
+
+    def setUp(self):
+        self.script = (ARCH / 'install.sh').read_text()
+        self.readme = (ARCH / 'README.md').read_text()
+
+    def setting(self, name):
+        return re.search(rf'^{name}=(\S+)$', self.script, re.M).group(1)
+
+    def test_it_pins_the_published_key(self):
+        published = re.search(r'^Signing key fingerprint: `([0-9A-F]{40})`$', self.readme, re.M).group(1)
+        self.assertEqual(self.setting('fingerprint'), published)
+        self.assertIn(f'pacman-key --lsign-key {published}', self.readme)
+
+    def test_it_adds_the_repository_the_readme_gives(self):
+        server = re.search(r'^#    Server = (\S+)/\$arch$', self.readme, re.M).group(1)
+        self.assertEqual(self.setting('repo_url'), server)
+        self.assertIn(f'curl -fsSL {server}/install.sh | sudo sh', self.readme)
+        self.assertIn('SigLevel = Required DatabaseRequired', self.script)
+        self.assertIn('pacman -Syu --needed "$@" gelabber-desktop', self.script)
+
+    def test_it_is_posix_sh(self):
+        subprocess.run(['sh', '-n', ARCH / 'install.sh'], check=True)
+        self.assertTrue(self.script.startswith('#!/bin/sh\n'))
+        self.assertNotIn('local ', self.script)
 
 
 class Scripts(unittest.TestCase):

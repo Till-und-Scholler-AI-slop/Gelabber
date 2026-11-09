@@ -7,6 +7,7 @@
 // GELABBER_PARITY_LOG_INVOKE=1 prints the app commands `desktop` scenes call.
 /* global process, console, document, window, URL, setTimeout, structuredClone */
 import { execFileSync, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import { chromium } from "playwright";
@@ -191,8 +192,18 @@ for (const scene of scenes) {
     const origin = "http://desktop-page.localhost";
     const dir = dirname(join(repo, scene.page));
     await page.route(`${origin}/**`, async (route) => {
-      const file = join(dir, new URL(route.request().url()).pathname);
-      const type = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript" };
+      const path = new URL(route.request().url()).pathname;
+      // The page's own files, else the web client's artwork, icons and fonts.
+      const roots = [dir, join(repo, "web/public"), join(repo, "web/src")];
+      const file = roots.map((root) => join(root, path)).find((f) => existsSync(f));
+      if (!file) return route.fulfill({ status: 404 });
+      const type = {
+        ".html": "text/html",
+        ".css": "text/css",
+        ".js": "text/javascript",
+        ".png": "image/png",
+        ".woff2": "font/woff2",
+      };
       await route.fulfill({
         body: await readFile(file),
         contentType: type[extname(file)] ?? "application/octet-stream",
@@ -304,6 +315,9 @@ for (const scene of scenes) {
           .hover();
         hovered = true;
       }
+      // Selects the whole text of the first element with exactly this text.
+      if (action.select)
+        await page.getByText(action.select, { exact: true }).first().selectText();
       // A text field by its placeholder, such as the header's "Suchen".
       if (action.placeholder)
         await page.getByPlaceholder(action.placeholder, { exact: true }).first().click();

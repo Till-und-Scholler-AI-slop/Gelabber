@@ -68,6 +68,9 @@ presets the port must re-implement `derivedColors` + `themeVariables` 1:1.
 | `--lr-danger` | ensureContrast(#f39b98 / #a12b29) | `#f39b98` | `#a12b29` |
 | `--lr-danger-bg` | fixed | `#8f302d` | `#b33b38` |
 | `--lr-on-danger` | fixed | `#ffffff` | `#ffffff` |
+| `--lr-live` | liveApartFrom(#ff7b5c / #db5b24, accent): turned 22° past an accent within 15° of its hue (Ristretto: `#ff5c74`); then ensureContrast(…, [bg,panel,surface], 3) unless its ink drops under 4.5 | `#ff7b5c` | `#db5b24` |
+| `--lr-on-live` | readableInk(live) | `#111111` | `#111111` |
+| `--lr-live-text` | ensureContrast(live,[bg,panel,surface]) | `#ff7b5c` | `#ad4a20` |
 | `--lr-backdrop` | fixed | `rgba(9,12,13,0.72)` | `rgba(37,40,41,0.45)` |
 | `--lr-speaking` | `var(--lr-online)` (`index.css:95`) | `#85d69b` | `#287a45` |
 
@@ -110,8 +113,9 @@ values above; ignore them.
 | Header search placeholder (`components/chat.css:78-80`) | subtle 80% + panel | `#74797c` | `#868889` |
 | Header search border on hover / with text (`chat.css:81-86`) | border 82% + text 18% | `#4f5354` | `#bbb7af` |
 | Header search border focused (`chat.css:91-93`) | accent 70% + border | `#b78f48` | `#e4b464` |
-| Header Live pill bg (`chat.css:2020`) | danger-bg 10% + bg | `#231b1c` | `#f1e2de` |
-| Header Live pill border (`chat.css:2017-2018`) | danger-bg 45% + border | `#593030` | `#ca9089` |
+| Header Live pill bg (`chat.css:2020`) | live 10% + bg | `#2e2321` | `#f5e6dc` |
+| Header Live pill border (`chat.css:2017-2018`) | live 45% + border | `#8b5245` | `#dc9f80` |
+| Live hint strip bg (`.lr-live-hint`) | live 9% + bg | `#2c2220` | `#f5e7de` |
 | Call-bar control "off" bg on panel (`voice/room.css:1189-1191`) | danger-bg 16% over panel | `#2f2323` | `#ead3cd` |
 | Call-bar Verlassen hover (`room.css:1238-1240`) | danger-bg + 12% black | `#7e2a28` | `#9e3431` |
 | Speaking glow (`index.css:1270-1272`) | speaking @30% / @45% alpha | `rgba(133,214,155,.30)` / `.45` | `rgba(40,122,69,.30)` / `.45` |
@@ -378,7 +382,7 @@ Shown only when the mention/DM count > 0 (plain unread shows only the pill, no d
 |---|---|
 | Position | absolute, right −5px, bottom −5px of the 44px tile (or 44×40 home button) |
 | Size | min 18×18, padding 0 5px, radius 999px (pill grows with digits) |
-| Fill / text | bg `--lr-danger-bg` (#8f302d dark / #b33b38 light), text `--lr-on-danger` #ffffff |
+| Fill / text | bg `--lr-accent`, text `--lr-accent-ink` (unread marks are the accent) |
 | Font | `700 11px / 1`, letter-spacing 0, no uppercase |
 | Ring | `box-shadow: 0 0 0 2px --lr-rail` |
 | Text | count, `"99+"` when > 99 |
@@ -509,7 +513,7 @@ radius 7) › `a.channel-row-link` (flex 1, padding 0 10px, gap 10px, full heigh
 | Pending (optimistic) | whole row `opacity .5`, not clickable |
 | Draft mark (text, not active) | `PencilIcon` 13px `--lr-muted`, title "Entwurf" |
 | Mention/DM count | the pill of 4.6 without ring/offset: `margin-left:auto` at the right end of the link (right edge = row right − 13px) |
-| LIVE chip (voice channel with someone live) | `margin-left:auto`; padding 1px 5px; radius `--lr-radius-small` 5px; bg `--lr-danger-bg`; text `#fff` `700 10px`, letter-spacing .4px, UPPERCASE "LIVE"; line box 15 → chip 17 tall; title = `liveSentence(...)` |
+| LIVE chip (voice channel with someone live) | `margin-left:auto`; padding 1px 5px; radius `--lr-radius-small` 5px; bg `--lr-live`; text `--lr-on-live` `700 10px`, letter-spacing .4px, UPPERCASE "LIVE"; line box 15 → chip 17 tall; title = `liveSentence(...)` |
 | Hover actions | absolute (`@media (hover:hover)`), right 3px, vertically centred, padding-left 6, radius 7, `background: inherit` = row's current bg (covers the name/count end); y = row top + 4 .. + 30; shown on hover, focus-within or while the row's menu is open, otherwise `visibility: hidden` (out of the accessibility tree and Tab order; native: not drawn). With `manage_channels`: `PencilIcon` 14 "#<name> bearbeiten" (voice: "<name> bearbeiten"); for managers and for every text channel: `MoreIcon` 14 "Aktionen für #<name>" (opens the row menu). Deleting is in the menu only. The row's roving Tab stop returns to the link when focus leaves the row |
 | Right-click | row menu (`RowMenu.tsx`, `rowMenuEntries.ts`; native `screens/shell/row_menu.rs`), also Umschalt+F10 / context-menu key anywhere in the row (link or its buttons), a long press, or the "…" button; a right press outside closes it. Items `.shell-menu-item` (min-height 36, padding 0 10, gap 10, radius 5, `--lr-type-ui`, icon 18 `--lr-muted`, hover `--lr-hover`), list gap 2. Text channel: `CheckCheckIcon` "Als gelesen markieren" (disabled, `--lr-subtle` without hover, while nothing is unread); `BellOffIcon` "Stummschalten" ▸ (submenu: "15 Minuten", "1 Stunde", "8 Stunden", "24 Stunden", "Bis ich es wieder einschalte") or, while muted, `BellOffIcon` "Stummschaltung aufheben" with the end as a muted second line (its description, not its name); `BellIcon` "Benachrichtigungen" ▸ (radio entries with a `CheckIcon` in `--lr-accent-text` on the set one: "Wie der Server (<level>)", "Alle Nachrichten", "Nur @Erwähnungen", "Nichts"); `GearIcon` "Benachrichtigungseinstellungen…" (the dialog). Managers then get a separator, `PencilIcon` "Kanal bearbeiten", separator, danger `TrashIcon` "Kanal löschen" (voice channels: only these). Category: `PlusIcon` "Kanal hier erstellen", `PencilIcon` "Kategorie umbenennen", separator, `TrashIcon` "Kategorie löschen". A submenu opens beside the menu (right, else left; first entry level with its opener; gap 4) on hover, click, Enter or →; ← and Esc close it first. Menu label (a11y): `#name` / `name` / `Kategorie <name>`. Home tile: only "Alle Direktnachrichten als gelesen markieren" |
 | Popover box (`ui/ui.css:635-660`, `ui/popoverPosition.ts:9-10`) | `.ui-popover`: fixed, z 60, min-width 180, max-width min(360, 100vw−16), padding 8, border 1px `--lr-border`, radius `--lr-radius-lg` 10, bg `--lr-elevated`, shadow `--lr-shadow-1`. Default placement `bottom-start`: top = anchor bottom + 6 (GAP), left = anchor left; flips above (anchor top − 6 − height) when it does not fit; kept 8px (MARGIN) inside the viewport. Anchor = the row link (channel) or the category row. Opens opacity 0→1 + scale .96→1 from the anchor side (180ms ease-enter), closes 130ms ease-exit |
@@ -522,7 +526,7 @@ radius 7) › `a.channel-row-link` (flex 1, padding 0 10px, gap 10px, full heigh
 | Avatar | 20×20 circle, initials 600 9px (5.x), on `personTint` tile; image cover |
 | Name | flex 1, ellipsis; speaking → `--lr-text` |
 | Speaking avatar | ring `0 0 0 2px --lr-speaking` + glow (`0 0 0 4px speaking@30%`, `0 0 8px 4px speaking@45%`) pulsing opacity .45↔1 over 1.2s ease-in-out (`index.css:1258-1288`). Only when not muted/deafened |
-| Live | `LiveIcon` 13px, `--lr-danger`, title "Live" |
+| Live | `LiveIcon` 13px, `--lr-live-text`, title "Live" |
 | Locally muted (not self) | `SpeakerOffIcon` 16px, `--lr-muted`, title "Lokal stummgeschaltet" (`UserVolumeControl.tsx:98-105`, `index.css:2213-2217`) |
 | Muted / deafened | `MicOffIcon` 13px or `HeadsetOffIcon` 13px (deafened wins), `--lr-danger`, title "stumm" / "taub" |
 | Unknown member name | "Jemand" |
@@ -577,7 +581,7 @@ There is NO channel topic: the `Channel` type has no topic field and no header s
 | Channel icon | `HashIcon` / `SpeakerIcon` 18px, `--lr-muted`; gap 10 to the name |
 | Name `h1` | 15px weight 650, letter-spacing −0.1px, line box 22.5, ellipsis |
 | Server name line | hidden on desktop (`index.css:350-352`; shown only ≤800px) |
-| Live pill (when someone in the server is live) | after the title, `margin-left:auto`; height 30, padding 0 4 0 6, gap 8, radius 15, border 1px (1.3 table), bg (1.3), 12px; contains "LIVE" badge (18 tall, padding 0 6, radius 9, `--lr-danger-bg`, #fff 700 10px, letter-spacing .4px, `chat.css:1689-1703`) + link `"<names> in <channel> +<more>"` (`--lr-text`, ellipsis, underline on hover) + optional button "Beitreten" (not in a call) / "Zum Kanal" (padding 3px 10px, radius 12, `--lr-danger-bg`, #fff, 650) (`voice/LiveHint.tsx:72-90`). Then the search loses its auto margin (`chat.css:2009-2045`) |
+| Live pill (when someone in the server is live) | after the title, `margin-left:auto`; height 30, padding 0 4 0 6, gap 8, radius 15, border 1px (1.3 table), bg (1.3), 12px; contains "LIVE" badge (18 tall, padding 0 6, radius 9, `--lr-live`, `--lr-on-live` 700 10px, letter-spacing .4px) + link `"<names> in <channel> +<more>"` (`--lr-text`, ellipsis, underline on hover) + optional button "Zuschauen" (not in a call: joins and watches) / "Zum Kanal" (padding 2px 10px, border 1px `--lr-border-strong`, radius 13, `--lr-surface`, `--lr-text`, 650; hover `--lr-hover`) (`voice/LiveHint.tsx:72-90`). Then the search loses its auto margin (`chat.css:2009-2045`) |
 | Search field (text channels and DMs) | `margin-left:auto`; 200×30 (260 wide when focused or holding text, width animates 100ms); padding 0 10; gap 8; border 1px `--lr-border`; radius 7; bg `--lr-panel`; text 13px `--lr-muted`; `SearchIcon` 16px; input text `--lr-text`; placeholder "Suchen" in (1.3); hover/with text: icon/text `--lr-text`, border (1.3); focused: border (1.3); title "Wörter oder eine Phrase in Anführungszeichen" |
 | Shortcut hint | `kbd` "Strg F" (macOS "⌘ F"), right end of the field (margin-left auto), padding 0 5, border 1px `--lr-border`, radius 5, 11px weight 400 `--lr-muted` (stays muted on hover; `chat.css:1931-1939`; hidden ≤800px, `chat.css:1724`), line-height inherited 1.5 → 16.5 line box → kbd box 18.5 tall, centred in the 28px inner height; hidden while the field has text |
 | Bell (`NotificationSettingsDialog.tsx:311-329`) | `.lr-header-icon` 32×32, radius 7, `--lr-muted`; `BellIcon` 16 or `BellOffIcon` 16 when muted; title "Benachrichtigungen" / "Stummgeschaltet"; hover bg `--lr-hover` + `--lr-text` |
@@ -723,8 +727,8 @@ hover `--lr-hover`, bottom corners radius 5, bleeds −4px to the card edges.
   margins) → controls (`margin-left:auto`, gap 4) → "Verlassen" button.
 - Controls: 36 tall, min-width 36, padding 0 8, radius 7, transparent, `--lr-muted`;
   hover `--lr-hover` + `--lr-text`; on (camera/share) `--lr-selected` + `--lr-accent-text`;
-  off (mic/headset closed) `--lr-danger` text on `danger-bg@16%`; Live `--lr-danger-bg`
-  + #fff; leave: margin-left 4, padding 0 12, `--lr-danger-bg` + #fff, hover darker
+  off (mic/headset closed) `--lr-danger` text on `danger-bg@16%`; Live `--lr-live`
+  + `--lr-on-live`; leave: margin-left 4, padding 0 12, `--lr-danger-bg` + #fff, hover darker
   (1.3), label "Verlassen" (`--lr-type-ui`).
 - Joining slides the bar up from below (translateY 100% → 0, 240ms ease-enter);
   leaving slides down (170ms ease-exit).
@@ -786,7 +790,7 @@ The file has 49 icons (`Icons.tsx:21-460`); the rest belong to other areas.
 | Home sidebar | Gelabber; Keine Server. Erstelle einen über + in der Serverleiste oder öffne einen Einladungslink. |
 | Placeholder | Navigation wird geladen, Erneut versuchen, Wird geladen…, Die Kanäle konnten nicht geladen werden., Die Unterhaltungen konnten nicht geladen werden. |
 | DM sidebar | Nachrichten, Neue Nachricht, Noch keine Unterhaltungen., Unterhaltungen |
-| Header | Suchen, In dieser Unterhaltung suchen, Wörter oder eine Phrase in Anführungszeichen, Strg F, Benachrichtigungen, Stummgeschaltet, `Benachrichtigungen für <x>`, `… (stumm)`, Mitgliederliste, Mitgliederliste einblenden, Mitgliederliste ausblenden, Live, Beitreten, Zum Kanal |
+| Header | Suchen, In dieser Unterhaltung suchen, Wörter oder eine Phrase in Anführungszeichen, Strg F, Benachrichtigungen, Stummgeschaltet, `Benachrichtigungen für <x>`, `… (stumm)`, Mitgliederliste, Mitgliederliste einblenden, Mitgliederliste ausblenden, Live, Zuschauen, Zum Kanal |
 | Member panel | Mitglieder, Online, Abwesend, Offline, ` — ` (em dash between label and count), ` · Du`, `Profil von <Name>`, Live, `Live in <channel>`, einem Sprachkanal, Im Sprachkanal, `In <ch>`, `Stumm in <ch>`, `Taub in <ch>`, Stumm, Taub |
 | User panel | Online, Abwesend, Offline, `<presence> · <status>`, Einstellungen, Benutzermenü, Benutzerkonto, Profil bearbeiten, Server wechseln …, Abmelden, Dein Status, Status, Speichern, Speichert…, Gespeichert., Nicht gespeichert – erneut versuchen |
 
