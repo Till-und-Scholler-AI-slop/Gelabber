@@ -195,7 +195,22 @@ fn move_old_volumes(stored: &mut Stored) {
                 account.old_volumes = None;
             }
         }
-        Err(e) => tracing::warn!("state: {}: {e}; volumes stay", path.display()),
+        Err(e) => {
+            tracing::warn!("state: {}: {e}; volumes stay", path.display());
+            return;
+        }
+    }
+    // Written now, not with the next change: an old field left on disk would
+    // be moved again at the next start and undo a level reset since.
+    let state = super::paths::file(FILE);
+    let written = serde_json::to_vec_pretty(stored)
+        .map_err(std::io::Error::other)
+        .and_then(|bytes| match &state {
+            Some(state) => super::paths::write_atomic(state, &bytes, true),
+            None => Ok(()),
+        });
+    if let Err(e) = written {
+        tracing::warn!("state: {e}");
     }
 }
 
@@ -520,6 +535,32 @@ mod tests {
         )));
         let text = std::fs::read_to_string(config.dir.join(FILE)).unwrap();
         assert!(text.contains("volumes"), "{text}");
+        drop(config);
+    }
+
+    /// The real start (load, no save of its own): the old field leaves the
+    /// file with the move, so a level reset afterwards does not come back.
+    #[test]
+    fn a_start_moves_the_old_volumes_and_the_next_one_moves_nothing() {
+        let config = super::super::paths::testing::TempConfig::new("state-old-volumes-start");
+        let (a, x) = (Uuid::from_u128(1), Uuid::from_u128(11));
+        let old = serde_json::json!({"accounts": {a.to_string(): {"dm": x, "volumes": {
+            x.to_string(): {"volume": 0.5},
+        }}}});
+        let state = config.dir.join(FILE);
+        std::fs::write(&state, old.to_string()).unwrap();
+        let volumes = config.dir.join(crate::screens::voice::volume::FILE);
+        drop(super::super::Platform::new(None));
+        let text = std::fs::read_to_string(&state).unwrap();
+        assert!(!text.contains("volumes"), "{text}");
+        assert!(text.contains(&x.to_string()), "the rest stays: {text}");
+        let moved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&volumes).unwrap()).unwrap();
+        assert_eq!(moved[a.to_string()][x.to_string()]["volume"], 0.5);
+        // The user resets the level on the slider: the entry goes.
+        std::fs::write(&volumes, "{}").unwrap();
+        drop(super::super::Platform::new(None));
+        assert_eq!(std::fs::read_to_string(&volumes).unwrap(), "{}");
         drop(config);
     }
 }
