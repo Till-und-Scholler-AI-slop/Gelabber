@@ -437,7 +437,8 @@ fn raced(err: &sqlx::Error) -> bool {
 
 #[derive(Deserialize)]
 struct SearchParams {
-    q: String,
+    // Optional so that a missing `q` is a field error, not axum's plain 400.
+    q: Option<String>,
     before: Option<String>,
     limit: Option<i64>,
 }
@@ -450,12 +451,14 @@ async fn search(
 ) -> Result<Json<MessagePage>, ApiError> {
     messaging_channel(&state.db, channel_id, user.id).await?;
     let mut fields = FieldErrors::new();
-    let q = params.q.trim();
+    let q = params.q.as_deref().unwrap_or_default().trim();
     if q.is_empty() {
         fields.insert("q", "required");
-    }
-    if q.chars().count() > 200 {
+    } else if q.chars().count() > 200 {
         fields.insert("q", "too_long");
+    } else if q.chars().any(char::is_control) {
+        // Postgres refuses NUL in text, which would answer 500.
+        fields.insert("q", "invalid");
     }
     let limit = validate::limit(params.limit, &mut fields);
     let before = validate::cursor(params.before.as_deref(), "before", &mut fields);
