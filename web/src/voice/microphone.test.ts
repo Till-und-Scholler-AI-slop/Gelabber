@@ -208,10 +208,8 @@ describe("the level the others hear", () => {
   it("follows mute and push-to-talk on the call's track after it opens", () => {
     const track = {
       enabled: false,
-      clone() {
-        return { enabled: this.enabled } as MediaStreamTrack;
-      },
-    } as unknown as MediaStreamTrack;
+      clone: () => ({ enabled: track.enabled }) as MediaStreamTrack,
+    } as MediaStreamTrack;
     // Opened while muted: the copy still hears the microphone.
     const meter = sentLevelMeter(track);
     expect(meter.copy.enabled).toBe(true);
