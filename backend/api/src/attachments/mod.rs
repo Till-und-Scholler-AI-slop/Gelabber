@@ -12,7 +12,7 @@ pub mod sniff;
 pub mod validate;
 
 use std::collections::HashMap;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use axum::Router;
 use axum::body::Body as RawBody;
@@ -113,6 +113,14 @@ struct StoredRow {
     filename: String,
     content_type: String,
     size_bytes: i64,
+}
+
+#[derive(FromRow)]
+struct UploadRow {
+    #[sqlx(flatten)]
+    row: StoredRow,
+    /// Until the expiry cleanup's grace ends.
+    transfer_secs: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -383,9 +391,11 @@ async fn upload(
     if !state.store.proxies() {
         return Err(ApiError::NotFound);
     }
-    let row = sqlx::query_as::<_, StoredRow>(
+    let UploadRow { row, transfer_secs } = sqlx::query_as::<_, UploadRow>(
         "SELECT id, message_id, channel_id, uploader_id, object_key, \
-                filename, content_type, size_bytes \
+                filename, content_type, size_bytes, \
+                EXTRACT(EPOCH FROM expires_at + interval '15 minutes' - now())::float8 \
+                  AS transfer_secs \
          FROM attachments \
          WHERE id = $1 AND uploader_id = $2 AND message_id IS NULL \
            AND expires_at > now() AND created_at > now() - make_interval(secs => $3)",
@@ -427,10 +437,15 @@ async fn upload(
             &row.content_type,
             row.size_bytes as u64,
             body,
+            // The expiry cleanup's grace: an upload that lands later may
+            // find its row refunded and gone.
+            Duration::from_secs_f64(transfer_secs.max(0.0)),
         )
         .await
     {
         Ok(()) => {}
+        // The link has expired meanwhile, as a new attempt would find.
+        Err(StoreError::TimedOut) => return Err(ApiError::NotFound),
         Err(StoreError::SizeMismatch) => {
             return Err(ApiError::Validation(FieldErrors::from([(
                 "size", "invalid",

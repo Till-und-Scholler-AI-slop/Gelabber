@@ -724,6 +724,48 @@ async fn real_minio_download_links_serve_the_object(pool: PgPool) {
     state.store.delete(&key).await.unwrap();
 }
 
+/// Proxy delivery against real MinIO: a slow but steady upload lands, and
+/// one cut at its deadline leaves no object behind for cleanup to miss.
+#[tokio::test]
+async fn real_minio_proxy_upload_deadline_leaves_no_object() {
+    let endpoint = std::env::var("MINIO_ENDPOINT").expect("source local minio-test.env");
+    let mut config = minio_config(&endpoint);
+    config.delivery = gelabber_api::config::AttachmentDelivery::Proxy;
+    let store = ObjectStore::from_minio(Some(&config)).unwrap();
+    store.ensure_ready().await.unwrap();
+    let trickle = |len: usize| {
+        Body::from_stream(futures_util::stream::unfold(0, move |sent| async move {
+            (sent < len).then_some(())?;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            Some((Ok::<_, std::io::Error>(vec![b'x']), sent + 1))
+        }))
+    };
+    let minute = Duration::from_secs(60);
+    store
+        .upload("att/steady", "text/plain", 8, trickle(8), minute)
+        .await
+        .unwrap();
+    assert_eq!(store.head("att/steady").await.unwrap().size, 8);
+    assert!(matches!(
+        store
+            .upload(
+                "att/late",
+                "text/plain",
+                8,
+                trickle(8),
+                Duration::from_millis(300)
+            )
+            .await,
+        Err(StoreError::TimedOut)
+    ));
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(matches!(
+        store.head("att/late").await,
+        Err(StoreError::NotFound)
+    ));
+    store.delete("att/steady").await.unwrap();
+}
+
 /// Headers the uploader adds to the presigned PUT are stored by MinIO, but
 /// the signed link overrides them: no content coding the viewer's browser
 /// would undo (the content check read the raw bytes), and the API's own

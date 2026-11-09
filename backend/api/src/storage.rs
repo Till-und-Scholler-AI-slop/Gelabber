@@ -34,6 +34,10 @@ pub const GET_WINDOW: Duration = Duration::from_secs(30 * 60);
 /// member left, was removed or logged out. Accepted by Silas on 2026-10-12;
 /// see `api/STORAGE_LIFECYCLE.md`.
 pub const GET_TTL: Duration = Duration::from_secs(60 * 60);
+/// Proxy delivery: how long an upload body may send nothing before the
+/// transfer is given up. Progress resets it; nothing bounds a steady upload
+/// but the deadline its caller passes.
+const UPLOAD_IDLE: Duration = Duration::from_secs(60);
 
 /// The current signing window: its start (Unix seconds) and the seconds left
 /// until the next one, at least one.
@@ -52,6 +56,8 @@ pub enum StoreError {
     RangeNotSatisfiable,
     /// An upload body longer or shorter than the size it was signed for.
     SizeMismatch,
+    /// An upload still running at the deadline its caller set.
+    TimedOut,
     Other(String),
 }
 
@@ -62,6 +68,7 @@ impl std::fmt::Display for StoreError {
             Self::Unconfigured => write!(f, "object store is not configured"),
             Self::RangeNotSatisfiable => write!(f, "range not satisfiable"),
             Self::SizeMismatch => write!(f, "upload size does not match"),
+            Self::TimedOut => write!(f, "upload not finished in time"),
             Self::Other(msg) => write!(f, "{msg}"),
         }
     }
@@ -192,19 +199,22 @@ impl ObjectStore {
     }
 
     /// Proxy delivery: the upload body, exactly `size` bytes, into the
-    /// object over the internal endpoint.
+    /// object over the internal endpoint, finished within `deadline` or
+    /// given up ([`StoreError::TimedOut`]).
     pub async fn upload(
         &self,
         key: &str,
         content_type: &str,
         size: u64,
         body: Body,
+        deadline: Duration,
     ) -> Result<(), StoreError> {
         match self {
             Self::Memory(store) => {
                 let limit = usize::try_from(size).map_err(|_| StoreError::SizeMismatch)?;
-                let bytes = axum::body::to_bytes(body, limit)
+                let bytes = tokio::time::timeout(deadline, axum::body::to_bytes(body, limit))
                     .await
+                    .map_err(|_| StoreError::TimedOut)?
                     .map_err(|_| StoreError::SizeMismatch)?;
                 if bytes.len() as u64 != size {
                     return Err(StoreError::SizeMismatch);
@@ -212,7 +222,7 @@ impl ObjectStore {
                 store.put(key, content_type, bytes.to_vec());
                 Ok(())
             }
-            Self::Minio(store) => store.upload(key, content_type, size, body).await,
+            Self::Minio(store) => store.upload(key, content_type, size, body, deadline).await,
         }
     }
 
@@ -330,9 +340,14 @@ struct MinioInner {
     public: Bucket,
     creds: Credentials,
     http: reqwest::Client,
-    /// Proxy delivery: no deadline for the whole transfer, which may take
-    /// minutes on a slow line, only for connecting and between reads.
+    /// Proxy delivery downloads: no deadline for the whole transfer, which
+    /// may take minutes on a slow line, only for connecting and between reads.
     stream_http: reqwest::Client,
+    /// Proxy delivery uploads: no read timeout at all, since reqwest runs it
+    /// as one fixed timer from `send()` that body progress never resets.
+    /// `upload` bounds the transfer itself.
+    upload_http: reqwest::Client,
+    upload_idle: Duration,
     delivery: AttachmentDelivery,
     /// Set once the bucket was seen to exist; `minio-init` creates it, so
     /// later presigns need no CreateBucket round trip.
@@ -369,6 +384,10 @@ impl MinioStore {
             .read_timeout(Duration::from_secs(60))
             .build()
             .map_err(|err| StoreError::Other(format!("http client: {err}")))?;
+        let upload_http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|err| StoreError::Other(format!("http client: {err}")))?;
         Ok(Self {
             inner: Arc::new(MinioInner {
                 internal,
@@ -376,6 +395,8 @@ impl MinioStore {
                 creds,
                 http,
                 stream_http,
+                upload_http,
+                upload_idle: UPLOAD_IDLE,
                 delivery: config.delivery,
                 ready: AtomicBool::new(false),
             }),
@@ -531,13 +552,15 @@ impl MinioStore {
 
     /// Proxy delivery: the browser's upload body into the object, signed
     /// for exactly `size` bytes like the presigned PUT. A body that runs
-    /// past `size` stops the transfer; one that ends early fails it.
+    /// past `size`, or sends nothing for `upload_idle`, stops the transfer;
+    /// one that ends early fails it. `deadline` bounds all of it.
     async fn upload(
         &self,
         key: &str,
         content_type: &str,
         size: u64,
         body: Body,
+        deadline: Duration,
     ) -> Result<(), StoreError> {
         let mut action = self.inner.internal.put_object(Some(&self.inner.creds), key);
         action
@@ -567,15 +590,38 @@ impl MinioStore {
                 Ok(chunk)
             })
         };
-        let result = self
+        // Each chunk must arrive within `upload_idle` of the one before.
+        let idle = self.inner.upload_idle;
+        let watched = futures_util::stream::unfold(
+            (Box::pin(counted), client_failed.clone(), false),
+            move |(mut body, client_failed, stalled)| async move {
+                if stalled {
+                    return None;
+                }
+                match tokio::time::timeout(idle, body.next()).await {
+                    Ok(Some(chunk)) => Some((chunk, (body, client_failed, false))),
+                    Ok(None) => None,
+                    Err(_) => {
+                        client_failed.store(true, Ordering::Relaxed);
+                        let err = std::io::Error::other("upload body idle");
+                        Some((Err(err), (body, client_failed, true)))
+                    }
+                }
+            },
+        );
+        let sent = self
             .inner
-            .stream_http
+            .upload_http
             .put(url)
             .header(reqwest::header::CONTENT_TYPE, content_type)
             .header(reqwest::header::CONTENT_LENGTH, size)
-            .body(reqwest::Body::wrap_stream(counted))
-            .send()
-            .await;
+            .body(reqwest::Body::wrap_stream(watched))
+            .send();
+        // Past the deadline the pending row may be refunded and forgotten;
+        // dropping the request aborts the PUT before MinIO stores it.
+        let Ok(result) = tokio::time::timeout(deadline, sent).await else {
+            return Err(StoreError::TimedOut);
+        };
         if client_failed.load(Ordering::Relaxed) {
             return Err(StoreError::SizeMismatch);
         }
@@ -1042,7 +1088,7 @@ mod tests {
         let (minio, seen) = fake_minio().await;
         let store = ObjectStore::Minio(minio);
         store
-            .upload("att/x", "image/png", 4, Body::from(&b"abcd"[..]))
+            .upload("att/x", "image/png", 4, Body::from(&b"abcd"[..]), MINUTE)
             .await
             .expect("upload");
         {
@@ -1055,7 +1101,7 @@ mod tests {
         }
         assert!(matches!(
             store
-                .upload("att/y", "image/png", 4, Body::from(&b"abcdef"[..]))
+                .upload("att/y", "image/png", 4, Body::from(&b"abcdef"[..]), MINUTE)
                 .await,
             Err(StoreError::SizeMismatch)
         ));
@@ -1074,6 +1120,60 @@ mod tests {
             (seen[0].method.as_str(), seen[0].path.as_str()),
             ("PUT", "/gelabber/")
         );
+    }
+
+    const MINUTE: Duration = Duration::from_secs(60);
+
+    /// `len` bytes, one every `every`, then the end or (`stall`) silence.
+    fn trickle(len: usize, every: Duration, stall: bool) -> Body {
+        let bytes = futures_util::stream::unfold(0, move |sent| async move {
+            if sent == len {
+                if stall {
+                    std::future::pending::<()>().await;
+                }
+                return None;
+            }
+            tokio::time::sleep(every).await;
+            Some((Ok::<_, std::io::Error>(vec![b'x']), sent + 1))
+        });
+        Body::from_stream(bytes)
+    }
+
+    /// A slow upload is cut only when it stops sending, or at the caller's
+    /// deadline: never by a fixed timer across the whole transfer.
+    #[tokio::test]
+    async fn proxy_upload_is_bounded_by_idleness_and_the_deadline() {
+        let (mut minio, seen) = fake_minio().await;
+        let idle = Duration::from_millis(400);
+        Arc::get_mut(&mut minio.inner).unwrap().upload_idle = idle;
+        let store = ObjectStore::Minio(minio);
+        let every = Duration::from_millis(100);
+
+        // Twice the idle limit in all, but never idle that long.
+        let slow = trickle(8, every, false);
+        store
+            .upload("att/slow", "image/png", 8, slow, MINUTE)
+            .await
+            .expect("a steady upload finishes");
+        assert_eq!(seen.lock().unwrap()[0].body, b"xxxxxxxx");
+
+        let stalled = trickle(2, every, true);
+        let started = std::time::Instant::now();
+        assert!(matches!(
+            store
+                .upload("att/stall", "image/png", 8, stalled, MINUTE)
+                .await,
+            Err(StoreError::SizeMismatch)
+        ));
+        assert!(started.elapsed() < Duration::from_secs(5));
+
+        let late = trickle(8, every, false);
+        assert!(matches!(
+            store
+                .upload("att/late", "image/png", 8, late, Duration::from_millis(300))
+                .await,
+            Err(StoreError::TimedOut)
+        ));
     }
 
     #[test]
