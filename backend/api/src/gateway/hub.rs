@@ -855,25 +855,51 @@ impl Gateway {
 
     pub async fn revoke_channel(&self, server_id: Uuid, channel_id: Uuid) -> Result<(), ApiError> {
         crate::media::revoke_channel(&self.connections.redis, channel_id).await?;
-        let conns: Vec<(ConnId, Uuid)> = self
+        let topic = Topic::Channel(channel_id);
+        // Only sockets holding the topic, a seat or a typing entry there.
+        let conns: Vec<(ConnId, Uuid, bool, bool)> = self
             .connections
             .inner
             .sockets
             .read()
             .await
             .iter()
-            .map(|(id, socket)| (*id, socket.user_id))
+            .filter_map(|(id, socket)| {
+                let seated = socket.rooms.contains_key(&channel_id);
+                let typing = socket.typing.contains(&(server_id, channel_id));
+                (seated || typing || socket.topics.contains(&topic)).then_some((
+                    *id,
+                    socket.user_id,
+                    seated,
+                    typing,
+                ))
+            })
             .collect();
-        for (id, uid) in conns {
-            self.unsubscribe(id, Topic::Channel(channel_id)).await;
-            if let Err(err) = self.leave_voice(id, uid, server_id, channel_id).await {
+        for (id, uid, seated, typing) in conns {
+            self.unsubscribe(id, topic).await;
+            if seated && let Err(err) = self.leave_voice(id, uid, server_id, channel_id).await {
                 warn!(error = err.code(), "deleted channel voice cleanup failed");
             }
-            self.note_typing(id, server_id, channel_id, false).await;
-            if let Err(err) = self.stop_typing(server_id, channel_id, uid).await {
-                warn!(error = err.code(), "deleted channel typing cleanup failed");
+            if typing {
+                self.note_typing(id, server_id, channel_id, false).await;
+                if let Err(err) = self.stop_typing(server_id, channel_id, uid).await {
+                    warn!(error = err.code(), "deleted channel typing cleanup failed");
+                }
             }
         }
+        // The replay log would otherwise keep the channel's last bodies.
+        self.connections
+            .with_conn(|mut conn| async move {
+                redis::cmd("DEL")
+                    .arg(topic.seq_key())
+                    .arg(topic.log_key())
+                    .arg(topic.epoch_key())
+                    .arg(topic.delivery_key())
+                    .query_async::<()>(&mut conn)
+                    .await
+            })
+            .await
+            .map_err(redis_err)?;
         Ok(())
     }
 
@@ -1292,6 +1318,70 @@ mod resilience_tests {
         assert!(!woke(theirs_signal).await);
         b.detach(mine).await;
         b.detach(theirs).await;
+    }
+
+    /// A channel delete touches only the sockets that hold something of
+    /// that channel, and drops the channel's sequenced log with it.
+    #[tokio::test]
+    async fn revoke_channel_stops_only_its_own_typers_and_drops_its_log() {
+        let g = gateway();
+        g.wait_ready(Duration::from_secs(2)).await.unwrap();
+        let (s, c, typer, bystander) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let topic = Topic::Channel(c);
+        let (tx, _rx) = mpsc::channel(128);
+        let (typing, _) = g.attach_session(typer, "typer".into(), tx).await;
+        g.watch_topic(typing, s, topic).await;
+        g.begin_catch_up(typing, topic).await;
+        g.finish_catch_up(typing, topic, 0).await;
+        g.note_typing(typing, s, c, true).await;
+        let (tx, _rx2) = mpsc::channel(128);
+        let (other, _) = g.attach_session(bystander, "bystander".into(), tx).await;
+        g.publish(EventDraft {
+            kind: super::super::protocol::EventKind::C,
+            server_id: s,
+            channel_id: Some(c),
+            entity_id: Some(Uuid::new_v4()),
+            delta: None,
+        })
+        .await
+        .unwrap();
+
+        let client = redis::Client::open(std::env::var("REDIS_URL").unwrap()).unwrap();
+        let mut pubsub = client.get_async_pubsub().await.unwrap();
+        pubsub
+            .subscribe(super::super::protocol::LiveTopic::Typing(c).redis_channel())
+            .await
+            .unwrap();
+        g.revoke_channel(s, c).await.unwrap();
+        let mut stops = Vec::new();
+        {
+            let mut messages = pubsub.on_message();
+            while let Ok(Some(message)) =
+                tokio::time::timeout(Duration::from_millis(300), messages.next()).await
+            {
+                stops.push(message.get_payload::<String>().unwrap());
+            }
+        }
+        assert_eq!(stops.len(), 1, "{stops:?}");
+        assert!(stops[0].contains(&typer.to_string()), "{stops:?}");
+
+        let mut conn = client.get_multiplexed_async_connection().await.unwrap();
+        let left: i64 = redis::cmd("EXISTS")
+            .arg(topic.seq_key())
+            .arg(topic.log_key())
+            .arg(topic.epoch_key())
+            .arg(topic.delivery_key())
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(left, 0);
+        g.detach(typing).await;
+        g.detach(other).await;
     }
 
     #[tokio::test]
