@@ -624,7 +624,10 @@ pub async fn check_uploads(
         }
         // The declared type must be what the bytes are. A mismatch stays
         // unbound and goes with the expiry cleanup.
-        let head = match store.prefix(&row.object_key, sniff::PREFIX_LEN).await {
+        let head = match store
+            .prefix(&row.object_key, sniff::prefix_len(&row.content_type))
+            .await
+        {
             Ok(head) => head,
             Err(StoreError::NotFound) => return Err(invalid()),
             Err(err) => return Err(store_internal(err)),
@@ -632,6 +635,11 @@ pub async fn check_uploads(
         if !sniff::matches(&row.content_type, &head) {
             return Err(ApiError::Validation(FieldErrors::from([(
                 AT[index], "mismatch",
+            )])));
+        }
+        if sniff::too_many_pixels(&row.content_type, &head) {
+            return Err(ApiError::Validation(FieldErrors::from([(
+                AT[index], "too_long",
             )])));
         }
         Ok(())

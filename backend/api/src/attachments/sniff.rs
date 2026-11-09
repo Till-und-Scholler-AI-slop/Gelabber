@@ -6,6 +6,43 @@
 
 /// Bytes read from the start of an object; `ustar` sits at offset 257.
 pub const PREFIX_LEN: usize = 512;
+/// A JPEG's frame header comes after its EXIF, XMP and ICC segments (up to
+/// 64 KiB each), so more of it is read to find the size.
+const JPEG_PREFIX_LEN: usize = 256 * 1024;
+/// Images shown inline must decode in every viewer's browser: at most this
+/// many pixels a side, and 8192² in all.
+const IMAGE_EDGE_MAX: u32 = 16384;
+const IMAGE_PIXELS_MAX: u64 = 1 << 26;
+
+/// How many leading bytes `matches` and `too_many_pixels` want.
+pub fn prefix_len(content_type: &str) -> usize {
+    if content_type == "image/jpeg" {
+        JPEG_PREFIX_LEN
+    } else {
+        PREFIX_LEN
+    }
+}
+
+/// Whether an image declares a canvas past the bounds. A size the prefix
+/// does not show is let through: the check cannot prove it.
+pub fn too_many_pixels(content_type: &str, head: &[u8]) -> bool {
+    let size = match content_type {
+        // The logical screen; browsers draw every frame within it.
+        "image/gif" => head.get(6..10).map(|b| {
+            (
+                u32::from(u16::from_le_bytes([b[0], b[1]])),
+                u32::from(u16::from_le_bytes([b[2], b[3]])),
+            )
+        }),
+        t if t.starts_with("image/") => crate::image_size::dimensions(head),
+        _ => None,
+    };
+    size.is_some_and(|(width, height)| {
+        width > IMAGE_EDGE_MAX
+            || height > IMAGE_EDGE_MAX
+            || u64::from(width) * u64::from(height) > IMAGE_PIXELS_MAX
+    })
+}
 
 pub fn matches(content_type: &str, head: &[u8]) -> bool {
     let at = |offset: usize, magic: &[u8]| head.get(offset..offset + magic.len()) == Some(magic);
