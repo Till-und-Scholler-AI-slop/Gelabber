@@ -180,7 +180,8 @@ export function MessagePane({
     searchField.current?.focus({ preventScroll: true });
   }, [setSearchText]);
   // Strg/⌘+F searches this conversation instead of the page; Strg+K stays
-  // the quick switcher (#324).
+  // the quick switcher (#324). Only a modal dialog blocks it: the desktop
+  // drawers are dialogs that stay open.
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (
@@ -188,7 +189,7 @@ export function MessagePane({
         !event.shiftKey &&
         !event.altKey &&
         event.key.toLowerCase() === "f" &&
-        !document.querySelector("dialog[open]")
+        !document.querySelector("dialog:modal")
       ) {
         event.preventDefault();
         searchField.current?.focus();
@@ -219,7 +220,10 @@ export function MessagePane({
         event.ctrlKey ||
         event.metaKey ||
         event.altKey ||
-        document.querySelector("dialog[open], details[open]")
+        // An expanded text attachment is not a menu that Esc closes.
+        document.querySelector(
+          "dialog:modal, details[open]:not(.lr-attachment-text)",
+        )
       )
         return;
       markByKey(event.shiftKey);
