@@ -18,8 +18,9 @@ pub enum Role {
     Member,
 }
 
-/// The caller's membership in one server. Constructed only by [`load`], so
-/// holding one proves the user *is* a member.
+/// The caller's membership in one server. Built by [`load`], or in
+/// `servers/mod.rs` for a user just shown to be a member (the server list,
+/// a new server, an update after `load`): holding one means they were.
 #[derive(Debug, Clone)]
 pub struct Membership {
     pub server: ServerRow,

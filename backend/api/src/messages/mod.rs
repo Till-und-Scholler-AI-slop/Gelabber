@@ -1,8 +1,9 @@
 //! `/api/channels/{id}/messages` and `/api/messages/{id}` (issue #5 + #15).
 //!
 //! REST carries history and write rights. The client sends optimistic and
-//! virtualises the list. After a successful write this module calls
-//! [`publish_channel`]; Redis failure is logged and does not fail the request.
+//! virtualises the list. A write queues its event in the outbox inside its
+//! transaction ([`delivery::enqueue`]) and wakes the worker after commit; a
+//! Redis failure delays delivery and does not fail the request.
 //!
 //! Rights: any member may read a text channel's history. `send_messages` is
 //! required to post or edit. The author may always delete their own row;
