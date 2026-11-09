@@ -11,6 +11,7 @@ import { syncPush } from "../pwa/push.ts";
 import { scopeGeneration } from "./scope.ts";
 import {
   changePassword,
+  checkSession,
   claimProfileWrite,
   ensureSession,
   login,
@@ -432,6 +433,27 @@ describe("session store", () => {
     resolveMe?.(json(200, fromServer));
     await done;
     expect(useSession.getState().user).toEqual(fromServer);
+  });
+
+  it("checkSession signs the tab out when the server ended the session", async () => {
+    let user: User | null = ada;
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "GET /api/auth/session": () => json(200, { user, csrf_token: "c3" }),
+    });
+    await login("ada@example.com", "password123");
+    const generation = scopeGeneration();
+
+    await checkSession();
+    expect(useSession.getState()).toEqual({
+      status: "authenticated",
+      user: ada,
+    });
+    expect(scopeGeneration()).toBe(generation);
+
+    user = null;
+    await checkSession();
+    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
   });
 
   it("a 401 from any request flips the tab to anonymous", async () => {

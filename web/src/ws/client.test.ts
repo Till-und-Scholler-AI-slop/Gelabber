@@ -312,6 +312,42 @@ describe("gateway client", () => {
     }
   });
 
+  it("asks once per failed streak whether a refused handshake means the session ended", async () => {
+    vi.useFakeTimers();
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 5,
+      maxRetryMs: 5,
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    let refused = 0;
+    gateway.onRefused(() => refused++);
+
+    gateway.start();
+    sockets[0]?.emit("open");
+    sockets[0]?.emit("close");
+    expect(refused).toBe(0);
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await vi.advanceTimersByTimeAsync(5);
+      expect(sockets).toHaveLength(attempt + 1);
+      sockets[attempt]?.emit("close");
+    }
+    expect(refused).toBe(1);
+    await vi.advanceTimersByTimeAsync(5);
+    sockets[4]?.emit("open");
+    sockets[4]?.emit("close");
+    await vi.advanceTimersByTimeAsync(5);
+    sockets[5]?.emit("close");
+    expect(refused).toBe(2);
+
+    gateway.stop();
+  });
+
   it("tells subscribers where the socket stands", async () => {
     vi.useFakeTimers();
     const sockets: FakeSocket[] = [];

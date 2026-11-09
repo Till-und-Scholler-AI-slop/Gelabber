@@ -97,6 +97,9 @@ export class Gateway {
   private inFront = false;
   /** Last explicit presence; idle is re-announced on a new or resynced socket. */
   private idle = false;
+  /** A refused handshake was reported since the last socket that opened. */
+  private refusedReported = false;
+  private refusedListeners = new Set<() => void>();
   /** Bumped by `resetSession` so a frame already in hand cannot fan out. */
   private epoch = 0;
   private eventListeners = new Set<(event: ChatEvent) => void>();
@@ -268,6 +271,17 @@ export class Gateway {
     };
   }
 
+  /**
+   * A socket closed before it opened, once per run of such failures: a 401
+   * handshake looks the same, so the session is worth one check.
+   */
+  onRefused(listener: () => void): () => void {
+    this.refusedListeners.add(listener);
+    return () => {
+      this.refusedListeners.delete(listener);
+    };
+  }
+
   onPresence(listener: (frame: PresenceFrame) => void): () => void {
     this.presenceListeners.add(listener);
     return () => {
@@ -359,6 +373,7 @@ export class Gateway {
     this.discoveredDms.clear();
     this.completedResync = this.resyncVersion;
     this.idle = false;
+    this.refusedReported = false;
     this.stop();
   }
 
@@ -407,6 +422,7 @@ export class Gateway {
     // we just replaced must not clear the new one or answer on it.
     const epoch = this.epoch;
     const live = () => this.socket === socket && this.epoch === epoch;
+    let opened = false;
 
     const onOpen = () => {
       if (!live()) {
@@ -414,6 +430,8 @@ export class Gateway {
         return;
       }
       this.retryAttempt = 0;
+      this.refusedReported = false;
+      opened = true;
       this.lastServerAt = this.opts.now();
       this.setStatus("open");
       this.startHeartbeat();
@@ -455,6 +473,10 @@ export class Gateway {
       this.clearHeartbeat();
       if (!this.stopped) {
         this.scheduleReconnect();
+      }
+      if (!opened && !this.refusedReported) {
+        this.refusedReported = true;
+        for (const listener of this.refusedListeners) listener();
       }
     };
     const detach = () => {
