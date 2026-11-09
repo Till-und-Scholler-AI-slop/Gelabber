@@ -47,6 +47,22 @@ enum FrameEffect {
     Idle,
     /// The page came to the front or left it.
     Focus(bool),
+    /// A write to the socket failed: end it, so the client reconnects and
+    /// resumes instead of staying without the topic.
+    Close,
+}
+
+/// Why a subscribe failed: a failed write ends the socket, a failed read of
+/// the database or Redis only this subscribe.
+enum SubscribeError {
+    Write(ApiError),
+    Read(ApiError),
+}
+
+impl From<ApiError> for SubscribeError {
+    fn from(err: ApiError) -> Self {
+        Self::Read(err)
+    }
 }
 
 pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
@@ -127,6 +143,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                     Some(Ok(Message::Text(text))) => {
                         last_client = Instant::now();
                         match handle_text(&state, &mut session_guard, user, conn, &text, &mut sink).await {
+                            Ok(FrameEffect::Close) => break,
                             Ok(FrameEffect::Liveness) => {
                                 let _ = state.gateway.touch_presence(conn).await;
                             }
@@ -356,12 +373,20 @@ async fn handle_text(
         ClientFrame::Subscribe { s, c, n, ep } => {
             // The scope tells the client which subscribe to retry. A database
             // error also fails the frame's commit, which ends the socket.
-            if let Err(err) = subscribe(state, db, user, conn, (s, c), (n, ep), sink).await {
-                state.gateway.unsubscribe(conn, Topic::of(s, c)).await;
-                warn!(error = err.code(), user_id = %user.id, "ws subscribe failed");
-                send(sink, ServerFrame::error("internal", Some(s), c)).await?;
+            match subscribe(state, db, user, conn, (s, c), (n, ep), sink).await {
+                Ok(()) => Ok(FrameEffect::Activity),
+                Err(SubscribeError::Read(err)) => {
+                    state.gateway.unsubscribe(conn, Topic::of(s, c)).await;
+                    warn!(error = err.code(), user_id = %user.id, "ws subscribe failed");
+                    send(sink, ServerFrame::error("internal", Some(s), c)).await?;
+                    Ok(FrameEffect::Activity)
+                }
+                Err(SubscribeError::Write(err)) => {
+                    state.gateway.unsubscribe(conn, Topic::of(s, c)).await;
+                    debug!(error = err.code(), user_id = %user.id, "ws subscribe write failed");
+                    Ok(FrameEffect::Close)
+                }
             }
-            Ok(FrameEffect::Activity)
         }
         ClientFrame::Unsubscribe { s, c } => {
             state.gateway.unsubscribe(conn, Topic::of(s, c)).await;
@@ -391,7 +416,7 @@ async fn subscribe(
     scope: (Uuid, Option<Uuid>),
     resume: (Option<u64>, Option<Uuid>),
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
-) -> Result<(), ApiError> {
+) -> Result<(), SubscribeError> {
     let (server_id, channel_id) = scope;
     let _guard = if channel_id.is_some_and(|cid| cid == server_id) {
         None // DM authorization below still verifies participants.
@@ -403,10 +428,11 @@ async fn subscribe(
                     sink,
                     ServerFrame::error("not_found", Some(server_id), channel_id),
                 )
-                .await?;
+                .await
+                .map_err(SubscribeError::Write)?;
                 return Ok(());
             }
-            Err(err) => return Err(err),
+            Err(err) => return Err(err.into()),
         }
     };
     match authorize(&mut *db, user.id, server_id, channel_id).await {
@@ -416,10 +442,11 @@ async fn subscribe(
                 sink,
                 ServerFrame::error("not_found", Some(server_id), channel_id),
             )
-            .await?;
+            .await
+            .map_err(SubscribeError::Write)?;
             return Ok(());
         }
-        Err(other) => return Err(other),
+        Err(other) => return Err(other.into()),
     }
 
     if _guard.is_some() {
@@ -458,7 +485,9 @@ async fn subscribe(
     texts.push(to_json(
         &ServerFrame::subscribed(server_id, channel_id, current).with_epoch(epoch),
     )?);
-    send_texts_within(sink, texts, REPLAY_DEADLINE).await?;
+    send_texts_within(sink, texts, REPLAY_DEADLINE)
+        .await
+        .map_err(SubscribeError::Write)?;
 
     // Live Pub/Sub frames that arrived while we were reading the log sit
     // in the per-socket queue. Flush them now (drop dups by `n`).
@@ -476,11 +505,15 @@ async fn subscribe(
         warn!(error = err.code(), "presence announce on subscribe failed");
     }
     match state.gateway.presence_snapshot(server_id).await {
-        Ok(snap) => send(sink, ServerFrame::presence_snap(server_id, snap)).await?,
+        Ok(snap) => send(sink, ServerFrame::presence_snap(server_id, snap))
+            .await
+            .map_err(SubscribeError::Write)?,
         Err(err) => warn!(error = err.code(), "presence snapshot on subscribe failed"),
     }
     match state.gateway.voice_snapshot(server_id).await {
-        Ok(voice) => send(sink, ServerFrame::voice_snap(server_id, voice)).await?,
+        Ok(voice) => send(sink, ServerFrame::voice_snap(server_id, voice))
+            .await
+            .map_err(SubscribeError::Write)?,
         Err(err) => warn!(error = err.code(), "voice snapshot on subscribe failed"),
     }
     Ok(())

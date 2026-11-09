@@ -676,6 +676,54 @@ async fn sockets_per_account_are_capped(pool: PgPool) {
     assert!(freed.is_ok(), "a closed socket gives its place back");
 }
 
+/// A subscribe whose replay the client does not read within the deadline
+/// ends the socket, so the client reconnects and resumes, instead of leaving
+/// it open without the topic.
+#[sqlx::test]
+async fn a_replay_past_its_deadline_ends_the_socket(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Slow").await;
+    let (s, c) = ids(&server);
+    // Silence alone must not close it within the test.
+    let (addr, state) = common::serve_ws_with_dead(pool, 60_000).await;
+    // More than the loopback socket buffers hold: the replay write blocks.
+    let big = "x".repeat(4 * 1024 * 1024);
+    for _ in 0..8 {
+        publish(&state, s, c, EventKind::C, &big).await;
+    }
+    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+    send_json(&mut ws, json!({ "op": "s", "s": s, "c": c, "n": 0 })).await;
+    tokio::time::sleep(Duration::from_secs(7)).await;
+
+    let mut subscribed = false;
+    let ended = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match ws.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                Some(Ok(Message::Text(text))) => {
+                    let frame: Value = serde_json::from_str(text.as_str()).unwrap();
+                    match frame["op"].as_str() {
+                        Some("ok") => subscribed = true,
+                        Some("h") => {
+                            let _ = ws
+                                .send(Message::Text(json!({"op":"h"}).to_string().into()))
+                                .await;
+                        }
+                        _ => {}
+                    }
+                }
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await;
+    assert!(!subscribed, "the replay was not supposed to finish");
+    assert!(
+        ended.is_ok(),
+        "the socket stayed open after a failed replay"
+    );
+}
+
 /// A client frame over 16 KiB is refused by the WebSocket layer before it is
 /// buffered, and the socket closes.
 #[sqlx::test]
