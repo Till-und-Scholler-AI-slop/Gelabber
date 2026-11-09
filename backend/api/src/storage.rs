@@ -333,6 +333,9 @@ struct MinioInner {
     /// minutes on a slow line, only for connecting and between reads.
     stream_http: reqwest::Client,
     delivery: AttachmentDelivery,
+    /// Set once the bucket was seen to exist; `minio-init` creates it, so
+    /// later presigns need no CreateBucket round trip.
+    ready: AtomicBool,
 }
 
 impl MinioStore {
@@ -373,11 +376,15 @@ impl MinioStore {
                 http,
                 stream_http,
                 delivery: config.delivery,
+                ready: AtomicBool::new(false),
             }),
         })
     }
 
     async fn ensure_ready(&self) -> Result<(), StoreError> {
+        if self.inner.ready.load(Ordering::Acquire) {
+            return Ok(());
+        }
         let action = self.inner.internal.create_bucket(&self.inner.creds);
         let url = action.sign(Duration::from_secs(60));
         let response =
@@ -387,6 +394,7 @@ impl MinioStore {
         let status = response.status().as_u16();
         // 200/201 created, 409 already exists.
         if status == 200 || status == 201 || status == 409 {
+            self.inner.ready.store(true, Ordering::Release);
             return Ok(());
         }
         let body = response.text().await.unwrap_or_default();
@@ -1040,6 +1048,21 @@ mod tests {
                 .await,
             Err(StoreError::SizeMismatch)
         ));
+    }
+
+    /// The bucket is created once per store, not on every presign.
+    #[tokio::test]
+    async fn readiness_is_checked_once() {
+        let (minio, seen) = fake_minio().await;
+        let store = ObjectStore::Minio(minio);
+        store.ensure_ready().await.expect("ready");
+        store.clone().ensure_ready().await.expect("still ready");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(
+            (seen[0].method.as_str(), seen[0].path.as_str()),
+            ("PUT", "/gelabber/")
+        );
     }
 
     #[test]
