@@ -686,7 +686,8 @@ pub struct Producer {
     _source: Source,
 }
 // SAFETY: producer calls go through libmediasoupclient, which marshals onto
-// libwebrtc threads; the handle is not shared (no Sync).
+// libwebrtc threads, and those that read the transport's state (stats, replace,
+// free) take its lock; the handle is not shared (no Sync).
 unsafe impl Send for Producer {}
 impl Drop for Producer {
     fn drop(&mut self) {
@@ -759,6 +760,9 @@ impl Producer {
     }
 
     pub fn stats(&self) -> Result<Value> {
+        // libmediasoupclient looks the sender up in the transport's map,
+        // which produce and close change under this lock.
+        let _guard = self.transport.0.lock.lock().unwrap();
         // SAFETY: live producer.
         owned_json(unsafe { ffi::gm_producer_stats(self.ptr.as_ptr()) })
     }
@@ -968,6 +972,8 @@ impl Consumer {
     /// `{"framesReceived","width","height"}` for video, `{"audioLevel",
     /// "samplesPlayed"}` for audio, plus libwebrtc stats in `rtc`.
     pub fn stats(&self) -> Result<Value> {
+        // As `Producer::stats`: the receiver's lookup races consume and close.
+        let _guard = self.transport.0.lock.lock().unwrap();
         // SAFETY: live consumer.
         owned_json(unsafe { ffi::gm_consumer_stats(self.ptr.as_ptr()) })
     }
