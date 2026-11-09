@@ -114,6 +114,37 @@ pub async fn lock_server(
     Ok(tx)
 }
 
+/// [`lock_server`] exclusively for kick, ban and server delete, waiting at
+/// most 5 s. Readers hold the row shared only briefly, so a longer wait means
+/// someone keeps it held (a member stalling their own ban); the caller gets
+/// a retryable answer. The rest of the transaction waits as usual.
+pub async fn lock_server_bounded(
+    db: &PgPool,
+    server_id: Uuid,
+) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, ApiError> {
+    let mut tx = db.begin().await?;
+    sqlx::query("SET LOCAL lock_timeout = '5s'")
+        .execute(&mut *tx)
+        .await?;
+    let locked = sqlx::query_scalar::<_, Uuid>("SELECT id FROM servers WHERE id = $1 FOR UPDATE")
+        .bind(server_id)
+        .fetch_optional(&mut *tx)
+        .await;
+    match locked {
+        Ok(Some(_)) => {}
+        Ok(None) => return Err(ApiError::NotFound),
+        // 55P03 lock_not_available: the timeout ran out.
+        Err(sqlx::Error::Database(err)) if err.code().as_deref() == Some("55P03") => {
+            return Err(ApiError::RateLimited { retry_after: 1 });
+        }
+        Err(err) => return Err(err.into()),
+    }
+    sqlx::query("SET LOCAL lock_timeout TO DEFAULT")
+        .execute(&mut *tx)
+        .await?;
+    Ok(tx)
+}
+
 pub async fn lock_server_conn(
     db: &mut sqlx::PgConnection,
     server_id: Uuid,
