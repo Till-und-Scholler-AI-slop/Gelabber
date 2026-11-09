@@ -30,6 +30,10 @@ pub enum Error {
     Invalid(&'static str),
     #[error("native media core ABI {found}, expected {expected}")]
     Abi { found: u32, expected: u32 },
+    /// The transport is in another call (a produce or consume waiting on
+    /// the server); a measurement can skip this round.
+    #[error("transport busy")]
+    Busy,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -386,6 +390,15 @@ impl Drop for TransportInner {
 pub struct Transport(Arc<TransportInner>);
 
 impl Transport {
+    /// The transport's lock if no other call holds it.
+    fn try_lock(&self) -> Result<std::sync::MutexGuard<'_, ()>> {
+        match self.0.lock.try_lock() {
+            Ok(guard) => Ok(guard),
+            Err(std::sync::TryLockError::WouldBlock) => Err(Error::Busy),
+            Err(std::sync::TryLockError::Poisoned(e)) => panic!("transport lock poisoned: {e}"),
+        }
+    }
+
     /// `params` is the server `transport` result
     /// (`id`, `iceParameters`, `iceCandidates`, `dtlsParameters`) plus optional
     /// `iceServers` and `iceTransportPolicy`.
@@ -759,10 +772,13 @@ impl Producer {
         check(unsafe { ffi::gm_producer_set_parameters(self.ptr.as_ptr(), parameters.as_ptr()) })
     }
 
+    /// libwebrtc's sender stats; [`Error::Busy`] while the transport is in
+    /// another call.
     pub fn stats(&self) -> Result<Value> {
         // libmediasoupclient looks the sender up in the transport's map,
-        // which produce and close change under this lock.
-        let _guard = self.transport.0.lock.lock().unwrap();
+        // which produce and close change under this lock. Not waited for:
+        // a produce holds it until the server answers.
+        let _guard = self.transport.try_lock()?;
         // SAFETY: live producer.
         owned_json(unsafe { ffi::gm_producer_stats(self.ptr.as_ptr()) })
     }
@@ -970,10 +986,11 @@ impl Consumer {
     }
 
     /// `{"framesReceived","width","height"}` for video, `{"audioLevel",
-    /// "samplesPlayed"}` for audio, plus libwebrtc stats in `rtc`.
+    /// "samplesPlayed"}` for audio, plus libwebrtc stats in `rtc`;
+    /// [`Error::Busy`] while the transport is in another call.
     pub fn stats(&self) -> Result<Value> {
         // As `Producer::stats`: the receiver's lookup races consume and close.
-        let _guard = self.transport.0.lock.lock().unwrap();
+        let _guard = self.transport.try_lock()?;
         // SAFETY: live consumer.
         owned_json(unsafe { ffi::gm_consumer_stats(self.ptr.as_ptr()) })
     }
