@@ -646,11 +646,6 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
             egui::Id::unique(("gelabber-row-bg", item.msg.id)),
             Sense::click(),
         );
-        if row_resp.secondary_clicked()
-            && let Some(anchor) = row::more_rect(&cx, row_rect)
-        {
-            actions.push(ListAction::Row(RowAction::Menu(item.msg.id, anchor)));
-        }
         let mut draft = pane
             .editing
             .as_mut()
@@ -672,6 +667,12 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
         }
         if hovered || menu_open {
             new_bar = row::bar_rect(&cx, row_rect).map(|b| (item.msg.id, b));
+        }
+        // The text lies over the row: a right click on it opens the menu too.
+        if (row_resp.secondary_clicked() || painted.text_menu)
+            && let Some(anchor) = row::more_rect(&cx, row_rect)
+        {
+            actions.push(ListAction::Row(RowAction::Menu(item.msg.id, anchor)));
         }
         actions.extend(painted.actions.into_iter().map(ListAction::Row));
     }

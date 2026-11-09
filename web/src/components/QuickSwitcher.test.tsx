@@ -71,5 +71,15 @@ describe("quick switcher", () => {
     expect(html).toContain(
       "<dt><kbd>Alt</kbd><kbd>Umschalt</kbd><kbd>↑ / ↓</kbd></dt>",
     );
+    // The call's keys under their own heading, after the workspace's.
+    expect(html).toMatch(
+      /<h3 id="[^"]+" class="shortcut-group-title">Im Sprachkanal<\/h3>/,
+    );
+    expect(html.indexOf("Im Sprachkanal")).toBeGreaterThan(
+      html.indexOf("Diese Übersicht"),
+    );
+    expect(html).toContain(
+      "<dt><kbd>Strg</kbd><kbd>Umschalt</kbd><kbd>M</kbd></dt><dd>Stummschaltung ein oder aus</dd>",
+    );
   });
 });

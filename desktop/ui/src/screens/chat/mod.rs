@@ -675,7 +675,10 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         || pane_state.confirm_delete.is_some()
         || chat.composers.get(&channel).is_some_and(|c| c.emoji_open)
         // A dialog over the page (quick switcher, profile…) owns Esc.
-        || ui.ctx().memory(|m| m.top_modal_layer().is_some());
+        || ui.ctx().memory(|m| m.top_modal_layer().is_some())
+        // So does a menu or popover, also one drawn after the page (the
+        // call bar's), as Popover.tsx stops the key on the web.
+        || crate::widgets::popover::any_open(ui.ctx());
     overlays(ui, app, &conv, chat, me);
     // Esc nobody else used marks the conversation read; Shift+Esc the server.
     // Not while the search hits are shown, as on the web.
@@ -1214,6 +1217,7 @@ fn menu_row(ui: &mut Ui, icon: crate::icons::Icon, label: &str, danger: bool) ->
     let c = theme.c;
     let width = ui.available_width().max(220.0);
     let (rect, response) = ui.allocate_exact_size(vec2(width, 32.0), egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::MenuItem, true, label));
     if response.hovered() {
         ui.painter()
             .rect_filled(rect, crate::theme::corner(5.0), c.hover);
@@ -1333,6 +1337,154 @@ mod page_tests {
                 .query_by_label("Diese Unterhaltung konnte nicht geladen werden.")
                 .is_none()
         );
+    }
+
+    /// Message text selects like the browser's: a drag from one message
+    /// into the next and Ctrl+C copy both; names and times stay out, and a
+    /// right click on the text still opens the row's menu.
+    #[test]
+    fn message_text_selects_across_rows() {
+        use crate::app::testkit::{ALLGEMEIN, HOME};
+        let _config = TempConfig::new("text-select");
+        let message = |n: u8, author: (&str, &str), content: &str| {
+            json!({
+                "id": format!("00000000-0000-4000-8000-0000000000e{n}"),
+                "channel_id": ALLGEMEIN,
+                "author": {"id": author.0, "name": author.1, "avatar_url": null},
+                "content": content,
+                "created_at": format!("2026-11-05T16:2{n}:00Z"),
+                "edited_at": null,
+                "revision": 0,
+                "created_order": n,
+            })
+        };
+        let jonas = ("00000000-0000-4000-8000-00000000007c", "Jonas");
+        let mira = ("00000000-0000-4000-8000-00000000007d", "Mira");
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", p) if p == format!("/channels/{ALLGEMEIN}/messages") => {
+                Some(Reply::json(json!({
+                    "messages": [
+                        message(1, jonas, "Film oder Spiel heute?"),
+                        message(2, mira, "Erst Film, dann **Spiel**.")
+                    ],
+                    "has_more": false
+                })))
+            }
+            _ => workspace(method, path),
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for_label(&mut harness, "Film oder Spiel heute?");
+        harness.run_steps(4);
+        let first = harness.get_by_label("Film oder Spiel heute?").rect();
+        let second = harness.get_by_label("Erst Film, dann Spiel.").rect();
+        assert!(first.bottom() < second.top());
+
+        harness.hover_at(first.left_center() + egui::vec2(1.0, 0.0));
+        harness.drag_at(first.left_center() + egui::vec2(1.0, 0.0));
+        harness.hover_at(first.center());
+        harness.hover_at(second.center());
+        harness.hover_at(second.right_center());
+        harness.event(egui::Event::PointerButton {
+            pos: second.right_center(),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+        let settled: Vec<String> = harness
+            .output()
+            .platform_output
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                egui::OutputCommand::TextSelectionSettled(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            settled,
+            vec!["Film oder Spiel heute?\n\nErst Film, dann Spiel.".to_owned()]
+        );
+        harness.event(egui::Event::Copy);
+        harness.step();
+        let copied: Vec<String> = harness
+            .output()
+            .platform_output
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            copied,
+            vec!["Film oder Spiel heute?\n\nErst Film, dann Spiel.".to_owned()]
+        );
+
+        harness
+            .get_by_label("Erst Film, dann Spiel.")
+            .click_secondary();
+        wait_for_label(&mut harness, "Text kopieren");
+    }
+
+    /// A search hit's text is selectable and still opens the hit on a
+    /// click, as the hit's button does around it.
+    #[test]
+    fn a_click_on_a_search_hit_text_opens_it() {
+        use crate::app::testkit::{ALLGEMEIN, HOME};
+        use egui::accesskit::Role;
+        let _config = TempConfig::new("search-hit-text");
+        let hit = "00000000-0000-4000-8000-0000000000e1";
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", p) if p == format!("/channels/{ALLGEMEIN}/messages/search") => {
+                Some(Reply::json(json!({
+                    "messages": [{
+                        "id": hit,
+                        "channel_id": ALLGEMEIN,
+                        "author": {
+                            "id": "00000000-0000-4000-8000-00000000007c",
+                            "name": "Jonas",
+                            "avatar_url": null
+                        },
+                        "content": "Film oder Spiel heute?",
+                        "created_at": "2026-11-05T16:21:00Z",
+                        "edited_at": null,
+                        "revision": 0,
+                        "created_order": 1,
+                    }],
+                    "has_more": false
+                })))
+            }
+            ("GET", p) if p == format!("/channels/{ALLGEMEIN}/messages") => {
+                Some(Reply::json(json!({"messages": [], "has_more": false})))
+            }
+            _ => workspace(method, path),
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for(&mut harness, "the search field", |h| {
+            h.query_by_role_and_label(Role::TextInput, "Suchen")
+                .is_some()
+        });
+        harness
+            .get_by_role_and_label(Role::TextInput, "Suchen")
+            .focus();
+        harness.step();
+        harness
+            .get_by_role_and_label(Role::TextInput, "Suchen")
+            .type_text("Film");
+        wait_for_label(
+            &mut harness,
+            "Zur Nachricht von Jonas: Film oder Spiel heute?",
+        );
+        harness.run_steps(2);
+        harness
+            .get_by_role_and_label(Role::Label, "Film oder Spiel heute?")
+            .click();
+        let context = format!("GET /channels/{ALLGEMEIN}/messages/{hit}/context");
+        wait_for(&mut harness, "the hit in its context", |_| {
+            api.saw(&context)
+        });
     }
 
     /// A picker left open closes with its page: back (Alt+←) and forward

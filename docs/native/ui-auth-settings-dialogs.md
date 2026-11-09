@@ -44,7 +44,7 @@ Default theme preference is **"dark"** when nothing stored (`theme/theme.ts:11-2
 | `--lr-online-text` | success text | `#85d69b` | `#277643` |
 | `--lr-warning` | away dot, caps-lock hint | `#d8a657` | `#a27e44` |
 | `--lr-danger` | error text, danger outline | `#f39b98` | `#a12b29` |
-| `--lr-danger-bg` | danger fill, count badge | `#8f302d` | `#b33b38` |
+| `--lr-danger-bg` | danger fill | `#8f302d` | `#b33b38` |
 | `--lr-on-danger` | text on danger fill | `#ffffff` | `#ffffff` |
 | `--lr-backdrop` | modal backdrop | `rgb(9 12 13 / .72)` | `rgb(37 40 41 / .45)` |
 | `--lr-tile-1…8` | server/avatar initials tints | `#634336 #635636 #4e6336 #366349 #365d63 #364963 #433663 #633653` | `#ead2c8 #eae0c8 #daeac8 #c8ead6 #c8e5ea #c8d6ea #d2c8ea #eac8dd` |
@@ -433,7 +433,7 @@ Voice card (the chosen room: current call → last visited → occupied → firs
 | Element | Spec |
 |---|---|
 | section | padding 0 |
-| heading | flex wrap, centre, gap 10, min-height 28: `SpeakerIcon 18` (muted; **online** colour when you are in it), h2 room name 600 16px/1.3, pill **"Verbunden"** when joined (inline-flex gap 6, height 22, padding 0 8, radius full, bg online 14%, colour online-text, 500 12px, leading 6px dot), red **"Live"** badge when someone is live (radius 3, bg danger-bg, `#fff`, padding 2/6, caps 11px) |
+| heading | flex wrap, centre, gap 10, min-height 28: `SpeakerIcon 18` (muted; **online** colour when you are in it), h2 room name 600 16px/1.3, pill **"Verbunden"** when joined (inline-flex gap 6, height 22, padding 0 8, radius full, bg online 14%, colour online-text, 500 12px, leading 6px dot), coral **"Live"** badge when someone is live (radius 3, bg `--lr-live`, ink `--lr-on-live`, padding 2/6, caps 11px) |
 | participants | margin-top 12, flex wrap gap 12; each tile **168×136**, padding 12, border 1 border, radius 10, bg surface, column centred: avatar **56×56** (initials 20px on tint, else panel), name margin-top 8 600 13px/1.35, status line only for "Kamera an"/"Live" (12px muted). Speaking: border + 1px ring in online colour. Mute icons top-left 8/8 (muted); "…" button top-right 6/6 visible on hover. Connection dot and speaker icon hidden here. |
 | live/camera stage | above participants: spotlight full width + filmstrip (see voice spec) |
 | switch note | when in another room: 12px muted "Du verlässt dabei {Raum}." |
@@ -565,7 +565,7 @@ Area heading (margin-bottom 24): title row flex wrap gap 8/12: h2 label 600 **20
 | Audio | Nur dieses Gerät | Mikrofon, Lautsprecher und Lautstärke. |
 | Video | Nur dieses Gerät | Kamera, Live gehen und Bildqualität. |
 | Benachrichtigungen | — (per group) | Hinweise auf neue Nachrichten. |
-| App | — | Gelabber als App installieren. |
+| App | — | Gelabber als App installieren. (Native app: listed when it has content; subtitle "Updates und was beim Schließen des Fensters passiert.", without a tray "Updates dieser App."; the update switch, state and install, and close-to-tray with a tray.) |
 
 Shared building blocks (`settings.css:129-270`): `.settings-form` column gap 20, max-width 560. Group (`components/SettingsGroup.tsx`): fieldset, legend flex wrap gap 6/10, margin-bottom 8, 600 16px/1.3 + scope badge; consecutive groups 32px apart. `.settings-row` (a Switch row): min-height 64, padding-y 12, border-bottom 1 border, gap 18; description small line-height 1.5, margin-top 2. `.settings-hint` 12px/1.5 muted. `.settings-actions` flex wrap centre gap 8/12. `.settings-row-noted`: a switch row with a note boxed under it (padding-bottom 12, border-bottom 1 border; the switch row inside has no rule); `.settings-row-note`: padding 10/12, radius md, bg surface, muted meta 12px/1.5, and the switch is `aria-describedby` its status line. `.settings-danger`: max 560, margin-top 40, padding-top 24, border-top. Loading area body: 4 skeleton rows; load failure "Dieser Bereich konnte nicht geladen werden.".
 
@@ -659,7 +659,7 @@ In-call dialog variant (`components/VoiceSettingsDialog.tsx:12-90`, `quality.css
 
 ### 6.8 Benachrichtigungen (`components/MessageAlertSettings.tsx`, `NotificationPrivacy.tsx`, `NotificationPermission.tsx`)
 
-Group **"Nachrichten"** [NUR DIESES GERÄT] switch rows: "Popup bei neuen Nachrichten in anderen Chats" (default on); desktop: "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist" (web: "Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist"; default off); "Ton bei Benachrichtigungen am Computer" / "Ein Ton für mehrere Nachrichten kurz hintereinander, keiner, während du taubgeschaltet bist. Auf dem Handy gilt die Geräteeinstellung." (disabled while the previous is off); desktop only: "Fenster schließen minimiert in den Infobereich" / "Ein laufender Anruf geht weiter. Beenden über das Symbol im Infobereich." (`components/CloseToTray.tsx`).
+Group **"Nachrichten"** [NUR DIESES GERÄT] switch rows: "Popup bei neuen Nachrichten in anderen Chats" (default on); desktop: "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist" (web: "Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist"; default off); "Ton bei Benachrichtigungen am Computer" / "Ein Ton für mehrere Nachrichten kurz hintereinander, keiner, während du taubgeschaltet bist. Auf dem Handy gilt die Geräteeinstellung." (disabled while the previous is off); desktop only: "Fenster schließen minimiert in den Infobereich" / "Ein laufender Anruf geht weiter. Beenden über das Symbol im Infobereich." (`components/CloseToTray.tsx`; the native app has it in App).
 Group **"Sperrbildschirm"** [FÜR DEIN KONTO]: "Inhalt in Benachrichtigungen verbergen" / "Benachrichtigungen zeigen nur „Neue Nachricht von …“, ohne Text und ohne Chat. Gilt für alle Geräte deines Kontos."; error "Die Einstellung konnte nicht gespeichert werden. Versuche es erneut."
 Permission note (`.settings-row-note`, §6.1) boxed under the desktop-notify switch, in the same row, describing it: desktop app with system notifications: "Benachrichtigungen laufen über dein System. Sperrbildschirm und „Nicht stören“ stellst du dort ein." (browser texts: `messages/notify.ts:86-100`, e.g. "Browser-Benachrichtigungen sind blockiert …").
 

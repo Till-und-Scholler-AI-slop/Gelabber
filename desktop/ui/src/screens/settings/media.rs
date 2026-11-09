@@ -113,13 +113,14 @@ fn group_head(ui: &mut Ui, title: &str, badge: Option<&str>) {
         c.subtle,
     );
     if let Some(b) = badge {
-        let block = Block::single(ui, b, HINT, c.accent_text);
+        // A quiet chip: the accent is for actions.
+        let block = Block::single(ui, b, HINT, c.muted);
         let rect = Rect::from_min_size(
             pos2(top.x + width - block.width() - 16.0, top.y + 6.0),
             vec2(block.width() + 16.0, 20.8),
         );
         ui.painter()
-            .rect_filled(rect, corner(theme.radius.sm), c.selected);
+            .rect_filled(rect, corner(theme.radius.sm), c.surface);
         block.paint(ui.painter(), pos2(rect.left() + 8.0, rect.top() + 2.0));
     }
     ui.allocate_exact_size(vec2(width, head_h), Sense::hover());
@@ -808,6 +809,19 @@ fn key_code(key: egui::Key) -> Option<String> {
         }
         _ => Some(name.replace(' ', "")),
     }
+}
+
+/// `usePushToTalkKeyName`: the key push-to-talk holds, as the settings
+/// name it; `None` while push-to-talk is off or has no key.
+pub fn push_to_talk_key_name(ctx: &egui::Context) -> Option<String> {
+    let p = super::prefs::get(ctx);
+    (p.voice_input == "ptt" && !p.ptt_key.is_empty()).then(|| {
+        if p.ptt_key_label.is_empty() {
+            key_label(&p.ptt_key)
+        } else {
+            p.ptt_key_label.clone()
+        }
+    })
 }
 
 /// `pushToTalkKeyLabel`.

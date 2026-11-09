@@ -14,8 +14,10 @@ use egui::{
 
 use crate::theme::{Theme, corner, mix};
 
-/// Chromium's default selection highlight (Linux, both colour schemes).
-const SELECTION: Color32 = Color32::from_rgb(0x33, 0x90, 0xff);
+/// Chromium's default selection highlight (Linux, both colour schemes),
+/// drawn at 80% under white text: measured on the parity shots'
+/// `text-select` scenes over the dark and the light background.
+const SELECTION: Color32 = Color32::from_rgb(0x00, 0x41, 0xc5);
 
 /// How glyph coverage becomes alpha. Calibrated against Chromium/Skia
 /// (`--disable-lcd-text`, no hinting) on the auth pages.
@@ -28,6 +30,8 @@ fn text_transfer(theme: &Theme) -> egui::epaint::FontColorTransferFunction {
 }
 
 pub fn apply(ctx: &egui::Context, theme: &Theme) {
+    // Message text selects across blocks; what it copies follows the browser.
+    crate::selection::install(ctx);
     ctx.all_styles_mut(|style| {
         style.text_styles = [
             (
@@ -58,9 +62,11 @@ pub fn apply(ctx: &egui::Context, theme: &Theme) {
         style.url_in_tooltip = false;
         style.always_scroll_the_only_direction = true;
         style.spacing = spacing();
+        // Labels (buttons, names, the shell) stay unselectable; message text
+        // opts in through `Block::select` and selects across its blocks.
         style.interaction = Interaction {
             selectable_labels: false,
-            multi_widget_text_select: false,
+            multi_widget_text_select: true,
             tooltip_delay: 0.2,
             tooltip_grace_time: 0.4,
             show_tooltips_only_when_still: false,

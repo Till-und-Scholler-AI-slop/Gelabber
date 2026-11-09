@@ -17,6 +17,7 @@ import { CloseIcon, HangUpIcon, SignalIcon, WarningIcon } from "./Icons.tsx";
 import { Button } from "./ui/Button.tsx";
 import { IconButton } from "./ui/IconButton.tsx";
 import { Popover } from "./ui/Popover.tsx";
+import { useTooltip } from "./ui/Tooltip.tsx";
 import { useLastOpen, usePresence } from "./ui/usePresence.ts";
 import { useMediaQuery } from "./useMediaQuery.ts";
 import { UserVolumeControl } from "./UserVolumeControl.tsx";
@@ -278,6 +279,7 @@ function QualityBars() {
   const label = quality
     ? callQualitySummary(quality)
     : "Verbindung: wird gemessen …";
+  const tip = useTooltip({ label, disabled: open });
   const sent = directionTotal([sample], "send");
   const received = directionTotal([sample, watch], "recv");
   const show = (section: "audio" | "diagnostics") => {
@@ -287,6 +289,7 @@ function QualityBars() {
   return (
     <>
       <button
+        {...tip.trigger}
         ref={anchor}
         type="button"
         className="voice-quality-bars"
@@ -294,13 +297,13 @@ function QualityBars() {
         aria-label={`${label} – Details anzeigen`}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title={label}
         onClick={() => setOpen((value) => !value)}
       >
         {[1, 2, 3, 4].map((bar) => (
           <span key={bar} aria-hidden="true" />
         ))}
       </button>
+      {tip.tooltip}
       <Popover
         open={open}
         onClose={() => setOpen(false)}
@@ -384,6 +387,8 @@ function CallPeople({
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name, "de"));
+  const names = people.map((person) => person.name).join(", ");
+  const tip = useTooltip({ label: names, disabled: open });
   if (people.length === 0) return null;
   const shown = [
     ...people.filter((person) => person.speaking),
@@ -392,17 +397,16 @@ function CallPeople({
     .slice(0, SHOWN_PEOPLE)
     .sort((a, b) => a.name.localeCompare(b.name, "de"));
   const more = people.length - shown.length;
-  const names = people.map((person) => person.name).join(", ");
   return (
     <>
       <button
+        {...tip.trigger}
         ref={anchor}
         type="button"
         className="voice-session-people"
         aria-label={`Im Anruf: ${names}`}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title={names}
         onClick={() => setOpen((value) => !value)}
       >
         {shown.map((person) => (
@@ -420,6 +424,7 @@ function CallPeople({
           </span>
         ) : null}
       </button>
+      {tip.tooltip}
       <Popover
         open={open}
         onClose={() => setOpen(false)}
@@ -456,16 +461,20 @@ function CallPeople({
 }
 
 function LeaveButton() {
+  const tip = useTooltip({ label: "Verlassen" });
   return (
-    <button
-      type="button"
-      onClick={() => leaveVoice()}
-      aria-label="Verlassen"
-      title="Verlassen"
-      className="voice-control voice-control-compact voice-control-leave"
-    >
-      <HangUpIcon size={18} />
-      <span className="voice-control-text">Verlassen</span>
-    </button>
+    <>
+      <button
+        {...tip.trigger}
+        type="button"
+        onClick={() => leaveVoice()}
+        aria-label="Verlassen"
+        className="voice-control voice-control-compact voice-control-leave"
+      >
+        <HangUpIcon size={18} />
+        <span className="voice-control-text">Verlassen</span>
+      </button>
+      {tip.tooltip}
+    </>
   );
 }

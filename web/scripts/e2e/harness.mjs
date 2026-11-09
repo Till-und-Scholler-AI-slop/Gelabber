@@ -599,8 +599,8 @@ export async function confirmDialog(actor, label) {
 // sound, a single toggle elsewhere. "Live beenden" is its stop entry.
 const LIVE_ENTRIES = new Set(["Live gehen", "Live beenden"]);
 // Scenarios say "Beitreten" for the voice room's join control, which reads
-// so, or "Hierher wechseln" from another call. Only the room's: a Live hint
-// in the header may offer its own "Beitreten" into another channel.
+// so, or "Hierher wechseln" from another call. Only the room's: the Live
+// hint and the live toast offer their own "Zuschauen" from elsewhere.
 const VOICE_JOIN = /^(Beitreten|Hierher wechseln)$/;
 async function joinVoiceRoom(actor) {
   await actor.page
@@ -627,11 +627,18 @@ export async function click(actor, name) {
     return;
   }
   if (name === "Zuschauen") {
-    // A Live is watched in its voice channel: join the call first.
+    // A Live is watched in its voice channel: join the call first, then
+    // the tile's button, not the hint's or a toast's.
     const join = actor.page
       .locator(".voice-room")
       .getByRole("button", { name: VOICE_JOIN });
     if (await join.count()) await joinVoiceRoom(actor);
+    await actor.page
+      .locator(".voice-room")
+      .getByRole("button", { name, exact: true })
+      .first()
+      .click();
+    return;
   }
   if (
     name === "Abmelden" &&

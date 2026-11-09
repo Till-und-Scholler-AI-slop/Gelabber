@@ -221,6 +221,7 @@ export function VoiceRoom({
               : status === "sharing"
                 ? "Ton wird mitgesendet"
                 : undefined,
+        sourceAudioOn: status === "sharing",
       };
     }
     if (here && voice.sourceWatchSupported)

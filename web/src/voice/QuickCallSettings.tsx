@@ -18,6 +18,7 @@ import { ChipGroup } from "../components/ui/ChipGroup.tsx";
 import { IconButton } from "../components/ui/IconButton.tsx";
 import { Popover } from "../components/ui/Popover.tsx";
 import { Select } from "../components/ui/Select.tsx";
+import { useTooltip } from "../components/ui/Tooltip.tsx";
 import { canChooseSpeaker, useCapabilities } from "./capabilities.ts";
 import {
   deviceChoices,
@@ -46,18 +47,22 @@ export function QuickCallSettingsButton({
 }) {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
+  const tip = useTooltip({ label: "Anrufeinstellungen", disabled: open });
   return (
     <>
       <IconButton
+        {...tip.trigger}
         ref={anchor}
         variant={variant}
         label="Anrufeinstellungen"
+        title={false}
         aria-haspopup="dialog"
         aria-expanded={open}
         icon={<GearIcon size={17} />}
         onClick={() => setOpen((value) => !value)}
         className={className}
       />
+      {tip.tooltip}
       <Popover
         open={open}
         onClose={() => setOpen(false)}
@@ -78,17 +83,21 @@ export function CallSoundButton({ className }: { className?: string }) {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
   const muted = useMediaSettings((s) => s.sourceAudioMuted);
+  const tip = useTooltip({ label: "Lautstärke", disabled: open });
   return (
     <>
       <IconButton
+        {...tip.trigger}
         ref={anchor}
         label="Lautstärke"
+        title={false}
         aria-haspopup="dialog"
         aria-expanded={open}
         icon={muted ? <SpeakerOffIcon size={17} /> : <SpeakerIcon size={17} />}
         onClick={() => setOpen((value) => !value)}
         className={`${className ?? ""}${muted ? " is-off" : ""}`}
       />
+      {tip.tooltip}
       <Popover
         open={open}
         onClose={() => setOpen(false)}

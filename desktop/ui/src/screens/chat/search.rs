@@ -305,8 +305,13 @@ pub fn show(
                 if text.is_empty() { "Datei" } else { &text }
             );
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
-            if resp.hovered() {
+            // The hit's text lies over it (selectable), so its hover is
+            // the pointer's place, and a click on the text opens it too.
+            let hot = ui.rect_contains_pointer(hit.intersect(body));
+            if hot {
                 clip.rect_filled(hit, corner(7.0), c.hover);
+            }
+            if resp.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
             let x = hit.left() + 12.0;
@@ -314,19 +319,15 @@ pub fn show(
             when.paint(&clip, pos2(x + name.width() + 8.0, y + 10.0));
             let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(body));
             inner.set_clip_rect(body.intersect(ui.clip_rect()));
-            let _ = laid.paint(
+            let painted = laid.paint(
                 &mut inner,
                 pos2(x, y + text_top),
                 egui::Id::unique(("gelabber-search-text", m.id)),
                 false,
                 None,
             );
-            open.paint_tinted(
-                &clip,
-                pos2(x, y + open_top),
-                resp.hovered().then_some(c.accent_text),
-            );
-            if resp.clicked() {
+            open.paint_tinted(&clip, pos2(x, y + open_top), hot.then_some(c.accent_text));
+            if resp.clicked() || painted.text.is_some_and(|t| t.clicked()) {
                 action = Some(SearchAction::Open(m.id));
             }
         }

@@ -110,6 +110,15 @@ pub enum ContentAction {
     CopyCode(usize, String),
 }
 
+/// What [`Laid::paint`] gave back.
+pub struct Painted {
+    /// What a click on a link, spoiler or copy button asked for.
+    pub action: Option<ContentAction>,
+    /// All of its selectable text: a click or right click on the text
+    /// lands here, not on what lies under it.
+    pub text: Option<egui::Response>,
+}
+
 struct Builder<'a> {
     job: LayoutJob,
     sections: Vec<SectionInfo>,
@@ -424,7 +433,7 @@ fn layout_as(
                 spoilers = b.spoilers;
                 b.job.wrap.max_width = (width - inset).max(1.0);
                 b.job.wrap.break_anywhere = false;
-                let block = Block::new(ui, b.job, body);
+                let block = hide_spoilers(Block::new(ui, b.job, body), &b.sections);
                 let height = block.height();
                 let margin = if quote { 2.0 } else { 0.0 };
                 boxes.push((
@@ -502,7 +511,7 @@ fn layout_as(
         };
         push_edited(&mut b, &theme);
         b.job.wrap.max_width = width.max(1.0);
-        let block = Block::new(ui, b.job, body);
+        let block = hide_spoilers(Block::new(ui, b.job, body), &b.sections);
         let height = block.height();
         boxes.push((
             height,
@@ -571,8 +580,20 @@ fn extents(block: &Block, range: (usize, usize)) -> Vec<(usize, f32, f32)> {
     out
 }
 
+/// Hidden spoilers stay out of what a selection copies and announces,
+/// as the web's `aria-hidden` spoiler text does.
+fn hide_spoilers(mut block: Block, sections: &[SectionInfo]) -> Block {
+    for section in sections {
+        if section.spoiler.is_some_and(|(_, shown)| !shown) {
+            block.hide(section.chars);
+        }
+    }
+    block
+}
+
 impl Laid {
-    /// Paints at `origin` (content box top-left); returns what a click asked for.
+    /// Paints at `origin` (content box top-left), its text selectable;
+    /// returns what a click asked for.
     pub fn paint(
         &self,
         ui: &mut Ui,
@@ -580,16 +601,20 @@ impl Laid {
         id: egui::Id,
         interactive: bool,
         copied: Option<(usize, bool)>,
-    ) -> Option<ContentAction> {
+    ) -> Painted {
         let theme = Theme::of(ui.ctx());
         let c = theme.c;
         let mut action = None;
+        let mut text: Option<egui::Response> = None;
         let ppp = ui.ctx().pixels_per_point();
         for (p, part) in self.parts.iter().enumerate() {
             let top = origin.y + part.y;
             match &part.kind {
                 PartKind::Text(t) => {
                     let left = origin.x + t.inset;
+                    // Under the spoilers and links sensed below.
+                    let selection = t.block.select(ui, id.with(("text", p)), pos2(left, top));
+                    crate::text::join(&mut text, selection.clone());
                     if t.inset > 0.0 {
                         ui.painter().rect_filled(
                             crate::widgets::snap(
@@ -664,7 +689,9 @@ impl Laid {
                         }
                     }
                     // Spoilers: one box per spoiler and row.
-                    let mut spoiler_rects: HashMap<usize, (bool, Vec<Rect>)> = HashMap::new();
+                    // In spoiler order, as screen readers meet them.
+                    let mut spoiler_rects: std::collections::BTreeMap<usize, (bool, Vec<Rect>)> =
+                        std::collections::BTreeMap::new();
                     for section in &t.sections {
                         if let Some((sid, shown)) = section.spoiler {
                             for (r, lo, hi) in extents(&t.block, section.chars) {
@@ -685,30 +712,58 @@ impl Laid {
                             }
                         }
                     }
+                    // Shown spoilers tint under the glyphs; hidden ones cover
+                    // them, so a selection cannot reveal what they hide.
+                    let mut covers = Vec::new();
+                    let mut spoiler_hot = false;
                     for (sid, (shown, rects)) in &spoiler_rects {
-                        let fill = if *shown {
-                            Color32::from_rgba_unmultiplied(c.text.r(), c.text.g(), c.text.b(), 20)
-                        } else {
-                            mix(c.bg, c.text, 0.22)
-                        };
-                        for rect in rects {
-                            ui.painter().rect_filled(*rect, CornerRadius::same(5), fill);
-                            if interactive && !shown {
+                        for (n, rect) in rects.iter().enumerate() {
+                            if *shown {
+                                let fill = Color32::from_rgba_unmultiplied(
+                                    c.text.r(),
+                                    c.text.g(),
+                                    c.text.b(),
+                                    20,
+                                );
+                                ui.painter().rect_filled(*rect, CornerRadius::same(5), fill);
+                                continue;
+                            }
+                            covers.push(*rect);
+                            if interactive {
                                 let response = ui.interact(
                                     *rect,
                                     id.with(("spoiler", p, *sid, rect.top() as i32)),
                                     Sense::click(),
                                 );
-                                if response.hovered() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                // `role="button" aria-label="Spoiler anzeigen"`,
+                                // once per spoiler.
+                                if n == 0 {
+                                    response.widget_info(|| {
+                                        egui::WidgetInfo::labeled(
+                                            egui::Role::Button,
+                                            true,
+                                            "Spoiler anzeigen",
+                                        )
+                                    });
                                 }
+                                spoiler_hot |= response.hovered();
                                 if response.clicked() {
                                     action = Some(ContentAction::RevealSpoiler(*sid));
                                 }
                             }
                         }
                     }
-                    t.block.paint(ui.painter(), pos2(left, top));
+                    t.block.paint_selectable(ui, &selection, pos2(left, top));
+                    for rect in covers {
+                        ui.painter().rect_filled(
+                            rect,
+                            CornerRadius::same(5),
+                            mix(c.bg, c.text, 0.22),
+                        );
+                    }
+                    if spoiler_hot {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
                     // Links: underline in alpha accent, currentColor on hover.
                     for section in &t.sections {
                         let Span::Link(index) = section.span else {
@@ -783,11 +838,14 @@ impl Laid {
                     );
                     if self.hit {
                         // `span.lr-md-codeblock`: padding 6 8, clipped at 8em.
-                        let clip = ui
-                            .painter()
-                            .with_clip_rect(rect.shrink(1.0).intersect(ui.clip_rect()));
-                        code.lines
-                            .paint(&clip, pos2(rect.left() + 9.0, rect.top() + 1.0 + 6.0));
+                        let lines = crate::text::selectable_in(
+                            ui,
+                            &code.lines,
+                            id.with(("code", code.index)),
+                            pos2(rect.left() + 9.0, rect.top() + 1.0 + 6.0),
+                            rect.shrink(1.0),
+                        );
+                        crate::text::join(&mut text, lines);
                         continue;
                     }
                     if let Some(lang) = &code.lang {
@@ -813,10 +871,20 @@ impl Laid {
                         ),
                         egui::vec2(inner + 12.0, 20.5),
                     );
+                    // The code's text first, so the button lies on top of it.
+                    let pre_top = rect.top() + 1.0 + 22.5 + 2.0;
+                    let lines_at = pos2(rect.left() + 11.0, pre_top - 3.0);
+                    let lines_ui = crate::text::clipped(ui, rect.shrink(1.0));
+                    let lines =
+                        code.lines
+                            .select(&lines_ui, id.with(("code", code.index)), lines_at);
                     let mut hovered = false;
                     if interactive {
                         let response =
                             ui.interact(button, id.with(("copy", code.index)), Sense::click());
+                        response.widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::Role::Button, true, label)
+                        });
                         hovered = response.hovered();
                         if hovered {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -842,22 +910,188 @@ impl Laid {
                         x += 13.0 + 4.0;
                     }
                     label_block.paint_tinted(ui.painter(), pos2(x, button.top() + 2.0), Some(fg));
-                    let pre_top = rect.top() + 1.0 + 22.5 + 2.0;
-                    let clip = ui
-                        .painter()
-                        .with_clip_rect(rect.shrink(1.0).intersect(ui.clip_rect()));
-                    code.lines
-                        .paint(&clip, pos2(rect.left() + 11.0, pre_top - 3.0));
+                    code.lines.paint_selectable(&lines_ui, &lines, lines_at);
+                    crate::text::join(&mut text, lines);
                 }
             }
         }
-        action
+        Painted { action, text }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use egui::{Event, Modifiers, OutputCommand, PointerButton, Vec2};
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable as _;
+
     use super::*;
+
+    /// The revealed spoilers and what the clicks asked for.
+    #[derive(Default)]
+    struct State {
+        revealed: HashSet<usize>,
+        asked: Vec<String>,
+    }
+
+    /// `content` as a message row paints it, its actions noted.
+    fn harness(content: String) -> Harness<'static, State> {
+        Harness::builder()
+            .with_size(egui::vec2(700.0, 300.0))
+            .build_ui_state(
+                move |ui, state: &mut State| {
+                    crate::fonts::install(ui.ctx());
+                    crate::theme::ensure(ui.ctx());
+                    let names = HashMap::new();
+                    let mentions = Mentions {
+                        names: &names,
+                        me: None,
+                        everyone: false,
+                        mentions: &[],
+                    };
+                    let laid = layout(ui, &content, 600.0, &mentions, &state.revealed, false);
+                    let id = egui::Id::unique("message");
+                    match laid.paint(ui, pos2(10.0, 10.0), id, true, None).action {
+                        Some(ContentAction::OpenLink(href)) => state.asked.push(href),
+                        Some(ContentAction::RevealSpoiler(n)) => {
+                            state.revealed.insert(n);
+                        }
+                        Some(ContentAction::CopyCode(_, text)) => state.asked.push(text),
+                        None => {}
+                    }
+                },
+                State::default(),
+            )
+    }
+
+    /// What the last pass handed to the clipboards: (Ctrl+C, selection).
+    fn copied(harness: &Harness<'_, State>) -> (Vec<String>, Vec<String>) {
+        let mut copy = Vec::new();
+        let mut settled = Vec::new();
+        for command in &harness.output().platform_output.commands {
+            match command {
+                OutputCommand::CopyText(text) => copy.push(text.clone()),
+                OutputCommand::TextSelectionSettled(text) => settled.push(text.clone()),
+                _ => {}
+            }
+        }
+        (copy, settled)
+    }
+
+    fn press(harness: &mut Harness<'_, State>, pos: Pos2, pressed: bool) {
+        harness.event(Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+    }
+
+    /// Drags from `from` to `to` and copies: what Ctrl+C and the
+    /// selection buffer got.
+    fn drag_and_copy(harness: &mut Harness<'_, State>, from: Pos2, to: Pos2) -> [Vec<String>; 2] {
+        harness.hover_at(from);
+        harness.drag_at(from);
+        harness.hover_at(from.lerp(to, 0.5));
+        harness.hover_at(to);
+        press(harness, to, false);
+        harness.step();
+        let (_, mut settled) = copied(harness);
+        harness.step();
+        settled.extend(copied(harness).1);
+        harness.event(Event::Copy);
+        harness.step();
+        [copied(harness).0, settled]
+    }
+
+    fn mentions_secret(harness: &Harness<'_, State>) -> bool {
+        harness
+            .query_all_by(|node| {
+                [node.label(), node.value()]
+                    .into_iter()
+                    .flatten()
+                    .any(|text| text.contains("geheim"))
+            })
+            .next()
+            .is_some()
+    }
+
+    /// A hidden spoiler stays out of what a selection copies and of the
+    /// accessibility tree (`aria-hidden` on the web); revealed, it is in.
+    #[test]
+    fn hidden_spoilers_stay_out_of_a_selection() {
+        let mut harness = harness("Vorher ||geheim|| nachher.\n\nZweite Zeile.".into());
+        harness.run_steps(2);
+        let text = harness
+            .get_by_label("Vorher  nachher.\n\nZweite Zeile.")
+            .rect();
+        harness.get_by_label("Spoiler anzeigen");
+        assert!(!mentions_secret(&harness));
+        let (from, to) = (text.left_top() + Vec2::new(1.0, 4.0), text.right_bottom());
+        let [copy, settled] = drag_and_copy(&mut harness, from, to);
+        let expected = vec!["Vorher  nachher.\n\nZweite Zeile.".to_owned()];
+        assert_eq!(copy, expected);
+        assert_eq!(settled, expected);
+
+        harness.get_by_label("Spoiler anzeigen").click();
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Spoiler anzeigen").is_none());
+        assert!(mentions_secret(&harness));
+        let text = harness
+            .get_by_label("Vorher geheim nachher.\n\nZweite Zeile.")
+            .rect();
+        let (from, to) = (text.left_top() + Vec2::new(1.0, 4.0), text.right_bottom());
+        let [copy, _] = drag_and_copy(&mut harness, from, to);
+        assert_eq!(
+            copy,
+            vec!["Vorher geheim nachher.\n\nZweite Zeile.".to_owned()]
+        );
+    }
+
+    /// A plain click on text selects nothing to copy: no whole paragraph
+    /// for Ctrl+C or the middle-click buffer, as in the browser.
+    #[test]
+    fn a_click_on_text_copies_nothing() {
+        let mut harness = harness("Film oder Spiel heute?".into());
+        harness.run_steps(2);
+        harness.get_by_label("Film oder Spiel heute?").click();
+        for _ in 0..3 {
+            harness.step();
+            assert_eq!(copied(&harness), (vec![], vec![]));
+        }
+        harness.event(Event::Copy);
+        harness.step();
+        assert_eq!(copied(&harness), (vec![], vec![]));
+    }
+
+    /// A link in selectable text still opens on a click.
+    #[test]
+    fn a_link_in_the_text_still_opens() {
+        let mut harness = harness("https://example.org/plan".into());
+        harness.run_steps(2);
+        harness.get_by_label("https://example.org/plan").click();
+        harness.run_steps(2);
+        assert_eq!(harness.state().asked, vec!["https://example.org/plan"]);
+    }
+
+    /// A code block's copy button lies over its selectable text, also on
+    /// its bottom edge where the text box starts.
+    #[test]
+    fn the_code_copy_button_lies_over_the_code() {
+        let line = "x".repeat(120);
+        let mut harness = harness(format!("```\n{line}\n```"));
+        harness.run_steps(2);
+        let button = harness.get_by_label("Kopieren").rect();
+        assert!(harness.get_by_label(&line).rect().right() > button.right());
+        let at = pos2(button.center().x, button.bottom() - 0.5);
+        harness.hover_at(at);
+        press(&mut harness, at, true);
+        press(&mut harness, at, false);
+        harness.run_steps(2);
+        assert_eq!(harness.state().asked, vec![line]);
+    }
 
     /// `MessageContent highlight`: the searched word is marked in plain
     /// text, bold included, but not in a spoiler, code, a link or a longer
