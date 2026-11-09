@@ -168,9 +168,10 @@ impl ObjectStore {
     /// The object for the browser. Redirect delivery: one stable link per
     /// window, the window of `now`, and MinIO answers with `content_type`,
     /// the type the API vouches for, not the one stored with the upload,
-    /// and with `disposition` (`None` for display) as its
-    /// `Content-Disposition`: a browser ignores `<a download>` once the link
-    /// redirects to another origin, so the header has to come from there.
+    /// and with `disposition` as its `Content-Disposition`: a browser
+    /// ignores `<a download>` once the link redirects to another origin, so
+    /// the header has to come from there. Either way MinIO replays nothing
+    /// the uploader sent with the PUT (see `get_at`).
     /// Proxy delivery and the memory store stream the bytes (one `range` of
     /// them, where the store can), and the API sets those headers itself.
     pub async fn serve(
@@ -472,6 +473,12 @@ impl MinioStore {
             "response-cache-control",
             format!("private, max-age={}", (GET_TTL - GET_WINDOW).as_secs()),
         );
+        // MinIO stores a `Content-Encoding` the uploader adds to the
+        // presigned PUT and replays it; the browser would then decode bytes
+        // the content check never saw.
+        action
+            .query_mut()
+            .insert("response-content-encoding", "identity".to_owned());
         if let Some(disposition) = disposition {
             action
                 .query_mut()
@@ -844,6 +851,10 @@ mod tests {
             Some("private, max-age=1800")
         );
         assert_eq!(query(&first, "response-content-disposition"), None);
+        assert_eq!(
+            query(&first, "response-content-encoding").as_deref(),
+            Some("identity")
+        );
     }
 
     #[test]

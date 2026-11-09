@@ -724,6 +724,68 @@ async fn real_minio_download_links_serve_the_object(pool: PgPool) {
     state.store.delete(&key).await.unwrap();
 }
 
+/// Headers the uploader adds to the presigned PUT are stored by MinIO, but
+/// the signed link overrides them: no content coding the viewer's browser
+/// would undo (the content check read the raw bytes), and the API's own
+/// disposition.
+#[sqlx::test]
+async fn real_minio_links_never_replay_the_uploaders_headers(pool: PgPool) {
+    use axum::http::header::LOCATION;
+    let endpoint = std::env::var("MINIO_ENDPOINT").expect("source local minio-test.env");
+    let config = minio_config(&endpoint);
+    let mut state = state(pool, 0);
+    state.store = ObjectStore::from_minio(Some(&config)).unwrap();
+    state.store.ensure_ready().await.unwrap();
+    let (mut client, _, channel) = owner(&state).await;
+    let signed = presign_png(&mut client, &channel, "x.png").await;
+    let id = signed["id"].as_str().unwrap().to_owned();
+    let http = reqwest::Client::new();
+    let mut request = http.put(signed["upload_url"].as_str().unwrap());
+    for (name, value) in signed["headers"].as_object().unwrap() {
+        request = request.header(name, value.as_str().unwrap());
+    }
+    let response = request
+        .header("Content-Encoding", "gzip")
+        .header("Content-Disposition", "attachment; filename=\"evil.html\"")
+        .body(PNG.to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success(), "{}", response.status());
+    message(&mut client, &channel, &id).await;
+
+    for (query, disposition) in [
+        ("", "inline; filename=\"x.png\""),
+        ("?download=1", "attachment; filename=\"x.png\""),
+    ] {
+        let (status, headers, _) = client
+            .send_raw(Method::GET, &format!("/api/attachments/{id}{query}"), None)
+            .await;
+        assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
+        let object = http
+            .get(headers[LOCATION].to_str().unwrap())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(object.status(), reqwest::StatusCode::OK);
+        let encoding = object
+            .headers()
+            .get(reqwest::header::CONTENT_ENCODING)
+            .map(|value| value.to_str().unwrap().to_owned());
+        assert!(
+            encoding.is_none() || encoding.as_deref() == Some("identity"),
+            "{query}: {encoding:?}"
+        );
+        assert_eq!(
+            object.headers()[reqwest::header::CONTENT_DISPOSITION],
+            disposition,
+            "{query}"
+        );
+        assert_eq!(object.bytes().await.unwrap().as_ref(), PNG);
+    }
+    state.store.delete(&format!("att/{id}")).await.unwrap();
+}
+
 /// #348 against real MinIO: with `ATTACHMENT_DELIVERY=proxy` and a public
 /// endpoint nobody can reach, the browser's upload and download both go
 /// through the API, a media player's range included.

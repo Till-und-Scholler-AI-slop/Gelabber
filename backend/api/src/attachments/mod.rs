@@ -286,7 +286,8 @@ async fn download(
         .serve(
             &row.object_key,
             served,
-            save.then_some(disposition.as_str()),
+            // Always signed, so MinIO never replays one sent with the PUT.
+            Some(disposition.as_str()),
             range,
             now,
         )
@@ -554,7 +555,8 @@ fn invalid() -> ApiError {
 /// The upload link stays valid until its expiry, so the uploader could
 /// still replace the bytes with others of the same signed length after
 /// this check. The served type (always the checked type, text as plain
-/// text) and `nosniff` keep that harmless; this check catches mistakes.
+/// text), `nosniff` and the download link's signed `identity` coding keep
+/// that harmless; this check catches mistakes.
 pub async fn check_uploads(
     db: &PgPool,
     store: &ObjectStore,
