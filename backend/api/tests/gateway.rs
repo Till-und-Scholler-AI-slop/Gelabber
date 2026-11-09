@@ -633,6 +633,19 @@ async fn shutdown_closes_sockets_with_service_restart_and_cleans_up(pool: PgPool
         .await
         .unwrap();
     assert!(!online, "presence cleared on the way out");
+
+    // A client reconnecting at once lands elsewhere, not on this process.
+    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+    request.headers_mut().insert(
+        COOKIE,
+        format!("{SESSION}={}", session_cookie(&owner))
+            .parse()
+            .unwrap(),
+    );
+    let err = tokio_tungstenite::connect_async(request)
+        .await
+        .expect_err("upgrade during shutdown");
+    assert!(err.to_string().contains("503"), "{err}");
 }
 
 /// One account holds a bounded number of sockets on a process; the upgrade

@@ -593,6 +593,11 @@ impl Gateway {
         self.connections.inner.shutdown.subscribe()
     }
 
+    /// Whether [`Self::drain`] has begun.
+    pub fn is_shutting_down(&self) -> bool {
+        *self.connections.inner.shutdown.borrow()
+    }
+
     /// Close every socket of this process with 1012 and wait, at most
     /// `timeout`, until they ran their cleanup. HTTP graceful shutdown does
     /// not wait for upgraded sockets, so the caller runs this first.

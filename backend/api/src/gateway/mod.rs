@@ -30,7 +30,7 @@ use axum::extract::State;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::http::HeaderMap;
 use axum::http::header::{HOST, ORIGIN};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use serde_json::Value;
 use uuid::Uuid;
@@ -74,6 +74,14 @@ async fn upgrade(
         return Err(ApiError::Forbidden(
             "Cross-origin WebSocket is not allowed.",
         ));
+    }
+    // Draining for shutdown: a socket opened now would be closed at once.
+    if state.gateway.is_shutting_down() {
+        return Ok((
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            [(axum::http::header::RETRY_AFTER, "1")],
+        )
+            .into_response());
     }
     let Some(slot) = state
         .gateway
