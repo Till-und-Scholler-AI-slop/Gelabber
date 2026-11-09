@@ -626,6 +626,37 @@ describe("password change across tabs", () => {
     expect(scopeGeneration()).toBe(generation);
   });
 
+  it("a write's csrf re-bootstrap after another tab's password change keeps the mark", async () => {
+    let posts = 0;
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "GET /api/auth/session": () => json(200, { user: ada, csrf_token: "c3" }),
+      "POST /api/servers": () =>
+        ++posts === 1
+          ? json(403, { error: "csrf_invalid", message: "Bad token." })
+          : json(200, {}),
+    });
+    await login("ada@example.com", "password123");
+    const generation = scopeGeneration();
+    const change = {
+      generation: "g-change",
+      phase: "settled",
+      userId: ada.id,
+      keepsAccount: true,
+    };
+    storage.set(FENCE, JSON.stringify(change));
+    synchronizeSharedSession();
+
+    // This tab's token was dropped; its first write re-bootstraps.
+    await expect(
+      api("/servers", { method: "POST", body: {} }),
+    ).resolves.toEqual({});
+    // Every other tab compares against this: no change for them either.
+    expect(JSON.parse(storage.get(FENCE)!)).toEqual(change);
+    expect(useSession.getState().status).toBe("authenticated");
+    expect(scopeGeneration()).toBe(generation);
+  });
+
   it("another tab's password change keeps this tab's account", async () => {
     fakeApi({
       "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
@@ -649,6 +680,11 @@ describe("password change across tabs", () => {
       status: "authenticated",
       user: ada,
     });
+    expect(scopeGeneration()).toBe(generation);
+
+    // A fresh tab's bootstrap settles the same session again, unmarked.
+    other({ generation: "g-change", phase: "settled", userId: ada.id });
+    expect(useSession.getState().status).toBe("authenticated");
     expect(scopeGeneration()).toBe(generation);
 
     // A sign-in, even as the same user, still releases the account.

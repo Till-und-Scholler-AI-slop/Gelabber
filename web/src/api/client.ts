@@ -141,8 +141,11 @@ export function sessionCookieGeneration(): string {
   return adoptedCookieGeneration;
 }
 
+/** Who and which cookie generation; the password-change mark is no change. */
 function cookieFingerprint(state: CookieState | null): string {
-  return state ? JSON.stringify(state) : "";
+  return state
+    ? JSON.stringify([state.generation, state.phase, state.userId])
+    : "";
 }
 
 function publishCookieState(state: CookieState): void {
@@ -151,7 +154,7 @@ function publishCookieState(state: CookieState): void {
   // Fail closed when storage is unavailable: never change cookies without
   // first publishing the generation other tabs must check.
   window.localStorage.setItem(COOKIE_STATE_KEY, serialized);
-  observedCookieState = serialized;
+  observedCookieState = cookieFingerprint(state);
   adoptedCookieGeneration = state.generation;
 }
 
@@ -472,15 +475,18 @@ function settleCookieIdentity(
 ): void {
   if (typeof window === "undefined") return;
   const previous = readCookieState();
+  const same =
+    generation === undefined &&
+    previous?.phase === "settled" &&
+    previous.userId === userId;
   publishCookieState({
-    generation:
-      generation ??
-      (previous?.phase === "settled" && previous.userId === userId
-        ? previous.generation
-        : randomUuid()),
+    generation: generation ?? (same ? previous.generation : randomUuid()),
     phase: "settled",
     userId,
-    ...(keepsAccount ? { keepsAccount } : {}),
+    // Re-settling the same session keeps its mark for tabs that see it late.
+    ...(keepsAccount || (same && previous.keepsAccount)
+      ? { keepsAccount: true as const }
+      : {}),
   });
 }
 
