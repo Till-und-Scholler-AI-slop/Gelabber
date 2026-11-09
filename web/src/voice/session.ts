@@ -30,6 +30,7 @@ import {
   requestMediaTicket,
   MEDIA_VERSION,
   MediaError,
+  mediaErrorMessage,
 } from "./media.ts";
 import { MediaPeer } from "./mediaPeer.ts";
 import { resetPlaybackBoostForTests } from "./playbackBoost.ts";
@@ -1552,19 +1553,15 @@ function scheduleSeatRebuild(): void {
   );
 }
 
-/** The browser SDK's chunk did not arrive (`sdk_load_*`); `again` says how
- * to retry. A tab whose chunk a deploy replaced only recovers by reloading. */
-function sdkLoadError(error: unknown, again: string): Error | null {
-  if (!(error instanceof MediaError)) return null;
-  if (error.code === "sdk_load_failed")
-    return new Error(
-      `Die Anruffunktion konnte nicht geladen werden. Bitte Gelabber neu laden und ${again}`,
-    );
-  if (error.code === "sdk_load_timeout")
-    return new Error(
-      `Die Anruffunktion lädt gerade sehr langsam. Bitte gleich ${again}`,
-    );
-  return null;
+/** The browser SDK's chunk did not arrive (`sdk_load_*`): the call ends
+ * with the error table's text, which says how to get back. */
+function sdkLoadError(error: unknown): Error | null {
+  if (
+    !(error instanceof MediaError) ||
+    (error.code !== "sdk_load_failed" && error.code !== "sdk_load_timeout")
+  )
+    return null;
+  return new Error(mediaErrorMessage(error.code) ?? error.code);
 }
 
 function retryableTicketError(error: unknown): boolean {
@@ -1646,7 +1643,7 @@ async function startPeer(
       );
       return;
     }
-    const unloaded = sdkLoadError(error, "den Sprachkanal erneut betreten.");
+    const unloaded = sdkLoadError(error);
     if (unloaded) {
       rollbackSeat(unloaded);
       return;

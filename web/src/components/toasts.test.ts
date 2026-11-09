@@ -36,6 +36,13 @@ describe("error toasts", () => {
     ]);
   });
 
+  it("says how to get back when the call's code did not load", () => {
+    notifyError(new MediaError("sdk_load_timeout"));
+    expect(useToasts.getState().toasts[0]?.message).toBe(
+      "Die Anruffunktion lädt gerade sehr langsam. Bitte gleich den Sprachkanal erneut betreten.",
+    );
+  });
+
   it("does not show a media error that a newer operation replaced", () => {
     notifyError(new MediaError("publication_replaced"));
     notifyError(new MediaError("publication_cancelled"));

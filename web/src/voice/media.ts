@@ -157,9 +157,12 @@ const MEDIA_MESSAGES: Record<string, string | null> = {
   request_overflow: MEDIA_BUSY,
   request_id_exhausted: MEDIA_BUSY,
   event_overflow: MEDIA_BUSY,
+  // The browser SDK's chunk did not arrive. It loads when joining, so the
+  // way back is joining again; a tab whose chunk a deploy replaced reloads.
   sdk_load_failed:
-    "Die Anruffunktion konnte nicht geladen werden. Bitte Gelabber neu laden.",
-  sdk_load_timeout: "Die Anruffunktion lädt gerade sehr langsam.",
+    "Die Anruffunktion konnte nicht geladen werden. Bitte Gelabber neu laden und den Sprachkanal erneut betreten.",
+  sdk_load_timeout:
+    "Die Anruffunktion lädt gerade sehr langsam. Bitte gleich den Sprachkanal erneut betreten.",
   publication_cancelled: null,
   publication_replaced: null,
 };
