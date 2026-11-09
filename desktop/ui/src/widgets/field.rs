@@ -132,6 +132,15 @@ impl<'a> TextField<'a> {
 
         let field_rect = Rect::from_min_size(pos2(top.x, y), Vec2::new(width, 37.0));
         let shown_key = self.id.with("shown");
+        // A new form is a new <input>: the last one's undo steps (a password
+        // typed before sign-in) and "Passwort anzeigen" do not carry over.
+        if mounted(ui.ctx(), self.id.with("mount")) {
+            if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), self.id) {
+                state.clear_undoer();
+                state.store(ui.ctx(), self.id);
+            }
+            ui.data_mut(|d| d.remove::<bool>(shown_key));
+        }
         let shown = self.password && ui.data(|d| d.get_temp::<bool>(shown_key)).unwrap_or(false);
         let masked = self.password && !shown;
 
@@ -385,5 +394,56 @@ mod tests {
         remount(&ctx);
         assert_eq!(frame(true), Some(true));
         assert_eq!(frame(true), Some(false));
+    }
+
+    /// A password typed, submitted and dropped with its form (sign-in,
+    /// sign-out) is not back on Strg+Z, and the field opens masked again.
+    #[test]
+    fn a_new_form_forgets_the_old_password() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(400.0, 200.0))
+            .with_context_setup(|ctx| {
+                crate::fonts::install(ctx);
+                crate::theme::set(ctx, Theme::dark());
+            })
+            .build_ui_state(
+                |ui, (text, show): &mut (String, bool)| {
+                    if *show {
+                        TextField::new("password", text)
+                            .label("Passwort")
+                            .password()
+                            .show(ui);
+                    }
+                },
+                (String::new(), true),
+            );
+        h.run();
+        h.get_by_label("Passwort anzeigen").click();
+        h.run();
+        ui_focus(&h.ctx);
+        h.run();
+        h.get_by_label("Passwort").type_text("geheim");
+        h.run();
+        // egui keeps an undo point once the text stood still for a second.
+        h.run_steps(90);
+        assert_eq!(h.state().0, "geheim");
+        // The form goes (signed in), a new one comes (signed out).
+        *h.state_mut() = (String::new(), false);
+        h.run_steps(2);
+        h.state_mut().1 = true;
+        h.run_steps(2);
+        ui_focus(&h.ctx);
+        h.run_steps(2);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        h.run_steps(2);
+        assert_eq!(h.state().0, "", "the old password came back");
+        h.get_by_label("Passwort anzeigen");
+        assert!(h.query_by_label("Passwort verbergen").is_none());
+    }
+
+    fn ui_focus(ctx: &egui::Context) {
+        ctx.memory_mut(|m| m.request_focus(field_id("password")));
     }
 }
