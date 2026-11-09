@@ -50,6 +50,12 @@ vi.mock("../servers/queries.ts", () => ({
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <a>{children}</a>,
 }));
+// The invite dialog as a mark: whether VoiceRoom keeps it mounted.
+vi.mock("../components/InviteDialog.tsx", () => ({
+  InviteDialog: ({ open }: { open: boolean }) => (
+    <i data-invite-dialog={open ? "open" : "closed"} />
+  ),
+}));
 vi.mock("./roster.ts", () => ({
   EMPTY_OCCUPANCY: {},
   EMPTY_LIVE_PEOPLE: {},
@@ -789,12 +795,12 @@ describe("active media UI", () => {
       );
     const empty = room();
     expect(empty).toContain('<h2 class="voice-room-name">Stage</h2>');
-    // No line about who is there and no free seats: an empty room is its
-    // name and the way in.
+    // No line about who is there: an empty room is its name, one free
+    // seat and the way in. The invite prompt is the channel page's.
     expect(empty).not.toContain("voice-room-summary");
-    expect(empty).not.toContain("voice-room-seat");
-    expect(empty).not.toContain("voice-room-participants");
+    expect(empty.match(/<li class="voice-room-seat"/g)).toHaveLength(1);
     expect(empty).not.toContain("Verbunden");
+    expect(empty).not.toContain("voice-room-invite");
     expect(empty).toContain("Beitreten</button>");
 
     fixture.roster = {
@@ -808,6 +814,9 @@ describe("active media UI", () => {
       const html = room();
       expect(html).not.toContain("Alice und Bob sind da.");
       expect(html.match(/<li class="voice-room-participant"/g)).toHaveLength(2);
+      // The channel's cards, compact: status line and a free seat.
+      expect(html.match(/>Im Raum</g)).toHaveLength(2);
+      expect(html.match(/<li class="voice-room-seat"/g)).toHaveLength(1);
       expect(html).toContain('aria-label="Optionen für Alice"');
       expect(html).toContain('aria-label="Optionen für Bob"');
       // Bob is quieter here: the card says so.
@@ -832,5 +841,39 @@ describe("active media UI", () => {
     } finally {
       resetUserVolumesForTests();
     }
+  });
+
+  it("asks for company under a room nobody else is in", () => {
+    fixture.live = {};
+    const page = () =>
+      renderToStaticMarkup(
+        <VoiceRoom server={server} channelId="stage" channelName="Stage" />,
+      );
+    const empty = page();
+    expect(empty).toMatch(
+      /<div class="voice-room-invite"><p>Fehlt noch jemand\?<\/p><button[^>]*>(?:<svg.*?<\/svg>)?Einladen<\/button>/,
+    );
+    // Under the way in, not between the seats and it.
+    expect(empty.indexOf("voice-room-invite")).toBeGreaterThan(
+      empty.indexOf("voice-room-actions"),
+    );
+
+    // Alone in the call: still asking.
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+    });
+    expect(page()).toContain("Nur du bist im Kanal.");
+    expect(page()).toContain('class="voice-room-invite"');
+
+    // Someone else is here: the room has its company.
+    fixture.roster = {
+      a: { alice: { channelId: "stage", muted: false, deafened: false } },
+    };
+    expect(page()).not.toContain("voice-room-invite");
+    // The dialog does not hang on the prompt: whoever its link brings in
+    // must not close it under the hand that copies the link.
+    expect(page()).toContain('data-invite-dialog="closed"');
   });
 });

@@ -1819,11 +1819,12 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
     font: 600 12px / 1 var(--lr-font);
   }
   /* Every unread badge sits inside the closed drawer; its button sums them
-     up: a red count for mentions, a dot for anything else. */
+     up: a red count for mentions, a dot for anything else. Both sit on the
+     tile's top right corner, clear of its initials. */
   .workspace-navigation-count {
     position: absolute;
-    top: 2px;
-    right: 0;
+    top: -2px;
+    right: -2px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1838,8 +1839,8 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
   }
   .workspace-navigation-unread {
     position: absolute;
-    top: 7px;
-    right: 6px;
+    top: 3px;
+    right: 3px;
     width: 10px;
     height: 10px;
     border-radius: 50%;

@@ -346,7 +346,8 @@ fn overview_room<'a>(app: &AppCtx, ui: &Ui, detail: &'a ServerDetail) -> Option<
 }
 
 /// The voice room part (`VoiceRoom overview`): heading, the people as
-/// 168×136 tiles, then "Beitreten" with the microphone test and settings.
+/// 168×136 cards and one free seat, then "Beitreten" with the microphone
+/// test and settings.
 #[allow(clippy::too_many_arguments)]
 fn voice_room(
     ui: &mut Ui,
@@ -454,34 +455,45 @@ fn voice_room(
     }
     let mut y = top + 28.0;
 
-    // People: wrapped tiles, gap 12.
-    if !occupants.is_empty() {
+    // People: wrapped cards, gap 12, then a free seat before joining.
+    let free = usize::from(!here && allowed);
+    let count = occupants.len() + free;
+    if count > 0 {
         y += 12.0;
         let per_row = (((width + 12.0) / 180.0).floor() as usize).max(1);
-        for (i, (user, occupant)) in occupants.iter().enumerate() {
-            let col = i % per_row;
-            let row = i / per_row;
-            let tile = Rect::from_min_size(
-                pos2(left + col as f32 * 180.0, y + row as f32 * 148.0),
+        let place = |i: usize| {
+            Rect::from_min_size(
+                pos2(
+                    left + (i % per_row) as f32 * 180.0,
+                    y + (i / per_row) as f32 * 148.0,
+                ),
                 Vec2::new(168.0, 136.0),
-            );
+            )
+        };
+        if free > 0 {
+            voice::tile::seat_sized(ui, place(occupants.len()), 56.0, 12.0, 12.0);
+        }
+        for (i, (user, occupant)) in occupants.iter().enumerate() {
+            let tile = place(i);
             let member = detail.members.iter().find(|m| m.user_id == *user);
             let name = member.map_or("Jemand", |m| m.name.as_str());
             let speaking =
                 voice::session::speaking(&call, *user, occupant.muted, occupant.deafened);
-            if speaking {
-                ui.painter().rect_stroke(
-                    tile.expand(0.5),
-                    corner(theme.radius.lg + 0.5),
-                    Stroke::new(1.0, c.speaking),
-                    StrokeKind::Middle,
-                );
-            }
+            let status = if occupant.deafened {
+                "Taub"
+            } else if occupant.muted {
+                "Stumm"
+            } else if speaking {
+                "Spricht"
+            } else {
+                "Im Raum"
+            };
+            // Who speaks is the avatar's ring and the status line.
             ui.painter().rect(
                 tile,
                 corner(theme.radius.lg),
                 c.surface,
-                Stroke::new(1.0, if speaking { c.speaking } else { c.border }),
+                Stroke::new(1.0, c.border),
                 StrokeKind::Inside,
             );
             // In the call a camera fills its owner's tile, the name over it.
@@ -518,21 +530,16 @@ fn voice_room(
                     me == Some(*user),
                     theme.radius.lg,
                 );
+                // No avatar shows over a picture: its edge says who speaks.
+                if speaking {
+                    voice::look::picture_speaking_edge(ui, ui.painter(), tile, theme.radius.lg);
+                }
                 // Name and status over a scrim at the bottom (padding 18 44 6 10).
                 let white = Color32::WHITE;
                 let soft = Color32::from_white_alpha((0.82 * 255.0) as u8);
                 let name_b = line(ui, name, text::UI.weight(600.0), white, 168.0 - 54.0);
                 let self_b =
                     (me == Some(*user)).then(|| line(ui, " (du)", text::UI, white, 168.0 - 54.0));
-                let status = if occupant.deafened {
-                    "Taub"
-                } else if occupant.muted {
-                    "Stumm"
-                } else if speaking {
-                    "Spricht"
-                } else {
-                    "Im Raum"
-                };
                 let status_b = line(
                     ui,
                     &format!("{status} · Kamera an"),
@@ -567,9 +574,18 @@ fn voice_room(
                 let _ = common::click(ui, tile, Id::unique(("overview-person", *user)));
                 continue;
             }
+            // The channel's card, compact (overview.css): the 56px avatar
+            // with its connection dot, gap 2 and 6, the name and the status.
             let label_style = text::UI.weight(600.0);
-            let name_block = line(ui, name, label_style, c.text, 168.0 - 24.0);
-            let content_h = 56.0 + 8.0 + name_block.height();
+            let name_block = line(ui, name, label_style, c.text, 168.0 - 26.0);
+            let status_block = line(
+                ui,
+                status,
+                text::META,
+                if speaking { c.online_text } else { c.muted },
+                168.0 - 26.0,
+            );
+            let content_h = 56.0 + 2.0 + 6.0 + name_block.height() + status_block.height();
             let ctop = tile.center().y - content_h / 2.0;
             let avatar = Rect::from_min_size(pos2(tile.center().x - 28.0, ctop), Vec2::splat(56.0));
             if speaking {
@@ -585,6 +601,10 @@ fn voice_room(
                 1.0,
                 c.surface,
             );
+            // The connection dot: 15px at 2 % from the corner, 2px surface ring.
+            let dot = avatar.max - Vec2::splat(56.0 * 0.02 + 7.5);
+            ui.painter().circle_filled(dot, 7.5, c.surface);
+            ui.painter().circle_filled(dot, 5.5, c.online);
             // `.voice-room-self`: " (du)" regular and muted after the name.
             let self_b = (me == Some(*user)).then(|| {
                 line(
@@ -597,33 +617,29 @@ fn voice_room(
             });
             let total = name_block.width() + self_b.as_ref().map_or(0.0, |b| b.width());
             let lx = tile.center().x - total / 2.0;
-            name_block.paint(ui.painter(), pos2(lx, avatar.bottom() + 8.0));
+            let ny = avatar.bottom() + 2.0 + 6.0;
+            name_block.paint(ui.painter(), pos2(lx, ny));
             if let Some(b) = self_b {
-                b.paint(
-                    ui.painter(),
-                    pos2(lx + name_block.width(), avatar.bottom() + 8.0),
-                );
+                b.paint(ui.painter(), pos2(lx + name_block.width(), ny));
             }
-            let mut mx = tile.left() + 8.0;
-            if occupant.muted || occupant.deafened {
-                icons::paint(
-                    ui.painter(),
-                    Icon::MicOff,
-                    pos2(mx, tile.top() + 8.0),
-                    14.0,
-                    c.muted,
-                );
-                mx += 16.0;
-            }
-            if occupant.deafened {
-                icons::paint(
-                    ui.painter(),
-                    Icon::HeadsetOff,
-                    pos2(mx, tile.top() + 8.0),
-                    14.0,
-                    c.muted,
-                );
-            }
+            status_block.paint(
+                ui.painter(),
+                pos2(
+                    tile.center().x - status_block.width() / 2.0,
+                    ny + name_block.height(),
+                ),
+            );
+            // The corner's marks as on the channel's cards: the green
+            // speaker, or the closed mic and headset.
+            voice::look::state_icons(
+                ui.painter(),
+                theme,
+                pos2(tile.left() + 1.0 + 8.0, tile.top() + 1.0 + 8.0),
+                occupant.muted,
+                occupant.deafened,
+                true,
+                c.muted,
+            );
             let _ = common::click(ui, tile, Id::unique(("overview-person", *user))).on_hover_text(
                 if me == Some(*user) {
                     "Dein Profil"
@@ -632,7 +648,7 @@ fn voice_room(
                 },
             );
         }
-        let rows = occupants.len().div_ceil(per_row);
+        let rows = count.div_ceil(per_row);
         y += rows as f32 * 136.0 + (rows.saturating_sub(1)) as f32 * 12.0;
     }
 

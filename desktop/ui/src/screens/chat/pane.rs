@@ -85,7 +85,8 @@ pub struct PaneState {
     pub to_latest: bool,
     /// A loaded row to scroll to and highlight.
     pub focus: Option<Uuid>,
-    scrolled_at: f64,
+    /// When the reader last scrolled (wheel or keys); none yet on opening.
+    scrolled_at: Option<f64>,
     pub at_latest: bool,
     /// The editor takes the keyboard on its next frame.
     pub edit_autofocus: bool,
@@ -489,7 +490,7 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
         if delta != 0.0 {
             pane.offset = (pane.offset - delta).clamp(0.0, max_offset);
             pane.stick = pane.offset >= max_offset - 0.5;
-            pane.scrolled_at = now_t;
+            pane.scrolled_at = Some(now_t);
             ui.input_mut(|i| i.smooth_scroll_delta.y = 0.0);
         }
     }
@@ -499,6 +500,7 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
     {
         pane.offset = offset;
         pane.stick = pane.offset >= max_offset - 0.5;
+        pane.scrolled_at = Some(now_t);
     }
     let at_latest = pane.offset >= max_offset - LATEST_SLACK;
     pane.at_latest = at_latest;
@@ -684,20 +686,28 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
         ui.ctx().request_repaint();
     }
 
-    // A thin thumb while the reader scrolls.
-    if max_offset > 0.0 && now_t - pane.scrolled_at < 1.0 {
+    // The app's scrollbar thumb (style.rs): it shows while the reader
+    // scrolls and fades out a second after.
+    let scrolling = pane.scrolled_at.is_some_and(|at| now_t - at < 1.0);
+    let shown = ui
+        .ctx()
+        .animate_bool_responsive(egui::Id::unique("gelabber-chat-thumb"), scrolling);
+    if max_offset > 0.0 && shown > 0.0 {
         let track = rect.shrink2(vec2(0.0, 2.0));
         let thumb_h = (viewport / scroll_h * track.height()).max(24.0);
         let t = pane.offset / max_offset;
         let thumb = Rect::from_min_size(
             pos2(
-                rect.right() - 8.0,
+                rect.right() - 9.0,
                 track.top() + t * (track.height() - thumb_h),
             ),
-            vec2(6.0, thumb_h),
+            vec2(7.0, thumb_h),
         );
+        let fill = ui.visuals().widgets.inactive.bg_fill;
         ui.painter()
-            .rect_filled(thumb, corner(3.0), mix(c.bg, c.text, 0.25));
+            .rect_filled(thumb, corner(3.5), fill.gamma_multiply(shown));
+    }
+    if scrolling {
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(100));
     }

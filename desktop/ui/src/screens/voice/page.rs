@@ -23,7 +23,7 @@ use crate::screens::shell::common;
 use crate::text::{self, Block, TextStyle};
 use crate::theme::{Theme, corner};
 use crate::widgets::tooltip::{Side, Tooltip};
-use crate::widgets::{IconButton, eased};
+use crate::widgets::{Button, IconButton, eased};
 
 const HEADER: f32 = 52.0;
 const TITLE: TextStyle = TextStyle::new(15.0, 650.0, 1.5).tracking(-0.1 / 15.0);
@@ -170,7 +170,7 @@ fn plain_room(ui: &mut Ui, app: &mut AppCtx, room: &Room, body: Rect) {
 }
 
 /// The not-staged room from `top`; returns its bottom (padding included).
-fn room_content(
+pub(super) fn room_content(
     ui: &mut Ui,
     app: &mut AppCtx,
     room: &Room,
@@ -247,7 +247,45 @@ fn room_content(
         y += 20.0;
         y = actions(ui, app, room, left, y);
     }
+    if room.others.is_empty() {
+        y += 24.0;
+        y = invite_prompt(ui, app, room, left, y, w);
+    }
     y + if compact { 16.0 } else { 28.0 }
+}
+
+/// `.voice-room-invite`: nobody else in the room, so the space under it
+/// asks for company and opens the invite dialog. The button wraps under
+/// the question when the row is too narrow (flex-wrap, row gap 8).
+/// Returns the row's bottom.
+fn invite_prompt(ui: &mut Ui, app: &AppCtx, room: &Room, left: f32, top: f32, width: f32) -> f32 {
+    let theme = Theme::of(ui.ctx());
+    let row_h = 32.0;
+    let ask = Block::single(ui, "Fehlt noch jemand?", text::BODY, theme.c.muted);
+    // The small button: its label, the 16px icon and gap 8, padding 12.
+    let label = Block::single(ui, "Einladen", text::UI, theme.c.text);
+    let button_w = label.width() + 24.0 + 24.0;
+    let wraps = ask.width() + 16.0 + button_w > width;
+    common::paint_mid(ui.painter(), &ask, left, top + row_h / 2.0);
+    let (bx, by) = if wraps {
+        (left, top + row_h + 8.0)
+    } else {
+        (left + ask.width() + 16.0, top)
+    };
+    let mut child = ui.new_child(UiBuilder::new().max_rect(Rect::from_min_size(
+        pos2(bx, by),
+        vec2(button_w.max(200.0), row_h),
+    )));
+    let button = Button::new("Einladen").small().icon(Icon::Link);
+    if child.add(button).clicked() {
+        let name = app.client.with_state(|s| {
+            s.server(room.server)
+                .map(|v| v.name.clone())
+                .unwrap_or_default()
+        });
+        crate::screens::shell::dialogs::open_invite(ui.ctx(), room.server, &name);
+    }
+    by + row_h
 }
 
 /// A card's height without its 16:10 (`aspect-ratio: auto`): the 64px

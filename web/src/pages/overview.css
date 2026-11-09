@@ -131,28 +131,22 @@
     flex-wrap: wrap;
     gap: 12px;
   }
-  .community-overview .voice-room .voice-room-participant {
+  /* The channel's cards and free seat, compact: the same avatar, dot,
+     name and status line on a fixed 168×136 card. */
+  .community-overview .voice-room .voice-room-participant,
+  .community-overview .voice-room .voice-room-seat {
     width: 168px;
     height: 136px;
     aspect-ratio: auto;
     padding: 12px;
   }
-  .community-overview .voice-room .voice-room-avatar {
+  .community-overview .voice-room .voice-room-avatar,
+  .community-overview .voice-room .voice-room-seat-circle {
     width: 56px;
     height: 56px;
   }
   .community-overview .voice-room .voice-room-participant-text {
-    margin-top: 8px;
-  }
-  /* Who is muted is the corner's icons, who speaks the ring: the line
-     under a name is left for a camera or a Live. Everyone here is
-     connected, so neither the dot nor the speaker says anything. */
-  .community-overview
-    .voice-room
-    .voice-room-participant-status:not([data-media]),
-  .community-overview .voice-room .voice-room-connection,
-  .community-overview .voice-room .voice-state-icons-speaker {
-    display: none;
+    margin-top: 6px;
   }
 }
 /* Unread text channels: one bordered list, the names in one column so the

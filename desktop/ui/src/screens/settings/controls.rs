@@ -70,8 +70,8 @@ pub fn header(ui: &Ui, page: Rect, title: &str, context: Option<&str>) {
     }
 }
 
-/// The scrolling body under the header. The scrollbar floats and shows
-/// only while the pointer is near, like the reference's hidden one.
+/// The scrolling body under the header. The app's scrollbar (style.rs),
+/// floating over the content without a gutter of its own.
 pub fn scroll<R>(
     ui: &mut Ui,
     rect: Rect,
@@ -81,14 +81,7 @@ pub fn scroll<R>(
 ) -> (R, f32) {
     let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
     child.set_clip_rect(rect);
-    {
-        let scroll = &mut child.spacing_mut().scroll;
-        scroll.floating = true;
-        scroll.bar_width = 8.0;
-        scroll.floating_width = 2.0;
-        scroll.dormant_handle_opacity = 0.0;
-        scroll.dormant_background_opacity = 0.0;
-    }
+    child.spacing_mut().scroll.floating_allocated_width = 0.0;
     let mut area = egui::ScrollArea::vertical()
         .id_salt(Id::unique(("gelabber-settings-scroll", id)))
         .auto_shrink([false, false]);

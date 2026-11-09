@@ -4,7 +4,7 @@
 //! on pictures.
 
 use egui::epaint::{CircleShape, Shadow};
-use egui::{Color32, Painter, Pos2, Rect, Stroke, Ui, Vec2, pos2};
+use egui::{Color32, Painter, Pos2, Rect, Stroke, StrokeKind, Ui, Vec2, pos2};
 
 use crate::icons::{self, Icon};
 use crate::images::Images;
@@ -41,27 +41,54 @@ pub fn glow_opacity(ui: &Ui) -> f32 {
 
 /// The ring and glow around a speaking avatar circle in `rect`: a 2px
 /// ring, then a 4px ring at 30 % and an 8px blur spread 4 at 45 %, both
-/// breathing.
+/// breathing. Drawn before the avatar, which covers their inner edges.
 pub fn speaking_ring(ui: &Ui, painter: &Painter, rect: Rect, own_ring: bool) {
     let theme = Theme::of(ui.ctx());
     let speaking = theme.c.speaking;
     let r = rect.width() / 2.0;
     let opacity = glow_opacity(ui);
-    if own_ring {
-        painter.circle_stroke(rect.center(), r + 1.0, Stroke::new(2.0, speaking));
-    }
+    // CSS blurs with a Gaussian of σ = blur / 2; egui's blur is a linear
+    // ramp, which spreads as far at about 14px for the web's 8px.
     let glow = Shadow {
         offset: [0, 0],
-        blur: 8,
+        blur: 14,
         spread: 4,
         color: speaking.gamma_multiply(0.45 * opacity),
     };
     painter.add(glow.as_shape(rect, corner(r)));
+    // A circle's stroke lies outside its radius. Both rings start a pixel
+    // under the avatar: from its very edge they would leave a dark seam.
     painter.add(CircleShape::stroke(
         rect.center(),
-        r + 2.0,
-        Stroke::new(4.0, speaking.gamma_multiply(0.30 * opacity)),
+        r - 1.0,
+        Stroke::new(5.0, speaking.gamma_multiply(0.30 * opacity)),
     ));
+    if own_ring {
+        painter.circle_stroke(rect.center(), r - 1.0, Stroke::new(3.0, speaking));
+    }
+}
+
+/// The edge of a speaking picture (`.voice-video-tile.is-speaking`): an
+/// inset 22px glow spread 6 at 50 %, breathing, under a 3px inset ring.
+/// No avatar shows on a picture, so this edge is its speaking cue.
+pub fn picture_speaking_edge(ui: &Ui, painter: &Painter, rect: Rect, radius: f32) {
+    let speaking = Theme::of(ui.ctx()).c.speaking;
+    let t = glow_opacity(ui);
+    for i in 0..6 {
+        let a = 0.5 * t * (1.0 - i as f32 / 6.0) * 0.35;
+        painter.rect_stroke(
+            rect.shrink(3.0 + i as f32 * 3.0),
+            corner((radius - 3.0 - i as f32 * 3.0).max(0.0)),
+            Stroke::new(3.0, speaking.gamma_multiply(a)),
+            StrokeKind::Inside,
+        );
+    }
+    painter.rect_stroke(
+        rect,
+        corner(radius),
+        Stroke::new(3.0, speaking),
+        StrokeKind::Inside,
+    );
 }
 
 /// An avatar circle: picture or initials (`font` px) on the person's
