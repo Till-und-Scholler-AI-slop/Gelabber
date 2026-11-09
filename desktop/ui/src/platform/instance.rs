@@ -1,18 +1,21 @@
 //! One app per user: a second start tells the running one to show its
 //! window (it may sit hidden in the tray) and ends before it opens one, as
 //! tauri-plugin-single-instance does for the Tauri app. A Unix socket in the
-//! runtime directory on Unix, a loopback port with a secret on Windows.
+//! runtime directory on Unix, a loopback port with a secret on Windows
+//! (where a named mutex tells that an app runs).
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{Read, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
 const SHOW: &str = "show";
 const ANSWER: &str = "ok";
 const WAIT: Duration = Duration::from_secs(2);
+/// Longer than any line of ours (`show` and a 32-digit secret).
+const MAX_LINE: usize = 64;
 
 type Wake = Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>;
 
@@ -67,27 +70,88 @@ impl Drop for Instance {
     }
 }
 
+/// A stream whose reads can be given a timeout.
+trait Timed: Read + Write {
+    fn set_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()>;
+}
+
+impl Timed for std::net::TcpStream {
+    fn set_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        self.set_read_timeout(timeout)?;
+        self.set_write_timeout(timeout)
+    }
+}
+
+#[cfg(unix)]
+impl Timed for std::os::unix::net::UnixStream {
+    fn set_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        self.set_read_timeout(timeout)?;
+        self.set_write_timeout(timeout)
+    }
+}
+
+/// One line of at most [`MAX_LINE`] bytes, whole before `deadline`: the
+/// timeout covers the line, not each read, so trickled bytes cannot hold it.
+fn read_line<S: Timed>(stream: &mut S, deadline: Instant) -> Option<String> {
+    let mut line = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        let left = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|d| !d.is_zero())?;
+        stream.set_timeout(Some(left)).ok()?;
+        match stream.read(&mut byte) {
+            Ok(0) => return None,
+            Ok(_) if byte[0] == b'\n' => return String::from_utf8(line).ok(),
+            Ok(_) if line.len() >= MAX_LINE => return None,
+            Ok(_) => line.push(byte[0]),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => return None,
+        }
+    }
+}
+
 /// A line from a second start; answers and wakes on `expect`.
-fn serve<S: std::io::Read + Write>(stream: S, expect: &str, show: &AtomicBool, wake: &Wake) {
-    let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    if reader.read_line(&mut line).is_ok() && line.trim_end() == expect {
+fn serve<S: Timed>(mut stream: S, expect: &str, show: &AtomicBool, wake: &Wake) {
+    let line = read_line(&mut stream, Instant::now() + WAIT);
+    if line.as_deref().map(str::trim_end) == Some(expect) {
         show.store(true, Ordering::Release);
-        let _ = writeln!(reader.get_mut(), "{ANSWER}");
+        let _ = writeln!(stream, "{ANSWER}");
         if let Some(wake) = wake.lock().clone() {
             wake();
         }
     }
 }
 
+/// Each connection on a thread of its own: a slow one keeps no other out.
+fn serve_all<S: Timed + Send + 'static>(
+    incoming: impl Iterator<Item = std::io::Result<S>>,
+    expect: String,
+    show: Arc<AtomicBool>,
+    wake: Wake,
+) {
+    let expect: Arc<str> = expect.into();
+    for stream in incoming.flatten() {
+        let (expect, show, wake) = (expect.clone(), show.clone(), wake.clone());
+        let spawned = std::thread::Builder::new()
+            .name("gelabber-instance-ask".into())
+            .spawn(move || serve(stream, &expect, &show, &wake));
+        if let Err(e) = spawned {
+            tracing::warn!("single instance: {e}");
+        }
+    }
+}
+
 /// Sends the request; true when a running app answered.
-fn ask<S: std::io::Read + Write>(stream: S, line: &str) -> bool {
-    let mut reader = BufReader::new(stream);
-    if writeln!(reader.get_mut(), "{line}").is_err() {
+fn ask<S: Timed>(mut stream: S, line: &str) -> bool {
+    let deadline = Instant::now() + WAIT;
+    if stream.set_timeout(Some(WAIT)).is_err() || writeln!(stream, "{line}").is_err() {
         return false;
     }
-    let mut answer = String::new();
-    reader.read_line(&mut answer).is_ok() && answer.trim_end() == ANSWER
+    read_line(&mut stream, deadline)
+        .as_deref()
+        .map(str::trim_end)
+        == Some(ANSWER)
 }
 
 /// The socket's name: per user, and per config directory so separate
@@ -99,12 +163,20 @@ fn name() -> String {
     format!("gelabber-{:016x}", hasher.finish())
 }
 
+/// In the runtime directory, else the config directory: both the user's
+/// own, unlike a fixed name in /tmp that another user could take first.
 #[cfg(unix)]
 pub fn claim() -> Claim {
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
         .map(std::path::PathBuf::from)
-        .filter(|d| d.is_dir())
-        .unwrap_or_else(std::env::temp_dir);
+        .filter(|d| d.is_absolute() && d.is_dir())
+        .or_else(super::paths::config_dir);
+    let Some(dir) = dir else {
+        return unguarded(std::io::Error::other("no runtime or config directory"));
+    };
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return unguarded(e);
+    }
     claim_at(&dir.join(format!("{}.sock", name())))
 }
 
@@ -115,15 +187,20 @@ fn claim_at(path: &std::path::Path) -> Claim {
     let listener = match listen(path) {
         Ok(l) => l,
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-            if let Ok(stream) = UnixStream::connect(path) {
-                let _ = stream.set_read_timeout(Some(WAIT));
-                let _ = stream.set_write_timeout(Some(WAIT));
-                if ask(stream, SHOW) {
-                    return Claim::Running;
+            match UnixStream::connect(path) {
+                Ok(stream) => {
+                    if ask(stream, SHOW) {
+                        return Claim::Running;
+                    }
+                    // An app listens but does not answer: its socket stays.
+                    return unguarded(std::io::Error::other("the running app does not answer"));
                 }
+                // Left by an app that ended without cleaning up.
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+                    let _ = std::fs::remove_file(path);
+                }
+                Err(e) => return unguarded(e),
             }
-            // Left by an app that ended without cleaning up.
-            let _ = std::fs::remove_file(path);
             match listen(path) {
                 Ok(l) => l,
                 Err(e) => return unguarded(e),
@@ -140,12 +217,7 @@ fn claim_at(path: &std::path::Path) -> Claim {
     instance.path = path.to_owned();
     let spawned = std::thread::Builder::new()
         .name("gelabber-instance".into())
-        .spawn(move || {
-            for stream in listener.incoming().flatten() {
-                let _ = stream.set_read_timeout(Some(WAIT));
-                serve(stream, SHOW, &show, &wake);
-            }
-        });
+        .spawn(move || serve_all(listener.incoming(), SHOW.into(), show, wake));
     if let Err(e) = spawned {
         tracing::warn!("single instance: {e}");
     }
@@ -155,17 +227,29 @@ fn claim_at(path: &std::path::Path) -> Claim {
 /// The secret a second start sends: kept in the config directory.
 #[cfg(any(windows, test))]
 fn claim_tcp(file: &std::path::Path) -> Claim {
-    use std::net::{Ipv4Addr, TcpListener, TcpStream};
+    if ask_tcp(file) {
+        return Claim::Running;
+    }
+    listen_tcp(file)
+}
+
+/// Asks the app whose port and secret `file` holds to show itself.
+#[cfg(any(windows, test))]
+fn ask_tcp(file: &std::path::Path) -> bool {
+    use std::net::{Ipv4Addr, TcpStream};
     if let Ok(text) = std::fs::read_to_string(file)
         && let Some((port, secret)) = text.trim().split_once(' ')
         && let Ok(port) = port.parse::<u16>()
         && let Ok(stream) = TcpStream::connect_timeout(&(Ipv4Addr::LOCALHOST, port).into(), WAIT)
     {
-        let _ = stream.set_read_timeout(Some(WAIT));
-        if ask(stream, &format!("{SHOW} {secret}")) {
-            return Claim::Running;
-        }
+        return ask(stream, &format!("{SHOW} {secret}"));
     }
+    false
+}
+
+#[cfg(any(windows, test))]
+fn listen_tcp(file: &std::path::Path) -> Claim {
+    use std::net::{Ipv4Addr, TcpListener};
     let listener = match TcpListener::bind((Ipv4Addr::LOCALHOST, 0)) {
         Ok(l) => l,
         Err(e) => return unguarded(e),
@@ -181,24 +265,49 @@ fn claim_tcp(file: &std::path::Path) -> Claim {
     let expect = format!("{SHOW} {secret}");
     let spawned = std::thread::Builder::new()
         .name("gelabber-instance".into())
-        .spawn(move || {
-            for stream in listener.incoming().flatten() {
-                let _ = stream.set_read_timeout(Some(WAIT));
-                serve(stream, &expect, &show, &wake);
-            }
-        });
+        .spawn(move || serve_all(listener.incoming(), expect, show, wake));
     if let Err(e) = spawned {
         tracing::warn!("single instance: {e}");
     }
     Claim::First(instance)
 }
 
+/// The named mutex decides whether an app runs, the port only carries
+/// "show": an app that is slow to answer does not get a second one beside it.
 #[cfg(windows)]
 pub fn claim() -> Claim {
-    match super::paths::file(&format!("{}.instance", name())) {
-        Some(file) => claim_tcp(&file),
-        None => unguarded(std::io::Error::other("no config directory")),
+    let Some(file) = super::paths::file(&format!("{}.instance", name())) else {
+        return unguarded(std::io::Error::other("no config directory"));
+    };
+    match first_by_mutex(&name()) {
+        Ok(true) => listen_tcp(&file),
+        Ok(false) => {
+            if !ask_tcp(&file) {
+                tracing::warn!("single instance: the running app does not answer");
+            }
+            Claim::Running
+        }
+        Err(e) => {
+            tracing::warn!("single instance: {e}");
+            claim_tcp(&file)
+        }
     }
+}
+
+/// Creates the session's named mutex; true when no app held it. Its handle
+/// is never closed: the mutex lives as long as this process.
+#[cfg(windows)]
+fn first_by_mutex(name: &str) -> std::io::Result<bool> {
+    use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+    use windows_sys::Win32::System::Threading::CreateMutexW;
+    let wide: Vec<u16> = format!("Local\\{name}").encode_utf16().chain([0]).collect();
+    // SAFETY: a NUL-terminated name that outlives the call; no attributes.
+    let handle = unsafe { CreateMutexW(std::ptr::null(), 0, wide.as_ptr()) };
+    if handle.is_null() {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: reads this thread's last error, set by CreateMutexW.
+    Ok(unsafe { GetLastError() } != ERROR_ALREADY_EXISTS)
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -274,5 +383,81 @@ mod tests {
         assert!(!ask(stream, "show nope"));
         assert!(!first.take_show());
         let _ = std::fs::remove_file(&file);
+    }
+
+    /// Anyone on the machine reaches the loopback port: a client that
+    /// trickles bytes without a line end must not keep a second start out.
+    #[test]
+    fn a_client_that_never_ends_its_line_keeps_nobody_out() {
+        let file = std::env::temp_dir().join(format!(
+            "gelabber-test-{}.instance",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let Claim::First(first) = claim_tcp(&file) else {
+            panic!("nothing runs yet");
+        };
+        let text = std::fs::read_to_string(&file).unwrap();
+        let port: u16 = text.split(' ').next().unwrap().parse().unwrap();
+        let done = Arc::new(AtomicBool::new(false));
+        let stop = done.clone();
+        let trickle = std::thread::spawn(move || {
+            let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            while !stop.load(Ordering::Acquire) {
+                if stream.write_all(b"x").is_err() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+        std::thread::sleep(Duration::from_millis(200));
+        let start = std::time::Instant::now();
+        assert!(matches!(claim_tcp(&file), Claim::Running));
+        assert!(start.elapsed() < WAIT);
+        assert!(wait_for(&first));
+        done.store(true, Ordering::Release);
+        trickle.join().unwrap();
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn a_line_is_read_whole_before_the_deadline_or_not_at_all() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let writer = std::thread::spawn(move || {
+            let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            for _ in 0..40 {
+                if stream.write_all(b"x").is_err() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        });
+        let (mut stream, _) = listener.accept().unwrap();
+        let start = std::time::Instant::now();
+        let deadline = start + Duration::from_millis(300);
+        assert_eq!(read_line(&mut stream, deadline), None);
+        assert!(start.elapsed() < Duration::from_millis(600));
+        writer.join().unwrap();
+    }
+
+    /// Only a socket nobody listens on is stale; one whose app is slow to
+    /// answer stays, and this start runs without the guard.
+    #[cfg(unix)]
+    #[test]
+    fn a_socket_that_does_not_answer_is_not_taken_over() {
+        let path = std::env::temp_dir().join(format!(
+            "gelabber-test-{}.sock",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let busy = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let Claim::First(second) = claim_at(&path) else {
+            panic!("nobody answered");
+        };
+        assert!(second.path.as_os_str().is_empty(), "no socket of its own");
+        drop(second);
+        // The first app's socket is still its own.
+        assert!(std::os::unix::net::UnixStream::connect(&path).is_ok());
+        drop(busy);
+        let _ = std::fs::remove_file(&path);
     }
 }
