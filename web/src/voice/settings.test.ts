@@ -174,6 +174,65 @@ describe("capture and explicit bandwidth preferences", () => {
     });
     expect(audioBitrate()).toBe(24000);
   });
+  it("does not restore a corrupted entry's values or unknown keys", async () => {
+    const storage = useMediaSettings.persist.getOptions().storage!;
+    await storage.setItem("gelabber.media", {
+      state: {
+        inputGain: 50,
+        audioInputId: 7,
+        audioOutputId: null,
+        videoInputId: { id: "cam" },
+        echoCancellation: "no",
+        noiseSuppression: 0,
+        autoGainControl: "yes",
+        messageToasts: "off",
+        desktopNotify: 1,
+        injected: "value",
+      } as never,
+    });
+    await useMediaSettings.persist.rehydrate();
+    const state = useMediaSettings.getState();
+    expect(state).toMatchObject({
+      inputGain: 2,
+      audioInputId: DEFAULT_MEDIA_SETTINGS.audioInputId,
+      audioOutputId: DEFAULT_MEDIA_SETTINGS.audioOutputId,
+      videoInputId: DEFAULT_MEDIA_SETTINGS.videoInputId,
+      echoCancellation: DEFAULT_MEDIA_SETTINGS.echoCancellation,
+      noiseSuppression: DEFAULT_MEDIA_SETTINGS.noiseSuppression,
+      autoGainControl: DEFAULT_MEDIA_SETTINGS.autoGainControl,
+      messageToasts: DEFAULT_MEDIA_SETTINGS.messageToasts,
+      desktopNotify: DEFAULT_MEDIA_SETTINGS.desktopNotify,
+    });
+    expect(state).not.toHaveProperty("injected");
+  });
+  it("restores valid devices, filters and notices", async () => {
+    const storage = useMediaSettings.persist.getOptions().storage!;
+    await storage.setItem("gelabber.media", {
+      state: {
+        inputGain: 1.5,
+        audioInputId: "mic",
+        audioOutputId: "speaker",
+        videoInputId: "cam",
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        messageToasts: false,
+        desktopNotify: true,
+      } as never,
+    });
+    await useMediaSettings.persist.rehydrate();
+    expect(useMediaSettings.getState()).toMatchObject({
+      inputGain: 1.5,
+      audioInputId: "mic",
+      audioOutputId: "speaker",
+      videoInputId: "cam",
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      messageToasts: false,
+      desktopNotify: true,
+    });
+  });
   it("persists the new modes and independent playback/call-sound choices", async () => {
     useMediaSettings.getState().patch({
       processingMode: "original",

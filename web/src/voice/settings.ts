@@ -550,9 +550,35 @@ export const useMediaSettings = create<MediaSettingsState>()(
         // for such a client and is not part of the settings here.
         const { shareSourceAudio: sharedBefore, ...stored } =
           persisted as Partial<MediaSettings> & { shareSourceAudio?: unknown };
+        const text = (value: unknown, fallback: string) =>
+          typeof value === "string" ? value : fallback;
+        const flag = (value: unknown, fallback: boolean) =>
+          typeof value === "boolean" ? value : fallback;
+        // Every field is read on its own: a hand-edited or corrupted entry,
+        // or a key this version does not know, does not reach the store.
         return {
           ...current,
-          ...stored,
+          audioInputId: text(stored.audioInputId, current.audioInputId),
+          audioOutputId: text(stored.audioOutputId, current.audioOutputId),
+          videoInputId: text(stored.videoInputId, current.videoInputId),
+          echoCancellation: flag(
+            stored.echoCancellation,
+            current.echoCancellation,
+          ),
+          noiseSuppression: flag(
+            stored.noiseSuppression,
+            current.noiseSuppression,
+          ),
+          autoGainControl: flag(
+            stored.autoGainControl,
+            current.autoGainControl,
+          ),
+          inputGain:
+            typeof stored.inputGain === "number"
+              ? clampGain(stored.inputGain)
+              : current.inputGain,
+          messageToasts: flag(stored.messageToasts, current.messageToasts),
+          desktopNotify: flag(stored.desktopNotify, current.desktopNotify),
           quality: asQuality(stored.quality),
           processingMode:
             "processingMode" in stored
