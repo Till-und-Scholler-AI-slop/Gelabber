@@ -669,8 +669,9 @@ impl Task {
         }
     }
 
-    /// A frame this client cannot read: logged, and its topic recovered
-    /// over REST as after a `gap`, since it may have been an event.
+    /// A frame this client cannot read: logged; a sequenced event's topic
+    /// is recovered over REST as after a `gap`. Other frames (typing,
+    /// presence, voice) are only skipped: a round each would be too many.
     fn on_undecodable(&self, text: &str, error: &serde_json::Error) {
         let topic = undecodable_topic(text);
         tracing::warn!(%error, ?topic, "gateway frame this client cannot read");
@@ -800,9 +801,13 @@ async fn connect(http: Http) -> Result<Socket, Failure> {
     }
 }
 
-/// The topic a frame names (`s`, `c`), read without its other fields.
+/// The topic of a sequenced event (`op: "e"`) read without its other
+/// fields; `None` for every other frame.
 fn undecodable_topic(text: &str) -> Option<Topic> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    if value.get("op")?.as_str()? != "e" {
+        return None;
+    }
     let id = |key: &str| value.get(key)?.as_str()?.parse::<Uuid>().ok();
     Some(Topic {
         s: id("s")?,
@@ -928,12 +933,16 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_frame_names_its_topic_for_a_gap() {
+    fn only_an_unreadable_event_names_its_topic_for_a_gap() {
         let bad = r#"{"op":"e","t":"c","s":"00000000-0000-0000-0000-000000000001","c":"00000000-0000-0000-0000-000000000002","n":"sieben"}"#;
         assert!(serde_json::from_str::<ServerFrame>(bad).is_err());
         let topic = undecodable_topic(bad).unwrap();
         assert_eq!(topic, Topic::channel(id(1), id(2)));
         assert_eq!(undecodable_topic(r#"{"op":"e","n":1}"#), None);
+        // Typing, presence, voice: no events, so no gap.
+        let typing = r#"{"op":"y","s":"00000000-0000-0000-0000-000000000001","c":"00000000-0000-0000-0000-000000000002","on":"ja"}"#;
+        assert!(serde_json::from_str::<ServerFrame>(typing).is_err());
+        assert_eq!(undecodable_topic(typing), None);
         assert_eq!(undecodable_topic("nicht json"), None);
         // As a gap: recovered over REST before the cursor moves on.
         let mut c = Cursors::default();
