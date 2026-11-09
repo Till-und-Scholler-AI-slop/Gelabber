@@ -955,8 +955,17 @@ impl Gateway {
                 }
             }
         }
-        // The replay log would otherwise keep the channel's last bodies.
-        self.connections
+        Ok(())
+    }
+
+    /// Drop a deleted channel's seq, replay log, epoch and delivery keys,
+    /// which would otherwise keep its last bodies. Call it after the delete,
+    /// which also removed the channel's queued outbox rows, has committed.
+    /// Best effort.
+    pub async fn drop_channel_log(&self, channel_id: Uuid) {
+        let topic = Topic::Channel(channel_id);
+        let dropped = self
+            .connections
             .with_conn(|mut conn| async move {
                 redis::cmd("DEL")
                     .arg(topic.seq_key())
@@ -966,9 +975,10 @@ impl Gateway {
                     .query_async::<()>(&mut conn)
                     .await
             })
-            .await
-            .map_err(redis_err)?;
-        Ok(())
+            .await;
+        if let Err(err) = dropped {
+            warn!(error = %err, %channel_id, "deleted channel's realtime keys not dropped");
+        }
     }
 
     pub fn ensure_subscriber(&self) {
@@ -1426,6 +1436,7 @@ mod resilience_tests {
             .await
             .unwrap();
         g.revoke_channel(s, c).await.unwrap();
+        g.drop_channel_log(c).await;
         let mut stops = Vec::new();
         {
             let mut messages = pubsub.on_message();

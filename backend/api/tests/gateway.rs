@@ -1650,6 +1650,84 @@ async fn resume_from_before_a_create_gets_the_current_create(pool: PgPool) {
     assert!(rows.iter().all(|r| r.1 == "d" && r.2.is_none()), "{rows:?}");
 }
 
+/// A deleted channel ends with no realtime keys, and no queued outbox row of
+/// it is left to bring them back.
+#[sqlx::test]
+async fn a_deleted_channel_keeps_no_realtime_keys(pool: PgPool) {
+    use gelabber_api::EventDraft;
+    use gelabber_api::gateway::{Topic, delivery};
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Gone").await;
+    let (s, c) = ids(&server);
+    let (_, state) = common::serve_ws(pool.clone()).await;
+    let posted = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{c}/messages"),
+            Some(json!({ "content": "letzte Worte" })),
+        )
+        .await;
+    assert_eq!(posted.status, StatusCode::CREATED, "{}", posted.body);
+    let _ = delivery::deliver_pending(&state, 32).await;
+    let topic = Topic::Channel(c);
+    let mut redis = state
+        .redis
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let keys = |redis: &mut redis::aio::MultiplexedConnection| {
+        let mut redis = redis.clone();
+        async move {
+            redis::cmd("EXISTS")
+                .arg(topic.seq_key())
+                .arg(topic.log_key())
+                .arg(topic.epoch_key())
+                .arg(topic.delivery_key())
+                .query_async::<i64>(&mut redis)
+                .await
+                .unwrap()
+        }
+    };
+    assert!(keys(&mut redis).await > 0, "the message reached the log");
+
+    // A row of the channel still queued at the delete (the outbox has no
+    // foreign key), held back so no worker delivers it first.
+    let mut tx = pool.begin().await.unwrap();
+    let id = delivery::revision(&mut tx).await.unwrap();
+    delivery::enqueue(
+        &mut tx,
+        id,
+        EventDraft {
+            kind: EventKind::E,
+            server_id: s,
+            channel_id: Some(c),
+            entity_id: Some(Uuid::new_v4()),
+            delta: Some(json!({ "b": "noch da" })),
+        },
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE gateway_outbox SET next_attempt = now() + interval '1 hour' WHERE id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let deleted = owner
+        .send(Method::DELETE, &format!("/api/channels/{c}"), None)
+        .await;
+    assert_eq!(deleted.status, StatusCode::NO_CONTENT, "{}", deleted.body);
+    assert_eq!(keys(&mut redis).await, 0);
+    let queued: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM gateway_outbox WHERE channel_id = $1")
+            .bind(c)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(queued, 0, "the delete drops the channel's queued rows");
+}
+
 /// An edit or a delete leaves no earlier body of that message in the replay
 /// log: its entries become copies of the newest event under their own `n`,
 /// so a resume still replays a contiguous run.
