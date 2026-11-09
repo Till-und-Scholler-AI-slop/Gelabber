@@ -353,6 +353,8 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
     {
         chat.panes.insert(channel, PaneState::default());
         chat.contexts.remove(&channel);
+        // So do the search and its hits.
+        chat.searches.remove(&channel);
         // The composer's pickers close with the page that had them, as on
         // the web (a route change, back with Alt+←); the draft stays.
         if let Some(composer) = chat.composers.get_mut(&channel) {
@@ -380,6 +382,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
 
     // Header.
     let search_state = chat.searches.entry(channel).or_default();
+    search_state.settle();
     let title = match &conv.peer {
         Some((name, avatar, presence)) => header::Title::Dm {
             name,
