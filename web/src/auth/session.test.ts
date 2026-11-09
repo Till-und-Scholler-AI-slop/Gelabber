@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, getCsrfToken } from "../api/client.ts";
+import {
+  ApiError,
+  api,
+  getCsrfToken,
+  resetSharedSessionForTests,
+  synchronizeSharedSession,
+} from "../api/client.ts";
+import { scopeGeneration } from "./scope.ts";
 import {
   changePassword,
   claimProfileWrite,
@@ -535,6 +542,87 @@ describe("session store", () => {
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).fields).toEqual({ avatar_url: "invalid" });
     expect(useSession.getState().user).toEqual(ada);
+  });
+});
+
+describe("password change across tabs", () => {
+  const FENCE = "gelabber:auth-generation";
+  let storage: Map<string, string>;
+  beforeEach(() => {
+    resetSharedSessionForTests();
+    resetSessionForTests();
+    storage = new Map();
+    vi.stubGlobal(
+      "window",
+      Object.assign(new EventTarget(), {
+        localStorage: {
+          getItem: (key: string) => storage.get(key) ?? null,
+          setItem: (key: string, value: string) => void storage.set(key, value),
+          removeItem: (key: string) => void storage.delete(key),
+        },
+      }),
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetSharedSessionForTests();
+  });
+
+  it("a wrong current password leaves this tab signed in for its next request", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "POST /api/auth/password": () =>
+        json(422, {
+          error: "validation_failed",
+          message: "Some fields are invalid.",
+          fields: { current_password: "wrong" },
+        }),
+      "GET /api/servers": () => json(200, []),
+    });
+    await login("ada@example.com", "password123");
+    const generation = scopeGeneration();
+
+    await expect(
+      changePassword("nope", "battery staple"),
+    ).rejects.toMatchObject({ code: "validation_failed" });
+    // The unread poll, a few seconds later.
+    await expect(api("/servers")).resolves.toEqual([]);
+    expect(useSession.getState()).toEqual({
+      status: "authenticated",
+      user: ada,
+    });
+    expect(scopeGeneration()).toBe(generation);
+  });
+
+  it("another tab's password change keeps this tab's account", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+    });
+    await login("ada@example.com", "password123");
+    const generation = scopeGeneration();
+    const other = (state: object) => {
+      storage.set(FENCE, JSON.stringify(state));
+      synchronizeSharedSession();
+    };
+
+    const change = {
+      generation: "g-change",
+      userId: ada.id,
+      keepsAccount: true,
+    };
+    other({ ...change, phase: "changing" });
+    expect(useSession.getState().status).toBe("authenticated");
+    other({ ...change, phase: "settled" });
+    expect(useSession.getState()).toEqual({
+      status: "authenticated",
+      user: ada,
+    });
+    expect(scopeGeneration()).toBe(generation);
+
+    // A sign-in, even as the same user, still releases the account.
+    other({ generation: "g-again", phase: "changing", userId: ada.id });
+    expect(useSession.getState().status).toBe("unknown");
+    expect(scopeGeneration()).not.toBe(generation);
   });
 });
 

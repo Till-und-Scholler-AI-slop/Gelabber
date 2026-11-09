@@ -105,6 +105,8 @@ type CookieState = {
   generation: string;
   phase: "changing" | "settled" | "unknown";
   userId: string | null;
+  /** A password change: the cookie changes, the signed-in account does not. */
+  keepsAccount?: true;
 };
 let observedCookieState = "";
 let adoptedCookieGeneration = "";
@@ -171,20 +173,35 @@ export function synchronizeSharedSession(): void {
   const state = readCookieState();
   if (!state && !observedCookieState) return;
   const fingerprint = cookieFingerprint(state);
-  const mismatched =
-    state?.phase !== "settled" || state?.userId !== sessionScope().userId;
+  const userId = sessionScope().userId;
+  // A password change: requests stamped before it turn stale, the account
+  // and its caches stay. A sign-in, even as the same user, still releases.
+  const sameAccount =
+    userId !== null &&
+    state?.keepsAccount === true &&
+    state.phase !== "unknown" &&
+    state.userId === userId;
+  const mismatched = state?.phase !== "settled" || state?.userId !== userId;
   if (fingerprint !== observedCookieState) {
     observedCookieState = fingerprint;
     adoptedCookieGeneration = state?.generation ?? "";
     csrfToken = null;
+    if (sameAccount) return;
     sessionSink?.(null, { force: true, shared: true, invalidate: true });
     scheduleReconciliation();
-  } else if (mismatched) {
+  } else if (mismatched && !sameAccount) {
     // An intent may have suppressed reconciliation when this generation was
     // first observed; the identity check also catches stamps taken too late.
     sessionSink?.(null, { shared: true, invalidate: true });
     scheduleReconciliation();
   }
+}
+
+/** Tests: forget the shared cookie state this module has seen. */
+export function resetSharedSessionForTests(): void {
+  observedCookieState = "";
+  adoptedCookieGeneration = "";
+  csrfToken = null;
 }
 
 export function setSessionReconciler(reconcile: () => Promise<void>): void {
@@ -398,6 +415,7 @@ async function performAuthApi<T>(
       generation: randomUuid(),
       phase: "changing",
       userId: previous?.userId ?? stamp.userId,
+      ...(path === "/auth/password" ? { keepsAccount: true as const } : {}),
     };
     publishCookieState(changing);
   }
@@ -410,7 +428,21 @@ async function performAuthApi<T>(
     const logout = response.ok && isLogoutPath(path);
     const user = logout ? null : valid ? payload.user : undefined;
     if (user !== undefined) {
-      settleCookieIdentity(user?.id ?? null, changing?.generation);
+      settleCookieIdentity(
+        user?.id ?? null,
+        changing?.generation,
+        changing?.keepsAccount,
+      );
+    } else if (
+      changing &&
+      path === "/auth/password" &&
+      previous?.phase === "settled" &&
+      response.status >= 400 &&
+      response.status < 500 &&
+      response.status !== 401
+    ) {
+      // Refused (wrong current password, validation): nothing changed.
+      publishCookieState({ ...previous, keepsAccount: true });
     } else if (changing) {
       // A failed/timed-out response might still have committed on the server.
       // A subsequent authoritative bootstrap is required, never guess the uid.
@@ -436,6 +468,7 @@ async function performAuthApi<T>(
 function settleCookieIdentity(
   userId: string | null,
   generation?: string,
+  keepsAccount?: true,
 ): void {
   if (typeof window === "undefined") return;
   const previous = readCookieState();
@@ -447,6 +480,7 @@ function settleCookieIdentity(
         : randomUuid()),
     phase: "settled",
     userId,
+    ...(keepsAccount ? { keepsAccount } : {}),
   });
 }
 
