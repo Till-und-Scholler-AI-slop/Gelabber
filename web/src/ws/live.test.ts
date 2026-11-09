@@ -76,6 +76,14 @@ describe("typing store", () => {
     );
   });
 
+  it("leaves the store alone on a tick where nothing expires", () => {
+    applyTyping("ch", "u1", true, 1_000, 500);
+    const before = useTypingStore.getState();
+    pruneTyping(1_100);
+    pruneTyping(1_200);
+    expect(useTypingStore.getState()).toBe(before);
+  });
+
   it("formats German typing copy", () => {
     expect(formatTyping([])).toBe("");
     expect(formatTyping(["Ada"])).toBe("Ada tippt…");

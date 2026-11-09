@@ -125,7 +125,8 @@ export function pruneTyping(now: number): void {
       }
       byChannel[channelId] = next;
     }
-    return changed || state.now !== now ? { byChannel, now } : state;
+    // Only an expiry is news: a fresh state per tick re-rendered every reader.
+    return changed ? { byChannel, now } : state;
   });
 }
 
