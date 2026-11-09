@@ -6,6 +6,7 @@ use egui::{Color32, Id, Rect, Ui, Vec2, pos2};
 use uuid::Uuid;
 
 use super::common::{self, line, paint_mid};
+use super::row_menu::{self, Owner};
 use crate::app::AppCtx;
 use crate::icons::Icon;
 use crate::text::{self, Block};
@@ -99,14 +100,15 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
         .show(&mut child, |ui| {
             let (area, _) =
                 ui.allocate_exact_size(Vec2::new(list.width(), content_h), egui::Sense::hover());
-            // The list is one Tab stop; ↑ and ↓ move between conversations.
+            // The list is one Tab stop; ↑ and ↓ move between conversations,
+            // → to a row's "…".
             let nav: Vec<common::NavRow> = dms
                 .iter()
                 .map(|dm| {
                     let item = Id::unique(("dm-row", dm.id));
                     common::NavRow {
                         key: item,
-                        items: vec![item],
+                        items: vec![item, Id::unique(("dm-more", dm.id))],
                     }
                 })
                 .collect();
@@ -120,7 +122,14 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
                     Vec2::new(area.width() - 16.0, 44.0),
                 );
                 let item = Id::unique(("dm-row", dm.id));
-                let stop = roved.is_stop(i, 0) || ui.memory(|m| m.has_focus(item));
+                let more_id = Id::unique(("dm-more", dm.id));
+                let within = roved.has_focus_within(i);
+                // The "…" hides once focus leaves the row: Tab comes back to
+                // the link.
+                let stop = roved
+                    .stop
+                    .is_some_and(|(r, at)| r == i && (at == 0 || !within))
+                    || ui.memory(|m| m.has_focus(item));
                 if !ui.is_rect_visible(row) && !stop {
                     continue;
                 }
@@ -135,12 +144,11 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
                 response.widget_info(|| {
                     egui::WidgetInfo::labeled(egui::Role::Link, true, &dm.peer.name)
                 });
-                if response.secondary_clicked() {
-                    super::overlays::open_notifications(
-                        ui.ctx(),
-                        super::overlays::Target::dm(dm.id, dm.peer.name.clone()),
-                    );
+                let owner = || Owner::Dm(dm.id, dm.peer.name.clone());
+                if response.secondary_clicked() || row_menu::menu_key(ui, &response) {
+                    row_menu::open(ui.ctx(), owner(), row, Some(item));
                 }
+                let menu_open = row_menu::is_open_for(ui.ctx(), dm.id);
                 let is_active = active == Some(dm.id);
                 let (badge, muted, presence) = app.client.with_state(|s| {
                     (
@@ -150,7 +158,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
                     )
                 });
                 // Hover wins over active for DM rows (rule order).
-                let fill = if response.hovered() {
+                let lit = response.hovered() || ui.rect_contains_pointer(row) || menu_open;
+                let fill = if lit {
                     c.hover
                 } else if is_active {
                     c.selected
@@ -212,7 +221,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
                     mark.on_hover_text("Entwurf");
                     right = pencil.left() - 10.0;
                 }
-                let color = if response.hovered() || is_active || unread {
+                let color = if lit || is_active || unread {
                     c.text
                 } else {
                     c.muted
@@ -232,6 +241,36 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>) {
                 );
                 paint_mid(ui.painter(), &name, left, row.center().y);
                 common::focus_visible(ui, &response, row, theme.radius.md);
+                // `.sidebar-row-actions`: "…" over the row's end in its fill,
+                // only while in sight (hover, focus in the row, menu open).
+                if lit || within {
+                    let actions = Rect::from_min_max(
+                        pos2(row.right() - 3.0 - 6.0 - 26.0, row.center().y - 13.0),
+                        pos2(row.right() - 3.0, row.center().y + 13.0),
+                    );
+                    ui.painter()
+                        .rect_filled(actions, crate::theme::corner(theme.radius.md), fill);
+                    let more = Rect::from_min_size(
+                        pos2(actions.left() + 6.0, actions.top()),
+                        Vec2::splat(26.0),
+                    );
+                    let more_stop =
+                        roved.is_stop(i, 1) && within || ui.memory(|m| m.has_focus(more_id));
+                    let label = format!("Aktionen für {}", dm.peer.name);
+                    let pressed = super::channel_sidebar::shell_icon_button_stop(
+                        ui,
+                        more,
+                        Icon::More,
+                        14.0,
+                        &label,
+                        more_id,
+                        more_stop,
+                    );
+                    if pressed.clicked() || row_menu::menu_key(ui, &pressed) {
+                        row_menu::open(ui.ctx(), owner(), more, Some(more_id));
+                        continue;
+                    }
+                }
                 if response.clicked() {
                     app.nav.navigate(&format!("/d/{}", dm.id));
                 }

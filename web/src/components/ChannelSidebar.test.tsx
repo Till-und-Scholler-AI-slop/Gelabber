@@ -139,7 +139,6 @@ function row({
       stop
       hintId={undefined}
       onEdit={noop}
-      onDelete={noop}
       onMenu={noop}
     />,
   );
@@ -219,27 +218,37 @@ describe("channel row", () => {
     expect(html).not.toContain("Entwurf");
   });
 
-  it("shows edit and delete beside the row for a mouse", () => {
+  it("shows edit and the menu beside the row for a mouse, named by the channel", () => {
     const html = row({ coarse: false });
-    expect(html).toContain('aria-label="Kanal bearbeiten"');
-    expect(html).toContain('aria-label="Kanal löschen"');
-    expect(html).not.toContain("Aktionen für");
+    expect(html).toContain('aria-label="#termine bearbeiten"');
+    expect(html).toMatch(
+      /aria-label="Aktionen für #termine" aria-haspopup="menu" aria-expanded="false"/,
+    );
+    // Deleting is in the menu only.
+    expect(html).not.toContain("löschen");
+    // The link is the row's way in; the actions take no Tab stop.
+    expect(html.match(/tabindex="0"/g)).toHaveLength(1);
+    expect(html).toMatch(/<a [^>]*tabindex="0"/);
   });
 
   it("opens the actions by a long press on a touch screen", () => {
     const html = row({ coarse: true });
-    expect(html).not.toContain('aria-label="Kanal bearbeiten"');
-    expect(html).not.toContain('aria-label="Kanal löschen"');
+    expect(html).not.toContain("bearbeiten");
     // One button stays for screen readers, shown once a keyboard reaches it.
     expect(html).toMatch(
       /<span class="sr-only focus-within:not-sr-only"><button [^>]*aria-label="Aktionen für #termine"/,
     );
   });
 
-  it("has no actions for members who cannot manage channels", () => {
-    const html = row({ coarse: true, manage: false });
+  it("gives members the menu of a text channel, without edit", () => {
+    const html = row({ coarse: false, manage: false });
+    expect(html).toContain('aria-label="Aktionen für #termine"');
+    expect(html).not.toContain("bearbeiten");
+  });
+
+  it("has no actions on a voice channel for members", () => {
+    const html = row({ coarse: false, manage: false, voice: true });
     expect(html).not.toContain("Aktionen für");
-    expect(html).not.toContain("Kanal löschen");
   });
 });
 

@@ -72,3 +72,37 @@ export function popoverOrigin(
   const below = position.top >= screenAnchor.bottom / zoom;
   return `${Math.round(x)}px ${below ? 0 : size.height}px`;
 }
+
+const SUBMENU_GAP = 4;
+
+/**
+ * Where a submenu goes: beside its menu, right if it fits there, else
+ * left, with its first entry level with the entry that opened it (`inset`
+ * is the submenu's padding and border). Arguments as for
+ * `popoverPosition`; `menu` is the open menu's box, `entry` the opening
+ * entry's.
+ */
+export function submenuPosition(
+  screenMenu: Box,
+  screenEntry: Box,
+  size: { width: number; height: number },
+  screenViewport: { width: number; height: number },
+  inset: number,
+  zoom = 1,
+): { top: number; left: number } {
+  const viewport = {
+    width: screenViewport.width / zoom,
+    height: screenViewport.height / zoom,
+  };
+  const right = screenMenu.right / zoom + SUBMENU_GAP;
+  const left =
+    right + size.width <= viewport.width - MARGIN
+      ? right
+      : screenMenu.left / zoom - SUBMENU_GAP - size.width;
+  const clamp = (value: number, max: number) =>
+    Math.max(MARGIN, Math.min(value, max - MARGIN));
+  return {
+    top: clamp(screenEntry.top / zoom - inset, viewport.height - size.height),
+    left: clamp(left, viewport.width - size.width),
+  };
+}

@@ -1,8 +1,5 @@
 {
-  "size": [
-    1280,
-    800
-  ],
+  "size": [1280, 800],
   "scenes": [
     {
       "name": "login",
@@ -318,16 +315,101 @@
       "actions": [
         {
           "rightclick": "Wohnzimmer"
+        },
+        {
+          "menuitem": "Benachrichtigungseinstellungen…"
         }
       ]
     },
     {
-      "name": "notify-all-dms",
+      "name": "row-menu-home",
       "path": "/s/{home}",
       "user": "lena",
       "actions": [
         {
           "rightclick": "Direktnachrichten"
+        }
+      ]
+    },
+    {
+      "name": "channel-row-hover",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "hover": "spiele"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-channel",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "/^spiele/"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-keys",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "/^spiele/"
+        },
+        {
+          "key": "ArrowDown"
+        },
+        {
+          "key": "ArrowRight"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-level",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "/^spiele/"
+        },
+        {
+          "hover": "Benachrichtigungen"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-server",
+      "path": "/s/{home}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "Wohnzimmer"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-dm",
+      "path": "/d/{dm}",
+      "user": "lena",
+      "actions": [
+        {
+          "hover": "Jonas"
+        },
+        {
+          "click": "Aktionen für Jonas"
+        }
+      ]
+    },
+    {
+      "name": "row-menu-member",
+      "path": "/s/{evening}",
+      "user": "lena",
+      "actions": [
+        {
+          "rightclick": "allgemein"
         }
       ]
     },
@@ -773,7 +855,10 @@
       "user": "lena",
       "actions": [
         {
-          "click": "Kanal bearbeiten"
+          "hover": "spiele"
+        },
+        {
+          "click": "#spiele bearbeiten"
         }
       ]
     },
@@ -783,7 +868,10 @@
       "user": "lena",
       "actions": [
         {
-          "click": "Kanal löschen"
+          "rightclick": "/^spiele/"
+        },
+        {
+          "menuitem": "Kanal löschen"
         }
       ]
     },
@@ -796,10 +884,36 @@
           "click": "Benachrichtigungen für #allgemein"
         },
         {
-          "clicktext": "Bis ich es wieder einschalte"
+          "click": "Bis ich es wieder einschalte"
         },
         {
           "wait": 500
+        }
+      ],
+      "after": "unmute lena allgemein"
+    },
+    {
+      "name": "row-menu-muted",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "actions": [
+        {
+          "click": "Benachrichtigungen für #allgemein"
+        },
+        {
+          "click": "Bis ich es wieder einschalte"
+        },
+        {
+          "wait": 500
+        },
+        {
+          "click": "Fertig"
+        },
+        {
+          "wait": 300
+        },
+        {
+          "rightclick": "/^allgemein/"
         }
       ],
       "after": "unmute lena allgemein"
@@ -1597,14 +1711,7 @@
           "wait": 3000
         }
       ],
-      "mask": [
-        [
-          312,
-          116,
-          944,
-          554
-        ]
-      ]
+      "mask": [[312, 116, 944, 554]]
     },
     {
       "name": "voice-fullscreen",

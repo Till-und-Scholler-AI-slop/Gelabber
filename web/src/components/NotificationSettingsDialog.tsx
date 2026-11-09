@@ -1,54 +1,26 @@
 // Notification level and mute of a server, a channel or a DM (issue #242),
-// opened by a right-click (a long press on phones) on its entry or by the
-// bell in its header. Every choice is saved at once.
+// opened by the bell in its header or from its row menu (RowMenu.tsx),
+// which has the quick choices. Every choice is saved at once.
 import { useState } from "react";
 
 import { ApiError } from "../api/client.ts";
-import {
-  settingOf,
-  useChangeNotificationSetting,
-  useMuteClock,
-  useNotificationSettings,
-  type SettingChange,
-} from "../messages/notificationSettings.ts";
-import { isMuted, type NotifyLevel } from "../messages/notifyLevel.ts";
-import { useMarkManyRead } from "../messages/readState.ts";
 import { BellIcon, BellOffIcon } from "./Icons.tsx";
 import { GhostButton, Modal } from "./Modal.tsx";
 import { Button } from "./ui/Button.tsx";
 import { RadioCard } from "./ui/RadioCard.tsx";
 import "./notificationSettings.css";
 import {
-  minutesUntil,
+  LEVELS,
+  MUTES,
+  levelName,
+  mutedLine,
+  useNotificationActions,
+} from "./notificationActions.ts";
+import {
   openNotificationSettings,
   useNotificationTarget,
   type NotificationTarget,
 } from "./notificationTarget.ts";
-
-const MUTES: { label: string; minutes?: number }[] = [
-  { label: "15 Minuten", minutes: 15 },
-  { label: "1 Stunde", minutes: 60 },
-  { label: "8 Stunden", minutes: 8 * 60 },
-  { label: "24 Stunden", minutes: 24 * 60 },
-  { label: "Bis ich es wieder einschalte" },
-];
-
-const LEVELS: { level: NotifyLevel; label: string; hint: string }[] = [
-  { level: "all", label: "Alle Nachrichten", hint: "Jede neue Nachricht" },
-  {
-    level: "mentions",
-    label: "Nur @Erwähnungen",
-    hint: "Wenn dich jemand erwähnt oder @everyone/@here schreibt",
-  },
-  {
-    level: "none",
-    label: "Nichts",
-    hint: "Keine Benachrichtigungen, kein Zähler",
-  },
-];
-
-const levelName = (level: NotifyLevel) =>
-  LEVELS.find((row) => row.level === level)!.label;
 
 export function NotificationSettingsHost() {
   const target = useNotificationTarget((state) => state.target);
@@ -61,16 +33,7 @@ export function NotificationSettingsHost() {
         target ? `Benachrichtigungen: ${target.name}` : "Benachrichtigungen"
       }
     >
-      {target?.allDms ? (
-        <div className="flex flex-col gap-5">
-          <MarkRead target={target} onDone={close} />
-          <div className="flex justify-end">
-            <GhostButton onClick={close} initialFocus>
-              Fertig
-            </GhostButton>
-          </div>
-        </div>
-      ) : target ? (
+      {target ? (
         <NotificationSettingsForm
           key={`${target.scope}:${target.id}`}
           target={target}
@@ -88,24 +51,15 @@ function NotificationSettingsForm({
   target: NotificationTarget;
   onDone: () => void;
 }) {
-  const { data: settings } = useNotificationSettings();
-  const change = useChangeNotificationSetting();
-  const now = useMuteClock();
+  const actions = useNotificationActions(target);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const own = settingOf(settings, target.scope, target.id);
-  const server = target.serverId
-    ? settingOf(settings, "server", target.serverId)
-    : null;
-  const muted = isMuted(own, now);
-  const serverMuted = server ? isMuted(server, now) : false;
-  const inherited: NotifyLevel = server?.level ?? "all";
 
-  const save = async (next: SettingChange) => {
+  const save = async (next: Promise<unknown>) => {
     setSaving(true);
     setError(null);
     try {
-      await change(target.scope, target.id, next);
+      await next;
     } catch (cause) {
       setError(
         cause instanceof ApiError && cause.status === 404
@@ -116,48 +70,45 @@ function NotificationSettingsForm({
       setSaving(false);
     }
   };
-  const level = own.level;
 
   return (
     <div className="notify-settings flex flex-col gap-5">
-      <MarkRead target={target} onDone={onDone} />
       <section aria-labelledby="notify-mute" className="flex flex-col gap-2">
         <h3 id="notify-mute" className="text-sm font-semibold">
           Stummschalten
         </h3>
-        {muted ? (
+        {actions.muted ? (
           <div className="notify-muted">
             <span className="inline-flex items-center gap-2">
               <BellOffIcon size={16} />
-              {own.muted_until
-                ? `Stumm bis ${formatUntil(own.muted_until)}`
-                : "Stumm, bis du es aufhebst"}
+              {mutedLine(actions.own.muted_until)}
             </span>
             <Button
               size="sm"
               disabled={saving}
-              onClick={() => void save({ level, muted: false })}
+              onClick={() => void save(actions.unmute())}
             >
               Aufheben
             </Button>
           </div>
         ) : (
-          <div className="notify-mute-grid">
+          // One row of chips: how long, in short; named in full.
+          <div
+            role="group"
+            aria-labelledby="notify-mute"
+            className="notify-mute-row"
+          >
             {MUTES.map((mute) => (
               <button
                 key={mute.label}
                 type="button"
                 disabled={saving}
+                title={mute.label}
+                aria-label={mute.label}
                 className="ui-chip"
-                onClick={() =>
-                  void save({
-                    level,
-                    muted: true,
-                    ...(mute.minutes ? { mute_minutes: mute.minutes } : {}),
-                  })
-                }
+                onClick={() => void save(actions.mute(mute.minutes))}
               >
-                {mute.label}
+                {mute.short}
               </button>
             ))}
           </div>
@@ -166,7 +117,7 @@ function NotificationSettingsForm({
           {target.dm
             ? "Stumm: kein Zähler, keine Benachrichtigung und kein Ton."
             : "Stumm: kein Punkt, keine Benachrichtigung und kein Ton. @Erwähnungen zählen weiter."}
-          {serverMuted ? " Der ganze Server ist gerade stumm." : ""}
+          {actions.serverMuted ? " Der ganze Server ist gerade stumm." : ""}
         </p>
       </section>
       {target.dm ? null : (
@@ -177,33 +128,19 @@ function NotificationSettingsForm({
           {target.serverId ? (
             <LevelOption
               name={target.id}
-              checked={level === null}
-              label={`Wie der Server (${levelName(inherited)})`}
-              onChange={() => void save({ level: null, muted: own.muted })}
+              checked={actions.isLevel(null)}
+              label={`Wie der Server (${levelName(actions.inherited)})`}
+              onChange={() => void save(actions.setLevel(null))}
             />
           ) : null}
           {LEVELS.map((row) => (
             <LevelOption
               key={row.level}
               name={target.id}
-              checked={
-                target.serverId
-                  ? level === row.level
-                  : (level ?? "all") === row.level
-              }
+              checked={actions.isLevel(row.level)}
               label={row.label}
               hint={row.hint}
-              onChange={() =>
-                void save({
-                  // A server at "all" needs no row of its own.
-                  level:
-                    !target.serverId && row.level === "all" ? null : row.level,
-                  muted: own.muted,
-                  ...(own.muted && own.muted_until
-                    ? { mute_minutes: minutesUntil(own.muted_until, now) }
-                    : {}),
-                })
-              }
+              onChange={() => void save(actions.setLevel(row.level))}
             />
           ))}
         </fieldset>
@@ -213,7 +150,8 @@ function NotificationSettingsForm({
           {error}
         </p>
       ) : null}
-      <div className="flex justify-end">
+      <div className="notify-footer">
+        <MarkRead target={target} onDone={onDone} />
         <GhostButton onClick={onDone} initialFocus>
           Fertig
         </GhostButton>
@@ -222,8 +160,8 @@ function NotificationSettingsForm({
   );
 }
 
-/** "Als gelesen markieren" (#245): the conversation, the whole server or
- * every direct message, then the dialog closes. */
+/** "Als gelesen markieren" (#245): the conversation or the whole server,
+ * then the dialog closes. */
 function MarkRead({
   target,
   onDone,
@@ -231,14 +169,9 @@ function MarkRead({
   target: NotificationTarget;
   onDone: () => void;
 }) {
-  const markRead = useMarkManyRead();
+  const { markRead } = useNotificationActions(target);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
-  const label = target.allDms
-    ? "Alle Direktnachrichten als gelesen markieren"
-    : target.scope === "server"
-      ? "Server als gelesen markieren"
-      : "Als gelesen markieren";
   return (
     <div className="flex flex-col gap-1">
       <Button
@@ -248,19 +181,13 @@ function MarkRead({
         onClick={() => {
           setBusy(true);
           setFailed(false);
-          markRead(
-            target.allDms
-              ? { all: "dms" }
-              : target.scope === "server"
-                ? { server: target.id }
-                : { channel: target.id },
-          )
+          markRead()
             .then(onDone)
             .catch(() => setFailed(true))
             .finally(() => setBusy(false));
         }}
       >
-        {label}
+        Als gelesen markieren
       </Button>
       {failed ? (
         <p role="alert" className="ui-field-error">
@@ -293,18 +220,6 @@ function LevelOption({
       description={hint}
     />
   );
-}
-
-function formatUntil(until: string): string {
-  const date = new Date(until);
-  const today = new Date();
-  const time = date.toLocaleTimeString("de-DE", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-  return date.toDateString() === today.toDateString()
-    ? `${time} Uhr`
-    : `${date.toLocaleDateString("de-DE", { weekday: "short", day: "numeric", month: "short" })}, ${time} Uhr`;
 }
 
 /** The bell in a header: shows a mute, opens the dialog. */

@@ -298,8 +298,8 @@ for (const scene of scenes) {
       // The first button or link of that name, with the secondary button.
       if (action.rightclick)
         await page
-          .getByRole("button", { name: action.rightclick, exact: true })
-          .or(page.getByRole("link", { name: action.rightclick, exact: true }))
+          .getByRole("button", { name: named(action.rightclick), exact: true })
+          .or(page.getByRole("link", { name: named(action.rightclick), exact: true }))
           .first()
           .click({ button: "right" });
       // Elements without a button role, such as a <summary>.
