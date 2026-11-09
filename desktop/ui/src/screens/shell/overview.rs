@@ -571,7 +571,10 @@ fn voice_room(
                         mx += 16.0;
                     }
                 }
-                let _ = common::click(ui, tile, Id::unique(("overview-person", *user)));
+                // As the sidebar's row: the profile with its volume controls.
+                if common::click(ui, tile, Id::unique(("overview-person", *user))).clicked() {
+                    super::overlays::open_member(ui.ctx(), server, *user);
+                }
                 continue;
             }
             // The channel's card, compact (overview.css): the 56px avatar
@@ -640,13 +643,15 @@ fn voice_room(
                 true,
                 c.muted,
             );
-            let _ = common::click(ui, tile, Id::unique(("overview-person", *user))).on_hover_text(
-                if me == Some(*user) {
+            let response = common::click(ui, tile, Id::unique(("overview-person", *user)))
+                .on_hover_text(if me == Some(*user) {
                     "Dein Profil"
                 } else {
                     "Profil und Lautstärke"
-                },
-            );
+                });
+            if response.clicked() {
+                super::overlays::open_member(ui.ctx(), server, *user);
+            }
         }
         let rows = count.div_ceil(per_row);
         y += rows as f32 * 136.0 + (rows.saturating_sub(1)) as f32 * 12.0;
