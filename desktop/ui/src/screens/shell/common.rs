@@ -366,15 +366,15 @@ mod tests {
         assert_eq!(
             keys,
             [
-                "Kanal in dieser Kategorie",
-                "Kategorie umbenennen",
-                "Kategorie löschen",
-                "Kategorie löschen",
-                "Kanal in dieser Kategorie",
-                "Kategorie löschen",
-                "Kategorie umbenennen",
+                "Kanal in „Sprachkanäle“ erstellen",
+                "Aktionen für Kategorie „Sprachkanäle“",
+                "Aktionen für Kategorie „Sprachkanäle“",
+                "Aktionen für Kategorie „Sprachkanäle“",
+                "Kanal in „Sprachkanäle“ erstellen",
+                "Aktionen für Kategorie „Sprachkanäle“",
+                "Kanal in „Sprachkanäle“ erstellen",
                 "Wohnzimmer",
-                "Kanal in dieser Kategorie",
+                "Kanal in „Sprachkanäle“ erstellen",
                 "allgemein"
             ]
         );
@@ -387,8 +387,39 @@ mod tests {
         harness.run_steps(2);
         assert_eq!(
             focused_label(&harness).as_deref(),
-            Some("Kanal in dieser Kategorie")
+            Some("Kanal in „Sprachkanäle“ erstellen")
         );
+    }
+
+    /// A channel's actions: → reaches them from the link, named by the
+    /// channel; out of the row they are gone, and Tab comes back to the
+    /// link, not to a hidden button.
+    #[test]
+    fn row_actions_show_with_focus_and_hide_after() {
+        use egui_kittest::kittest::Queryable;
+        let _config = TempConfig::new("shell-row-actions");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for_label(&mut harness, "allgemein");
+        for _ in 0..8 {
+            harness.key_press(egui::Key::Tab);
+            harness.run_steps(2);
+        }
+        assert_eq!(focused_label(&harness).as_deref(), Some("allgemein"));
+        let mut keys = Vec::new();
+        for key in [egui::Key::ArrowRight, egui::Key::ArrowRight] {
+            harness.key_press(key);
+            harness.run_steps(2);
+            keys.push(focused_label(&harness).unwrap_or_default());
+        }
+        assert_eq!(keys, ["#allgemein bearbeiten", "Aktionen für #allgemein"]);
+        harness.key_press(egui::Key::Tab);
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Aktionen für #allgemein").is_none());
+        assert!(harness.query_by_label("#allgemein bearbeiten").is_none());
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
+        harness.run_steps(2);
+        assert_eq!(focused_label(&harness).as_deref(), Some("allgemein"));
     }
 
     /// "Zum Inhalt springen" (AppShell.tsx): the next Tab is the page's,

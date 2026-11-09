@@ -33,7 +33,7 @@ export function isMuted(
 }
 
 export type Badge = {
-  /** A red number: mentions, or unread direct messages. */
+  /** A number in the accent: mentions, or unread direct messages. */
   count: number;
   /** Unread without a number: a plain dot. */
   dot: boolean;

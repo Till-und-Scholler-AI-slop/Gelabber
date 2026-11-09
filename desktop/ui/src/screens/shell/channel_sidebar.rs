@@ -8,6 +8,7 @@ use gelabber_client::{Category, Channel, ChannelKind, Permission, VoiceOccupant}
 use uuid::Uuid;
 
 use super::common::{self, line, paint_mid};
+use super::row_menu::{self, Owner};
 use super::state;
 use crate::app::AppCtx;
 use crate::icons::{self, Icon};
@@ -159,7 +160,6 @@ pub fn show(
         rect.top() + 51.0,
     );
 
-    row_menu(ui);
     if menu_open {
         server_menu(
             ui,
@@ -235,11 +235,13 @@ pub fn show(
                 let mut items = vec![Id::unique(("channel-row", ch.id))];
                 if can_manage {
                     items.push(Id::unique(("edit-channel", ch.id)));
-                    items.push(Id::unique(("delete-channel", ch.id)));
+                }
+                if can_manage || ch.kind == ChannelKind::Text {
+                    items.push(Id::unique(("channel-more", ch.id)));
                 }
                 items
             }
-            Row::Category(category) if can_manage => (0..3)
+            Row::Category(category) if can_manage => (0..2)
                 .map(|a| Id::unique(("category-action", category.id, a)))
                 .collect(),
             _ => continue,
@@ -255,7 +257,11 @@ pub fn show(
         _ => None,
     });
     let roved = common::rove(ui, Id::unique(("channel-list", server)), &nav, preferred);
-    let hint = if can_manage {
+    // Members have a text channel's menu ("…") as its action.
+    let any_text = rows
+        .iter()
+        .any(|row| matches!(row, Row::Channel(ch) if ch.kind == ChannelKind::Text));
+    let hint = if can_manage || any_text {
         common::ROW_HINT
     } else {
         common::LIST_HINT
@@ -281,6 +287,12 @@ pub fn show(
                 let at = nav_of[index];
                 let stop = at.and_then(|r| roved.stop.filter(|(s, _)| *s == r).map(|(_, i)| i));
                 let within = at.is_some_and(|r| roved.has_focus_within(r));
+                // A channel's actions hide once focus leaves the row: Tab
+                // comes back to its link (`useRovingRow` resetOnLeave).
+                let stop = match row {
+                    Row::Channel(_) if !within => stop.map(|_| 0),
+                    _ => stop,
+                };
                 // The stop and the focused row stay in the frame off screen
                 // too: egui drops focus from a widget it does not see.
                 if !ui.is_rect_visible(slot) && stop.is_none() && !within {
@@ -446,9 +458,9 @@ fn category_row(
     can_manage: bool,
     keys: RowKeys,
 ) {
-    // The 78px of hidden actions always take room (they stay in flow).
+    // The 52px of hidden actions always take room (they stay in flow).
     let max = if can_manage {
-        slot.width() - 3.0 - 78.0 - 5.0 - 8.0
+        slot.width() - 3.0 - 52.0 - 5.0 - 8.0
     } else {
         slot.width() - 11.0
     };
@@ -462,40 +474,40 @@ fn category_row(
         Id::unique(("category-menu", category.id)),
         egui::Sense::CLICK,
     );
+    let owner = || Owner::Category(server, category.clone());
     if menu.secondary_clicked() {
-        state::with(ui.ctx(), |s| {
-            s.row_menu = Some((state::RowMenu::Category(server, category.clone()), slot));
-        });
+        row_menu::open(ui.ctx(), owner(), slot, None);
     }
+    let menu_open = row_menu::is_open_for(ui.ctx(), category.id);
     let hovered = ui.rect_contains_pointer(slot);
-    if !hovered && !keys.within && keys.stop.is_none() {
+    if !hovered && !keys.within && keys.stop.is_none() && !menu_open {
         return;
     }
     let top = slot.top() + 3.0;
-    let x0 = slot.right() - 3.0 - 78.0;
-    let actions = [
-        (Icon::Plus, "Kanal in dieser Kategorie"),
-        (Icon::Pencil, "Kategorie umbenennen"),
-        (Icon::Trash, "Kategorie löschen"),
-    ];
-    // Hidden but in the Tab order (the stop) unless hovered or focused.
-    let shown = hovered || keys.within;
+    let x0 = slot.right() - 3.0 - 52.0;
+    let add = format!("Kanal in „{}“ erstellen", category.name);
+    let more = format!("Aktionen für Kategorie „{}“", category.name);
+    let actions = [(Icon::Plus, add.as_str()), (Icon::More, more.as_str())];
+    // The row's only way in from the keyboard: these stay focusable (only
+    // faded) while out of sight. Renaming and deleting are in the menu.
+    let shown = hovered || keys.within || menu_open;
     for (i, (icon, label)) in actions.into_iter().enumerate() {
         let rect = Rect::from_min_size(pos2(x0 + 26.0 * i as f32, top), Vec2::splat(26.0));
         let id = Id::unique(("category-action", category.id, i));
         let stop = keys.stop == Some(i) || ui.memory(|m| m.has_focus(id));
-        let clicked = if shown {
-            shell_icon_button_stop(ui, rect, icon, 14.0, label, id, stop).clicked()
+        let response = if shown {
+            shell_icon_button_stop(ui, rect, icon, 14.0, label, id, stop)
         } else {
             let response = common::click_stop(ui, rect, id, stop);
             response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
-            false
+            response
         };
-        if clicked {
+        if row_menu::menu_key(ui, &response) {
+            row_menu::open(ui.ctx(), owner(), rect, Some(id));
+        } else if response.clicked() && shown {
             match i {
                 0 => super::dialogs::open_channel(ui.ctx(), server, None, Some(category.id)),
-                1 => super::dialogs::open_category(ui.ctx(), server, Some(category)),
-                _ => super::dialogs::confirm_delete_category(ui.ctx(), server, category),
+                _ => row_menu::open(ui.ctx(), owner(), rect, Some(id)),
             }
         }
     }
@@ -521,19 +533,18 @@ fn channel_row(
     let stop = keys.stop == Some(0) || ui.memory(|m| m.has_focus(link_id));
     let response = common::click_stop(ui, row, link_id, stop);
     let voice = ch.kind == ChannelKind::Voice;
-    if response.secondary_clicked() {
-        if can_manage {
-            state::with(ui.ctx(), |s| {
-                s.row_menu = Some((state::RowMenu::Channel(server, ch.clone()), row));
-            });
-        } else if !voice {
-            // Members get the channel's notification settings.
-            super::overlays::open_notifications(
-                ui.ctx(),
-                super::overlays::Target::channel(ch.id, server, format!("#{}", ch.name)),
-            );
-        }
+    // Its menu: a text channel's notifications for everyone, editing and
+    // deleting for those who manage channels.
+    let has_menu = can_manage || !voice;
+    if has_menu && (response.secondary_clicked() || row_menu::menu_key(ui, &response)) {
+        row_menu::open(
+            ui.ctx(),
+            Owner::Channel(server, ch.clone()),
+            row,
+            Some(link_id),
+        );
     }
+    let menu_open = row_menu::is_open_for(ui.ctx(), ch.id);
     let own = crate::screens::voice::session::own_seat(app, server).map(|(c, _, _)| c);
     let (badge, muted, in_voice, live) = app.client.with_state(|s| {
         let read = s.read.get(&ch.id);
@@ -550,7 +561,7 @@ fn channel_row(
     let hovered = response.hovered();
     let fill = if active {
         c.selected
-    } else if hovered {
+    } else if hovered || menu_open {
         c.hover
     } else {
         Color32::TRANSPARENT
@@ -604,12 +615,12 @@ fn channel_row(
         name_right = r.left() - 10.0;
     } else if live && voice {
         let chip_style = text::TextStyle::new(10.0, 700.0, 1.5).tracking(0.04);
-        let block = Block::single(ui, "LIVE", chip_style, Color32::WHITE);
+        let block = Block::single(ui, "LIVE", chip_style, c.on_live);
         let chip = Rect::from_min_max(
             pos2(name_right - block.width() - 10.0, row.center().y - 8.5),
             pos2(name_right, row.center().y + 8.5),
         );
-        painter.rect_filled(chip, corner(theme.radius.sm), c.danger_bg);
+        painter.rect_filled(chip, corner(theme.radius.sm), c.live);
         paint_mid(&painter, &block, chip.left() + 5.0, chip.center().y);
         name_right = chip.left() - 10.0;
     }
@@ -649,62 +660,76 @@ fn channel_row(
             .on_hover_text(format!("{} · verbunden", ch.name));
     }
 
-    // Hover (or focus) actions cover the name's end with the row's own fill.
-    // Out of sight they stay there unseen (`opacity-0`), as on the web, so a
-    // click on them still lands; the row's single Tab stop may be one of them.
-    if can_manage {
-        let shown = hovered || ui.rect_contains_pointer(row) || keys.within;
-        let edit_id = Id::unique(("edit-channel", ch.id));
-        let delete_id = Id::unique(("delete-channel", ch.id));
+    // Hover (or focus) actions cover the name's end with the row's own fill:
+    // edit for those who manage channels, then "…" for the menu, which holds
+    // deleting. Out of sight they are not drawn at all, so neither screen
+    // readers nor Tab meet them; the link is the row's way in.
+    let shown = has_menu && (hovered || ui.rect_contains_pointer(row) || keys.within || menu_open);
+    if shown {
+        let label = if voice {
+            ch.name.clone()
+        } else {
+            format!("#{}", ch.name)
+        };
+        let count = if can_manage { 2.0 } else { 1.0 };
         let actions = Rect::from_min_max(
-            pos2(row.right() - 61.0, row.top() + 4.0),
+            pos2(row.right() - 3.0 - 6.0 - 26.0 * count, row.top() + 4.0),
             pos2(row.right() - 3.0, row.top() + 30.0),
         );
-        if shown {
-            painter.rect(
-                actions,
-                corner(theme.radius.md),
-                under,
-                Stroke::NONE,
-                StrokeKind::Inside,
-            );
-        }
-        let edit =
-            Rect::from_min_size(pos2(actions.left() + 6.0, actions.top()), Vec2::splat(26.0));
-        let delete = Rect::from_min_size(pos2(edit.right(), actions.top()), Vec2::splat(26.0));
+        painter.rect(
+            actions,
+            corner(theme.radius.md),
+            under,
+            Stroke::NONE,
+            StrokeKind::Inside,
+        );
         let focused = ui.memory(|m| m.focused());
         let stop_at = |i: usize, id: Id| keys.stop == Some(i) || focused == Some(id);
-        let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(actions));
-        if !shown {
-            ui.set_opacity(0.0);
+        let mut x = actions.left() + 6.0;
+        if can_manage {
+            let edit_id = Id::unique(("edit-channel", ch.id));
+            let edit = Rect::from_min_size(pos2(x, actions.top()), Vec2::splat(26.0));
+            x += 26.0;
+            let edit = shell_icon_button_stop(
+                ui,
+                edit,
+                Icon::Pencil,
+                14.0,
+                &format!("{label} bearbeiten"),
+                edit_id,
+                stop_at(1, edit_id),
+            );
+            if row_menu::menu_key(ui, &edit) {
+                row_menu::open(
+                    ui.ctx(),
+                    Owner::Channel(server, ch.clone()),
+                    row,
+                    Some(edit_id),
+                );
+            } else if edit.clicked() {
+                super::dialogs::open_channel(ui.ctx(), server, Some(ch), ch.category_id);
+                return;
+            }
         }
-        let ui = &mut ui;
-        if shell_icon_button_stop(
+        let more_id = Id::unique(("channel-more", ch.id));
+        let more = Rect::from_min_size(pos2(x, actions.top()), Vec2::splat(26.0));
+        let index = if can_manage { 2 } else { 1 };
+        let response = shell_icon_button_stop(
             ui,
-            edit,
-            Icon::Pencil,
+            more,
+            Icon::More,
             14.0,
-            "Kanal bearbeiten",
-            edit_id,
-            stop_at(1, edit_id),
-        )
-        .clicked()
-        {
-            super::dialogs::open_channel(ui.ctx(), server, Some(ch), ch.category_id);
-            return;
-        }
-        if shell_icon_button_stop(
-            ui,
-            delete,
-            Icon::Trash,
-            14.0,
-            "Kanal löschen",
-            delete_id,
-            stop_at(2, delete_id),
-        )
-        .clicked()
-        {
-            super::dialogs::confirm_delete_channel(ui.ctx(), server, ch);
+            &format!("Aktionen für {label}"),
+            more_id,
+            stop_at(index, more_id),
+        );
+        if response.clicked() || row_menu::menu_key(ui, &response) {
+            row_menu::open(
+                ui.ctx(),
+                Owner::Channel(server, ch.clone()),
+                more,
+                Some(more_id),
+            );
             return;
         }
     }
@@ -775,7 +800,7 @@ fn person_row(
     let mut right = row.right() - 8.0;
     let mut marks: Vec<(Icon, f32, Color32)> = Vec::new();
     if live {
-        marks.push((Icon::Live, 13.0, c.danger));
+        marks.push((Icon::Live, 13.0, c.live_text));
     }
     if occupant.deafened {
         marks.push((Icon::HeadsetOff, 13.0, c.danger));
@@ -978,115 +1003,8 @@ fn server_menu(
     }
 }
 
-/// `.shell-menu-item`: min-height 36, padding 0 10, gap 10, radius 5.
-/// The right-click menu of a channel or category row (`.shell-menu-item`
-/// rows with 18px icons, a separator before the danger item).
-fn row_menu(ui: &mut Ui) {
-    let Some((menu, anchor)) = state::with(ui.ctx(), |s| s.row_menu.clone()) else {
-        return;
-    };
-    let theme = Theme::of(ui.ctx());
-    let c = theme.c;
-    let items: Vec<(Icon, &str, bool)> = match &menu {
-        state::RowMenu::Channel(_, ch) => {
-            let mut v = vec![(Icon::Pencil, "Kanal bearbeiten", false)];
-            if ch.kind == ChannelKind::Text {
-                v.push((Icon::Bell, "Benachrichtigungen…", false));
-            }
-            v.push((Icon::Trash, "Kanal löschen", true));
-            v
-        }
-        state::RowMenu::Category(..) => vec![
-            (Icon::Plus, "Kanal in dieser Kategorie", false),
-            (Icon::Pencil, "Kategorie umbenennen", false),
-            (Icon::Trash, "Kategorie löschen", true),
-        ],
-    };
-    let picked = Popover::new("row-menu", anchor).show(ui.ctx(), |ui| {
-        ui.spacing_mut().item_spacing.y = 2.0;
-        // Fits the longest item like the web's max-content popover
-        // (padding 10, 18px icon, gap 10, label, padding 10).
-        let widest = items
-            .iter()
-            .map(|(_, label, _)| Block::single(ui, label, text::UI, c.text).width())
-            .fold(0.0, f32::max);
-        let width = (38.0 + widest + 10.0).ceil().max(180.0 - 18.0);
-        let mut picked = None;
-        for (i, (icon, label, danger)) in items.iter().enumerate() {
-            if *danger {
-                // `hr`: 1px border line, margin 4px 6px.
-                let (r, _) = ui.allocate_exact_size(Vec2::new(width, 9.0), egui::Sense::hover());
-                hairline_h(
-                    ui.painter(),
-                    &theme,
-                    r.left() + 6.0..=r.right() - 6.0,
-                    r.top() + 4.0,
-                );
-            }
-            let (rect, response) =
-                ui.allocate_exact_size(Vec2::new(width, 36.0), egui::Sense::click());
-            if response.hovered() {
-                common::fill(ui.painter(), rect, theme.radius.sm, c.hover);
-                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-            }
-            let (icon_color, color) = if *danger {
-                (c.danger, c.danger)
-            } else {
-                (c.muted, c.text)
-            };
-            icons::paint(
-                ui.painter(),
-                *icon,
-                pos2(rect.left() + 10.0, rect.center().y - 9.0),
-                18.0,
-                icon_color,
-            );
-            let block = Block::single(ui, label, text::UI, color);
-            paint_mid(ui.painter(), &block, rect.left() + 38.0, rect.center().y);
-            if response.clicked() {
-                picked = Some(i);
-            }
-        }
-        picked
-    });
-    let close = match picked {
-        None => true,
-        Some(None) => false,
-        Some(Some(i)) => {
-            let (_, label, _) = items[i];
-            match (&menu, label) {
-                (state::RowMenu::Channel(server, ch), "Kanal bearbeiten") => {
-                    super::dialogs::open_channel(ui.ctx(), *server, Some(ch), ch.category_id)
-                }
-                (state::RowMenu::Channel(server, ch), "Benachrichtigungen…") => {
-                    super::overlays::open_notifications(
-                        ui.ctx(),
-                        super::overlays::Target::channel(ch.id, *server, format!("#{}", ch.name)),
-                    )
-                }
-                (state::RowMenu::Channel(server, ch), _) => {
-                    super::dialogs::confirm_delete_channel(ui.ctx(), *server, ch)
-                }
-                (state::RowMenu::Category(server, cat), "Kanal in dieser Kategorie") => {
-                    super::dialogs::open_channel(ui.ctx(), *server, None, Some(cat.id))
-                }
-                (state::RowMenu::Category(server, cat), "Kategorie umbenennen") => {
-                    super::dialogs::open_category(ui.ctx(), *server, Some(cat))
-                }
-                (state::RowMenu::Category(server, cat), _) => {
-                    super::dialogs::confirm_delete_category(ui.ctx(), *server, cat)
-                }
-            }
-            true
-        }
-    };
-    // The right press that opened it is not a press outside.
-    let opening = ui.input(|i| i.pointer.secondary_pressed());
-    if close && !opening {
-        state::with(ui.ctx(), |s| s.row_menu = None);
-    }
-}
-
+/// `.shell-menu-item` of the server menu: min-height 36, padding 0 10,
+/// gap 10, radius 5, 16px icons.
 fn menu_row(ui: &mut Ui, icon: Icon, label: &str, width: f32) -> egui::Response {
     let theme = Theme::of(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 36.0), egui::Sense::click());

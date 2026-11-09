@@ -2,7 +2,6 @@
 import { create } from "zustand";
 
 import type { NotificationScope } from "../messages/notificationSettings.ts";
-import { useHoldMenu } from "./useHoldMenu.ts";
 
 export type NotificationTarget = {
   scope: NotificationScope;
@@ -24,22 +23,6 @@ export const useNotificationTarget = create<{
 
 export function openNotificationSettings(target: NotificationTarget): void {
   useNotificationTarget.setState({ target });
-}
-
-/**
- * A right click or a held finger on an entry: the dialog instead of the
- * browser's menu.
- */
-export function useNotificationMenu(target: NotificationTarget) {
-  const open = () => openNotificationSettings(target);
-  const hold = useHoldMenu(open);
-  return {
-    onContextMenu: (event: { preventDefault: () => void }) => {
-      event.preventDefault();
-      open();
-    },
-    ...hold,
-  };
 }
 
 /** Minutes left of a running mute, so a level change keeps its end. */

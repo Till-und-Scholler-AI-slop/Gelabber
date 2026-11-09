@@ -1,8 +1,11 @@
 import { useNavigate } from "@tanstack/react-router";
 
 import { useMessageToasts, type MessageToast } from "../messages/toasts.ts";
+import { useVoice } from "../voice/session.ts";
+import { currentCall, joinToWatch, watchLabel } from "../voice/watchLive.ts";
 import { Avatar } from "./Avatar.tsx";
 import { CloseIcon } from "./Icons.tsx";
+import { Button } from "./ui/Button.tsx";
 import { IconButton } from "./ui/IconButton.tsx";
 import { usePresenceList } from "./ui/usePresence.ts";
 import "./ui/ui.css";
@@ -15,6 +18,7 @@ export function MessageToasts() {
   const hold = useMessageToasts((state) => state.hold);
   const release = useMessageToasts((state) => state.release);
   const navigate = useNavigate();
+  const call = useVoice(currentCall);
   // One that is opened, closed or runs out slides away before it goes.
   const { entries, ref } = usePresenceList(toasts, toastKey);
 
@@ -25,6 +29,15 @@ export function MessageToasts() {
           toast.count > 1
             ? `${toast.channelLabel} · ${toast.count} neu`
             : toast.channelLabel;
+        const live = toast.live;
+        const open = () =>
+          void navigate({
+            to: "/s/$serverId/c/$channelId",
+            params: {
+              serverId: toast.serverId,
+              channelId: toast.channelId,
+            },
+          });
         return (
           <div
             key={key}
@@ -48,9 +61,13 @@ export function MessageToasts() {
             <button
               type="button"
               className="ui-message-toast__open"
-              aria-label={`Öffnen: ${where}, ${toast.author}${
-                toast.mentioned ? " hat dich erwähnt" : ""
-              }: ${toast.preview}`}
+              aria-label={
+                live
+                  ? `Öffnen: ${where}, ${toast.preview}`
+                  : `Öffnen: ${where}, ${toast.author}${
+                      toast.mentioned ? " hat dich erwähnt" : ""
+                    }: ${toast.preview}`
+              }
               onClick={() => {
                 dismiss(toast.id);
                 if (toast.dm) {
@@ -60,13 +77,7 @@ export function MessageToasts() {
                   });
                   return;
                 }
-                void navigate({
-                  to: "/s/$serverId/c/$channelId",
-                  params: {
-                    serverId: toast.serverId,
-                    channelId: toast.channelId,
-                  },
-                });
+                open();
               }}
             >
               <span className="ui-message-toast__where">{where}</span>
@@ -74,8 +85,35 @@ export function MessageToasts() {
                 {toast.author}
                 {toast.mentioned ? <small> hat dich erwähnt</small> : null}
               </span>
-              <span className="ui-message-toast__preview">{toast.preview}</span>
+              {live ? (
+                // The name stands once, above: here only where.
+                <span className="ui-message-toast__preview ui-message-toast__live">
+                  <b>Live</b> in {live.voice}
+                </span>
+              ) : (
+                <span className="ui-message-toast__preview">
+                  {toast.preview}
+                </span>
+              )}
             </button>
+            {live ? (
+              <Button
+                size="sm"
+                className="ui-message-toast__action"
+                onClick={() => {
+                  dismiss(toast.id);
+                  open();
+                  joinToWatch({
+                    serverId: toast.serverId,
+                    channelId: toast.channelId,
+                    channelName: live.voice,
+                    people: [live.userId],
+                  });
+                }}
+              >
+                {watchLabel(call, toast.serverId, toast.channelId)}
+              </Button>
+            ) : null}
             <IconButton
               size="xs"
               label="Schließen"

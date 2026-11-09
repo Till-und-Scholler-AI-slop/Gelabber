@@ -14,7 +14,7 @@ media = ["gelabber-call/media"]
 [dependencies]
 gelabber-client = { path = "../client" }
 gelabber-call = { path = "../call" }
-eframe = { version = "0.37.0", default-features = false, features = ["wgpu", "accesskit", "wayland", "x11"] }
+eframe = { version = "0.37.0", default-features = false, features = ["wgpu", "accesskit", "clipboard", "wayland", "x11"] }
 egui = "0.37.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }

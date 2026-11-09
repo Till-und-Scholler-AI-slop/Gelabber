@@ -16,7 +16,22 @@ Signing key fingerprint: `5992A8FD7578E86E36D45A4001C81EE2C2C0BBC5`
 
 ## For users
 
-One time, as root:
+One command sets up the repository and installs the app
+([`install.sh`](install.sh), published next to the key; read it first if
+you like):
+
+```sh
+curl -fsSL https://till-und-scholler-ai-slop.github.io/Gelabber/install.sh | sudo sh
+```
+
+It checks that the downloaded key has the fingerprint below, adds it to
+pacman's keyring, appends `[gelabber]` to `/etc/pacman.conf` unless it is
+there already, and runs `pacman -Syu gelabber-desktop`, which updates the
+rest of the system too and asks before it does. Running it again only
+installs or updates the package. Arguments go to pacman
+(`… | sudo sh -s -- --noconfirm`).
+
+By hand, the same, one time, as root:
 
 ```sh
 # 1. The repository's signing key. Check that `gpg --show-keys gelabber.asc`
@@ -67,7 +82,9 @@ always holds only the newest release.
   `.SRCINFO`; CI checks that the committed `.SRCINFO` matches the
   `PKGBUILD`.
 - `repo.sh build`: builds and signs the package, then the signed repository
-  database (`repo-add --sign`), plus `gelabber.asc` with the public key.
+  database (`repo-add --sign`), plus `gelabber.asc` with the public key and
+  `install.sh`, which pins this README's fingerprint and repository address
+  (checked by `desktop/packaging/tests`).
 - `repo.sh test`: adds that repository to pacman with `SigLevel = Required`,
   installs the Tauri package of each 0.8 release in `TAURI_RELEASES` (its
   PKGBUILD at the tag and its release tarball) with its dependencies, lets
@@ -75,7 +92,11 @@ always holds only the newest release.
   checks the import: from WebKitGTK for 0.8.9, only from
   `legacy-settings.json` for 0.8.10. It starts the app under Xvfb
   (`../native/smoke.sh`), upgrades to a newer build, removes with `-Rns` and
-  fails if a library is missing or a file is left behind.
+  fails if a library is missing or a file is left behind. Then it takes
+  the repository and key out of pacman again and installs with the site's
+  `install.sh` (its address and fingerprint swapped for the test build's),
+  piped into `sh` as from `curl`: twice, then once with a wrong fingerprint,
+  which has to stop before `/etc/pacman.conf` changes.
 - `.github/workflows/desktop-native.yml` (run by `ci.yml` and
   `desktop-release.yml`): job "Arch package and repository" builds with a
   throwaway key and runs the test, except for pull requests; the repository

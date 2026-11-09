@@ -385,4 +385,28 @@ mod tests {
         }
         assert!(client.with_state(|s| !s.servers.is_empty()));
     }
+
+    /// A conversation marked read from its menu says so when it fails, as
+    /// a server or every DM does (the web's `notifyError`).
+    #[test]
+    fn a_failed_mark_read_of_a_conversation_is_a_toast() {
+        let client = Client::new("http://127.0.0.1:9").unwrap();
+        client.mark_conversation_read(uuid::Uuid::from_u128(2));
+        let start = Instant::now();
+        let mut notices = Vec::new();
+        while notices.is_empty() && start.elapsed() < std::time::Duration::from_secs(5) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            notices = client.take_notices();
+        }
+        assert!(
+            notices.iter().any(|n| matches!(
+                n,
+                Notice::Failed {
+                    failed: "Nicht als gelesen markiert.",
+                    ..
+                }
+            )),
+            "{notices:?}"
+        );
+    }
 }

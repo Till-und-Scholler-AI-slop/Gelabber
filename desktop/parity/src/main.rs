@@ -83,6 +83,13 @@ struct SetupState {
     auto_check: bool,
     available: Option<String>,
     last_check: Option<u64>,
+    /// "downloading" (`downloaded` of `total` bytes) or "installing": an
+    /// install at work; otherwise the update is offered.
+    #[serde(default)]
+    phase: String,
+    #[serde(default)]
+    downloaded: u64,
+    total: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -160,6 +167,9 @@ enum Action {
     /// Rest the pointer on the first button or link, else element, with this label;
     /// it stays there for the screenshot.
     Hover(String),
+    /// Select the whole text of the first text with exactly this label,
+    /// with a drag across it.
+    Select(String),
     /// Focus the text field with this accessible name.
     Focus(String),
     /// Press a key, Playwright style: "Control+k", "ArrowDown", "Escape".
@@ -419,6 +429,19 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                                 available: u.available.clone(),
                                 checked: u.last_check.is_some(),
                                 error: None,
+                                // The Windows setup's, as the Tauri app's.
+                                installs: true,
+                                notice: u.available.as_deref().map(|v| Notice {
+                                    phase: match u.phase.as_str() {
+                                        "downloading" => Phase::Downloading {
+                                            downloaded: u.downloaded,
+                                            total: u.total,
+                                        },
+                                        "installing" => Phase::Installing,
+                                        _ => Phase::Offer,
+                                    },
+                                    ..Notice::new(v, Offer::Restart)
+                                }),
                             });
                     shell
                 });
@@ -506,6 +529,26 @@ fn render(out: &Path, only: Option<Vec<String>>) {
                             .unwrap_or_else(|| panic!("{}: nothing labelled {label:?}", scene.name))
                             .hover();
                         hovered = true;
+                    }
+                    Action::Select(label) => {
+                        use egui::accesskit::Role;
+                        reveal(&mut harness, size.y, label, &[Role::Label]);
+                        let rect = find(&harness, label, &[Role::Label])
+                            .unwrap_or_else(|| panic!("{}: no text {label:?}", scene.name))
+                            .rect();
+                        // From before the first character to after the last.
+                        let from = rect.left_top() + egui::vec2(1.0, 4.0);
+                        let to = rect.right_bottom() - egui::vec2(1.0, 4.0);
+                        harness.hover_at(from);
+                        harness.drag_at(from);
+                        harness.hover_at(rect.center());
+                        harness.hover_at(to);
+                        harness.event(egui::Event::PointerButton {
+                            pos: to,
+                            button: egui::PointerButton::Primary,
+                            pressed: false,
+                            modifiers: egui::Modifiers::NONE,
+                        });
                     }
                     Action::Focus(label) => {
                         use egui::accesskit::Role;
@@ -635,7 +678,7 @@ fn unnamed(harness: &App<'_>) -> (usize, Vec<String>) {
 }
 
 /// The Launcher on a bundled page: the setup page with its `?server=` (the
-/// way back) and `?error=` (why it shows).
+/// way back), `?error=` (why it shows) and `?detail=` (what the system said).
 fn page_app(cc: &eframe::CreationContext<'_>, page: &str, query: &str) -> gelabber_ui::Launcher {
     assert_eq!(
         page, "desktop/parity/reference/setup/index.html",
@@ -645,7 +688,9 @@ fn page_app(cc: &eframe::CreationContext<'_>, page: &str, query: &str) -> gelabb
     gelabber_ui::Launcher::setup(
         cc,
         query.query("server").map(str::to_owned),
-        query.query("error").map(str::to_owned),
+        query.query("error").map(|message| {
+            gelabber_ui::setup::Failure::new(message, query.query("detail").map(str::to_owned))
+        }),
         Box::new(|_| {}),
     )
 }

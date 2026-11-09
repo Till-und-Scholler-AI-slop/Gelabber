@@ -445,11 +445,11 @@ fn voice_room(
         x = pill.right() + 10.0;
     }
     if live_any {
-        let label = Block::single(ui, "LIVE", text::CAPS, Color32::WHITE);
+        let label = Block::single(ui, "LIVE", text::CAPS, c.on_live);
         let badge =
             Rect::from_min_size(pos2(x, center - 9.0), Vec2::new(label.width() + 12.0, 18.0));
         ui.painter()
-            .rect_filled(badge, corner(theme.radius.xs), c.danger_bg);
+            .rect_filled(badge, corner(theme.radius.xs), c.live);
         paint_mid(ui.painter(), &label, badge.left() + 6.0, center);
     }
     let mut y = top + 28.0;

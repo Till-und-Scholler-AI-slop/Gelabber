@@ -1,6 +1,5 @@
 import { UnreadBadge } from "../messages/UnreadBadge.tsx";
 import { useBadge } from "../messages/useBadge.ts";
-import { useNotificationMenu } from "./notificationTarget.ts";
 import { useServerMuted } from "../messages/notificationSettings.ts";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -24,7 +23,9 @@ import { AddServerDialog } from "./ServerDialogs.tsx";
 import { ServerIconFace } from "./ServerIcon.tsx";
 import { tileInitials, tileTint } from "./initials.ts";
 import { useNavigationDrawer } from "./navigationDrawer.ts";
+import { NotificationRowMenu } from "./RowMenu.tsx";
 import { LIST_ROW, ROW_ITEM, listStop, moveWithinList } from "./rowKeys.ts";
+import { useRowMenu } from "./rowMenuTrigger.ts";
 import { TIP_GRACE_MS, TIP_WARM_MS, tipDelay } from "./tooltipTiming.ts";
 
 const TILE_PX = 60;
@@ -85,12 +86,8 @@ function HomeTile({ active }: { active: boolean }) {
   const openId = lastDmStillListed(remembered, dms) ? remembered : null;
   const badge = useBadge({ dms: true });
   const drawer = useNavigationDrawer();
-  const menu = useNotificationMenu({
-    scope: "channel",
-    id: "dms",
-    name: "Direktnachrichten",
-    allDms: true,
-  });
+  // Its menu marks every conversation read.
+  const menu = useRowMenu();
   return (
     <div className="server-home-tile">
       <Link
@@ -113,11 +110,23 @@ function HomeTile({ active }: { active: boolean }) {
           active ? "is-active" : "",
           badge.count > 0 || badge.dot ? "is-unread" : "",
         ].join(" ")}
-        {...menu}
+        {...menu.trigger}
       >
         <ChatIcon size={27} />
         <UnreadBadge id={unreadId} dms rail showDot={false} />
       </Link>
+      {menu.open ? (
+        <NotificationRowMenu
+          target={{
+            scope: "channel",
+            id: "dms",
+            name: "Direktnachrichten",
+            allDms: true,
+          }}
+          anchor={menu.anchor}
+          onClose={menu.close}
+        />
+      ) : null}
     </div>
   );
 }
@@ -289,13 +298,11 @@ function ServerTile({
         : muted
           ? "Stummgeschaltet"
           : null;
-  // The tooltip also ends when the finger leaves.
-  const { onPointerLeave: endHold, ...menu } = useNotificationMenu({
-    scope: "server",
-    id: server.id,
-    name: server.name,
-  });
-  return (
+  // Its menu (mark read, mute, notifications) takes the tooltip's place;
+  // the tooltip also ends when the finger leaves.
+  const menu = useRowMenu(onTipEnd);
+  const { onPointerLeave: endHold, ...trigger } = menu.trigger;
+  const tile = (
     <Link
       to={channelId ? "/s/$serverId/c/$channelId" : "/s/$serverId"}
       params={
@@ -331,7 +338,7 @@ function ServerTile({
         badge.count > 0 || badge.dot ? "is-unread" : "",
       ].join(" ")}
       style={{ "--server-tile": tileTint(server.id) } as CSSProperties}
-      {...menu}
+      {...trigger}
       {...ROW_ITEM}
     >
       <ServerIconFace
@@ -340,5 +347,17 @@ function ServerTile({
       />
       <UnreadBadge id={unreadId} serverId={server.id} rail showDot={false} />
     </Link>
+  );
+  return (
+    <>
+      {tile}
+      {menu.open ? (
+        <NotificationRowMenu
+          target={{ scope: "server", id: server.id, name: server.name }}
+          anchor={menu.anchor}
+          onClose={menu.close}
+        />
+      ) : null}
+    </>
   );
 }

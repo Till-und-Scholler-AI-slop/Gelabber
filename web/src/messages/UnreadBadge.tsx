@@ -6,7 +6,7 @@ import { unreadLabel } from "./notifyLevel.ts";
 import { useReadState } from "./readState.ts";
 import { useBadge, type BadgeScope } from "./useBadge.ts";
 
-/** A red number for mentions and direct messages, a dot for other unread
+/** An accent number for mentions and direct messages, a dot for other unread
  * messages (notifyLevel.ts). Lists that mark unread rows themselves pass
  * `showDot={false}`: the dot is then only read out. */
 export function UnreadBadge({

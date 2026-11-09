@@ -9,6 +9,7 @@ import {
   importTheme,
   isThemeDocument,
   themeVariables,
+  toHsl,
 } from "./model.ts";
 describe("theme catalogue and files", () => {
   it("ships twelve adapted Omarchy palettes plus both original modes", () => {
@@ -154,9 +155,63 @@ describe("derived interface colours", () => {
       );
       atLeast(d.danger, [c.background, c.panel, c.surface], 4.5);
       atLeast("#ffffff", [d.dangerBg], 4.5);
+      atLeast(d.onLive, [d.live], 4.5);
+      atLeast(d.live, [c.background, c.panel, c.surface], 3);
+      atLeast(d.liveText, [c.background, c.panel, c.surface], 4.5);
       for (const tile of d.tiles) atLeast(c.text, [tile], 4.5);
     },
   );
+
+  it("keeps Live apart from danger and the accent", () => {
+    // Hue distance on the colour wheel, in degrees.
+    const apart = (a: string, b: string) => {
+      const d = Math.abs(toHsl(a).h - toHsl(b).h) % 360;
+      return Math.min(d, 360 - d);
+    };
+    for (const theme of BUILTIN_THEMES) {
+      const d = derivedColors(theme);
+      expect(d.live, theme.id).not.toBe(d.dangerBg);
+      // Dark ink on the coral, white on the danger red: never the same pair.
+      expect(d.onLive, theme.id).toBe("#111111");
+      if (toHsl(theme.colors.accent).s >= 0.3)
+        expect(apart(d.live, theme.colors.accent), theme.id).toBeGreaterThan(
+          15,
+        );
+    }
+    expect(themeVariables(BUILTIN_THEMES[0])["--lr-live"]).toBe("#ff7b5c");
+    expect(themeVariables(BUILTIN_THEMES[1])["--lr-live"]).toBe("#db5b24");
+    // Ristretto's accent is a salmon: Live turns pinker, past it.
+    const ristretto = BUILTIN_THEMES.find((t) => t.id === "ristretto")!;
+    const r = derivedColors(ristretto);
+    // The same values as the native theme's test.
+    expect([r.live, r.onLive, r.liveText]).toEqual([
+      "#ff5c74",
+      "#111111",
+      "#ff667c",
+    ]);
+  });
+
+  it("derives a readable Live for custom themes", () => {
+    // A light theme on a coral-ish surface: the fill gives way to keep its
+    // ink, the text colour still reads.
+    const odd = {
+      ...BUILTIN_THEMES[1],
+      colors: {
+        ...BUILTIN_THEMES[1].colors,
+        background: "#f08a70",
+        panel: "#f29a84",
+        surface: "#e9806a",
+      },
+    };
+    const d = derivedColors(odd);
+    expect(contrast(d.onLive, d.live)).toBeGreaterThanOrEqual(4.5);
+    for (const bg of [
+      odd.colors.background,
+      odd.colors.panel,
+      odd.colors.surface,
+    ])
+      expect(contrast(d.liveText, bg)).toBeGreaterThanOrEqual(4.5);
+  });
 
   it("keeps the accent fill as designed, light amber included", () => {
     const light = BUILTIN_THEMES.find((theme) => theme.id === "light")!;

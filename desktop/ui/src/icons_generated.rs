@@ -49,6 +49,7 @@ pub enum Icon {
     Copy,
     Pin,
     Check,
+    CheckCheck,
     Warning,
     Share,
     Eye,
@@ -56,7 +57,7 @@ pub enum Icon {
 }
 
 impl Icon {
-    pub const ALL: [Icon; 49] = [
+    pub const ALL: [Icon; 50] = [
         Icon::Hash,
         Icon::Speaker,
         Icon::Plus,
@@ -102,6 +103,7 @@ impl Icon {
         Icon::Copy,
         Icon::Pin,
         Icon::Check,
+        Icon::CheckCheck,
         Icon::Warning,
         Icon::Share,
         Icon::Eye,
@@ -156,6 +158,7 @@ impl Icon {
             Icon::Copy => include_bytes!("../assets/icons/copy.svg"),
             Icon::Pin => include_bytes!("../assets/icons/pin.svg"),
             Icon::Check => include_bytes!("../assets/icons/check.svg"),
+            Icon::CheckCheck => include_bytes!("../assets/icons/check-check.svg"),
             Icon::Warning => include_bytes!("../assets/icons/warning.svg"),
             Icon::Share => include_bytes!("../assets/icons/share.svg"),
             Icon::Eye => include_bytes!("../assets/icons/eye.svg"),

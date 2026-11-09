@@ -44,7 +44,7 @@ Default theme preference is **"dark"** when nothing stored (`theme/theme.ts:11-2
 | `--lr-online-text` | success text | `#85d69b` | `#277643` |
 | `--lr-warning` | away dot, caps-lock hint | `#d8a657` | `#a27e44` |
 | `--lr-danger` | error text, danger outline | `#f39b98` | `#a12b29` |
-| `--lr-danger-bg` | danger fill, count badge | `#8f302d` | `#b33b38` |
+| `--lr-danger-bg` | danger fill | `#8f302d` | `#b33b38` |
 | `--lr-on-danger` | text on danger fill | `#ffffff` | `#ffffff` |
 | `--lr-backdrop` | modal backdrop | `rgb(9 12 13 / .72)` | `rgb(37 40 41 / .45)` |
 | `--lr-tile-1…8` | server/avatar initials tints | `#634336 #635636 #4e6336 #366349 #365d63 #364963 #433663 #633653` | `#ead2c8 #eae0c8 #daeac8 #c8ead6 #c8e5ea #c8d6ea #d2c8ea #eac8dd` |
@@ -433,7 +433,7 @@ Voice card (the chosen room: current call → last visited → occupied → firs
 | Element | Spec |
 |---|---|
 | section | padding 0 |
-| heading | flex wrap, centre, gap 10, min-height 28: `SpeakerIcon 18` (muted; **online** colour when you are in it), h2 room name 600 16px/1.3, pill **"Verbunden"** when joined (inline-flex gap 6, height 22, padding 0 8, radius full, bg online 14%, colour online-text, 500 12px, leading 6px dot), red **"Live"** badge when someone is live (radius 3, bg danger-bg, `#fff`, padding 2/6, caps 11px) |
+| heading | flex wrap, centre, gap 10, min-height 28: `SpeakerIcon 18` (muted; **online** colour when you are in it), h2 room name 600 16px/1.3, pill **"Verbunden"** when joined (inline-flex gap 6, height 22, padding 0 8, radius full, bg online 14%, colour online-text, 500 12px, leading 6px dot), coral **"Live"** badge when someone is live (radius 3, bg `--lr-live`, ink `--lr-on-live`, padding 2/6, caps 11px) |
 | participants | margin-top 12, flex wrap gap 12; each tile **168×136**, padding 12, border 1 border, radius 10, bg surface, column centred: avatar **56×56** (initials 20px on tint, else panel), name margin-top 8 600 13px/1.35, status line only for "Kamera an"/"Live" (12px muted). Speaking: border + 1px ring in online colour. Mute icons top-left 8/8 (muted); "…" button top-right 6/6 visible on hover. Connection dot and speaker icon hidden here. |
 | live/camera stage | above participants: spotlight full width + filmstrip (see voice spec) |
 | switch note | when in another room: 12px muted "Du verlässt dabei {Raum}." |
@@ -565,7 +565,7 @@ Area heading (margin-bottom 24): title row flex wrap gap 8/12: h2 label 600 **20
 | Audio | Nur dieses Gerät | Mikrofon, Lautsprecher und Lautstärke. |
 | Video | Nur dieses Gerät | Kamera, Live gehen und Stream-Qualität. |
 | Benachrichtigungen | — (per group) | Hinweise auf neue Nachrichten. |
-| App | — | Gelabber als App installieren. |
+| App | — | Gelabber als App installieren. (Native app: listed when it has content; subtitle "Updates und was beim Schließen des Fensters passiert.", without a tray "Updates dieser App."; the update switch, state and install, and close-to-tray with a tray.) |
 
 Shared building blocks (`settings.css:129-270`): `.settings-form` column gap 20, max-width 560. Group (`components/SettingsGroup.tsx`): fieldset, legend flex wrap gap 6/10, margin-bottom 8, 600 16px/1.3 + scope badge; consecutive groups 32px apart. `.settings-row` (a Switch row): min-height 64, padding-y 12, border-bottom 1 border, gap 18; description small line-height 1.5, margin-top 2. `.settings-hint` 12px/1.5 muted. `.settings-actions` flex wrap centre gap 8/12. `.settings-note`: margin-top 24 (32 after a group), padding 14/16, border, radius 7, bg panel, 14px/1.5. `.settings-danger`: max 560, margin-top 40, padding-top 24, border-top. Loading area body: 4 skeleton rows; load failure "Dieser Bereich konnte nicht geladen werden.".
 
@@ -659,7 +659,7 @@ In-call dialog variant (`components/VoiceSettingsDialog.tsx:12-90`, `quality.css
 
 ### 6.8 Benachrichtigungen (`components/MessageAlertSettings.tsx`, `NotificationPrivacy.tsx`, `NotificationPermission.tsx`)
 
-Group **"Nachrichten"** [NUR DIESES GERÄT] switch rows: "Popup bei neuen Nachrichten in anderen Chats" (default on); desktop: "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist" (web: "Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist"; default off); "Ton bei Benachrichtigungen am Computer" / "Ein Ton für mehrere Nachrichten kurz hintereinander, keiner, während du taubgeschaltet bist. Auf dem Handy gilt die Geräteeinstellung." (disabled while the previous is off); desktop only: "Fenster schließen minimiert in den Infobereich" / "Ein laufender Anruf geht weiter. Beenden über das Symbol im Infobereich." (`components/CloseToTray.tsx`).
+Group **"Nachrichten"** [NUR DIESES GERÄT] switch rows: "Popup bei neuen Nachrichten in anderen Chats" (default on); desktop: "Benachrichtigung, wenn das Gelabber-Fenster nicht im Vordergrund ist" (web: "Browser-Benachrichtigung, wenn der Tab nicht im Vordergrund ist"; default off); "Ton bei Benachrichtigungen am Computer" / "Ein Ton für mehrere Nachrichten kurz hintereinander, keiner, während du taubgeschaltet bist. Auf dem Handy gilt die Geräteeinstellung." (disabled while the previous is off); desktop only: "Fenster schließen minimiert in den Infobereich" / "Ein laufender Anruf geht weiter. Beenden über das Symbol im Infobereich." (`components/CloseToTray.tsx`; the native app has it in App).
 Group **"Sperrbildschirm"** [FÜR DEINEN ACCOUNT]: "Inhalt in Benachrichtigungen verbergen" / "Benachrichtigungen zeigen nur „Neue Nachricht von …“, ohne Text und ohne Chat. Gilt für alle Geräte deines Accounts."; error "Die Einstellung konnte nicht gespeichert werden. Versuche es erneut."
 Note box (§6.1): desktop app with system notifications: "Benachrichtigungen laufen über dein System. Sperrbildschirm und „Nicht stören“ stellst du dort ein." (browser texts: `messages/notify.ts:86-100`).
 
@@ -728,15 +728,14 @@ Arrow keys/Home/End move focus.
 
 IconButton sm 32 `MoreIcon 18` "Aktionen für {name}" → Popover `bottom-end`: column min-width 200; items min-height 36, padding 0 12, radius 5, 500 13px, hover bg hover: **"Vom Server entfernen"** (text), **"Sperren"** (danger). Each asks first (§2.2).
 
-### 9.3 Notification settings dialog (right-click a server/channel/DM, or header bell) (`components/NotificationSettingsDialog.tsx:53-296`, `components/notificationSettings.css`)
+### 9.3 Notification settings dialog (header bell, or "Benachrichtigungseinstellungen…" in a row menu) (`components/NotificationSettingsDialog.tsx:53-296`, `components/notificationSettings.css`)
 
 Modal **"Benachrichtigungen: {name}"**; column gap 20:
-1. sm secondary (left) **"Als gelesen markieren"** / **"Server als gelesen markieren"** / **"Alle Direktnachrichten als gelesen markieren"**.
-2. Section h3 **"Stummschalten"** (600 14px/20px), gap 8: not muted → 2-column grid (gap 8) of chips (min-height 36, radius 5, centred): "15 Minuten", "1 Stunde", "8 Stunden", "24 Stunden", "Bis ich es wieder einschalte" (last spans both columns). Muted → box (flex wrap, centre, gap 8, padding 8/12, radius 7, bg surface, 500 13px/1.35, space-between): inline-flex gap 8 `BellOffIcon 16` + "Stumm bis {14:30 Uhr | Mi., 5. Nov., 14:30 Uhr}" or "Stumm, bis du es aufhebst" + sm **"Aufheben"**. Hint 12px muted: DM "Stumm: kein Zähler, keine Benachrichtigung und kein Ton." else "Stumm: kein Punkt, keine Benachrichtigung und kein Ton. @Erwähnungen zählen weiter." (+ " Der ganze Server ist gerade stumm.").
+1. Section h3 **"Stummschalten"** (600 14px/20px), gap 8: not muted → one row (`.notify-mute-row`, flex-wrap, gap 8) of `.ui-chip` pills (32 tall, padding 0 12, `flex: 1 0 auto`, centred, `title` the full length): "15 Min.", "1 Std.", "8 Std.", "24 Std.", "Unbegrenzt". Muted → box (flex wrap, centre, gap 8, padding 8/12, radius 7, bg surface, 500 13px/1.35, space-between): inline-flex gap 8 `BellOffIcon 16` + "Stumm bis {14:30 Uhr | Mi., 5. Nov., 14:30 Uhr}" or "Stumm, bis du es aufhebst" + sm **"Aufheben"**. Hint 12px muted: DM "Stumm: kein Zähler, keine Benachrichtigung und kein Ton." else "Stumm: kein Punkt, keine Benachrichtigung und kein Ton. @Erwähnungen zählen weiter." (+ " Der ganze Server ist gerade stumm.").
 3. (not DMs) fieldset (column gap 8, disabled while saving) with legend **"Benachrichtigen bei"** (600 14px/20px, mb 4), RadioCards: channel only "Wie der Server ({level})"; "Alle Nachrichten" / "Jede neue Nachricht"; "Nur @Erwähnungen" / "Wenn dich jemand erwähnt oder @everyone/@here schreibt"; "Nichts" / "Keine Benachrichtigungen, kein Zähler".
 4. Error 12px danger "Nicht gespeichert. Versuch es noch einmal." / "Nicht mehr verfügbar.".
 Saving (`messages/notificationSettings.ts:26-56`): `PUT /servers/{id}/notification-settings` or `PUT /channels/{id}/notification-settings` (DMs are channels) with `{level: "all"|"mentions"|"none"|null, muted: bool, mute_minutes?: number}` — a mute chip sends `mute_minutes` 15/60/480/1440 (none for "Bis ich es wieder einschalte"); "Aufheben" sends `muted:false`; a channel's "Wie der Server" is `level:null`, a server's "Alle Nachrichten" is also sent as `null`. List: `GET /notification-settings` → `[{scope:"server"|"channel", id, level, muted, muted_until}]`. The `{level}` in "Wie der Server ({level})" is the inherited level's label ("Alle Nachrichten", "Nur @Erwähnungen", "Nichts"). Time format: today `HH:MM Uhr`, else `de-DE {weekday:short, day:numeric, month:short}` + ", HH:MM Uhr" (`NotificationSettingsDialog.tsx:300-308`).
-5. Right-aligned ghost **"Fertig"** (initial focus).
+5. Footer (`.notify-footer`, space-between, gap 8): sm secondary **"Als gelesen markieren"** (left, vertically centred with "Fertig"), ghost **"Fertig"** (right, initial focus).
 
 ---
 

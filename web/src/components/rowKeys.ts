@@ -51,9 +51,15 @@ export function moveWithinRow(event: KeyboardEvent<HTMLElement>): void {
  * The roving Tab stop of one row: spread `keys` on the row and give item
  * `i` `tabIndex(i)`. Off (every item in the normal Tab order) while the
  * row has no actions. A row of a list that is not the list's Tab stop
- * (`stop` false) takes no Tab stop at all.
+ * (`stop` false) takes no Tab stop at all. With `resetOnLeave` the stop
+ * goes back to the first item when focus leaves the row: its actions hide
+ * then, and a hidden button takes no focus.
  */
-export function useRovingRow(enabled: boolean, stop = true) {
+export function useRovingRow(
+  enabled: boolean,
+  stop = true,
+  resetOnLeave = false,
+) {
   const [current, setCurrent] = useState(0);
   return {
     keys: {
@@ -63,6 +69,10 @@ export function useRovingRow(enabled: boolean, stop = true) {
           event.target as HTMLElement,
         );
         if (index >= 0) setCurrent(index);
+      },
+      onBlur: (event: FocusEvent<HTMLElement>) => {
+        const next = event.relatedTarget as Node | null;
+        if (resetOnLeave && !event.currentTarget.contains(next)) setCurrent(0);
       },
     },
     tabIndex: (index: number): number | undefined =>
