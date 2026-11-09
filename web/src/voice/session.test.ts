@@ -969,9 +969,16 @@ describe("voice session", () => {
   it("rolls back local join when the server forbids it", () => {
     const { emitErr, errors } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    expect(
+      voiceOf(useVoiceRoster.getState().byServer, "srv", "u-self"),
+    ).not.toBeNull();
     emitErr({ op: "err", e: "forbidden", s: "srv", c: "voice" });
     expect(useVoice.getState().status).toBe("idle");
     expect(errors).toHaveLength(1);
+    // The sidebar no longer lists me in a channel I was refused.
+    expect(voiceOf(useVoiceRoster.getState().byServer, "srv", "u-self")).toBe(
+      null,
+    );
   });
 
   it("tracks other participants from sig frames, not chat events", () => {

@@ -505,6 +505,7 @@ function onErr(err: ErrFrame): void {
       voice.awaitingJoin = null;
       voice.awaitingScreen = null;
       stopPeer();
+      vacateSelf(pending.serverId, pending.channelId);
       useVoice.setState({
         ...IDLE_VOICE,
         playbackBlocked: state.playbackBlocked,
