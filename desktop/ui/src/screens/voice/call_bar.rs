@@ -356,7 +356,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         mic_problem(ui, app, &mic, state.mic == MicStatus::Denied);
     } else {
         let ptt = prefs::get(ui.ctx()).voice_input == "ptt";
-        let held = push_to_talk(ui, app, ptt && !muted);
+        push_to_talk(ui, app, ptt && !muted);
+        // The call's gate, whichever source holds it (and its release delay).
+        let held = app.call.with_state(|s| s.push_to_talk_open);
         let (title, detail) = call_tip(ui.ctx(), CallKey::Mute, muted);
         let word = if state.muted && !state.deafened && !narrow {
             Some("Stumm")
@@ -577,17 +579,54 @@ enum Tone {
     Problem,
 }
 
-/// Push-to-talk inside the window: the chosen key (or Maustaste 4/5)
-/// opens the microphone while held. Returns whether it is held.
-fn push_to_talk(ui: &Ui, app: &AppCtx, active: bool) -> bool {
+/// Who reports the push-to-talk key: the window's own keys, or the global
+/// hook (`platform::ptt`) that also sees it while another app has the focus.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PttSource {
+    Window,
+    Hook,
+}
+
+/// What each source holds; the call gets their OR (`setHeld("page", …)`),
+/// so one letting go does not close the microphone the other holds open.
+#[derive(Clone, Copy, Default)]
+struct PttHeld {
+    window: bool,
+    hook: bool,
+}
+
+/// `source` holds the key down or lets it go.
+pub fn push_to_talk_from(
+    ctx: &egui::Context,
+    call: &gelabber_call::Call,
+    source: PttSource,
+    held: bool,
+) {
     let id = Id::unique("gelabber-ptt-held");
+    let before: PttHeld = ctx.data(|d| d.get_temp(id)).unwrap_or_default();
+    let mut after = before;
+    match source {
+        PttSource::Window => after.window = held,
+        PttSource::Hook => after.hook = held,
+    }
+    ctx.data_mut(|d| d.insert_temp(id, after));
+    let any = |h: PttHeld| h.window || h.hook;
+    if any(after) != any(before) {
+        call.push_to_talk(any(after));
+    }
+}
+
+/// Push-to-talk inside the window: the chosen key (or Maustaste 4/5)
+/// opens the microphone while held.
+fn push_to_talk(ui: &Ui, app: &AppCtx, active: bool) {
+    let id = Id::unique("gelabber-ptt-window");
     let was: bool = ui.ctx().data(|d| d.get_temp(id)).unwrap_or(false);
     if !active {
         if was {
-            app.call.push_to_talk(false);
+            push_to_talk_from(ui.ctx(), app.call, PttSource::Window, false);
             ui.ctx().data_mut(|d| d.insert_temp(id, false));
         }
-        return false;
+        return;
     }
     let code = prefs::get(ui.ctx()).ptt_key;
     // Read outside `input`: the context's lock is not reentrant.
@@ -605,10 +644,9 @@ fn push_to_talk(ui: &Ui, app: &AppCtx, active: bool) -> bool {
         }
     });
     if held != was {
-        app.call.push_to_talk(held);
+        push_to_talk_from(ui.ctx(), app.call, PttSource::Window, held);
         ui.ctx().data_mut(|d| d.insert_temp(id, held));
     }
-    held
 }
 
 /// The microphone's or the headset's toggle.

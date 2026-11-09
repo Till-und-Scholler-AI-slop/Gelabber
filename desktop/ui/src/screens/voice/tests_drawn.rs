@@ -152,6 +152,29 @@ fn holding_the_push_to_talk_key_opens_the_microphone() {
     assert!(!call.push_to_talk_held());
 }
 
+/// The window's keys and the global hook each hold the key for themselves:
+/// the window losing it (focus gone) leaves the hook's microphone open.
+#[test]
+fn the_window_and_the_global_hook_hold_push_to_talk_apart() {
+    use crate::screens::voice::call_bar::{PttSource, push_to_talk_from};
+    let _config = crate::platform::paths::testing::TempConfig::new("ptt-sources");
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call.clone(), bar);
+    push_to_talk_on(&h.ctx, &call);
+    h.run_steps(2);
+    h.key_down(egui::Key::A);
+    h.run_steps(2);
+    push_to_talk_from(&h.ctx, &call, PttSource::Hook, true);
+    h.key_up(egui::Key::A);
+    h.run_steps(2);
+    assert!(call.push_to_talk_held(), "the hook still holds it");
+    assert!(call.state().push_to_talk_open);
+    push_to_talk_from(&h.ctx, &call, PttSource::Hook, false);
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held());
+}
+
 #[test]
 fn a_lost_call_offers_to_rejoin_and_goes_away() {
     let (client, call) = offline();

@@ -34,6 +34,7 @@ use uuid::Uuid;
 
 use crate::app::GelabberApp;
 use crate::screens::settings::prefs;
+use crate::screens::voice::call_bar::{PttSource, push_to_talk_from};
 use crate::screens::{chat, shell};
 
 /// The desktop entry's and the window's id (Wayland app id, notification
@@ -504,7 +505,7 @@ impl Platform {
 }
 
 /// Binds the global key while a call wants push-to-talk and hands the key
-/// to [`gelabber_call::Call::push_to_talk`].
+/// to the call beside the window's own ([`push_to_talk_from`]).
 #[derive(Default)]
 struct PttLink {
     /// The key last bound or tried; a failed one is not tried every pass.
@@ -546,7 +547,7 @@ impl PttLink {
             self.events.lock().clear();
             if self.down {
                 self.down = false;
-                call.push_to_talk(false);
+                push_to_talk_from(ctx, call, PttSource::Hook, false);
             }
             self.status = None;
             self.key = want.map(str::to_owned);
@@ -567,11 +568,11 @@ impl PttLink {
             match event {
                 ptt::Event::Press => {
                     self.down = true;
-                    call.push_to_talk(true);
+                    push_to_talk_from(ctx, call, PttSource::Hook, true);
                 }
                 ptt::Event::Release => {
                     self.down = false;
-                    call.push_to_talk(false);
+                    push_to_talk_from(ctx, call, PttSource::Hook, false);
                 }
                 ptt::Event::Bound { trigger } => self.status = Some(PttStatus::Bound { trigger }),
                 ptt::Event::Failed { reason } => self.status = Some(PttStatus::Failed { reason }),
