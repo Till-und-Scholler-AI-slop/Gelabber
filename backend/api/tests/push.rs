@@ -27,7 +27,7 @@ struct Hit {
 }
 
 /// Answers 201, 410 for an endpoint under `/gone/`, 500 under `/fail/`,
-/// 400 under `/bad/`, 403 under `/denied/`.
+/// 400 under `/bad/`, 403 under `/denied/`, 413 under `/big/`.
 async fn fake_service() -> (String, mpsc::UnboundedReceiver<Hit>) {
     let (tx, rx) = mpsc::unbounded_channel();
     let router = Router::new()
@@ -42,6 +42,7 @@ async fn fake_service() -> (String, mpsc::UnboundedReceiver<Hit>) {
                     let fail = path.starts_with("fail/");
                     let bad = path.starts_with("bad/");
                     let denied = path.starts_with("denied/");
+                    let big = path.starts_with("big/");
                     let _ = tx.send(Hit {
                         path,
                         headers,
@@ -53,6 +54,8 @@ async fn fake_service() -> (String, mpsc::UnboundedReceiver<Hit>) {
                         StatusCode::BAD_REQUEST
                     } else if denied {
                         StatusCode::FORBIDDEN
+                    } else if big {
+                        StatusCode::PAYLOAD_TOO_LARGE
                     } else if fail {
                         StatusCode::INTERNAL_SERVER_ERROR
                     } else {
@@ -525,7 +528,8 @@ async fn an_endpoint_moves_only_with_its_keys(pool: PgPool) {
 }
 
 /// A subscription that keeps failing goes once it has not taken a push for
-/// a month; a recent one stays.
+/// a month and was not re-registered since; a recent one stays, and an
+/// outage on the service's side (5xx) costs none.
 #[sqlx::test]
 async fn a_long_failing_subscription_is_removed(pool: PgPool) {
     let World {
@@ -536,31 +540,64 @@ async fn a_long_failing_subscription_is_removed(pool: PgPool) {
         service,
         ..
     } = setup(pool.clone()).await;
-    subscribe(&mut b, &Browser::new(&service, "fail/old")).await;
-    subscribe(&mut b, &Browser::new(&service, "fail/new")).await;
+    for path in ["big/old", "big/new", "big/resynced", "fail/old", "sub/1"] {
+        subscribe(&mut b, &Browser::new(&service, path)).await;
+    }
     sqlx::query(
         "UPDATE push_subscriptions SET created_at=now()-interval '40 days' \
-         WHERE endpoint LIKE '%/fail/old'",
+         WHERE endpoint LIKE '%/old'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Took its last push long ago, but the app re-subscribed it just now.
+    sqlx::query(
+        "UPDATE push_subscriptions SET last_ok_at=now()-interval '40 days' \
+         WHERE endpoint LIKE '%/resynced'",
     )
     .execute(&pool)
     .await
     .unwrap();
     post(&mut a, &dm, "eins").await;
-    next(&mut hits).await;
-    next(&mut hits).await;
-    let mut left = Vec::new();
-    for _ in 0..50 {
-        left = sqlx::query_scalar::<_, String>("SELECT endpoint FROM push_subscriptions")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
-        if left.len() == 1 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
+    for _ in 0..5 {
+        next(&mut hits).await;
     }
-    assert_eq!(left.len(), 1);
-    assert!(left[0].ends_with("/fail/new"), "{left:?}");
+    let left = endpoints_left(&pool, 4).await;
+    assert_eq!(left.len(), 4, "{left:?}");
+    assert!(!left.iter().any(|e| e.ends_with("/big/old")), "{left:?}");
+}
+
+/// When no push of a message went out, the failures are more likely the
+/// server's own (DNS, egress): even a month-old subscription stays.
+#[sqlx::test]
+async fn a_message_no_service_took_costs_no_subscription(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool.clone()).await;
+    for path in ["big/old", "fail/old", "gone/1"] {
+        subscribe(&mut b, &Browser::new(&service, path)).await;
+    }
+    sqlx::query(
+        "UPDATE push_subscriptions SET created_at=now()-interval '40 days' \
+         WHERE endpoint LIKE '%/old'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    post(&mut a, &dm, "eins").await;
+    for _ in 0..3 {
+        next(&mut hits).await;
+    }
+    // The gone one going shows the cleanup ran.
+    let left = endpoints_settled(&pool, 2).await;
+    assert_eq!(left.len(), 2, "{left:?}");
+    assert!(left[0].ends_with("/big/old"), "{left:?}");
+    assert!(left[1].ends_with("/fail/old"), "{left:?}");
 }
 
 async fn endpoints_left(pool: &PgPool, expected: usize) -> Vec<String> {
@@ -578,6 +615,14 @@ async fn endpoints_left(pool: &PgPool, expected: usize) -> Vec<String> {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     left
+}
+
+/// Like [`endpoints_left`], then a moment more: the gone row is deleted
+/// before the failed ones, so reaching `expected` alone proves nothing.
+async fn endpoints_settled(pool: &PgPool, expected: usize) -> Vec<String> {
+    endpoints_left(pool, expected).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    endpoints_left(pool, expected).await
 }
 
 /// A service that refuses a subscription (400, 403 after a key change)
@@ -608,8 +653,8 @@ async fn a_refused_subscription_is_removed_at_once(pool: PgPool) {
 }
 
 /// Refused by the service across the board, the fault is the server's (a
-/// rejected VAPID token, a clock off): a refusal counts as a failure, and
-/// only a subscription silent for a month goes.
+/// rejected VAPID token, a clock off): no subscription goes, not even one
+/// silent for a month.
 #[sqlx::test]
 async fn a_refusal_of_every_push_keeps_the_subscriptions(pool: PgPool) {
     let World {
@@ -620,8 +665,9 @@ async fn a_refusal_of_every_push_keeps_the_subscriptions(pool: PgPool) {
         service,
         ..
     } = setup(pool.clone()).await;
-    subscribe(&mut b, &Browser::new(&service, "denied/new")).await;
-    subscribe(&mut b, &Browser::new(&service, "denied/old")).await;
+    for path in ["denied/new", "denied/old", "gone/1"] {
+        subscribe(&mut b, &Browser::new(&service, path)).await;
+    }
     sqlx::query(
         "UPDATE push_subscriptions SET created_at=now()-interval '40 days' \
          WHERE endpoint LIKE '%/denied/old'",
@@ -630,12 +676,14 @@ async fn a_refusal_of_every_push_keeps_the_subscriptions(pool: PgPool) {
     .await
     .unwrap();
     post(&mut a, &dm, "eins").await;
-    next(&mut hits).await;
-    next(&mut hits).await;
-    // The old one going shows the cleanup ran; the recent one stays.
-    let left = endpoints_left(&pool, 1).await;
-    assert_eq!(left.len(), 1, "{left:?}");
+    for _ in 0..3 {
+        next(&mut hits).await;
+    }
+    // The gone one going shows the cleanup ran; both refused ones stay.
+    let left = endpoints_settled(&pool, 2).await;
+    assert_eq!(left.len(), 2, "{left:?}");
     assert!(left[0].ends_with("/denied/new"), "{left:?}");
+    assert!(left[1].ends_with("/denied/old"), "{left:?}");
 }
 
 type Ws =
