@@ -196,10 +196,7 @@ async function change(op: Operation, importing: boolean): Promise<boolean> {
     return false;
   }
 }
-async function sendPending(
-  refresh: boolean,
-  importing = false,
-): Promise<void> {
+async function sendPending(refresh: boolean, importing = false): Promise<void> {
   const s = useAccountThemes.getState();
   if (!s.owner || !s.pending || busy) return;
   const stamp = generation;
