@@ -225,6 +225,14 @@
   }
 }
 
+/* Each group under its name, as the sidebar heads its sections. */
+.shortcut-group-title {
+  margin: 0 0 2px;
+  font: var(--lr-type-caps);
+  letter-spacing: 0.06em;
+  color: var(--lr-muted);
+  text-transform: uppercase;
+}
 .shortcut-list {
   display: flex;
   flex-direction: column;

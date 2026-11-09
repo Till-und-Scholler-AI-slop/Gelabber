@@ -574,11 +574,14 @@ fn people_rows(ui: &Ui, people: &[Person], width: f32) -> Vec<Vec<(Person, f32)>
 }
 
 /// K and Esc for Kino, unless a field has the keys or a dialog is open.
-fn kino_keys(ui: &Ui, kino: bool) {
+pub(super) fn kino_keys(ui: &Ui, kino: bool) {
     let ctx = ui.ctx();
+    // A dialog over the page owns the keys: also the quick switcher, the
+    // shortcut sheet and the profile (`modalOpen` on the web).
     if ctx.egui_wants_keyboard_input()
         || crate::screens::shell::dialog_open(ctx)
         || super::dialogs::open(ctx)
+        || ctx.memory(|m| m.top_modal_layer().is_some())
     {
         return;
     }
@@ -588,6 +591,8 @@ fn kino_keys(ui: &Ui, kino: bool) {
             .then(|| ptt_key(&p.ptt_key))
             .flatten()
     };
+    // An open menu or popover (the call bar's too) closes on Esc first.
+    let popover = crate::widgets::popover::any_open(ctx);
     let mut action = None;
     ctx.input_mut(|i| {
         i.events.retain(|e| {
@@ -602,6 +607,7 @@ fn kino_keys(ui: &Ui, kino: bool) {
                 return true;
             };
             match stage::kino_key(*key, *modifiers, *repeat, kino, ptt) {
+                Some(KinoKey::Leave) if popover => true,
                 Some(a) => {
                     action = Some(a);
                     false
@@ -815,6 +821,19 @@ fn watch_strip(
             x += 36.0 + 4.0;
             let resp = common::click(ui, r, Id::unique(("watch-strip", which)));
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+            // The call bar's tooltip, icons only (`VoiceAudioToggles`).
+            let (title, detail) = super::call_bar::call_tip(
+                ui.ctx(),
+                if which == 0 {
+                    super::call_bar::CallKey::Mute
+                } else {
+                    super::call_bar::CallKey::Deafen
+                },
+                off,
+            );
+            Tooltip::new(title)
+                .detail(Some(&detail))
+                .on_hover_or_focus(&resp, Side::Above);
             let fill = if off {
                 c.danger_bg.gamma_multiply(0.45)
             } else if resp.hovered() {

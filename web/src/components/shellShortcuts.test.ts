@@ -3,9 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   nextUnread,
   shellShortcut,
-  shortcutList,
+  shortcutGroups,
   stepIndex,
 } from "./shellShortcuts.ts";
+import { callShortcut } from "../voice/pushToTalk.ts";
 
 const keys = (
   key: string,
@@ -77,17 +78,67 @@ describe("shell shortcuts", () => {
     expect(nextUnread([false, true], -1, 1)).toBe(1);
   });
 
+  const all = (mac: boolean, ptt: string | null = null) =>
+    shortcutGroups(mac, ptt).flatMap((group) => group.shortcuts);
+
   it("names the keys as the keyboard prints them", () => {
-    expect(shortcutList(false)[0]?.keys).toEqual(["Strg", "K"]);
-    expect(shortcutList(true)[0]?.keys).toEqual(["⌘", "K"]);
-    // A plain K is the voice channel's Kino.
+    expect(all(false)[0]?.keys).toEqual(["Strg", "K"]);
+    expect(all(true)[0]?.keys).toEqual(["⌘", "K"]);
+  });
+
+  it("lists the call's keys in a group of their own", () => {
+    const voice = shortcutGroups(false).find(
+      (group) => group.title === "Im Sprachkanal",
+    );
+    expect(voice?.shortcuts.map((entry) => entry.keys.join("+"))).toEqual([
+      "Strg+Umschalt+M",
+      "Strg+Umschalt+D",
+      "K",
+      "M / Leertaste",
+    ]);
+    // The sheet's keys are the ones callShortcut answers to.
+    for (const [code, action] of [
+      ["KeyM", "mute"],
+      ["KeyD", "deafen"],
+    ] as const)
+      expect(
+        callShortcut(
+          {
+            code,
+            ctrlKey: true,
+            metaKey: false,
+            shiftKey: true,
+            altKey: false,
+            repeat: false,
+          },
+          null,
+        ),
+      ).toBe(action);
     expect(
-      shortcutList(false).find((entry) => entry.keys.join() === "K")?.label,
-    ).toBe("Kino im Sprachkanal ein oder aus");
+      shortcutGroups(true).find((group) => group.title === "Im Sprachkanal")
+        ?.shortcuts[0]?.keys,
+    ).toEqual(["⌘", "⇧", "M"]);
+    // Push-to-talk's key only while it has one.
+    expect(
+      all(false, "Leertaste").find(
+        (entry) => entry.label === "Zum Sprechen gedrückt halten",
+      )?.keys,
+    ).toEqual(["Leertaste"]);
+    expect(
+      all(false).some(
+        (entry) => entry.label === "Zum Sprechen gedrückt halten",
+      ),
+    ).toBe(false);
+  });
+
+  it("says what Esc does when nothing is open", () => {
+    expect(all(false).find((entry) => entry.keys.join() === "Esc")?.label).toBe(
+      "Schließen, sonst Unterhaltung als gelesen markieren",
+    );
   });
 
   it("lists Strg+F for the conversation search, not Strg+K (#377)", () => {
-    const search = shortcutList(false).find(
+    const search = all(false).find(
       (entry) => entry.label === "In der Unterhaltung suchen",
     );
     expect(search?.keys).toEqual(["Strg", "F"]);

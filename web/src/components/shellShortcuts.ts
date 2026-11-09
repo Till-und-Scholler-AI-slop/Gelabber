@@ -81,23 +81,52 @@ export function keyNames(mac: boolean) {
     : { mod: "Strg", alt: "Alt", shift: "Umschalt" };
 }
 
-/** The list the shortcut sheet shows, in its order. */
-export function shortcutList(
+export type Shortcut = { keys: string[]; label: string };
+export type ShortcutGroup = { title: string; shortcuts: Shortcut[] };
+
+/** What the shortcut sheet shows, in its order: the workspace's keys, then
+ * the call's (voice/callShortcuts.ts, kinoKey, VoiceTile). `pushToTalk` is
+ * the key push-to-talk holds, as the settings name it, when it is on. */
+export function shortcutGroups(
   mac: boolean,
-): { keys: string[]; label: string }[] {
+  pushToTalk: string | null = null,
+): ShortcutGroup[] {
   const { mod, alt, shift } = keyNames(mac);
   return [
-    { keys: [mod, "K"], label: "Server, Kanal oder Unterhaltung öffnen" },
-    { keys: [mod, "F"], label: "In der Unterhaltung suchen" },
-    { keys: [alt, "↑ / ↓"], label: "Vorheriger oder nächster Kanal" },
     {
-      keys: [alt, shift, "↑ / ↓"],
-      label: "Vorheriger oder nächster ungelesener Kanal",
+      title: "Allgemein",
+      shortcuts: [
+        { keys: [mod, "K"], label: "Server, Kanal oder Unterhaltung öffnen" },
+        { keys: [mod, "F"], label: "In der Unterhaltung suchen" },
+        { keys: [alt, "↑ / ↓"], label: "Vorheriger oder nächster Kanal" },
+        {
+          keys: [alt, shift, "↑ / ↓"],
+          label: "Vorheriger oder nächster ungelesener Kanal",
+        },
+        { keys: [mod, alt, "↑ / ↓"], label: "Vorheriger oder nächster Server" },
+        // Whatever is open takes Esc first (MessagePane).
+        {
+          keys: ["Esc"],
+          label: "Schließen, sonst Unterhaltung als gelesen markieren",
+        },
+        { keys: [shift, "Esc"], label: "Ganzen Server als gelesen markieren" },
+        { keys: [mod, "/"], label: "Diese Übersicht" },
+      ],
     },
-    { keys: [mod, alt, "↑ / ↓"], label: "Vorheriger oder nächster Server" },
-    { keys: ["Esc"], label: "Unterhaltung als gelesen markieren" },
-    { keys: [shift, "Esc"], label: "Ganzen Server als gelesen markieren" },
-    { keys: ["K"], label: "Kino im Sprachkanal ein oder aus" },
-    { keys: [mod, "/"], label: "Diese Übersicht" },
+    {
+      title: "Im Sprachkanal",
+      shortcuts: [
+        { keys: [mod, shift, "M"], label: "Stummschaltung ein oder aus" },
+        { keys: [mod, shift, "D"], label: "Taubschaltung ein oder aus" },
+        ...(pushToTalk
+          ? [{ keys: [pushToTalk], label: "Zum Sprechen gedrückt halten" }]
+          : []),
+        { keys: ["K"], label: "Kino ein oder aus" },
+        {
+          keys: ["M / Leertaste"],
+          label: "Im Vollbild: Stummschaltung ein oder aus",
+        },
+      ],
+    },
   ];
 }
