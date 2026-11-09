@@ -454,8 +454,8 @@
     justify-content: center;
     padding: 0 5px;
     border-radius: var(--lr-radius-full);
-    background: var(--lr-danger-bg);
-    color: var(--lr-on-danger);
+    background: var(--lr-accent);
+    color: var(--lr-accent-ink);
     font: 700 11px / 1 var(--lr-font);
     letter-spacing: 0;
     text-transform: none;
@@ -1071,6 +1071,28 @@
     font: var(--lr-type-body);
     color: var(--lr-muted);
   }
+  /* Someone went live: the on-air tag before the voice channel, and a way
+     to watch beside it, above the card's own link. */
+  .ui-message-toast__live > b {
+    margin-right: var(--lr-space-1);
+    padding: 1px 5px;
+    border-radius: var(--lr-radius-xs);
+    background: var(--lr-live);
+    color: var(--lr-on-live);
+    font: var(--lr-type-caps);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    vertical-align: 1px;
+  }
+  .ui-message-toast__action {
+    position: relative;
+    z-index: 1;
+    flex-shrink: 0;
+    align-self: flex-end;
+    /* Under the close button, as far from the edge as the avatar. */
+    margin-right: calc(var(--lr-space-3) - var(--lr-space-10));
+  }
   .ui-message-toast__close {
     position: absolute;
     top: 6px;
@@ -1081,6 +1103,9 @@
     /* Text stays clear of the 44px close button. */
     .ui-message-toast {
       padding-right: 56px;
+    }
+    .ui-message-toast__action {
+      margin-right: 0;
     }
   }
   /* In a conversation they sit above the composer and end where it ends,

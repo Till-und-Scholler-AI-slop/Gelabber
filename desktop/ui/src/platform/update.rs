@@ -186,8 +186,9 @@ pub fn set_auto_check(enabled: bool) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-/// The setup screen's update section (`#updates` of the setup page), only
-/// where the app updates itself, as the Tauri page's `update_state`.
+/// What Settings › App and the setup screen show of the updates, as the
+/// Tauri page's `update_state`. The setup screen shows its section only
+/// where the app installs updates itself (`installs`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SetupView {
     pub current: String,
@@ -197,6 +198,11 @@ pub struct SetupView {
     /// A check got an answer or failed.
     pub checked: bool,
     pub error: Option<String>,
+    /// The Windows setup: the app downloads and installs updates itself.
+    pub installs: bool,
+    /// The update found: what it offers and how far its install is, also
+    /// after "Später".
+    pub notice: Option<Notice>,
 }
 
 impl SetupView {
@@ -215,13 +221,39 @@ impl SetupView {
         }
         line
     }
+
+    /// The status line: [`Self::line`], or how far an install is.
+    pub fn status(&self) -> String {
+        match self.notice.as_ref().map(|n| (n, &n.phase)) {
+            Some((_, Phase::Offer)) | None => self.line(),
+            Some((_, Phase::Failed(reason))) => format!("{} {reason}", self.line()),
+            Some((notice, _)) => notice.text(),
+        }
+    }
+
+    /// An install that can start now: "Jetzt installieren" works.
+    pub fn can_install(&self) -> bool {
+        self.notice
+            .as_ref()
+            .is_some_and(|n| n.offer == Offer::Restart && n.enabled())
+    }
+
+    /// An install at work (downloading, then installing).
+    pub fn installing(&self) -> bool {
+        self.notice
+            .as_ref()
+            .is_some_and(|n| n.offer == Offer::Restart && !n.enabled())
+    }
 }
 
-/// What the setup section asks of the [`Updater`].
+/// What the update controls (Settings › App, the setup screen) ask of the
+/// [`Updater`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SetupAsk {
     AutoCheck(bool),
     CheckNow,
+    /// "Jetzt installieren": download, check and install the update found.
+    Install,
 }
 
 fn setup_view_id() -> Id {
@@ -550,13 +582,11 @@ pub struct Notice {
     pub phase: Phase,
 }
 
-// The BANNER's colours, the same in every theme.
-const BG: Color32 = crate::theme::hex(0x1d2021);
-const BORDER: Color32 = crate::theme::hex(0x2c3032);
-const INK: Color32 = crate::theme::hex(0xeef0ee);
-const ACCENT: Color32 = crate::theme::hex(0xf3b752);
-const ACCENT_INK: Color32 = crate::theme::hex(0x191b1b);
-const LINE: Color32 = crate::theme::hex(0x3a3f42);
+/// The shell header's height: the notice sits below it, clear of the
+/// channel title and the search.
+const HEADER: f32 = 52.0;
+/// Disabled buttons while the update is at work: dimmed, as `opacity: .5`.
+const DIMMED: f32 = 0.5;
 
 impl Notice {
     pub fn new(version: &str, offer: Offer) -> Self {
@@ -609,16 +639,39 @@ impl Notice {
         matches!(self.phase, Phase::Offer | Phase::Failed(_))
     }
 
-    /// Over everything at the top centre, clear of the composer and the call
-    /// dock: the BANNER's box (14px/1.4 system-ui, padding 10px 12px, gap 10px).
+    /// How much of the download is in, 0 to 1; `None` before the size is
+    /// known and outside the download.
+    pub fn progress(&self) -> Option<f32> {
+        match self.phase {
+            Phase::Downloading {
+                downloaded,
+                total: Some(total),
+            } if total > 0 => Some((downloaded as f32 / total as f32).clamp(0.0, 1.0)),
+            Phase::Ready | Phase::Installing => Some(1.0),
+            _ => None,
+        }
+    }
+
+    /// Over everything at the top centre, below the header and clear of the
+    /// composer and the call dock: the BANNER's box (14px/1.4, padding
+    /// 10px 12px, gap 10px) in the theme's colours.
     pub fn paint(&self, ctx: &Context) -> Option<Click> {
-        crate::fonts::use_system_ui(ctx);
-        let style = TextStyle::new(14.0, 400.0, 1.4).system_ui();
+        let theme = crate::theme::Theme::of(ctx);
+        let c = theme.c;
+        let style = TextStyle::new(14.0, 400.0, 1.4);
         let enabled = self.enabled();
+        // While at work the buttons stay, dimmed, so the box keeps its place.
+        let dim = |color: Color32| {
+            if enabled {
+                color
+            } else {
+                color.gamma_multiply(DIMMED)
+            }
+        };
         let mut clicked = None;
         egui::Area::new(Id::unique("gelabber-update-notice"))
             .order(egui::Order::Foreground)
-            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 12.0))
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, HEADER + 8.0))
             .constrain(false)
             .show(ctx, |ui| {
                 let (pad_x, pad_y, gap, line) = (12.0, 10.0, 10.0, style.line_px());
@@ -629,12 +682,12 @@ impl Notice {
                     .map(|(i, (label, click))| {
                         let primary = i == 0 && *click != Click::Later;
                         let (weight, ink) = if primary {
-                            (600.0, ACCENT_INK)
+                            (600.0, c.accent_ink)
                         } else {
-                            (400.0, INK)
+                            (400.0, c.text)
                         };
                         (
-                            Block::single(ui, label, style.weight(weight), ink),
+                            Block::single(ui, label, style.weight(weight), dim(ink)),
                             *click,
                             primary,
                         )
@@ -653,9 +706,9 @@ impl Notice {
                 let screen = ctx.content_rect();
                 let room = (screen.width() - 32.0 - 2.0 * (pad_x + 1.0) - buttons_w).max(40.0);
                 let text = self.text();
-                let mut block = Block::single(ui, &text, style, INK);
+                let mut block = Block::single(ui, &text, style, c.text);
                 if block.width() > room {
-                    block = Block::wrapped(ui, &text, style, INK, room);
+                    block = Block::wrapped(ui, &text, style, c.text, room);
                 }
                 let row_h = buttons
                     .iter()
@@ -681,22 +734,37 @@ impl Notice {
                 painter.rect(
                     rect,
                     CornerRadius::same(12),
-                    BG,
-                    Stroke::new(1.0, BORDER),
+                    c.panel,
+                    Stroke::new(1.0, c.border),
                     StrokeKind::Inside,
                 );
                 let middle = rect.top() + 1.0 + pad_y + row_h / 2.0;
                 let mut x = rect.left() + 1.0 + pad_x;
-                block.paint(painter, pos2(x, middle - block.height() / 2.0));
+                let text_top = middle - block.height() / 2.0;
+                block.paint(painter, pos2(x, text_top));
+                // A thin bar under the line while the download runs.
+                if let Some(done) = self.progress() {
+                    let track = Rect::from_min_size(
+                        pos2(
+                            x,
+                            (text_top + block.height() + 3.0).min(rect.bottom() - 4.0),
+                        ),
+                        Vec2::new(block.width(), 3.0),
+                    );
+                    painter.rect_filled(track, CornerRadius::same(2), c.border);
+                    let mut bar = track;
+                    bar.set_width(track.width() * done);
+                    painter.rect_filled(bar, CornerRadius::same(2), c.accent);
+                }
                 x += block.width();
                 for (label, click, primary) in &buttons {
                     x += gap;
                     let size = button_size(label, *primary);
                     let button = Rect::from_min_size(pos2(x, middle - size.y / 2.0), size);
                     let (fill, stroke) = if *primary {
-                        (ACCENT, Stroke::NONE)
+                        (dim(c.accent), Stroke::NONE)
                     } else {
-                        (Color32::TRANSPARENT, Stroke::new(1.0, LINE))
+                        (Color32::TRANSPARENT, Stroke::new(1.0, dim(c.border_strong)))
                     };
                     painter.rect(
                         button,
@@ -796,14 +864,11 @@ impl Updater {
         matches!(self.install, Install::Setup { .. }) && !self.key.trim().is_empty()
     }
 
-    /// Each pass, the setup screen's too: its section's clicks, then what it
-    /// shows ([`show_setup`]).
+    /// Each pass, the setup screen's too: the clicks of the update controls
+    /// (Settings › App, the setup screen), then what they show
+    /// ([`show_setup`]).
     pub fn setup(&mut self, ctx: &Context) {
         self.take_check();
-        if !self.updates_itself() {
-            show_setup(ctx, None);
-            return;
-        }
         match take_ask(ctx) {
             Some(SetupAsk::AutoCheck(enabled)) => match set_auto_check(enabled) {
                 Ok(()) => self.auto = Some(enabled),
@@ -813,9 +878,27 @@ impl Updater {
                 let wake = ctx.clone();
                 self.start_check(Arc::new(move || wake.request_repaint()));
             }
+            Some(SetupAsk::Install)
+                if self.at_rest()
+                    && self
+                        .found
+                        .as_ref()
+                        .map(|f| Offer::for_install(&self.install, f))
+                        == Some(Offer::Restart) =>
+            {
+                // As "Neu starten" in the notice, which shows how far it is.
+                self.requested = true;
+                self.dismissed = None;
+                ctx.request_repaint();
+            }
             _ => {}
         }
         let auto = *self.auto.get_or_insert_with(auto_check);
+        let notice = self.found.as_ref().map(|found| Notice {
+            version: found.version.clone(),
+            offer: Offer::for_install(&self.install, found),
+            phase: self.phase.clone(),
+        });
         show_setup(
             ctx,
             Some(SetupView {
@@ -825,6 +908,8 @@ impl Updater {
                 available: self.found.as_ref().map(|f| f.version.clone()),
                 checked: self.last.is_some(),
                 error: self.error.clone(),
+                installs: self.updates_itself(),
+                notice,
             }),
         );
     }
@@ -837,6 +922,36 @@ impl Updater {
     /// Every pass with the app: checks when due, runs an accepted update and
     /// says when the app is to end for its installer. `busy`: [`call_busy`].
     pub fn tick(&mut self, client: &Client, now: f64, busy: bool) -> bool {
+        let repaint = client.clone();
+        let wake: Wake = Arc::new(move || repaint.repaint());
+        if self.advance(&wake, busy) {
+            return true;
+        }
+        if self.checking.is_none() && self.at_rest() && now >= self.next {
+            self.next = now + 60.0;
+            if auto_check() && due(self.last, SystemTime::now()) {
+                self.start_check(wake);
+            }
+        }
+        false
+    }
+
+    /// Every pass of the setup screen: no app and no call there, so an
+    /// install asked for ("Jetzt installieren") runs at once; true when the
+    /// app is to end for its installer.
+    pub fn tick_setup(&mut self, ctx: &Context) -> bool {
+        // The way to setup left the call: its minute after does not hold.
+        self.lock = CallLock::default();
+        let repaint = ctx.clone();
+        self.advance(
+            &(Arc::new(move || repaint.request_repaint()) as Wake),
+            false,
+        )
+    }
+
+    /// An accepted update: downloads it, and once it is checked hands the
+    /// installer to main.rs ([`PENDING`]) unless a call holds the app.
+    fn advance(&mut self, wake: &Wake, busy: bool) -> bool {
         self.locked = self.lock.locked(busy, Instant::now());
         self.take_check();
         self.take_download();
@@ -848,7 +963,7 @@ impl Updater {
                 // The installer refused by a call is not loaded again.
                 self.phase = Phase::Ready;
             } else {
-                self.start_download(client);
+                self.start_download(wake.clone());
             }
         }
         if self.phase == Phase::Ready
@@ -862,13 +977,6 @@ impl Updater {
                 *PENDING.lock() = Some((installer, dir.clone()));
                 self.phase = Phase::Installing;
                 return true;
-            }
-        }
-        if self.checking.is_none() && self.at_rest() && now >= self.next {
-            self.next = now + 60.0;
-            if auto_check() && due(self.last, SystemTime::now()) {
-                let wake = client.clone();
-                self.start_check(Arc::new(move || wake.repaint()));
             }
         }
         false
@@ -924,7 +1032,9 @@ impl Updater {
         self.error = None;
     }
 
-    fn start_download(&mut self, client: &Client) {
+    /// The download on its own thread, like [`Self::start_check`], so the
+    /// setup screen can install without a server's client.
+    fn start_download(&mut self, wake: Wake) {
         let Some(Found {
             version,
             package: Some((url, signature)),
@@ -941,11 +1051,12 @@ impl Updater {
         let slot: Slot<_> = Arc::default();
         self.downloading = Some(slot.clone());
         let progress = self.progress.clone();
-        let wake = client.clone();
         let key = self.key;
-        client.spawn(async move {
-            let result = match download_client() {
-                Ok(http) => {
+        let spawned = std::thread::Builder::new()
+            .name("gelabber-update-download".into())
+            .spawn(move || {
+                let fetch = async {
+                    let http = download_client()?;
                     download(
                         &http,
                         &url,
@@ -955,15 +1066,23 @@ impl Updater {
                         &download_dir(&version),
                         |done, total| {
                             *progress.lock() = (done, total);
-                            wake.repaint();
+                            wake();
                         },
                     )
                     .await
-                }
-                Err(e) => Err(e),
-            };
-            *slot.lock() = Some(result);
-        });
+                };
+                let result = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| e.to_string())
+                    .and_then(|runtime| runtime.block_on(fetch));
+                *slot.lock() = Some(result);
+                wake();
+            });
+        if let Err(e) = spawned {
+            self.downloading = None;
+            self.phase = Phase::Failed(e.to_string());
+        }
     }
 
     fn take_download(&mut self) {
@@ -1442,6 +1561,7 @@ mod tests {
         assert_eq!(notice.text(), "Update wird geladen … 40 %");
         assert!(banner.contains("`Update wird geladen …${percent}`"));
         assert!(!notice.enabled());
+        assert_eq!(notice.progress(), Some(19.0 / 47.0));
         notice.phase = Phase::Installing;
         assert_eq!(
             notice.text(),
@@ -1451,10 +1571,17 @@ mod tests {
         notice.phase = Phase::Failed("kaputt".into());
         assert_eq!(notice.text(), "kaputt");
         assert!(notice.enabled());
-        for color in [
-            "#1d2021", "#2c3032", "#eef0ee", "#f3b752", "#191b1b", "#3a3f42",
+        assert_eq!(notice.progress(), None);
+        // The theme's colours, as `paint` takes them from it.
+        for token in [
+            "--lr-panel",
+            "--lr-border",
+            "--lr-text",
+            "--lr-accent",
+            "--lr-accent-ink",
+            "--lr-border-strong",
         ] {
-            assert!(banner.contains(color), "{color}");
+            assert!(banner.contains(&format!("var({token})")), "{token}");
         }
 
         let link = Notice::new("0.9.1", Offer::Download);
@@ -1522,8 +1649,9 @@ mod tests {
         );
     }
 
-    /// The setup page's `#updates`: its line as setup.js writes it, the
-    /// switch into update.json, and only where the app updates itself.
+    /// The update controls (Settings › App, the setup screen): the line as
+    /// setup.js writes it, the switch into update.json, and whether the app
+    /// installs updates itself.
     #[test]
     fn the_setup_section_shows_switches_and_says_what_setup_js_says() {
         let _config = crate::platform::paths::testing::TempConfig::new("update-setup");
@@ -1534,6 +1662,7 @@ mod tests {
             available: available.map(str::to_owned),
             checked,
             error: error.map(str::to_owned),
+            ..SetupView::default()
         };
         assert_eq!(view(false, None, false, None).line(), "Installiert: 0.9.0.");
         assert_eq!(
@@ -1549,16 +1678,50 @@ mod tests {
             "Installiert: 0.9.0. Das ist die neueste Version. Letzte Suche: 404"
         );
 
+        let mut downloading = view(false, Some("0.9.1"), true, None);
+        downloading.notice = Some(Notice {
+            version: "0.9.1".into(),
+            offer: Offer::Restart,
+            phase: Phase::Downloading {
+                downloaded: 1,
+                total: Some(4),
+            },
+        });
+        assert_eq!(downloading.status(), "Update wird geladen … 25 %");
+        assert!(downloading.installing() && !downloading.can_install());
+        let mut failed = downloading.clone();
+        failed.notice.as_mut().unwrap().phase = Phase::Failed("kaputt".into());
+        assert_eq!(
+            failed.status(),
+            "Installiert: 0.9.0. Verfügbar: 0.9.1. kaputt"
+        );
+        assert!(failed.can_install());
+
         let ctx = Context::default();
         let mut manual = Updater::new(Install::Manual);
         manual.setup(&ctx);
-        assert_eq!(setup_view(&ctx), None, "the tarball has no section");
+        let tarball = setup_view(&ctx).unwrap();
+        assert!(!tarball.installs, "the tarball does not install itself");
+        // Its update links the release page; "Jetzt installieren" does nothing.
+        manual.set_found(Some(Found {
+            version: "0.9.1".into(),
+            notes: None,
+            package: None,
+        }));
+        ask(&ctx, SetupAsk::Install);
+        manual.setup(&ctx);
+        assert!(!manual.requested);
+        assert_eq!(
+            setup_view(&ctx).unwrap().notice.map(|n| n.offer),
+            Some(Offer::Download)
+        );
 
         let mut updater = Updater::new(Install::Setup {
             dir: temp_dir("setup-section"),
         });
         updater.setup(&ctx);
         let shown = setup_view(&ctx).unwrap();
+        assert!(shown.installs);
         assert!(shown.auto_check && !shown.checking && !shown.checked);
         assert_eq!(shown.current, env!("CARGO_PKG_VERSION"));
         ask(&ctx, SetupAsk::AutoCheck(false));
@@ -1610,6 +1773,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(download_dir("0.9.1"));
     }
 
+    /// "Jetzt installieren" on the setup screen: no app, no server's
+    /// client; the same download and check, then the app is to end.
+    #[test]
+    fn the_setup_screen_installs_without_an_app() {
+        let _pending = PENDING_TESTS.lock();
+        let (addr, _) = serve(vec![("application/octet-stream", INSTALLER.to_vec())]);
+        let ctx = Context::default();
+        let dir = temp_dir("install-setup");
+        let mut updater = Updater::new(Install::Setup { dir: dir.clone() });
+        updater.key = KEY_A;
+        updater.set_found(Some(Found {
+            version: "0.9.1".into(),
+            notes: None,
+            package: Some((format!("http://{addr}/setup.exe"), SIG_A.into())),
+        }));
+        updater.dismissed = Some("0.9.1".into());
+        // The call left on the way here ("Server wechseln …") ended just now.
+        assert!(updater.lock.locked(true, Instant::now()));
+        ask(&ctx, SetupAsk::Install);
+        updater.setup(&ctx);
+        assert!(updater.requested);
+        // The notice shows how far it is, also after "Später".
+        assert!(updater.notice().is_some());
+        let start = Instant::now();
+        while !updater.tick_setup(&ctx) {
+            assert!(
+                !matches!(updater.phase, Phase::Failed(_)),
+                "{:?}",
+                updater.phase
+            );
+            assert!(start.elapsed() < Duration::from_secs(10), "download hangs");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(updater.phase, Phase::Installing);
+        let (installer, into) = PENDING.lock().take().unwrap();
+        assert_eq!(into, dir);
+        assert_eq!(std::fs::read(&installer).unwrap(), INSTALLER);
+        let _ = std::fs::remove_dir_all(download_dir("0.9.1"));
+    }
+
     #[test]
     fn an_installer_of_another_key_is_refused_and_can_be_tried_again() {
         let _pending = PENDING_TESTS.lock();
@@ -1651,6 +1854,8 @@ mod tests {
         let mut harness = egui_kittest::Harness::builder()
             .with_size(egui::vec2(1280.0, 800.0))
             .build_ui(move |ui| {
+                // The app's fonts, which the notice is set in.
+                crate::fonts::install(ui.ctx());
                 if let Some(click) = n.lock().paint(ui.ctx()) {
                     c.lock().push(click);
                 }

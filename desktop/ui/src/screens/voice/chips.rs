@@ -269,7 +269,7 @@ pub fn kino_bar(ui: &mut Ui, room: Rect, label: Option<(bool, String, String)>) 
         let mut x = exit.right() + 10.0;
         let chip_left = x;
         let badge =
-            live.then(|| Block::single(ui, "Live", TextStyle::new(10.0, 600.0, 1.3), white));
+            live.then(|| Block::single(ui, "Live", TextStyle::new(10.0, 600.0, 1.3), c.on_live));
         let strong = Block::single(ui, &name, text::UI.weight(900.0), white);
         let rest = Block::single(ui, &format!("· {place}"), text::UI.weight(400.0), grey);
         let mut content = strong.width() + 8.0 + rest.width();
@@ -289,7 +289,7 @@ pub fn kino_bar(ui: &mut Ui, room: Rect, label: Option<(bool, String, String)>) 
                 pos2(x, cy - (b.height() + 2.0) / 2.0),
                 vec2(b.width() + 10.0, b.height() + 2.0),
             );
-            painter.rect_filled(r, corner(theme.radius.xs), c.danger_bg);
+            painter.rect_filled(r, corner(theme.radius.xs), c.live);
             b.paint(&painter, r.min + vec2(5.0, 1.0));
             x = r.right() + 8.0;
         }

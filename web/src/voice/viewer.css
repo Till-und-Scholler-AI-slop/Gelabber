@@ -24,15 +24,44 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.voice-video-live {
+/* Top left: the Live tag, and on the own Live what becomes of its sound. */
+.voice-video-tags {
   position: absolute;
   top: 8px;
   left: 8px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 16px);
+  pointer-events: none;
+}
+.voice-video-live {
   padding: 2px 6px;
   border-radius: var(--lr-radius-xs);
-  background: var(--lr-danger-bg);
-  color: var(--lr-on-danger);
+  background: var(--lr-live);
+  color: var(--lr-on-live);
   font: var(--lr-type-caps);
+}
+.voice-video-sound {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 2px 6px;
+  border-radius: var(--lr-radius-xs);
+  background: color-mix(in srgb, var(--lr-bg) 82%, transparent);
+  color: var(--lr-text);
+  font: var(--lr-type-caps);
+  white-space: nowrap;
+  pointer-events: auto;
+}
+.voice-video-sound > svg {
+  flex-shrink: 0;
+}
+/* Sound that should go out and does not: noticed, not an alarm. */
+.voice-video-sound--off > svg {
+  color: var(--lr-warning);
 }
 .voice-video-placeholder,
 .voice-video-overlay {
@@ -327,13 +356,4 @@ html[data-reduced-motion="true"] .voice-video-spinner {
   font: var(--lr-type-ui);
   font-weight: 600;
   cursor: pointer;
-}
-.voice-source-audio-tile {
-  position: absolute;
-  bottom: 28px;
-  inset-inline: 12px;
-  padding: 5px 8px;
-  border-radius: 6px;
-  background: #151819df;
-  color: white;
 }

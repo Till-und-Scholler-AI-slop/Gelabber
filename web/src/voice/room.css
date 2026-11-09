@@ -26,8 +26,8 @@
 }
 .voice-room-live-badge {
   border-radius: var(--lr-radius-xs);
-  background: var(--lr-danger-bg);
-  color: var(--lr-on-danger);
+  background: var(--lr-live);
+  color: var(--lr-on-live);
   padding: 2px 6px;
   font: var(--lr-type-caps);
 }
@@ -276,7 +276,7 @@ html[data-kino] .app-shell-workspace .voice-session-dock {
 }
 /* The corner names the picture in front instead. */
 .voice-room[data-kino] .is-focus .voice-video-caption,
-.voice-room[data-kino] .is-focus .voice-video-live,
+.voice-room[data-kino] .is-focus .voice-video-tags,
 .voice-room[data-kino] .is-focus > .voice-room-participant-text,
 .voice-room[data-kino] .is-focus > .voice-room-participant-more {
   display: none;
@@ -362,8 +362,8 @@ html[data-kino] .app-shell-workspace .voice-session-dock {
 .voice-kino-live {
   padding: 1px 5px;
   border-radius: var(--lr-radius-xs);
-  background: var(--lr-danger-bg);
-  color: var(--lr-on-danger);
+  background: var(--lr-live);
+  color: var(--lr-on-live);
   font: var(--lr-type-caps);
   font-size: 10px;
 }
@@ -390,9 +390,12 @@ html[data-kino] .app-shell-workspace .voice-session-dock {
   font: var(--lr-type-caps);
   text-transform: none;
 }
-.voice-stage > .is-strip .voice-video-live {
+.voice-stage > .is-strip .voice-video-tags {
   top: 6px;
   left: 6px;
+}
+.voice-stage > .is-strip .voice-video-sound {
+  display: none;
 }
 .voice-stage > .is-strip .voice-video-actions {
   top: 4px;
@@ -1156,7 +1159,7 @@ a.voice-session-link:hover > span {
   color: var(--lr-muted);
 }
 /* Controls: transparent until on, one height and corner. A camera that is
-   on gets an accent tint, a Live red; a closed microphone or headset is
+   on gets an accent tint, a Live coral; a closed microphone or headset is
    red. Being on changes colours only, never the size. */
 .voice-session-dock .voice-controls {
   flex-wrap: nowrap;
@@ -1225,8 +1228,8 @@ a.voice-session-link:hover > span {
 }
 .voice-session-dock .voice-control-live,
 .voice-session-dock .voice-control-live:hover {
-  background: var(--lr-danger-bg);
-  color: var(--lr-on-danger);
+  background: var(--lr-live);
+  color: var(--lr-on-live);
 }
 .voice-session-dock .voice-control-leave,
 .voice-session-dock .voice-control-leave:hover {
@@ -1569,10 +1572,6 @@ a.voice-session-link:hover > span {
 }
 .voice-state-icons-speaker {
   color: var(--lr-online);
-}
-.voice-source-audio-notice {
-  color: var(--lr-muted);
-  line-height: 1.4;
 }
 .voice-microphone-test {
   display: flex;

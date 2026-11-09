@@ -112,6 +112,12 @@ pub struct Colors {
     pub danger: Color32,
     pub danger_bg: Color32,
     pub on_danger: Color32,
+    /// `--lr-live`: the on-air coral, a fill.
+    pub live: Color32,
+    /// `--lr-on-live`: text on [`Colors::live`].
+    pub on_live: Color32,
+    /// `--lr-live-text`: the coral for text and icons on the surfaces.
+    pub live_text: Color32,
     /// Unmultiplied `--lr-backdrop`.
     pub backdrop: Color32,
     pub speaking: Color32,
@@ -192,6 +198,15 @@ impl Theme {
         let accent_text =
             ensure_contrast(c.accent, &[c.background, c.panel, c.surface, selected], 4.5);
         let muted = ensure_contrast(c.muted, &[c.panel, c.surface, hover], 4.5);
+        // On air: a warm coral apart from the danger red and the accent; it
+        // stands out from the surfaces (3:1) unless that costs its ink 4.5:1.
+        let coral = live_apart_from(if dark { hex(0xff7b5c) } else { hex(0xdb5b24) }, c.accent);
+        let raised = ensure_contrast(coral, &[c.background, c.panel, c.surface], 3.0);
+        let live = if contrast(readable_ink(raised), raised) >= 4.5 {
+            raised
+        } else {
+            coral
+        };
         let subtle = ensure_contrast(mix(muted, c.background, 0.25), &[c.panel, elevated], 4.5);
         let border_strong = ensure_contrast(
             mix(c.border, c.text, 0.35),
@@ -237,6 +252,9 @@ impl Theme {
             ),
             danger_bg: if dark { hex(0x8f302d) } else { hex(0xb33b38) },
             on_danger: Color32::WHITE,
+            live,
+            on_live: readable_ink(live),
+            live_text: ensure_contrast(live, &[c.background, c.panel, c.surface], 4.5),
             backdrop: if dark {
                 Color32::from_rgba_unmultiplied(9, 12, 13, 184)
             } else {
@@ -439,6 +457,39 @@ fn hsl(hue: f64, saturation: f64, lightness: f64) -> Color32 {
     Color32::from_rgb(ch(0.0), ch(8.0), ch(4.0))
 }
 
+/// Hue (degrees), saturation and lightness, as model.ts `toHsl`.
+fn to_hsl(c: Color32) -> (f64, f64, f64) {
+    let [r, g, b] = [c.r(), c.g(), c.b()].map(|v| f64::from(v) / 255.0);
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let (l, d) = ((max + min) / 2.0, max - min);
+    if d == 0.0 {
+        return (0.0, 0.0, l);
+    }
+    let sector = if max == r {
+        ((g - b) / d + 6.0) % 6.0
+    } else if max == g {
+        (b - r) / d + 2.0
+    } else {
+        (r - g) / d + 4.0
+    };
+    (sector * 60.0, d / (1.0 - (2.0 * l - 1.0).abs()), l)
+}
+
+/// The on-air coral, unless the accent shares its hue (Ristretto's salmon):
+/// then Live turns 22° past the accent, away from it (model.ts
+/// `liveApartFrom`), so an unread count or a primary button never reads as
+/// Live.
+fn live_apart_from(coral: Color32, accent: Color32) -> Color32 {
+    let (ah, as_, _) = to_hsl(accent);
+    let (kh, ks, kl) = to_hsl(coral);
+    let apart = (ah - kh + 540.0) % 360.0 - 180.0;
+    if as_ < 0.3 || apart.abs() >= 15.0 {
+        return coral;
+    }
+    let turn = if apart > 0.0 { -22.0 } else { 22.0 };
+    hsl((ah + turn + 360.0).round() % 360.0, ks, kl)
+}
+
 fn fix_contrast(mut definition: Definition) -> Definition {
     let c = &mut definition.colors;
     let backgrounds = [c.background, c.panel, c.surface, c.rail];
@@ -590,12 +641,15 @@ mod tests {
             c.warning,
             c.danger,
             c.danger_bg,
+            c.live,
+            c.on_live,
+            c.live_text,
         ]
         .map(h);
         let want = [
             "#17191a", "#1d2021", "#272b2d", "#131617", "#252829", "#eef0ee", "#a4abb1", "#8a8f93",
             "#2c3032", "#717475", "#f3b752", "#111111", "#f3b752", "#2e3131", "#443b2a", "#85d69b",
-            "#85d69b", "#d8a657", "#f39b98", "#8f302d",
+            "#85d69b", "#d8a657", "#f39b98", "#8f302d", "#ff7b5c", "#111111", "#ff7b5c",
         ];
         assert_eq!(got, want);
         assert_eq!(
@@ -607,6 +661,56 @@ mod tests {
         );
         assert_eq!(h(t.primary_hover), "#ffc458");
         assert_eq!(h(t.danger_hover), "#9d3532");
+    }
+
+    // Live on coral-ish custom surfaces, as model.ts derives it: the fill
+    // keeps 3:1 to them and its ink 4.5:1, the text colour reads on them.
+    #[test]
+    fn live_derives_like_web_for_custom_themes() {
+        let mut light = Definition::light();
+        light.colors.background = hex(0xf08a70);
+        light.colors.panel = hex(0xf29a84);
+        light.colors.surface = hex(0xe9806a);
+        let c = Theme::from_definition(light).c;
+        assert_eq!(
+            [c.live, c.on_live, c.live_text].map(h),
+            ["#823a1c", "#ffffff", "#542917"]
+        );
+        let mut dark = Definition::dark();
+        dark.colors.background = hex(0xffd0c0);
+        dark.colors.panel = hex(0xffc4b0);
+        dark.colors.surface = hex(0xffb8a0);
+        dark.colors.text = hex(0x111111);
+        dark.colors.muted = hex(0x444444);
+        let c = Theme::from_definition(dark).c;
+        assert_eq!(
+            [c.live, c.on_live, c.live_text].map(h),
+            ["#ac5642", "#ffffff", "#824335"]
+        );
+    }
+
+    // Ristretto's accent is a salmon: Live turns pinker, past it, as in
+    // model.ts. No preset's Live shares the accent's hue.
+    #[test]
+    fn live_keeps_apart_from_the_accent() {
+        let c = Theme::from_definition(crate::screens::settings::themes::preset("ristretto")).c;
+        assert_eq!(
+            [c.live, c.on_live, c.live_text].map(h),
+            ["#ff5c74", "#111111", "#ff667c"]
+        );
+        let hue_apart = |a: Color32, b: Color32| {
+            let d = (to_hsl(a).0 - to_hsl(b).0).abs() % 360.0;
+            d.min(360.0 - d)
+        };
+        for preset in crate::screens::settings::themes::presets() {
+            let accent = preset.colors.accent;
+            let c = Theme::from_definition(preset).c;
+            assert_ne!(c.live, c.danger_bg);
+            assert_eq!(c.on_live, INK_DARK);
+            if to_hsl(accent).1 >= 0.3 {
+                assert!(hue_apart(c.live, accent) > 15.0, "{}", h(c.live));
+            }
+        }
     }
 
     #[test]
@@ -634,12 +738,15 @@ mod tests {
             c.warning,
             c.danger,
             c.danger_bg,
+            c.live,
+            c.on_live,
+            c.live_text,
         ]
         .map(h);
         let want = [
             "#f8f5f0", "#f4f0e9", "#ece7df", "#eee9e1", "#fcfbf9", "#252829", "#5c646b", "#6a6e71",
             "#dcd6cc", "#86837e", "#e8a638", "#111111", "#836026", "#e3e0da", "#f2e3c9", "#287a45",
-            "#277643", "#a27e44", "#a12b29", "#b33b38",
+            "#277643", "#a27e44", "#a12b29", "#b33b38", "#db5b24", "#111111", "#ad4a20",
         ];
         assert_eq!(got, want);
         assert_eq!(
