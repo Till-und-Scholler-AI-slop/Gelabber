@@ -84,11 +84,12 @@ return {prev, agg}
 /// A snapshot that read "no status" can race an announce that writes the
 /// status for a member already in the set (its SADD is then a no-op). The
 /// re-check here keeps that member instead of removing it for good.
+/// Returns the members it removed.
 const PRUNE_STALE_LUA: &str = r#"
-local removed = 0
+local removed = {}
 for i = 2, #KEYS do
-  if redis.call('EXISTS', KEYS[i]) == 0 then
-    removed = removed + redis.call('SREM', KEYS[1], ARGV[i - 1])
+  if redis.call('EXISTS', KEYS[i]) == 0 and redis.call('SREM', KEYS[1], ARGV[i - 1]) == 1 then
+    table.insert(removed, ARGV[i - 1])
   end
 end
 return removed
@@ -390,7 +391,7 @@ impl Gateway {
         // announce for a member already in the set), so the removal re-checks
         // it atomically instead of trusting this read.
         if !stale.is_empty() {
-            let _ = self
+            let pruned = self
                 .with_conn(|mut conn| {
                     let stale = stale.clone();
                     async move {
@@ -403,10 +404,21 @@ impl Gateway {
                         for user_id in &stale {
                             call.arg(user_id.to_string());
                         }
-                        call.invoke_async::<i64>(&mut conn).await
+                        call.invoke_async::<Vec<String>>(&mut conn).await
                     }
                 })
                 .await;
+            // A status that ran out never said offline: whoever saw the
+            // member online hears it now, from the first snapshot to notice.
+            for user_id in pruned.unwrap_or_default() {
+                if let Ok(user_id) = user_id.parse()
+                    && let Err(err) = self
+                        .publish_presence(server_id, user_id, PresenceStatus::Offline)
+                        .await
+                {
+                    tracing::debug!(error = err.code(), "offline after prune not published");
+                }
+            }
         }
         snap.sort_by_key(|entry| entry.u);
         Ok(snap)
@@ -726,4 +738,58 @@ impl Gateway {
 
 fn parse_st(raw: &str) -> PresenceStatus {
     PresenceStatus::parse(raw).unwrap_or(PresenceStatus::Offline)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use tokio::sync::mpsc;
+
+    /// A member whose status ran out is pruned by the next snapshot, and the
+    /// server's watchers hear that it went offline.
+    #[tokio::test]
+    async fn a_pruned_member_goes_offline_for_the_watchers() {
+        let g = Gateway::new(
+            redis::Client::open(std::env::var("REDIS_URL").unwrap()).unwrap(),
+            8,
+            Duration::from_secs(10),
+            Duration::from_secs(2),
+        );
+        g.wait_ready(Duration::from_secs(2)).await.unwrap();
+        let (server, gone) = (Uuid::new_v4(), Uuid::new_v4());
+        let (tx, mut rx) = mpsc::channel(128);
+        let (watcher, _) = g.attach_session(Uuid::new_v4(), "watcher".into(), tx).await;
+        g.watch_server(watcher, server).await;
+        let mut conn = redis::Client::open(std::env::var("REDIS_URL").unwrap())
+            .unwrap()
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
+        redis::cmd("SADD")
+            .arg(server_set_key(server))
+            .arg(gone.to_string())
+            .query_async::<i64>(&mut conn)
+            .await
+            .unwrap();
+
+        assert!(g.presence_snapshot(server).await.unwrap().is_empty());
+        // The roster pass sends voice snapshots meanwhile.
+        let frame = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match rx.recv().await {
+                    Some(ServerFrame::Sig { .. }) => continue,
+                    other => return other,
+                }
+            }
+        })
+        .await
+        .expect("offline frame")
+        .unwrap();
+        assert_eq!(
+            frame,
+            ServerFrame::presence(server, gone, PresenceStatus::Offline)
+        );
+        g.detach(watcher).await;
+    }
 }
