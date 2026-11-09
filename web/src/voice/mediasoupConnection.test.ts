@@ -1674,7 +1674,7 @@ describe("public mediasoup connection lifecycle", () => {
     await expect(f.connection.getStats()).resolves.toEqual([]);
   });
 
-  it("collects public producer/consumer stats and deduplicates rows per transport without summing counters", async () => {
+  it("collects the transports' stats, which carry every producer and consumer row, without summing counters", async () => {
     const f = fixture();
     await f.start();
     await f.connection.publish(publication("a", new Capture("mic", "audio")));
@@ -1725,8 +1725,9 @@ describe("public mediasoup connection lifecycle", () => {
         bytesReceived: 400,
       }),
     );
-    expect(send.producers[0].getStats).toHaveBeenCalledOnce();
-    expect(recv.consumers[0].getStats).toHaveBeenCalledOnce();
+    // The per-source reports are subsets of these: not asked again.
+    expect(send.producers[0].getStats).not.toHaveBeenCalled();
+    expect(recv.consumers[0].getStats).not.toHaveBeenCalled();
   });
 
   it("rejects send queue overflow and settles every queued publication on close", async () => {

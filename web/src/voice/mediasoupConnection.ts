@@ -1195,6 +1195,8 @@ export class MediasoupConnection implements MediaConnection {
       direction: "send" | "recv";
       report: () => Promise<RTCStatsReport>;
     }> = [];
+    // A transport's report holds every producer's and consumer's rows; their
+    // own reports are subsets with the same ids.
     if (this.send) {
       const transport = this.send;
       scopes.push({
@@ -1202,12 +1204,6 @@ export class MediasoupConnection implements MediaConnection {
         direction: "send",
         report: () => transport.getStats(),
       });
-      for (const { producer } of this.publications.values())
-        scopes.push({
-          transport,
-          direction: "send",
-          report: () => producer.getStats(),
-        });
     }
     if (this.recv) {
       const transport = this.recv;
@@ -1216,12 +1212,6 @@ export class MediasoupConnection implements MediaConnection {
         direction: "recv",
         report: () => transport.getStats(),
       });
-      for (const { consumer } of this.received.values())
-        scopes.push({
-          transport,
-          direction: "recv",
-          report: () => consumer.getStats(),
-        });
     }
     const reports: Array<{ id: string; rows: StatsEntry[] }> = [];
     // Diagnostic collection must not consume the SDK budget needed for control.
