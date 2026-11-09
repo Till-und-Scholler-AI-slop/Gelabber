@@ -188,8 +188,8 @@ fn the_own_live_says_what_becomes_of_its_sound() {
     let notes = [
         "Ton wird mitgesendet",
         "Kein Ton von „Spotify“",
-        "Stream-Ton nicht aufgenommen · Video läuft weiter",
-        "Stream-Ton beendet · Video läuft weiter",
+        "Live-Ton nicht aufgenommen · Video läuft weiter",
+        "Live-Ton beendet · Video läuft weiter",
     ];
     for (sound, words) in [
         (LiveSound::Sharing, Some(notes[0])),
@@ -237,7 +237,7 @@ fn the_own_live_says_what_becomes_of_its_sound() {
     };
     assert_eq!(
         call_bar::dock_notice(&live(LiveSound::Ended), "").as_deref(),
-        Some("Der Stream-Ton wurde beendet. Das Video läuft weiter.")
+        Some("Der Live-Ton wurde beendet. Das Video läuft weiter.")
     );
     // Switched on during a Live, the sound joins it: nothing waits for
     // the next one, as the desktop text "Gilt auch während du live bist" says.
@@ -390,7 +390,7 @@ fn the_voice_dialog_opens_on_its_tab_and_moves_with_the_arrows() {
     assert!(selected(&h, "Diagnose"));
     h.key_press(egui::Key::ArrowLeft);
     h.run_steps(6);
-    assert!(selected(&h, "Video & Stream"));
+    assert!(selected(&h, "Video & Live"));
     h.get_by_label("Fertig").click();
     h.run_steps(6);
     assert!(!dialogs::open(&h.ctx));
@@ -458,7 +458,7 @@ fn the_notice_is_a_row_of_the_bar() {
     call.set_state(state);
     let mut h = harness(client, call.clone(), wide_bar);
     h.run_steps(4);
-    let text = "Der Stream-Ton wurde beendet. Das Video läuft weiter.";
+    let text = "Der Live-Ton wurde beendet. Das Video läuft weiter.";
     let notice = h.get_by_label(text).rect();
     let leave = h.get_by_label("Verlassen").rect();
     // Under the controls, 6px apart, inside the bar that grew by its row.
@@ -577,6 +577,92 @@ fn separators_run_through_the_bottom_strip_one_device_pixel_wide() {
             );
         }
     }
+}
+
+/// "Zuschauen" from the hint or a live toast (`joinToWatch`): outside a
+/// call it joins; in that call it does not join again; in another call it
+/// only opens the channel, and the button says so.
+#[test]
+fn watching_from_outside_joins_watches_or_only_opens() {
+    use crate::screens::voice::{hint, session};
+    let kino = uuid::Uuid::from_u128(0x21);
+    let (client, call) = offline();
+    let images = Images::new(client.clone());
+    let mut nav = Nav::new("/");
+    let mut signed_in = Session::new();
+    let mut toasts = Toasts::default();
+    let mut app = AppCtx {
+        client: &client,
+        call: &call,
+        images: &images,
+        nav: &mut nav,
+        session: &mut signed_in,
+        account_mail: None,
+        toasts: &mut toasts,
+    };
+    let label = |channel| hint::watch_label(call.with_state(session::joined), SERVER, channel);
+    let sofa_page = format!("/s/{SERVER}/c/{SOFA}");
+
+    assert_eq!(label(SOFA), "Zuschauen");
+    hint::join_to_watch(&mut app, SERVER, SOFA, &[JONAS]);
+    assert_eq!(call.join_attempts(), 1);
+    assert_eq!(app.nav.location().path, sofa_page);
+
+    call.set_state(in_sofa(MicStatus::Live));
+    app.nav.navigate("/");
+    assert_eq!(label(SOFA), "Zuschauen");
+    hint::join_to_watch(&mut app, SERVER, SOFA, &[JONAS]);
+    assert_eq!(call.join_attempts(), 1, "already there: watch, no join");
+    assert_eq!(app.nav.location().path, sofa_page);
+
+    assert_eq!(label(kino), "Zum Kanal");
+    hint::join_to_watch(&mut app, SERVER, kino, &[JONAS]);
+    assert_eq!(call.join_attempts(), 1, "the room asks before it switches");
+    assert_eq!(app.nav.location().path, format!("/s/{SERVER}/c/{kino}"));
+    assert_eq!(call.with_state(session::joined), Some((SERVER, SOFA)));
+}
+
+/// Esc with a call bar popover open only closes the popover, as
+/// Popover.tsx stops the key; Kino goes with the next Esc.
+#[test]
+fn an_open_popover_takes_the_esc_before_kino() {
+    use crate::screens::voice::{page, stage};
+
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call, |ui, app| {
+        let kino = stage::kino(ui.ctx());
+        page::kino_keys(ui, kino);
+        bar(ui, app);
+    });
+    h.run_steps(4);
+    stage::set_kino(&h.ctx, true);
+    // As after a click on the popover's background: no control has the
+    // focus (one that has keeps all keys from Kino anyway).
+    let unfocus = |h: &mut H| {
+        h.ctx.memory_mut(|m| {
+            if let Some(id) = m.focused() {
+                m.surrender_focus(id);
+            }
+        });
+        h.run_steps(2);
+    };
+    h.get_by_label("Verbindung: wird gemessen … – Details anzeigen")
+        .click();
+    h.run_steps(4);
+    h.get_by_label("Alle Details");
+    unfocus(&mut h);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+    assert!(
+        h.query_by_label("Alle Details").is_none(),
+        "the popover closed"
+    );
+    assert!(stage::kino(&h.ctx), "Kino stays");
+    unfocus(&mut h);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(4);
+    assert!(!stage::kino(&h.ctx), "the next Esc leaves Kino");
 }
 
 #[test]

@@ -573,7 +573,7 @@ async function applyInputGain(): Promise<void> {
       if (micCurrent(pc, session, request))
         voice.deps?.onError?.(
           new Error(
-            "Mic-Gain konnte nicht aktiviert werden; bisheriges Mikrofon bleibt aktiv",
+            "Mikrofonverstärkung konnte nicht aktiviert werden; bisheriges Mikrofon bleibt aktiv",
           ),
         );
       return;
@@ -594,7 +594,7 @@ async function applyInputGain(): Promise<void> {
       insert.dispose();
       if (micCurrent(pc, session, request))
         voice.deps?.onError?.(
-          new Error("Mic-Gain ausgefallen; bisheriges Mikrofon bleibt aktiv"),
+          new Error("Mikrofonverstärkung ausgefallen; bisheriges Mikrofon bleibt aktiv"),
         );
       return;
     }

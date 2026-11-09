@@ -271,7 +271,9 @@ fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
                 .interact_pos()
                 .is_some_and(|p| !area.response.rect.contains(p) && !chevron.contains(p))
     });
-    let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+    // Used up, with or without Shift (consume_key ignores an extra Shift):
+    // the page under it (als gelesen markieren) does not also act.
+    let escape = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
     if picked.is_some() || outside || escape {
         state::with(ui.ctx(), |s| s.user_menu = false);
     }
@@ -594,5 +596,57 @@ mod tests {
         wait_for(&mut harness, "the strip to go", |h| {
             h.query_by_label(text).is_none()
         });
+    }
+
+    /// Esc closes the open menu and is used up there: the conversation
+    /// under it is not marked read too, nor with Shift the whole server.
+    #[test]
+    fn esc_closes_the_menu_and_marks_nothing_read() {
+        use crate::app::testkit::{ALLGEMEIN, HOME, workspace};
+        use std::time::{Duration, Instant};
+
+        let _config = TempConfig::new("menu-esc");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        let reads = || {
+            api.seen
+                .lock()
+                .iter()
+                .filter(|r| r.starts_with("PUT ") && r.ends_with("/read"))
+                .count()
+        };
+        // Settled: requests go to another thread.
+        let settle = |harness: &mut egui_kittest::Harness<'_, crate::Launcher>| {
+            for _ in 0..20 {
+                harness.step();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        // With nothing open, Esc marks #allgemein read (once it is shown).
+        let start = Instant::now();
+        while reads() == 0 {
+            assert!(
+                start.elapsed() < Duration::from_secs(15),
+                "no Esc mark-read"
+            );
+            harness.key_press(egui::Key::Escape);
+            settle(&mut harness);
+        }
+        settle(&mut harness);
+        let before = reads();
+        for shift in [false, true] {
+            open_menu(&mut harness);
+            if shift {
+                harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Escape);
+            } else {
+                harness.key_press(egui::Key::Escape);
+            }
+            settle(&mut harness);
+            assert!(
+                harness.query_by_label("Abmelden").is_none(),
+                "closed (shift: {shift})"
+            );
+            assert_eq!(reads(), before, "nothing marked read (shift: {shift})");
+        }
     }
 }

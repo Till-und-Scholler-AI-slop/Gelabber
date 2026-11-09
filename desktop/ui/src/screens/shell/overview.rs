@@ -446,11 +446,11 @@ fn voice_room(
         x = pill.right() + 10.0;
     }
     if live_any {
-        let label = Block::single(ui, "LIVE", text::CAPS, Color32::WHITE);
+        let label = Block::single(ui, "LIVE", text::CAPS, c.on_live);
         let badge =
             Rect::from_min_size(pos2(x, center - 9.0), Vec2::new(label.width() + 12.0, 18.0));
         ui.painter()
-            .rect_filled(badge, corner(theme.radius.xs), c.danger_bg);
+            .rect_filled(badge, corner(theme.radius.xs), c.live);
         paint_mid(ui.painter(), &label, badge.left() + 6.0, center);
     }
     let mut y = top + 28.0;
@@ -711,7 +711,7 @@ fn voice_room(
     let gear = mic.translate(Vec2::new(36.0 + 8.0, 0.0));
     let response = ui.put(
         gear,
-        IconButton::new(Icon::Gear, "Voice-Einstellungen")
+        IconButton::new(Icon::Gear, "Anrufeinstellungen")
             .secondary()
             .icon_size(17.0),
     );
@@ -941,7 +941,8 @@ fn message_preview(
         };
         return (None, text);
     }
-    let mut text = readable_mentions(&gelabber_client::store::excerpt(&message.content), members);
+    let plain = crate::screens::chat::markdown::plain_text(&message.content);
+    let mut text = readable_mentions(&gelabber_client::store::excerpt(&plain), members);
     if text.is_empty() {
         text = if message.gif.is_some() {
             "GIF".into()

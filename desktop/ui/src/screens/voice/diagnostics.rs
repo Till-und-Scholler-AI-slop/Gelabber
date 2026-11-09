@@ -650,7 +650,7 @@ pub fn tab(ui: &mut Ui, app: &mut AppCtx, width: f32) {
             false,
         ),
         (
-            "Mic-Gain",
+            "Mikrofonverstärkung",
             format!("{} %", (p.input_gain * 100.0).round() as i64),
             false,
         ),

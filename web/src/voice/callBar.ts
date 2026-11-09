@@ -22,21 +22,21 @@ export function dockNotices(
       id: "unavailable",
       text:
         sound === "unavailable"
-          ? "Der Browser hat keinen Stream-Ton freigegeben. Das Video läuft weiter."
+          ? "Der Browser hat keinen Live-Ton freigegeben. Das Video läuft weiter."
           : null,
     },
     {
       id: "unsupported",
       text:
         sound === "unsupported"
-          ? "Dieser Medienserver unterstützt Stream-Ton noch nicht. Das Video läuft weiter."
+          ? "Dieser Medienserver unterstützt Live-Ton noch nicht. Das Video läuft weiter."
           : null,
     },
     {
       id: "ended",
       text:
         sound === "ended"
-          ? "Der Stream-Ton wurde beendet. Das Video läuft weiter."
+          ? "Der Live-Ton wurde beendet. Das Video läuft weiter."
           : null,
     },
     {
@@ -45,7 +45,7 @@ export function dockNotices(
       id: "next-share",
       text:
         context.sharesSound && voice.localScreen && sound === "off"
-          ? "Stream-Ton ab dem nächsten Live."
+          ? "Ton ab dem nächsten Live."
           : null,
     },
   ];

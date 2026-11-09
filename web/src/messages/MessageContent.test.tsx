@@ -79,6 +79,20 @@ describe("message content", () => {
     expect(out).not.toContain('role="button"');
   });
 
+  it("marks searched words in the text, never in spoilers, code or links", () => {
+    const out = renderToStaticMarkup(
+      <MessageContent
+        content="**Snacks** ||snacks|| `snacks` https://snacks.example snacksbar"
+        interactive={false}
+        highlight={["snacks"]}
+      />,
+    );
+    expect(out.match(/<mark /g)).toHaveLength(1);
+    expect(out).toContain(
+      '<strong><mark class="lr-search-mark">Snacks</mark></strong>',
+    );
+  });
+
   it("hides spoilers until they are clicked", () => {
     expect(html("||secret||")).toContain(
       '<span class="lr-md-spoiler" role="button" tabindex="0" aria-label="Spoiler anzeigen"><span aria-hidden="true" inert="">secret</span></span>',

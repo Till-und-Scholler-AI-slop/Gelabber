@@ -277,6 +277,7 @@ export function createLiveNotices(
         authorAvatar: member?.avatar_url ?? null,
         mentioned: false,
         preview: text,
+        live: { userId: start.userId, voice: voice.name },
       });
     if (!decision.desktop) return;
     const shown = await deps.notify(

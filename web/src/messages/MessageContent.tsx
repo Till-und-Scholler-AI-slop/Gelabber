@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { CopyLabel } from "../components/ui/CopyButton.tsx";
 import { COPIED_MS, useCopied } from "../components/ui/useCopied.ts";
 import { copyText } from "../servers/clipboard.ts";
 import { isTauriApp } from "../tauriApp.ts";
 import { parseMessage, type Block, type Inline } from "./markdown.ts";
+import { markMatches } from "./searchTerms.ts";
 
 export type MentionPart =
   { type: "mention"; userId: string } | { type: "everyone" | "here" };
@@ -14,23 +15,51 @@ export type MentionRenderer = (part: MentionPart) => ReactNode;
 /**
  * A message's text with its markdown (#250). `interactive={false}` is for
  * places that are themselves a button, like search hits: links and the copy
- * button turn into plain text there and spoilers stay hidden.
+ * button turn into plain text there and spoilers stay hidden. `highlight`
+ * marks these words (lower-cased, `searchTerms`) in the text outside
+ * spoilers, code and links.
  */
 export function MessageContent({
   content,
   renderMention,
   interactive = true,
+  highlight = NO_TERMS,
 }: {
   content: string;
   renderMention?: MentionRenderer;
   interactive?: boolean;
+  highlight?: readonly string[];
 }) {
   const blocks = useMemo(() => parseMessage(content), [content]);
-  const ctx = { renderMention, interactive };
+  const ctx = { renderMention, interactive, highlight };
   return <>{blocks.map((block, n) => renderBlock(block, n, ctx))}</>;
 }
 
-type Ctx = { renderMention?: MentionRenderer; interactive: boolean };
+const NO_TERMS: readonly string[] = [];
+
+type Ctx = {
+  renderMention?: MentionRenderer;
+  interactive: boolean;
+  highlight: readonly string[];
+};
+
+/** Plain text, with the searched words in `<mark>`. */
+function marked(text: string, key: number, terms: readonly string[]) {
+  if (!terms.length) return text;
+  return (
+    <Fragment key={key}>
+      {markMatches(text, terms).map((run, n) =>
+        run.match ? (
+          <mark key={n} className="lr-search-mark">
+            {run.text}
+          </mark>
+        ) : (
+          run.text
+        ),
+      )}
+    </Fragment>
+  );
+}
 
 function renderBlock(block: Block, key: number, ctx: Ctx): ReactNode {
   switch (block.type) {
@@ -62,7 +91,7 @@ function renderInline(nodes: Inline[], ctx: Ctx): ReactNode[] {
   return nodes.map((node, key) => {
     switch (node.type) {
       case "text":
-        return node.text;
+        return marked(node.text, key, ctx.highlight);
       case "strong":
         return <strong key={key}>{renderInline(node.children, ctx)}</strong>;
       case "em":
@@ -78,7 +107,7 @@ function renderInline(nodes: Inline[], ctx: Ctx): ReactNode[] {
       case "spoiler":
         return (
           <Spoiler key={key} interactive={ctx.interactive}>
-            {renderInline(node.children, ctx)}
+            {renderInline(node.children, { ...ctx, highlight: NO_TERMS })}
           </Spoiler>
         );
       case "code":

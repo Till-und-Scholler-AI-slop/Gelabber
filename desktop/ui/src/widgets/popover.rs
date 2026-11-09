@@ -100,6 +100,11 @@ impl Popover {
                 },
             );
         });
+        ctx.data_mut(|d| {
+            let list = d.get_temp_mut_or_default::<Vec<(u64, Rect)>>(shown_id());
+            list.retain(|(at, _)| at + 1 >= frame);
+            list.push((frame, self.anchor));
+        });
         let mut out = None;
         let area = egui::Area::new(self.id)
             .order(Order::Foreground)
@@ -161,6 +166,35 @@ enum Focus {
 
 fn opening_id() -> Id {
     Id::unique("gelabber-popover-opening")
+}
+
+fn shown_id() -> Id {
+    Id::unique("gelabber-popover-shown")
+}
+
+/// The anchors of the popovers drawn in this frame or the one before:
+/// open ones, wherever in the frame they are drawn.
+fn shown(ctx: &egui::Context) -> Vec<Rect> {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data(|d| d.get_temp::<Vec<(u64, Rect)>>(shown_id()))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(at, _)| at + 1 >= frame)
+        .map(|(_, anchor)| anchor)
+        .collect()
+}
+
+/// Whether a popover is open. Its Esc is its own to close it, as
+/// Popover.tsx stops the key: the page's Esc (als gelesen markieren, Kino
+/// verlassen) waits for the next.
+pub fn any_open(ctx: &egui::Context) -> bool {
+    !shown(ctx).is_empty()
+}
+
+/// Whether a popover anchored at `anchor` is open: that control's tooltip
+/// makes way for it.
+pub fn open_at(ctx: &egui::Context, anchor: Rect) -> bool {
+    shown(ctx).iter().any(|r| r.intersects(anchor))
 }
 
 fn focus_state(ctx: &egui::Context) -> Focus {
@@ -247,6 +281,44 @@ pub fn menu_item(ui: &mut Ui, icon: Option<Icon>, label: &str, danger: bool) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A popover counts as open in the frame after it was drawn too, so a
+    /// page drawn before it (the chat under the call bar) leaves it the
+    /// Esc; once it is gone, the Esc is the page's again.
+    #[test]
+    fn an_open_popover_is_known_before_it_is_drawn() {
+        let ctx = egui::Context::default();
+        let anchor = Rect::from_min_size(pos2(10.0, 10.0), Vec2::new(36.0, 36.0));
+        let elsewhere = Rect::from_min_size(pos2(300.0, 10.0), Vec2::new(36.0, 36.0));
+        let mut seen = Vec::new();
+        for draw in [true, false, false] {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                // As the frame starts: a popover sizing itself takes a
+                // second pass.
+                if ui.ctx().current_pass_index() == 0 {
+                    seen.push((
+                        any_open(ui.ctx()),
+                        open_at(ui.ctx(), anchor),
+                        open_at(ui.ctx(), elsewhere),
+                    ));
+                }
+                if draw {
+                    let _ = Popover::new("probe-open", anchor).show(ui.ctx(), |ui| {
+                        menu_item(ui, None, "Eins", false);
+                    });
+                }
+            });
+            output.textures_delta.clear();
+        }
+        assert_eq!(
+            seen,
+            [
+                (false, false, false),
+                (true, true, false),
+                (false, false, false)
+            ]
+        );
+    }
 
     /// A menu moves the focus to its first entry as it opens; a native
     /// `<select>`'s list leaves it on the field.

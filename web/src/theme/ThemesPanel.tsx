@@ -271,7 +271,7 @@ export function ThemesPanel() {
         <div className="themes-sync" role="status">
           <span>
             {state.status === "saving"
-              ? "Wird mit deinem Account synchronisiert …"
+              ? "Wird mit deinem Konto synchronisiert …"
               : state.error}
           </span>
           {state.status !== "saving" && (
@@ -287,14 +287,14 @@ export function ThemesPanel() {
                       await confirmAction({
                         title: "Lokale Änderung verwerfen?",
                         message:
-                          "Gelabber lädt dann wieder den Theme-Stand deines Accounts.",
-                        confirmLabel: "Account-Stand laden",
+                          "Gelabber lädt dann wieder den Theme-Stand deines Kontos.",
+                        confirmLabel: "Gespeicherten Stand laden",
                       })
                     )
                       void discardPendingTheme();
                   }}
                 >
-                  Account-Stand laden
+                  Gespeicherten Stand laden
                 </Button>
               )}
             </div>
@@ -587,8 +587,8 @@ export function ThemesPanel() {
       ) : null}
       <p className="themes-footnote">
         {state.status === "ready"
-          ? "Mit deinem Account synchronisiert."
-          : "Deine Themes gehören zu deinem Account."}{" "}
+          ? "Mit deinem Konto synchronisiert."
+          : "Deine Themes gehören zu deinem Konto."}{" "}
         Paletten nach{" "}
         <a
           href="https://github.com/omacom/omarchy/tree/quattro/themes"

@@ -1655,7 +1655,7 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   gap: 2px;
   padding: 6px 20px;
   border-bottom: 1px solid var(--lr-border);
-  background: color-mix(in srgb, var(--lr-danger-bg) 9%, var(--lr-bg));
+  background: color-mix(in srgb, var(--lr-live) 9%, var(--lr-bg));
   font-size: 13px;
 }
 .lr-live-hint > div {
@@ -1674,17 +1674,22 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.lr-live-hint button {
+/* Watching is an ordinary step, not an alarm: a neutral button. */
+.lr-live-hint button,
+.lr-live-pill > button {
   flex-shrink: 0;
-  padding: 3px 10px;
+  padding: 2px 10px;
+  border: 1px solid var(--lr-border-strong);
   border-radius: 13px;
-  background: var(--lr-danger-bg);
-  color: #fff;
+  background: var(--lr-surface);
+  color: var(--lr-text);
   font-size: 12px;
   font-weight: 650;
+  transition: background-color var(--lr-dur-fast) var(--lr-ease);
 }
-.lr-live-hint button:hover {
-  filter: brightness(1.1);
+.lr-live-hint button:hover,
+.lr-live-pill > button:hover {
+  background: var(--lr-hover);
 }
 .lr-live-badge {
   display: inline-grid;
@@ -1693,8 +1698,8 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   margin-right: 8px;
   padding: 0 6px;
   border-radius: 9px;
-  background: var(--lr-danger-bg);
-  color: #fff;
+  background: var(--lr-live);
+  color: var(--lr-on-live);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.4px;
@@ -1927,6 +1932,12 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 .lr-search-hit:hover > span {
   color: var(--lr-accent-text);
 }
+/* The searched words, marked like a mention of you. */
+.lr-search-mark {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--lr-warning) 30%, transparent);
+  color: inherit;
+}
 
 .lr-header-search > kbd {
   margin-left: auto;
@@ -2014,10 +2025,9 @@ button.lr-preview-video:focus-visible .lr-preview-play {
   height: 30px;
   margin-left: auto;
   padding: 0 4px 0 6px;
-  border: 1px solid
-    color-mix(in srgb, var(--lr-danger-bg) 45%, var(--lr-border));
+  border: 1px solid color-mix(in srgb, var(--lr-live) 45%, var(--lr-border));
   border-radius: 15px;
-  background: color-mix(in srgb, var(--lr-danger-bg) 10%, var(--lr-bg));
+  background: color-mix(in srgb, var(--lr-live) 10%, var(--lr-bg));
   font-size: 12px;
   white-space: nowrap;
 }
@@ -2032,13 +2042,6 @@ button.lr-preview-video:focus-visible .lr-preview-play {
 }
 .lr-live-pill > a:hover {
   text-decoration: underline;
-}
-.lr-live-pill > button {
-  padding: 3px 10px;
-  border-radius: 12px;
-  background: var(--lr-danger-bg);
-  color: #fff;
-  font-weight: 650;
 }
 .lr-live-pill + .lr-header-search {
   margin-left: 0;

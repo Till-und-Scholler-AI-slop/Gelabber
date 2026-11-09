@@ -148,11 +148,20 @@ function toastText(error: unknown): string | null {
 /**
  * For mutations whose form is already closed: say what went wrong. `failed`
  * names the change that did not happen ("Nachricht nicht gelöscht."), so
- * the reader knows which one it was once the screen has moved on.
+ * the reader knows which one it was once the screen has moved on. `gone`
+ * says what a `not_found` means for this change ("Die Nachricht gibt es
+ * nicht mehr.") instead of the generic text.
  */
-export function notifyError(error: unknown, failed?: string): void {
+export function notifyError(
+  error: unknown,
+  failed?: string,
+  gone?: string,
+): void {
   if (error instanceof DOMException && error.name === "AbortError") return;
-  const message = toastText(error);
+  const message =
+    gone && error instanceof ApiError && error.code === "not_found"
+      ? gone
+      : toastText(error);
   if (message)
     useToasts
       .getState()

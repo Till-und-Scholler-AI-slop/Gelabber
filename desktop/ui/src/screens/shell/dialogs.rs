@@ -742,7 +742,7 @@ fn channel_dialog(
                         let w = (ui.available_width() - 8.0) / 2.0;
                         for (is_voice, icon, label, detail) in [
                             (false, Icon::Hash, "Text", "Nachrichten, Dateien"),
-                            (true, Icon::Speaker, "Voice", "Sprache, Live"),
+                            (true, Icon::Speaker, "Sprache", "Reden, Kamera, Live"),
                         ] {
                             // A `RadioCard`: the radio, then the label and its hint.
                             let (rect, response) =

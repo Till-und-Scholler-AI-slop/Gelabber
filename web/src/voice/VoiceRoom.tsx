@@ -219,12 +219,13 @@ export function VoiceRoom({
       return {
         sourceAudioNotice:
           status === "unavailable"
-            ? "Kein Stream-Ton freigegeben · Video läuft weiter"
+            ? "Kein Live-Ton freigegeben · Video läuft weiter"
             : status === "ended"
-              ? "Stream-Ton beendet · Video läuft weiter"
+              ? "Live-Ton beendet · Video läuft weiter"
               : status === "sharing"
                 ? "Ton wird mitgesendet"
                 : undefined,
+        sourceAudioOn: status === "sharing",
       };
     }
     if (here && voice.sourceWatchSupported)

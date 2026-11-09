@@ -1,4 +1,4 @@
-// The Voice & Video forms' layout: groups under a small heading, and rows
+// The Audio & Video forms' layout: groups under a small heading, and rows
 // with the setting's name on the left and its control on the right,
 // stacked where the form is narrow (quality.css).
 

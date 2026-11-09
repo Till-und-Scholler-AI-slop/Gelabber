@@ -11,6 +11,7 @@ pub mod platform;
 pub mod route;
 pub mod rules;
 pub mod screens;
+pub mod selection;
 pub mod setup;
 pub mod style;
 pub mod task;

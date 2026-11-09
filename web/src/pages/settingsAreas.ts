@@ -32,7 +32,7 @@ export const SETTINGS_AREAS = [
     scope: "account",
     group: "konto",
     label: "Sicherheit",
-    description: "Passwort und angemeldete Geräte.",
+    description: "Passwort ändern und überall abmelden.",
   },
   {
     id: "darstellung",
@@ -59,7 +59,7 @@ export const SETTINGS_AREAS = [
     scope: "device",
     group: "app",
     label: "Video",
-    description: "Kamera, Live gehen und Stream-Qualität.",
+    description: "Kamera, Live gehen und Bildqualität.",
   },
   {
     id: "benachrichtigungen",

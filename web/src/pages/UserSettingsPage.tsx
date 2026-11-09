@@ -158,7 +158,8 @@ export function UserSettingsPage() {
     <div className="settings-screen">
       <header className="lr-channel-header settings-header">
         {listFirst ? <BackToList /> : null}
-        <h1>Einstellungen</h1>
+        {/* Beside the sidebar, its title already names the page. */}
+        <h1 className={listFirst ? undefined : "sr-only"}>Einstellungen</h1>
       </header>
       <div ref={scroller} className="settings-scroll">
         <section

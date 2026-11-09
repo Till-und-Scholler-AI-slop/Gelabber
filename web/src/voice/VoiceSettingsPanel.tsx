@@ -1,4 +1,4 @@
-// The body of one tab of the Voice & Video dialog. Loaded on its own, once
+// The body of one tab of the Audio & Video dialog. Loaded on its own, once
 // the dialog first opens (see VoiceSettingsDialog).
 
 import type { MediaDialogSection } from "./settings.ts";

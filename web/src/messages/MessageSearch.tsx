@@ -1,11 +1,20 @@
 import { keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { searchMessages } from "./search.ts";
 import { scopeGeneration, useUserId } from "../auth/scope.ts";
 import type { Message } from "./types.ts";
 import { MessageContent } from "./MessageContent.tsx";
 import { MessageContextView } from "./MessageContext.tsx";
 import { readableMentions } from "./mentions.ts";
+import { plainText } from "./markdown.ts";
+import { searchTerms } from "./searchTerms.ts";
+import { formatWhen } from "../components/messageTime.ts";
 import {
   mentionRenderer,
   messagePing,
@@ -42,8 +51,11 @@ export function MessageSearch({
   }, [selected]);
   const query = useInfiniteQuery({
     queryKey: ["user", userId, generation, "message-search", channelId, q],
-    queryFn: ({ pageParam, signal }) =>
-      searchMessages(channelId, q, pageParam, signal),
+    // Each page keeps the query it answers, for the words it marks.
+    queryFn: async ({ pageParam, signal }) => ({
+      ...(await searchMessages(channelId, q, pageParam, signal)),
+      q,
+    }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => {
       const oldest = page.messages[0];
@@ -59,6 +71,9 @@ export function MessageSearch({
   });
   const rows =
     query.data?.pages.flatMap((page) => [...page.messages].reverse()) ?? [];
+  // Typing on keeps the last hits: they mark the words they were found by.
+  const shownQ = query.data?.pages[0]?.q ?? q;
+  const terms = useMemo(() => searchTerms(shownQ), [shownQ]);
   if (selected)
     return (
       <MessageContextView
@@ -111,13 +126,13 @@ export function MessageSearch({
                 else resultButtons.current.delete(message.id);
               }}
               onClick={() => setOpened({ q, id: message.id })}
-              aria-label={`Zur Nachricht von ${message.author.name}: ${readableMentions(message.content, members) || "Datei"}`}
+              aria-label={`Zur Nachricht von ${message.author.name}: ${readableMentions(plainText(message.content), members) || "Datei"}`}
               className="lr-search-hit"
             >
               <p>
                 <strong>{message.author.name}</strong>{" "}
                 <time dateTime={message.created_at}>
-                  {new Date(message.created_at).toLocaleString("de-DE")}
+                  {formatWhen(message.created_at)}
                 </time>
               </p>
               <p>
@@ -130,6 +145,7 @@ export function MessageSearch({
                     messagePing(message),
                   )}
                   interactive={false}
+                  highlight={terms}
                 />
               </p>
               <span>Nachricht im Kontext öffnen</span>
