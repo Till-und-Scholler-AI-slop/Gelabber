@@ -579,6 +579,42 @@ async fn real_minio_failed_delete_retains_job_and_later_retry_removes_only_its_o
     state.store.delete(&foreign).await.unwrap();
 }
 
+/// A delete that keeps failing is retried later each time, up to a cap,
+/// not every second forever.
+#[sqlx::test]
+async fn real_minio_failed_deletes_back_off(pool: PgPool) {
+    let endpoint = std::env::var("MINIO_ENDPOINT").expect("source local minio-test.env");
+    let proxy = proxy(endpoint).await;
+    let config = minio_config(&proxy.endpoint);
+    let mut state = state(pool, 0);
+    state.store = ObjectStore::from_minio(Some(&config)).unwrap();
+    state.store.ensure_ready().await.unwrap();
+    sqlx::query(
+        "INSERT INTO storage_cleanup (object_key, retain_until) VALUES ('att/stuck', now())",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+    let mut delays = Vec::new();
+    for attempts in [0, 1, 2, 5, 40] {
+        sqlx::query("UPDATE storage_cleanup SET attempts=$1, next_attempt=now()")
+            .bind(attempts)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        cleanup::delete_pending(&state, 32).await.unwrap();
+        let delay: f64 = sqlx::query_scalar(
+            "SELECT EXTRACT(EPOCH FROM next_attempt - now())::float8 FROM storage_cleanup",
+        )
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+        delays.push(delay.round() as i64);
+    }
+    assert_eq!(delays, [1, 2, 4, 32, 300]);
+    assert_eq!(proxy.deletes.load(Ordering::SeqCst), 5);
+}
+
 /// The windowed download link (#201) and its save variant against real
 /// MinIO: the redirect is cacheable per session for the rest of its window,
 /// the signed link serves the bytes with the signed cache header, and the
