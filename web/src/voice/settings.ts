@@ -390,6 +390,14 @@ export function clampVideoUploadLimit(value: unknown): number {
   return Math.round(Math.min(0xffff_ffff, Math.max(1, value)));
 }
 
+/** The custom upload limit field's text in Mbit/s as bit/s, or `null`
+ * while it holds no limit yet (empty, "0", "0." on the way to "0.5"). */
+export function uploadLimitFromField(text: string): number | null {
+  const mbit = Number(text.trim().replace(",", "."));
+  if (text.trim() === "" || !Number.isFinite(mbit) || mbit <= 0) return null;
+  return clampVideoUploadLimit(mbit * 1_000_000);
+}
+
 function snapshot(state: MediaSettingsState): MediaSettings {
   return {
     audioInputId: state.audioInputId,

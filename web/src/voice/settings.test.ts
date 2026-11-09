@@ -6,6 +6,7 @@ import {
   VIDEO_FRAME_RATES,
   explicitStreamProfile,
   clampVideoUploadLimit,
+  uploadLimitFromField,
   allocateVideoBitrates,
   audioBitrate,
   sourceAudioBitrate,
@@ -79,6 +80,14 @@ describe("capture and explicit bandwidth preferences", () => {
     expect(clampVideoUploadLimit(-1)).toBe(0);
     useMediaSettings.getState().patch({ economyMode: false });
     expect(audioBitrate()).toBeNull();
+  });
+  it("reads the custom upload limit field only once it holds a limit", () => {
+    // Half-typed: kept as text, the stored limit and its mode stay.
+    for (const text of ["", "0", "0.", "-", "abc"])
+      expect(uploadLimitFromField(text)).toBeNull();
+    expect(uploadLimitFromField("0.5")).toBe(500_000);
+    expect(uploadLimitFromField("12")).toBe(12_000_000);
+    expect(uploadLimitFromField("1,5")).toBe(1_500_000);
   });
   it("keeps every capture resolution/FPS independent of bandwidth", () => {
     for (const height of VIDEO_RESOLUTIONS)
