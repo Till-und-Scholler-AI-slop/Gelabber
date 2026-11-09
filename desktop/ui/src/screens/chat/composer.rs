@@ -563,9 +563,9 @@ pub fn show(
 
     // Keys before the field sees them: Enter sends, ↑ edits my last one,
     // Esc drops the reply.
-    let wire = mentions::to_wire(&state.draft, input.members, &state.picked);
-    let over = remaining(state, input) < 0;
-    let disabled = over || (state.draft.trim().is_empty() && state.files.is_empty());
+    let disabled = |state: &ComposerState| {
+        remaining(state, input) < 0 || (state.draft.trim().is_empty() && state.files.is_empty())
+    };
     let mut submit = false;
     if focused {
         if ui.input_mut(|i| super::consume_plain(i, egui::Key::Enter)) {
@@ -692,16 +692,13 @@ pub fn show(
         }
     }
     // Send: accent, or quiet while there is nothing to send.
+    let off = disabled(state);
     let resp = ui.interact(
         send_rect,
         edit_id.with("send"),
-        if disabled {
-            Sense::hover()
-        } else {
-            Sense::click()
-        },
+        if off { Sense::hover() } else { Sense::click() },
     );
-    if disabled {
+    if off {
         icons::paint_centered(
             ui.painter(),
             Icon::Send,
@@ -731,9 +728,11 @@ pub fn show(
     if resp.clicked() {
         submit = true;
     }
-    if submit && !disabled {
+    // What is sent is the draft after the field took this frame's typing:
+    // a character typed in the same frame as Enter goes along.
+    if submit && !disabled(state) {
         actions.push(ComposerAction::Send {
-            text: wire,
+            text: mentions::to_wire(&state.draft, input.members, &state.picked),
             reply: state.reply.take().map(|(id, _)| id),
             files: std::mem::take(&mut state.files),
         });
@@ -940,6 +939,55 @@ mod tests {
         let state = state.borrow();
         assert_eq!(state.files.len(), 1);
         assert_eq!(state.files[0].content_type, "text/plain");
+    }
+
+    /// A character typed in the same frame as Enter is sent with the rest.
+    #[test]
+    fn typing_and_enter_in_one_frame_send_everything() {
+        let members: Vec<Member> = Vec::new();
+        let state = std::cell::RefCell::new(ComposerState {
+            draft: "Hallo".into(),
+            ..ComposerState::default()
+        });
+        let sent = std::cell::RefCell::new(Vec::new());
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(800.0, 300.0))
+            .build_ui(|ui| {
+                crate::fonts::install(ui.ctx());
+                crate::theme::set(ui.ctx(), crate::theme::Theme::dark());
+                let input = ComposerInput {
+                    channel: Uuid::nil(),
+                    placeholder: "#allgemein".into(),
+                    can_send: true,
+                    can_send_files: true,
+                    gifs: false,
+                    members: &members,
+                    me: None,
+                    keywords: false,
+                    unsent: 0,
+                };
+                let pane = ui.max_rect();
+                for action in show(ui, pane, &mut state.borrow_mut(), &input) {
+                    if let ComposerAction::Send { text, .. } = action {
+                        sent.borrow_mut().push(text);
+                    }
+                }
+            });
+        state.borrow_mut().focus = true;
+        harness.run_steps(3);
+        // Both in one frame (`event` would give each its own).
+        let events = &mut harness.input_mut().events;
+        events.push(egui::Event::Text("!".into()));
+        events.push(egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(2);
+        assert_eq!(*sent.borrow(), ["Hallo!"]);
+        assert_eq!(state.borrow().draft, "");
     }
 
     /// A file over the limit is named by its size on disk; ten chips wrap
