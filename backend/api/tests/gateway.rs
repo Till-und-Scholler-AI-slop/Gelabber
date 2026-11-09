@@ -158,7 +158,9 @@ async fn publish(
         server_id,
         channel_id,
         kind,
-        Some(Uuid::from_u128(0xE01)),
+        // A message of its own: an edit or delete rewrites its message's
+        // earlier entries in the replay log.
+        Some(Uuid::new_v4()),
         Some(json!({ "b": body })),
     )
     .await
@@ -1360,6 +1362,91 @@ async fn publish_substitutes_only_the_envelope_placeholders(pool: PgPool) {
     assert!(log[0].n >= 1);
     assert!(log[0].ep.is_some());
     assert_eq!(log[0].d, Some(delta));
+}
+
+/// An edit or a delete leaves no earlier body of that message in the replay
+/// log: its entries become copies of the newest event under their own `n`,
+/// so a resume still replays a contiguous run.
+#[sqlx::test]
+async fn edit_and_delete_rewrite_the_messages_earlier_log_entries(pool: PgPool) {
+    use gelabber_api::EventDraft;
+    use gelabber_api::gateway::Topic;
+    use gelabber_api::gateway::protocol::CatchUp;
+    let state = common::ws_state(pool);
+    let (s, c, message, other) = (
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+    );
+    let publish = |kind, entity, body: Option<&str>| {
+        let state = state.clone();
+        let delta = body.map(|body| json!({ "b": body }));
+        async move {
+            state
+                .gateway
+                .publish(EventDraft {
+                    kind,
+                    server_id: s,
+                    channel_id: Some(c),
+                    entity_id: Some(entity),
+                    delta,
+                })
+                .await
+                .expect("publish")
+        }
+    };
+    let topic = Topic::of(s, Some(c));
+    let bodies = |log: &[gelabber_api::Event]| -> Vec<(u64, String, Option<String>)> {
+        let mut rows: Vec<_> = log
+            .iter()
+            .map(|event| {
+                (
+                    event.n,
+                    event.t.as_str().to_owned(),
+                    event
+                        .d
+                        .as_ref()
+                        .map(|d| d["b"].as_str().unwrap().to_owned()),
+                )
+            })
+            .collect();
+        rows.sort();
+        rows
+    };
+    publish(EventKind::C, message, Some("geheim")).await;
+    publish(EventKind::C, other, Some("bleibt")).await;
+    publish(EventKind::E, message, Some("anders")).await;
+    let log = state.gateway.load_log(topic).await.unwrap();
+    assert_eq!(
+        bodies(&log),
+        [
+            (1, "e".into(), Some("anders".into())),
+            (2, "c".into(), Some("bleibt".into())),
+            (3, "e".into(), Some("anders".into())),
+        ]
+    );
+    publish(EventKind::D, message, None).await;
+    let log = state.gateway.load_log(topic).await.unwrap();
+    assert_eq!(
+        bodies(&log),
+        [
+            (1, "d".into(), None),
+            (2, "c".into(), Some("bleibt".into())),
+            (3, "d".into(), None),
+            (4, "d".into(), None),
+        ]
+    );
+    let epoch = log[0].ep;
+    assert!(log.iter().all(|event| event.ep == epoch));
+    let (current, plan) = state.gateway.catch_up(topic, Some(0)).await.unwrap();
+    assert_eq!(current, 4);
+    match plan {
+        CatchUp::Replay(events) => {
+            assert_eq!(events.iter().map(|e| e.n).collect::<Vec<_>>(), [1, 2, 3, 4])
+        }
+        other => panic!("expected a replay, got {other:?}"),
+    }
 }
 
 #[sqlx::test]
