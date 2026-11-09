@@ -239,9 +239,26 @@ async fn the_upgrade_renews_and_heartbeats_do_not(pool: PgPool) {
     let mut ws = connect(addr, &client).await;
     let (_, renewed) = row(&pool).await;
     assert_near(renewed, Utc::now() + chrono::Duration::hours(1));
+    ws.close(None).await.ok();
 
-    stay_connected(&mut ws, Duration::from_millis(300)).await;
-    assert_eq!(row(&pool).await.1, renewed, "heartbeats are not a use");
+    // 2 s short of one renewal step (5 minutes): the upgrade leaves the row
+    // alone, and the socket's copy of the expiry is due within 2 s. A renewal
+    // from the heartbeats after that would move the row.
+    set_row(&pool, 600, 3600 - 300 + 2).await;
+    let mut ws = connect(addr, &client).await;
+    let (_, due) = row(&pool).await;
+    stay_connected(&mut ws, Duration::from_secs(3)).await;
+    assert_eq!(row(&pool).await.1, due, "heartbeats are not a use");
+
+    // The same socket renews on activity, so the check above could see one.
+    send_json(&mut ws, json!({ "op": "p" })).await;
+    for _ in 0..20 {
+        stay_connected(&mut ws, Duration::from_millis(100)).await;
+        if row(&pool).await.1 != due {
+            break;
+        }
+    }
+    assert_near(row(&pool).await.1, Utc::now() + chrono::Duration::hours(1));
 }
 
 #[sqlx::test]
