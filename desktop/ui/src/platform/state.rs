@@ -87,8 +87,29 @@ impl Window {
     }
 }
 
+/// A file this build cannot read (a hand edit, a newer version's) is moved
+/// to `native-state.json.unreadable`, so the next save does not overwrite it.
 pub fn load() -> Stored {
-    serde_json::from_value(super::paths::read_json(FILE)).unwrap_or_default()
+    let Some(path) = super::paths::file(FILE) else {
+        return Stored::default();
+    };
+    let read =
+        std::fs::read(&path).map_err(|e| (e.kind() != std::io::ErrorKind::NotFound, e.to_string()));
+    let parsed =
+        read.and_then(|bytes| serde_json::from_slice(&bytes).map_err(|e| (true, e.to_string())));
+    match parsed {
+        Ok(stored) => stored,
+        Err((there, e)) => {
+            if there {
+                let aside = path.with_file_name(format!("{FILE}.unreadable"));
+                tracing::warn!("state: {e}; kept as {}", aside.display());
+                if let Err(e) = std::fs::rename(&path, &aside) {
+                    tracing::warn!("state: {e}");
+                }
+            }
+            Stored::default()
+        }
+    }
 }
 
 /// Off the UI thread, in order; a failed write only loses the newest change.
@@ -241,5 +262,19 @@ mod tests {
         // Unknown files read as empty, not as an error.
         let s: Stored = serde_json::from_str(r#"{"accounts":{},"other":1}"#).unwrap();
         assert_eq!(s, Stored::default());
+    }
+
+    #[test]
+    fn a_file_this_build_cannot_read_is_moved_aside_not_overwritten() {
+        let config = super::super::paths::testing::TempConfig::new("state-unreadable");
+        let path = config.dir.join(FILE);
+        let text =
+            r#"{"accounts":{"0f9a4c1e-8f1b-4f3e-9d55-2b7a1c3e5d01":{"place":{"kind":"planet"}}}}"#;
+        std::fs::write(&path, text).unwrap();
+        assert_eq!(load(), Stored::default());
+        assert!(!path.exists());
+        let aside = config.dir.join(format!("{FILE}.unreadable"));
+        assert_eq!(std::fs::read_to_string(aside).unwrap(), text);
+        drop(config);
     }
 }
