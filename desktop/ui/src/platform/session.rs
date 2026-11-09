@@ -121,6 +121,7 @@ fn store_in(
 #[cfg(target_os = "linux")]
 pub mod secret {
     use std::collections::HashMap;
+    use std::time::Duration;
 
     use zbus::blocking::{Connection, connection};
     use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
@@ -130,6 +131,8 @@ pub mod secret {
     const IFACE: &str = "org.freedesktop.Secret.Service";
     const COLLECTION: &str = "org.freedesktop.Secret.Collection";
     const ITEM: &str = "org.freedesktop.Secret.Item";
+    /// The longest a keyring call may take.
+    const CALL_TIMEOUT: Duration = Duration::from_secs(2);
 
     /// `(session, parameters, value, content type)`.
     type Secret = (OwnedObjectPath, Vec<u8>, Vec<u8>, String);
@@ -155,7 +158,9 @@ pub mod secret {
                 Some(address) => connection::Builder::address(address).ok()?,
                 None => connection::Builder::session().ok()?,
             };
-            let conn = builder.build().ok()?;
+            // Called from the UI thread: a hung or slow keyring daemon must not
+            // freeze start-up or a frame (as notify/dbus.rs).
+            let conn = builder.method_timeout(CALL_TIMEOUT).build().ok()?;
             let reply = conn
                 .call_method(
                     Some(SERVICE),
@@ -624,6 +629,44 @@ mod tests {
         // No service on the bus: no keyring at all.
         let (_empty, other) = crate::platform::testing::private_bus("secrets-none").unwrap();
         assert!(secret::SecretService::connect(Some(&other)).is_none());
+    }
+
+    /// A keyring daemon that hangs: connecting gives up instead of holding
+    /// the UI thread for as long as the daemon takes.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_hung_keyring_is_given_up() {
+        use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
+        struct Hung;
+        #[zbus::interface(name = "org.freedesktop.Secret.Service")]
+        impl Hung {
+            fn open_session(
+                &self,
+                _algorithm: String,
+                _input: OwnedValue,
+            ) -> (OwnedValue, OwnedObjectPath) {
+                std::thread::sleep(std::time::Duration::from_secs(8));
+                (
+                    OwnedValue::try_from(Value::from("")).unwrap(),
+                    ObjectPath::try_from("/s/1").unwrap().into(),
+                )
+            }
+        }
+        let Some((_daemon, address)) = crate::platform::testing::private_bus("secrets-hung") else {
+            eprintln!("no dbus-daemon: skipped");
+            return;
+        };
+        let _service = zbus::blocking::connection::Builder::address(address.as_str())
+            .unwrap()
+            .name("org.freedesktop.secrets")
+            .unwrap()
+            .serve_at("/org/freedesktop/secrets", Hung)
+            .unwrap()
+            .build()
+            .unwrap();
+        let start = std::time::Instant::now();
+        assert!(secret::SecretService::connect(Some(&address)).is_none());
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
     }
 
     /// A keyring whose items can be locked away, like the Secret Service.
