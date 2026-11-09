@@ -35,6 +35,8 @@ const SYSTEM: TextStyle = TextStyle::new(13.5, 400.0, 1.5);
 const STATUS: TextStyle = TextStyle::new(12.0, 400.0, 1.4);
 const FAILURE: TextStyle = TextStyle::new(13.0, 400.0, 1.35);
 const EDIT: TextStyle = TextStyle::new(14.5, 400.0, 1.5);
+/// `.lr-field-error` under the editor.
+const EDIT_ERROR: TextStyle = TextStyle::new(12.0, 400.0, 1.5);
 
 /// The state of my own row that the server has not confirmed.
 #[derive(Clone, Debug, PartialEq)]
@@ -114,6 +116,8 @@ pub struct RowCx<'a> {
     pub reactions: Vec<Shown>,
     /// The draft while this row is being edited.
     pub edit: Option<&'a str>,
+    /// Why that draft cannot be saved.
+    pub edit_error: Option<&'a str>,
     /// 0..1: the jump highlight fading out.
     pub highlight: f32,
     /// The GIF's picture through the server's media proxy.
@@ -379,11 +383,20 @@ pub fn layout(ui: &Ui, cx: &RowCx, width: f32) -> RowLayout {
         ));
     }
     if let Some(draft) = cx.edit {
-        let lines = draft.split('\n').count().max(1) as f32;
+        // As many lines as the draft wraps to inside the field's padding;
+        // past 400 the field scrolls.
+        let mut job = crate::text::job(draft, EDIT, c.text, Some(column - 2.0 - 18.0));
+        job.keep_trailing_whitespace = true;
+        let lines = ui.fonts_mut(|f| f.layout_job(job)).rows.len().max(1) as f32;
         let editor = (lines * EDIT.line_px() + 18.0).clamp(50.75, 400.0);
         // Form: margin-top 4, gap 6, then the actions line: its buttons
-        // (padding 4, 12px/1.5) make it 26 tall.
-        let h = editor + 6.0 + 26.0;
+        // (padding 4, 12px/1.5) make it 26 tall; an error line above it.
+        let error = if cx.edit_error.is_some() {
+            EDIT_ERROR.line_px() + 6.0
+        } else {
+            0.0
+        };
+        let h = editor + 6.0 + error + 26.0;
         let top = stack.add(4.0, h, 0.0);
         out.edit = Some((top, editor));
     } else if !msg.content.is_empty() || msg.gif.is_none() {
@@ -894,7 +907,7 @@ pub fn paint(
     }
     if let (Some((y, editor_h)), Some(edit)) = (layout.edit, edit) {
         let rect = Rect::from_min_size(pos2(x, top + y), vec2(column, editor_h));
-        paint_editor(ui, msg.id, rect, edit, &mut actions);
+        paint_editor(ui, msg.id, rect, edit, cx.edit_error, &mut actions);
     }
     // The hover bar sits over the row's top edge, above the previous row.
     if (hovered || menu_open)
@@ -986,7 +999,14 @@ fn editor_id(message: Uuid) -> egui::Id {
     egui::Id::unique(("gelabber-edit", message))
 }
 
-fn paint_editor(ui: &mut Ui, id: Uuid, rect: Rect, edit: Editing, actions: &mut Vec<RowAction>) {
+fn paint_editor(
+    ui: &mut Ui,
+    id: Uuid,
+    rect: Rect,
+    edit: Editing,
+    error: Option<&str>,
+    actions: &mut Vec<RowAction>,
+) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
     let Editing { draft, autofocus } = edit;
@@ -999,7 +1019,8 @@ fn paint_editor(ui: &mut Ui, id: Uuid, rect: Rect, edit: Editing, actions: &mut 
     );
     let edit_id = editor_id(id);
     let focused = ui.memory(|m| m.has_focus(edit_id));
-    if focused && ui.input_mut(|i| super::consume_plain(i, egui::Key::Enter)) {
+    // Enter saves only what may be saved; it never breaks the line.
+    if focused && ui.input_mut(|i| super::consume_plain(i, egui::Key::Enter)) && error.is_none() {
         actions.push(RowAction::SaveEdit(id));
     }
     // Esc drops egui's focus before the frame runs; it was the editor's.
@@ -1017,18 +1038,26 @@ fn paint_editor(ui: &mut Ui, id: Uuid, rect: Rect, edit: Editing, actions: &mut 
     let inner = rect.shrink(1.0);
     let output = ui
         .scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
-            egui::TextEdit::multiline(draft)
-                .id(edit_id)
-                .frame(egui::Frame::NONE.inner_margin(egui::Margin {
-                    left: 9,
-                    right: 9,
-                    top: 7,
-                    bottom: 7,
-                }))
-                .desired_width(inner.width())
-                .min_size(inner.size())
-                .layouter(&mut layouter)
-                .show(ui)
+            ui.set_clip_rect(inner.intersect(ui.clip_rect()));
+            egui::ScrollArea::vertical()
+                .id_salt(edit_id.with("scroll"))
+                .max_height(inner.height())
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    egui::TextEdit::multiline(draft)
+                        .id(edit_id)
+                        .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+                            left: 9,
+                            right: 9,
+                            top: 7,
+                            bottom: 7,
+                        }))
+                        .desired_width(inner.width())
+                        .min_size(inner.size())
+                        .layouter(&mut layouter)
+                        .show(ui)
+                })
+                .inner
         })
         .inner;
     if autofocus {
@@ -1042,7 +1071,18 @@ fn paint_editor(ui: &mut Ui, id: Uuid, rect: Rect, edit: Editing, actions: &mut 
     }
     // "Esc bricht ab · Enter speichert" · Abbrechen · Speichern: the
     // actions line starts 6 below the field; its text sits 4 below that.
-    let line = rect.bottom() + 6.0;
+    let mut line = rect.bottom() + 6.0;
+    if let Some(error) = error {
+        let block = Block::single(ui, error, EDIT_ERROR, c.danger);
+        block.paint(ui.painter(), pos2(rect.left(), line));
+        ui.interact(
+            Rect::from_min_size(pos2(rect.left(), line), block.size()),
+            edit_id.with("error"),
+            Sense::hover(),
+        )
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, error));
+        line += EDIT_ERROR.line_px() + 6.0;
+    }
     let y = line + 4.0;
     let hint = Block::single(
         ui,
@@ -1067,9 +1107,27 @@ fn paint_editor(ui: &mut Ui, id: Uuid, rect: Rect, edit: Editing, actions: &mut 
         ui.painter().rect_filled(cancel_rect, corner(5.0), c.hover);
     }
     cancel.paint(ui.painter(), pos2(cancel_rect.left() + 10.0, y));
-    ui.painter().rect_filled(save_rect, corner(5.0), c.accent);
-    save.paint(ui.painter(), pos2(save_rect.left() + 10.0, y));
-    let r_save = ui.interact(save_rect, edit_id.with("save"), Sense::click());
+    // `disabled` while the draft cannot be saved.
+    let alpha = if error.is_some() { 0.5 } else { 1.0 };
+    ui.painter()
+        .rect_filled(save_rect, corner(5.0), c.accent.gamma_multiply(alpha));
+    save.paint_tinted(
+        ui.painter(),
+        pos2(save_rect.left() + 10.0, y),
+        error.map(|_| c.accent_ink.gamma_multiply(alpha)),
+    );
+    let r_save = ui.interact(
+        save_rect,
+        edit_id.with("save"),
+        if error.is_some() {
+            Sense::hover()
+        } else {
+            Sense::click()
+        },
+    );
+    r_save.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::Button, error.is_none(), "Speichern")
+    });
     if r_cancel.clicked() {
         actions.push(RowAction::CancelEdit);
     }
@@ -1118,6 +1176,7 @@ mod tests {
             images: &images,
             reactions: Vec::new(),
             edit: None,
+            edit_error: None,
             highlight: 0.0,
             gif_url: None,
             uploads: None,
@@ -1131,6 +1190,69 @@ mod tests {
         assert!(bar_buttons(&shown).is_empty());
         let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 40.0));
         assert!(bar_rect(&shown, rect).is_none());
+    }
+
+    /// The editor is as tall as the draft wraps, not as its hard lines;
+    /// an error line makes room for itself.
+    #[test]
+    fn the_editor_grows_with_wrapped_lines() {
+        let me = Uuid::from_u128(1);
+        let msg: Message = serde_json::from_value(serde_json::json!({
+            "id": Uuid::from_u128(2),
+            "channel_id": Uuid::nil(),
+            "author": {"id": me, "name": "Lena", "avatar_url": null},
+            "content": "Hallo",
+            "created_at": "2026-11-05T16:21:00Z",
+            "edited_at": null,
+            "revision": 0,
+            "created_order": 1,
+        }))
+        .expect("message");
+        let names = HashMap::new();
+        let revealed = HashSet::new();
+        let images =
+            Images::new(gelabber_client::Client::new("http://127.0.0.1:9").expect("client"));
+        let long = "Wort ".repeat(80);
+        let ctx = egui::Context::default();
+        crate::fonts::install(&ctx);
+        let mut heights = Vec::new();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            for (draft, error) in [
+                ("kurz", None),
+                (long.as_str(), None),
+                ("kurz", Some("Nachricht fehlt.")),
+            ] {
+                let cx = RowCx {
+                    msg: &msg,
+                    continued: false,
+                    mine: true,
+                    mentioned: false,
+                    send: None,
+                    can_send: true,
+                    can_delete: true,
+                    me,
+                    names: &names,
+                    now: chrono::Utc::now(),
+                    revealed: &revealed,
+                    copied: None,
+                    images: &images,
+                    reactions: Vec::new(),
+                    edit: Some(draft),
+                    edit_error: error,
+                    highlight: 0.0,
+                    gif_url: None,
+                    uploads: None,
+                    actions: true,
+                };
+                heights.push(layout(ui, &cx, 600.0).edit.expect("editor"));
+            }
+        });
+        output.textures_delta.clear();
+        let (short, long, with_error) = (heights[0], heights[1], heights[2]);
+        assert_eq!(short.1, 50.75);
+        // 400 characters in a column about 500 wide: several lines.
+        assert!(long.1 > short.1 + 2.0 * EDIT.line_px(), "{long:?}");
+        assert_eq!(with_error.1, short.1);
     }
 
     #[test]

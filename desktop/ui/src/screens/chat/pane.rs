@@ -70,6 +70,11 @@ pub struct PaneState {
     away_from: Option<Uuid>,
     pub highlight: Option<(Uuid, f64)>,
     pub editing: Option<(Uuid, String)>,
+    /// Why the edit cannot be saved as it is (`validateContent`).
+    pub edit_error: Option<String>,
+    /// An edit on its way: the message, what was typed, what was sent,
+    /// and the `edit:<id>` failure count when it was sent.
+    pub saving: Option<(Uuid, String, String, u64)>,
     pub menu: Option<(Uuid, Rect)>,
     pub picker: Option<Uuid>,
     pub confirm_delete: Option<Uuid>,
@@ -204,6 +209,7 @@ struct Snap {
     intents: HashMap<(Uuid, String), (bool, f64)>,
     revealed: HashMap<Uuid, HashSet<usize>>,
     editing: Option<(Uuid, String)>,
+    edit_error: Option<String>,
     copied: Option<(Uuid, usize, bool, f64)>,
     highlight: Option<(Uuid, f64)>,
     empty: HashSet<usize>,
@@ -241,6 +247,10 @@ fn make_cx<'a>(item: &'a Item<'a>, input: &'a ListInput<'a>, snap: &'a Snap) -> 
             .as_ref()
             .filter(|(id, _)| *id == m.id)
             .map(|(_, d)| d.as_str()),
+        edit_error: snap
+            .edit_error
+            .as_deref()
+            .filter(|_| snap.editing.as_ref().is_some_and(|(id, _)| *id == m.id)),
         highlight: snap
             .highlight
             .filter(|(id, _)| *id == m.id)
@@ -280,7 +290,9 @@ fn row_key(cx: &RowCx, item: &Item, width: f32) -> u64 {
     cx.msg.attachments.len().hash(&mut h);
     cx.msg.previews.len().hash(&mut h);
     format!("{:?}", cx.send).hash(&mut h);
-    cx.edit.map(|e| e.split('\n').count()).hash(&mut h);
+    // The editor wraps: its height follows the whole draft.
+    cx.edit.hash(&mut h);
+    cx.edit_error.is_some().hash(&mut h);
     cx.revealed.len().hash(&mut h);
     h.finish()
 }
@@ -402,6 +414,7 @@ pub fn show(ui: &mut Ui, rect: Rect, input: &ListInput, pane: &mut PaneState) ->
         intents: pane.intents.clone(),
         revealed: pane.revealed.clone(),
         editing: pane.editing.clone(),
+        edit_error: pane.edit_error.clone(),
         copied: pane.copied,
         highlight: pane.highlight,
         empty: HashSet::new(),
@@ -1069,6 +1082,7 @@ pub fn context_rows(
         intents: HashMap::new(),
         revealed: revealed.clone(),
         editing: None,
+        edit_error: None,
         copied: None,
         highlight: None,
         empty: HashSet::new(),

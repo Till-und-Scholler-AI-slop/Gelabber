@@ -484,6 +484,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
     // The list, or the search hits over it.
     let now = client.http().server_now();
     let pane_state = chat.panes.entry(channel).or_default();
+    settle_edit(pane_state, client, &conv);
     let searching = chat
         .searches
         .get_mut(&channel)
@@ -715,6 +716,45 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
     }
 }
 
+/// Why the edit `draft` of `id` cannot be saved (`validateContent`); an
+/// emptied text is fine while the message keeps files.
+fn edit_error(client: &Client, conv: &Conversation, id: Uuid, draft: &str) -> Option<String> {
+    let files = client.with_state(|s| {
+        s.find_message(id)
+            .is_some_and(|m| !m.attachments.is_empty())
+    });
+    if draft.is_empty() && files {
+        return None;
+    }
+    let wire = mentions::to_wire(draft, &conv.members, &HashMap::new());
+    composer::validate_content(&wire).map(|code| crate::rules::field_message("content", code))
+}
+
+/// The editor's error for this frame, and an edit on its way: saved, it is
+/// forgotten; turned down, the editor opens again with what was typed.
+fn settle_edit(pane: &mut PaneState, client: &Client, conv: &Conversation) {
+    if let Some((id, typed, wire, failures)) = pane.saving.clone() {
+        let (failed, saved) = client.with_state(|s| {
+            (
+                s.failures(&format!("edit:{id}")) != failures,
+                s.find_message(id).is_none_or(|m| m.content == wire),
+            )
+        });
+        if failed {
+            pane.saving = None;
+            if pane.editing.is_none() {
+                pane.start_edit(id, typed);
+            }
+        } else if saved {
+            pane.saving = None;
+        }
+    }
+    pane.edit_error = pane
+        .editing
+        .as_ref()
+        .and_then(|(id, draft)| edit_error(client, conv, *id, draft));
+}
+
 /// `jumpTo`: the search closes; a loaded message is scrolled to, one that
 /// is not opens in its context.
 fn jump_to(chat: &mut ChatState, client: &Client, channel: Uuid, id: Uuid) {
@@ -817,11 +857,17 @@ fn row_action(
             }
         }
         RowAction::SaveEdit(id) => {
-            if let Some((_, draft)) = pane.editing.take() {
+            let valid = pane
+                .editing
+                .as_ref()
+                .is_some_and(|(_, draft)| edit_error(client, conv, id, draft).is_none());
+            if valid && let Some((_, draft)) = pane.editing.take() {
                 let wire = mentions::to_wire(&draft, &conv.members, &HashMap::new());
-                if !wire.trim().is_empty() {
-                    client.edit_message(id, &wire);
-                }
+                let failures = client.with_state(|s| s.failures(&format!("edit:{id}")));
+                // Kept until the server has it: turned down, the editor
+                // opens again with what was typed.
+                pane.saving = Some((id, draft, wire.clone(), failures));
+                client.edit_message(id, &wire);
             }
         }
         RowAction::CancelEdit => pane.editing = None,
@@ -1483,6 +1529,79 @@ mod page_tests {
         assert!(before <= 1, "{before}");
         harness.input_mut().focused = true;
         wait_for(&mut harness, "the read mark", |_| marks() > before);
+    }
+
+    /// An edit the server turns down opens the editor again with what was
+    /// typed; one that may not be sent says why and does not go out.
+    #[test]
+    fn a_refused_edit_keeps_what_was_typed() {
+        use crate::app::testkit::{ALLGEMEIN, HOME, LENA};
+        let _config = TempConfig::new("edit-refused");
+        let id = "00000000-0000-4000-8000-0000000000e1";
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", p) if p == format!("/channels/{ALLGEMEIN}/messages") => {
+                Some(Reply::json(json!({
+                    "messages": [{
+                        "id": id,
+                        "channel_id": ALLGEMEIN,
+                        "author": {"id": LENA, "name": "Lena", "avatar_url": null},
+                        "content": "Kommt ihr heute?",
+                        "created_at": "2026-11-05T16:21:00Z",
+                        "edited_at": null,
+                        "revision": 0,
+                        "created_order": 1,
+                    }],
+                    "has_more": false
+                })))
+            }
+            ("PATCH", p) if p == format!("/messages/{id}") => Some(Reply::error(503, "internal")),
+            _ => {
+                // Lena may write.
+                let mut reply = workspace(method, path)?;
+                if let Some(list) = reply
+                    .body
+                    .get_mut("permissions")
+                    .and_then(|p| p.as_array_mut())
+                {
+                    list.push(json!("send_messages"));
+                }
+                Some(reply)
+            }
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for_label(&mut harness, "Kommt ihr heute?");
+        harness.run_steps(4);
+        // ↑ in the empty composer edits my last message.
+        wait_for_label(&mut harness, "Nachricht an #allgemein");
+        harness.get_by_label("Nachricht an #allgemein").click();
+        harness.run_steps(2);
+        harness.key_press(egui::Key::ArrowUp);
+        wait_for_label(&mut harness, "Speichern");
+        harness.run_steps(2);
+        let editing = |h: &egui_kittest::Harness<'_, crate::setup::Launcher>| {
+            let chat = super::chat_state(&h.ctx);
+            let chat = chat.lock();
+            chat.panes
+                .values()
+                .find_map(|p| p.editing.as_ref().map(|(_, d)| d.clone()))
+        };
+        assert_eq!(editing(&harness).as_deref(), Some("Kommt ihr heute?"));
+        // Too long to send: the editor says so and Enter does nothing.
+        harness.event(egui::Event::Text("x".repeat(2000)));
+        harness.run_steps(2);
+        wait_for_label(&mut harness, "Nachricht ist zu lang.");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(4);
+        assert!(!api.saw(&format!("PATCH /messages/{id}")));
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.event(egui::Event::Text("Kommt ihr heute? Ja!".into()));
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Nachricht ist zu lang.").is_none());
+        harness.key_press(egui::Key::Enter);
+        wait_for(&mut harness, "the refused edit", |h| {
+            api.saw(&format!("PATCH /messages/{id}")) && editing(h).is_some()
+        });
+        assert_eq!(editing(&harness).as_deref(), Some("Kommt ihr heute? Ja!"));
     }
 
     /// A search hit's text is selectable and still opens the hit on a

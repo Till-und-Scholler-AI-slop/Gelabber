@@ -165,6 +165,24 @@ pub fn height(
     h + file_error_height(ctx, state, width)
 }
 
+/// `validateContent` of a message's wire text: the field code, or `None`.
+pub fn validate_content(wire: &str) -> Option<&'static str> {
+    let value = wire.replace("\r\n", "\n").replace('\r', "\n");
+    let value = value.trim();
+    if value.is_empty() {
+        Some("required")
+    } else if value.chars().count() as i64 > CONTENT_MAX {
+        Some("too_long")
+    } else if value
+        .chars()
+        .any(|c| matches!(c, '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{7f}'))
+    {
+        Some("invalid")
+    } else {
+        None
+    }
+}
+
 fn remaining(state: &ComposerState, input: &ComposerInput) -> i64 {
     let wire = mentions::to_wire(&state.draft, input.members, &state.picked);
     CONTENT_MAX - wire.replace("\r\n", "\n").chars().count() as i64
