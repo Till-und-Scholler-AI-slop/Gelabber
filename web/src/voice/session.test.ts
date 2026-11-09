@@ -1051,6 +1051,38 @@ describe("voice session", () => {
     expect(useVoice.getState().participants["u-bob"]).toBeUndefined();
   });
 
+  it("keeps the first start and its microphone when the chat socket is ready mid-join", async () => {
+    const ticket = deferred();
+    const f = install({
+      gateTicket: (index) => (index === 0 ? ticket.promise : undefined),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    // The gateway (re)opens while the first start still waits for its ticket.
+    f.emitReady();
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    ticket.resolve();
+    await vi.waitFor(() => expect(f.peers.at(-1)?.audio).toBeTruthy());
+    expect(f.peers).toHaveLength(1);
+    expect(f.getUserMediaCalls()).toBe(1);
+    expect(useVoice.getState().mic).toBe("live");
+  });
+
+  it("captures the microphone on a rebuild that overtook the join before its capture", async () => {
+    const start = deferred();
+    const f = install({
+      holdStart: (index) => (index === 0 ? start.promise : undefined),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(f.peers).toHaveLength(1));
+    // The media socket drops while the first connection is still starting.
+    f.closeMedia();
+    await vi.waitFor(() => expect(f.peers).toHaveLength(2));
+    start.resolve();
+    await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+    expect(f.getUserMediaCalls()).toBe(1);
+    expect(f.errors).toEqual([]);
+  });
+
   it("leaves an open media peer alone when the chat socket reconnects", async () => {
     const { emitSig, emitReady, peers, mediaSent } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });

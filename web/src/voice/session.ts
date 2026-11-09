@@ -562,8 +562,11 @@ function onReady(): void {
   });
   if (state.muted) sendFlag("m", state.serverId, state.channelId, true);
   if (state.deafened) sendFlag("d", state.serverId, state.channelId, true);
-  // Rebuild only when the media transport has actually closed or failed.
+  // Rebuild only when the media transport has actually closed or failed; a
+  // start still under way has no socket yet and is not one of those.
   if (keepMedia) return;
+  if (voice.seatStarting !== 0 && voice.seatStarting === voice.seat.generation)
+    return;
   scheduleSeatRebuild();
 }
 
@@ -1554,6 +1557,7 @@ async function startPeer(
   const resumeShare = useVoice.getState().sharing;
   stopPeer(recovering);
   voice.seat.generation = mine;
+  voice.seatStarting = mine;
   const join = voice.micJoin;
   if (!recovering) {
     if (resumeCamera) useVoice.setState({ camera: true });
@@ -1594,6 +1598,7 @@ async function startPeer(
     );
     await pc.start(joined.routerRtpCapabilities);
     if (voice.seat.generation !== mine || voice.seat.connection !== pc) return;
+    voice.seatStarting = 0;
     voice.startedConnections.add(pc);
     setConnection("connected");
     useVoice.setState({ sourceWatchSupported: true });
@@ -1605,6 +1610,7 @@ async function startPeer(
     attachSeatDiagnostics(mine);
   } catch (error) {
     if (voice.seat.generation !== mine) return;
+    voice.seatStarting = 0;
     if (error instanceof MediaError && error.code === "update_required") {
       rollbackSeat(
         new Error(
@@ -1648,11 +1654,17 @@ async function startPeer(
       k: "a",
     });
     await applySendBitrate().catch(() => undefined);
-  } else if (recovering && voice.micOvertaken) {
+  } else if (
+    recovering &&
+    (voice.micOvertaken || voice.micCaptureJoin !== join)
+  ) {
     // A rebuild does not wait for a prompt: what it carried goes out first.
+    // It also captures for a start it overtook before that start's capture.
     voice.micOvertaken = false;
+    voice.micCaptureJoin = join;
     void refreshMic();
   } else if (!recovering) {
+    voice.micCaptureJoin = join;
     const micRequest = ++voice.micEpoch;
     try {
       const { raw: stream, processor: insert } = await acquireMic(

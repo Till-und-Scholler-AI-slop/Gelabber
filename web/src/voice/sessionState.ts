@@ -89,6 +89,9 @@ export type VoiceSession = {
    * the seat's already, for the server's events, but its device has not
    * loaded and it turns every publication down. */
   startedConnections: WeakSet<MediaConnection>;
+  /** The seat generation whose start has not reached its connection yet;
+   * 0 when none is under way. A gateway reconnect leaves such a start be. */
+  seatStarting: number;
   videoBudget: VideoLimits;
   /** Each browser capture lifetime has one UUID, shared with its source
    * audio. */
@@ -107,6 +110,9 @@ export type VoiceSession = {
    * join (another channel, or leaving and joining again) moves it on, so an
    * answer from an earlier join never takes over the current one's capture. */
   micJoin: number;
+  /** The join whose own microphone capture has begun. A rebuild that
+   * overtook a start before that step captures for it. */
+  micCaptureJoin: number;
   /** Why the call has no microphone, until one is captured again. */
   micFailure: "unavailable" | "denied" | null;
   /** The chosen microphone went away and the default one stands in: it comes
@@ -173,6 +179,7 @@ export function createVoiceSession(previous?: VoiceSession): VoiceSession {
     seatRecoverySlot: new Map(),
     seatRetry: new MediaRetry(),
     startedConnections: new WeakSet(),
+    seatStarting: 0,
     videoBudget: new VideoLimits(() => session.seat, profileForVideoTrack),
     captureEpochs: new WeakMap(),
 
@@ -183,6 +190,7 @@ export function createVoiceSession(previous?: VoiceSession): VoiceSession {
     micEpoch: 0,
     micOvertaken: false,
     micJoin: 0,
+    micCaptureJoin: -1,
     micFailure: null,
     micFellBack: false,
     micLossHandled: new WeakSet(),
