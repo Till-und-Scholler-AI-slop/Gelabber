@@ -5,7 +5,7 @@ import { useParams } from "@tanstack/react-router";
 import { useEffect, useMemo, type ReactNode } from "react";
 
 import { useUserId } from "../auth/scope.ts";
-import { HashIcon, SpeakerIcon } from "../components/Icons.tsx";
+import { HashIcon, LockIcon, SpeakerIcon } from "../components/Icons.tsx";
 import { LoadError } from "../components/LoadError.tsx";
 import { MemberPanel, MemberPanelToggle } from "../components/MemberPanel.tsx";
 import { MessagePane } from "../components/MessagePane.tsx";
@@ -14,12 +14,14 @@ import { Redirect } from "../components/Redirect.tsx";
 import { TypingBar } from "../components/TypingBar.tsx";
 import { MainSkeleton, SkeletonRows } from "../components/ui/Skeleton.tsx";
 import { useT } from "../i18n/catalog.ts";
+import { roles as rolesCatalog } from "../i18n/catalogs/roles.ts";
 import { servers } from "../i18n/catalogs/servers.ts";
 import { VoiceRoomPart } from "../voice/voiceRoomPart.ts";
 import { LiveHint } from "../voice/LiveHint.tsx";
 import { useLastChannel } from "../servers/lastChannel.ts";
 import { can } from "../servers/permissions.ts";
 import { useServer } from "../servers/queries.ts";
+import { membersWhoSee } from "../servers/roles.ts";
 import type { Channel, ServerDetail } from "../servers/types.ts";
 import { useTypingInput } from "../ws/useLive.ts";
 
@@ -29,6 +31,7 @@ export function ChannelPage() {
   });
   const { data: server, error, isFetching, refetch } = useServer(serverId);
   const t = useT(servers);
+  const tr = useT(rolesCatalog);
   const userId = useUserId();
   const remember = useLastChannel((s) => s.remember);
   const channel = server?.channels.find((c) => c.id === channelId);
@@ -62,6 +65,15 @@ export function ChannelPage() {
         <span className="lr-channel-title-name">
           <Icon size={18} />
           <h1>{channel.name}</h1>
+          {channel.limited ? (
+            <span
+              className="lr-channel-title-lock"
+              role="img"
+              aria-label={tr("limitedLabel")}
+            >
+              <LockIcon size={14} />
+            </span>
+          ) : null}
         </span>
       </div>
       <LiveHint server={server} variant="pill" />
@@ -128,6 +140,16 @@ function TextChat({
     () => server.members.map((m) => ({ id: m.user_id, name: m.name })),
     [server.members],
   );
+  // `@…` offers only who can read the channel; names in messages still
+  // resolve against every member.
+  const mentionable = useMemo(
+    () =>
+      membersWhoSee(server, channel).map((m) => ({
+        id: m.user_id,
+        name: m.name,
+      })),
+    [server, channel],
+  );
   return (
     <MessagePane
       key={channel.id}
@@ -141,6 +163,7 @@ function TextChat({
       canModerate={can(server, "manage_messages")}
       canMentionEveryone={can(server, "mention_everyone")}
       members={members}
+      mentionable={mentionable}
       notify={{
         scope: "channel",
         id: channel.id,
