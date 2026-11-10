@@ -363,6 +363,11 @@ impl ConnTable {
             }
         }
     }
+
+    /// Sockets open on this API process (`GET /api/operator/usage`).
+    pub async fn socket_count(&self) -> usize {
+        self.inner.sockets.read().await.len()
+    }
 }
 
 impl VoiceRoster {
@@ -1200,6 +1205,11 @@ impl Gateway {
     /// Fan-out a live signaling frame. No seq, no replay list.
     pub async fn publish_sig(&self, event: SigEvent) -> Result<(), ApiError> {
         self.voice.publish_sig(event).await
+    }
+
+    /// Every server with a voice index in Redis, from any API process.
+    pub async fn voice_servers(&self) -> Result<Vec<Uuid>, ApiError> {
+        self.voice.voice_servers().await
     }
 }
 

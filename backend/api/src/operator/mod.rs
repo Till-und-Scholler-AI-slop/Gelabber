@@ -1,13 +1,17 @@
 //! `/api/operator/*`: the instance operators' area "Betrieb" (v0.10, #517).
 //! Every route goes through the [`Operator`] extractor: `401` without a
-//! session, `404` for anyone who is not an operator.
+//! session, `404` for anyone who is not an operator. The one route outside
+//! the area, `POST /api/servers/{id}/reports`, lives in [`reports`] beside
+//! the operators' side of reports.
 
 pub mod access;
 pub mod accounts;
 pub mod admission;
 pub mod audit;
 pub mod invitations;
+pub mod reports;
 pub mod servers;
+pub mod usage;
 
 use axum::Router;
 use axum::extract::State;
@@ -27,6 +31,8 @@ pub fn router() -> Router<AppState> {
         .merge(accounts::router())
         .merge(invitations::router())
         .merge(servers::router())
+        .merge(reports::router())
+        .merge(usage::router())
 }
 
 /// `GET /api/operator`: what the area needs before its first page. The web
