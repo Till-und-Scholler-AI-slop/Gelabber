@@ -166,6 +166,9 @@ export function ReportTable({
               >
                 {formatWhen(report.created_at)}
               </time>
+              {report.status === "open" ? null : (
+                <Resolution report={report} outcome={report.status} />
+              )}
             </td>
             <td className="is-menu">
               <RowMenuButton
@@ -177,6 +180,45 @@ export function ReportTable({
         ))}
       </tbody>
     </table>
+  );
+}
+
+/** How a closed report was closed: outcome, by whom, when, and the note. */
+function Resolution({
+  report,
+  outcome,
+}: {
+  report: Report;
+  outcome: "dismissed" | "actioned";
+}) {
+  const t = useT(operator);
+  return (
+    <div className="operator-resolution">
+      <Badge tone={outcome === "actioned" ? "warning" : "neutral"}>
+        {t(`reports.outcome.${outcome}`)}
+      </Badge>
+      <span className="operator-muted">
+        {" "}
+        {report.resolved_by?.name ?? t("reports.resolverGone")}
+        {report.resolved_at ? (
+          <>
+            {" · "}
+            <time
+              dateTime={report.resolved_at}
+              title={formatDate(report.resolved_at, {
+                dateStyle: "medium",
+                timeStyle: "short",
+              })}
+            >
+              {formatWhen(report.resolved_at)}
+            </time>
+          </>
+        ) : null}
+      </span>
+      {report.resolution_note ? (
+        <p className="operator-muted">{report.resolution_note}</p>
+      ) : null}
+    </div>
   );
 }
 

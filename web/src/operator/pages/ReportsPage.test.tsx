@@ -127,6 +127,28 @@ describe("Meldungen page", () => {
     expect(html).toContain('class="operator-details"');
   });
 
+  it("shows how a closed report was closed", () => {
+    const hourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
+    fixture.result = {
+      data: page([
+        report({
+          status: "dismissed",
+          resolved_at: hourAgo,
+          resolved_by: { id: "lena", name: "Lena" },
+          resolution_note: "Geklärt mit der Inhaberin",
+        }),
+        report({ id: "r2", status: "actioned", resolved_at: hourAgo }),
+      ]),
+    };
+    const body = text(render());
+    expect(body).toContain(
+      "vor 5 Minuten Ohne Folgen Lena · vor 1 Stunde Geklärt mit der Inhaberin",
+    );
+    expect(body).toContain(
+      "vor 5 Minuten Maßnahme Gelöschtes Konto · vor 1 Stunde",
+    );
+  });
+
   it("names every reason in both languages", () => {
     const reasons = ["spam", "harassment", "sexual", "illegal", "other"];
     fixture.result = {

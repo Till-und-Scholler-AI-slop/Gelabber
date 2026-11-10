@@ -82,6 +82,9 @@ export const operator = defineCatalog(
     "reports.menuLabel": "Aktionen für die Meldung zu {name}",
     "reports.menu.open": "Zum Server",
     "reports.menu.dismiss": "Erledigt ohne Folgen",
+    "reports.outcome.dismissed": "Ohne Folgen",
+    "reports.outcome.actioned": "Maßnahme",
+    "reports.resolverGone": "Gelöschtes Konto",
     "dialogs.delistTitle": "{name} aus dem Verzeichnis nehmen?",
     "dialogs.delistMessage":
       "Der Server erscheint nicht mehr im Verzeichnis, und sein Inhaber kann ihn nicht wieder eintragen. Offene Meldungen zu ihm gelten als erledigt.",
@@ -308,6 +311,9 @@ export const operator = defineCatalog(
     "reports.menuLabel": "Actions for the report about {name}",
     "reports.menu.open": "Go to the server",
     "reports.menu.dismiss": "Resolve without action",
+    "reports.outcome.dismissed": "No action",
+    "reports.outcome.actioned": "Action taken",
+    "reports.resolverGone": "Deleted account",
     "dialogs.delistTitle": "Remove {name} from the directory?",
     "dialogs.delistMessage":
       "The server no longer appears in the directory, and its owner can’t list it again. Its open reports count as resolved.",
@@ -334,7 +340,7 @@ export const operator = defineCatalog(
     "toasts.relistFailed": "Not allowed again.",
     "toasts.unblockFailed": "Block not lifted.",
     "toasts.serverGone": "That server no longer exists.",
-    "accounts.searchLabel": "Search names or email addresses",
+    "accounts.searchLabel": "Search name or email",
     "accounts.filterLabel": "Filter accounts",
     "accounts.filter.all": "All",
     "accounts.filter.disabled": "Disabled",
