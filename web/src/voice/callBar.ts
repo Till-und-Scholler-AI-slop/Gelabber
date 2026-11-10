@@ -2,6 +2,8 @@
 // the own Live's sound, and what a screen reader hears when the call
 // changes.
 
+import { translate } from "../i18n/catalog.ts";
+import { voice as texts } from "../i18n/catalogs/voice.ts";
 import type { VoiceState } from "./session.ts";
 
 export type NoticeContext = {
@@ -22,22 +24,19 @@ export function dockNotices(
       id: "unavailable",
       text:
         sound === "unavailable"
-          ? "Der Browser hat keinen Live-Ton freigegeben. Das Video läuft weiter."
+          ? translate(texts, "notice.soundUnavailable")
           : null,
     },
     {
       id: "unsupported",
       text:
         sound === "unsupported"
-          ? "Dieser Medienserver unterstützt Live-Ton noch nicht. Das Video läuft weiter."
+          ? translate(texts, "notice.soundUnsupported")
           : null,
     },
     {
       id: "ended",
-      text:
-        sound === "ended"
-          ? "Der Live-Ton wurde beendet. Das Video läuft weiter."
-          : null,
+      text: sound === "ended" ? translate(texts, "notice.soundEnded") : null,
     },
     {
       // A browser hands sound over in its picker only: a Live that started
@@ -45,7 +44,7 @@ export function dockNotices(
       id: "next-share",
       text:
         context.sharesSound && voice.localScreen && sound === "off"
-          ? "Ton ab dem nächsten Live."
+          ? translate(texts, "notice.soundNextLive")
           : null,
     },
   ];
@@ -66,18 +65,24 @@ export function callAnnouncement(
   now: CallMoment,
 ): string | null {
   if (now.connection === "failed")
-    return before.connection === "failed" ? null : "Verbindung verloren";
+    return before.connection === "failed"
+      ? null
+      : translate(texts, "announce.lost");
   if (now.status === "idle")
-    return before.status === "joined" ? "Getrennt" : null;
+    return before.status === "joined"
+      ? translate(texts, "announce.disconnected")
+      : null;
   if (now.connection === "connected") {
     if (before.connection === "reconnecting")
-      return "Verbindung wiederhergestellt";
+      return translate(texts, "announce.restored");
     return before.connection !== "connected" ||
       before.channelName !== now.channelName
-      ? `Mit ${now.channelName ?? "dem Sprachkanal"} verbunden`
+      ? now.channelName
+        ? translate(texts, "announce.connectedTo", { channel: now.channelName })
+        : translate(texts, "announce.connectedToVoice")
       : null;
   }
   if (now.connection === "reconnecting" && before.connection !== "reconnecting")
-    return "Verbindung wird wiederhergestellt";
+    return translate(texts, "announce.reconnecting");
   return null;
 }

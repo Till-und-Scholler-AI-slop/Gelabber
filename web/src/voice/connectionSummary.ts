@@ -3,6 +3,8 @@
 // them (everyone's voice in one row, a camera's layers in one row). Shared
 // by the call bar's connection popover and the diagnostics tab.
 
+import { translate } from "../i18n/catalog.ts";
+import { diagnostics } from "../i18n/catalogs/diagnostics.ts";
 import {
   CALL_QUALITY_LIMITS,
   SOURCE_LABEL,
@@ -67,10 +69,15 @@ export type FlowGroup = {
 };
 
 function flowName(role: ConnectionRole, flow: FlowStats): string {
-  if (role === "watch") return flow.kind === "video" ? "Live" : "Live-Ton";
+  if (role === "watch")
+    return translate(
+      diagnostics,
+      flow.kind === "video" ? "source.screen" : "source.screenAudio",
+    );
   // Received video on the call's own connection is the others' cameras.
-  if (flow.kind === "video" && flow.direction === "recv") return "Video";
-  return SOURCE_LABEL[flow.source];
+  if (flow.kind === "video" && flow.direction === "recv")
+    return translate(diagnostics, "source.video");
+  return translate(diagnostics, SOURCE_LABEL[flow.source]);
 }
 
 function worst(values: (number | null)[]): number | null {

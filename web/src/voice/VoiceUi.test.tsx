@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { useLocale } from "../i18n/locale.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import type { VoiceFlags } from "./roster.ts";
 import type { VoiceState } from "./session.ts";
@@ -361,6 +362,39 @@ describe("active media UI", () => {
     const controls = renderToStaticMarkup(<VoiceSessionControls />);
     expect(control(controls, "Stummschalten")).toContain('aria-pressed="true"');
     expect(controls).toContain("Verlassen");
+  });
+
+  it("names the stage views Grid, Focus and Cinema in English", () => {
+    fixture.live = {};
+    fixture.roster = {
+      a: { alice: { channelId: "stage", muted: false, deafened: false } },
+    };
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+      participants: { alice: { pubs: ["v", "s"] } },
+      remote: { alice: { v: stream, s: stream } },
+    });
+    useLocale.setState({ locale: "en" });
+    try {
+      const html = renderToStaticMarkup(
+        <VoiceRoom
+          server={{ ...server, id: "a" }}
+          channelId="stage"
+          channelName="Room"
+        />,
+      );
+      expect(html).toMatch(
+        /<button type="button" class="voice-stage-kino" aria-keyshortcuts="K" title="Cinema \(K\)"[^>]*>(?:<svg.*?<\/svg>)?Cinema<\/button>/,
+      );
+      expect(html).toMatch(
+        /role="radiogroup" aria-label="View"(?:(?!<\/div>).)*>(?:<svg.*?<\/svg>)?Grid(?:(?!<\/div>).)*>(?:<svg.*?<\/svg>)?Focus/,
+      );
+      expect(html).toContain("2 in the channel · Someone is live");
+    } finally {
+      useLocale.setState({ locale: "de" });
+    }
   });
 
   it("keeps camera and screen media scoped to the exact active server and channel", () => {

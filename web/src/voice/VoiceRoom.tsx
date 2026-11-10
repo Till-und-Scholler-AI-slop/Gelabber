@@ -21,6 +21,8 @@ import {
   type RefObject,
 } from "react";
 
+import { useT } from "../i18n/catalog.ts";
+import { voice as texts } from "../i18n/catalogs/voice.ts";
 import { can } from "../servers/permissions.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import { InviteDialog } from "../components/InviteDialog.tsx";
@@ -105,6 +107,7 @@ export function VoiceRoom({
    * about them. The channel's page names the room itself. */
   overview?: boolean;
 }) {
+  const t = useT(texts);
   const allowed = can(server, "join_voice");
   const voice = useVoice();
   const user = useSession((s) => s.user);
@@ -159,8 +162,10 @@ export function VoiceRoom({
 
   const nameOf = (id: string) =>
     id === me
-      ? `${members.get(id)?.name ?? user?.name ?? "Du"} (du)`
-      : (members.get(id)?.name ?? "Mitglied");
+      ? t("people.you", {
+          name: members.get(id)?.name ?? user?.name ?? t("names.you"),
+        })
+      : (members.get(id)?.name ?? t("people.member"));
   const shares: StageTile[] = [];
   const cameras = new Map<string, StageTile>();
   const speaks = (id: string, flags: { muted: boolean; deafened: boolean }) =>
@@ -183,7 +188,7 @@ export function VoiceRoom({
         source: "s",
         userId: id,
         stream: stream ?? null,
-        name: `${name} — Live`,
+        name: t("room.liveTile", { name }),
       });
     }
     if (cameraOn) {
@@ -219,11 +224,11 @@ export function VoiceRoom({
       return {
         sourceAudioNotice:
           status === "unavailable"
-            ? "Kein Live-Ton freigegeben · Video läuft weiter"
+            ? t("room.soundNotShared")
             : status === "ended"
-              ? "Live-Ton beendet · Video läuft weiter"
+              ? t("room.soundEnded")
               : status === "sharing"
-                ? "Ton wird mitgesendet"
+                ? t("room.soundSharing")
                 : undefined,
         sourceAudioOn: status === "sharing",
       };
@@ -376,10 +381,10 @@ export function VoiceRoom({
   const liveOn = occupants.some(([id]) => isLive(id));
   const others = occupants
     .filter(([id]) => id !== me)
-    .map(([id]) => members.get(id)?.name ?? "Jemand");
+    .map(([id]) => members.get(id)?.name ?? t("people.someone"));
   const othersLive = occupants
     .filter(([id]) => id !== me && isLive(id))
-    .map(([id]) => members.get(id)?.name ?? "Jemand");
+    .map(([id]) => members.get(id)?.name ?? t("people.someone"));
   const elsewhere = voice.status === "joined" && !here;
   const freeSeats =
     here || !allowed
@@ -396,12 +401,12 @@ export function VoiceRoom({
       id,
       member: members.get(id),
       self: id === me,
-      fallbackName: user?.name ?? "Du",
+      fallbackName: user?.name ?? t("names.you"),
       fallbackAvatar: id === me ? (user?.avatar_url ?? null) : null,
       muted: id === me && here ? voice.muted : flags.muted,
       deafened: id === me && here ? voice.deafened : flags.deafened,
       speaking: speaks(id, flags),
-      media: isLive(id) ? "Live" : camera ? "Kamera an" : null,
+      media: isLive(id) ? t("live.badge") : camera ? t("room.cameraOn") : null,
       pinned,
       onTogglePin: togglePin,
       channelName,
@@ -430,9 +435,11 @@ export function VoiceRoom({
           <SpeakerIcon size={18} />
           <h2 className="voice-room-name">{channelName}</h2>
           {here ? (
-            <span className="voice-room-connected">Verbunden</span>
+            <span className="voice-room-connected">{t("call.connected")}</span>
           ) : null}
-          {liveOn ? <span className="voice-room-live-badge">Live</span> : null}
+          {liveOn ? (
+            <span className="voice-room-live-badge">{t("live.badge")}</span>
+          ) : null}
         </div>
       ) : kino ? null : staged ? (
         <div className="voice-stage-bar">
@@ -446,7 +453,7 @@ export function VoiceRoom({
           </p>
           {narrow ? null : (
             <ChipGroup
-              label="Ansicht"
+              label={t("room.viewLabel")}
               className="voice-stage-views"
               value={view}
               onChange={(next) => chooseView(roomKey, next)}
@@ -456,7 +463,7 @@ export function VoiceRoom({
                   label: (
                     <>
                       <GridIcon size={15} />
-                      Raster
+                      {t("room.viewGrid")}
                     </>
                   ),
                 },
@@ -465,7 +472,7 @@ export function VoiceRoom({
                   label: (
                     <>
                       <FocusIcon size={15} />
-                      Fokus
+                      {t("room.viewFocus")}
                     </>
                   ),
                 },
@@ -478,11 +485,11 @@ export function VoiceRoom({
               type="button"
               className="voice-stage-kino"
               aria-keyshortcuts="K"
-              title="Kino (K)"
+              title={t("room.cinemaTitle")}
               onClick={() => enterKino(true)}
             >
               <TheaterIcon size={15} />
-              Kino
+              {t("room.cinema")}
             </button>
           ) : null}
         </div>
@@ -495,7 +502,7 @@ export function VoiceRoom({
         <ul
           ref={stageRef}
           className="voice-stage"
-          aria-label="Bühne"
+          aria-label={t("room.stage")}
           data-view={view}
           data-measured={layout ? "" : undefined}
         >
@@ -560,13 +567,13 @@ export function VoiceRoom({
             onClick={leaveKino}
           >
             <TheaterExitIcon size={15} />
-            Kino verlassen
-            <kbd aria-hidden="true">Esc</kbd>
+            {t("room.leaveCinema")}
+            <kbd aria-hidden="true">{t("room.escKey")}</kbd>
           </button>
           {focus ? (
             <span className="voice-kino-chip voice-kino-label">
               {focus.kind === "live" ? (
-                <span className="voice-kino-live">Live</span>
+                <span className="voice-kino-live">{t("live.badge")}</span>
               ) : null}
               <strong>{nameOf(focus.userId)}</strong>
               <span className="voice-kino-place">· {channelName}</span>
@@ -578,7 +585,7 @@ export function VoiceRoom({
         <div
           className="voice-room-stage"
           role="region"
-          aria-label="Übertragungen"
+          aria-label={t("room.streams")}
         >
           {/* One element per picture, in a fixed order: the spotlight is a
               place on the stage, so swapping never rebuilds a video. */}
@@ -621,7 +628,7 @@ export function VoiceRoom({
         !focus && occupants.some(([id]) => !cameras.has(id)) ? (
           <ul
             className="voice-room-participants voice-stage-people"
-            aria-label="Ohne Kamera"
+            aria-label={t("room.withoutCamera")}
           >
             {occupants
               .filter(([id]) => !cameras.has(id))
@@ -633,7 +640,7 @@ export function VoiceRoom({
       ) : occupants.length > 0 || freeSeats > 0 ? (
         <ul
           className="voice-room-participants"
-          aria-label="Teilnehmer im Sprachkanal"
+          aria-label={t("room.participants")}
         >
           {occupants.map(([id, flags]) => {
             const camera = cameras.get(id);
@@ -648,14 +655,16 @@ export function VoiceRoom({
           {Array.from({ length: freeSeats }, (_, seat) => (
             <li key={`seat-${seat}`} className="voice-room-seat" aria-hidden>
               <span className="voice-room-seat-circle" />
-              <span>Platz frei</span>
+              <span>{t("room.freeSeat")}</span>
             </li>
           ))}
         </ul>
       ) : null}
       {!here && allowed && elsewhere ? (
         <p className="voice-room-muted voice-room-switch-note">
-          Du verlässt dabei {voice.channelName ?? "deinen Sprachkanal"}.
+          {voice.channelName
+            ? t("room.switchNote", { channel: voice.channelName })
+            : t("room.switchNoteUnnamed")}
         </p>
       ) : null}
       {!here ? (
@@ -668,16 +677,16 @@ export function VoiceRoom({
               onClick={onJoin}
               className="voice-room-join"
             >
-              {elsewhere ? "Hierher wechseln" : "Beitreten"}
+              {elsewhere ? t("room.switchHere") : t("room.join")}
             </Button>
           ) : (
             <p className="voice-room-muted voice-room-denied">
-              Keine Berechtigung für Sprachkanäle.
+              {t("room.noPermission")}
             </p>
           )}
           <IconButton
             variant="secondary"
-            label="Mikrofon testen"
+            label={t("room.testMicrophone")}
             icon={<MicIcon size={18} />}
             onClick={() => setTestingMicrophone(roomKey)}
           />
@@ -686,13 +695,13 @@ export function VoiceRoom({
       ) : null}
       {askCompany ? (
         <div className="voice-room-invite">
-          <p>Fehlt noch jemand?</p>
+          <p>{t("room.askCompany")}</p>
           <Button
             size="sm"
             icon={<LinkIcon size={16} />}
             onClick={() => setInviting(true)}
           >
-            Einladen
+            {t("room.invite")}
           </Button>
         </div>
       ) : null}

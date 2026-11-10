@@ -5,6 +5,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { translate } from "../i18n/catalog.ts";
+import { voiceSettings } from "../i18n/catalogs/voiceSettings.ts";
+
 import {
   listMediaDevices,
   type DeviceList,
@@ -43,7 +46,9 @@ export function deviceChoices(
   value: string,
 ): { value: string; options: { id: string; label: string }[] } {
   const named = defaultDeviceName(options);
-  const standard = named ? `Standard – ${named}` : "Standard";
+  const standard = named
+    ? translate(voiceSettings, "devices.defaultNamed", { name: named })
+    : translate(voiceSettings, "devices.default");
   const devices = options.filter((option) => option.id !== DEFAULT_ID);
   const current = value === DEFAULT_ID ? "" : value;
   return {
@@ -51,7 +56,7 @@ export function deviceChoices(
     options: [
       { id: "", label: standard },
       ...(current && !devices.some((option) => option.id === current)
-        ? [{ id: current, label: "Gewähltes Gerät" }]
+        ? [{ id: current, label: translate(voiceSettings, "devices.chosen") }]
         : []),
       ...devices,
     ],

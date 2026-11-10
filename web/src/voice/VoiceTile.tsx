@@ -17,6 +17,8 @@ import {
   type KeyboardEvent,
 } from "react";
 
+import { useT } from "../i18n/catalog.ts";
+import { voice } from "../i18n/catalogs/voice.ts";
 import {
   CollapseIcon,
   ExpandIcon,
@@ -83,6 +85,7 @@ export function VoiceTile(props: VoiceTileProps) {
 
 /** The large view: fullscreen where the page cannot have it. */
 export function StreamViewer(props: VoiceTileProps & { onClose: () => void }) {
+  const t = useT(voice);
   const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -100,7 +103,7 @@ export function StreamViewer(props: VoiceTileProps & { onClose: () => void }) {
     <dialog
       ref={dialogRef}
       className="stream-viewer"
-      aria-label={`Vollbild: ${props.label}`}
+      aria-label={t("tile.fullscreenLabel", { name: props.label })}
       onCancel={(event) => {
         event.preventDefault();
         props.onClose();
@@ -181,6 +184,7 @@ function VideoSurface({
   onExit?: () => void;
   viewer?: boolean;
 }) {
+  const t = useT(voice);
   const [framed, setFramed] = useState<MediaStream | null>(null);
   const picture = stream !== null && framed === stream;
   const joined = useVoice((s) => s.status === "joined");
@@ -417,16 +421,16 @@ function VideoSurface({
       />
       {blocked ? (
         <div className="voice-video-overlay">
-          <p role="status">Die Videowiedergabe ist blockiert.</p>
+          <p role="status">{t("tile.playbackBlocked")}</p>
           <Button size="sm" variant="primary" onClick={play}>
-            Wiedergabe starten
+            {t("tile.startPlayback")}
           </Button>
         </div>
       ) : null}
       {sourceWatch && !sourceWatch.watching ? (
         <div className="voice-source-watch-overlay">
           <button type="button" onClick={sourceWatch.toggle}>
-            Zuschauen
+            {t("watch.watch")}
           </button>
         </div>
       ) : null}
@@ -438,15 +442,15 @@ function VideoSurface({
           {wait === "loading" ? (
             <span role="status" className="voice-video-wait">
               <span className="voice-video-spinner" aria-hidden="true" />
-              Video wird geladen …
+              {t("tile.loading")}
             </span>
           ) : null}
           {wait === "stalled" ? (
             <>
-              <span role="status">Kein Bild empfangen</span>
+              <span role="status">{t("tile.noPicture")}</span>
               {canReload ? (
                 <Button size="sm" onClick={reload}>
-                  Neu laden
+                  {t("tile.reload")}
                 </Button>
               ) : null}
             </>
@@ -458,7 +462,9 @@ function VideoSurface({
       ) : null}
       {live || sourceAudioNotice ? (
         <div className="voice-video-tags">
-          {live ? <span className="voice-video-live">Live</span> : null}
+          {live ? (
+            <span className="voice-video-live">{t("live.badge")}</span>
+          ) : null}
           {sourceAudioNotice ? (
             <span
               role="status"
@@ -471,7 +477,7 @@ function VideoSurface({
                 <SpeakerOffIcon size={12} />
               )}
               <span aria-hidden="true">
-                {sourceAudioOn ? "Mit Ton" : "Ohne Ton"}
+                {sourceAudioOn ? t("tile.withSound") : t("tile.withoutSound")}
               </span>
               <span className="sr-only">{sourceAudioNotice}</span>
             </span>
@@ -503,7 +509,7 @@ function VideoSurface({
             {sourceWatch?.watching ? (
               <IconButton
                 size="sm"
-                label="Nicht mehr zuschauen"
+                label={t("tile.stopWatching")}
                 icon={<EyeOffIcon size={16} />}
                 onClick={sourceWatch.toggle}
                 className="voice-video-action"
@@ -517,7 +523,7 @@ function VideoSurface({
             {onTogglePin ? (
               <IconButton
                 size="sm"
-                label="Anheften"
+                label={t("tile.pin")}
                 pressed={pinned}
                 icon={<PinIcon size={16} />}
                 onClick={onTogglePin}
@@ -526,8 +532,8 @@ function VideoSurface({
             ) : null}
             <IconButton
               size="sm"
-              label="Vollbild"
-              title="Vollbild (auch per Doppelklick)"
+              label={t("tile.fullscreen")}
+              title={t("tile.fullscreenTitle")}
               data-fullscreen-toggle=""
               icon={<ExpandIcon size={16} />}
               onClick={() => void enterFullscreen()}
@@ -557,11 +563,12 @@ function WatchStrip({
   onStopWatching: (() => void) | undefined;
   onExit: () => void;
 }) {
+  const t = useT(voice);
   return (
     <div
       className="voice-watch-strip"
       role="group"
-      aria-label={`Steuerung: ${label}`}
+      aria-label={t("tile.controlsLabel", { name: label })}
     >
       <strong className="voice-watch-strip-label">{label}</strong>
       {joined ? (
@@ -577,7 +584,7 @@ function WatchStrip({
           onClick={onStopWatching}
         >
           <EyeOffIcon size={16} />
-          <span>Nicht mehr zuschauen</span>
+          <span>{t("tile.stopWatching")}</span>
         </button>
       ) : null}
       <button
@@ -588,7 +595,7 @@ function WatchStrip({
         onClick={onExit}
       >
         <CollapseIcon size={16} />
-        <span>Vollbild beenden</span>
+        <span>{t("tile.exitFullscreen")}</span>
       </button>
     </div>
   );
@@ -596,12 +603,13 @@ function WatchStrip({
 
 /** The stream sound on and off, on the picture in front. */
 function StreamSoundAction() {
+  const t = useT(voice);
   const muted = useMediaSettings((s) => s.sourceAudioMuted);
   const patch = useMediaSettings((s) => s.patch);
   return (
     <IconButton
       size="sm"
-      label="Live-Ton stummschalten"
+      label={t("tile.muteLiveSound")}
       pressed={muted}
       icon={muted ? <SpeakerOffIcon size={16} /> : <SpeakerIcon size={16} />}
       onClick={() => patch({ sourceAudioMuted: !muted })}
@@ -612,6 +620,7 @@ function StreamSoundAction() {
 
 /** The stream sound's own volume, next to the picture it belongs to. */
 function StreamVolume() {
+  const t = useT(voice);
   const volume = useMediaSettings((s) => s.sourceAudioVolume);
   const muted = useMediaSettings((s) => s.sourceAudioMuted);
   const deafened = useVoice((s) => s.deafened);
@@ -621,10 +630,8 @@ function StreamVolume() {
       <button
         type="button"
         aria-pressed={muted}
-        aria-label="Live-Ton stummschalten"
-        title={
-          muted ? "Live-Ton wieder einschalten" : "Live-Ton stummschalten"
-        }
+        aria-label={t("tile.muteLiveSound")}
+        title={muted ? t("tile.unmuteLiveSound") : t("tile.muteLiveSound")}
         className={`voice-control voice-control-compact${muted ? " is-off" : ""}`}
         onClick={() => patch({ sourceAudioMuted: !muted })}
       >
@@ -640,8 +647,8 @@ function StreamVolume() {
             "--lr-range-value": playbackSliderFill(volume),
           } as CSSProperties
         }
-        aria-label="Live-Ton-Lautstärke"
-        aria-valuetext={`${Math.round(volume * 100)} %`}
+        aria-label={t("tile.liveSoundVolume")}
+        aria-valuetext={t("percent", { percent: Math.round(volume * 100) })}
         disabled={muted || deafened}
         onChange={(event) =>
           patch({

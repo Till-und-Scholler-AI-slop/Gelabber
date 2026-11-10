@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { translate } from "../i18n/catalog.ts";
+import { diagnostics } from "../i18n/catalogs/diagnostics.ts";
 import {
   micConstraints,
   type AudioProcessingMode,
@@ -18,10 +20,11 @@ export type ProcessingInfo = {
   inputGain: number;
   contextState: string | null;
 };
-const inactive: ProcessingInfo = {
+/** Its words in the language of the moment it is noted. */
+const inactive = (): ProcessingInfo => ({
   requested: "enhanced",
   actual: null,
-  message: "Mikrofon inaktiv",
+  message: translate(diagnostics, "processing.inactive"),
   sampleRate: null,
   channels: null,
   echoCancellation: null,
@@ -30,10 +33,10 @@ const inactive: ProcessingInfo = {
   addedBufferMs: null,
   inputGain: 1,
   contextState: null,
-};
-export const useAudioProcessing = create<ProcessingInfo>(() => inactive);
+});
+export const useAudioProcessing = create<ProcessingInfo>(() => inactive());
 export function noteAudioProcessing(info: ProcessingInfo | null): void {
-  useAudioProcessing.setState(info ?? inactive);
+  useAudioProcessing.setState(info ?? inactive());
 }
 export type MicProcessor = {
   stream: MediaStream;
@@ -63,7 +66,10 @@ async function fetchModel(): Promise<ArrayBuffer> {
   const arm = () => {
     clearTimeout(stall);
     stall = setTimeout(
-      () => abort.abort(new Error("Rauschfilter lädt nicht weiter")),
+      () =>
+        abort.abort(
+          new Error(translate(diagnostics, "processing.error.modelStalled")),
+        ),
       MODEL_STALL_MS,
     );
   };
@@ -74,7 +80,7 @@ async function fetchModel(): Promise<ArrayBuffer> {
       signal: abort.signal,
     });
     if (!response.ok)
-      throw new Error("Rauschfilter konnte nicht geladen werden");
+      throw new Error(translate(diagnostics, "processing.error.modelLoad"));
     if (!response.body) return await response.arrayBuffer();
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = [];
@@ -107,7 +113,9 @@ async function loadModel(): Promise<WebAssembly.Module> {
         byte.toString(16).padStart(2, "0"),
       ).join("");
       if (hash !== ASSET_HASH)
-        throw new Error("Rauschfilter-Prüfsumme stimmt nicht");
+        throw new Error(
+          translate(diagnostics, "processing.error.modelChecksum"),
+        );
       const model = await WebAssembly.compile(bytes);
       modelFailure = null;
       return model;
@@ -144,7 +152,7 @@ function infoFor(
       actual === "browser" &&
       effective.noiseSuppression === false &&
       effective.autoGainControl === false
-        ? "Browser-Modus aktiv; Browser meldet keine Rauschfilter"
+        ? translate(diagnostics, "processing.browserNoFilters")
         : message,
     sampleRate: effective.sampleRate ?? null,
     channels: effective.channelCount ?? null,
@@ -172,11 +180,14 @@ export async function createProcessor(
     raw,
     settings,
     actual,
-    actual === "enhanced"
-      ? "Lokale Rauschunterdrückung aktiv"
-      : actual === "browser"
-        ? "Browserfilter aktiv"
-        : "Original / Musik aktiv",
+    translate(
+      diagnostics,
+      actual === "enhanced"
+        ? "processing.enhanced"
+        : actual === "browser"
+          ? "processing.browser"
+          : "processing.original",
+    ),
   );
   if (actual !== "enhanced" && settings.inputGain === 1) {
     let disposed = false;
@@ -243,12 +254,11 @@ export async function createProcessor(
   };
   function resumeContext(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      cancelResume = () => reject(new Error("Audioverarbeitung beendet"));
+      cancelResume = () =>
+        reject(new Error(translate(diagnostics, "processing.error.ended")));
       resumeTimer = setTimeout(
         () =>
-          reject(
-            new Error("Audioverarbeitung konnte nicht fortgesetzt werden"),
-          ),
+          reject(new Error(translate(diagnostics, "processing.error.resume"))),
         2_000,
       );
       void ctx.resume().then(resolve, reject);
@@ -287,7 +297,8 @@ export async function createProcessor(
   };
   try {
     await resumeContext();
-    if (ctx.state !== "running") throw new Error("Audioverarbeitung pausiert");
+    if (ctx.state !== "running")
+      throw new Error(translate(diagnostics, "processing.error.paused"));
     source = ctx.createMediaStreamSource(raw);
     gain = ctx.createGain();
     gain.gain.value = settings.inputGain;
@@ -301,7 +312,9 @@ export async function createProcessor(
         !ctx.audioWorklet ||
         typeof AudioWorkletNode === "undefined"
       )
-        throw new Error("Lokaler Rauschfilter wird nicht unterstützt");
+        throw new Error(
+          translate(diagnostics, "processing.error.noiseFilterUnsupported"),
+        );
       const model = await loadModel();
       await ctx.audioWorklet.addModule(
         `/audio/rnnoise-worklet.js?v=${ASSET_HASH}`,
@@ -315,13 +328,20 @@ export async function createProcessor(
       const worklet = node;
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(
-          () => reject(new Error("Rauschfilter startet nicht")),
+          () =>
+            reject(
+              new Error(
+                translate(diagnostics, "processing.error.workletTimeout"),
+              ),
+            ),
           2_000,
         );
         worklet.onprocessorerror = () => {
           fault();
           clearTimeout(timeout);
-          reject(new Error("Rauschfilter konnte nicht starten"));
+          reject(
+            new Error(translate(diagnostics, "processing.error.workletFailed")),
+          );
         };
         worklet.port.onmessage = (event: MessageEvent) => {
           if (event.data?.ready) {
@@ -337,7 +357,7 @@ export async function createProcessor(
       info.channels = 1;
     } else source.connect(gain);
     if (faulted || ctx.state !== "running")
-      throw new Error("Audioverarbeitung pausiert beim Start");
+      throw new Error(translate(diagnostics, "processing.error.pausedAtStart"));
     gain.connect(destination);
     info.sampleRate = ctx.sampleRate ?? info.sampleRate;
     info.channels = destination.channelCount;
@@ -352,7 +372,7 @@ export async function createProcessor(
       info.message =
         ctx.state === "running"
           ? message
-          : "Audioverarbeitung pausiert; Wiederaufnahme läuft";
+          : translate(diagnostics, "processing.resuming");
       onState?.({ ...info });
       if (ctx.state === "closed") fault();
       else resume();
@@ -418,7 +438,8 @@ export async function captureMicrophone(
   });
   ownership.acquired(raw);
   try {
-    if (!ownership.current()) throw new Error("Mikrofonanfrage abgebrochen");
+    if (!ownership.current())
+      throw new Error(translate(diagnostics, "processing.error.cancelled"));
     const processor = await createProcessor(
       raw,
       forceBrowser ? { ...settings, inputGain: 1 } : settings,
@@ -429,15 +450,19 @@ export async function captureMicrophone(
     if (!ownership.current() || !processor.usable()) {
       processor.dispose();
       throw new Error(
-        "Mikrofonanfrage abgebrochen oder Audioprozessor ausgefallen",
+        translate(diagnostics, "processing.error.cancelledOrFailed"),
       );
     }
     if (forceBrowser || (unavailable && settings.processingMode === "enhanced"))
       processor.nativeFallback = true;
     if ((forceBrowser || unavailable) && settings.processingMode === "enhanced")
-      processor.info.message = forceBrowser
-        ? `Audioprozessor ausgefallen; ${processor.info.message} (Mikrofonverstärkung 100 %)`
-        : `Lokaler Rauschfilter nicht unterstützt; ${processor.info.message}`;
+      processor.info.message = translate(
+        diagnostics,
+        forceBrowser
+          ? "processing.processorFailed"
+          : "processing.noiseFilterUnsupported",
+        { state: processor.info.message },
+      );
     return { raw, processor };
   } catch (error) {
     raw.getTracks().forEach((track) => track.stop());
@@ -451,7 +476,9 @@ export async function captureMicrophone(
     ownership.acquired(raw);
     try {
       if (!ownership.current())
-        throw new Error("Mikrofonanfrage abgebrochen", { cause: error });
+        throw new Error(translate(diagnostics, "processing.error.cancelled"), {
+          cause: error,
+        });
       const processor = await createProcessor(
         raw,
         { ...settings, inputGain: 1 },
@@ -461,10 +488,18 @@ export async function captureMicrophone(
       );
       if (!ownership.current() || !processor.usable()) {
         processor.dispose();
-        throw new Error("Mikrofonanfrage abgebrochen", { cause: error });
+        throw new Error(translate(diagnostics, "processing.error.cancelled"), {
+          cause: error,
+        });
       }
       processor.nativeFallback = true;
-      processor.info.message = `${actual === "enhanced" ? "Lokaler Rauschfilter" : "Audioverarbeitung"} nicht verfügbar; ${processor.info.message} (Mikrofonverstärkung 100 %)`;
+      processor.info.message = translate(
+        diagnostics,
+        actual === "enhanced"
+          ? "processing.noiseFilterUnavailable"
+          : "processing.unavailable",
+        { state: processor.info.message },
+      );
       return { raw, processor };
     } catch (fallbackError) {
       raw.getTracks().forEach((track) => track.stop());

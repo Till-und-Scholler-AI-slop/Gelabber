@@ -7,6 +7,8 @@
 import { create } from "zustand";
 
 import { keyNames } from "../components/shellShortcuts.ts";
+import { translate } from "../i18n/catalog.ts";
+import { voice } from "../i18n/catalogs/voice.ts";
 
 export type VoiceInputMode = "activity" | "ptt";
 
@@ -28,15 +30,18 @@ const MOUSE_BUTTONS: Record<string, number> = { Mouse4: 3, Mouse5: 4 };
 
 /** The key as the settings show it, when no label was kept. */
 export function pushToTalkKeyLabel(code: string): string {
-  if (code === "Mouse4") return "Maustaste 4";
-  if (code === "Mouse5") return "Maustaste 5";
-  if (code === "Space") return "Leertaste";
-  return code
+  if (code === "Mouse4") return translate(voice, "pushToTalk.mouse4");
+  if (code === "Mouse5") return translate(voice, "pushToTalk.mouse5");
+  if (code === "Space") return translate(voice, "pushToTalk.space");
+  const key = code
     .replace(/^Key(?=[A-Z]$)/, "")
     .replace(/^Digit(?=\d$)/, "")
-    .replace(/^Numpad/, "Num ")
-    .replace(/Left$/, " links")
-    .replace(/Right$/, " rechts");
+    .replace(/^Numpad/, "Num ");
+  if (/.Left$/.test(key))
+    return translate(voice, "pushToTalk.left", { key: key.slice(0, -4) });
+  if (/.Right$/.test(key))
+    return translate(voice, "pushToTalk.right", { key: key.slice(0, -5) });
+  return key;
 }
 
 /** A key event's binding, or null for keys that cannot be one. */
@@ -205,20 +210,25 @@ export function callTip(
   off: boolean,
   pushToTalkKey: string | null = null,
 ): { label: string; detail: string } {
-  const label =
+  const label = translate(
+    voice,
     action === "mute"
       ? off
-        ? "Stummschaltung aufheben"
-        : "Stummschalten"
+        ? "controls.unmute"
+        : "controls.mute"
       : off
-        ? "Taubschaltung aufheben"
-        : "Taubschalten";
+        ? "controls.undeafen"
+        : "controls.deafen",
+  );
   const shortcut = callShortcutLabel(action);
   return {
     label,
     detail:
       action === "mute" && !off && pushToTalkKey
-        ? `${shortcut} · Push-to-Talk: ${pushToTalkKey}`
+        ? translate(voice, "controls.pushToTalkDetail", {
+            shortcut,
+            key: pushToTalkKey,
+          })
         : shortcut,
   };
 }

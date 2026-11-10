@@ -1,4 +1,6 @@
 import { api } from "../api/client.ts";
+import { translate } from "../i18n/catalog.ts";
+import { voice } from "../i18n/catalogs/voice.ts";
 import type { TrackKind } from "../ws/protocol.ts";
 import type {
   DtlsParameters,
@@ -127,30 +129,29 @@ export class MediaError extends Error {
   }
 }
 
-const MEDIA_FAILED = "Die Sprachverbindung ist fehlgeschlagen.";
-const MEDIA_SLOW =
-  "Der Sprachserver antwortet nicht. Bitte noch einmal versuchen.";
-const MEDIA_BUSY =
-  "Die Sprachverbindung ist überlastet. Bitte noch einmal versuchen.";
-const MEDIA_UPDATE =
-  "Bitte Gelabber aktualisieren und den Sprachkanal erneut betreten.";
-/** What a media error code means for the user. `null`: a newer operation
- * took over, nothing to say. A code missing here reads as MEDIA_FAILED. */
-const MEDIA_MESSAGES: Record<string, string | null> = {
+type VoiceKey = keyof typeof voice.de;
+
+const MEDIA_FAILED = "error.failed";
+const MEDIA_SLOW = "error.slow";
+const MEDIA_BUSY = "error.busy";
+const MEDIA_UPDATE = "error.update";
+/** What a media error code means for the user, as a `voice` catalog key.
+ * `null`: a newer operation took over, nothing to say. A code missing here
+ * reads as MEDIA_FAILED. */
+const MEDIA_MESSAGES: Record<string, VoiceKey | null> = {
   // The media server's codes.
   bad_request: MEDIA_FAILED,
-  forbidden: "Dafür fehlt dir in diesem Sprachkanal die Berechtigung.",
+  forbidden: "error.forbidden",
   unsupported_media_version: MEDIA_UPDATE,
   update_required: MEDIA_UPDATE,
-  unsupported_codec:
-    "Dein Browser kann kein Format senden, das dieser Sprachkanal empfängt.",
-  unavailable: "Kein freier Sprachplatz.",
-  unauthorized: "Der Sprachserver hat die Verbindung nicht zugelassen.",
+  unsupported_codec: "error.unsupportedCodec",
+  unavailable: "error.unavailable",
+  unauthorized: "error.unauthorized",
   negotiation_failed: MEDIA_FAILED,
   ice_failed: MEDIA_FAILED,
-  gone: "Der Sprachserver ist gerade nicht erreichbar.",
+  gone: "error.gone",
   // The client's own.
-  connection_closed: "Die Verbindung zum Sprachserver ist abgebrochen.",
+  connection_closed: "error.connectionClosed",
   request_timeout: MEDIA_SLOW,
   sdk_timeout: MEDIA_SLOW,
   live_recovery_timeout: MEDIA_SLOW,
@@ -159,17 +160,17 @@ const MEDIA_MESSAGES: Record<string, string | null> = {
   event_overflow: MEDIA_BUSY,
   // The browser SDK's chunk did not arrive. It loads when joining, so the
   // way back is joining again; a tab whose chunk a deploy replaced reloads.
-  sdk_load_failed:
-    "Die Anruffunktion konnte nicht geladen werden. Bitte Gelabber neu laden und den Sprachkanal erneut betreten.",
-  sdk_load_timeout:
-    "Die Anruffunktion lädt gerade sehr langsam. Bitte gleich den Sprachkanal erneut betreten.",
+  sdk_load_failed: "error.sdkLoadFailed",
+  sdk_load_timeout: "error.sdkLoadTimeout",
   publication_cancelled: null,
   publication_replaced: null,
 };
 
 export function mediaErrorMessage(code: string): string | null {
-  const message = MEDIA_MESSAGES[code];
-  return message === undefined ? MEDIA_FAILED : message;
+  const key = Object.hasOwn(MEDIA_MESSAGES, code)
+    ? MEDIA_MESSAGES[code]
+    : MEDIA_FAILED;
+  return key === null ? null : translate(voice, key);
 }
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const trackKinds = new Set(["a", "v", "s", "sa"]);
