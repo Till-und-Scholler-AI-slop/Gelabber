@@ -1424,8 +1424,9 @@ impl Session {
                         seat.close_source(Kind::V).await;
                     }
                     // Whichever start let the running camera go, its `p v`
-                    // is taken back here.
-                    if self.st.lock().announced.contains(&Kind::V) {
+                    // is taken back here; a seat rebuild forgets what was
+                    // announced, while the gateway keeps it.
+                    if released.is_some() || self.st.lock().announced.contains(&Kind::V) {
                         self.announce(Kind::V, false);
                         inner.play(Sound::CameraOff, Some(false));
                     }
