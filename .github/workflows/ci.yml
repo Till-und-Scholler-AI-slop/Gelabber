@@ -83,12 +83,18 @@ jobs:
           DOCS_RS: "1"
         run: cargo clippy --locked --manifest-path backend/Cargo.toml --workspace --all-targets -- -D warnings
 
+  # Two runners take half of the tests each: the tests wait on Postgres and
+  # on timers more than they compute, so a second runner halves their time.
   rust:
-    name: Rust tests
+    name: Rust tests (${{ matrix.part }}/2)
     needs: changes
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2]
     permissions:
       contents: read
       packages: read
@@ -210,9 +216,11 @@ jobs:
           curl -fsS "$MINIO_ENDPOINT/minio/health/ready" >/dev/null
           # The 100 ms typing assertion runs alone in the next step.
           sh backend/build/run-native-ci.sh nextest run --locked --workspace --all-targets --no-fail-fast \
+            --partition hash:${{ matrix.part }}/2 \
             -E 'not test(typing_broadcasts_fast_and_clears_on_stop)'
 
       - name: Test typing latency in isolation
+        if: matrix.part == 1
         env:
           VERIFY_TYPING_STABILITY: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_typing_stability }}
         run: |
