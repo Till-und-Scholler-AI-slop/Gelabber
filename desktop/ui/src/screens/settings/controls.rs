@@ -1001,13 +1001,17 @@ pub type Prepared = crate::task::Pending<Result<(Vec<u8>, &'static str), String>
 
 /// `prepareAvatar` / `prepareBanner` off the UI thread: read, crop, encode.
 pub fn prepare(ctx: &egui::Context, file: ImageFile, w: u32, h: u32) -> Prepared {
-    crate::task::Pending::thread(ctx, move || {
-        let bytes = match file {
-            ImageFile::Bytes(bytes) => bytes,
-            ImageFile::Path(path) => read_image(&path)?,
-        };
-        prepare_image(&bytes, w, h)
-    })
+    crate::task::Pending::thread(
+        ctx,
+        move || {
+            let bytes = match file {
+                ImageFile::Bytes(bytes) => bytes,
+                ImageFile::Path(path) => read_image(&path)?,
+            };
+            prepare_image(&bytes, w, h)
+        },
+        || Err(unreadable()),
+    )
 }
 
 const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
