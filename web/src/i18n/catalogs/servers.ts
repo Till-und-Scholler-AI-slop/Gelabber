@@ -19,7 +19,8 @@ export const servers = defineCatalog(
     "join.inputPlaceholder": "Link oder Code einfügen",
     "join.submit": "Beitreten",
     "join.error.empty": "Bitte einen Einladungslink oder Code eingeben.",
-    "join.error.foreign": "Dieser Link gehört zu einem anderen Gelabber-Server.",
+    "join.error.foreign":
+      "Dieser Link gehört zu einem anderen Gelabber-Server.",
     "join.error.invalid": "Das sieht nicht wie ein Einladungslink aus.",
 
     "form.nameLabel": "Name",
@@ -67,7 +68,10 @@ export const servers = defineCatalog(
     "terms.validFor": "gültig {duration}",
     "terms.validForever": "unbegrenzt gültig",
     "terms.usesUnlimited": "unbegrenzt nutzbar",
-    "terms.usesLimited": { one: "{count}-mal nutzbar", other: "{count}-mal nutzbar" },
+    "terms.usesLimited": {
+      one: "{count}-mal nutzbar",
+      other: "{count}-mal nutzbar",
+    },
 
     // An invite in a list: "3/∞ benutzt · läuft in 6 Tagen ab".
     "expiry.uses": "{uses}/{max} benutzt",
@@ -76,7 +80,10 @@ export const servers = defineCatalog(
     "expiry.expired": "abgelaufen",
 
     "overview.label": "Übersicht",
-    "overview.members": { one: "{count} Mitglied", other: "{count} Mitglieder" },
+    "overview.members": {
+      one: "{count} Mitglied",
+      other: "{count} Mitglieder",
+    },
     "overview.inVoice": "{count} im Sprachkanal",
     "overview.inVoiceRooms": "{count} in Sprachkanälen",
     "overview.alone": "Noch keine weiteren Mitglieder.",

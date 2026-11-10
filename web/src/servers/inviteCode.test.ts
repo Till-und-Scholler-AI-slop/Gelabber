@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { setLocale } from "../i18n/locale.ts";
 
 import { inviteExpiry, inviteInputMessage, parseInvite } from "./inviteCode.ts";
 
@@ -54,5 +56,21 @@ describe("invite expiry", () => {
   it("has nothing to say about links without an end", () => {
     expect(inviteExpiry(null, now)).toBeNull();
     expect(inviteExpiry(at(-1), now)).toBe("abgelaufen");
+  });
+});
+
+describe("invite input and expiry in English", () => {
+  const now = Date.parse("2026-10-21T12:00:00Z");
+  const at = (ms: number) => new Date(now + ms).toISOString();
+  afterEach(() => setLocale("de", { persist: false }));
+
+  it("says what is wrong and when a link runs out", () => {
+    setLocale("en", { persist: false });
+    expect(inviteInputMessage("foreign")).toBe(
+      "This link belongs to another Gelabber server.",
+    );
+    expect(inviteExpiry(at(86_400_000), now)).toBe("expires tomorrow");
+    expect(inviteExpiry(at(3 * 3_600_000), now)).toBe("expires in 3 hours");
+    expect(inviteExpiry(at(-1), now)).toBe("expired");
   });
 });
