@@ -75,6 +75,14 @@ cargo run --manifest-path desktop/Cargo.toml -p gelabber-parity -- render <nativ
 cargo run --manifest-path desktop/Cargo.toml -p gelabber-parity -- compare <web-dir> <native-dir> <report-dir>
 ```
 
+The parity stack's API runs with this environment (each package adds its
+keys to this one block):
+
+```sh
+# lena is an operator, for the "Betrieb" scenes; registration stays open.
+API_OPERATOR_EMAILS=lena@example.test
+```
+
 Packages, built by `desktop-native.yml` after merge and for releases:
 
 ```sh
