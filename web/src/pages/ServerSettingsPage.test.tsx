@@ -1,7 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { setLocale } from "../i18n/locale.ts";
 
 import type { ServerDetail } from "../servers/types.ts";
 
@@ -78,5 +80,20 @@ describe("server settings page", () => {
     expect(html).toMatch(
       new RegExp(`<button[^>]*aria-describedby="${hint?.[1]}"[^>]*>Speichern`),
     );
+  });
+});
+
+describe("server settings page in English", () => {
+  afterEach(() => setLocale("de", { persist: false }));
+
+  it("labels the sections and the permissions in English", () => {
+    setLocale("en", { persist: false });
+    const html = page(["manage_server"]);
+    expect(marked(html)).toEqual(["General"]);
+    expect(html).toContain("Server settings");
+    expect(html).toContain("Member permissions");
+    expect(html).toContain("Go Live");
+    expect(html).toContain("Danger zone");
+    expect(html).not.toContain("Servereinstellungen");
   });
 });

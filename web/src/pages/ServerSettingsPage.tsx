@@ -26,6 +26,9 @@ import {
 } from "../auth/avatarImage.ts";
 import { errorMessage, fieldMessage } from "../auth/rules.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
+import { useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
+import { serverSettings } from "../i18n/catalogs/serverSettings.ts";
 import { PresenceAvatar } from "../components/PresenceAvatar.tsx";
 import { Field } from "../components/Field.tsx";
 import { ServerIconFace } from "../components/ServerIcon.tsx";
@@ -69,19 +72,15 @@ import { presenceOf, usePresenceStore } from "../ws/live.ts";
 import { sectionInView, type SectionJump } from "./sectionSpy.ts";
 import "./settings.css";
 
-const NOT_SAVED = {
-  tone: "error",
-  message: "Nicht gespeichert – erneut versuchen",
-} as const;
-
 export function ServerSettingsPage() {
   const { serverId } = useParams({ from: "/workspace/s/$serverId/settings" });
   const { data: server, error, isFetching, refetch } = useServer(serverId);
+  const t = useT(serverSettings);
   if (error && !server)
     return (
       <div className="p-6">
         <LoadError
-          message="Die Servereinstellungen konnten nicht geladen werden."
+          message={t("loadFailed")}
           pending={isFetching}
           onRetry={() => void refetch()}
         />
@@ -99,14 +98,15 @@ type SectionId =
   | "sperren"
   | "gefahrenzone";
 
-const SECTION_LABEL: Record<SectionId, string> = {
-  allgemein: "Allgemein",
-  rechte: "Rechte",
-  einladungen: "Einladungen",
-  mitglieder: "Mitglieder",
-  sperren: "Sperren",
-  gefahrenzone: "Gefahrenzone",
-};
+/** Each section's label; the ids stay German, they are URL fragments. */
+const SECTION_LABEL = {
+  allgemein: "section.general",
+  rechte: "section.permissions",
+  einladungen: "section.invites",
+  mitglieder: "section.members",
+  sperren: "section.bans",
+  gefahrenzone: "section.danger",
+} as const satisfies Record<SectionId, string>;
 
 /** The sections this member sees, in page order. */
 function serverSettingsSections(manage: boolean): SectionId[] {
@@ -207,6 +207,7 @@ function useCurrentSection(
 }
 
 function Settings({ server }: { server: ServerDetail }) {
+  const t = useT(serverSettings);
   const manage = can(server, "manage_server");
   const sections = serverSettingsSections(manage);
   const scroller = useRef<HTMLDivElement>(null);
@@ -216,12 +217,16 @@ function Settings({ server }: { server: ServerDetail }) {
     <div className="settings-screen">
       <header className="lr-channel-header settings-header">
         <h1>
-          Servereinstellungen
+          {t("title")}
           <span className="settings-header-context"> · {server.name}</span>
         </h1>
       </header>
       <div ref={scroller} className="settings-scroll">
-        <nav ref={nav} className="server-settings-nav" aria-label="Abschnitte">
+        <nav
+          ref={nav}
+          className="server-settings-nav"
+          aria-label={t("navLabel")}
+        >
           {sections.map((id) => (
             <a
               key={id}
@@ -233,7 +238,7 @@ function Settings({ server }: { server: ServerDetail }) {
                 jump(id);
               }}
             >
-              {SECTION_LABEL[id]}
+              {t(SECTION_LABEL[id])}
             </a>
           ))}
         </nav>
@@ -261,6 +266,7 @@ function Section({
   hint?: string;
   children: ReactNode;
 }) {
+  const t = useT(serverSettings);
   return (
     <section
       className="server-settings-section"
@@ -268,7 +274,7 @@ function Section({
     >
       <header className="server-settings-section__heading">
         <h2 id={sectionId(id)} tabIndex={-1}>
-          {title ?? SECTION_LABEL[id]}
+          {title ?? t(SECTION_LABEL[id])}
         </h2>
         {hint ? <p>{hint}</p> : null}
       </header>
@@ -278,6 +284,8 @@ function Section({
 }
 
 function NameSection({ server }: { server: ServerDetail }) {
+  const t = useT(serverSettings);
+  const tc = useT(common);
   const [name, setName] = useState(server.name);
   const { errors, clearField, setFields, fromError } = useFormErrors();
   const update = useUpdateServer(server.id);
@@ -298,23 +306,19 @@ function NameSection({ server }: { server: ServerDetail }) {
     update.mutate(
       { name },
       {
-        onSuccess: () =>
-          status.show({ tone: "success", message: "Gespeichert." }),
+        onSuccess: () => status.show({ tone: "success", message: tc("saved") }),
         onError: fromError,
       },
     );
   };
 
   return (
-    <Section
-      id="allgemein"
-      hint="Ein neues Bild gilt sofort, den Namen übernimmst du mit Speichern."
-    >
+    <Section id="allgemein" hint={t("general.hint")}>
       <IconRow server={server} />
       <form onSubmit={onSubmit} noValidate className="settings-form">
         <Field
           id="server-name"
-          label="Servername"
+          label={t("general.nameLabel")}
           type="text"
           maxLength={100}
           value={name}
@@ -328,15 +332,15 @@ function NameSection({ server }: { server: ServerDetail }) {
         <div className="settings-actions">
           <SubmitButton
             pending={update.isPending}
-            pendingLabel="Speichert…"
+            pendingLabel={t("general.saving")}
             disabled={!dirty}
             aria-describedby={unchanged ? unchangedId : undefined}
           >
-            Speichern
+            {tc("save")}
           </SubmitButton>
           {unchanged ? (
             <span id={unchangedId} className="settings-hint">
-              Keine Änderungen.
+              {t("general.unchanged")}
             </span>
           ) : null}
           <InlineStatus status={status.status} />
@@ -348,6 +352,8 @@ function NameSection({ server }: { server: ServerDetail }) {
 
 /** Upload and removal apply at once, like the profile avatar. */
 function IconRow({ server }: { server: ServerDetail }) {
+  const t = useT(serverSettings);
+  const tc = useT(common);
   const picker = useRef<HTMLInputElement>(null);
   const icon = useServerIcon(server.id);
   const status = useInlineStatus();
@@ -356,8 +362,7 @@ function IconRow({ server }: { server: ServerDetail }) {
     status.clear();
     setRemoving(image === null);
     icon.mutate(image, {
-      onSuccess: () =>
-        status.show({ tone: "success", message: "Gespeichert." }),
+      onSuccess: () => status.show({ tone: "success", message: tc("saved") }),
       onError: (error) =>
         status.show({
           tone: "error",
@@ -366,7 +371,7 @@ function IconRow({ server }: { server: ServerDetail }) {
               ? avatarImageMessage(error)
               : error instanceof ApiError
                 ? errorMessage(error.code)
-                : NOT_SAVED.message,
+                : tc("notSaved"),
         }),
     });
   };
@@ -401,9 +406,9 @@ function IconRow({ server }: { server: ServerDetail }) {
             onClick={() => picker.current?.click()}
             disabled={icon.isPending}
             pending={icon.isPending && !removing}
-            pendingLabel="Lädt hoch…"
+            pendingLabel={t("icon.uploading")}
           >
-            Bild hochladen
+            {t("icon.upload")}
           </Button>
           {server.icon_url ? (
             <Button
@@ -412,9 +417,9 @@ function IconRow({ server }: { server: ServerDetail }) {
               onClick={() => save(null)}
               disabled={icon.isPending}
               pending={icon.isPending && removing}
-              pendingLabel="Entfernt…"
+              pendingLabel={t("icon.removing")}
             >
-              Entfernen
+              {tc("remove")}
             </Button>
           ) : null}
           <InlineStatus status={status.status} />
@@ -424,7 +429,7 @@ function IconRow({ server }: { server: ServerDetail }) {
           type="file"
           accept="image/png,image/jpeg,image/webp,image/gif"
           hidden
-          aria-label="Serverbild auswählen"
+          aria-label={t("icon.pickLabel")}
           onChange={(event) => void onPick(event)}
         />
       </div>
@@ -434,6 +439,8 @@ function IconRow({ server }: { server: ServerDetail }) {
 
 /** Each switch saves at once (optimistic, rolled back on error). */
 function PermissionsSection({ server }: { server: ServerDetail }) {
+  const t = useT(serverSettings);
+  const tc = useT(common);
   const client = useQueryClient();
   const userId = useUserId();
   const update = useUpdateServer(server.id);
@@ -451,9 +458,8 @@ function PermissionsSection({ server }: { server: ServerDetail }) {
     update.mutate(
       { member_permissions: normalisePermissions(next) },
       {
-        onSuccess: () =>
-          status.show({ tone: "success", message: "Gespeichert." }),
-        onError: () => status.show(NOT_SAVED),
+        onSuccess: () => status.show({ tone: "success", message: tc("saved") }),
+        onError: () => status.show({ tone: "error", message: tc("notSaved") }),
       },
     );
   };
@@ -461,16 +467,16 @@ function PermissionsSection({ server }: { server: ServerDetail }) {
   return (
     <Section
       id="rechte"
-      title="Rechte für Mitglieder"
-      hint="Gilt für alle Mitglieder außer dem Inhaber. Änderungen wirken sofort."
+      title={t("permissions.title")}
+      hint={t("permissions.hint")}
     >
       <div className="server-settings-list">
         {PERMISSIONS.map((permission) => (
           <Switch
             key={permission.id}
             className="settings-row"
-            label={permission.label}
-            description={permission.hint}
+            label={t(`permission.${permission.key}.label`)}
+            description={t(`permission.${permission.key}.hint`)}
             checked={current.has(permission.id)}
             onChange={() => toggle(permission.id)}
           />
@@ -482,6 +488,7 @@ function PermissionsSection({ server }: { server: ServerDetail }) {
 }
 
 function InvitesSection({ server }: { server: ServerDetail }) {
+  const t = useT(serverSettings);
   const {
     data: invites,
     isPending,
@@ -503,18 +510,15 @@ function InvitesSection({ server }: { server: ServerDetail }) {
     }
     status.show({
       tone: "error",
-      message: `Kopieren ging nicht. Der Code ist ${invite.code}.`,
+      message: t("invites.copyFailed", { code: invite.code }),
     });
     return false;
   };
 
   return (
-    <Section
-      id="einladungen"
-      hint="Alle aktiven Links. Jedes Mitglied kann Links erstellen."
-    >
+    <Section id="einladungen" hint={t("invites.hint")}>
       <div className="settings-actions">
-        <Button onClick={() => setInviting(true)}>Neuen Link erstellen</Button>
+        <Button onClick={() => setInviting(true)}>{t("invites.create")}</Button>
         <InlineStatus status={status.status} />
       </div>
       <InviteDialog
@@ -523,15 +527,15 @@ function InvitesSection({ server }: { server: ServerDetail }) {
         onClose={() => setInviting(false)}
       />
       {isPending ? (
-        <p className="settings-hint">Lade Einladungen…</p>
+        <p className="settings-hint">{t("invites.loading")}</p>
       ) : error ? (
         <LoadError
-          message="Die Einladungen konnten nicht geladen werden."
+          message={t("invites.loadFailed")}
           pending={isFetching}
           onRetry={() => void refetch()}
         />
       ) : !invites || invites.length === 0 ? (
-        <p className="settings-hint">Keine aktiven Einladungen.</p>
+        <p className="settings-hint">{t("invites.empty")}</p>
       ) : (
         <ul className="server-settings-list">
           {invites.map((invite) => (
@@ -543,17 +547,16 @@ function InvitesSection({ server }: { server: ServerDetail }) {
               onRevoke={async () => {
                 if (
                   await confirmAction({
-                    title: "Link widerrufen?",
-                    message:
-                      "Der Link funktioniert danach nicht mehr. Bestehende Mitglieder bleiben.",
-                    confirmLabel: "Widerrufen",
+                    title: t("invites.revokeTitle"),
+                    message: t("invites.revokeMessage"),
+                    confirmLabel: t("invites.revoke"),
                   })
                 )
                   revoke.mutate(invite.code, {
                     onSuccess: () =>
                       status.show({
                         tone: "success",
-                        message: "Link widerrufen.",
+                        message: t("invites.revoked"),
                       }),
                   });
               }}
@@ -576,6 +579,8 @@ function InviteRow({
   onCopy: () => Promise<boolean>;
   onRevoke: () => void;
 }) {
+  const t = useT(serverSettings);
+  const tc = useT(common);
   return (
     <li className="server-settings-row">
       <div className="server-settings-row__main">
@@ -586,10 +591,10 @@ function InviteRow({
       </div>
       <div className="server-settings-row__actions">
         <CopyButton size="sm" onCopy={onCopy}>
-          Kopieren
+          {tc("copy")}
         </CopyButton>
         <Button size="sm" variant="danger-outline" onClick={onRevoke}>
-          Widerrufen
+          {t("invites.revoke")}
         </Button>
       </div>
     </li>
@@ -597,9 +602,13 @@ function InviteRow({
 }
 
 function MembersSection({ server }: { server: ServerDetail }) {
+  const t = useT(serverSettings);
   const byServer = usePresenceStore((s) => s.byServer);
   return (
-    <Section id="mitglieder" title={`Mitglieder (${server.members.length})`}>
+    <Section
+      id="mitglieder"
+      title={t("members.title", { count: server.members.length })}
+    >
       <ul className="server-settings-list">
         {server.members.map((member) => (
           <li key={member.user_id} className="server-settings-row">
@@ -610,7 +619,9 @@ function MembersSection({ server }: { server: ServerDetail }) {
             />
             <span className="server-settings-row__name">{member.name}</span>
             <Badge tone={member.role === "owner" ? "accent" : "neutral"}>
-              {member.role === "owner" ? "Inhaber" : "Mitglied"}
+              {member.role === "owner"
+                ? t("members.owner")
+                : t("members.member")}
             </Badge>
             <MemberActionsMenu server={server} member={member} />
           </li>
@@ -621,6 +632,7 @@ function MembersSection({ server }: { server: ServerDetail }) {
 }
 
 function BansSection({ server }: { server: ServerDetail }) {
+  const t = useT(serverSettings);
   const {
     data: bans,
     isPending,
@@ -631,21 +643,17 @@ function BansSection({ server }: { server: ServerDetail }) {
   const unban = useUnbanMember(server.id);
 
   return (
-    <Section
-      id="sperren"
-      title="Gesperrte Konten"
-      hint="Gesperrte User können auch mit einem Einladungslink nicht wieder beitreten."
-    >
+    <Section id="sperren" title={t("bans.title")} hint={t("bans.hint")}>
       {isPending ? (
-        <p className="settings-hint">Lade Sperren…</p>
+        <p className="settings-hint">{t("bans.loading")}</p>
       ) : error ? (
         <LoadError
-          message="Die Sperren konnten nicht geladen werden."
+          message={t("bans.loadFailed")}
           pending={isFetching}
           onRetry={() => void refetch()}
         />
       ) : !bans || bans.length === 0 ? (
-        <p className="settings-hint">Niemand ist gesperrt.</p>
+        <p className="settings-hint">{t("bans.empty")}</p>
       ) : (
         <ul className="server-settings-list">
           {bans.map((ban) => (
@@ -657,17 +665,16 @@ function BansSection({ server }: { server: ServerDetail }) {
                 onClick={async () => {
                   if (
                     await confirmAction({
-                      title: `${ban.name} wieder zulassen?`,
-                      message:
-                        "Ein Beitritt per Einladungslink ist dann wieder möglich.",
-                      confirmLabel: "Entsperren",
+                      title: t("bans.unbanTitle", { name: ban.name }),
+                      message: t("bans.unbanMessage"),
+                      confirmLabel: t("bans.unban"),
                       tone: "neutral",
                     })
                   )
                     unban.mutate(ban.user_id);
                 }}
               >
-                Entsperren
+                {t("bans.unban")}
               </Button>
             </li>
           ))}
@@ -678,6 +685,7 @@ function BansSection({ server }: { server: ServerDetail }) {
 }
 
 function DangerSection({ server }: { server: ServerDetail }) {
+  const t = useT(serverSettings);
   const navigate = useNavigate();
   const user = useSession((s) => s.user);
   const forget = useLastChannel((s) => s.forget);
@@ -695,11 +703,7 @@ function DangerSection({ server }: { server: ServerDetail }) {
   return (
     <Section
       id="gefahrenzone"
-      hint={
-        owner
-          ? "Löscht Kanäle, Kategorien, Nachrichten, Einladungen und Mitgliedschaften endgültig."
-          : "Wieder beitreten kannst du nur mit einem neuen Einladungslink."
-      }
+      hint={owner ? t("danger.ownerHint") : t("danger.memberHint")}
     >
       <div className="settings-actions">
         <Button
@@ -708,10 +712,9 @@ function DangerSection({ server }: { server: ServerDetail }) {
             if (owner) {
               if (
                 !(await confirmAction({
-                  title: `Server „${server.name}“ endgültig löschen?`,
-                  message:
-                    "Kanäle, Nachrichten, Einladungen und Mitgliedschaften werden gelöscht.",
-                  confirmLabel: "Server löschen",
+                  title: t("danger.deleteTitle", { name: server.name }),
+                  message: t("danger.deleteMessage"),
+                  confirmLabel: t("danger.delete"),
                 }))
               )
                 return;
@@ -719,8 +722,8 @@ function DangerSection({ server }: { server: ServerDetail }) {
             } else {
               if (
                 !(await confirmAction({
-                  title: `Server „${server.name}“ verlassen?`,
-                  confirmLabel: "Verlassen",
+                  title: t("danger.leaveTitle", { name: server.name }),
+                  confirmLabel: t("danger.leaveConfirm"),
                 }))
               )
                 return;
@@ -730,7 +733,7 @@ function DangerSection({ server }: { server: ServerDetail }) {
             go();
           }}
         >
-          {owner ? "Server löschen" : "Server verlassen"}
+          {owner ? t("danger.delete") : t("danger.leave")}
         </Button>
       </div>
     </Section>

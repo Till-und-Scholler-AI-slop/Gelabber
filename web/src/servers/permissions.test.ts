@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { translate } from "../i18n/catalog.ts";
+import { serverSettings } from "../i18n/catalogs/serverSettings.ts";
 import {
   ALL_PERMISSIONS,
   PERMISSIONS,
@@ -33,10 +35,12 @@ describe("permissions", () => {
 
   it("keeps the go_live id and calls it Live gehen", () => {
     const live = PERMISSIONS.find((p) => p.id === "go_live");
-    expect(live?.label).toBe("Live gehen");
-    expect(live?.hint).toContain("Sprachkanal");
-    expect(
-      PERMISSIONS.map((p) => `${p.label} ${p.hint}`).join(" "),
-    ).not.toMatch(/Go Live|Bildschirm teilen/);
+    expect(live?.key).toBe("goLive");
+    const text = (key: (typeof PERMISSIONS)[number]["key"]) =>
+      `${translate(serverSettings, `permission.${key}.label`)} ${translate(serverSettings, `permission.${key}.hint`)}`;
+    expect(text("goLive")).toMatch(/^Live gehen .*Sprachkanal/);
+    expect(PERMISSIONS.map((p) => text(p.key)).join(" ")).not.toMatch(
+      /Go Live|Bildschirm teilen/,
+    );
   });
 });
