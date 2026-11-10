@@ -504,6 +504,85 @@ async fn mentions_reach_only_members_who_see_the_channel(pool: PgPool) {
     assert_eq!(res.body["mentions"], json!([c]));
 }
 
+/// An upload started before the channel was limited cannot finish, and its
+/// pending file cannot be fetched.
+#[sqlx::test]
+async fn a_pending_upload_stops_once_the_channel_is_limited(pool: PgPool) {
+    let state = common::state(pool.clone());
+    let Team {
+        mut ada,
+        mut bob,
+        sid,
+        text,
+        ..
+    } = team(&state).await;
+    let png = b"\x89PNG\r\n\x1a\n0123456789abcdef".to_vec();
+    let signed = bob
+        .send(
+            Method::POST,
+            &format!("/api/channels/{text}/attachments"),
+            Some(json!({"filename": "a.png", "content_type": "image/png", "size": png.len()})),
+        )
+        .await;
+    assert_eq!(signed.status, StatusCode::CREATED, "{}", signed.body);
+    let attachment = id(&signed.body["id"]);
+
+    let r = role(&mut ada, sid, "Stammgäste").await;
+    let res = patch_access(&mut ada, text, json!([r])).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    let (status, body) = bob.put_upload(&signed.body, png, |_| {}).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let res = bob
+        .send(Method::GET, &format!("/api/attachments/{attachment}"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+}
+
+/// `@here` reaches only the online members who see the channel.
+#[sqlx::test]
+async fn here_reaches_only_members_who_see_the_channel(pool: PgPool) {
+    let (addr, state) = common::serve_ws(pool.clone()).await;
+    let Team {
+        mut ada,
+        bob,
+        cara,
+        sid,
+        text,
+    } = team(&state).await;
+    let r = role(&mut ada, sid, "Stammgäste").await;
+    set_roles(&mut ada, sid, cara.user_id(), json!([r])).await;
+    let res = patch_access(&mut ada, text, json!([r])).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    // Bob and Cara are both online.
+    let mut watch = connect(addr, &ada).await;
+    send(&mut watch, json!({"op": "s", "s": sid})).await;
+    until(&mut watch, |f| f["op"] == "ok").await;
+    let mut online = Vec::new();
+    for client in [&bob, &cara] {
+        let mut ws = connect(addr, client).await;
+        send(&mut ws, json!({"op": "s", "s": sid})).await;
+        until(&mut ws, |f| f["op"] == "ok").await;
+        let user = client.user_id().to_owned();
+        until(&mut watch, |f| {
+            f["op"] == "p" && f["u"] == user.as_str() && f["st"] == "o"
+        })
+        .await;
+        online.push(ws);
+    }
+
+    let res = ada
+        .send(
+            Method::POST,
+            &format!("/api/channels/{text}/messages"),
+            Some(json!({"content": "@here Essen"})),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    assert_eq!(res.body["mentions"], json!([cara.user_id()]));
+}
+
 async fn connect(addr: std::net::SocketAddr, client: &Client) -> Ws {
     let mut req = format!("ws://{addr}/ws").into_client_request().unwrap();
     req.headers_mut().insert(
