@@ -16,7 +16,14 @@ import {
 import { encodeCursor, flattenPages } from "../messages/pages.ts";
 import type { Message, MessagePage } from "../messages/types.ts";
 import { Gateway, type SocketLike } from "./client.ts";
-import { READY_SPREAD_MS, attachRealtimeRecovery } from "./useRealtime.ts";
+import { serverKeys } from "../servers/queries.ts";
+import type { ChatEvent } from "./protocol.ts";
+import {
+  READY_SPREAD_MS,
+  applyAccessChange,
+  attachRealtimeRecovery,
+  isAccessChange,
+} from "./useRealtime.ts";
 
 class Socket implements SocketLike {
   sent: string[] = [];
@@ -1183,5 +1190,44 @@ it("navigation replacing a bridge while discovery is held retains its pending DM
     op: "s",
     s: "first-dm",
     c: "first-dm",
+  });
+});
+
+describe("server access changes", () => {
+  const event = (overrides: Partial<ChatEvent>): ChatEvent => ({
+    op: "e",
+    t: "e",
+    s: "s1",
+    n: 4,
+    d: { k: "a" },
+    ...overrides,
+  });
+
+  it('recognises {"k":"a"} on the server topic only', () => {
+    expect(isAccessChange(event({}))).toBe(true);
+    expect(isAccessChange(event({ c: "channel" }))).toBe(false);
+    expect(isAccessChange(event({ t: "d", i: "user-a" }))).toBe(false);
+    expect(isAccessChange(event({ d: { k: "b" } }))).toBe(false);
+    expect(isAccessChange(event({ d: null }))).toBe(false);
+    expect(isAccessChange(event({ d: undefined }))).toBe(false);
+  });
+
+  it("invalidates the server's detail and the server list, nothing else", () => {
+    const queryClient = client();
+    const detail = serverKeys.detail("user-a", 1, "s1");
+    const other = serverKeys.detail("user-a", 1, "s2");
+    const list = serverKeys.list("user-a", 1);
+    const history = messageKeys.channel("user-a", 1, "channel");
+    for (const key of [detail, other, list, history])
+      queryClient.setQueryData(key, {});
+
+    applyAccessChange(queryClient, "user-a", 1, "s1");
+
+    const stale = (key: readonly unknown[]) =>
+      queryClient.getQueryState(key)?.isInvalidated;
+    expect(stale(detail)).toBe(true);
+    expect(stale(list)).toBe(true);
+    expect(stale(other)).toBe(false);
+    expect(stale(history)).toBe(false);
   });
 });
