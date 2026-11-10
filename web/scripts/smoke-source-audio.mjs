@@ -359,6 +359,8 @@ async function sample() {
     const video = figure.querySelector("video");
     return {
       label: figure.querySelector("figcaption")?.textContent ?? "",
+      // The stage's Live caption has the LIVE badge instead of "— Live".
+      live: !!figure.querySelector("figcaption.voice-live-caption"),
       attached: !!video?.srcObject,
       width: video?.videoWidth ?? 0,
       muted: video?.muted ?? true,
@@ -403,16 +405,25 @@ const micPlayback = (sample) =>
 const dock = (actor) =>
   actor.page.getByRole("region", { name: "Aktive Medien", exact: true });
 // "Live gehen" in the call bar opens the Live menu where a Live can carry
-// sound: "Live gehen" or "Live beenden", then the "Ton mitsenden" switch.
+// sound: "Live gehen", then the "Ton mitsenden" switch. While live it lists
+// who watches, with the button "Live beenden".
 const liveControl = (actor) =>
   dock(actor).getByRole("button", { name: "Live gehen", exact: true });
 async function share(actor, name) {
   await liveControl(actor).click();
+  if (name === "Live beenden") {
+    await actor.page
+      .locator(".voice-watchers")
+      .getByRole("button", { name, exact: true })
+      .click();
+    return;
+  }
   await actor.page.getByRole("menuitem", { name, exact: true }).click();
 }
+// A Live on the stage: its caption has the LIVE badge.
 const tile = (actor) =>
   actor.page.locator("figure").filter({
-    has: actor.page.locator("figcaption", { hasText: "— Live" }),
+    has: actor.page.locator("figcaption.voice-live-caption"),
   });
 
 async function until(probe, accept, message, timeout = 30_000) {
@@ -816,8 +827,7 @@ async function sourceScenario(receiver, kind) {
           el.publisher === owner.id,
       ) &&
       state.videos.some(
-        (video) =>
-          video.label.includes("— Live") && video.attached && video.width > 0,
+        (video) => video.live && video.attached && video.width > 0,
       ),
     "Watched source must render video and one matching audio track",
   );
@@ -1079,8 +1089,7 @@ try {
     () => snapshot(receiver),
     (state) =>
       state.videos.some(
-        (video) =>
-          video.label.includes("— Live") && video.attached && video.width > 0,
+        (video) => video.live && video.attached && video.width > 0,
       ),
     "No-audio fallback must still render video",
   );

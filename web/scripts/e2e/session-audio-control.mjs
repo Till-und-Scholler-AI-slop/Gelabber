@@ -153,6 +153,7 @@ export async function sessionAudioControl({
     check,
     CheckFailure,
     click: async () => {},
+    liveTiles: () => locator,
     snapshot: async (actor) => actor.sample,
     observe: async (_ms, probe) => probe(),
     until: async (probe, accept, code, budget) => {

@@ -9,6 +9,7 @@ import {
   CheckFailure,
   check,
   click,
+  liveTiles,
   snapshot,
   until,
   observe,
@@ -81,7 +82,7 @@ export async function concurrentLive(h, f, { reset, options }) {
     "concurrent-live-not-both-running",
   );
   await click(f.watcher, "Beitreten");
-  const tiles = f.watcher.page.locator("figure").filter({ hasText: "— Live" });
+  const tiles = liveTiles(f.watcher.page);
   const shown = await until(
     () => tiles.count(),
     (count) => count === 2,
@@ -200,10 +201,8 @@ export async function mediaExtraScenarios(h, f, { begin, reset, options }) {
         // Join/capture clicks precede async publication and source-Watch capability.
         // Require actual subscription controls; count=0 must not silently skip Watch.
         const sourceButtons = {};
-        for (const [kind, label] of [["live", "— Live"]]) {
-          const tiles = f.member.page
-            .locator("figure")
-            .filter({ hasText: label });
+        for (const kind of ["live"]) {
+          const tiles = liveTiles(f.member.page);
           const start = tiles.getByRole("button", {
             name: "Zuschauen",
             exact: true,
