@@ -44,6 +44,13 @@ describe("boot splash", () => {
     expect(html).toMatch(/<a [^>]*href=""[^>]*>Seite neu laden<\/a>/);
   });
 
+  // It appears on its own, away from focus: a screen reader has to hear it.
+  it("announces the failure text as an alert", () => {
+    expect(html).toMatch(
+      /<p role="alert">\s*Gelabber konnte nicht geladen werden\./,
+    );
+  });
+
   it("shows it when the entry script fails to load", () => {
     const { errors, splash, HTMLScriptElement } = boot();
     // Load errors do not bubble: only a capturing listener sees them.
