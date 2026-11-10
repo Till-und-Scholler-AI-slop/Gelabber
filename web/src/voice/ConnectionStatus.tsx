@@ -100,14 +100,14 @@ export function ConnectionStatus({
           label={t("status.ping")}
           value={quality?.rttMs ?? null}
           format={(ms) => String(Math.round(ms))}
-          unit="ms"
+          unit=" ms"
           tone={pingTone}
         />
         <Figure
           label={t("status.packetLoss")}
           value={quality?.loss ?? null}
           format={percent}
-          unit="%"
+          unit={t("status.percentUnit")}
           tone={lossTone}
         />
         {compact ? null : (
@@ -136,6 +136,7 @@ function Figure({
   label: string;
   value: number | null;
   format: (value: number) => string;
+  /** With its own leading space where the language sets one. */
   unit: string;
   tone: (value: number) => QualityTone;
 }) {
@@ -148,7 +149,7 @@ function Figure({
         ) : (
           <>
             {format(value)}
-            <small> {unit}</small>
+            <small>{unit}</small>
           </>
         )}
       </dd>
