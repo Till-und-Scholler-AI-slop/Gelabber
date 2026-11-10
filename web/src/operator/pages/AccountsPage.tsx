@@ -42,7 +42,7 @@ export function AccountsPage() {
   const [input, setInput] = useState("");
   const search = useDebouncedValue(input.trim(), SEARCH_DEBOUNCE_MS);
   const [filter, setFilter] = useState<AccountFilter>("all");
-  const [offset, setOffset] = usePaging(`${filter}\n${search}`);
+  const [offset, setOffset, settle] = usePaging(`${filter}\n${search}`);
   const query = useOperatorAccounts({
     q: search || undefined,
     filter,
@@ -50,6 +50,11 @@ export function AccountsPage() {
   });
   const actions = useAccountActions();
   const data = query.data;
+  settle(
+    data && !query.isPlaceholderData
+      ? { rows: data.accounts.length, total: data.total }
+      : undefined,
+  );
 
   return (
     <OperatorPageFrame page="konten">

@@ -66,12 +66,17 @@ export function InvitationsPage() {
   const overview = useOperatorOverview().data;
   const refresh = useOperatorRefresh();
   const [status, setStatus] = useState<InvitationFilter>("all");
-  const [offset, setOffset] = usePaging(status);
+  const [offset, setOffset, settle] = usePaging(status);
   const query = useOperatorInvitations({
     status,
     offset: offset || undefined,
   });
   const data = query.data;
+  settle(
+    data && !query.isPlaceholderData
+      ? { rows: data.invitations.length, total: data.total }
+      : undefined,
+  );
 
   return (
     <OperatorPageFrame page="einladungen">

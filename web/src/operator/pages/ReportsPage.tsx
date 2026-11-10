@@ -34,10 +34,15 @@ export function ReportsPage() {
   const t = useT(operator);
   const navigate = useNavigate();
   const [status, setStatus] = useState<ReportListStatus>("open");
-  const [offset, setOffset] = usePaging(status);
+  const [offset, setOffset, settle] = usePaging(status);
   const query = useOperatorReports({ status, offset: offset || undefined });
   const actions = useServerActions();
   const data = query.data;
+  settle(
+    data && !query.isPlaceholderData
+      ? { rows: data.reports.length, total: data.total }
+      : undefined,
+  );
 
   const handlers = (report: Report): ReportHandlers => {
     const target = {

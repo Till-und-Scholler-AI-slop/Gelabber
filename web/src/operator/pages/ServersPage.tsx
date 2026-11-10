@@ -37,7 +37,7 @@ export function ServersPage({ q }: { q?: string }) {
   const [input, setInput] = useState(q ?? "");
   const search = useDebouncedValue(input.trim(), SEARCH_DEBOUNCE_MS);
   const [filter, setFilter] = useState<ServerFilter>("all");
-  const [offset, setOffset] = usePaging(`${filter}\n${search}`);
+  const [offset, setOffset, settle] = usePaging(`${filter}\n${search}`);
   const query = useOperatorServers({
     q: search || undefined,
     filter,
@@ -45,6 +45,11 @@ export function ServersPage({ q }: { q?: string }) {
   });
   const actions = useServerActions();
   const data = query.data;
+  settle(
+    data && !query.isPlaceholderData
+      ? { rows: data.servers.length, total: data.total }
+      : undefined,
+  );
 
   return (
     <OperatorPageFrame page="server">
