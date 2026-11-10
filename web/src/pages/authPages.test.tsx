@@ -4,10 +4,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setLocale } from "../i18n/locale.ts";
+import type { PublicPages } from "../public/pages.ts";
 
 const fixture = vi.hoisted(() => ({
   search: {} as Record<string, unknown>,
   mail: undefined as boolean | undefined,
+  links: [] as string[],
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -23,27 +25,32 @@ vi.mock("@tanstack/react-router", () => ({
     to: string;
     search?: Record<string, string>;
     className?: string;
-  }) => (
-    <a
-      href={`${to}${search && Object.keys(search).length ? `?${new URLSearchParams(search)}` : ""}`}
-      className={className}
-    >
-      {children}
-    </a>
-  ),
+  }) => {
+    fixture.links.push(to);
+    return (
+      <a
+        href={`${to}${search && Object.keys(search).length ? `?${new URLSearchParams(search)}` : ""}`}
+        className={className}
+      >
+        {children}
+      </a>
+    );
+  },
 }));
 vi.mock("../auth/mail.ts", () => ({
   useAccountMailStatus: () => fixture.mail,
 }));
 
+import { AuthFrame } from "./AuthLayout.tsx";
 import { LoginPage } from "./LoginPage.tsx";
 import { MailSent, RegisterPage } from "./RegisterPage.tsx";
 
-function render(page: ReactNode): string {
+function render(page: ReactNode, publicPages?: PublicPages): string {
+  const client = new QueryClient();
+  if (publicPages)
+    client.setQueryData(["instance", "public-pages"], publicPages);
   return renderToStaticMarkup(
-    <QueryClientProvider client={new QueryClient()}>
-      {page}
-    </QueryClientProvider>,
+    <QueryClientProvider client={client}>{page}</QueryClientProvider>,
   );
 }
 
@@ -52,6 +59,7 @@ const INVITE_BANNER = "Einladung erhalten.";
 beforeEach(() => {
   fixture.search = {};
   fixture.mail = undefined;
+  fixture.links = [];
 });
 
 describe("login page", () => {
@@ -177,5 +185,75 @@ describe("in English", () => {
       "Confirmation link sent to <strong>new@example.org</strong>. It is valid for 24 hours.",
     );
     expect(html).toMatch(/>Send again \(60 s\)<\/button>/);
+  });
+});
+
+describe("legal links under the card", () => {
+  afterEach(() => setLocale("de", { persist: false }));
+
+  const ALL: PublicPages = {
+    landing: false,
+    legal: {
+      terms: { de: "/de/nutzungsbedingungen", en: "/en/terms" },
+      imprint: { de: "/de/impressum", en: "/en/imprint" },
+      privacy: { de: "/de/datenschutz", en: "/en/privacy" },
+    },
+  };
+  const frame = (pages?: PublicPages) =>
+    render(
+      <AuthFrame>
+        <section className="lr-auth-card">Karte</section>
+      </AuthFrame>,
+      pages,
+    );
+
+  it("lists the published pages after the card, in the reference's order", () => {
+    const html = frame(ALL);
+    expect(html).toContain(
+      '<section class="lr-auth-card">Karte</section><nav class="auth-legal" aria-label="Rechtliches">' +
+        '<a href="/de/impressum">Impressum</a>' +
+        '<a href="/de/datenschutz">Datenschutz</a>' +
+        '<a href="/de/nutzungsbedingungen">Nutzungsbedingungen</a></nav></div>',
+    );
+  });
+
+  it("names and links them in the UI language", () => {
+    setLocale("en", { persist: false });
+    const html = frame(ALL);
+    expect(html).toContain(
+      '<nav class="auth-legal" aria-label="Legal">' +
+        '<a href="/en/imprint">Imprint</a>' +
+        '<a href="/en/privacy">Privacy</a>' +
+        '<a href="/en/terms">Terms</a></nav>',
+    );
+  });
+
+  it("shows exactly the published pages", () => {
+    const html = frame({
+      landing: false,
+      legal: { privacy: { de: "/de/datenschutz" } },
+    });
+    expect(html).toContain(
+      '<nav class="auth-legal" aria-label="Rechtliches"><a href="/de/datenschutz">Datenschutz</a></nav>',
+    );
+    setLocale("en", { persist: false });
+    expect(
+      frame({ landing: false, legal: { privacy: { de: "/de/datenschutz" } } }),
+    ).toContain('<a href="/de/datenschutz">Privacy</a>');
+  });
+
+  it("draws no row without a published page", () => {
+    expect(frame()).not.toContain("<nav");
+    expect(frame({ landing: true, legal: {} })).not.toContain("<nav");
+  });
+
+  it("makes the brand a plain link only while the landing page is on", () => {
+    // The mocked router Link draws the same anchor, and notes where it led.
+    const brand = '<a href="/" class="auth-brand">';
+    expect(frame(ALL)).toContain(brand);
+    expect(fixture.links).toEqual(["/"]);
+    fixture.links = [];
+    expect(frame({ ...ALL, landing: true })).toContain(brand);
+    expect(fixture.links).toEqual([]);
   });
 });
