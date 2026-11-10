@@ -311,7 +311,7 @@ export const auth = defineCatalog(
     "page.checkInbox": "Check your inbox",
     "page.noMail": "No email? Check your spam folder or send the link again.",
     "page.otherAddress": "Use a different address",
-    "page.toSignIn": "To sign-in",
+    "page.toSignIn": "Go to sign-in",
     "page.backToSignIn": "Back to sign-in",
     "page.forgotPassword": "Forgot your password?",
     "page.linkExpired": "Link expired",
@@ -362,13 +362,13 @@ export const auth = defineCatalog(
     "verify.signInForNew": "Sign in to get a new one.",
 
     "invite.loadFailed": "The invite couldn’t be loaded",
-    "invite.toServers": "To your servers",
+    "invite.toServers": "Go to your servers",
     "invite.toServer": "Go to server",
     "invite.join": "Join",
     "invite.joining": "Joining…",
     "invite.members": { one: "{count} member", other: "{count} members" },
     "invite.alreadyMember": "You’re already a member of",
-    "invite.invitedTo": "Invite to",
+    "invite.invitedTo": "Invitation to",
     "invite.bannedTitle": "No entry",
     "invite.deadTitle": "Invite can’t be used",
     "invite.notFound": "This invite link doesn’t exist or has been revoked.",
@@ -376,7 +376,7 @@ export const auth = defineCatalog(
 
     "notFound.title": "Page not found",
     "notFound.body": "This address doesn’t exist in Gelabber.",
-    "notFound.home": "To the start page",
+    "notFound.home": "Go to the start page",
     "routeError.title": "Something went wrong",
     "routeError.body": "This page couldn’t be shown.",
     "routeError.bodyInCall":
