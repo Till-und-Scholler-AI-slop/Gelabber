@@ -112,6 +112,10 @@ export const servers = defineCatalog(
     "error.memberNotKicked": "Mitglied nicht entfernt.",
     "error.memberNotBanned": "Mitglied nicht gesperrt.",
     "error.memberNotUnbanned": "Mitglied nicht entsperrt.",
+    "error.roleNotCreated": "Rolle nicht erstellt.",
+    "error.roleNotSaved": "Rolle nicht gespeichert.",
+    "error.roleNotDeleted": "Rolle nicht gelöscht.",
+    "error.memberRolesNotSaved": "Rollen nicht gespeichert.",
   },
   {
     voiceHeading: "Voice channels",
@@ -208,5 +212,9 @@ export const servers = defineCatalog(
     "error.memberNotKicked": "Member not removed.",
     "error.memberNotBanned": "Member not banned.",
     "error.memberNotUnbanned": "Member not unbanned.",
+    "error.roleNotCreated": "Role not created.",
+    "error.roleNotSaved": "Role not saved.",
+    "error.roleNotDeleted": "Role not deleted.",
+    "error.memberRolesNotSaved": "Roles not saved.",
   },
 );
