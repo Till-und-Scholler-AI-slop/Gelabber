@@ -3,6 +3,8 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { CloseIcon } from "./Icons.tsx";
 import { IconButton } from "./ui/IconButton.tsx";
 import { backdropClicks } from "./modalClose.ts";
+import { useT } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 /** Up to this width the workspace navigation is a closed drawer. */
 export const NAVIGATION_DRAWER_MAX_WIDTH = 800;
@@ -36,6 +38,7 @@ export function WorkspaceDrawer({
   const modalRef = useRef(false);
   const onCloseRef = useRef(onClose);
   const headingId = useId();
+  const t = useT(shell);
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -130,7 +133,7 @@ export function WorkspaceDrawer({
         <IconButton
           ref={closeButtonRef}
           className="workspace-drawer-close"
-          label={`${title} schließen`}
+          label={t("drawer.closeLabel", { title })}
           icon={<CloseIcon size={20} />}
           onClick={onClose}
         />

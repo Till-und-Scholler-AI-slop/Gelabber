@@ -44,6 +44,8 @@ import { useReadState, useReadingChannel } from "../messages/readState.ts";
 import { unreadMark } from "../messages/unreadIndicators.ts";
 import { forgetServer, useServer, useServers } from "../servers/queries.ts";
 import { SettingsSidebar } from "./UserSettingsPage.tsx";
+import { translate, useT } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 // After the first screen has settled, so it does not land among the start's
 // own notices; not on the page it would lead to.
@@ -77,6 +79,7 @@ export function WorkspaceLayout() {
 }
 
 function Workspace() {
+  const t = useT(shell);
   const { serverId, channelId } = useParams({ strict: false });
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const onDms = pathname === "/d" || pathname.startsWith("/d/");
@@ -94,20 +97,20 @@ function Workspace() {
   if (onDms) return <SelectedDms channelId={channelId} />;
   if (onSettings)
     return (
-      <WorkspaceFrame place="Einstellungen" sidebar={<SettingsSidebar />} />
+      <WorkspaceFrame
+        place={t("place.settings")}
+        sidebar={<SettingsSidebar />}
+      />
     );
   return (
     <WorkspaceFrame
       place="Gelabber"
       sidebar={
-        <aside className="channel-sidebar" aria-label="Navigation">
-          <div className="sidebar-brand">Gelabber</div>
+        <aside className="channel-sidebar" aria-label={t("sidebar.label")}>
+          <div className="sidebar-brand">Gelabber{/* i18n-ok */}</div>
           {/* Only once the list says so: never flash it at members. */}
           {servers?.length === 0 ? (
-            <div className="sidebar-empty">
-              Keine Server. Erstelle einen über + in der Serverleiste oder öffne
-              einen Einladungslink.
-            </div>
+            <div className="sidebar-empty">{t("noServers")}</div>
           ) : null}
           <UserPanel />
         </aside>
@@ -131,6 +134,7 @@ function WorkspaceFrame({
   serverId?: string;
   dmActive?: boolean;
 }) {
+  const t = useT(shell);
   const drawer = useNavigationDrawer();
   const navigationId = useId();
   const { channelId } = useParams({ strict: false });
@@ -160,17 +164,19 @@ function WorkspaceFrame({
   const count = mark.count > 99 ? "99+" : String(mark.count);
   const label =
     mark.count > 0
-      ? `Navigation öffnen, ${mark.count > 99 ? "mehr als 99" : mark.count} ${mark.count === 1 ? "Benachrichtigung" : "Benachrichtigungen"}`
+      ? mark.count > 99
+        ? t("drawer.openLabelOver99")
+        : t("drawer.openLabelCount", { count: mark.count })
       : mark.any
-        ? "Navigation öffnen, ungelesene Nachrichten"
-        : "Navigation öffnen";
+        ? t("drawer.openLabelUnread")
+        : t("drawer.openLabel");
   return (
     <div className="workspace">
       <WorkspaceDrawer
         id={navigationId}
         open={drawer.open}
         onClose={drawer.hide}
-        title="Navigation"
+        title={t("sidebar.label")}
         breakpoint={NAVIGATION_DRAWER_MAX_WIDTH}
         className="workspace-navigation"
       >
@@ -241,6 +247,7 @@ function SelectedServer({
   serverId: string;
   channelId: string | undefined;
 }) {
+  const t = useT(shell);
   const client = useQueryClient();
   const navigate = useNavigate();
   const userId = useUserId();
@@ -253,7 +260,7 @@ function SelectedServer({
 
   useEffect(() => {
     if (!gone || !userId) return;
-    notify("Server nicht gefunden oder kein Zugriff.");
+    notify(translate(shell, "serverGone"));
     forgetServer(client, userId, serverId, { keepDetail: true });
     void navigate({ to: "/", replace: true }).then(() =>
       forgetServer(client, userId, serverId),
@@ -273,7 +280,7 @@ function SelectedServer({
             failure={
               error
                 ? {
-                    message: "Die Kanäle konnten nicht geladen werden.",
+                    message: t("channels.loadFailed"),
                     pending: isFetching,
                     onRetry: () => void refetch(),
                   }
@@ -287,11 +294,12 @@ function SelectedServer({
 }
 
 function SelectedDms({ channelId }: { channelId: string | undefined }) {
+  const t = useT(shell);
   const { data: dms, error, isFetching, refetch } = useDms();
   return (
     <WorkspaceFrame
       dmActive
-      place="Nachrichten"
+      place={t("place.dms")}
       sidebar={
         dms ? (
           <DmSidebar dms={dms} activeChannelId={channelId} />
@@ -300,7 +308,7 @@ function SelectedDms({ channelId }: { channelId: string | undefined }) {
             failure={
               error
                 ? {
-                    message: "Die Unterhaltungen konnten nicht geladen werden.",
+                    message: t("dmsLoadFailed"),
                     pending: isFetching,
                     onRetry: () => void refetch(),
                   }

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { setLocale } from "../i18n/locale.ts";
 import {
   TYPING_BAR_PX,
   TYPING_IDLE_MS,
@@ -66,17 +67,17 @@ describe("typing store", () => {
   it("starts, stops, and expires by timeout", () => {
     applyTyping("ch", "u1", true, 1_000, 500);
     applyTyping("ch", "u2", true, 1_000, 500);
-    expect(typingUserIds(useTypingStore.getState().byChannel, "ch", 1_200)).toEqual(
-      ["u1", "u2"],
-    );
+    expect(
+      typingUserIds(useTypingStore.getState().byChannel, "ch", 1_200),
+    ).toEqual(["u1", "u2"]);
     applyTyping("ch", "u1", false, 1_200, 500);
-    expect(typingUserIds(useTypingStore.getState().byChannel, "ch", 1_200)).toEqual(
-      ["u2"],
-    );
+    expect(
+      typingUserIds(useTypingStore.getState().byChannel, "ch", 1_200),
+    ).toEqual(["u2"]);
     pruneTyping(1_600);
-    expect(typingUserIds(useTypingStore.getState().byChannel, "ch", 1_600)).toEqual(
-      [],
-    );
+    expect(
+      typingUserIds(useTypingStore.getState().byChannel, "ch", 1_600),
+    ).toEqual([]);
   });
 
   it("leaves the store alone on a tick where nothing expires", () => {
@@ -94,6 +95,24 @@ describe("typing store", () => {
     expect(formatTyping(["Ada", "Bob", "Cy"])).toBe(
       "Ada, Bob und 1 weitere tippen…",
     );
+  });
+
+  it("formats English typing copy and group labels", () => {
+    setLocale("en", { persist: false });
+    try {
+      expect(formatTyping(["Ada"])).toBe("Ada is typing…");
+      expect(formatTyping(["Ada", "Bob"])).toBe("Ada and Bob are typing…");
+      expect(formatTyping(["Ada", "Bob", "Cy"])).toBe(
+        "Ada, Bob and 1 other are typing…",
+      );
+      expect(formatTyping(["Ada", "Bob", "Cy", "Di"])).toBe(
+        "Ada, Bob and 2 others are typing…",
+      );
+      const groups = groupMembers([{ user_id: "u1", name: "Ada" }], () => "i");
+      expect(groups[0]?.label).toBe("Away");
+    } finally {
+      setLocale("de", { persist: false });
+    }
   });
 
   it("hides the local user from the indicator", () => {
@@ -151,9 +170,9 @@ describe("ttl reliability", () => {
     applyTyping("ch", "u1", true, Date.now(), 50);
     vi.setSystemTime(Date.now() + 80);
     pruneTyping(Date.now());
-    expect(typingUserIds(useTypingStore.getState().byChannel, "ch", Date.now())).toEqual(
-      [],
-    );
+    expect(
+      typingUserIds(useTypingStore.getState().byChannel, "ch", Date.now()),
+    ).toEqual([]);
     vi.useRealTimers();
   });
 });

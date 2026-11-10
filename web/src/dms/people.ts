@@ -4,6 +4,7 @@
 import { matchScore } from "../components/quickSwitch.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import type { DirectMessage } from "./types.ts";
+import { compareNames } from "../i18n/format.ts";
 
 export type DmCandidate = {
   id: string;
@@ -44,7 +45,7 @@ export function dmCandidates(
   }
   const rest = [...people.values()]
     .filter((person) => person.dmId === null)
-    .sort((a, b) => a.name.localeCompare(b.name, "de"));
+    .sort((a, b) => compareNames(a.name, b.name));
   return [...recent, ...rest];
 }
 

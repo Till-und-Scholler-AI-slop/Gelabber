@@ -1,6 +1,8 @@
 import { logout } from "../auth/session.ts";
 import { leaveVoice, useVoice } from "../voice/session.ts";
 import { confirmAction } from "./confirm.ts";
+import { translate } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 /** Whether signing out would end a call. */
 export function logoutEndsCall(voice: { status: string }): boolean {
@@ -15,9 +17,9 @@ export async function logOut(): Promise<boolean> {
   if (
     logoutEndsCall(useVoice.getState()) &&
     !(await confirmAction({
-      title: "Abmelden und Anruf beenden?",
-      message: "Du verlässt dabei den Sprachkanal.",
-      confirmLabel: "Abmelden",
+      title: translate(shell, "logout.endCall.title"),
+      message: translate(shell, "logout.endCall.message"),
+      confirmLabel: translate(shell, "logout.endCall.confirm"),
     }))
   )
     return false;

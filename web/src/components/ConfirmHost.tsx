@@ -3,6 +3,8 @@ import { Fragment, useId } from "react";
 import { useConfirm, type ConfirmRequest } from "./confirm.ts";
 import { Modal } from "./Modal.tsx";
 import { Button } from "./ui/Button.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
 
 export function ConfirmHost() {
   const pending = useConfirm((state) => state.pending);
@@ -17,6 +19,7 @@ export function ConfirmDialog({
   pending: (ConfirmRequest & { id: number }) | null;
   answer: (id: number, ok: boolean) => void;
 }) {
+  const t = useT(common);
   const messageId = useId();
   const formId = useId();
   const cancel = () => {
@@ -38,7 +41,7 @@ export function ConfirmDialog({
           // A replacing question remounts, so its own initial focus applies.
           <Fragment key={pending.id}>
             <Button variant="ghost" onClick={cancel} initialFocus={danger}>
-              Abbrechen
+              {t("cancel")}
             </Button>
             <Button
               type="submit"

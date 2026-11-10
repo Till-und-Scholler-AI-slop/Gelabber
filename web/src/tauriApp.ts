@@ -2,6 +2,8 @@
 // native app replaced it. The client only tells it so and keeps it usable.
 
 import { ERROR_MS, notify } from "./components/toasts.ts";
+import { translate } from "./i18n/catalog.ts";
+import { shell } from "./i18n/catalogs/shell.ts";
 
 type TauriInternals = {
   invoke(command: string, args?: Record<string, unknown>): Promise<unknown>;
@@ -35,8 +37,5 @@ let warned = false;
 export function warnIfTauriOutdated(): void {
   if (warned || !isTauriApp()) return;
   warned = true;
-  notify(
-    "Die Desktop-App ist veraltet. Ab 0.9 gibt es eine neue Desktop-App: unter Windows ab v0.7 über das App-Update, unter Arch mit pacman -Syu, sonst gelabber-native-* aus dem GitHub-Release.",
-    { duration: ERROR_MS },
-  );
+  notify(translate(shell, "tauriOutdated"), { duration: ERROR_MS });
 }

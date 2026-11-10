@@ -22,10 +22,13 @@ export type LazyPart<P extends object> = {
 
 const parts: LazyPart<never>[] = [];
 
-/** `failure` is the sentence shown when the chunk cannot be loaded. */
+/**
+ * `failure` is the sentence shown when the chunk cannot be loaded; a
+ * function gives it in the language shown at that moment.
+ */
 export function lazyPart<P extends object>(
   load: () => Promise<ComponentType<P>>,
-  failure: string,
+  failure: string | (() => string),
 ): LazyPart<P> {
   let ready: ComponentType<P> | null = null;
   let pending: Promise<ComponentType<P>> | null = null;
@@ -65,7 +68,12 @@ export function lazyPart<P extends object>(
       const Ready = state.ready;
       return <Ready {...(props as P)} />;
     }
-    if (state.failed) return <LazyPartFailed failure={failure} />;
+    if (state.failed)
+      return (
+        <LazyPartFailed
+          failure={typeof failure === "function" ? failure() : failure}
+        />
+      );
     return fallback;
   }
   Component.displayName = "LazyPart";

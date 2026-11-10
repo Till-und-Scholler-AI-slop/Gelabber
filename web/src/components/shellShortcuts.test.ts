@@ -7,6 +7,7 @@ import {
   stepIndex,
 } from "./shellShortcuts.ts";
 import { callShortcut } from "../voice/pushToTalk.ts";
+import { setLocale } from "../i18n/locale.ts";
 
 const keys = (
   key: string,
@@ -143,5 +144,21 @@ describe("shell shortcuts", () => {
     );
     expect(search?.keys).toEqual(["Strg", "F"]);
     expect(shellShortcut(keys("f", { ctrlKey: true }))).toBeNull();
+  });
+
+  it("names keys and shortcuts in English", () => {
+    setLocale("en", { persist: false });
+    try {
+      const [general, voice] = shortcutGroups(false);
+      expect(general?.title).toBe("General");
+      expect(voice?.title).toBe("In a voice channel");
+      const search = general?.shortcuts.find((row) => row.keys.includes("F"));
+      expect(search).toEqual({
+        keys: ["Ctrl", "F"],
+        label: "Search the conversation",
+      });
+    } finally {
+      setLocale("de", { persist: false });
+    }
   });
 });

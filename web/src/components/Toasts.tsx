@@ -8,6 +8,8 @@ import { IconButton } from "./ui/IconButton.tsx";
 import type { PresenceState } from "./ui/presence.ts";
 import { usePresenceList } from "./ui/usePresence.ts";
 import "./ui/ui.css";
+import { useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
 
 const toastKey = (toast: Toast) => toast.id;
 
@@ -93,6 +95,7 @@ function ToastCard({
   state: PresenceState;
   cardRef: (element: Element | null) => void;
 }) {
+  const t = useT(common);
   const dismiss = useToasts((state) => state.dismiss);
   const hold = useToasts((state) => state.hold);
   const release = useToasts((state) => state.release);
@@ -147,7 +150,7 @@ function ToastCard({
       ) : null}
       <IconButton
         size="sm"
-        label="Schließen"
+        label={t("close")}
         className="ui-toast__close"
         icon={<CloseIcon size={16} />}
         onClick={close}
