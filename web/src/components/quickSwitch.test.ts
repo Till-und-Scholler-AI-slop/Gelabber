@@ -18,6 +18,8 @@ const channel = (id: string, kind: Channel["kind"] = "text"): Channel => ({
   name: id,
   kind,
   created_at,
+  limited: false,
+  role_ids: [],
 });
 const server: ServerDetail = {
   id: "s1",
@@ -30,6 +32,7 @@ const server: ServerDetail = {
   categories: [],
   channels: [channel("allgemein"), channel("wohnzimmer", "voice")],
   members: [],
+  roles: [],
 };
 const dm: DirectMessage = {
   id: "d1",

@@ -75,6 +75,8 @@ const channel = (
   name: id,
   kind,
   created_at,
+  limited: false,
+  role_ids: [],
 });
 
 const server: ServerDetail = {
@@ -92,6 +94,7 @@ const server: ServerDetail = {
     channel("termine", "cat"),
   ],
   members: [],
+  roles: [],
 };
 
 function wrap(node: ReactNode) {

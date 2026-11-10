@@ -628,6 +628,8 @@ export function useCreateChannel(serverId: string) {
             : input.name.trim(),
         kind: input.kind,
         created_at: now(),
+        limited: (input.role_ids?.length ?? 0) > 0,
+        role_ids: input.role_ids ?? [],
       };
       patchDetail(
         client,

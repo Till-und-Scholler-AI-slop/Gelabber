@@ -31,8 +31,7 @@ export const serverSettings = defineCatalog(
     "permissions.hint":
       "Gilt für alle Mitglieder außer dem Inhaber. Änderungen wirken sofort.",
     "permission.manageServer.label": "Server verwalten",
-    "permission.manageServer.hint":
-      "Umbenennen, Rechte ändern, Einladungen, Kick und Ban.",
+    "permission.manageServer.hint": "Umbenennen, Rollen ändern, Einladungen.",
     "permission.manageChannels.label": "Kanäle verwalten",
     "permission.manageChannels.hint":
       "Kategorien und Kanäle anlegen, umbenennen, löschen.",
@@ -51,6 +50,9 @@ export const serverSettings = defineCatalog(
     "permission.goLive.label": "Live gehen",
     "permission.goLive.hint":
       "Im Sprachkanal einen Bildschirm oder ein Fenster für alle dort zeigen.",
+    "permission.moderateMembers.label": "Mitglieder moderieren",
+    "permission.moderateMembers.hint":
+      "Mitglieder vom Server entfernen und sperren.",
 
     "invites.hint": "Alle aktiven Links. Jedes Mitglied kann Links erstellen.",
     "invites.create": "Neuen Link erstellen",
@@ -117,8 +119,7 @@ export const serverSettings = defineCatalog(
     "permissions.hint":
       "Applies to every member except the owner. Changes take effect at once.",
     "permission.manageServer.label": "Manage server",
-    "permission.manageServer.hint":
-      "Rename, change permissions, invites, kick and ban.",
+    "permission.manageServer.hint": "Rename, change roles, invites.",
     "permission.manageChannels.label": "Manage channels",
     "permission.manageChannels.hint":
       "Create, rename and delete categories and channels.",
@@ -137,6 +138,9 @@ export const serverSettings = defineCatalog(
     "permission.goLive.label": "Go Live",
     "permission.goLive.hint":
       "Show a screen or window to everyone in the voice channel.",
+    "permission.moderateMembers.label": "Moderate members",
+    "permission.moderateMembers.hint":
+      "Remove members from the server and ban them.",
 
     "invites.hint": "All active links. Any member can create links.",
     "invites.create": "Create new link",

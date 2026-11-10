@@ -45,6 +45,7 @@ function page(permissions: ServerDetail["permissions"]) {
     categories: [],
     channels: [],
     members: [],
+    roles: [],
   };
   return renderToStaticMarkup(
     <QueryClientProvider client={new QueryClient()}>

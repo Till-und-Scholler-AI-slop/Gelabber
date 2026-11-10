@@ -199,6 +199,7 @@ describe("active media UI", () => {
               avatar_url: null,
               joined_at: "",
               role: "member",
+              role_ids: [],
             },
           ],
         }}
@@ -304,6 +305,7 @@ describe("active media UI", () => {
               avatar_url: "/real-alice.png",
               joined_at: "",
               role: "member",
+              role_ids: [],
             },
             {
               user_id: "bob",
@@ -311,6 +313,7 @@ describe("active media UI", () => {
               avatar_url: null,
               joined_at: "",
               role: "member",
+              role_ids: [],
             },
           ],
         }}

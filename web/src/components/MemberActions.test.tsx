@@ -54,6 +54,7 @@ const member = (overrides: Partial<Member> = {}): Member => ({
   avatar_url: null,
   joined_at: "2026-01-01T00:00:00Z",
   role: "member",
+  role_ids: [],
   ...overrides,
 });
 /** The attribute React writes for a disabled button. */

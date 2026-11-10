@@ -18,6 +18,7 @@ const server = (id: string, name: string, members: Member[]): ServerDetail => ({
   categories: [],
   channels: [],
   members,
+  roles: [],
 });
 const dm = (id: string, peer: string): DirectMessage => ({
   id,

@@ -1,12 +1,13 @@
-// The six coarse flags of issue #4, in the API's canonical order, with the
-// key of the copy the settings page shows (`serverSettings`
-// `permission.<key>.label` / `.hint`). Mirrors
+// The nine coarse flags (issue #4, `moderate_members` since v0.10), in the
+// API's canonical order, with the key of the copy the settings page shows
+// (`serverSettings` `permission.<key>.label` / `.hint`). Mirrors
 // `backend/api/src/servers/permissions.rs`.
 
 import type { Permission, Server } from "./types.ts";
 
 export const PERMISSIONS = [
   { id: "manage_server", key: "manageServer" },
+  { id: "moderate_members", key: "moderateMembers" },
   { id: "manage_channels", key: "manageChannels" },
   { id: "manage_messages", key: "manageMessages" },
   { id: "mention_everyone", key: "mentionEveryone" },
@@ -18,7 +19,8 @@ export const PERMISSIONS = [
 
 export const ALL_PERMISSIONS: Permission[] = PERMISSIONS.map((p) => p.id);
 
-/** Does the signed-in user hold `permission` in `server`? Owner: always. */
+/** Does the signed-in user hold `permission` in `server`? Owner: always.
+ * `permissions` is already the union of "Alle Mitglieder" and the roles. */
 export function can(
   server: Pick<Server, "role" | "permissions"> | undefined,
   permission: Permission,
