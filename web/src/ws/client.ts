@@ -95,6 +95,12 @@ export class Gateway {
   private lastServerAt = 0;
   private stopped = true;
   private inFront = false;
+  /** Last explicit presence; idle is re-announced on a new or resynced socket. */
+  private idle = false;
+  /** A refused handshake was reported since the last socket that opened. */
+  private refusedReported = false;
+  private refusedListeners = new Set<() => void>();
+  private freshListeners = new Set<(topic: Topic) => void>();
   /** Bumped by `resetSession` so a frame already in hand cannot fan out. */
   private epoch = 0;
   private eventListeners = new Set<(event: ChatEvent) => void>();
@@ -266,6 +272,29 @@ export class Gateway {
     };
   }
 
+  /**
+   * The first acknowledgement of a topic subscribed without a cursor. Its
+   * head may count an event a history read in flight did not see yet, and
+   * nothing replays it, so that history is worth reading again.
+   */
+  onFresh(listener: (topic: Topic) => void): () => void {
+    this.freshListeners.add(listener);
+    return () => {
+      this.freshListeners.delete(listener);
+    };
+  }
+
+  /**
+   * A socket closed before it opened, once per run of such failures: a 401
+   * handshake looks the same, so the session is worth one check.
+   */
+  onRefused(listener: () => void): () => void {
+    this.refusedListeners.add(listener);
+    return () => {
+      this.refusedListeners.delete(listener);
+    };
+  }
+
   onPresence(listener: (frame: PresenceFrame) => void): () => void {
     this.presenceListeners.add(listener);
     return () => {
@@ -290,6 +319,7 @@ export class Gateway {
   }
 
   sendPresence(st?: "o" | "i"): void {
+    if (st) this.idle = st === "i";
     this.send(st ? { op: "p", st } : { op: "p" });
   }
 
@@ -327,11 +357,15 @@ export class Gateway {
       return;
     }
     this.stopped = false;
+    if (typeof window !== "undefined")
+      window.addEventListener("online", this.onOnline);
     this.open();
   }
 
   stop(): void {
     this.stopped = true;
+    if (typeof window !== "undefined")
+      window.removeEventListener("online", this.onOnline);
     this.clearTimers();
     const socket = this.socket;
     this.unbindSocket();
@@ -351,6 +385,8 @@ export class Gateway {
     this.gaps.clear();
     this.discoveredDms.clear();
     this.completedResync = this.resyncVersion;
+    this.idle = false;
+    this.refusedReported = false;
     this.stop();
   }
 
@@ -392,10 +428,14 @@ export class Gateway {
     const url = this.opts.url ?? gatewayUrl();
     const socket = this.opts.open ? this.opts.open(url) : new WebSocket(url);
     this.socket = socket;
+    // The watchdog covers the handshake too: one that never answers is dropped.
+    this.lastServerAt = this.opts.now();
+    this.startWatchdog();
     // Captured here, not in `onFrame`: a close/open/message from the socket
     // we just replaced must not clear the new one or answer on it.
     const epoch = this.epoch;
     const live = () => this.socket === socket && this.epoch === epoch;
+    let opened = false;
 
     const onOpen = () => {
       if (!live()) {
@@ -403,6 +443,8 @@ export class Gateway {
         return;
       }
       this.retryAttempt = 0;
+      this.refusedReported = false;
+      opened = true;
       this.lastServerAt = this.opts.now();
       this.setStatus("open");
       this.startHeartbeat();
@@ -416,6 +458,8 @@ export class Gateway {
         );
       }
       if (this.inFront) this.send({ op: "f", on: true });
+      // The server counts the subscribes above as activity.
+      if (this.idle) this.send({ op: "p", st: "i" });
       for (const listener of this.readyListeners) {
         listener();
       }
@@ -442,6 +486,10 @@ export class Gateway {
       this.clearHeartbeat();
       if (!this.stopped) {
         this.scheduleReconnect();
+      }
+      if (!opened && !this.refusedReported) {
+        this.refusedReported = true;
+        for (const listener of this.refusedListeners) listener();
       }
     };
     const detach = () => {
@@ -489,6 +537,13 @@ export class Gateway {
         const old = this.cursors.get(key);
         if (!old || frame.n > old.n || (frame.ep && !old.ep))
           this.cursors.set(key, { ep: frame.ep ?? old?.ep, n: frame.n });
+        if (!old) {
+          const topic = { s: frame.s, ...(frame.c ? { c: frame.c } : {}) };
+          for (const listener of this.freshListeners) {
+            if (!alive()) return;
+            listener(topic);
+          }
+        }
         return;
       }
       case "e": {
@@ -554,6 +609,7 @@ export class Gateway {
             ),
           );
         }
+        if (this.idle) this.send({ op: "p", st: "i" });
         for (const listener of this.resyncListeners) {
           if (!alive()) return;
           listener();
@@ -597,19 +653,54 @@ export class Gateway {
   }
 
   private startHeartbeat(): void {
-    this.clearHeartbeat();
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = setInterval(() => {
       this.send({ op: "h" });
     }, this.opts.heartbeatMs);
+  }
+
+  private startWatchdog(): void {
+    if (this.watchdogTimer) clearInterval(this.watchdogTimer);
     this.watchdogTimer = setInterval(
       () => {
         if (this.opts.now() - this.lastServerAt >= this.opts.deadMs) {
-          this.socket?.close();
+          this.dropSocket();
         }
       },
       Math.min(1_000, this.opts.heartbeatMs),
     );
   }
+
+  /**
+   * Gives up on the current socket without waiting for its `close`: on a
+   * black-holed path the closing handshake can take a minute to fail.
+   */
+  private dropSocket(): void {
+    const socket = this.socket;
+    this.unbindSocket();
+    this.socket = null;
+    this.clearHeartbeat();
+    try {
+      socket?.close();
+    } catch {
+      // Already gone.
+    }
+    if (!this.stopped) this.scheduleReconnect();
+  }
+
+  /** Back online: a socket still waiting to (re)connect tries now. */
+  private readonly onOnline = (): void => {
+    if (this.stopped || this.currentStatus === "open") return;
+    const socket = this.socket;
+    this.unbindSocket();
+    this.socket = null;
+    try {
+      socket?.close();
+    } catch {
+      // Already gone.
+    }
+    this.open();
+  };
 
   private scheduleReconnect(): void {
     this.setStatus("reconnecting");

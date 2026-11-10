@@ -8,8 +8,7 @@ German strings appear only where the REST/auth flow produces them.
 Conventions in this file
 
 - Paths are relative to the API origin. The web client prefixes every call with
-  `API_BASE = (VITE_API_BASE_URL ?? "/api")` with trailing slashes stripped
-  (`web/src/api/client.ts:71-72`). In the web code `api("/servers")` means
+  `API_BASE = "/api"` (`web/src/api/client.ts`). In the web code `api("/servers")` means
   `GET /api/servers`. This spec always writes the full `/api/...` path.
 - `uuid` = lower-case hyphenated UUID string (serde `uuid` default).
 - `ts` = RFC 3339 UTC timestamp as chrono serialises `DateTime<Utc>`:

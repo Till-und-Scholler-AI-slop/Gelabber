@@ -1,8 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, getCsrfToken } from "../api/client.ts";
+import {
+  ApiError,
+  api,
+  getCsrfToken,
+  resetSharedSessionForTests,
+  synchronizeSharedSession,
+} from "../api/client.ts";
+import { syncPush } from "../pwa/push.ts";
+import { scopeGeneration } from "./scope.ts";
 import {
   changePassword,
+  checkSession,
   claimProfileWrite,
   ensureSession,
   login,
@@ -22,6 +31,10 @@ import {
   verifyEmail,
 } from "./session.ts";
 import type { User } from "./types.ts";
+
+vi.mock("../pwa/push.ts", () => ({
+  syncPush: vi.fn(() => Promise.resolve("off")),
+}));
 
 const ada: User = {
   id: "u1",
@@ -296,6 +309,7 @@ describe("session store", () => {
     });
     await login("ada@example.com", "password123");
 
+    vi.mocked(syncPush).mockClear();
     await expect(
       changePassword("password123", "battery staple"),
     ).resolves.toEqual(ada);
@@ -304,6 +318,8 @@ describe("session store", () => {
       user: ada,
     });
     expect(getCsrfToken()).toBe("c6");
+    // The change ended every session, and with them this browser's push row.
+    expect(syncPush).toHaveBeenCalledOnce();
   });
 
   it("changePassword surfaces a wrong current password as a field error", async () => {
@@ -317,6 +333,7 @@ describe("session store", () => {
         }),
     });
     await login("ada@example.com", "password123");
+    vi.mocked(syncPush).mockClear();
 
     await expect(
       changePassword("nope", "battery staple"),
@@ -325,6 +342,7 @@ describe("session store", () => {
       fields: { current_password: "wrong" },
     });
     expect(useSession.getState().status).toBe("authenticated");
+    expect(syncPush).not.toHaveBeenCalled();
   });
 
   it("keeps local logout but exposes failed server revocation for retry", async () => {
@@ -415,6 +433,27 @@ describe("session store", () => {
     resolveMe?.(json(200, fromServer));
     await done;
     expect(useSession.getState().user).toEqual(fromServer);
+  });
+
+  it("checkSession signs the tab out when the server ended the session", async () => {
+    let user: User | null = ada;
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "GET /api/auth/session": () => json(200, { user, csrf_token: "c3" }),
+    });
+    await login("ada@example.com", "password123");
+    const generation = scopeGeneration();
+
+    await checkSession();
+    expect(useSession.getState()).toEqual({
+      status: "authenticated",
+      user: ada,
+    });
+    expect(scopeGeneration()).toBe(generation);
+
+    user = null;
+    await checkSession();
+    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
   });
 
   it("a 401 from any request flips the tab to anonymous", async () => {
@@ -535,6 +574,153 @@ describe("session store", () => {
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).fields).toEqual({ avatar_url: "invalid" });
     expect(useSession.getState().user).toEqual(ada);
+  });
+});
+
+describe("password change across tabs", () => {
+  const FENCE = "gelabber:auth-generation";
+  let storage: Map<string, string>;
+  beforeEach(() => {
+    resetSharedSessionForTests();
+    resetSessionForTests();
+    storage = new Map();
+    vi.stubGlobal(
+      "window",
+      Object.assign(new EventTarget(), {
+        localStorage: {
+          getItem: (key: string) => storage.get(key) ?? null,
+          setItem: (key: string, value: string) => void storage.set(key, value),
+          removeItem: (key: string) => void storage.delete(key),
+        },
+      }),
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetSharedSessionForTests();
+  });
+
+  it("a wrong current password leaves this tab signed in for its next request", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "POST /api/auth/password": () =>
+        json(422, {
+          error: "validation_failed",
+          message: "Some fields are invalid.",
+          fields: { current_password: "wrong" },
+        }),
+      "GET /api/servers": () => json(200, []),
+    });
+    await login("ada@example.com", "password123");
+    const generation = scopeGeneration();
+
+    await expect(
+      changePassword("nope", "battery staple"),
+    ).rejects.toMatchObject({ code: "validation_failed" });
+    // The unread poll, a few seconds later.
+    await expect(api("/servers")).resolves.toEqual([]);
+    expect(useSession.getState()).toEqual({
+      status: "authenticated",
+      user: ada,
+    });
+    expect(scopeGeneration()).toBe(generation);
+  });
+
+  it("a write's csrf re-bootstrap after another tab's password change keeps the mark", async () => {
+    let posts = 0;
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "GET /api/auth/session": () => json(200, { user: ada, csrf_token: "c3" }),
+      "POST /api/servers": () =>
+        ++posts === 1
+          ? json(403, { error: "csrf_invalid", message: "Bad token." })
+          : json(200, {}),
+    });
+    await login("ada@example.com", "password123");
+    const generation = scopeGeneration();
+    const change = {
+      generation: "g-change",
+      phase: "settled",
+      userId: ada.id,
+      keepsAccount: true,
+    };
+    storage.set(FENCE, JSON.stringify(change));
+    synchronizeSharedSession();
+
+    // This tab's token was dropped; its first write re-bootstraps.
+    await expect(
+      api("/servers", { method: "POST", body: {} }),
+    ).resolves.toEqual({});
+    // Every other tab compares against this: no change for them either.
+    expect(JSON.parse(storage.get(FENCE)!)).toEqual(change);
+    expect(useSession.getState().status).toBe("authenticated");
+    expect(scopeGeneration()).toBe(generation);
+  });
+
+  it("a refused change does not restore over another tab's newer sign-in", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+      "POST /api/auth/password": () => {
+        // Without Web Locks another tab can sign in meanwhile.
+        storage.set(
+          FENCE,
+          JSON.stringify({
+            generation: "g-bob",
+            phase: "settled",
+            userId: "u2",
+          }),
+        );
+        return json(422, {
+          error: "validation_failed",
+          message: "Some fields are invalid.",
+          fields: { current_password: "wrong" },
+        });
+      },
+    });
+    await login("ada@example.com", "password123");
+
+    await expect(
+      changePassword("nope", "battery staple"),
+    ).rejects.toMatchObject({ code: "validation_failed" });
+    const fence = JSON.parse(storage.get(FENCE)!);
+    expect(fence.userId).not.toBe(ada.id);
+    expect(fence.phase).not.toBe("settled");
+  });
+
+  it("another tab's password change keeps this tab's account", async () => {
+    fakeApi({
+      "POST /api/auth/login": () => json(200, { user: ada, csrf_token: "c2" }),
+    });
+    await login("ada@example.com", "password123");
+    const generation = scopeGeneration();
+    const other = (state: object) => {
+      storage.set(FENCE, JSON.stringify(state));
+      synchronizeSharedSession();
+    };
+
+    const change = {
+      generation: "g-change",
+      userId: ada.id,
+      keepsAccount: true,
+    };
+    other({ ...change, phase: "changing" });
+    expect(useSession.getState().status).toBe("authenticated");
+    other({ ...change, phase: "settled" });
+    expect(useSession.getState()).toEqual({
+      status: "authenticated",
+      user: ada,
+    });
+    expect(scopeGeneration()).toBe(generation);
+
+    // A fresh tab's bootstrap settles the same session again, unmarked.
+    other({ generation: "g-change", phase: "settled", userId: ada.id });
+    expect(useSession.getState().status).toBe("authenticated");
+    expect(scopeGeneration()).toBe(generation);
+
+    // A sign-in, even as the same user, still releases the account.
+    other({ generation: "g-again", phase: "changing", userId: ada.id });
+    expect(useSession.getState().status).toBe("unknown");
+    expect(scopeGeneration()).not.toBe(generation);
   });
 });
 

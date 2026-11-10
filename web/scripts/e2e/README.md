@@ -1,7 +1,7 @@
 # Actual-app acceptance scenarios
 
-The current v0.4 candidate uses mediasoup 0.29.0 through the official Rust binding
-and public mediasoup-client 3.24.1, with Gelabber's own v4 WebSocket/authority
+Gelabber 0.9 uses mediasoup 0.29.0 through the official Rust binding
+and public mediasoup-client 3.26.0, with Gelabber's own v4 WebSocket/authority
 contract. A publishing voice connection uses separate SDK send and receive PCs
 (at most two active PCs); a Live is watched inside the call. Native
 transport compaction preserves captures and creates fresh Producer/Consumer IDs.
@@ -19,10 +19,9 @@ The original 11a delivery added `web/scripts/e2e/**` and two npm script entries.
 
 ## Invoke
 
-Use the pinned toolchain and the existing installed dependencies. From `web/`:
+Use Node from `engines` in `package.json` and the installed dependencies. From `web/`:
 
 ```bash
-source /tmp/gelabber-toolchain/env.sh
 npm run test:e2e-harness
 GELABBER_SMOKE_URL=http://127.0.0.1:5177 \
 GELABBER_E2E_WEB_SHA=6e221705c34e944bd3804aa3c9482488e770f249 \

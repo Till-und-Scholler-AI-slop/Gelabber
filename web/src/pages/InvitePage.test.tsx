@@ -70,6 +70,17 @@ describe("invite page", () => {
     expect(html).toContain('<a href="/">Abbrechen</a>');
   });
 
+  it("keeps a loaded invite when a refetch fails", () => {
+    fixture.preview = {
+      ...loaded(),
+      isError: true,
+      error: new ApiError("internal", 502, "internal"),
+    };
+    const html = renderToStaticMarkup(<InvitePage />);
+    expect(html).toContain('<h1 id="invite-server-name">Spieleabend</h1>');
+    expect(html).not.toContain("Einladung konnte nicht geladen werden");
+  });
+
   it("says when the link runs out", () => {
     const inSixDays = new Date(Date.now() + 6 * 86_400_000 + 60_000);
     fixture.preview = loaded({ expires_at: inSixDays.toISOString() });

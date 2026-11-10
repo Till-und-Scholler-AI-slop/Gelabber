@@ -8,7 +8,10 @@ export function safeRedirect(value: unknown): string | undefined {
     value.startsWith("/") &&
     !value.startsWith("//") &&
     // Browsers read a backslash like a slash: `/\host` leaves the app too.
-    !value.startsWith("/\\")
+    !value.startsWith("/\\") &&
+    // URL parsing drops tabs and newlines: `/\t/host` reads as `//host`.
+    // eslint-disable-next-line no-control-regex
+    !/[\u0000-\u001f\u007f]/.test(value)
     ? value
     : undefined;
 }

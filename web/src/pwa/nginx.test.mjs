@@ -172,6 +172,18 @@ describe("production nginx config", () => {
     );
   });
 
+  it("gives the unhashed static files a cache lifetime", () => {
+    // Their names stay across releases, so not immutable. The RNNoise worklet
+    // and wasm must match the build that loads them: asked again each time.
+    for (const directory of ["/icons/", "/images/"])
+      expect(location(directory), directory).toContain(
+        'add_header Cache-Control "public, max-age=86400"',
+      );
+    expect(location("/audio/")).toContain(
+      'add_header Cache-Control "no-cache"',
+    );
+  });
+
   it("answers 404 for a missing file in every static directory", () => {
     const directories = readdirSync(new URL("public/", web), {
       withFileTypes: true,

@@ -200,6 +200,10 @@ export function useMessageToastsBridge(): void {
         own,
         channelId: event.c,
         viewingChannelId,
+        // Replays older than the live delivery window do not generate a
+        // burst. Measured on the server clock: a fast local clock must not
+        // suppress every live notification.
+        ageMs: serverNow() - Date.parse(message.created_at),
       });
       if (!decision.toast && !decision.desktop) return;
       const label = channelLabel(client, userId, generation, event, dm);
@@ -227,14 +231,7 @@ export function useMessageToastsBridge(): void {
         });
       const now = Date.now();
       const pacing = deliveries.current!.pacing;
-      // Replays older than the live delivery window do not generate a burst.
-      // Age is measured on the server clock: a fast local clock must not
-      // suppress every live notification.
-      if (
-        decision.desktop &&
-        serverNow() - Date.parse(message.created_at) < 30_000 &&
-        pacing.take(event.c, now)
-      ) {
+      if (decision.desktop && pacing.take(event.c, now)) {
         const channelId = event.c;
         void showMessageNotification(
           {

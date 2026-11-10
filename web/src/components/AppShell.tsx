@@ -1,4 +1,9 @@
-import { Link, Outlet, useRouterState } from "@tanstack/react-router";
+import {
+  CatchBoundary,
+  Link,
+  Outlet,
+  useRouterState,
+} from "@tanstack/react-router";
 
 import { useReadBridge } from "../messages/readState.ts";
 import { useUnreadIndicators } from "../messages/unreadIndicators.ts";
@@ -14,6 +19,7 @@ import {
 import { useFocusReport, useIdlePresence } from "../ws/useLive.ts";
 import { usePushSubscription } from "../pwa/push.ts";
 import { useMessageToastsBridge } from "../messages/useMessageToasts.ts";
+import { RouteErrorPage } from "../pages/RouteErrorPage.tsx";
 import { ConfirmHost } from "./ConfirmHost.tsx";
 import { ConnectionNotice } from "./ConnectionNotice.tsx";
 import { InvitePromptHost } from "./InviteDialog.tsx";
@@ -38,6 +44,9 @@ export function AppShell() {
   const workspace = useRouterState({
     select: (state) =>
       state.matches.some((match) => match.routeId === "/workspace"),
+  });
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
   });
   const bare = useRouterState({
     select: (state) => state.matches.some((match) => match.staticData.bare),
@@ -86,9 +95,15 @@ export function AppShell() {
         </header>
       ) : null}
       <div id="app-content" tabIndex={workspace ? undefined : -1}>
-        <SessionRecoveryNotice>
-          <Outlet />
-        </SessionRecoveryNotice>
+        {/* A page that throws leaves the call controls and toasts in place. */}
+        <CatchBoundary
+          getResetKey={() => pathname}
+          errorComponent={RouteErrorPage}
+        >
+          <SessionRecoveryNotice>
+            <Outlet />
+          </SessionRecoveryNotice>
+        </CatchBoundary>
       </div>
       {user ? <AuthenticatedRealtime key={user.id} /> : null}
       {user ? <ConnectionNotice /> : null}

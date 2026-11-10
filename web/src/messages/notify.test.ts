@@ -14,6 +14,26 @@ import {
 } from "./notify.ts";
 
 describe("message toast rules", () => {
+  it("announces a replayed old message neither as toast nor on the desktop", () => {
+    const base = {
+      toastEnabled: true,
+      desktopEnabled: true,
+      hidden: true,
+      type: "c" as const,
+      own: false,
+      channelId: "c1",
+      viewingChannelId: "c2",
+    };
+    expect(messageNotificationDecision({ ...base, ageMs: 29_000 })).toEqual({
+      toast: true,
+      desktop: true,
+    });
+    // Back on a server after hours: its cursors resume and replay.
+    expect(
+      messageNotificationDecision({ ...base, ageMs: 3 * 60 * 60 * 1000 }),
+    ).toEqual({ toast: false, desktop: false });
+  });
+
   it("delivers desktop messages independently, including the hidden open chat", () => {
     const base = {
       toastEnabled: false,
