@@ -58,25 +58,29 @@ export function ChannelPage() {
   const Icon = channel.kind === "voice" ? SpeakerIcon : HashIcon;
 
   // On a phone the header is the only place that names the server.
+  const name = (
+    <div className="lr-channel-title">
+      <span className="lr-channel-title-server">{server.name}</span>
+      <span className="lr-channel-title-name">
+        <Icon size={18} />
+        <h1>{channel.name}</h1>
+        {channel.limited ? (
+          <span
+            className="lr-channel-title-lock"
+            role="img"
+            aria-label={tr("limitedLabel")}
+          >
+            <LockIcon size={14} />
+          </span>
+        ) : null}
+      </span>
+    </div>
+  );
+  const pill = <LiveHint server={server} variant="pill" />;
   const title = (
     <>
-      <div className="lr-channel-title">
-        <span className="lr-channel-title-server">{server.name}</span>
-        <span className="lr-channel-title-name">
-          <Icon size={18} />
-          <h1>{channel.name}</h1>
-          {channel.limited ? (
-            <span
-              className="lr-channel-title-lock"
-              role="img"
-              aria-label={tr("limitedLabel")}
-            >
-              <LockIcon size={14} />
-            </span>
-          ) : null}
-        </span>
-      </div>
-      <LiveHint server={server} variant="pill" />
+      {name}
+      {pill}
     </>
   );
 
@@ -84,21 +88,28 @@ export function ChannelPage() {
     <div className="flex min-h-0 flex-1 overflow-hidden">
       <div className="lr-channel-content flex min-w-0 flex-1 flex-col overflow-hidden">
         {channel.kind === "voice" ? (
-          <>
-            <header className="lr-channel-header">
-              {title}
-              <span className="lr-channel-header-spacer" />
-              <MemberPanelToggle />
-            </header>
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <VoiceRoomPart.Component
-                server={server}
-                channelId={channel.id}
-                channelName={channel.name}
-                fallback={<SkeletonRows count={3} avatars />}
-              />
-            </div>
-          </>
+          // The room draws the header: in the call it holds the room's
+          // facts, its view and Kino.
+          <VoiceRoomPart.Component
+            server={server}
+            channelId={channel.id}
+            channelName={channel.name}
+            title={name}
+            hint={pill}
+            actions={<MemberPanelToggle />}
+            fallback={
+              <>
+                <header className="lr-channel-header">
+                  {title}
+                  <span className="lr-channel-header-spacer" />
+                  <MemberPanelToggle />
+                </header>
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <SkeletonRows count={3} avatars />
+                </div>
+              </>
+            }
+          />
         ) : (
           <div className="relative min-h-0 flex-1">
             <div

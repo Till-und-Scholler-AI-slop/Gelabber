@@ -18,6 +18,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
   type RefObject,
 } from "react";
 
@@ -98,6 +99,9 @@ export function VoiceRoom({
   channelId,
   channelName,
   overview = false,
+  title,
+  hint,
+  actions,
 }: {
   server: ServerDetail;
   channelId: string;
@@ -106,6 +110,12 @@ export function VoiceRoom({
    * call, then its people as compact cards and one free seat; no line
    * about them. The channel's page names the room itself. */
   overview?: boolean;
+  /** The channel page's header: the room draws it, since in the call it
+   * carries the room's facts, its view and Kino. `hint` (the Live pill)
+   * shows only outside this call; `actions` sit at its right end. */
+  title?: ReactNode;
+  hint?: ReactNode;
+  actions?: ReactNode;
 }) {
   const t = useT(texts);
   const allowed = can(server, "join_voice");
@@ -392,6 +402,17 @@ export function VoiceRoom({
       : occupants.length === 0 && !overview
         ? FREE_SEATS_EMPTY
         : 1;
+  // In the call the header says who is there, or with pictures how many
+  // and what runs; a phone keeps that line at the top of the room.
+  const facts = !here
+    ? null
+    : staged
+      ? stageFacts({
+          people: occupants.length,
+          cameras: cameras.size,
+          lives: occupants.filter(([id]) => isLive(id)).length,
+        })
+      : roomSummary(others, { here });
   // Nobody else here: the space under the room asks for company.
   const askCompany = !overview && !staged && others.length === 0;
 
@@ -416,7 +437,7 @@ export function VoiceRoom({
   const flagsOf = new Map(occupants);
   const noFlags = { muted: false, deafened: false };
 
-  return (
+  const room = (
     <section
       className="voice-room"
       aria-label={channelName}
@@ -441,58 +462,10 @@ export function VoiceRoom({
             <span className="voice-room-live-badge">{t("live.badge")}</span>
           ) : null}
         </div>
-      ) : kino ? null : staged ? (
-        <div className="voice-stage-bar">
-          <p className="voice-stage-facts">
-            {stageFacts({
-              people: occupants.length,
-              cameras: cameras.size,
-              live: othersLive,
-              selfLive: here && voice.sharing,
-            })}
-          </p>
-          {narrow ? null : (
-            <ChipGroup
-              label={t("room.viewLabel")}
-              className="voice-stage-views"
-              value={view}
-              onChange={(next) => chooseView(roomKey, next)}
-              options={[
-                {
-                  value: "raster",
-                  label: (
-                    <>
-                      <GridIcon size={15} />
-                      {t("room.viewGrid")}
-                    </>
-                  ),
-                },
-                {
-                  value: "fokus",
-                  label: (
-                    <>
-                      <FocusIcon size={15} />
-                      {t("room.viewFocus")}
-                    </>
-                  ),
-                },
-              ]}
-            />
-          )}
-          {canKino ? (
-            <button
-              ref={kinoButton}
-              type="button"
-              className="voice-stage-kino"
-              aria-keyshortcuts="K"
-              title={t("room.cinemaTitle")}
-              onClick={() => enterKino(true)}
-            >
-              <TheaterIcon size={15} />
-              {t("room.cinema")}
-            </button>
-          ) : null}
-        </div>
+      ) : kino ? null : here ? (
+        narrow ? (
+          <p className="voice-room-summary">{facts}</p>
+        ) : null
       ) : (
         <p className="voice-room-summary">
           {roomSummary(others, { here, live: othersLive })}
@@ -726,6 +699,63 @@ export function VoiceRoom({
         />
       ) : null}
     </section>
+  );
+  if (overview) return room;
+
+  return (
+    <>
+      <header className="lr-channel-header">
+        {title}
+        {here ? null : hint}
+        {facts && !narrow ? (
+          <p className="voice-header-facts">{facts}</p>
+        ) : null}
+        <span className="lr-channel-header-spacer" />
+        {staged && !narrow ? (
+          <ChipGroup
+            label={t("room.viewLabel")}
+            className="voice-stage-views"
+            value={view}
+            onChange={(next) => chooseView(roomKey, next)}
+            options={[
+              {
+                value: "raster",
+                label: (
+                  <>
+                    <GridIcon size={15} />
+                    {t("room.viewGrid")}
+                  </>
+                ),
+              },
+              {
+                value: "fokus",
+                label: (
+                  <>
+                    <FocusIcon size={15} />
+                    {t("room.viewFocus")}
+                  </>
+                ),
+              },
+            ]}
+          />
+        ) : null}
+        {canKino ? (
+          <button
+            ref={kinoButton}
+            type="button"
+            className="voice-stage-kino"
+            aria-keyshortcuts="K"
+            title={t("room.cinemaTitle")}
+            onClick={() => enterKino(true)}
+          >
+            <TheaterIcon size={15} />
+            {t("room.cinema")}
+          </button>
+        ) : null}
+        {actions}
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto">{room}</div>
+    </>
   );
 }
 

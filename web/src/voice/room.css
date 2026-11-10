@@ -54,9 +54,9 @@
   flex: 0 0 auto;
   width: 192px;
 }
-/* The channel's stage while pictures run: a line of facts, the pictures
-   filling the space between the header and the call bar, and the people
-   without a camera under them. VoiceRoom measures the stage and places
+/* The channel's stage while pictures run: the pictures filling the space
+   between the header and the call bar, and the people without a camera
+   under them. VoiceRoom measures the stage and places
    each picture (--stage-x, -y, -w, -h); the pictures never change their
    element, only their place. */
 .voice-room[data-stage] {
@@ -67,22 +67,21 @@
   min-height: 360px;
   padding: 16px 24px;
 }
-.voice-stage-bar {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 12px;
-  min-height: 36px;
-}
-.voice-stage-facts {
-  flex: 1;
+/* In the call the channel header carries the room's facts after its name,
+   and its view and Kino at the right end. */
+.voice-header-facts {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--lr-muted);
-  font: var(--lr-type-ui);
-  font-weight: 400;
+  font-size: 13px;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.lr-channel-header > .voice-stage-views,
+.lr-channel-header > .voice-stage-kino {
+  flex: none;
 }
 .voice-stage {
   position: relative;
