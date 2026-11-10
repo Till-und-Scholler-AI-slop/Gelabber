@@ -372,7 +372,11 @@ impl GelabberApp {
         // A new server's account: its own theme document.
         screens::settings::forget_account(ctx);
         let repaint_ctx = ctx.clone();
-        client.set_repaint(std::sync::Arc::new(move || repaint_ctx.request_repaint()));
+        client.set_repaint(std::sync::Arc::new(move || {
+            repaint_ctx.request_repaint();
+            // A video's own window keeps up while the main one is hidden.
+            screens::voice::window::wake(&repaint_ctx);
+        }));
         let images = Images::new(client.clone());
         // The artwork of the signed-out pages is large; start early.
         images.get(ctx, screens::auth::layout::ARTWORK);

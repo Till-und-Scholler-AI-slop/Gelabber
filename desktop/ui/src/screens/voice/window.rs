@@ -22,6 +22,9 @@ struct Windows {
     failed: Option<VideoKey>,
     /// The picture each window drew last (`Frame::serial`).
     drawn: HashMap<VideoKey, u64>,
+    /// The call the open windows show, for [`wake`]; only while one is open,
+    /// as the windows' own draw callbacks hold it too.
+    call: Option<Call>,
 }
 
 fn id() -> Id {
@@ -66,6 +69,29 @@ pub fn close(ctx: &egui::Context, key: VideoKey) {
     });
 }
 
+/// The open windows whose video has a picture they did not draw yet.
+fn due(w: &Windows, serial: impl Fn(VideoKey) -> Option<u64>) -> Vec<VideoKey> {
+    w.open
+        .keys()
+        .copied()
+        .filter(|k| serial(*k).is_some_and(|s| w.drawn.get(k) != Some(&s)))
+        .collect()
+}
+
+/// Repaints the windows with a new picture; they do not poll. Called from
+/// the client's repaint hook on any thread, as each picture arrives: the
+/// main window's own passes slow down or stop while it is minimised,
+/// hidden or (Wayland) on another workspace, the video's window does not.
+pub fn wake(ctx: &egui::Context) {
+    let Some(w) = ctx.data(|d| d.get_temp::<Windows>(id()).filter(|w| !w.open.is_empty())) else {
+        return;
+    };
+    let Some(call) = &w.call else { return };
+    for key in due(&w, |k| call.frame(k).map(|f| f.serial)) {
+        ctx.request_repaint_of(viewport_id(key));
+    }
+}
+
 /// Shows every open window, once per frame of the main window. Without
 /// separate windows (a backend that embeds viewports) the window counts as
 /// not opened, as the web's `openNativeViewer` rejecting.
@@ -88,6 +114,7 @@ pub fn show(ctx: &egui::Context, call: &Call) {
             w.open.retain(|k, _| shown.contains(k));
         }
         w.drawn.retain(|k, _| w.open.contains_key(k));
+        w.call = (!w.open.is_empty()).then(|| call.clone());
         w.open.clone().into_iter().collect()
     });
     if open.is_empty() {
@@ -100,12 +127,8 @@ pub fn show(ctx: &egui::Context, call: &Call) {
         });
         return;
     }
+    wake(ctx);
     for (key, title) in open {
-        // A new picture wakes the window; it does not poll.
-        let serial = call.frame(key).map(|f| f.serial);
-        if serial.is_some() && with(ctx, |w| w.drawn.get(&key).copied()) != serial {
-            ctx.request_repaint_of(viewport_id(key));
-        }
         let call = call.clone();
         ctx.show_viewport_deferred(
             viewport_id(key),
@@ -260,5 +283,28 @@ mod tests {
                 .viewport_output
                 .contains_key(&viewport_id(key))
         );
+    }
+
+    /// The picture's arrival, not the main window's pass, wakes a window:
+    /// [`wake`] runs from the client's repaint hook. Only a window whose
+    /// video has a picture it did not draw yet is due.
+    #[test]
+    fn only_a_new_picture_wakes_a_window() {
+        let (a, b, c) = (VideoKey(1), VideoKey(2), VideoKey(3));
+        let mut w = Windows::default();
+        for key in [a, b, c] {
+            w.open.insert(key, String::new());
+        }
+        w.drawn.insert(a, 5);
+        w.drawn.insert(b, 5);
+        let serial = |k: VideoKey| match k.0 {
+            1 => Some(5),
+            2 => Some(6),
+            _ => None,
+        };
+        assert_eq!(due(&w, serial), vec![b], "a drew it, c has none yet");
+        // No window open: nothing to wake, and no call kept for it.
+        let ctx = egui::Context::default();
+        wake(&ctx);
     }
 }
