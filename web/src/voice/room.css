@@ -1247,29 +1247,78 @@ html[data-compact-rooms="true"] .voice-room-seat {
   line-height: 1.3;
 }
 .voice-session-link > strong,
-.voice-session-link > span {
+.voice-session-link > span,
+.voice-session-status > strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
+  line-height: 1.3;
 }
-.voice-session-link > strong {
+.voice-session-link > strong,
+.voice-session-status > strong {
   font-weight: 600;
   color: var(--lr-muted);
 }
 .voice-session-link > span {
   color: var(--lr-muted);
 }
-[data-connection="connected"] .voice-session-link > strong {
+[data-connection="connected"]
+  :is(.voice-session-link, .voice-session-status)
+  > strong {
   color: var(--lr-online-text);
 }
 /* --lr-warning is drawn for icons (3:1); text takes it a step towards the
    text colour, for 4.5:1 in light and dark. */
-[data-connection="reconnecting"] .voice-session-link > strong {
+[data-connection="reconnecting"]
+  :is(.voice-session-link, .voice-session-status)
+  > strong {
   color: color-mix(in srgb, var(--lr-warning) 70%, var(--lr-text));
 }
-[data-connection="failed"] .voice-session-link > strong {
+[data-connection="failed"]
+  :is(.voice-session-link, .voice-session-status)
+  > strong {
   color: var(--lr-danger);
+}
+/* The call's status: the icon and state word are one button that opens the
+   connection, the place under the word is the link back to the channel.
+   The button spans both lines, so the icon stays centred beside them as
+   before; the link lies over its second line. */
+.voice-session-where {
+  display: grid;
+  flex: 1;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+.voice-session-status {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  grid-template-columns: subgrid;
+  grid-template-rows: subgrid;
+  align-items: center;
+  min-width: 0;
+  border-radius: var(--lr-radius);
+  text-align: left;
+  cursor: pointer;
+}
+.voice-session-status > :first-child {
+  grid-row: 1 / -1;
+}
+.voice-session-status > strong {
+  grid-column: 2;
+  grid-row: 1;
+}
+.voice-session-where > .voice-session-link {
+  position: relative;
+  grid-column: 2;
+  grid-row: 2;
+}
+.voice-session-status:hover > .voice-quality-bars {
+  background: var(--lr-hover);
 }
 a.voice-session-link:hover > span {
   color: var(--lr-text);
@@ -1288,9 +1337,6 @@ a.voice-session-link:hover > span {
   border-radius: var(--lr-radius);
   color: var(--lr-online);
   cursor: pointer;
-}
-.voice-quality-bars:hover {
-  background: var(--lr-hover);
 }
 .voice-quality-bars > span {
   width: 3px;

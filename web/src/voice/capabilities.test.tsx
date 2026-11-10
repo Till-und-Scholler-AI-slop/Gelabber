@@ -146,7 +146,8 @@ describe("capture controls", () => {
     expect(control(html, "Kamera")).toContain('aria-pressed="false"');
     expect(control(html, "Live gehen")).toBeNull();
     expect(html).not.toContain("aria-disabled");
-    expect(html).toContain('aria-label="Anrufeinstellungen"');
+    // The settings left the call bar; the user panel's gear has them.
+    expect(html).not.toContain('aria-label="Anrufeinstellungen"');
   });
 
   it("desktop browser: camera and Live, no Go Live, no Teilen", async () => {

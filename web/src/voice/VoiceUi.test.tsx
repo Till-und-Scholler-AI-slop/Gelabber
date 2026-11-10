@@ -133,7 +133,10 @@ import {
   VoiceAudioToggles,
   VoiceControls,
 } from "../components/VoiceControls.tsx";
-import { VoiceSessionControls } from "../components/VoiceSessionControls.tsx";
+import {
+  ConnectionDetails,
+  VoiceSessionControls,
+} from "../components/VoiceSessionControls.tsx";
 import { callAnnouncement } from "./callBar.ts";
 import { CallSound } from "./QuickCallSettings.tsx";
 import { resetPushToTalkForTests, usePushToTalk } from "./pushToTalk.ts";
@@ -800,13 +803,51 @@ describe("active media UI", () => {
     expect(render()).toContain(
       'aria-label="Verbindung: wird gemessen … – Details anzeigen"',
     );
-    // The bars open the connection at a glance, not the dialog.
+    // The bars and the state word are one button that opens the connection
+    // at a glance, not the dialog; the place stays the way to the channel.
+    const status =
+      /<button[^>]*class="voice-session-status"[^>]*>(.*?)<\/button>/.exec(
+        render(),
+      );
+    expect(status?.[0]).toContain(
+      'aria-haspopup="dialog" aria-expanded="false"',
+    );
+    expect(status?.[1]).toContain('class="voice-quality-bars"');
+    expect(status?.[1]).toContain("<strong>Verbunden</strong>");
+    expect(status?.[1]).not.toContain("Zocken");
+    expect(render()).toMatch(/<a><span>Zocken · Spieleabend<\/span><\/a>/);
+    fixture.voice.connection = "connecting";
     expect(render()).toMatch(
-      /class="voice-quality-bars"[^>]*aria-haspopup="dialog" aria-expanded="false"/,
+      /class="voice-session-status"[^>]*>.*<strong>Verbinde …<\/strong><\/button>/,
     );
     fixture.voice.connection = "failed";
     expect(render()).toContain("Verbindung verloren");
     expect(render()).toContain("Erneut versuchen");
+  });
+  it("leaves the settings out of the call bar", () => {
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+      channelName: "Zocken",
+      connection: "connected",
+    });
+    const html = renderToStaticMarkup(<VoiceSessionControls />);
+    expect(html).not.toContain("Anrufeinstellungen");
+    for (const label of ["Stummschalten", "Taubschalten", "Verlassen"])
+      expect(control(html, label)).not.toBeNull();
+  });
+  it("holds the call's volumes in the connection popover", () => {
+    const html = renderToStaticMarkup(<ConnectionDetails onDone={() => {}} />);
+    expect(html).toMatch(/<h3 id="[^"]+">Lautstärke<\/h3>/);
+    expect(html).toContain(">Gespräche</label>");
+    expect(html).toContain(">Live-Ton</label>");
+    expect(control(html, "Live-Ton stummschalten")).not.toBeNull();
+    // Totals first, then the volumes, then the ways on.
+    const order = ["Du sendest", "Lautstärke", "Einstellungen", "Alle Details"];
+    const at = order.map((text) => html.indexOf(text));
+    expect(at.every((index) => index >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
   });
   it("offers a lost call again after the session left it", () => {
     Object.assign(fixture.voice, {

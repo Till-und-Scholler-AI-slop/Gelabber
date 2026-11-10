@@ -1,5 +1,5 @@
 // The call's controls: microphone, headset, camera, "Live gehen", the
-// volumes while a Live plays and the settings, as icon buttons. Each toggle keeps one name and says its state
+// volumes while a Live plays, as icon buttons. Each toggle keeps one name and says its state
 // through aria-pressed; the icon shows the state, and media that is on
 // sits on a pill: the camera accent, a Live red. A closed microphone or
 // headset also says "Stumm" or "Taub". The tooltips (ui/Tooltip.tsx) say
@@ -49,10 +49,7 @@ import { useLiveWatchers, watchersTitle } from "../voice/useLiveWatchers.ts";
 import { formatNumber } from "../i18n/format.ts";
 import { useUserId } from "../auth/scope.ts";
 import type { ServerDetail } from "../servers/types.ts";
-import {
-  CallSoundButton,
-  QuickCallSettingsButton,
-} from "../voice/QuickCallSettings.tsx";
+import { CallSoundButton } from "../voice/QuickCallSettings.tsx";
 import {
   callShortcutKeys,
   callTip,
@@ -257,7 +254,6 @@ export function VoiceControls({
       ) : null}
       <LiveControl canLive={canLive} server={server} />
       {streamSound ? <CallSoundButton className={BUTTON} /> : null}
-      <QuickCallSettingsButton className={BUTTON} />
     </div>
   );
 }
