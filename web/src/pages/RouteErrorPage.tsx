@@ -16,7 +16,7 @@ export function RouteErrorView({ inCall }: { inCall: boolean }) {
         <h1>Etwas ist schiefgelaufen</h1>
         <p className="auth-lead">
           {inCall
-            ? "Diese Seite konnte nicht angezeigt werden. Dein Anruf läuft weiter; neu laden beendet ihn."
+            ? "Diese Seite konnte nicht angezeigt werden. Dein Anruf läuft weiter. Neu laden beendet ihn."
             : "Diese Seite konnte nicht angezeigt werden."}
         </p>
         <div className="auth-actions">
