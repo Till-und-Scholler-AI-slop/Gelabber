@@ -14,19 +14,29 @@ pub const NOTICE_DELAY: f64 = 3.0;
 /// `RESTORED_MS`: how long "Verbindung wiederhergestellt" stays.
 pub const RESTORED: f64 = 3.0;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Notice {
     Offline,
     Reconnecting,
+    /// The server or TLS turned the upgrade down (`State::gateway_refused`):
+    /// retrying is slow, so it shows at once with why.
+    Refused(String),
     Restored,
 }
 
 impl Notice {
-    pub fn text(self) -> &'static str {
+    pub fn text(&self) -> String {
         match self {
-            Self::Offline => "Keine Verbindung – dein Gerät ist offline",
-            Self::Reconnecting => "Keine Verbindung – wird wiederhergestellt…",
-            Self::Restored => "Verbindung wiederhergestellt",
+            Self::Offline => "Keine Verbindung – dein Gerät ist offline".into(),
+            Self::Reconnecting => "Keine Verbindung – wird wiederhergestellt…".into(),
+            Self::Refused(reason) if reason.starts_with("TLS") => {
+                "Keine Verbindung – das Zertifikat des Servers wird nicht akzeptiert".into()
+            }
+            Self::Refused(reason) if reason.starts_with("HTTP ") => {
+                format!("Keine Verbindung – vom Server abgelehnt ({reason})")
+            }
+            Self::Refused(_) => "Keine Verbindung – vom Server abgelehnt".into(),
+            Self::Restored => "Verbindung wiederhergestellt".into(),
         }
     }
 }
@@ -47,19 +57,29 @@ impl Notices {
             return;
         }
         // The pill's key: lost ↔ restored starts it again.
-        let restored = |n: Option<Notice>| n == Some(Notice::Restored);
-        if self.notice.is_none() || restored(next) != restored(self.notice) {
+        let restored = |n: &Option<Notice>| *n == Some(Notice::Restored);
+        if self.notice.is_none() || restored(&next) != restored(&self.notice) {
             self.since = now;
         }
         self.notice = next;
     }
 
     fn troubled(&self) -> bool {
-        matches!(self.notice, Some(Notice::Offline | Notice::Reconnecting))
+        matches!(
+            self.notice,
+            Some(Notice::Offline | Notice::Reconnecting | Notice::Refused(_))
+        )
     }
 
-    /// `update({status, online})` plus the timers that ran out by `now`.
-    pub fn update(&mut self, status: GatewayStatus, online: bool, now: f64) -> Option<Notice> {
+    /// `update({status, online})` plus the timers that ran out by `now`;
+    /// `refused` is why the gateway turns the upgrade down, if it does.
+    pub fn update(
+        &mut self,
+        status: GatewayStatus,
+        online: bool,
+        refused: Option<&str>,
+        now: f64,
+    ) -> Option<Notice> {
         if self.delay_until.is_some_and(|at| now >= at) {
             self.delay_until = None;
             self.show(Some(Notice::Reconnecting), now);
@@ -80,6 +100,12 @@ impl Notices {
                 self.restored_until = None;
                 self.show(Some(Notice::Offline), now);
             }
+            GatewayStatus::Connecting | GatewayStatus::Reconnecting if refused.is_some() => {
+                self.delay_until = None;
+                self.restored_until = None;
+                let reason = refused.unwrap_or_default().to_owned();
+                self.show(Some(Notice::Refused(reason)), now);
+            }
             GatewayStatus::Open => {
                 self.delay_until = None;
                 if self.troubled() {
@@ -97,7 +123,7 @@ impl Notices {
                 }
             }
         }
-        self.notice
+        self.notice.clone()
     }
 
     /// The pill's opacity: `@starting-style` fades it in over `--lr-dur`.
@@ -125,13 +151,13 @@ pub fn notices(ctx: &egui::Context) -> Notices {
 }
 
 /// Updates the notice from the gateway and paints the pill over the page.
-pub fn show(ui: &mut Ui, status: GatewayStatus) {
+pub fn show(ui: &mut Ui, status: GatewayStatus, refused: Option<&str>) {
     let ctx = ui.ctx().clone();
     let now = ctx.input(|i| i.time);
     let mut notices = notices(&ctx);
     // The desktop has no navigator.onLine; a lost network shows as a
     // socket that does not come back.
-    let notice = notices.update(status, true, now);
+    let notice = notices.update(status, true, refused, now);
     if let Some(at) = notices.next_timer() {
         ctx.request_repaint_after(std::time::Duration::from_secs_f64((at - now).max(0.0)));
     }
@@ -141,15 +167,16 @@ pub fn show(ui: &mut Ui, status: GatewayStatus) {
     }
     ctx.data_mut(|d| d.insert_temp(state_id(), notices));
     let Some(notice) = notice else { return };
-    paint(ui, notice, opacity);
+    paint(ui, &notice, opacity);
 }
 
-fn paint(ui: &mut Ui, notice: Notice, opacity: f32) {
+fn paint(ui: &mut Ui, notice: &Notice, opacity: f32) {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
-    let restored = notice == Notice::Restored;
+    let restored = *notice == Notice::Restored;
+    let text = notice.text();
     let color = if restored { c.online_text } else { c.text };
-    let block = Block::single(ui, notice.text(), text::UI, color);
+    let block = Block::single(ui, &text, text::UI, color);
     // padding 6px 14px 6px 12px, a 1px border, 8px gap after the mark.
     let mark = if restored { 14.0 } else { 8.0 };
     let width = 1.0 + 12.0 + mark + space::S2 + block.width() + 14.0 + 1.0;
@@ -190,7 +217,7 @@ fn paint(ui: &mut Ui, notice: Notice, opacity: f32) {
             );
             // role="status": the change is read out.
             let status = ui.interact(rect, Id::unique("gelabber-connection-text"), Sense::hover());
-            crate::widgets::announce(&status, egui::Role::Status, notice.text());
+            crate::widgets::announce(&status, egui::Role::Status, &text);
         });
 }
 
@@ -209,7 +236,7 @@ mod tests {
             .with_size(egui::vec2(1280.0, 800.0))
             .with_step_dt(0.05)
             .with_context_setup(crate::fonts::install)
-            .build_ui(move |ui| show(ui, shared.get()));
+            .build_ui(move |ui| show(ui, shared.get(), None));
         let lost = "Keine Verbindung – wird wiederhergestellt…";
         let back = "Verbindung wiederhergestellt";
         harness.run_steps(2);
@@ -254,13 +281,44 @@ mod tests {
     fn offline_shows_at_once() {
         let mut n = Notices::default();
         assert_eq!(
-            n.update(GatewayStatus::Reconnecting, false, 0.0),
+            n.update(GatewayStatus::Reconnecting, false, None, 0.0),
             Some(Notice::Offline)
         );
         assert_eq!(
-            n.update(GatewayStatus::Open, true, 1.0),
+            n.update(GatewayStatus::Open, true, None, 1.0),
             Some(Notice::Restored)
         );
-        assert_eq!(n.update(GatewayStatus::Open, true, 4.1), None);
+        assert_eq!(n.update(GatewayStatus::Open, true, None, 4.1), None);
+    }
+
+    #[test]
+    fn a_refused_upgrade_shows_at_once_with_why() {
+        let mut n = Notices::default();
+        let refused = n.update(GatewayStatus::Reconnecting, true, Some("HTTP 403"), 0.0);
+        assert_eq!(refused, Some(Notice::Refused("HTTP 403".into())));
+        assert_eq!(
+            refused.unwrap().text(),
+            "Keine Verbindung – vom Server abgelehnt (HTTP 403)"
+        );
+        // It stays past the reconnect delay while the slow retry runs.
+        assert!(matches!(
+            n.update(GatewayStatus::Connecting, true, Some("HTTP 403"), 10.0),
+            Some(Notice::Refused(_))
+        ));
+        let tls = n.update(
+            GatewayStatus::Reconnecting,
+            true,
+            Some("TLS: bad cert"),
+            11.0,
+        );
+        assert_eq!(
+            tls.unwrap().text(),
+            "Keine Verbindung – das Zertifikat des Servers wird nicht akzeptiert"
+        );
+        // Accepted again: restored, like any other comeback.
+        assert_eq!(
+            n.update(GatewayStatus::Open, true, None, 12.0),
+            Some(Notice::Restored)
+        );
     }
 }

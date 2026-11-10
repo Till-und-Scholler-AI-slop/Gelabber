@@ -598,10 +598,12 @@ impl GelabberApp {
         screens::show(ui, &mut app, &mut self.screen);
         skip.paint(ui);
         if signed_in {
-            let status = self.client.with_state(|s| s.gateway);
-            screens::shell::connection::show(ui, status);
+            let (status, refused) = self
+                .client
+                .with_state(|s| (s.gateway, s.gateway_refused.clone()));
+            screens::shell::connection::show(ui, status, refused.as_deref());
         } else {
-            screens::shell::connection::show(ui, gelabber_client::GatewayStatus::Idle);
+            screens::shell::connection::show(ui, gelabber_client::GatewayStatus::Idle, None);
         }
         logout_failed(ui, &self.client, signed_in);
         // A file choice that no desktop chooser took: the path field.
