@@ -325,7 +325,9 @@ export function fieldMessage(field: string, code: FieldCode): string {
         ? "Die Datei ist zu groß (max. 25 MB)."
         : field === "attachment_ids"
           ? "Höchstens 10 Dateien pro Nachricht."
-          : `${label} ist zu lang.`;
+          : field.startsWith("attachment_ids.")
+            ? "Das Bild hat zu viele Pixel (max. 16384 px pro Seite, 64 Megapixel)."
+            : `${label} ist zu lang.`;
     case "too_large":
       return "Alle Dateien zusammen sind zu groß (max. 100 MB).";
     case "mismatch":

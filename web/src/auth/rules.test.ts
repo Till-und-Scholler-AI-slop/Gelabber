@@ -80,6 +80,13 @@ describe("copy", () => {
     );
   });
 
+  // The server's bind turns down an image too large in pixels by its place.
+  it("names an image with too many pixels", () => {
+    expect(fieldMessage("attachment_ids.1", "too_long")).toBe(
+      "Das Bild hat zu viele Pixel (max. 16384 px pro Seite, 64 Megapixel).",
+    );
+  });
+
   it("maps server field codes to messages", () => {
     expect(fieldMessages({ email: "taken", name: "required" })).toEqual({
       email: "Diese E-Mail-Adresse ist schon registriert.",
