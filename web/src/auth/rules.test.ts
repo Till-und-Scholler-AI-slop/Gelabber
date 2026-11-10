@@ -11,6 +11,7 @@ import {
   validateAvatarUrl,
   validateEmail,
   validateName,
+  validateNewEmail,
   validatePassword,
 } from "./rules.ts";
 
@@ -26,6 +27,32 @@ describe("validation rules (mirror of backend/api/src/auth/validate.rs)", () => 
     expect(validateEmail("ada@@example.com")).toBe("invalid");
     expect(validateEmail("a da@example.com")).toBe("invalid");
     expect(validateEmail(`${"a".repeat(254)}@example.com`)).toBe("too_long");
+  });
+
+  // Registration (new_email): one bare mailbox, as the server stores it.
+  // Sign-in keeps the lenient check so older accounts stay reachable.
+  it("a new email is one bare address", () => {
+    expect(validateNewEmail(" Ada.Lovelace+chat@Example.org ")).toBeNull();
+    expect(validateNewEmail("victim@bücher.de")).toBeNull();
+    expect(validateNewEmail("o'neil_x-y@example.org")).toBeNull();
+    for (const raw of [
+      "a<victim@example.org>",
+      "<victim@example.org>",
+      '"victim"@example.org',
+      '"a b"@example.org',
+      "victim(comment)@example.org",
+      "victim@ex%61mple.org",
+      ".victim@example.org",
+      "vic..tim@example.org",
+      `${"a".repeat(65)}@example.org`,
+    ]) {
+      expect(validateNewEmail(raw), raw).toBe("invalid");
+      expect(fieldMessage("email", "invalid")).toBe(
+        "Das sieht nicht wie eine E-Mail-Adresse aus.",
+      );
+    }
+    expect(validateEmail("a<victim@example.org>")).toBeNull();
+    expect(validateNewEmail("")).toBe("required");
   });
 
   it("password counts characters, not bytes", () => {
