@@ -32,6 +32,8 @@ describe("operator formats", () => {
     setLocale("en", { persist: false });
     expect(formatBytes(6_800_000_000)).toBe("6.8 GB");
     expect(formatBytes(340_000_000)).toBe("340 MB");
+    expect(formatBytes(0)).toBe("0 bytes");
+    expect(formatBytes(512)).toBe("512 bytes");
     expect(formatCount(12345)).toBe("12,345");
     setLocale("de", { persist: false });
     expect(formatCount(12345)).toBe("12.345");
@@ -44,6 +46,10 @@ describe("operator formats", () => {
     expect(formatWhen(new Date(now + 3 * DAY).toISOString(), now)).toBe(
       "in 3 Tagen",
     );
+    // An invitation made for 7 days, a moment later, still reads 7 days.
+    expect(formatWhen(now + 7 * DAY - 5_000, now)).toBe("in 7 Tagen");
+    expect(formatWhen(now + 30 * DAY - 5_000, now)).toBe("in 30 Tagen");
+    expect(formatWhen(now + 59 * MINUTE + 50_000, now)).toBe("in 1 Stunde");
     setLocale("en", { persist: false });
     expect(formatWhen(now - 5 * MINUTE, now)).toBe("5 minutes ago");
     expect(formatWhen(now - 2 * 60 * MINUTE, now)).toBe("2 hours ago");

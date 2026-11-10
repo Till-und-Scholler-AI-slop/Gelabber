@@ -31,6 +31,8 @@ export function formatBytes(bytes: number): string {
     style: "unit",
     unit: BYTE_UNITS[unit],
     maximumFractionDigits: unit > 0 && value < 10 ? 1 : 0,
+    // English's short "byte" has no plural ("0 byte"); the long form does.
+    unitDisplay: unit === 0 ? "long" : "short",
   });
 }
 
@@ -54,14 +56,19 @@ export function formatWhen(
   const at =
     value instanceof Date ? value.getTime() : new Date(value).getTime();
   const diff = at - now;
-  const size = Math.abs(diff);
   const auto = { numeric: "auto" } as const;
-  if (size < HOUR)
-    return formatRelative(Math.trunc(diff / MINUTE), "minute", auto);
-  if (size < DAY) return formatRelative(Math.trunc(diff / HOUR), "hour", auto);
-  if (size < 30 * DAY)
-    return formatRelative(Math.trunc(diff / DAY), "day", auto);
-  if (size < 365 * DAY)
-    return formatRelative(Math.trunc(diff / (30 * DAY)), "month", auto);
-  return formatRelative(Math.trunc(diff / (365 * DAY)), "year", auto);
+  // Rounded, so an invitation made for 7 days reads "in 7 Tagen" at once;
+  // the unit is the first one whose rounded count stays below the next.
+  const steps = [
+    [MINUTE, 60, "minute"],
+    [HOUR, 24, "hour"],
+    // Up to 30 days in days: the longest invitation reads "in 30 Tagen".
+    [DAY, 31, "day"],
+    [30 * DAY, 12, "month"],
+  ] as const;
+  for (const [size, below, unit] of steps) {
+    const count = Math.round(diff / size);
+    if (Math.abs(count) < below) return formatRelative(count, unit, auto);
+  }
+  return formatRelative(Math.round(diff / (365 * DAY)), "year", auto);
 }
