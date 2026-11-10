@@ -587,8 +587,9 @@ fn text_action(
     response
 }
 
-/// `AttachmentImageFailed`: name, "Bild konnte nicht geladen werden.",
-/// "Erneut laden" and "Herunterladen", centred in a dashed box.
+/// `AttachmentImageFailed`: name, "Bild konnte nicht geladen werden." (or
+/// why it never shows), "Erneut laden" and "Herunterladen", centred in a
+/// dashed box.
 fn paint_failed(
     ui: &mut Ui,
     images: &Images,
@@ -610,13 +611,12 @@ fn paint_failed(
     );
     name_job.wrap.max_rows = 1;
     let name = Block::new(ui, name_job, TextStyle::new(13.0, 400.0, 1.5));
-    let status = Block::wrapped(
-        ui,
-        "Bild konnte nicht geladen werden.",
-        STATE_STYLE,
-        c.muted,
-        inner.width(),
-    );
+    let said = if images.too_large(&attachment_url(att.id), Fit::Inline) {
+        "Bild ist zu groß zum Anzeigen."
+    } else {
+        "Bild konnte nicht geladen werden."
+    };
+    let status = Block::wrapped(ui, said, STATE_STYLE, c.muted, inner.width());
     let actions_h = STATE_STYLE.line_px();
     let total = 15.0 + 6.0 + name.height() + 6.0 + status.height() + 6.0 + actions_h;
     let mut y = rect.center().y - total / 2.0;
@@ -634,7 +634,7 @@ fn paint_failed(
     self::status(
         ui,
         Rect::from_min_size(pos2(inner.left(), y), status.size()),
-        "Bild konnte nicht geladen werden.",
+        said,
     );
     y += status.height() + 6.0;
     let mut action = None;
