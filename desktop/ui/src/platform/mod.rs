@@ -9,6 +9,7 @@ pub mod files;
 pub mod instance;
 pub mod legacy;
 pub mod notify;
+mod open;
 pub mod paths;
 pub mod ptt;
 #[cfg(target_os = "linux")]
@@ -20,9 +21,11 @@ pub mod tray;
 pub mod update;
 pub mod webview;
 
+pub use open::{open_url, open_url_logged};
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use egui::{Context, Id, ViewportCommand};
 use gelabber_client::Client;
@@ -31,6 +34,7 @@ use uuid::Uuid;
 
 use crate::app::GelabberApp;
 use crate::screens::settings::prefs;
+use crate::screens::voice::call_bar::{PttSource, push_to_talk_from};
 use crate::screens::{chat, shell};
 
 /// The desktop entry's and the window's id (Wayland app id, notification
@@ -124,11 +128,11 @@ pub struct Platform {
     window_can_hide: bool,
     quitting: bool,
     front: Option<bool>,
-    next_tick: f64,
+    /// Its own clock: logic-only passes (hidden, not composited) keep egui's still.
+    next_tick: Option<Instant>,
     stored: state::Stored,
     saved: state::Stored,
     restored_for: Option<Uuid>,
-    volumes: Volumes,
     ptt: PttLink,
     updates: update::Updater,
     /// The window title last sent (`titleWith`).
@@ -160,11 +164,10 @@ impl Platform {
             window_can_hide: true,
             quitting: false,
             front: None,
-            next_tick: 0.0,
+            next_tick: None,
             saved: stored.clone(),
             stored,
             restored_for: None,
-            volumes: Volumes::default(),
             ptt: PttLink::default(),
             updates: update::Updater::default(),
             title: "Gelabber".into(),
@@ -213,7 +216,7 @@ impl Platform {
             instance.set_wake(waker(&self.wake));
         }
         self.tray = tray::Tray::start(self.tray_events.clone(), waker(&self.wake));
-        self.updates.start(ctx.input(|i| i.time));
+        self.updates.start(Instant::now());
     }
 
     fn show_window(&mut self, ctx: &Context) {
@@ -269,7 +272,7 @@ impl Platform {
                 }),
             )
         });
-        let now = ctx.input(|i| i.time);
+        let now = Instant::now();
         // Title bar and decorations in the theme's mode, the setup screen's
         // too (it shows in the active theme, as the sign-in pages).
         let title_bar = if crate::theme::Theme::of(ctx).is_dark() {
@@ -285,6 +288,8 @@ impl Platform {
         self.in_setup = app.is_none();
         let Some(app) = app else {
             self.show_unread(ctx, tray::Unread::default());
+            // The call ended with the app: the global key goes with it.
+            self.ptt.stop(ctx);
             // "Jetzt installieren" on the setup screen: no call to wait for.
             if self.updates.tick_setup(ctx) {
                 self.quitting = true;
@@ -334,9 +339,15 @@ impl Platform {
             call.play_sound(gelabber_call::Sound::LiveStart);
         }
         self.ptt.tick(ctx, &call, &p);
-        if now >= self.next_tick {
-            self.next_tick = now + 0.5;
-            self.tick(ctx, &client, &call, in_front);
+        // Hidden, minimised or behind another window, the window sees no
+        // key's release (no paint runs then): its hold ends here. The
+        // global hook's hold is its own and goes on.
+        if !in_front || joined.is_none() {
+            crate::screens::voice::call_bar::release_window(ctx, &call);
+        }
+        if self.next_tick.is_none_or(|next| now >= next) {
+            self.next_tick = Some(now + Duration::from_millis(500));
+            self.tick(ctx, &client, in_front);
         }
         // An accepted update: the window closes, main.rs runs the installer.
         if self.updates.tick(&client, now, update::call_busy(&call)) {
@@ -353,7 +364,7 @@ impl Platform {
     }
 
     /// Twice a second: the sign-in, the tray's dot, what is remembered.
-    fn tick(&mut self, ctx: &Context, client: &Client, call: &gelabber_call::Call, in_front: bool) {
+    fn tick(&mut self, ctx: &Context, client: &Client, in_front: bool) {
         if let Some(keeper) = self.keeper.lock().as_mut() {
             keeper.tick(client);
         }
@@ -382,7 +393,7 @@ impl Platform {
             tray::Unread::default()
         };
         self.show_unread(ctx, unread);
-        self.remember(ctx, me, call);
+        self.remember(ctx, me);
     }
 
     /// The tray's dot, the window title and the launcher's count.
@@ -412,7 +423,8 @@ impl Platform {
             && self.restored_for != Some(user)
         {
             self.restored_for = Some(user);
-            self.volumes = Volumes::default();
+            chat::switch_account(ctx, user);
+            shell::switch_account(ctx, user);
             if let Some(account) = self.stored.accounts.get(&user) {
                 shell::restore_memory(ctx, user, account.memory());
                 chat::restore_drafts(ctx, account.fresh_drafts(state::now_ms()));
@@ -420,7 +432,7 @@ impl Platform {
         }
     }
 
-    fn remember(&mut self, ctx: &Context, me: Option<Uuid>, call: &gelabber_call::Call) {
+    fn remember(&mut self, ctx: &Context, me: Option<Uuid>) {
         let now = state::now_ms();
         if let Some(user) = me.filter(|u| self.restored_for == Some(*u)) {
             let account = self.stored.accounts.entry(user).or_default();
@@ -428,7 +440,6 @@ impl Platform {
                 account.set_memory(&memory);
             }
             account.set_drafts(&chat::drafts(ctx), now);
-            self.volumes.tick(call, account);
         }
         self.track_window(ctx);
         if self.stored != self.saved {
@@ -460,16 +471,17 @@ impl Platform {
             return;
         }
         window.maximized = maximized == Some(true);
+        // egui's points shrink with the text size; the window opens before
+        // any zoom is set, so it is stored in the desktop's logical pixels.
+        let zoom = ctx.zoom_factor();
+        let (width, height) = (inner.width() * zoom, inner.height() * zoom);
         // A maximized window keeps the size it comes back to.
-        if !window.maximized
-            && inner.width() >= state::MIN_SIZE[0]
-            && inner.height() >= state::MIN_SIZE[1]
-        {
-            window.width = inner.width().round();
-            window.height = inner.height().round();
+        if !window.maximized && width >= state::MIN_SIZE[0] && height >= state::MIN_SIZE[1] {
+            window.width = width.round();
+            window.height = height.round();
             if let Some(outer) = outer {
-                window.x = Some(outer.min.x.round());
-                window.y = Some(outer.min.y.round());
+                window.x = Some((outer.min.x * zoom).round());
+                window.y = Some((outer.min.y * zoom).round());
             }
         }
         self.stored.window = Some(window);
@@ -487,94 +499,24 @@ impl Platform {
     /// The app ends: what it showed goes, what it remembers is written.
     pub fn on_exit(&mut self) {
         self.notifier.clear();
-        // Written here as well: the last background write may not finish.
-        if self.stored != state::Stored::default()
-            && let Err(e) = paths::write_json(
-                "native-state.json",
-                &serde_json::to_value(&self.stored).unwrap_or_default(),
-                true,
-            )
-        {
-            tracing::warn!("state: {e}");
+        if self.stored != self.saved {
+            state::save(&self.stored);
+            self.saved = self.stored.clone();
         }
-    }
-}
-
-/// Per-person volumes: stored ones go to people who join the call, the
-/// user's changes are kept (voice/userVolume.ts).
-#[derive(Default)]
-struct Volumes {
-    channel: Option<Uuid>,
-    /// Per person: the volume last set or seen, and whether the call
-    /// reported it back (only then is a difference the user's change).
-    applied: std::collections::HashMap<Uuid, (f32, bool)>,
-}
-
-impl Volumes {
-    fn tick(&mut self, call: &impl VolumeSink, account: &mut state::Account) {
-        let (channel, people) = call.people();
-        if channel != self.channel {
-            self.channel = channel;
-            self.applied.clear();
+        // The queued writes (state, settings, volumes) finish before the process ends.
+        if !paths::flush(Duration::from_secs(3)) {
+            tracing::warn!("state: writes still running at exit");
         }
-        let same = |a: f32, b: f32| (a - b).abs() <= 0.001;
-        for (user, volume) in people {
-            match self.applied.get(&user).copied() {
-                None => {
-                    let stored = account.volumes.get(&user).map_or(1.0, |v| v.volume);
-                    let confirmed = same(stored, volume);
-                    if !confirmed {
-                        call.set_volume(user, stored);
-                    }
-                    self.applied.insert(user, (stored, confirmed));
-                }
-                Some((target, false)) => {
-                    if same(target, volume) {
-                        self.applied.insert(user, (target, true));
-                    }
-                }
-                Some((applied, true)) if !same(applied, volume) => {
-                    account.set_volume(user, volume);
-                    self.applied.insert(user, (volume, true));
-                }
-                Some(_) => {}
-            }
-        }
-    }
-}
-
-/// The call as [`Volumes`] uses it.
-trait VolumeSink {
-    /// The call's channel and the others in it with their volumes.
-    fn people(&self) -> (Option<Uuid>, Vec<(Uuid, f32)>);
-    fn set_volume(&self, user: Uuid, volume: f32);
-}
-
-impl VolumeSink for gelabber_call::Call {
-    fn people(&self) -> (Option<Uuid>, Vec<(Uuid, f32)>) {
-        self.with_state(|s| {
-            (
-                s.channel,
-                s.participants
-                    .iter()
-                    .filter(|p| !p.me)
-                    .map(|p| (p.user, p.volume))
-                    .collect(),
-            )
-        })
-    }
-
-    fn set_volume(&self, user: Uuid, volume: f32) {
-        gelabber_call::Call::set_volume(self, user, volume);
     }
 }
 
 /// Binds the global key while a call wants push-to-talk and hands the key
-/// to [`gelabber_call::Call::push_to_talk`].
+/// to the call beside the window's own ([`push_to_talk_from`]).
 #[derive(Default)]
 struct PttLink {
-    /// The key last bound or tried; a failed one is not tried every pass.
-    key: Option<String>,
+    /// The key and its label last bound or tried; a failed one is not tried
+    /// every pass.
+    key: Option<(String, String)>,
     binding: Option<ptt::Ptt>,
     events: Arc<Mutex<Vec<ptt::Event>>>,
     status: Option<PttStatus>,
@@ -582,6 +524,19 @@ struct PttLink {
 }
 
 impl PttLink {
+    /// No app (the setup screen), so no call: the binding (Windows hook,
+    /// portal session) ends.
+    fn stop(&mut self, ctx: &Context) {
+        if self.key.is_some() || self.status.is_some() {
+            self.binding = None;
+            self.events.lock().clear();
+            self.down = false;
+            self.status = None;
+            self.key = None;
+            ctx.data_mut(|d| d.insert_temp::<Option<PttStatus>>(ptt_id(), None));
+        }
+    }
+
     fn tick(&mut self, ctx: &Context, call: &gelabber_call::Call, p: &prefs::Prefs) {
         let in_call = call.with_state(|s| {
             matches!(
@@ -592,25 +547,25 @@ impl PttLink {
             )
         });
         let want = (in_call && p.voice_input == "ptt" && !p.ptt_key.is_empty())
-            .then_some(p.ptt_key.as_str());
-        if self.key.as_deref() != want {
+            .then(|| (p.ptt_key.clone(), p.ptt_key_label.clone()));
+        if self.key != want {
             // The old binding ends before a new one starts.
             self.binding = None;
             self.events.lock().clear();
             if self.down {
                 self.down = false;
-                call.push_to_talk(false);
+                push_to_talk_from(ctx, call, PttSource::Hook, false);
             }
             self.status = None;
-            self.key = want.map(str::to_owned);
-            if let Some(key) = want {
+            self.key = want.clone();
+            if let Some((key, label)) = want {
                 let events = self.events.clone();
                 let wake = ctx.clone();
                 let report: ptt::Report = Arc::new(move |e| {
                     events.lock().push(e);
                     wake.request_repaint();
                 });
-                match ptt::bind(key, report) {
+                match ptt::bind(&key, &label, report) {
                     Ok(binding) => self.binding = Some(binding),
                     Err(reason) => self.status = Some(PttStatus::Failed { reason }),
                 }
@@ -620,11 +575,11 @@ impl PttLink {
             match event {
                 ptt::Event::Press => {
                     self.down = true;
-                    call.push_to_talk(true);
+                    push_to_talk_from(ctx, call, PttSource::Hook, true);
                 }
                 ptt::Event::Release => {
                     self.down = false;
-                    call.push_to_talk(false);
+                    push_to_talk_from(ctx, call, PttSource::Hook, false);
                 }
                 ptt::Event::Bound { trigger } => self.status = Some(PttStatus::Bound { trigger }),
                 ptt::Event::Failed { reason } => self.status = Some(PttStatus::Failed { reason }),
@@ -638,61 +593,6 @@ impl PttLink {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A call whose volumes follow `set_volume` once `answers` is on.
-    struct FakeCall {
-        channel: Option<Uuid>,
-        people: Mutex<Vec<(Uuid, f32)>>,
-        answers: bool,
-        sent: Mutex<Vec<(Uuid, f32)>>,
-    }
-
-    impl VolumeSink for FakeCall {
-        fn people(&self) -> (Option<Uuid>, Vec<(Uuid, f32)>) {
-            (self.channel, self.people.lock().clone())
-        }
-        fn set_volume(&self, user: Uuid, volume: f32) {
-            self.sent.lock().push((user, volume));
-            if self.answers {
-                for p in self.people.lock().iter_mut().filter(|p| p.0 == user) {
-                    p.1 = volume;
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn stored_volumes_reach_who_joins_and_the_users_changes_are_kept() {
-        let (anna, tom) = (Uuid::new_v4(), Uuid::new_v4());
-        let mut account = state::Account::default();
-        account.set_volume(anna, 1.5);
-        let call = FakeCall {
-            channel: Some(Uuid::new_v4()),
-            people: Mutex::new(vec![(anna, 1.0), (tom, 1.0)]),
-            answers: true,
-            sent: Mutex::default(),
-        };
-        let mut volumes = Volumes::default();
-        volumes.tick(&call, &mut account);
-        assert_eq!(*call.sent.lock(), vec![(anna, 1.5)]);
-        volumes.tick(&call, &mut account);
-        // The user turns Tom down: kept.
-        call.people.lock()[1].1 = 0.5;
-        volumes.tick(&call, &mut account);
-        assert_eq!(account.volumes[&tom].volume, 0.5);
-        assert_eq!(account.volumes[&anna].volume, 1.5);
-        // A call that has not taken the stored volume yet changes nothing.
-        let slow = FakeCall {
-            channel: Some(Uuid::new_v4()),
-            people: Mutex::new(vec![(anna, 0.0)]),
-            answers: false,
-            sent: Mutex::default(),
-        };
-        let mut volumes = Volumes::default();
-        volumes.tick(&slow, &mut account);
-        volumes.tick(&slow, &mut account);
-        assert_eq!(account.volumes[&anna].volume, 1.5);
-    }
 
     /// Without a tray, a notification service or a call the passes run,
     /// remember the window and publish what the settings page shows.
@@ -727,6 +627,124 @@ mod tests {
         let stored = state::load();
         let window = stored.window.unwrap();
         assert_eq!((window.width, window.height), (900.0, 700.0));
+        drop(config);
+    }
+
+    /// A hidden or uncomposited window gets logic-only passes whose input
+    /// time stands still; the twice-a-second duties must go on regardless.
+    #[test]
+    fn the_tick_runs_on_passes_whose_input_time_stands_still() {
+        let config = paths::testing::TempConfig::new("platform-tick-clock");
+        let ctx = Context::default();
+        let client = Client::new("http://127.0.0.1:9").unwrap();
+        let mut platform = Platform::new(None);
+        let mut app = GelabberApp::with_context(&ctx, client, None);
+        let pass = |platform: &mut Platform, app: &mut GelabberApp, size: egui::Vec2| {
+            let mut input = egui::RawInput {
+                time: Some(10.0),
+                ..Default::default()
+            };
+            input
+                .viewports
+                .entry(egui::ViewportId::ROOT)
+                .or_default()
+                .inner_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size));
+            let mut out = ctx.run_ui(input, |ui| platform.logic(ui.ctx(), Some(app)));
+            out.textures_delta.clear();
+        };
+        pass(&mut platform, &mut app, egui::vec2(900.0, 700.0));
+        assert_eq!(platform.stored.window.unwrap().width, 900.0);
+        std::thread::sleep(Duration::from_millis(600));
+        pass(&mut platform, &mut app, egui::vec2(1000.0, 700.0));
+        assert_eq!(platform.stored.window.unwrap().width, 1000.0);
+        drop(config);
+    }
+
+    /// A key held in the window as it is minimised: the logic pass, which
+    /// runs without a paint, lets the window's hold go; the hook's stays.
+    #[test]
+    fn a_hidden_window_lets_its_push_to_talk_key_go() {
+        use crate::screens::voice::call_bar::{PttSource, push_to_talk_from};
+        let config = paths::testing::TempConfig::new("platform-ptt-hidden");
+        let ctx = Context::default();
+        let client = Client::new("http://127.0.0.1:9").unwrap();
+        let mut platform = Platform::new(None);
+        let mut app = GelabberApp::with_context(&ctx, client, None);
+        let call = app.call().clone();
+        call.set_state(gelabber_call::CallState {
+            status: gelabber_call::CallStatus::Connected,
+            server: Some(uuid::Uuid::from_u128(0xa0)),
+            channel: Some(uuid::Uuid::from_u128(0xb1)),
+            ..gelabber_call::CallState::default()
+        });
+        let pass = |platform: &mut Platform, app: &mut GelabberApp, minimized: bool| {
+            let mut input = egui::RawInput::default();
+            input
+                .viewports
+                .entry(egui::ViewportId::ROOT)
+                .or_default()
+                .minimized = Some(minimized);
+            let mut out = ctx.run_ui(input, |ui| platform.logic(ui.ctx(), Some(app)));
+            out.textures_delta.clear();
+        };
+        prefs::update(&ctx, |p| {
+            p.voice_input = "ptt".into();
+            p.ptt_key = "KeyA".into();
+        });
+        call.set_settings(crate::screens::voice::sync::settings(&prefs::get(&ctx)));
+        push_to_talk_from(&ctx, &call, PttSource::Window, true);
+        pass(&mut platform, &mut app, false);
+        assert!(call.push_to_talk_held(), "shown: the window keeps it");
+        pass(&mut platform, &mut app, true);
+        assert!(!call.push_to_talk_held(), "minimised: let go");
+        push_to_talk_from(&ctx, &call, PttSource::Hook, true);
+        pass(&mut platform, &mut app, true);
+        assert!(call.push_to_talk_held(), "the hook holds while hidden");
+        drop(config);
+    }
+
+    /// "Server wechseln …" in a push-to-talk call: the setup screen has no
+    /// call, so the global key (hook, portal session) is let go.
+    #[test]
+    fn the_setup_screen_lets_the_global_key_go() {
+        let config = paths::testing::TempConfig::new("platform-ptt-setup");
+        let ctx = Context::default();
+        let mut platform = Platform::new(None);
+        platform.ptt.key = Some(("F13".into(), "F13".into()));
+        platform.ptt.status = Some(PttStatus::Bound { trigger: None });
+        ctx.data_mut(|d| d.insert_temp(ptt_id(), platform.ptt.status.clone()));
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            platform.logic(ui.ctx(), None);
+        });
+        out.textures_delta.clear();
+        assert_eq!(platform.ptt.key, None);
+        assert_eq!(ptt_status(&ctx), None);
+        drop(config);
+    }
+
+    /// "Groß" zooms egui's points by 1.25; the window opens before any zoom,
+    /// so what is stored must be the window's own size, not the points.
+    #[test]
+    fn the_window_is_remembered_without_the_text_size() {
+        let config = paths::testing::TempConfig::new("platform-zoom");
+        let ctx = Context::default();
+        ctx.set_zoom_factor(1.25);
+        let mut platform = Platform::new(None);
+        let mut input = egui::RawInput::default();
+        let viewport = input.viewports.entry(egui::ViewportId::ROOT).or_default();
+        viewport.inner_rect = Some(egui::Rect::from_min_size(
+            egui::pos2(80.0, 40.0),
+            egui::vec2(800.0, 560.0),
+        ));
+        viewport.outer_rect = Some(egui::Rect::from_min_size(
+            egui::pos2(80.0, 16.0),
+            egui::vec2(800.0, 584.0),
+        ));
+        let mut out = ctx.run_ui(input, |ui| platform.track_window(ui.ctx()));
+        out.textures_delta.clear();
+        let window = platform.stored.window.unwrap();
+        assert_eq!((window.width, window.height), (1000.0, 700.0));
+        assert_eq!((window.x, window.y), (Some(100.0), Some(20.0)));
         drop(config);
     }
 }

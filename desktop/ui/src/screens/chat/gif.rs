@@ -5,7 +5,7 @@
 use egui::{Color32, Rect, Sense, Stroke, StrokeKind, TextBuffer, Ui, pos2, vec2};
 use gelabber_client::{ApiError, Client, Gif, GifPage, GifPick};
 
-use crate::images::{ImageState, Images, cover_uv};
+use crate::images::{Fit, ImageState, Images, cover_uv};
 use crate::task::{Pending, poll};
 use crate::text::{Block, TextStyle};
 use crate::theme::{Theme, corner};
@@ -202,7 +202,7 @@ pub fn show(
                                 block.paint(ui.painter(), r.center() - block.size() / 2.0);
                             }
                             if let Some(ImageState::Ready(t)) =
-                                url.map(|url| images.frame(ui.ctx(), &url, playing))
+                                url.map(|url| images.frame(ui.ctx(), &url, playing, Fit::Inline))
                             {
                                 let tint = if resp.hovered() {
                                     Color32::WHITE

@@ -3,8 +3,9 @@
 //! menu or dialog is open, and the overview's message previews. It lives
 //! in the egui context under the shell's own id.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use gelabber_client::{ApiError, Invite, Message};
 use parking_lot::Mutex;
@@ -52,12 +53,17 @@ impl Default for Terms {
     }
 }
 
+/// A link request's answer with the terms it asked for.
+pub type Created = (Terms, Result<Invite, ApiError>);
+
 pub struct InviteState {
     pub server: Uuid,
     pub name: String,
     pub terms: Terms,
     pub invite: Option<(Invite, Terms)>,
-    pub creating: Option<Pending<Result<Invite, ApiError>>>,
+    pub creating: Option<Pending<Created>>,
+    /// The number of the newest link request; older ones revoke their link.
+    pub latest: Arc<AtomicU64>,
     pub error: Option<String>,
     /// The link was copied: it is not revoked when the terms change.
     pub handed_out: bool,
@@ -94,6 +100,8 @@ pub enum Dialog {
         picker: super::overlays::picker::PickerState,
         /// The person picked; the dialog waits for their DM.
         waiting: Option<Uuid>,
+        /// The servers without a loaded member list were asked for.
+        loaded: bool,
     },
 }
 
@@ -107,6 +115,8 @@ pub struct Preview {
 
 #[derive(Default)]
 pub struct ShellState {
+    /// The account the rest belongs to; `memory` is kept per account.
+    pub account: Option<Uuid>,
     pub memory: HashMap<Uuid, Memory>,
     pub dialog: Option<Dialog>,
     pub server_menu: bool,
@@ -119,6 +129,8 @@ pub struct ShellState {
     pub invite_prompt: Option<(Uuid, String)>,
     /// The menu of a channel, category, server or conversation row.
     pub row_menu: Option<super::row_menu::Open>,
+    /// Servers being left or deleted: still listed until the request ends.
+    pub left: HashSet<Uuid>,
 }
 
 #[derive(Clone, Default)]
@@ -132,6 +144,20 @@ pub fn with<R>(ctx: &egui::Context, f: impl FnOnce(&mut ShellState) -> R) -> R {
     });
     let mut state = shared.0.lock();
     f(&mut state)
+}
+
+/// Another account signed in: its menus, dialogs and previews start
+/// empty; the remembered places stay, each under its own account.
+pub fn switch_account(ctx: &egui::Context, user: Uuid) {
+    with(ctx, |s| {
+        if s.account != Some(user) {
+            *s = ShellState {
+                account: Some(user),
+                memory: std::mem::take(&mut s.memory),
+                ..ShellState::default()
+            };
+        }
+    });
 }
 
 /// The memory of `user`.

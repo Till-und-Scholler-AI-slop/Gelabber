@@ -44,6 +44,30 @@ pub fn restore_memory(ctx: &egui::Context, user: Uuid, memory: Memory) {
     });
 }
 
+/// Another account signed in (or the first one this run): the shell's
+/// menus, dialogs, overlays and drafts of the one before are dropped.
+pub fn switch_account(ctx: &egui::Context, user: Uuid) {
+    let changed = state::with(ctx, |s| s.account != Some(user));
+    state::switch_account(ctx, user);
+    overlays::switch_account(ctx, user);
+    if changed {
+        user_panel::switch_account(ctx);
+    }
+}
+
+/// The user leaves or deletes `server` (the request is on its way): "/"
+/// and the remembered places no longer lead there.
+pub fn leave_server(ctx: &egui::Context, client: &gelabber_client::Client, server: Uuid) {
+    let user = client.with_state(|s| s.me().map(|m| m.id));
+    state::remember(ctx, user, |m| {
+        m.channels.remove(&server);
+        if m.place == Some(Place::Server(server)) {
+            m.place = None;
+        }
+    });
+    state::with(ctx, |s| s.left.insert(server));
+}
+
 pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     let theme = Theme::of(ui.ctx());
     let screen = ui.ctx().content_rect();
@@ -51,8 +75,13 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     effects(ui, app);
     voice::video::sweep(ui.ctx(), app.call);
     let route = app.nav.route().clone();
-    overlays::keys(ui, state::with(ui.ctx(), |s| s.dialog.is_some()));
-    shortcuts(ui, app, &route);
+    // A modal that is not the shell's (a voice or chat dialog, a settings
+    // confirm) holds the shortcuts too, as useShellShortcuts does.
+    let other_modal = ui.ctx().memory(|m| m.top_modal_layer().is_some())
+        && !dialog_open(ui.ctx())
+        && !overlays::is_open(ui.ctx());
+    overlays::keys(ui, dialog_open(ui.ctx()) || other_modal);
+    shortcuts(ui, app, &route, other_modal);
 
     // A running call's bar takes the bottom strip next to the user panel;
     // the page and the member panel end above it.
@@ -68,6 +97,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
         voice::show(&mut main, app, s, c);
         call_bar(ui, app, screen, true);
         dialogs::show(ui, app);
+        // The switcher, profiles and toasts stay over Kino, and the
+        // client's notices (kicked, banned, failures) are taken meanwhile.
+        overlays::show(ui, app);
         return;
     }
 
@@ -285,10 +317,12 @@ fn effects(ui: &Ui, app: &mut AppCtx) {
         Route::Channel(s, c) => {
             let kind = app.client.with_state(|st| st.channel(*c).map(|ch| ch.kind));
             match kind {
-                Some(ChannelKind::Text) => app.client.open_server_channel(*s, *c),
                 // A voice room has no history of its own; the server's view
                 // keeps its topics (the call subscribes the room).
-                _ => app.client.open_server(*s),
+                Some(ChannelKind::Voice) => app.client.open_server(*s),
+                // Unknown yet (the server still loads): the chat page draws
+                // and opens the channel, so the same view here, not a rival.
+                _ => app.client.open_server_channel(*s, *c),
             }
             if first || kind.is_some() {
                 state::remember(ui.ctx(), user, |m| {
@@ -311,6 +345,20 @@ fn effects(ui: &Ui, app: &mut AppCtx) {
             if first && app.client.with_state(|s| s.view != View::default()) {
                 app.client.close_view();
             }
+        }
+    }
+    // A left server is forgotten once its request ended; a failed one is
+    // a way back again.
+    let left = state::with(ui.ctx(), |s| s.left.clone());
+    for server in left {
+        let settled = app.client.with_state(|s| {
+            let failed = [format!("leave:{server}"), format!("delete_server:{server}")]
+                .iter()
+                .any(|key| matches!(s.op(key), Some(OpState::Failed(_))));
+            failed || !s.servers.iter().any(|v| v.id == server)
+        });
+        if settled {
+            state::with(ui.ctx(), |s| s.left.remove(&server));
         }
     }
     // SelectedServer: a server that is gone or forbidden leaves for "/".
@@ -338,8 +386,8 @@ fn effects(ui: &Ui, app: &mut AppCtx) {
 
 /// shellShortcuts.ts: Alt+↑/↓ the previous or next channel, with Umschalt
 /// the previous or next unread one, with Strg the previous or next server.
-fn shortcuts(ui: &Ui, app: &mut AppCtx, route: &Route) {
-    if state::with(ui.ctx(), |s| s.dialog.is_some()) || overlays::is_open(ui.ctx()) {
+fn shortcuts(ui: &Ui, app: &mut AppCtx, route: &Route, other_modal: bool) {
+    if other_modal || dialog_open(ui.ctx()) || overlays::is_open(ui.ctx()) {
         return;
     }
     let mut step = 0i32;
@@ -480,5 +528,105 @@ mod tests {
         assert_eq!(step_index(3, Some(1), -1), Some(0));
         assert_eq!(next_unread(&[true, false, true], Some(2), 1), Some(0));
         assert_eq!(next_unread(&[false, false, true], Some(2), 1), None);
+    }
+
+    /// A dialog, menu or question of one account is not shown to the
+    /// next; the remembered places stay with their own account.
+    #[test]
+    fn another_account_gets_none_of_the_shell_state() {
+        let ctx = egui::Context::default();
+        let (a, b, server) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        switch_account(&ctx, a);
+        state::remember(&ctx, Some(a), |m| m.place = Some(Place::Server(server)));
+        dialogs::open_add(&ctx, state::AddStep::Join);
+        state::with(&ctx, |s| {
+            s.invite_prompt = Some((server, "Wohnzimmer".into()))
+        });
+        overlays::ask(
+            &ctx,
+            overlays::Question::danger(
+                "Lena sperren?",
+                None,
+                "Sperren",
+                overlays::ConfirmAction::Ban { server, user: b },
+            ),
+        );
+        // The same account again keeps it.
+        switch_account(&ctx, a);
+        assert!(dialog_open(&ctx));
+        assert!(overlays::is_open(&ctx));
+        switch_account(&ctx, b);
+        assert!(!dialog_open(&ctx));
+        assert!(!overlays::is_open(&ctx));
+        assert!(state::with(&ctx, |s| s.invite_prompt.is_none()));
+        assert_eq!(
+            memory_of(&ctx, a).and_then(|m| m.place),
+            Some(Place::Server(server))
+        );
+    }
+
+    /// useShellShortcuts: while any modal dialog is open (here the settings'
+    /// confirm), Alt+↓ moves nowhere and Strg+K opens nothing over it.
+    #[test]
+    fn shortcuts_keep_off_under_a_modal_that_is_not_the_shells() {
+        use crate::app::testkit::{FakeApi, HOME, launcher, wait_for_label, workspace};
+        use crate::platform::paths::testing::TempConfig;
+        use crate::screens::settings::controls;
+
+        let _config = TempConfig::new("shortcuts-modal");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
+        wait_for_label(&mut harness, "allgemein");
+        controls::ask(
+            &harness.ctx.clone(),
+            controls::Confirm::danger("probe", "Wirklich?", None, "Ja"),
+        );
+        wait_for_label(&mut harness, "Wirklich?");
+        harness.run_steps(2);
+        harness.key_press_modifiers(Modifiers::ALT, Key::ArrowDown);
+        harness.key_press_modifiers(Modifiers::COMMAND, Key::K);
+        harness.run_steps(4);
+        let route = harness
+            .state_mut()
+            .app()
+            .expect("app")
+            .nav()
+            .route()
+            .clone();
+        assert_eq!(route, Route::ServerSettings(HOME.parse().expect("id")));
+        use egui_kittest::kittest::Queryable;
+        assert!(harness.query_by_label("Wechseln zu").is_none());
+    }
+
+    /// Steps in real time for `ms` (requests go to another thread).
+    fn settle(harness: &mut egui_kittest::Harness<'_, crate::Launcher>, ms: u64) {
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_millis(ms) {
+            harness.step();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    /// A channel of a server whose detail fails to load: the shell and the
+    /// chat page open the same view, so the failed load is not asked again
+    /// and again (each flip of the view refetched it).
+    #[test]
+    fn a_failed_server_under_a_channel_route_is_asked_once() {
+        use crate::app::testkit::{ALLGEMEIN, FakeApi, HOME, Reply, launcher, workspace};
+        use crate::platform::paths::testing::TempConfig;
+
+        let _config = TempConfig::new("channel-detail-failed");
+        let api = FakeApi::start(true, |method, path, _| {
+            if method == "GET" && path == format!("/servers/{HOME}") {
+                return Some(Reply::error(500, "internal"));
+            }
+            workspace(method, path)
+        });
+        let detail = format!("GET /servers/{HOME}");
+        let asked = || api.seen.lock().iter().filter(|r| **r == detail).count();
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        crate::app::testkit::wait_for(&mut harness, "the detail request", |_| asked() > 0);
+        settle(&mut harness, 1500);
+        assert_eq!(asked(), 1, "{:?}", api.seen.lock());
     }
 }

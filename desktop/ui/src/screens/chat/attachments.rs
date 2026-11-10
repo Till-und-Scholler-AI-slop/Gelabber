@@ -16,7 +16,7 @@ use parking_lot::Mutex;
 use uuid::Uuid;
 
 use crate::icons::{self, Icon};
-use crate::images::{ImageState, Images, TextState, cover_uv};
+use crate::images::{Fit, ImageState, Images, TextState, cover_uv};
 use crate::text::{Block, TextStyle};
 use crate::theme::{Theme, corner, mix};
 
@@ -78,8 +78,90 @@ pub fn upload_text(state: Option<UploadState>) -> Option<&'static str> {
 pub enum MediaAction {
     /// Open a picture large (a URL the image cache knows).
     Open(String, String),
-    /// Download or open externally.
+    /// Open in the browser (a link preview).
     External(String),
+    /// Fetch through the app's session and save where the user says, as `name`.
+    Download { url: String, name: String },
+}
+
+impl MediaAction {
+    fn download(att: &Attachment) -> Self {
+        Self::Download {
+            url: download_url(att.id),
+            name: att.filename.clone(),
+        }
+    }
+}
+
+/// A file name from the server as the save dialog's suggestion: no path,
+/// nothing Windows refuses, never empty.
+pub fn safe_file_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .take(200)
+        .collect();
+    let cleaned = cleaned.trim().trim_end_matches('.').trim_start_matches('.');
+    let stem = cleaned
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit());
+    if cleaned.is_empty() {
+        "Download".to_owned()
+    } else if reserved {
+        format!("_{cleaned}")
+    } else {
+        cleaned.to_owned()
+    }
+}
+
+type DownloadErrors = Arc<Mutex<Vec<String>>>;
+
+fn download_errors(ctx: &egui::Context) -> DownloadErrors {
+    ctx.data_mut(|d| {
+        d.get_temp_mut_or_default::<DownloadErrors>(egui::Id::unique("gelabber-download-errors"))
+            .clone()
+    })
+}
+
+/// Fetches `url` with the app's session (a browser would have none) and
+/// asks where to save it, suggesting `name`; a failed fetch is a toast.
+pub fn download(ctx: &egui::Context, client: &gelabber_client::Client, url: &str, name: &str) {
+    let ctx = ctx.clone();
+    let http = client.http().clone();
+    let (url, name) = (url.to_owned(), safe_file_name(name));
+    client.spawn(async move {
+        match http.bytes(&url).await {
+            Ok(bytes) => crate::platform::files::save(&ctx, "Datei speichern", &name, bytes),
+            Err(e) => {
+                tracing::warn!("download {url}: {e}");
+                // A lost session sends the app to the login page instead.
+                if let Some(text) = crate::toasts::error_text(&e) {
+                    download_errors(&ctx)
+                        .lock()
+                        .push(format!("Datei nicht heruntergeladen. {text}"));
+                }
+                ctx.request_repaint();
+            }
+        }
+    });
+}
+
+/// Downloads that failed since the last call, for the toasts.
+pub fn take_download_errors(ctx: &egui::Context) -> Vec<String> {
+    std::mem::take(&mut *download_errors(ctx).lock())
 }
 
 /// What the attachments remember between frames: open text previews, and
@@ -90,6 +172,21 @@ struct Shown {
     started: HashMap<Uuid, f64>,
     /// GIF messages the reader started or stopped (`chosen`).
     gifs: HashMap<Uuid, bool>,
+    /// How far each open text preview is scrolled.
+    scroll: HashMap<Uuid, Vec2>,
+    /// The text preview under the pointer and the frame it was drawn in.
+    wheel: Option<(Rect, bool, bool, u64)>,
+}
+
+/// Whether a text preview under `pointer` takes a wheel of `delta_y`:
+/// it scrolls until its end, then the list does (scroll chaining).
+pub fn takes_wheel(ctx: &egui::Context, pointer: Pos2, delta_y: f32) -> bool {
+    let frame = ctx.cumulative_frame_nr();
+    shown(ctx).lock().wheel.is_some_and(|(rect, up, down, f)| {
+        f + 1 >= frame
+            && rect.contains(pointer)
+            && ((delta_y > 0.0 && up) || (delta_y < 0.0 && down))
+    })
 }
 
 fn shown(ctx: &egui::Context) -> Arc<Mutex<Shown>> {
@@ -196,15 +293,12 @@ pub fn image_box(natural: Option<Vec2>, width: f32) -> Vec2 {
 }
 
 fn natural(ui: &Ui, images: &Images, url: &str) -> Option<Vec2> {
-    match images.get(ui.ctx(), url) {
-        ImageState::Ready(t) => Some(t.size_vec2()),
-        _ => None,
-    }
+    images.natural(ui.ctx(), url, Fit::Inline)
 }
 
 /// A picture that failed, not one still on its way up (`isPendingId`).
 fn failed(ui: &Ui, images: &Images, att: &Attachment, url: &str) -> bool {
-    !att.id.is_nil() && matches!(images.get(ui.ctx(), url), ImageState::Failed)
+    !att.id.is_nil() && images.failed(ui.ctx(), url, Fit::Inline)
 }
 
 /// Lays out `attachments` in a column `width` wide; `uploads` are the
@@ -380,7 +474,7 @@ pub fn layout(
 fn paint_image(ui: &Ui, images: &Images, url: &str, rect: Rect, cover: bool, play: bool) {
     let theme = Theme::of(ui.ctx());
     let painter = ui.painter();
-    if let ImageState::Ready(texture) = images.frame(ui.ctx(), url, play) {
+    if let ImageState::Ready(texture) = images.frame(ui.ctx(), url, play, Fit::Inline) {
         let inner = rect.shrink(1.0);
         let uv = if cover {
             cover_uv(texture.size_vec2(), inner.size())
@@ -567,7 +661,7 @@ fn paint_failed(
         id.with("download"),
     );
     if download.clicked() && start_download(ui.ctx(), att.id) {
-        action = Some(MediaAction::External(download_url(att.id)));
+        action = Some(MediaAction::download(att));
     }
     action
 }
@@ -753,7 +847,7 @@ impl Media {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
                     if response.clicked() && !att.id.is_nil() && start_download(ui.ctx(), att.id) {
-                        action = Some(MediaAction::External(download_url(att.id)));
+                        action = Some(MediaAction::download(att));
                     }
                 }
                 Piece::Text(piece) => {
@@ -835,7 +929,7 @@ fn paint_text(
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
         if response.clicked() && start_download(ui.ctx(), piece.att.id) {
-            *action = Some(MediaAction::External(download_url(piece.att.id)));
+            *action = Some(MediaAction::download(&piece.att));
         }
     };
     match &piece.body {
@@ -860,11 +954,36 @@ fn paint_text(
                 pos2(at.x + 1.0, line + 1.0),
                 vec2(piece.width - 2.0, 10.0 + shown_h + 10.0),
             );
+            // The text scrolls both ways inside its box (`overflow: auto`).
+            let seen = vec2(pre.width() - 24.0, *shown_h);
+            let max = (block.size() - seen).max(Vec2::ZERO);
+            let state = shown(ui.ctx());
+            let mut offset = state
+                .lock()
+                .scroll
+                .get(&piece.att.id)
+                .copied()
+                .unwrap_or_default();
+            if ui.rect_contains_pointer(pre) {
+                let delta = ui.input(|i| i.smooth_scroll_delta);
+                let next = (offset - delta).clamp(Vec2::ZERO, max);
+                if next != offset {
+                    offset = next;
+                    ui.input_mut(|i| i.smooth_scroll_delta = Vec2::ZERO);
+                }
+                state.lock().wheel = Some((
+                    pre,
+                    offset.y > 0.0,
+                    offset.y < max.y,
+                    ui.ctx().cumulative_frame_nr(),
+                ));
+            }
+            state.lock().scroll.insert(piece.att.id, offset.min(max));
             let lines = crate::text::selectable_in(
                 ui,
                 block,
                 id.with("preview"),
-                pos2(pre.left() + 12.0, pre.top() + 10.0),
+                pos2(pre.left() + 12.0, pre.top() + 10.0) - offset,
                 pre,
             );
             crate::text::join(text, lines);
@@ -1015,7 +1134,7 @@ pub fn paint_gif(
     let played = images.client().http().gif_media_url(&gif.url);
     let url = if playing { played.as_str() } else { still };
     ui.painter().rect_filled(rect, corner(7.0), c.panel);
-    match images.frame(ui.ctx(), url, playing) {
+    match images.frame(ui.ctx(), url, playing, Fit::Inline) {
         ImageState::Ready(texture) => {
             ui.painter().add(
                 egui::epaint::RectShape::filled(
@@ -1272,7 +1391,7 @@ impl Previews {
                     ui.painter()
                         .rect_filled(img_rect, corner(5.0), Color32::BLACK);
                 }
-                if let ImageState::Ready(t) = images.get(ui.ctx(), url) {
+                if let ImageState::Ready(t) = images.shown(ui.ctx(), url, Fit::Inline) {
                     ui.painter().add(
                         egui::epaint::RectShape::filled(
                             img_rect,
@@ -1426,6 +1545,124 @@ mod tests {
                 .is_none()
         );
         assert_eq!(upload_text(Some(UploadState::Done)), None);
+    }
+
+    #[test]
+    fn server_file_names_are_safe_suggestions() {
+        assert_eq!(safe_file_name("Bericht 2026.pdf"), "Bericht 2026.pdf");
+        assert_eq!(safe_file_name("../../etc/passwd"), "_.._etc_passwd");
+        assert_eq!(safe_file_name("a\\b:c*?.txt"), "a_b_c__.txt");
+        assert_eq!(safe_file_name("CON.txt"), "_CON.txt");
+        assert_eq!(safe_file_name("com1"), "_com1");
+        assert_eq!(safe_file_name("..."), "Download");
+        assert_eq!(safe_file_name("bild.png. "), "bild.png");
+        assert_eq!(safe_file_name("x\u{0}y"), "x_y");
+        assert_eq!(safe_file_name(&"a".repeat(300)).len(), 200);
+    }
+
+    #[test]
+    fn a_download_comes_through_the_session_into_a_file() {
+        let id = Uuid::from_u128(5);
+        let path: &'static str =
+            Box::leak(format!("{}?download=1", attachment_url(id)).into_boxed_str());
+        let origin = crate::images::tests::serve(vec![(path, b"%PDF-1.7".to_vec())]);
+        let client = gelabber_client::Client::new(&origin).expect("client");
+        let dir = std::env::temp_dir().join(format!("gelabber-download-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let ctx = egui::Context::default();
+        crate::platform::files::set_choosers(
+            &ctx,
+            crate::platform::files::Choosers {
+                bus: None,
+                portal: false,
+                native: false,
+                zenity: String::new(),
+                kdialog: String::new(),
+                downloads: Some(dir.clone()),
+            },
+        );
+        let att = attachment(5, "../Rechnung?.pdf", "application/pdf");
+        let MediaAction::Download { url, name } = MediaAction::download(&att) else {
+            panic!("a download");
+        };
+        download(&ctx, &client, &url, &name);
+        let saved = dir.join("_Rechnung_.pdf");
+        for _ in 0..300 {
+            if saved.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(std::fs::read(&saved).expect("saved"), b"%PDF-1.7");
+        let _ = std::fs::remove_dir_all(&dir);
+        // A refused fetch says so.
+        download(&ctx, &client, "/api/attachments/gone?download=1", "x.pdf");
+        let mut errors = Vec::new();
+        for _ in 0..300 {
+            errors = take_download_errors(&ctx);
+            if !errors.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].starts_with("Datei nicht heruntergeladen."));
+    }
+
+    #[test]
+    fn a_long_text_preview_scrolls() {
+        let id = Uuid::from_u128(7);
+        let path: &'static str = Box::leak(attachment_url(id).into_boxed_str());
+        let text: String = (1..=60).map(|n| format!("Zeile {n}\n")).collect();
+        let origin = crate::images::tests::serve(vec![(path, text.into_bytes())]);
+        let images = Images::new(gelabber_client::Client::new(&origin).expect("client"));
+        let drawn = images.clone();
+        let file = Attachment {
+            size: 600,
+            ..attachment(7, "log.txt", "text/plain")
+        };
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(700.0, 500.0))
+            .build_ui(move |ui| {
+                crate::fonts::install(ui.ctx());
+                crate::theme::set(ui.ctx(), Theme::dark());
+                shown(ui.ctx()).lock().open.insert(id, true);
+                if let Some(media) = layout(ui, &drawn, std::slice::from_ref(&file), 600.0, None) {
+                    let mut text = None;
+                    let _ = media.paint(
+                        ui,
+                        &drawn,
+                        pos2(10.0, 10.0),
+                        egui::Id::unique("t"),
+                        &mut text,
+                    );
+                }
+            });
+        settle(&mut harness, &images);
+        assert!(matches!(
+            images.text(&harness.ctx, path),
+            TextState::Ready(_)
+        ));
+        let offset = |h: &egui_kittest::Harness<'_>| shown(&h.ctx).lock().scroll.get(&id).copied();
+        assert_eq!(offset(&harness), Some(Vec2::ZERO));
+        harness.event(egui::Event::PointerMoved(pos2(100.0, 150.0)));
+        for _ in 0..10 {
+            harness.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, -200.0),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+        }
+        harness.run_steps(30);
+        // 60 lines of 19.2 in a 300 high box: scrolled to its end, no further.
+        let y = offset(&harness).expect("scrolled").y;
+        assert!((y - (60.0 * 19.2 - 300.0)).abs() < 20.0, "{y}");
+        // The list under it gets the wheel back at the end.
+        assert!(!takes_wheel(&harness.ctx, pos2(100.0, 150.0), -10.0));
+        assert!(takes_wheel(&harness.ctx, pos2(100.0, 150.0), 10.0));
     }
 
     #[test]

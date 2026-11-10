@@ -17,8 +17,9 @@
 //!   native builds before 0.9 (the same device settings, the server's origin).
 //!
 //! Nothing is overwritten: device settings only into a missing
-//! `settings.json`, the server only where `desktop.json` has none, volumes and
-//! drafts only for accounts without them. The sources stay where they are.
+//! `settings.json`, the server only where `desktop.json` has none, volumes
+//! (into `user-volumes.json`, which the sliders read) and drafts only for
+//! accounts without them. The sources stay where they are.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -28,13 +29,23 @@ use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use super::paths::write_atomic;
-use super::state::{DRAFT_MAX_AGE_MS, Draft, Stored, UserVolume};
+use super::state::{DRAFT_MAX_AGE_MS, Draft, Stored};
 use super::webview::{self, Found};
 
 pub const LEGACY_FILE: &str = "legacy-settings.json";
 const SETTINGS: &str = "settings.json";
 const DESKTOP: &str = "desktop.json";
 const STATE: &str = "native-state.json";
+/// The per-person volumes of screens/voice/volume.rs, by account.
+const VOLUMES: &str = crate::screens::voice::volume::FILE;
+
+/// `UserVolume` of voice/userVolume.ts.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct UserVolume {
+    volume: f64,
+    #[serde(default)]
+    muted: bool,
+}
 
 /// The web client's localStorage keys taken whole, and the prefixes of
 /// those taken per account.
@@ -297,7 +308,28 @@ fn import_from(
     }
 
     let accounts = account_data(&entries, now);
-    if !accounts.is_empty() {
+    if accounts.values().any(|(volumes, _)| !volumes.is_empty()) {
+        let path = config.join(VOLUMES);
+        // A volumes file this build cannot read is left alone, not replaced.
+        let all = match read_json(&path) {
+            Some(Value::Object(map)) => Some(map),
+            None if !path.exists() => Some(Map::new()),
+            _ => None,
+        };
+        if let Some(mut all) = all {
+            for (id, (volumes, _)) in &accounts {
+                let key = id.to_string();
+                if volumes.is_empty() || all.contains_key(&key) {
+                    continue;
+                }
+                let value = serde_json::to_value(volumes).map_err(|e| e.to_string())?;
+                imported.volumes += volumes.len();
+                all.insert(key, value);
+            }
+            write_json(&path, &Value::Object(all), false)?;
+        }
+    }
+    if accounts.values().any(|(_, drafts)| !drafts.is_empty()) {
         let state_path = config.join(STATE);
         // A state file this build cannot read is left alone, not replaced.
         let state: Option<Stored> = match read_json(&state_path) {
@@ -306,12 +338,8 @@ fn import_from(
             None => None,
         };
         if let Some(mut state) = state {
-            for (id, (volumes, drafts)) in accounts {
+            for (id, (_, drafts)) in accounts {
                 let account = state.accounts.entry(id).or_default();
-                if account.volumes.is_empty() {
-                    imported.volumes += volumes.len();
-                    account.volumes = volumes;
-                }
                 if account.drafts.is_empty() {
                     imported.drafts += drafts.len();
                     account.drafts = drafts;
@@ -501,16 +529,14 @@ mod tests {
         assert_eq!(settings["compactRooms"], true);
         assert!(settings.get("theme").is_none());
 
+        // Volumes into the file the sliders read (screens/voice/volume.rs).
+        assert_eq!(
+            dirs.json(VOLUMES),
+            json!({ACCOUNT: {FRIEND: {"volume": 0.5, "muted": true}}})
+        );
         let state: Stored = serde_json::from_value(dirs.json(STATE)).unwrap();
         let account = &state.accounts[&Uuid::parse_str(ACCOUNT).unwrap()];
         let friend = Uuid::parse_str(FRIEND).unwrap();
-        assert_eq!(
-            account.volumes[&friend],
-            UserVolume {
-                volume: 0.5,
-                muted: true
-            }
-        );
         assert_eq!(
             account.drafts[&Uuid::parse_str(CHANNEL).unwrap()].text,
             draft
@@ -671,6 +697,7 @@ mod tests {
             assert!(first.is_err(), "{store:?}: {first:?}");
             assert!(!dirs.config.join(SETTINGS).exists());
             assert!(!dirs.config.join(STATE).exists());
+            assert!(!dirs.config.join(VOLUMES).exists());
             // The next start takes it.
             let imported = store.import(&dirs).unwrap().unwrap();
             assert_taken(&dirs, &imported, "bis gleich 👋");
@@ -748,14 +775,10 @@ mod tests {
         let mut state = Stored::default();
         let account = Uuid::parse_str(ACCOUNT).unwrap();
         let other = Uuid::new_v4();
-        state.accounts.entry(account).or_default().volumes.insert(
-            other,
-            UserVolume {
-                volume: 2.0,
-                muted: false,
-            },
-        );
+        state.accounts.entry(account).or_default();
         write_json(&dirs.config.join(STATE), &state, true).unwrap();
+        let own = json!({ACCOUNT: {other.to_string(): {"volume": 2.0, "muted": false}}});
+        write_json(&dirs.config.join(VOLUMES), &own, false).unwrap();
         let imported = import_into(&dirs.config, Some(&dirs.old), None, NOW)
             .unwrap()
             .unwrap();
@@ -763,9 +786,7 @@ mod tests {
         assert_eq!(imported.volumes, 0);
         assert_eq!(imported.drafts, 1);
         assert_eq!(dirs.json(DESKTOP)["server"], "https://chosen.example");
-        let back: Stored = serde_json::from_value(dirs.json(STATE)).unwrap();
-        assert_eq!(back.accounts[&account].volumes.len(), 1);
-        assert!(back.accounts[&account].volumes.contains_key(&other));
+        assert_eq!(dirs.json(VOLUMES), own);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -785,6 +806,7 @@ mod tests {
         write_json(&dirs.config.join(LEGACY_FILE), &export(), false).unwrap();
         std::fs::write(dirs.config.join(DESKTOP), "{halb").unwrap();
         std::fs::write(dirs.config.join(STATE), r#"{"accounts": 3}"#).unwrap();
+        std::fs::write(dirs.config.join(VOLUMES), "[1,").unwrap();
         let imported = import_into(&dirs.config, Some(&dirs.old), None, NOW)
             .unwrap()
             .unwrap();
@@ -797,6 +819,10 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dirs.config.join(STATE)).unwrap(),
             r#"{"accounts": 3}"#
+        );
+        assert_eq!(
+            std::fs::read_to_string(dirs.config.join(VOLUMES)).unwrap(),
+            "[1,"
         );
         assert!(dirs.config.join(SETTINGS).exists());
     }

@@ -33,6 +33,11 @@ fn draft_id() -> Id {
     Id::unique("gelabber-user-status")
 }
 
+/// Another account signed in: the status card's draft goes.
+pub(super) fn switch_account(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove::<StatusDraft>(draft_id()));
+}
+
 /// `rect` is the 56px strip at the bottom of the sidebar column; `context`
 /// the server or DM whose presence counts (`ownPresence`).
 pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {

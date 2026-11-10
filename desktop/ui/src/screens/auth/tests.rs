@@ -194,3 +194,22 @@ fn verify_email_waits_out_a_rate_limit() {
         .click();
     assert_cooldown(&mut harness);
 }
+
+/// A failed `/auth/mail` at launch (server restarting, offline) is not
+/// "no mail": it is asked again, and "Passwort vergessen?" comes.
+#[test]
+fn a_failed_mail_check_is_retried() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let _config = TempConfig::new("auth-mail-retry");
+    let down = Arc::new(AtomicBool::new(true));
+    let flag = down.clone();
+    let api = FakeApi::start(false, move |method, at, _| {
+        (method == "GET" && at == "/auth/mail" && flag.swap(false, Ordering::SeqCst))
+            .then(|| Reply::error(503, "unavailable"))
+    });
+    let mut harness = launcher(&api, "/login");
+    wait_for_label(&mut harness, "E-Mail-Adresse");
+    wait_for_label(&mut harness, "Passwort vergessen?");
+    assert!(!down.load(Ordering::SeqCst));
+}

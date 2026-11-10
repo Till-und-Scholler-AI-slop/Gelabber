@@ -57,9 +57,13 @@ struct ChatState {
     /// The DM the page fetched in this opening, and the account data's
     /// epoch it asked in.
     dm_asked: Option<(Uuid, u64)>,
-    gifs_requested: bool,
+    /// The account data's epoch the GIF status was asked in, and when that
+    /// ask was seen to fail.
+    gifs_asked: Option<(u64, Option<std::time::Instant>)>,
     /// The conversation shown last and the frame it was shown in.
     shown: Option<(Uuid, u64)>,
+    /// The signed-in account all of this belongs to.
+    account: Option<Uuid>,
 }
 
 fn chat_state(ctx: &egui::Context) -> Arc<Mutex<ChatState>> {
@@ -89,11 +93,73 @@ fn ensure_workspace(client: &Client, chat: &mut ChatState) {
             client.bootstrap();
         }
     }
-    if !chat.gifs_requested {
-        chat.gifs_requested = true;
-        if client.with_state(|s| s.gifs.is_none() && s.op("gifs").is_none()) {
-            client.load_gif_status();
+    let (epoch, unknown, failed) = client.with_state(|s| {
+        let unknown = s.gifs.is_none();
+        (
+            s.epoch(),
+            unknown && s.op("gifs").is_none(),
+            unknown && matches!(s.op("gifs"), Some(gelabber_client::OpState::Failed(_))),
+        )
+    });
+    if ask_gifs(
+        &mut chat.gifs_asked,
+        epoch,
+        unknown,
+        failed,
+        std::time::Instant::now(),
+    ) {
+        client.load_gif_status();
+    }
+}
+
+/// A failed GIF status is asked for again after this long.
+const GIFS_RETRY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Whether to ask for the GIF status (the composer's GIF button): once per
+/// account data (a sign-in drops it), and again a while after a failure.
+fn ask_gifs(
+    asked: &mut Option<(u64, Option<std::time::Instant>)>,
+    epoch: u64,
+    unknown: bool,
+    failed: bool,
+    now: std::time::Instant,
+) -> bool {
+    match asked {
+        Some((e, failed_at)) if *e == epoch => {
+            if !failed {
+                *failed_at = None;
+                return false;
+            }
+            match failed_at {
+                None => {
+                    *failed_at = Some(now);
+                    false
+                }
+                Some(at) if now.duration_since(*at) >= GIFS_RETRY => {
+                    *failed_at = None;
+                    true
+                }
+                Some(_) => false,
+            }
         }
+        _ if unknown || failed => {
+            *asked = Some((epoch, None));
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Another account signed in: the chat's drafts, files, hits and lists of
+/// the one before are dropped, not shown to it or stored as its own.
+pub fn switch_account(ctx: &egui::Context, user: Uuid) {
+    let state = chat_state(ctx);
+    let mut chat = state.lock();
+    if chat.account != Some(user) {
+        *chat = ChatState {
+            account: Some(user),
+            ..ChatState::default()
+        };
     }
 }
 
@@ -353,6 +419,8 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
     {
         chat.panes.insert(channel, PaneState::default());
         chat.contexts.remove(&channel);
+        // So do the search and its hits.
+        chat.searches.remove(&channel);
         // The composer's pickers close with the page that had them, as on
         // the web (a route change, back with Alt+←); the draft stays.
         if let Some(composer) = chat.composers.get_mut(&channel) {
@@ -380,6 +448,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
 
     // Header.
     let search_state = chat.searches.entry(channel).or_default();
+    search_state.settle();
     let title = match &conv.peer {
         Some((name, avatar, presence)) => header::Title::Dm {
             name,
@@ -484,6 +553,7 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
     // The list, or the search hits over it.
     let now = client.http().server_now();
     let pane_state = chat.panes.entry(channel).or_default();
+    settle_edit(pane_state, client, &conv);
     let searching = chat
         .searches
         .get_mut(&channel)
@@ -525,7 +595,14 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
         let view = chat.contexts.get_mut(&channel).expect("context state");
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list_rect));
         child.set_clip_rect(list_rect.intersect(ui.clip_rect()));
-        context_actions = context::show(&mut child, list_rect, client, channel, view, &input);
+        let revealed = chat
+            .panes
+            .get(&channel)
+            .map(|p| p.revealed.clone())
+            .unwrap_or_default();
+        context_actions = context::show(
+            &mut child, list_rect, client, channel, view, &input, &revealed,
+        );
     } else if searching {
         let s = chat.searches.get_mut(&channel).expect("search state");
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list_rect));
@@ -600,6 +677,9 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
             }
             context::ContextAction::Row(row) => list_actions.push(ListAction::Row(row)),
         }
+    }
+    for text in attachments::take_download_errors(ui.ctx()) {
+        app.toasts.error(text);
     }
     let now_t = ui.input(|i| i.time);
     for action in list_actions {
@@ -705,6 +785,45 @@ fn show_conversation(ui: &mut Ui, app: &mut AppCtx, conv: Conversation) {
     }
 }
 
+/// Why the edit `draft` of `id` cannot be saved (`validateContent`); an
+/// emptied text is fine while the message keeps files.
+fn edit_error(client: &Client, conv: &Conversation, id: Uuid, draft: &str) -> Option<String> {
+    let files = client.with_state(|s| {
+        s.find_message(id)
+            .is_some_and(|m| !m.attachments.is_empty())
+    });
+    if draft.is_empty() && files {
+        return None;
+    }
+    let wire = mentions::to_wire(draft, &conv.members, &HashMap::new());
+    composer::validate_content(&wire).map(|code| crate::rules::field_message("content", code))
+}
+
+/// The editor's error for this frame, and an edit on its way: saved, it is
+/// forgotten; turned down, the editor opens again with what was typed.
+fn settle_edit(pane: &mut PaneState, client: &Client, conv: &Conversation) {
+    if let Some((id, typed, wire, failures)) = pane.saving.clone() {
+        let (failed, saved) = client.with_state(|s| {
+            (
+                s.failures(&format!("edit:{id}")) != failures,
+                s.find_message(id).is_none_or(|m| m.content == wire),
+            )
+        });
+        if failed {
+            pane.saving = None;
+            if pane.editing.is_none() {
+                pane.start_edit(id, typed);
+            }
+        } else if saved {
+            pane.saving = None;
+        }
+    }
+    pane.edit_error = pane
+        .editing
+        .as_ref()
+        .and_then(|(id, draft)| edit_error(client, conv, *id, draft));
+}
+
 /// `jumpTo`: the search closes; a loaded message is scrolled to, one that
 /// is not opens in its context.
 fn jump_to(chat: &mut ChatState, client: &Client, channel: Uuid, id: Uuid) {
@@ -760,7 +879,7 @@ fn row_action(
         // Taken by `jump_to` before the rows' actions get here.
         RowAction::JumpTo(_) => {}
         RowAction::Content(id, content) => match content {
-            ContentAction::OpenLink(href) => open_external(ui.ctx(), &href),
+            ContentAction::OpenLink(href) => crate::platform::open_url_logged(&href),
             ContentAction::RevealSpoiler(n) => {
                 pane.revealed.entry(id).or_default().insert(n);
             }
@@ -777,7 +896,10 @@ fn row_action(
                 } else {
                     url
                 };
-                open_external(ui.ctx(), &full);
+                crate::platform::open_url_logged(&full);
+            }
+            attachments::MediaAction::Download { url, name } => {
+                attachments::download(ui.ctx(), client, &url, &name);
             }
         },
         RowAction::Retry(nonce) => client.retry_send(conv.channel, nonce),
@@ -804,11 +926,17 @@ fn row_action(
             }
         }
         RowAction::SaveEdit(id) => {
-            if let Some((_, draft)) = pane.editing.take() {
+            let valid = pane
+                .editing
+                .as_ref()
+                .is_some_and(|(_, draft)| edit_error(client, conv, id, draft).is_none());
+            if valid && let Some((_, draft)) = pane.editing.take() {
                 let wire = mentions::to_wire(&draft, &conv.members, &HashMap::new());
-                if !wire.trim().is_empty() {
-                    client.edit_message(id, &wire);
-                }
+                let failures = client.with_state(|s| s.failures(&format!("edit:{id}")));
+                // Kept until the server has it: turned down, the editor
+                // opens again with what was typed.
+                pane.saving = Some((id, draft, wire.clone(), failures));
+                client.edit_message(id, &wire);
             }
         }
         RowAction::CancelEdit => pane.editing = None,
@@ -827,26 +955,6 @@ fn consume_plain(input: &mut egui::InputState, key: egui::Key) -> bool {
         )
     });
     input.events.len() != before
-}
-
-/// Opens a link in the system browser.
-pub fn open_external(ctx: &egui::Context, url: &str) {
-    ctx.open_url(egui::OpenUrl::new_tab(url));
-    #[cfg(target_os = "linux")]
-    let opener = Some("xdg-open");
-    #[cfg(target_os = "macos")]
-    let opener = Some("open");
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    let opener: Option<&str> = None;
-    if let Some(opener) = opener {
-        let _ = std::process::Command::new(opener).arg(url).spawn();
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let _ = std::process::Command::new("cmd")
-            .args(["/C", "start", "", url])
-            .spawn();
-    }
 }
 
 fn paint_typing(ui: &Ui, rect: Rect, text: &str) {
@@ -1153,12 +1261,24 @@ fn overlays(ui: &mut Ui, app: &mut AppCtx, conv: &Conversation, chat: &mut ChatS
     if let Some((url, name)) = pane.lightbox.clone() {
         let (close, download) = attachments::lightbox(&ctx, app.images, &url, &name);
         if download {
-            let full = if url.starts_with('/') {
-                client.http().url(&url)
+            // An attachment as a download; a preview's picture as it is.
+            let fetch = if url.starts_with("/api/attachments/") {
+                format!("{url}?download=1")
             } else {
                 url.clone()
             };
-            open_external(&ctx, &format!("{full}?download=1"));
+            let name = if name.is_empty() {
+                url.rsplit('/')
+                    .next()
+                    .unwrap_or("")
+                    .split('?')
+                    .next()
+                    .unwrap_or("")
+                    .to_owned()
+            } else {
+                name.clone()
+            };
+            attachments::download(&ctx, client, &fetch, &name);
         }
         if close {
             pane.lightbox = None;
@@ -1261,6 +1381,47 @@ mod tests {
     }
 
     #[test]
+    fn the_gif_status_is_asked_per_account_and_again_after_a_failure() {
+        let t0 = std::time::Instant::now();
+        let mut asked = None;
+        assert!(ask_gifs(&mut asked, 1, true, false, t0));
+        // Asked: not again while it runs or once it is in.
+        assert!(!ask_gifs(&mut asked, 1, true, false, t0));
+        assert!(!ask_gifs(&mut asked, 1, false, false, t0));
+        // Signed out and in: the status was dropped, it is asked again.
+        assert!(ask_gifs(&mut asked, 2, true, false, t0));
+        // A failed ask waits, then goes again.
+        assert!(!ask_gifs(&mut asked, 2, false, true, t0));
+        assert!(!ask_gifs(&mut asked, 2, false, true, t0 + GIFS_RETRY / 2));
+        assert!(ask_gifs(&mut asked, 2, false, true, t0 + GIFS_RETRY));
+        assert!(!ask_gifs(&mut asked, 2, false, true, t0 + GIFS_RETRY));
+    }
+
+    #[test]
+    fn another_account_gets_none_of_the_chat_state() {
+        let ctx = egui::Context::default();
+        let (a, b, channel) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        switch_account(&ctx, a);
+        restore_drafts(&ctx, HashMap::from([(channel, "Geheim".to_owned())]));
+        chat_state(&ctx)
+            .lock()
+            .searches
+            .entry(channel)
+            .or_default()
+            .text = "Urlaub".into();
+        // The same account again keeps it.
+        switch_account(&ctx, a);
+        assert_eq!(
+            drafts(&ctx).get(&channel).map(String::as_str),
+            Some("Geheim")
+        );
+        switch_account(&ctx, b);
+        assert!(drafts(&ctx).is_empty());
+        assert!(with_drafts(&ctx).is_empty());
+        assert!(chat_state(&ctx).lock().searches.is_empty());
+    }
+
+    #[test]
     fn shift_enter_is_not_a_plain_enter() {
         let mut input = egui::InputState::default();
         input.events = vec![enter(egui::Modifiers::SHIFT)];
@@ -1282,6 +1443,20 @@ mod page_tests {
     use crate::platform::paths::testing::TempConfig;
 
     const DM: &str = "00000000-0000-4000-8000-0000000000d1";
+
+    /// Jonas's message `n` in #allgemein, a minute after the one before.
+    fn history_message(n: u8, content: &str) -> serde_json::Value {
+        json!({
+            "id": format!("00000000-0000-4000-8000-0000000001{n:02}"),
+            "channel_id": crate::app::testkit::ALLGEMEIN,
+            "author": {"id": "00000000-0000-4000-8000-00000000007c", "name": "Jonas", "avatar_url": null},
+            "content": content,
+            "created_at": format!("2026-11-05T16:{n:02}:00Z"),
+            "edited_at": null,
+            "revision": 0,
+            "created_order": n,
+        })
+    }
 
     fn dms(method: &str, path: &str) -> Option<Reply> {
         let dm = json!({
@@ -1426,6 +1601,193 @@ mod page_tests {
             .get_by_label("Erst Film, dann Spiel.")
             .click_secondary();
         wait_for_label(&mut harness, "Text kopieren");
+    }
+
+    /// A message that arrives while the window is in the background is
+    /// marked read once the window has the focus again.
+    #[test]
+    fn the_newest_message_is_marked_read_when_the_window_gets_the_focus() {
+        use crate::app::testkit::{ALLGEMEIN, HOME};
+        let _config = TempConfig::new("read-on-focus");
+        // The history arrives once the window is in the background.
+        let go = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let gate = go.clone();
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", p) if p == format!("/channels/{ALLGEMEIN}/messages") => {
+                while !gate.load(std::sync::atomic::Ordering::Acquire) {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Some(Reply::json(json!({
+                    "messages": [{
+                        "id": "00000000-0000-4000-8000-0000000000e1",
+                        "channel_id": ALLGEMEIN,
+                        "author": {"id": "00000000-0000-4000-8000-00000000007c", "name": "Jonas", "avatar_url": null},
+                        "content": "Kommt ihr heute?",
+                        "created_at": "2026-11-05T16:21:00Z",
+                        "edited_at": null,
+                        "revision": 0,
+                        "created_order": 1,
+                    }],
+                    "has_more": false
+                })))
+            }
+            ("PUT", p) if p == format!("/channels/{ALLGEMEIN}/read") => Some(Reply::json(json!({
+                "channel_id": ALLGEMEIN, "last_read_message_id": null, "mention_count": 0
+            }))),
+            _ => workspace(method, path),
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        harness.input_mut().focused = false;
+        harness.step();
+        go.store(true, std::sync::atomic::Ordering::Release);
+        wait_for_label(&mut harness, "Kommt ihr heute?");
+        // Opening marks once in the client core, focused or not; the pane
+        // marks nothing while the window is in the background.
+        let read = format!("PUT /channels/{ALLGEMEIN}/read");
+        let marks = || api.seen.lock().iter().filter(|r| **r == read).count();
+        for _ in 0..20 {
+            harness.step();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let before = marks();
+        assert!(before <= 1, "{before}");
+        harness.input_mut().focused = true;
+        wait_for(&mut harness, "the read mark", |_| marks() > before);
+    }
+
+    /// An edit the server turns down opens the editor again with what was
+    /// typed; one that may not be sent says why and does not go out.
+    #[test]
+    fn a_refused_edit_keeps_what_was_typed() {
+        use crate::app::testkit::{ALLGEMEIN, HOME, LENA};
+        let _config = TempConfig::new("edit-refused");
+        let id = "00000000-0000-4000-8000-0000000000e1";
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", p) if p == format!("/channels/{ALLGEMEIN}/messages") => {
+                Some(Reply::json(json!({
+                    "messages": [{
+                        "id": id,
+                        "channel_id": ALLGEMEIN,
+                        "author": {"id": LENA, "name": "Lena", "avatar_url": null},
+                        "content": "Kommt ihr heute?",
+                        "created_at": "2026-11-05T16:21:00Z",
+                        "edited_at": null,
+                        "revision": 0,
+                        "created_order": 1,
+                    }],
+                    "has_more": false
+                })))
+            }
+            ("PATCH", p) if p == format!("/messages/{id}") => Some(Reply::error(503, "internal")),
+            _ => {
+                // Lena may write.
+                let mut reply = workspace(method, path)?;
+                if let Some(list) = reply
+                    .body
+                    .get_mut("permissions")
+                    .and_then(|p| p.as_array_mut())
+                {
+                    list.push(json!("send_messages"));
+                }
+                Some(reply)
+            }
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for_label(&mut harness, "Kommt ihr heute?");
+        harness.run_steps(4);
+        // ↑ in the empty composer edits my last message.
+        wait_for_label(&mut harness, "Nachricht an #allgemein");
+        harness.get_by_label("Nachricht an #allgemein").click();
+        harness.run_steps(2);
+        harness.key_press(egui::Key::ArrowUp);
+        wait_for_label(&mut harness, "Speichern");
+        harness.run_steps(2);
+        let editing = |h: &egui_kittest::Harness<'_, crate::setup::Launcher>| {
+            let chat = super::chat_state(&h.ctx);
+            let chat = chat.lock();
+            chat.panes
+                .values()
+                .find_map(|p| p.editing.as_ref().map(|(_, d)| d.clone()))
+        };
+        assert_eq!(editing(&harness).as_deref(), Some("Kommt ihr heute?"));
+        // Too long to send: the editor says so and Enter does nothing.
+        harness.event(egui::Event::Text("x".repeat(2000)));
+        harness.run_steps(2);
+        wait_for_label(&mut harness, "Nachricht ist zu lang.");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(4);
+        assert!(!api.saw(&format!("PATCH /messages/{id}")));
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.event(egui::Event::Text("Kommt ihr heute? Ja!".into()));
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Nachricht ist zu lang.").is_none());
+        harness.key_press(egui::Key::Enter);
+        wait_for(&mut harness, "the refused edit", |h| {
+            api.saw(&format!("PATCH /messages/{id}")) && editing(h).is_some()
+        });
+        assert_eq!(editing(&harness).as_deref(), Some("Kommt ihr heute? Ja!"));
+    }
+
+    /// A first page shorter than the list: older history loads at once.
+    #[test]
+    fn older_history_fills_a_short_list() {
+        use crate::app::testkit::{ALLGEMEIN, HOME};
+        let _config = TempConfig::new("older-short");
+        let pages = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let asked = pages.clone();
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", p) if p == format!("/channels/{ALLGEMEIN}/messages") => {
+                let n = asked.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                let (content, more) = if n == 0 {
+                    ("Neueste", true)
+                } else {
+                    ("Ältere", false)
+                };
+                Some(Reply::json(json!({
+                    "messages": [history_message(10 - n as u8, content)],
+                    "has_more": more
+                })))
+            }
+            _ => workspace(method, path),
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for_label(&mut harness, "Neueste");
+        // Nothing to scroll: the older page comes by itself.
+        wait_for_label(&mut harness, "Ältere");
+    }
+
+    /// A failed older page says so above the first row, not over its day.
+    #[test]
+    fn a_failed_older_page_leaves_room_for_the_first_row() {
+        use crate::app::testkit::{ALLGEMEIN, HOME};
+        let _config = TempConfig::new("older-failed");
+        let pages = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let asked = pages.clone();
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", p) if p == format!("/channels/{ALLGEMEIN}/messages") => {
+                if asked.fetch_add(1, std::sync::atomic::Ordering::AcqRel) > 0 {
+                    return Some(Reply::error(503, "internal"));
+                }
+                let page: Vec<_> = (1..=30)
+                    .map(|n| history_message(n, &format!("Nachricht {n}")))
+                    .collect();
+                Some(Reply::json(json!({"messages": page, "has_more": true})))
+            }
+            _ => workspace(method, path),
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for_label(&mut harness, "Nachricht 30");
+        harness.run_steps(4);
+        harness.key_press(egui::Key::Home);
+        wait_for_label(&mut harness, "Erneut laden");
+        harness.run_steps(4);
+        let retry = harness.get_by_label("Erneut laden").rect();
+        let first = harness.get_by_label("Nachricht 1").rect();
+        // The day divider (38) and the name line lie between them.
+        assert!(
+            retry.bottom() <= first.top() - 38.0 - 19.0,
+            "{retry:?} {first:?}"
+        );
     }
 
     /// A search hit's text is selectable and still opens the hit on a

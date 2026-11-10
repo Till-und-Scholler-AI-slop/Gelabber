@@ -121,6 +121,33 @@ pub fn column<R>(ui: &mut Ui, width: f32, content: impl FnOnce(&mut Ui) -> R) ->
     out
 }
 
+// -------------------------------------------------------------- id scope
+
+fn id_scope_id() -> Id {
+    Id::unique("gelabber-controls-id-scope")
+}
+
+/// Salts the ids of the controls drawn until it is set back to `None`: a
+/// form drawn twice in one frame (a dialog over its own page) keeps its
+/// controls apart.
+pub fn set_id_scope(ctx: &egui::Context, scope: Option<&'static str>) {
+    ctx.data_mut(|d| d.insert_temp(id_scope_id(), scope));
+}
+
+/// The scope [`set_id_scope`] set, if any.
+pub fn id_scope(ctx: &egui::Context) -> Option<&'static str> {
+    ctx.data(|d| d.get_temp::<Option<&'static str>>(id_scope_id()))
+        .flatten()
+}
+
+/// `id` in the current [`id_scope`].
+pub fn scoped(ctx: &egui::Context, id: Id) -> Id {
+    match id_scope(ctx) {
+        Some(scope) => id.with(scope),
+        None => id,
+    }
+}
+
 /// A row of items `gap` apart, vertically centred, `height` tall.
 pub fn row<R>(ui: &mut Ui, gap: f32, height: f32, content: impl FnOnce(&mut Ui) -> R) -> R {
     let width = ui.available_width();
@@ -274,7 +301,7 @@ fn switch_row_ruled(
             Sense::CLICK
         },
     );
-    let id = Id::unique(("gelabber-switch-row", id));
+    let id = scoped(ui.ctx(), Id::unique(("gelabber-switch-row", id)));
     // The row is the switch's label, as `<label>` around the web's input.
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, !disabled, *on, label));
     describe(ui, response.id, note);
@@ -343,7 +370,7 @@ pub fn chips(
 ) -> Option<usize> {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
-    let id = Id::unique(("gelabber-chips", id));
+    let id = scoped(ui.ctx(), Id::unique(("gelabber-chips", id)));
     let mut chosen = None;
     let start = ui.cursor().min;
     let mut x = start.x;
@@ -443,7 +470,7 @@ pub fn radio_card(
     let d = Block::wrapped(ui, desc, text::META, c.muted, text_w);
     let h = 1.0 + 12.0 + l.height() + 2.0 + d.height() + 12.0 + 1.0;
     let (rect, response) = ui.allocate_exact_size(vec2(width, h.max(44.0)), Sense::click());
-    let id = Id::unique(("gelabber-radio-card", id));
+    let id = scoped(ui.ctx(), Id::unique(("gelabber-radio-card", id)));
     let hover = eased(ui.ctx(), id, response.hovered(), c.panel, c.hover);
     let (fill, border) = if checked {
         (c.selected, c.accent)
@@ -489,8 +516,8 @@ pub fn radio_mark(ui: &mut Ui, min: Pos2, checked: bool) {
 /// opens the options under it.
 /// Whether the [`select`] named `id` has its list open.
 pub fn select_open(ctx: &egui::Context, id: &str) -> bool {
-    ctx.data(|d| d.get_temp::<bool>(Id::unique(("gelabber-select-open", id))))
-        .unwrap_or(false)
+    let open_id = scoped(ctx, Id::unique(("gelabber-select-open", id)));
+    ctx.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false)
 }
 
 pub fn select(
@@ -505,7 +532,7 @@ pub fn select(
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(vec2(width, 37.0), Sense::click());
     crate::widgets::popover::focus_first(&response);
-    let open_id = Id::unique(("gelabber-select-open", id.clone()));
+    let open_id = scoped(ui.ctx(), Id::unique(("gelabber-select-open", id)));
     let mut open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
     if response.clicked() {
         open = !open;
@@ -547,7 +574,7 @@ pub fn select(
     }
     let mut changed = false;
     if open {
-        let shown = Popover::new(("select", id), rect)
+        let shown = Popover::new(("select", open_id), rect)
             .min_width(width)
             .select_list()
             .show(ui.ctx(), |ui| {
@@ -645,7 +672,7 @@ fn range(
     let c = &theme.c;
     let width = ui.available_width();
     let rect = Rect::from_min_size(ui.cursor().min, vec2(width, 20.0));
-    let id = Id::unique(("gelabber-slider", id));
+    let id = scoped(ui.ctx(), Id::unique(("gelabber-slider", id)));
     let sense = if disabled {
         Sense::hover()
     } else {
@@ -903,6 +930,15 @@ pub fn answer(ctx: &egui::Context, key: &str) -> Option<bool> {
     None
 }
 
+/// Answers the question `key` as its dialog would.
+#[cfg(test)]
+pub fn answer_for_test(ctx: &egui::Context, key: &str, yes: bool) {
+    let slot = confirm_slot(ctx);
+    let mut s = slot.lock();
+    s.open = None;
+    s.answered = Some((key.to_owned(), yes));
+}
+
 /// Whether a question is open (pages pause their shortcuts meanwhile).
 pub fn asking(ctx: &egui::Context) -> bool {
     confirm_slot(ctx).lock().open.is_some()
@@ -936,8 +972,8 @@ pub fn show_confirm(ctx: &egui::Context) {
 /// A file chosen in the system dialog, read off the UI thread.
 pub use crate::platform::files::Picked;
 
-/// Opens the desktop's file chooser (platform/files.rs: the portal, zenity
-/// or kdialog, else a path field in the window); the slot fills with the
+/// Opens the desktop's file chooser (platform/files.rs: the portal, zenity,
+/// kdialog or the Windows dialog, else a path field in the window); the slot fills with the
 /// bytes and the file name, or `None` when nothing was chosen.
 pub fn pick_file(ctx: &egui::Context, title: &str, filter: &[&str]) -> Picked {
     let slot: Picked = Arc::new(Mutex::new(None));
@@ -946,81 +982,69 @@ pub fn pick_file(ctx: &egui::Context, title: &str, filter: &[&str]) -> Picked {
 }
 
 /// Saves `bytes` where the user chooses (the web's download); without a
-/// dialog program the file goes to the Downloads folder.
+/// dialog into the Downloads folder. A toast says where it went
+/// (platform/files.rs).
 pub fn save_file(ctx: &egui::Context, title: &str, name: &str, bytes: Vec<u8>) {
-    use std::process::Command;
-    let (title, name) = (title.to_owned(), name.to_owned());
-    let ctx = ctx.clone();
-    std::thread::spawn(move || {
-        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-        let downloads = home.map(|h| h.join("Downloads")).filter(|d| d.is_dir());
-        let suggested = downloads
-            .clone()
-            .map(|d| d.join(&name))
-            .unwrap_or_else(|| std::path::PathBuf::from(&name));
-        let suggested = suggested.to_string_lossy().into_owned();
-        let programs: [(&str, Vec<String>); 2] = [
-            (
-                "zenity",
-                vec![
-                    "--file-selection".into(),
-                    "--save".into(),
-                    "--confirm-overwrite".into(),
-                    format!("--title={title}"),
-                    format!("--filename={suggested}"),
-                ],
-            ),
-            (
-                "kdialog",
-                vec![
-                    "--title".into(),
-                    title.clone(),
-                    "--getsavefilename".into(),
-                    suggested.clone(),
-                ],
-            ),
-        ];
-        let mut target = None;
-        let mut ran = false;
-        for (program, args) in programs {
-            if let Ok(out) = Command::new(program).args(&args).output() {
-                ran = true;
-                if out.status.success() {
-                    let p = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-                    target = (!p.is_empty()).then_some(p);
-                }
-                break;
-            }
-        }
-        if !ran {
-            target = Some(suggested);
-        }
-        if let Some(path) = target {
-            let _ = std::fs::write(path, bytes);
-        }
-        ctx.request_repaint();
-    });
+    crate::platform::files::save(ctx, title, name, bytes);
 }
 
-/// Takes a dropped file from the window, if one was dropped this frame.
-pub fn dropped_file(ctx: &egui::Context) -> Option<(Vec<u8>, String)> {
+/// A picked or dropped image on its way to an upload.
+pub enum ImageFile {
+    /// Read already (the file chooser's slot).
+    Bytes(Vec<u8>),
+    /// Dropped on the window: read on the worker, its size checked first.
+    Path(std::path::PathBuf),
+}
+
+/// The upload's body and type, or the message for the form.
+pub type Prepared = crate::task::Pending<Result<(Vec<u8>, &'static str), String>>;
+
+/// `prepareAvatar` / `prepareBanner` off the UI thread: read, crop, encode.
+pub fn prepare(ctx: &egui::Context, file: ImageFile, w: u32, h: u32) -> Prepared {
+    crate::task::Pending::thread(
+        ctx,
+        move || {
+            let bytes = match file {
+                ImageFile::Bytes(bytes) => bytes,
+                ImageFile::Path(path) => read_image(&path)?,
+            };
+            prepare_image(&bytes, w, h)
+        },
+        || Err(unreadable()),
+    )
+}
+
+const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+
+fn too_large() -> String {
+    "Das Bild ist zu groß (höchstens 20 MB).".into()
+}
+
+fn unreadable() -> String {
+    "Dieses Bild kann Gelabber nicht lesen. PNG, JPEG, WebP oder GIF gehen.".into()
+}
+
+/// Reads a dropped file, unless its size already rules it out.
+fn read_image(path: &std::path::Path) -> Result<Vec<u8>, String> {
+    let len = std::fs::metadata(path).map_err(|_| unreadable())?.len();
+    if len > MAX_IMAGE_BYTES {
+        return Err(too_large());
+    }
+    std::fs::read(path).map_err(|_| unreadable())
+}
+
+/// The file dropped on the window this frame, if any (not read yet).
+pub fn dropped_image(ctx: &egui::Context) -> Option<ImageFile> {
     let file = ctx.input(|i| i.raw.dropped_files.first().cloned())?;
-    let path = file.path().to_path_buf();
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    file.bytes().ok().map(|b| (b, name))
+    Some(ImageFile::Path(file.path().to_path_buf()))
 }
 
 /// `prepareAvatar` / `prepareBanner`: a centred crop to `w`×`h`, encoded
 /// as JPEG (opaque) or PNG. Errors are the web's two messages.
-pub fn prepare_image(bytes: &[u8], w: u32, h: u32) -> Result<(Vec<u8>, &'static str), String> {
-    if bytes.len() > 20 * 1024 * 1024 {
-        return Err("Das Bild ist zu groß (höchstens 20 MB).".into());
+fn prepare_image(bytes: &[u8], w: u32, h: u32) -> Result<(Vec<u8>, &'static str), String> {
+    if bytes.len() as u64 > MAX_IMAGE_BYTES {
+        return Err(too_large());
     }
-    let unreadable =
-        || "Dieses Bild kann der Browser nicht lesen. PNG, JPEG, WebP oder GIF gehen.".to_owned();
     let img = image::load_from_memory(bytes).map_err(|_| unreadable())?;
     let (iw, ih) = (img.width() as f64, img.height() as f64);
     let ratio = f64::from(w) / f64::from(h);
@@ -1093,5 +1117,46 @@ mod tests {
         let back = image::load_from_memory(&out).unwrap();
         assert_eq!((back.width(), back.height()), (256, 256));
         assert!(prepare_image(b"nope", 10, 10).is_err());
+    }
+
+    /// A dropped file is prepared on a worker; one over 20 MB is refused by
+    /// its size, before it is read.
+    #[test]
+    fn dropped_images_are_sized_before_they_are_read() {
+        let dir = std::env::temp_dir().join(format!("gelabber-drop-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Sparse: 3 GB on paper, nothing on disk; reading it would take that.
+        let huge = dir.join("huge.png");
+        std::fs::File::create(&huge)
+            .unwrap()
+            .set_len(3 << 30)
+            .unwrap();
+        assert_eq!(read_image(&huge), Err(too_large()));
+        let small = dir.join("small.png");
+        image::RgbaImage::from_pixel(30, 10, image::Rgba([1, 2, 3, 128]))
+            .save(&small)
+            .unwrap();
+        let ctx = egui::Context::default();
+        let mut pending = Some(prepare(&ctx, ImageFile::Path(small), 96, 32));
+        let start = std::time::Instant::now();
+        let prepared = loop {
+            if let Some(done) = crate::task::poll(&mut pending) {
+                break done;
+            }
+            assert!(start.elapsed().as_secs() < 10, "the worker never answered");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        let (_, kind) = prepared.expect("prepared");
+        assert_eq!(kind, "image/png");
+        let mut pending = Some(prepare(&ctx, ImageFile::Path(huge), 96, 32));
+        let refused = loop {
+            if let Some(done) = crate::task::poll(&mut pending) {
+                break done;
+            }
+            assert!(start.elapsed().as_secs() < 10, "the worker never answered");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        assert_eq!(refused, Err(too_large()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

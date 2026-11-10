@@ -261,16 +261,8 @@ fn load() -> Prefs {
 fn save(prefs: &Prefs) {
     let Some(path) = file() else { return };
     let text = serde_json::to_string_pretty(&prefs.to_json()).unwrap_or_default();
-    // Off the UI thread; a failed write only loses the setting on restart.
-    std::thread::spawn(move || {
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let tmp = path.with_extension("json.tmp");
-        if std::fs::write(&tmp, text).is_ok() {
-            let _ = std::fs::rename(&tmp, &path);
-        }
-    });
+    // Off the UI thread and in order: a slider drag saves every frame.
+    crate::platform::paths::write_latest(path, text.into_bytes(), false);
 }
 
 type Shared = Arc<Mutex<Prefs>>;

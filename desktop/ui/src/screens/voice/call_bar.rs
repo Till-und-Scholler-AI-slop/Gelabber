@@ -159,6 +159,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     let c = theme.c;
     let state = app.call.state();
     let Some((server, channel)) = session::joined(&state) else {
+        // A key held as the call ended is not the next call's.
+        release_window(ui.ctx(), app.call);
         if let Some((server, channel)) = state.lost_call {
             lost(ui, app, rect, server, channel);
         }
@@ -354,9 +356,14 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         ui.painter().circle_filled(dot, 4.0, c.panel);
         ui.painter().circle_filled(dot, 2.5, c.warning);
         mic_problem(ui, app, &mic, state.mic == MicStatus::Denied);
+        // No key is followed meanwhile, so none is held: its release would
+        // be missed and the microphone left open once it works again.
+        release_window(ui.ctx(), app.call);
     } else {
         let ptt = prefs::get(ui.ctx()).voice_input == "ptt";
-        let held = push_to_talk(ui, app, ptt && !muted);
+        push_to_talk(ui, app, ptt && !muted);
+        // The call's gate, whichever source holds it (and its release delay).
+        let held = app.call.with_state(|s| s.push_to_talk_open);
         let (title, detail) = call_tip(ui.ctx(), CallKey::Mute, muted);
         let word = if state.muted && !state.deafened && !narrow {
             Some("Stumm")
@@ -577,37 +584,175 @@ enum Tone {
     Problem,
 }
 
-/// Push-to-talk inside the window: the chosen key (or Maustaste 4/5)
-/// opens the microphone while held. Returns whether it is held.
-fn push_to_talk(ui: &Ui, app: &AppCtx, active: bool) -> bool {
+/// Who reports the push-to-talk key: the window's own keys, or the global
+/// hook (`platform::ptt`) that also sees it while another app has the focus.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PttSource {
+    Window,
+    Hook,
+}
+
+/// What each source holds; the call gets their OR (`setHeld("page", …)`),
+/// so one letting go does not close the microphone the other holds open.
+#[derive(Clone, Copy, Default)]
+struct PttHeld {
+    window: bool,
+    hook: bool,
+}
+
+/// `source` holds the key down or lets it go.
+pub fn push_to_talk_from(
+    ctx: &egui::Context,
+    call: &gelabber_call::Call,
+    source: PttSource,
+    held: bool,
+) {
     let id = Id::unique("gelabber-ptt-held");
+    let before: PttHeld = ctx.data(|d| d.get_temp(id)).unwrap_or_default();
+    let mut after = before;
+    match source {
+        PttSource::Window => after.window = held,
+        PttSource::Hook => after.hook = held,
+    }
+    ctx.data_mut(|d| d.insert_temp(id, after));
+    let any = |h: PttHeld| h.window || h.hook;
+    if any(after) != any(before) {
+        call.push_to_talk(any(after));
+    }
+}
+
+/// The side mouse button push-to-talk holds in a running call: it does not
+/// also go back or forward (pushToTalk.ts `onMouse`).
+pub fn ptt_side_button(
+    ctx: &egui::Context,
+    call: &gelabber_call::Call,
+) -> Option<egui::PointerButton> {
+    let p = prefs::get(ctx);
+    let button = match p.ptt_key.as_str() {
+        "Mouse4" => egui::PointerButton::Extra1,
+        "Mouse5" => egui::PointerButton::Extra2,
+        _ => return None,
+    };
+    let in_call = call.with_state(|s| {
+        matches!(
+            s.status,
+            CallStatus::Connecting | CallStatus::Connected | CallStatus::Reconnecting
+        )
+    });
+    (in_call && p.voice_input == "ptt").then_some(button)
+}
+
+/// Push-to-talk inside the window: the chosen key (or Maustaste 4/5)
+/// opens the microphone while held.
+fn window_id() -> Id {
+    Id::unique("gelabber-ptt-window")
+}
+
+/// The window's key as followed from its presses and releases: egui keeps
+/// only logical keys down, and a release can come as another logical key
+/// (Shift let go of "1" as "!"), so a release counts by its place too.
+#[derive(Clone, Copy, Default)]
+struct Hold {
+    down: bool,
+    /// The press's `key` and `physical_key`.
+    key: Option<Key>,
+    physical: Option<Key>,
+}
+
+fn place_id() -> Id {
+    Id::unique("gelabber-ptt-window-place")
+}
+
+/// `hold` after this frame's input, for push-to-talk on `target`.
+fn follow(
+    mut hold: Hold,
+    target: crate::screens::settings::media::WindowKey,
+    i: &egui::InputState,
+) -> Hold {
+    use crate::screens::settings::media::WindowKey;
+    for e in &i.events {
+        match e {
+            egui::Event::Key {
+                key,
+                physical_key,
+                pressed,
+                ..
+            } => {
+                let ours = match target {
+                    WindowKey::Logical(k) => *key == k,
+                    WindowKey::Place(k) => *physical_key == Some(k),
+                };
+                if *pressed && ours {
+                    hold = Hold {
+                        down: true,
+                        key: Some(*key),
+                        physical: *physical_key,
+                    };
+                } else if !*pressed
+                    && (ours || (hold.physical.is_some() && *physical_key == hold.physical))
+                {
+                    hold.down = false;
+                }
+            }
+            egui::Event::WindowFocused(false) => hold.down = false,
+            _ => {}
+        }
+    }
+    // egui let the key go (a release seen in a frame not followed here).
+    if hold.down && hold.key.is_some_and(|k| !i.key_down(k)) {
+        hold.down = false;
+    }
+    hold
+}
+
+/// The window lets push-to-talk go and forgets the key it followed, while
+/// it does not follow the key (no call, no microphone, push-to-talk off).
+/// The global hook's hold is its own.
+pub fn release_window(ctx: &egui::Context, call: &gelabber_call::Call) {
+    ctx.data_mut(|d| {
+        d.insert_temp(place_id(), Hold::default());
+        d.insert_temp(window_id(), false);
+    });
+    // Tells the call only when the window's hold changes.
+    push_to_talk_from(ctx, call, PttSource::Window, false);
+}
+
+fn push_to_talk(ui: &Ui, app: &AppCtx, active: bool) {
+    use crate::screens::settings::media::window_key;
+    let id = window_id();
+    let place_id = place_id();
     let was: bool = ui.ctx().data(|d| d.get_temp(id)).unwrap_or(false);
     if !active {
-        if was {
-            app.call.push_to_talk(false);
-            ui.ctx().data_mut(|d| d.insert_temp(id, false));
-        }
-        return false;
+        release_window(ui.ctx(), app.call);
+        return;
     }
-    let code = prefs::get(ui.ctx()).ptt_key;
-    let held = ui.input(|i| match code.as_str() {
-        "Mouse4" => i.pointer.button_down(egui::PointerButton::Extra1),
-        "Mouse5" => i.pointer.button_down(egui::PointerButton::Extra2),
-        "" => false,
-        code => {
-            let name = code
-                .strip_prefix("Key")
-                .or_else(|| code.strip_prefix("Digit"))
-                .unwrap_or(code);
-            egui::Key::from_name(name).is_some_and(|k| i.key_down(k))
-                && !ui.ctx().egui_wants_keyboard_input()
-        }
+    let p = prefs::get(ui.ctx());
+    let target = window_key(&p.ptt_key, &p.ptt_key_label);
+    // Read outside `input`: the context's lock is not reentrant.
+    let typing = ui.ctx().egui_wants_keyboard_input();
+    let hold_was: Hold = ui.ctx().data(|d| d.get_temp(place_id)).unwrap_or_default();
+    let (held, hold) = ui.input(|i| match p.ptt_key.as_str() {
+        "Mouse4" => (
+            i.pointer.button_down(egui::PointerButton::Extra1),
+            Hold::default(),
+        ),
+        "Mouse5" => (
+            i.pointer.button_down(egui::PointerButton::Extra2),
+            Hold::default(),
+        ),
+        _ => match target {
+            Some(target) => {
+                let hold = follow(hold_was, target, i);
+                (hold.down && !typing, hold)
+            }
+            None => (false, Hold::default()),
+        },
     });
+    ui.ctx().data_mut(|d| d.insert_temp(place_id, hold));
     if held != was {
-        app.call.push_to_talk(held);
+        push_to_talk_from(ui.ctx(), app.call, PttSource::Window, held);
         ui.ctx().data_mut(|d| d.insert_temp(id, held));
     }
-    held
 }
 
 /// The microphone's or the headset's toggle.
