@@ -930,6 +930,15 @@ pub fn answer(ctx: &egui::Context, key: &str) -> Option<bool> {
     None
 }
 
+/// Answers the question `key` as its dialog would.
+#[cfg(test)]
+pub fn answer_for_test(ctx: &egui::Context, key: &str, yes: bool) {
+    let slot = confirm_slot(ctx);
+    let mut s = slot.lock();
+    s.open = None;
+    s.answered = Some((key.to_owned(), yes));
+}
+
 /// Whether a question is open (pages pause their shortcuts meanwhile).
 pub fn asking(ctx: &egui::Context) -> bool {
     confirm_slot(ctx).lock().open.is_some()
