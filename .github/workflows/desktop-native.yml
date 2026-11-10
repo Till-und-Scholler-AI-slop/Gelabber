@@ -365,10 +365,14 @@ jobs:
           workspaces: desktop
           save-if: ${{ github.event_name == 'push' }}
 
+      # A release is built from a commit CI has tested on main, so its build
+      # runs no checks again: a flaky one would hold the release back.
       - name: Format
+        if: inputs.release_tag == ''
         run: cargo fmt --manifest-path desktop/Cargo.toml --all -- --check
 
       - name: Clippy
+        if: inputs.release_tag == ''
         run: cargo clippy --manifest-path desktop/Cargo.toml --all-targets -- -D warnings
 
       # GStreamer and the test desktop (PipeWire, pipewire-pulse,
@@ -386,11 +390,13 @@ jobs:
       # Every test of the workspace. This core is built with H264, so the
       # loopback call must use it.
       - name: Loopback call against mediasoup 0.29
+        if: inputs.release_tag == ''
         env:
           GELABBER_EXPECT_H264: "1"
         run: cargo test --manifest-path desktop/Cargo.toml -- --nocapture --test-threads=1
 
       - name: Loopback call with the GStreamer H264 encoder
+        if: inputs.release_tag == ''
         env:
           GELABBER_EXPECT_H264: "1"
           GELABBER_H264_ENCODER: x264enc
@@ -399,6 +405,7 @@ jobs:
         run: cargo test --manifest-path desktop/Cargo.toml --test mediasoup_loopback -- --nocapture
 
       - name: Loopback call with the GStreamer H264 decoder
+        if: inputs.release_tag == ''
         env:
           GELABBER_EXPECT_H264: "1"
           GELABBER_H264_DECODER: avdec_h264
@@ -409,6 +416,7 @@ jobs:
       # AV1 through GStreamer in front of libaom and dav1d: av1enc and av1dec
       # (libaom in gst-plugins-bad) stand in for NVENC/VA-API/NVDEC.
       - name: Loopback call with GStreamer AV1 codecs
+        if: inputs.release_tag == ''
         env:
           GELABBER_EXPECT_H264: "1"
           GELABBER_AV1_ENCODER: av1enc
@@ -423,6 +431,7 @@ jobs:
       # decoder it cannot link AV1 to videoconvert, so it does not start.
       # libaom and dav1d take over.
       - name: Loopback call with failing GStreamer AV1 codecs
+        if: inputs.release_tag == ''
         env:
           GELABBER_EXPECT_H264: "1"
           GELABBER_AV1_ENCODER: identity
@@ -435,6 +444,7 @@ jobs:
       # Real xdg-desktop-portal frontend and PipeWire, with a test backend
       # whose monitor is a shared-memory test stream (no compositor or GPU here).
       - name: Screen capture through the ScreenCast portal
+        if: inputs.release_tag == ''
         timeout-minutes: 15
         env:
           GELABBER_TEST_SCREEN: "1"
@@ -450,6 +460,7 @@ jobs:
       # the speakers. Covers device selection, the three processing modes
       # (RNNoise included), Opus through mediasoup and playout.
       - name: Voice through PulseAudio devices
+        if: inputs.release_tag == ''
         id: voice
         timeout-minutes: 10
         env:
@@ -1038,7 +1049,7 @@ jobs:
       # worker is there.
       - name: Tests of the core with their mediasoup worker (build)
         id: worker
-        if: ${{ !cancelled() && steps.core.outcome == 'success' }}
+        if: ${{ !cancelled() && inputs.release_tag == '' && steps.core.outcome == 'success' }}
         timeout-minutes: 45
         run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --no-run
 
@@ -1052,7 +1063,7 @@ jobs:
       # to 127.0.0.1: probe it, and move the tests' server to the machine's
       # address if needed (GELABBER_TEST_LISTEN_IP).
       - name: Address for the loopback call
-        if: ${{ !cancelled() && steps.core.outcome == 'success' }}
+        if: ${{ !cancelled() && inputs.release_tag == '' && steps.core.outcome == 'success' }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           # Whether a datagram from a socket on $from reaches one on $to, and as coming from $from.
@@ -1140,7 +1151,7 @@ jobs:
       # features and rebuild the worker. The empty core directory keeps Clippy's
       # build scripts from compiling the C++ again.
       - name: Clippy
-        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        if: ${{ !cancelled() && inputs.release_tag == '' && steps.toolchain.outcome == 'success' }}
         timeout-minutes: 45
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
@@ -1149,7 +1160,7 @@ jobs:
           cargo clippy --release --locked --manifest-path desktop/Cargo.toml -p gelabber -p gelabber-ui -p gelabber-call -p gelabber-client --all-targets -- -D warnings
 
       - name: Format
-        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        if: ${{ !cancelled() && inputs.release_tag == '' && steps.toolchain.outcome == 'success' }}
         run: cargo fmt --manifest-path desktop/Cargo.toml --all -- --check
 
   # The pacman repository (Arch/Omarchy): package, signed database, a user's
