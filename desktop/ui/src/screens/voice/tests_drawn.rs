@@ -254,6 +254,25 @@ fn the_next_call_starts_without_the_last_ones_key() {
     assert!(call.push_to_talk_held(), "the first press holds");
 }
 
+/// Shift let go of "1" comes as "!": the release still counts by its place.
+#[test]
+fn a_digit_released_with_shift_held_lets_go() {
+    use egui::Key;
+    let _config = crate::platform::paths::testing::TempConfig::new("ptt-shift");
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call.clone(), bar);
+    push_to_talk_key(&h.ctx, &call, "Digit1", "1");
+    h.run_steps(2);
+    h.event(key_event(Key::Num1, Some(Key::Num1), true));
+    h.run_steps(2);
+    assert!(call.push_to_talk_held());
+    h.event(key_event(Key::ShiftLeft, Some(Key::ShiftLeft), true));
+    h.event(key_event(Key::Exclamationmark, Some(Key::Num1), false));
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held(), "let go by its place");
+}
+
 /// A key recorded before places (an egui name) holds as it did.
 #[test]
 fn an_old_push_to_talk_key_holds_as_before() {

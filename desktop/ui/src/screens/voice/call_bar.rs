@@ -648,10 +648,61 @@ fn window_id() -> Id {
     Id::unique("gelabber-ptt-window")
 }
 
-/// A key matched by place: egui keeps only logical keys down, so its
-/// presses and releases are followed here.
+/// The window's key as followed from its presses and releases: egui keeps
+/// only logical keys down, and a release can come as another logical key
+/// (Shift let go of "1" as "!"), so a release counts by its place too.
+#[derive(Clone, Copy, Default)]
+struct Hold {
+    down: bool,
+    /// The press's `key` and `physical_key`.
+    key: Option<Key>,
+    physical: Option<Key>,
+}
+
 fn place_id() -> Id {
     Id::unique("gelabber-ptt-window-place")
+}
+
+/// `hold` after this frame's input, for push-to-talk on `target`.
+fn follow(
+    mut hold: Hold,
+    target: crate::screens::settings::media::WindowKey,
+    i: &egui::InputState,
+) -> Hold {
+    use crate::screens::settings::media::WindowKey;
+    for e in &i.events {
+        match e {
+            egui::Event::Key {
+                key,
+                physical_key,
+                pressed,
+                ..
+            } => {
+                let ours = match target {
+                    WindowKey::Logical(k) => *key == k,
+                    WindowKey::Place(k) => *physical_key == Some(k),
+                };
+                if *pressed && ours {
+                    hold = Hold {
+                        down: true,
+                        key: Some(*key),
+                        physical: *physical_key,
+                    };
+                } else if !*pressed
+                    && (ours || (hold.physical.is_some() && *physical_key == hold.physical))
+                {
+                    hold.down = false;
+                }
+            }
+            egui::Event::WindowFocused(false) => hold.down = false,
+            _ => {}
+        }
+    }
+    // egui let the key go (a release seen in a frame not followed here).
+    if hold.down && hold.key.is_some_and(|k| !i.key_down(k)) {
+        hold.down = false;
+    }
+    hold
 }
 
 /// The window lets push-to-talk go and forgets the key it followed, while
@@ -660,7 +711,7 @@ fn place_id() -> Id {
 pub fn release_window(ctx: &egui::Context, call: &gelabber_call::Call) {
     let was: bool = ctx.data(|d| d.get_temp(window_id())).unwrap_or(false);
     ctx.data_mut(|d| {
-        d.insert_temp(place_id(), false);
+        d.insert_temp(place_id(), Hold::default());
         d.insert_temp(window_id(), false);
     });
     if was {
@@ -669,7 +720,7 @@ pub fn release_window(ctx: &egui::Context, call: &gelabber_call::Call) {
 }
 
 fn push_to_talk(ui: &Ui, app: &AppCtx, active: bool) {
-    use crate::screens::settings::media::{WindowKey, window_key};
+    use crate::screens::settings::media::window_key;
     let id = window_id();
     let place_id = place_id();
     let was: bool = ui.ctx().data(|d| d.get_temp(id)).unwrap_or(false);
@@ -681,31 +732,25 @@ fn push_to_talk(ui: &Ui, app: &AppCtx, active: bool) {
     let target = window_key(&p.ptt_key, &p.ptt_key_label);
     // Read outside `input`: the context's lock is not reentrant.
     let typing = ui.ctx().egui_wants_keyboard_input();
-    let place_was: bool = ui.ctx().data(|d| d.get_temp(place_id)).unwrap_or(false);
-    let (held, place_down) = ui.input(|i| match p.ptt_key.as_str() {
-        "Mouse4" => (i.pointer.button_down(egui::PointerButton::Extra1), false),
-        "Mouse5" => (i.pointer.button_down(egui::PointerButton::Extra2), false),
+    let hold_was: Hold = ui.ctx().data(|d| d.get_temp(place_id)).unwrap_or_default();
+    let (held, hold) = ui.input(|i| match p.ptt_key.as_str() {
+        "Mouse4" => (
+            i.pointer.button_down(egui::PointerButton::Extra1),
+            Hold::default(),
+        ),
+        "Mouse5" => (
+            i.pointer.button_down(egui::PointerButton::Extra2),
+            Hold::default(),
+        ),
         _ => match target {
-            Some(WindowKey::Logical(k)) => (i.key_down(k) && !typing, false),
-            Some(WindowKey::Place(k)) => {
-                let mut down = place_was;
-                for e in &i.events {
-                    match e {
-                        egui::Event::Key {
-                            physical_key: Some(pk),
-                            pressed,
-                            ..
-                        } if *pk == k => down = *pressed,
-                        egui::Event::WindowFocused(false) => down = false,
-                        _ => {}
-                    }
-                }
-                (down && !typing, down)
+            Some(target) => {
+                let hold = follow(hold_was, target, i);
+                (hold.down && !typing, hold)
             }
-            None => (false, false),
+            None => (false, Hold::default()),
         },
     });
-    ui.ctx().data_mut(|d| d.insert_temp(place_id, place_down));
+    ui.ctx().data_mut(|d| d.insert_temp(place_id, hold));
     if held != was {
         push_to_talk_from(ui.ctx(), app.call, PttSource::Window, held);
         ui.ctx().data_mut(|d| d.insert_temp(id, held));
