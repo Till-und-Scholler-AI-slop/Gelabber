@@ -886,6 +886,86 @@ describe("voice session", () => {
     });
   });
 
+  it("announces the join's watches to the gateway once the join is acknowledged", () => {
+    const { sent, emitSig } = install();
+    joinVoice({
+      serverId: "srv",
+      channelId: "voice",
+      channelName: "Lounge",
+      watch: ["ada", "bob", "u-self"],
+    });
+    const watches = () =>
+      sent.filter((frame) => frame.op === "sig" && frame.t === "w");
+    // No seat yet: a refusal now would read as a refused join.
+    expect(watches()).toEqual([]);
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    expect(watches()).toEqual([
+      { op: "sig", t: "w", s: "srv", c: "voice", o: "ada", k: "s", on: true },
+      { op: "sig", t: "w", s: "srv", c: "voice", o: "bob", k: "s", on: true },
+    ]);
+  });
+
+  it("toggleSourceWatch tells the gateway, also without media watches", () => {
+    const { sent, emitSig } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    expect(useVoice.getState().sourceWatchSupported).toBe(false);
+    toggleSourceWatch("ada", "s");
+    toggleSourceWatch("ada", "s");
+    toggleSourceWatch("u-self", "s");
+    expect(
+      sent.filter((frame) => frame.op === "sig" && frame.t === "w"),
+    ).toEqual([
+      { op: "sig", t: "w", s: "srv", c: "voice", o: "ada", k: "s", on: true },
+      { op: "sig", t: "w", s: "srv", c: "voice", o: "ada", k: "s", on: false },
+    ]);
+  });
+
+  it("a toggle before the join's ack waits for the ack's announcement", () => {
+    const { sent, emitSig } = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    toggleSourceWatch("ada", "s");
+    toggleSourceWatch("bob", "s");
+    toggleSourceWatch("bob", "s");
+    const watches = () =>
+      sent.filter((frame) => frame.op === "sig" && frame.t === "w");
+    expect(watches()).toEqual([]);
+    emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+    expect(watches()).toEqual([
+      { op: "sig", t: "w", s: "srv", c: "voice", o: "ada", k: "s", on: true },
+    ]);
+  });
+
+  it("re-sends every watch after the gateway comes back", async () => {
+    for (const keepMedia of [false, true]) {
+      const f = install();
+      joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+      f.emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+      if (keepMedia)
+        await vi.waitFor(() => expect(f.peers[0]?.audio).toBeTruthy());
+      toggleSourceWatch("ada", "s");
+      toggleSourceWatch("bob", "s");
+      toggleSourceWatch("bob", "s");
+      f.sent.length = 0;
+      f.emitReady();
+      // reannounceActive (media kept) and the plain rejoin both re-send.
+      f.emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-self" });
+      expect(
+        f.sent.filter((frame) => frame.op === "sig" && frame.t === "w"),
+      ).toEqual([
+        { op: "sig", t: "w", s: "srv", c: "voice", o: "ada", k: "s", on: true },
+      ]);
+      if (keepMedia)
+        expect(
+          f.sent.some(
+            (frame) => frame.op === "sig" && frame.t === "p" && frame.k === "a",
+          ),
+        ).toBe(true);
+      resetVoiceForTests();
+      resetVoiceRoster();
+    }
+  });
+
   it("publishes via correlated v4 media WS and keeps presence on chat WS", async () => {
     const { sent, mediaSent, peers } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
