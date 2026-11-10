@@ -1,5 +1,6 @@
 // Seeds a fresh local stack with the fixed data both clients are compared on
-// (desktop/parity): people, two servers, channels, messages and a DM.
+// (desktop/parity): people, two servers, channels, messages, a DM, and
+// roles with a channel limited to them.
 // Run in web/: node scripts/parity/seed.mjs [base-url] [out.json]
 // The base URL is the web origin (Vite proxies /api), default 127.0.0.1:5180.
 /* global process, console, fetch */
@@ -142,6 +143,28 @@ await say(lena, dm.id, "Ja, ich schicke sie dir heute Abend.");
 // Lena read everything in allgemein except nothing in spiele and musik, so
 // the sidebar shows unread state there.
 await lena.call("PUT", `/channels/${g}/read`, {});
+
+// Roles (v0.10), as in roles-editor.png: Moderation for Jonas, Stammgäste
+// for Jonas, Mira and Tom; spiele is only for them, so Ada does not see it.
+const moderators = await lena.call("POST", `/servers/${home.id}/roles`, {
+  name: "Moderation",
+  color: "blue",
+  permissions: ["moderate_members", "manage_messages", "mention_everyone"],
+});
+const regulars = await lena.call("POST", `/servers/${home.id}/roles`, {
+  name: "Stammgäste",
+  color: "green",
+});
+await lena.call("PUT", `/servers/${home.id}/members/${jonas.user.id}/roles`, {
+  role_ids: [moderators.id, regulars.id],
+});
+for (const p of [mira, tom])
+  await lena.call("PUT", `/servers/${home.id}/members/${p.user.id}/roles`, {
+    role_ids: [regulars.id],
+  });
+await lena.call("PATCH", `/channels/${games.id}`, {
+  role_ids: [moderators.id, regulars.id],
+});
 
 const fixture = {
   base: BASE,

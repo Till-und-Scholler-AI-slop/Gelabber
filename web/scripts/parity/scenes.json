@@ -2161,6 +2161,88 @@
           "clicktext": "Diagnostics"
         }
       ]
+    },
+    {
+      "name": "server-settings-rollen",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "Rollen"
+        },
+        {
+          "wait": 300
+        }
+      ]
+    },
+    {
+      "name": "server-settings-rollen-base",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "Rollen"
+        },
+        {
+          "wait": 300
+        },
+        {
+          "clicktext": "Alle Mitglieder"
+        }
+      ]
+    },
+    {
+      "name": "role-delete-confirm",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "Rollen"
+        },
+        {
+          "wait": 300
+        },
+        {
+          "click": "Rolle löschen"
+        }
+      ]
+    },
+    {
+      "name": "server-settings-role-picker",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "actions": [
+        {
+          "link": "Mitglieder"
+        },
+        {
+          "wait": 300
+        },
+        {
+          "click": "Rollen für Mira"
+        }
+      ]
+    },
+    {
+      "name": "edit-channel-access",
+      "path": "/s/{home}/c/{spiele}",
+      "user": "lena",
+      "actions": [
+        {
+          "hover": "spiele"
+        },
+        {
+          "click": "#spiele bearbeiten"
+        },
+        {
+          "click": "Zugriff"
+        }
+      ]
+    },
+    {
+      "name": "channel-hidden-for-member",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "ada"
     }
   ]
 }
