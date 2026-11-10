@@ -18,7 +18,8 @@ vi.mock("./ui/Popover.tsx", () => ({
   ),
 }));
 
-import { ChannelDialog, channelRequest } from "./ServerDialogs.tsx";
+import { channelRequest } from "../servers/channelRequest.ts";
+import { ChannelDialog } from "./ServerDialogs.tsx";
 
 const created_at = "2026-11-01T00:00:00Z";
 const role = (
