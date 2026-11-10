@@ -1,5 +1,5 @@
 //! Operator area "Betrieb" (#517): who is an operator, the area bootstrap,
-//! the audit trail, and disabling accounts.
+//! the audit trail, disabling accounts and blocking and delisting servers.
 
 mod common;
 
@@ -1029,4 +1029,740 @@ async fn an_invitation_is_mailed_in_the_operators_language(pool: PgPool) {
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(mailer.outbox().len(), 1);
+}
+
+// ---- Servers: block and delist ----
+
+const BEN: &str = "ben@example.test";
+
+/// [`operator_state`] with a live Redis, for media tickets and sockets.
+fn ws_operator_state(pool: PgPool) -> AppState {
+    let mut state = common::ws_state(pool);
+    state.operators = Arc::new(HashSet::from([LENA.to_owned()]));
+    state
+}
+
+/// A server of `owner`: its id, text channel, voice channel and an invite.
+struct Server {
+    id: String,
+    text: String,
+    voice: String,
+    code: String,
+}
+
+async fn server_of(owner: &mut Client, name: &str) -> Server {
+    let res = owner
+        .send(Method::POST, "/api/servers", Some(json!({ "name": name })))
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let channel = |kind: &str| {
+        res.body["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["kind"] == kind)
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let (text, voice) = (channel("text"), channel("voice"));
+    let id = res.body["id"].as_str().unwrap().to_owned();
+    let invite = owner
+        .send(
+            Method::POST,
+            &format!("/api/servers/{id}/invites"),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(invite.status, StatusCode::CREATED, "{}", invite.body);
+    Server {
+        id,
+        text,
+        voice,
+        code: invite.body["code"].as_str().unwrap().to_owned(),
+    }
+}
+
+async fn join_server(client: &mut Client, code: &str) {
+    let res = client
+        .send(Method::POST, &format!("/api/invites/{code}/join"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+}
+
+async fn post_message(client: &mut Client, channel: &str, text: &str) -> String {
+    let res = client
+        .send(
+            Method::POST,
+            &format!("/api/channels/{channel}/messages"),
+            Some(json!({ "content": text })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    res.body["id"].as_str().unwrap().to_owned()
+}
+
+async fn report(pool: &PgPool, server: &str, reporter: &str) -> Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO reports (server_id, reporter_id, reason) VALUES ($1, $2, 'spam') \
+         RETURNING id",
+    )
+    .bind(Uuid::parse_str(server).unwrap())
+    .bind(Uuid::parse_str(reporter).unwrap())
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+async fn report_status(pool: &PgPool, id: Uuid) -> (String, Option<Uuid>) {
+    sqlx::query_as("SELECT status, resolved_by FROM reports WHERE id = $1")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// Rows of `operator_audit` about servers as (action, target_server, detail).
+async fn server_audit(pool: &PgPool) -> Vec<(String, Option<Uuid>, serde_json::Value)> {
+    sqlx::query_as(
+        "SELECT action, target_server, detail FROM operator_audit \
+         WHERE action LIKE 'servers.%' ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+async fn operate(
+    op: &mut Client,
+    server: &str,
+    action: &str,
+    body: Option<serde_json::Value>,
+) -> common::Response {
+    op.send(
+        Method::POST,
+        &format!("/api/operator/servers/{server}/{action}"),
+        body,
+    )
+    .await
+}
+
+fn unread_of(rows: &common::Response, channel: &str) -> Option<i64> {
+    rows.body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["channel_id"] == channel)
+        .map(|row| row["unread_count"].as_i64().unwrap())
+}
+
+#[sqlx::test]
+async fn the_server_routes_answer_401_and_404_like_the_area(pool: PgPool) {
+    let state = operator_state(pool.clone());
+    let mut tom = registered(&state, TOM, "Tom").await;
+    let abend = server_of(&mut tom, "Abend").await;
+    let mut anonymous = Client::from_state(state.clone());
+    anonymous.bootstrap().await;
+    let id = &abend.id;
+    let routes = [
+        (Method::GET, "/api/operator/servers".to_owned(), None),
+        (
+            Method::POST,
+            format!("/api/operator/servers/{id}/delist"),
+            Some(json!({})),
+        ),
+        (
+            Method::POST,
+            format!("/api/operator/servers/{id}/relist"),
+            None,
+        ),
+        (
+            Method::POST,
+            format!("/api/operator/servers/{id}/block"),
+            Some(json!({ "reason": "Spam" })),
+        ),
+        (
+            Method::POST,
+            format!("/api/operator/servers/{id}/unblock"),
+            None,
+        ),
+    ];
+    for (method, path, body) in routes {
+        let res = anonymous.send(method.clone(), &path, body.clone()).await;
+        assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{path}: {}", res.body);
+        // Even the owner of the server is no operator.
+        let res = tom.send(method, &path, body).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{path}: {}", res.body);
+    }
+    assert!(audit_rows(&pool).await.is_empty());
+    let changed: bool = sqlx::query_scalar(
+        "SELECT blocked_at IS NOT NULL OR delisted_at IS NOT NULL FROM servers WHERE id = $1",
+    )
+    .bind(Uuid::parse_str(id).unwrap())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!changed);
+}
+
+#[sqlx::test]
+async fn blocking_a_server_locks_its_members_out_until_unblocked(pool: PgPool) {
+    let state = ws_operator_state(pool.clone());
+    let mut lena = registered(&state, LENA, "Lena").await;
+    let mut tom = registered(&state, TOM, "Tom").await;
+    let mut ben = registered(&state, BEN, "Ben").await;
+    let abend = server_of(&mut tom, "Abend").await;
+    let control = server_of(&mut tom, "Kontrolle").await;
+    join_server(&mut ben, &abend.code).await;
+    join_server(&mut ben, &control.code).await;
+    post_message(&mut tom, &abend.text, "hallo").await;
+    post_message(&mut tom, &control.text, "hallo").await;
+    let open = report(&pool, &abend.id, ben.user_id()).await;
+    let elsewhere = report(&pool, &control.id, ben.user_id()).await;
+    let unread = ben.send(Method::GET, "/api/messages/unread", None).await;
+    assert_eq!(unread_of(&unread, &abend.text), Some(1));
+
+    // The reason is required.
+    for body in [json!({}), json!({ "reason": "  " })] {
+        let res = operate(&mut lena, &abend.id, "block", Some(body)).await;
+        assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+        assert_eq!(res.body["fields"]["reason"], "required");
+    }
+    let res = operate(
+        &mut lena,
+        &abend.id,
+        "block",
+        Some(json!({ "reason": "x".repeat(501) })),
+    )
+    .await;
+    assert_eq!(res.body["fields"]["reason"], "too_long", "{}", res.body);
+    assert!(server_audit(&pool).await.is_empty());
+
+    let res = operate(
+        &mut lena,
+        &abend.id,
+        "block",
+        Some(json!({ "reason": " Betrug " })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["id"], abend.id.as_str());
+    assert_eq!(res.body["blocked_reason"], "Betrug");
+    assert!(res.body["blocked_at"].is_string(), "{}", res.body);
+    assert_eq!(res.body["open_reports"], 0);
+    assert_eq!(res.body["members"], 2);
+    let lena_id = Uuid::parse_str(lena.user_id()).unwrap();
+    assert_eq!(
+        report_status(&pool, open).await,
+        ("actioned".to_owned(), Some(lena_id))
+    );
+    assert_eq!(report_status(&pool, elsewhere).await.0, "open");
+    let audit = server_audit(&pool).await;
+    assert_eq!(audit.len(), 1);
+    assert_eq!(audit[0].0, "servers.block");
+    assert_eq!(audit[0].1, Some(Uuid::parse_str(&abend.id).unwrap()));
+    assert_eq!(audit[0].2["reason"], "Betrug");
+
+    // Members, the owner included, get 403 server_blocked everywhere.
+    for client in [&mut ben, &mut tom] {
+        let res = client
+            .send(Method::GET, &format!("/api/servers/{}", abend.id), None)
+            .await;
+        assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+        assert_eq!(res.body["error"], "server_blocked");
+        let res = client
+            .send(
+                Method::GET,
+                &format!("/api/channels/{}/messages", abend.text),
+                None,
+            )
+            .await;
+        assert_eq!(res.body["error"], "server_blocked", "{}", res.body);
+        let res = client
+            .send(
+                Method::POST,
+                &format!("/api/channels/{}/messages", abend.text),
+                Some(json!({ "content": "noch da?" })),
+            )
+            .await;
+        assert_eq!(res.body["error"], "server_blocked", "{}", res.body);
+        let res = client
+            .send(
+                Method::POST,
+                &format!("/api/channels/{}/media-ticket", abend.voice),
+                None,
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+        assert_eq!(res.body["error"], "server_blocked");
+        let res = client
+            .send(
+                Method::GET,
+                &format!("/api/servers/{}/invites", abend.id),
+                None,
+            )
+            .await;
+        assert_eq!(res.body["error"], "server_blocked", "{}", res.body);
+        // The other server works as before.
+        let res = client
+            .send(Method::GET, &format!("/api/servers/{}", control.id), None)
+            .await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    }
+
+    // The list keeps it, marked, so the client can explain.
+    let list = ben.send(Method::GET, "/api/servers", None).await;
+    let blocked: Vec<(String, bool)> = list
+        .body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            (
+                s["id"].as_str().unwrap().to_owned(),
+                s["blocked"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        blocked,
+        [(abend.id.clone(), true), (control.id.clone(), false)]
+    );
+
+    // Its channels drop out of unread, and read-all leaves them alone.
+    let unread = ben.send(Method::GET, "/api/messages/unread", None).await;
+    assert_eq!(unread_of(&unread, &abend.text), None, "{}", unread.body);
+    assert_eq!(unread_of(&unread, &control.text), Some(1));
+    let res = ben
+        .send(Method::PUT, "/api/messages/read-all", Some(json!({})))
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let moved: Vec<&str> = res
+        .body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["channel_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(moved, [control.text.as_str()]);
+    let res = ben
+        .send(
+            Method::PUT,
+            &format!("/api/servers/{}/read", abend.id),
+            None,
+        )
+        .await;
+    assert_eq!(res.body["error"], "server_blocked", "{}", res.body);
+
+    // Its invites are dead, for newcomers and members alike.
+    let mut mia = registered(&state, "mia@example.test", "Mia").await;
+    for client in [&mut mia, &mut ben] {
+        let res = client
+            .send(Method::GET, &format!("/api/invites/{}", abend.code), None)
+            .await;
+        assert_eq!(res.status, StatusCode::GONE, "{}", res.body);
+        assert_eq!(res.body["error"], "invite_invalid");
+        let res = client
+            .send(
+                Method::POST,
+                &format!("/api/invites/{}/join", abend.code),
+                None,
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::GONE, "{}", res.body);
+    }
+
+    // A second block changes nothing and writes no row.
+    let res = operate(
+        &mut lena,
+        &abend.id,
+        "block",
+        Some(json!({ "reason": "Anders" })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["blocked_reason"], "Betrug");
+    assert_eq!(server_audit(&pool).await.len(), 1);
+
+    // Unblocking restores access.
+    let res = operate(&mut lena, &abend.id, "unblock", None).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(res.body["blocked_at"].is_null(), "{}", res.body);
+    assert!(res.body["blocked_reason"].is_null());
+    let res = ben
+        .send(Method::GET, &format!("/api/servers/{}", abend.id), None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["blocked"], false);
+    let res = mia
+        .send(Method::GET, &format!("/api/invites/{}", abend.code), None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let unread = ben.send(Method::GET, "/api/messages/unread", None).await;
+    assert!(unread_of(&unread, &abend.text).is_some());
+    let res = operate(&mut lena, &abend.id, "unblock", None).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let actions: Vec<String> = server_audit(&pool)
+        .await
+        .into_iter()
+        .map(|row| row.0)
+        .collect();
+    assert_eq!(actions, ["servers.block", "servers.unblock"]);
+}
+
+#[sqlx::test]
+async fn a_blocked_server_can_still_be_left_and_deleted(pool: PgPool) {
+    let state = operator_state(pool.clone());
+    let mut lena = registered(&state, LENA, "Lena").await;
+    let mut tom = registered(&state, TOM, "Tom").await;
+    let mut ben = registered(&state, BEN, "Ben").await;
+    let abend = server_of(&mut tom, "Abend").await;
+    join_server(&mut ben, &abend.code).await;
+    let res = operate(
+        &mut lena,
+        &abend.id,
+        "block",
+        Some(json!({ "reason": "x" })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    // The owner still cannot leave; a member can.
+    let res = tom
+        .send(
+            Method::POST,
+            &format!("/api/servers/{}/leave", abend.id),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    assert_eq!(res.body["error"], "forbidden");
+    let res = ben
+        .send(
+            Method::POST,
+            &format!("/api/servers/{}/leave", abend.id),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let list = ben.send(Method::GET, "/api/servers", None).await;
+    assert_eq!(list.body, json!([]));
+
+    let res = tom
+        .send(Method::DELETE, &format!("/api/servers/{}", abend.id), None)
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let res = operate(&mut lena, &abend.id, "unblock", None).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+}
+
+#[sqlx::test]
+async fn blocking_ends_seats_and_subscriptions(pool: PgPool) {
+    let state = ws_operator_state(pool.clone());
+    let addr = common::serve_ws_state(state.clone()).await;
+    let mut lena = registered(&state, LENA, "Lena").await;
+    let mut tom = registered(&state, TOM, "Tom").await;
+    let mut ben = registered(&state, BEN, "Ben").await;
+    let abend = server_of(&mut tom, "Abend").await;
+    join_server(&mut ben, &abend.code).await;
+    let sid = Uuid::parse_str(&abend.id).unwrap();
+    let mut ws = connect(addr, &ben).await;
+    ws_send(
+        &mut ws,
+        json!({ "op": "s", "s": abend.id, "c": abend.text }),
+    )
+    .await;
+    ws_until(&mut ws, |f| {
+        f["op"] == "ok" && f["c"] == abend.text.as_str()
+    })
+    .await;
+    ws_send(
+        &mut ws,
+        json!({ "op": "sig", "t": "j", "s": abend.id, "c": abend.voice }),
+    )
+    .await;
+    ws_until(&mut ws, |f| f["op"] == "sig" && f["t"] == "j").await;
+    assert_eq!(state.gateway.voice_snapshot(sid).await.unwrap().len(), 1);
+
+    let res = operate(
+        &mut lena,
+        &abend.id,
+        "block",
+        Some(json!({ "reason": "x" })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    ws_until(&mut ws, |f| {
+        f["op"] == "err" && f["e"] == "server_blocked" && f["s"] == abend.id.as_str()
+    })
+    .await;
+    assert!(state.gateway.voice_snapshot(sid).await.unwrap().is_empty());
+
+    // Subscribing again and rejoining voice are refused alike.
+    ws_send(
+        &mut ws,
+        json!({ "op": "s", "s": abend.id, "c": abend.text }),
+    )
+    .await;
+    ws_until(&mut ws, |f| f["op"] == "err" && f["e"] == "server_blocked").await;
+    ws_send(
+        &mut ws,
+        json!({ "op": "sig", "t": "j", "s": abend.id, "c": abend.voice }),
+    )
+    .await;
+    ws_until(&mut ws, |f| f["op"] == "err" && f["e"] == "server_blocked").await;
+    assert!(state.gateway.voice_snapshot(sid).await.unwrap().is_empty());
+
+    // After unblocking the same socket subscribes again.
+    let res = operate(&mut lena, &abend.id, "unblock", None).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    ws_send(
+        &mut ws,
+        json!({ "op": "s", "s": abend.id, "c": abend.text }),
+    )
+    .await;
+    ws_until(&mut ws, |f| {
+        f["op"] == "ok" && f["c"] == abend.text.as_str()
+    })
+    .await;
+}
+
+async fn ws_send(ws: &mut Ws, frame: serde_json::Value) {
+    ws.send(Message::Text(frame.to_string().into()))
+        .await
+        .unwrap();
+}
+
+/// The first frame matching `pred`, answering heartbeats on the way.
+async fn ws_until(ws: &mut Ws, pred: impl Fn(&serde_json::Value) -> bool) -> serde_json::Value {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            match ws.next().await.expect("open socket").expect("frame") {
+                Message::Text(raw) => {
+                    let frame: serde_json::Value = serde_json::from_str(&raw).unwrap();
+                    if frame["op"] == "h" {
+                        ws_send(ws, json!({ "op": "h" })).await;
+                    }
+                    if pred(&frame) {
+                        return frame;
+                    }
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("matching frame")
+}
+
+#[sqlx::test]
+async fn delisting_closes_reports_and_relisting_clears_it(pool: PgPool) {
+    let state = operator_state(pool.clone());
+    let mut lena = registered(&state, LENA, "Lena").await;
+    let mut tom = registered(&state, TOM, "Tom").await;
+    let ben = registered(&state, BEN, "Ben").await;
+    let abend = server_of(&mut tom, "Abend").await;
+    let first = report(&pool, &abend.id, ben.user_id()).await;
+
+    let res = operate(
+        &mut lena,
+        &abend.id,
+        "delist",
+        Some(json!({ "reason": "x".repeat(501) })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    assert_eq!(res.body["fields"]["reason"], "too_long");
+    assert_eq!(report_status(&pool, first).await.0, "open");
+
+    let res = operate(
+        &mut lena,
+        &abend.id,
+        "delist",
+        Some(json!({ "reason": "Werbung" })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["directory"], "delisted");
+    assert_eq!(res.body["open_reports"], 0);
+    assert!(res.body["blocked_at"].is_null());
+    assert_eq!(report_status(&pool, first).await.0, "actioned");
+    // Members keep the server: delisting only concerns the directory.
+    let res = tom
+        .send(Method::GET, &format!("/api/servers/{}", abend.id), None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    // Again with nothing to do: no row. A new report is closed by the next.
+    let res = operate(&mut lena, &abend.id, "delist", Some(json!({}))).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(server_audit(&pool).await.len(), 1);
+    let second = report(&pool, &abend.id, ben.user_id()).await;
+    let res = operate(&mut lena, &abend.id, "delist", Some(json!({}))).await;
+    assert_eq!(res.body["directory"], "delisted", "{}", res.body);
+    assert_eq!(report_status(&pool, second).await.0, "actioned");
+
+    let res = operate(&mut lena, &abend.id, "relist", None).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["directory"], "off");
+    let res = operate(&mut lena, &abend.id, "relist", None).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    let audit = server_audit(&pool).await;
+    let actions: Vec<&str> = audit.iter().map(|row| row.0.as_str()).collect();
+    assert_eq!(
+        actions,
+        ["servers.delist", "servers.delist", "servers.relist"]
+    );
+    assert_eq!(audit[0].2, json!({ "reason": "Werbung", "reports": 1 }));
+    assert_eq!(audit[1].2, json!({ "reason": null, "reports": 1 }));
+    assert!(
+        audit
+            .iter()
+            .all(|row| row.1 == Some(Uuid::parse_str(&abend.id).unwrap()))
+    );
+
+    // Unknown and malformed ids are 404 and write nothing.
+    let unknown = Uuid::new_v4().to_string();
+    for id in [unknown.as_str(), "nope"] {
+        for (action, body) in [
+            ("delist", Some(json!({}))),
+            ("relist", None),
+            ("block", Some(json!({ "reason": "x" }))),
+            ("unblock", None),
+        ] {
+            let res = operate(&mut lena, id, action, body).await;
+            assert_eq!(res.status, StatusCode::NOT_FOUND, "{action}: {}", res.body);
+        }
+    }
+    assert_eq!(server_audit(&pool).await.len(), 3);
+}
+
+#[sqlx::test]
+async fn the_server_list_searches_filters_and_counts_storage(pool: PgPool) {
+    let state = operator_state(pool.clone());
+    let mut lena = registered(&state, LENA, "Lena").await;
+    let mut tom = registered(&state, TOM, "Tom").await;
+    let mut ben = registered(&state, "ben@spiele.test", "Ben").await;
+    let abend = server_of(&mut tom, "Abend").await;
+    let runde = server_of(&mut ben, "Runde 50%").await;
+    join_server(&mut ben, &abend.code).await;
+    report(&pool, &runde.id, tom.user_id()).await;
+
+    // 1000 bytes sent with a message; 500 still pending upload.
+    let message = post_message(&mut tom, &abend.text, "Bild").await;
+    let channel = Uuid::parse_str(&abend.text).unwrap();
+    let uploader = Uuid::parse_str(tom.user_id()).unwrap();
+    for (message, size) in [
+        (Some(Uuid::parse_str(&message).unwrap()), 1000_i64),
+        (None, 500),
+    ] {
+        sqlx::query(
+            "INSERT INTO attachments (message_id, channel_id, uploader_id, object_key, \
+                 filename, content_type, size_bytes) \
+             VALUES ($1, $2, $3, $4, 'x.png', 'image/png', $5)",
+        )
+        .bind(message)
+        .bind(channel)
+        .bind(uploader)
+        .bind(format!("att/{}", Uuid::new_v4()))
+        .bind(size)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let list = |q: &str| format!("/api/operator/servers{q}");
+    let names = |res: &common::Response| -> Vec<String> {
+        res.body["servers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let res = lena.send(Method::GET, &list(""), None).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["total"], 2);
+    assert_eq!(names(&res), ["Runde 50%", "Abend"], "newest first");
+    let row = &res.body["servers"][1];
+    assert_eq!(row["id"], abend.id.as_str());
+    assert_eq!(row["owner"]["id"], tom.user_id());
+    assert_eq!(row["owner"]["name"], "Tom");
+    assert_eq!(row["owner"]["email"], TOM);
+    assert_eq!(row["members"], 2);
+    assert_eq!(row["storage_bytes"], 1000);
+    assert_eq!(row["directory"], "off");
+    assert_eq!(row["open_reports"], 0);
+    assert!(row["icon_url"].is_null());
+    assert!(row["created_at"].is_string());
+    assert!(row["blocked_at"].is_null());
+    assert_eq!(res.body["servers"][0]["open_reports"], 1);
+    assert_eq!(res.body["servers"][0]["storage_bytes"], 0);
+
+    // By server name (literal %), owner name and owner address.
+    for (q, expected) in [
+        ("?q=50%25", vec!["Runde 50%"]),
+        ("?q=%25", vec!["Runde 50%"]),
+        ("?q=abe", vec!["Abend"]),
+        ("?q=tom", vec!["Abend"]),
+        ("?q=spiele.test", vec!["Runde 50%"]),
+        ("?q=niemand", vec![]),
+    ] {
+        let res = lena.send(Method::GET, &list(q), None).await;
+        assert_eq!(res.status, StatusCode::OK, "{q}: {}", res.body);
+        assert_eq!(names(&res), expected, "{q}");
+        assert_eq!(res.body["total"], expected.len() as i64, "{q}");
+    }
+
+    let res = operate(
+        &mut lena,
+        &abend.id,
+        "block",
+        Some(json!({ "reason": "x" })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    for (q, expected) in [
+        ("?filter=reported", vec!["Runde 50%"]),
+        ("?filter=blocked", vec!["Abend"]),
+        ("?filter=listed", vec![]),
+        ("?filter=all&offset=1", vec!["Abend"]),
+        ("?offset=2", vec![]),
+    ] {
+        let res = lena.send(Method::GET, &list(q), None).await;
+        assert_eq!(res.status, StatusCode::OK, "{q}: {}", res.body);
+        assert_eq!(names(&res), expected, "{q}");
+    }
+    let res = lena.send(Method::GET, &list("?offset=1"), None).await;
+    assert_eq!(res.body["total"], 2);
+
+    let long = "x".repeat(101);
+    for (q, field, code) in [
+        (format!("?q={long}"), "q", "too_long"),
+        ("?filter=gelistet".to_owned(), "filter", "invalid"),
+        ("?offset=-1".to_owned(), "offset", "invalid"),
+    ] {
+        let res = lena.send(Method::GET, &list(&q), None).await;
+        assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{q}");
+        assert_eq!(res.body["fields"][field], code, "{q}");
+    }
+
+    let audit = server_audit(&pool).await;
+    let lists: Vec<&serde_json::Value> = audit
+        .iter()
+        .filter(|row| row.0 == "servers.list")
+        .map(|row| &row.2)
+        .collect();
+    // One row per successful list, none for the refused ones.
+    assert_eq!(lists.len(), 1 + 6 + 5 + 1);
+    assert_eq!(lists[0], &json!({ "q": "", "filter": "all", "offset": 0 }));
+    assert_eq!(lists[1]["q"], "50%");
+    assert!(
+        audit
+            .iter()
+            .filter(|row| row.0 == "servers.list")
+            .all(|row| row.1.is_none())
+    );
 }
