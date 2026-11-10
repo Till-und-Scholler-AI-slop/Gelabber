@@ -950,7 +950,9 @@ try {
     "four concurrent sources: a/v/s/sa actual RTP and two rendered videos",
   );
   stage = "device and DSP changes with four sources";
-  await dock(owner)
+  // In a call the user panel's gear holds the call settings.
+  await owner.page
+    .locator(".user-panel")
     .getByRole("button", { name: "Anrufeinstellungen", exact: true })
     .click();
   const input = owner.page.locator("#audio-input");
