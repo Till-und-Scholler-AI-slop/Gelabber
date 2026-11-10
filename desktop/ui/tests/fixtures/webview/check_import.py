@@ -4,8 +4,8 @@ app had run the fixture page (page/index.html) on 127.0.0.1:8123.
     python3 -I check_import.py <config-dir>
 
 <config-dir> is the app's config directory (desktop.json, settings.json,
-native-state.json). Exit status 1 with the difference when a value is not
-the page's. Standard library only.
+native-state.json, user-volumes.json). Exit status 1 with the difference
+when a value is not the page's. Standard library only.
 """
 
 import json
@@ -37,9 +37,14 @@ def main() -> None:
         problems.append(f"settings.json took more than the device settings: {sorted(settings)}")
     state = json.loads((config / "native-state.json").read_text(encoding="utf-8"))
     account = state.get("accounts", {}).get(ACCOUNT, {})
-    volume = account.get("volumes", {}).get(FRIEND)
+    # Volumes go into the file the sliders read, not into native-state.json.
+    volumes = config / "user-volumes.json"
+    levels = json.loads(volumes.read_text(encoding="utf-8")) if volumes.exists() else {}
+    volume = levels.get(ACCOUNT, {}).get(FRIEND)
     if volume != {"volume": 0.5, "muted": True}:
         problems.append(f"the friend's volume: {volume!r}")
+    if "volumes" in account:
+        problems.append(f"native-state.json still holds volumes: {account['volumes']!r}")
     drafts = account.get("drafts", {})
     if drafts.get(CHANNEL, {}).get("text") != "bis gleich \U0001f44b":
         problems.append(f"the fresh draft: {drafts.get(CHANNEL)!r}")
