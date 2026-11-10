@@ -59,6 +59,9 @@ async fn issue_ticket(
     // Re-read after acquiring the server lock: a delete may have won the race.
     let channel = load_channel(&mut *session_guard, channel_id).await?;
     let member = membership::load(&mut *session_guard, server_id, user.id).await?;
+    if !member.sees(&channel) {
+        return Err(ApiError::NotFound);
+    }
     member.require(Permission::JoinVoice)?;
     if channel.kind != ChannelKind::Voice {
         return Err(ApiError::BadRequest(

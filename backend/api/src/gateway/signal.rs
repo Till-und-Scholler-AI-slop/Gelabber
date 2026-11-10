@@ -214,6 +214,10 @@ async fn authorize_join(
     let member = membership::load(&mut *db, server_id, user_id).await?;
     member.require(Permission::JoinVoice)?;
     let channel = load_channel(db, server_id, channel_id).await?;
+    // A room the caller cannot see is as unknown as a missing one.
+    if !member.sees(&channel) {
+        return Err(ApiError::NotFound);
+    }
     if channel.kind != ChannelKind::Voice {
         return Err(ApiError::BadRequest(
             "Voice signaling is for voice channels.".into(),

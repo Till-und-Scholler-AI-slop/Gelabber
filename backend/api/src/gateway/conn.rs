@@ -557,10 +557,10 @@ async fn typing(
         .await
 }
 
-/// Membership + (optional) channel belongs to that server — or the caller
-/// is a participant of a 1:1 DM. For DMs the protocol `s` is the channel
-/// id. Same 404 semantics as the REST API: unknown and foreign are
-/// indistinguishable.
+/// Membership + (optional) channel belongs to that server and is visible to
+/// the caller — or the caller is a participant of a 1:1 DM. For DMs the
+/// protocol `s` is the channel id. Same 404 semantics as the REST API:
+/// unknown, foreign and hidden are indistinguishable.
 async fn authorize(
     db: &mut sqlx::PgConnection,
     user_id: Uuid,
@@ -594,7 +594,10 @@ async fn authorize(
     if channel.server_id != Some(server_id) {
         return Err(ApiError::NotFound);
     }
-    membership::load(&mut *db, server_id, user_id).await?;
+    let member = membership::load(&mut *db, server_id, user_id).await?;
+    if !member.sees(&channel) {
+        return Err(ApiError::NotFound);
+    }
     Ok(())
 }
 

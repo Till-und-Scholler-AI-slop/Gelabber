@@ -163,7 +163,7 @@ async fn mark_read(
 ) -> Result<Json<ReadState>, ApiError> {
     let access = messaging_channel(&state.db, channel_id, user.id).await?;
     let mut tx = state.db.begin().await?;
-    if let super::MessagingChannel::Server { member } = &access {
+    if let super::MessagingChannel::Server { member, .. } = &access {
         membership::lock_server_conn(&mut tx, member.server.id, false).await?;
     }
     delivery::lock_channel(&mut tx, channel_id).await?;

@@ -166,7 +166,7 @@ pub(crate) async fn resolve(
                 here_users: None,
             })
         }
-        MessagingChannel::Server { member } => {
+        MessagingChannel::Server { member, channel } => {
             // `@everyone` / `@here` need the right and stay within a few per
             // window; otherwise the message goes out without the ping. The
             // limiter is in memory, so with several API nodes it counts per
@@ -214,16 +214,20 @@ pub(crate) async fn resolve(
             }
             let mut wanted = parsed.users;
             wanted.extend(reached.iter().copied());
+            // Only members who see the channel: a limited one mentions nobody
+            // outside its roles.
             let users: Vec<Uuid> = sqlx::query_scalar(
                 "SELECT user_id FROM server_members WHERE server_id=$1 AND user_id=ANY($2) \
-                 AND user_id<>$3 ORDER BY user_id",
+                 AND user_id<>$3 AND channel_visible_to($4, user_id) ORDER BY user_id",
             )
             .bind(member.server.id)
             .bind(&wanted)
             .bind(author)
+            .bind(channel.id)
             .fetch_all(&state.db)
             .await?;
-            // Members only: someone who left since an earlier `@here` drops out.
+            // Members who see the channel only: someone who left or lost
+            // sight since an earlier `@here` drops out.
             let here_users = here.then(|| {
                 users
                     .iter()

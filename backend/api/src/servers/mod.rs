@@ -244,6 +244,7 @@ async fn load_detail(db: &PgPool, member: Membership) -> Result<ServerDetail, Ap
         list_members(db, server_id),
         roles::list(db, server_id),
     )?;
+    let (categories, channels) = visible_to(&member, categories, channels);
     let members = members
         .into_iter()
         .map(|user| Member {
@@ -262,6 +263,30 @@ async fn load_detail(db: &PgPool, member: Membership) -> Result<ServerDetail, Ap
         members,
         roles,
     })
+}
+
+/// What of the server's layout the caller sees: the channels [`Membership::sees`]
+/// allows, and the categories minus those that hold channels, all of them
+/// hidden. Empty categories stay, so `manage_channels` holders can fill them.
+fn visible_to(
+    member: &Membership,
+    categories: Vec<Category>,
+    channels: Vec<Channel>,
+) -> (Vec<Category>, Vec<Channel>) {
+    let (channels, hidden): (Vec<Channel>, Vec<Channel>) = channels
+        .into_iter()
+        .partition(|channel| member.sees(channel));
+    let categories = categories
+        .into_iter()
+        .filter(|category| {
+            let holds = |list: &[Channel]| {
+                list.iter()
+                    .any(|channel| channel.category_id == Some(category.id))
+            };
+            holds(&channels) || !holds(&hidden)
+        })
+        .collect();
+    (categories, channels)
 }
 
 async fn list_members(db: &PgPool, server_id: Uuid) -> Result<Vec<MemberRow>, ApiError> {
