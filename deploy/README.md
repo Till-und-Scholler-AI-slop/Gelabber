@@ -337,6 +337,48 @@ Migration 0021 adds `users.email_verified_at` and the `account_tokens` table. As
 
 The API keeps up to `API_DB_MAX_CONNECTIONS` (default 20) Postgres connections; every open WebSocket checks its session once a second. The stack runs one API process, so keep the value well below Postgres' `max_connections` (100 in the bundled Postgres). After changing it, recreate the API: `docker compose up -d --no-deps --force-recreate api`.
 
+## Betrieb
+
+"Betrieb" is the operator area of the web app (`/betrieb`): beta invitations, accounts, servers, reports and usage of this instance. Only operators see it; other accounts get `404` from `/api/operator/*`, as if it did not exist. The native app has no operator pages; its user menu opens them in the browser.
+
+**Operators** are named in `.env`, never in the app:
+
+```sh
+API_OPERATOR_EMAILS=lena@example.org,tom@example.org
+```
+
+- Register the accounts first, then list their addresses and recreate the API (`docker compose up -d --no-deps --force-recreate api`). Addresses are compared without regard to case. An entry that is not a valid address stops the API at start.
+- With account mail on, an address counts only once its account has confirmed it. With mail off, nothing proves who owns an address: whoever registers a listed address first holds operator rights. Register operator accounts before you list them, and keep mail on for a public instance.
+- Removing an address from the list and recreating the API takes the rights away. Nobody can grant them in the app, and operators cannot disable each other.
+
+**Registration** is set with `API_REGISTRATION`:
+
+- `open` (default): anyone may register; invitation codes are ignored.
+- `invitation`: a new account needs one of two codes, and registration without one answers `403 invitation_required`. The first is a beta invitation an operator creates under "Beta-Einladungen": once, optionally for one address, valid for 1, 7 or 30 days or without end, and sent by mail when account mail is on and an address is given. Its link is `APP_PUBLIC_URL/register?invitation=<code>` (without `APP_PUBLIC_URL`, the address the operator's browser used). The second is the invite link of a server that is not blocked, so the people a group founder invites can register too; registering does not use up the invite. An unknown, used, revoked, expired or wrong-address code answers `410 invitation_invalid`. Existing accounts sign in as before.
+
+The page shows the mode but cannot change it; change `.env` and recreate the API.
+
+**Disabling an account** (Konten) ends all of its sessions at once: open sockets close, voice seats and media tickets end, and its cookies stop working. Sign-in with the right password then answers `403 account_disabled`, and password reset and address confirmation do not sign it in either. Its messages and its servers stay as they are; a server it owns keeps working for its members. Enabling it restores sign-in.
+
+**Blocking a server** (Server, or Meldungen) closes it for everyone, its owner included: every request answers `403 server_blocked`, members in voice are removed, open sockets get `{"op":"err","e":"server_blocked"}`, and its invite links answer as invalid. It stays in its members' server list with a notice; members can still leave it and the owner can still delete it. Its open reports are closed as actioned. Unblocking restores access; nothing was deleted. **Delisting** only removes a server from the directory and closes its open reports; its members notice nothing, and only an operator can let it be listed again.
+
+**Reports** come from members of a server (`POST /api/servers/{id}/reports`, at most 10 per account and hour). Owners never see them; operators close them under "Meldungen".
+
+**Audit:** every operator request that succeeds writes a row to `operator_audit`, reads included (`*.list` with the search in `detail`). Opening the area writes none, and neither does a request that changes nothing, such as blocking a server twice. Rows are never purged, and there is no page for them. Read them with SQL (with your `POSTGRES_USER` and `POSTGRES_DB`):
+
+```sh
+docker compose exec postgres psql -U gelabber gelabber -c "
+  SELECT created_at, operator_email, action, target_user, target_server,
+         target_report, target_invitation, detail
+  FROM operator_audit ORDER BY created_at DESC LIMIT 50"
+```
+
+The actions are `invitations.list|create|revoke`, `accounts.list|disable|enable`, `servers.list|delist|relist|block|unblock`, `reports.list|resolve` and `usage.read`. The targets carry no foreign keys, so a row outlives the account, server or report it names. Each row is also logged by the API.
+
+**Usage** (Auslastung) shows numbers from the database, from Redis (who is in voice and live) and from this one API process (open sockets). Media-server numbers (rooms, peers, forwarded bytes) are not there: they stay in Grafana, on the dashboard under "Metrics" (SFU rooms, SFU peers, Forwarded RTP).
+
+Migration 0032 adds the columns and tables for this. As with every migration, an older API binary does not start against the migrated database.
+
 ## Backup
 
 PostgreSQL metadata and MinIO attachments form **one snapshot pair**. Before
