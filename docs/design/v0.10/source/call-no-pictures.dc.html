@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Sprachkanal ohne Bild</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+.app{--bg:#17191a;--panel:#1d2021;--surface:#272b2d;--rail:#131617;--text:#eef0ee;--muted:#a4abb1;--subtle:#8a9095;--accent:#f3b752;--accent-ink:#1c1405;--border:#2c3032;--border-strong:#707374;--elevated:#252829;--hover:#2e3131;--selected:#443b2a;--online:#85d69b;--danger:#f39b98;--danger-bg:#8f302d;--live:#ff7b5c;--on-live:#1d0d07;width:1280px;height:800px;display:flex;overflow:hidden;position:relative;background:var(--bg);color:var(--text);font:400 14px/1.5 Inter,ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.app *{box-sizing:border-box}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer}
+.app button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.app ::selection{background:var(--selected);color:var(--text)}
+.sprite{position:absolute;width:0;height:0}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.av{border-radius:999px;display:grid;place-items:center;color:#fff;font-weight:600;flex-shrink:0;position:relative}
+.s20{width:20px;height:20px;font-size:9px}.s24{width:24px;height:24px;font-size:10px}.s32{width:32px;height:32px;font-size:13px}.s36{width:36px;height:36px;font-size:14px}
+.c1{background:#6e4a3e}.c2{background:#3d4f6e}.c3{background:#6b4438}.c4{background:#46522f}.c5{background:#5a3a4e}.c6{background:#2f5a57}.c7{background:#5c4a2a}.c8{background:#4a4470}
+.dot{position:absolute;right:-1px;bottom:-1px;width:10px;height:10px;border-radius:999px;background:var(--online);border:2px solid var(--panel)}
+.rail{width:64px;background:var(--rail);display:flex;flex-direction:column;align-items:center;gap:12px;padding:12px 0;flex-shrink:0}
+.rail-dm{width:44px;height:44px;display:grid;place-items:center;position:relative}
+.rail-dm .ic{width:26px;height:26px}
+.badge{position:absolute;right:-2px;bottom:-2px;min-width:18px;height:18px;border-radius:999px;background:var(--accent);color:var(--accent-ink);font:700 11px/18px Inter,sans-serif;text-align:center}
+.srv{width:44px;height:44px;border-radius:10px;background:#6b4a3c;color:#fff;font:600 14px/44px Inter,sans-serif;text-align:center;position:relative}
+.srv.round{border-radius:999px}
+.srv.on::before{content:"";position:absolute;left:-10px;top:10px;width:4px;height:24px;border-radius:0 3px 3px 0;background:var(--text)}
+.srv-add{width:44px;height:44px;border-radius:999px;border:1px dashed var(--border-strong);display:grid;place-items:center;color:var(--online)}
+.side{width:224px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.side-head{height:52px;display:flex;align-items:center;gap:10px;padding:0 14px 0 16px;border-bottom:1px solid var(--border);font:600 15px/1 Inter,sans-serif;flex-shrink:0}
+.side-head span{flex:1}
+.side-head .ic{color:var(--muted)}
+.nav{flex:1;padding:8px;display:flex;flex-direction:column;gap:2px;overflow:hidden}
+.row{position:relative;height:34px;display:flex;align-items:center;gap:10px;padding:0 12px;border-radius:7px;color:var(--muted);font:500 14px/1 Inter,sans-serif;width:100%;text-align:left;flex-shrink:0}
+.row span{flex:1}
+.row.on{background:var(--selected);color:var(--text)}
+.row.on .ic{color:var(--online)}
+.row.unread{color:var(--text);font-weight:700}
+.row.unread::before{content:"";position:absolute;left:-8px;top:9px;width:3px;height:16px;border-radius:0 2px 2px 0;background:var(--accent)}
+.cap{font:600 11px/1.3 Inter,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:14px 8px 6px;flex-shrink:0}
+.who{height:28px;display:flex;align-items:center;gap:8px;padding:0 10px 0 36px;color:var(--muted);font:500 13px/1 Inter,sans-serif;flex-shrink:0}
+.who span{flex:1}
+.who .av{flex:none}
+.who.talk{color:var(--text)}
+.who.talk .av{outline:2px solid var(--online);outline-offset:1px}
+.who .ic{width:13px;height:13px}
+.who .ic.g{color:var(--online)}.who .ic.r{color:var(--danger)}
+.who.more{width:100%;text-align:left;color:var(--muted)}
+.me{height:56px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px;padding:0 12px 0 10px;flex-shrink:0}
+.me .grow{flex:1;min-width:0}
+.me b{display:block;font:600 14px/1.3 Inter,sans-serif}
+.me small{display:block;font:400 12px/1.3 Inter,sans-serif;color:var(--muted)}
+.me .ic{width:18px;height:18px;color:var(--muted)}
+.work{flex:1;min-width:0;display:flex;flex-direction:column}
+.upper{flex:1;min-height:0;display:flex}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.head{height:52px;display:flex;align-items:center;gap:10px;padding:0 12px 0 20px;border-bottom:1px solid var(--border);flex-shrink:0}
+.head h1{margin:0;font:600 15px/1 Inter,sans-serif}
+.head p{flex:1;margin:0 0 0 4px;font:500 13px/1 Inter,sans-serif;color:var(--muted)}
+.head>.ic{color:var(--muted);width:18px;height:18px}
+.ibtn{width:32px;height:32px;border-radius:7px;display:grid;place-items:center;color:var(--muted)}
+.ibtn.on{background:var(--surface);color:var(--text)}
+.stagewrap{flex:1;padding:20px 24px 24px}
+.facts{height:20px;margin:0 0 16px;font:500 13px/20px Inter,sans-serif;color:var(--muted)}
+.stage{position:relative;width:696px;height:648px}
+.tile{position:absolute;border:1px solid var(--border);border-radius:10px;background:var(--surface);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;overflow:hidden}
+.tile .state{position:absolute;left:10px;top:10px;color:var(--muted)}
+.tile.talk .state{color:var(--online)}
+.tile.talk .av{outline:3px solid var(--online);outline-offset:2px}
+.tile .nm{margin-top:10px;font:600 16px/1.3 Inter,sans-serif;max-width:90%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .st{font:400 13px/1.3 Inter,sans-serif;color:var(--muted)}
+.tile.talk .st{color:var(--online)}
+.tile.small{gap:0}
+.tile.small .nm{margin-top:8px;font-size:12px}
+.tile.small .st{display:none}
+.tile.small .state{left:7px;top:7px}
+.tile.small .state .ic{width:13px;height:13px}
+.mem{width:248px;background:var(--panel);border-left:1px solid var(--border);flex-shrink:0;display:flex;flex-direction:column;overflow:hidden}
+.mem-head{height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid var(--border);font:600 15px/1 Inter,sans-serif;flex-shrink:0}
+.mem-head small{font:400 12px/1 Inter,sans-serif;color:var(--muted)}
+.mem .cap{padding:18px 16px 6px}
+.mrow{height:48px;display:flex;align-items:center;gap:10px;padding:0 16px;flex-shrink:0}
+.mrow .grow{flex:1;min-width:0}
+.mrow b{display:block;font:600 14px/1.3 Inter,sans-serif}
+.mrow small{display:block;font:400 12px/1.3 Inter,sans-serif;color:var(--muted)}
+.mrow .ic{width:14px;height:14px;color:var(--muted)}
+.mrow .ic.g{color:var(--online)}
+.mrow.off b{color:var(--muted);font-weight:500}
+.mrow.off .av{opacity:.55}
+.mrow.off .dot{background:var(--border-strong)}
+.dock{height:56px;border-top:1px solid var(--border);background:var(--panel);display:flex;align-items:center;gap:12px;padding:0 16px 0 24px;flex-shrink:0}
+.conn{display:flex;align-items:center;gap:14px;width:230px}
+.bars{display:flex;align-items:flex-end;gap:2px;height:14px}
+.bars i{display:block;width:3px;border-radius:1px;background:var(--online)}
+.conn b{display:block;font:600 13px/1.3 Inter,sans-serif;color:var(--online)}
+.conn small{display:block;font:400 12px/1.3 Inter,sans-serif;color:var(--muted)}
+.stack{flex:1;display:flex;justify-content:center;align-items:center}
+.stack .av{margin-left:-6px;border:2px solid var(--panel)}
+.stack .plus{margin-left:6px;font:600 12px/1 Inter,sans-serif;color:var(--muted)}
+.ctl{display:flex;align-items:center;gap:4px}
+.cbtn{height:36px;min-width:36px;padding:0 9px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;gap:6px;color:var(--muted);font:500 13px/1 Inter,sans-serif}
+.cbtn .ic{width:18px;height:18px}
+.cbtn .ic.sm{width:12px;height:12px}
+.leave{background:var(--danger-bg);color:#fff;font-weight:600;padding:0 14px;margin-left:8px}
+</style>
+</helmet>
+<div class="app">
+<svg class="sprite" aria-hidden="true">
+<defs>
+<symbol id="i-msg" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></symbol>
+<symbol id="i-hash" viewBox="0 0 24 24"><path d="M4 9h16"></path><path d="M4 15h16"></path><path d="M10 3 8 21"></path><path d="M16 3l-2 18"></path></symbol>
+<symbol id="i-vol" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4z"></path><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></symbol>
+<symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></symbol>
+<symbol id="i-up" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"></path></symbol>
+<symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></symbol>
+<symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></symbol>
+<symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><path d="M12 19v3"></path></symbol>
+<symbol id="i-micoff" viewBox="0 0 24 24"><path d="M2 2l20 20"></path><path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2"></path><path d="M5 10v2a7 7 0 0 0 12 5"></path><path d="M15 9.34V5a3 3 0 0 0-5.68-1.33"></path><path d="M9 9v3a3 3 0 0 0 5.12 2.12"></path><path d="M12 19v3"></path></symbol>
+<symbol id="i-phones" viewBox="0 0 24 24"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"></path></symbol>
+<symbol id="i-camoff" viewBox="0 0 24 24"><path d="M10.66 6H14a2 2 0 0 1 2 2v2.5l5.248-3.062A.5.5 0 0 1 22 7.87v8.196"></path><path d="M16 16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2"></path><path d="m2 2 20 20"></path></symbol>
+<symbol id="i-radio" viewBox="0 0 24 24"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"></path><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"></path><circle cx="12" cy="12" r="2"></circle><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"></path><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"></path></symbol>
+<symbol id="i-gear" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></symbol>
+<symbol id="i-hang" viewBox="0 0 24 24"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"></path><path d="M22 2 2 22"></path></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"></path><path d="M12 5v14"></path></symbol>
+<symbol id="i-eq" viewBox="0 0 24 24"><path d="M6 9v6" stroke-width="4"></path><path d="M12 5v14" stroke-width="4"></path><path d="M18 9v6" stroke-width="4"></path></symbol>
+</defs>
+</svg>
+
+<nav class="rail" aria-label="Server">
+<button class="rail-dm" aria-label="Direktnachrichten, 1 ungelesen"><svg class="ic" aria-hidden="true"><use href="#i-msg"></use></svg><span class="badge">1</span></button>
+<button class="srv on" aria-label="Wohnzimmer">Wo</button>
+<button class="srv round" aria-label="Spieleabend">Sp</button>
+<button class="srv-add" aria-label="Server hinzufügen"><svg class="ic" aria-hidden="true"><use href="#i-plus"></use></svg></button>
+</nav>
+
+<aside class="side">
+<div class="side-head"><span>Wohnzimmer</span><svg class="ic" aria-hidden="true"><use href="#i-down"></use></svg><svg class="ic" aria-hidden="true"><use href="#i-link"></use></svg></div>
+<div class="nav">
+<button class="row"><svg class="ic" aria-hidden="true"><use href="#i-msg"></use></svg><span>Übersicht</span></button>
+<div class="cap">Textkanäle</div>
+<button class="row"><svg class="ic" aria-hidden="true"><use href="#i-hash"></use></svg><span>allgemein</span></button>
+<div class="cap">Sprachkanäle</div>
+<button class="row"><svg class="ic" aria-hidden="true"><use href="#i-vol"></use></svg><span>Wohnzimmer</span></button>
+<div class="cap">Plaudern</div>
+<button class="row unread"><svg class="ic" aria-hidden="true"><use href="#i-hash"></use></svg><span>spiele</span></button>
+<button class="row unread"><svg class="ic" aria-hidden="true"><use href="#i-hash"></use></svg><span>musik</span></button>
+<div class="cap">Sprachkanäle</div>
+<button class="row on"><svg class="ic" aria-hidden="true"><use href="#i-vol"></use></svg><span>Sofa</span></button>
+<sc-for list="{{sideWho}}" as="w" hint-placeholder-count="4">
+<div class="who {{w.cls}}"><span class="av s20 {{w.c}}">{{w.initial}}</span><span>{{w.name}}</span>
+<sc-if value="{{w.talk}}" hint-placeholder-val="{{ false }}"><svg class="ic g" aria-hidden="true"><use href="#i-eq"></use></svg></sc-if>
+<sc-if value="{{w.mute}}" hint-placeholder-val="{{ false }}"><svg class="ic r" aria-hidden="true"><use href="#i-micoff"></use></svg></sc-if>
+</div>
+</sc-for>
+<sc-if value="{{hasMore}}" hint-placeholder-val="{{ false }}"><button class="who more"><span>{{moreLabel}}</span></button></sc-if>
+<button class="row"><svg class="ic" aria-hidden="true"><use href="#i-vol"></use></svg><span>Kino</span></button>
+</div>
+<div class="me"><span class="av s36 c1">L<span class="dot"></span></span><div class="grow"><b>Lena</b><small>Online</small></div><button aria-label="Einstellungen"><svg class="ic" aria-hidden="true"><use href="#i-gear"></use></svg></button><button aria-label="Status"><svg class="ic" aria-hidden="true"><use href="#i-up"></use></svg></button></div>
+</aside>
+
+<div class="work">
+<div class="upper">
+<main class="main">
+<div class="head"><svg class="ic" aria-hidden="true"><use href="#i-vol"></use></svg><h1>Sofa</h1><p>{{facts}}</p><button class="ibtn on" aria-label="Mitglieder ausblenden"><svg class="ic" aria-hidden="true"><use href="#i-users"></use></svg></button></div>
+<div class="stagewrap">
+<div class="stage">
+<sc-for list="{{people}}" as="p" hint-placeholder-count="4">
+<div class="{{p.cls}}" style="{{p.rect}}">
+<sc-if value="{{p.talk}}" hint-placeholder-val="{{ false }}"><span class="state"><svg class="ic" role="img" aria-label="Spricht"><use href="#i-vol"></use></svg></span></sc-if>
+<sc-if value="{{p.mute}}" hint-placeholder-val="{{ false }}"><span class="state"><svg class="ic" role="img" aria-label="Stumm"><use href="#i-micoff"></use></svg></span></sc-if>
+<span class="av {{p.c}}" style="{{p.avStyle}}">{{p.initial}}</span>
+<span class="nm">{{p.label}}</span>
+<span class="st">{{p.status}}</span>
+</div>
+</sc-for>
+</div>
+</div>
+</main>
+
+<aside class="mem">
+<div class="mem-head"><span>Mitglieder</span><small>{{memCount}}</small></div>
+<div class="cap">Online — {{onlineCount}}</div>
+<sc-for list="{{members}}" as="m" hint-placeholder-count="4">
+<div class="mrow"><span class="av s32 {{m.c}}">{{m.initial}}<span class="dot"></span></span><div class="grow"><b>{{m.label}}</b><small>Sofa</small></div>
+<sc-if value="{{m.talk}}" hint-placeholder-val="{{ false }}"><svg class="ic g" aria-hidden="true"><use href="#i-vol"></use></svg></sc-if>
+<sc-if value="{{m.mute}}" hint-placeholder-val="{{ false }}"><svg class="ic" aria-hidden="true"><use href="#i-micoff"></use></svg></sc-if>
+</div>
+</sc-for>
+<div class="cap">Offline — 2</div>
+<div class="mrow off"><span class="av s32 c6">P<span class="dot"></span></span><div class="grow"><b>Pia</b></div></div>
+<div class="mrow off"><span class="av s32 c7">R<span class="dot"></span></span><div class="grow"><b>Ruben</b></div></div>
+</aside>
+</div>
+
+<div class="dock">
+<div class="conn"><span class="bars" role="img" aria-label="Verbindung gut"><i style="height:5px"></i><i style="height:8px"></i><i style="height:11px"></i><i style="height:14px"></i></span><div><b>Verbunden</b><small>Sofa · Wohnzimmer</small></div></div>
+<div class="stack">
+<sc-for list="{{stack}}" as="s" hint-placeholder-count="3"><span class="av s24 {{s.c}}">{{s.initial}}</span></sc-for>
+<sc-if value="{{stackHasMore}}" hint-placeholder-val="{{ false }}"><span class="plus">{{stackMore}}</span></sc-if>
+</div>
+<div class="ctl">
+<button class="cbtn" aria-label="Stummschalten"><svg class="ic" aria-hidden="true"><use href="#i-mic"></use></svg></button>
+<button class="cbtn" aria-label="Taubschalten"><svg class="ic" aria-hidden="true"><use href="#i-phones"></use></svg></button>
+<button class="cbtn" aria-label="Kamera einschalten"><svg class="ic" aria-hidden="true"><use href="#i-camoff"></use></svg></button>
+<button class="cbtn"><svg class="ic" aria-hidden="true"><use href="#i-radio"></use></svg>Live<svg class="ic sm" aria-hidden="true"><use href="#i-up"></use></svg></button>
+<button class="cbtn leave"><svg class="ic" aria-hidden="true"><use href="#i-hang"></use></svg>Verlassen</button>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"people":{"editor":"int","default":4,"min":2,"max":25,"step":1,"section":"Anruf"},"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+renderVals() {
+const NAMES = ['Lena','Jonas','Mira','Tom','Ada','Felix','Noor','Kai','Ines','Paul','Yuki','Emre','Sofia','Ben','Lucia','Omar','Hanna','Nils','Priya','Marek','Elif','Jan','Chloe','Diego','Anouk'];
+const raw = Number(this.props.people ?? 4);
+const n = Math.max(2, Math.min(25, Math.round(isFinite(raw) ? raw : 4)));
+const W = 696, H = 648, GAP = 12;
+// Same rule as fitGrid in web/src/voice/stage.ts: the column count whose tiles come out largest,
+// each tile between square and 16:9.
+let best = null, bestArea = 0;
+for (let c = 1; c <= n; c++) {
+const r = Math.ceil(n / c);
+const cw = (W - GAP * (c - 1)) / c;
+const ch = (H - GAP * (r - 1)) / r;
+if (cw <= 0 || ch <= 0) continue;
+const tw = Math.min(cw, ch * 16 / 9);
+const th = Math.min(ch, tw);
+if (tw * th > bestArea + 0.5) { bestArea = tw * th; best = { c: c, r: r, w: Math.floor(tw), h: Math.floor(th) }; }
+}
+const span = (k, s) => k * s + (k - 1) * GAP;
+const top = Math.round((H - span(best.r, best.h)) / 2);
+const avatar = Math.max(36, Math.min(96, Math.round(best.h * 0.34)));
+const small = best.h < 180;
+const all = NAMES.slice(0, n).map((name, i) => {
+const state = i < 2 ? 'talk' : (i % 5 === 2 ? 'mute' : 'idle');
+const row = Math.floor(i / best.c);
+const col = i - row * best.c;
+const inRow = Math.min(best.c, n - row * best.c);
+const left = Math.round((W - span(inRow, best.w)) / 2) + col * (best.w + GAP);
+return {
+name: name,
+initial: name.charAt(0),
+c: 'c' + (i % 8 + 1),
+label: i === 0 ? name + ' (du)' : name,
+status: state === 'talk' ? 'Spricht' : state === 'mute' ? 'Stumm' : 'Im Raum',
+talk: state === 'talk',
+mute: state === 'mute',
+cls: 'tile ' + state + (small ? ' small' : ''),
+rect: 'left:' + left + 'px;top:' + (top + row * (best.h + GAP)) + 'px;width:' + best.w + 'px;height:' + best.h + 'px',
+avStyle: 'width:' + avatar + 'px;height:' + avatar + 'px;font-size:' + Math.round(avatar * 0.38) + 'px'
+};
+});
+const others = all.slice(1).map((p) => p.name);
+let facts = 'Du bist hier mit ' + others[0] + '.';
+if (others.length === 2) facts = 'Du bist hier mit ' + others[0] + ' und ' + others[1] + '.';
+if (others.length === 3) facts = 'Du bist hier mit ' + others[0] + ', ' + others[1] + ' und ' + others[2] + '.';
+if (others.length > 3) facts = 'Du bist hier mit ' + others[0] + ', ' + others[1] + ' und ' + (others.length - 2) + ' weiteren.';
+const sideShown = n;
+return {
+people: all,
+facts: facts,
+sideWho: all.slice(0, sideShown).map((p) => ({ name: p.name, initial: p.initial, c: p.c, talk: p.talk, mute: p.mute, cls: p.talk ? 'talk' : '' })),
+hasMore: n > sideShown,
+moreLabel: '+' + (n - sideShown) + ' weitere',
+members: all.slice(0, 11),
+onlineCount: n,
+memCount: n + 2,
+stack: all.slice(0, 3),
+stackHasMore: n > 3,
+stackMore: '+' + (n - 3)
+};
+}
+}
+</script>
+</body>
+</html>
