@@ -1032,6 +1032,49 @@ mod tests {
         }
     }
 
+    #[test]
+    fn watch_request_decodes_with_its_owner() {
+        let owner = Uuid::from_u128(4);
+        let frame: ClientFrame = serde_json::from_value(serde_json::json!({
+            "op": "sig", "t": "w", "s": Uuid::from_u128(1), "c": Uuid::from_u128(2),
+            "o": owner, "k": "s", "on": true,
+        }))
+        .unwrap();
+        let ClientFrame::Sig { t, o, k, on, .. } = frame else {
+            panic!("not a sig frame");
+        };
+        assert_eq!(
+            (t, o, k, on),
+            (
+                Some(SigKind::W),
+                Some(owner),
+                Some(TrackKind::S),
+                Some(true)
+            )
+        );
+    }
+
+    #[test]
+    fn watch_frame_carries_the_full_set_and_others_omit_it() {
+        let (s, c, u) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let (a, b) = (Uuid::from_u128(5), Uuid::from_u128(4));
+        let json =
+            serde_json::to_value(ServerFrame::sig(SigEvent::watching(s, c, u, vec![a, b, a])))
+                .unwrap();
+        assert_eq!(json["t"], "w");
+        assert_eq!(json["w"], serde_json::json!([b, a]));
+        let json = ServerFrame::sig(SigEvent::watching(s, c, u, Vec::new()))
+            .to_json()
+            .unwrap();
+        assert!(json.contains(r#""w":[]"#), "{json}");
+        let json = ServerFrame::sig(SigEvent::join(s, c, u)).to_json().unwrap();
+        assert!(!json.contains(r#""w""#), "{json}");
+        // Redis carries the Lua-built frame; it decodes back with the set.
+        let raw = format!(r#"{{"t":"w","s":"{s}","c":"{c}","u":"{u}","w":["{b}"]}}"#);
+        let event: SigEvent = serde_json::from_str(&raw).unwrap();
+        assert_eq!(event.w, Some(vec![b]));
+    }
+
     /// The language frame survives Redis and reaches the socket as `lc`.
     #[test]
     fn locale_frame_wire_format() {

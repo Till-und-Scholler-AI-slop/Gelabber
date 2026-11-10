@@ -1000,6 +1000,8 @@ mod tests {
         let rows = g.voice.records(room_key(c)).await.unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].p, HashSet::from([TrackKind::A]));
+        // Written before watches were kept: it watches nothing.
+        assert!(rows[0].w.is_empty());
         assert_eq!(g.voice_snapshot(s).await.unwrap().len(), 1);
     }
 
@@ -1028,7 +1030,8 @@ mod tests {
             kinds,
             [
                 super::super::protocol::SigKind::J,
-                super::super::protocol::SigKind::P
+                super::super::protocol::SigKind::P,
+                super::super::protocol::SigKind::W
             ]
         );
         assert!(replayed.iter().all(|event| event.replay));
@@ -1076,5 +1079,180 @@ mod tests {
         );
         assert!(g.voice_snapshot(s).await.unwrap()[0].s);
         g.detach(id).await;
+    }
+
+    use super::super::protocol::SigKind;
+
+    /// The next sig frame about `u` on this socket, skipping others.
+    async fn next_about(rx: &mut mpsc::Receiver<ServerFrame>, u: Uuid) -> ServerFrame {
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+                .await
+                .expect("a sig frame")
+                .expect("socket open");
+            if matches!(&frame, ServerFrame::Sig { u: Some(who), .. } if *who == u) {
+                return frame;
+            }
+        }
+    }
+
+    /// The next watch set published for `u`.
+    async fn next_watch(rx: &mut mpsc::Receiver<ServerFrame>, u: Uuid) -> Vec<Uuid> {
+        loop {
+            if let ServerFrame::Sig {
+                t: SigKind::W,
+                w: Some(set),
+                ..
+            } = next_about(rx, u).await
+            {
+                return set;
+            }
+        }
+    }
+
+    fn sorted(mut ids: Vec<Uuid>) -> Vec<Uuid> {
+        ids.sort();
+        ids
+    }
+
+    #[tokio::test]
+    async fn watch_writes_the_seat_publishes_the_set_and_stops_at_the_limit() {
+        let g = gateway();
+        let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let (id, mut rx) = socket(&g, u).await;
+        // No seat yet: nothing to watch from.
+        assert!(
+            !g.set_voice_watch(id, u, s, c, Uuid::new_v4(), true)
+                .await
+                .unwrap()
+        );
+        g.join_voice(id, u, s, c).await.unwrap();
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        assert!(g.set_voice_watch(id, u, s, c, a, true).await.unwrap());
+        assert_eq!(next_watch(&mut rx, u).await, vec![a]);
+        assert!(g.set_voice_watch(id, u, s, c, b, true).await.unwrap());
+        assert_eq!(next_watch(&mut rx, u).await, sorted(vec![a, b]));
+        let rows = g.voice.records(room_key(c)).await.unwrap();
+        assert_eq!(rows[0].w, HashSet::from([a, b]));
+        // Another server's id for the same room is no seat either.
+        assert!(
+            !g.set_voice_watch(id, u, Uuid::new_v4(), c, a, true)
+                .await
+                .unwrap()
+        );
+        assert!(g.set_voice_watch(id, u, s, c, a, false).await.unwrap());
+        assert_eq!(next_watch(&mut rx, u).await, vec![b]);
+        for _ in 1..WATCH_LIMIT {
+            assert!(
+                g.set_voice_watch(id, u, s, c, Uuid::new_v4(), true)
+                    .await
+                    .unwrap()
+            );
+        }
+        let full = g.connections.inner.sockets.read().await[&id].rooms[&c]
+            .watches
+            .clone();
+        assert_eq!(full.len(), WATCH_LIMIT);
+        // The 65th owner is refused; one already watched still is fine.
+        assert!(
+            !g.set_voice_watch(id, u, s, c, Uuid::new_v4(), true)
+                .await
+                .unwrap()
+        );
+        assert!(g.set_voice_watch(id, u, s, c, b, true).await.unwrap());
+        assert_eq!(
+            g.connections.inner.sockets.read().await[&id].rooms[&c].watches,
+            full
+        );
+        g.detach(id).await;
+    }
+
+    #[tokio::test]
+    async fn two_tabs_watch_as_one_and_only_the_last_leave_drops_the_set() {
+        let g = gateway();
+        let (u, s, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let owner = Uuid::new_v4();
+        let (first, _r1) = socket(&g, u).await;
+        let (second, _r2) = socket(&g, u).await;
+        let other = Uuid::new_v4();
+        let (peer, mut rx) = socket(&g, other).await;
+        for id in [first, second] {
+            g.join_voice(id, u, s, c).await.unwrap();
+        }
+        g.join_voice(peer, other, s, c).await.unwrap();
+        for id in [first, second] {
+            assert!(g.set_voice_watch(id, u, s, c, owner, true).await.unwrap());
+            assert_eq!(next_watch(&mut rx, u).await, vec![owner]);
+        }
+        // The other tab still watches.
+        assert!(
+            g.set_voice_watch(first, u, s, c, owner, false)
+                .await
+                .unwrap()
+        );
+        assert_eq!(next_watch(&mut rx, u).await, vec![owner]);
+        // Leaving one seat republishes the set from the seat that stays.
+        assert!(g.leave_voice(second, u, s, c).await.unwrap());
+        assert_eq!(next_watch(&mut rx, u).await, Vec::<Uuid>::new());
+        // Leaving the last one sends only `l`.
+        assert!(g.leave_voice(first, u, s, c).await.unwrap());
+        let ServerFrame::Sig { t, .. } = next_about(&mut rx, u).await else {
+            unreachable!()
+        };
+        assert_eq!(t, SigKind::L);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), next_about(&mut rx, u))
+                .await
+                .is_err()
+        );
+        for id in [first, second, peer] {
+            g.detach(id).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn join_replays_one_watch_set_per_peer_even_an_empty_one() {
+        let g = gateway();
+        let (s, c) = (Uuid::new_v4(), Uuid::new_v4());
+        let (a, b, newcomer) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let (sa, _ra) = socket(&g, a).await;
+        let (sb, _rb) = socket(&g, b).await;
+        let (sn, _rn) = socket(&g, newcomer).await;
+        g.join_voice(sa, a, s, c).await.unwrap();
+        g.join_voice(sb, b, s, c).await.unwrap();
+        assert!(
+            g.set_voice_pub(sa, a, s, c, TrackKind::S, true)
+                .await
+                .unwrap()
+        );
+        assert!(g.set_voice_watch(sb, b, s, c, a, true).await.unwrap());
+        let replayed = g.join_voice(sn, newcomer, s, c).await.unwrap();
+        assert!(replayed.iter().all(|event| event.replay));
+        let watches: HashMap<Uuid, Vec<Uuid>> = replayed
+            .iter()
+            .filter(|event| event.t == SigKind::W)
+            .map(|event| (event.u, event.w.clone().unwrap()))
+            .collect();
+        assert_eq!(watches, HashMap::from([(a, vec![]), (b, vec![a])]));
+        assert_eq!(
+            replayed
+                .iter()
+                .filter(|event| event.t == SigKind::W)
+                .count(),
+            2
+        );
+        // Each peer's set follows its own j and p.
+        for peer in [a, b] {
+            let kinds: Vec<_> = replayed
+                .iter()
+                .filter(|event| event.u == peer)
+                .map(|event| event.t)
+                .collect();
+            assert_eq!(kinds.first(), Some(&SigKind::J));
+            assert_eq!(kinds.last(), Some(&SigKind::W));
+        }
+        for id in [sa, sb, sn] {
+            g.detach(id).await;
+        }
     }
 }
