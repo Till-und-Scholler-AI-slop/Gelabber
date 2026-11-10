@@ -159,6 +159,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
     let c = theme.c;
     let state = app.call.state();
     let Some((server, channel)) = session::joined(&state) else {
+        // A key held as the call ended is not the next call's.
+        release_window(ui.ctx(), app.call);
         if let Some((server, channel)) = state.lost_call {
             lost(ui, app, rect, server, channel);
         }
@@ -354,6 +356,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect) {
         ui.painter().circle_filled(dot, 4.0, c.panel);
         ui.painter().circle_filled(dot, 2.5, c.warning);
         mic_problem(ui, app, &mic, state.mic == MicStatus::Denied);
+        // No key is followed meanwhile, so none is held: its release would
+        // be missed and the microphone left open once it works again.
+        release_window(ui.ctx(), app.call);
     } else {
         let ptt = prefs::get(ui.ctx()).voice_input == "ptt";
         push_to_talk(ui, app, ptt && !muted);
@@ -639,19 +644,37 @@ pub fn ptt_side_button(
 
 /// Push-to-talk inside the window: the chosen key (or Maustaste 4/5)
 /// opens the microphone while held.
+fn window_id() -> Id {
+    Id::unique("gelabber-ptt-window")
+}
+
+/// A key matched by place: egui keeps only logical keys down, so its
+/// presses and releases are followed here.
+fn place_id() -> Id {
+    Id::unique("gelabber-ptt-window-place")
+}
+
+/// The window lets push-to-talk go and forgets the key it followed, while
+/// it does not follow the key (no call, no microphone, push-to-talk off).
+/// The global hook's hold is its own.
+pub fn release_window(ctx: &egui::Context, call: &gelabber_call::Call) {
+    let was: bool = ctx.data(|d| d.get_temp(window_id())).unwrap_or(false);
+    ctx.data_mut(|d| {
+        d.insert_temp(place_id(), false);
+        d.insert_temp(window_id(), false);
+    });
+    if was {
+        push_to_talk_from(ctx, call, PttSource::Window, false);
+    }
+}
+
 fn push_to_talk(ui: &Ui, app: &AppCtx, active: bool) {
     use crate::screens::settings::media::{WindowKey, window_key};
-    let id = Id::unique("gelabber-ptt-window");
-    // A key matched by place: egui keeps only logical keys down, so its
-    // presses and releases are followed here.
-    let place_id = Id::unique("gelabber-ptt-window-place");
+    let id = window_id();
+    let place_id = place_id();
     let was: bool = ui.ctx().data(|d| d.get_temp(id)).unwrap_or(false);
     if !active {
-        ui.ctx().data_mut(|d| d.insert_temp(place_id, false));
-        if was {
-            push_to_talk_from(ui.ctx(), app.call, PttSource::Window, false);
-            ui.ctx().data_mut(|d| d.insert_temp(id, false));
-        }
+        release_window(ui.ctx(), app.call);
         return;
     }
     let p = prefs::get(ui.ctx());

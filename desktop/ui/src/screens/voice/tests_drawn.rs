@@ -207,6 +207,53 @@ fn the_window_holds_push_to_talk_on_the_key_that_was_recorded() {
     assert!(!call.push_to_talk_held(), "the focus went with the key");
 }
 
+/// A place key released while the microphone failed does not keep it open
+/// once it works again.
+#[test]
+fn a_key_released_while_the_microphone_failed_is_not_held() {
+    use egui::Key;
+    let _config = crate::platform::paths::testing::TempConfig::new("ptt-mic-lost");
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call.clone(), bar);
+    push_to_talk_key(&h.ctx, &call, "BracketLeft", "Ü");
+    h.run_steps(2);
+    h.event(key_event(Key::OpenBracket, Some(Key::OpenBracket), true));
+    h.run_steps(2);
+    assert!(call.push_to_talk_held());
+    call.set_state(in_sofa(MicStatus::Unavailable));
+    h.run_steps(2);
+    h.event(key_event(Key::OpenBracket, Some(Key::OpenBracket), false));
+    h.run_steps(2);
+    call.set_state(in_sofa(MicStatus::Live));
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held(), "released, not open");
+}
+
+/// A key held as the call ended: the next call's first press holds.
+#[test]
+fn the_next_call_starts_without_the_last_ones_key() {
+    use egui::Key;
+    let _config = crate::platform::paths::testing::TempConfig::new("ptt-next-call");
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call.clone(), bar);
+    push_to_talk_key(&h.ctx, &call, "BracketLeft", "Ü");
+    h.run_steps(2);
+    h.event(key_event(Key::OpenBracket, Some(Key::OpenBracket), true));
+    h.run_steps(2);
+    call.set_state(gelabber_call::CallState::default());
+    h.run_steps(2);
+    h.event(key_event(Key::OpenBracket, Some(Key::OpenBracket), false));
+    h.run_steps(2);
+    call.set_state(in_sofa(MicStatus::Live));
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held());
+    h.event(key_event(Key::OpenBracket, Some(Key::OpenBracket), true));
+    h.run_steps(2);
+    assert!(call.push_to_talk_held(), "the first press holds");
+}
+
 /// A key recorded before places (an egui name) holds as it did.
 #[test]
 fn an_old_push_to_talk_key_holds_as_before() {
