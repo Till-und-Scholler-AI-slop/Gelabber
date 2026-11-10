@@ -807,3 +807,68 @@ async fn the_voice_roster_leaves_out_hidden_rooms(pool: PgPool) {
     .expect("a roster with the room");
     assert!(seated(&roster, ada.user_id()), "{roster}");
 }
+
+/// The `g` claim of a media ticket for `room`, read back from Redis.
+async fn ticket_go_live(client: &mut Client, room: Uuid) -> bool {
+    let res = client
+        .send(
+            Method::POST,
+            &format!("/api/channels/{room}/media-ticket"),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let ticket = res.body["ticket"].as_str().unwrap();
+    let raw = redis_get(gelabber_shared::ticket::redis_key(ticket))
+        .await
+        .expect("ticket in Redis");
+    let claim: Value = serde_json::from_str(&raw).unwrap();
+    claim["g"].as_bool().unwrap_or(false)
+}
+
+#[sqlx::test]
+async fn go_live_through_a_role_reaches_the_ticket_and_the_gateway(pool: PgPool) {
+    let (addr, state) = common::serve_ws(pool.clone()).await;
+    let Team {
+        mut ada,
+        mut bob,
+        sid,
+        ..
+    } = team(&state).await;
+    let res = ada
+        .send(
+            Method::PATCH,
+            &format!("/api/servers/{sid}"),
+            Some(json!({"member_permissions": ["join_voice", "send_messages"]})),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let room = create_channel(&mut ada, sid, json!({"name": "Raum", "kind": "voice"})).await;
+    let room = id(&room.body["id"]);
+    let res = ada
+        .send(
+            Method::POST,
+            &format!("/api/servers/{sid}/roles"),
+            Some(json!({"name": "Streamer", "color": "pink", "permissions": ["go_live"]})),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let streamer = id(&res.body["id"]);
+
+    let mut ws = join_voice(addr, &bob, sid, room).await;
+    let live = json!({"op": "sig", "t": "p", "s": sid, "c": room, "k": "s"});
+    assert!(!ticket_go_live(&mut bob, room).await);
+    send(&mut ws, live.clone()).await;
+    let denied = until(&mut ws, |f| f["op"] == "err").await;
+    assert_eq!(denied["e"], "forbidden", "{denied}");
+
+    // The role's go_live adds to the base role: ticket and gateway agree.
+    set_roles(&mut ada, sid, bob.user_id(), json!([streamer])).await;
+    assert!(ticket_go_live(&mut bob, room).await);
+    send(&mut ws, live).await;
+    let screen = until(&mut ws, |f| {
+        f["op"] == "err" || (f["op"] == "sig" && f["t"] == "p" && f["k"] == "s")
+    })
+    .await;
+    assert_eq!(screen["op"], "sig", "{screen}");
+}
