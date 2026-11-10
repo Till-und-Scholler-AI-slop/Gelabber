@@ -202,10 +202,10 @@ async fn insert_dm<'e>(
     tx: &mut Transaction<'e, Postgres>,
     pair_key: &str,
 ) -> Result<Channel, ApiError> {
-    Ok(sqlx::query_as::<_, Channel>(
-        "INSERT INTO channels (name, kind, pair_key) VALUES ('', 'dm', $1) \
-         RETURNING id, server_id, category_id, name, kind, created_at",
-    )
+    Ok(sqlx::query_as::<_, Channel>(concat!(
+        "INSERT INTO channels AS c (name, kind, pair_key) VALUES ('', 'dm', $1) RETURNING ",
+        crate::servers::channel::channel_columns!()
+    ))
     .bind(pair_key)
     .fetch_one(&mut **tx)
     .await?)

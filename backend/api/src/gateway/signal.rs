@@ -236,10 +236,11 @@ async fn load_channel(
     server_id: Uuid,
     channel_id: Uuid,
 ) -> Result<Channel, ApiError> {
-    sqlx::query_as::<_, Channel>(
-        "SELECT id, server_id, category_id, name, kind, created_at \
-         FROM channels WHERE id = $1 AND server_id = $2",
-    )
+    sqlx::query_as::<_, Channel>(concat!(
+        "SELECT ",
+        crate::servers::channel::channel_columns!(),
+        " FROM channels c WHERE c.id = $1 AND c.server_id = $2"
+    ))
     .bind(channel_id)
     .bind(server_id)
     .fetch_optional(db)

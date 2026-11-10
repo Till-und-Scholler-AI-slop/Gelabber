@@ -85,6 +85,17 @@ pub struct Category {
     pub created_at: DateTime<Utc>,
 }
 
+/// The select list that builds a [`Channel`] from `channels c`. Every query
+/// that returns one uses it (`INSERT … AS c` / `UPDATE … AS c` included).
+macro_rules! channel_columns {
+    () => {
+        "c.id, c.server_id, c.category_id, c.name, c.kind, c.created_at, c.limited, \
+         ARRAY(SELECT cr.role_id FROM channel_roles cr WHERE cr.channel_id = c.id \
+               ORDER BY cr.role_id) AS role_ids"
+    };
+}
+pub(crate) use channel_columns;
+
 #[derive(Debug, Clone, Serialize, FromRow, PartialEq, Eq)]
 pub struct Channel {
     pub id: Uuid,
@@ -94,6 +105,12 @@ pub struct Channel {
     #[sqlx(try_from = "String")]
     pub kind: ChannelKind,
     pub created_at: DateTime<Utc>,
+    /// Seen only by the owner and holders of one of `role_ids` (v0.10). A
+    /// limited channel whose last role was deleted is the owner's alone.
+    /// Always false for DMs.
+    pub limited: bool,
+    /// The roles a limited channel is for; empty when it is not limited.
+    pub role_ids: Vec<Uuid>,
 }
 
 pub async fn list_categories(db: &PgPool, server_id: Uuid) -> Result<Vec<Category>, ApiError> {
@@ -104,7 +121,11 @@ pub async fn list_categories(db: &PgPool, server_id: Uuid) -> Result<Vec<Categor
 }
 
 pub async fn list_channels(db: &PgPool, server_id: Uuid) -> Result<Vec<Channel>, ApiError> {
-    Ok(sqlx::query_as::<_, Channel>("SELECT id, server_id, category_id, name, kind, created_at FROM channels WHERE server_id = $1 ORDER BY created_at, id")
+    Ok(sqlx::query_as::<_, Channel>(concat!(
+        "SELECT ",
+        channel_columns!(),
+        " FROM channels c WHERE c.server_id = $1 ORDER BY c.created_at, c.id"
+    ))
     .bind(server_id)
     .fetch_all(db)
     .await?)
@@ -131,12 +152,13 @@ pub async fn insert_channel<'e>(
     name: &str,
     kind: ChannelKind,
 ) -> Result<Channel, ApiError> {
-    Ok(sqlx::query_as::<_, Channel>(
+    Ok(sqlx::query_as::<_, Channel>(concat!(
         // See `insert_category` for `clock_timestamp()`.
-        "INSERT INTO channels (server_id, category_id, name, kind, created_at) \
+        "INSERT INTO channels AS c (server_id, category_id, name, kind, created_at) \
          VALUES ($1, $2, $3, $4, clock_timestamp()) \
-         RETURNING id, server_id, category_id, name, kind, created_at",
-    )
+         RETURNING ",
+        channel_columns!()
+    ))
     .bind(server_id)
     .bind(category_id)
     .bind(name)
@@ -149,9 +171,11 @@ pub async fn get<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     db: E,
     channel_id: Uuid,
 ) -> Result<Option<Channel>, ApiError> {
-    Ok(sqlx::query_as::<_, Channel>(
-        "SELECT id, server_id, category_id, name, kind, created_at FROM channels WHERE id = $1",
-    )
+    Ok(sqlx::query_as::<_, Channel>(concat!(
+        "SELECT ",
+        channel_columns!(),
+        " FROM channels c WHERE c.id = $1"
+    ))
     .bind(channel_id)
     .fetch_optional(db)
     .await?)
@@ -339,14 +363,15 @@ async fn update_channel(
         check_category(&state.db, server_id, category_id).await?;
     }
 
-    let updated = sqlx::query_as::<_, Channel>(
-        "UPDATE channels \
-         SET name = COALESCE($2, name), \
-             category_id = CASE WHEN $3 THEN $4 ELSE category_id END, \
+    let updated = sqlx::query_as::<_, Channel>(concat!(
+        "UPDATE channels AS c \
+         SET name = COALESCE($2, c.name), \
+             category_id = CASE WHEN $3 THEN $4 ELSE c.category_id END, \
              updated_at = now() \
-         WHERE id = $1 \
-         RETURNING id, server_id, category_id, name, kind, created_at",
-    )
+         WHERE c.id = $1 \
+         RETURNING ",
+        channel_columns!()
+    ))
     .bind(channel_id)
     .bind(name.as_deref())
     .bind(category.is_some())

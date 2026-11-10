@@ -20,6 +20,7 @@ use super::protocol::{
     VoiceEntry, plan_catch_up,
 };
 use crate::error::ApiError;
+use crate::servers::permissions::Permission;
 
 mod event_log;
 mod fanout;
@@ -845,7 +846,11 @@ impl Gateway {
                 self.clear_server_access(id, sid, &cids, "not_found").await;
             } else {
                 let current = current.expect("checked");
-                if revision.1 & !current.1 & 48 != 0 {
+                if revision.1
+                    & !current.1
+                    & (Permission::JoinVoice as i32 | Permission::GoLive as i32)
+                    != 0
+                {
                     self.clear_voice_access(id, sid).await?;
                 }
                 // Refresh only: a removal that cleared the server after the

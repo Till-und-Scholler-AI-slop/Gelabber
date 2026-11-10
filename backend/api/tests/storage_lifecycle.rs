@@ -983,10 +983,11 @@ async fn stale_cleanup_ack_cannot_remove_a_new_claim_and_s3_does_not_hold_pool_c
 
 #[sqlx::test(migrations = false)]
 async fn migration_backfills_existing_bytes_and_rollback_preserves_metadata_and_jobs(pool: PgPool) {
-    // 0013 and 0030 only add `users` columns and 0028 the `servers` icon
-    // column, which the current binary's sign-up and server creation below
-    // read back; none touches the storage schema under test.
-    const READ_BACK_COLUMNS: [i64; 3] = [13, 28, 30];
+    // 0013 and 0030 only add `users` columns, 0028 the `servers` icon column
+    // and 0031 the roles tables and `channels.limited`, which the current
+    // binary's sign-up and server creation below read back; none touches the
+    // storage schema under test.
+    const READ_BACK_COLUMNS: [i64; 4] = [13, 28, 30, 31];
     for migration in sqlx::migrate!("./migrations")
         .iter()
         .filter(|m| m.version < 8 || READ_BACK_COLUMNS.contains(&m.version))

@@ -151,7 +151,7 @@ async fn save(
     icon: Option<(String, &str)>,
 ) -> Result<ServerView, ApiError> {
     let staged = stage(state, server_id, user_id, icon.as_ref()).await;
-    let (tx, server, replaced) = match staged {
+    let (tx, member, replaced) = match staged {
         Ok(staged) => staged,
         Err(err) => {
             if let Some((_, key)) = icon {
@@ -164,12 +164,12 @@ async fn save(
     if let Some(key) = replaced {
         avatars::discard(state, &key).await;
     }
-    Ok(Membership { server, user_id }.into())
+    Ok(member.into())
 }
 
 type Staged<'a> = (
     sqlx::Transaction<'a, sqlx::Postgres>,
-    ServerRow,
+    Membership,
     Option<String>,
 );
 
@@ -209,7 +209,7 @@ async fn stage<'a>(
         .as_deref()
         .filter(|old| Some(*old) != url);
     let replaced = schedule_removal(&mut tx, server_id, previous).await?;
-    Ok((tx, server, replaced))
+    Ok((tx, Membership { server, ..member }, replaced))
 }
 
 async fn download(

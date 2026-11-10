@@ -146,24 +146,17 @@ async fn list_servers(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<Vec<ServerView>>, ApiError> {
-    let rows = sqlx::query_as::<_, ServerRow>(
-        "SELECT s.id, s.name, s.owner_id, s.member_permissions, s.icon_url, s.created_at \
-         FROM server_members m JOIN servers s ON s.id = m.server_id \
+    let rows = sqlx::query_as::<_, Membership>(concat!(
+        "SELECT ",
+        membership::membership_columns!(),
+        " FROM server_members m JOIN servers s ON s.id = m.server_id \
          WHERE m.user_id = $1 \
-         ORDER BY m.joined_at, s.id",
-    )
+         ORDER BY m.joined_at, s.id"
+    ))
     .bind(user.id)
     .fetch_all(&state.db)
     .await?;
-    let views = rows
-        .into_iter()
-        .map(|server| {
-            ServerView::from(Membership {
-                server,
-                user_id: user.id,
-            })
-        })
-        .collect();
+    let views = rows.into_iter().map(ServerView::from).collect();
     Ok(Json(views))
 }
 
@@ -220,14 +213,7 @@ async fn create_server(
     tx.commit().await?;
     info!(server_id = %server.id, owner_id = %user.id, "server created");
 
-    let detail = load_detail(
-        &state.db,
-        Membership {
-            server,
-            user_id: user.id,
-        },
-    )
-    .await?;
+    let detail = load_detail(&state.db, Membership::base(server, user.id)).await?;
     Ok((StatusCode::CREATED, Json(detail)).into_response())
 }
 
@@ -343,13 +329,7 @@ async fn update_server(
             .announce_recheck(Recheck::Server(server_id))
             .await;
     }
-    Ok(Json(
-        Membership {
-            server,
-            user_id: user.id,
-        }
-        .into(),
-    ))
+    Ok(Json(Membership { server, ..member }.into()))
 }
 
 /// Owner only. Members, categories, channels and invites go with it.

@@ -94,10 +94,11 @@ async fn load_channel<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     db: E,
     channel_id: Uuid,
 ) -> Result<Channel, ApiError> {
-    sqlx::query_as::<_, Channel>(
-        "SELECT id, server_id, category_id, name, kind, created_at \
-         FROM channels WHERE id = $1",
-    )
+    sqlx::query_as::<_, Channel>(concat!(
+        "SELECT ",
+        crate::servers::channel::channel_columns!(),
+        " FROM channels c WHERE c.id = $1"
+    ))
     .bind(channel_id)
     .fetch_optional(db)
     .await?
