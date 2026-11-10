@@ -70,6 +70,9 @@ pub enum ApiError {
     UpstreamQuota { retry_after: u64 },
     /// 500: anything unexpected. The string is logged, not returned.
     Internal(String),
+    /// 403: an operator disabled the account (`users.disabled_at`). Only
+    /// answered to someone who proved the password or held a mailed link.
+    AccountDisabled,
 }
 
 #[derive(Debug, Serialize)]
@@ -104,6 +107,7 @@ impl ApiError {
             Self::Upstream(_) => "upstream_unavailable",
             Self::UpstreamQuota { .. } => "upstream_quota",
             Self::Internal(_) => "internal",
+            Self::AccountDisabled => "account_disabled",
         }
     }
 
@@ -124,6 +128,7 @@ impl ApiError {
             Self::Upstream(_) => StatusCode::BAD_GATEWAY,
             Self::UpstreamQuota { .. } => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::AccountDisabled => StatusCode::FORBIDDEN,
         }
     }
 
@@ -152,6 +157,7 @@ impl ApiError {
                 "This server has used up its GIF requests for now. Try again later."
             }
             Self::Internal(_) => "Something went wrong on our side.",
+            Self::AccountDisabled => "This account has been disabled.",
         }
     }
 
@@ -241,5 +247,14 @@ mod tests {
         assert_eq!(json["error"], "rate_limited");
         assert_eq!(json["retry_after"], 12);
         assert_eq!(err.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[test]
+    fn account_disabled_is_403_without_fields() {
+        let err = ApiError::AccountDisabled;
+        let json = serde_json::to_value(err.body()).unwrap();
+        assert_eq!(json["error"], "account_disabled");
+        assert!(json.get("fields").is_none());
+        assert_eq!(err.status(), StatusCode::FORBIDDEN);
     }
 }

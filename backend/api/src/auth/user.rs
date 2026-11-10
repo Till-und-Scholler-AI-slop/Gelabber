@@ -112,6 +112,8 @@ pub struct Credentials {
     pub password_hash: String,
     /// The owner opened a confirmation or reset link (migration 0021).
     pub email_verified: bool,
+    /// An operator disabled the account (migration 0032).
+    pub disabled: bool,
 }
 
 /// Inserts a new account. `email` must already be normalised (trimmed,
@@ -199,12 +201,24 @@ pub async fn credentials_by_email(
     email: &str,
 ) -> Result<Option<Credentials>, ApiError> {
     Ok(sqlx::query_as::<_, Credentials>(
-        "SELECT id, password_hash, email_verified_at IS NOT NULL AS email_verified \
+        "SELECT id, password_hash, email_verified_at IS NOT NULL AS email_verified, \
+             disabled_at IS NOT NULL AS disabled \
              FROM users WHERE lower(email) = $1",
     )
     .bind(email)
     .fetch_optional(db)
     .await?)
+}
+
+/// Whether an operator disabled the account; `false` for an unknown id.
+pub async fn is_disabled(db: &PgPool, id: Uuid) -> Result<bool, ApiError> {
+    Ok(
+        sqlx::query_scalar::<_, bool>("SELECT disabled_at IS NOT NULL FROM users WHERE id = $1")
+            .bind(id)
+            .fetch_optional(db)
+            .await?
+            .unwrap_or(false),
+    )
 }
 
 pub async fn password_hash_by_id(db: &PgPool, id: Uuid) -> Result<Option<String>, ApiError> {

@@ -36,7 +36,7 @@ const SESSION_ROW: &str = "SELECT u.id, u.email, u.name, u.avatar_url, u.created
          u.pronouns, u.status_text, u.accent_color, u.banner_color, u.banner_url, \
          u.avatar_decoration, u.locale, s.created_at AS session_created_at, s.expires_at \
      FROM sessions s JOIN users u ON u.id = s.user_id \
-     WHERE s.token_hash = $1 AND s.expires_at > now()";
+     WHERE s.token_hash = $1 AND s.expires_at > now() AND u.disabled_at IS NULL";
 
 #[derive(sqlx::FromRow)]
 struct SessionRow {
@@ -57,8 +57,9 @@ async fn row_of<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
 }
 
 /// Resolves a raw cookie token to its user. Expired rows are treated as
-/// absent; the next sign-in sweeps them (`revoke`). Read-only: the request
-/// extractors renew the session on top ([`touch`]).
+/// absent; the next sign-in sweeps them (`revoke`). So is any session of a
+/// disabled account (#517), whose rows disabling removes. Read-only: the
+/// request extractors renew the session on top ([`touch`]).
 pub async fn resolve<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
     db: E,
     raw: &str,

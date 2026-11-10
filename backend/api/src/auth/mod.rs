@@ -400,7 +400,11 @@ async fn login(
     };
     limits::login_succeeded(&state, &email);
     // Only after the password matched, so the answer tells nothing to
-    // someone who does not know it.
+    // someone who does not know it. A disabled account gets no new
+    // confirmation link either.
+    if credentials.disabled {
+        return Err(ApiError::AccountDisabled);
+    }
     if !credentials.email_verified
         && let Some(mailer) = state.mail.as_ref()
     {
@@ -425,13 +429,28 @@ async fn login(
 /// Issues a session + fresh CSRF token for `user` and builds the response.
 /// A session the browser already carries is revoked first: the cookie is
 /// about to be overwritten, so its row would otherwise linger until TTL.
+/// A disabled account is refused here (`403 account_disabled`), whichever
+/// path signed it in.
 async fn signed_in(
     state: &AppState,
     headers: &HeaderMap,
     user: User,
     status: StatusCode,
 ) -> Result<Response, ApiError> {
-    let operator = operator::access::is_signed_in_operator(state, &user).await?;
+    // One read for both: a disabled account gets no session (#517), and
+    // the operator flag needs the confirmation while mail is on.
+    let (disabled, verified): (bool, bool) = sqlx::query_as(
+        "SELECT disabled_at IS NOT NULL, email_verified_at IS NOT NULL FROM users WHERE id = $1",
+    )
+    .bind(user.id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| ApiError::Internal(format!("user {} vanished mid-request", user.id)))?;
+    if disabled {
+        info!(user_id = %user.id, "sign-in refused, account disabled");
+        return Err(ApiError::AccountDisabled);
+    }
+    let operator = operator::access::is_operator(state, &user, verified);
     let previous = cookies::get(headers, SESSION_COOKIE);
     session::revoke_current(state, previous.as_deref()).await?;
     // Expired-row housekeeping is separate from the targeted logout.
@@ -643,11 +662,12 @@ async fn confirm_password_reset(
     let new_password = new_password.expect("validated");
 
     // A dead link costs no Argon2 run.
-    if tokens::peek(&state.db, &body.token, Purpose::ResetPassword)
+    let user_id = tokens::peek(&state.db, &body.token, Purpose::ResetPassword)
         .await?
-        .is_none()
-    {
-        return Err(ApiError::TokenInvalid);
+        .ok_or(ApiError::TokenInvalid)?;
+    // A disabled account keeps its password (#517).
+    if user::is_disabled(&state.db, user_id).await? {
+        return Err(ApiError::AccountDisabled);
     }
     let hash = password::hash(new_password).await?;
     let (user_id, revoked) = tokens::reset_password(&state.db, &body.token, &hash)
