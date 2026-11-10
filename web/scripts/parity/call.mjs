@@ -1,8 +1,10 @@
 // Puts people from the parity fixture into a voice channel and keeps them
 // there until stopped, so both clients can be compared on a running call.
 // Each person is a headless Chromium with fake microphone and camera.
-// Run in web/: node scripts/parity/call.mjs [channel] [person[:muted|:camera|:live],…]
+// Run in web/: node scripts/parity/call.mjs [channel] [person[:muted|:camera|:live|:watch],…]
 //   default: Sofa jonas,mira:muted
+// `watch` presses every "Zuschauen" in the room, and keeps checking once a
+// second, so a Live that starts later is watched too.
 // Cameras show one still picture (a generated y4m) and a Live a still
 // canvas instead of Chromium's moving fake screen, so web and native shots
 // get the same frames.
@@ -23,6 +25,7 @@ const people = (process.argv[3] ?? "jonas,mira:muted").split(",").map((entry) =>
     muted: flags.includes("muted"),
     camera: flags.includes("camera"),
     live: flags.includes("live"),
+    watch: flags.includes("watch"),
   };
 });
 const channel = fixture.servers.home.channels[channelName];
@@ -61,6 +64,26 @@ const browser = await chromium.launch({
     "--autoplay-policy=no-user-gesture-required",
   ],
 });
+
+/** Presses each "Zuschauen" on the page now and once a second from then on. */
+function watchEveryLive(page) {
+  let busy = false;
+  const press = async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const buttons = page.getByRole("button", { name: "Zuschauen", exact: true });
+      // Each press removes its button, so the first one is always next.
+      for (let n = await buttons.count(); n > 0; n--) await buttons.first().click({ timeout: 2000 });
+    } catch {
+      // A Live that ended under the click: the next round looks again.
+    } finally {
+      busy = false;
+    }
+  };
+  void press();
+  setInterval(press, 1000);
+}
 
 for (const person of people) {
   const user = fixture.users[person.name];
@@ -109,7 +132,8 @@ for (const person of people) {
     await page.getByRole("menuitem", { name: "Live gehen", exact: true }).click();
     await page.getByRole("button", { name: "Live gehen", pressed: true }).first().waitFor();
   }
-  const flags = ["muted", "camera", "live"].filter((flag) => person[flag]);
+  if (person.watch) watchEveryLive(page);
+  const flags = ["muted", "camera", "live", "watch"].filter((flag) => person[flag]);
   console.log(`${person.name} is in ${channelName}${flags.map((f) => ` (${f})`).join("")}`);
 }
 console.log("in the call; Ctrl+C or SIGTERM ends it");
