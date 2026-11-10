@@ -80,11 +80,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // The peer address is the rate-limit key when no proxy wrote
     // `X-Forwarded-For` (`limits::client_ip`).
+    let gateway = state.gateway.clone();
     axum::serve(
         listener,
         app(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        // Upgraded sockets are not HTTP connections the server waits for.
+        gateway.drain(std::time::Duration::from_secs(5)).await;
+    })
     .await?;
 
     info!("gelabber-api stopped");

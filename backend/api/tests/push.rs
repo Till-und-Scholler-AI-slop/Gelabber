@@ -9,7 +9,7 @@ use axum::http::{HeaderMap, Method, StatusCode};
 use axum::{Router, routing};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
 use common::{Client, SESSION};
-use futures_util::SinkExt;
+use futures_util::{SinkExt, StreamExt};
 use gelabber_api::push::webpush::{Vapid, decrypt};
 use gelabber_api::{AppState, Config, app};
 use serde_json::{Value, json};
@@ -693,6 +693,25 @@ async fn a_page_in_front_holds_pushes_back(pool: PgPool) {
     .await
     .unwrap();
     focus_is(&state, b.user_id(), true).await;
+    // In front, but showing something else: the page does not subscribe to
+    // this conversation, so the push still goes.
+    post(&mut a, &dm, "anderswo").await;
+    assert_eq!(browser.open(&next(&mut hits).await)["body"], "anderswo");
+
+    // A page in front that follows the conversation holds the push back.
+    ws.send(Message::Text(
+        json!({"op":"s","s":dm,"c":dm}).to_string().into(),
+    ))
+    .await
+    .unwrap();
+    loop {
+        let frame = ws.next().await.expect("socket open").expect("frame");
+        if let Message::Text(text) = frame
+            && serde_json::from_str::<Value>(text.as_str()).unwrap()["op"] == "ok"
+        {
+            break;
+        }
+    }
     post(&mut a, &dm, "gesehen").await;
     // The push runs after the answer; let it look at the focus first.
     tokio::time::sleep(Duration::from_millis(500)).await;

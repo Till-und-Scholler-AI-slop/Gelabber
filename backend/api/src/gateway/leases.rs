@@ -277,7 +277,9 @@ impl VoiceRoster {
                 joined.replay = true;
                 events.push(joined);
                 for kind in pubs {
-                    events.push(SigEvent::published(s, c, uid, kind));
+                    let mut published = SigEvent::published(s, c, uid, kind);
+                    published.replay = true;
+                    events.push(published);
                 }
             }
             self.aggregate_signal(u, s, c, "j", &HashSet::new()).await?;
@@ -932,6 +934,40 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].p, HashSet::from([TrackKind::A]));
         assert_eq!(g.voice_snapshot(s).await.unwrap().len(), 1);
+    }
+
+    /// Everything a join replays to the newcomer is marked as replay, the
+    /// occupants' publications too: clients announce none of it.
+    #[tokio::test]
+    async fn join_marks_every_replayed_event() {
+        let g = gateway();
+        let (a, b, s, c) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let (sa, _ra) = socket(&g, a).await;
+        let (sb, _rb) = socket(&g, b).await;
+        g.join_voice(sa, a, s, c).await.unwrap();
+        assert!(
+            g.set_voice_pub(sa, a, s, c, TrackKind::S, true)
+                .await
+                .unwrap()
+        );
+        let replayed = g.join_voice(sb, b, s, c).await.unwrap();
+        let kinds: Vec<_> = replayed.iter().map(|event| event.t).collect();
+        assert_eq!(
+            kinds,
+            [
+                super::super::protocol::SigKind::J,
+                super::super::protocol::SigKind::P
+            ]
+        );
+        assert!(replayed.iter().all(|event| event.replay));
+        for id in [sa, sb] {
+            g.detach(id).await;
+        }
     }
 
     #[tokio::test]

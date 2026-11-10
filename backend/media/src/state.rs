@@ -9,6 +9,7 @@ use crate::sfu::Sfu;
 pub struct AppState {
     pub redis: redis::Client,
     pub ready_timeout: Duration,
+    pub redis_probe: Arc<crate::health::RedisProbe>,
     pub join_deadline: Duration,
     pub heartbeat: Duration,
     pub idle_timeout: Duration,
@@ -24,6 +25,7 @@ impl AppState {
         Ok(Self {
             redis: redis.clone(),
             ready_timeout: config.ready_timeout,
+            redis_probe: Arc::default(),
             join_deadline: config.join_deadline,
             heartbeat: config.heartbeat,
             idle_timeout: config.idle_timeout,

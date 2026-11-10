@@ -374,7 +374,11 @@ async fn deliver(
         users
     };
     // Without Redis nobody counts as in front: push anyway.
-    let in_front = state.gateway.in_front(&users).await.unwrap_or_default();
+    let in_front = state
+        .gateway
+        .in_front_in(&users, message.channel_id)
+        .await
+        .unwrap_or_default();
     let urgency = if server.is_none() { "high" } else { "normal" };
     let results = futures_util::stream::iter(
         targets

@@ -2,11 +2,11 @@
 
 Gelabber owns tickets, room authority and its WebSocket signaling. The sole media
 engine is the official Rust mediasoup 0.29.0 binding; web uses the public
-mediasoup-client 3.24.1 SDK. See the [migration document](../docs/v0.4-mediasoup-migration.md)
+mediasoup-client 3.26.0 SDK. See the [migration document](../docs/v0.4-mediasoup-migration.md)
 for the native build and coherent previous-application rollback boundary.
 
 Clients join with `op: "j"`, a positive increasing request `id`, the one-use `tk`
-and `v: 4`. A dedicated Live viewer additionally sends `w: <publisher UUID>`.
+and `v: 4`; a join that carries `w` is refused (Watch happens inside the room).
 The correlated result includes `v: 4`, room/user identity, a peer generation and
 `routerRtpCapabilities`. Other protocol versions receive `update_required` before
 ticket consumption. API, media and web must be updated together.

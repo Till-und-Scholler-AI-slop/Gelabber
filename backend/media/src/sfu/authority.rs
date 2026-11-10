@@ -2,6 +2,18 @@
 use super::*;
 
 impl Sfu {
+    /// `Revoked` only when Redis answered "no". A check that could not be
+    /// made is `Gone`, so the client rejoins with a new ticket.
+    pub(super) async fn authorize(
+        &self,
+        authority: &AuthorizedTicketClaim,
+    ) -> Result<(), SfuError> {
+        match crate::ticket::validate_authority(&self.redis, authority).await {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(SfuError::Revoked),
+            Err(_) => Err(SfuError::Gone),
+        }
+    }
     pub(super) fn watch_authority(weak: Weak<Self>, channel: Uuid, peer: Weak<Peer>) {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
@@ -14,13 +26,15 @@ impl Sfu {
                 if !peer.grant.valid() {
                     break;
                 }
-                if !sfu.ready()
-                    || !crate::ticket::validate_authority(&sfu.redis, &peer.authority)
-                        .await
-                        .unwrap_or(false)
-                {
+                // A draining or engine-less pool is not a revocation either.
+                let verdict = if sfu.ready() {
+                    sfu.authorize(&peer.authority).await
+                } else {
+                    Err(SfuError::Gone)
+                };
+                if let Err(error) = verdict {
                     sfu.leave(peer.id, channel).await;
-                    sfu.emit(&peer, ServerFrame::error("unauthorized"));
+                    sfu.emit(&peer, ServerFrame::error(error.code()));
                     break;
                 }
             }

@@ -5,13 +5,19 @@
 //! of them, and the whole SFU `MEDIA_PENDING_MAX` as a safety valve for file
 //! descriptors. A per-address cap alone stops one host; the valve stops many
 //! hosts, and is set high so one host cannot fill it and fail everyone's
-//! join. The join deadline bounds how long a slot is held. A joined socket
+//! join. IPv6 /64s of one /48 share `PREFIX_SHARES` per-address caps, so a
+//! subscriber's many /64s cannot fill the valve either. The join deadline bounds how long a slot is held. A joined socket
 //! gives its slot back: it holds a consumed ticket, which the API rations.
 //! A socket that leaves takes a slot again for the time until it rejoins.
 
 use std::collections::HashMap;
+use std::net::Ipv6Addr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+
+/// Per-address shares one IPv6 /48 may hold together. Clients are keyed per
+/// /64, and one subscriber may hold 256 or more of those.
+const PREFIX_SHARES: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refused {
@@ -55,7 +61,11 @@ impl PendingSockets {
     pub fn acquire(self: &Arc<Self>, key: &str) -> Result<PendingSlot, Refused> {
         let mut held = self.held.lock().unwrap_or_else(|err| err.into_inner());
         let mine = held.by_ip.get(key).copied().unwrap_or(0);
-        let refused = if mine >= self.per_ip {
+        let prefix = prefix_key(key);
+        let shared = prefix
+            .as_ref()
+            .map_or(0, |prefix| held.by_ip.get(prefix).copied().unwrap_or(0));
+        let refused = if mine >= self.per_ip || shared >= self.per_ip * PREFIX_SHARES {
             Some((Refused::PerIp, &self.refused_per_ip))
         } else if held.total >= self.max {
             Some((Refused::Total, &self.refused_total))
@@ -67,6 +77,9 @@ impl PendingSockets {
             return Err(reason);
         }
         held.by_ip.insert(key.to_owned(), mine + 1);
+        if let Some(prefix) = prefix {
+            held.by_ip.insert(prefix, shared + 1);
+        }
         held.total += 1;
         Ok(PendingSlot {
             sockets: Arc::clone(self),
@@ -98,14 +111,32 @@ impl PendingSockets {
 
     fn release(&self, key: &str) {
         let mut held = self.held.lock().unwrap_or_else(|err| err.into_inner());
-        if let Some(count) = held.by_ip.get_mut(key) {
-            *count -= 1;
-            if *count == 0 {
-                held.by_ip.remove(key);
+        if held.by_ip.contains_key(key) {
+            let prefix = prefix_key(key);
+            for key in std::iter::once(key).chain(prefix.as_deref()) {
+                if let Some(count) = held.by_ip.get_mut(key) {
+                    *count -= 1;
+                    if *count == 0 {
+                        held.by_ip.remove(key);
+                    }
+                }
             }
             held.total -= 1;
         }
     }
+}
+
+/// The /48 of an IPv6 client key (`…/64`, `gelabber_shared::client_addr`).
+fn prefix_key(key: &str) -> Option<String> {
+    let s = key
+        .strip_suffix("/64")?
+        .parse::<Ipv6Addr>()
+        .ok()?
+        .segments();
+    Some(format!(
+        "{}/48",
+        Ipv6Addr::new(s[0], s[1], s[2], 0, 0, 0, 0, 0)
+    ))
 }
 
 impl Drop for PendingSlot {
@@ -146,9 +177,31 @@ mod tests {
     }
 
     #[test]
+    fn one_ipv6_48_gets_a_few_shares_not_the_valve() {
+        let sockets = PendingSockets::new(2, 1024);
+        let mut held = Vec::new();
+        for net in 0..PREFIX_SHARES * 2 {
+            held.push(
+                sockets
+                    .acquire(&format!("2001:db8:1:{net:x}::/64"))
+                    .unwrap(),
+            );
+        }
+        assert_eq!(
+            sockets.acquire("2001:db8:1:ffff::/64").err(),
+            Some(Refused::PerIp)
+        );
+        assert!(sockets.acquire("2001:db8:2::/64").is_ok());
+        assert!(sockets.acquire("192.0.2.1").is_ok());
+        held.pop();
+        assert!(sockets.acquire("2001:db8:1:ffff::/64").is_ok());
+    }
+
+    #[test]
     fn released_addresses_leave_no_entry() {
         let sockets = PendingSockets::new(4, 4);
         drop(sockets.acquire("a").unwrap());
+        drop(sockets.acquire("2001:db8::/64").unwrap());
         assert!(sockets.held.lock().unwrap().by_ip.is_empty());
     }
 

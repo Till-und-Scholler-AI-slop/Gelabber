@@ -128,3 +128,66 @@ async fn ready_and_metrics_report_the_worker_pool() {
         assert!(text.contains(needle), "missing {needle:?} in {text}");
     }
 }
+
+#[tokio::test]
+async fn ready_probes_redis_at_most_once_a_second() {
+    // A counting TCP proxy in front of the test Redis.
+    let url = std::env::var("REDIS_URL").expect("isolated REDIS_URL required");
+    let info = redis::Client::open(url.as_str())
+        .unwrap()
+        .get_connection_info()
+        .clone();
+    let redis::ConnectionAddr::Tcp(host, port) = info.addr().clone() else {
+        panic!("local TCP Redis required");
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy = listener.local_addr().unwrap();
+    let accepted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = accepted.clone();
+    tokio::spawn(async move {
+        loop {
+            let (mut client, _) = listener.accept().await.unwrap();
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let target = (host.clone(), port);
+            tokio::spawn(async move {
+                let mut upstream = tokio::net::TcpStream::connect(target).await.unwrap();
+                let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
+            });
+        }
+    });
+    let redis_url = format!("redis://{proxy}");
+    let config = Config::from_source(|key| match key {
+        "REDIS_URL" => Some(redis_url.clone()),
+        "MEDIA_ICE_BIND" => Some("127.0.0.1:0".to_owned()),
+        _ => None,
+    })
+    .expect("config");
+    let app = app(gelabber_media::AppState::from_config(&config)
+        .await
+        .expect("state"));
+    let ready = || {
+        app.clone().oneshot(
+            Request::builder()
+                .uri("/media/ready")
+                .body(Body::empty())
+                .unwrap(),
+        )
+    };
+    let before = accepted.load(std::sync::atomic::Ordering::SeqCst);
+    let answers = futures_util::future::join_all((0..10).map(|_| ready())).await;
+    for response in answers {
+        assert_eq!(response.unwrap().status(), StatusCode::OK);
+    }
+    assert_eq!(
+        accepted.load(std::sync::atomic::Ordering::SeqCst) - before,
+        1,
+        "a burst shares one probe"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    assert_eq!(ready().await.unwrap().status(), StatusCode::OK);
+    assert_eq!(
+        accepted.load(std::sync::atomic::Ordering::SeqCst) - before,
+        2,
+        "a second later the answer is fresh"
+    );
+}

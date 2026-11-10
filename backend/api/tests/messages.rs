@@ -732,6 +732,10 @@ async fn concurrent_deletes_publish_one_delete_event(pool: PgPool) {
         .unwrap()
         .into_iter()
         .filter(|event| event.t == EventKind::D && event.i == Some(message))
-        .count();
+        // The delete also rewrites the message's earlier entries into copies
+        // of itself; one delete means one revision.
+        .map(|event| event.r)
+        .collect::<std::collections::HashSet<_>>()
+        .len();
     assert_eq!(deletes, 1);
 }

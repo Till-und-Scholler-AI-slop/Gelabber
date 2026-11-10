@@ -1,10 +1,10 @@
 //! One WebSocket: session already checked, then subscribe / heartbeat /
 //! catch-up / presence / typing.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use axum::extract::ws::{Message, Utf8Bytes, WebSocket};
+use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
@@ -19,7 +19,9 @@ use crate::servers::channel::{self, ChannelKind};
 use crate::servers::membership;
 use crate::state::AppState;
 
-const MAX_CLIENT_BYTES: usize = 16 * 1024;
+/// Largest client message and frame. The upgrade hands it to the WebSocket
+/// layer, which refuses a bigger one before buffering it and ends the socket.
+pub(super) const MAX_CLIENT_BYTES: usize = 16 * 1024;
 
 /// How long a socket without a voice seat goes without a session and access
 /// check while it sends and receives nothing. Revocations reach it at once
@@ -30,6 +32,12 @@ const MAX_CLIENT_BYTES: usize = 16 * 1024;
 /// Seat holders are the few sockets in a call, so that poll stays cheap.
 const SECURITY_BACKSTOP: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// One subscribe's replay, gap and `ok` together, written while the frame's
+/// transaction holds the session and server rows. A client that reads too
+/// slowly for it loses the socket instead of keeping the rows and a pool
+/// connection for minutes.
+const REPLAY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+
 enum FrameEffect {
     /// Heartbeat: keep the socket and Redis TTL, do not reset idle.
     Liveness,
@@ -39,6 +47,22 @@ enum FrameEffect {
     Idle,
     /// The page came to the front or left it.
     Focus(bool),
+    /// A write to the socket failed: end it, so the client reconnects and
+    /// resumes instead of staying without the topic.
+    Close,
+}
+
+/// Why a subscribe failed: a failed write ends the socket, a failed read of
+/// the database or Redis only this subscribe.
+enum SubscribeError {
+    Write(ApiError),
+    Read(ApiError),
+}
+
+impl From<ApiError> for SubscribeError {
+    fn from(err: ApiError) -> Self {
+        Self::Read(err)
+    }
 }
 
 pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
@@ -83,11 +107,18 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
     security.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     let (mut sink, mut stream) = socket.split();
+    let mut shutdown = state.gateway.shutdown_signal();
+    let mut close = None;
 
     loop {
         tokio::select! {
             biased;
             _ = revoked.changed() => break,
+            _ = async { drop(shutdown.wait_for(|on| *on).await) } => {
+                // 1012 Service Restart: the client reconnects to the next process.
+                close = Some(CloseFrame { code: 1012, reason: Utf8Bytes::from_static("restart") });
+                break;
+            }
             _ = &mut expired => {
                 match current_expiry(&state, &session).await {
                     Some(at) if at > chrono::Utc::now() => {
@@ -111,11 +142,8 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
                         last_client = Instant::now();
-                        if text.len() > MAX_CLIENT_BYTES {
-                            let _ = send(&mut sink, ServerFrame::error("bad_request", None, None)).await;
-                            continue;
-                        }
                         match handle_text(&state, &mut session_guard, user, conn, &text, &mut sink).await {
+                            Ok(FrameEffect::Close) => break,
                             Ok(FrameEffect::Liveness) => {
                                 let _ = state.gateway.touch_presence(conn).await;
                             }
@@ -203,7 +231,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
 
     let _ = tokio::time::timeout(
         std::time::Duration::from_secs(1),
-        sink.send(Message::Close(None)),
+        sink.send(Message::Close(close)),
     )
     .await;
     if focused {
@@ -343,12 +371,22 @@ async fn handle_text(
             Ok(FrameEffect::Liveness)
         }
         ClientFrame::Subscribe { s, c, n, ep } => {
-            let result = subscribe(state, db, user, conn, (s, c), (n, ep), sink).await;
-            if result.is_err() {
-                state.gateway.unsubscribe(conn, Topic::of(s, c)).await;
+            // The scope tells the client which subscribe to retry. A database
+            // error also fails the frame's commit, which ends the socket.
+            match subscribe(state, db, user, conn, (s, c), (n, ep), sink).await {
+                Ok(()) => Ok(FrameEffect::Activity),
+                Err(SubscribeError::Read(err)) => {
+                    state.gateway.unsubscribe(conn, Topic::of(s, c)).await;
+                    warn!(error = err.code(), user_id = %user.id, "ws subscribe failed");
+                    send(sink, ServerFrame::error("internal", Some(s), c)).await?;
+                    Ok(FrameEffect::Activity)
+                }
+                Err(SubscribeError::Write(err)) => {
+                    state.gateway.unsubscribe(conn, Topic::of(s, c)).await;
+                    debug!(error = err.code(), user_id = %user.id, "ws subscribe write failed");
+                    Ok(FrameEffect::Close)
+                }
             }
-            result?;
-            Ok(FrameEffect::Activity)
         }
         ClientFrame::Unsubscribe { s, c } => {
             state.gateway.unsubscribe(conn, Topic::of(s, c)).await;
@@ -378,7 +416,7 @@ async fn subscribe(
     scope: (Uuid, Option<Uuid>),
     resume: (Option<u64>, Option<Uuid>),
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
-) -> Result<(), ApiError> {
+) -> Result<(), SubscribeError> {
     let (server_id, channel_id) = scope;
     let _guard = if channel_id.is_some_and(|cid| cid == server_id) {
         None // DM authorization below still verifies participants.
@@ -390,10 +428,11 @@ async fn subscribe(
                     sink,
                     ServerFrame::error("not_found", Some(server_id), channel_id),
                 )
-                .await?;
+                .await
+                .map_err(SubscribeError::Write)?;
                 return Ok(());
             }
-            Err(err) => return Err(err),
+            Err(err) => return Err(err.into()),
         }
     };
     match authorize(&mut *db, user.id, server_id, channel_id).await {
@@ -403,10 +442,11 @@ async fn subscribe(
                 sink,
                 ServerFrame::error("not_found", Some(server_id), channel_id),
             )
-            .await?;
+            .await
+            .map_err(SubscribeError::Write)?;
             return Ok(());
         }
-        Err(other) => return Err(other),
+        Err(other) => return Err(other.into()),
     }
 
     if _guard.is_some() {
@@ -426,26 +466,28 @@ async fn subscribe(
         .events
         .catch_up_epoch(topic, resume.0, resume.1)
         .await?;
+    // The server row lock is held until these are written, so the whole
+    // replay shares one deadline rather than one per frame.
+    let mut texts = Vec::new();
     match plan {
         CatchUp::None => {}
         CatchUp::Replay(events) => {
             for event in events {
-                send(sink, ServerFrame::event(event)).await?;
+                texts.push(to_json(&ServerFrame::event(event))?);
             }
         }
         CatchUp::Gap => {
-            send(
-                sink,
-                ServerFrame::gap(server_id, channel_id).with_epoch(epoch),
-            )
-            .await?;
+            texts.push(to_json(
+                &ServerFrame::gap(server_id, channel_id).with_epoch(epoch),
+            )?);
         }
     }
-    send(
-        sink,
-        ServerFrame::subscribed(server_id, channel_id, current).with_epoch(epoch),
-    )
-    .await?;
+    texts.push(to_json(
+        &ServerFrame::subscribed(server_id, channel_id, current).with_epoch(epoch),
+    )?);
+    send_texts_within(sink, texts, REPLAY_DEADLINE)
+        .await
+        .map_err(SubscribeError::Write)?;
 
     // Live Pub/Sub frames that arrived while we were reading the log sit
     // in the per-socket queue. Flush them now (drop dups by `n`).
@@ -456,12 +498,24 @@ async fn subscribe(
         .await;
 
     // Presence is ephemeral: announce after the sequenced `ok` so a snapshot
-    // never looks like catch-up and never bumps `n`.
-    state.gateway.announce_server(conn, server_id).await?;
-    let snap = state.gateway.presence_snapshot(server_id).await?;
-    send(sink, ServerFrame::presence_snap(server_id, snap)).await?;
-    let voice = state.gateway.voice_snapshot(server_id).await?;
-    send(sink, ServerFrame::voice_snap(server_id, voice)).await?;
+    // never looks like catch-up and never bumps `n`. A failure here leaves
+    // the chat subscription standing; the roster pass and later presence
+    // frames fill in.
+    if let Err(err) = state.gateway.announce_server(conn, server_id).await {
+        warn!(error = err.code(), "presence announce on subscribe failed");
+    }
+    match state.gateway.presence_snapshot(server_id).await {
+        Ok(snap) => send(sink, ServerFrame::presence_snap(server_id, snap))
+            .await
+            .map_err(SubscribeError::Write)?,
+        Err(err) => warn!(error = err.code(), "presence snapshot on subscribe failed"),
+    }
+    match state.gateway.voice_snapshot(server_id).await {
+        Ok(voice) => send(sink, ServerFrame::voice_snap(server_id, voice))
+            .await
+            .map_err(SubscribeError::Write)?,
+        Err(err) => warn!(error = err.code(), "voice snapshot on subscribe failed"),
+    }
     Ok(())
 }
 
@@ -592,6 +646,7 @@ async fn deliver(
     batch: Vec<(ServerFrame, String)>,
 ) -> Result<bool, ApiError> {
     let mut checked = false;
+    let dms = state.gateway.socket_dms(conn).await;
     for run in server_runs(batch) {
         let mut db = tokio::time::timeout(
             std::time::Duration::from_secs(1),
@@ -608,7 +663,7 @@ async fn deliver(
             if !state.gateway.wants_frame(conn, &frame).await {
                 continue;
             }
-            let ok = match frame_scope(&frame) {
+            let ok = match dequeue_scope(&frame, &dms) {
                 None => true,
                 Some(scope) => match allowed.get(&scope) {
                     Some(&ok) => ok,
@@ -664,6 +719,19 @@ fn frame_scope(frame: &ServerFrame) -> Option<Scope> {
     }
 }
 
+/// [`frame_scope`] for the dequeue check. Presence on a DM is published on
+/// the DM id, which is no server row: it is checked as the DM it is.
+fn dequeue_scope(frame: &ServerFrame, dms: &HashSet<Uuid>) -> Option<Scope> {
+    match frame_scope(frame) {
+        Some((sid, None))
+            if matches!(frame, ServerFrame::Presence { .. }) && dms.contains(&sid) =>
+        {
+            Some((sid, Some(sid)))
+        }
+        scope => scope,
+    }
+}
+
 /// Check at dequeue time too: already queued events cannot leak after removal.
 /// The server row lock stays held in `db`'s transaction until the frames of
 /// this scope are written.
@@ -696,10 +764,18 @@ async fn send_texts(
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     texts: Vec<String>,
 ) -> Result<(), ApiError> {
+    send_texts_within(sink, texts, std::time::Duration::from_secs(1)).await
+}
+
+async fn send_texts_within(
+    sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    texts: Vec<String>,
+    deadline: std::time::Duration,
+) -> Result<(), ApiError> {
     if texts.is_empty() {
         return Ok(());
     }
-    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+    tokio::time::timeout(deadline, async {
         for text in texts {
             sink.feed(Message::Text(Utf8Bytes::from(text))).await?;
         }

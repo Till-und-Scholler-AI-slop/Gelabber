@@ -19,16 +19,17 @@ impl Sfu {
             .peer
             .clone();
         let _rpc = peer.rpc_gate.lock().await;
-        if !peer.grant.valid() || !self.room_ready(&room) {
+        // Drain and a lost engine are recoverable: the client rejoins.
+        let verdict = if !self.room_ready(&room) {
+            Err(SfuError::Gone)
+        } else if !peer.grant.valid() {
+            Err(SfuError::Revoked)
+        } else {
+            self.authorize(&peer.authority).await
+        };
+        if let Err(error) = verdict {
             self.leave(id, channel).await;
-            return Err(SfuError::Revoked);
-        }
-        if !crate::ticket::validate_authority(&self.redis, &peer.authority)
-            .await
-            .unwrap_or(false)
-        {
-            self.leave(id, channel).await;
-            return Err(SfuError::Revoked);
+            return Err(error);
         }
         match frame {
             ClientFrame::Capabilities { rtp, .. } => {
@@ -65,7 +66,7 @@ impl Sfu {
                 {
                     return Err(SfuError::BadAnnounce);
                 }
-                let opts = gateway_transport_options(room.engine.server.clone());
+                let opts = gateway_transport_options(room.engine.server()?);
                 let transport = room
                     .engine
                     .native(
@@ -371,13 +372,13 @@ impl Sfu {
                 gate: Mutex::new(()),
                 packet_samples: StdMutex::new(HashMap::new()),
             });
-            if !crate::ticket::validate_authority(&self.redis, &peer.authority)
-                .await
-                .unwrap_or(false)
-                || !pubn.valid()
-            {
+            let verdict = match self.authorize(&peer.authority).await {
+                Ok(()) if !pubn.valid() => Err(SfuError::Revoked),
+                verdict => verdict,
+            };
+            if let Err(error) = verdict {
                 stop_producer(&pubn.producer).await;
-                return Err(SfuError::Revoked);
+                return Err(error);
             }
             // Atomically replace the slot with a still-paused new Producer. This actual
             // ID fences timeout/close callbacks from the retired Producer, even if the
