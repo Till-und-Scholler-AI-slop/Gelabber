@@ -170,13 +170,15 @@ pub enum Download {
     Image,
     /// A text attachment shown inline (`TEXT_PREVIEW_MAX`).
     Text,
+    /// Any attachment saved to disk.
+    File,
 }
 
 impl Download {
     pub const fn max_bytes(self) -> usize {
         match self {
             // An attachment's limit (attachments/validate.rs `SIZE_MAX`).
-            Self::Image => 25 * 1024 * 1024,
+            Self::Image | Self::File => 25 * 1024 * 1024,
             Self::Text => 100 * 1024,
         }
     }

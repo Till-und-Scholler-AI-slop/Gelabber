@@ -143,7 +143,7 @@ pub fn download(ctx: &egui::Context, client: &gelabber_client::Client, url: &str
     let http = client.http().clone();
     let (url, name) = (url.to_owned(), safe_file_name(name));
     client.spawn(async move {
-        match http.bytes(&url).await {
+        match http.bytes(&url, gelabber_client::Download::File).await {
             Ok(bytes) => crate::platform::files::save(&ctx, "Datei speichern", &name, bytes),
             Err(e) => {
                 tracing::warn!("download {url}: {e}");
