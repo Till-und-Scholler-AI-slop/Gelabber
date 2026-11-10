@@ -514,11 +514,13 @@ fn voice_room(
                     corner(theme.radius.lg),
                     Color32::from_rgb(0x0b, 0x0d, 0x0e),
                 );
-                voice::video::request(
+                voice::video::request_fit(
                     ui,
                     app.call,
                     key,
-                    voice::video::drawn_rect(inner, &frame, voice::video::Fit::Cover),
+                    inner,
+                    Some(&frame),
+                    voice::video::Fit::Cover,
                     15,
                 );
                 voice::video::paint(
