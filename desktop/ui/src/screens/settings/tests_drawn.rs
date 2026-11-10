@@ -160,3 +160,30 @@ fn recording_a_key_claims_the_side_buttons() {
         assert_eq!(super::prefs::get(&h.ctx).ptt_key, "Mouse4");
     });
 }
+
+/// Audio or Video on the page with the call's "Alle Einstellungen …" over
+/// it: two copies of one form in a frame, each with ids of its own (debug
+/// builds panicked on the shared ones, release ones mixed the input).
+#[test]
+fn the_media_dialog_over_its_own_page_keeps_its_controls_apart() {
+    use crate::screens::voice::dialogs::{self, Tab};
+    for (area, tab) in [("audio", Tab::Audio), ("video", Tab::Video)] {
+        within(30, move || {
+            let _config = crate::platform::paths::testing::TempConfig::new("media-twice");
+            let mut page = settings_page(area);
+            let (mut h, _world, _client, _call) =
+                harness(&format!("/settings/{area}"), move |ui, app| {
+                    page(ui, app);
+                    dialogs::show(ui, app);
+                });
+            super::prefs::update(&h.ctx, |p| {
+                p.voice_input = "ptt".into();
+                p.video_upload_limit = 10_000_000.0;
+            });
+            h.run_steps(3);
+            dialogs::open_settings(&h.ctx, tab);
+            h.run_steps(6);
+            assert!(dialogs::open(&h.ctx));
+        });
+    }
+}

@@ -719,7 +719,8 @@ fn general(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
     ui.add_space(14.0);
     controls::column(ui, 560.0, |ui| {
         let mut name = s.name.clone().unwrap_or_else(|| detail.server.name.clone());
-        let field = TextField::new("server-name", &mut name)
+        // Not the add-server dialog's "server-name", which can draw over it.
+        let field = TextField::new(("server-settings", "server-name"), &mut name)
             .label("Servername")
             .char_limit(100)
             .error(s.name_errors.field("name"))
@@ -1329,5 +1330,23 @@ mod tests {
             section_in_view(&at(&[15.0, 400.0]), page(0.0), Some(("s5", 0.0))).1,
             None
         );
+    }
+
+    /// "Server erstellen" over a server's settings: two name fields in one
+    /// frame (debug builds panicked; release ones typed into both).
+    #[test]
+    fn the_add_server_dialog_over_the_settings_has_its_own_name_field() {
+        use crate::app::testkit::{FakeApi, HOME, launcher, wait_for_label, workspace};
+        use egui_kittest::kittest::Queryable;
+        let _config = crate::platform::paths::testing::TempConfig::new("server-name-twice");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
+        wait_for_label(&mut harness, "Servername");
+        harness.get_by_label("Server hinzufügen").click();
+        wait_for_label(&mut harness, "Server erstellen");
+        harness.get_by_label("Server erstellen").click();
+        harness.run_steps(6);
+        harness.get_by_label("Name");
+        harness.get_by_label("Servername");
     }
 }

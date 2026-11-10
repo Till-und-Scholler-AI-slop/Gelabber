@@ -121,6 +121,33 @@ pub fn column<R>(ui: &mut Ui, width: f32, content: impl FnOnce(&mut Ui) -> R) ->
     out
 }
 
+// -------------------------------------------------------------- id scope
+
+fn id_scope_id() -> Id {
+    Id::unique("gelabber-controls-id-scope")
+}
+
+/// Salts the ids of the controls drawn until it is set back to `None`: a
+/// form drawn twice in one frame (a dialog over its own page) keeps its
+/// controls apart.
+pub fn set_id_scope(ctx: &egui::Context, scope: Option<&'static str>) {
+    ctx.data_mut(|d| d.insert_temp(id_scope_id(), scope));
+}
+
+/// The scope [`set_id_scope`] set, if any.
+pub fn id_scope(ctx: &egui::Context) -> Option<&'static str> {
+    ctx.data(|d| d.get_temp::<Option<&'static str>>(id_scope_id()))
+        .flatten()
+}
+
+/// `id` in the current [`id_scope`].
+pub fn scoped(ctx: &egui::Context, id: Id) -> Id {
+    match id_scope(ctx) {
+        Some(scope) => id.with(scope),
+        None => id,
+    }
+}
+
 /// A row of items `gap` apart, vertically centred, `height` tall.
 pub fn row<R>(ui: &mut Ui, gap: f32, height: f32, content: impl FnOnce(&mut Ui) -> R) -> R {
     let width = ui.available_width();
@@ -274,7 +301,7 @@ fn switch_row_ruled(
             Sense::CLICK
         },
     );
-    let id = Id::unique(("gelabber-switch-row", id));
+    let id = scoped(ui.ctx(), Id::unique(("gelabber-switch-row", id)));
     // The row is the switch's label, as `<label>` around the web's input.
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, !disabled, *on, label));
     describe(ui, response.id, note);
@@ -343,7 +370,7 @@ pub fn chips(
 ) -> Option<usize> {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
-    let id = Id::unique(("gelabber-chips", id));
+    let id = scoped(ui.ctx(), Id::unique(("gelabber-chips", id)));
     let mut chosen = None;
     let start = ui.cursor().min;
     let mut x = start.x;
@@ -443,7 +470,7 @@ pub fn radio_card(
     let d = Block::wrapped(ui, desc, text::META, c.muted, text_w);
     let h = 1.0 + 12.0 + l.height() + 2.0 + d.height() + 12.0 + 1.0;
     let (rect, response) = ui.allocate_exact_size(vec2(width, h.max(44.0)), Sense::click());
-    let id = Id::unique(("gelabber-radio-card", id));
+    let id = scoped(ui.ctx(), Id::unique(("gelabber-radio-card", id)));
     let hover = eased(ui.ctx(), id, response.hovered(), c.panel, c.hover);
     let (fill, border) = if checked {
         (c.selected, c.accent)
@@ -489,8 +516,8 @@ pub fn radio_mark(ui: &mut Ui, min: Pos2, checked: bool) {
 /// opens the options under it.
 /// Whether the [`select`] named `id` has its list open.
 pub fn select_open(ctx: &egui::Context, id: &str) -> bool {
-    ctx.data(|d| d.get_temp::<bool>(Id::unique(("gelabber-select-open", id))))
-        .unwrap_or(false)
+    let open_id = scoped(ctx, Id::unique(("gelabber-select-open", id)));
+    ctx.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false)
 }
 
 pub fn select(
@@ -505,7 +532,7 @@ pub fn select(
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(vec2(width, 37.0), Sense::click());
     crate::widgets::popover::focus_first(&response);
-    let open_id = Id::unique(("gelabber-select-open", id.clone()));
+    let open_id = scoped(ui.ctx(), Id::unique(("gelabber-select-open", id)));
     let mut open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
     if response.clicked() {
         open = !open;
@@ -547,7 +574,7 @@ pub fn select(
     }
     let mut changed = false;
     if open {
-        let shown = Popover::new(("select", id), rect)
+        let shown = Popover::new(("select", open_id), rect)
             .min_width(width)
             .select_list()
             .show(ui.ctx(), |ui| {
@@ -645,7 +672,7 @@ fn range(
     let c = &theme.c;
     let width = ui.available_width();
     let rect = Rect::from_min_size(ui.cursor().min, vec2(width, 20.0));
-    let id = Id::unique(("gelabber-slider", id));
+    let id = scoped(ui.ctx(), Id::unique(("gelabber-slider", id)));
     let sense = if disabled {
         Sense::hover()
     } else {

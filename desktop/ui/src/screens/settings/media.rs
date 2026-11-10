@@ -52,8 +52,11 @@ fn dialog_id() -> Id {
 
 /// The forms inside the Audio & Video dialog: fields on the page colour,
 /// buttons and chips without the settings page's accent text.
+/// The dialog draws over the page's own form: its controls get ids of
+/// their own.
 pub fn set_in_dialog(ctx: &egui::Context, on: bool) {
     ctx.data_mut(|d| d.insert_temp(dialog_id(), on));
+    controls::set_id_scope(ctx, on.then_some("media-dialog"));
 }
 
 fn recording_id() -> Id {
@@ -643,7 +646,7 @@ fn disclosure(ui: &mut Ui, s: &mut State, p: &mut Prefs) {
     let width = ui.available_width();
     let top = ui.cursor().min;
     let summary = Rect::from_min_size(top + vec2(1.0, 1.0), vec2(width - 2.0, 44.0));
-    let id = Id::unique("gelabber-media-disclosure");
+    let id = controls::scoped(ui.ctx(), Id::unique("gelabber-media-disclosure"));
     let response = ui.interact(summary, id, Sense::click());
     if response.clicked() {
         s.advanced_open = !s.advanced_open;
@@ -1157,7 +1160,7 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 let b = Block::single(ui, label, text::UI, c.text);
                 let w = 1.0 + 12.0 + 20.0 + 8.0 + b.width() + 12.0 + 1.0;
                 let rect = Rect::from_min_size(pos2(x, top.y), vec2(w, 36.0));
-                let id = Id::unique(("gelabber-upload-mode", i));
+                let id = controls::scoped(ui.ctx(), Id::unique(("gelabber-upload-mode", i)));
                 let response = ui.interact(rect, id, Sense::click());
                 let painter = ui.painter();
                 painter.rect(
@@ -1198,8 +1201,8 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                         .unwrap_or_else(|| format!("{}", p.video_upload_limit / 1_000_000.0));
                     let rect = Rect::from_min_size(ui.cursor().min, vec2(128.0, 37.0));
                     let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
-                    let out = crate::widgets::TextField::new("video-upload-limit", &mut t)
-                        .show(&mut child);
+                    let field = ("video-upload-limit", controls::id_scope(ui.ctx()));
+                    let out = crate::widgets::TextField::new(field, &mut t).show(&mut child);
                     ui.advance_cursor_after_rect(rect);
                     if out.response.changed() {
                         if let Ok(v) = t.replace(',', ".").parse::<f64>()
