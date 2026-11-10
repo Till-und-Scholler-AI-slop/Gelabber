@@ -23,6 +23,9 @@ jobs:
   build:
     # Other releases (the build-deps mirror) are no app version.
     if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v')
+    # For its libwebrtc jobs, which store a new package in a release.
+    permissions:
+      contents: write
     uses: ./.github/workflows/desktop-native.yml
     with:
       release_tag: ${{ github.event.release.tag_name || inputs.release_tag }}
@@ -108,6 +111,8 @@ jobs:
         with:
           name: arch-repo
           path: site
+      # One name per attempt: a second artifact of one name stops deploy-pages,
+      # so a re-run after a failed deployment could never pass.
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site

@@ -374,6 +374,9 @@ jobs:
     name: Desktop
     needs: changes
     if: needs.changes.outputs.desktop == 'true'
+    # For its libwebrtc jobs, which store a new package in a release (pushes).
+    permissions:
+      contents: write
     uses: ./.github/workflows/desktop-native.yml
 
   # The one required check: red if any job that ran failed or was cancelled.
