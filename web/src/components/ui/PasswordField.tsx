@@ -1,5 +1,7 @@
 import { useState, type ReactNode } from "react";
 
+import { useT } from "../../i18n/catalog.ts";
+import { shell } from "../../i18n/catalogs/shell.ts";
 import { EyeIcon, EyeOffIcon, WarningIcon } from "../Icons.tsx";
 import { fieldDescription } from "./fieldDescription.ts";
 import { FormField } from "./FormField.tsx";
@@ -30,6 +32,7 @@ export function PasswordField({
   onBlur,
   ...input
 }: PasswordFieldProps) {
+  const t = useT(shell);
   const [shown, setShown] = useState(false);
   const [capsLock, setCapsLock] = useState(false);
   const toggle = passwordToggle(shown);
@@ -63,7 +66,7 @@ export function PasswordField({
         />
         <IconButton
           className="ui-password__toggle"
-          label="Passwort anzeigen"
+          label={t("password.show")}
           title={toggle.title}
           pressed={toggle.pressed}
           icon={shown ? <EyeOffIcon size={18} /> : <EyeIcon size={18} />}
@@ -73,7 +76,7 @@ export function PasswordField({
       {capsLock ? (
         <p id={capsId} className="ui-caps-hint">
           <WarningIcon size={14} />
-          Feststelltaste ist an
+          {t("password.capsLock")}
         </p>
       ) : null}
     </FormField>
