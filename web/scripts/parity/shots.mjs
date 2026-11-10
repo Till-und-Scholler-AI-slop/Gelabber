@@ -315,8 +315,14 @@ for (const scene of scenes) {
         ).trim();
         said.push([who, id]);
       }
+      // A button, or a <summary> with that label (the user menu), which
+      // Playwright does not expose as a button.
       if (action.click)
-        await page.getByRole("button", { name: named(action.click), exact: true }).first().click();
+        await page
+          .getByRole("button", { name: named(action.click), exact: true })
+          .or(page.locator("summary").and(page.getByLabel(named(action.click), { exact: true })))
+          .first()
+          .click();
       if (action.menuitem)
         await page.getByRole("menuitem", { name: named(action.menuitem), exact: true }).first().click();
       if (action.link)
