@@ -396,7 +396,8 @@ jobs:
           save-if: ${{ github.event_name == 'push' }}
 
       # A release is built from a commit CI has tested on main, so its build
-      # runs no checks again: a flaky one would hold the release back.
+      # runs the code checks no more: a flaky one would hold the release back.
+      # One loopback call stays, the only check that runs the release's core.
       - name: Format
         if: inputs.release_tag == ''
         run: cargo fmt --manifest-path desktop/Cargo.toml --all -- --check
@@ -513,6 +514,14 @@ jobs:
 
       # The native app (desktop/gelabber) on lavapipe under Xvfb, no server and
       # empty settings: it must paint its setup screen and end by itself.
+      # The same selection as the step for checks, so the core is built once.
+      - name: Loopback call of the release build
+        if: inputs.release_tag != ''
+        timeout-minutes: 20
+        env:
+          GELABBER_EXPECT_H264: "1"
+        run: cargo test --manifest-path desktop/Cargo.toml --test mediasoup_loopback -- --nocapture --test-threads=1
+
       - name: Native app smoke test
         timeout-minutes: 10
         run: |
@@ -1079,7 +1088,7 @@ jobs:
       # worker is there.
       - name: Tests of the core with their mediasoup worker (build)
         id: worker
-        if: ${{ !cancelled() && inputs.release_tag == '' && steps.core.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.core.outcome == 'success' }}
         timeout-minutes: 45
         run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --no-run
 
@@ -1093,7 +1102,7 @@ jobs:
       # to 127.0.0.1: probe it, and move the tests' server to the machine's
       # address if needed (GELABBER_TEST_LISTEN_IP).
       - name: Address for the loopback call
-        if: ${{ !cancelled() && inputs.release_tag == '' && steps.core.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.core.outcome == 'success' }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           # Whether a datagram from a socket on $from reaches one on $to, and as coming from $from.
@@ -1152,7 +1161,8 @@ jobs:
       # The Linux job's call through an in-process mediasoup worker. H264 only
       # where Media Foundation has codecs, so no GELABBER_EXPECT_H264.
       # GELABBER_TEST_SCREEN_MONITOR captures the primary monitor without the
-      # picker; the test skips where Windows cannot capture.
+      # picker; the test skips where Windows cannot capture. A release build
+      # makes the call alone, without the tests that measure frame rates.
       - name: Loopback call against mediasoup 0.29
         id: tests
         if: ${{ !cancelled() && steps.worker.outcome == 'success' }}
@@ -1160,7 +1170,9 @@ jobs:
         env:
           RUST_BACKTRACE: "1"
           GELABBER_TEST_SCREEN_MONITOR: "1"
-        run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core -- --nocapture --test-threads=1
+        run: |
+          $only = if ($env:RELEASE_TAG) { @('--test', 'mediasoup_loopback') } else { @() }
+          cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core @only -- --nocapture --test-threads=1
 
       # A native crash ends the test without a word; libwebrtc's log says
       # where it got to, and how far ICE came on the address chosen above.
