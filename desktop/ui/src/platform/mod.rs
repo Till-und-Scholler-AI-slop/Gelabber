@@ -691,7 +691,10 @@ mod tests {
             p.voice_input = "ptt".into();
             p.ptt_key = "KeyA".into();
         });
-        call.set_settings(crate::screens::voice::sync::settings(&prefs::get(&ctx)));
+        let p = prefs::get(&ctx);
+        call.set_settings(crate::screens::voice::sync::settings(&p));
+        // Taken as bound already: no portal session on the developer's own bus.
+        platform.ptt.key = Some((p.ptt_key.clone(), p.ptt_key_label.clone()));
         push_to_talk_from(&ctx, &call, PttSource::Window, true);
         pass(&mut platform, &mut app, false);
         assert!(call.push_to_talk_held(), "shown: the window keeps it");
@@ -700,6 +703,7 @@ mod tests {
         push_to_talk_from(&ctx, &call, PttSource::Hook, true);
         pass(&mut platform, &mut app, true);
         assert!(call.push_to_talk_held(), "the hook holds while hidden");
+        assert!(platform.ptt.binding.is_none(), "no real shortcut was bound");
         drop(config);
     }
 
