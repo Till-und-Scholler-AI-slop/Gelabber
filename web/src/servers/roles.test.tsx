@@ -9,10 +9,12 @@ import {
   BASE_ROLE,
   ROLE_COLORS,
   accessOf,
+  accessRoleIds,
   accessSummary,
   defaultRoleSelection,
   effectivePermissions,
   inheritedFromBase,
+  membersWhoSee,
   newRoleInput,
   nextColor,
   nextRoleName,
@@ -21,6 +23,7 @@ import {
   roleRename,
   rolesInOrder,
   rolesOf,
+  sameAccess,
   seesChannel,
   toggleAccess,
   toggleMemberRole,
@@ -348,5 +351,54 @@ describe("roles editor helpers", () => {
   it("adds or takes away one role of a member", () => {
     expect(toggleMemberRole(["r-reg"], "r-mod")).toEqual(["r-reg", "r-mod"]);
     expect(toggleMemberRole(["r-reg", "r-mod"], "r-reg")).toEqual(["r-mod"]);
+  });
+});
+
+describe("the Zugriff field's role_ids", () => {
+  it("compares selections as sets", () => {
+    expect(sameAccess(null, null)).toBe(true);
+    expect(sameAccess(null, [])).toBe(false);
+    expect(sameAccess([], [])).toBe(true);
+    expect(sameAccess(["r-mod", "r-reg"], ["r-reg", "r-mod"])).toBe(true);
+    expect(sameAccess(["r-mod"], ["r-mod", "r-reg"])).toBe(false);
+  });
+
+  it("sends nothing while the access is unchanged", () => {
+    expect(accessRoleIds(null, null)).toBeUndefined();
+    expect(accessRoleIds(["r-mod"], ["r-mod"])).toBeUndefined();
+    // An owner-only channel stays owner-only: `[]` would open it.
+    expect(accessRoleIds([], [])).toBeUndefined();
+  });
+
+  it("sends [] for Alle Mitglieder and the roles otherwise", () => {
+    expect(accessRoleIds(["r-mod"], null)).toEqual([]);
+    expect(accessRoleIds([], null)).toEqual([]);
+    expect(accessRoleIds(null, ["r-mod", "r-reg"])).toEqual(["r-mod", "r-reg"]);
+    expect(accessRoleIds([], ["r-reg"])).toEqual(["r-reg"]);
+  });
+});
+
+describe("membersWhoSee", () => {
+  const ids = (c: Channel) => membersWhoSee(server, c).map((m) => m.user_id);
+
+  it("is every member for a channel that is not limited", () => {
+    expect(ids(channel(false))).toEqual([
+      "lena",
+      "jonas",
+      "mira",
+      "tom",
+      "ada",
+    ]);
+  });
+
+  it("is the owner and the holders of the channel's roles", () => {
+    expect(ids(channel(true, ["r-mod"]))).toEqual(["lena", "jonas"]);
+    expect(ids(channel(true, ["r-mod", "r-reg"]))).toEqual([
+      "lena",
+      "jonas",
+      "mira",
+      "tom",
+    ]);
+    expect(ids(channel(true))).toEqual(["lena"]);
   });
 });

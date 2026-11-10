@@ -28,12 +28,21 @@ import {
   validateChannelName,
   validateName,
 } from "../servers/rules.ts";
+import {
+  accessOf,
+  accessRoleIds,
+  sameAccess,
+  type AccessSelection,
+} from "../servers/roles.ts";
 import type {
   Category,
   Channel,
   ChannelKind,
+  CreateChannelInput,
   ServerDetail,
+  UpdateChannelInput,
 } from "../servers/types.ts";
+import { ChannelAccessField } from "./ChannelAccessField.tsx";
 import { Field } from "./Field.tsx";
 import { FormError } from "./FormError.tsx";
 import { HashIcon, LinkIcon, PlusIcon, SpeakerIcon } from "./Icons.tsx";
@@ -435,6 +444,35 @@ export function ChannelDialog({
   );
 }
 
+/** What the channel form's submit sends: a patch of the channel, or the
+ * new channel. Access goes along only when it changed: `[]` would open an
+ * owner-only channel. */
+export function channelRequest(
+  editing: Pick<Channel, "id"> | null,
+  form: {
+    name: string;
+    kind: ChannelKind;
+    categoryId: string;
+    initialAccess: AccessSelection;
+    access: AccessSelection;
+  },
+):
+  | { mode: "edit"; id: string; patch: UpdateChannelInput }
+  | { mode: "create"; input: CreateChannelInput } {
+  const role_ids = accessRoleIds(form.initialAccess, form.access);
+  const category_id = form.categoryId || null;
+  if (editing)
+    return {
+      mode: "edit",
+      id: editing.id,
+      patch: { name: form.name, category_id, role_ids },
+    };
+  return {
+    mode: "create",
+    input: { name: form.name, kind: form.kind, category_id, role_ids },
+  };
+}
+
 function ChannelForm({
   server,
   state,
@@ -451,7 +489,15 @@ function ChannelForm({
   const editing = state.mode === "edit" ? state.channel : null;
   const [initialName] = useState(editing?.name ?? "");
   const [name, setName] = useState(initialName);
-  useReportDirty(onDirty, name !== initialName);
+  // "Alle Mitglieder" (`null`) unless the channel is limited.
+  const [initialAccess] = useState<AccessSelection>(
+    editing ? accessOf(editing) : null,
+  );
+  const [access, setAccess] = useState(initialAccess);
+  useReportDirty(
+    onDirty,
+    name !== initialName || !sameAccess(access, initialAccess),
+  );
   const [kind, setKind] = useState<ChannelKind>(
     state.mode === "edit" ? state.channel.kind : (state.kind ?? "text"),
   );
@@ -480,13 +526,17 @@ function ChannelForm({
       setFields({ name: fieldMessage("name", code) });
       return;
     }
-    if (editing) {
-      update.mutate({
-        id: editing.id,
-        patch: { name, category_id: parentId || null },
-      });
+    const request = channelRequest(editing, {
+      name,
+      kind,
+      categoryId: parentId,
+      initialAccess,
+      access,
+    });
+    if (request.mode === "edit") {
+      update.mutate({ id: request.id, patch: request.patch });
     } else {
-      create.mutate({ name, kind, category_id: parentId || null });
+      create.mutate(request.input);
     }
     onClose();
   };
@@ -557,6 +607,7 @@ function ChannelForm({
           ))}
         </Select>
       </FormField>
+      <ChannelAccessField server={server} value={access} onChange={setAccess} />
       <FormError message={errors.form} />
       <div className="flex justify-end gap-2">
         <GhostButton onClick={onClose}>{tc("cancel")}</GhostButton>

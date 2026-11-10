@@ -123,6 +123,39 @@ export function toggleAccess(
   return [...selection, id];
 }
 
+/** Whether two access selections allow the same people. */
+export function sameAccess(a: AccessSelection, b: AccessSelection): boolean {
+  if (a === null || b === null) return a === b;
+  const held = new Set(a);
+  return a.length === b.length && b.every((id) => held.has(id));
+}
+
+/**
+ * The `role_ids` a channel form sends: `undefined` while the selection is
+ * still `initial` (the channel keeps its access; on create it is open to
+ * everyone), `[]` for "Alle Mitglieder", else the roles. A channel whose
+ * roles were all deleted ("Nur Inhaber", `[]`) must not send `[]` unasked:
+ * that would open it to everyone.
+ */
+export function accessRoleIds(
+  initial: AccessSelection,
+  selection: AccessSelection,
+): string[] | undefined {
+  if (sameAccess(initial, selection)) return undefined;
+  return selection === null ? [] : [...selection];
+}
+
+/** The members who see the channel, as the `@…` suggestions offer them. */
+export function membersWhoSee(
+  server: Pick<ServerDetail, "owner_id" | "members">,
+  channel: Pick<Channel, "limited" | "role_ids">,
+): Member[] {
+  if (!channel.limited) return server.members;
+  return server.members.filter((member) =>
+    seesChannel(member, channel, server),
+  );
+}
+
 /** Whether "Alle Mitglieder" grants the flag, so a custom role shows it on
  * and fixed ("über „Alle Mitglieder“"). */
 export function inheritedFromBase(
