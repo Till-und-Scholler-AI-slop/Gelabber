@@ -5,6 +5,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useSession } from "../auth/session.ts";
 import { useT } from "../i18n/catalog.ts";
 import { members as membersCatalog } from "../i18n/catalogs/members.ts";
+import { useCurrentLocale } from "../i18n/locale.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import {
   EMPTY_LIVE,
@@ -77,9 +78,12 @@ export function MemberPanel({
     () => new Map(server.channels.map((channel) => [channel.id, channel.name])),
     [server.channels],
   );
+  // The group headings and their order are in the current language.
+  const locale = useCurrentLocale();
   const groups = useMemo(
     () => groupMembers(members, (id) => presenceOf(byServer, serverId, id)),
-    [members, byServer, serverId],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see locale
+    [members, byServer, serverId, locale],
   );
 
   return (
