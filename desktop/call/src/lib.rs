@@ -21,7 +21,7 @@ mod socket;
 mod sounds;
 mod synth;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, Instant};
@@ -351,6 +351,9 @@ pub(crate) struct Inner {
     /// The last measured level per person, 0..1 RMS.
     levels: Mutex<HashMap<Uuid, f32>>,
     requests: Mutex<HashMap<VideoKey, VideoRequest>>,
+    /// Keys no tile shows any more: their sinks drop frames until asked
+    /// again, the last picture kept.
+    released: Mutex<HashSet<VideoKey>>,
     notices: Mutex<Vec<String>>,
     diagnostics: Mutex<diagnostics::Diagnostics>,
     mic_test: Mutex<MicTest>,
@@ -441,6 +444,11 @@ impl Inner {
         self.requests.lock().get(&key).copied()
     }
 
+    /// No tile shows `key`: its frames are not taken.
+    pub(crate) fn released(&self, key: VideoKey) -> bool {
+        self.released.lock().contains(&key)
+    }
+
     /// A new sink for `key`: its frames count while the flag holds; an
     /// older sink of the key is cut off.
     pub(crate) fn open_sink(&self, key: VideoKey) -> Arc<AtomicBool> {
@@ -460,7 +468,12 @@ impl Inner {
             if !flag.load(Ordering::Acquire) {
                 return;
             }
-            frames.insert(key, Arc::new(frame));
+            // A picture nobody asked for repaints once, so a view that
+            // shows a key only with a picture can ask for it.
+            let first = frames.insert(key, Arc::new(frame)).is_none();
+            if !first && !self.requests.lock().contains_key(&key) {
+                return;
+            }
         }
         self.client.repaint();
     }
@@ -473,6 +486,7 @@ impl Inner {
         if sinks.get(&key).is_some_and(|f| Arc::ptr_eq(f, flag)) {
             sinks.remove(&key);
             frames.remove(&key);
+            self.released.lock().remove(&key);
         }
     }
 
@@ -483,6 +497,8 @@ impl Inner {
             if let Some(flag) = self.sinks.lock().remove(&key) {
                 flag.store(false, Ordering::Release);
             }
+            // The next sink of the key brings a first picture again.
+            self.released.lock().remove(&key);
             frames.remove(&key).is_some()
         };
         if removed {
@@ -496,6 +512,7 @@ impl Inner {
             flag.store(false, Ordering::Release);
         }
         frames.clear();
+        self.released.lock().clear();
         self.levels.lock().clear();
     }
 
@@ -569,6 +586,7 @@ impl Call {
                 sinks: Mutex::new(HashMap::new()),
                 levels: Mutex::new(HashMap::new()),
                 requests: Mutex::new(HashMap::new()),
+                released: Mutex::new(HashSet::new()),
                 notices: Mutex::new(Vec::new()),
                 diagnostics: Mutex::new(diagnostics::Diagnostics::default()),
                 mic_test: Mutex::new(MicTest::default()),
@@ -977,6 +995,7 @@ impl Call {
     /// drops frames before they reach Rust. Physical pixels; 0 = no limit.
     pub fn request_video(&self, key: VideoKey, width: u32, height: u32, fps: u32) {
         let request = VideoRequest { width, height, fps };
+        self.inner.released.lock().remove(&key);
         let previous = self.inner.requests.lock().insert(key, request);
         #[cfg(feature = "media")]
         if previous != Some(request) {
@@ -987,9 +1006,18 @@ impl Call {
     }
 
     /// No tile shows `key` any more: its size is forgotten, so the next
-    /// tile's [`Self::request_video`] reaches the core even at that size.
+    /// tile's [`Self::request_video`] reaches the core even at that size,
+    /// and until then its frames are neither scaled nor copied nor repaint.
+    /// [`Self::frame`] keeps the last one.
     pub fn release_video(&self, key: VideoKey) {
-        self.inner.requests.lock().remove(&key);
+        let had = self.inner.requests.lock().remove(&key).is_some();
+        self.inner.released.lock().insert(key);
+        #[cfg(feature = "media")]
+        if had {
+            media::apply_request(&self.inner, key, media::RELEASED);
+        }
+        #[cfg(not(feature = "media"))]
+        let _ = had;
     }
 
     /// What a tile asked for `key`: width, height and rate.

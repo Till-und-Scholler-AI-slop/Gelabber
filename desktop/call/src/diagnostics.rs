@@ -247,12 +247,13 @@ impl Diagnostics {
             let id = e["id"].as_str().unwrap_or_default().to_owned();
             let bytes_key = if send { "bytesSent" } else { "bytesReceived" };
             let bytes = e[bytes_key].as_u64().unwrap_or(0);
-            let at = e["timestamp"].as_f64().unwrap_or(at_ms);
+            // libwebrtc stamps stats in microseconds.
+            let at = e["timestamp"].as_f64().unwrap_or(at_ms * 1000.0);
             let bitrate = self
                 .counters
                 .insert(id.clone(), (bytes, at))
                 .and_then(|(b0, t0)| {
-                    let seconds = (at - t0) / 1000.0;
+                    let seconds = (at - t0) / 1_000_000.0;
                     (seconds > 0.0).then(|| bytes.saturating_sub(b0) as f64 * 8.0 / seconds)
                 });
             // Loss of a sent stream is what the far end reports back.
@@ -716,9 +717,37 @@ mod tests {
         let first = d.flows(&stats(0, 0.0), false, Kind::A, 0.0);
         assert_eq!(first[0].bitrate_bps, None);
         assert_eq!(first[0].codec.as_deref(), Some("opus"));
-        let second = d.flows(&stats(10_000, 2000.0), false, Kind::A, 2000.0);
+        let second = d.flows(&stats(10_000, 2_000_000.0), false, Kind::A, 2000.0);
         assert_eq!(second[0].bitrate_bps, Some(40_000.0));
         assert_eq!(second[0].loss, Some(0.01));
         assert_eq!(second[0].jitter_ms, Some(2.0));
+    }
+
+    /// libwebrtc stamps each stats object in microseconds
+    /// (`RTCStats::ToJson`: `timestamp_.us()`); the core passes them on.
+    #[test]
+    fn rates_read_microsecond_timestamps() {
+        let mut d = Diagnostics::default();
+        let sample = |bytes: u64, at_us: u64| {
+            json!([
+                {"type": "codec", "id": "COT01_111", "timestamp": at_us,
+                 "mimeType": "audio/opus", "payloadType": 111, "clockRate": 48000, "channels": 2},
+                {"type": "outbound-rtp", "id": "OT01A1234", "timestamp": at_us, "ssrc": 1234,
+                 "kind": "audio", "mediaType": "audio", "transportId": "T01",
+                 "codecId": "COT01_111", "packetsSent": 100, "bytesSent": bytes,
+                 "headerBytesSent": 1200, "mid": "0", "mediaSourceId": "SA1", "active": true}
+            ])
+        };
+        let at_ms = 1_793_217_600_000.0;
+        let first = d.flows(&sample(10_000, 1_793_217_600_000_000), true, Kind::A, at_ms);
+        assert_eq!(first[0].bitrate_bps, None);
+        // 10 kB more two seconds later: 40 kbit/s.
+        let second = d.flows(
+            &sample(20_000, 1_793_217_602_000_000),
+            true,
+            Kind::A,
+            at_ms + 2000.0,
+        );
+        assert_eq!(second[0].bitrate_bps, Some(40_000.0));
     }
 }

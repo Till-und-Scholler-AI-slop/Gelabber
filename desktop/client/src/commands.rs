@@ -32,11 +32,21 @@ const PRESENCE_PULSE: Duration = Duration::from_millis(10_000);
 const CLIENT_IDLE: Duration = Duration::from_secs(300);
 /// Recovery after a reconnect waits up to this long so clients spread out.
 const READY_SPREAD: Duration = Duration::from_millis(1_000);
+/// A failed recovery round is tried again after this, doubling up to the
+/// max, while the socket is wanted: missed events stay missing until then.
+const RECOVERY_RETRY: Duration = Duration::from_secs(1);
+const RECOVERY_RETRY_MAX: Duration = Duration::from_secs(30);
+/// Failed rounds retried in a row before waiting for the next event.
+const RECOVERY_RETRIES: u32 = 5;
 /// Unread counts are refetched this long after the last event (web 750 ms,
 /// at most 5 s while events keep coming).
 const UNREAD_DEBOUNCE: Duration = Duration::from_millis(750);
 const UNREAD_MAX_WAIT: Duration = Duration::from_secs(5);
 const TICK: Duration = Duration::from_millis(400);
+/// The server list and a server's detail are fetched again when shown or
+/// focused after this long (the web's `staleTime`): channels, members and
+/// permissions change without an event.
+const SERVER_STALE: Duration = Duration::from_secs(60);
 
 /// Which notification setting to change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,20 +59,35 @@ pub enum SettingTarget {
 impl Client {
     // ------------------------------------------------------------ helpers
 
-    /// Runs `work` as the named operation: `State::ops[op]` is `Pending`,
-    /// then `Done` or `Failed`; `apply` gets the result on success.
+    /// Runs `work` as the named operation: `State::ops[op]` is `Pending`
+    /// when this returns, then `Done` or `Failed`; `apply` gets the result on
+    /// success, in the same write as `Done`, so no frame sees one without
+    /// the other. Writes on the calling thread: not while holding `state()`.
     pub fn run<T, F, A>(&self, op: impl Into<String>, work: F, apply: A)
     where
         T: Send + 'static,
         F: Future<Output = Result<T, ApiError>> + Send + 'static,
         A: FnOnce(&mut State, T) + Send + 'static,
     {
-        let this = self.clone();
         let op = op.into();
+        let epoch = self.write(|s| {
+            s.ops.insert(op.clone(), OpState::Pending);
+            s.epoch
+        });
+        let this = self.clone();
         self.spawn(async move {
-            let epoch = this.epoch();
-            if let Some(value) = this.op(&op, work).await {
-                this.write_in(epoch, |s| apply(s, value));
+            match work.await {
+                Ok(value) => {
+                    this.write_in(epoch, |s| {
+                        s.ops.insert(op, OpState::Done);
+                        apply(s, value);
+                    });
+                }
+                Err(error) => {
+                    if this.epoch() == epoch {
+                        this.fail_op(&op, error);
+                    }
+                }
             }
         });
     }
@@ -171,6 +196,7 @@ impl Client {
     async fn adopt_session(&self, user: Option<User>) {
         match user {
             Some(user) => {
+                self.http().forget_sign_out();
                 let other = self.with_state(|s| s.me().is_some_and(|m| m.id != user.id));
                 if other {
                     self.stop_gateway();
@@ -225,7 +251,8 @@ impl Client {
     }
 
     /// Optimistic like the web: signed out at once, then the server is
-    /// told. Op key `logout` reports the server's answer.
+    /// told. Op key `logout` reports the server's answer; until it confirms,
+    /// this repeats a failed [`Self::logout_all`].
     pub fn logout(&self) {
         self.sign_out(false);
     }
@@ -245,14 +272,8 @@ impl Client {
                 s.session = Session::Anonymous;
             });
             let http = this.http().clone();
-            let work = async move {
-                if everywhere {
-                    http.logout_all().await
-                } else {
-                    http.logout().await
-                }
-            };
-            this.op("logout", work).await;
+            this.op("logout", async move { http.sign_out(everywhere).await })
+                .await;
         });
     }
 
@@ -332,6 +353,7 @@ impl Client {
                 Ok(list) => {
                     s.servers = list;
                     s.servers_loaded = true;
+                    s.servers_fetched = Some(Instant::now());
                 }
                 Err(e) => failure = Some(e),
             }
@@ -344,8 +366,7 @@ impl Client {
             }
             match unread {
                 Ok(rows) => {
-                    s.read.clear();
-                    s.apply_read_states(rows);
+                    s.replace_read_states(rows);
                 }
                 Err(e) => failure = failure.take().or(Some(e)),
             }
@@ -396,6 +417,7 @@ impl Client {
                 }
                 s.servers = list;
                 s.servers_loaded = true;
+                s.servers_fetched = Some(Instant::now());
             });
             self.sync_topics();
         }
@@ -410,6 +432,7 @@ impl Client {
                         *entry = detail.server.clone();
                     }
                     s.server_details.insert(id, detail);
+                    s.server_fetched.insert(id, Instant::now());
                 });
                 self.sync_topics();
                 Ok(())
@@ -433,8 +456,7 @@ impl Client {
         let epoch = self.epoch();
         if let Ok(rows) = self.http().unread().await {
             self.write_in(epoch, |s| {
-                s.read.clear();
-                s.apply_read_states(rows);
+                s.replace_read_states(rows);
             });
         }
     }
@@ -449,6 +471,7 @@ impl Client {
             server: Some(id),
             channel: None,
         };
+        self.refresh_if_stale(Some(id));
         // A failed load is not retried every frame; `refresh_server` does.
         let needed = self.with_state(|s| {
             s.view != view || (!s.server_details.contains_key(&id) && s.op(&key).is_none())
@@ -459,11 +482,47 @@ impl Client {
         let this = self.clone();
         self.spawn(async move {
             this.change_view(view);
-            if !this.with_state(|s| s.server_details.contains_key(&id)) {
+            // Nor when only the view changed: the shell and a page that
+            // both open it would take turns forever.
+            if !this.with_state(|s| s.server_details.contains_key(&id) || s.op(&key).is_some()) {
                 let work = this.reload_server(id);
                 this.op(&key, work).await;
             }
             this.inner.opening.lock().remove(&view);
+        });
+    }
+
+    /// Fetches the list and `server`'s detail again in the background when
+    /// they are older than [`SERVER_STALE`]. Cheap to call every frame.
+    fn refresh_if_stale(&self, server: Option<Uuid>) {
+        let stale = |at: Option<&Instant>| at.is_some_and(|t| t.elapsed() >= SERVER_STALE);
+        let (list, detail) = self.with_state(|s| {
+            (
+                stale(s.servers_fetched.as_ref()),
+                server.filter(|id| stale(s.server_fetched.get(id))),
+            )
+        });
+        if !list && detail.is_none() {
+            return;
+        }
+        // Once per period, also when it fails.
+        self.write(|s| {
+            let now = Instant::now();
+            if list {
+                s.servers_fetched = Some(now);
+            }
+            if let Some(id) = detail {
+                s.server_fetched.insert(id, now);
+            }
+        });
+        let this = self.clone();
+        self.spawn(async move {
+            if list {
+                this.reload_servers().await;
+            }
+            if let Some(id) = detail {
+                let _ = this.reload_server(id).await;
+            }
         });
     }
 
@@ -483,8 +542,8 @@ impl Client {
         self.spawn(async move { this.load_latest(channel).await });
     }
 
-    /// Opens a text channel or DM: history (first page) once, then marks it
-    /// read like the web. The server is looked up; for a route with both
+    /// Opens a text channel or DM: history (first page) once. Marking it
+    /// read is the pane's (at the newest row, focused). The server is looked up; for a route with both
     /// ids use [`Self::open_server_channel`]. Cheap to call every frame.
     pub fn open_channel(&self, channel: Uuid) {
         let server = self.with_state(|s| {
@@ -549,6 +608,9 @@ impl Client {
     }
 
     fn open_conversation(&self, server: Option<Uuid>, channel: Uuid) {
+        if server.is_some() {
+            self.refresh_if_stale(server);
+        }
         let view = View {
             server,
             channel: Some(channel),
@@ -568,7 +630,6 @@ impl Client {
         }
         let this = self.clone();
         self.spawn(async move {
-            let changed = this.with_state(|s| s.view != view);
             this.change_view(view);
             if let Some(id) = server
                 && !this.with_state(|s| {
@@ -586,9 +647,6 @@ impl Client {
             });
             if fetch {
                 this.load_latest(channel).await;
-            }
-            if changed || fetch {
-                this.mark_read_now(channel).await;
             }
             this.inner.opening.lock().remove(&view);
         });
@@ -1125,10 +1183,15 @@ impl Client {
         self.update_front(front);
     }
 
-    /// The window gained or lost focus/visibility.
+    /// The window gained or lost focus/visibility. Gaining it refetches a
+    /// stale server list and detail, as the web does on focus.
     pub fn set_focused(&self, focused: bool) {
-        self.inner.local.lock().focused = focused;
+        let gained = !std::mem::replace(&mut self.inner.local.lock().focused, focused) && focused;
         self.update_front(focused);
+        if gained {
+            let server = self.with_state(|s| s.view.server);
+            self.refresh_if_stale(server);
+        }
     }
 
     fn update_front(&self, focused: bool) {
@@ -1409,23 +1472,22 @@ impl Client {
 
     /// Op key `create_server`; the new server joins the list.
     pub fn create_server(&self, name: &str) {
-        let http = self.http().clone();
         let name = name.to_owned();
         let this = self.clone();
-        self.run(
-            "create_server",
-            async move {
-                let detail = http.create_server(&name).await?;
+        self.spawn(async move {
+            let epoch = this.epoch();
+            let http = this.http().clone();
+            if let Some(detail) = this.op("create_server", http.create_server(&name)).await {
+                this.write_in(epoch, |s| {
+                    if s.server(detail.server.id).is_none() {
+                        s.servers.push(detail.server.clone());
+                    }
+                    s.server_details.insert(detail.server.id, detail);
+                });
+                // Now that the state has it.
                 this.sync_topics();
-                Ok(detail)
-            },
-            |s, detail| {
-                if s.server(detail.server.id).is_none() {
-                    s.servers.push(detail.server.clone());
-                }
-                s.server_details.insert(detail.server.id, detail);
-            },
-        );
+            }
+        });
     }
 
     /// Op key `join`; refetches the list.
@@ -1641,6 +1703,16 @@ impl Client {
         self.spawn(async move {
             let http = this.http().clone();
             let work = async move {
+                // Would overwrite a newer server's level with a guess.
+                if body.level == Some(NotificationLevel::Unknown) {
+                    return Err(ApiError::Api {
+                        status: 0,
+                        code: "unknown_level".into(),
+                        message: "Diese Stufe kennt diese Version von Gelabber nicht. Bitte wähle zuerst eine Stufe.".into(),
+                        fields: serde_json::Value::Null,
+                        retry_after: None,
+                    });
+                }
                 match target {
                     SettingTarget::Server(id) => http.set_server_notifications(id, &body).await,
                     SettingTarget::Channel(id) => http.set_channel_notifications(id, &body).await,
@@ -1661,8 +1733,7 @@ impl Client {
                 s.notification_settings = list;
             }
             if let Ok(rows) = unread {
-                s.read.clear();
-                s.apply_read_states(rows);
+                s.replace_read_states(rows);
             }
         });
     }
@@ -1723,7 +1794,7 @@ impl Client {
         }
     }
 
-    fn on_gateway(&self, event: GatewayEvent) {
+    pub(crate) fn on_gateway(&self, event: GatewayEvent) {
         match event {
             GatewayEvent::Status(status) => self.write(|s| s.gateway = status),
             GatewayEvent::Ready => {
@@ -1740,16 +1811,14 @@ impl Client {
                 self.schedule_recovery(true);
             }
             GatewayEvent::Event(event) => {
-                let (removed, read_now, created) = self.write(|s| {
+                let (removed, created) = self.write(|s| {
                     let removed = s.apply_event(&event);
                     let me = s.me().map(|u| u.id);
                     let created = (event.t == EventKind::C)
                         .then(|| event.message())
                         .flatten()
                         .filter(|m| Some(m.author.id) != me);
-                    let read_now =
-                        created.is_some() && event.c.is_some() && event.c == s.view.channel;
-                    (removed, read_now, created)
+                    (removed, created)
                 });
                 if let Some((server, banned)) = removed {
                     self.removed_from(server, banned);
@@ -1760,9 +1829,6 @@ impl Client {
                         message: Box::new(message),
                     });
                 }
-                if read_now && self.inner.local.lock().in_front {
-                    self.schedule_mark_read(event.c.unwrap_or_default());
-                }
                 self.schedule_unread_refresh();
                 let tap = self.inner.event_tap.read().clone();
                 if let Some(tap) = tap {
@@ -1771,6 +1837,7 @@ impl Client {
             }
             GatewayEvent::Gap(_) => self.schedule_recovery(false),
             GatewayEvent::Resync => self.schedule_recovery(false),
+            GatewayEvent::Refused(reason) => self.write(|s| s.gateway_refused = reason),
             GatewayEvent::Frame(frame) => {
                 let voice = matches!(frame, ServerFrame::Sig(_) | ServerFrame::Err { .. });
                 let event = voice.then(|| GatewayEvent::Frame(frame.clone()));
@@ -1863,13 +1930,23 @@ impl Client {
                 return;
             }
             r.running = true;
+            // A retry still waiting is replaced by this round.
+            r.retry += 1;
         }
+        self.recovery_rounds(spread, 0);
+    }
+
+    /// Runs rounds until one succeeds or nothing asks for another. A failed
+    /// one is retried after a wait that neither counts as `busy` nor keeps
+    /// the client alive, at most [`RECOVERY_RETRIES`] times in a row.
+    fn recovery_rounds(&self, spread: bool, failures: u32) {
         let this = self.clone();
         self.spawn(async move {
             if spread {
                 tokio::time::sleep(READY_SPREAD.mul_f64(crate::gateway::jitter())).await;
             }
-            loop {
+            let mut failures = failures;
+            let token = loop {
                 let gaps = this
                     .gateway()
                     .map(|g| g.gap_recoveries())
@@ -1883,11 +1960,37 @@ impl Client {
                 let mut r = this.inner.recovery.lock();
                 if r.rerun {
                     r.rerun = false;
+                    failures = 0;
                     continue;
                 }
                 r.running = false;
-                break;
-            }
+                // Something that keeps failing (one server's detail) is not
+                // fetched with everything else for the whole session.
+                if ok || this.gateway().is_none() || failures >= RECOVERY_RETRIES {
+                    return;
+                }
+                r.retry += 1;
+                break r.retry;
+            };
+            let wait = RECOVERY_RETRY
+                .saturating_mul(1 << failures.min(5))
+                .min(RECOVERY_RETRY_MAX);
+            let weak = this.weak();
+            this.runtime().spawn(async move {
+                tokio::time::sleep(wait).await;
+                let Some(client) = Client::from_weak(&weak) else {
+                    return;
+                };
+                {
+                    let mut r = client.inner.recovery.lock();
+                    // A round started meanwhile, or the retry was replaced.
+                    if r.running || r.retry != token {
+                        return;
+                    }
+                    r.running = true;
+                }
+                client.recovery_rounds(false, failures + 1);
+            });
         });
     }
 
@@ -1913,13 +2016,13 @@ impl Client {
                     s.forget_server(id);
                 }
                 s.servers = list;
+                s.servers_fetched = Some(Instant::now());
             }
             if let Ok(list) = dms {
                 s.dms = list;
             }
             if let Ok(rows) = unread {
-                s.read.clear();
-                s.apply_read_states(rows);
+                s.replace_read_states(rows);
             }
         });
         if current.is_none() {
@@ -1950,7 +2053,11 @@ impl Client {
                     self.write_in(epoch, |s| s.channel_mut(channel).merge_latest(page));
                 }
                 Err(e) if e.is_gone() => {}
-                Err(_) => ok = false,
+                Err(_) => {
+                    // Opening it fetches once more, then shows the error row.
+                    self.write_in(epoch, |s| s.channel_mut(channel).stale = true);
+                    ok = false;
+                }
             }
         }
         self.sync_topics();
@@ -1993,29 +2100,136 @@ impl Client {
             }
         });
     }
+}
 
-    /// A new message in the open conversation while the app is in front.
-    fn schedule_mark_read(&self, channel: Uuid) {
-        let generation = self
-            .inner
-            .read_generation
-            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
-            + 1;
-        let weak = self.weak();
-        self.runtime().spawn(async move {
-            tokio::time::sleep(UNREAD_DEBOUNCE).await;
-            let Some(client) = Client::from_weak(&weak) else {
-                return;
-            };
-            if client
-                .inner
-                .read_generation
-                .load(std::sync::atomic::Ordering::Acquire)
-                == generation
-                && client.with_state(|s| s.view.channel == Some(channel))
-            {
-                client.mark_read_now(channel).await;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Answers every request with a body nothing decodes from.
+    fn broken_server() -> (String, Arc<parking_lot::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let log = log.clone();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]);
+                    log.lock()
+                        .push(head.lines().next().unwrap_or("").to_owned());
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
+                });
             }
         });
+        (format!("http://{addr}"), seen)
+    }
+
+    fn signed_in(client: &Client, dm: Uuid) {
+        client.write(|s| {
+            s.session = Session::Authenticated(Box::new(
+                serde_json::from_value(serde_json::json!({
+                    "id": Uuid::from_u128(1), "email": "ich@example.test", "name": "Ich",
+                    "created_at": "2026-10-01T00:00:00Z",
+                }))
+                .unwrap(),
+            ));
+            s.view = View {
+                server: None,
+                channel: Some(dm),
+            };
+            let h = s.channel_mut(dm);
+            h.loaded = true;
+        });
+    }
+
+    /// The visible conversation's refetch failed: it is stale, so opening
+    /// it fetches again instead of keeping the hole.
+    #[test]
+    fn a_failed_recovery_leaves_the_visible_history_stale() {
+        let (url, _) = broken_server();
+        let client = Client::new(&url).unwrap();
+        let dm = Uuid::from_u128(5);
+        signed_in(&client, dm);
+        let ok = client.block_on(client.recover());
+        assert!(!ok);
+        assert!(client.with_state(|s| s.channels[&dm].stale));
+    }
+
+    /// A level this client does not know is never written back: muting a
+    /// conversation that has one fails instead of saving "all".
+    #[test]
+    fn an_unknown_level_is_not_saved_back() {
+        let (url, seen) = broken_server();
+        let client = Client::new(&url).unwrap();
+        client.set_notifications(
+            SettingTarget::Channel(Uuid::from_u128(5)),
+            NotificationSettingBody {
+                level: Some(NotificationLevel::Unknown),
+                muted: true,
+                mute_minutes: None,
+            },
+        );
+        let start = std::time::Instant::now();
+        while !client.with_state(|s| matches!(s.op("notifications"), Some(OpState::Failed(_)))) {
+            assert!(start.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            seen.lock().iter().all(|l| !l.starts_with("PUT")),
+            "{:?}",
+            seen.lock()
+        );
+    }
+
+    /// Waiting to retry a failed round is not `busy` (the sidebar's retry
+    /// button would read "Wird geladen…") and does not keep the client alive.
+    #[test]
+    fn a_recovery_retry_waits_idle_and_lets_the_client_go() {
+        let (url, seen) = broken_server();
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        client.ensure_gateway();
+        client.schedule_recovery(false);
+        let start = std::time::Instant::now();
+        while seen.lock().is_empty() || client.busy() {
+            assert!(start.elapsed() < Duration::from_secs(2), "still busy");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(client.inner.recovery.lock().retry > 1, "no retry waiting");
+        let weak = client.weak();
+        drop(client);
+        // The finished round's task lets go a moment after `busy` drops;
+        // the retry waits a whole second.
+        let start = std::time::Instant::now();
+        while weak.upgrade().is_some() {
+            assert!(start.elapsed() < Duration::from_millis(500), "still alive");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// A failed round is tried again while the socket is wanted.
+    #[test]
+    fn a_failed_recovery_round_is_retried() {
+        let (url, seen) = broken_server();
+        let client = Client::new(&url).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        client.ensure_gateway();
+        client.schedule_recovery(false);
+        std::thread::sleep(Duration::from_millis(2_500));
+        client.stop_gateway();
+        let rounds = seen
+            .lock()
+            .iter()
+            .filter(|l| l.starts_with("GET /api/servers "))
+            .count();
+        assert!(rounds >= 2, "{rounds} rounds");
     }
 }

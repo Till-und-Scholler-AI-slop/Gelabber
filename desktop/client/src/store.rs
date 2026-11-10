@@ -15,6 +15,9 @@ use crate::models::*;
 pub const TYPING_TTL: Duration = Duration::from_millis(6_000);
 /// First page and every older page (`messages/rules.ts`).
 pub const PAGE_SIZE: u32 = 50;
+/// Deleted ids kept per conversation, so a page read before the delete
+/// does not bring the message back (the web's revision floors).
+const TOMBSTONES: usize = 256;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum Session {
@@ -236,6 +239,8 @@ pub struct ChannelMessages {
     pub stale: bool,
     /// The last read mark was not saved ("Lesestatus nicht gespeichert.").
     pub read_failed: bool,
+    /// The newest deleted ids, oldest first; never shown again.
+    deleted: std::collections::VecDeque<Uuid>,
 }
 
 impl ChannelMessages {
@@ -248,6 +253,9 @@ impl ChannelMessages {
     pub fn upsert(&mut self, message: Message) {
         if let Some(nonce) = message.nonce {
             self.pending.retain(|p| p.nonce != nonce);
+        }
+        if self.deleted.contains(&message.id) {
+            return;
         }
         if let Some(existing) = self.messages.iter_mut().find(|m| m.id == message.id) {
             if message.is_newer_than(existing) {
@@ -263,6 +271,12 @@ impl ChannelMessages {
     }
 
     pub fn remove(&mut self, id: Uuid) -> bool {
+        if !self.deleted.contains(&id) {
+            self.deleted.push_back(id);
+            if self.deleted.len() > TOMBSTONES {
+                self.deleted.pop_front();
+            }
+        }
         let before = self.messages.len();
         self.messages.retain(|m| m.id != id);
         for message in &mut self.messages {
@@ -300,12 +314,25 @@ impl ChannelMessages {
     /// The first page (or a refetch after a gap) replaces what was loaded.
     /// Rows newer than the page came live while it was requested and stay;
     /// before the first load, every row held came that way.
-    pub fn replace(&mut self, page: MessagePage) {
+    pub fn replace(&mut self, mut page: MessagePage) {
         let first_load = !self.loaded;
+        page.messages.retain(|m| !self.deleted.contains(&m.id));
         let newest = page.messages.last().map(Message::order_key);
+        // With more history on the server, a row older than the page (an
+        // edit of an old message) would hide everything between.
+        let oldest = page
+            .messages
+            .first()
+            .filter(|_| page.has_more)
+            .map(Message::order_key);
         let held = std::mem::replace(&mut self.messages, page.messages);
         for message in held {
-            if first_load || newest.is_some_and(|n| message.order_key() > n) {
+            let keep = if first_load {
+                oldest.is_none_or(|o| message.order_key() >= o)
+            } else {
+                newest.is_some_and(|n| message.order_key() > n)
+            };
+            if keep {
                 self.upsert(message);
             }
         }
@@ -318,8 +345,16 @@ impl ChannelMessages {
 
     /// An older page goes in front; duplicates are skipped.
     pub fn prepend(&mut self, page: MessagePage) {
-        self.has_more = page.has_more;
         self.loading_older = false;
+        // Nothing in it could be read: the cursor would not move and the
+        // pane would ask for the same page again. The error row stops it.
+        if page.messages.is_empty() && page.has_more {
+            self.error = Some(ApiError::Decode(
+                "keine lesbare Nachricht auf der älteren Seite".into(),
+            ));
+            return;
+        }
+        self.has_more = page.has_more;
         for message in page.messages {
             if self.get(message.id).is_none() {
                 self.upsert(message);
@@ -462,6 +497,9 @@ pub struct State {
     pub live: HashMap<Uuid, HashMap<Uuid, Vec<Uuid>>>,
     pub voice_self: VoiceSelf,
     pub gateway: GatewayStatus,
+    /// Why the gateway's upgrade is turned down (`HTTP 403`, `TLS: …`)
+    /// while it retries only slowly; `None` once it opens.
+    pub gateway_refused: Option<String>,
     pub view: View,
     pub ops: HashMap<String, OpState>,
     /// How often each op failed: a view that waits for an answer compares
@@ -481,6 +519,10 @@ pub struct State {
     /// The newest Lives worth a notice, oldest first; each consumer keeps
     /// the last `seq` it handled.
     pub live_started: Vec<LiveStart>,
+    /// When the server list and each server's detail were last fetched
+    /// (or a background refetch began), for the stale refetch.
+    pub(crate) servers_fetched: Option<Instant>,
+    pub(crate) server_fetched: HashMap<Uuid, Instant>,
     /// Bumped by every account reset; answers started before are dropped.
     pub(crate) epoch: u64,
 }
@@ -577,10 +619,25 @@ impl State {
             })
     }
 
+    /// Read rows from REST, by position like `rd` (`apply_sync`): an answer
+    /// read before a newer mark landed does not undo it.
     pub fn apply_read_states(&mut self, rows: Vec<ReadState>) {
         for row in rows {
-            self.read.insert(row.channel_id, row);
+            match self.read.get(&row.channel_id) {
+                Some(current) if row.position() < current.position() => {}
+                _ => {
+                    self.read.insert(row.channel_id, row);
+                }
+            }
         }
+    }
+
+    /// The whole `GET /messages/unread` list: conversations it lacks are
+    /// gone, the others are taken as [`Self::apply_read_states`] does.
+    pub fn replace_read_states(&mut self, rows: Vec<ReadState>) {
+        self.read
+            .retain(|id, _| rows.iter().any(|r| r.channel_id == *id));
+        self.apply_read_states(rows);
     }
 
     /// `rd` from another device; true when the counts must be refetched.
@@ -612,6 +669,19 @@ impl State {
             if let Some(nonce) = message.nonce {
                 channel.pending.retain(|p| p.nonce != nonce);
             }
+            return;
+        }
+        // An edit or reaction of a message older than the loaded window
+        // would hide everything between it and the window: paging fetches
+        // it (the web drops it too).
+        let below = channel.loaded
+            && channel.has_more
+            && channel.get(message.id).is_none()
+            && channel
+                .messages
+                .first()
+                .is_some_and(|oldest| message.order_key() < oldest.order_key());
+        if below {
             return;
         }
         channel.upsert(message);
@@ -668,6 +738,7 @@ impl State {
     /// Kicked, banned, left or deleted: drop everything of that server.
     pub fn forget_server(&mut self, server: Uuid) {
         self.ops.remove(&format!("server:{server}"));
+        self.server_fetched.remove(&server);
         self.servers.retain(|s| s.id != server);
         if let Some(detail) = self.server_details.remove(&server) {
             for channel in detail.channels {
@@ -1293,6 +1364,81 @@ mod tests {
         assert_eq!(ids(&s), vec![id(5)]);
     }
 
+    /// An older page whose messages a newer server shaped beyond reading
+    /// stops paging with the error row instead of asking for it forever.
+    #[test]
+    fn an_unreadable_older_page_stops_paging() {
+        let mut c = ChannelMessages {
+            loaded: true,
+            has_more: true,
+            loading_older: true,
+            ..Default::default()
+        };
+        c.upsert(message(5, 50, 5));
+        c.prepend(MessagePage {
+            messages: vec![],
+            has_more: true,
+        });
+        assert!(!c.loading_older);
+        assert!(c.error.is_some());
+        // A readable page goes on as before.
+        c.error = None;
+        c.prepend(page(vec![message(1, 10, 1)]));
+        assert_eq!(c.oldest_cursor(), Some(message(1, 10, 1).cursor()));
+        assert!(c.error.is_none() && !c.has_more);
+    }
+
+    /// An edit of a message older than the loaded window stays out while
+    /// older pages exist: paging would skip what lies between.
+    #[test]
+    fn an_edit_older_than_the_window_stays_out() {
+        let mut s = State::default();
+        let more = |messages| MessagePage {
+            messages,
+            has_more: true,
+        };
+        s.channel_mut(id(100)).loading = true;
+        // Arrives while the first page is on its way.
+        s.apply_message(message(1, 10, 2));
+        s.channel_mut(id(100))
+            .replace(more(vec![message(5, 50, 5), message(6, 60, 6)]));
+        s.apply_message(message(2, 20, 3));
+        let ids: Vec<Uuid> = s.channels[&id(100)].messages.iter().map(|m| m.id).collect();
+        assert_eq!(ids, vec![id(5), id(6)]);
+        assert_eq!(
+            s.channels[&id(100)].oldest_cursor(),
+            Some(message(5, 50, 5).cursor())
+        );
+        // Without older pages it is simply part of the history.
+        s.channel_mut(id(100)).has_more = false;
+        s.apply_message(message(2, 20, 3));
+        assert_eq!(s.channels[&id(100)].messages.len(), 3);
+    }
+
+    /// A delete that came before the page holding the message (first page
+    /// or an older one in flight) keeps it away.
+    #[test]
+    fn a_deleted_message_does_not_come_back_with_a_page() {
+        let mut s = State::default();
+        s.channel_mut(id(100)).loading = true;
+        s.apply_delete(id(100), id(2));
+        let ids = |s: &State| {
+            s.channels[&id(100)]
+                .messages
+                .iter()
+                .map(|m| m.id)
+                .collect::<Vec<_>>()
+        };
+        s.channel_mut(id(100))
+            .replace(page(vec![message(2, 20, 2), message(3, 30, 3)]));
+        assert_eq!(ids(&s), vec![id(3)]);
+        s.apply_delete(id(100), id(1));
+        s.channel_mut(id(100))
+            .prepend(page(vec![message(1, 10, 1)]));
+        s.apply_message(message(2, 20, 4));
+        assert_eq!(ids(&s), vec![id(3)]);
+    }
+
     #[test]
     fn last_server_stays_subscribed_and_reset_bumps_the_epoch() {
         let mut s = State::default();
@@ -1699,6 +1845,35 @@ mod tests {
         );
         s.view.channel = Some(id(3));
         assert_eq!(s.dms_badge(now), Badge::default());
+    }
+
+    #[test]
+    fn read_rows_apply_by_position_not_arrival() {
+        let now = chrono::Utc::now();
+        let row = |channel: u128, read: i64, latest: i64, unread| ReadState {
+            channel_id: id(channel),
+            server_id: None,
+            read_message_id: None,
+            read_at: None,
+            read_order: Some(read),
+            membership_at: now,
+            latest_order: Some(latest),
+            unread_count: unread,
+            mention_count: 0,
+            level: NotificationLevel::All,
+            muted: false,
+            muted_until: None,
+        };
+        let mut s = State::default();
+        s.replace_read_states(vec![row(1, 3, 10, 7), row(2, 1, 1, 0)]);
+        // Marked read up to 10, then a list asked for before that answers.
+        s.apply_read_states(vec![row(1, 10, 10, 0)]);
+        s.replace_read_states(vec![row(1, 3, 10, 7)]);
+        assert_eq!(s.read[&id(1)].unread_count, 0);
+        // A newer message is taken; a conversation the list lacks is gone.
+        s.replace_read_states(vec![row(1, 10, 11, 1)]);
+        assert_eq!(s.read[&id(1)].unread_count, 1);
+        assert!(!s.read.contains_key(&id(2)));
     }
 
     #[test]

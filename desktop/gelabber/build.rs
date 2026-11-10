@@ -1,5 +1,6 @@
 //! Lets the binary find the native media core: on Linux through the rpath
-//! (`$ORIGIN` for the packages, the core's build directory for `cargo run`),
+//! (`$ORIGIN` for the packages, the core's build directory for debug
+//! builds and `GELABBER_BUILD_RPATH=1`),
 //! on Windows by copying `gelabber_media.dll` next to the executable, which
 //! has no rpath.
 use std::path::{Path, PathBuf};
@@ -33,7 +34,12 @@ fn main() {
     if target_os.as_deref() == Ok("linux") {
         // $ORIGIN first: a package must load its own core, not the build's.
         println!("cargo:rustc-link-arg-bins=-Wl,-rpath,$ORIGIN");
-        if let Ok(dir) = &lib_dir {
+        // The build directory only for `cargo run` builds: in a package it
+        // would be a library search path on every user's machine.
+        println!("cargo:rerun-if-env-changed=GELABBER_BUILD_RPATH");
+        let dev = std::env::var("PROFILE").as_deref() == Ok("debug")
+            || std::env::var_os("GELABBER_BUILD_RPATH").is_some_and(|v| v == "1");
+        if dev && let Ok(dir) = &lib_dir {
             println!("cargo:rustc-link-arg-bins=-Wl,-rpath,{dir}");
         }
     }

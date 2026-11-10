@@ -83,7 +83,7 @@ pub fn wants_notification(
     match setting.level {
         NotificationLevel::None => false,
         NotificationLevel::Mentions => dm || mentioned,
-        NotificationLevel::All => true,
+        NotificationLevel::All | NotificationLevel::Unknown => true,
     }
 }
 

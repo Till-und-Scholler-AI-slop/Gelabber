@@ -34,6 +34,12 @@ const DEFAULT_REQUEST: VideoRequest = VideoRequest {
     height: 720,
     fps: 0,
 };
+/// What a released key's sink gets: next to nothing, until a tile asks.
+pub(crate) const RELEASED: VideoRequest = VideoRequest {
+    width: 2,
+    height: 2,
+    fps: 1,
+};
 /// How often a Live's capture is asked whether it still runs.
 const SCREEN_POLL: Duration = Duration::from_millis(1000);
 /// How often an open desktop picker is asked for an answer.
@@ -160,6 +166,7 @@ pub(crate) fn join(inner: &Arc<Inner>, server: Uuid, channel: Uuid) {
             ..St::default()
         }),
         stopped: AtomicBool::new(false),
+        gating: Mutex::new(()),
         seats: AtomicU64::new(0),
     });
     *inner.media.session.lock() = Some(session.clone());
@@ -188,6 +195,28 @@ pub(crate) fn leave(inner: &Arc<Inner>) {
             ..CallState::default()
         }
     });
+}
+
+/// Kicked or banned: the client let the gateway seat go, so the call goes
+/// too; the client's notice says why.
+fn end_taken(inner: &Arc<Inner>, session: &Arc<Session>) {
+    let current = inner
+        .media
+        .current()
+        .is_some_and(|s| Arc::ptr_eq(&s, session));
+    if current {
+        leave(inner);
+        sync_push_to_talk(inner);
+    }
+}
+
+/// The push-to-talk gate as the call now stands (off outside a call), as
+/// `Call::leave` sets it.
+fn sync_push_to_talk(inner: &Arc<Inner>) {
+    crate::Call {
+        inner: inner.clone(),
+    }
+    .sync_push_to_talk();
 }
 
 pub(crate) fn set_muted(inner: &Arc<Inner>, muted: bool) {
@@ -592,6 +621,7 @@ pub(crate) fn settings_changed(inner: &Arc<Inner>, previous: &CallSettings, next
         }
         let limits_changed = previous.video_upload_limit != next.video_upload_limit
             || previous.economy_mode != next.economy_mode
+            || previous.camera_profile != next.camera_profile
             || previous.screen_profile != next.screen_profile;
         if limits_changed && let Some(seat) = session.seat() {
             seat.apply_parameters().await;
@@ -609,6 +639,9 @@ pub(crate) fn on_gateway(inner: &Arc<Inner>, event: &GatewayEvent) {
     let Some(session) = inner.media.current() else {
         return;
     };
+    if session.seat_taken() {
+        return end_taken(inner, &session);
+    }
     match event {
         GatewayEvent::Ready => session.on_ready(),
         GatewayEvent::Frame(ServerFrame::Sig(sig)) => session.on_sig(sig),
@@ -645,6 +678,10 @@ struct St {
     /// What each person publishes, from the gateway.
     pubs: HashMap<Uuid, Vec<Kind>>,
     mic: Option<Local>,
+    /// Microphones a switch replaces, per switch: still sending until the
+    /// producer took the new one, so gated with it.
+    replaced_mics: Vec<(u64, Local)>,
+    mic_switch: u64,
     mic_epoch: Uuid,
     camera: Option<Local>,
     screen: Option<Local>,
@@ -676,6 +713,11 @@ struct St {
     received: HashMap<String, (u64, Instant)>,
     packets: (u64, u64),
     stream_error_shown: bool,
+    /// A seat was refused (`unauthorized`) and the next one runs on a new
+    /// ticket.
+    renewed: bool,
+    /// When a working seat was revoked unasked, for the bound on rebuilds.
+    revocations: Vec<Instant>,
 }
 
 pub(crate) struct Session {
@@ -686,6 +728,8 @@ pub(crate) struct Session {
     fake: bool,
     st: Mutex<St>,
     stopped: AtomicBool,
+    /// Held while the microphone's track flag is decided and set.
+    gating: Mutex<()>,
     seats: AtomicU64,
 }
 
@@ -713,6 +757,8 @@ enum Leave {
     Refused(String),
     /// The connection could not be rebuilt: offer to join again.
     Lost,
+    /// Lost, with the media error's own message.
+    LostWith(String),
 }
 
 impl Session {
@@ -726,6 +772,21 @@ impl Session {
 
     fn seat(&self) -> Option<Arc<Seat>> {
         self.st.lock().seat.clone()
+    }
+
+    /// The client no longer holds this call's gateway seat, which it took
+    /// before the own `j` came back (a kick or ban drops it).
+    fn seat_taken(&self) -> bool {
+        if self.st.lock().awaiting_join {
+            return false;
+        }
+        let Some(inner) = self.inner() else {
+            return false;
+        };
+        let held = inner
+            .client()
+            .with_state(|s| (s.voice_self.server, s.voice_self.channel));
+        held != (Some(self.server), Some(self.channel))
     }
 
     fn engine(&self) -> Option<core::Engine> {
@@ -744,7 +805,7 @@ impl Session {
         }
         let (seat, locals) = {
             let mut st = self.st.lock();
-            let locals: Vec<Local> = [
+            let mut locals: Vec<Local> = [
                 st.mic.take(),
                 st.camera.take(),
                 st.screen.take(),
@@ -753,6 +814,7 @@ impl Session {
             .into_iter()
             .flatten()
             .collect();
+            locals.extend(st.replaced_mics.drain(..).map(|(_, l)| l));
             (st.seat.take(), locals)
         };
         if let Some(seat) = seat {
@@ -845,7 +907,7 @@ impl Session {
             Ok(joined) => joined,
             Err(e) => {
                 sock.close();
-                self.on_media_error(generation, e.code(), false);
+                self.on_media_error(generation, e.code(), logic::MediaStage::Join);
                 return;
             }
         };
@@ -922,21 +984,28 @@ impl Session {
         {
             Ok(answer) => seat.note_codecs(&answer["codecs"]),
             Err(e) => {
-                self.on_media_error(generation, e.code(), true);
+                self.on_media_error(generation, e.code(), logic::MediaStage::Building);
                 return;
             }
         }
-        match seat.make_transport(core::Direction::Recv).await {
-            Ok(recv) => *seat.recv.lock() = Some(recv),
+        let recv = match seat.make_transport(core::Direction::Recv).await {
+            Ok(recv) => recv,
             Err(e) => {
-                self.on_media_error(generation, e.code(), true);
+                self.on_media_error(generation, e.code(), logic::MediaStage::Building);
                 return;
             }
-        }
-        let queued = std::mem::take(&mut *seat.queued.lock());
+        };
+        // Under the queue's lock, so no event is queued after the drain.
+        let queued = {
+            let mut queued = seat.queued.lock();
+            *seat.recv.lock() = Some(recv);
+            std::mem::take(&mut *queued)
+        };
         for event in queued {
             seat.clone().handle_event(event);
         }
+        // The seat holds: a later refusal may renew its ticket once more.
+        self.st.lock().renewed = false;
         inner.write(|s| {
             s.status = CallStatus::Connected;
             s.watch_supported = true;
@@ -964,30 +1033,159 @@ impl Session {
                 .inner()
                 .is_some_and(|i| i.read(|s| s.muted || s.deafened));
             self.apply_local_audio();
-            if seat.publish(Kind::A, &mic, None, paused).await.is_ok() {
-                self.announce(Kind::A, true);
+            match seat.publish(Kind::A, &mic, None, paused).await {
+                Ok(()) => self.announce(Kind::A, true),
+                Err(e) => return self.mic_not_sent(seat, &e),
             }
         }
         let camera = self.st.lock().camera.clone();
-        if let Some(camera) = camera
-            && seat.publish(Kind::V, &camera, None, false).await.is_ok()
-        {
-            self.announce(Kind::V, true);
+        if let Some(camera) = camera {
+            self.send_video(seat, Kind::V, &camera).await;
         }
-        let (screen, audio) = {
-            let st = self.st.lock();
-            (st.screen.clone(), st.screen_audio.clone())
-        };
+        let screen = self.st.lock().screen.clone();
         if let Some(screen) = screen
-            && seat.publish(Kind::S, &screen, None, false).await.is_ok()
+            && self.send_video(seat, Kind::S, &screen).await
         {
-            self.announce(Kind::S, true);
-            if let Some(audio) = audio
-                && seat.publish(Kind::Sa, &audio, None, false).await.is_ok()
-            {
-                self.announce(Kind::Sa, true);
+            self.send_live_sound(seat, screen.epoch).await;
+        }
+    }
+
+    /// Sends a camera or Live on `seat` and announces it unless it is
+    /// already; whether it went out. A capture stopped meanwhile is taken
+    /// back, one the server refuses stops with a word.
+    async fn send_video(self: &Arc<Self>, seat: &Arc<Seat>, kind: Kind, local: &Local) -> bool {
+        match seat.publish(kind, local, None, false).await {
+            Ok(()) => {
+                let kept = self.keep_published(seat, kind, local.epoch).await;
+                self.announce_once(kept, kind);
+                kept
+            }
+            Err(e) => {
+                self.video_not_sent(seat, kind, local.epoch, &e).await;
+                false
             }
         }
+    }
+
+    /// The Live's sound as it is now (it may have been switched on while
+    /// the picture went out), once the picture of `epoch` is on the seat.
+    async fn send_live_sound(self: &Arc<Self>, seat: &Arc<Seat>, epoch: Uuid) {
+        let audio = self.st.lock().screen_audio.clone();
+        let Some(audio) = audio.filter(|a| a.epoch == epoch) else {
+            return;
+        };
+        match seat.publish(Kind::Sa, &audio, None, false).await {
+            Ok(()) => {
+                let kept = self.keep_published(seat, Kind::Sa, epoch).await;
+                self.announce_once(kept, Kind::Sa);
+            }
+            Err(e) if e.code() == "connection_closed" || seat.closed.load(Ordering::Acquire) => {}
+            Err(e) => {
+                tracing::warn!("Live sound: {e}");
+                let current = self
+                    .st
+                    .lock()
+                    .screen_audio
+                    .as_ref()
+                    .is_some_and(|a| a.epoch == epoch);
+                if current {
+                    self.stop_live_sound(LiveSound::Unavailable(Some(e.code().to_owned())))
+                        .await;
+                }
+            }
+        }
+    }
+
+    /// `p` for a capture that went out and is not announced yet; decided on
+    /// what was announced, so overlapping starts neither skip nor repeat it.
+    fn announce_once(&self, kept: bool, kind: Kind) {
+        if kept && !self.st.lock().announced.contains(&kind) {
+            self.announce(kind, true);
+        }
+    }
+
+    /// After a publication of `kind` under `epoch` came back: whether it is
+    /// still the capture wanted. One stopped meanwhile is closed here (its
+    /// stop found no producer yet); one replaced meanwhile stays for the
+    /// newer capture.
+    async fn keep_published(&self, seat: &Seat, kind: Kind, epoch: Uuid) -> bool {
+        let (now, newer) = {
+            let st = self.st.lock();
+            let local = match kind {
+                Kind::A => &st.mic,
+                Kind::V => &st.camera,
+                Kind::S => &st.screen,
+                Kind::Sa => &st.screen_audio,
+            };
+            (
+                local.as_ref().is_some_and(|l| l.epoch == epoch),
+                local.is_some(),
+            )
+        };
+        let ours = seat
+            .producers
+            .lock()
+            .get(&kind)
+            .is_some_and(|h| h.epoch == epoch);
+        match logic::published_sound(now && self.live(), newer, ours) {
+            logic::PublishedSound::Announce => true,
+            logic::PublishedSound::Close => {
+                seat.close_source(kind).await;
+                false
+            }
+            logic::PublishedSound::Keep => false,
+        }
+    }
+
+    /// The microphone could not be sent (`commitMicSend`): a word, then a
+    /// new seat. A seat that closed meanwhile has its next one send it.
+    fn mic_not_sent(self: &Arc<Self>, seat: &Seat, error: &MediaError) {
+        if error.code() == "connection_closed" || seat.closed.load(Ordering::Acquire) {
+            return;
+        }
+        tracing::warn!("microphone not sent: {error}");
+        if let Some(inner) = self.inner() {
+            let first = !std::mem::replace(&mut self.st.lock().stream_error_shown, true);
+            if first {
+                inner.notify(logic::media_error_message(error.code()));
+            }
+        }
+        self.schedule_rebuild(seat.generation);
+    }
+
+    /// A camera or Live the seat would not take: its capture stops with a
+    /// word, as the web's `publish` does.
+    async fn video_not_sent(
+        self: &Arc<Self>,
+        seat: &Seat,
+        kind: Kind,
+        epoch: Uuid,
+        error: &MediaError,
+    ) {
+        if error.code() == "connection_closed" || seat.closed.load(Ordering::Acquire) {
+            return;
+        }
+        let current = {
+            let st = self.st.lock();
+            let local = if kind == Kind::S {
+                &st.screen
+            } else {
+                &st.camera
+            };
+            local.as_ref().is_some_and(|l| l.epoch == epoch)
+        };
+        if !current || !self.live() {
+            return;
+        }
+        tracing::warn!("{kind:?} not sent: {error}");
+        let Some(inner) = self.inner() else { return };
+        self.stop_video(kind).await;
+        inner.notify(if kind == Kind::S && error.code() == "forbidden" {
+            // The seat's ticket predates a go-live grant: only a new one has it.
+            logic::LIVE_NEEDS_REJOIN
+        } else {
+            logic::media_error_message(error.code())
+        });
     }
 
     fn microphone_options(&self) -> Value {
@@ -1082,8 +1280,9 @@ impl Session {
             let paused = self
                 .inner()
                 .is_some_and(|i| i.read(|s| s.muted || s.deafened));
-            if seat.publish(Kind::A, &mic, None, paused).await.is_ok() {
-                self.announce(Kind::A, true);
+            match seat.publish(Kind::A, &mic, None, paused).await {
+                Ok(()) => self.announce(Kind::A, true),
+                Err(e) => self.mic_not_sent(&seat, &e),
             }
         }
     }
@@ -1115,7 +1314,7 @@ impl Session {
             }
             None => return,
         };
-        let local = {
+        let (local, switch) = {
             let mut st = self.st.lock();
             if !self.live() {
                 drop(st);
@@ -1128,8 +1327,12 @@ impl Session {
                 epoch,
                 height: 0,
             };
-            st.mic = Some(local.clone());
-            local
+            st.mic_switch += 1;
+            let switch = st.mic_switch;
+            if let Some(previous) = st.mic.replace(local.clone()) {
+                st.replaced_mics.push((switch, previous));
+            }
+            (local, switch)
         };
         if let Some(inner) = self.inner() {
             inner.write(|s| {
@@ -1142,7 +1345,21 @@ impl Session {
             let paused = self
                 .inner()
                 .is_some_and(|i| i.read(|s| s.muted || s.deafened));
-            let _ = seat.publish(Kind::A, &local, None, paused).await;
+            if let Err(e) = seat.publish(Kind::A, &local, None, paused).await {
+                self.mic_not_sent(&seat, &e);
+            }
+        }
+        // The producer sends the new one now (or none): the old one goes.
+        let replaced: Vec<Local> = {
+            let mut st = self.st.lock();
+            let (done, kept) = std::mem::take(&mut st.replaced_mics)
+                .into_iter()
+                .partition(|(s, _)| *s == switch);
+            st.replaced_mics = kept;
+            done.into_iter().map(|(_, l)| l).collect()
+        };
+        if !replaced.is_empty() {
+            std::thread::spawn(move || drop(replaced));
         }
     }
 
@@ -1158,24 +1375,42 @@ impl Session {
         };
         let fake = self.fake || settings.camera == "test-pattern";
         let device = settings.camera.clone();
-        let captured = blocking(move || {
-            if fake {
-                return core::Source::test_pattern(&engine, size.width, size.height, size.fps);
-            }
-            let options = json!({
-                "width": size.width, "height": size.height, "fps": size.fps, "device": device,
-            });
-            core::Source::camera(&engine, &options).or_else(|e| {
-                if device.is_empty() {
-                    return Err(e);
+        let open = || {
+            let (engine, device) = (engine.clone(), device.clone());
+            blocking(move || {
+                if fake {
+                    return core::Source::test_pattern(&engine, size.width, size.height, size.fps);
                 }
-                let fallback = json!({
-                    "width": size.width, "height": size.height, "fps": size.fps, "device": "",
+                let options = json!({
+                    "width": size.width, "height": size.height, "fps": size.fps, "device": device,
                 });
-                core::Source::camera(&engine, &fallback)
+                core::Source::camera(&engine, &options).or_else(|e| {
+                    if device.is_empty() {
+                        return Err(e);
+                    }
+                    let fallback = json!({
+                        "width": size.width, "height": size.height, "fps": size.fps, "device": "",
+                    });
+                    core::Source::camera(&engine, &fallback)
+                })
             })
-        })
-        .await;
+        };
+        let mut captured = open().await;
+        // A running camera may hold the device (V4L2 opens it once): it lets
+        // go, and the new capture is tried once more.
+        let mut released = None;
+        if !matches!(captured, Some(Ok(_))) && self.st.lock().camera_turn == turn {
+            if let Some(Err(e)) = &captured {
+                tracing::debug!("camera beside the running one: {e}");
+            }
+            released = self.release_camera().await;
+            if released.is_some() {
+                if self.st.lock().camera_turn != turn {
+                    return;
+                }
+                captured = open().await;
+            }
+        }
         let source = match captured {
             Some(Ok(source)) => source,
             other => {
@@ -1183,7 +1418,19 @@ impl Session {
                     tracing::warn!("camera: {e}");
                 }
                 if self.st.lock().camera_turn == turn {
+                    // Nothing is captured any more: nothing may be sent.
                     inner.write(|s| s.camera = false);
+                    if let Some(seat) = self.seat() {
+                        seat.close_source(Kind::V).await;
+                    }
+                    // Whichever start let the running camera go, its `p v`
+                    // is taken back here.
+                    if self.st.lock().announced.contains(&Kind::V) {
+                        self.announce(Kind::V, false);
+                        inner.play(Sound::CameraOff, Some(false));
+                    }
+                    inner.drop_frame(VideoKey::camera(self.me));
+                    self.publish_participants();
                     inner.notify(logic::CAMERA_UNAVAILABLE);
                 }
                 return;
@@ -1196,13 +1443,18 @@ impl Session {
                 std::thread::spawn(move || drop(source));
                 return;
             }
-            let epoch = st.camera.as_ref().map_or_else(Uuid::new_v4, |c| c.epoch);
+            let epoch = st
+                .camera
+                .as_ref()
+                .map(|c| c.epoch)
+                .or(released)
+                .unwrap_or_else(Uuid::new_v4);
             let local = Local {
                 source: source.clone(),
                 epoch,
                 height: size.height,
             };
-            st.camera.replace(local).is_some()
+            st.camera.replace(local).is_some() || released.is_some()
         };
         self.preview(Kind::V, &source);
         if !replacing {
@@ -1210,12 +1462,25 @@ impl Session {
         }
         self.publish_participants();
         let local = self.st.lock().camera.clone();
-        if let (Some(seat), Some(local)) = (self.seat(), local)
-            && seat.publish(Kind::V, &local, None, false).await.is_ok()
-            && !replacing
-        {
-            self.announce(Kind::V, true);
+        if let (Some(seat), Some(local)) = (self.seat(), local) {
+            self.send_video(&seat, Kind::V, &local).await;
         }
+    }
+
+    /// Lets the camera's capture go with its producer, its `p v` kept, so
+    /// a new capture can open the device; the epoch it ran under.
+    async fn release_camera(self: &Arc<Self>) -> Option<Uuid> {
+        let local = self.st.lock().camera.take()?;
+        if let Some(seat) = self.seat() {
+            seat.close_source(Kind::V).await;
+        }
+        let epoch = local.epoch;
+        let _ = blocking(move || {
+            let _ = local.source.set_video_sink(None);
+            drop(local);
+        })
+        .await;
+        Some(epoch)
     }
 
     async fn start_screen(self: &Arc<Self>, with_audio: bool) {
@@ -1335,14 +1600,8 @@ impl Session {
         self.publish_participants();
         tokio::spawn(self.clone().watch_screen(turn));
         let Some(seat) = self.seat() else { return };
-        if seat.publish(Kind::S, &screen, None, false).await.is_err() {
-            return;
-        }
-        self.announce(Kind::S, true);
-        if let Some(audio) = screen_audio
-            && seat.publish(Kind::Sa, &audio, None, false).await.is_ok()
-        {
-            self.announce(Kind::Sa, true);
+        if self.send_video(&seat, Kind::S, &screen).await {
+            self.send_live_sound(&seat, screen.epoch).await;
         }
     }
 
@@ -1555,7 +1814,8 @@ impl Session {
                 (locals, had)
             } else {
                 st.camera_turn += 1;
-                let had = st.camera.is_some();
+                // A camera let go for its re-capture is still announced.
+                let had = st.camera.is_some() || st.announced.contains(&Kind::V);
                 (st.camera.take().into_iter().collect(), had)
             }
         };
@@ -1618,7 +1878,7 @@ impl Session {
             VideoKey::camera(self.me)
         };
         let Some(inner) = self.inner() else { return };
-        let request = inner.request_of(key).unwrap_or(DEFAULT_REQUEST);
+        let request = sink_request(&inner, key);
         let _ = source.set_video_sink_limits(limits(request));
         let flag = inner.open_sink(key);
         let _ = source.set_video_sink(Some(frame_sink(&self.call, key, flag)));
@@ -1672,15 +1932,30 @@ impl Session {
 
     fn apply_local_audio(&self) {
         let Some(inner) = self.inner() else { return };
-        let (muted, deafened) = inner.read(|s| (s.muted, s.deafened));
-        let mic_off = muted || deafened;
-        let silent = mic_off || !inner.gate_open();
-        let mic = self.st.lock().mic.clone();
-        if let Some(mic) = &mic {
-            let _ = mic.source.set_enabled(!silent);
-        }
+        self.gate_mic(&inner);
         if let Some(seat) = self.seat() {
             inner.runtime().spawn(async move { seat.sync_mic().await });
+        }
+    }
+
+    /// The microphone's track on or off as mute, deafen and push-to-talk say.
+    fn gate_mic(&self, inner: &Inner) {
+        // Read and set as one step: push-to-talk calls this on the UI
+        // thread, a replaced microphone on the runtime.
+        let _gating = self.gating.lock();
+        let (muted, deafened) = inner.read(|s| (s.muted, s.deafened));
+        let switches = logic::mic_switches(muted, deafened, inner.gate_open());
+        // A microphone being replaced may still be the one sending.
+        let mics: Vec<core::Source> = {
+            let st = self.st.lock();
+            st.mic
+                .iter()
+                .chain(st.replaced_mics.iter().map(|(_, l)| l))
+                .map(|l| l.source.clone())
+                .collect()
+        };
+        for mic in &mics {
+            let _ = mic.set_enabled(switches.enabled);
         }
     }
 
@@ -1906,6 +2181,7 @@ impl Session {
                     ..CallState::default()
                 }
             });
+            sync_push_to_talk(&inner);
             inner.notify(gelabber_client::error_message(code));
             return;
         }
@@ -2120,32 +2396,37 @@ impl Session {
         });
     }
 
-    fn on_media_error(self: &Arc<Self>, generation: u64, code: &str, joined: bool) {
+    fn on_media_error(self: &Arc<Self>, generation: u64, code: &str, stage: logic::MediaStage) {
         let Some(inner) = self.inner() else { return };
         if self.seats.load(Ordering::Acquire) != generation {
             return;
         }
         tracing::debug!("media error {code}");
-        match code {
-            "ice_failed" => {}
-            "update_required" | "unauthorized" => {
+        let rebuilding = self.st.lock().attempts > 0;
+        // Revoked again and again while the tickets keep coming: bounded
+        // apart from `attempts`, which every connected transport resets.
+        let revoked = stage == logic::MediaStage::Seat && matches!(code, "unauthorized" | "gone");
+        if revoked && logic::revoked_too_often(&mut self.st.lock().revocations, Instant::now()) {
+            self.give_up(Leave::LostWith(logic::media_error_message(code).into()));
+            return;
+        }
+        match logic::media_error_action(code, stage, rebuilding) {
+            logic::MediaErrorAction::Ignore => {}
+            logic::MediaErrorAction::Rebuild => self.schedule_rebuild(generation),
+            logic::MediaErrorAction::Renew => {
+                // A seat with a renewed ticket that is refused again ends it.
+                if std::mem::replace(&mut self.st.lock().renewed, true) {
+                    self.give_up(Leave::Refused(logic::media_error_message(code).into()));
+                } else {
+                    self.schedule_rebuild(generation);
+                }
+            }
+            logic::MediaErrorAction::Leave => {
                 self.give_up(Leave::Refused(logic::media_error_message(code).into()));
             }
-            // A rebuild tries again; a first join has no seat to wait for.
-            "unavailable" if !joined && self.st.lock().attempts > 0 => {
-                self.schedule_rebuild(generation)
-            }
-            "unavailable" if !joined => {
-                self.give_up(Leave::Refused(logic::media_error_message(code).into()));
-            }
-            "forbidden" if joined => inner.notify(logic::media_error_message(code)),
-            "connection_closed" | "network" | "request_timeout" | "connect_timeout" | "gone" => {
-                self.schedule_rebuild(generation)
-            }
-            _ if !joined => self.schedule_rebuild(generation),
-            _ => {
+            logic::MediaErrorAction::Notify { once } => {
                 let first = !std::mem::replace(&mut self.st.lock().stream_error_shown, true);
-                if first {
+                if first || !once {
                     inner.notify(logic::media_error_message(code));
                 }
             }
@@ -2171,6 +2452,7 @@ impl Session {
                 logic::LOST_CALL_MESSAGE.to_owned(),
                 Some((self.server, self.channel)),
             ),
+            Leave::LostWith(message) => (message, Some((self.server, self.channel))),
         };
         inner.write(|s| {
             *s = CallState {
@@ -2181,6 +2463,7 @@ impl Session {
                 ..CallState::default()
             }
         });
+        sync_push_to_talk(&inner);
         inner.notify(message);
     }
 
@@ -2200,6 +2483,13 @@ impl Session {
         loop {
             tick.tick().await;
             if !self.live() || self.seats.load(Ordering::Acquire) != generation {
+                return;
+            }
+            // A kick that came as an event, which the voice hook does not see.
+            if self.seat_taken() {
+                if let Some(inner) = self.inner() {
+                    end_taken(&inner, &self);
+                }
                 return;
             }
             let Some(seat) = self.seat() else { return };
@@ -2398,6 +2688,15 @@ fn rand_unit() -> f32 {
     (nanos % 1000) as f32 / 1000.0
 }
 
+/// What a new sink of `key` gets: the tile's size, else a default.
+fn sink_request(inner: &Inner, key: VideoKey) -> VideoRequest {
+    match inner.request_of(key) {
+        Some(request) => request,
+        None if inner.released(key) => RELEASED,
+        None => DEFAULT_REQUEST,
+    }
+}
+
 fn limits(request: VideoRequest) -> core::VideoSinkLimits {
     core::VideoSinkLimits {
         max_width: request.width,
@@ -2416,6 +2715,11 @@ fn frame_sink(call: &Weak<Inner>, key: VideoKey, flag: Arc<AtomicBool>) -> core:
             return;
         }
         let Some(inner) = call.upgrade() else { return };
+        // Not copied while no tile shows it.
+        if inner.released(key) {
+            crate::release_elsewhere(inner);
+            return;
+        }
         serial += 1;
         inner.put_frame(
             key,
@@ -2448,6 +2752,9 @@ struct Tp {
     direction: &'static str,
     open: Mutex<HashSet<u64>>,
     refused: AtomicBool,
+    /// The code of the last request answered with a refusal, so a failed
+    /// produce can tell the server's no from the SDK's.
+    refusal: Mutex<Option<String>>,
 }
 
 impl Tp {
@@ -2461,12 +2768,21 @@ impl Tp {
             refused
         };
         if refused {
-            let _ = self.native.respond(request, Err("transport closed".into()));
+            self.refuse(request, "connection_closed");
         }
         !refused
     }
 
+    /// Refuses `request`, noting why before the waiting call returns.
+    fn refuse(&self, request: u64, code: &str) {
+        *self.refusal.lock() = Some(code.to_owned());
+        let _ = self.native.respond(request, Err(code.to_owned()));
+    }
+
     fn answer(&self, request: u64, answer: Result<Value, String>) {
+        if let Err(code) = &answer {
+            *self.refusal.lock() = Some(code.clone());
+        }
         let _ = self.native.respond(request, answer);
         self.open.lock().remove(&request);
     }
@@ -2478,7 +2794,7 @@ impl Tp {
             std::mem::take(&mut *open)
         };
         for request in open {
-            let _ = self.native.respond(request, Err("transport closed".into()));
+            self.refuse(request, "connection_closed");
         }
     }
 }
@@ -2640,7 +2956,7 @@ impl Seat {
                 SocketEvent::Event(frame) => self.clone().handle_event(frame),
                 SocketEvent::Error(code) => {
                     if let Some(session) = self.session.upgrade() {
-                        session.on_media_error(self.generation, &code, true);
+                        session.on_media_error(self.generation, &code, logic::MediaStage::Seat);
                     }
                 }
                 SocketEvent::Closed => {
@@ -2757,6 +3073,7 @@ impl Seat {
             direction: name,
             open: Mutex::new(HashSet::new()),
             refused: AtomicBool::new(self.closed.load(Ordering::Acquire)),
+            refusal: Mutex::new(None),
         });
         let weak = Arc::downgrade(&tp);
         let seat = Arc::downgrade(self);
@@ -2832,16 +3149,31 @@ impl Seat {
         } else {
             ("audio/opus".to_owned(), false)
         };
+        let settings = self
+            .session
+            .upgrade()
+            .and_then(|s| s.inner())
+            .map(|i| i.settings())
+            .unwrap_or_default();
         let replace = self.producers.lock().get(&kind).and_then(|h| {
             (h.mime == mime && h.epoch == local.epoch).then(|| (h.producer.clone(), h.id.clone()))
         });
         if let Some((producer, _)) = replace {
             let source = local.source.clone();
-            let replaced = blocking(move || producer.lock().replace_source(&source)).await;
+            let swapped = producer.clone();
+            let replaced = blocking(move || swapped.lock().replace_source(&source)).await;
             return match replaced {
                 Some(Ok(())) => {
                     drop(send);
+                    // The new capture's size and profile set the limits.
+                    self.apply_parameters_of(kind, &producer, local, &settings);
                     if kind == Kind::A {
+                        // The new track took the old one's state: the gate's again.
+                        if let Some(session) = self.session.upgrade()
+                            && let Some(inner) = session.inner()
+                        {
+                            session.gate_mic(&inner);
+                        }
                         self.sync_mic().await;
                     } else {
                         self.set_paused(kind, paused).await;
@@ -2869,12 +3201,6 @@ impl Seat {
         }
         let tp = send.clone().expect("send transport");
         let old = self.producers.lock().get(&kind).map(|h| h.id.clone());
-        let settings = self
-            .session
-            .upgrade()
-            .and_then(|s| s.inner())
-            .map(|i| i.settings())
-            .unwrap_or_default();
         let mut app = json!({
             "k": kind.as_str(),
             "epoch": local.epoch,
@@ -2900,6 +3226,7 @@ impl Seat {
             options["encodings"] = encodings;
         }
         let source = local.source.clone();
+        tp.refusal.lock().take();
         let produced = {
             let tp = tp.clone();
             let options = options.clone();
@@ -2907,18 +3234,25 @@ impl Seat {
         };
         let producer = match produced {
             Some(Ok(producer)) => producer,
-            Some(Err(e)) if kind.video() && options.get("encodings").is_some() => {
-                // Layers refused: one stream instead.
+            // The SDK, not the server, refused the layers: one stream instead.
+            Some(Err(e))
+                if kind.video()
+                    && options.get("encodings").is_some()
+                    && !self.closed.load(Ordering::Acquire)
+                    && tp.refusal.lock().is_none() =>
+            {
                 tracing::debug!("produce {kind:?} in layers: {e}");
                 options.as_object_mut().map(|o| o.remove("encodings"));
                 let source = local.source.clone();
-                let tp = tp.clone();
-                match blocking(move || tp.native.produce(&source, &options)).await {
+                let retry = tp.clone();
+                match blocking(move || retry.native.produce(&source, &options)).await {
                     Some(Ok(producer)) => producer,
-                    _ => return Err(MediaError::new("sdk_failed")),
+                    Some(Err(e)) => return Err(self.produce_error(&tp, &e)),
+                    None => return Err(MediaError::new("connection_closed")),
                 }
             }
-            _ => return Err(MediaError::new("sdk_failed")),
+            Some(Err(e)) => return Err(self.produce_error(&tp, &e)),
+            None => return Err(MediaError::new("connection_closed")),
         };
         let id = producer.id().to_owned();
         if self.closed.load(Ordering::Acquire) {
@@ -2941,7 +3275,7 @@ impl Seat {
             std::thread::spawn(move || drop(previous));
         }
         drop(send);
-        if paused {
+        if paused && kind != Kind::A {
             let _ = producer.lock().set_paused(true);
         }
         self.apply_parameters_of(kind, &producer, local, &settings);
@@ -2950,6 +3284,21 @@ impl Seat {
             self.sync_mic().await;
         }
         Ok(())
+    }
+
+    /// Why a produce failed: a closed seat, else the server's answer, else
+    /// the SDK.
+    fn produce_error(&self, tp: &Tp, error: &core::Error) -> MediaError {
+        if self.closed.load(Ordering::Acquire) {
+            return MediaError::new("connection_closed");
+        }
+        match tp.refusal.lock().take() {
+            Some(code) => MediaError(code),
+            None => {
+                tracing::debug!("produce: {error}");
+                MediaError::new("sdk_failed")
+            }
+        }
     }
 
     /// Bitrates, rates and priorities of every sender (`VideoLimits`).
@@ -3049,7 +3398,8 @@ impl Seat {
         let Some(inner) = self.session.upgrade().and_then(|s| s.inner()) else {
             return;
         };
-        let paused = inner.read(|s| s.muted || s.deafened);
+        let (muted, deafened) = inner.read(|s| (s.muted, s.deafened));
+        let paused = logic::mic_switches(muted, deafened, true).paused;
         self.set_paused(Kind::A, paused).await;
     }
 
@@ -3070,7 +3420,8 @@ impl Seat {
         });
     }
 
-    /// Pauses or resumes a producer here and on the server.
+    /// Pauses or resumes a producer here (not the microphone's) and on the
+    /// server.
     async fn set_paused(&self, kind: Kind, paused: bool) {
         let (producer, id, changed) = {
             let mut producers = self.producers.lock();
@@ -3081,7 +3432,11 @@ impl Seat {
             held.paused = paused;
             (held.producer.clone(), held.id.clone(), changed)
         };
-        let _ = producer.lock().set_paused(paused);
+        // The microphone's track belongs to its gate: libmediasoupclient's
+        // resume would enable it with push-to-talk closed.
+        if kind != Kind::A {
+            let _ = producer.lock().set_paused(paused);
+        }
         if !changed {
             return;
         }
@@ -3163,18 +3518,21 @@ impl Seat {
         if self.removed.lock().contains(&key) {
             return;
         }
-        if self.recv.lock().is_none() {
+        {
+            // Decided under the queue's lock, which `run_seat` drains it under.
             let mut queued = self.queued.lock();
-            if let Some(slot) = queued.iter_mut().find(|q| {
-                q["op"] == op
-                    && q["consumerId"] == id.as_str()
-                    && q["generation"] == generation.as_str()
-            }) {
-                *slot = frame;
-            } else if queued.len() < 3 * 1024 {
-                queued.push(frame);
+            if self.recv.lock().is_none() {
+                if let Some(slot) = queued.iter_mut().find(|q| {
+                    q["op"] == op
+                        && q["consumerId"] == id.as_str()
+                        && q["generation"] == generation.as_str()
+                }) {
+                    *slot = frame;
+                } else if queued.len() < 3 * 1024 {
+                    queued.push(frame);
+                }
+                return;
             }
-            return;
         }
         if op == "consumer" {
             {
@@ -3281,7 +3639,7 @@ impl Seat {
         } else if let Some(video) = received_key(k, owner) {
             // The sink before `consumerReady` resumes it: the first key
             // frame reaches it.
-            let request = inner.request_of(video).unwrap_or(DEFAULT_REQUEST);
+            let request = sink_request(&inner, video);
             let _ = consumer.set_video_sink_limits(limits(request));
             let flag = inner.open_sink(video);
             sink = Some(flag.clone());
@@ -3395,7 +3753,7 @@ fn forward(
             if let core::TransportEvent::Connect { request, .. }
             | core::TransportEvent::Produce { request, .. } = event
             {
-                let _ = transport.native.respond(request, Err("seat closed".into()));
+                transport.refuse(request, "connection_closed");
             }
             continue;
         };
@@ -3487,6 +3845,7 @@ mod tests {
             fake: true,
             st: Mutex::new(St::default()),
             stopped: AtomicBool::new(false),
+            gating: Mutex::new(()),
             seats: AtomicU64::new(0),
         });
         *call.inner.media.session.lock() = Some(session.clone());
@@ -3506,6 +3865,160 @@ mod tests {
             vec![Cue::MuteSelf, Cue::UnmuteSelf]
         );
         session.stop();
+    }
+
+    #[test]
+    fn a_refused_request_of_a_half_built_seat_builds_a_new_one() {
+        let call = offline();
+        let session = session(&call);
+        session.seats.store(1, Ordering::Release);
+        session.on_media_error(1, "unavailable", logic::MediaStage::Building);
+        let st = session.st.lock();
+        assert!(st.rebuilding, "a rebuild is planned");
+        assert_eq!(st.attempts, 1);
+        drop(st);
+        session.stop();
+    }
+
+    #[test]
+    fn a_seat_revoked_again_and_again_ends_with_a_retry_offer() {
+        let call = offline();
+        let session = session(&call);
+        session.seats.store(1, Ordering::Release);
+        call.inner.write(|s| s.channel = Some(session.channel));
+        let mut settings = call.settings();
+        settings.push_to_talk = true;
+        call.set_settings(settings);
+        assert!(!call.inner.read(|s| s.push_to_talk_open));
+        // Each new seat would connect and reset `attempts`; the bound holds.
+        for _ in 0..3 {
+            session.on_media_error(1, "gone", logic::MediaStage::Seat);
+            session.st.lock().attempts = 0;
+            assert!(call.inner.media.current().is_some());
+        }
+        session.on_media_error(1, "unauthorized", logic::MediaStage::Seat);
+        assert!(call.inner.media.current().is_none());
+        let (status, lost) = call.inner.read(|s| (s.status.clone(), s.lost_call));
+        assert_eq!(
+            status,
+            CallStatus::Failed("Der Sprachserver hat die Verbindung nicht zugelassen.".into())
+        );
+        assert_eq!(lost, Some((session.server, session.channel)));
+        assert!(
+            call.inner.read(|s| s.push_to_talk_open),
+            "no gate outside a call"
+        );
+    }
+
+    #[test]
+    fn an_unauthorized_seat_gets_one_new_ticket() {
+        let call = offline();
+        let session = session(&call);
+        session.seats.store(1, Ordering::Release);
+        session.on_media_error(1, "unauthorized", logic::MediaStage::Seat);
+        assert!(session.st.lock().rebuilding, "a new seat, not the end");
+        assert!(call.inner.media.current().is_some());
+        // The seat on the new ticket is refused as well: the call ends.
+        session.on_media_error(1, "unauthorized", logic::MediaStage::Join);
+        assert!(call.inner.media.current().is_none());
+        // The media server's no, not a sign-in error.
+        assert_eq!(
+            call.inner.read(|s| s.status.clone()),
+            CallStatus::Failed("Der Sprachserver hat die Verbindung nicht zugelassen.".into())
+        );
+    }
+
+    #[test]
+    fn a_kick_ends_the_call_without_a_sign_in_error() {
+        let call = offline();
+        let session = session(&call);
+        let client = call.client().clone();
+        client.voice_join(session.server, session.channel);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while client.with_state(|s| s.voice_self.channel) != Some(session.channel) {
+            assert!(Instant::now() < deadline, "the client took the seat");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        call.inner.write(|s| {
+            s.status = CallStatus::Connected;
+            s.channel = Some(session.channel);
+        });
+        let mut settings = call.settings();
+        settings.push_to_talk = true;
+        call.set_settings(settings);
+        assert!(!call.inner.read(|s| s.push_to_talk_open), "the key is up");
+        // Another server's frame: the call stays.
+        let other = GatewayEvent::Frame(ServerFrame::Err {
+            e: "kicked".into(),
+            s: Some(Uuid::new_v4()),
+            c: None,
+        });
+        call.on_gateway(&other);
+        assert!(call.inner.media.current().is_some());
+        // The client dropped the seat (`removed_from`): the call leaves.
+        client.voice_leave();
+        while client.with_state(|s| s.voice_self.channel).is_some() {
+            assert!(Instant::now() < deadline, "the client left the seat");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let kicked = GatewayEvent::Frame(ServerFrame::Err {
+            e: "kicked".into(),
+            s: Some(session.server),
+            c: None,
+        });
+        call.on_gateway(&kicked);
+        assert!(call.inner.media.current().is_none());
+        assert_eq!(call.inner.read(|s| s.status.clone()), CallStatus::default());
+        assert!(session.stopped.load(Ordering::Acquire));
+        // Out of the call, push-to-talk no longer holds the microphone shut.
+        assert!(call.inner.read(|s| s.push_to_talk_open));
+    }
+
+    #[test]
+    fn a_released_video_is_neither_copied_nor_repainted() {
+        let call = offline();
+        let repaints = Arc::new(AtomicU64::new(0));
+        let counted = repaints.clone();
+        call.client().set_repaint(Arc::new(move || {
+            counted.fetch_add(1, Ordering::Relaxed);
+        }));
+        let key = VideoKey::camera(Uuid::new_v4());
+        let flag = call.inner.open_sink(key);
+        let mut sink = frame_sink(&Arc::downgrade(&call.inner), key, flag);
+        let (y, uv) = ([16u8; 4], [128u8; 1]);
+        let picture = core::VideoFrame {
+            width: 2,
+            height: 2,
+            y: &y,
+            u: &uv,
+            v: &uv,
+            stride_y: 2,
+            stride_u: 1,
+            stride_v: 1,
+            rotation: 0,
+            timestamp_us: 0,
+            source_width: 2,
+            source_height: 2,
+        };
+        let serial = || call.frame(key).map(|f| f.serial);
+        let repainted = || repaints.load(Ordering::Relaxed);
+        // The first picture repaints, so a view can ask for the key.
+        sink(&picture);
+        assert_eq!((serial(), repainted()), (Some(1), 1));
+        // Nobody asked: the picture is kept current without a repaint.
+        sink(&picture);
+        assert_eq!((serial(), repainted()), (Some(2), 1));
+        call.request_video(key, 640, 360, 30);
+        sink(&picture);
+        assert_eq!((serial(), repainted()), (Some(3), 2));
+        // Released: the last picture stays, no new one is copied.
+        call.release_video(key);
+        sink(&picture);
+        assert_eq!((serial(), repainted()), (Some(3), 2));
+        // Asked again: frames flow.
+        call.request_video(key, 640, 360, 30);
+        sink(&picture);
+        assert_eq!((serial(), repainted()), (Some(4), 3));
     }
 
     #[test]
