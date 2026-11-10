@@ -3,6 +3,7 @@
 
 import { bindDraftAccount } from "../messages/drafts.ts";
 import { bindThemeAccount } from "../theme/account.ts";
+import { resetEditDrafts } from "../components/editDrafts.ts";
 import { clearToasts } from "../components/toasts.ts";
 import { clearMessageToasts } from "../messages/toasts.ts";
 import { resetPendingMessages } from "../messages/pending.ts";
@@ -35,6 +36,7 @@ export function releaseUserScope(nextUserId: string | null): void {
   dropForeignUserQueries();
   resetPendingMessages();
   resetReplyTargets();
+  resetEditDrafts();
   clearMessageToasts();
   clearToasts();
   resetLiveStores();

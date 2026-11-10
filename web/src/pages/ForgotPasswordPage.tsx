@@ -4,7 +4,7 @@ import { useRef, useState, type FormEvent } from "react";
 
 import { ApiError } from "../api/client.ts";
 import { errorMessage, fieldMessage, validateEmail } from "../auth/rules.ts";
-import { requestPasswordReset } from "../auth/session.ts";
+import { requestPasswordReset, useSession } from "../auth/session.ts";
 import { RESEND_COOLDOWN_S, useCooldown } from "../auth/useCooldown.ts";
 import { useFocusOnMount } from "../auth/useFocusOnMount.ts";
 import { useFormErrors } from "../auth/useFormErrors.ts";
@@ -17,7 +17,8 @@ import { useInlineStatus } from "../components/ui/useInlineStatus.ts";
 
 export function ForgotPasswordPage() {
   const search = useSearch({ from: "/auth/forgot-password" });
-  const [email, setEmail] = useState(search.email ?? "");
+  const signedIn = useSession((state) => state.user?.email);
+  const [email, setEmail] = useState(search.email ?? signedIn ?? "");
   const [sentTo, setSentTo] = useState<string | null>(null);
   const form = useRef<HTMLFormElement>(null);
   const { errors, clearField, setFields, fromError, cooldown } =

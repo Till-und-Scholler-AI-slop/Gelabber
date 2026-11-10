@@ -151,6 +151,47 @@ async fn a_fresh_expiry_is_not_written_again(pool: PgPool) {
     assert_eq!(after, renewed);
 }
 
+/// Lower settings apply to sessions that already exist: the API caps every
+/// row at its start, since renewal only ever moves an expiry forward.
+#[sqlx::test]
+async fn shorter_settings_cap_existing_sessions(pool: PgPool) {
+    let long = lifetime_state(pool.clone(), "48", "24");
+    signed_in(long).await;
+    let short = lifetime_state(pool.clone(), "4", "1");
+
+    // Idle cap: in use for 2 hours, would run 20 more.
+    set_row(&pool, 2 * 3600, 20 * 3600).await;
+    let capped = gelabber_api::auth::session::cap_to_settings(
+        &short.db,
+        short.session_idle,
+        short.session_ttl,
+    )
+    .await
+    .unwrap();
+    assert_eq!(capped, 1);
+    let (_, expires_at) = row(&pool).await;
+    assert_near(expires_at, Utc::now() + chrono::Duration::hours(1));
+
+    // Absolute cap: 3.5 hours old, so half an hour left of 4.
+    set_row(&pool, 7 * 1800, 50 * 60).await;
+    gelabber_api::auth::session::cap_to_settings(&short.db, short.session_idle, short.session_ttl)
+        .await
+        .unwrap();
+    let (_, expires_at) = row(&pool).await;
+    assert_near(expires_at, Utc::now() + chrono::Duration::minutes(30));
+
+    // Already within both: untouched.
+    set_row(&pool, 600, 1800).await;
+    let capped = gelabber_api::auth::session::cap_to_settings(
+        &short.db,
+        short.session_idle,
+        short.session_ttl,
+    )
+    .await
+    .unwrap();
+    assert_eq!(capped, 0);
+}
+
 #[sqlx::test]
 async fn an_idle_session_ends_and_stays_ended(pool: PgPool) {
     let mut client = signed_in(lifetime_state(pool.clone(), "4", "1")).await;
@@ -239,9 +280,26 @@ async fn the_upgrade_renews_and_heartbeats_do_not(pool: PgPool) {
     let mut ws = connect(addr, &client).await;
     let (_, renewed) = row(&pool).await;
     assert_near(renewed, Utc::now() + chrono::Duration::hours(1));
+    ws.close(None).await.ok();
 
-    stay_connected(&mut ws, Duration::from_millis(300)).await;
-    assert_eq!(row(&pool).await.1, renewed, "heartbeats are not a use");
+    // 2 s short of one renewal step (5 minutes): the upgrade leaves the row
+    // alone, and the socket's copy of the expiry is due within 2 s. A renewal
+    // from the heartbeats after that would move the row.
+    set_row(&pool, 600, 3600 - 300 + 2).await;
+    let mut ws = connect(addr, &client).await;
+    let (_, due) = row(&pool).await;
+    stay_connected(&mut ws, Duration::from_secs(3)).await;
+    assert_eq!(row(&pool).await.1, due, "heartbeats are not a use");
+
+    // The same socket renews on activity, so the check above could see one.
+    send_json(&mut ws, json!({ "op": "p" })).await;
+    for _ in 0..20 {
+        stay_connected(&mut ws, Duration::from_millis(100)).await;
+        if row(&pool).await.1 != due {
+            break;
+        }
+    }
+    assert_near(row(&pool).await.1, Utc::now() + chrono::Duration::hours(1));
 }
 
 #[sqlx::test]

@@ -117,13 +117,22 @@ pub fn layout(ui: &Ui, shown: &[Shown], width: f32) -> Chips {
 
 /// Paints the chips at `origin`; returns the emoji clicked and whether it
 /// adds my reaction.
+/// Which chips a click toggles: any (I may write), only those I gave, or
+/// none (a message's context, outside the loaded history).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Toggle {
+    Any,
+    Mine,
+    None,
+}
+
 pub fn paint(
     ui: &mut Ui,
     chips: &Chips,
     origin: Pos2,
     id: egui::Id,
     me: Uuid,
-    can_send: bool,
+    toggle: Toggle,
     name_of: &dyn Fn(Uuid) -> Option<String>,
 ) -> Option<(String, bool)> {
     let theme = Theme::of(ui.ctx());
@@ -132,7 +141,11 @@ pub fn paint(
     for (rect, block, shown) in &chips.chips {
         let rect = crate::widgets::snap(ui.ctx(), rect.translate(origin.to_vec2()));
         let mine = shown.users.contains(&me);
-        let enabled = mine || can_send;
+        let enabled = match toggle {
+            Toggle::Any => true,
+            Toggle::Mine => mine,
+            Toggle::None => false,
+        };
         let response = ui.interact(
             rect,
             id.with(("reaction", &shown.emoji)),

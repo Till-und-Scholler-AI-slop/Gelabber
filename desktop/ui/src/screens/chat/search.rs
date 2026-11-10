@@ -40,11 +40,24 @@ pub struct SearchState {
     /// The next page failed (`isFetchNextPageError`).
     more_failed: bool,
     scroll: f32,
+    /// How far the hits scroll: their height past the body's.
+    max_scroll: f32,
 }
 
 impl SearchState {
     pub fn changed(&mut self, now: f64) {
         self.changed_at = now;
+    }
+
+    /// An emptied field forgets the hits: the same words typed again later
+    /// ask the server again.
+    pub fn settle(&mut self) {
+        if self.text.trim().is_empty() && !(self.query.is_empty() && self.pages.is_empty()) {
+            *self = Self {
+                text: std::mem::take(&mut self.text),
+                ..Self::default()
+            };
+        }
     }
 
     /// Whether the hits replace the list (typing paused with text).
@@ -222,6 +235,8 @@ pub fn show(
     if ui.rect_contains_pointer(body) {
         state.scroll = (state.scroll - ui.input(|i| i.smooth_scroll_delta.y)).max(0.0);
     }
+    // Held to last frame's end, so the wheel stops at the last hit.
+    state.scroll = state.scroll.min(state.max_scroll);
     let clip = ui.painter().with_clip_rect(body.intersect(ui.clip_rect()));
     let mut y = body.top() - state.scroll;
     // `<p>` lines: padding 6 8.
@@ -343,6 +358,14 @@ pub fn show(
         if secondary(&mut child, at, label, enabled, id) {
             state.more = state.fetch(client, channel, state.next_cursor());
         }
+        // The button (13px line, padding 6) under its 8px gap, and 8 below.
+        y += 8.0 + 19.5 + 12.0 + 8.0;
+    }
+    let content = y + state.scroll - body.top();
+    let max_scroll = (content - body.height()).max(0.0);
+    if max_scroll != state.max_scroll {
+        state.max_scroll = max_scroll;
+        ui.ctx().request_repaint();
     }
     action
 }
@@ -476,6 +499,83 @@ mod tests {
         s.pages.push(page(&[5], false));
         assert_eq!(s.next_cursor(), None);
         assert_eq!(s.more_button(), None);
+    }
+
+    #[test]
+    fn an_emptied_field_forgets_the_hits() {
+        let mut s = SearchState {
+            text: "Snacks".into(),
+            query: "Snacks".into(),
+            shown: "Snacks".into(),
+            pages: vec![page(&[30], false)],
+            result: Some(Ok(())),
+            ..SearchState::default()
+        };
+        s.settle();
+        assert_eq!(s.query, "Snacks");
+        s.text.clear();
+        s.settle();
+        assert!(s.query.is_empty() && s.pages.is_empty() && s.result.is_none());
+        // The same words again: a new request, not the old hits.
+        s.text = "Snacks".into();
+        assert!(s.active(10.0));
+    }
+
+    #[test]
+    fn the_hits_scroll_no_further_than_the_last() {
+        let client = Client::new("http://127.0.0.1:9").expect("client");
+        let state = std::cell::RefCell::new(SearchState {
+            text: "Snacks".into(),
+            query: "Snacks".into(),
+            shown: "Snacks".into(),
+            pages: vec![page(&(1..=12).collect::<Vec<_>>(), false)],
+            result: Some(Ok(())),
+            changed_at: -10.0,
+            ..SearchState::default()
+        });
+        let names = HashMap::new();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(600.0, 400.0))
+            .build_ui(|ui| {
+                crate::fonts::install(ui.ctx());
+                crate::theme::set(ui.ctx(), crate::theme::Theme::dark());
+                let rect = ui.max_rect();
+                let _ = show(
+                    ui,
+                    rect,
+                    &client,
+                    Uuid::nil(),
+                    &mut state.borrow_mut(),
+                    &names,
+                    Uuid::nil(),
+                    Utc::now(),
+                );
+            });
+        harness.run_steps(2);
+        harness.event(egui::Event::PointerMoved(pos2(300.0, 200.0)));
+        for _ in 0..40 {
+            harness.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, -300.0),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+        }
+        harness.run_steps(30);
+        let s = state.borrow();
+        assert!(s.max_scroll > 0.0);
+        assert!(s.scroll <= s.max_scroll, "{} > {}", s.scroll, s.max_scroll);
+        drop(s);
+        // Hits are still on screen, not blank space past them.
+        use egui_kittest::kittest::Queryable as _;
+        assert!(
+            harness
+                .query_all_by_label_contains("Zur Nachricht von A")
+                .next()
+                .is_some()
+        );
     }
 
     #[test]

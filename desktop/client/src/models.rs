@@ -5,28 +5,75 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
 pub type Timestamp = DateTime<Utc>;
+
+/// The elements of a list that decode; the others are logged and left
+/// out, so one shape a newer server added costs that element only.
+fn lenient_items<T: DeserializeOwned>(items: Vec<serde_json::Value>) -> Vec<T> {
+    items
+        .into_iter()
+        .filter_map(|item| match serde_json::from_value(item) {
+            Ok(value) => Some(value),
+            Err(error) => {
+                tracing::warn!(%error, "left out a list element this client cannot read");
+                None
+            }
+        })
+        .collect()
+}
 
 /// Live events pass through Redis cjson, which turns `[]` into `{}`
 /// (web/src/messages/types.ts): accept an object or null as an empty list.
 fn lenient_vec<'de, D, T>(de: D) -> Result<Vec<T>, D::Error>
 where
     D: Deserializer<'de>,
-    T: Deserialize<'de>,
+    T: DeserializeOwned,
 {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Either<T> {
-        List(Vec<T>),
-        Other(serde::de::IgnoredAny),
-    }
-    Ok(match Option::<Either<T>>::deserialize(de)? {
-        Some(Either::List(list)) => list,
+    Ok(match Option::<serde_json::Value>::deserialize(de)? {
+        Some(serde_json::Value::Array(items)) => lenient_items(items),
         _ => Vec::new(),
     })
+}
+
+/// A list the server always sends, read element by element.
+fn lenient_list<'de, D, T>(de: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: DeserializeOwned,
+{
+    Vec::<serde_json::Value>::deserialize(de).map(lenient_items)
+}
+
+fn lenient_opt_list<'de, D, T>(de: D) -> Result<Option<Vec<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: DeserializeOwned,
+{
+    Option::<Vec<serde_json::Value>>::deserialize(de).map(|v| v.map(lenient_items))
+}
+
+/// A value this client does not know reads as absent.
+fn lenient_opt<'de, D, T>(de: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: DeserializeOwned,
+{
+    Ok(Option::<serde_json::Value>::deserialize(de)?.and_then(|v| serde_json::from_value(v).ok()))
+}
+
+/// A whole answer that is a list (`GET /api/servers`, `/dms`, …), read
+/// element by element.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Lenient<T>(pub Vec<T>);
+
+impl<'de, T: DeserializeOwned> Deserialize<'de> for Lenient<T> {
+    fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        lenient_list(de).map(Lenient)
+    }
 }
 
 // ---------------------------------------------------------------- auth / me
@@ -200,6 +247,8 @@ impl Permission {
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     Owner,
+    /// Also a role this client does not know: no owner rights.
+    #[serde(other)]
     Member,
 }
 
@@ -228,8 +277,12 @@ impl Server {
 pub struct ServerDetail {
     #[serde(flatten)]
     pub server: Server,
+    #[serde(deserialize_with = "lenient_list")]
     pub categories: Vec<Category>,
+    /// A channel of a kind this client does not know is left out.
+    #[serde(deserialize_with = "lenient_list")]
     pub channels: Vec<Channel>,
+    #[serde(deserialize_with = "lenient_list")]
     pub members: Vec<Member>,
 }
 
@@ -504,6 +557,7 @@ pub struct SystemMessage {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MessagePage {
     /// Oldest → newest.
+    #[serde(deserialize_with = "lenient_list")]
     pub messages: Vec<Message>,
     pub has_more: bool,
 }
@@ -512,6 +566,7 @@ pub struct MessagePage {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MessageContext {
     pub target_id: Uuid,
+    #[serde(deserialize_with = "lenient_list")]
     pub messages: Vec<Message>,
     /// Cursors (`ts|uuid`, `+00:00` offset) for further history.
     pub before: String,
@@ -549,6 +604,11 @@ pub enum NotificationLevel {
     All,
     Mentions,
     None,
+    /// A level a newer server knows and this client does not: it notifies
+    /// like `All`, and a save never writes it back (`Client::set_notifications`
+    /// refuses), so the choice made elsewhere survives.
+    #[serde(other)]
+    Unknown,
 }
 
 /// One row of `GET /api/messages/unread`.
@@ -598,6 +658,11 @@ impl ReadState {
             count: if none { 0 } else { self.mention_count.max(0) },
             dot,
         }
+    }
+
+    /// Where this row stands: a row behind another describes an older state.
+    pub fn position(&self) -> (Timestamp, Option<i64>, Option<i64>) {
+        (self.membership_at, self.read_order, self.latest_order)
     }
 
     /// Takes a pushed read position unless it is behind ours (the web's
@@ -742,6 +807,7 @@ pub struct GifStatus {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GifPage {
+    #[serde(deserialize_with = "lenient_list")]
     pub gifs: Vec<Gif>,
     pub next_page: Option<u32>,
 }
@@ -751,12 +817,14 @@ pub struct GifPage {
 /// Presence as the gateway spells it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PresenceStatus {
-    #[serde(rename = "o")]
-    Online,
     #[serde(rename = "i")]
     Idle,
     #[serde(rename = "x")]
     Offline,
+    /// Also a status this client does not know: connected all the same
+    /// (`other` must come last).
+    #[serde(rename = "o", other)]
+    Online,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -771,6 +839,9 @@ pub enum EventKind {
     C,
     E,
     D,
+    /// A kind this client does not know: sequenced, applied as nothing.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -790,6 +861,9 @@ pub enum SigKind {
     D,
     /// Occupancy snapshot (server only).
     R,
+    /// A kind this client does not know.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Microphone, camera, screen (a Live) and the screen's audio.
@@ -904,7 +978,11 @@ pub enum ServerFrame {
         u: Option<Uuid>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         st: Option<PresenceStatus>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "lenient_opt_list",
+            skip_serializing_if = "Option::is_none"
+        )]
         snap: Option<Vec<PresenceEntry>>,
     },
     #[serde(rename = "y")]
@@ -912,7 +990,10 @@ pub enum ServerFrame {
     #[serde(rename = "ns")]
     NotificationSettings,
     #[serde(rename = "rd")]
-    Read { d: Vec<ReadSync> },
+    Read {
+        #[serde(deserialize_with = "lenient_list")]
+        d: Vec<ReadSync>,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -945,7 +1026,13 @@ impl EventFrame {
 
     /// The message of a create/edit event; `r` overrides `d.revision`.
     pub fn message(&self) -> Option<Message> {
-        let mut message: Message = serde_json::from_value(self.d.clone()?).ok()?;
+        let mut message: Message = match serde_json::from_value(self.d.clone()?) {
+            Ok(message) => message,
+            Err(error) => {
+                tracing::warn!(%error, "an event's message this client cannot read");
+                return None;
+            }
+        };
         if let Some(r) = self.r {
             message.revision = r;
         }
@@ -962,7 +1049,12 @@ pub struct SigFrame {
     pub c: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub u: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// A track kind this client does not know reads as none.
+    #[serde(
+        default,
+        deserialize_with = "lenient_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub k: Option<TrackKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on: Option<bool>,
@@ -970,7 +1062,11 @@ pub struct SigFrame {
     pub m: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub d: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "lenient_opt_list",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub snap: Option<Vec<VoiceEntry>>,
     /// Someone who is there already, replayed to a new occupant: no news.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

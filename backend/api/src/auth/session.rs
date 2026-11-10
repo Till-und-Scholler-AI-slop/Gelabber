@@ -154,6 +154,25 @@ async fn renew(state: &AppState, session: &CurrentSession) -> DateTime<Utc> {
     }
 }
 
+/// Brings every live session within the current settings: no later than
+/// `idle` from now nor `ttl` after it began. Run at startup, so lowering
+/// `API_SESSION_IDLE_HOURS` or `API_SESSION_TTL_HOURS` also shortens the
+/// sessions that exist; renewal alone never moves an expiry back. Returns
+/// how many rows it shortened.
+pub async fn cap_to_settings(db: &PgPool, idle: Duration, ttl: Duration) -> Result<u64, ApiError> {
+    let result = sqlx::query(
+        "UPDATE sessions SET expires_at = LEAST(expires_at, \
+             now() + make_interval(secs => $1), created_at + make_interval(secs => $2)) \
+         WHERE expires_at > now() AND expires_at > LEAST( \
+             now() + make_interval(secs => $1), created_at + make_interval(secs => $2))",
+    )
+    .bind(idle.as_secs_f64())
+    .bind(ttl.as_secs_f64())
+    .execute(db)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 /// Removes the session behind `raw` (if given) and, in the same statement,
 /// every expired row. Its caller is `signed_in` (login, register without
 /// account mail, change-password, verify-email, password-reset confirm),

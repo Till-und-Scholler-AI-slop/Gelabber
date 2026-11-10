@@ -39,6 +39,8 @@ let generation = 0;
 let readId = 0;
 let busy = false;
 const key = (owner: string) => `gelabber.themes.v1:${owner}`;
+/** A sending mark older than this belongs to a tab that went away mid-save. */
+const SENDING_STALE_MS = 30_000;
 function validOperation(v: unknown): v is Operation {
   if (!v || typeof v !== "object" || !("kind" in v)) return false;
   return v.kind === "save"
@@ -47,13 +49,19 @@ function validOperation(v: unknown): v is Operation {
         "id" in v &&
         typeof v.id === "string";
 }
-function cache(): void {
+/** `sending`: when the PUT went out, so another tab does not adopt it while
+ * it is in flight. */
+function cache(sending = false): void {
   const s = useAccountThemes.getState();
   if (!s.owner) return;
   try {
     localStorage.setItem(
       key(s.owner),
-      JSON.stringify({ doc: s.doc, pending: s.pending }),
+      JSON.stringify({
+        doc: s.doc,
+        pending: s.pending,
+        ...(sending ? { sending: Date.now() } : {}),
+      }),
     );
   } catch {
     /* Memory state still works. */
@@ -78,7 +86,13 @@ export function bindThemeAccount(owner: string | null): void {
         isThemeDocument(saved.doc, BUILTIN_IDS)
       ) {
         doc = saved.doc;
-        if ("pending" in saved && validOperation(saved.pending))
+        // A save still marked as sending after a while never finished: the
+        // tab closed or switched account, so this one takes the change over.
+        const sending =
+          "sending" in saved &&
+          typeof saved.sending === "number" &&
+          Date.now() - saved.sending < SENDING_STALE_MS;
+        if ("pending" in saved && validOperation(saved.pending) && !sending)
           pending = saved.pending;
       }
     } catch {
@@ -118,7 +132,13 @@ function applyOperation(doc: ThemeDocument, op: Operation): ThemeDocument {
 }
 export async function syncThemes(): Promise<void> {
   const before = useAccountThemes.getState();
-  if (!before.owner || before.pending || busy) return;
+  if (!before.owner || busy) return;
+  if (before.pending) {
+    // An unsynced change (offline, or restored from the cache) goes out on
+    // the next sync; a conflict waits for the user's choice.
+    if (before.status === "error") await sendPending(true);
+    return;
+  }
   const stamp = generation;
   const request = ++readId;
   try {
@@ -137,7 +157,7 @@ export async function syncThemes(): Promise<void> {
         doc: { ...remote, active: before.doc.active },
         status: "ready",
       });
-      await changeTheme({ kind: "apply", id: before.doc.active });
+      await change({ kind: "apply", id: before.doc.active }, true);
     } else {
       useAccountThemes.setState({ doc: remote, status: "ready", error: "" });
       cache();
@@ -150,7 +170,12 @@ export async function syncThemes(): Promise<void> {
       });
   }
 }
-export async function changeTheme(op: Operation): Promise<boolean> {
+export function changeTheme(op: Operation): Promise<boolean> {
+  return change(op, false);
+}
+/** `importing`: the first write of a fresh account, which another tab may
+ * have done already. */
+async function change(op: Operation, importing: boolean): Promise<boolean> {
   const s = useAccountThemes.getState();
   if (
     !s.owner ||
@@ -164,8 +189,7 @@ export async function changeTheme(op: Operation): Promise<boolean> {
     const next = applyOperation(s.doc, op);
     readId++;
     useAccountThemes.setState({ doc: next, pending: op });
-    cache();
-    await sendPending(false);
+    await sendPending(false, importing);
     return true; // Accepted locally; failed sync remains visible and retryable.
   } catch (error) {
     useAccountThemes.setState({
@@ -177,13 +201,15 @@ export async function changeTheme(op: Operation): Promise<boolean> {
     return false;
   }
 }
-async function sendPending(refresh: boolean): Promise<void> {
+async function sendPending(refresh: boolean, importing = false): Promise<void> {
   const s = useAccountThemes.getState();
   if (!s.owner || !s.pending || busy) return;
   const stamp = generation;
+  let reread = false;
   busy = true;
   readId++;
   useAccountThemes.setState({ status: "saving", error: "" });
+  cache(true);
   try {
     let next = s.doc;
     if (refresh) {
@@ -210,16 +236,22 @@ async function sendPending(refresh: boolean): Promise<void> {
   } catch (error) {
     if (stamp !== generation) return;
     const conflict = error instanceof ApiError && error.status === 409;
-    useAccountThemes.setState({
-      status: conflict ? "conflict" : "error",
-      error: conflict
-        ? "Auf einem anderen Gerät geändert. Deine Änderung bleibt erhalten. Erneut anwenden übernimmt sie auf den aktuellen Stand."
-        : "Noch nicht synchronisiert. Deine Änderung ist hier gespeichert.",
-    });
+    if (conflict && importing) {
+      // Another tab or device set the account up first: take its state.
+      reread = true;
+      useAccountThemes.setState({ pending: null, status: "loading" });
+    } else
+      useAccountThemes.setState({
+        status: conflict ? "conflict" : "error",
+        error: conflict
+          ? "Auf einem anderen Gerät geändert. Deine Änderung bleibt erhalten. Erneut anwenden übernimmt sie auf den aktuellen Stand."
+          : "Noch nicht synchronisiert. Deine Änderung ist hier gespeichert.",
+      });
     cache();
   } finally {
     if (stamp === generation) busy = false;
   }
+  if (reread) await syncThemes();
 }
 export async function retryThemes(): Promise<void> {
   if (useAccountThemes.getState().pending) await sendPending(true);

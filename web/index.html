@@ -31,6 +31,21 @@
       href="/icons/icon-192.png"
     />
     <script>
+      // The entry bundle failed to load or run before the first render: say
+      // so instead of "Verbinde…" for ever. Load errors do not bubble.
+      window.addEventListener(
+        "error",
+        (event) => {
+          if (
+            event instanceof ErrorEvent ||
+            event.target instanceof HTMLScriptElement
+          )
+            document
+              .querySelector(".boot-splash")
+              ?.setAttribute("data-failed", "");
+        },
+        true,
+      );
       const setInitialColours = (background, text) => {
         document.documentElement.style.setProperty("--lr-bg", background);
         document.documentElement.style.setProperty("--lr-text", text);
@@ -117,6 +132,22 @@
         opacity: 0;
         animation: boot-splash-in 240ms ease-out 600ms forwards;
       }
+      .boot-splash p {
+        display: none;
+        margin: 0;
+        font-size: 14px;
+        text-align: center;
+      }
+      .boot-splash a {
+        color: inherit;
+        font-weight: 600;
+      }
+      .boot-splash[data-failed] span {
+        display: none;
+      }
+      .boot-splash[data-failed] p {
+        display: block;
+      }
       @keyframes boot-splash-in {
         to {
           opacity: 1;
@@ -137,6 +168,10 @@
         <img src="/icons/icon-192.png" width="48" height="48" alt="" />
         <strong>Gelabber</strong>
         <span>Verbinde…</span>
+        <p role="alert">
+          Gelabber konnte nicht geladen werden.
+          <a href="">Seite neu laden</a>
+        </p>
       </div>
     </div>
     <script type="module" src="/src/main.tsx"></script>

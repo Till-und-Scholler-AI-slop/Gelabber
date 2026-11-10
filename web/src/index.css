@@ -1731,7 +1731,9 @@ html[data-reduced-motion="true"] .gel-avatar.is-speaking::after {
       overlay var(--lr-dur-large-exit) allow-discrete;
   }
   .workspace-navigation[open] {
-    translate: 0 0;
+    /* none, not 0 0: a translate makes the drawer the containing block of
+       the fixed menus inside it, and its overflow would clip them. */
+    translate: none;
     transition:
       translate var(--lr-dur-large) var(--lr-ease-enter),
       display var(--lr-dur-large) allow-discrete,

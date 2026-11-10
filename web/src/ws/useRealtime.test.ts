@@ -290,6 +290,36 @@ describe("gap recovery on the existing gateway protocol", () => {
     expect(queryClient.getQueryData(dmKey)).toEqual([{ id: "new-dm" }]);
   });
 
+  it("reads a history again after its topic's first ok, which may count a message the read missed", async () => {
+    const queryClient = client();
+    const { gateway: ws, socket } = gateway();
+    let history = rows(1);
+    let reads = 0;
+    install(() => {
+      reads++;
+      return json({ messages: history, has_more: false });
+    });
+    await login(ada.email, "password123");
+    const stamp = takeStamp()!;
+    // The history read and the subscribe leave together; m002 is committed
+    // after the read and before the subscribe snapshot.
+    await observe(queryClient);
+    history = rows(2);
+    cleanups.push(
+      attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
+    );
+    socket.frame({ op: "ok", s: "server", c: "channel", n: 2 });
+    await vi.waitFor(() =>
+      expect(flattenPages(cache(queryClient).pages)).toEqual(rows(2)),
+    );
+    expect(reads).toBe(2);
+    // A resumed topic replays what it missed instead.
+    socket.frame({ op: "ok", s: "server", c: "channel", n: 2 });
+    socket.frame({ op: "ok", s: "server", n: 1 });
+    await Promise.resolve();
+    expect(reads).toBe(2);
+  });
+
   it("replaces a pending initial GET from before the gap and discards its late body", async () => {
     const queryClient = client();
     const { gateway: ws, socket } = gateway();
@@ -345,11 +375,12 @@ describe("gap recovery on the existing gateway protocol", () => {
     });
     await login(ada.email, "password123");
     const stamp = takeStamp()!;
+    // Subscribed before the channel is opened: no first-subscribe race.
+    socket.frame({ op: "ok", s: "server", c: "channel", n: 1 });
     await observe(queryClient);
     cleanups.push(
       attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
     );
-    socket.frame({ op: "ok", s: "server", c: "channel", n: 1 });
     failing = true;
     socket.frame({ op: "gap", s: "server", c: "channel" });
     socket.frame({ op: "ok", s: "server", c: "channel", n: 9 });
@@ -407,11 +438,12 @@ describe("gap recovery on the existing gateway protocol", () => {
     });
     await login(ada.email, "password123");
     const stamp = takeStamp()!;
+    // Subscribed before the channel is opened: no first-subscribe race.
+    socket.frame({ op: "ok", s: "server", c: "channel", n: 3 });
     await observe(queryClient);
     cleanups.push(
       attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
     );
-    socket.frame({ op: "ok", s: "server", c: "channel", n: 3 });
     socket.close();
     history = [
       history[0]!,
@@ -468,11 +500,12 @@ describe("gap recovery on the existing gateway protocol", () => {
     });
     await login(ada.email, "password123");
     const stamp = takeStamp()!;
+    // Subscribed before the channel is opened: no first-subscribe race.
+    socket.frame({ op: "ok", s: "server", c: "channel", n: 1 });
     await observe(queryClient);
     cleanups.push(
       attachRealtimeRecovery(queryClient, stamp, ws, { readySpreadMs: 0 }),
     );
-    socket.frame({ op: "ok", s: "server", c: "channel", n: 1 });
     socket.frame({ op: "gap", s: "server", c: "channel" });
     socket.frame({ op: "ok", s: "server", c: "channel", n: 8 });
     await started.promise;
@@ -1000,9 +1033,10 @@ it("spreads the refetch after a reconnect and folds the resume gaps into it", as
   install(() => json({ messages: rows(1, ++reads), has_more: false }));
   await login(ada.email, "password123");
   const stamp = takeStamp()!;
+  // Subscribed before the channel is opened: no first-subscribe race.
+  socket.frame({ op: "ok", s: "server", c: "channel", n: 1 });
   await observe(queryClient);
   cleanups.push(attachRealtimeRecovery(queryClient, stamp, ws));
-  socket.frame({ op: "ok", s: "server", c: "channel", n: 1 });
   socket.close();
   await vi.advanceTimersByTimeAsync(0);
   sockets[1]!.emit("open");

@@ -99,6 +99,8 @@ struct State {
     icon: Load<gelabber_client::Server>,
     icon_removing: bool,
     picking: Option<Picked>,
+    /// The picked icon, read and cropped off the UI thread.
+    preparing: Option<controls::Prepared>,
     permissions_status: Status,
     /// The mask the next switch builds on, ahead of the server's answer.
     permissions: Option<Vec<Permission>>,
@@ -110,6 +112,8 @@ struct State {
     copied: HashMap<String, f64>,
     bans: Option<Result<Vec<Ban>, ApiError>>,
     bans_load: Load<Vec<Ban>>,
+    /// A ban on its way; the list reloads once it is in.
+    ban: Load<()>,
     unban: Load<()>,
     menu: Option<Uuid>,
     /// Who a kick/ban question is about.
@@ -213,7 +217,11 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     controls::header(ui, rect, "Servereinstellungen", Some(&detail.server.name));
     let shared = state(&ctx);
     let mut s = shared.lock();
-    if s.server != Some(server) {
+    // Each visit starts afresh, as the web's page mounts: lists, drafts and
+    // the clock the expiry texts count from.
+    let entered =
+        crate::widgets::field::mounted(&ctx, Id::unique("gelabber-server-settings-mount"));
+    if s.server != Some(server) || entered {
         *s = State {
             server: Some(server),
             opened_at: chrono::Utc::now().timestamp_millis() as f64,
@@ -543,10 +551,20 @@ fn poll_loads(ui: &Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, m
             app.client.kick(id, user);
             s.target = None;
         } else if let Some(true) = controls::answer(ui.ctx(), &format!("ban:{user}")) {
-            app.client.ban(id, user);
+            // Not the client's op: a list fetched beside it raced the ban.
+            let http = app.client.http().clone();
+            s.ban = Some(Pending::spawn(app.client, async move {
+                http.ban(id, user).await
+            }));
             s.target = None;
-            reload_bans(app, s, id);
         }
+    }
+    if let Some(r) = poll(&mut s.ban) {
+        match r {
+            Ok(()) => app.client.refresh_server(id),
+            Err(e) => app.toasts.failure("Mitglied nicht gesperrt.", None, &e),
+        }
+        reload_bans(app, s, id);
     }
     let unbans: Vec<Uuid> = s
         .bans
@@ -577,6 +595,7 @@ fn poll_loads(ui: &Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail, m
         }
     }
     if let Some(true) = controls::answer(ui.ctx(), &format!("drop-server:{id}")) {
+        crate::screens::shell::leave_server(ui.ctx(), app.client, id);
         if detail.server.role == Role::Owner {
             app.client.delete_server(id);
         } else {
@@ -656,22 +675,29 @@ fn general(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
         if let Some(file) = done {
             s.picking = None;
             if let Some((bytes, _)) = file {
-                match controls::prepare_image(&bytes, 256, 256) {
-                    Ok((data, kind)) => {
-                        s.icon_removing = false;
-                        s.icon_status.clear();
-                        let http = app.client.http().clone();
-                        let kind = kind.to_owned();
-                        s.icon = Some(Pending::spawn(app.client, async move {
-                            http.upload_server_icon(id, &kind, data).await
-                        }));
-                    }
-                    Err(m) => s.icon_status.error(ui, m),
-                }
+                s.icon_removing = false;
+                s.icon_status.clear();
+                s.preparing = Some(controls::prepare(
+                    ui.ctx(),
+                    controls::ImageFile::Bytes(bytes),
+                    256,
+                    256,
+                ));
             }
         }
     }
-    let busy = s.icon.is_some();
+    if let Some(prepared) = poll(&mut s.preparing) {
+        match prepared {
+            Ok((data, kind)) => {
+                let http = app.client.http().clone();
+                s.icon = Some(Pending::spawn(app.client, async move {
+                    http.upload_server_icon(id, kind, data).await
+                }));
+            }
+            Err(m) => s.icon_status.error(ui, m),
+        }
+    }
+    let busy = s.icon.is_some() || s.preparing.is_some();
     controls::row(ui, 16.0, 64.0, |ui| {
         icon_tile(ui, app, detail);
         ui.spacing_mut().item_spacing.x = 8.0;
@@ -718,7 +744,8 @@ fn general(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
     ui.add_space(14.0);
     controls::column(ui, 560.0, |ui| {
         let mut name = s.name.clone().unwrap_or_else(|| detail.server.name.clone());
-        let field = TextField::new("server-name", &mut name)
+        // Not the add-server dialog's "server-name", which can draw over it.
+        let field = TextField::new(("server-settings", "server-name"), &mut name)
             .label("Servername")
             .char_limit(100)
             .error(s.name_errors.field("name"))
@@ -1328,5 +1355,132 @@ mod tests {
             section_in_view(&at(&[15.0, 400.0]), page(0.0), Some(("s5", 0.0))).1,
             None
         );
+    }
+
+    /// "Server erstellen" over a server's settings: two name fields in one
+    /// frame (debug builds panicked; release ones typed into both).
+    #[test]
+    fn the_add_server_dialog_over_the_settings_has_its_own_name_field() {
+        use crate::app::testkit::{FakeApi, HOME, launcher, wait_for_label, workspace};
+        use egui_kittest::kittest::Queryable;
+        let _config = crate::platform::paths::testing::TempConfig::new("server-name-twice");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
+        wait_for_label(&mut harness, "Servername");
+        harness.get_by_label("Server hinzufügen").click();
+        wait_for_label(&mut harness, "Server erstellen");
+        harness.get_by_label("Server erstellen").click();
+        harness.run_steps(6);
+        harness.get_by_label("Name");
+        harness.get_by_label("Servername");
+    }
+
+    const JONAS: &str = "00000000-0000-4000-8000-000000000042";
+
+    /// Wohnzimmer with Jonas as a member; bans and invites as `banned` says.
+    fn with_jonas(
+        banned: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        invites: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) -> impl Fn(&str, &str, &str) -> Option<crate::app::testkit::Reply> + Send + Sync + 'static
+    {
+        use crate::app::testkit::{HOME, LENA, Reply, workspace};
+        use serde_json::{Value, json};
+        use std::sync::atomic::Ordering;
+        move |method, path, body| {
+            let base = format!("/servers/{HOME}");
+            let is_banned = banned.load(Ordering::SeqCst);
+            match method {
+                "POST" if path == format!("{base}/ban") => {
+                    assert!(body.contains(JONAS));
+                    // The ban takes a moment, as a real one can.
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    banned.store(true, Ordering::SeqCst);
+                    Some(Reply::json(Value::Null))
+                }
+                "GET" if path == format!("{base}/bans") => {
+                    let list = if is_banned {
+                        json!([{
+                            "user_id": JONAS, "name": "Jonas", "avatar_url": null,
+                            "banned_by": LENA, "banned_at": "2026-01-02T00:00:00Z"
+                        }])
+                    } else {
+                        json!([])
+                    };
+                    Some(Reply::json(list))
+                }
+                "GET" if path == format!("{base}/invites") => {
+                    invites.fetch_add(1, Ordering::SeqCst);
+                    Some(Reply::json(json!([])))
+                }
+                "GET" if path == base => {
+                    let mut reply = workspace(method, path)?;
+                    if !is_banned {
+                        let jonas = json!({
+                            "user_id": JONAS, "name": "Jonas", "avatar_url": null,
+                            "joined_at": "2026-01-01T00:00:00Z", "status_text": null,
+                            "accent_color": null, "avatar_decoration": null, "role": "member"
+                        });
+                        if let Some(members) = reply.body["members"].as_array_mut() {
+                            members.push(jonas);
+                        }
+                    }
+                    Some(reply)
+                }
+                _ => workspace(method, path),
+            }
+        }
+    }
+
+    fn banned_users(ctx: &egui::Context) -> Option<Vec<Uuid>> {
+        let shared = state(ctx);
+        let s = shared.lock();
+        s.bans
+            .as_ref()
+            .and_then(|b| b.as_ref().ok())
+            .map(|b| b.iter().map(|x| x.user_id).collect())
+    }
+
+    /// The ban list is fetched after the ban, not beside it.
+    #[test]
+    fn a_ban_shows_in_the_ban_list() {
+        use crate::app::testkit::{FakeApi, HOME, launcher, wait_for, wait_for_label};
+        let _config = crate::platform::paths::testing::TempConfig::new("ban-list");
+        let banned = std::sync::Arc::default();
+        let api = FakeApi::start(true, with_jonas(banned, std::sync::Arc::default()));
+        let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
+        wait_for_label(&mut harness, "Servername");
+        wait_for(&mut harness, "the ban list", |h| {
+            banned_users(&h.ctx).is_some_and(|b| b.is_empty())
+        });
+        let jonas: Uuid = JONAS.parse().unwrap();
+        state(&harness.ctx).lock().target = Some(jonas);
+        controls::answer_for_test(&harness.ctx, &format!("ban:{jonas}"), true);
+        wait_for(&mut harness, "Jonas in the ban list", |h| {
+            banned_users(&h.ctx).is_some_and(|b| b == [jonas])
+        });
+    }
+
+    /// Back on the page, the invites are fetched again.
+    #[test]
+    fn a_new_visit_loads_the_lists_again() {
+        use crate::app::testkit::{FakeApi, HOME, launcher, wait_for, wait_for_label};
+        use std::sync::atomic::Ordering;
+        let _config = crate::platform::paths::testing::TempConfig::new("server-settings-visit");
+        let invites = std::sync::Arc::<std::sync::atomic::AtomicUsize>::default();
+        let api = FakeApi::start(true, with_jonas(std::sync::Arc::default(), invites.clone()));
+        let page = format!("/s/{HOME}/settings");
+        let mut harness = launcher(&api, &page);
+        wait_for_label(&mut harness, "Servername");
+        wait_for(&mut harness, "the invites", |_| {
+            invites.load(Ordering::SeqCst) == 1
+        });
+        let app = harness.state_mut().app().expect("app");
+        app.navigate(&format!("/s/{HOME}"));
+        harness.run_steps(4);
+        let app = harness.state_mut().app().expect("app");
+        app.navigate(&page);
+        wait_for(&mut harness, "the invites again", |_| {
+            invites.load(Ordering::SeqCst) == 2
+        });
     }
 }

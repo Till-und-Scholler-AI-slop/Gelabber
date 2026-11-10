@@ -167,8 +167,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                     let h = row_h(e);
                     let row = Rect::from_min_size(pos2(left, y), Vec2::new(right - left, h));
                     y += h + 2.0;
-                    let response = common::click(ui, row, Id::unique(("member-row", server, e.id)))
-                        .on_hover_text(format!("Profil von {}", e.name));
+                    let response = common::click(ui, row, Id::unique(("member-row", server, e.id)));
                     response.widget_info(|| {
                         egui::WidgetInfo::labeled(
                             egui::Role::Button,
@@ -179,6 +178,12 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                     if response.clicked() {
                         super::overlays::open_member(ui.ctx(), server, e.id);
                     }
+                    // A row out of view keeps its place in the Tab order and
+                    // its focus, but is neither laid out nor painted.
+                    if !ui.is_rect_visible(row) {
+                        continue;
+                    }
+                    let response = response.on_hover_text(format!("Profil von {}", e.name));
                     let under = if response.hovered() {
                         common::fill(ui.painter(), row, theme.radius.md, c.hover);
                         c.hover

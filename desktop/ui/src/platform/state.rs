@@ -1,12 +1,13 @@
 //! What the web keeps in localStorage per account and this app keeps in
 //! `native-state.json`: the last place, channel and DM (servers/lastPlace.ts,
 //! lastChannel.ts, dms/lastDm.ts), unsent texts for a week
-//! (messages/drafts.ts), per-person volumes (voice/userVolume.ts), and the
-//! window's size and position.
+//! (messages/drafts.ts), and the window's size and position. Per-person
+//! volumes are screens/voice/volume.rs's (`user-volumes.json`).
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use crate::screens::shell::{Memory, Place};
@@ -33,8 +34,10 @@ pub struct Account {
     pub dm: Option<Uuid>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub drafts: HashMap<Uuid, Draft>,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub volumes: HashMap<Uuid, UserVolume>,
+    /// Per-person volumes as 0.9.0–0.9.2 kept (and applied) them here. Moved
+    /// into `user-volumes.json` at load, and kept here until that worked.
+    #[serde(default, rename = "volumes", skip_serializing_if = "Option::is_none")]
+    pub old_volumes: Option<Map<String, Value>>,
 }
 
 /// `Place` of lastPlace.ts, as it stores it.
@@ -52,17 +55,8 @@ pub struct Draft {
     pub at: i64,
 }
 
-/// `UserVolume` of voice/userVolume.ts; only values away from 100 % and
-/// unmuted are kept.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct UserVolume {
-    pub volume: f32,
-    #[serde(default)]
-    pub muted: bool,
-}
-
-/// The window in logical points; no position where the desktop does not
-/// tell it (Wayland).
+/// The window in the desktop's logical pixels (egui points at zoom 1); no
+/// position where the desktop does not tell it (Wayland).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Window {
     pub width: f32,
@@ -98,34 +92,208 @@ impl Window {
     }
 }
 
+/// A file this build cannot read (a hand edit, a newer version's) is moved
+/// to `native-state.json.unreadable` (`-2` and on when that is taken), so
+/// the next save does not overwrite it.
 pub fn load() -> Stored {
-    serde_json::from_value(super::paths::read_json(FILE)).unwrap_or_default()
+    let Some(path) = super::paths::file(FILE) else {
+        return Stored::default();
+    };
+    let read =
+        std::fs::read(&path).map_err(|e| (e.kind() != std::io::ErrorKind::NotFound, e.to_string()));
+    let parsed =
+        read.and_then(|bytes| serde_json::from_slice(&bytes).map_err(|e| (true, e.to_string())));
+    match parsed {
+        Ok(mut stored) => {
+            move_old_volumes(&mut stored);
+            stored
+        }
+        Err((there, e)) => {
+            if there {
+                // Each one kept: an earlier rescued copy is not replaced.
+                let aside = (1..)
+                    .map(|n| match n {
+                        1 => path.with_file_name(format!("{FILE}.unreadable")),
+                        n => path.with_file_name(format!("{FILE}.unreadable-{n}")),
+                    })
+                    .find(|p| !p.exists())
+                    .unwrap_or_else(|| path.with_file_name(format!("{FILE}.unreadable")));
+                tracing::warn!("state: {e}; kept as {}", aside.display());
+                if let Err(e) = std::fs::rename(&path, &aside) {
+                    tracing::warn!("state: {e}");
+                }
+            }
+            Stored::default()
+        }
+    }
 }
 
-/// Off the UI thread; a failed write only loses the newest change.
+/// The volumes of [`Account::old_volumes`] into the sliders' store
+/// (screens/voice/volume.rs) for each person it has no level for, with its
+/// range and its mute; the old field goes once that file is written.
+fn move_old_volumes(stored: &mut Stored) {
+    use crate::screens::voice::volume;
+    if stored.accounts.values().all(|a| a.old_volumes.is_none()) {
+        return;
+    }
+    let Some(path) = super::paths::file(volume::FILE) else {
+        return;
+    };
+    let mut all = match std::fs::read(&path) {
+        Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
+            Ok(Value::Object(all)) => all,
+            _ => {
+                tracing::warn!("state: {} does not read; volumes stay", path.display());
+                return;
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Map::new(),
+        Err(e) => {
+            tracing::warn!("state: {}: {e}; volumes stay", path.display());
+            return;
+        }
+    };
+    // Only these lose the old field: an account whose entry in the store is
+    // no object keeps it, nothing went over.
+    let mut moved = Vec::new();
+    for (id, account) in &stored.accounts {
+        let Some(old) = &account.old_volumes else {
+            continue;
+        };
+        let key = id.to_string();
+        let entry = all
+            .entry(key.clone())
+            .or_insert_with(|| Value::Object(Map::new()));
+        let Value::Object(people) = entry else {
+            continue;
+        };
+        for (person, level) in old {
+            if Uuid::parse_str(person).is_err() || people.contains_key(person) {
+                continue;
+            }
+            let volume = level
+                .get("volume")
+                .and_then(Value::as_f64)
+                .filter(|v| v.is_finite())
+                .unwrap_or(1.0)
+                .clamp(0.0, volume::MAX_PLAYBACK);
+            let muted = level.get("muted").and_then(Value::as_bool) == Some(true);
+            if (volume - 1.0).abs() > f64::EPSILON || muted {
+                people.insert(
+                    person.clone(),
+                    serde_json::json!({ "volume": volume, "muted": muted }),
+                );
+            }
+        }
+        if people.is_empty() {
+            all.remove(&key);
+        }
+        moved.push(*id);
+    }
+    let written = serde_json::to_vec_pretty(&Value::Object(all))
+        .map_err(std::io::Error::other)
+        .and_then(|bytes| super::paths::write_atomic(&path, &bytes, false));
+    match written {
+        Ok(()) => {
+            for id in &moved {
+                if let Some(account) = stored.accounts.get_mut(id) {
+                    account.old_volumes = None;
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("state: {}: {e}; volumes stay", path.display());
+            return;
+        }
+    }
+    // Written now, not with the next change: an old field left on disk would
+    // be moved again at the next start and undo a level reset since.
+    let state = super::paths::file(FILE);
+    let written = serde_json::to_vec_pretty(stored)
+        .map_err(std::io::Error::other)
+        .and_then(|bytes| match &state {
+            Some(state) => super::paths::write_atomic(state, &bytes, true),
+            None => Ok(()),
+        });
+    if let Err(e) = written {
+        tracing::warn!("state: {e}");
+    }
+}
+
+/// Off the UI thread, in order; a failed write only loses the newest change.
 pub fn save(stored: &Stored) {
-    // The path is fixed now: the directory must not change under the thread.
     let (Ok(bytes), Some(path)) = (serde_json::to_vec_pretty(stored), super::paths::file(FILE))
     else {
         return;
     };
-    let write = move || {
-        if let Err(e) = super::paths::write_atomic(&path, &bytes, true) {
-            tracing::warn!("state: {e}");
-        }
-    };
-    if std::thread::Builder::new()
-        .name("gelabber-state".into())
-        .spawn(write)
-        .is_err()
-    {
-        tracing::warn!("state: no thread to write it");
-    }
+    super::paths::write_latest(path, bytes, true);
 }
 
 /// The stored window for the viewport builder.
 pub fn window() -> Option<Window> {
-    load().window.and_then(Window::sane)
+    let mut window = load().window.and_then(Window::sane)?;
+    // A monitor that is gone would open the window where nobody sees it.
+    if !on_screen(&window) {
+        window.x = None;
+        window.y = None;
+    }
+    Some(window)
+}
+
+/// The stored window (logical pixels) in physical pixels at `scale`, as
+/// winit places it; `None` without a position.
+#[cfg(any(windows, test))]
+fn physical_rect(window: &Window, scale: f32) -> Option<[i32; 4]> {
+    let (x, y) = (window.x?, window.y?);
+    let px = |v: f32| (v * scale).round() as i32;
+    Some([px(x), px(y), px(x + window.width), px(y + window.height)])
+}
+
+/// Whether a monitor shows any part of the window at its stored place.
+/// Compared in physical pixels: winit turns the logical position into
+/// physical ones with the scale of the monitor it creates the window on
+/// (the primary one), and monitors are found by physical rectangles.
+#[cfg(windows)]
+fn on_screen(window: &Window) -> bool {
+    use windows_sys::Win32::Foundation::{POINT, RECT};
+    use windows_sys::Win32::Graphics::Gdi::{
+        MONITOR_DEFAULTTONULL, MONITOR_DEFAULTTOPRIMARY, MonitorFromPoint, MonitorFromRect,
+    };
+    use windows_sys::Win32::UI::HiDpi::{
+        DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForMonitor, MDT_EFFECTIVE_DPI,
+        SetThreadDpiAwarenessContext,
+    };
+    // SAFETY: plain calls with values on the stack; the thread's DPI
+    // awareness (physical coordinates from here on) is put back below.
+    unsafe {
+        let before = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        let primary = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
+        let (mut dpi_x, mut dpi_y) = (96u32, 96u32);
+        let scale = if GetDpiForMonitor(primary, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) == 0 {
+            dpi_x as f32 / 96.0
+        } else {
+            1.0
+        };
+        let shown = physical_rect(window, scale).is_none_or(|[left, top, right, bottom]| {
+            let rect = RECT {
+                left,
+                top,
+                right,
+                bottom,
+            };
+            !MonitorFromRect(&rect, MONITOR_DEFAULTTONULL).is_null()
+        });
+        if !before.is_null() {
+            SetThreadDpiAwarenessContext(before);
+        }
+        shown
+    }
+}
+
+/// X11 window managers keep a window on screen; Wayland ignores positions.
+#[cfg(not(windows))]
+fn on_screen(_: &Window) -> bool {
+    true
 }
 
 impl From<&Memory> for Account {
@@ -138,7 +306,7 @@ impl From<&Memory> for Account {
             channels: m.channels.clone(),
             dm: m.dm,
             drafts: HashMap::new(),
-            volumes: HashMap::new(),
+            old_volumes: None,
         }
     }
 }
@@ -155,7 +323,7 @@ impl Account {
         }
     }
 
-    /// The places of `memory`, leaving drafts and volumes as they are.
+    /// The places of `memory`, leaving the drafts as they are.
     pub fn set_memory(&mut self, memory: &Memory) {
         let places = Account::from(memory);
         self.place = places.place;
@@ -183,21 +351,6 @@ impl Account {
                 text: text.clone(),
                 at: now,
             });
-        }
-    }
-
-    /// `sanitize` of userVolume.ts: 100 % and unmuted is not stored.
-    pub fn set_volume(&mut self, user: Uuid, volume: f32) {
-        let volume = if volume.is_finite() {
-            volume.clamp(0.0, 2.0)
-        } else {
-            1.0
-        };
-        let muted = self.volumes.get(&user).is_some_and(|v| v.muted);
-        if (volume - 1.0).abs() < 0.001 && !muted {
-            self.volumes.remove(&user);
-        } else {
-            self.volumes.insert(user, UserVolume { volume, muted });
         }
     }
 }
@@ -254,16 +407,19 @@ mod tests {
         assert!(account.fresh_drafts(2_000 + DRAFT_MAX_AGE_MS).is_empty());
     }
 
+    /// The off-screen check compares physical pixels with physical pixels.
     #[test]
-    fn only_volumes_away_from_the_default_are_kept() {
-        let u = Uuid::new_v4();
-        let mut account = Account::default();
-        account.set_volume(u, 1.5);
-        assert_eq!(account.volumes[&u].volume, 1.5);
-        account.set_volume(u, 9.0);
-        assert_eq!(account.volumes[&u].volume, 2.0);
-        account.set_volume(u, 1.0);
-        assert!(account.volumes.is_empty());
+    fn the_stored_place_scales_to_physical_pixels() {
+        let w = Window {
+            width: 800.0,
+            height: 600.0,
+            x: Some(-100.0),
+            y: Some(50.0),
+            maximized: false,
+        };
+        assert_eq!(physical_rect(&w, 1.5), Some([-150, 75, 1050, 975]));
+        assert_eq!(physical_rect(&w, 1.0), Some([-100, 50, 700, 650]));
+        assert_eq!(physical_rect(&Window { x: None, ..w }, 1.5), None);
     }
 
     #[test]
@@ -292,5 +448,148 @@ mod tests {
         // Unknown files read as empty, not as an error.
         let s: Stored = serde_json::from_str(r#"{"accounts":{},"other":1}"#).unwrap();
         assert_eq!(s, Stored::default());
+    }
+
+    #[test]
+    fn a_file_this_build_cannot_read_is_moved_aside_not_overwritten() {
+        let config = super::super::paths::testing::TempConfig::new("state-unreadable");
+        let path = config.dir.join(FILE);
+        let text =
+            r#"{"accounts":{"0f9a4c1e-8f1b-4f3e-9d55-2b7a1c3e5d01":{"place":{"kind":"planet"}}}}"#;
+        std::fs::write(&path, text).unwrap();
+        assert_eq!(load(), Stored::default());
+        assert!(!path.exists());
+        let aside = config.dir.join(format!("{FILE}.unreadable"));
+        assert_eq!(std::fs::read_to_string(&aside).unwrap(), text);
+        // A second one does not replace the first.
+        std::fs::write(&path, "{halb").unwrap();
+        assert_eq!(load(), Stored::default());
+        assert_eq!(std::fs::read_to_string(&aside).unwrap(), text);
+        let second = config.dir.join(format!("{FILE}.unreadable-2"));
+        assert_eq!(std::fs::read_to_string(second).unwrap(), "{halb");
+        drop(config);
+    }
+
+    /// 0.9.0–0.9.2 kept imported per-person volumes in this file and applied
+    /// them; they move once into the sliders' store, without replacing a
+    /// level set there, and only then leave this file.
+    #[test]
+    fn old_volumes_move_into_the_sliders_store_once() {
+        let config = super::super::paths::testing::TempConfig::new("state-old-volumes");
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let (x, y, z) = (
+            Uuid::from_u128(11),
+            Uuid::from_u128(12),
+            Uuid::from_u128(13),
+        );
+        let old = serde_json::json!({"accounts": {
+            a.to_string(): {"dm": z, "volumes": {
+                x.to_string(): {"volume": 0.5, "muted": true},
+                y.to_string(): {"volume": 2.0},
+                z.to_string(): {"volume": 9.0},
+            }},
+            b.to_string(): {"volumes": {x.to_string(): {"volume": 1.5}}},
+        }});
+        std::fs::write(config.dir.join(FILE), old.to_string()).unwrap();
+        let volumes = config.dir.join(crate::screens::voice::volume::FILE);
+        let own =
+            serde_json::json!({a.to_string(): {y.to_string(): {"volume": 3.0, "muted": false}}});
+        std::fs::write(&volumes, own.to_string()).unwrap();
+
+        let stored = load();
+        let moved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&volumes).unwrap()).unwrap();
+        assert_eq!(
+            moved,
+            serde_json::json!({
+                a.to_string(): {
+                    x.to_string(): {"volume": 0.5, "muted": true},
+                    y.to_string(): {"volume": 3.0, "muted": false},
+                    z.to_string(): {"volume": 4.0, "muted": false},
+                },
+                b.to_string(): {x.to_string(): {"volume": 1.5, "muted": false}},
+            })
+        );
+        assert_eq!(stored.accounts[&a].dm, Some(z));
+        // The next save leaves the old field out.
+        save(&stored);
+        assert!(super::super::paths::flush(std::time::Duration::from_secs(
+            5
+        )));
+        let text = std::fs::read_to_string(config.dir.join(FILE)).unwrap();
+        assert!(!text.contains("volumes"), "{text}");
+        drop(config);
+    }
+
+    /// A sliders' store that does not read is left alone, and so is the old
+    /// field: the move is tried again at the next start.
+    #[test]
+    fn old_volumes_stay_while_the_store_does_not_read() {
+        let config = super::super::paths::testing::TempConfig::new("state-old-volumes-kept");
+        let (a, x) = (Uuid::from_u128(1), Uuid::from_u128(11));
+        let old = serde_json::json!({"accounts": {a.to_string(): {"volumes": {
+            x.to_string(): {"volume": 0.5},
+        }}}});
+        std::fs::write(config.dir.join(FILE), old.to_string()).unwrap();
+        let volumes = config.dir.join(crate::screens::voice::volume::FILE);
+        std::fs::write(&volumes, "{halb").unwrap();
+        let stored = load();
+        assert_eq!(std::fs::read_to_string(&volumes).unwrap(), "{halb");
+        save(&stored);
+        assert!(super::super::paths::flush(std::time::Duration::from_secs(
+            5
+        )));
+        let text = std::fs::read_to_string(config.dir.join(FILE)).unwrap();
+        assert!(text.contains("volumes"), "{text}");
+        drop(config);
+    }
+
+    /// The real start (load, no save of its own): the old field leaves the
+    /// file with the move, so a level reset afterwards does not come back.
+    #[test]
+    fn a_start_moves_the_old_volumes_and_the_next_one_moves_nothing() {
+        let config = super::super::paths::testing::TempConfig::new("state-old-volumes-start");
+        let (a, x) = (Uuid::from_u128(1), Uuid::from_u128(11));
+        let old = serde_json::json!({"accounts": {a.to_string(): {"dm": x, "volumes": {
+            x.to_string(): {"volume": 0.5},
+        }}}});
+        let state = config.dir.join(FILE);
+        std::fs::write(&state, old.to_string()).unwrap();
+        let volumes = config.dir.join(crate::screens::voice::volume::FILE);
+        drop(super::super::Platform::new(None));
+        let text = std::fs::read_to_string(&state).unwrap();
+        assert!(!text.contains("volumes"), "{text}");
+        assert!(text.contains(&x.to_string()), "the rest stays: {text}");
+        let moved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&volumes).unwrap()).unwrap();
+        assert_eq!(moved[a.to_string()][x.to_string()]["volume"], 0.5);
+        // The user resets the level on the slider: the entry goes.
+        std::fs::write(&volumes, "{}").unwrap();
+        drop(super::super::Platform::new(None));
+        assert_eq!(std::fs::read_to_string(&volumes).unwrap(), "{}");
+        drop(config);
+    }
+
+    /// An account whose entry in the sliders' store is no object keeps its
+    /// old volumes: nothing is dropped that was not moved.
+    #[test]
+    fn old_volumes_that_could_not_move_stay() {
+        let config = super::super::paths::testing::TempConfig::new("state-old-volumes-odd");
+        let (a, b, x) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(11));
+        let old = serde_json::json!({"accounts": {
+            a.to_string(): {"volumes": {x.to_string(): {"volume": 0.5}}},
+            b.to_string(): {"volumes": {x.to_string(): {"volume": 1.5}}},
+        }});
+        std::fs::write(config.dir.join(FILE), old.to_string()).unwrap();
+        let volumes = config.dir.join(crate::screens::voice::volume::FILE);
+        std::fs::write(&volumes, serde_json::json!({a.to_string(): 3}).to_string()).unwrap();
+        let stored = load();
+        assert!(stored.accounts[&a].old_volumes.is_some());
+        assert!(stored.accounts[&b].old_volumes.is_none());
+        let on_disk: Stored =
+            serde_json::from_slice(&std::fs::read(config.dir.join(FILE)).unwrap()).unwrap();
+        assert!(on_disk.accounts[&a].old_volumes.is_some());
+        assert!(on_disk.accounts[&b].old_volumes.is_none());
+        drop(config);
     }
 }

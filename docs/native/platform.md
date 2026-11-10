@@ -22,14 +22,16 @@ renamed, so a crash never leaves half a file.
 | `update.json` | `autoCheck` (read only) | yes |
 | `settings.json` | device settings (`screens/settings/prefs.rs`) | no |
 | `session.json` (0600) | `gelabber_session` cookie per server origin, only where the keyring did not take it (see Sign-in) | no |
-| `native-state.json` (0600) | per account: last place, last channel per server, last DM, drafts (7 days), per-person volumes; window size, position, maximized | no |
+| `native-state.json` (0600) | per account: last place, last channel per server, last DM, drafts (7 days); window size, position, maximized | no |
+| `user-volumes.json` | per account: each person's playback volume and local mute (`screens/voice/volume.rs`) | no |
 | `legacy-settings.json` | the Tauri app's export of the web client's localStorage (read once, never written) | written by it |
 
 First start (`legacy.rs`): while `settings.json` is missing, the app takes
 over `legacy-settings.json` (`{"version": 1, "localStorage": {key: value}}`:
 `gelabber.media`, `gelabber.media.source-audio-share`, `gelabber.interface`
-into `settings.json`, `gelabber.user-volumes:<account>` and
-`gelabber:chat-draft:<account>:<channel>` into `native-state.json`). Without
+into `settings.json`, `gelabber.user-volumes:<account>` into
+`user-volumes.json` and `gelabber:chat-draft:<account>:<channel>` into
+`native-state.json`). Without
 a readable `legacy-settings.json` (0.8.9 and older) it reads the same entries
 from the Tauri app's WebView storage (`webview.rs`: WebView2's LevelDB on
 Windows, WebKitGTK's SQLite on Linux); a failure that may pass (an I/O or
@@ -40,6 +42,12 @@ and `…/server`, the latter only where `desktop.json` has no server). It
 overwrites nothing (a `desktop.json` or `native-state.json` it cannot read
 stays as it is) and leaves the sources where they are; `settings.json` is
 written even when empty, so it happens once.
+
+0.9.0 to 0.9.2 kept per-person volumes in `native-state.json` (`volumes` per
+account). Loading that file moves them once into `user-volumes.json`, for
+each person it has no level for yet, and drops the old field once that file
+is written; while `user-volumes.json` cannot be read or written they stay
+where they are.
 
 Server choice, first match wins: `--server <url>` / `--server=<url>`,
 `GELABBER_SERVER`, `desktop.json`, else the setup screen.

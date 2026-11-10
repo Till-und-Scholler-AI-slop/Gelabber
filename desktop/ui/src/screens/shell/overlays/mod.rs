@@ -36,6 +36,8 @@ pub enum Overlay {
 
 #[derive(Default)]
 struct OverlayState {
+    /// The account the open overlays and held toasts belong to.
+    account: Option<Uuid>,
     overlay: Option<Overlay>,
     question: Option<Question>,
     toasts: message_toasts::MessageToasts,
@@ -90,6 +92,19 @@ pub(super) fn follow_route(ctx: &egui::Context, route: &Route) {
             s.dialog = None;
         }
     });
+}
+
+/// Another account signed in: nothing of the one before stays open or
+/// held (a question, a profile, the switcher, its toasts).
+pub(super) fn switch_account(ctx: &egui::Context, user: Uuid) {
+    let state = shared(ctx);
+    let mut s = state.lock();
+    if s.account != Some(user) {
+        *s = OverlayState {
+            account: Some(user),
+            ..OverlayState::default()
+        };
+    }
 }
 
 fn shared(ctx: &egui::Context) -> Arc<Mutex<OverlayState>> {

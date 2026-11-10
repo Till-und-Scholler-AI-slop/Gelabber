@@ -44,31 +44,32 @@ pub struct Ptt {
 }
 
 /// Binds `key` (a `KeyboardEvent.code` as the settings store it, or
-/// `Mouse4`/`Mouse5`) and reports `Bound` or `Failed`, then `Press` and
-/// `Release`, from another thread. End an older binding first: on Linux
-/// both would be portal sessions with the same shortcut.
-pub fn bind(key: &str, report: Report) -> Result<Ptt, String> {
+/// `Mouse4`/`Mouse5`; `label` is what the settings show for it) and reports
+/// `Bound` or `Failed`, then `Press` and `Release`, from another thread. End
+/// an older binding first: on Linux both would be portal sessions with the
+/// same shortcut.
+pub fn bind(key: &str, label: &str, report: Report) -> Result<Ptt, String> {
     if !KEYS.iter().any(|known| known.code == key) {
         return Err(format!("unknown key: {key}"));
     }
     Ok(Ptt {
-        _binding: start(key, report)?,
+        _binding: start(key, label, report)?,
     })
 }
 
 #[cfg(windows)]
-fn start(key: &str, report: Report) -> Result<Box<dyn Binding>, String> {
+fn start(key: &str, _label: &str, report: Report) -> Result<Box<dyn Binding>, String> {
     let trigger = windows_trigger(key).ok_or("key without a Windows trigger")?;
     Ok(Box::new(hook::start(trigger, report)?))
 }
 
 #[cfg(target_os = "linux")]
-fn start(key: &str, report: Report) -> Result<Box<dyn Binding>, String> {
-    Ok(Box::new(portal::start(xkb_trigger(key), report)))
+fn start(key: &str, label: &str, report: Report) -> Result<Box<dyn Binding>, String> {
+    Ok(Box::new(portal::start(portal_trigger(key, label), report)))
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
-fn start(_key: &str, _report: Report) -> Result<Box<dyn Binding>, String> {
+fn start(_key: &str, _label: &str, _report: Report) -> Result<Box<dyn Binding>, String> {
     Err("no global keys on this system".into())
 }
 
@@ -257,6 +258,20 @@ fn key(code: &str) -> Option<&'static Key> {
     KEYS.iter().find(|key| key.code == code)
 }
 
+/// Whether `code` is one of [`KEYS`] (a place code, not an older egui name).
+pub fn known(code: &str) -> bool {
+    key(code).is_some()
+}
+
+/// The code a physical key (egui's `physical_key`) binds, from [`KEYS`].
+/// egui reports the number pad's digits, `-`, `/` and `.` as the main
+/// keys, so those bind the main keys' codes.
+pub fn code_of(physical: egui::Key) -> Option<&'static str> {
+    KEYS.iter()
+        .map(|key| key.code)
+        .find(|code| egui::Key::from_name(code) == Some(physical))
+}
+
 #[cfg_attr(not(windows), allow(dead_code))]
 fn windows_trigger(code: &str) -> Option<Trigger> {
     key(code).map(|key| key.windows)
@@ -269,9 +284,27 @@ fn xkb_trigger(code: &str) -> Option<&'static str> {
     key(code).and_then(|key| key.xkb)
 }
 
+/// The portal's suggestion for `code` recorded as `label`. A keysym is
+/// looked up through the desktop's layout, so a letter or digit is named by
+/// the label the user saw (QWERTZ's Z is stored at KeyY, its keysym is "z");
+/// other keys by the US name of their place.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn portal_trigger(code: &str, label: &str) -> Option<&'static str> {
+    let mut chars = label.chars();
+    if let (Some(c), None) = (chars.next(), chars.next())
+        && c.is_ascii_alphanumeric()
+    {
+        let sym = c.to_ascii_lowercase().to_string();
+        if let Some(found) = KEYS.iter().filter_map(|k| k.xkb).find(|x| *x == sym) {
+            return Some(found);
+        }
+    }
+    xkb_trigger(code)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Event, KEYS, Trigger, windows_trigger, xkb_trigger};
+    use super::{Event, KEYS, Trigger, portal_trigger, windows_trigger, xkb_trigger};
     use std::collections::HashSet;
 
     #[test]
@@ -321,9 +354,44 @@ mod tests {
     }
 
     #[test]
+    fn physical_keys_bind_their_place_codes() {
+        use egui::Key;
+        assert_eq!(super::code_of(Key::Y), Some("KeyY"));
+        assert_eq!(super::code_of(Key::Num4), Some("Digit4"));
+        assert_eq!(super::code_of(Key::ArrowUp), Some("ArrowUp"));
+        assert_eq!(super::code_of(Key::Backtick), Some("Backquote"));
+        assert_eq!(super::code_of(Key::Equals), Some("Equal"));
+        assert_eq!(super::code_of(Key::OpenBracket), Some("BracketLeft"));
+        assert_eq!(super::code_of(Key::Plus), Some("NumpadAdd"));
+        assert_eq!(super::code_of(Key::ShiftLeft), Some("ShiftLeft"));
+        assert_eq!(super::code_of(Key::SuperRight), Some("MetaRight"));
+        assert_eq!(super::code_of(Key::Menu), Some("ContextMenu"));
+        assert_eq!(super::code_of(Key::Escape), None);
+        // Every code it gives is one the bindings know.
+        for code in KEYS.iter().filter_map(|k| egui::Key::from_name(k.code)) {
+            let bound = super::code_of(code).expect("a code");
+            assert!(KEYS.iter().any(|k| k.code == bound));
+        }
+    }
+
+    /// The desktop maps the suggested keysym through its layout: QWERTZ's Z
+    /// (stored at KeyY) is suggested as "z", the key the user pressed.
+    #[test]
+    fn the_portal_is_offered_the_key_the_user_saw() {
+        assert_eq!(portal_trigger("KeyY", "Z"), Some("z"));
+        assert_eq!(portal_trigger("KeyZ", "Z"), Some("z"));
+        assert_eq!(portal_trigger("Digit4", "4"), Some("4"));
+        // Keys without such a label keep their place's name.
+        assert_eq!(portal_trigger("F13", "F13"), Some("F13"));
+        assert_eq!(portal_trigger("Backquote", "^"), Some("grave"));
+        assert_eq!(portal_trigger("BracketLeft", "Ü"), Some("bracketleft"));
+        assert_eq!(portal_trigger("ControlLeft", "Control links"), None);
+    }
+
+    #[test]
     fn unknown_keys_are_refused_before_anything_starts() {
         let report: super::Report = std::sync::Arc::new(|_: Event| {});
-        assert!(super::bind("Escape", report.clone()).is_err());
-        assert!(super::bind("", report).is_err());
+        assert!(super::bind("Escape", "Escape", report.clone()).is_err());
+        assert!(super::bind("", "", report).is_err());
     }
 }

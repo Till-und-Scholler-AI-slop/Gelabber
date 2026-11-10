@@ -422,7 +422,8 @@ pub struct CardState {
     errors: FormErrors,
     running: Option<&'static str>,
     picking: Option<Picked>,
-    banner_upload: Option<crate::task::Pending<Result<User, gelabber_client::ApiError>>>,
+    /// The picked or dropped banner, read and cropped off the UI thread.
+    preparing: Option<controls::Prepared>,
     /// Which colour picker is open.
     picker: Option<&'static str>,
     /// The preview's height last frame, for its sticky stop.
@@ -467,11 +468,17 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
             }
         }
     }
-    if let Some(result) = crate::task::poll(&mut s.banner_upload) {
+    // The upload's answer is in the client's session, for every view of it.
+    if s.running == Some("upload")
+        && s.preparing.is_none()
+        && let Some(result) = settled(app, "banner")
+    {
         s.running = None;
         match result {
-            Ok(updated) => {
-                adopt_user(app, &updated);
+            Ok(()) => {
+                if let Some(updated) = app.client.with_state(|st| st.me().cloned()) {
+                    adopt_user(app, &updated);
+                }
                 s.banner_saved = true;
                 s.errors.clear_field("banner_url");
             }
@@ -483,22 +490,31 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
         if let Some(file) = done {
             s.picking = None;
             if let Some((bytes, _)) = file {
-                upload_banner(app, s, &bytes);
+                prepare_banner(ui.ctx(), s, controls::ImageFile::Bytes(bytes));
             }
         }
     }
     if s.running.is_none()
-        && let Some((bytes, _)) = controls::dropped_file(ui.ctx())
+        && let Some(file) = controls::dropped_image(ui.ctx())
     {
-        upload_banner(app, s, &bytes);
+        prepare_banner(ui.ctx(), s, file);
     }
-    // The client may hold a newer user than the one passed (banner upload).
+    if let Some(prepared) = crate::task::poll(&mut s.preparing) {
+        match prepared {
+            Ok((data, kind)) => app.client.upload_banner(kind, data),
+            Err(message) => {
+                s.running = None;
+                s.errors.set_fields(vec![("banner_url", message)]);
+            }
+        }
+    }
+    // The client may hold a newer user than the one passed.
     let user = app
         .client
         .with_state(|st| st.me().cloned())
         .filter(|u| u.id == user.id)
         .unwrap_or_else(|| user.clone());
-    let busy = s.running.is_some() || op_pending(app, "profile");
+    let busy = s.running.is_some() || op_pending(app, "profile") || op_pending(app, "banner");
     let patch = form.patch(&user);
     let dirty = !is_empty_patch(&patch);
     s.dirty = dirty;
@@ -833,19 +849,11 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
     s.form = Some(form);
 }
 
-fn upload_banner(app: &AppCtx, s: &mut CardState, bytes: &[u8]) {
+/// Reads and crops the banner off the UI thread; the upload follows.
+fn prepare_banner(ctx: &egui::Context, s: &mut CardState, file: controls::ImageFile) {
     s.banner_saved = false;
-    match controls::prepare_image(bytes, 960, 320) {
-        Ok((data, kind)) => {
-            s.running = Some("upload");
-            let http = app.client.http().clone();
-            let kind = kind.to_owned();
-            s.banner_upload = Some(crate::task::Pending::spawn(app.client, async move {
-                http.upload_banner(&kind, data).await
-            }));
-        }
-        Err(message) => s.errors.set_fields(vec![("banner_url", message)]),
-    }
+    s.running = Some("upload");
+    s.preparing = Some(controls::prepare(ctx, file, 960, 320));
 }
 
 /// `ColorField`: label, a 48×36 swatch that opens a picker, the value or
@@ -949,4 +957,61 @@ fn color_field(
         controls::paragraph(ui, e, text::META, c.danger, w);
     }
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app::testkit::{FakeApi, Reply, lena, wait_for};
+    use crate::platform::paths::testing::TempConfig;
+
+    #[derive(Debug)]
+    struct Dropped(std::path::PathBuf);
+    impl egui::DroppedFile for Dropped {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            panic!("read on the UI thread")
+        }
+    }
+
+    /// A dropped banner lands in the client's session, not only in the
+    /// card: the rest of the app (the user panel, profile popouts) reads it there.
+    #[test]
+    fn an_uploaded_banner_reaches_the_session() {
+        let config = TempConfig::new("banner-upload");
+        let api = FakeApi::start(true, |method, path, _| {
+            (method == "PUT" && path == "/me/banner").then(|| {
+                let mut user = lena();
+                user["banner_url"] = "/api/banners/neu.png".into();
+                Reply::json(user)
+            })
+        });
+        let client = gelabber_client::Client::new(&api.origin).expect("client");
+        let watched = client.clone();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .with_max_steps(10_000)
+            .with_step_dt(1.0 / 60.0)
+            .build_eframe(move |cc| {
+                crate::Launcher::with_app(cc, client.clone(), Some("/settings/profilkarte".into()))
+            });
+        wait_for(&mut harness, "the card", |h| {
+            use egui_kittest::kittest::Queryable;
+            h.query_by_label("Bannerbild hochladen").is_some()
+        });
+        let file = config.dir.join("banner.png");
+        image::RgbaImage::from_pixel(96, 32, image::Rgba([200, 40, 40, 255]))
+            .save(&file)
+            .expect("png");
+        harness
+            .input_mut()
+            .dropped_files
+            .push(std::sync::Arc::new(Dropped(file)));
+        let banner = || watched.with_state(|s| s.me().and_then(|u| u.banner_url.clone()));
+        wait_for(&mut harness, "the banner in the session", |_| {
+            banner().as_deref() == Some("/api/banners/neu.png")
+        });
+        assert!(api.saw("PUT /me/banner"));
+    }
 }

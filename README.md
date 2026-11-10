@@ -36,10 +36,12 @@ PWA auf dem Handy: [Gelabber als PWA installieren](docs/v0.6-pwa.md).
 
 | Pfad | Rolle |
 |---|---|
-| `api/` | Rust, Axum 0.8.9, sqlx 0.9.0, Tokio 1.53.1 |
-| `web/` | React + Vite, mediasoup-client 3.24.1 (`node:26.8.2-trixie` → `nginx:1.31.5-alpine`) |
-| `media/` | Eigener Media-Gateway, offizielle Rust-Bindung mediasoup 0.29.0 als einzige SFU-Engine |
-| `deploy/compose` | Caddy 2.11.4, Postgres 18.6, Redis 8.10.1, MinIO CE `RELEASE.2025-10-15T17-29-55Z`, coturn 4.18.0 |
+| `backend/api/` | Rust, Axum 0.8.9, sqlx 0.9.0, Tokio 1.54.1 |
+| `backend/media/` | Eigener Media-Gateway, offizielle Rust-Bindung mediasoup 0.29.0 als einzige SFU-Engine |
+| `backend/shared/` | Typen, auf die sich API und SFU einigen müssen (Media-Ticket, ICE-URLs, Client-Adresse) |
+| `web/` | React + Vite, mediasoup-client 3.26.0 (`node:26.12.1-trixie` → `nginx:1.31.7-alpine`) |
+| `desktop/` | Native Desktop-App für Linux und Windows, eigener Cargo-Workspace (siehe `desktop/README.md`) |
+| `deploy/` | Compose (`deploy/compose`): Caddy 2.11.4, Postgres 18.6, Redis 8.10.1, MinIO CE `RELEASE.2025-10-15T17-29-55Z`, coturn 4.18.0 |
 
 Aktuell veröffentlicht: [v0.9.2](https://github.com/Till-und-Scholler-AI-slop/Gelabber/releases/tag/v0.9.2).
 

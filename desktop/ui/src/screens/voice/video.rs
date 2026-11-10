@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use eframe::egui_wgpu::{self, CallbackResources, CallbackTrait, ScreenDescriptor, wgpu};
 use egui::{Rect, Ui, vec2};
@@ -96,6 +97,28 @@ struct Resources {
     tiles: HashMap<egui::Id, Planes>,
 }
 
+impl Resources {
+    fn drop_unused(&mut self, now: Instant) {
+        self.tiles
+            .retain(|_, p| now.saturating_duration_since(p.used) <= KEEP);
+    }
+}
+
+/// Once a frame of the app: frees the GPU copies of tiles no window draws
+/// any more, also after the last one went (no draw runs then).
+pub fn sweep_gpu(render_state: &egui_wgpu::RenderState) {
+    sweep_gpu_at(render_state, Instant::now());
+}
+
+fn sweep_gpu_at(render_state: &egui_wgpu::RenderState, now: Instant) {
+    let mut renderer = render_state.renderer.write();
+    if let Some(res) = renderer.callback_resources.get_mut::<Resources>()
+        && !res.tiles.is_empty()
+    {
+        res.drop_unused(now);
+    }
+}
+
 /// One tile's GPU copy of its picture.
 struct Planes {
     width: u32,
@@ -104,9 +127,13 @@ struct Planes {
     textures: [wgpu::Texture; 3],
     params: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
-    /// The egui frame that drew it last; tiles gone for a while are freed.
-    used: u64,
+    /// When a tile drew it last; tiles gone for [`KEEP`] are freed. A
+    /// clock, not egui's frame number, which each window counts for itself.
+    used: Instant,
 }
+
+/// How long the GPU copy of a tile that is no longer drawn stays.
+const KEEP: Duration = Duration::from_secs(2);
 
 /// The pipeline is in a renderer: pictures draw at their size.
 static INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -278,7 +305,7 @@ impl Planes {
             textures,
             params,
             bind_group,
-            used: 0,
+            used: Instant::now(),
         }
     }
 
@@ -377,7 +404,7 @@ struct Draw {
     id: egui::Id,
     frame: Arc<Frame>,
     params: Params,
-    egui_frame: u64,
+    at: Instant,
 }
 
 impl CallbackTrait for Draw {
@@ -405,15 +432,14 @@ impl CallbackTrait for Draw {
             res.tiles.insert(self.id, planes);
         }
         let srgb = res.srgb;
-        let frame_nr = self.egui_frame;
         if let Some(planes) = res.tiles.get_mut(&self.id) {
             if planes.serial != Some(self.frame.serial) {
                 planes.upload(queue, &self.frame);
             }
-            planes.used = frame_nr;
+            planes.used = planes.used.max(self.at);
             queue.write_buffer(&planes.params, 0, &self.params.bytes(srgb));
         }
-        res.tiles.retain(|_, p| p.used + 120 >= frame_nr);
+        res.drop_unused(self.at);
         Vec::new()
     }
 
@@ -516,15 +542,19 @@ pub fn paint(
         id,
         frame,
         params,
-        egui_frame: ui.ctx().cumulative_frame_nr(),
+        at: Instant::now(),
     };
     ui.painter()
         .add(egui_wgpu::Callback::new_paint_callback(rect, draw));
 }
 
-/// The size each key was last asked for and when (`input.time`).
+/// The size each key was last asked for, when (`input.time`), and for a
+/// cover tile whether the picture counted as wider than it.
 #[derive(Clone, Default)]
-struct Asked(HashMap<gelabber_call::VideoKey, ((u32, u32, u32), f64)>);
+struct Asked(HashMap<gelabber_call::VideoKey, Ask>);
+
+/// Width, height and rate asked for; when; and the cover decision.
+type Ask = ((u32, u32, u32), f64, Option<bool>);
 
 fn asked_id() -> egui::Id {
     egui::Id::unique("gelabber-video-requests")
@@ -533,9 +563,81 @@ fn asked_id() -> egui::Id {
 /// A key no tile asked for this long has no tile any more.
 const GONE_AFTER: f64 = 0.5;
 
-/// Asks the call for the size a tile shows `key` at, in physical pixels,
-/// once per change: the core scales and drops frames before they reach
-/// Rust, and the SFU sends a fitting layer.
+/// How far a picture's shape may stray from the tile's before a cover tile
+/// switches the side it fills by: more than the core's rounding moves it.
+const COVER_SLACK: f32 = 1.03;
+
+/// What to ask the core for so the picture fills a `tile` (physical
+/// pixels) drawn with `fit`: the core shrinks the picture to fit inside,
+/// aspect kept, sides rounded down to even, and 0 leaves a side open.
+/// The limits are for the picture as displayed (the core swaps them for a
+/// sideways one). Only the tile and (for cover) which side of the shown
+/// picture is longer decide, never the delivered size, which carries the
+/// core's rounding.
+/// `wide_before` is the last cover decision; returns the size and this one.
+pub fn ask(
+    tile: (u32, u32),
+    shown: Option<(f32, f32)>,
+    fit: Fit,
+    wide_before: Option<bool>,
+) -> ((u32, u32), Option<bool>) {
+    let (tw, th) = tile;
+    let (size, wide) = match (fit, shown) {
+        (Fit::Cover, Some((w, h))) if w > 0.0 && h > 0.0 => {
+            let (picture, room) = (w / h, tw as f32 / th as f32);
+            let wide = match wide_before {
+                Some(true) => picture * COVER_SLACK > room,
+                Some(false) => picture > room * COVER_SLACK,
+                None => picture > room,
+            };
+            // The tile's height (wide) or width, the other side open.
+            ((if wide { (0, th) } else { (tw, 0) }), Some(wide))
+        }
+        _ => ((tw, th), None),
+    };
+    (size, wide)
+}
+
+/// Asks the call for the size a tile shows `key` at (see [`ask`]), once
+/// per change: the core scales and drops frames before they reach Rust.
+/// `frame` is the picture the tile shows, when it has one.
+pub fn request_fit(
+    ui: &Ui,
+    call: &gelabber_call::Call,
+    key: gelabber_call::VideoKey,
+    tile: Rect,
+    frame: Option<&Frame>,
+    fit: Fit,
+    fps: u32,
+) {
+    let ppp = ui.ctx().pixels_per_point();
+    let tile_px = (
+        (tile.width() * ppp).round().max(1.0) as u32,
+        (tile.height() * ppp).round().max(1.0) as u32,
+    );
+    let now = ui.ctx().input(|i| i.time);
+    let before = ui.ctx().data(|d| {
+        d.get_temp::<Asked>(asked_id())
+            .and_then(|a| a.0.get(&key).copied())
+    });
+    let (wh, wide) = ask(
+        tile_px,
+        frame.map(shown_size),
+        fit,
+        before.and_then(|(_, _, wide)| wide),
+    );
+    let size = (wh.0, wh.1, fps);
+    ui.ctx().data_mut(|d| {
+        d.get_temp_mut_or_default::<Asked>(asked_id())
+            .0
+            .insert(key, (size, now, wide))
+    });
+    if before.map(|(size, _, _)| size) != Some(size) {
+        call.request_video(key, size.0, size.1, size.2);
+    }
+}
+
+/// [`request_fit`] for the whole of `tile`, before a picture shows.
 pub fn request(
     ui: &Ui,
     call: &gelabber_call::Call,
@@ -543,22 +645,7 @@ pub fn request(
     tile: Rect,
     fps: u32,
 ) {
-    let ppp = ui.ctx().pixels_per_point();
-    let size = (
-        (tile.width() * ppp).round().max(1.0) as u32,
-        (tile.height() * ppp).round().max(1.0) as u32,
-        fps,
-    );
-    let now = ui.ctx().input(|i| i.time);
-    let last = ui.ctx().data_mut(|d| {
-        d.get_temp_mut_or_default::<Asked>(asked_id())
-            .0
-            .insert(key, (size, now))
-            .map(|(size, _)| size)
-    });
-    if last != Some(size) {
-        call.request_video(key, size.0, size.1, size.2);
-    }
+    request_fit(ui, call, key, tile, None, Fit::Contain, fps);
 }
 
 /// Forgets the last size asked for `key`, here and in the call, so the
@@ -576,14 +663,25 @@ pub fn forget(ctx: &egui::Context, call: &gelabber_call::Call, key: gelabber_cal
 /// a while is let go of, and its next tile asks for its size again.
 pub fn sweep(ctx: &egui::Context, call: &gelabber_call::Call) {
     let now = ctx.input(|i| i.time);
+    // An open video window asks only when a picture wakes it: a slow or
+    // still video would otherwise lose its request and never wake it again.
+    let windowed: Vec<gelabber_call::VideoKey> = ctx
+        .data(|d| d.get_temp::<Asked>(asked_id()))
+        .map(|a| a.0.into_keys().collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|k| super::window::is_open(ctx, *k))
+        .collect();
     let gone: Vec<gelabber_call::VideoKey> = ctx.data_mut(|d| {
         let asked = &mut d.get_temp_mut_or_default::<Asked>(asked_id()).0;
+        let held =
+            |k: &gelabber_call::VideoKey, at: f64| now - at <= GONE_AFTER || windowed.contains(k);
         let gone = asked
             .iter()
-            .filter(|(_, (_, at))| now - at > GONE_AFTER)
+            .filter(|(k, (_, at, _))| !held(k, *at))
             .map(|(k, _)| *k)
             .collect();
-        asked.retain(|_, (_, at)| now - *at <= GONE_AFTER);
+        asked.retain(|k, (_, at, _)| held(k, *at));
         gone
     });
     for key in gone {
@@ -652,6 +750,112 @@ mod tests {
         assert_eq!(call.video_request(key), None);
         frame(1.1, true);
         assert_eq!(call.video_request(key), Some((320, 180, 30)));
+    }
+
+    /// A video in its own window keeps its request between pictures,
+    /// however long a still picture lasts; closed, it lets go.
+    #[test]
+    fn an_open_window_holds_its_request() {
+        let call = gelabber_call::Call::new(
+            gelabber_client::Client::new("http://127.0.0.1:9").expect("client"),
+        );
+        let key = gelabber_call::VideoKey(9);
+        let ctx = egui::Context::default();
+        let tile = Rect::from_min_size(pos2(0.0, 0.0), vec2(960.0, 540.0));
+        let frame = |time: f64, drawn: bool| {
+            let input = egui::RawInput {
+                time: Some(time),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                sweep(ui.ctx(), &call);
+                if drawn {
+                    request(ui, &call, key, tile, 30);
+                }
+            });
+            out.textures_delta.clear();
+        };
+        super::super::window::toggle(&ctx, key, "Jonas");
+        frame(0.0, true);
+        frame(5.0, false);
+        assert_eq!(call.video_request(key), Some((960, 540, 30)));
+        super::super::window::close(&ctx, key);
+        frame(5.1, false);
+        assert_eq!(call.video_request(key), None);
+    }
+
+    /// The core's sink (gelabber_media.cc `OnFrame`, `Fit`): the limits are
+    /// for the picture as displayed, so a sideways one reads them swapped;
+    /// shrink into them (0: none), aspect kept, to even sides; a picture
+    /// that fits stays. Returns the frame as delivered, before its turn.
+    fn core_fit(max: (u32, u32), source: (u32, u32), sideways: bool) -> (u32, u32) {
+        let max = if sideways { (max.1, max.0) } else { max };
+        let (mw, mh) = (i64::from(max.0), i64::from(max.1));
+        let (w, h) = (i64::from(source.0), i64::from(source.1));
+        let wide = mw > 0 && w > mw;
+        let tall = mh > 0 && h > mh;
+        if !wide && !tall {
+            return source;
+        }
+        let (w, h) = if wide && (!tall || mw * h <= mh * w) {
+            (mw, h * mw / w)
+        } else {
+            (w * mh / h, mh)
+        };
+        ((w & !1).max(2) as u32, (h & !1).max(2) as u32)
+    }
+
+    /// Asked, delivered, asked again: the ask settles at once for every
+    /// tile size (the stage's 944×612 used to flip every frame), a cover
+    /// picture covers its tile and a contained one fits, also turned.
+    #[test]
+    fn the_ask_settles_and_fills_the_tile() {
+        let sources = [(1920, 1080), (1280, 720), (640, 480), (1080, 1920)];
+        for (source, sideways) in sources.into_iter().flat_map(|s| [(s, false), (s, true)]) {
+            let turn = |(w, h): (u32, u32)| if sideways { (h, w) } else { (w, h) };
+            for fit in [Fit::Contain, Fit::Cover] {
+                for tw in (120..1400).step_by(37) {
+                    for th in (90..900).step_by(29) {
+                        let mut frame = None::<(u32, u32)>;
+                        let mut wide = None;
+                        let mut asks = Vec::new();
+                        for _ in 0..4 {
+                            let shown = frame.map(|f| {
+                                let (w, h) = turn(f);
+                                (w as f32, h as f32)
+                            });
+                            let (size, w) = ask((tw, th), shown, fit, wide);
+                            wide = w;
+                            asks.push(size);
+                            frame = Some(core_fit(size, source, sideways));
+                        }
+                        let what = format!("{source:?} {sideways} {fit:?} {tw}×{th}: {asks:?}");
+                        assert_eq!(asks[1], asks[3], "{what}");
+                        assert_eq!(asks[2], asks[3], "{what}");
+                        let (w, h) = turn(frame.unwrap());
+                        // No upscaling beyond the source itself.
+                        let shrunk = w < turn(source).0;
+                        match fit {
+                            Fit::Contain => assert!(w <= tw && h <= th, "{what}: {w}×{h}"),
+                            Fit::Cover if shrunk => assert!(
+                                // 3 % of slack near the tile's own shape.
+                                w as f32 * 1.04 >= tw as f32 && h as f32 * 1.04 >= th as f32,
+                                "{what}: {w}×{h}"
+                            ),
+                            Fit::Cover => {}
+                        }
+                        // Contained, it fills the tile on one side at least.
+                        if fit == Fit::Contain && shrunk {
+                            assert!(w + 2 >= tw || h + 2 >= th, "{what}: {w}×{h}");
+                        }
+                    }
+                }
+            }
+        }
+        // A portrait phone camera (sideways 1920×1080) in a 300×600 tile.
+        let (size, _) = ask((300, 600), Some((1080.0, 1920.0)), Fit::Contain, None);
+        assert_eq!(size, (300, 600));
+        assert_eq!(core_fit(size, (1920, 1080), true), (532, 300));
     }
 
     #[test]
@@ -726,6 +930,59 @@ mod tests {
         let [r, g, b, _] = px(220, 60);
         assert!(r < 25 && g > 230 && b < 25, "green: {r} {g} {b}");
         assert_eq!(&px(160, 60)[..3], &[11, 13, 14]);
+    }
+
+    /// The GPU copies of tiles go a while after the last draw, through the
+    /// app's sweep: no tile's draw is left to free them.
+    #[test]
+    fn copies_of_tiles_no_one_draws_are_freed() {
+        let red = Arc::new(solid(64, 36, 81, 90, 240, 1));
+        let render_state = egui_kittest::wgpu::create_render_state(
+            egui_kittest::wgpu::default_wgpu_setup(),
+            egui_wgpu::RendererOptions::PREDICTABLE,
+        );
+        install(&render_state);
+        let shown = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let on = shown.clone();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(vec2(120.0, 120.0))
+            .renderer(egui_kittest::wgpu::WgpuTestRenderer::from_render_state(
+                render_state.clone(),
+            ))
+            .build_ui(move |ui| {
+                if on.load(std::sync::atomic::Ordering::Relaxed) {
+                    let tile = Rect::from_min_size(pos2(10.0, 10.0), vec2(100.0, 100.0));
+                    paint(
+                        ui,
+                        egui::Id::unique("video-test-sweep"),
+                        tile,
+                        red.clone(),
+                        Fit::Cover,
+                        false,
+                        0.0,
+                    );
+                }
+            });
+        // The test's clock: every draw lies between these two.
+        let first = Instant::now();
+        harness.run();
+        harness.render().expect("render");
+        let tiles = |rs: &egui_wgpu::RenderState| {
+            rs.renderer
+                .read()
+                .callback_resources
+                .get::<Resources>()
+                .map_or(0, |r| r.tiles.len())
+        };
+        assert_eq!(tiles(&render_state), 1);
+        shown.store(false, std::sync::atomic::Ordering::Relaxed);
+        harness.run();
+        harness.render().expect("render");
+        let last = Instant::now();
+        sweep_gpu_at(&render_state, first);
+        assert_eq!(tiles(&render_state), 1, "kept for a moment");
+        sweep_gpu_at(&render_state, last + KEEP * 2);
+        assert_eq!(tiles(&render_state), 0);
     }
 
     /// A tile reaching past the window's edge keeps its scale: egui clamps

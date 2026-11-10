@@ -275,6 +275,29 @@ fn notification_entries(
     entries
 }
 
+/// How long until `owner`'s timed mute ends or the next minute starts,
+/// whichever is first: the menu's mute line changes no sooner.
+fn timed_mute_wait(app: &AppCtx, owner: &Owner) -> Option<std::time::Duration> {
+    let target = owner.target()?;
+    let now = app.client.http().server_now();
+    let own = app
+        .client
+        .with_state(|s| notify::setting_of(s, target.scope, target.id));
+    let until = own.until.filter(|_| own.is_muted(now))?;
+    Some(until_next_minute(now, until))
+}
+
+fn until_next_minute(
+    now: chrono::DateTime<chrono::Utc>,
+    until: chrono::DateTime<chrono::Utc>,
+) -> std::time::Duration {
+    use chrono::Timelike;
+    let into = std::time::Duration::new(u64::from(now.second()), now.nanosecond() % 1_000_000_000);
+    let minute = std::time::Duration::from_secs(60).saturating_sub(into);
+    let end = (until - now).to_std().unwrap_or_default();
+    minute.min(end).max(std::time::Duration::from_millis(10))
+}
+
 /// Every entry of `owner`'s menu; `manage` whether the user manages
 /// channels (edit and delete).
 fn entries(app: &AppCtx, owner: &Owner) -> Vec<Entry> {
@@ -400,6 +423,10 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     if entries.is_empty() {
         state::with(&ctx, |s| s.row_menu = None);
         return;
+    }
+    // A timed mute listed: its line and its end are shown by the minute.
+    if let Some(wait) = timed_mute_wait(app, &open.owner) {
+        ctx.request_repaint_after(wait);
     }
     let focus_in_menu = |ctx: &egui::Context| {
         let focused = ctx.memory(|m| m.focused());
@@ -597,6 +624,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
         }
     }
 
+    // Another frame only when something moved or was picked: the rects
+    // feed the next frame's hit tests, a pick changes the menu.
+    let changed = open.menu_rect != menu_rect || open.sub_rect != sub_rect || pick.is_some();
     state::with(&ctx, |s| {
         if let Some(m) = s.row_menu.as_mut() {
             m.menu_rect = menu_rect;
@@ -623,7 +653,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
             run(&ctx, app, &open.owner, act);
         }
     }
-    ctx.request_repaint();
+    if changed {
+        ctx.request_repaint();
+    }
 }
 
 /// Closes the menu; `refocus` gives the focus back to its opener.
@@ -920,6 +952,18 @@ mod tests {
 
     /// The same entries as the web's rowMenuEntries.test.ts.
     #[test]
+    fn a_timed_mute_wakes_the_menu_by_the_minute() {
+        use chrono::TimeZone;
+        let now = chrono::Utc
+            .with_ymd_and_hms(2026, 11, 10, 18, 41, 15)
+            .unwrap();
+        let later = now + chrono::Duration::hours(1);
+        assert_eq!(until_next_minute(now, later).as_secs(), 45);
+        let soon = now + chrono::Duration::seconds(5);
+        assert_eq!(until_next_minute(now, soon).as_secs(), 5);
+    }
+
+    #[test]
     fn entries_match_the_web() {
         let now = chrono::Utc::now();
         let server = Uuid::from_u128(1);
@@ -1087,6 +1131,35 @@ mod tests {
             ]
         );
         assert!(harness.query_by_label("Kanal löschen").is_none());
+    }
+
+    /// An open menu that nothing happens in lets the app rest.
+    #[test]
+    fn an_open_menu_does_not_draw_frame_after_frame() {
+        use crate::app::testkit::{
+            ALLGEMEIN, FakeApi, HOME, focused_label, launcher, wait_for_label, workspace,
+        };
+        use crate::platform::paths::testing::TempConfig;
+        let _config = TempConfig::new("shell-row-menu-idle");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for_label(&mut harness, "allgemein");
+        for _ in 0..8 {
+            harness.key_press(egui::Key::Tab);
+            harness.run_steps(2);
+        }
+        assert_eq!(focused_label(&harness).as_deref(), Some("allgemein"));
+        harness.key_press_modifiers(Modifiers::SHIFT, Key::F10);
+        wait_for_label(&mut harness, "Kanal löschen");
+        let start = std::time::Instant::now();
+        let mut idle = false;
+        while !idle && start.elapsed() < std::time::Duration::from_secs(10) {
+            harness.step();
+            idle = !harness.ctx.has_requested_repaint();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(idle, "still repainting");
+        assert!(is_open_for(&harness.ctx, ALLGEMEIN.parse().expect("id")));
     }
 
     /// A level keeps a timed mute's end; a server's "all" is no row.

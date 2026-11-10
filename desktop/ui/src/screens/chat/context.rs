@@ -114,6 +114,7 @@ pub fn show(
     channel: Uuid,
     state: &mut ContextState,
     input: &ListInput,
+    revealed: &std::collections::HashMap<Uuid, std::collections::HashSet<usize>>,
 ) -> Vec<ContextAction> {
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
@@ -191,7 +192,15 @@ pub fn show(
     }
     if let Some(Ok(context)) = &state.result {
         let messages = context.messages.clone();
-        let rows = pane::context_rows(ui, body, input, &messages, state.target, &mut state.scroll);
+        let rows = pane::context_rows(
+            ui,
+            body,
+            input,
+            &messages,
+            state.target,
+            &mut state.scroll,
+            revealed,
+        );
         actions.extend(rows.into_iter().map(ContextAction::Row));
     }
     actions

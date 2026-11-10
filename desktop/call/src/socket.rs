@@ -69,7 +69,16 @@ impl MediaSocket {
         let config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
             .max_message_size(Some(MAX_FRAME))
             .max_frame_size(Some(MAX_FRAME));
-        let connect = tokio_tungstenite::connect_async_with_config(url, Some(config), false);
+        let connector = gelabber_client::http::ws_connector().map_err(|e| {
+            tracing::warn!("media socket: no TLS configuration: {e}");
+            MediaError::new("network")
+        })?;
+        let connect = tokio_tungstenite::connect_async_tls_with_config(
+            url,
+            Some(config),
+            false,
+            Some(connector),
+        );
         let (stream, _) = tokio::time::timeout(MEDIA_REQUEST_DEADLINE, connect)
             .await
             .map_err(|_| MediaError::new("connect_timeout"))?

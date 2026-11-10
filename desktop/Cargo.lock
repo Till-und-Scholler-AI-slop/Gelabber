@@ -1796,6 +1796,8 @@ dependencies = [
  "futures-util",
  "parking_lot",
  "reqwest",
+ "rustls",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

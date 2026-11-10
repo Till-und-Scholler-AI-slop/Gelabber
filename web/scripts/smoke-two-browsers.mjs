@@ -1,4 +1,5 @@
-// Runs against the Compose stack from CI. Each isolated browser context has
+// Runs locally against a running Compose stack (`npm run test:browser-smoke`);
+// CI no longer runs it. Each isolated browser context has
 // its own account, WebSocket, media peer and cookie jar. Media travels through
 // the running SFU and coturn; only camera and Live capture is synthetic.
 /* global process, window, navigator, document, setInterval, clearInterval, console, URL */

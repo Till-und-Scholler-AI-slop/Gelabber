@@ -47,6 +47,7 @@ import {
   playbackSliderVolume,
   sharesSourceAudio,
   sourceAudioChoice,
+  uploadLimitFromField,
   useMediaSettings,
   videoSendBudget,
 } from "./settings.ts";
@@ -446,18 +447,10 @@ export function MediaSettingsForm({
             </div>
             {settings.videoUploadLimit > 0 && (
               <div className="stream-upload-limit">
-                <Input
-                  id="video-upload-limit"
-                  type="number"
-                  min="0.001"
-                  max="4294.967"
-                  step="any"
-                  aria-label="Eigenes gemeinsames Video-Limit (Mbit/s)"
-                  value={settings.videoUploadLimit / 1_000_000}
-                  onChange={(event) =>
-                    settings.patch({
-                      videoUploadLimit: Number(event.target.value) * 1_000_000,
-                    })
+                <UploadLimitField
+                  limit={settings.videoUploadLimit}
+                  onLimit={(videoUploadLimit) =>
+                    settings.patch({ videoUploadLimit })
                   }
                 />
                 <span>Mbit/s für alle Videos zusammen</span>
@@ -480,6 +473,41 @@ export function MediaSettingsForm({
         <MicrophoneTest onClose={() => setMicrophoneTest(false)} />
       )}
     </div>
+  );
+}
+
+/** The custom limit in Mbit/s. The text is its own while typing: an empty
+ * or half-typed field ("0" on the way to "0.5") keeps the stored limit, and
+ * leaving the field shows that limit again. */
+function UploadLimitField({
+  limit,
+  onLimit,
+}: {
+  limit: number;
+  onLimit: (limit: number) => void;
+}) {
+  const [text, setText] = useState(String(limit / 1_000_000));
+  const [shown, setShown] = useState(limit);
+  if (shown !== limit) {
+    setShown(limit);
+    setText(String(limit / 1_000_000));
+  }
+  return (
+    <Input
+      id="video-upload-limit"
+      type="number"
+      min="0.001"
+      max="4294.967"
+      step="any"
+      aria-label="Eigenes gemeinsames Video-Limit (Mbit/s)"
+      value={text}
+      onChange={(event) => {
+        setText(event.target.value);
+        const next = uploadLimitFromField(event.target.value);
+        if (next !== null) onLimit(next);
+      }}
+      onBlur={() => setText(String(limit / 1_000_000))}
+    />
   );
 }
 

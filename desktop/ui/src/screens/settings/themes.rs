@@ -340,6 +340,8 @@ struct Sync {
     shown: Option<Definition>,
     /// A gallery preview and the frame it was last asked for.
     preview: Option<(Definition, u64)>,
+    /// The client's account epoch this belongs to.
+    epoch: Option<u64>,
 }
 
 fn sync(ctx: &egui::Context) -> Arc<Mutex<Sync>> {
@@ -355,12 +357,30 @@ fn sync(ctx: &egui::Context) -> Arc<Mutex<Sync>> {
 pub fn forget(ctx: &egui::Context) {
     let shared = sync(ctx);
     let mut s = shared.lock();
-    let shown = s.shown.take();
-    *s = Sync {
-        shown,
-        ..Sync::default()
-    };
+    s.forget();
 }
+
+impl Sync {
+    fn forget(&mut self) {
+        let shown = self.shown.take();
+        *self = Sync {
+            shown,
+            ..Sync::default()
+        };
+    }
+
+    /// A sign-out or another account (a new store epoch) starts afresh: the
+    /// last one's local document, save and error are not this one's.
+    fn follow_account(&mut self, epoch: u64) {
+        if self.epoch.is_some_and(|e| e != epoch) {
+            self.forget();
+        }
+        self.epoch = Some(epoch);
+    }
+}
+
+/// The account's themes did not load with the workspace.
+const LOAD_FAILED: &str = "Themes konnten nicht geladen werden. Bitte erneut versuchen.";
 
 /// What the pages read about the account's themes.
 pub struct SyncView {
@@ -373,6 +393,7 @@ pub struct SyncView {
 }
 
 fn poll_sync(client: &Client, s: &mut Sync) {
+    s.follow_account(client.with_state(|st| st.epoch()));
     let state = client.with_state(|st| st.op("themes").cloned());
     match state {
         Some(gelabber_client::OpState::Done) => {
@@ -418,10 +439,7 @@ fn poll_sync(client: &Client, s: &mut Sync) {
             Err(ApiError::Decode(_)) => {
                 s.error = Some("Unbekanntes Theme-Format vom Server.".into())
             }
-            Err(_) => {
-                s.error =
-                    Some("Themes konnten nicht geladen werden. Bitte erneut versuchen.".into())
-            }
+            Err(_) => s.error = Some(LOAD_FAILED.into()),
         }
     }
 }
@@ -438,10 +456,15 @@ pub fn sync_state(ctx: &egui::Context, app: &AppCtx) -> SyncView {
     poll_sync(app.client, &mut s);
     let doc = effective(app.client, &s);
     let loaded = doc.is_some();
+    // The workspace loaded without them: say so, and offer the reload.
+    let missing = !loaded && s.reload.is_none() && app.client.with_state(|st| st.bootstrapped);
     SyncView {
         doc: doc.unwrap_or_default(),
         saving: s.saving || op_pending(app, "themes"),
-        error: s.error.clone(),
+        error: s
+            .error
+            .clone()
+            .or_else(|| missing.then(|| LOAD_FAILED.into())),
         ready: loaded && s.pending.is_none() && s.reload.is_none(),
         pending: s.pending.is_some(),
     }
@@ -451,6 +474,7 @@ pub fn sync_state(ctx: &egui::Context, app: &AppCtx) -> SyncView {
 pub fn change(ctx: &egui::Context, app: &AppCtx, op: Op) -> bool {
     let shared = sync(ctx);
     let mut s = shared.lock();
+    s.follow_account(app.client.with_state(|st| st.epoch()));
     let Some(doc) = effective(app.client, &s) else {
         return false;
     };
@@ -478,7 +502,7 @@ pub fn change(ctx: &egui::Context, app: &AppCtx, op: Op) -> bool {
 }
 
 /// "Erneut versuchen" / "Erneut anwenden": reload, then resend a pending change.
-fn retry(ctx: &egui::Context, app: &AppCtx) {
+pub(super) fn retry(ctx: &egui::Context, app: &AppCtx) {
     let shared = sync(ctx);
     let mut s = shared.lock();
     s.reapply = s.pending.is_some();
@@ -1366,9 +1390,9 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut PanelState, viewport: Rect) {
         // Under the baseline, not at the bottom of the 1.6 line box.
         link::underline(ui.painter(), foot, r.top(), r.left(), r.right(), c.muted);
         if Link::interact(ui, r, Id::unique("gelabber-omarchy"), "Omarchy").clicked() {
-            ctx.open_url(egui::OpenUrl::new_tab(
+            crate::platform::open_url_logged(
                 "https://github.com/omacom/omarchy/tree/quattro/themes",
-            ));
+            );
         }
     }
 }
@@ -1873,6 +1897,87 @@ mod tests {
             apply_op(&doc, &Op::Apply("nope".into())).unwrap_err(),
             "Das ausgewählte Theme ist nicht mehr verfügbar."
         );
+    }
+
+    /// Themes that did not load with the workspace: the Themes area says so,
+    /// and "Erneut versuchen" loads them.
+    #[test]
+    fn themes_that_failed_to_load_can_be_loaded_again() {
+        use crate::app::testkit::{FakeApi, Reply, launcher, wait_for, wait_for_label};
+        use egui::accesskit::Role;
+        use egui_kittest::kittest::Queryable;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _config = crate::platform::paths::testing::TempConfig::new("themes-unloaded");
+        let up = std::sync::Arc::new(AtomicBool::new(false));
+        let serve = up.clone();
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", "/me/themes") if !serve.load(Ordering::SeqCst) => {
+                Some(Reply::error(503, "unavailable"))
+            }
+            _ => None,
+        });
+        let mut harness = launcher(&api, "/settings/themes");
+        wait_for_label(&mut harness, LOAD_FAILED);
+        up.store(true, Ordering::SeqCst);
+        harness
+            .get_by_role_and_label(Role::Button, "Erneut versuchen")
+            .click();
+        // The reloaded document is the account's now.
+        wait_for(&mut harness, "the themes", |h| {
+            sync(&h.ctx).lock().local.is_some()
+        });
+        harness.run_steps(2);
+        assert!(harness.query_by_label(LOAD_FAILED).is_none());
+    }
+
+    /// Darstellung says the themes did not load, and loads them again.
+    #[test]
+    fn darstellung_offers_to_load_the_themes_again() {
+        use crate::app::testkit::{FakeApi, Reply, launcher, wait_for, wait_for_label};
+        use egui::accesskit::Role;
+        use egui_kittest::kittest::Queryable;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _config = crate::platform::paths::testing::TempConfig::new("themes-unloaded-mode");
+        let up = std::sync::Arc::new(AtomicBool::new(false));
+        let serve = up.clone();
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", "/me/themes") if !serve.load(Ordering::SeqCst) => {
+                Some(Reply::error(503, "unavailable"))
+            }
+            _ => None,
+        });
+        let mut harness = launcher(&api, "/settings/darstellung");
+        wait_for_label(&mut harness, "Erneut versuchen");
+        up.store(true, Ordering::SeqCst);
+        harness
+            .get_by_role_and_label(Role::Button, "Erneut versuchen")
+            .click();
+        wait_for(&mut harness, "the themes", |h| {
+            sync(&h.ctx).lock().local.is_some()
+        });
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Erneut versuchen").is_none());
+    }
+
+    /// Another account (a new store epoch) does not inherit the last one's
+    /// local document, save or error; the window's theme stays meanwhile.
+    #[test]
+    fn theme_sync_belongs_to_one_account() {
+        let mut s = Sync {
+            local: Some(ThemeDocument::default()),
+            saving: true,
+            error: Some("x".into()),
+            shown: Some(preset("light")),
+            ..Sync::default()
+        };
+        s.follow_account(1);
+        assert!(s.saving && s.local.is_some(), "the first account keeps it");
+        s.follow_account(1);
+        assert!(s.saving);
+        s.follow_account(2);
+        assert!(!s.saving && s.local.is_none() && s.error.is_none());
+        assert_eq!(s.shown, Some(preset("light")));
+        assert_eq!(s.epoch, Some(2));
     }
 
     /// "System" follows the OS while the app runs, as prefers-color-scheme.

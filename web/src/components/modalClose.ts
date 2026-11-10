@@ -22,6 +22,28 @@ export function outsideBox(
   );
 }
 
+type DialogEvent = { target: unknown; currentTarget: unknown };
+
+/**
+ * Tells a click on a dialog itself from the end of a drag: a text selection
+ * dragged out of a field and released over the backdrop also clicks the
+ * dialog, the common ancestor. Only a press that began on the dialog itself
+ * counts. `press` takes the dialog's pointerdown, `onDialog` its click.
+ */
+export function backdropClicks() {
+  let pressedOnDialog = false;
+  return {
+    press(event: DialogEvent): void {
+      pressedOnDialog = event.target === event.currentTarget;
+    },
+    onDialog(event: DialogEvent): boolean {
+      const pressed = pressedOnDialog;
+      pressedOnDialog = false;
+      return pressed && event.target === event.currentTarget;
+    },
+  };
+}
+
 export const DISCARD_CHANGES: ConfirmRequest = {
   title: "Änderungen verwerfen?",
   message: "Deine Eingaben gehen verloren.",

@@ -126,6 +126,51 @@ export class MediaError extends Error {
     this.name = "MediaError";
   }
 }
+
+const MEDIA_FAILED = "Die Sprachverbindung ist fehlgeschlagen.";
+const MEDIA_SLOW =
+  "Der Sprachserver antwortet nicht. Bitte noch einmal versuchen.";
+const MEDIA_BUSY =
+  "Die Sprachverbindung ist überlastet. Bitte noch einmal versuchen.";
+const MEDIA_UPDATE =
+  "Bitte Gelabber aktualisieren und den Sprachkanal erneut betreten.";
+/** What a media error code means for the user. `null`: a newer operation
+ * took over, nothing to say. A code missing here reads as MEDIA_FAILED. */
+const MEDIA_MESSAGES: Record<string, string | null> = {
+  // The media server's codes.
+  bad_request: MEDIA_FAILED,
+  forbidden: "Dafür fehlt dir in diesem Sprachkanal die Berechtigung.",
+  unsupported_media_version: MEDIA_UPDATE,
+  update_required: MEDIA_UPDATE,
+  unsupported_codec:
+    "Dein Browser kann kein Format senden, das dieser Sprachkanal empfängt.",
+  unavailable: "Kein freier Sprachplatz.",
+  unauthorized: "Der Sprachserver hat die Verbindung nicht zugelassen.",
+  negotiation_failed: MEDIA_FAILED,
+  ice_failed: MEDIA_FAILED,
+  gone: "Der Sprachserver ist gerade nicht erreichbar.",
+  // The client's own.
+  connection_closed: "Die Verbindung zum Sprachserver ist abgebrochen.",
+  request_timeout: MEDIA_SLOW,
+  sdk_timeout: MEDIA_SLOW,
+  live_recovery_timeout: MEDIA_SLOW,
+  request_overflow: MEDIA_BUSY,
+  request_id_exhausted: MEDIA_BUSY,
+  event_overflow: MEDIA_BUSY,
+  // The browser SDK's chunk did not arrive. It loads when joining, so the
+  // way back is joining again; a tab whose chunk a deploy replaced reloads.
+  sdk_load_failed:
+    "Die Anruffunktion konnte nicht geladen werden. Bitte Gelabber neu laden und den Sprachkanal erneut betreten.",
+  sdk_load_timeout:
+    "Die Anruffunktion lädt gerade sehr langsam. Bitte gleich den Sprachkanal erneut betreten.",
+  publication_cancelled: null,
+  publication_replaced: null,
+};
+
+export function mediaErrorMessage(code: string): string | null {
+  const message = MEDIA_MESSAGES[code];
+  return message === undefined ? MEDIA_FAILED : message;
+}
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const trackKinds = new Set(["a", "v", "s", "sa"]);
 const record = (v: unknown): v is Record<string, unknown> =>

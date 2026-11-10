@@ -133,6 +133,112 @@ describe("account theme sync", () => {
       body: doc("dark", 1),
     });
   });
+  it("adopts the account another tab initialised first", async () => {
+    localStorage.setItem("gelabber.theme", "light");
+    bindThemeAccount("a");
+    call
+      .mockResolvedValueOnce(doc("dark", 0))
+      .mockRejectedValueOnce(new ApiError("theme_conflict", 409, "conflict"))
+      .mockResolvedValueOnce(doc("nord", 1));
+    await syncThemes();
+    expect(call).toHaveBeenCalledTimes(3);
+    expect(useAccountThemes.getState()).toMatchObject({
+      doc: { active: "nord", revision: 1 },
+      pending: null,
+      status: "ready",
+    });
+  });
+  it("sends a change restored from the cache on the next sync", async () => {
+    bindThemeAccount("a");
+    call.mockResolvedValueOnce(doc());
+    await syncThemes();
+    call.mockRejectedValueOnce(new Error("offline"));
+    await changeTheme({ kind: "apply", id: "nord" });
+    bindThemeAccount(null);
+    bindThemeAccount("a");
+    call
+      .mockResolvedValueOnce(doc("gruvbox", 4))
+      .mockResolvedValueOnce(doc("nord", 5));
+    await syncThemes();
+    expect(call).toHaveBeenLastCalledWith("/me/themes", {
+      method: "PUT",
+      body: doc("nord", 4),
+    });
+    expect(useAccountThemes.getState()).toMatchObject({
+      pending: null,
+      status: "ready",
+      doc: { revision: 5 },
+    });
+  });
+  it("retries an unsynced change when the tab comes back", async () => {
+    bindThemeAccount("a");
+    call.mockResolvedValueOnce(doc());
+    await syncThemes();
+    call.mockRejectedValueOnce(new Error("offline"));
+    await changeTheme({ kind: "apply", id: "nord" });
+    expect(useAccountThemes.getState().status).toBe("error");
+    call
+      .mockResolvedValueOnce(doc("dark", 1))
+      .mockResolvedValueOnce(doc("nord", 2));
+    await syncThemes();
+    expect(useAccountThemes.getState()).toMatchObject({
+      pending: null,
+      status: "ready",
+    });
+  });
+  it("leaves a conflict to the user", async () => {
+    bindThemeAccount("a");
+    call.mockResolvedValueOnce(doc());
+    await syncThemes();
+    call.mockRejectedValueOnce(new ApiError("theme_conflict", 409, "conflict"));
+    await changeTheme({ kind: "apply", id: "nord" });
+    call.mockClear();
+    await syncThemes();
+    expect(call).not.toHaveBeenCalled();
+    expect(useAccountThemes.getState().status).toBe("conflict");
+  });
+  it("does not take over another tab's change while it is being sent", async () => {
+    bindThemeAccount("a");
+    call.mockResolvedValueOnce(doc());
+    await syncThemes();
+    const pending = deferred<ThemeDocument>();
+    call.mockReturnValueOnce(pending.promise);
+    const save = changeTheme({ kind: "apply", id: "nord" });
+    // A second tab binds the same account from the shared cache meanwhile.
+    const cached = localStorage.getItem("gelabber.themes.v1:a");
+    bindThemeAccount(null);
+    localStorage.setItem("gelabber.themes.v1:a", cached!);
+    bindThemeAccount("a");
+    expect(useAccountThemes.getState()).toMatchObject({
+      pending: null,
+      status: "loading",
+    });
+    pending.resolve(doc("nord", 2));
+    await save;
+  });
+  it("takes over a change whose sending tab went away mid-save", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      bindThemeAccount("a");
+      call.mockResolvedValueOnce(doc());
+      await syncThemes();
+      const pending = deferred<ThemeDocument>();
+      call.mockReturnValueOnce(pending.promise);
+      void changeTheme({ kind: "apply", id: "nord" });
+      // The sending tab closed: its marker stays in the cache.
+      const cached = localStorage.getItem("gelabber.themes.v1:a");
+      bindThemeAccount(null);
+      localStorage.setItem("gelabber.themes.v1:a", cached!);
+      vi.advanceTimersByTime(31_000);
+      bindThemeAccount("a");
+      expect(useAccountThemes.getState()).toMatchObject({
+        pending: { kind: "apply", id: "nord" },
+        status: "error",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("discards corrupt cache and never overwrites an existing account during migration", async () => {
     localStorage.setItem("gelabber.themes.v1:a", "{broken");
     localStorage.setItem("gelabber.theme", "light");

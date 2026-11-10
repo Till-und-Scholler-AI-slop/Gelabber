@@ -2,8 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { MessageContent } from "../messages/MessageContent.tsx";
-import { mentionRenderer } from "./mentionRenderer.tsx";
-import type { MessagePing } from "./MessageMentions.tsx";
+import { mentionRenderer, type MessagePing } from "./mentionRenderer.tsx";
 
 const ADA = "0190f7a2-0000-7000-8000-00000000000a";
 const BOB = "0190f7a2-0000-7000-8000-00000000000b";

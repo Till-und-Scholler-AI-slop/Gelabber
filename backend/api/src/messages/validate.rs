@@ -25,16 +25,8 @@ pub enum Cursor {
     Bound { at: DateTime<Utc>, id: Uuid },
 }
 
-pub fn content(raw: &str, errors: &mut FieldErrors) -> Option<String> {
-    let value = normalise(raw);
-    if value.is_empty() {
-        errors.insert("content", "required");
-        return None;
-    }
-    check_content(&value, errors)
-}
-
-/// Like [`content`] but empty is allowed — a message may be attachment-only.
+/// Trimmed message text. Empty is allowed — a message may be attachment-only
+/// or a GIF — so each handler decides when empty is `required`.
 pub fn content_optional(raw: &str, errors: &mut FieldErrors) -> Option<String> {
     let value = normalise(raw);
     if value.is_empty() {
@@ -123,27 +115,26 @@ mod tests {
 
     #[test]
     fn content_trims_and_caps() {
-        assert_eq!(run(|e| content("  hi  ", e)).0.as_deref(), Some("hi"));
         assert_eq!(
-            run(|e| content("   ", e)).1.get("content"),
-            Some(&"required")
+            run(|e| content_optional("  hi  ", e)).0.as_deref(),
+            Some("hi")
         );
         assert_eq!(
-            run(|e| content(&"x".repeat(CONTENT_MAX + 1), e))
+            run(|e| content_optional(&"x".repeat(CONTENT_MAX + 1), e))
                 .1
                 .get("content"),
             Some(&"too_long")
         );
         assert_eq!(
-            run(|e| content("ok\nline\t2", e)).0.as_deref(),
+            run(|e| content_optional("ok\nline\t2", e)).0.as_deref(),
             Some("ok\nline\t2")
         );
         assert_eq!(
-            run(|e| content("a\u{0000}b", e)).1.get("content"),
+            run(|e| content_optional("a\u{0000}b", e)).1.get("content"),
             Some(&"invalid")
         );
         assert_eq!(
-            run(|e| content("win\r\nline", e)).0.as_deref(),
+            run(|e| content_optional("win\r\nline", e)).0.as_deref(),
             Some("win\nline")
         );
         assert_eq!(run(|e| content_optional("  ", e)).0.as_deref(), Some(""));

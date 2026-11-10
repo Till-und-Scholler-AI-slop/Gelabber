@@ -30,7 +30,9 @@ pub enum GatewayStatus {
 }
 
 /// Timers of the web client (`DEFAULT_*_MS`), matching the server's
-/// `API_WS_HEARTBEAT_MS`/`API_WS_DEAD_MS` defaults.
+/// `API_WS_HEARTBEAT_MS`/`API_WS_DEAD_MS` defaults; the reconnect cap is
+/// higher than the web's 2 s, so a server that keeps failing is not hit
+/// every 2 s by every client.
 #[derive(Clone, Copy, Debug)]
 pub struct GatewayConfig {
     pub heartbeat: Duration,
@@ -45,10 +47,14 @@ impl Default for GatewayConfig {
             heartbeat: Duration::from_millis(15_000),
             dead: Duration::from_millis(30_000),
             retry: Duration::from_millis(200),
-            max_retry: Duration::from_millis(2_000),
+            max_retry: Duration::from_millis(10_000),
         }
     }
 }
+
+/// After a refused upgrade (403, 404, a certificate) the next try waits
+/// this long, not the reconnect backoff: retrying at once will not help.
+pub const REFUSED_RETRY: Duration = Duration::from_secs(60);
 
 /// What the socket reports to its owner, in arrival order.
 #[derive(Clone, Debug)]
@@ -62,6 +68,9 @@ pub enum GatewayEvent {
     Gap(Topic),
     /// The server lost its event stream: rediscover everything.
     Resync,
+    /// The server or TLS turned the upgrade down (not a network error):
+    /// why, until the next open (`None`). Retried only slowly meanwhile.
+    Refused(Option<String>),
     /// Every other frame: `sig`, `p`, `y`, `err`, `ns`, `rd`, `dm`.
     Frame(ServerFrame),
 }
@@ -354,6 +363,7 @@ impl Gateway {
             shared: shared.clone(),
             rx,
             focus: false,
+            confirmed: false,
         };
         runtime.spawn(task.run());
         Self { tx, shared }
@@ -415,6 +425,8 @@ struct Task {
     shared: Arc<Shared>,
     rx: mpsc::UnboundedReceiver<Command>,
     focus: bool,
+    /// The open socket answered a subscribe (`ok`).
+    confirmed: bool,
 }
 
 enum Closed {
@@ -441,6 +453,7 @@ impl Task {
     async fn run(mut self) {
         let mut attempt: u32 = 0;
         let mut first = true;
+        let mut refused = false;
         loop {
             self.set_status(if first {
                 GatewayStatus::Connecting
@@ -448,19 +461,44 @@ impl Task {
                 GatewayStatus::Reconnecting
             });
             first = false;
-            let socket = match self.connect().await {
-                Ok(socket) => socket,
+            let mut slow = false;
+            match self.connect().await {
                 Err(Closed::Stopped) => break,
-                Err(Closed::Dropped) => None,
-            };
-            if let Some(socket) = socket {
-                attempt = 0;
-                if let Closed::Stopped = self.serve(socket).await {
-                    break;
+                Err(Closed::Dropped) => {}
+                Ok(Ok(socket)) => {
+                    if std::mem::take(&mut refused) {
+                        (self.handler)(GatewayEvent::Refused(None));
+                    }
+                    let opened = Instant::now();
+                    self.confirmed = false;
+                    let closed = self.serve(socket).await;
+                    // Only a socket that worked resets the backoff: one the
+                    // server accepts and drops at once is a failed connect.
+                    if self.confirmed || opened.elapsed() >= self.config.heartbeat {
+                        attempt = 0;
+                    }
+                    if let Closed::Stopped = closed {
+                        break;
+                    }
+                }
+                Ok(Err(Failure::Network)) => {}
+                Ok(Err(failure)) => {
+                    tracing::warn!(?failure, "gateway upgrade refused");
+                    if let Failure::Unauthenticated = failure {
+                        // The session ended (sign-out elsewhere): as a 401 on REST.
+                        self.http.report_unauthenticated();
+                    }
+                    refused = true;
+                    (self.handler)(GatewayEvent::Refused(Some(failure.reason())));
+                    slow = true;
                 }
             }
             self.set_status(GatewayStatus::Reconnecting);
-            let delay = backoff(&self.config, attempt, jitter());
+            let delay = if slow {
+                REFUSED_RETRY.mul_f64(0.5 + jitter() * 0.5)
+            } else {
+                backoff(&self.config, attempt, jitter())
+            };
             attempt = attempt.saturating_add(1);
             if !self.wait(delay).await {
                 break;
@@ -471,7 +509,7 @@ impl Task {
 
     /// Connects while still taking commands, so a sign-out during a slow
     /// handshake never opens a socket afterwards. `Err(Stopped)` when stopped.
-    async fn connect(&mut self) -> Result<Option<Socket>, Closed> {
+    async fn connect(&mut self) -> Result<Result<Socket, Failure>, Closed> {
         let connecting = connect(self.http.clone());
         tokio::pin!(connecting);
         loop {
@@ -575,9 +613,14 @@ impl Task {
                         }
                     };
                     last_server = Instant::now();
-                    let Ok(frame) = serde_json::from_str::<ServerFrame>(text.as_str()) else {
-                        continue;
+                    let frame = match serde_json::from_str::<ServerFrame>(text.as_str()) {
+                        Ok(frame) => frame,
+                        Err(error) => {
+                            self.on_undecodable(text.as_str(), &error);
+                            continue;
+                        }
                     };
+                    self.confirmed |= matches!(frame, ServerFrame::Ok { .. });
                     let replies = self.on_frame(frame);
                     for reply in replies {
                         if send(&mut sink, &reply).await.is_err() {
@@ -623,6 +666,18 @@ impl Task {
                     }
                 }
             }
+        }
+    }
+
+    /// A frame this client cannot read: logged; a sequenced event's topic
+    /// is recovered over REST as after a `gap`. Other frames (typing,
+    /// presence, voice) are only skipped: a round each would be too many.
+    fn on_undecodable(&self, text: &str, error: &serde_json::Error) {
+        let topic = undecodable_topic(text);
+        tracing::warn!(%error, ?topic, "gateway frame this client cannot read");
+        if let Some(topic) = topic {
+            self.shared.cursors.lock().on_gap(topic, None);
+            (self.handler)(GatewayEvent::Gap(topic));
         }
     }
 
@@ -679,22 +734,85 @@ impl Task {
     }
 }
 
-async fn connect(http: Http) -> Option<Socket> {
-    let mut request = http.ws_url("/ws").into_client_request().ok()?;
+/// Why an upgrade did not open a socket.
+#[derive(Debug, PartialEq, Eq)]
+enum Failure {
+    /// Offline, a timeout, a 5xx: the reconnect backoff.
+    Network,
+    /// 401: the session is over.
+    Unauthenticated,
+    /// Another 4xx, or the certificate was not accepted.
+    Refused(String),
+}
+
+impl Failure {
+    fn of(error: &tokio_tungstenite::tungstenite::Error) -> Self {
+        use tokio_tungstenite::tungstenite::Error;
+        match error {
+            Error::Http(response) => {
+                let status = response.status();
+                if status == 401 {
+                    Self::Unauthenticated
+                } else if status.is_client_error() && status != 408 && status != 429 {
+                    Self::Refused(format!("HTTP {}", status.as_u16()))
+                } else {
+                    Self::Network
+                }
+            }
+            Error::Tls(error) => Self::Refused(format!("TLS: {error}")),
+            Error::Io(io) => match io.get_ref().and_then(|e| e.downcast_ref::<rustls::Error>()) {
+                Some(error) => Self::Refused(format!("TLS: {error}")),
+                None => Self::Network,
+            },
+            _ => Self::Network,
+        }
+    }
+
+    fn reason(&self) -> String {
+        match self {
+            Self::Network => "network".into(),
+            Self::Unauthenticated => "HTTP 401".into(),
+            Self::Refused(reason) => reason.clone(),
+        }
+    }
+}
+
+async fn connect(http: Http) -> Result<Socket, Failure> {
+    let mut request = http
+        .ws_url("/ws")
+        .into_client_request()
+        .map_err(|e| Failure::Refused(e.to_string()))?;
     if let Some(cookie) = http.cookie_header()
         && let Ok(value) = cookie.parse()
     {
         request.headers_mut().insert("Cookie", value);
     }
-    let connect = tokio_tungstenite::connect_async(request);
+    let connector =
+        crate::http::ws_connector().map_err(|e| Failure::Refused(format!("TLS: {e}")))?;
+    let connect =
+        tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector));
     match tokio::time::timeout(Duration::from_secs(10), connect).await {
-        Ok(Ok((socket, _))) => Some(socket),
+        Ok(Ok((socket, _))) => Ok(socket),
         Ok(Err(error)) => {
             tracing::debug!(%error, "gateway connect failed");
-            None
+            Err(Failure::of(&error))
         }
-        Err(_) => None,
+        Err(_) => Err(Failure::Network),
     }
+}
+
+/// The topic of a sequenced event (`op: "e"`) read without its other
+/// fields; `None` for every other frame.
+fn undecodable_topic(text: &str) -> Option<Topic> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    if value.get("op")?.as_str()? != "e" {
+        return None;
+    }
+    let id = |key: &str| value.get(key)?.as_str()?.parse::<Uuid>().ok();
+    Some(Topic {
+        s: id("s")?,
+        c: id("c"),
+    })
 }
 
 async fn send<S>(sink: &mut S, frame: &ClientFrame) -> Result<(), ()>
@@ -714,14 +832,15 @@ mod tests {
     }
 
     #[test]
-    fn backoff_matches_the_web() {
+    fn backoff_doubles_up_to_the_cap() {
         let c = GatewayConfig::default();
         assert_eq!(backoff(&c, 0, 0.7), Duration::ZERO);
         assert_eq!(backoff(&c, 1, 0.0), Duration::from_millis(100));
         assert_eq!(backoff(&c, 1, 1.0), Duration::from_millis(200));
         assert_eq!(backoff(&c, 3, 1.0), Duration::from_millis(800));
-        assert_eq!(backoff(&c, 5, 1.0), Duration::from_millis(2000));
-        assert_eq!(backoff(&c, 40, 0.0), Duration::from_millis(1000));
+        assert_eq!(backoff(&c, 5, 1.0), Duration::from_millis(3200));
+        assert_eq!(backoff(&c, 7, 1.0), Duration::from_millis(10_000));
+        assert_eq!(backoff(&c, 40, 0.0), Duration::from_millis(5_000));
         let j = jitter();
         assert!((0.0..1.0).contains(&j));
     }
@@ -811,6 +930,104 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(f, ServerFrame::Err { ref e, c: None, .. } if e == "kicked"));
+    }
+
+    #[test]
+    fn only_an_unreadable_event_names_its_topic_for_a_gap() {
+        let bad = r#"{"op":"e","t":"c","s":"00000000-0000-0000-0000-000000000001","c":"00000000-0000-0000-0000-000000000002","n":"sieben"}"#;
+        assert!(serde_json::from_str::<ServerFrame>(bad).is_err());
+        let topic = undecodable_topic(bad).unwrap();
+        assert_eq!(topic, Topic::channel(id(1), id(2)));
+        assert_eq!(undecodable_topic(r#"{"op":"e","n":1}"#), None);
+        // Typing, presence, voice: no events, so no gap.
+        let typing = r#"{"op":"y","s":"00000000-0000-0000-0000-000000000001","c":"00000000-0000-0000-0000-000000000002","on":"ja"}"#;
+        assert!(serde_json::from_str::<ServerFrame>(typing).is_err());
+        assert_eq!(undecodable_topic(typing), None);
+        assert_eq!(undecodable_topic("nicht json"), None);
+        // As a gap: recovered over REST before the cursor moves on.
+        let mut c = Cursors::default();
+        c.on_ok(topic, 6, None);
+        c.on_gap(topic, None);
+        assert_eq!(c.gap_recoveries().len(), 1);
+    }
+
+    /// A 401 on the upgrade (signed out elsewhere) ends the session as a
+    /// 401 on REST does, and is not retried every second meanwhile.
+    #[test]
+    fn a_refused_upgrade_signs_out_and_waits() {
+        use std::io::{Read, Write};
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let upgrades = Arc::new(AtomicUsize::new(0));
+        let count = upgrades.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                count.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+            }
+        });
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let http = Http::new(&format!("http://{addr}")).unwrap();
+        let signed_out = Arc::new(AtomicBool::new(false));
+        let flag = signed_out.clone();
+        http.set_unauthenticated_hook(Arc::new(move || flag.store(true, Ordering::SeqCst)));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let seen = events.clone();
+        let gateway = Gateway::start(
+            runtime.handle(),
+            http,
+            GatewayConfig::default(),
+            Arc::new(move |e| seen.lock().push(e)),
+        );
+        std::thread::sleep(Duration::from_millis(2_000));
+        assert!(signed_out.load(Ordering::SeqCst));
+        assert_eq!(upgrades.load(Ordering::SeqCst), 1);
+        assert!(
+            events
+                .lock()
+                .iter()
+                .any(|e| matches!(e, GatewayEvent::Refused(Some(reason)) if reason == "HTTP 401"))
+        );
+        gateway.stop();
+    }
+
+    /// A server that accepts the socket and drops it at once is retried
+    /// with a growing delay, not at once every time.
+    #[test]
+    fn an_accept_then_drop_server_is_backed_off() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let listener = runtime
+            .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let opens = Arc::new(AtomicUsize::new(0));
+        let count = opens.clone();
+        runtime.spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                if let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    let _ = socket.close(None).await;
+                }
+            }
+        });
+        let http = Http::new(&format!("http://{addr}")).unwrap();
+        let gateway = Gateway::start(
+            runtime.handle(),
+            http,
+            GatewayConfig::default(),
+            Arc::new(|_| {}),
+        );
+        std::thread::sleep(Duration::from_millis(1_500));
+        gateway.stop();
+        let opens = opens.load(Ordering::SeqCst);
+        assert!((2..10).contains(&opens), "{opens} opens in 1.5 s");
     }
 
     #[test]

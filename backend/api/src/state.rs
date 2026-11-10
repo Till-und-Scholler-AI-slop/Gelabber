@@ -18,6 +18,12 @@ use crate::metrics::HttpMetrics;
 use crate::previews::LinkPreviews;
 use crate::storage::ObjectStore;
 
+/// One subscribe's replay, gap and `ok` together, written while the frame's
+/// transaction holds the session and server rows. A client that reads too
+/// slowly for it loses the socket instead of keeping the rows and a pool
+/// connection for minutes.
+pub const REPLAY_DEADLINE: Duration = Duration::from_secs(5);
+
 /// Shared handles for request handlers. Both clients are created lazily so
 /// the process boots even while Postgres/Redis are still starting; `/ready`
 /// reports the live state instead.
@@ -47,6 +53,8 @@ pub struct AppState {
     pub ws_dead: Duration,
     pub ws_idle: Duration,
     pub ws_replay: usize,
+    /// How long one subscribe's replay may take to write ([`REPLAY_DEADLINE`]).
+    pub ws_replay_deadline: Duration,
     pub ice_servers: Vec<IceServer>,
     pub turn_auth_secret: Option<String>,
     pub turn_cred_ttl: Duration,
@@ -158,6 +166,7 @@ impl AppState {
             ws_dead: config.ws_dead,
             ws_idle: config.ws_idle,
             ws_replay: config.ws_replay,
+            ws_replay_deadline: REPLAY_DEADLINE,
             ice_servers: config.ice_servers.clone(),
             turn_auth_secret: config.turn_auth_secret.clone(),
             turn_cred_ttl: config.turn_cred_ttl,

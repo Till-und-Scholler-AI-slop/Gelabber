@@ -242,6 +242,12 @@ pub enum SessionStatus {
     Authenticated(Value),
 }
 
+/// GET /api/auth/mail: whether the server sends account mail.
+fn mail_check(client: &Client) -> Pending<Result<Value, ApiError>> {
+    let http = client.http().clone();
+    Pending::spawn(client, async move { http.get::<Value>("/auth/mail").await })
+}
+
 /// `SESSION_RETRY_MS` (session.ts).
 const RETRY: [f64; 4] = [2.0, 5.0, 15.0, 30.0];
 
@@ -337,12 +343,16 @@ pub struct GelabberApp {
     session: Session,
     screen: ScreenState,
     mail_check: Option<Pending<Result<Value, ApiError>>>,
+    /// A failed mail check is asked again then, on the session's backoff.
+    mail_retry: Option<(usize, f64)>,
     account_mail: Option<bool>,
     toasts: Toasts,
     /// The client's workspace (lists, gateway) was started for this sign-in.
     workspace: bool,
     /// The client's own session was signed in last frame.
     client_signed_in: bool,
+    /// The server ended the session: the way to the login page says so.
+    expired: bool,
     /// The video tiles' pipeline is installed in the renderer.
     video_ready: bool,
     /// The theme's page colour, for the window's clear colour.
@@ -361,17 +371,20 @@ impl GelabberApp {
         theme::ensure(ctx);
         // A new server's account: its own theme document.
         screens::settings::forget_account(ctx);
+        // The old call's video windows would keep it and its client alive.
+        screens::voice::window::forget(ctx);
         let repaint_ctx = ctx.clone();
-        client.set_repaint(std::sync::Arc::new(move || repaint_ctx.request_repaint()));
+        client.set_repaint(std::sync::Arc::new(move || {
+            repaint_ctx.request_repaint();
+            // A video's own window keeps up while the main one is hidden.
+            screens::voice::window::wake(&repaint_ctx);
+        }));
         let images = Images::new(client.clone());
         // The artwork of the signed-out pages is large; start early.
         images.get(ctx, screens::auth::layout::ARTWORK);
         let mut session = Session::new();
         session.check(&client);
-        let http = client.http().clone();
-        let mail_check = Some(Pending::spawn(&client, async move {
-            http.get::<Value>("/auth/mail").await
-        }));
+        let mail_check = Some(mail_check(&client));
         Self {
             nav: Nav::new(route.as_deref().unwrap_or("/")),
             call: gelabber_call::Call::new(client.clone()),
@@ -380,10 +393,12 @@ impl GelabberApp {
             session,
             screen: ScreenState::None,
             mail_check,
+            mail_retry: None,
             account_mail: None,
             toasts: Toasts::default(),
             workspace: false,
             client_signed_in: false,
+            expired: false,
             video_ready: false,
             background: std::cell::Cell::new(Theme::dark().c.bg),
         }
@@ -431,8 +446,15 @@ impl GelabberApp {
             route if is_workspace(route) && !signed_in => {
                 let href = location.href();
                 let redirect = if href == "/" { String::new() } else { href };
-                self.nav
-                    .replace(&with_query("/login", &[("redirect", &redirect)]));
+                let reason = if std::mem::take(&mut self.expired) {
+                    "expired"
+                } else {
+                    ""
+                };
+                self.nav.replace(&with_query(
+                    "/login",
+                    &[("redirect", &redirect), ("reason", reason)],
+                ));
             }
             Route::Profile if signed_in => self.nav.replace("/settings/profil"),
             _ => {}
@@ -444,14 +466,19 @@ impl GelabberApp {
     /// and follows the client when the server ends the session.
     fn sync_workspace(&mut self) {
         let signed_in = matches!(self.session.status, SessionStatus::Authenticated(_));
-        let client_signed_in = self
-            .client
-            .with_state(|s| matches!(s.session, gelabber_client::Session::Authenticated(_)));
+        let (client_signed_in, expired) = self.client.with_state(|s| {
+            (
+                matches!(s.session, gelabber_client::Session::Authenticated(_)),
+                s.session_expired,
+            )
+        });
         if signed_in && self.client_signed_in && !client_signed_in {
             self.session.adopt(&Value::Null);
             self.workspace = false;
+            self.expired = expired;
         } else if signed_in && !self.workspace {
             self.workspace = true;
+            self.expired = false;
             if client_signed_in {
                 self.client.bootstrap();
             } else {
@@ -468,13 +495,32 @@ impl GelabberApp {
         let now = ctx.input(|i| i.time);
         crate::style::scroll_activity(&ctx);
         self.session.poll(now);
-        if let Some(result) = poll(&mut self.mail_check) {
-            self.account_mail = Some(
-                result
-                    .ok()
-                    .and_then(|v| v.get("enabled").and_then(Value::as_bool))
-                    .unwrap_or(false),
-            );
+        match poll(&mut self.mail_check) {
+            // Unknown, not "no mail" (offline, server restarting): asked
+            // again on the session's backoff; "Passwort vergessen?" waits.
+            Some(Err(e)) if e.status().is_none_or(|s| s >= 500 || s == 429) => {
+                let failures = self.mail_retry.map_or(0, |(n, _)| n) + 1;
+                self.mail_retry = Some((failures, now + RETRY[failures.min(4) - 1]));
+            }
+            Some(result) => {
+                self.mail_retry = None;
+                self.account_mail = Some(
+                    result
+                        .ok()
+                        .and_then(|v| v.get("enabled").and_then(Value::as_bool))
+                        .unwrap_or(false),
+                );
+            }
+            None => {}
+        }
+        if let Some((_, at)) = self.mail_retry
+            && self.mail_check.is_none()
+        {
+            if now >= at {
+                self.mail_check = Some(mail_check(&self.client));
+            } else {
+                ctx.request_repaint_after(Duration::from_secs_f64((at - now).min(1.0)));
+            }
         }
         if let Some(wait) = self.session.retry_in(now) {
             if wait <= 0.0 {
@@ -484,11 +530,16 @@ impl GelabberApp {
             }
         }
         // The mouse's back and forward buttons and Alt+←/→, as in the browser.
+        let ptt = screens::voice::call_bar::ptt_side_button(&ctx, &self.call);
+        // While the settings record a key, a side button is the key.
+        let recording = screens::settings::media::recording_key(&ctx);
+        let side =
+            |i: &egui::InputState, b| !recording && ptt != Some(b) && i.pointer.button_pressed(b);
         let (back, forward) = ctx.input(|i| {
             (
-                i.pointer.button_pressed(egui::PointerButton::Extra1)
+                side(i, egui::PointerButton::Extra1)
                     || (i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft)),
-                i.pointer.button_pressed(egui::PointerButton::Extra2)
+                side(i, egui::PointerButton::Extra2)
                     || (i.modifiers.alt && i.key_pressed(egui::Key::ArrowRight)),
             )
         });
@@ -549,14 +600,24 @@ impl GelabberApp {
         screens::show(ui, &mut app, &mut self.screen);
         skip.paint(ui);
         if signed_in {
-            let status = self.client.with_state(|s| s.gateway);
-            screens::shell::connection::show(ui, status);
+            let (status, refused) = self
+                .client
+                .with_state(|s| (s.gateway, s.gateway_refused.clone()));
+            screens::shell::connection::show(ui, status, refused.as_deref());
         } else {
-            screens::shell::connection::show(ui, gelabber_client::GatewayStatus::Idle);
+            screens::shell::connection::show(ui, gelabber_client::GatewayStatus::Idle, None);
         }
         logout_failed(ui, &self.client, signed_in);
         // A file choice that no desktop chooser took: the path field.
         crate::platform::files::show_in_app(&ctx);
+        // Where a save went, or why it did not.
+        for (text, failed) in crate::platform::files::take_notices(&ctx) {
+            if failed {
+                self.toasts.error(text);
+            } else {
+                self.toasts.notify(text);
+            }
+        }
         self.toasts.show(ui, !is_workspace(self.nav.route()));
         crate::widgets::opener::restore(&ctx);
     }
@@ -676,8 +737,13 @@ fn logout_failed(ui: &mut Ui, client: &Client, signed_in: bool) {
         .data_mut(|d| d.insert_temp(egui::Id::unique("gelabber-logout-failed"), true));
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
-    let message =
-        "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut.";
+    // "Überall abmelden" left for /login at once; until the server confirms,
+    // the other devices are still signed in, and the retry repeats it.
+    let message = if client.http().unconfirmed_sign_out_everywhere() {
+        "Die Abmeldung auf allen Geräten konnte nicht bestätigt werden. Bitte versuche es erneut."
+    } else {
+        "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut."
+    };
     let screen = ui.ctx().content_rect();
     // margin 12px 16px, padding 12px 16px, the 3px warning bar on the left.
     let outer = egui::Rect::from_min_max(
@@ -751,6 +817,9 @@ impl eframe::App for GelabberApp {
             screens::voice::video::install(render_state);
             self.video_ready = true;
         }
+        if let Some(render_state) = frame.wgpu_render_state() {
+            screens::voice::video::sweep_gpu(render_state);
+        }
         self.frame(ui);
     }
 
@@ -808,6 +877,96 @@ mod tests {
         assert!(nav.back());
         nav.navigate("/forgot-password");
         assert!(!nav.forward());
+    }
+
+    /// Maustaste 4 bound to push-to-talk talks in a call and does not also
+    /// go back; outside the call it goes back as before.
+    #[test]
+    fn the_push_to_talk_side_button_does_not_go_back_in_a_call() {
+        use crate::screens::settings::prefs;
+        use egui_kittest::kittest::Queryable;
+        use testkit::{FakeApi, HOME, launcher, wait_for, workspace};
+        let _config = crate::platform::paths::testing::TempConfig::new("app-ptt-mouse");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, "/");
+        wait_for(&mut harness, "the shell", |h| {
+            h.query_all_by_label("Wohnzimmer").next().is_some()
+        });
+        let page = format!("/s/{HOME}/settings");
+        let app = harness.state_mut().app().expect("app");
+        app.navigate(&page);
+        let call = app.call().clone();
+        prefs::update(&harness.ctx, |p| {
+            p.voice_input = "ptt".into();
+            p.ptt_key = "Mouse4".into();
+        });
+        call.set_state(gelabber_call::CallState {
+            status: gelabber_call::CallStatus::Connected,
+            server: Some(HOME.parse().unwrap()),
+            channel: Some(uuid::Uuid::from_u128(0xb1)),
+            ..gelabber_call::CallState::default()
+        });
+        let press = |harness: &mut egui_kittest::Harness<'_, crate::setup::Launcher>| {
+            for pressed in [true, false] {
+                harness.event(egui::Event::PointerButton {
+                    pos: egui::pos2(640.0, 400.0),
+                    button: egui::PointerButton::Extra1,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.run_steps(2);
+            }
+        };
+        let path = |harness: &mut egui_kittest::Harness<'_, crate::setup::Launcher>| {
+            let app = harness.state_mut().app().expect("app");
+            app.nav().location().path.clone()
+        };
+        press(&mut harness);
+        assert_eq!(path(&mut harness), page, "talking, not going back");
+        call.set_state(gelabber_call::CallState::default());
+        press(&mut harness);
+        assert_ne!(path(&mut harness), page, "without a call it goes back");
+    }
+
+    /// A session the server ends leads to the login page with "Sitzung
+    /// abgelaufen" (RequireUser.tsx); signing out there does not.
+    #[test]
+    fn a_session_the_server_ends_says_so_on_the_login_page() {
+        use egui_kittest::kittest::Queryable;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use testkit::{FakeApi, HOME, Reply, launcher, wait_for, wait_for_label, workspace};
+        let _config = crate::platform::paths::testing::TempConfig::new("app-expired");
+        let ended = Arc::new(AtomicBool::new(false));
+        let gone = ended.clone();
+        let api = FakeApi::start(true, move |method, path, _| {
+            if gone.load(Ordering::SeqCst) {
+                return Some(Reply::error(401, "unauthenticated"));
+            }
+            workspace(method, path)
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        wait_for(&mut harness, "the shell", |h| {
+            h.query_all_by_label("Wohnzimmer").next().is_some()
+        });
+        ended.store(true, Ordering::SeqCst);
+        let app = harness.state_mut().app().expect("app");
+        // Any request now answers 401.
+        app.client.load_mail_status();
+        wait_for_label(&mut harness, "Sitzung abgelaufen. Melde dich erneut an.");
+        let app = harness.state_mut().app().expect("app");
+        assert_eq!(app.nav().route(), &Route::Login);
+        // The banner goes with the next page, as the query does.
+        app.navigate("/register");
+        harness.run_steps(2);
+        let app = harness.state_mut().app().expect("app");
+        app.navigate("/login");
+        harness.run_steps(4);
+        assert!(
+            harness
+                .query_by_label("Sitzung abgelaufen. Melde dich erneut an.")
+                .is_none()
+        );
     }
 
     /// The window shows the shell on its own session check, so the page can

@@ -390,6 +390,14 @@ export function clampVideoUploadLimit(value: unknown): number {
   return Math.round(Math.min(0xffff_ffff, Math.max(1, value)));
 }
 
+/** The custom upload limit field's text in Mbit/s as bit/s, or `null`
+ * while it holds no limit yet (empty, "0", "0." on the way to "0.5"). */
+export function uploadLimitFromField(text: string): number | null {
+  const mbit = Number(text.trim().replace(",", "."));
+  if (text.trim() === "" || !Number.isFinite(mbit) || mbit <= 0) return null;
+  return clampVideoUploadLimit(mbit * 1_000_000);
+}
+
 function snapshot(state: MediaSettingsState): MediaSettings {
   return {
     audioInputId: state.audioInputId,
@@ -542,9 +550,35 @@ export const useMediaSettings = create<MediaSettingsState>()(
         // for such a client and is not part of the settings here.
         const { shareSourceAudio: sharedBefore, ...stored } =
           persisted as Partial<MediaSettings> & { shareSourceAudio?: unknown };
+        const text = (value: unknown, fallback: string) =>
+          typeof value === "string" ? value : fallback;
+        const flag = (value: unknown, fallback: boolean) =>
+          typeof value === "boolean" ? value : fallback;
+        // Every field is read on its own: a hand-edited or corrupted entry,
+        // or a key this version does not know, does not reach the store.
         return {
           ...current,
-          ...stored,
+          audioInputId: text(stored.audioInputId, current.audioInputId),
+          audioOutputId: text(stored.audioOutputId, current.audioOutputId),
+          videoInputId: text(stored.videoInputId, current.videoInputId),
+          echoCancellation: flag(
+            stored.echoCancellation,
+            current.echoCancellation,
+          ),
+          noiseSuppression: flag(
+            stored.noiseSuppression,
+            current.noiseSuppression,
+          ),
+          autoGainControl: flag(
+            stored.autoGainControl,
+            current.autoGainControl,
+          ),
+          inputGain:
+            typeof stored.inputGain === "number"
+              ? clampGain(stored.inputGain)
+              : current.inputGain,
+          messageToasts: flag(stored.messageToasts, current.messageToasts),
+          desktopNotify: flag(stored.desktopNotify, current.desktopNotify),
           quality: asQuality(stored.quality),
           processingMode:
             "processingMode" in stored

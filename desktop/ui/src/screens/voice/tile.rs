@@ -685,9 +685,12 @@ pub fn picture(
     // Someone else's Live is watched by choice; until then, "Zuschauen".
     let needs_watch = live && !pic.own && !pic.watching;
     let in_window = pic.key.is_some_and(|k| window::is_open(ui.ctx(), k));
+    // The large view over the stage has the picture to itself: one ask
+    // and one GPU copy, not a second at the tile's size under it.
+    let in_large_view = super::page::large_view(ui.ctx()) == Some(pic.id);
     let frame = pic
         .key
-        .filter(|_| !in_window)
+        .filter(|_| !in_window && !in_large_view)
         .and_then(|k| app.call.frame(k));
     let wait_id = id.with("waiting");
     if in_window {
@@ -720,12 +723,12 @@ pub fn picture(
             window::close(ui.ctx(), key);
         }
     }
-    match (&frame, needs_watch || in_window) {
+    match (&frame, needs_watch || in_window || in_large_view) {
         (Some(frame), false) => {
             ui.ctx().data_mut(|d| d.remove::<f64>(wait_id));
             if let Some(key) = pic.key {
                 let fps = if place.strip() { 15 } else { 30 };
-                video::request(ui, app.call, key, video::drawn_rect(rect, frame, fit), fps);
+                video::request_fit(ui, app.call, key, rect, Some(frame), fit, fps);
             }
             video::paint(
                 ui,
@@ -737,7 +740,7 @@ pub fn picture(
                 radius,
             );
         }
-        (_, true) if in_window => {}
+        (_, true) if in_window || in_large_view => {}
         (_, true) => {
             let label = Block::single(ui, "Zuschauen", text::UI.weight(600.0), c.accent_ink);
             let button = Rect::from_center_size(
@@ -760,8 +763,18 @@ pub fn picture(
             if let Some(key) = pic.key {
                 video::request(ui, app.call, key, rect, 30);
             }
-            if placeholder(ui, &painter, rect, wait_id, &pic.label, pic.key.is_some()) {
-                // "Neu laden": watch the Live again, or ask for the camera anew.
+            // A Live is watched again; nothing re-asks for a camera, so its
+            // tile offers no "Neu laden".
+            let reload = !matches!(pic.id.kind, Kind::Camera);
+            if placeholder(
+                ui,
+                &painter,
+                rect,
+                wait_id,
+                &pic.label,
+                pic.key.is_some(),
+                reload,
+            ) {
                 ui.ctx().data_mut(|d| d.remove::<f64>(wait_id));
                 if let Some(key) = pic.key {
                     video::forget(ui.ctx(), app.call, key);
@@ -1037,6 +1050,7 @@ fn placeholder(
     wait_id: Id,
     label: &str,
     expected: bool,
+    reload: bool,
 ) -> bool {
     let now = ui.input(|i| i.time);
     let since: f64 = ui
@@ -1070,6 +1084,11 @@ fn placeholder(
     // A spinner above the words while loading, "Neu laden" under them after.
     let total = 16.0 + 8.0 + block.height();
     let top = rect.center().y - total / 2.0;
+    if stalled && !reload {
+        let at = rect.center() - block.size() / 2.0;
+        block.paint(painter, at);
+        return false;
+    }
     if stalled {
         let words = rect.center().y - (block.height() + 8.0 + 32.0) / 2.0;
         block.paint(painter, pos2(rect.center().x - block.width() / 2.0, words));

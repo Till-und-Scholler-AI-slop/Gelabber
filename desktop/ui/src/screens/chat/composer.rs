@@ -37,7 +37,12 @@ pub struct ComposerState {
     pub picked: HashMap<String, Uuid>,
     pub focus: bool,
     /// Files chosen in the system's file dialog, once it closes.
-    chosen: Option<std::sync::Arc<parking_lot::Mutex<Option<Vec<std::path::PathBuf>>>>>,
+    chosen: Option<crate::platform::files::PickedMany>,
+    /// Files being read (or a pasted picture encoded) off the UI thread,
+    /// in the order they came.
+    loading: Vec<files::Loading>,
+    /// Rows of attached-file chips the last frame drew.
+    chip_rows: usize,
     /// Where the caret goes once the field shows the new draft.
     caret: Option<usize>,
     last_caret: Option<usize>,
@@ -144,7 +149,7 @@ pub fn height(
         field += 8.0 + 40.0;
     }
     if !state.files.is_empty() {
-        field += 10.0 + 56.0;
+        field += 10.0 + chips_height(state.chip_rows);
     }
     let n = suggestions_for(state, input).len();
     if n > 0 {
@@ -158,6 +163,24 @@ pub fn height(
         h += 4.0 + 18.0;
     }
     h + file_error_height(ctx, state, width)
+}
+
+/// `validateContent` of a message's wire text: the field code, or `None`.
+pub fn validate_content(wire: &str) -> Option<&'static str> {
+    let value = wire.replace("\r\n", "\n").replace('\r', "\n");
+    let value = value.trim();
+    if value.is_empty() {
+        Some("required")
+    } else if value.chars().count() as i64 > CONTENT_MAX {
+        Some("too_long")
+    } else if value
+        .chars()
+        .any(|c| matches!(c, '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{7f}'))
+    {
+        Some("invalid")
+    } else {
+        None
+    }
 }
 
 fn remaining(state: &ComposerState, input: &ComposerInput) -> i64 {
@@ -357,10 +380,11 @@ pub fn show(
         }
         fy += 48.0;
     }
-    // Files to attach.
+    // Files to attach, in rows that wrap.
     if !state.files.is_empty() {
         let mut x = field.left() + 11.0;
-        let top = fy + 10.0;
+        let mut top = fy + 10.0;
+        let mut rows = 1;
         let mut remove = None;
         for (i, file) in state.files.iter().enumerate() {
             let name = Block::single(ui, &file.filename, TextStyle::new(13.0, 600.0, 1.5), c.text);
@@ -370,7 +394,14 @@ pub fn show(
                 TextStyle::new(11.0, 400.0, 1.5),
                 c.muted,
             );
-            let w = (8.0 + name.width().max(size.width()) + 10.0 + 4.0 + 26.0 + 12.0).min(260.0);
+            let w = (8.0 + name.width().max(size.width()) + 10.0 + 4.0 + 26.0 + 12.0)
+                .min(260.0)
+                .min(field.width() - 22.0);
+            if x > field.left() + 11.0 && x + w > field.right() - 11.0 {
+                x = field.left() + 11.0;
+                top += 56.0 + 8.0;
+                rows += 1;
+            }
             let r = Rect::from_min_size(pos2(x, top), vec2(w, 56.0));
             ui.painter().rect_filled(r, corner(7.0), c.surface);
             let clip = ui.painter().with_clip_rect(r);
@@ -381,6 +412,9 @@ pub fn show(
                 Vec2::splat(26.0),
             );
             let resp = ui.interact(close, edit_id.with(("remove", i)), Sense::click());
+            resp.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::Button, true, "Anhang entfernen")
+            });
             if resp.hovered() {
                 ui.painter().circle_filled(close.center(), 13.0, c.hover);
             }
@@ -401,7 +435,12 @@ pub fn show(
             state.files.remove(i);
             state.file_error = None;
         }
-        fy += 10.0 + 56.0;
+        if rows != state.chip_rows {
+            // `height()` laid out the last frame's rows.
+            state.chip_rows = rows;
+            ui.ctx().request_repaint();
+        }
+        fy += 10.0 + chips_height(rows);
     }
     // Mention suggestions, inside the field above the row.
     let list = suggestions_for(state, input);
@@ -503,7 +542,10 @@ pub fn show(
             edit_id.with("attach"),
         ) && state.chosen.is_none()
         {
-            state.chosen = Some(choose_files(ui.ctx()));
+            state.chosen = Some(crate::platform::files::pick_many(
+                ui.ctx(),
+                "Datei anhängen",
+            ));
         }
         x += 36.0;
     }
@@ -521,9 +563,9 @@ pub fn show(
 
     // Keys before the field sees them: Enter sends, ↑ edits my last one,
     // Esc drops the reply.
-    let wire = mentions::to_wire(&state.draft, input.members, &state.picked);
-    let over = remaining(state, input) < 0;
-    let disabled = over || (state.draft.trim().is_empty() && state.files.is_empty());
+    let disabled = |state: &ComposerState| {
+        remaining(state, input) < 0 || (state.draft.trim().is_empty() && state.files.is_empty())
+    };
     let mut submit = false;
     if focused {
         if ui.input_mut(|i| super::consume_plain(i, egui::Key::Enter)) {
@@ -650,16 +692,13 @@ pub fn show(
         }
     }
     // Send: accent, or quiet while there is nothing to send.
+    let off = disabled(state);
     let resp = ui.interact(
         send_rect,
         edit_id.with("send"),
-        if disabled {
-            Sense::hover()
-        } else {
-            Sense::click()
-        },
+        if off { Sense::hover() } else { Sense::click() },
     );
-    if disabled {
+    if off {
         icons::paint_centered(
             ui.painter(),
             Icon::Send,
@@ -689,9 +728,11 @@ pub fn show(
     if resp.clicked() {
         submit = true;
     }
-    if submit && !disabled {
+    // What is sent is the draft after the field took this frame's typing:
+    // a character typed in the same frame as Enter goes along.
+    if submit && !disabled(state) {
         actions.push(ComposerAction::Send {
-            text: wire,
+            text: mentions::to_wire(&state.draft, input.members, &state.picked),
             reply: state.reply.take().map(|(id, _)| id),
             files: std::mem::take(&mut state.files),
         });
@@ -727,120 +768,54 @@ pub fn show(
         )
         .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, error));
     }
-    let mut next = Vec::new();
+    let mut sources = Vec::new();
     // Files picked with the paperclip.
     let picked = state.chosen.as_ref().and_then(|slot| slot.lock().take());
     if let Some(paths) = picked {
         state.chosen = None;
-        for path in paths {
-            if let Ok(data) = std::fs::read(&path) {
-                next.push(outgoing(&path, data));
-            }
-        }
+        sources.extend(paths.into_iter().map(files::Source::Path));
         state.focus = true;
     }
     if input.can_send_files {
         // Files dropped on the window attach like the paperclip.
         let dropped = ui.input(|i| i.raw.dropped_files.clone());
         for file in dropped {
-            if let Ok(data) = file.bytes() {
-                next.push(outgoing(file.path(), data));
-                state.focus = true;
-            }
+            sources.push(files::Source::Path(file.path().to_path_buf()));
+            state.focus = true;
         }
         // A picture pasted into the draft (`pastedFiles`).
         if had_focus {
-            let now = chrono::Utc::now();
-            let pasted: Vec<OutgoingFile> = ui.input(|i| {
-                i.events
-                    .iter()
-                    .filter_map(|e| match e {
-                        egui::Event::PasteImage(image) => files::pasted_image(image, now),
-                        _ => None,
-                    })
-                    .collect()
+            ui.input(|i| {
+                for e in &i.events {
+                    if let egui::Event::PasteImage(image) = e {
+                        sources.push(files::Source::Pasted(image.clone()));
+                    }
+                }
             });
-            next.extend(pasted);
         }
     }
-    if !next.is_empty() {
-        state.file_error = files::add_files(&mut state.files, next);
+    // Read (and a picture encoded) on a worker: a large file must not stop
+    // the window, and one over the limit is not read at all.
+    if !sources.is_empty() {
+        state
+            .loading
+            .push(files::load(ui.ctx(), sources, chrono::Utc::now()));
+    }
+    while let Some(done) = state.loading.first().and_then(|l| l.lock().take()) {
+        state.loading.remove(0);
+        let (next, mut notes) = done;
+        if let Some(note) = files::add_files(&mut state.files, next) {
+            notes.push(note);
+        }
+        state.file_error = (!notes.is_empty()).then(|| notes.join(" "));
     }
     actions
 }
 
-/// A file from the disk: its name, the type its name says, the bytes.
-fn outgoing(path: &std::path::Path, data: Vec<u8>) -> OutgoingFile {
-    let filename = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    OutgoingFile {
-        content_type: files::infer_content_type(&filename, ""),
-        filename,
-        data: std::sync::Arc::new(data),
-    }
-}
-
-/// Runs the desktop's file chooser on a thread; the slot fills with the
-/// chosen paths (none when cancelled or when there is no chooser).
-fn choose_files(
-    ctx: &egui::Context,
-) -> std::sync::Arc<parking_lot::Mutex<Option<Vec<std::path::PathBuf>>>> {
-    let slot = std::sync::Arc::new(parking_lot::Mutex::new(None));
-    let out = slot.clone();
-    let ctx = ctx.clone();
-    std::thread::spawn(move || {
-        let attempts: &[(&str, &[&str])] = if cfg!(target_os = "macos") {
-            &[(
-                "osascript",
-                &[
-                    "-e",
-                    "set f to choose file with multiple selections allowed",
-                    "-e",
-                    "set out to \"\"",
-                    "-e",
-                    "repeat with x in f",
-                    "-e",
-                    "set out to out & POSIX path of x & linefeed",
-                    "-e",
-                    "end repeat",
-                    "-e",
-                    "out",
-                ],
-            )]
-        } else {
-            &[
-                (
-                    "zenity",
-                    &[
-                        "--file-selection",
-                        "--multiple",
-                        "--separator=\n",
-                        "--title=Datei anhängen",
-                    ],
-                ),
-                (
-                    "kdialog",
-                    &["--getopenfilename", "--multiple", "--separate-output"],
-                ),
-            ]
-        };
-        let mut paths = Vec::new();
-        for (program, args) in attempts {
-            if let Ok(output) = std::process::Command::new(program).args(*args).output() {
-                paths = String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .filter(|l| !l.trim().is_empty())
-                    .map(std::path::PathBuf::from)
-                    .collect();
-                break;
-            }
-        }
-        *out.lock() = Some(paths);
-        ctx.request_repaint();
-    });
-    slot
+/// The chips' height in `rows` rows, 8 apart.
+fn chips_height(rows: usize) -> f32 {
+    let rows = rows.max(1) as f32;
+    rows * 56.0 + (rows - 1.0) * 8.0
 }
 
 fn composer_icon(ui: &mut Ui, rect: Rect, icon: Icon, label: &str, id: egui::Id) -> bool {
@@ -875,12 +850,106 @@ mod tests {
     use super::*;
     use egui_kittest::kittest::Queryable as _;
 
+    fn composer<'a>(
+        state: &'a std::cell::RefCell<ComposerState>,
+        members: &'a [Member],
+    ) -> egui_kittest::Harness<'a> {
+        egui_kittest::Harness::builder()
+            .with_size(egui::vec2(800.0, 400.0))
+            .build_ui(|ui| {
+                crate::fonts::install(ui.ctx());
+                crate::theme::set(ui.ctx(), crate::theme::Theme::dark());
+                let input = ComposerInput {
+                    channel: Uuid::nil(),
+                    placeholder: "#allgemein".into(),
+                    can_send: true,
+                    can_send_files: true,
+                    gifs: false,
+                    members,
+                    me: None,
+                    keywords: false,
+                    unsent: 0,
+                };
+                let pane = ui.max_rect();
+                let _ = show(ui, pane, &mut state.borrow_mut(), &input);
+            })
+    }
+
+    /// Steps until the files being read are in.
+    fn loaded(harness: &mut egui_kittest::Harness<'_>, state: &std::cell::RefCell<ComposerState>) {
+        for _ in 0..300 {
+            harness.step();
+            if state.borrow().loading.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        harness.run_steps(2);
+    }
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("gelabber-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        dir
+    }
+
+    #[derive(Debug)]
+    struct Dropped(std::path::PathBuf);
+    impl egui::DroppedFile for Dropped {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            panic!("read on the UI thread")
+        }
+    }
+
     /// Files dragged over the window: the composer says where they go;
     /// dropped, the ones the API refuses are named and left out.
     #[test]
     fn files_over_the_window_show_where_they_go() {
         let members: Vec<Member> = Vec::new();
         let state = std::cell::RefCell::new(ComposerState::default());
+        let mut harness = composer(&state, &members);
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Loslassen zum Anhängen").is_none());
+        harness.input_mut().hovered_files.push(egui::HoveredFile {
+            path: Some("liste.txt".into()),
+            mime: String::new(),
+        });
+        harness.run_steps(2);
+        harness.get_by_label("Loslassen zum Anhängen");
+        harness.input_mut().hovered_files.clear();
+        let dir = temp_dir("drop");
+        for (name, bytes) in [
+            ("liste.txt", b"Milch".to_vec()),
+            ("seite.html", b"<p>".to_vec()),
+        ] {
+            std::fs::write(dir.join(name), bytes).expect("write");
+            harness
+                .input_mut()
+                .dropped_files
+                .push(std::sync::Arc::new(Dropped(dir.join(name))));
+        }
+        harness.step();
+        loaded(&mut harness, &state);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(harness.query_by_label("Loslassen zum Anhängen").is_none());
+        harness.get_by_label("seite.html: Dieser Dateityp ist nicht erlaubt.");
+        let state = state.borrow();
+        assert_eq!(state.files.len(), 1);
+        assert_eq!(state.files[0].content_type, "text/plain");
+    }
+
+    /// A character typed in the same frame as Enter is sent with the rest.
+    #[test]
+    fn typing_and_enter_in_one_frame_send_everything() {
+        let members: Vec<Member> = Vec::new();
+        let state = std::cell::RefCell::new(ComposerState {
+            draft: "Hallo".into(),
+            ..ComposerState::default()
+        });
+        let sent = std::cell::RefCell::new(Vec::new());
         let mut harness = egui_kittest::Harness::builder()
             .with_size(egui::vec2(800.0, 300.0))
             .build_ui(|ui| {
@@ -898,41 +967,67 @@ mod tests {
                     unsent: 0,
                 };
                 let pane = ui.max_rect();
-                let _ = show(ui, pane, &mut state.borrow_mut(), &input);
+                for action in show(ui, pane, &mut state.borrow_mut(), &input) {
+                    if let ComposerAction::Send { text, .. } = action {
+                        sent.borrow_mut().push(text);
+                    }
+                }
             });
-        harness.run_steps(2);
-        assert!(harness.query_by_label("Loslassen zum Anhängen").is_none());
-        harness.input_mut().hovered_files.push(egui::HoveredFile {
-            path: Some("liste.txt".into()),
-            mime: String::new(),
+        state.borrow_mut().focus = true;
+        harness.run_steps(3);
+        // Both in one frame (`event` would give each its own).
+        let events = &mut harness.input_mut().events;
+        events.push(egui::Event::Text("!".into()));
+        events.push(egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
         });
         harness.run_steps(2);
-        harness.get_by_label("Loslassen zum Anhängen");
-        harness.input_mut().hovered_files.clear();
-        #[derive(Debug)]
-        struct Dropped(std::path::PathBuf, Vec<u8>);
-        impl egui::DroppedFile for Dropped {
-            fn path(&self) -> &std::path::Path {
-                &self.0
-            }
-            fn bytes(&self) -> Result<Vec<u8>, String> {
-                Ok(self.1.clone())
-            }
+        assert_eq!(*sent.borrow(), ["Hallo!"]);
+        assert_eq!(state.borrow().draft, "");
+    }
+
+    /// A file over the limit is named by its size on disk; ten chips wrap
+    /// inside the field, each with its remove button.
+    #[test]
+    fn dropped_files_are_checked_before_reading_and_their_chips_wrap() {
+        let members: Vec<Member> = Vec::new();
+        let state = std::cell::RefCell::new(ComposerState::default());
+        let mut harness = composer(&state, &members);
+        harness.run_steps(2);
+        let dir = temp_dir("chips");
+        // Sparse: 26 MB on paper, nothing on the disk.
+        let big = std::fs::File::create(dir.join("film.mp4")).expect("file");
+        big.set_len(26 * 1024 * 1024).expect("size");
+        let mut names = vec!["film.mp4".to_owned()];
+        for i in 0..10 {
+            let name = format!("Urlaubsbericht-Teil-{i}.txt");
+            std::fs::write(dir.join(&name), b"Sonne").expect("write");
+            names.push(name);
         }
-        for (name, bytes) in [
-            ("liste.txt", b"Milch".to_vec()),
-            ("seite.html", b"<p>".to_vec()),
-        ] {
+        for name in &names {
             harness
                 .input_mut()
                 .dropped_files
-                .push(std::sync::Arc::new(Dropped(name.into(), bytes)));
+                .push(std::sync::Arc::new(Dropped(dir.join(name))));
         }
-        harness.run_steps(2);
-        assert!(harness.query_by_label("Loslassen zum Anhängen").is_none());
-        harness.get_by_label("seite.html: Dieser Dateityp ist nicht erlaubt.");
-        let state = state.borrow();
-        assert_eq!(state.files.len(), 1);
-        assert_eq!(state.files[0].content_type, "text/plain");
+        harness.step();
+        loaded(&mut harness, &state);
+        let _ = std::fs::remove_dir_all(&dir);
+        harness.get_by_label("film.mp4: Die Datei ist zu groß (max. 25 MB).");
+        assert_eq!(state.borrow().files.len(), 10);
+        let buttons: Vec<egui::Rect> = harness
+            .query_all_by_label("Anhang entfernen")
+            .map(|n| n.rect())
+            .collect();
+        assert_eq!(buttons.len(), 10);
+        assert!(
+            buttons.iter().all(|r| r.right() <= 800.0 - 16.0),
+            "{buttons:?}"
+        );
+        assert!(state.borrow().chip_rows > 1);
     }
 }

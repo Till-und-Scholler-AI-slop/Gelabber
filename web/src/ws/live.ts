@@ -19,6 +19,8 @@ export function isPresenceActivityEvent(type: string): boolean {
 }
 export const TYPING_TTL_MS = 6_000;
 export const TYPING_REFRESH_MS = 3_000;
+/** No keystroke for this long ends "tippt…" though the caret stays put. */
+export const TYPING_IDLE_MS = 6_000;
 /** Reserved strip under the message pane — typing must not relayout chat. */
 export const TYPING_BAR_PX = 28;
 
@@ -125,8 +127,54 @@ export function pruneTyping(now: number): void {
       }
       byChannel[channelId] = next;
     }
-    return changed || state.now !== now ? { byChannel, now } : state;
+    // Only an expiry is news: a fresh state per tick re-rendered every reader.
+    return changed ? { byChannel, now } : state;
   });
+}
+
+/**
+ * Announces typing for one composer: on at the first keystroke, refreshed
+ * while keys keep coming, off when the field empties, on `stop`, or after
+ * `TYPING_IDLE_MS` without a keystroke.
+ */
+export function createTypingSender(
+  send: (serverId: string, channelId: string, on: boolean) => void,
+  now: () => number = Date.now,
+): {
+  input: (serverId: string, channelId: string, value: string) => void;
+  stop: () => void;
+} {
+  let sent: { s: string; c: string } | null = null;
+  let refresh: ReturnType<typeof setInterval> | null = null;
+  let lastInput = 0;
+
+  const stop = () => {
+    if (refresh) {
+      clearInterval(refresh);
+      refresh = null;
+    }
+    const target = sent;
+    sent = null;
+    if (target) send(target.s, target.c, false);
+  };
+
+  const input = (serverId: string, channelId: string, value: string) => {
+    if (value.length === 0) {
+      stop();
+      return;
+    }
+    lastInput = now();
+    if (sent) return;
+    const target = { s: serverId, c: channelId };
+    sent = target;
+    send(target.s, target.c, true);
+    refresh = setInterval(() => {
+      if (now() - lastInput >= TYPING_IDLE_MS) stop();
+      else send(target.s, target.c, true);
+    }, TYPING_REFRESH_MS);
+  };
+
+  return { input, stop };
 }
 
 export function typingUserIds(

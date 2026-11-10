@@ -374,7 +374,11 @@ async fn deliver(
         users
     };
     // Without Redis nobody counts as in front: push anyway.
-    let in_front = state.gateway.in_front(&users).await.unwrap_or_default();
+    let in_front = state
+        .gateway
+        .in_front_in(&users, message.channel_id)
+        .await
+        .unwrap_or_default();
     let urgency = if server.is_none() { "high" } else { "normal" };
     let results = futures_util::stream::iter(
         targets
@@ -467,7 +471,8 @@ async fn settle(state: &AppState, push: &Push, results: Vec<(Outcome, String)>) 
     let mut sent = Vec::new();
     let mut gone = Vec::new();
     // A subscription that has not taken a push for 30 days goes on its next
-    // failure (a 413, a 429, a service that is gone).
+    // failure (a 413, an unexpected 4xx), but only in a batch where another
+    // push went out: when none did, the fault is more likely ours.
     let mut failed = Vec::new();
     let mut refused = Vec::new();
     for (outcome, endpoint) in results {
@@ -476,6 +481,7 @@ async fn settle(state: &AppState, push: &Push, results: Vec<(Outcome, String)>) 
             Outcome::Gone => gone.push(endpoint),
             Outcome::Refused => refused.push(endpoint),
             Outcome::Failed => failed.push(endpoint),
+            Outcome::Transient => {}
         }
     }
     // A refusal is the subscription's fault only where the same service took
@@ -510,10 +516,12 @@ async fn settle(state: &AppState, push: &Push, results: Vec<(Outcome, String)>) 
             .execute(&state.db)
             .await;
     }
-    if !failed.is_empty() {
+    if !failed.is_empty() && !sent.is_empty() {
+        // `created_at` moves on every re-subscribe from an opened app, so a
+        // quiet but live subscription counts from then, not its last push.
         let _ = sqlx::query(
             "DELETE FROM push_subscriptions WHERE endpoint=ANY($1)
-             AND COALESCE(last_ok_at, created_at) < now() - interval '30 days'",
+             AND GREATEST(last_ok_at, created_at) < now() - interval '30 days'",
         )
         .bind(&failed)
         .execute(&state.db)
@@ -671,7 +679,11 @@ enum Outcome {
     /// message, such rows are not kept for a month of retries; a browser
     /// still subscribed sends it again on its next start (`syncPush`).
     Refused,
+    /// Any other 4xx (a 413, say): counts against a silent subscription.
     Failed,
+    /// Unreachable, 429 or 5xx, or our own encryption: says nothing about
+    /// the subscription, so it never costs one.
+    Transient,
 }
 
 /// `topic` names what the push is about: a later push with the same topic
@@ -684,7 +696,7 @@ async fn send(push: &Push, target: &Target, payload: &[u8], urgency: &str, topic
         return Outcome::Gone;
     };
     let Ok(body) = webpush::encrypt(&receiver, payload) else {
-        return Outcome::Failed;
+        return Outcome::Transient;
     };
     let expires = chrono::Utc::now().timestamp() + 12 * 3600;
     let response = push
@@ -714,13 +726,20 @@ async fn send(push: &Push, target: &Target, payload: &[u8], urgency: &str, topic
             );
             Outcome::Refused
         }
-        Ok(response) => {
+        Ok(response) if response.status().is_client_error() && response.status() != 429 => {
             warn!(status = response.status().as_u16(), "push service refused");
             Outcome::Failed
         }
+        Ok(response) => {
+            warn!(
+                status = response.status().as_u16(),
+                "push service unavailable"
+            );
+            Outcome::Transient
+        }
         Err(err) => {
             warn!(error = %err, "push service unreachable");
-            Outcome::Failed
+            Outcome::Transient
         }
     }
 }

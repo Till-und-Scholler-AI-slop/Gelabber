@@ -452,7 +452,7 @@ fn attachments_upload_bind_and_download() {
     let http = lena.http().clone();
     let url = http.attachment_url(attachment.id, false);
     let bytes = lena
-        .block_on(async move { http.bytes(&url).await })
+        .block_on(async move { http.bytes(&url, gelabber_client::Download::Text).await })
         .unwrap();
     assert_eq!(bytes, b"Hallo Anhang");
     while lena.busy() {

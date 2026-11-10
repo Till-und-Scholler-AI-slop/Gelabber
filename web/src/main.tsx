@@ -16,7 +16,7 @@ import { watchSpeaking } from "./voice/speaking.ts";
 
 // The Tauri app keeps out of the worker and install prompts, as it always did.
 const desktop = isTauriApp();
-if (desktop) void warnIfTauriOutdated();
+if (desktop) warnIfTauriOutdated();
 markTauriRoot(document.documentElement);
 const stopInstallTracking = trackInstallation(window, desktop);
 if (import.meta.hot) import.meta.hot.dispose(stopInstallTracking);

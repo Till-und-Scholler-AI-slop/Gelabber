@@ -37,8 +37,10 @@ fn validate_avatar_url(raw: &str) -> Option<&'static str> {
     if v.chars().count() > 2048 {
         return Some("too_long");
     }
-    let ok = v.len() > 8
-        && v[..8].eq_ignore_ascii_case("https://")
+    // `get`: byte 8 may fall inside a multibyte character.
+    let ok = v
+        .get(..8)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"))
         && v[8..]
             .chars()
             .next()
@@ -57,6 +59,8 @@ pub struct ProfileState {
     /// Which write is running: `save`, `upload` or `remove`.
     running: Option<&'static str>,
     picking: Option<Picked>,
+    /// The picked or dropped image, read and cropped off the UI thread.
+    preparing: Option<controls::Prepared>,
     /// The URL field as typed 400 ms ago, for the preview.
     settled_url: String,
     typed_at: f64,
@@ -120,17 +124,31 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
         if let Some(file) = done {
             s.picking = None;
             if let Some((bytes, _)) = file {
-                upload(app, s, &bytes);
+                prepare(ui.ctx(), s, controls::ImageFile::Bytes(bytes));
             }
         }
     }
     if s.running.is_none()
-        && let Some((bytes, _)) = controls::dropped_file(ui.ctx())
+        && s.preparing.is_none()
+        && let Some(file) = controls::dropped_image(ui.ctx())
     {
-        upload(app, s, &bytes);
+        prepare(ui.ctx(), s, file);
+    }
+    if let Some(prepared) = crate::task::poll(&mut s.preparing) {
+        match prepared {
+            Ok((data, kind)) => {
+                s.running = Some("upload");
+                app.client.upload_avatar(kind, data);
+            }
+            Err(message) => s.errors.set_fields(vec![("avatar_url", message)]),
+        }
     }
 
-    let busy = s.running.is_some() || op_pending(app, "profile") || op_pending(app, "avatar");
+    let busy = s.running.is_some()
+        || s.preparing.is_some()
+        || op_pending(app, "profile")
+        || op_pending(app, "avatar");
+    let uploading = s.running == Some("upload") || s.preparing.is_some();
     let dirty = s.name.trim() != user.name
         || s.avatar_url.trim() != user.avatar_url.clone().unwrap_or_default();
     let unchanged = !dirty && !s.saved && !busy;
@@ -162,8 +180,8 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
                 .add(
                     Button::new("Bild hochladen")
                         .small()
-                        .disabled(busy && s.running != Some("upload"))
-                        .pending((s.running == Some("upload")).then_some("Lädt hoch…")),
+                        .disabled(busy && !uploading)
+                        .pending(uploading.then_some("Lädt hoch…")),
                 )
                 .clicked();
             if upload_clicked && !busy && s.picking.is_none() {
@@ -298,15 +316,9 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
     });
 }
 
-fn upload(app: &AppCtx, s: &mut ProfileState, bytes: &[u8]) {
+fn prepare(ctx: &egui::Context, s: &mut ProfileState, file: controls::ImageFile) {
     s.saved = false;
-    match controls::prepare_image(bytes, 256, 256) {
-        Ok((data, kind)) => {
-            s.running = Some("upload");
-            app.client.upload_avatar(kind, data);
-        }
-        Err(message) => s.errors.set_fields(vec![("avatar_url", message)]),
-    }
+    s.preparing = Some(controls::prepare(ctx, file, 256, 256));
 }
 
 // ------------------------------------------------------------ security
@@ -473,5 +485,14 @@ mod tests {
         assert_eq!(validate_avatar_url("https://a.example/x.png"), None);
         assert_eq!(validate_avatar_url("http://a.example"), Some("invalid"));
         assert_eq!(validate_avatar_url("https:///x"), Some("invalid"));
+    }
+
+    /// A multibyte character across byte 8 once panicked the slice.
+    #[test]
+    fn avatar_urls_with_umlauts_are_checked_not_sliced() {
+        assert_eq!(validate_avatar_url("http://ärzte.example"), Some("invalid"));
+        assert_eq!(validate_avatar_url("a😀😀"), Some("invalid"));
+        assert_eq!(validate_avatar_url("Avatar ö"), Some("invalid"));
+        assert_eq!(validate_avatar_url("https://ärzte.example/a.png"), None);
     }
 }

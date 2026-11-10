@@ -12,6 +12,10 @@ import {
   type StreamProfileId,
 } from "./settings.ts";
 
+/** How often a sent capture's size is compared with the one its caps were
+ * computed for: a shared window or tab can change size at any time. */
+const RESIZE_CHECK_MS = 2_000;
+
 /** Bits per pixel and frame: generous for screen content, still a hard ceiling. */
 const BITS_PER_PIXEL = 0.1;
 
@@ -44,6 +48,11 @@ export function encodingBitrates(
   );
 }
 
+function sizeOf(track: MediaStreamTrack): string {
+  const settings = track.getSettings?.();
+  return `${settings?.width ?? 0}x${settings?.height ?? 0}`;
+}
+
 /**
  * One video-budget queue for the current peer generation. Profile changes,
  * publish, unpublish and profile changes share it. A newer request supersedes an
@@ -53,6 +62,9 @@ export class VideoLimits {
   private chain: Promise<void> = Promise.resolve();
   private generation = 0;
   private revision = 0;
+  /** The size each track's caps were computed for. */
+  private sizes = new WeakMap<MediaStreamTrack, string>();
+  private resizeTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     /** The seat as it is now: a reset replaces it. */
@@ -61,6 +73,7 @@ export class VideoLimits {
   ) {}
 
   reset(): void {
+    this.stopResizeCheck();
     this.revision += 1;
     this.chain = Promise.resolve();
     this.generation = this.seat().generation;
@@ -88,6 +101,7 @@ export class VideoLimits {
       this.generation = generation;
     }
     const revision = ++this.revision;
+    this.watchResize(pc, generation);
     const run = this.chain.then(
       () => this.apply(pc, generation, revision),
       () => this.apply(pc, generation, revision),
@@ -97,6 +111,36 @@ export class VideoLimits {
       () => undefined,
     );
     return run;
+  }
+
+  private stopResizeCheck(): void {
+    if (this.resizeTimer !== null) clearInterval(this.resizeTimer);
+    this.resizeTimer = null;
+  }
+
+  /** Runs the budget again when a sent video track's size changed, while
+   * this connection is the seat's and sends video. */
+  private watchResize(pc: MediaConnection, generation: number): void {
+    if (this.resizeTimer !== null) return;
+    this.resizeTimer = setInterval(() => {
+      const seat = this.seat();
+      const tracks = (pc.senders() ?? [])
+        .map((sender) => sender.track)
+        .filter(
+          (track): track is MediaStreamTrack =>
+            track?.kind === "video" && track.readyState !== "ended",
+        );
+      if (
+        seat.generation !== generation ||
+        seat.connection !== pc ||
+        tracks.length === 0
+      ) {
+        this.stopResizeCheck();
+        return;
+      }
+      if (tracks.some((track) => this.sizes.get(track) !== sizeOf(track)))
+        void this.enqueue(pc).catch(() => {});
+    }, RESIZE_CHECK_MS);
   }
 
   private async apply(
@@ -124,6 +168,7 @@ export class VideoLimits {
       const profile = profiles[index] ?? "balanced";
       const fps = streamProfileFps(profile);
       const settings = sender.track?.getSettings?.();
+      if (sender.track) this.sizes.set(sender.track, sizeOf(sender.track));
       const fallback = STREAM_PROFILES[profile];
       // libwebrtc's own defaults cap a 1080p+ layer at 5 Mbit/s, so every
       // layer gets an explicit ceiling from its own pixels and frame rate.

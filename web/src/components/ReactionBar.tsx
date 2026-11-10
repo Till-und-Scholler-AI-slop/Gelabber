@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentType } from "react";
+import { useRef } from "react";
 import { createPortal } from "react-dom";
 import { displayedReactions, reactorNames } from "../messages/reactions.ts";
 import { useMentions } from "./mentionContext.ts";
@@ -6,45 +6,19 @@ import type { Reacting } from "./useReaction.ts";
 import type { Message } from "../messages/types.ts";
 import { SmileIcon } from "./Icons.tsx";
 import { Modal } from "./Modal.tsx";
+import { EmojiPickerPart } from "./emojiPickerPart.ts";
 
 export function EmojiPickerLoader({
   onSelect,
 }: {
   onSelect: (emoji: string) => void;
 }) {
-  const [load, setLoad] = useState<{
-    Picker?: ComponentType<{ onSelect: (emoji: string) => void }>;
-    failed?: boolean;
-  }>({});
-  useEffect(() => {
-    let alive = true;
-    void import("./EmojiPicker.tsx").then(
-      (module) => {
-        if (alive) setLoad({ Picker: module.default });
-      },
-      () => {
-        if (alive) setLoad({ failed: true });
-      },
-    );
-    return () => {
-      alive = false;
-    };
-  }, []);
-  if (load.Picker) return <load.Picker onSelect={onSelect} />;
-  if (load.failed)
-    return (
-      <div role="alert" className="flex flex-col gap-3">
-        <p>Die Emoji-Auswahl konnte nicht geladen werden.</p>
-        <button
-          type="button"
-          className="rounded border px-3 py-2"
-          onClick={() => window.location.reload()}
-        >
-          Seite neu laden
-        </button>
-      </div>
-    );
-  return <p role="status">Emoji-Auswahl wird geladen…</p>;
+  return (
+    <EmojiPickerPart.Component
+      onSelect={onSelect}
+      fallback={<p role="status">Emoji-Auswahl wird geladen…</p>}
+    />
+  );
 }
 
 export function ReactionBar({

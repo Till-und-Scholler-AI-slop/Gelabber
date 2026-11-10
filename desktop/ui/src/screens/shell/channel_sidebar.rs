@@ -996,9 +996,12 @@ fn server_menu(
         });
     match picked {
         None => {
-            // Esc or a press outside; a press on the button toggles itself.
-            let on_button =
-                ui.input(|i| i.pointer.interact_pos().is_some_and(|p| anchor.contains(p)));
+            // Esc or a press outside; a press on the button toggles itself
+            // (only a press: the pointer may rest there while Esc is hit).
+            let on_button = ui.input(|i| {
+                i.pointer.any_pressed()
+                    && i.pointer.interact_pos().is_some_and(|p| anchor.contains(p))
+            });
             if !on_button {
                 state::with(ui.ctx(), |s| s.server_menu = false);
             }
@@ -1282,5 +1285,38 @@ mod tests {
             participant_label("Bob", false, true, true, true),
             "Bob, Live, taub"
         );
+    }
+
+    /// Esc closes the server menu also while the pointer still rests on
+    /// the name that opened it.
+    #[test]
+    fn esc_closes_the_server_menu_under_the_pointer() {
+        use egui::accesskit::Role;
+        use egui_kittest::kittest::Queryable;
+
+        use crate::app::testkit::{FakeApi, HOME, launcher, wait_for_label, workspace};
+        use crate::platform::paths::testing::TempConfig;
+
+        let _config = TempConfig::new("server-menu-esc");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        wait_for_label(&mut harness, "allgemein");
+        harness
+            .get_by_role_and_label(Role::DisclosureTriangle, "Wohnzimmer")
+            .click();
+        wait_for_label(&mut harness, "Servereinstellungen");
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(4);
+        assert!(harness.query_by_label("Servereinstellungen").is_none());
+        // A click on the name still opens and closes it.
+        let name = |h: &egui_kittest::Harness<'_, crate::Launcher>| {
+            h.get_by_role_and_label(Role::DisclosureTriangle, "Wohnzimmer")
+                .click();
+        };
+        name(&harness);
+        wait_for_label(&mut harness, "Servereinstellungen");
+        name(&harness);
+        harness.run_steps(4);
+        assert!(harness.query_by_label("Servereinstellungen").is_none());
     }
 }

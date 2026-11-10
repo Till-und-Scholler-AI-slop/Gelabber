@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import { SettingsGroup } from "../components/SettingsGroup.tsx";
+import { Button } from "../components/ui/Button.tsx";
 import { ChipGroup } from "../components/ui/ChipGroup.tsx";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
 import { Switch } from "../components/ui/Switch.tsx";
@@ -10,7 +11,12 @@ import {
   useInterfacePreferences,
   type UiScale,
 } from "../interface/preferences.ts";
-import { changeTheme, syncThemes, useAccountThemes } from "../theme/account.ts";
+import {
+  changeTheme,
+  retryThemes,
+  syncThemes,
+  useAccountThemes,
+} from "../theme/account.ts";
 import { BUILTIN_THEMES, builtinTheme } from "../theme/presets.ts";
 
 const MODES = [
@@ -102,7 +108,12 @@ export function AppearanceSettings() {
           ))}
         </div>
         {unavailable && themes.error ? (
-          <p className="ui-field-error">{themes.error}</p>
+          <>
+            <p className="ui-field-error">{themes.error}</p>
+            <Button size="sm" onClick={() => void retryThemes()}>
+              {themes.pending ? "Erneut anwenden" : "Erneut versuchen"}
+            </Button>
+          </>
         ) : null}
         <p className="settings-hint">
           {otherTheme ? `Gerade aktiv: ${otherTheme.name}. ` : null}

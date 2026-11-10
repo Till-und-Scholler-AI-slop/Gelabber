@@ -696,17 +696,89 @@ pub const PEER_SETTLE: Duration = Duration::from_millis(2000);
 pub fn media_error_message(code: &str) -> &'static str {
     match code {
         "update_required" => "Bitte Gelabber aktualisieren und den Sprachkanal erneut betreten.",
-        "unauthorized" => "Bitte melde dich erneut an.",
+        // The seat, not the sign-in: the ticket endpoint answers for that.
+        "unauthorized" => "Der Sprachserver hat die Verbindung nicht zugelassen.",
+        "gone" => "Der Sprachserver ist gerade nicht erreichbar.",
         "unavailable" => "Kein freier Sprachplatz.",
         "forbidden" => "Dafür fehlt dir die Berechtigung.",
         _ => "Der Stream konnte nicht verbunden werden. Der Sprachkanal bleibt aktiv.",
     }
 }
 
+/// Where a media error came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaStage {
+    /// The `j` of a new seat.
+    Join,
+    /// A request of a seat still being built: capabilities, receive transport.
+    Building,
+    /// An `err` of a working seat.
+    Seat,
+}
+
+/// What a media error does to the call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaErrorAction {
+    Ignore,
+    /// A new seat with a new ticket, without a word.
+    Rebuild,
+    /// The server said no: one new ticket decides, the ticket endpoint
+    /// being the authority.
+    Renew,
+    /// The call ends with the code's message.
+    Leave,
+    /// A message; `once` only the first of the call. The seat goes on.
+    Notify {
+        once: bool,
+    },
+}
+
+/// `rebuilding`: an earlier seat of this call was lost.
+pub fn media_error_action(code: &str, stage: MediaStage, rebuilding: bool) -> MediaErrorAction {
+    use MediaErrorAction::*;
+    match (code, stage) {
+        ("ice_failed", _) => Ignore,
+        ("update_required", _) => Leave,
+        ("unauthorized", _) => Renew,
+        // A first join has no seat to wait for.
+        ("unavailable", MediaStage::Join) if !rebuilding => Leave,
+        // A half-built seat neither receives nor sends: a new one.
+        (_, MediaStage::Join | MediaStage::Building) => Rebuild,
+        ("connection_closed" | "network" | "request_timeout" | "connect_timeout" | "gone", _) => {
+            Rebuild
+        }
+        ("forbidden", _) => Notify { once: false },
+        _ => Notify { once: true },
+    }
+}
+
+/// A seat that stayed up this long since the last revocation counts as
+/// working again.
+pub const REVOCATION_CALM: Duration = Duration::from_secs(30);
+pub const REVOCATION_WINDOW: Duration = Duration::from_secs(60);
+pub const REVOCATION_LIMIT: usize = 4;
+
+/// Notes a revocation nobody asked for (`unauthorized` or `gone` of a
+/// working seat) at `now`; true for the [`REVOCATION_LIMIT`]-th within
+/// [`REVOCATION_WINDOW`], when the servers disagree and rebuilding is futile.
+pub fn revoked_too_often(revocations: &mut Vec<Instant>, now: Instant) -> bool {
+    if revocations
+        .last()
+        .is_some_and(|last| now.saturating_duration_since(*last) >= REVOCATION_CALM)
+    {
+        revocations.clear();
+    }
+    revocations.retain(|at| now.saturating_duration_since(*at) < REVOCATION_WINDOW);
+    revocations.push(now);
+    revocations.len() >= REVOCATION_LIMIT
+}
+
 pub const LOST_CALL_MESSAGE: &str =
     "Die Sprachverbindung konnte nicht wiederhergestellt werden. Bitte erneut beitreten.";
 pub const LIVE_FORBIDDEN_MESSAGE: &str = "In diesem Server darfst du nicht live gehen.";
 pub const CAMERA_UNAVAILABLE: &str = "Die Kamera ist nicht verfügbar.";
+/// A Live the seat refused (`forbidden`): its ticket predates the grant.
+pub const LIVE_NEEDS_REJOIN: &str = "Betritt den Sprachkanal neu, um live zu gehen.";
 /// `microphoneFailure` for a join that goes on listening.
 pub const MIC_NOT_FOUND: &str = "Kein Mikrofon gefunden, du hörst nur zu.";
 pub const MIC_DENIED: &str = "Mikrofonzugriff nicht erlaubt, du hörst nur zu.";
@@ -744,6 +816,23 @@ pub fn silent_app(app: &str, streams: Option<u64>, quiet: &mut u32) -> Option<Op
 pub fn mute_change(muted: bool, deafened: bool, want: bool) -> Option<(bool, bool)> {
     let next = (want, deafened && want);
     (next != (muted, deafened)).then_some(next)
+}
+
+/// The microphone's two switches (`applyLocalAudio`): its track, which
+/// push-to-talk closes too, and the server's pause, which only mute and
+/// deafen set. The producer's own pause stays unused: it is the same track.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MicSwitches {
+    pub enabled: bool,
+    pub paused: bool,
+}
+
+pub fn mic_switches(muted: bool, deafened: bool, gate_open: bool) -> MicSwitches {
+    let off = muted || deafened;
+    MicSwitches {
+        enabled: !off && gate_open,
+        paused: off,
+    }
 }
 
 /// `applySourceAudioChoice` of the desktop app, for a running Live whose
@@ -1120,6 +1209,69 @@ mod tests {
         // Deafened is muted: muting again is no change, unmuting undeafens.
         assert_eq!(mute_change(true, true, true), None);
         assert_eq!(mute_change(true, true, false), Some((false, false)));
+    }
+
+    #[test]
+    fn media_errors_rebuild_a_half_built_seat_and_renew_a_refused_one() {
+        use MediaErrorAction::*;
+        use MediaStage::*;
+        for code in [
+            "unavailable",
+            "forbidden",
+            "negotiation_failed",
+            "bad_request",
+        ] {
+            assert_eq!(media_error_action(code, Building, false), Rebuild, "{code}");
+        }
+        assert_eq!(media_error_action("unauthorized", Seat, false), Renew);
+        assert_eq!(media_error_action("unauthorized", Building, false), Renew);
+        assert_eq!(media_error_action("gone", Seat, false), Rebuild);
+        assert_eq!(media_error_action("update_required", Seat, false), Leave);
+        assert_eq!(media_error_action("unavailable", Join, false), Leave);
+        assert_eq!(media_error_action("unavailable", Join, true), Rebuild);
+        assert_eq!(
+            media_error_action("forbidden", Seat, false),
+            Notify { once: false }
+        );
+        assert_eq!(
+            media_error_action("bad_request", Seat, false),
+            Notify { once: true }
+        );
+        assert_eq!(media_error_action("ice_failed", Seat, false), Ignore);
+    }
+
+    #[test]
+    fn the_fourth_revocation_within_a_minute_ends_the_seat() {
+        let start = Instant::now();
+        let at = |s: u64| start + Duration::from_secs(s);
+        let mut seen = Vec::new();
+        assert!(!revoked_too_often(&mut seen, at(0)));
+        assert!(!revoked_too_often(&mut seen, at(10)));
+        assert!(!revoked_too_often(&mut seen, at(20)));
+        assert!(revoked_too_often(&mut seen, at(29)));
+        // A seat that stayed up 30 s starts the count again.
+        let mut seen = Vec::new();
+        for s in [0, 20, 40] {
+            assert!(!revoked_too_often(&mut seen, at(s)));
+        }
+        assert!(!revoked_too_often(&mut seen, at(70)));
+        // Older than a minute no longer counts, even without a calm spell.
+        let mut seen = Vec::new();
+        for s in [0, 25, 50, 75] {
+            assert!(!revoked_too_often(&mut seen, at(s)), "{s}");
+        }
+        assert!(revoked_too_often(&mut seen, at(80)));
+    }
+
+    #[test]
+    fn push_to_talk_closes_the_track_and_leaves_the_server_running() {
+        let open = |enabled, paused| MicSwitches { enabled, paused };
+        // Key up: silent here, but no server pause that would resume it.
+        assert_eq!(mic_switches(false, false, false), open(false, false));
+        assert_eq!(mic_switches(false, false, true), open(true, false));
+        // Mute and deafen close both, whatever the key.
+        assert_eq!(mic_switches(true, false, true), open(false, true));
+        assert_eq!(mic_switches(true, true, false), open(false, true));
     }
 
     #[test]

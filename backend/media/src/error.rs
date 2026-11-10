@@ -16,6 +16,9 @@ pub enum SfuError {
     /// Authority revoked: member/channel generation or session mismatch,
     /// expiry, or peer removed.
     Revoked,
+    /// The authority check could not be made, or the room is draining or on a
+    /// lost worker: the peer is removed and the client rejoins with a new ticket.
+    Gone,
     Negotiation(String),
     Ice(String),
 }
@@ -37,6 +40,7 @@ impl SfuError {
             Self::UnsupportedCodec => "unsupported_codec",
             Self::Unavailable => "unavailable",
             Self::Revoked => "unauthorized",
+            Self::Gone => "gone",
             Self::Negotiation(_) => "negotiation_failed",
             Self::Ice(_) => "ice_failed",
         }
@@ -53,6 +57,7 @@ impl fmt::Display for SfuError {
             Self::UnsupportedCodec => write!(f, "unsupported media codec"),
             Self::Unavailable => write!(f, "unavailable"),
             Self::Revoked => write!(f, "revoked"),
+            Self::Gone => write!(f, "gone"),
             Self::Negotiation(source) | Self::Ice(source) => write!(f, "{source}"),
         }
     }

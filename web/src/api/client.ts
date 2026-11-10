@@ -68,8 +68,8 @@ export class ApiError extends Error {
 
 export const REQUEST_TIMEOUT_MS = 10_000;
 
-const configuredBase: string | undefined = import.meta.env.VITE_API_BASE_URL;
-export const API_BASE = (configuredBase ?? "/api").replace(/\/+$/, "");
+// Same origin, fixed: attachment, GIF and image URLs name `/api` directly.
+export const API_BASE = "/api";
 
 let csrfToken: string | null = null;
 
@@ -105,6 +105,8 @@ type CookieState = {
   generation: string;
   phase: "changing" | "settled" | "unknown";
   userId: string | null;
+  /** A password change: the cookie changes, the signed-in account does not. */
+  keepsAccount?: true;
 };
 let observedCookieState = "";
 let adoptedCookieGeneration = "";
@@ -139,8 +141,11 @@ export function sessionCookieGeneration(): string {
   return adoptedCookieGeneration;
 }
 
+/** Who and which cookie generation; the password-change mark is no change. */
 function cookieFingerprint(state: CookieState | null): string {
-  return state ? JSON.stringify(state) : "";
+  return state
+    ? JSON.stringify([state.generation, state.phase, state.userId])
+    : "";
 }
 
 function publishCookieState(state: CookieState): void {
@@ -149,7 +154,7 @@ function publishCookieState(state: CookieState): void {
   // Fail closed when storage is unavailable: never change cookies without
   // first publishing the generation other tabs must check.
   window.localStorage.setItem(COOKIE_STATE_KEY, serialized);
-  observedCookieState = serialized;
+  observedCookieState = cookieFingerprint(state);
   adoptedCookieGeneration = state.generation;
 }
 
@@ -171,20 +176,35 @@ export function synchronizeSharedSession(): void {
   const state = readCookieState();
   if (!state && !observedCookieState) return;
   const fingerprint = cookieFingerprint(state);
-  const mismatched =
-    state?.phase !== "settled" || state?.userId !== sessionScope().userId;
+  const userId = sessionScope().userId;
+  // A password change: requests stamped before it turn stale, the account
+  // and its caches stay. A sign-in, even as the same user, still releases.
+  const sameAccount =
+    userId !== null &&
+    state?.keepsAccount === true &&
+    state.phase !== "unknown" &&
+    state.userId === userId;
+  const mismatched = state?.phase !== "settled" || state?.userId !== userId;
   if (fingerprint !== observedCookieState) {
     observedCookieState = fingerprint;
     adoptedCookieGeneration = state?.generation ?? "";
     csrfToken = null;
+    if (sameAccount) return;
     sessionSink?.(null, { force: true, shared: true, invalidate: true });
     scheduleReconciliation();
-  } else if (mismatched) {
+  } else if (mismatched && !sameAccount) {
     // An intent may have suppressed reconciliation when this generation was
     // first observed; the identity check also catches stamps taken too late.
     sessionSink?.(null, { shared: true, invalidate: true });
     scheduleReconciliation();
   }
+}
+
+/** Tests: forget the shared cookie state this module has seen. */
+export function resetSharedSessionForTests(): void {
+  observedCookieState = "";
+  adoptedCookieGeneration = "";
+  csrfToken = null;
 }
 
 export function setSessionReconciler(reconcile: () => Promise<void>): void {
@@ -398,6 +418,7 @@ async function performAuthApi<T>(
       generation: randomUuid(),
       phase: "changing",
       userId: previous?.userId ?? stamp.userId,
+      ...(path === "/auth/password" ? { keepsAccount: true as const } : {}),
     };
     publishCookieState(changing);
   }
@@ -410,7 +431,23 @@ async function performAuthApi<T>(
     const logout = response.ok && isLogoutPath(path);
     const user = logout ? null : valid ? payload.user : undefined;
     if (user !== undefined) {
-      settleCookieIdentity(user?.id ?? null, changing?.generation);
+      settleCookieIdentity(
+        user?.id ?? null,
+        changing?.generation,
+        changing?.keepsAccount,
+      );
+    } else if (
+      changing &&
+      path === "/auth/password" &&
+      previous?.phase === "settled" &&
+      // Without Web Locks another tab may have published since.
+      readCookieState()?.generation === changing.generation &&
+      response.status >= 400 &&
+      response.status < 500 &&
+      response.status !== 401
+    ) {
+      // Refused (wrong current password, validation): nothing changed.
+      publishCookieState({ ...previous, keepsAccount: true });
     } else if (changing) {
       // A failed/timed-out response might still have committed on the server.
       // A subsequent authoritative bootstrap is required, never guess the uid.
@@ -436,17 +473,22 @@ async function performAuthApi<T>(
 function settleCookieIdentity(
   userId: string | null,
   generation?: string,
+  keepsAccount?: true,
 ): void {
   if (typeof window === "undefined") return;
   const previous = readCookieState();
+  const same =
+    generation === undefined &&
+    previous?.phase === "settled" &&
+    previous.userId === userId;
   publishCookieState({
-    generation:
-      generation ??
-      (previous?.phase === "settled" && previous.userId === userId
-        ? previous.generation
-        : randomUuid()),
+    generation: generation ?? (same ? previous.generation : randomUuid()),
     phase: "settled",
     userId,
+    // Re-settling the same session keeps its mark for tabs that see it late.
+    ...(keepsAccount || (same && previous.keepsAccount)
+      ? { keepsAccount: true as const }
+      : {}),
   });
 }
 
@@ -616,9 +658,7 @@ async function send(path: string, options: RequestOptions): Promise<Response> {
     headers.set("X-CSRF-Token", csrfToken);
   }
 
-  const signal = options.signal
-    ? AbortSignal.any([options.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
-    : AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const signal = timeoutSignal(REQUEST_TIMEOUT_MS, options.signal);
 
   try {
     const response = await fetch(`${API_BASE}${path}`, {
@@ -641,6 +681,30 @@ async function send(path: string, options: RequestOptions): Promise<Response> {
     }
     throw new ApiError("network", 0, "Network error.");
   }
+}
+
+/**
+ * Aborts with `signal` or after `ms`, whichever comes first. By hand where
+ * `AbortSignal.any` is missing (Safari < 17.4, Firefox < 124, Chrome < 116).
+ */
+export function timeoutSignal(ms: number, signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(ms);
+  if (!signal) return timeout;
+  if (typeof AbortSignal.any === "function")
+    return AbortSignal.any([signal, timeout]);
+  const controller = new AbortController();
+  const sources = [signal, timeout];
+  const abort = (source: AbortSignal) => {
+    for (const other of sources) other.removeEventListener("abort", onAbort);
+    controller.abort(source.reason);
+  };
+  function onAbort(this: AbortSignal) {
+    abort(this);
+  }
+  const fired = sources.find((source) => source.aborted);
+  if (fired) abort(fired);
+  else for (const source of sources) source.addEventListener("abort", onAbort);
+  return controller.signal;
 }
 
 function rememberCsrf(payload: unknown): void {

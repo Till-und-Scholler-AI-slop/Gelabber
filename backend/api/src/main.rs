@@ -57,6 +57,22 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|err| format!("database migration failed: {err}"))?;
     info!("database migrations applied");
 
+    // Lowered session settings apply to sessions that already exist too.
+    let capped = gelabber_api::auth::session::cap_to_settings(
+        &state.db,
+        state.session_idle,
+        state.session_ttl,
+    )
+    .await
+    .map_err(|err| {
+        error!(error = ?err, "capping sessions failed");
+        format!("capping sessions failed: {}", err.code())
+    })?;
+    info!(
+        sessions = capped,
+        "sessions capped to the configured lifetime"
+    );
+
     match state.store.ensure_ready().await {
         Ok(()) => info!("object store ready"),
         Err(err) => tracing::warn!(error = %err, "object store not ready; uploads will retry"),
@@ -80,11 +96,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // The peer address is the rate-limit key when no proxy wrote
     // `X-Forwarded-For` (`limits::client_ip`).
+    let gateway = state.gateway.clone();
     axum::serve(
         listener,
         app(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        // Upgraded sockets are not HTTP connections the server waits for.
+        gateway.drain(std::time::Duration::from_secs(5)).await;
+    })
     .await?;
 
     info!("gelabber-api stopped");

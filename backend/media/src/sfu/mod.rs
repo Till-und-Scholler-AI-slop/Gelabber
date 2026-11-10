@@ -49,6 +49,11 @@ const STOP_TIMEOUT: Duration = Duration::from_millis(500);
 const STOP_CONCURRENCY: usize = 64;
 const WATCH_LIMIT: usize = 64;
 const CONSUMER_LIMIT: usize = 1024;
+/// Peers one user may hold on this SFU: a few devices and tabs at once.
+const PEERS_PER_USER: usize = 8;
+/// Peers in one room: each consumes up to four sources of every other peer,
+/// which `CONSUMER_LIMIT` allows for this many.
+const PEERS_PER_ROOM: usize = CONSUMER_LIMIT / 4;
 /// Browser-reported failures per producer before a viewer stops re-consuming it.
 const CONSUMER_FAILURE_LIMIT: u8 = 5;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
@@ -203,8 +208,9 @@ impl RoomData {
 /// port and command slots. A room stays on its engine for its lifetime.
 struct Engine {
     slot: usize,
-    worker: Worker,
-    server: WebRtcServer,
+    /// `engine_lost` takes these: the SDK closes a worker only when its last
+    /// handle drops, and a worker that was merely slow then frees its port.
+    handles: StdMutex<Option<(Worker, WebRtcServer)>>,
     /// Set when the worker died or missed its heartbeat; never cleared. The
     /// slot gets a new engine instead.
     lost: Arc<AtomicBool>,
@@ -251,8 +257,7 @@ impl Engine {
         .await?;
         Ok(Arc::new(Self {
             slot,
-            worker,
-            server,
+            handles: StdMutex::new(Some((worker, server))),
             lost,
             exited,
             lost_at: StdMutex::new(None),
@@ -263,7 +268,21 @@ impl Engine {
         }))
     }
     fn alive(&self) -> bool {
-        !self.lost.load(Ordering::SeqCst) && !self.worker.closed() && !self.server.closed()
+        !self.lost.load(Ordering::SeqCst)
+            && self
+                .handles
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|(worker, server)| !worker.closed() && !server.closed())
+    }
+    fn worker(&self) -> Result<Worker, SfuError> {
+        let handles = self.handles.lock().unwrap();
+        Ok(handles.as_ref().ok_or(SfuError::Gone)?.0.clone())
+    }
+    fn server(&self) -> Result<WebRtcServer, SfuError> {
+        let handles = self.handles.lock().unwrap();
+        Ok(handles.as_ref().ok_or(SfuError::Gone)?.1.clone())
     }
     /// How long this slot has been without a live worker; zero while alive.
     fn down_for(&self) -> Duration {
@@ -359,6 +378,8 @@ pub struct Sfu {
     engines: StdMutex<Vec<Arc<Engine>>>,
     rooms: Mutex<HashMap<Uuid, Arc<Room>>>,
     counters: Counters,
+    /// Joined peers per user, for `PEERS_PER_USER`.
+    user_peers: StdMutex<HashMap<Uuid, usize>>,
     draining: AtomicBool,
 }
 impl Sfu {
@@ -384,6 +405,7 @@ impl Sfu {
             engines: StdMutex::new(engines.clone()),
             rooms: Mutex::new(HashMap::new()),
             counters: Counters::default(),
+            user_peers: StdMutex::new(HashMap::new()),
             draining: AtomicBool::new(false),
         });
         Self::watch_stats(Arc::downgrade(&sfu));
@@ -410,8 +432,11 @@ impl Sfu {
                 if engine.lost.load(Ordering::SeqCst) {
                     break "mediasoup worker unexpectedly exited";
                 }
+                let Ok(worker) = engine.worker() else {
+                    break "mediasoup worker released";
+                };
                 if !matches!(
-                    tokio::time::timeout(HEARTBEAT_TIMEOUT, engine.worker.dump()).await,
+                    tokio::time::timeout(HEARTBEAT_TIMEOUT, worker.dump()).await,
                     Ok(Ok(_))
                 ) {
                     break "native worker heartbeat unresponsive";
@@ -444,6 +469,8 @@ impl Sfu {
             fail_closed(reason);
         }
         self.close_engine_rooms(engine).await;
+        // Rooms and in-flight joins may still hold the router a moment longer.
+        drop(engine.handles.lock().unwrap().take());
         self.respawn(engine.slot);
     }
     async fn close_engine_rooms(self: &Arc<Self>, engine: &Arc<Engine>) {
@@ -483,6 +510,7 @@ impl Sfu {
         c.peers.fetch_sub(peers.len(), Ordering::Relaxed);
         room.engine.peers.fetch_sub(peers.len(), Ordering::Relaxed);
         for p in &peers {
+            self.release_user_peer(p.peer.authority.claim.u);
             p.peer.grant.stop();
             for watch in p.watches.values() {
                 watch.stop();
@@ -593,15 +621,14 @@ impl Sfu {
         if version != MEDIA_PROTOCOL_VERSION {
             return Err(SfuError::ProtocolVersion);
         }
+        // Like the check after the router: a draining pool is recoverable.
+        if self.draining.load(Ordering::SeqCst) {
+            return Err(SfuError::Gone);
+        }
         if !self.ready() {
             return Err(SfuError::Unavailable);
         }
-        if !crate::ticket::validate_authority(&self.redis, &authority)
-            .await
-            .unwrap_or(false)
-        {
-            return Err(SfuError::Revoked);
-        }
+        self.authorize(&authority).await?;
         let channel = authority.claim.c;
         let room = {
             let mut rooms = self.rooms.lock().await;
@@ -622,7 +649,7 @@ impl Sfu {
             .router
             .get_or_try_init(|| async {
                 room.engine
-                    .native(room.engine.worker.clone(), |worker| async move {
+                    .native(room.engine.worker()?, |worker| async move {
                         worker
                             .create_router(RouterOptions::new(router_codecs()?))
                             .await
@@ -636,14 +663,16 @@ impl Sfu {
             self.remove_empty_room(channel, &room).await;
             return Err(err);
         }
-        if !crate::ticket::validate_authority(&self.redis, &authority)
-            .await
-            .unwrap_or(false)
-            || !self.room_ready(&room)
-        {
+        // Drain and a lost engine are recoverable: the client rejoins.
+        let ready = if self.room_ready(&room) {
+            self.authorize(&authority).await
+        } else {
+            Err(SfuError::Gone)
+        };
+        if let Err(error) = ready {
             room.joining.fetch_sub(1, Ordering::SeqCst);
             self.remove_empty_room(channel, &room).await;
-            return Err(SfuError::Revoked);
+            return Err(error);
         }
         let id = PeerId(Uuid::new_v4());
         let peer = Arc::new(Peer {
@@ -661,6 +690,12 @@ impl Sfu {
         // A lost engine's rooms are closed under this lock after `lost` is
         // set: either that close sees this peer, or this check sees `lost`.
         if !room.engine.alive() {
+            drop(data);
+            room.joining.fetch_sub(1, Ordering::SeqCst);
+            self.remove_empty_room(channel, &room).await;
+            return Err(SfuError::Gone);
+        }
+        if data.peers.len() >= PEERS_PER_ROOM || !self.take_user_peer(peer.authority.claim.u) {
             drop(data);
             room.joining.fetch_sub(1, Ordering::SeqCst);
             self.remove_empty_room(channel, &room).await;
@@ -745,6 +780,7 @@ impl Sfu {
             let mut data = room.data.lock().await;
             let removed = data.peers.remove(&id);
             if let Some(p) = &removed {
+                self.release_user_peer(p.peer.authority.claim.u);
                 self.counters
                     .transports
                     .fetch_sub(p.transports.len(), Ordering::Relaxed);
@@ -757,6 +793,25 @@ impl Sfu {
         // send a better one again.
         self.announce_video_codecs(changed);
         self.remove_empty_room(channel, &room).await;
+    }
+    /// Counts a new peer of `user`; false when the user holds its share.
+    fn take_user_peer(&self, user: Uuid) -> bool {
+        let mut users = self.user_peers.lock().unwrap();
+        let held = users.entry(user).or_insert(0);
+        if *held >= PEERS_PER_USER {
+            return false;
+        }
+        *held += 1;
+        true
+    }
+    fn release_user_peer(&self, user: Uuid) {
+        let mut users = self.user_peers.lock().unwrap();
+        if let Some(held) = users.get_mut(&user) {
+            *held -= 1;
+            if *held == 0 {
+                users.remove(&user);
+            }
+        }
     }
     async fn remove_empty_room(&self, channel: Uuid, room: &Arc<Room>) {
         let mut rooms = self.rooms.lock().await;

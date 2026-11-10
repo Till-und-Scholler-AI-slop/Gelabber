@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../api/client.ts";
-import { putPresigned } from "./api.ts";
+import { putPresigned, uploadTimeoutMs } from "./api.ts";
+import { SIZE_MAX } from "./rules.ts";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -12,6 +13,14 @@ function file(): File {
     type: "image/png",
   });
 }
+
+describe("uploadTimeoutMs", () => {
+  it("gives a large file time on a slow uplink", () => {
+    expect(uploadTimeoutMs(0)).toBe(120_000);
+    // 25 MiB at 512 kbit/s takes about 7 minutes.
+    expect(uploadTimeoutMs(SIZE_MAX)).toBeGreaterThan((SIZE_MAX * 8) / 512);
+  });
+});
 
 describe("putPresigned", () => {
   it("does not set the forbidden content-length header", async () => {

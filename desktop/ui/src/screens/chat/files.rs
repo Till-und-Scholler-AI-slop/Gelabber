@@ -195,6 +195,72 @@ pub fn add_files(files: &mut Vec<OutgoingFile>, next: Vec<OutgoingFile>) -> Opti
     (!notes.is_empty()).then(|| notes.join(" "))
 }
 
+/// Where an attached file comes from.
+pub enum Source {
+    /// A file on the disk (chosen or dropped).
+    Path(std::path::PathBuf),
+    /// A picture pasted into the draft.
+    Pasted(std::sync::Arc<egui::ColorImage>),
+}
+
+/// The files of [`load`] once they are read, and the notes for those left
+/// out before reading.
+pub type Loaded = (Vec<OutgoingFile>, Vec<String>);
+pub type Loading = std::sync::Arc<parking_lot::Mutex<Option<Loaded>>>;
+
+/// Reads `sources` on a worker thread; a file over [`SIZE_MAX`] by its size
+/// on disk is named, not read.
+pub fn load(
+    ctx: &egui::Context,
+    sources: Vec<Source>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Loading {
+    let slot = Loading::default();
+    let out = slot.clone();
+    let ctx = ctx.clone();
+    let work = move || {
+        let mut files = Vec::new();
+        let mut notes = Vec::new();
+        for source in sources {
+            match source {
+                Source::Path(path) => {
+                    let filename = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    match std::fs::metadata(&path) {
+                        Ok(meta) if meta.len() > SIZE_MAX as u64 => notes.push(format!(
+                            "{filename}: {}",
+                            crate::rules::field_message("size", "too_long")
+                        )),
+                        Ok(meta) if meta.is_file() => {
+                            if let Ok(data) = std::fs::read(&path) {
+                                files.push(OutgoingFile {
+                                    content_type: infer_content_type(&filename, ""),
+                                    filename,
+                                    data: std::sync::Arc::new(data),
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Source::Pasted(image) => files.extend(pasted_image(&image, now)),
+            }
+        }
+        *out.lock() = Some((files, notes));
+        ctx.request_repaint();
+    };
+    if let Err(e) = std::thread::Builder::new()
+        .name("gelabber-attach".into())
+        .spawn(work)
+    {
+        tracing::warn!("attach: no thread: {e}");
+        *slot.lock() = Some((Vec::new(), Vec::new()));
+    }
+    slot
+}
+
 /// A pasted picture as a PNG file named like the web's
 /// "Bild-20261105-143000.png".
 pub fn pasted_image(

@@ -140,6 +140,60 @@ async fn ready_does_not_hang_on_stalled_dependencies() {
     redis_task.abort();
 }
 
+/// Like `silent_server`, but counts the connections it accepted.
+async fn counting_server() -> (
+    SocketAddr,
+    std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    tokio::task::JoinHandle<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let accepted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = accepted.clone();
+    let handle = tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((socket, _)) = listener.accept().await {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            held.push(socket);
+        }
+    });
+    (addr, accepted, handle)
+}
+
+/// `/ready` is public: a burst of requests must not open a database and a
+/// Redis connection each.
+#[tokio::test]
+async fn ready_probes_once_for_a_burst() {
+    let (postgres, pg_accepted, pg_task) = counting_server().await;
+    let (redis, redis_accepted, redis_task) = counting_server().await;
+    let state = AppState::from_config(&config(postgres, redis, 300)).unwrap();
+    let app = app(state);
+
+    let burst = (0..20).map(|_| {
+        app.clone()
+            .oneshot(Request::get("/ready").body(Body::empty()).unwrap())
+    });
+    for response in futures_util::future::join_all(burst).await {
+        assert_eq!(response.unwrap().status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let again = app
+        .oneshot(Request::get("/ready").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(again.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    // The app's background workers also try the pool and Redis, so allow a
+    // few more than the one probe; a probe per request would be 21 each.
+    let ordering = std::sync::atomic::Ordering::SeqCst;
+    let (pg, redis) = (pg_accepted.load(ordering), redis_accepted.load(ordering));
+    assert!(
+        pg < 10 && redis < 10,
+        "postgres {pg}, redis {redis} connections"
+    );
+    pg_task.abort();
+    redis_task.abort();
+}
+
 #[tokio::test]
 async fn metrics_is_prometheus_text_and_health_stays_json() {
     let unreachable = closed_port().await;

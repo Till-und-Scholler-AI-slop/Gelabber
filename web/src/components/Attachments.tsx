@@ -296,7 +296,12 @@ function AttachmentText({ attachment }: { attachment: Attachment }) {
   return (
     <details
       className="lr-attachment-text"
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+      onToggle={(event) => {
+        const opened = event.currentTarget.open;
+        setOpen(opened);
+        // Opening again fetches again: a failure before is not this answer.
+        if (opened) setError(false);
+      }}
     >
       <summary>
         <PaperclipIcon size={15} />

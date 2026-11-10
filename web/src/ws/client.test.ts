@@ -5,6 +5,9 @@ import type { ChatEvent } from "./protocol.ts";
 
 class FakeSocket implements SocketLike {
   sent: string[] = [];
+  closed = false;
+  /** A black-holed path: `close()` never completes its handshake. */
+  holdClose = false;
   private listeners = new Map<
     string,
     Set<(event: { data?: string }) => void>
@@ -15,7 +18,8 @@ class FakeSocket implements SocketLike {
   }
 
   close(): void {
-    this.emit("close");
+    this.closed = true;
+    if (!this.holdClose) this.emit("close");
   }
 
   addEventListener(
@@ -78,6 +82,44 @@ describe("gateway client", () => {
       '{"op":"f","on":true}',
       '{"op":"f","on":false}',
     ]);
+    gateway.stop();
+  });
+
+  it("re-announces idle after its subscribes on a reconnect and a resync", async () => {
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 10,
+      maxRetryMs: 10,
+      heartbeatMs: 10_000,
+      deadMs: 20_000,
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    gateway.setTopics([{ s: "srv", c: "ch" }]);
+    gateway.start();
+    sockets[0]?.emit("open");
+    gateway.sendPresence("i");
+    sockets[0]?.emit("close");
+    await vi.waitFor(() => {
+      expect(sockets.length).toBe(2);
+    });
+    sockets[1]?.emit("open");
+    // The server counts a subscribe as activity, so idle has to follow it.
+    expect(sockets[1]?.sent).toEqual([
+      '{"op":"s","s":"srv","c":"ch"}',
+      '{"op":"p","st":"i"}',
+    ]);
+    sockets[1]!.sent.length = 0;
+    sockets[1]?.emit("message", '{"op":"resync"}');
+    expect(sockets[1]?.sent.at(-1)).toBe('{"op":"p","st":"i"}');
+    gateway.sendPresence("o");
+    sockets[1]!.sent.length = 0;
+    sockets[1]?.emit("message", '{"op":"resync"}');
+    expect(sockets[1]?.sent).toEqual(['{"op":"s","s":"srv","c":"ch"}']);
     gateway.stop();
   });
 
@@ -162,6 +204,146 @@ describe("gateway client", () => {
     now = 50;
     await vi.advanceTimersByTimeAsync(25);
     expect(sockets.length).toBe(2);
+
+    gateway.stop();
+  });
+
+  it("reconnects after silence even when the dead socket never reports close", async () => {
+    vi.useFakeTimers();
+    let now = 0;
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 5,
+      maxRetryMs: 5,
+      heartbeatMs: 20,
+      deadMs: 40,
+      now: () => now,
+      open: () => {
+        const socket = new FakeSocket();
+        socket.holdClose = true;
+        sockets.push(socket);
+        return socket;
+      },
+    });
+
+    gateway.start();
+    sockets[0]?.emit("open");
+    now = 50;
+    await vi.advanceTimersByTimeAsync(25);
+    expect(sockets[0]?.closed).toBe(true);
+    expect(sockets.length).toBe(2);
+    // The old socket's close, if it ever comes, must not touch the new one.
+    sockets[0]?.emit("close");
+    sockets[1]?.emit("open");
+    expect(gateway.status).toBe("open");
+
+    gateway.stop();
+  });
+
+  it("gives up on a handshake that never answers", async () => {
+    vi.useFakeTimers();
+    let now = 0;
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 5,
+      maxRetryMs: 5,
+      heartbeatMs: 20,
+      deadMs: 40,
+      now: () => now,
+      open: () => {
+        const socket = new FakeSocket();
+        socket.holdClose = true;
+        sockets.push(socket);
+        return socket;
+      },
+    });
+
+    gateway.start();
+    now = 30;
+    await vi.advanceTimersByTimeAsync(30);
+    expect(sockets.length).toBe(1);
+    now = 45;
+    await vi.advanceTimersByTimeAsync(15);
+    expect(sockets[0]?.closed).toBe(true);
+    expect(sockets.length).toBe(2);
+
+    gateway.stop();
+  });
+
+  it("reconnects at once when the browser comes back online", async () => {
+    vi.useFakeTimers();
+    const target = new EventTarget();
+    vi.stubGlobal("window", target);
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 1_000,
+      maxRetryMs: 1_000,
+      heartbeatMs: 60_000,
+      deadMs: 120_000,
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    try {
+      gateway.start();
+      sockets[0]?.emit("open");
+      // The first retry is immediate; the second waits for the backoff.
+      sockets[0]?.emit("close");
+      await vi.advanceTimersByTimeAsync(0);
+      sockets[1]?.emit("close");
+      expect(sockets.length).toBe(2);
+      target.dispatchEvent(new Event("online"));
+      expect(sockets.length).toBe(3);
+      sockets[2]?.emit("open");
+      // An open socket is left alone.
+      target.dispatchEvent(new Event("online"));
+      expect(sockets.length).toBe(3);
+      gateway.stop();
+      target.dispatchEvent(new Event("online"));
+      expect(sockets.length).toBe(3);
+    } finally {
+      gateway.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("asks once per failed streak whether a refused handshake means the session ended", async () => {
+    vi.useFakeTimers();
+    const sockets: FakeSocket[] = [];
+    const gateway = new Gateway({
+      url: "ws://test/ws",
+      retryMs: 5,
+      maxRetryMs: 5,
+      open: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    let refused = 0;
+    gateway.onRefused(() => refused++);
+
+    gateway.start();
+    sockets[0]?.emit("open");
+    sockets[0]?.emit("close");
+    expect(refused).toBe(0);
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await vi.advanceTimersByTimeAsync(5);
+      expect(sockets).toHaveLength(attempt + 1);
+      sockets[attempt]?.emit("close");
+    }
+    expect(refused).toBe(1);
+    await vi.advanceTimersByTimeAsync(5);
+    sockets[4]?.emit("open");
+    sockets[4]?.emit("close");
+    await vi.advanceTimersByTimeAsync(5);
+    sockets[5]?.emit("close");
+    expect(refused).toBe(2);
 
     gateway.stop();
   });

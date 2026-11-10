@@ -192,18 +192,24 @@ def release():
             raise ValueError('Invalid image-set source')
         if registry_digest(f'{item["image"]}:{version}') != item['digest']:
             raise ValueError('Release version digest changed')
+    # A pre-release (vX.Y.Z-rc.1) must never become Latest or move the aliases.
+    stable = re.fullmatch(r'v\d+\.\d+\.\d+', version) is not None
     # Do not edit or replace an existing release, even on a retry.
     releases = api('releases?per_page=100')
     if any(r['tag_name'] == version for r in releases):
         print('Release already exists at the verified SHA; preserving it.')
-        latest()
+        if stable:
+            latest()
         return
     args = ['gh', 'release', 'create', version, 'image-set.json', 'image-set.env',
             '--target', sha, '--title', f'Gelabber {version}']
+    if not stable:
+        args += ['--prerelease', '--latest=false']
     notes = Path(f'.github/release-notes/{version}.md')
     args += ['--notes-file', str(notes)] if notes.exists() else ['--generate-notes']
     run(*args)
-    latest()
+    if stable:
+        latest()
 
 
 if __name__ == '__main__':

@@ -33,18 +33,22 @@ describe("lazy parts", () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a failed load, as the browser does", async () => {
+  // A failed chunk (a deploy replaced it) is asked for again by the next
+  // use, as the media SDK's loader does.
+  it("asks again after a failed load", async () => {
     const load = vi
       .fn<() => Promise<typeof Hello>>()
-      .mockRejectedValue(new TypeError("Failed to fetch module"));
+      .mockRejectedValueOnce(new TypeError("Failed to fetch module"))
+      .mockResolvedValue(Hello);
     const part = lazyPart(load, "Fehlt.");
     await expect(part.preload()).resolves.toBeUndefined();
-    await part.preload();
     expect(part.loaded()).toBe(false);
-    expect(load).toHaveBeenCalledTimes(1);
     expect(
       renderToStaticMarkup(<part.Component name="Ada" fallback="lädt" />),
     ).toBe("lädt");
+    await part.preload();
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(part.loaded()).toBe(true);
   });
 
   it("preloads the parts not loaded yet once the browser is idle", async () => {
@@ -59,6 +63,19 @@ describe("lazy parts", () => {
     expect(load).not.toHaveBeenCalled();
     for (const run of idle) run();
     await vi.waitFor(() => expect(part.loaded()).toBe(true));
+    stop();
+  });
+
+  it("preloads the emoji picker with the other parts", async () => {
+    const idle: (() => void)[] = [];
+    vi.stubGlobal("window", {
+      requestIdleCallback: (run: () => void) => idle.push(run),
+      cancelIdleCallback: vi.fn(),
+    });
+    const { EmojiPickerPart } = await import("./emojiPickerPart.ts");
+    const stop = preloadPartsWhenIdle();
+    for (const run of idle) run();
+    await vi.waitFor(() => expect(EmojiPickerPart.loaded()).toBe(true));
     stop();
   });
 

@@ -120,10 +120,12 @@ pub fn parse(content: &str) -> Parsed {
         let plain = escaped(rest, start);
         rest = &rest[start + 2..];
         let Some(end) = rest.find('>') else { break };
-        if !plain
-            && let Ok(id) = Uuid::parse_str(&rest[..end])
-            && !users.contains(&id)
-        {
+        // Not a token: look for the next `<@` right after this one, since
+        // the `>` found may close a real token further on.
+        let Ok(id) = Uuid::parse_str(&rest[..end]) else {
+            continue;
+        };
+        if !plain && !users.contains(&id) {
             users.push(id);
         }
         rest = &rest[end + 1..];
@@ -304,6 +306,9 @@ mod tests {
         assert!(!parsed.everyone && !parsed.here);
         assert!(parse("<@not-a-uuid> <@").users.is_empty());
         assert!(parse(&format!("<@{A}")).users.is_empty());
+        // An unclosed `<@` does not swallow the real token after it.
+        assert_eq!(parse(&format!("x <@ y <@{A}>")).users, ids(&[A]));
+        assert_eq!(parse(&format!("<@<@{A}> <@{B}>")).users, ids(&[A, B]));
     }
 
     #[test]
