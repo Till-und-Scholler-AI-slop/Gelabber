@@ -1,4 +1,7 @@
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
+
+import { LockIcon } from "../components/Icons.tsx";
 
 import { setLocale } from "../i18n/locale.ts";
 import { ALL_PERMISSIONS } from "./permissions.ts";
@@ -11,6 +14,7 @@ import {
   inheritedFromBase,
   nextColor,
   nextRoleName,
+  roleColorVar,
   roleCounts,
   rolesOf,
   seesChannel,
@@ -259,5 +263,27 @@ describe("effectivePermissions", () => {
     expect(effectivePermissions(member("lena", [], "owner"), server)).toEqual(
       ALL_PERMISSIONS,
     );
+  });
+});
+
+describe("role colours", () => {
+  it("names each of the six colours' token", () => {
+    expect(ROLE_COLORS.map(roleColorVar)).toEqual([
+      "var(--lr-role-amber)",
+      "var(--lr-role-blue)",
+      "var(--lr-role-green)",
+      "var(--lr-role-pink)",
+      "var(--lr-role-violet)",
+      "var(--lr-role-coral)",
+    ]);
+  });
+});
+
+describe("LockIcon", () => {
+  it("draws a 14 px padlock hidden from screen readers", () => {
+    const html = renderToStaticMarkup(<LockIcon size={14} />);
+    expect(html).toContain('width="14"');
+    expect(html).toContain('aria-hidden="true"');
+    expect(html).toContain("<rect");
   });
 });

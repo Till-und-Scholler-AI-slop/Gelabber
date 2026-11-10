@@ -160,3 +160,9 @@ export function effectivePermissions(
     ...rolesOf(member, server).flatMap((role) => role.permissions),
   ]);
 }
+
+/** The CSS colour of a role's dot or swatch (`--lr-role-*` in index.css).
+ * The owner's dot is `--lr-accent`, the base role's `--lr-muted`. */
+export function roleColorVar(color: RoleColor): string {
+  return `var(--lr-role-${color})`;
+}
