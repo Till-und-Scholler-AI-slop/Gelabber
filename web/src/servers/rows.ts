@@ -1,6 +1,8 @@
 // The channel sidebar renders one flat list (so it can be virtualised):
 // uncategorised channels first, then each category followed by its channels.
 
+import { translate, translateIn } from "../i18n/catalog.ts";
+import { servers } from "../i18n/catalogs/servers.ts";
 import type { Category, Channel, ServerDetail } from "./types.ts";
 
 export type Row =
@@ -46,23 +48,36 @@ export function buildRows(server: ServerDetail): Row[] {
 
 export type SectionRow = { kind: "section"; key: string; label: string };
 
-export const VOICE_HEADING = "Sprachkanäle";
+/** The uncategorised voice rooms' heading, in the interface's language. */
+export function voiceHeading(): string {
+  return translate(servers, "voiceHeading");
+}
 
-/** The category whose name the voice heading would repeat (the first). */
+/** The heading in every language: a server keeps the names its creator's
+ * language gave it, and every viewer must merge them. */
+const VOICE_HEADINGS = new Set(
+  (["de", "en"] as const).map((locale) =>
+    translateIn(locale, servers, "voiceHeading").toLowerCase(),
+  ),
+);
+
+/**
+ * The category whose name the voice heading would repeat (the first), in
+ * either language: "Sprachkanäle" or "Voice channels".
+ */
 export function voiceHeadingCategory(
   categories: readonly Category[],
 ): Category | undefined {
-  const name = VOICE_HEADING.toLocaleLowerCase("de");
-  return categories.find(
-    (category) => category.name.trim().toLocaleLowerCase("de") === name,
+  return categories.find((category) =>
+    VOICE_HEADINGS.has(category.name.trim().toLowerCase()),
   );
 }
 
 /**
  * The sidebar's order: uncategorised text channels, the uncategorised voice
  * rooms under a "Sprachkanäle" heading of their own, then the categories.
- * A category of that name takes the rooms at its top instead, so the
- * heading does not show twice. Only the list merges: the rooms stay
+ * A category of that name (in either language) takes the rooms at its top
+ * instead, so the heading does not show twice. Only the list merges: the rooms stay
  * uncategorised, so a channel created from one of them is uncategorised too,
  * and deleting that category leaves them under their own heading again.
  */
@@ -100,7 +115,7 @@ export function sidebarRows(server: ServerDetail): (Row | SectionRow)[] {
           {
             kind: "section" as const,
             key: "voice-heading",
-            label: VOICE_HEADING,
+            label: voiceHeading(),
           },
           ...voice,
         ]
