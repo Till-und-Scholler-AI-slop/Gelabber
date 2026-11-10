@@ -257,6 +257,15 @@ fn key(code: &str) -> Option<&'static Key> {
     KEYS.iter().find(|key| key.code == code)
 }
 
+/// The code a physical key (egui's `physical_key`) binds, from [`KEYS`].
+/// egui reports the number pad's digits, `-`, `/` and `.` as the main
+/// keys, so those bind the main keys' codes.
+pub fn code_of(physical: egui::Key) -> Option<&'static str> {
+    KEYS.iter()
+        .map(|key| key.code)
+        .find(|code| egui::Key::from_name(code) == Some(physical))
+}
+
 #[cfg_attr(not(windows), allow(dead_code))]
 fn windows_trigger(code: &str) -> Option<Trigger> {
     key(code).map(|key| key.windows)
@@ -318,6 +327,27 @@ mod tests {
         assert_eq!(xkb_trigger("KeyV"), Some("v"));
         assert_eq!(xkb_trigger("ControlLeft"), None);
         assert_eq!(xkb_trigger("Mouse4"), None);
+    }
+
+    #[test]
+    fn physical_keys_bind_their_place_codes() {
+        use egui::Key;
+        assert_eq!(super::code_of(Key::Y), Some("KeyY"));
+        assert_eq!(super::code_of(Key::Num4), Some("Digit4"));
+        assert_eq!(super::code_of(Key::ArrowUp), Some("ArrowUp"));
+        assert_eq!(super::code_of(Key::Backtick), Some("Backquote"));
+        assert_eq!(super::code_of(Key::Equals), Some("Equal"));
+        assert_eq!(super::code_of(Key::OpenBracket), Some("BracketLeft"));
+        assert_eq!(super::code_of(Key::Plus), Some("NumpadAdd"));
+        assert_eq!(super::code_of(Key::ShiftLeft), Some("ShiftLeft"));
+        assert_eq!(super::code_of(Key::SuperRight), Some("MetaRight"));
+        assert_eq!(super::code_of(Key::Menu), Some("ContextMenu"));
+        assert_eq!(super::code_of(Key::Escape), None);
+        // Every code it gives is one the bindings know.
+        for code in KEYS.iter().filter_map(|k| egui::Key::from_name(k.code)) {
+            let bound = super::code_of(code).expect("a code");
+            assert!(KEYS.iter().any(|k| k.code == bound));
+        }
     }
 
     #[test]

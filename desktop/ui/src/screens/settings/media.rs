@@ -780,23 +780,6 @@ pub fn global_key_note(
     }
 }
 
-/// Web `KeyboardEvent.code` names for egui keys, as the PTT core expects.
-fn key_code(key: egui::Key) -> Option<String> {
-    use egui::Key;
-    let name = key.name();
-    match key {
-        Key::Escape | Key::Enter | Key::Backspace => None,
-        Key::Space => Some("Space".into()),
-        _ if name.len() == 1 && name.chars().all(|c| c.is_ascii_alphabetic()) => {
-            Some(format!("Key{}", name.to_ascii_uppercase()))
-        }
-        _ if name.len() == 1 && name.chars().all(|c| c.is_ascii_digit()) => {
-            Some(format!("Digit{name}"))
-        }
-        _ => Some(name.replace(' ', "")),
-    }
-}
-
 /// `usePushToTalkKeyName`: the key push-to-talk holds, as the settings
 /// name it; `None` while push-to-talk is off or has no key.
 pub fn push_to_talk_key_name(ctx: &egui::Context) -> Option<String> {
@@ -822,55 +805,89 @@ fn key_label(code: &str) -> String {
                 .filter(|r| r.len() == 1)
                 .or_else(|| code.strip_prefix("Digit").filter(|r| r.len() == 1))
                 .unwrap_or(code);
-            c.replacen("Numpad", "Num ", 1)
+            let c = c.replacen("Numpad", "Num ", 1);
+            if let Some(side) = c.strip_suffix("Left") {
+                format!("{side} links")
+            } else if let Some(side) = c.strip_suffix("Right") {
+                format!("{side} rechts")
+            } else {
+                c
+            }
         }
     }
 }
 
-/// The next key or side mouse button while recording; Esc cancels.
-fn record_key(ctx: &egui::Context, s: &mut State) -> Option<(String, String)> {
-    let mut out = None;
-    ctx.input(|i| {
-        for e in &i.events {
-            match e {
-                egui::Event::Key {
-                    key: egui::Key::Escape,
-                    pressed: true,
-                    ..
-                } => {
-                    s.recording = false;
-                    return;
+/// What the recorder makes of a frame's events.
+#[derive(Debug, PartialEq)]
+enum Recorded {
+    Nothing,
+    Cancel,
+    Key(String, String),
+}
+
+/// The next key or side mouse button: the key's place as the global
+/// binding knows it (`KeyboardEvent.code`), named by the character it
+/// types, as `PushToTalkSettings` does. Esc cancels.
+fn recorded(events: &[egui::Event]) -> Recorded {
+    for (at, e) in events.iter().enumerate() {
+        match e {
+            egui::Event::Key {
+                key,
+                physical_key,
+                pressed: true,
+                ..
+            } => {
+                if *key == egui::Key::Escape || *physical_key == Some(egui::Key::Escape) {
+                    return Recorded::Cancel;
                 }
-                egui::Event::Key {
-                    key, pressed: true, ..
-                } => {
-                    if let Some(code) = key_code(*key) {
-                        let label = key_label(&code);
-                        out = Some((code, label));
-                        return;
-                    }
+                let Some(code) = physical_key.and_then(crate::platform::ptt::code_of) else {
+                    continue;
+                };
+                if code == "Enter" || code == "NumpadEnter" || code == "Backspace" {
+                    continue;
                 }
-                egui::Event::PointerButton {
-                    button,
-                    pressed: true,
-                    ..
-                } => {
-                    let code = match button {
-                        egui::PointerButton::Extra1 => "Mouse4",
-                        egui::PointerButton::Extra2 => "Mouse5",
-                        _ => continue,
-                    };
-                    out = Some((code.to_owned(), key_label(code)));
-                    return;
-                }
-                _ => {}
+                // The text the press typed, if it is one visible character.
+                let typed = events[at + 1..].iter().find_map(|e| match e {
+                    egui::Event::Text(t) => Some(t.as_str()),
+                    _ => None,
+                });
+                let label = match typed {
+                    Some(t) if t.chars().count() == 1 && t != " " => t.to_uppercase(),
+                    _ => key_label(code),
+                };
+                return Recorded::Key(code.to_owned(), label);
             }
+            egui::Event::PointerButton {
+                button,
+                pressed: true,
+                ..
+            } => {
+                let code = match button {
+                    egui::PointerButton::Extra1 => "Mouse4",
+                    egui::PointerButton::Extra2 => "Mouse5",
+                    _ => continue,
+                };
+                return Recorded::Key(code.to_owned(), key_label(code));
+            }
+            _ => {}
         }
-    });
-    if out.is_some() {
-        s.recording = false;
     }
-    out
+    Recorded::Nothing
+}
+
+/// [`recorded`] for this frame; recording ends with a key or Esc.
+fn record_key(ctx: &egui::Context, s: &mut State) -> Option<(String, String)> {
+    match ctx.input(|i| recorded(&i.events)) {
+        Recorded::Nothing => None,
+        Recorded::Cancel => {
+            s.recording = false;
+            None
+        }
+        Recorded::Key(code, label) => {
+            s.recording = false;
+            Some((code, label))
+        }
+    }
 }
 
 // ----------------------------------------------------------------- video
@@ -1264,6 +1281,59 @@ mod tests {
         assert_eq!(mbit(2_500_000.0), "2,5 Mbit/s");
         assert_eq!(mbit(10_000_000.0), "10 Mbit/s");
         assert_eq!(key_label("KeyV"), "V");
-        assert_eq!(key_code(egui::Key::V).as_deref(), Some("KeyV"));
+        assert_eq!(key_label("ControlLeft"), "Control links");
+        assert_eq!(key_label("Numpad0"), "Num 0");
+    }
+
+    fn press(logical: egui::Key, physical: Option<egui::Key>) -> egui::Event {
+        egui::Event::Key {
+            key: logical,
+            physical_key: physical,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    /// The key's place is recorded, as the global binding listens by place.
+    #[test]
+    fn the_recorder_keeps_the_place_and_names_the_character() {
+        use egui::Key;
+        let key = |code: &str, label: &str| Recorded::Key(code.into(), label.into());
+        // QWERTZ: the key labelled Z sits where US keyboards have Y.
+        assert_eq!(
+            recorded(&[press(Key::Z, Some(Key::Y)), egui::Event::Text("z".into())]),
+            key("KeyY", "Z")
+        );
+        assert_eq!(
+            recorded(&[press(Key::ArrowUp, Some(Key::ArrowUp))]),
+            key("ArrowUp", "ArrowUp")
+        );
+        assert_eq!(
+            recorded(&[
+                press(Key::Backtick, Some(Key::Backtick)),
+                egui::Event::Text("^".into())
+            ]),
+            key("Backquote", "^")
+        );
+        assert_eq!(
+            recorded(&[press(Key::ShiftLeft, Some(Key::ShiftLeft))]),
+            key("ShiftLeft", "Shift links")
+        );
+        assert_eq!(
+            recorded(&[
+                press(Key::Space, Some(Key::Space)),
+                egui::Event::Text(" ".into())
+            ]),
+            key("Space", "Leertaste")
+        );
+        assert_eq!(
+            recorded(&[press(Key::Escape, Some(Key::Escape))]),
+            Recorded::Cancel
+        );
+        assert_eq!(
+            recorded(&[press(Key::Enter, Some(Key::Enter))]),
+            Recorded::Nothing
+        );
     }
 }
