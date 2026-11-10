@@ -21,6 +21,7 @@ import { roles as rolesCatalog } from "../i18n/catalogs/roles.ts";
 import { serverSettings } from "../i18n/catalogs/serverSettings.ts";
 import { Field } from "../components/Field.tsx";
 import { LockIcon, PlusIcon } from "../components/Icons.tsx";
+import { RoleDot } from "../components/RoleDot.tsx";
 import { confirmAction } from "../components/confirm.ts";
 import { Button } from "../components/ui/Button.tsx";
 import { Checkbox } from "../components/ui/Checkbox.tsx";
@@ -65,23 +66,6 @@ import type {
 import "./serverRoles.css";
 
 type Status = ReturnType<typeof useInlineStatus>;
-
-/** A role's dot. The owner's is the accent, the base role's muted. */
-export function RoleDot({ color }: { color: RoleColor | "owner" | "base" }) {
-  const background =
-    color === "owner"
-      ? "var(--lr-accent)"
-      : color === "base"
-        ? "var(--lr-muted)"
-        : roleColorVar(color);
-  return (
-    <span
-      className="role-dot"
-      style={{ background } as CSSProperties}
-      aria-hidden="true"
-    />
-  );
-}
 
 /**
  * The list of roles (Inhaber, the custom roles, Alle Mitglieder) and the

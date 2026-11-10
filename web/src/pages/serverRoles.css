@@ -1,15 +1,5 @@
 /* Server settings, roles (v0.10): the editor, the chips and the picker. */
 
-/* Role colours mark dots and swatches only, never text. A ring keeps them
-   visible on light themes. */
-.role-dot {
-  flex-shrink: 0;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 1px var(--lr-border);
-}
-
 /* The editor is wider than the reading measure: list, gap, panel. */
 .server-settings-section.server-settings-section--roles {
   max-width: none;
