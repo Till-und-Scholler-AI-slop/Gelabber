@@ -7,6 +7,8 @@ use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub const VOICE_LEASE_MS: u64 = 5000;
+/// Most Lives one seat watches at once, the media service's `WATCH_LIMIT`.
+pub const WATCH_LIMIT: usize = 64;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct SeatRecord {
@@ -18,6 +20,9 @@ struct SeatRecord {
     d: bool,
     #[serde(deserialize_with = "known_kinds")]
     p: HashSet<TrackKind>,
+    /// Owners whose Live this seat watches. Seats written before #521 have none.
+    #[serde(default)]
+    w: HashSet<Uuid>,
 }
 
 /// A seat an API from before #353 wrote can still list the old Go Live
@@ -69,6 +74,7 @@ local count=0
 local muted=true
 local deafened=true
 local pubs={}
+local watch={}
 for _,key in ipairs(redis.call('ZRANGE',KEYS[1],0,-1)) do
   local seat=redis.call('GET',key)
   if seat then
@@ -76,12 +82,22 @@ for _,key in ipairs(redis.call('ZRANGE',KEYS[1],0,-1)) do
     if row.u==ARGV[1] then
       count=count+1; muted=muted and row.m; deafened=deafened and row.d
       for _,kind in ipairs(row.p) do pubs[kind]=true end
+      if type(row.w)=='table' then for _,owner in ipairs(row.w) do watch[owner]=true end end
     end
   else redis.call('ZREM',KEYS[1],key) end
 end
 local base='"s":"'..ARGV[2]..'","c":"'..ARGV[3]..'","u":"'..ARGV[1]..'"'
 local function send(t,extra) redis.call('PUBLISH',KEYS[2],'{"t":"'..t..'",'..base..(extra or '')..'}') end
 local function flags() send('m',',"on":'..tostring(muted)); send('d',',"on":'..tostring(deafened)) end
+-- By hand: cjson encodes an empty table as {}, and the set must read [].
+local function watches()
+  local owners={}
+  for owner in pairs(watch) do table.insert(owners,owner) end
+  table.sort(owners)
+  local list='['
+  for i,owner in ipairs(owners) do list=list..(i>1 and ',' or '')..'"'..owner..'"' end
+  send('w',',"w":'..list..']')
+end
 if ARGV[4]=='j' and count>0 then send('j',',"m":'..tostring(muted)..',"d":'..tostring(deafened))
 elseif ARGV[4]=='m' and count>0 then send('m',',"on":'..tostring(muted))
 elseif (ARGV[4]=='d' or ARGV[4]=='d+') and count>0 then
@@ -90,10 +106,12 @@ elseif ARGV[4]=='leave' then
   if count==0 then send('l') else
     flags()
     for _,kind in ipairs(cjson.decode(ARGV[6])) do if not pubs[kind] then send('u',',"k":"'..kind..'"') end end
+    watches()
   end
 elseif ARGV[4]=='u' then
   for _,kind in ipairs(cjson.decode(ARGV[6])) do if not pubs[kind] then send('u',',"k":"'..kind..'"') end end
 elseif ARGV[4]=='p' and pubs[ARGV[5]] then send('p',',"k":"'..ARGV[5]..'"')
+elseif ARGV[4]=='w' and count>0 then watches()
 end
 return 1
 "#;
@@ -136,6 +154,7 @@ impl VoiceRoster {
             m: seat.muted,
             d: seat.deafened,
             p: seat.pubs.clone(),
+            w: seat.watches.clone(),
         })?;
         self.connections
             .with_conn(|mut conn| {
@@ -250,6 +269,7 @@ impl VoiceRoster {
                     pubs: HashSet::new(),
                     muted: false,
                     deafened: false,
+                    watches: HashSet::new(),
                 })
                 .clone()
         };
@@ -264,15 +284,20 @@ impl VoiceRoster {
         }
         let result = async {
             let rows = self.records(room_key(c)).await?;
-            let mut peers: HashMap<Uuid, (bool, bool, HashSet<TrackKind>)> = HashMap::new();
+            type Peer = (bool, bool, HashSet<TrackKind>, HashSet<Uuid>);
+            let mut peers: HashMap<Uuid, Peer> = HashMap::new();
             for row in rows.into_iter().filter(|row| row.u != u) {
-                let peer = peers.entry(row.u).or_insert((true, true, HashSet::new()));
+                let peer =
+                    peers
+                        .entry(row.u)
+                        .or_insert((true, true, HashSet::new(), HashSet::new()));
                 peer.0 &= row.m;
                 peer.1 &= row.d;
                 peer.2.extend(row.p);
+                peer.3.extend(row.w);
             }
             let mut events = Vec::new();
-            for (uid, (m, d, pubs)) in peers {
+            for (uid, (m, d, pubs, watches)) in peers {
                 let mut joined = SigEvent::join_state(s, c, uid, m, d);
                 joined.replay = true;
                 events.push(joined);
@@ -281,6 +306,10 @@ impl VoiceRoster {
                     published.replay = true;
                     events.push(published);
                 }
+                // Also an empty set: a rejoin after a reconnect gets the whole room.
+                let mut watching = SigEvent::watching(s, c, uid, watches.into_iter().collect());
+                watching.replay = true;
+                events.push(watching);
             }
             self.aggregate_signal(u, s, c, "j", &HashSet::new()).await?;
             Ok(events)
@@ -462,6 +491,44 @@ impl VoiceRoster {
             }
             self.aggregate_signal(u, s, c, "u", &removed).await?;
         }
+        Ok(true)
+    }
+    /// `false` when the connection has no seat in `c` on `s`, or when it
+    /// would watch more than [`WATCH_LIMIT`] Lives.
+    pub async fn set_voice_watch(
+        &self,
+        id: ConnId,
+        u: Uuid,
+        s: Uuid,
+        c: Uuid,
+        owner: Uuid,
+        on: bool,
+    ) -> Result<bool, ApiError> {
+        let _guard = self.connections.inner.voice_ops.lock().await;
+        let mut seat = {
+            let sockets = self.connections.inner.sockets.read().await;
+            let Some(seat) = sockets
+                .get(&id)
+                .and_then(|socket| socket.rooms.get(&c))
+                .filter(|seat| seat.server_id == s)
+            else {
+                return Ok(false);
+            };
+            seat.clone()
+        };
+        if on {
+            if !seat.watches.contains(&owner) && seat.watches.len() >= WATCH_LIMIT {
+                return Ok(false);
+            }
+            seat.watches.insert(owner);
+        } else {
+            seat.watches.remove(&owner);
+        }
+        self.write_seat(id, u, c, &seat).await?;
+        if let Some(socket) = self.connections.inner.sockets.write().await.get_mut(&id) {
+            socket.rooms.insert(c, seat);
+        }
+        self.aggregate_signal(u, s, c, "w", &HashSet::new()).await?;
         Ok(true)
     }
     pub async fn voice_snapshot(&self, s: Uuid) -> Result<Vec<VoiceEntry>, ApiError> {

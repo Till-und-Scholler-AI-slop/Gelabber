@@ -170,6 +170,8 @@ pub enum SigKind {
     D,
     /// Occupancy snapshot after a server subscribe (`snap`).
     R,
+    /// Watch someone's Live (client: `o`, `on`; server: the full set `w`).
+    W,
 }
 
 impl SigKind {
@@ -182,6 +184,7 @@ impl SigKind {
             Self::M => "m",
             Self::D => "d",
             Self::R => "r",
+            Self::W => "w",
         }
     }
 }
@@ -259,6 +262,10 @@ pub struct SigEvent {
     /// Existing occupant replay sent only to the joining connection.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub replay: bool,
+    /// Watch (`t: "w"`): the complete, sorted set of owners whose Live the
+    /// user watches in this channel. `[]` means none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub w: Option<Vec<Uuid>>,
 }
 
 impl SigEvent {
@@ -273,6 +280,7 @@ impl SigEvent {
             m: None,
             d: None,
             replay: false,
+            w: None,
         }
     }
 
@@ -318,6 +326,16 @@ impl SigEvent {
     pub fn deafened(server_id: Uuid, channel_id: Uuid, user_id: Uuid, on: bool) -> Self {
         let mut event = Self::base(SigKind::D, server_id, channel_id, user_id);
         event.on = Some(on);
+        event
+    }
+
+    /// `owners` is sorted here, so every copy of a set reads the same.
+    pub fn watching(server_id: Uuid, channel_id: Uuid, user_id: Uuid, owners: Vec<Uuid>) -> Self {
+        let mut owners = owners;
+        owners.sort();
+        owners.dedup();
+        let mut event = Self::base(SigKind::W, server_id, channel_id, user_id);
+        event.w = Some(owners);
         event
     }
 }
@@ -405,6 +423,9 @@ pub enum ClientFrame {
         k: Option<TrackKind>,
         #[serde(default)]
         on: Option<bool>,
+        /// Watch (`t: "w"`): the owner of the Live.
+        #[serde(default)]
+        o: Option<Uuid>,
     },
     /// The page is in front (focused and visible) or not (#243): while one
     /// is, no Web Push goes to the account.
@@ -491,6 +512,9 @@ pub enum ServerFrame {
         /// See [`SigEvent::replay`]: clients stay quiet about these.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         replay: bool,
+        /// See [`SigEvent::w`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        w: Option<Vec<Uuid>>,
     },
     #[serde(rename = "err")]
     Err {
@@ -601,6 +625,7 @@ impl ServerFrame {
             d: event.d,
             snap: None,
             replay: event.replay,
+            w: event.w,
         }
     }
 
@@ -616,6 +641,7 @@ impl ServerFrame {
             d: None,
             snap: Some(snap),
             replay: false,
+            w: None,
         }
     }
 

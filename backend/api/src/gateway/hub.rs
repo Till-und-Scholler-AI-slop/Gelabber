@@ -95,6 +95,8 @@ pub(super) struct VoiceSeat {
     pub(super) pubs: HashSet<TrackKind>,
     pub(super) muted: bool,
     pub(super) deafened: bool,
+    /// Owners whose Live this seat watches (`sig t:"w"`).
+    pub(super) watches: HashSet<Uuid>,
 }
 
 pub(super) struct Socket {
@@ -1188,6 +1190,20 @@ impl Gateway {
     /// Fan-out a live signaling frame. No seq, no replay list.
     pub async fn publish_sig(&self, event: SigEvent) -> Result<(), ApiError> {
         self.voice.publish_sig(event).await
+    }
+
+    pub async fn set_voice_watch(
+        &self,
+        id: ConnId,
+        user_id: Uuid,
+        server_id: Uuid,
+        channel_id: Uuid,
+        owner: Uuid,
+        on: bool,
+    ) -> Result<bool, ApiError> {
+        self.voice
+            .set_voice_watch(id, user_id, server_id, channel_id, owner, on)
+            .await
     }
 }
 

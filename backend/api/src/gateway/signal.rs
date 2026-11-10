@@ -28,6 +28,7 @@ struct Call<'a> {
     kind: SigKind,
     track: Option<TrackKind>,
     on: Option<bool>,
+    owner: Option<Uuid>,
     sink: &'a mut Sink,
 }
 
@@ -39,7 +40,7 @@ pub async fn handle(
     frame: ClientFrame,
     sink: &mut Sink,
 ) -> Result<(), ApiError> {
-    let ClientFrame::Sig { s, c, t, k, on } = frame else {
+    let ClientFrame::Sig { s, c, t, k, on, o } = frame else {
         return send_err(sink, "bad_request", None, None).await;
     };
     let (Some(server_id), Some(channel_id), Some(kind)) = (s, c, t) else {
@@ -56,6 +57,7 @@ pub async fn handle(
         kind,
         track: k,
         on,
+        owner: o,
         sink,
     };
     if let Err(err) = membership::lock_server_conn(call.db, server_id, false).await {
@@ -67,6 +69,7 @@ pub async fn handle(
         SigKind::P | SigKind::U => publish(&mut call).await,
         SigKind::M | SigKind::D => mute_deafen(&mut call).await,
         SigKind::R => bad(&mut call).await,
+        SigKind::W => watch(&mut call).await,
     }
 }
 
@@ -179,6 +182,37 @@ async fn mute_deafen(call: &mut Call<'_>) -> Result<(), ApiError> {
             .set_voice_deafen(call.conn, call.user.id, call.server_id, call.channel_id, on)
             .await?
     };
+    if !ok {
+        return bad(call).await;
+    }
+    Ok(())
+}
+
+/// Watching needs only a seat in the room, like receiving a camera: the
+/// owner need not be live or present. The intent outlives a restarted Live,
+/// as the media service's grant does; that service still enforces it.
+async fn watch(call: &mut Call<'_>) -> Result<(), ApiError> {
+    if !require_room(call).await? {
+        return Ok(());
+    }
+    let (Some(owner), Some(on)) = (call.owner, call.on) else {
+        return bad(call).await;
+    };
+    if !matches!(call.track, None | Some(TrackKind::S)) || owner == call.user.id {
+        return bad(call).await;
+    }
+    let ok = call
+        .state
+        .gateway
+        .set_voice_watch(
+            call.conn,
+            call.user.id,
+            call.server_id,
+            call.channel_id,
+            owner,
+            on,
+        )
+        .await?;
     if !ok {
         return bad(call).await;
     }
