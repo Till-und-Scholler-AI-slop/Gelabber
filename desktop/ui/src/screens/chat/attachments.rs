@@ -96,6 +96,9 @@ impl MediaAction {
 /// A file name from the server as the save dialog's suggestion: no path,
 /// nothing Windows refuses, never empty.
 pub fn safe_file_name(name: &str) -> String {
+    // 200 bytes, not characters: file systems count bytes (255 at most),
+    // and " (2)" may still follow.
+    let mut bytes = 0;
     let cleaned: String = name
         .chars()
         .map(|c| {
@@ -105,7 +108,10 @@ pub fn safe_file_name(name: &str) -> String {
                 c
             }
         })
-        .take(200)
+        .take_while(|c| {
+            bytes += c.len_utf8();
+            bytes <= 200
+        })
         .collect();
     let cleaned = cleaned.trim().trim_end_matches('.').trim_start_matches('.');
     let stem = cleaned
@@ -1558,6 +1564,10 @@ mod tests {
         assert_eq!(safe_file_name("bild.png. "), "bild.png");
         assert_eq!(safe_file_name("x\u{0}y"), "x_y");
         assert_eq!(safe_file_name(&"a".repeat(300)).len(), 200);
+        // Four bytes each: the cap is in bytes, at a character's end.
+        let wide = safe_file_name(&"😀".repeat(100));
+        assert_eq!(wide.len(), 200);
+        assert_eq!(safe_file_name(&format!("a{}", "😀".repeat(100))).len(), 197);
     }
 
     #[test]
