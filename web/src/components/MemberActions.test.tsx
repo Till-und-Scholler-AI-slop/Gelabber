@@ -46,7 +46,7 @@ import { MemberActions } from "./MemberActions.tsx";
 const server: Pick<Server, "id" | "role" | "permissions"> = {
   id: "s",
   role: "member",
-  permissions: ["manage_server"],
+  permissions: ["moderate_members"],
 };
 const member = (overrides: Partial<Member> = {}): Member => ({
   user_id: "jonas",
@@ -137,11 +137,21 @@ describe("member actions", () => {
     expect(button(html, "Sperren")).toContain(DISABLED);
   });
 
-  it("shows nothing for the owner, oneself or without manage_server", () => {
+  it("shows nothing for the owner, oneself or without moderate_members", () => {
     const render = (s: typeof server, m: Member) =>
       renderToStaticMarkup(<MemberActions server={s} member={m} />);
     expect(render(server, member({ role: "owner" }))).toBe("");
     expect(render(server, member({ user_id: "self" }))).toBe("");
     expect(render({ ...server, permissions: [] }, member())).toBe("");
+  });
+
+  it("needs moderate_members, not manage_server, since v0.10", () => {
+    const render = (s: typeof server) =>
+      renderToStaticMarkup(<MemberActions server={s} member={member()} />);
+    expect(render({ ...server, permissions: ["manage_server"] })).toBe("");
+    expect(render(server)).toContain("Moderation");
+    expect(render({ ...server, role: "owner", permissions: [] })).toContain(
+      "Moderation",
+    );
   });
 });

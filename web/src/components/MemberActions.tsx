@@ -1,4 +1,4 @@
-// Kick / ban of a member. Hidden unless the caller holds `manage_server`
+// Kick / ban of a member. Hidden unless the caller holds `moderate_members`
 // and the target is not the owner or themselves. Never one click away:
 // both sit behind a disclosure or a menu, and both ask first.
 
@@ -30,7 +30,7 @@ function useModeration({ server, member }: ModerationProps) {
   const kickMember = useKickMember(server.id);
   const banMember = useBanMember(server.id);
   const allowed =
-    can(server, "manage_server") &&
+    can(server, "moderate_members") &&
     member.role !== "owner" &&
     member.user_id !== me;
   return {
