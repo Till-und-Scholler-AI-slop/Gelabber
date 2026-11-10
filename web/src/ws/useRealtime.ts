@@ -19,9 +19,14 @@ import {
   messageKeys,
   messageQueryOptions,
 } from "../messages/queries.ts";
-import { applyMemberRemoved, forgetServer } from "../servers/queries.ts";
+import {
+  applyMemberRemoved,
+  forgetServer,
+  refetchOnAccessChange,
+} from "../servers/queries.ts";
 import { leaveVoice, useVoice } from "../voice/session.ts";
 import { getGateway, type GapRecovery, type Gateway } from "./client.ts";
+import type { ChatEvent } from "./protocol.ts";
 import { shouldLeaveView } from "./leaveView.ts";
 import { translate } from "../i18n/catalog.ts";
 import { shell } from "../i18n/catalogs/shell.ts";
@@ -32,6 +37,32 @@ function dropVoice(serverId: string): void {
   if (voice.status === "joined" && voice.serverId === serverId) {
     leaveVoice();
   }
+}
+
+/** The server-topic event "access changed" (`t: "e"`, no `c`,
+ * `d: {"k": "a"}`): roles, rights or a channel's access changed. */
+export function isAccessChange(event: ChatEvent): boolean {
+  return (
+    event.t === "e" &&
+    !event.c &&
+    event.d !== null &&
+    typeof event.d === "object" &&
+    "k" in event.d &&
+    event.d.k === "a"
+  );
+}
+
+/** Reads the server's detail and the server list again, after the caller's
+ * own role or server writes of it have settled: the caller's rights and the
+ * channels they see may have changed. An open channel that is gone sends
+ * `ChannelPage` back to the server. */
+export function applyAccessChange(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  serverId: string,
+): void {
+  refetchOnAccessChange(client, userId, generation, serverId);
 }
 
 /** Upper bound of the random wait before a reconnect refetches. */
@@ -350,6 +381,10 @@ export function useRealtimeBridge(
       if (!userId || !alive()) return;
       if (event.c) {
         applyChannelEvent(client, userId, generation, event);
+        return;
+      }
+      if (isAccessChange(event)) {
+        applyAccessChange(client, userId, generation, event.s);
         return;
       }
       if (event.t === "d" && event.i) {

@@ -94,6 +94,14 @@
   /* Follows each theme's own green, which keeps its contrast (model.ts). */
   --lr-speaking: var(--lr-online);
   --lr-media-space: 64px;
+  /* Role colours (v0.10), the same in every theme: only for dots and
+     swatches, never text, with an inset --lr-border ring on light themes. */
+  --lr-role-amber: #e0a04a;
+  --lr-role-blue: #6fb3d9;
+  --lr-role-green: #85d69b;
+  --lr-role-pink: #d98fb8;
+  --lr-role-violet: #b29ae6;
+  --lr-role-coral: #e08f6f;
 
   /* Type scale: font shorthands, used as `font: var(--lr-type-ui)`. */
   --lr-type-caps: 600 11px / 1.3 var(--lr-font);
@@ -357,6 +365,11 @@ summary {
   min-width: 0;
 }
 .lr-channel-title-name > svg {
+  flex-shrink: 0;
+  color: var(--lr-muted);
+}
+.lr-channel-title-lock {
+  display: inline-flex;
   flex-shrink: 0;
   color: var(--lr-muted);
 }
@@ -869,6 +882,12 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   translate: 0 -50%;
 }
 .channel-row-draft {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--lr-muted);
+}
+/* A channel limited to roles (v0.10). */
+.channel-row-lock {
   display: inline-flex;
   flex-shrink: 0;
   color: var(--lr-muted);

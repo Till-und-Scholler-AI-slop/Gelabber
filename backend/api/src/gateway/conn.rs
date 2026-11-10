@@ -85,6 +85,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
     let mut last_activity = Instant::now();
     let mut idle = false;
     let mut focused = false;
+    let mut rosters = Rosters::new();
     // A focus claim outlives a few missed heartbeats, not a dead socket.
     let focus_ttl = state.ws_dead * 2;
     let mut beat = tokio::time::interval(state.ws_heartbeat);
@@ -138,7 +139,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
                         last_client = Instant::now();
-                        match handle_text(&state, &mut session_guard, user, conn, &text, &mut sink).await {
+                        match handle_text(&state, &mut session_guard, user, conn, &text, &mut sink, &mut rosters).await {
                             Ok(FrameEffect::Close) => break,
                             Ok(FrameEffect::Liveness) => {
                                 let _ = state.gateway.touch_presence(conn).await;
@@ -216,7 +217,7 @@ pub async fn run(socket: WebSocket, state: AppState, session: CurrentSession) {
             frame = rx.recv() => {
                 let Some(frame) = frame else { break };
                 let Ok(batch) = take_batch(frame, &mut rx) else { break };
-                match deliver(&state, &session, user.id, conn, &mut sink, batch).await {
+                match deliver(&state, &session, user.id, conn, &mut sink, batch, &mut rosters).await {
                     Ok(true) => checked = Instant::now(),
                     Ok(false) => {}
                     Err(_) => break,
@@ -350,6 +351,7 @@ async fn handle_text(
     conn: ConnId,
     text: &str,
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    rosters: &mut Rosters,
 ) -> Result<FrameEffect, ApiError> {
     let frame: ClientFrame = match serde_json::from_str(text) {
         Ok(frame) => frame,
@@ -370,7 +372,12 @@ async fn handle_text(
             // The scope tells the client which subscribe to retry. A database
             // error also fails the frame's commit, which ends the socket.
             match subscribe(state, db, user, conn, (s, c), (n, ep), sink).await {
-                Ok(()) => Ok(FrameEffect::Activity),
+                Ok(roster) => {
+                    if let Some(roster) = roster {
+                        rosters.insert(s, roster);
+                    }
+                    Ok(FrameEffect::Activity)
+                }
                 Err(SubscribeError::Read(err)) => {
                     state.gateway.unsubscribe(conn, Topic::of(s, c)).await;
                     warn!(error = err.code(), user_id = %user.id, "ws subscribe failed");
@@ -412,7 +419,7 @@ async fn subscribe(
     scope: (Uuid, Option<Uuid>),
     resume: (Option<u64>, Option<Uuid>),
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
-) -> Result<(), SubscribeError> {
+) -> Result<Option<Vec<VoiceEntry>>, SubscribeError> {
     let (server_id, channel_id) = scope;
     let _guard = if channel_id.is_some_and(|cid| cid == server_id) {
         None // DM authorization below still verifies participants.
@@ -426,7 +433,7 @@ async fn subscribe(
                 )
                 .await
                 .map_err(SubscribeError::Write)?;
-                return Ok(());
+                return Ok(None);
             }
             Err(err) => return Err(err.into()),
         }
@@ -440,7 +447,7 @@ async fn subscribe(
             )
             .await
             .map_err(SubscribeError::Write)?;
-            return Ok(());
+            return Ok(None);
         }
         Err(other) => return Err(other.into()),
     }
@@ -506,20 +513,24 @@ async fn subscribe(
             .map_err(SubscribeError::Write)?,
         Err(err) => warn!(error = err.code(), "presence snapshot on subscribe failed"),
     }
-    match state.gateway.voice_snapshot(server_id).await {
+    let roster = match state.gateway.voice_snapshot(server_id).await {
         Ok(voice) => {
             let voice = if _guard.is_some() {
                 visible_seats(voice, &hidden_rooms(&mut *db, server_id, user.id).await?)
             } else {
                 voice
             };
-            send(sink, ServerFrame::voice_snap(server_id, voice))
+            send(sink, ServerFrame::voice_snap(server_id, voice.clone()))
                 .await
-                .map_err(SubscribeError::Write)?
+                .map_err(SubscribeError::Write)?;
+            Some(voice)
         }
-        Err(err) => warn!(error = err.code(), "voice snapshot on subscribe failed"),
-    }
-    Ok(())
+        Err(err) => {
+            warn!(error = err.code(), "voice snapshot on subscribe failed");
+            None
+        }
+    };
+    Ok(roster)
 }
 
 /// The limited channels of `server_id` that `user_id` cannot see. Their
@@ -645,6 +656,12 @@ const BATCH_BYTES: usize = 16 * 1024;
 
 type Scope = (Uuid, Option<Uuid>);
 
+/// The voice roster this socket last received per server, as filtered for
+/// its user. A roster pass that changes only a hidden room filters to the
+/// same list and is dropped, so the frame itself does not tell that
+/// something happened there.
+type Rosters = HashMap<Uuid, Vec<VoiceEntry>>;
+
 fn take_batch(
     first: ServerFrame,
     rx: &mut mpsc::Receiver<ServerFrame>,
@@ -675,6 +692,7 @@ async fn deliver(
     conn: ConnId,
     sink: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     batch: Vec<(ServerFrame, String)>,
+    rosters: &mut Rosters,
 ) -> Result<bool, ApiError> {
     let mut checked = false;
     let dms = state.gateway.socket_dms(conn).await;
@@ -709,7 +727,8 @@ async fn deliver(
             if !ok {
                 continue;
             }
-            // A roster is server-wide: re-serialize it without hidden rooms.
+            // A roster is server-wide: re-serialize it without hidden rooms,
+            // and drop it when this socket already has that list.
             match frame {
                 ServerFrame::Sig {
                     t: SigKind::R,
@@ -723,12 +742,15 @@ async fn deliver(
                             entry.insert(hidden_rooms(&mut db, s, user_id).await?)
                         }
                     };
-                    if seats.iter().any(|seat| hidden.contains(&seat.c)) {
-                        out.push(to_json(&ServerFrame::voice_snap(
-                            s,
-                            visible_seats(seats, hidden),
-                        ))?);
+                    let (seats, json) = if seats.iter().any(|seat| hidden.contains(&seat.c)) {
+                        let seats = visible_seats(seats, hidden);
+                        let json = to_json(&ServerFrame::voice_snap(s, seats.clone()))?;
+                        (seats, json)
                     } else {
+                        (seats, json)
+                    };
+                    if rosters.get(&s) != Some(&seats) {
+                        rosters.insert(s, seats);
                         out.push(json);
                     }
                 }

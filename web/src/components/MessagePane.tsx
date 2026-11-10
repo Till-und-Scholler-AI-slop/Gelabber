@@ -97,6 +97,7 @@ export function MessagePane({
   canMentionEveryone = false,
   mention = "#",
   members = NO_MEMBERS,
+  mentionable,
   notify,
   peer,
   footer,
@@ -120,6 +121,9 @@ export function MessagePane({
   mention?: "#" | "@";
   /** Who can be mentioned here: the server's members, a DM's two people. */
   members?: readonly MentionMember[];
+  /** Who the `@…` suggestions offer, when not all of `members`: in a
+   * channel limited to roles, those who can read it. */
+  mentionable?: readonly MentionMember[];
   /** The bell in the header: notification settings of this conversation. */
   notify?: NotificationTarget;
   /** A DM's other person, shown where its history begins. */
@@ -396,10 +400,11 @@ export function MessagePane({
   const mentions = useMemo(
     () => ({
       members,
+      mentionable: mentionable ?? members,
       me: user?.id,
       keywords: mention === "#" && canMentionEveryone,
     }),
-    [members, user?.id, mention, canMentionEveryone],
+    [members, mentionable, user?.id, mention, canMentionEveryone],
   );
 
   return (

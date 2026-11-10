@@ -17,7 +17,7 @@ export function useMentionSuggestions(
   setDraft: (text: string, caret: number) => void,
 ) {
   const t = useT(chat);
-  const { members, me, keywords } = useMentions();
+  const { mentionable, me, keywords } = useMentions();
   const [caret, setCaret] = useState<number | null>(null);
   const [active, setActive] = useState(0);
   // Escape closes the list until the `@…` it was shown for changes.
@@ -32,7 +32,7 @@ export function useMentionSuggestions(
   const key = at ? `${at.start}:${at.query}` : null;
   const suggestions =
     at && key !== dismissed
-      ? mentionSuggestions(at.query, members, { me, keywords })
+      ? mentionSuggestions(at.query, mentionable, { me, keywords })
       : [];
   const open = suggestions.length > 0;
   const current = Math.min(active, suggestions.length - 1);

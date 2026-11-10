@@ -152,5 +152,6 @@ function peerMember(dm: DirectMessage): Member {
     avatar_url: dm.peer.avatar_url,
     joined_at: dm.created_at,
     role: "member",
+    role_ids: [],
   };
 }
