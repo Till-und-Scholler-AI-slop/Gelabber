@@ -17,6 +17,12 @@ export const dms = defineCatalog(
       "Keine Personen. Direktnachrichten gehen an Mitglieder deiner Server.",
     "newMessage.notFound": "Niemand gefunden für „{query}“.",
     "open.failed": "Unterhaltung nicht geöffnet.",
+    "conversation.loadFailed":
+      "Diese Unterhaltung konnte nicht geladen werden.",
+    "conversation.profileOf": "Profil von {name}",
+    "index.loadFailed": "Die Direktnachrichten konnten nicht geladen werden.",
+    "index.pick": "Wähle eine Unterhaltung.",
+    "index.empty": "Keine Unterhaltungen",
   },
   {
     "sidebar.label": "Direct messages",
@@ -31,5 +37,10 @@ export const dms = defineCatalog(
       "Nobody here. Direct messages go to members of your servers.",
     "newMessage.notFound": "Nobody found for “{query}”.",
     "open.failed": "Conversation not opened.",
+    "conversation.loadFailed": "Couldn’t load this conversation.",
+    "conversation.profileOf": "{name}’s profile",
+    "index.loadFailed": "Couldn’t load your direct messages.",
+    "index.pick": "Pick a conversation.",
+    "index.empty": "No conversations",
   },
 );

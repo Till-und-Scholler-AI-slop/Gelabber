@@ -154,6 +154,29 @@ export const shell = defineCatalog(
     "removed.kicked": "Du wurdest vom Server entfernt.",
     tauriOutdated:
       "Die Desktop-App ist veraltet. Ab 0.9 gibt es eine neue Desktop-App: unter Windows ab v0.7 über das App-Update, unter Arch mit pacman -Syu, sonst gelabber-native-* aus dem GitHub-Release.",
+    "welcome.title": "Willkommen",
+    "welcome.titleNamed": "Willkommen, {name}",
+    "welcome.loadFailed": "Die Server konnten nicht geladen werden.",
+    "welcome.create.title": "Eigenen Server erstellen",
+    "welcome.create.lead": "Mit #allgemein und einem Sprachkanal.",
+    "welcome.create.action": "Server erstellen",
+    "welcome.join.title": "Server beitreten",
+    "welcome.setAvatar": "Profilbild festlegen ›",
+    "place.settings": "Einstellungen",
+    "place.dms": "Nachrichten",
+    noServers:
+      "Keine Server. Erstelle einen über + in der Serverleiste oder öffne einen Einladungslink.",
+    "drawer.openLabel": "Navigation öffnen",
+    "drawer.openLabelUnread": "Navigation öffnen, ungelesene Nachrichten",
+    "drawer.openLabelCount": {
+      one: "Navigation öffnen, {count} Benachrichtigung",
+      other: "Navigation öffnen, {count} Benachrichtigungen",
+    },
+    "drawer.openLabelOver99":
+      "Navigation öffnen, mehr als 99 Benachrichtigungen",
+    serverGone: "Server nicht gefunden oder kein Zugriff.",
+    "channels.loadFailed": "Die Kanäle konnten nicht geladen werden.",
+    dmsLoadFailed: "Die Unterhaltungen konnten nicht geladen werden.",
   },
   {
     "password.show": "Show password",
@@ -302,5 +325,27 @@ export const shell = defineCatalog(
     "removed.kicked": "You were removed from the server.",
     tauriOutdated:
       "This desktop app is out of date. Since 0.9 there is a new desktop app: on Windows from v0.7 through the app update, on Arch with pacman -Syu, otherwise gelabber-native-* from the GitHub release.",
+    "welcome.title": "Welcome",
+    "welcome.titleNamed": "Welcome, {name}",
+    "welcome.loadFailed": "Couldn’t load the servers.",
+    "welcome.create.title": "Create your own server",
+    "welcome.create.lead": "With #general and a voice channel.",
+    "welcome.create.action": "Create server",
+    "welcome.join.title": "Join a server",
+    "welcome.setAvatar": "Set a profile picture ›",
+    "place.settings": "Settings",
+    "place.dms": "Messages",
+    noServers:
+      "No servers. Create one with + in the server bar or open an invite link.",
+    "drawer.openLabel": "Open navigation",
+    "drawer.openLabelUnread": "Open navigation, unread messages",
+    "drawer.openLabelCount": {
+      one: "Open navigation, {count} notification",
+      other: "Open navigation, {count} notifications",
+    },
+    "drawer.openLabelOver99": "Open navigation, more than 99 notifications",
+    serverGone: "Server not found, or you have no access.",
+    "channels.loadFailed": "Couldn’t load the channels.",
+    dmsLoadFailed: "Couldn’t load the conversations.",
   },
 );

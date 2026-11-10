@@ -1,7 +1,0 @@
-# W4: files whose UI text is not in the catalogs yet.
-# The batch deletes this list when it is done (docs/i18n.md).
-src/pages/DmChannelPage.tsx
-src/pages/DmIndexPage.tsx
-src/pages/WorkspaceIndexPage.tsx
-src/pages/WorkspaceLayout.tsx
-src/pages/sectionSpy.ts
