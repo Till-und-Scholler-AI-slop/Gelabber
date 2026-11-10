@@ -137,6 +137,58 @@ class CoturnEntry(unittest.TestCase):
                     self.assertIn(value, stderr)
                     self.assertIsNone(started)
 
+    def test_a_cidr_prefix_with_a_leading_zero_is_refused(self):
+        """The shell reads `/032` as octal (26): a silently wrong range."""
+        for value in ('10.0.0.0/032', '10.0.0.0/08', '10.0.0.0/00'):
+            with self.subTest(value=value):
+                code, stderr, started = self.start(TURN_PASSWORD='x',
+                                                   TURN_ALLOWED_PEER_IPS=value)
+                self.assertEqual(code, 1)
+                self.assertIn(value, stderr)
+                self.assertIsNone(started)
+
+    def test_ipv6_entries_must_be_whole_addresses(self):
+        """coturn aborts on these; the check before it must refuse them too."""
+        for value in ('1:2:3', '1.2.3.4:40000', ':1::2', '1::2:', '1:2:3:4:5:6:7:8:9',
+                      '12345::1', '::1.2.3', '1:2:3:4:5:6:7::8', 'fd00::1-1:2'):
+            with self.subTest(value=value):
+                code, stderr, started = self.start(TURN_PASSWORD='x',
+                                                   TURN_ALLOWED_PEER_IPS=value)
+                self.assertEqual(code, 1)
+                self.assertIn(value, stderr)
+                self.assertIsNone(started)
+        for value in ('1:2:3', '1.2.3.4:40000'):
+            with self.subTest(media=value):
+                code, stderr, started = self.start(TURN_PASSWORD='x',
+                                                   MEDIA_ADVERTISED_IP=value)
+                self.assertEqual(code, 0, stderr)
+                self.assertIn('TURN_ALLOWED_PEER_IPS', stderr)
+                self.assertFalse([arg for arg in started
+                                  if arg.startswith('--allowed-peer-ip')], started)
+
+    def test_whole_ipv6_addresses_pass(self):
+        value = ('2001:db8::1 :: ::1 1:2:3:4:5:6:7:8 ::ffff:192.0.2.1 '
+                 '64:ff9b::192.0.2.1 fd00::1-fd00::ff 1::2:3:4:5:6:7')
+        code, stderr, started = self.start(TURN_PASSWORD='x',
+                                           TURN_ALLOWED_PEER_IPS=value)
+        self.assertEqual(code, 0, stderr)
+        allowed = [arg.split('=', 1)[1] for arg in started
+                   if arg.startswith('--allowed-peer-ip=')]
+        self.assertEqual(allowed, value.split())
+
+    def test_an_entry_that_allows_everything_warns(self):
+        for value in ('0.0.0.0/0', '10.1.2.3/0', '0.0.0.0-255.255.255.255'):
+            with self.subTest(value=value):
+                code, stderr, started = self.start(TURN_PASSWORD='x',
+                                                   TURN_ALLOWED_PEER_IPS=value)
+                self.assertEqual(code, 0, stderr)
+                self.assertIn('--allowed-peer-ip=0.0.0.0-255.255.255.255', started)
+                self.assertIn(f'TURN_ALLOWED_PEER_IPS: {value} allows every address', stderr)
+        code, stderr, started = self.start(TURN_PASSWORD='x',
+                                           TURN_ALLOWED_PEER_IPS='10.0.0.0/8')
+        self.assertEqual(code, 0, stderr)
+        self.assertNotIn('allows every address', stderr)
+
     def test_public_default_secret_is_refused(self):
         for turn in ({}, {'TURN_PASSWORD': 'x'}):
             with self.subTest(**turn):
