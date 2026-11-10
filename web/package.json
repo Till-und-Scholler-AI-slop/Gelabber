@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/public-pages/prerender.mjs",
     "preview": "vite preview",
     "lint": "node --require ./eslint-ts6-register.cjs ./node_modules/eslint/bin/eslint.js .",
     "format": "prettier --write .",
