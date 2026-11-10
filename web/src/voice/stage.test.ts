@@ -10,6 +10,8 @@ import {
   kinoKey,
   kinoRects,
   LONG_PRESS_MS,
+  peopleStageFits,
+  personTile,
   rasterOrder,
   rasterRects,
   type StageKind,
@@ -123,6 +125,56 @@ describe("raster rects", () => {
 
   it("is empty before the stage has a size", () => {
     expect(rasterRects(2, 0, 0)).toEqual([]);
+  });
+});
+
+describe("people stage", () => {
+  // The reference's stage: 1280x800 with the member list open.
+  const W = 696;
+  const H = 648;
+
+  it("gives two people one column of wide tiles, avatars at most 96", () => {
+    const rects = rasterRects(2, W, H);
+    expect(rects).toEqual([
+      { x: 66, y: 0, width: 565, height: 318 },
+      { x: 66, y: 330, width: 565, height: 318 },
+    ]);
+    expect(personTile(318)).toEqual({ avatar: 96, small: false });
+  });
+
+  it("puts four people in two rows of two", () => {
+    const rects = rasterRects(4, W, H);
+    expect(rects.map(({ width, height }) => [width, height])).toEqual(
+      Array(4).fill([342, 318]),
+    );
+    expect(rects[3]).toEqual({ x: 354, y: 330, width: 342, height: 318 });
+  });
+
+  it("makes 25 people small tiles in five rows of five", () => {
+    const rects = rasterRects(25, W, H);
+    expect(
+      new Set(rects.map((rect) => `${rect.width}x${rect.height}`)),
+    ).toEqual(new Set(["129x120"]));
+    expect(new Set(rects.map((rect) => rect.y)).size).toBe(5);
+    expect(personTile(120)).toEqual({ avatar: 41, small: true });
+  });
+
+  it("keeps the avatar between 36 and 96 and turns small under 180", () => {
+    expect(personTile(60).avatar).toBe(36);
+    expect(personTile(179)).toEqual({ avatar: 61, small: true });
+    expect(personTile(180)).toEqual({ avatar: 61, small: false });
+    expect(personTile(400).avatar).toBe(96);
+  });
+
+  it("gives a phone's stage up below 72 pixels a tile", () => {
+    // A 390 wide phone: 25 people still fit, 60 do not.
+    expect(peopleStageFits(rasterRects(25, 358, 600))).toBe(true);
+    expect(peopleStageFits(rasterRects(60, 358, 600))).toBe(false);
+    expect(peopleStageFits([{ x: 0, y: 0, width: 72, height: 72 }])).toBe(true);
+    expect(peopleStageFits([{ x: 0, y: 0, width: 100, height: 71 }])).toBe(
+      false,
+    );
+    expect(peopleStageFits([])).toBe(true);
   });
 });
 
