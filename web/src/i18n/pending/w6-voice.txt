@@ -1,6 +1,5 @@
 # W6: files whose UI text is not in the catalogs yet.
 # The batch deletes this list when it is done (docs/i18n.md).
-src/components/VoiceSessionControls.tsx
 src/voice/ConnectionStatus.tsx
 src/voice/LiveHint.tsx
 src/voice/MicrophoneTest.tsx
@@ -13,7 +12,6 @@ src/voice/VoiceSettings.tsx
 src/voice/VoiceSettingsPanel.tsx
 src/voice/VoiceTile.tsx
 src/voice/audioProcessing.ts
-src/voice/callBar.ts
 src/voice/callMicrophone.ts
 src/voice/callShortcuts.ts
 src/voice/callSoundSynth.ts
