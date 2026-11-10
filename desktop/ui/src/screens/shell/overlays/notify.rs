@@ -90,6 +90,9 @@ pub struct NotifyDialog {
     /// even when the op ran between two frames.
     before: Setting,
     error: Option<&'static str>,
+    /// `notifications` failures when that save was sent: a refusal can
+    /// fail the op between two frames, before it is ever seen running.
+    failures: u64,
 }
 
 impl NotifyDialog {
@@ -99,7 +102,20 @@ impl NotifyDialog {
             saving: None,
             before: Setting::default(),
             error: None,
+            failures: 0,
         }
+    }
+}
+
+/// Why a save did not go through, under the dialog's choices.
+fn failure_text(e: &gelabber_client::ApiError) -> &'static str {
+    if matches!(e, gelabber_client::ApiError::Api { code, .. } if code == "unknown_level") {
+        // The client refused it: the stored level is newer than this app.
+        "Diese Stufe kennt diese Version von Gelabber nicht. Bitte wähle zuerst eine Stufe."
+    } else if e.status() == Some(404) {
+        "Nicht mehr verfügbar."
+    } else {
+        "Nicht gespeichert. Versuch es noch einmal."
     }
 }
 
@@ -254,28 +270,25 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, d: &mut NotifyDialog) -> bool {
     let c = theme.c;
     let now = app.client.http().server_now();
     let target = d.target.clone();
-    let (own, server, op) = app.client.with_state(|s| {
+    let (own, server, op, failures) = app.client.with_state(|s| {
         (
             setting_of(s, target.scope, target.id),
             target
                 .server
                 .map(|id| setting_of(s, SettingScope::Server, id)),
             s.op("notifications").cloned(),
+            s.failures("notifications"),
         )
     });
     let time = ctx.input(|i| i.time);
     if let Some((since, seen)) = d.saving.as_mut() {
         let stale = time - *since > 1.5;
         match op {
-            Some(OpState::Pending) => *seen = true,
-            Some(OpState::Failed(e)) if *seen => {
+            Some(OpState::Failed(e)) if *seen || failures != d.failures => {
                 d.saving = None;
-                d.error = Some(if e.status() == Some(404) {
-                    "Nicht mehr verfügbar."
-                } else {
-                    "Nicht gespeichert. Versuch es noch einmal."
-                });
+                d.error = Some(failure_text(&e));
             }
+            Some(OpState::Pending) => *seen = true,
             _ if *seen || stale || own != d.before => d.saving = None,
             _ => ctx.request_repaint(),
         }
@@ -363,7 +376,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, d: &mut NotifyDialog) -> bool {
             if let Some(error) = d.error {
                 let w = ui.available_width();
                 let block = Block::wrapped(ui, error, text::META, c.danger, w);
-                text::show(ui, &block);
+                let shown = text::show(ui, &block);
+                crate::widgets::announce(&shown, egui::Role::Alert, error);
             }
             // `.notify-footer`: marking read is an action, beside "Fertig".
             super::row(ui, 36.0, 8.0, |ui| {
@@ -395,6 +409,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, d: &mut NotifyDialog) -> bool {
         d.saving = Some((time, false));
         d.before = own;
         d.error = None;
+        d.failures = failures;
     }
     !(output.close_requested || done)
 }
@@ -562,5 +577,40 @@ fn format_until(until: DateTime<Utc>) -> String {
             local.day(),
             MONTHS[local.month0() as usize]
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app::testkit::{
+        ALLGEMEIN, FakeApi, HOME, Reply, launcher, wait_for_label, wait_for_text, workspace,
+    };
+    use crate::platform::paths::testing::TempConfig;
+    use egui_kittest::kittest::Queryable;
+
+    /// A level a newer server stored is never saved back: the client
+    /// refuses at once, and the dialog says why instead of going quiet.
+    #[test]
+    fn a_refused_save_says_why() {
+        let _config = TempConfig::new("notify-unknown-level");
+        let api = FakeApi::start(true, |method, path, _| match (method, path) {
+            ("GET", "/notification-settings") => Some(Reply::json(serde_json::json!([{
+                "scope": "channel", "id": ALLGEMEIN, "level": "digest",
+                "muted": false, "muted_until": null
+            }]))),
+            _ => workspace(method, path),
+        });
+        let mut harness = launcher(&api, &format!("/s/{HOME}/c/{ALLGEMEIN}"));
+        wait_for_label(&mut harness, "Benachrichtigungen für #allgemein");
+        harness
+            .get_by_label("Benachrichtigungen für #allgemein")
+            .click();
+        wait_for_label(&mut harness, "15 Minuten");
+        harness.get_by_label("15 Minuten").click();
+        wait_for_text(
+            &mut harness,
+            "Diese Stufe kennt diese Version von Gelabber nicht.",
+        );
+        assert!(api.seen.lock().iter().all(|r| !r.starts_with("PUT")));
     }
 }
