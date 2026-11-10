@@ -2,11 +2,14 @@
 // settings header and navigation show at once (see UserSettingsPage).
 
 import { lazyPart } from "../components/lazyPart.tsx";
+import { translate } from "../i18n/catalog.ts";
+import { settings } from "../i18n/catalogs/settings.ts";
 
 export const SettingsAreaPart = lazyPart(
   () =>
     import("./SettingsAreaContent.tsx").then(
       (module) => module.SettingsAreaContent,
     ),
-  "Dieser Bereich konnte nicht geladen werden.",
+  // Taken in the language shown when the module loads: lazyPart wants a string.
+  translate(settings, "areaPart.failed"),
 );

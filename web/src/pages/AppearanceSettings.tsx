@@ -12,6 +12,7 @@ import { changeAccountLocale } from "../i18n/account.ts";
 import { translate, useT } from "../i18n/catalog.ts";
 import { common } from "../i18n/catalogs/common.ts";
 import { language } from "../i18n/catalogs/language.ts";
+import { settings } from "../i18n/catalogs/settings.ts";
 import { LOCALES, useCurrentLocale } from "../i18n/locale.ts";
 import {
   useInterfacePreferences,
@@ -25,17 +26,10 @@ import {
 } from "../theme/account.ts";
 import { BUILTIN_THEMES, builtinTheme } from "../theme/presets.ts";
 
-const MODES = [
-  { id: "light", label: "Hell", hint: "Gelabber Hell" },
-  { id: "dark", label: "Dunkel", hint: "Gelabber Dunkel" },
-  { id: "system", label: "System", hint: "Folgt dem Gerät" },
-] as const;
+// Under Hell and Dunkel, the theme's name, which stays as it is.
+const MODES = ["light", "dark", "system"] as const;
 
-const SCALES: { value: UiScale; label: string }[] = [
-  { value: "compact", label: "Kompakt" },
-  { value: "standard", label: "Standard" },
-  { value: "large", label: "Groß" },
-];
+const SCALES: readonly UiScale[] = ["compact", "standard", "large"];
 
 /** A small picture of the theme on its card: page, panel, text and accent. */
 function ModeSwatch({ id }: { id: "light" | "dark" | "system" }) {
@@ -101,6 +95,8 @@ function LanguageSettings() {
 
 /** Settings area "Darstellung": light or dark, text size, room density. */
 export function AppearanceSettings() {
+  const t = useT(settings);
+  const tc = useT(common);
   const preferences = useInterfacePreferences();
   const themes = useAccountThemes();
   const status = useInlineStatus();
@@ -112,7 +108,7 @@ export function AppearanceSettings() {
     themes.status === "error" ||
     themes.status === "conflict";
   const saving = themes.status === "saving" || !!themes.pending;
-  const otherTheme = MODES.some((mode) => mode.id === active)
+  const otherTheme = MODES.some((mode) => mode === active)
     ? null
     : (themes.doc.customThemes.find((theme) => theme.id === active) ??
       BUILTIN_THEMES.find((theme) => theme.id === active));
@@ -125,32 +121,36 @@ export function AppearanceSettings() {
     <>
       <LanguageSettings />
 
-      <SettingsGroup title="Farbschema" scope="account">
+      <SettingsGroup title={t("appearance.colorScheme")} scope="account">
         <div className="settings-mode-options">
           {MODES.map((mode) => (
-            <label key={mode.id} className="settings-mode-option">
+            <label key={mode} className="settings-mode-option">
               <input
                 type="radio"
                 name="theme-mode"
                 className="ui-check"
-                checked={active === mode.id}
+                checked={active === mode}
                 disabled={unavailable}
                 onChange={async () => {
                   if (saving) return;
                   status.show(
-                    (await changeTheme({ kind: "apply", id: mode.id }))
-                      ? { tone: "success", message: "Gespeichert." }
+                    (await changeTheme({ kind: "apply", id: mode }))
+                      ? { tone: "success", message: translate(common, "saved") }
                       : {
                           tone: "error",
-                          message: "Nicht gespeichert – erneut versuchen",
+                          message: translate(common, "notSaved"),
                         },
                   );
                 }}
               />
-              <ModeSwatch id={mode.id} />
+              <ModeSwatch id={mode} />
               <span className="ui-choice-text">
-                {mode.label}
-                <small>{mode.hint}</small>
+                {t(`appearance.mode.${mode}`)}
+                <small>
+                  {mode === "system"
+                    ? t("appearance.mode.systemHint")
+                    : builtinTheme(mode).name}
+                </small>
               </span>
             </label>
           ))}
@@ -159,40 +159,45 @@ export function AppearanceSettings() {
           <>
             <p className="ui-field-error">{themes.error}</p>
             <Button size="sm" onClick={() => void retryThemes()}>
-              {themes.pending ? "Erneut anwenden" : "Erneut versuchen"}
+              {themes.pending ? t("appearance.retryApply") : tc("tryAgain")}
             </Button>
           </>
         ) : null}
         <p className="settings-hint">
-          {otherTheme ? `Gerade aktiv: ${otherTheme.name}. ` : null}
+          {otherTheme
+            ? `${t("appearance.activeTheme", { name: otherTheme.name })} `
+            : null}
           <Link
             to="/settings/$area"
             params={{ area: "themes" }}
             className="settings-link"
           >
-            Weitere Themes
+            {t("appearance.moreThemes")}
           </Link>
         </p>
         <InlineStatus status={status.status} />
       </SettingsGroup>
 
-      <SettingsGroup title="Ansicht" scope="device">
+      <SettingsGroup title={t("appearance.view")} scope="device">
         <div className="settings-row settings-row--stacked">
           <span className="ui-choice-text">
-            Textgröße
-            <small>Gilt für die ganze Oberfläche.</small>
+            {t("appearance.textSize")}
+            <small>{t("appearance.textSizeHint")}</small>
           </span>
           <ChipGroup
-            label="Textgröße"
-            options={SCALES}
+            label={t("appearance.textSize")}
+            options={SCALES.map((value) => ({
+              value,
+              label: t(`appearance.scale.${value}`),
+            }))}
             value={preferences.uiScale}
             onChange={(uiScale) => preferences.patch({ uiScale })}
           />
         </div>
         <Switch
           className="settings-row"
-          label="Kompakte Sprachkanäle"
-          description="Kleinere Avatare und weniger Abstand."
+          label={t("appearance.compactRooms")}
+          description={t("appearance.compactRoomsHint")}
           checked={preferences.compactRooms}
           onChange={(event) =>
             preferences.patch({ compactRooms: event.target.checked })
@@ -200,8 +205,8 @@ export function AppearanceSettings() {
         />
         <Switch
           className="settings-row"
-          label="Bewegung reduzieren"
-          description="Berücksichtigt auch die Einstellung deines Geräts."
+          label={t("appearance.reducedMotion")}
+          description={t("appearance.reducedMotionHint")}
           checked={preferences.reducedMotion}
           onChange={(event) =>
             preferences.patch({ reducedMotion: event.target.checked })
