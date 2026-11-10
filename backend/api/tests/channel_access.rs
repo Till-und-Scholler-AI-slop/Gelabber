@@ -1017,3 +1017,47 @@ async fn go_live_through_a_role_reaches_the_ticket_and_the_gateway(pool: PgPool)
     .await;
     assert_eq!(screen["op"], "sig", "{screen}");
 }
+
+/// Watching a Live goes through the same room check as every voice signal:
+/// a hidden room is not found, and whom someone in it watches stays there.
+#[sqlx::test]
+async fn watching_in_a_hidden_room_is_not_found_and_does_not_leak(pool: PgPool) {
+    let (addr, state) = common::serve_ws(pool.clone()).await;
+    let Team {
+        mut ada,
+        bob,
+        cara,
+        sid,
+        ..
+    } = team(&state).await;
+    let r = role(&mut ada, sid, "Stammgäste").await;
+    set_roles(&mut ada, sid, cara.user_id(), json!([r])).await;
+    let hidden = create_channel(
+        &mut ada,
+        sid,
+        json!({"name": "Hinterzimmer", "kind": "voice", "role_ids": [r]}),
+    )
+    .await;
+    assert_eq!(hidden.status, StatusCode::CREATED, "{}", hidden.body);
+    let hidden = id(&hidden.body["id"]);
+
+    let mut bob_ws = connect(addr, &bob).await;
+    send(&mut bob_ws, json!({"op": "s", "s": sid})).await;
+    until(&mut bob_ws, |f| f["op"] == "sig" && f["t"] == "r").await;
+    let watch = |owner: &str| json!({"op": "sig", "t": "w", "s": sid, "c": hidden, "o": owner, "k": "s", "on": true});
+    not_found(&mut bob_ws, watch(ada.user_id()), hidden).await;
+
+    let mut cara_seat = join_voice(addr, &cara, sid, hidden).await;
+    send(&mut cara_seat, watch(ada.user_id())).await;
+    let set = until(&mut cara_seat, |f| f["op"] == "sig" && f["t"] == "w").await;
+    assert_eq!(set["w"], json!([ada.user_id()]), "{set}");
+    let cara_id = cara.user_id().to_owned();
+    let leaked = tokio::time::timeout(
+        Duration::from_millis(1000),
+        until(&mut bob_ws, |f| {
+            f["op"] == "sig" && f["u"] == cara_id.as_str()
+        }),
+    )
+    .await;
+    assert!(leaked.is_err(), "hidden watch leaked: {leaked:?}");
+}
