@@ -780,3 +780,40 @@ fn the_large_view_has_the_video_to_itself() {
     h.run_steps(2);
     assert_eq!(call.video_request(key), None);
 }
+
+/// A picture that never came: a watched Live offers "Neu laden" (watch it
+/// again); a camera does not, as nothing would ask for it anew.
+#[test]
+fn only_a_live_offers_to_reload_a_missing_picture() {
+    for live in [false, true] {
+        let (client, call) = offline();
+        call.set_state(in_sofa(MicStatus::Live));
+        let mut pic = if live {
+            picture(JONAS, Kind::Live, "Jonas — Live", false)
+        } else {
+            picture(JONAS, Kind::Camera, "Jonas", false)
+        };
+        pic.watching = true;
+        let jonas = person(JONAS, "Jonas", false);
+        let mut h = harness(client, call, move |ui, app| {
+            tile::picture(
+                ui,
+                app,
+                stage_rect(),
+                &pic,
+                Some(&jonas),
+                tile::Place::Grid,
+                false,
+                false,
+                1.0,
+            );
+        });
+        // Past `FRAME_STALLED` (8 s) at 60 frames a second.
+        h.run_steps(500);
+        assert_eq!(
+            h.query_by_label("Neu laden").is_some(),
+            live,
+            "live: {live}"
+        );
+    }
+}

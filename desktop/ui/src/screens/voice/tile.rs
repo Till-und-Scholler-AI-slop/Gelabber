@@ -763,8 +763,18 @@ pub fn picture(
             if let Some(key) = pic.key {
                 video::request(ui, app.call, key, rect, 30);
             }
-            if placeholder(ui, &painter, rect, wait_id, &pic.label, pic.key.is_some()) {
-                // "Neu laden": watch the Live again, or ask for the camera anew.
+            // A Live is watched again; nothing re-asks for a camera, so its
+            // tile offers no "Neu laden".
+            let reload = !matches!(pic.id.kind, Kind::Camera);
+            if placeholder(
+                ui,
+                &painter,
+                rect,
+                wait_id,
+                &pic.label,
+                pic.key.is_some(),
+                reload,
+            ) {
                 ui.ctx().data_mut(|d| d.remove::<f64>(wait_id));
                 if let Some(key) = pic.key {
                     video::forget(ui.ctx(), app.call, key);
@@ -1040,6 +1050,7 @@ fn placeholder(
     wait_id: Id,
     label: &str,
     expected: bool,
+    reload: bool,
 ) -> bool {
     let now = ui.input(|i| i.time);
     let since: f64 = ui
@@ -1073,6 +1084,11 @@ fn placeholder(
     // A spinner above the words while loading, "Neu laden" under them after.
     let total = 16.0 + 8.0 + block.height();
     let top = rect.center().y - total / 2.0;
+    if stalled && !reload {
+        let at = rect.center() - block.size() / 2.0;
+        block.paint(painter, at);
+        return false;
+    }
     if stalled {
         let words = rect.center().y - (block.height() + 8.0 + 32.0) / 2.0;
         block.paint(painter, pos2(rect.center().x - block.width() / 2.0, words));
