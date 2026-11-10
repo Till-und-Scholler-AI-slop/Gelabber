@@ -1,5 +1,7 @@
 import { ApiError, api, timeoutSignal } from "../api/client.ts";
 import type { GifPick } from "../gifs/api.ts";
+import { translate } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
 import type {
   ListMessagesParams,
   Message,
@@ -100,18 +102,15 @@ export async function putPresigned(
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
-      throw new Error(
-        "Der Upload hat zu lange gedauert und wurde abgebrochen.",
-        { cause: error },
-      );
+      throw new Error(translate(chat, "upload.timedOut"), { cause: error });
     }
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error("Der Upload wurde abgebrochen.", { cause: error });
+      throw new Error(translate(chat, "upload.aborted"), { cause: error });
     }
     throw new ApiError("network", 0, "Network error.");
   }
   if (!response.ok) {
-    throw new Error("Der Upload ist fehlgeschlagen.");
+    throw new Error(translate(chat, "upload.failed"));
   }
 }
 

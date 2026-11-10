@@ -2,6 +2,7 @@
 // `backend/api/src/attachments/validate.rs`.
 
 import type { FieldCode } from "../api/client.ts";
+import { formatNumber } from "../i18n/format.ts";
 
 export const CONTENT_MAX = 2000;
 export const PAGE_SIZE = 50;
@@ -259,9 +260,16 @@ export function validateAttachmentSet(
   return null;
 }
 
-/** A file size as the chat shows it: "2,5 MB", "12 KB". */
+/** A file size as the chat shows it: "2,5 MB", "12 KB" ("2.5 MB" in
+ *  English). */
 export function formatSize(bytes: number): string {
   if (bytes >= 1024 * 1024)
-    return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} MB`;
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+    return `${formatNumber(bytes / (1024 * 1024), {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+      useGrouping: false,
+    })} MB`;
+  return `${formatNumber(Math.max(1, Math.round(bytes / 1024)), {
+    useGrouping: false,
+  })} KB`;
 }

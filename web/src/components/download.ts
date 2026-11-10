@@ -9,8 +9,6 @@ import { useEffect, useState, type MouseEvent } from "react";
  *  toast stays. */
 export const DOWNLOAD_STARTED_MS = 4000;
 
-export const DOWNLOAD_STARTED = "Download gestartet";
-
 /** Whether this link's download just started, and the click that starts
  *  it. Spread `link` onto the `<a download>`. */
 export function useDownload(): {
