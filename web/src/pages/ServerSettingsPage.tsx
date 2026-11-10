@@ -187,7 +187,8 @@ function useCurrentSection(
 
 function Settings({ server }: { server: ServerDetail }) {
   const t = useT(serverSettings);
-  const sections = serverSettingsSections(server);
+  // The directory switch arrives with discovery.
+  const sections = serverSettingsSections(server, false);
   const shows = (id: SectionId) => sections.includes(id);
   const scroller = useRef<HTMLDivElement>(null);
   const nav = useRef<HTMLElement>(null);

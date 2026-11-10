@@ -180,7 +180,10 @@ const switches = (html: string) =>
 
 describe("server settings sections", () => {
   const sections = (permissions: Permission[], owner = false) =>
-    serverSettingsSections({ role: owner ? "owner" : "member", permissions });
+    serverSettingsSections(
+      { role: owner ? "owner" : "member", permissions },
+      false,
+    );
 
   it("follow manage_server and moderate_members", () => {
     expect(sections(["manage_server", "moderate_members"])).toEqual([
@@ -366,6 +369,19 @@ describe("roles editor", () => {
     const rows = switches(html);
     expect(rows).toHaveLength(9);
     expect(rows.every((row) => row.checked && row.disabled)).toBe(true);
+  });
+
+  it("falls back to the first custom role when the chosen one is gone", () => {
+    const html = render(
+      <RolesEditor
+        server={detail(["manage_server"], withRoles)}
+        initial="r-deleted"
+      />,
+    );
+    expect(roleRows(html).filter((row) => row.selected)).toEqual([
+      { name: "Moderation", count: 1, selected: true },
+    ]);
+    expect(html).toContain("<h3>Moderation</h3>");
   });
 });
 
