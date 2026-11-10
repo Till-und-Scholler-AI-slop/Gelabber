@@ -89,13 +89,18 @@ vi.mock("./VoiceTile.tsx", () => ({
     stream,
     label,
     speaking,
+    liveCaption,
   }: {
     stream: MediaStream | null;
     label: string;
     speaking?: boolean;
+    liveCaption?: { name: string; watchers: ReactNode };
   }) => (
     <span data-source={stream?.id ?? "none"} data-speaking={speaking}>
       {label}
+      {liveCaption ? (
+        <i data-caption={liveCaption.name}>{liveCaption.watchers}</i>
+      ) : null}
     </span>
   ),
 }));
@@ -1113,5 +1118,77 @@ describe("active media UI", () => {
     expect(alone).not.toContain("data-stage");
     expect(alone).toContain('aria-label="Teilnehmer im Sprachkanal"');
     expect(alone).toContain('class="voice-room-invite"');
+  });
+
+  it("says who watches a Live: on its caption, in Fokus's row and on the own Live's button (#521)", () => {
+    const people = [
+      ["self", "Lena"],
+      ["jonas", "Jonas"],
+      ["mira", "Mira"],
+      ["tom", "Tom"],
+    ].map(([user_id, name]) => ({
+      user_id,
+      name,
+      avatar_url: null,
+      joined_at: "",
+      role: "member",
+      role_ids: [],
+    }));
+    const home = { ...server, members: people } as unknown as ServerDetail;
+    fixture.live = { a: { sofa: { jonas: { s: true } } } };
+    fixture.roster = {
+      a: Object.fromEntries(
+        ["self", "jonas", "mira", "tom"].map((id) => [
+          id,
+          { channelId: "sofa", muted: false, deafened: false },
+        ]),
+      ),
+    };
+    // Mira's watch comes from the gateway, the own one from local state.
+    fixture.watches = { a: { mira: ["jonas"], tom: [] } };
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "sofa",
+      channelName: "Sofa",
+      participants: { jonas: { pubs: ["s"] } },
+      remote: { jonas: { s: stream } },
+      sourceSubscriptions: { jonas: { s: true } },
+    });
+    const html = renderToStaticMarkup(
+      <VoiceRoom server={home} channelId="sofa" channelName="Sofa" />,
+    );
+    // The caption: the owner's name and the count, a button for the list.
+    expect(html).toContain('data-caption="Jonas"');
+    expect(html).toMatch(
+      /<button type="button" class="voice-live-count" aria-label="2 schauen zu – Liste anzeigen" aria-haspopup="dialog" aria-expanded="false">/,
+    );
+    // Fokus's row: live, watching the Live in front, or the state.
+    expect(html).toContain('data-view="fokus"');
+    const status = (name: string) =>
+      new RegExp(
+        `${name}(?:(?!</li>).)*<span class="voice-room-participant-status([^"]*)">(?:<svg(?:(?!</svg>).)*</svg>)?([^<]*)</span>`,
+      )
+        .exec(html)
+        ?.slice(1);
+    expect(status("Lena")).toEqual([" is-watching", "Schaut zu"]);
+    expect(status("Jonas")).toEqual([" is-live", "Ist live"]);
+    expect(status("Mira")).toEqual([" is-watching", "Schaut zu"]);
+    expect(status("Tom")).toEqual(["", "Im Raum"]);
+
+    // The own Live: its button counts who watches, still "Live gehen".
+    fixture.watches = { a: { jonas: ["self"], mira: ["self"] } };
+    Object.assign(fixture.voice, {
+      participants: {},
+      remote: {},
+      sourceSubscriptions: {},
+      sharing: true,
+    });
+    const bar = renderToStaticMarkup(<VoiceControls canLive server={home} />);
+    expect(control(bar, "Live gehen")).toContain('aria-pressed="true"');
+    expect(control(bar, "Live gehen")).toContain('aria-haspopup="dialog"');
+    expect(bar).toMatch(
+      /<span class="voice-control-watchers"><svg(?:(?!<\/svg>).)*<\/svg>2<\/span>/,
+    );
   });
 });
