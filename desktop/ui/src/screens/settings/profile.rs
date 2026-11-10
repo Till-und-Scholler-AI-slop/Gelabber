@@ -37,8 +37,10 @@ fn validate_avatar_url(raw: &str) -> Option<&'static str> {
     if v.chars().count() > 2048 {
         return Some("too_long");
     }
-    let ok = v.len() > 8
-        && v[..8].eq_ignore_ascii_case("https://")
+    // `get`: byte 8 may fall inside a multibyte character.
+    let ok = v
+        .get(..8)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"))
         && v[8..]
             .chars()
             .next()
@@ -473,5 +475,14 @@ mod tests {
         assert_eq!(validate_avatar_url("https://a.example/x.png"), None);
         assert_eq!(validate_avatar_url("http://a.example"), Some("invalid"));
         assert_eq!(validate_avatar_url("https:///x"), Some("invalid"));
+    }
+
+    /// A multibyte character across byte 8 once panicked the slice.
+    #[test]
+    fn avatar_urls_with_umlauts_are_checked_not_sliced() {
+        assert_eq!(validate_avatar_url("http://ärzte.example"), Some("invalid"));
+        assert_eq!(validate_avatar_url("a😀😀"), Some("invalid"));
+        assert_eq!(validate_avatar_url("Avatar ö"), Some("invalid"));
+        assert_eq!(validate_avatar_url("https://ärzte.example/a.png"), None);
     }
 }
