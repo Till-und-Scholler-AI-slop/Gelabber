@@ -3,6 +3,8 @@ import { HashIcon, SpeakerIcon, ChatIcon } from "../components/Icons.tsx";
 import { useT } from "../i18n/catalog.ts";
 import { themes } from "../i18n/catalogs/themes.ts";
 import { themeVariables, type ThemeDefinition } from "./model.ts";
+// Names in the sample, the same in every language.
+const SAMPLE = { brand: "Gelabber", person: "Mara", initials: "MA" };
 export function ThemePreview({
   theme,
   small = false,
@@ -18,8 +20,7 @@ export function ThemePreview({
       aria-hidden="true"
     >
       <aside className="theme-preview-sidebar">
-        <strong>Gelabber</strong>
-        {/* i18n-ok */}
+        <strong>{SAMPLE.brand}</strong>
         <span>{t("preview.channels")}</span>
         <b>
           <ChatIcon size={12} /> {t("preview.overview")}
@@ -39,12 +40,10 @@ export function ThemePreview({
           <span>{t("preview.topic")}</span>
         </header>
         <div className="theme-preview-message">
-          <i>MA</i>
-          {/* i18n-ok */}
+          <i>{SAMPLE.initials}</i>
           <div>
             <strong>
-              Mara <small>18:42</small>
-              {/* i18n-ok */}
+              {SAMPLE.person} <small>18:42</small>
             </strong>
             <p>{t("preview.question")}</p>
           </div>
