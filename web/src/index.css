@@ -368,6 +368,11 @@ summary {
   flex-shrink: 0;
   color: var(--lr-muted);
 }
+.lr-channel-title-lock {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--lr-muted);
+}
 @media (max-width: 800px) {
   .lr-channel-title-server {
     display: block;
@@ -877,6 +882,12 @@ html[data-reduced-motion="true"] .server-tile-placeholder {
   translate: 0 -50%;
 }
 .channel-row-draft {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--lr-muted);
+}
+/* A channel limited to roles (v0.10). */
+.channel-row-lock {
   display: inline-flex;
   flex-shrink: 0;
   color: var(--lr-muted);

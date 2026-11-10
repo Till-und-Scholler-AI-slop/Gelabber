@@ -78,6 +78,7 @@ import {
   HashIcon,
   HeadsetOffIcon,
   LiveIcon,
+  LockIcon,
   MicOffIcon,
   LinkIcon,
   MoreIcon,
@@ -100,6 +101,7 @@ import {
 import "./shell.css";
 import { translate, useT } from "../i18n/catalog.ts";
 import { shell } from "../i18n/catalogs/shell.ts";
+import { roles as rolesCatalog } from "../i18n/catalogs/roles.ts";
 import { compareNames } from "../i18n/format.ts";
 import { useCurrentLocale } from "../i18n/locale.ts";
 
@@ -939,6 +941,7 @@ export function ChannelRow({
   onMenu: (anchor: HTMLElement) => void;
 }) {
   const t = useT(shell);
+  const tr = useT(rolesCatalog);
   const pending = isPendingId(channel.id);
   const muted = useChannelMuted(channel.id);
   const text = channel.kind === "text";
@@ -955,6 +958,16 @@ export function ChannelRow({
         <span className="channel-row-draft" title={t("channel.draft")}>
           <PencilIcon size={13} />
           <span className="sr-only">{t("channel.draft")}</span>
+        </span>
+      ) : null}
+      {channel.limited ? (
+        // The hover actions lie over it while they show (index.css).
+        <span
+          className="channel-row-lock"
+          role="img"
+          aria-label={tr("limitedLabel")}
+        >
+          <LockIcon size={14} />
         </span>
       ) : null}
       {text ? <UnreadBadge channelId={channel.id} showDot={false} /> : null}

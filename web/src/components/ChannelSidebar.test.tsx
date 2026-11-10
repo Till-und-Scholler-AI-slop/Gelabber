@@ -130,17 +130,23 @@ function row({
   voice = false,
   live = [],
   inVoice = false,
+  limited = false,
 }: {
   coarse: boolean;
   manage?: boolean;
   voice?: boolean;
   live?: string[];
   inVoice?: boolean;
+  limited?: boolean;
 }) {
   const noop = () => {};
   return wrap(
     <ChannelRow
-      channel={channel("termine", "cat", voice ? "voice" : "text")}
+      channel={{
+        ...channel("termine", "cat", voice ? "voice" : "text"),
+        limited,
+        role_ids: limited ? ["r-mod"] : [],
+      }}
       active={false}
       inVoice={inVoice}
       live={live}
@@ -259,6 +265,20 @@ describe("channel row", () => {
   it("has no actions on a voice channel for members", () => {
     const html = row({ coarse: false, manage: false, voice: true });
     expect(html).not.toContain("Aktionen für");
+  });
+
+  it("shows a lock on a channel limited to roles, before the actions", () => {
+    for (const voice of [false, true]) {
+      const html = row({ coarse: false, voice, limited: true });
+      expect(html).toMatch(
+        /<a [^>]*>.*<span class="channel-row-lock" role="img" aria-label="Nur für bestimmte Rollen"><svg/,
+      );
+      // The hover actions follow the link and lie over the lock.
+      expect(html.indexOf("channel-row-lock")).toBeLessThan(
+        html.indexOf("sidebar-row-actions"),
+      );
+    }
+    expect(row({ coarse: false })).not.toContain("channel-row-lock");
   });
 });
 
