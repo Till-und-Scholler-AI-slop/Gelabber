@@ -5,6 +5,9 @@
 import { useRef, useState } from "react";
 
 import { useSession } from "../auth/session.ts";
+import { useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
+import { members } from "../i18n/catalogs/members.ts";
 import { can } from "../servers/permissions.ts";
 import { useBanMember, useKickMember } from "../servers/queries.ts";
 import type { Member, Server } from "../servers/types.ts";
@@ -21,6 +24,8 @@ type ModerationProps = {
 };
 
 function useModeration({ server, member }: ModerationProps) {
+  const t = useT(members);
+  const tc = useT(common);
   const me = useSession((s) => s.user?.id);
   const kickMember = useKickMember(server.id);
   const banMember = useBanMember(server.id);
@@ -36,10 +41,9 @@ function useModeration({ server, member }: ModerationProps) {
     kick: async () => {
       if (
         await confirmAction({
-          title: `${member.name} vom Server entfernen?`,
-          message:
-            "Mit einem neuen Einladungslink ist ein erneuter Beitritt möglich.",
-          confirmLabel: "Entfernen",
+          title: t("moderation.kickTitle", { name: member.name }),
+          message: t("moderation.kickMessage"),
+          confirmLabel: tc("remove"),
         })
       )
         kickMember.mutate(member.user_id);
@@ -47,10 +51,9 @@ function useModeration({ server, member }: ModerationProps) {
     ban: async () => {
       if (
         await confirmAction({
-          title: `${member.name} sperren?`,
-          message:
-            "Sie können nicht wieder beitreten, auch nicht mit einem Einladungslink.",
-          confirmLabel: "Sperren",
+          title: t("moderation.banTitle", { name: member.name }),
+          message: t("moderation.banMessage"),
+          confirmLabel: t("moderation.ban"),
         })
       )
         banMember.mutate(member.user_id);
@@ -60,12 +63,13 @@ function useModeration({ server, member }: ModerationProps) {
 
 /** In a member's profile: a collapsed "Moderation" section below a divider. */
 export function MemberActions(props: ModerationProps) {
+  const t = useT(members);
   const { allowed, busy, kick, ban } = useModeration(props);
   if (!allowed) return null;
   return (
     <details className="member-moderation">
       <summary>
-        Moderation
+        {t("moderation.title")}
         <ChevronIcon size={14} />
       </summary>
       <div className="member-moderation__actions">
@@ -75,10 +79,10 @@ export function MemberActions(props: ModerationProps) {
           onClick={kick}
           disabled={busy}
         >
-          Vom Server entfernen
+          {t("moderation.kick")}
         </Button>
         <Button variant="danger" size="sm" onClick={ban} disabled={busy}>
-          Sperren
+          {t("moderation.ban")}
         </Button>
       </div>
     </details>
@@ -87,11 +91,12 @@ export function MemberActions(props: ModerationProps) {
 
 /** On a member row: a "…" button whose menu holds kick and ban. */
 export function MemberActionsMenu(props: ModerationProps) {
+  const t = useT(members);
   const { allowed, busy, kick, ban } = useModeration(props);
   const button = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   if (!allowed) return null;
-  const label = `Aktionen für ${props.member.name}`;
+  const label = t("moderation.menuLabel", { name: props.member.name });
   const choose = (action: () => Promise<void>) => () => {
     setOpen(false);
     void action();
@@ -121,14 +126,14 @@ export function MemberActionsMenu(props: ModerationProps) {
             className="member-menu__item"
             onClick={choose(kick)}
           >
-            Vom Server entfernen
+            {t("moderation.kick")}
           </button>
           <button
             type="button"
             className="member-menu__item member-menu__item--danger"
             onClick={choose(ban)}
           >
-            Sperren
+            {t("moderation.ban")}
           </button>
         </div>
       </Popover>
