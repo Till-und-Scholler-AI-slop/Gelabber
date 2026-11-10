@@ -551,7 +551,10 @@ pub fn paint(
 /// The size each key was last asked for, when (`input.time`), and for a
 /// cover tile whether the picture counted as wider than it.
 #[derive(Clone, Default)]
-struct Asked(HashMap<gelabber_call::VideoKey, ((u32, u32, u32), f64, Option<bool>)>);
+struct Asked(HashMap<gelabber_call::VideoKey, Ask>);
+
+/// Width, height and rate asked for; when; and the cover decision.
+type Ask = ((u32, u32, u32), f64, Option<bool>);
 
 fn asked_id() -> egui::Id {
     egui::Id::unique("gelabber-video-requests")
