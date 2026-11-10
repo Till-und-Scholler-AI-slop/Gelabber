@@ -3,9 +3,11 @@
 // are fixed and no rows; custom roles are `server.roles`, by position.
 // Mirrors `backend/api/src/servers/membership.rs`.
 
+import type { FieldCode } from "../api/client.ts";
 import { translate } from "../i18n/catalog.ts";
 import { roles as rolesCatalog } from "../i18n/catalogs/roles.ts";
 import { ALL_PERMISSIONS, normalisePermissions } from "./permissions.ts";
+import { validateRoleName } from "./rules.ts";
 import type {
   Channel,
   Member,
@@ -165,4 +167,70 @@ export function effectivePermissions(
  * The owner's dot is `--lr-accent`, the base role's `--lr-muted`. */
 export function roleColorVar(color: RoleColor): string {
   return `var(--lr-role-${color})`;
+}
+
+/** The owner's row in the roles editor; "Alle Mitglieder" is `BASE_ROLE`. */
+export const OWNER_ROLE = "owner";
+
+/** The role the editor opens on: the first custom role, else "Alle
+ * Mitglieder". */
+export function defaultRoleSelection(server: Roles): string {
+  return [...server.roles].sort(byPosition)[0]?.id ?? BASE_ROLE;
+}
+
+/** Custom roles in the order the editor and the pickers list them. */
+export function rolesInOrder(server: Roles): ServerRole[] {
+  return [...server.roles].sort(byPosition);
+}
+
+/** One switch flipped: the flags with `permission` added or taken away, in
+ * canonical order. */
+export function togglePermission(
+  permissions: readonly Permission[],
+  permission: Permission,
+): Permission[] {
+  return permissions.includes(permission)
+    ? permissions.filter((p) => p !== permission)
+    : normalisePermissions([...permissions, permission]);
+}
+
+/** One checkbox of the member's role picker: the role ids with `id` added
+ * or taken away. */
+export function toggleMemberRole(
+  roleIds: readonly string[],
+  id: string,
+): string[] {
+  return roleIds.includes(id)
+    ? roleIds.filter((role) => role !== id)
+    : [...roleIds, id];
+}
+
+/** What "Neue Rolle" creates: the name (numbered when taken), the first
+ * free colour and no flags. `name` is "Neue Rolle" in the interface's
+ * language. */
+export function newRoleInput(
+  server: Roles,
+  name: string,
+): { name: string; color: RoleColor; permissions: Permission[] } {
+  return {
+    name: nextRoleName(server, name),
+    color: nextColor(server),
+    permissions: [],
+  };
+}
+
+/** A rename typed into the name field: `null` when nothing changed, the
+ * field code when the name is not allowed, else the name to save. */
+export function roleRename(
+  server: Roles,
+  role: Pick<ServerRole, "id" | "name">,
+  raw: string,
+): { code: FieldCode } | { name: string } | null {
+  const name = raw.trim();
+  if (name === role.name) return null;
+  const others = server.roles
+    .filter((other) => other.id !== role.id)
+    .map((other) => other.name);
+  const code = validateRoleName(name, others);
+  return code ? { code } : { name };
 }

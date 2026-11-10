@@ -10,15 +10,21 @@ import {
   ROLE_COLORS,
   accessOf,
   accessSummary,
+  defaultRoleSelection,
   effectivePermissions,
   inheritedFromBase,
+  newRoleInput,
   nextColor,
   nextRoleName,
   roleColorVar,
   roleCounts,
+  roleRename,
+  rolesInOrder,
   rolesOf,
   seesChannel,
   toggleAccess,
+  toggleMemberRole,
+  togglePermission,
 } from "./roles.ts";
 import type {
   Channel,
@@ -285,5 +291,62 @@ describe("LockIcon", () => {
     expect(html).toContain('width="14"');
     expect(html).toContain('aria-hidden="true"');
     expect(html).toContain("<rect");
+  });
+});
+
+describe("roles editor helpers", () => {
+  it("opens on the first custom role, else on Alle Mitglieder", () => {
+    expect(defaultRoleSelection(server)).toBe("r-mod");
+    expect(defaultRoleSelection({ roles: [] })).toBe(BASE_ROLE);
+    expect(rolesInOrder(server).map((r) => r.name)).toEqual([
+      "Moderation",
+      "Stammgäste",
+    ]);
+  });
+
+  it("creates Neue Rolle, numbered when taken, in the next free colour", () => {
+    expect(newRoleInput(server, "Neue Rolle")).toEqual({
+      name: "Neue Rolle",
+      color: "amber",
+      permissions: [],
+    });
+    const again = {
+      roles: [...server.roles, role("n", "Neue Rolle", 2, "amber")],
+    };
+    expect(newRoleInput(again, "Neue Rolle")).toEqual({
+      name: "Neue Rolle 2",
+      color: "pink",
+      permissions: [],
+    });
+  });
+
+  it("saves a changed, allowed name and reports why another is not", () => {
+    expect(roleRename(server, moderation, " Moderation ")).toBeNull();
+    expect(roleRename(server, moderation, "Mods ")).toEqual({ name: "Mods" });
+    // Another role's name and the fixed ones are taken, ignoring case.
+    expect(roleRename(server, moderation, "stammgäste")).toEqual({
+      code: "taken",
+    });
+    expect(roleRename(server, moderation, "Alle Mitglieder")).toEqual({
+      code: "taken",
+    });
+    expect(roleRename(server, moderation, "  ")).toEqual({ code: "required" });
+    expect(roleRename(server, moderation, "x".repeat(33))).toEqual({
+      code: "too_long",
+    });
+  });
+
+  it("flips one flag and keeps the canonical order", () => {
+    expect(
+      togglePermission(["manage_messages", "go_live"], "manage_server"),
+    ).toEqual(["manage_server", "manage_messages", "go_live"]);
+    expect(togglePermission(["manage_messages", "go_live"], "go_live")).toEqual(
+      ["manage_messages"],
+    );
+  });
+
+  it("adds or takes away one role of a member", () => {
+    expect(toggleMemberRole(["r-reg"], "r-mod")).toEqual(["r-reg", "r-mod"]);
+    expect(toggleMemberRole(["r-reg", "r-mod"], "r-reg")).toEqual(["r-mod"]);
   });
 });
