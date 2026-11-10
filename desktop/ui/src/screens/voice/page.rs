@@ -626,7 +626,7 @@ pub(super) fn kino_keys(ui: &Ui, kino: bool) {
     let ptt = {
         let p = crate::screens::settings::prefs::get(ctx);
         (p.voice_input == "ptt")
-            .then(|| ptt_key(&p.ptt_key))
+            .then(|| crate::screens::settings::media::window_key(&p.ptt_key, &p.ptt_key_label))
             .flatten()
     };
     // An open menu or popover (the call bar's too) closes on Esc first.
@@ -636,14 +636,15 @@ pub(super) fn kino_keys(ui: &Ui, kino: bool) {
         i.events.retain(|e| {
             let egui::Event::Key {
                 key,
+                physical_key,
                 pressed: true,
                 repeat,
                 modifiers,
-                ..
             } = e
             else {
                 return true;
             };
+            let ptt = ptt_of(ptt, *key, *physical_key);
             match stage::kino_key(*key, *modifiers, *repeat, kino, ptt) {
                 Some(KinoKey::Leave) if popover => true,
                 Some(a) => {
@@ -661,13 +662,18 @@ pub(super) fn kino_keys(ui: &Ui, kino: bool) {
     }
 }
 
-/// A `KeyboardEvent.code` like `KeyK` or `Digit1` as egui's key.
-fn ptt_key(code: &str) -> Option<egui::Key> {
-    let name = code
-        .strip_prefix("Key")
-        .or_else(|| code.strip_prefix("Digit"))
-        .unwrap_or(code);
-    egui::Key::from_name(name)
+/// The push-to-talk key as Kino compares it with this press's `key`: by
+/// what typed its label, or this press when it is at its place.
+fn ptt_of(
+    ptt: Option<crate::screens::settings::media::WindowKey>,
+    key: egui::Key,
+    physical: Option<egui::Key>,
+) -> Option<egui::Key> {
+    use crate::screens::settings::media::WindowKey;
+    match ptt? {
+        WindowKey::Logical(k) => Some(k),
+        WindowKey::Place(k) => (physical == Some(k)).then_some(key),
+    }
 }
 
 fn fullscreen_id() -> Id {
@@ -980,4 +986,23 @@ fn watch_strip(
         app.call.watch(pic.id.user, false);
     }
     pill_button(ui, &mut x, Icon::Collapse, &end, "Vollbild beenden")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ptt_of;
+    use crate::screens::settings::media::WindowKey;
+    use egui::Key;
+
+    /// Kino leaves the push-to-talk key alone: QWERTZ's Z (stored at KeyY)
+    /// by what it types, a key egui names no character for by its place.
+    #[test]
+    fn kino_knows_the_push_to_talk_key_as_it_was_pressed() {
+        let qwertz = Some(WindowKey::Logical(Key::Z));
+        assert_eq!(ptt_of(qwertz, Key::Z, Some(Key::Y)), Some(Key::Z));
+        let place = Some(WindowKey::Place(Key::K));
+        assert_eq!(ptt_of(place, Key::K, Some(Key::K)), Some(Key::K));
+        assert_eq!(ptt_of(place, Key::K, Some(Key::L)), None);
+        assert_eq!(ptt_of(None, Key::K, Some(Key::K)), None);
+    }
 }

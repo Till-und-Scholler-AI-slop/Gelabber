@@ -152,6 +152,78 @@ fn holding_the_push_to_talk_key_opens_the_microphone() {
     assert!(!call.push_to_talk_held());
 }
 
+fn key_event(logical: egui::Key, physical: Option<egui::Key>, pressed: bool) -> egui::Event {
+    egui::Event::Key {
+        key: logical,
+        physical_key: physical,
+        pressed,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+/// `code` and its label as the settings store them, the call following.
+fn push_to_talk_key(ctx: &egui::Context, call: &Call, code: &str, label: &str) {
+    use crate::screens::settings::prefs;
+    prefs::update(ctx, |p| {
+        p.voice_input = "ptt".into();
+        p.ptt_key = code.into();
+        p.ptt_key_label = label.into();
+    });
+    call.set_settings(crate::screens::voice::sync::settings(&prefs::get(ctx)));
+}
+
+/// QWERTZ: Z recorded at the place KeyY holds the window's microphone on
+/// the key labelled Z, not on the one labelled Y.
+#[test]
+fn the_window_holds_push_to_talk_on_the_key_that_was_recorded() {
+    use egui::Key;
+    let _config = crate::platform::paths::testing::TempConfig::new("ptt-qwertz");
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call.clone(), bar);
+    push_to_talk_key(&h.ctx, &call, "KeyY", "Z");
+    h.run_steps(2);
+    // The key labelled Y (logical Y at the place KeyZ).
+    h.event(key_event(Key::Y, Some(Key::Z), true));
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held(), "not the key labelled Y");
+    h.event(key_event(Key::Y, Some(Key::Z), false));
+    h.event(key_event(Key::Z, Some(Key::Y), true));
+    h.run_steps(2);
+    assert!(call.push_to_talk_held(), "the key labelled Z");
+    h.event(key_event(Key::Z, Some(Key::Y), false));
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held());
+
+    // Ü has no egui key: its place holds, until the window loses the focus.
+    push_to_talk_key(&h.ctx, &call, "BracketLeft", "Ü");
+    h.run_steps(2);
+    h.event(key_event(Key::OpenBracket, Some(Key::OpenBracket), true));
+    h.run_steps(2);
+    assert!(call.push_to_talk_held(), "held at its place");
+    h.event(egui::Event::WindowFocused(false));
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held(), "the focus went with the key");
+}
+
+/// A key recorded before places (an egui name) holds as it did.
+#[test]
+fn an_old_push_to_talk_key_holds_as_before() {
+    let _config = crate::platform::paths::testing::TempConfig::new("ptt-old");
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call.clone(), bar);
+    push_to_talk_key(&h.ctx, &call, "Backtick", "Backtick");
+    h.run_steps(2);
+    h.key_down(egui::Key::Backtick);
+    h.run_steps(2);
+    assert!(call.push_to_talk_held());
+    h.key_up(egui::Key::Backtick);
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held());
+}
+
 /// The window's keys and the global hook each hold the key for themselves:
 /// the window losing it (focus gone) leaves the hook's microphone open.
 #[test]

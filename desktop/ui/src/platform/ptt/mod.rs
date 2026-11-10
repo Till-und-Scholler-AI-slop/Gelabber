@@ -257,6 +257,11 @@ fn key(code: &str) -> Option<&'static Key> {
     KEYS.iter().find(|key| key.code == code)
 }
 
+/// Whether `code` is one of [`KEYS`] (a place code, not an older egui name).
+pub fn known(code: &str) -> bool {
+    key(code).is_some()
+}
+
 /// The code a physical key (egui's `physical_key`) binds, from [`KEYS`].
 /// egui reports the number pad's digits, `-`, `/` and `.` as the main
 /// keys, so those bind the main keys' codes.

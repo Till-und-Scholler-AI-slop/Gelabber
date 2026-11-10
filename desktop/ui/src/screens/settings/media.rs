@@ -835,6 +835,38 @@ fn key_label(code: &str) -> String {
     }
 }
 
+/// How the window tells the push-to-talk key (Maustaste 4/5 aside).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowKey {
+    /// The key that types the stored label, as egui's `key` names it.
+    Logical(egui::Key),
+    /// The key at the stored place, as egui's `physical_key` names it.
+    Place(egui::Key),
+}
+
+/// The window's push-to-talk key, from what the settings store: the place
+/// code and the label the user saw. The key that typed a one-character
+/// label is the one that was pressed, whatever the layout (QWERTZ "Z" is
+/// stored at the place `KeyY`). An older name (`Backtick`, `Up`) or a
+/// label that is only the code's name matches as before, by egui's key.
+/// Anything else (Ü, ß, a dead key) matches by place.
+pub fn window_key(code: &str, label: &str) -> Option<WindowKey> {
+    let typed = {
+        let mut chars = label.chars();
+        match (chars.next(), chars.next()) {
+            (Some(c), None) if !c.is_whitespace() => egui::Key::from_name(&c.to_string()),
+            _ => None,
+        }
+    };
+    if !crate::platform::ptt::known(code) || label.is_empty() || label == key_label(code) {
+        return egui::Key::from_name(code).map(WindowKey::Logical);
+    }
+    if let Some(key) = typed {
+        return Some(WindowKey::Logical(key));
+    }
+    egui::Key::from_name(code).map(WindowKey::Place)
+}
+
 /// The name of a key that typed nothing as it was pressed. The dead keys
 /// of a German keyboard show their mark, as the keycap does.
 fn silent_key_label(code: &str) -> String {
@@ -1311,6 +1343,46 @@ mod tests {
         assert_eq!(key_label("KeyV"), "V");
         assert_eq!(key_label("ControlLeft"), "Control links");
         assert_eq!(key_label("Numpad0"), "Num 0");
+    }
+
+    #[test]
+    fn the_window_matches_what_was_pressed_and_old_keys_as_before() {
+        use egui::Key;
+        // QWERTZ: Z recorded at the place KeyY is the key that types Z.
+        assert_eq!(window_key("KeyY", "Z"), Some(WindowKey::Logical(Key::Z)));
+        // Recorded before places: the stored names match as they did.
+        assert_eq!(window_key("KeyZ", "Z"), Some(WindowKey::Logical(Key::Z)));
+        assert_eq!(window_key("KeyA", ""), Some(WindowKey::Logical(Key::A)));
+        assert_eq!(
+            window_key("Backtick", "Backtick"),
+            Some(WindowKey::Logical(Key::Backtick))
+        );
+        assert_eq!(
+            window_key("Up", "Up"),
+            Some(WindowKey::Logical(Key::ArrowUp))
+        );
+        assert_eq!(
+            window_key("Minus", "Minus"),
+            Some(WindowKey::Logical(Key::Minus))
+        );
+        assert_eq!(
+            window_key("Space", "Leertaste"),
+            Some(WindowKey::Logical(Key::Space))
+        );
+        // Keys without a character of their own in egui go by place.
+        assert_eq!(
+            window_key("BracketLeft", "Ü"),
+            Some(WindowKey::Place(Key::OpenBracket))
+        );
+        assert_eq!(
+            window_key("Backquote", "^"),
+            Some(WindowKey::Place(Key::Backtick))
+        );
+        assert_eq!(
+            window_key("Minus", "SS"),
+            Some(WindowKey::Place(Key::Minus))
+        );
+        assert_eq!(window_key("", ""), None);
     }
 
     fn press(logical: egui::Key, physical: Option<egui::Key>) -> egui::Event {
