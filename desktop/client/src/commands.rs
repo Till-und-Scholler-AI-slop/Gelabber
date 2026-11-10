@@ -1667,6 +1667,17 @@ impl Client {
         );
     }
 
+    /// Op key `banner`.
+    pub fn upload_banner(&self, content_type: &str, data: Vec<u8>) {
+        let http = self.http().clone();
+        let content_type = content_type.to_owned();
+        self.run(
+            "banner",
+            async move { http.upload_banner(&content_type, data).await },
+            |s, user| s.session = Session::Authenticated(Box::new(user)),
+        );
+    }
+
     /// Op key `themes`; `theme_conflict` when another device saved first.
     pub fn save_themes(&self, doc: ThemeDocument) {
         let http = self.http().clone();
