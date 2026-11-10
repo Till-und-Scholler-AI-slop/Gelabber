@@ -270,6 +270,7 @@ struct Target {
     p256dh: String,
     auth: String,
     hide_content: bool,
+    locale: Locale,
 }
 
 /// After a message is stored: push it in the background, unless
@@ -340,7 +341,7 @@ async fn deliver(
     // to "nothing"; the channel's own level wins over its server's.
     let targets: Vec<Target> = sqlx::query_as(
         "SELECT p.endpoint, p.user_id, p.p256dh, p.auth,
-                u.notifications_hide_content AS hide_content
+                u.notifications_hide_content AS hide_content, u.locale
          FROM push_subscriptions p
          JOIN sessions s ON s.token_hash=p.session_hash AND s.expires_at>now()
          JOIN users u ON u.id=p.user_id
@@ -385,7 +386,7 @@ async fn deliver(
             .into_iter()
             .filter(|target| !in_front.contains(&target.user_id))
             .filter_map(|target| {
-                let locale = Locale::of_recipient(target.user_id);
+                let locale = target.locale;
                 let (title, body) = if target.hide_content {
                     (
                         i18n::new_message_from(locale, &message.author.name),
@@ -572,7 +573,7 @@ async fn take_receipts(state: &AppState, message: Uuid) -> Result<Vec<Target>, A
             DELETE FROM push_receipts WHERE message_id=$1 RETURNING endpoint, sent_at
          )
          SELECT p.endpoint, p.user_id, p.p256dh, p.auth,
-                u.notifications_hide_content AS hide_content
+                u.notifications_hide_content AS hide_content, u.locale
          FROM taken t
          JOIN push_subscriptions p ON p.endpoint=t.endpoint
          JOIN users u ON u.id=p.user_id
@@ -597,7 +598,7 @@ async fn send_recall(
     }
     let (place, path) = heading(state, message, server).await?;
     let results = futures_util::stream::iter(targets.into_iter().filter_map(|target| {
-        let locale = Locale::of_recipient(target.user_id);
+        let locale = target.locale;
         let title = if target.hide_content {
             i18n::new_message_from(locale, &message.author.name)
         } else {

@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::i18n::Locale;
+
 /// Redis Pub/Sub channel / replay-key prefix. Keep it short.
 pub const REDIS_PREFIX: &str = "gb:";
 
@@ -520,6 +522,10 @@ pub enum ServerFrame {
     /// other sockets clear badges and notifications without asking.
     #[serde(rename = "rd")]
     Read { d: Vec<ReadSync> },
+    /// The account's language changed on some device (issue #515): every
+    /// socket of the account switches. Only to that account's own sockets.
+    #[serde(rename = "lc")]
+    Locale { l: Locale },
 }
 
 /// A conversation's new read position and what is still unread after it.
@@ -673,6 +679,8 @@ pub enum UserFrame {
     NotificationSettings,
     #[serde(rename = "rd")]
     Read { d: Vec<ReadSync> },
+    #[serde(rename = "lc")]
+    Locale { l: Locale },
 }
 
 impl From<UserFrame> for ServerFrame {
@@ -680,6 +688,7 @@ impl From<UserFrame> for ServerFrame {
         match frame {
             UserFrame::NotificationSettings => Self::NotificationSettings,
             UserFrame::Read { d } => Self::Read { d },
+            UserFrame::Locale { l } => Self::Locale { l },
         }
     }
 }

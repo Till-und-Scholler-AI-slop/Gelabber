@@ -427,9 +427,15 @@ mod tests {
         })
         .unwrap();
         let state = AppState::with_pool(&config, pool.clone()).unwrap();
-        let user = crate::auth::user::insert(pool, "media@example.test", "media", "unused")
-            .await
-            .unwrap();
+        let user = crate::auth::user::insert(
+            pool,
+            "media@example.test",
+            "media",
+            "unused",
+            Default::default(),
+        )
+        .await
+        .unwrap();
         let raw = crate::auth::session::create(pool, user.id, Duration::from_secs(3600))
             .await
             .unwrap();

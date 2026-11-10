@@ -1,0 +1,189 @@
+//! Account mail (#195): subject and plain-text body, in the account's
+//! [`Locale`]. `base` is the public URL without a trailing slash, `instance`
+//! its host name. The texts never contain what a registrant typed (name,
+//! password): a confirmation mail can reach someone who never asked for it.
+
+use super::Locale;
+use crate::mail::Mail;
+
+pub fn render(locale: Locale, mail: &Mail, base: &str, instance: &str) -> (String, String) {
+    match locale {
+        Locale::De => german(mail, base, instance),
+        Locale::En => english(mail, base, instance),
+    }
+}
+
+fn german(mail: &Mail, base: &str, instance: &str) -> (String, String) {
+    match mail {
+        Mail::ConfirmEmail { token } => (
+            "Bestätige deine E-Mail-Adresse für Gelabber".to_owned(),
+            format!(
+                "Hallo,\n\n\
+                 mit dieser Adresse wurde auf {instance} ein Gelabber-Konto angelegt. \
+                 Öffne diesen Link, um die Adresse zu bestätigen:\n\n\
+                 {base}/verify-email#token={token}\n\n\
+                 Der Link gilt 24 Stunden und nur einmal.\n\n\
+                 Warst du das nicht? Dann ignoriere diese Mail. Ohne Bestätigung \
+                 lässt sich das Konto nicht benutzen.\n"
+            ),
+        ),
+        Mail::ResetPassword { token } => (
+            "Neues Passwort für Gelabber".to_owned(),
+            format!(
+                "Hallo,\n\n\
+                 für dein Gelabber-Konto auf {instance} wurde ein neues Passwort \
+                 angefordert. Hier kannst du es festlegen:\n\n\
+                 {base}/reset-password#token={token}\n\n\
+                 Der Link gilt eine Stunde und nur einmal. Danach bist du auf \
+                 allen Geräten abgemeldet.\n\n\
+                 Hast du nichts angefordert? Dann ignoriere diese Mail; dein \
+                 Passwort bleibt, wie es ist.\n"
+            ),
+        ),
+        Mail::AlreadyRegistered => (
+            "Dein Gelabber-Konto".to_owned(),
+            format!(
+                "Hallo,\n\n\
+                 gerade wollte jemand auf {instance} ein Gelabber-Konto mit dieser \
+                 Adresse anlegen. Du hast dort schon eins.\n\n\
+                 Anmelden: {base}/login\n\
+                 Passwort vergessen: {base}/forgot-password\n\n\
+                 Warst du das nicht? Dann ignoriere diese Mail; an deinem Konto \
+                 hat sich nichts geändert.\n"
+            ),
+        ),
+    }
+}
+
+fn english(mail: &Mail, base: &str, instance: &str) -> (String, String) {
+    match mail {
+        Mail::ConfirmEmail { token } => (
+            "Confirm your email address for Gelabber".to_owned(),
+            format!(
+                "Hi,\n\n\
+                 A Gelabber account was created on {instance} with this address. \
+                 Open this link to confirm the address:\n\n\
+                 {base}/verify-email#token={token}\n\n\
+                 The link is valid for 24 hours and works once.\n\n\
+                 Wasn't you? Then ignore this email. Without confirmation the \
+                 account cannot be used.\n"
+            ),
+        ),
+        Mail::ResetPassword { token } => (
+            "New password for Gelabber".to_owned(),
+            format!(
+                "Hi,\n\n\
+                 Someone asked for a new password for your Gelabber account on \
+                 {instance}. You can set it here:\n\n\
+                 {base}/reset-password#token={token}\n\n\
+                 The link is valid for one hour and works once. Afterwards you are \
+                 signed out on all devices.\n\n\
+                 Didn't ask for this? Then ignore this email; your password stays \
+                 as it is.\n"
+            ),
+        ),
+        Mail::AlreadyRegistered => (
+            "Your Gelabber account".to_owned(),
+            format!(
+                "Hi,\n\n\
+                 Someone just tried to create a Gelabber account on {instance} with \
+                 this address. You already have one there.\n\n\
+                 Sign in: {base}/login\n\
+                 Forgot password: {base}/forgot-password\n\n\
+                 Wasn't you? Then ignore this email; nothing about your account \
+                 has changed.\n"
+            ),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BASE: &str = "https://chat.example.org";
+    const INSTANCE: &str = "chat.example.org";
+
+    fn mails() -> [Mail; 3] {
+        [
+            Mail::ConfirmEmail {
+                token: "abc".into(),
+            },
+            Mail::ResetPassword {
+                token: "abc".into(),
+            },
+            Mail::AlreadyRegistered,
+        ]
+    }
+
+    #[test]
+    fn both_languages_carry_the_same_links() {
+        for mail in mails() {
+            let (de_subject, de_body) = render(Locale::De, &mail, BASE, INSTANCE);
+            let (en_subject, en_body) = render(Locale::En, &mail, BASE, INSTANCE);
+            assert_ne!(de_subject, en_subject);
+            let links = |body: &str| -> Vec<String> {
+                body.split_whitespace()
+                    .filter(|word| word.starts_with(BASE))
+                    .map(str::to_owned)
+                    .collect()
+            };
+            assert!(!links(&de_body).is_empty(), "{de_body}");
+            assert_eq!(links(&de_body), links(&en_body), "{}", mail.kind());
+            assert!(de_body.contains(INSTANCE) && en_body.contains(INSTANCE));
+        }
+    }
+
+    #[test]
+    fn german_texts_are_unchanged() {
+        let (subject, body) = render(Locale::De, &mails()[0], BASE, INSTANCE);
+        assert_eq!(subject, "Bestätige deine E-Mail-Adresse für Gelabber");
+        assert!(body.starts_with(
+            "Hallo,\n\nmit dieser Adresse wurde auf chat.example.org ein Gelabber-Konto angelegt. "
+        ));
+        assert!(body.contains("\n\nhttps://chat.example.org/verify-email#token=abc\n\n"));
+    }
+
+    #[test]
+    fn english_texts() {
+        let [confirm, reset, already] = mails();
+        assert_eq!(
+            render(Locale::En, &confirm, BASE, INSTANCE),
+            (
+                "Confirm your email address for Gelabber".to_owned(),
+                "Hi,\n\nA Gelabber account was created on chat.example.org with this address. \
+                 Open this link to confirm the address:\n\n\
+                 https://chat.example.org/verify-email#token=abc\n\n\
+                 The link is valid for 24 hours and works once.\n\n\
+                 Wasn't you? Then ignore this email. Without confirmation the account \
+                 cannot be used.\n"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            render(Locale::En, &reset, BASE, INSTANCE),
+            (
+                "New password for Gelabber".to_owned(),
+                "Hi,\n\nSomeone asked for a new password for your Gelabber account on \
+                 chat.example.org. You can set it here:\n\n\
+                 https://chat.example.org/reset-password#token=abc\n\n\
+                 The link is valid for one hour and works once. Afterwards you are signed \
+                 out on all devices.\n\n\
+                 Didn't ask for this? Then ignore this email; your password stays as it is.\n"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            render(Locale::En, &already, BASE, INSTANCE),
+            (
+                "Your Gelabber account".to_owned(),
+                "Hi,\n\nSomeone just tried to create a Gelabber account on chat.example.org \
+                 with this address. You already have one there.\n\n\
+                 Sign in: https://chat.example.org/login\n\
+                 Forgot password: https://chat.example.org/forgot-password\n\n\
+                 Wasn't you? Then ignore this email; nothing about your account has changed.\n"
+                    .to_owned()
+            )
+        );
+    }
+}

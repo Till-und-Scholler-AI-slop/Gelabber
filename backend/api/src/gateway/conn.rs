@@ -848,9 +848,15 @@ mod tests {
         })
         .unwrap();
         let state = AppState::with_pool(&config, pool.clone()).unwrap();
-        let user = crate::auth::user::insert(&pool, "renew@example.test", "renew", "unused")
-            .await
-            .unwrap();
+        let user = crate::auth::user::insert(
+            &pool,
+            "renew@example.test",
+            "renew",
+            "unused",
+            Default::default(),
+        )
+        .await
+        .unwrap();
         let raw = crate::auth::session::create(&pool, user.id, Duration::from_secs(120))
             .await
             .unwrap();
@@ -918,9 +924,15 @@ mod tests {
             .await
             .unwrap();
         let state = AppState::with_pool(&config, small.clone()).unwrap();
-        let user = crate::auth::user::insert(&pool, "tick@example.test", "tick", "unused")
-            .await
-            .unwrap();
+        let user = crate::auth::user::insert(
+            &pool,
+            "tick@example.test",
+            "tick",
+            "unused",
+            Default::default(),
+        )
+        .await
+        .unwrap();
         let raw = crate::auth::session::create(&pool, user.id, Duration::from_secs(600))
             .await
             .unwrap();

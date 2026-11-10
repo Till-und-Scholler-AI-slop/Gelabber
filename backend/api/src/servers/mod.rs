@@ -29,6 +29,7 @@ use uuid::Uuid;
 use crate::auth::session::CurrentUser;
 use crate::error::{ApiError, FieldErrors};
 use crate::gateway::Recheck;
+use crate::i18n;
 use crate::json::Body;
 use crate::path::Id;
 use crate::state::AppState;
@@ -168,7 +169,8 @@ async fn list_servers(
 
 /// Creates the server with its owner membership, a first text channel
 /// (`#allgemein` under "Textkanäle") and a voice room ("Wohnzimmer" under
-/// "Sprachkanäle"), so it is usable the moment it exists.
+/// "Sprachkanäle"), named in the creator's language
+/// ([`i18n::default_channels`]), so it is usable the moment it exists.
 /// Answers with the full detail so the client can render it without a
 /// second request.
 async fn create_server(
@@ -196,21 +198,22 @@ async fn create_server(
         .bind(user.id)
         .execute(&mut *tx)
         .await?;
-    let category = channel::insert_category(&mut *tx, server.id, "Textkanäle").await?;
+    let names = i18n::default_channels(user.locale);
+    let category = channel::insert_category(&mut *tx, server.id, names.text_category).await?;
     channel::insert_channel(
         &mut *tx,
         server.id,
         Some(category.id),
-        "allgemein",
+        names.text_channel,
         ChannelKind::Text,
     )
     .await?;
-    let voice = channel::insert_category(&mut *tx, server.id, "Sprachkanäle").await?;
+    let voice = channel::insert_category(&mut *tx, server.id, names.voice_category).await?;
     channel::insert_channel(
         &mut *tx,
         server.id,
         Some(voice.id),
-        "Wohnzimmer",
+        names.voice_channel,
         ChannelKind::Voice,
     )
     .await?;

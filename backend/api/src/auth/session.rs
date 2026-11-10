@@ -34,7 +34,7 @@ pub async fn create(db: &PgPool, user_id: Uuid, ttl: Duration) -> Result<String,
 
 const SESSION_ROW: &str = "SELECT u.id, u.email, u.name, u.avatar_url, u.created_at, u.bio, \
          u.pronouns, u.status_text, u.accent_color, u.banner_color, u.banner_url, \
-         u.avatar_decoration, s.created_at AS session_created_at, s.expires_at \
+         u.avatar_decoration, u.locale, s.created_at AS session_created_at, s.expires_at \
      FROM sessions s JOIN users u ON u.id = s.user_id \
      WHERE s.token_hash = $1 AND s.expires_at > now()";
 

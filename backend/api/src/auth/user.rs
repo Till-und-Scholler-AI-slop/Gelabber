@@ -6,6 +6,7 @@ use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 use crate::error::ApiError;
+use crate::i18n::Locale;
 
 /// What the API returns about an account. Never carries the password hash.
 #[derive(Debug, Clone, Serialize, FromRow, PartialEq, Eq)]
@@ -18,6 +19,9 @@ pub struct User {
     #[sqlx(flatten)]
     #[serde(flatten)]
     pub card: ProfileCard,
+    /// The account's language (migration 0030). Private to the account:
+    /// [`PublicProfile`] and member lists do not carry it.
+    pub locale: Locale,
 }
 
 /// The optional profile card fields (migration 0013). `None` everywhere is
@@ -117,15 +121,17 @@ pub async fn insert(
     email: &str,
     name: &str,
     password_hash: &str,
+    locale: Locale,
 ) -> Result<User, ApiError> {
     sqlx::query_as::<_, User>(
-        "INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3) \
+        "INSERT INTO users (email, name, password_hash, locale) VALUES ($1, $2, $3, $4) \
          RETURNING id, email, name, avatar_url, created_at, bio, pronouns, status_text, \
-             accent_color, banner_color, banner_url, avatar_decoration",
+             accent_color, banner_color, banner_url, avatar_decoration, locale",
     )
     .bind(email)
     .bind(name)
     .bind(password_hash)
+    .bind(locale)
     .fetch_one(db)
     .await
     .map_err(|err| match &err {
@@ -139,7 +145,7 @@ pub async fn insert(
 
 /// Registration while account mail is on: inserts an unconfirmed account,
 /// or takes over a pending one (`registration_pending`, migration 0021)
-/// with this registrant's name and password, dropping its earlier
+/// with this registrant's name, password and language, dropping its earlier
 /// confirmation links (a reset link the owner asked for stays).
 /// Nobody has proven they own a pending address, so the person who finally
 /// confirms it gets the credentials they typed, never a stranger's.
@@ -150,19 +156,22 @@ pub async fn insert_unverified(
     email: &str,
     name: &str,
     password_hash: &str,
+    locale: Locale,
 ) -> Result<Option<Uuid>, ApiError> {
     let mut tx = db.begin().await?;
     let id: Option<Uuid> = sqlx::query_scalar(
-        "INSERT INTO users (email, name, password_hash, registration_pending) \
-         VALUES ($1, $2, $3, true) \
+        "INSERT INTO users (email, name, password_hash, registration_pending, locale) \
+         VALUES ($1, $2, $3, true, $4) \
          ON CONFLICT ((lower(email))) DO UPDATE \
-         SET name = EXCLUDED.name, password_hash = EXCLUDED.password_hash, updated_at = now() \
+         SET name = EXCLUDED.name, password_hash = EXCLUDED.password_hash, \
+             locale = EXCLUDED.locale, updated_at = now() \
          WHERE users.registration_pending AND users.email_verified_at IS NULL \
          RETURNING id",
     )
     .bind(email)
     .bind(name)
     .bind(password_hash)
+    .bind(locale)
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(id) = id {
@@ -238,7 +247,7 @@ pub async fn set_password_hash(
 pub async fn by_id(db: &PgPool, id: Uuid) -> Result<Option<User>, ApiError> {
     Ok(sqlx::query_as::<_, User>(
         "SELECT id, email, name, avatar_url, created_at, bio, pronouns, status_text, \
-             accent_color, banner_color, banner_url, avatar_decoration \
+             accent_color, banner_color, banner_url, avatar_decoration, locale \
          FROM users WHERE id = $1",
     )
     .bind(id)
@@ -306,7 +315,7 @@ pub async fn update_profile(
          WHERE u.id = prev.id \
          RETURNING u.id, u.email, u.name, u.avatar_url, u.created_at, u.bio, u.pronouns, \
              u.status_text, u.accent_color, u.banner_color, u.banner_url, u.avatar_decoration, \
-             prev.avatar_url AS previous_avatar_url, prev.banner_url AS previous_banner_url",
+             u.locale, prev.avatar_url AS previous_avatar_url, prev.banner_url AS previous_banner_url",
     )
     .bind(id)
     .bind(patch.name.as_deref());
@@ -314,4 +323,15 @@ pub async fn update_profile(
         query = query.bind(field.is_some()).bind(field.clone().flatten());
     }
     Ok(query.fetch_optional(db).await?)
+}
+
+/// Sets the account's language. `None` when the row is gone.
+pub async fn set_locale(db: &PgPool, id: Uuid, locale: Locale) -> Result<Option<Locale>, ApiError> {
+    Ok(
+        sqlx::query_scalar("UPDATE users SET locale = $2 WHERE id = $1 RETURNING locale")
+            .bind(id)
+            .bind(locale)
+            .fetch_optional(db)
+            .await?,
+    )
 }

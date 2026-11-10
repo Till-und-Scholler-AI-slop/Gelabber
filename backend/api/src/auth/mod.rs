@@ -26,7 +26,7 @@ pub mod validate;
 
 use axum::Router;
 use axum::extract::State;
-use axum::http::header::HOST;
+use axum::http::header::{ACCEPT_LANGUAGE, HOST};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{AppendHeaders, IntoResponse, Json, Response};
 use axum::routing::{get, post};
@@ -35,6 +35,7 @@ use tracing::{info, warn};
 
 use crate::cookies::{self, CSRF_COOKIE, SESSION_COOKIE, SetCookie};
 use crate::error::{ApiError, FieldErrors};
+use crate::i18n::{self, Locale};
 use crate::json::Body;
 use crate::limits::{self, MailBudget};
 use crate::mail::{Mail, Mailer};
@@ -84,6 +85,10 @@ pub struct RegisterBody {
     pub password: String,
     #[serde(default)]
     pub name: String,
+    /// `de` or `en`; without it the `Accept-Language` header decides, and
+    /// without that German (clients older than v0.10).
+    #[serde(default)]
+    pub locale: Option<String>,
 }
 
 impl std::fmt::Debug for RegisterBody {
@@ -92,6 +97,7 @@ impl std::fmt::Debug for RegisterBody {
             .field("email", &self.email)
             .field("password", &Redacted)
             .field("name", &self.name)
+            .field("locale", &self.locale)
             .finish()
     }
 }
@@ -210,16 +216,29 @@ async fn register(
     let email = validate::new_email(&body.email, &mut errors);
     let name = validate::name(&body.name, &mut errors);
     let pw = validate::password(&body.password, &mut errors);
+    let locale = match body.locale.as_deref() {
+        Some(raw) => Locale::parse(raw).or_else(|| {
+            errors.insert("locale", "invalid");
+            None
+        }),
+        None => Some(
+            headers
+                .get(ACCEPT_LANGUAGE)
+                .and_then(Locale::from_accept_language)
+                .unwrap_or(Locale::De),
+        ),
+    };
     validate::finish(errors)?;
-    let (email, name, pw) = (
+    let (email, name, pw, locale) = (
         email.expect("validated"),
         name.expect("validated"),
         pw.expect("validated"),
+        locale.expect("validated"),
     );
 
     let hash = password::hash(pw).await?;
     let Some(mailer) = state.mail.as_ref() else {
-        let user = user::insert(&state.db, &email, &name, &hash).await?;
+        let user = user::insert(&state.db, &email, &name, &hash, locale).await?;
         info!(user_id = %user.id, "user registered");
         return signed_in(&state, &headers, user, StatusCode::CREATED).await;
     };
@@ -230,7 +249,8 @@ async fn register(
     // hourly mails nothing is written either: a takeover without a new
     // link would leave the owner without a working one.
     if limits::mail_allowed(&state, MailBudget::Registration, &email) {
-        let outgoing = match user::insert_unverified(&state.db, &email, &name, &hash).await {
+        let outgoing = match user::insert_unverified(&state.db, &email, &name, &hash, locale).await
+        {
             Ok(Some(user_id)) => {
                 info!(%user_id, "user registered, awaiting confirmation");
                 Ok(Some((user_id, Outgoing::Confirm)))
@@ -305,14 +325,24 @@ fn send_mail(
                 .await
                 .map(|token| Mail::ResetPassword { token }),
             Outgoing::AlreadyRegistered => Ok(Mail::AlreadyRegistered),
+        }
+        .map_err(|err| ("token", format!("{err:?}")));
+        // The account's language, read here too so the answer's timing
+        // stays the same for every address.
+        let mail = match mail {
+            Ok(mail) => i18n::of_recipient(&state.db, user_id)
+                .await
+                .map(|locale| (mail, locale))
+                .map_err(|err| ("locale", format!("{err:?}"))),
+            Err(err) => Err(err),
         };
         let sent = match mail {
-            Ok(mail) => mailer
-                .send(&email, &mail)
+            Ok((mail, locale)) => mailer
+                .send(&email, &mail, locale)
                 .await
                 .map(|()| mail.kind())
                 .map_err(|err| (mail.kind(), err)),
-            Err(err) => Err(("token", format!("{err:?}"))),
+            Err(err) => Err(err),
         };
         match sent {
             Ok(kind) => info!(%user_id, kind, "account mail sent"),

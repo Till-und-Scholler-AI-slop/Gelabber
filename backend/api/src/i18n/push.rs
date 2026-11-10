@@ -1,34 +1,17 @@
-//! Texts the server itself puts in front of people (issue #314): push
-//! titles and bodies. Messages in the app are rendered by the client; a push
-//! has no client code to run, so its words come from here, in the
-//! recipient's [`Locale`].
+//! Push titles and bodies (issue #314), in the recipient's [`Locale`].
 //!
-//! The pages carry the same German words (`web/src/messages/system.ts`,
+//! The pages carry the same words (`web/src/messages/system.ts`,
 //! `web/src/messages/notificationPrivacy.ts`, `web/src/messages/mentions.ts`,
 //! `web/public/sw.js`).
 
+use super::Locale;
 use crate::messages::system::{self, SystemMessage};
-
-/// The language a recipient reads. Gelabber speaks German only; a second
-/// language adds a variant here and a per-account setting that
-/// [`Locale::of_recipient`] reads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Locale {
-    De,
-}
-
-impl Locale {
-    /// Every account reads German until a second language ships.
-    pub fn of_recipient(_user: uuid::Uuid) -> Self {
-        // TODO(#356): read the account's locale once there is a second one.
-        Self::De
-    }
-}
 
 /// Title of a hidden notification (#268): who wrote, nothing else.
 pub fn new_message_from(locale: Locale, author: &str) -> String {
     match locale {
         Locale::De => format!("Neue Nachricht von {author}"),
+        Locale::En => format!("New message from {author}"),
     }
 }
 
@@ -36,6 +19,7 @@ pub fn new_message_from(locale: Locale, author: &str) -> String {
 pub fn message_deleted(locale: Locale) -> &'static str {
     match locale {
         Locale::De => "Nachricht gelöscht",
+        Locale::En => "Message deleted",
     }
 }
 
@@ -43,6 +27,7 @@ pub fn message_deleted(locale: Locale) -> &'static str {
 pub fn unnamed_channel(locale: Locale) -> &'static str {
     match locale {
         Locale::De => "Kanal",
+        Locale::En => "Channel",
     }
 }
 
@@ -50,6 +35,7 @@ pub fn unnamed_channel(locale: Locale) -> &'static str {
 pub fn unknown_user(locale: Locale) -> &'static str {
     match locale {
         Locale::De => "Unbekannt",
+        Locale::En => "Unknown",
     }
 }
 
@@ -57,6 +43,7 @@ pub fn unknown_user(locale: Locale) -> &'static str {
 pub fn gif(locale: Locale) -> &'static str {
     match locale {
         Locale::De => "GIF",
+        Locale::En => "GIF",
     }
 }
 
@@ -64,6 +51,7 @@ pub fn gif(locale: Locale) -> &'static str {
 pub fn file(locale: Locale) -> &'static str {
     match locale {
         Locale::De => "Datei",
+        Locale::En => "File",
     }
 }
 
@@ -75,6 +63,10 @@ pub fn system_text(locale: Locale, message: &SystemMessage, author: &str) -> Str
             format!("{author} ist live in {}.", message.param("voice_name"))
         }
         (Locale::De, _) => format!("Systemnachricht von {author}"),
+        (Locale::En, system::LIVE_STARTED) => {
+            format!("{author} is live in {}.", message.param("voice_name"))
+        }
+        (Locale::En, _) => format!("System message from {author}"),
     }
 }
 
@@ -96,5 +88,26 @@ mod tests {
             params: serde_json::json!({}),
         };
         assert_eq!(system_text(de, &unknown, "Ada"), "Systemnachricht von Ada");
+    }
+
+    #[test]
+    fn english_texts() {
+        let en = Locale::En;
+        assert_eq!(new_message_from(en, "Ada"), "New message from Ada");
+        assert_eq!(message_deleted(en), "Message deleted");
+        assert_eq!(unnamed_channel(en), "Channel");
+        assert_eq!(unknown_user(en), "Unknown");
+        assert_eq!(gif(en), "GIF");
+        assert_eq!(file(en), "File");
+        let live = SystemMessage {
+            kind: system::LIVE_STARTED.into(),
+            params: serde_json::json!({ "voice_name": "Lounge" }),
+        };
+        assert_eq!(system_text(en, &live, "Ada"), "Ada is live in Lounge.");
+        let unknown = SystemMessage {
+            kind: "later_kind".into(),
+            params: serde_json::json!({}),
+        };
+        assert_eq!(system_text(en, &unknown, "Ada"), "System message from Ada");
     }
 }
