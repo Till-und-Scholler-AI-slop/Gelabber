@@ -642,8 +642,7 @@ pub fn ptt_side_button(
     (in_call && p.voice_input == "ptt").then_some(button)
 }
 
-/// Push-to-talk inside the window: the chosen key (or Maustaste 4/5)
-/// opens the microphone while held.
+/// Whether the window's key holds push-to-talk now, as last told to the call.
 fn window_id() -> Id {
     Id::unique("gelabber-ptt-window")
 }
@@ -717,6 +716,8 @@ pub fn release_window(ctx: &egui::Context, call: &gelabber_call::Call) {
     push_to_talk_from(ctx, call, PttSource::Window, false);
 }
 
+/// Push-to-talk inside the window: the chosen key (or Maustaste 4/5)
+/// opens the microphone while held.
 fn push_to_talk(ui: &Ui, app: &AppCtx, active: bool) {
     use crate::screens::settings::media::window_key;
     let id = window_id();
