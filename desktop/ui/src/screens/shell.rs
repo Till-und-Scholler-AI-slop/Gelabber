@@ -68,6 +68,15 @@ pub fn leave_server(ctx: &egui::Context, client: &gelabber_client::Client, serve
     state::with(ctx, |s| s.left.insert(server));
 }
 
+/// Whether the request that leaves or deletes a server has ended, as far
+/// as the shell can tell: it failed, or the server list no longer holds the
+/// server. A list that has not arrived yet holds nothing and says nothing;
+/// read as the end, it dropped the mark and "/" led back into the server
+/// when the list came.
+fn leave_settled(failed: bool, list_loaded: bool, listed: bool) -> bool {
+    failed || (list_loaded && !listed)
+}
+
 pub fn show(ui: &mut Ui, app: &mut AppCtx) {
     let theme = Theme::of(ui.ctx());
     let screen = ui.ctx().content_rect();
@@ -355,7 +364,11 @@ fn effects(ui: &Ui, app: &mut AppCtx) {
             let failed = [format!("leave:{server}"), format!("delete_server:{server}")]
                 .iter()
                 .any(|key| matches!(s.op(key), Some(OpState::Failed(_))));
-            failed || !s.servers.iter().any(|v| v.id == server)
+            leave_settled(
+                failed,
+                s.servers_loaded,
+                s.servers.iter().any(|v| v.id == server),
+            )
         });
         if settled {
             state::with(ui.ctx(), |s| s.left.remove(&server));
@@ -519,6 +532,18 @@ fn next_unread(unread: &[bool], index: Option<usize>, step: i32) -> Option<usize
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Seen in CI: a server left before the server list had arrived was
+    /// taken for gone, and "/" went back into it when the list came.
+    #[test]
+    fn a_leave_ends_with_a_failure_or_a_loaded_list_without_the_server() {
+        // (failed, list loaded, listed)
+        assert!(!leave_settled(false, false, false), "no list yet");
+        assert!(!leave_settled(false, true, true), "still listed");
+        assert!(leave_settled(false, true, false), "gone from the list");
+        assert!(leave_settled(true, true, true), "failed: a way back again");
+        assert!(leave_settled(true, false, false), "failed before the list");
+    }
 
     #[test]
     fn steps_like_the_web() {
