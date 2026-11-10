@@ -2813,6 +2813,7 @@ describe("voice session", () => {
         name: "Ada",
         avatar_url: null,
         created_at: "2026-01-01T00:00:00.000Z",
+        locale: "de",
       },
     });
     useSession.setState({ status: "anonymous", user: null });

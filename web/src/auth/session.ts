@@ -13,6 +13,7 @@ import {
   synchronizeSharedSession,
   type SessionSinkOptions,
 } from "../api/client.ts";
+import { currentLocale } from "../i18n/locale.ts";
 import { syncPush } from "../pwa/push.ts";
 import { releaseUserScope } from "./release.ts";
 import {
@@ -293,7 +294,13 @@ export function register(
   password: string,
   name: string,
 ): Promise<User | null> {
-  return signIn("/auth/register", { email, password, name });
+  // The new account keeps the language this device shows.
+  return signIn("/auth/register", {
+    email,
+    password,
+    name,
+    locale: currentLocale(),
+  });
 }
 
 /**

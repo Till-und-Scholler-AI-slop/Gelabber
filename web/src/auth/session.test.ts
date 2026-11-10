@@ -7,6 +7,7 @@ import {
   resetSharedSessionForTests,
   synchronizeSharedSession,
 } from "../api/client.ts";
+import { setLocale } from "../i18n/locale.ts";
 import { syncPush } from "../pwa/push.ts";
 import { scopeGeneration } from "./scope.ts";
 import {
@@ -42,6 +43,7 @@ const ada: User = {
   name: "Ada",
   avatar_url: null,
   created_at: "2026-09-13T00:00:00Z",
+  locale: "de",
 };
 
 function json(status: number, body: unknown): Response {
@@ -223,6 +225,26 @@ describe("session store", () => {
     });
     await register("ada@example.com", "password123", "Ada");
     expect(useSession.getState().status).toBe("authenticated");
+  });
+
+  it("register asks for the language this device shows", async () => {
+    let body: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        body = JSON.parse(String(init?.body));
+        return Promise.resolve(
+          json(201, { user: { ...ada, locale: "en" }, csrf_token: "c3" }),
+        );
+      }),
+    );
+    setLocale("en", { persist: false });
+    try {
+      await register("ada@example.com", "password123", "Ada");
+    } finally {
+      setLocale("de", { persist: false });
+    }
+    expect(body).toMatchObject({ name: "Ada", locale: "en" });
   });
 
   it("register with account mail stays signed out until the link is opened", async () => {

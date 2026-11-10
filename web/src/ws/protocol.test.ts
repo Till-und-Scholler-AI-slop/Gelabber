@@ -84,6 +84,10 @@ describe("ws protocol", () => {
     expect(decode("not-json")).toBeNull();
   });
 
+  it("accepts the account's language frame", () => {
+    expect(decode('{"op":"lc","l":"en"}')).toEqual({ op: "lc", l: "en" });
+  });
+
   it("keeps signaling frames small", () => {
     expect(encode({ op: "sig", t: "j", s: "srv", c: "voice" })).toBe(
       '{"op":"sig","t":"j","s":"srv","c":"voice"}',

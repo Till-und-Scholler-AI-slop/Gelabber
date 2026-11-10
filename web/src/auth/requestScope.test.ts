@@ -21,6 +21,7 @@ const ada: User = {
   name: "Ada",
   avatar_url: null,
   created_at: "2026-09-13T00:00:00Z",
+  locale: "de",
 };
 const bob: User = {
   ...ada,

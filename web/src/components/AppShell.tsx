@@ -9,6 +9,7 @@ import { useReadBridge } from "../messages/readState.ts";
 import { useUnreadIndicators } from "../messages/unreadIndicators.ts";
 import { useNotificationSettingsBridge } from "../messages/notificationSettings.ts";
 import { useSession } from "../auth/session.ts";
+import { useAccountLocaleBridge } from "../i18n/account.ts";
 import { useVoice } from "../voice/session.ts";
 import { useLiveNotices } from "../voice/useLiveNotices.ts";
 import { useCallWakeLock } from "../voice/wakeLock.ts";
@@ -36,6 +37,7 @@ function AuthenticatedRealtime() {
   useReadBridge();
   useUnreadIndicators();
   useNotificationSettingsBridge();
+  useAccountLocaleBridge();
   return null;
 }
 

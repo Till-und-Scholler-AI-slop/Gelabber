@@ -2,6 +2,8 @@
 // Chat events stay on `op: "e"`. Presence/typing are live-only (`p` / `y`).
 // Signaling is `op: "sig"` — live only.
 
+import type { Locale } from "../i18n/locale.ts";
+
 export type EventType = "c" | "e" | "d";
 
 export type Topic = {
@@ -100,6 +102,11 @@ export type AccountFrame =
       /** Read positions moved on some device (#244). */
       op: "rd";
       d: ReadSync[];
+    }
+  | {
+      /** The account's language changed on some device. */
+      op: "lc";
+      l: Locale;
     };
 
 /** A conversation's new read position, as `PUT …/read` answers it. */
@@ -159,7 +166,8 @@ export function decode(raw: string): ServerFrame | null {
     op === "resync" ||
     op === "dm" ||
     op === "ns" ||
-    op === "rd"
+    op === "rd" ||
+    op === "lc"
   ) {
     return value as ServerFrame;
   }

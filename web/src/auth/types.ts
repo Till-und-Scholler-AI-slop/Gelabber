@@ -1,3 +1,5 @@
+import type { Locale } from "../i18n/locale.ts";
+
 export type AvatarDecoration = "ring" | "glow" | "rainbow" | "stars";
 
 /**
@@ -23,6 +25,8 @@ export type User = ProfileCard & {
   name: string;
   avatar_url: string | null;
   created_at: string;
+  /** The account's language: the interface, push texts and mail. */
+  locale: Locale;
 };
 
 /** `GET /api/users/{id}`: another member's card, without the e-mail. */
