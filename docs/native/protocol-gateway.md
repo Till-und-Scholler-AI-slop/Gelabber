@@ -271,8 +271,9 @@ these ops and drops anything else (`web/src/ws/protocol.ts:139-167`).
 | `y` | `{"op":"y","s":"<srv>","c":"<chan>","u":"<user>","on":true}` | typing; delivered only to sockets subscribed to channel topic `c` | `protocol.rs:509-511`, `hub/fanout.rs:206-221` |
 | `ns` | `{"op":"ns"}` | notification settings changed on some device → refetch them | `protocol.rs:512-515` |
 | `rd` | `{"op":"rd","d":[ReadSync,…]}` | read positions moved on another device | `protocol.rs:516-534` |
+| `lc` | `{"op":"lc","l":"en"}` | the account's language changed (`PUT /api/me/locale`) → switch to `l` (`de` \| `en`) and keep it as the device's cached language. Servers older than v0.10 never send it; older clients ignore it | `protocol.rs` (`ServerFrame::Locale`, `UserFrame::Locale`), `profile.rs` (`put_locale`) |
 
-`ns`, `rd`, `dm`, `resync` go to every socket of the account regardless of subscriptions (`hub.rs:659-665`, `hub/fanout.rs:123-161`).
+`ns`, `rd`, `lc`, `dm`, `resync` go to every socket of the account regardless of subscriptions (`hub.rs:659-665`, `hub/fanout.rs:123-161`).
 
 ### 3.1 Error codes on `/ws`
 
