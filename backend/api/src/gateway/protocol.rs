@@ -1005,4 +1005,22 @@ mod tests {
             assert!(serde_json::from_value::<TrackKind>(serde_json::json!(kind)).is_err());
         }
     }
+
+    /// The language frame survives Redis and reaches the socket as `lc`.
+    #[test]
+    fn locale_frame_wire_format() {
+        let frame = super::UserFrame::Locale {
+            l: crate::i18n::Locale::En,
+        };
+        let raw = serde_json::to_string(&frame).unwrap();
+        assert_eq!(raw, r#"{"op":"lc","l":"en"}"#);
+        assert_eq!(
+            serde_json::from_str::<super::UserFrame>(&raw).unwrap(),
+            frame
+        );
+        assert_eq!(
+            super::ServerFrame::from(frame).to_json().unwrap(),
+            r#"{"op":"lc","l":"en"}"#
+        );
+    }
 }

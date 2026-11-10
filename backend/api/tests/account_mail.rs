@@ -532,3 +532,95 @@ async fn malformed_links_are_refused_without_touching_accounts(pool: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::GONE, "{}", res.body);
 }
+
+/// Issue #515: every account mail is in the account's language, whatever
+/// language the request that caused it carried.
+#[sqlx::test]
+async fn mails_follow_the_account_language(pool: PgPool) {
+    let (state, mailer) = mail_state(pool);
+    let mut ada = client(&state).await;
+    let register = |locale: &'static str, password: &'static str| json!({ "email": ADA, "password": password, "name": "Ada", "locale": locale });
+
+    let res = post(&mut ada, "/api/auth/register", register("en", PASSWORD)).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 1).await;
+    assert_eq!(sent[0].subject, "Confirm your email address for Gelabber");
+    assert!(sent[0].body.starts_with("Hi,\n\n"), "{}", sent[0].body);
+
+    // Taking over the pending registration takes its language too.
+    let res = post(&mut ada, "/api/auth/register", register("de", PASSWORD)).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 2).await;
+    assert_eq!(
+        sent[1].subject,
+        "Bestätige deine E-Mail-Adresse für Gelabber"
+    );
+    let res = post(&mut ada, "/api/auth/register", register("en", PASSWORD)).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 3).await;
+    assert_eq!(sent[2].subject, "Confirm your email address for Gelabber");
+    let res = post(
+        &mut ada,
+        "/api/auth/verify-email",
+        json!({ "token": token(&sent[2]), "password": PASSWORD }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["user"]["locale"], "en");
+
+    // A German registration with her address: the notice is in her language,
+    // and her account keeps it.
+    let mut stranger = client(&state).await;
+    let res = post(
+        &mut stranger,
+        "/api/auth/register",
+        register("de", "another password"),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 4).await;
+    assert_eq!(sent[3].subject, "Your Gelabber account");
+    assert!(
+        sent[3]
+            .body
+            .contains("Forgot password: https://chat.example.org/forgot-password"),
+        "{}",
+        sent[3].body
+    );
+
+    let res = post(
+        &mut stranger,
+        "/api/auth/password-reset",
+        json!({ "email": ADA }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 5).await;
+    assert_eq!(sent[4].subject, "New password for Gelabber");
+    assert!(
+        sent[4]
+            .body
+            .contains("https://chat.example.org/reset-password#token="),
+        "{}",
+        sent[4].body
+    );
+
+    // A switch to German applies to the next mail.
+    let res = ada
+        .send(
+            Method::PUT,
+            "/api/me/locale",
+            Some(json!({ "locale": "de" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let res = post(
+        &mut stranger,
+        "/api/auth/password-reset",
+        json!({ "email": ADA }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 6).await;
+    assert_eq!(sent[5].subject, "Neues Passwort für Gelabber");
+}

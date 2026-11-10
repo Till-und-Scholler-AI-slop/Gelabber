@@ -851,3 +851,35 @@ async fn servers_are_listed_in_join_order(pool: PgPool) {
     assert_eq!(ids, [&first["id"], &second["id"], &theirs["id"]]);
     assert_eq!(list.body[2]["role"], "member");
 }
+
+/// Issue #515: a new server's first channels are named in its creator's
+/// language; members never see anyone's language.
+#[sqlx::test]
+async fn a_new_server_is_named_in_the_creator_language(pool: PgPool) {
+    let (mut owner, _) = two_users(pool).await;
+    let res = owner
+        .send(
+            Method::PUT,
+            "/api/me/locale",
+            Some(json!({ "locale": "en" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    let server = create_server(&mut owner, "Team Ada").await;
+    let categories: Vec<_> = server["categories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(categories, ["Text channels", "Voice channels"]);
+    let channels: Vec<_> = server["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| (c["name"].as_str().unwrap(), c["kind"].as_str().unwrap()))
+        .collect();
+    assert_eq!(channels, [("general", "text"), ("Living room", "voice")]);
+    assert!(server["members"][0].get("locale").is_none());
+}

@@ -894,3 +894,65 @@ async fn a_recall_shows_who_wrote_only_where_content_is_hidden(pool: PgPool) {
     assert_eq!(payload["body"], "Nachricht gelöscht");
     assert_eq!(payload["path"], format!("/s/{server}/c/{channel}"));
 }
+
+/// Issue #515: a push is in its recipient's language, also a recall.
+#[sqlx::test]
+async fn a_push_speaks_the_recipient_language(pool: PgPool) {
+    let World {
+        mut a,
+        mut b,
+        dm,
+        mut hits,
+        service,
+        ..
+    } = setup(pool.clone()).await;
+    let bob_browser = Browser::new(&service, "sub/bob");
+    subscribe(&mut b, &bob_browser).await;
+    let ada_browser = Browser::new(&service, "sub/ada");
+    subscribe(&mut a, &ada_browser).await;
+    let r = b
+        .send(
+            Method::PUT,
+            "/api/me/locale",
+            Some(json!({ "locale": "en" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    sqlx::query("UPDATE users SET notifications_hide_content=true")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let message = post(&mut a, &dm, "secret").await;
+    let id = message["id"].as_str().unwrap();
+    let hit = next(&mut hits).await;
+    assert_eq!(hit.path, "sub/bob");
+    let payload = bob_browser.open(&hit);
+    assert_eq!(payload["title"], "New message from Ada");
+    assert_eq!(payload["body"], "");
+    receipts_are(&pool, id, 1).await;
+    let r = a
+        .send(Method::DELETE, &format!("/api/messages/{id}"), None)
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    let payload = bob_browser.open(&next(&mut hits).await);
+    assert_eq!(payload["recall"], true);
+    assert_eq!(payload["title"], "New message from Ada");
+    assert_eq!(payload["body"], "Message deleted");
+
+    // Ada still reads German.
+    let message = post(&mut b, &dm, "geheim").await;
+    let id = message["id"].as_str().unwrap();
+    let hit = next(&mut hits).await;
+    assert_eq!(hit.path, "sub/ada");
+    let payload = ada_browser.open(&hit);
+    assert_eq!(payload["title"], "Neue Nachricht von Bob");
+    receipts_are(&pool, id, 1).await;
+    let r = b
+        .send(Method::DELETE, &format!("/api/messages/{id}"), None)
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    let payload = ada_browser.open(&next(&mut hits).await);
+    assert_eq!(payload["title"], "Neue Nachricht von Bob");
+    assert_eq!(payload["body"], "Nachricht gelöscht");
+}
