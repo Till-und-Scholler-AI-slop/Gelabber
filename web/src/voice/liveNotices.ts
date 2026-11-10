@@ -17,6 +17,8 @@ import type { MessageNotification } from "../pwa/notifications.ts";
 import { can } from "../servers/permissions.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import type { SigEvent, VoiceEntry } from "../ws/protocol.ts";
+import { translate } from "../i18n/catalog.ts";
+import { voice } from "../i18n/catalogs/voice.ts";
 import { liveSentence } from "./roomSummary.ts";
 
 /** Once per person and voice channel until they have been off Live there
@@ -186,7 +188,10 @@ export function liveSoundWanted(
 
 /** "Ada ist live in Lounge.", as the chat notice said. */
 export function liveText(author: string, voiceName: string): string {
-  return `${liveSentence([author], false)} in ${voiceName}.`;
+  return translate(voice, "live.inChannel", {
+    sentence: liveSentence([author], false),
+    channel: voiceName,
+  });
 }
 
 /** The system notification's words. With message content hidden (#268)
