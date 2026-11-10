@@ -31,6 +31,27 @@
       href="/icons/icon-192.png"
     />
     <script>
+      // The interface language before the first paint: the one this device
+      // last showed, else the browser's first German or English, else
+      // English (detectLocale in src/i18n/locale.ts). The splash shows the
+      // texts whose lang matches; i18n/startup.ts carries the choice on.
+      let locale = null;
+      try {
+        locale = localStorage.getItem("gelabber.locale");
+      } catch {
+        // Blocked storage: the browser's languages decide.
+      }
+      if (locale !== "de" && locale !== "en") {
+        locale = "en";
+        for (const tag of navigator.languages ?? [navigator.language ?? ""]) {
+          const primary = String(tag).trim().toLowerCase().split(/[-_]/)[0];
+          if (primary === "de" || primary === "en") {
+            locale = primary;
+            break;
+          }
+        }
+      }
+      document.documentElement.lang = locale;
       // The entry bundle failed to load or run before the first render: say
       // so instead of "Verbinde…" for ever. Load errors do not bubble.
       window.addEventListener(
@@ -126,11 +147,16 @@
         font-weight: 700;
         letter-spacing: -0.02em;
       }
-      .boot-splash span {
+      .boot-splash-status {
         color: color-mix(in srgb, var(--lr-text) 68%, var(--lr-bg));
         font-size: 13px;
         opacity: 0;
         animation: boot-splash-in 240ms ease-out 600ms forwards;
+      }
+      /* Both languages are in the markup; the one <html lang> names shows. */
+      html:not([lang="en"]) .boot-splash [lang="en"],
+      html[lang="en"] .boot-splash [lang="de"] {
+        display: none;
       }
       .boot-splash p {
         display: none;
@@ -142,7 +168,7 @@
         color: inherit;
         font-weight: 600;
       }
-      .boot-splash[data-failed] span {
+      .boot-splash[data-failed] .boot-splash-status {
         display: none;
       }
       .boot-splash[data-failed] p {
@@ -154,7 +180,7 @@
         }
       }
       @media (prefers-reduced-motion: reduce) {
-        .boot-splash span {
+        .boot-splash-status {
           opacity: 1;
           animation: none;
         }
@@ -167,10 +193,19 @@
       <div class="boot-splash">
         <img src="/icons/icon-192.png" width="48" height="48" alt="" />
         <strong>Gelabber</strong>
-        <span>Verbinde…</span>
+        <span class="boot-splash-status">
+          <span lang="de">Verbinde…</span>
+          <span lang="en">Connecting…</span>
+        </span>
         <p role="alert">
-          Gelabber konnte nicht geladen werden.
-          <a href="">Seite neu laden</a>
+          <span lang="de">
+            Gelabber konnte nicht geladen werden.
+            <a href="">Seite neu laden</a>
+          </span>
+          <span lang="en">
+            Gelabber could not be loaded.
+            <a href="">Reload page</a>
+          </span>
         </p>
       </div>
     </div>

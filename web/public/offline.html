@@ -9,6 +9,27 @@
     <meta name="theme-color" content="#17191a" />
     <title>Keine Verbindung · Gelabber</title>
     <script>
+      // The app's language, as index.html picks it: the one this device last
+      // showed, else the browser's first German or English, else English.
+      // The page has a block of text per language; CSS shows the chosen one.
+      let locale = null;
+      try {
+        locale = localStorage.getItem("gelabber.locale");
+      } catch {
+        // Blocked storage: the browser's languages decide.
+      }
+      if (locale !== "de" && locale !== "en") {
+        locale = "en";
+        for (const tag of navigator.languages ?? [navigator.language ?? ""]) {
+          const primary = String(tag).trim().toLowerCase().split(/[-_]/)[0];
+          if (primary === "de" || primary === "en") {
+            locale = primary;
+            break;
+          }
+        }
+      }
+      document.documentElement.lang = locale;
+      if (locale === "en") document.title = "No connection · Gelabber";
       // Same colours as the app: reuse the palette it cached for its own first
       // paint (theme/theme.ts). Anything unexpected keeps the dark default.
       try {
@@ -81,6 +102,10 @@
         font-weight: 600;
         text-decoration: none;
       }
+      html:not([lang="en"]) main[lang="en"],
+      html[lang="en"] main[lang="de"] {
+        display: none;
+      }
       a:focus-visible {
         outline: 2px solid var(--text, #eef0ee);
         outline-offset: 4px;
@@ -88,14 +113,23 @@
     </style>
   </head>
   <body>
-    <main>
+    <main lang="de">
       <p>Gelabber</p>
       <h1>Gerade keine Verbindung</h1>
       <p>
         Für Nachrichten und Gespräche brauchst du eine Internetverbindung.
         Sobald du wieder online bist, lädt Gelabber diese Seite von selbst neu.
       </p>
-      <a id="retry" href="">Erneut verbinden</a>
+      <a class="retry" href="">Erneut verbinden</a>
+    </main>
+    <main lang="en">
+      <p>Gelabber</p>
+      <h1>No connection right now</h1>
+      <p>
+        Messages and calls need an internet connection. As soon as you are back
+        online, Gelabber reloads this page by itself.
+      </p>
+      <a class="retry" href="">Reconnect</a>
     </main>
     <script>
       // The worker shows this page at the address the user asked for. Retrying
@@ -105,10 +139,11 @@
         if (location.pathname === "/offline.html") location.replace("/");
         else location.reload();
       };
-      document.getElementById("retry").addEventListener("click", (event) => {
-        event.preventDefault();
-        retry();
-      });
+      for (const link of document.querySelectorAll(".retry"))
+        link.addEventListener("click", (event) => {
+          event.preventDefault();
+          retry();
+        });
       addEventListener("online", retry);
       // A phone can suspend this page while it is in the background and never
       // deliver `online`; check again when the user comes back to it.

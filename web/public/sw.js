@@ -4,7 +4,7 @@
 const CACHE_PREFIX = "gelabber-pwa-offline-";
 // Raise with every change to offline.html: nothing else replaces the cached
 // copy. src/pwa/worker.test.mjs fails when the page changes without it.
-const CACHE_NAME = `${CACHE_PREFIX}v2`;
+const CACHE_NAME = `${CACHE_PREFIX}v3`;
 const OFFLINE_URL = "/offline.html";
 // Pages of the app itself. API, gateway/media traffic, attachment downloads
 // and static files never match.
