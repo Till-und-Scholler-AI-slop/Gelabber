@@ -7,5 +7,5 @@ import { voice } from "../i18n/catalogs/voice.ts";
 
 export const VoiceRoomPart = lazyPart(
   () => import("./VoiceRoom.tsx").then((module) => module.VoiceRoom),
-  translate(voice, "error.roomLoadFailed"),
+  () => translate(voice, "error.roomLoadFailed"),
 );

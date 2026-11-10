@@ -907,7 +907,8 @@ function rollbackSeat(error?: unknown, lost = false): void {
           lostCall: {
             serverId,
             channelId,
-            channelName: state.channelName ?? "Sprachkanal",
+            channelName:
+              state.channelName ?? translate(texts, "call.voiceChannel"),
           },
         }
       : {}),

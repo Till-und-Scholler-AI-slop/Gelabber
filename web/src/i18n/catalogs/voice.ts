@@ -349,7 +349,7 @@ export const voice = defineCatalog(
     "participant.speaking": "Speaking",
     "participant.present": "In the room",
     "participant.self": "(you)",
-    "participant.profileLabel": "Profile of {name}",
+    "participant.profileLabel": "{name}’s profile",
     "participant.optionsLabel": "Options for {name}",
     "participant.viewProfile": "View profile",
     "participant.localVolume": "Volume for you",

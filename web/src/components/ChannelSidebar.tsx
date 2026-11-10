@@ -101,6 +101,7 @@ import "./shell.css";
 import { translate, useT } from "../i18n/catalog.ts";
 import { shell } from "../i18n/catalogs/shell.ts";
 import { compareNames } from "../i18n/format.ts";
+import { useCurrentLocale } from "../i18n/locale.ts";
 
 type ParticipantRow = {
   kind: "participant";
@@ -185,9 +186,12 @@ export function ChannelSidebar({
   const occupancy = useVoiceRoster(
     (s) => s.byServer[server.id] ?? EMPTY_OCCUPANCY,
   );
+  // The voice heading in the rows is in the current language.
+  const locale = useCurrentLocale();
   const rows = useMemo(
     () => withParticipants(sidebarRows(server), server, occupancy, live),
-    [server, occupancy, live],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see locale
+    [server, occupancy, live, locale],
   );
   const [channelDialog, setChannelDialog] = useState<ChannelDialogState | null>(
     null,

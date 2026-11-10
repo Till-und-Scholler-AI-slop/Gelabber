@@ -10,5 +10,5 @@ export const VoiceSettingsPanelPart = lazyPart(
     import("./VoiceSettingsPanel.tsx").then(
       (module) => module.VoiceSettingsPanel,
     ),
-  translate(voiceSettings, "panel.loadFailed"),
+  () => translate(voiceSettings, "panel.loadFailed"),
 );

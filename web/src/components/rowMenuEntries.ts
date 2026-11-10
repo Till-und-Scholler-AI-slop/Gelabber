@@ -4,6 +4,7 @@ import type { NotifyLevel } from "../messages/notifyLevel.ts";
 import { LEVELS, MUTES, levelName, mutedLine } from "./notificationActions.ts";
 import type { NotificationTarget } from "./notificationTarget.ts";
 import { translate } from "../i18n/catalog.ts";
+import { notifications } from "../i18n/catalogs/notifications.ts";
 import { shell } from "../i18n/catalogs/shell.ts";
 
 export type MenuIcon =
@@ -108,7 +109,7 @@ export function notificationEntries(
           ? [
               {
                 kind: "radio" as const,
-                label: translate(shell, "rowMenu.levelLikeServer", {
+                label: translate(notifications, "level.inherit", {
                   level: levelName(actions.inherited),
                 }),
                 checked: actions.isLevel(null),

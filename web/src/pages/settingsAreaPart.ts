@@ -10,6 +10,5 @@ export const SettingsAreaPart = lazyPart(
     import("./SettingsAreaContent.tsx").then(
       (module) => module.SettingsAreaContent,
     ),
-  // Taken in the language shown when the module loads: lazyPart wants a string.
-  translate(settings, "areaPart.failed"),
+  () => translate(settings, "areaPart.failed"),
 );

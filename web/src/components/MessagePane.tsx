@@ -82,7 +82,8 @@ import { useDebouncedValue } from "./useDebouncedValue.ts";
 import { isMac, keyNames } from "./shellShortcuts.ts";
 
 const NO_MEMBERS: readonly MentionMember[] = [];
-const searchKeys = keyNames(isMac());
+// The key names follow the language, so they are read at render time.
+const mac = isMac();
 
 export function MessagePane({
   title,
@@ -432,7 +433,7 @@ export function MessagePane({
             />
             {searchText ? null : (
               <kbd aria-hidden="true">
-                {searchKeys.mod} F{/* i18n-ok: a key name */}
+                {keyNames(mac).mod} F{/* i18n-ok: a key name */}
               </kbd>
             )}
           </label>
