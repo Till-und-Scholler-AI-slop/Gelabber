@@ -44,6 +44,7 @@ import { useMuteClock } from "../messages/notificationSettings.ts";
 import { useReadState, useReadingChannel } from "../messages/readState.ts";
 import { unreadMark } from "../messages/unreadIndicators.ts";
 import { forgetServer, useServer, useServers } from "../servers/queries.ts";
+import { BlockedServerNotice } from "../servers/BlockedServerNotice.tsx";
 import { SettingsSidebar } from "./UserSettingsPage.tsx";
 import { OperatorSidebar } from "../operator/OperatorSidebar.tsx";
 import { translate, useT } from "../i18n/catalog.ts";
@@ -141,11 +142,14 @@ function WorkspaceFrame({
   place,
   serverId,
   dmActive = false,
+  main,
 }: {
   sidebar: ReactNode;
   place: Place;
   serverId?: string;
   dmActive?: boolean;
+  /** Takes the place of the routed page (a blocked server's notice). */
+  main?: ReactNode;
 }) {
   const t = useT(shell);
   const drawer = useNavigationDrawer();
@@ -240,7 +244,7 @@ function WorkspaceFrame({
           tabIndex={-1}
           className="workspace-content"
         >
-          <Outlet />
+          {main ?? <Outlet />}
         </main>
       </div>
       <QuickSwitcher
@@ -270,6 +274,15 @@ function SelectedServer({
   const gone =
     error instanceof ApiError &&
     (error.code === "not_found" || error.code === "forbidden");
+  // Blocked by an operator: the list says so, or a read just met it.
+  const blockedRead =
+    error instanceof ApiError && error.code === "server_blocked";
+  const blocked = blockedRead || listed?.blocked === true;
+  // Lifted meanwhile: the list (read again) knows first.
+  const lifted = blockedRead && listed?.blocked === false;
+  useEffect(() => {
+    if (lifted) void refetch();
+  }, [lifted, refetch]);
 
   useEffect(() => {
     if (!gone || !userId) return;
@@ -281,6 +294,20 @@ function SelectedServer({
   }, [gone, client, navigate, serverId, userId]);
 
   if (gone) return null;
+  if (blocked)
+    return (
+      <WorkspaceFrame
+        serverId={serverId}
+        place={listed ?? "Gelabber"}
+        sidebar={
+          <aside className="channel-sidebar" aria-label={t("sidebar.label")}>
+            <div className="sidebar-brand">{listed?.name ?? "Gelabber"}</div>
+            <UserPanel />
+          </aside>
+        }
+        main={<BlockedServerNotice serverId={serverId} server={listed} />}
+      />
+    );
   return (
     <WorkspaceFrame
       serverId={serverId}
