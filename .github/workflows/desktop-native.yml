@@ -320,7 +320,7 @@ jobs:
     # cancels the whole run, libwebrtc included). Branch runs are never cancelled.
     concurrency:
       group: desktop-core-linux-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' && github.run_attempt == 1 }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -582,7 +582,7 @@ jobs:
     # As core-linux: a newer push to a pull request cancels the older run's.
     concurrency:
       group: desktop-core-windows-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' && github.run_attempt == 1 }}
     runs-on: windows-2022
     timeout-minutes: 120
     defaults:
