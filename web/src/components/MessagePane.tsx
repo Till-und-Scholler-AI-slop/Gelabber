@@ -74,12 +74,16 @@ import {
   type ComposerHandle,
 } from "./messagePaneContext.ts";
 import { dayBreak, dayLabel, formatWhen } from "./messageTime.ts";
+import { translate, useT } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
+import { common } from "../i18n/catalogs/common.ts";
 import { useMessageScroll } from "./useMessageScroll.ts";
 import { useDebouncedValue } from "./useDebouncedValue.ts";
 import { isMac, keyNames } from "./shellShortcuts.ts";
 
 const NO_MEMBERS: readonly MentionMember[] = [];
-const searchKeys = keyNames(isMac());
+// The key names follow the language, so they are read at render time.
+const mac = isMac();
 
 export function MessagePane({
   title,
@@ -124,6 +128,8 @@ export function MessagePane({
   onDraftChange?: (value: string) => void;
   onDraftStop?: () => void;
 }) {
+  const t = useT(chat);
+  const tc = useT(common);
   const user = useSession((s) => s.user);
   const query = useMessages(channelId, true);
   const searchScope = `${user?.id ?? "anonymous"}:${channelId}`;
@@ -404,7 +410,7 @@ export function MessagePane({
           <label
             className="lr-header-search"
             data-active={searchText ? "" : undefined}
-            title="Wörter oder eine Phrase in Anführungszeichen"
+            title={t("pane.searchHint")}
           >
             <SearchIcon size={16} />
             <input
@@ -421,12 +427,14 @@ export function MessagePane({
                 if (searchText) setSearchText("");
                 else event.currentTarget.blur();
               }}
-              placeholder="Suchen"
-              aria-label="In dieser Unterhaltung suchen"
+              placeholder={t("pane.searchPlaceholder")}
+              aria-label={t("pane.searchLabel")}
               aria-keyshortcuts="Control+F Meta+F"
             />
             {searchText ? null : (
-              <kbd aria-hidden="true">{searchKeys.mod} F</kbd>
+              <kbd aria-hidden="true">
+                {keyNames(mac).mod} F{/* i18n-ok: a key name */}
+              </kbd>
             )}
           </label>
           {notify ? <NotificationBell target={notify} muted={muted} /> : null}
@@ -435,9 +443,9 @@ export function MessagePane({
         {notice}
         {read.error ? (
           <p className="lr-inline-notice" role="status">
-            <span>Lesestatus nicht gespeichert.</span>
+            <span>{t("pane.readNotSaved")}</span>
             <button type="button" onClick={read.retry}>
-              Erneut versuchen
+              {tc("tryAgain")}
             </button>
           </p>
         ) : null}
@@ -451,17 +459,18 @@ export function MessagePane({
                 {unreadCount !== null && openedAtUnread && !overlay ? (
                   <section
                     className="lr-unread-bar"
-                    aria-label="Ungelesene Nachrichten"
+                    aria-label={t("unread.messages")}
                   >
                     <p>
                       <strong>
-                        {unreadCount === 1
-                          ? "1 neue Nachricht"
-                          : // The server counts up to 100.
-                            `${unreadCount > 99 ? "99+" : unreadCount} neue Nachrichten`}
+                        {t("pane.newMessages", {
+                          count: unreadCount,
+                          // The server counts up to 100.
+                          n: unreadCount > 99 ? "99+" : String(unreadCount),
+                        })}
                       </strong>
                       {firstUnread
-                        ? ` seit ${formatWhen(firstUnread.created_at)}`
+                        ? ` ${t("pane.unreadSince", { when: formatWhen(firstUnread.created_at) })}`
                         : null}
                     </p>
                     <Button
@@ -469,7 +478,7 @@ export function MessagePane({
                       variant="secondary"
                       onClick={() => setUnreadJump((value) => value + 1)}
                     >
-                      Springen
+                      {t("pane.jump")}
                     </Button>
                     <Button
                       size="sm"
@@ -482,8 +491,8 @@ export function MessagePane({
                         focusList();
                       }}
                     >
-                      Als gelesen markieren
-                      <kbd aria-hidden="true">Esc</kbd>
+                      {t("pane.markRead")}
+                      <kbd aria-hidden="true">Esc{/* i18n-ok */}</kbd>
                     </Button>
                   </section>
                 ) : null}
@@ -566,7 +575,7 @@ export function MessagePane({
                       key={contextTarget.id}
                       channelId={channelId}
                       messageId={contextTarget.id}
-                      closeLabel="Zurück zum Chat"
+                      closeLabel={t("pane.backToChat")}
                       onClose={() => setContextTarget(null)}
                       renderMessage={(message) => (
                         <MessageRow
@@ -598,10 +607,11 @@ export function MessagePane({
                   >
                     <ArrowDownIcon size={15} />
                     {arrived === 0
-                      ? "Zu den neuesten Nachrichten"
-                      : arrived === 1
-                        ? "1 neue Nachricht"
-                        : `${arrived} neue Nachrichten`}
+                      ? t("pane.toLatest")
+                      : t("pane.newMessages", {
+                          count: arrived,
+                          n: String(arrived),
+                        })}
                   </button>
                 ) : null}
               </div>
@@ -688,6 +698,7 @@ function MessageList({
   /** Above the oldest message once there is nothing older. */
   historyStart: ReactNode;
 }) {
+  const t = useT(chat);
   const edit = useEditMessage(channelId);
   const remove = useDeleteMessage(channelId);
   // Day dividers and the times beside the rows read the clock as they
@@ -774,7 +785,7 @@ function MessageList({
     <div
       ref={scrollRef}
       role="log"
-      aria-label="Nachrichten"
+      aria-label={t("list.label")}
       aria-busy={!ready || undefined}
       {...handlers}
       style={{ overflowAnchor: "none", overscrollBehavior: "contain" }}
@@ -783,9 +794,7 @@ function MessageList({
       {loadError ? (
         <div role="alert" className="lr-list-state">
           <p>
-            {loadError === "paging"
-              ? "Ältere Nachrichten konnten nicht geladen werden."
-              : "Nachrichten konnten nicht geladen werden."}
+            {t(loadError === "paging" ? "list.olderFailed" : "list.failed")}
           </p>
           <button
             type="button"
@@ -793,7 +802,7 @@ function MessageList({
             disabled={!ready || loadingOlder}
             className="lr-button-secondary"
           >
-            Erneut laden
+            {t("list.reload")}
           </button>
         </div>
       ) : null}
@@ -801,7 +810,7 @@ function MessageList({
         // Always there with one height: a row above the list that changes
         // size shifts everything below it.
         <p className="lr-list-loading">
-          {loadingOlder ? "Ältere Nachrichten…" : ""}
+          {loadingOlder ? t("list.loadingOlder") : ""}
         </p>
       ) : null}
       <div
@@ -837,9 +846,9 @@ function MessageList({
                 <div
                   className="lr-new-divider"
                   role="separator"
-                  aria-label="Neue Nachrichten"
+                  aria-label={t("list.newDividerLabel")}
                 >
-                  <span>Neu</span>
+                  <span>{t("list.newDivider")}</span>
                 </div>
               ) : null}
               <MessageRow
@@ -867,7 +876,7 @@ function MessageList({
       {ready && !loadError && items.length === 0 ? (
         <div className="lr-list-empty">
           {historyStart}
-          <p>Noch keine Nachrichten. Schreib die erste.</p>
+          <p>{t("list.empty")}</p>
         </div>
       ) : null}
     </div>
@@ -878,10 +887,10 @@ function confirmDelete(message: Message, meId: string | undefined) {
   const own = message.author.id === meId;
   return confirmAction({
     title: own
-      ? "Nachricht löschen?"
-      : `Nachricht von ${message.author.name} löschen?`,
-    message: "Das lässt sich nicht rückgängig machen.",
-    confirmLabel: "Löschen",
+      ? translate(chat, "delete.titleOwn")
+      : translate(chat, "delete.titleOther", { name: message.author.name }),
+    message: translate(chat, "delete.message"),
+    confirmLabel: translate(common, "delete"),
   });
 }
 
@@ -895,6 +904,7 @@ function HistoryStart({
   channelName: string;
   peer?: { name: string; avatar_url: string | null };
 }) {
+  const t = useT(chat);
   if (mention === "@")
     return (
       <div className="lr-history-start">
@@ -902,7 +912,7 @@ function HistoryStart({
           <Avatar name={peer.name} url={peer.avatar_url} size="lg" decorative />
         ) : null}
         <h2>{peer?.name ?? channelName}</h2>
-        <p>Anfang der Unterhaltung.</p>
+        <p>{t("list.startOfDm")}</p>
       </div>
     );
   return (
@@ -911,7 +921,7 @@ function HistoryStart({
         <HashIcon size={20} />
         {channelName}
       </h2>
-      <p>Anfang des Kanals.</p>
+      <p>{t("list.startOfChannel")}</p>
     </div>
   );
 }

@@ -30,6 +30,8 @@ import { isMac, shortcutGroups } from "./shellShortcuts.ts";
 import { tileInitials, tileTint } from "./initials.ts";
 import { ServerIconFace } from "./ServerIcon.tsx";
 import "./shell.css";
+import { useT } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 export function QuickSwitcher({
   open,
@@ -41,8 +43,9 @@ export function QuickSwitcher({
   /** The conversation open now, left out of the list. */
   current: string | undefined;
 }) {
+  const t = useT(shell);
   return (
-    <Modal open={open} onClose={onClose} title="Wechseln zu">
+    <Modal open={open} onClose={onClose} title={t("switcher.title")}>
       {open ? <SwitcherBody onClose={onClose} current={current} /> : null}
     </Modal>
   );
@@ -55,6 +58,7 @@ function SwitcherBody({
   onClose: () => void;
   current: string | undefined;
 }) {
+  const t = useT(shell);
   const navigate = useNavigate();
   const userId = useUserId();
   const [query, setQuery] = useState("");
@@ -117,16 +121,16 @@ function SwitcherBody({
   return (
     <>
       <Picker
-        label="Server, Kanal oder Unterhaltung"
-        placeholder="Server, Kanal oder Unterhaltung suchen"
+        label={t("switcher.label")}
+        placeholder={t("switcher.placeholder")}
         query={query}
         onQuery={setQuery}
         options={options}
         onPick={(option) => go(option.value)}
-        empty={`Nichts gefunden für „${query.trim()}“.`}
+        empty={t("switcher.empty", { query: query.trim() })}
       />
       <p className="shell-picker-hint" aria-hidden="true">
-        ↑ ↓ auswählen · Enter öffnen · Esc schließen
+        {t("switcher.hint")}
       </p>
     </>
   );
@@ -176,11 +180,12 @@ export function ShortcutSheet({
   open: boolean;
   onClose: () => void;
 }) {
+  const t = useT(shell);
   const ids = useId();
   // The push-to-talk key, only while push-to-talk is on and has one.
   const pushToTalk = usePushToTalkKeyName();
   return (
-    <Modal open={open} onClose={onClose} title="Tastenkürzel">
+    <Modal open={open} onClose={onClose} title={t("shortcuts.title")}>
       {shortcutGroups(isMac(), pushToTalk).map((group, index) => (
         <section
           key={group.title}

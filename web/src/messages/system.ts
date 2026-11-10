@@ -2,7 +2,10 @@
 // a kind plus parameters instead of a finished sentence, so the words are
 // the client's (`backend/api/src/messages/system.rs`). The author is the person the
 // message is about; `content` is empty. A push uses the same wording
-// (`system_text` in backend/api/src/i18n.rs).
+// (`system_text` in backend/api/src/i18n/push.rs).
+
+import { translate } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
 
 export type SystemMessage = {
   kind: string;
@@ -33,8 +36,11 @@ function param(system: SystemMessage, name: string): string {
 export function systemText(system: SystemMessage, author: string): string {
   switch (system.kind) {
     case "live_started":
-      return `${author} ist live in ${param(system, "voice_name")}.`;
+      return translate(chat, "system.liveStarted", {
+        author,
+        voice: param(system, "voice_name"),
+      });
     default:
-      return `Systemnachricht von ${author}`;
+      return translate(chat, "system.unknown", { author });
   }
 }

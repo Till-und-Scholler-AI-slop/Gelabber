@@ -8,6 +8,9 @@ import type { HardwareVideo } from "./videoCodec.ts";
 
 import { create } from "zustand";
 
+import { translate } from "../i18n/catalog.ts";
+import { diagnostics } from "../i18n/catalogs/diagnostics.ts";
+import { formatNumber, formatTime } from "../i18n/format.ts";
 import { APP_VERSION } from "../version.ts";
 import {
   audioBitrate,
@@ -1165,7 +1168,7 @@ export function buildDiagnosticExport(now = new Date()): DiagnosticExport {
     browser: browserInfo(),
     settings: relevantSettings(),
     video: state.latest?.caps.video ?? null,
-    note: "Messwerte sind Anhaltspunkte und keine bewiesene Fehlerursache.",
+    note: translate(diagnostics, "export.note"),
     phases: state.phases,
     events: state.events,
     samples: state.samples,
@@ -1181,13 +1184,20 @@ export function buildDiagnosticExport(now = new Date()): DiagnosticExport {
   };
 }
 
+type DiagnosticsKey = keyof typeof diagnostics.de;
+
+/** What a figure the browser did not report reads as. */
+export function unknownValue(): string {
+  return translate(diagnostics, "value.unknown");
+}
+
 export function formatBps(bps: number | null): string {
-  if (bps === null || !Number.isFinite(bps)) return "unbekannt";
+  if (bps === null || !Number.isFinite(bps)) return unknownValue();
   const abs = Math.abs(bps);
   const scaled = abs >= 1_000_000 ? abs / 1_000_000 : abs / 1_000;
   const unit = abs >= 1_000_000 ? "Mbit/s" : "kbit/s";
   const digits = Number.isInteger(scaled) || scaled >= 100 ? 0 : 1;
-  const text = scaled.toLocaleString("de-DE", {
+  const text = formatNumber(scaled, {
     minimumFractionDigits: 0,
     maximumFractionDigits: digits,
   });
@@ -1195,55 +1205,61 @@ export function formatBps(bps: number | null): string {
 }
 
 export function formatRatio(ratio: number | null): string {
-  if (ratio === null || !Number.isFinite(ratio)) return "unbekannt";
-  return `${(ratio * 100).toLocaleString("de-DE", {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  })} %`;
+  if (ratio === null || !Number.isFinite(ratio)) return unknownValue();
+  return translate(diagnostics, "percent", {
+    percent: formatNumber(ratio * 100, {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    }),
+  });
 }
 
 export function formatMs(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return "unbekannt";
-  return `${value.toLocaleString("de-DE", { maximumFractionDigits: 1 })} ms`;
+  if (value === null || !Number.isFinite(value)) return unknownValue();
+  return `${formatNumber(value, { maximumFractionDigits: 1 })} ms`;
 }
 
 export function formatCount(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return "unbekannt";
-  return value.toLocaleString("de-DE", { maximumFractionDigits: 1 });
+  if (value === null || !Number.isFinite(value)) return unknownValue();
+  return formatNumber(value, { maximumFractionDigits: 1 });
 }
 
-export const PHASE_LABEL: Record<Phase, string> = {
-  "voice-only": "nur Sprache",
-  "stream-on": "Stream an",
-  "stream-off": "Stream aus",
-  watch: "Watch",
+/** Each phase's and source's name, as `diagnostics` catalog keys. */
+export const PHASE_LABEL: Record<Phase, DiagnosticsKey> = {
+  "voice-only": "phase.voiceOnly",
+  "stream-on": "phase.streamOn",
+  "stream-off": "phase.streamOff",
+  watch: "phase.watch",
 };
 
-export const SOURCE_LABEL: Record<FlowSource, string> = {
-  voice: "Sprache",
-  camera: "Kamera",
-  screen: "Live",
-  "screen-audio": "Live-Ton",
-  video: "Video",
-  watch: "Watch",
+export const SOURCE_LABEL: Record<FlowSource, DiagnosticsKey> = {
+  voice: "source.voice",
+  camera: "source.camera",
+  screen: "source.screen",
+  "screen-audio": "source.screenAudio",
+  video: "source.video",
+  watch: "source.watch",
 };
 
-export const QUALITY_LIMIT_LABEL: Record<string, string> = {
-  none: "keine",
-  cpu: "CPU",
-  bandwidth: "Bandbreite",
-  other: "sonstige",
+export const QUALITY_LIMIT_LABEL: Record<string, DiagnosticsKey> = {
+  none: "limit.none",
+  cpu: "limit.cpu",
+  bandwidth: "limit.bandwidth",
+  other: "limit.other",
 };
 
 export function formatQualityLimit(value: string | null): string {
-  if (!value) return "unbekannt";
-  return QUALITY_LIMIT_LABEL[value] ?? "unbekannt";
+  const key =
+    value && Object.hasOwn(QUALITY_LIMIT_LABEL, value)
+      ? QUALITY_LIMIT_LABEL[value]
+      : null;
+  return key ? translate(diagnostics, key) : unknownValue();
 }
 
 export function formatClock(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleTimeString("de-DE", {
+  return formatTime(date, {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -1269,11 +1285,11 @@ export type CallQuality = {
   path: TransportSnapshot["path"];
 };
 
-const QUALITY_LABEL: Record<CallQualityLevel, string> = {
-  4: "gut",
-  3: "ordentlich",
-  2: "schwach",
-  1: "schlecht",
+const QUALITY_LABEL: Record<CallQualityLevel, DiagnosticsKey> = {
+  4: "quality.good",
+  3: "quality.fair",
+  2: "quality.weak",
+  1: "quality.poor",
 };
 
 function steps(value: number | null, limits: readonly number[]): number {
@@ -1307,7 +1323,7 @@ export function callQuality(
     )) as CallQualityLevel;
   return {
     level,
-    label: QUALITY_LABEL[level],
+    label: translate(diagnostics, QUALITY_LABEL[level]),
     rttMs,
     loss,
     path: snapshot.transport.path,
@@ -1315,15 +1331,21 @@ export function callQuality(
 }
 
 function percent(ratio: number): string {
-  return `${Math.round(ratio * 100).toLocaleString("de-DE")} %`;
+  return translate(diagnostics, "percent", {
+    percent: Math.round(ratio * 100),
+  });
 }
 
 /** The tooltip line: "Verbindung: gut · 38 ms · 0 % Verlust". */
 export function callQualitySummary(quality: CallQuality): string {
   return [
-    `Verbindung: ${quality.label}`,
+    translate(diagnostics, "quality.summary", { label: quality.label }),
     quality.rttMs === null ? null : `${Math.round(quality.rttMs)} ms`,
-    quality.loss === null ? null : `${percent(quality.loss)} Verlust`,
+    quality.loss === null
+      ? null
+      : translate(diagnostics, "quality.lossSummary", {
+          percent: percent(quality.loss),
+        }),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -1332,7 +1354,9 @@ export function callQualitySummary(quality: CallQuality): string {
 /** One plain sentence above the raw figures: "Verbindung gut. Direkt
  * verbunden, kaum Verlust." */
 export function callQualityVerdict(quality: CallQuality): string {
-  const head = `Verbindung ${quality.label}.`;
+  const head = translate(diagnostics, "quality.verdict", {
+    label: quality.label,
+  });
   const detail = callQualityDetail(quality);
   return detail ? `${head} ${detail}` : head;
 }
@@ -1342,19 +1366,25 @@ export function callQualityVerdict(quality: CallQuality): string {
 export function callQualityDetail(quality: CallQuality): string | null {
   const details = [
     quality.path === "direct"
-      ? "Direkt verbunden"
+      ? translate(diagnostics, "quality.direct")
       : quality.path === "turn"
-        ? "Über einen Relay-Server verbunden"
+        ? translate(diagnostics, "quality.relay")
         : null,
     quality.loss === null
       ? null
       : quality.loss < CALL_QUALITY_LIMITS.loss[0]
-        ? "kaum Verlust"
-        : quality.loss < CALL_QUALITY_LIMITS.loss[1]
-          ? `etwas Verlust (${percent(quality.loss)})`
-          : `hoher Verlust (${percent(quality.loss)})`,
+        ? translate(diagnostics, "quality.lowLoss")
+        : translate(
+            diagnostics,
+            quality.loss < CALL_QUALITY_LIMITS.loss[1]
+              ? "quality.someLoss"
+              : "quality.highLoss",
+            { percent: percent(quality.loss) },
+          ),
     quality.rttMs !== null && quality.rttMs >= CALL_QUALITY_LIMITS.rttMs[1]
-      ? `hohe Verzögerung (${Math.round(quality.rttMs)} ms)`
+      ? translate(diagnostics, "quality.highDelay", {
+          ms: String(Math.round(quality.rttMs)),
+        })
       : null,
   ].filter(Boolean);
   if (details.length === 0) return null;

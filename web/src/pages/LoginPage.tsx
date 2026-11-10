@@ -13,11 +13,14 @@ import { FormError } from "../components/FormError.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { buttonClass } from "../components/ui/buttonClass.ts";
 import { PasswordField } from "../components/ui/PasswordField.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { auth } from "../i18n/catalogs/auth.ts";
 import { InstallDisclosure } from "../pwa/InstallApp.tsx";
 import { installHintUseful, useInstallation } from "../pwa/install.ts";
 import { InviteContextBanner } from "./AuthLayout.tsx";
 
 export function LoginPage() {
+  const t = useT(auth);
   const navigate = useNavigate();
   const { redirect, reason } = useSearch({ from: "/auth/login" });
   const [email, setEmail] = useState("");
@@ -70,30 +73,30 @@ export function LoginPage() {
       {invited ? <InviteContextBanner /> : null}
       {reason === "expired" ? (
         <p role="status" className="auth-banner">
-          Sitzung abgelaufen. Melde dich erneut an.
+          {t("login.sessionExpired")}
         </p>
       ) : null}
-      <h1>Anmelden</h1>
+      <h1>{t("login.title")}</h1>
       {invited ? (
         <>
-          <p className="auth-lead">Neu bei Gelabber?</p>
+          <p className="auth-lead">{t("login.newHere")}</p>
           <Link
             to="/register"
             search={{ redirect }}
             className={buttonClass({ size: "lg", className: "mt-3" })}
           >
-            Konto anlegen
+            {t("login.createAccount")}
           </Link>
         </>
       ) : (
         <p className="auth-lead">
-          Noch kein Konto?{" "}
+          {t("login.noAccount")}{" "}
           <Link
             to="/register"
             search={redirect ? { redirect } : {}}
             className="auth-link"
           >
-            Registrieren
+            {t("login.register")}
           </Link>
         </p>
       )}
@@ -101,7 +104,7 @@ export function LoginPage() {
       <form ref={form} onSubmit={onSubmit} noValidate className="auth-form">
         <Field
           id="email"
-          label="E-Mail-Adresse"
+          label={t("fieldLabel.email")}
           type="email"
           autoComplete="email"
           inputMode="email"
@@ -115,7 +118,7 @@ export function LoginPage() {
         />
         <PasswordField
           id="password"
-          label="Passwort"
+          label={t("fieldLabel.password")}
           autoComplete="current-password"
           value={password}
           onChange={(event) => {
@@ -128,10 +131,10 @@ export function LoginPage() {
         <SubmitButton
           size="lg"
           pending={mutation.isPending}
-          pendingLabel="Anmelden…"
+          pendingLabel={t("login.submitting")}
           cooldown={cooldown}
         >
-          Anmelden
+          {t("login.submit")}
         </SubmitButton>
         <p className="auth-recovery">
           {accountMail === true ? (
@@ -140,10 +143,10 @@ export function LoginPage() {
               search={typedEmail ? { email: typedEmail } : {}}
               className="auth-link"
             >
-              Passwort vergessen?
+              {t("page.forgotPassword")}
             </Link>
           ) : accountMail === false ? (
-            "Passwort vergessen? Frag die Person, die diesen Gelabber-Server betreibt."
+            t("login.forgotPasswordNoMail")
           ) : null}
         </p>
       </form>

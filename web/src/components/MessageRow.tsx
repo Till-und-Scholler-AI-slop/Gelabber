@@ -59,6 +59,9 @@ import {
 import { plainText } from "../messages/markdown.ts";
 import { AttemptActionsContext, JumpTo } from "./messagePaneContext.ts";
 import { formatClock, formatFull, formatWhen } from "./messageTime.ts";
+import { translate, useT } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
+import { common } from "../i18n/catalogs/common.ts";
 
 export function MessageRow({
   message,
@@ -85,6 +88,8 @@ export function MessageRow({
   /** `skipConfirm` with Shift held. */
   onDelete: (skipConfirm: boolean) => void;
 }) {
+  const t = useT(chat);
+  const tc = useT(common);
   const pending = isPendingId(message.id);
   // Kept from the mount: a later render, or the same row scrolled back
   // into view, does not play it again.
@@ -202,8 +207,8 @@ export function MessageRow({
 
   const copy = async () => {
     if (await copyText(fromWire(message.content, members)))
-      notify("Text kopiert.");
-    else notifyError(new Error("Der Text konnte nicht kopiert werden."));
+      notify(translate(chat, "row.copied"));
+    else notifyError(new Error(translate(chat, "row.copyFailed")));
   };
   const menuActions: MessageActions =
     pending || editing
@@ -292,20 +297,20 @@ export function MessageRow({
       <span ref={setReactionSlot} className="lr-message-reaction-slot" />
       {canReply ? (
         <IconButton
-          label="Antworten"
+          label={t("row.reply")}
           onClick={() => setReplyTarget(message.channel_id, message)}
         >
           <ReplyIcon size={14} />
         </IconButton>
       ) : null}
       {showEdit ? (
-        <IconButton label="Nachricht bearbeiten" onClick={startEdit}>
+        <IconButton label={t("row.editLabel")} onClick={startEdit}>
           <PencilIcon size={14} />
         </IconButton>
       ) : null}
       <IconButton
         buttonRef={moreButton}
-        label="Weitere Aktionen"
+        label={t("row.moreLabel")}
         menu={menu === "more"}
         onClick={() => setMenu(menu === "more" ? null : "more")}
       >
@@ -331,9 +336,9 @@ export function MessageRow({
   const edited = message.edited_at ? (
     <span
       className="lr-message-edited"
-      title={`Bearbeitet am ${formatFull(message.edited_at)}`}
+      title={t("row.editedAt", { when: formatFull(message.edited_at) })}
     >
-      (bearbeitet)
+      {t("row.edited")}
     </span>
   ) : null;
   const rowClass = [
@@ -488,19 +493,19 @@ export function MessageRow({
                 }
               }}
               rows={2}
-              aria-label="Nachricht bearbeiten"
+              aria-label={t("row.editLabel")}
               autoFocus={editFocus}
             />
             {error ? (
               <p className="lr-field-error">{fieldMessage("content", error)}</p>
             ) : null}
             <div className="lr-message-edit-actions">
-              <span>Esc bricht ab · Enter speichert</span>
+              <span>{t("row.editHint")}</span>
               <button type="button" onClick={cancelEdit}>
-                Abbrechen
+                {tc("cancel")}
               </button>
               <button type="submit" disabled={Boolean(error)}>
-                Speichern
+                {tc("save")}
               </button>
             </div>
           </form>
@@ -542,31 +547,31 @@ export function MessageRow({
 
 /** In place of the time while a message is on its way or did not arrive. */
 function SendStatus({ state }: { state: SendAttempt["status"] }) {
+  const t = useT(chat);
   if (state === "sending")
     return (
       <span className="lr-message-status is-sending">
         <span className="lr-message-spinner" aria-hidden="true" />
-        Wird gesendet…
+        {t("row.sending")}
       </span>
     );
   return (
     <span className="lr-message-status is-failed">
       <WarningIcon size={13} />
-      {state === "failed" ? "Nicht gesendet" : "Status unklar – Verlauf prüfen"}
+      {t(state === "failed" ? "row.notSent" : "row.unclear")}
     </span>
   );
 }
 
 /** Why a message was not sent, and what to do about it, on its row. */
 function SendFailure({ attempt }: { attempt: SendAttempt }) {
+  const t = useT(chat);
   const actions = useContext(AttemptActionsContext);
   return (
     <div className="lr-message-failure">
       <p>
         {attempt.error}
-        {attempt.status === "uncertain"
-          ? " Die Nachricht kann bereits gespeichert sein. Prüfe den Verlauf, bevor du sie erneut sendest."
-          : null}
+        {attempt.status === "uncertain" ? ` ${t("row.uncertainHint")}` : null}
       </p>
       <div className="lr-message-failure-actions">
         {attempt.status === "failed" && actions ? (
@@ -576,7 +581,7 @@ function SendFailure({ attempt }: { attempt: SendAttempt }) {
             disabled={attempt.files.length > 0 && !actions.canSendFiles}
             onClick={() => actions.retry(attempt)}
           >
-            Erneut senden
+            {t("row.resend")}
           </Button>
         ) : null}
         {attempt.gif || !actions ? null : (
@@ -585,7 +590,7 @@ function SendFailure({ attempt }: { attempt: SendAttempt }) {
             variant="ghost"
             onClick={() => actions.edit(attempt)}
           >
-            Bearbeiten
+            {t("row.edit")}
           </Button>
         )}
         <Button
@@ -593,7 +598,7 @@ function SendFailure({ attempt }: { attempt: SendAttempt }) {
           variant="ghost"
           onClick={() => discardAttempt(attempt.id)}
         >
-          Verwerfen
+          {t("row.discard")}
         </Button>
       </div>
     </div>
@@ -601,26 +606,31 @@ function SendFailure({ attempt }: { attempt: SendAttempt }) {
 }
 
 function ReplyHeader({ reply }: { reply: Reply }) {
+  const t = useT(chat);
   const jumpTo = useContext(JumpTo);
   const { members } = useMentions();
   if (reply.deleted || !reply.author)
     return (
       <p className="lr-reply-header is-deleted">
         <ReplyIcon size={13} />
-        <span>Die ursprüngliche Nachricht wurde gelöscht.</span>
+        <span>{t("row.replyDeleted")}</span>
       </p>
     );
   const system = asSystem(reply.system);
   const summary =
     (system && systemText(system, reply.author.name)) ||
     (reply.excerpt && readableMentions(plainText(reply.excerpt), members)) ||
-    (reply.has_gif ? "GIF" : reply.has_attachment ? "Anhang" : "");
+    (reply.has_gif
+      ? "GIF" // i18n-ok
+      : reply.has_attachment
+        ? t("row.replyAttachment")
+        : "");
   return (
     <button
       type="button"
       className="lr-reply-header"
       onClick={() => jumpTo(reply.id)}
-      aria-label={`Antwort auf ${reply.author.name}: ${summary}. Zur Nachricht springen`}
+      aria-label={t("row.replyLabel", { name: reply.author.name, summary })}
     >
       <ReplyIcon size={13} />
       <span className="lr-reply-author">{reply.author.name}</span>

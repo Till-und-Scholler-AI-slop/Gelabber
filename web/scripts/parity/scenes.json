@@ -1433,6 +1433,9 @@
         },
         {
           "key": "Tab"
+        },
+        {
+          "key": "Tab"
         }
       ]
     },
@@ -1914,6 +1917,248 @@
         },
         {
           "wait": 1500
+        }
+      ]
+    },
+    {
+      "name": "settings-darstellung-en",
+      "path": "/settings/darstellung",
+      "user": "lena",
+      "locale": "en",
+      "desktop": true
+    },
+    {
+      "name": "login-en",
+      "path": "/login",
+      "user": null,
+      "locale": "en"
+    },
+    {
+      "name": "register-en",
+      "path": "/register",
+      "user": null,
+      "locale": "en"
+    },
+    {
+      "name": "channel-allgemein-en",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "locale": "en"
+    },
+    {
+      "name": "server-settings-en",
+      "path": "/s/{home}/settings",
+      "user": "lena",
+      "locale": "en"
+    },
+    {
+      "name": "voice-joined-en",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "locale": "en",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Join"
+        },
+        {
+          "wait": 3000
+        }
+      ]
+    },
+    {
+      "name": "dm-en",
+      "path": "/d/{dm}",
+      "user": "lena",
+      "locale": "en"
+    },
+    {
+      "name": "forgot-password-en",
+      "path": "/forgot-password",
+      "user": null,
+      "locale": "en"
+    },
+    {
+      "name": "reset-password-en",
+      "path": "/reset-password",
+      "user": null,
+      "locale": "en"
+    },
+    {
+      "name": "verify-email-en",
+      "path": "/verify-email",
+      "user": null,
+      "locale": "en"
+    },
+    {
+      "name": "invite-page-en",
+      "path": "/invite/{invite}",
+      "user": null,
+      "locale": "en"
+    },
+    {
+      "name": "invite-invalid-en",
+      "path": "/invite/xyz",
+      "user": null,
+      "locale": "en"
+    },
+    {
+      "name": "not-found-en",
+      "path": "/gibt-es-nicht",
+      "user": "lena",
+      "locale": "en"
+    },
+    {
+      "name": "login-expired-en",
+      "path": "/login?reason=expired",
+      "user": null,
+      "locale": "en"
+    },
+    {
+      "name": "settings-themes-en",
+      "path": "/settings/themes",
+      "user": "lena",
+      "locale": "en",
+      "desktop": true
+    },
+    {
+      "name": "settings-benachrichtigungen-en",
+      "path": "/settings/benachrichtigungen",
+      "user": "lena",
+      "locale": "en",
+      "desktop": true
+    },
+    {
+      "name": "channel-search-en",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "locale": "en",
+      "actions": [
+        {
+          "placeholder": "Search"
+        },
+        {
+          "type": "Snacks"
+        },
+        {
+          "wait": 600
+        }
+      ]
+    },
+    {
+      "name": "emoji-picker-en",
+      "path": "/s/{home}/c/{allgemein}",
+      "user": "lena",
+      "locale": "en",
+      "actions": [
+        {
+          "click": "Insert emoji"
+        },
+        {
+          "wait": 1000
+        }
+      ]
+    },
+    {
+      "name": "home-en",
+      "path": "/",
+      "user": "lena",
+      "locale": "en"
+    },
+    {
+      "name": "server-overview-en",
+      "path": "/s/{home}",
+      "user": "lena",
+      "locale": "en"
+    },
+    {
+      "name": "add-server-en",
+      "path": "/s/{home}",
+      "user": "lena",
+      "locale": "en",
+      "actions": [
+        {
+          "click": "Add server"
+        }
+      ]
+    },
+    {
+      "name": "invite-dialog-en",
+      "path": "/s/{home}",
+      "user": "lena",
+      "locale": "en",
+      "actions": [
+        {
+          "click": "Invite"
+        },
+        {
+          "wait": 500
+        }
+      ],
+      "after": "revoke-unused lena home"
+    },
+    {
+      "name": "member-profile-en",
+      "path": "/s/{home}",
+      "user": "lena",
+      "locale": "en",
+      "actions": [
+        {
+          "click": "Tom’s profile"
+        }
+      ]
+    },
+    {
+      "name": "voice-focus-en",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "locale": "en",
+      "call": "Sofa jonas:camera:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Join"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "clicktext": "Focus"
+        }
+      ]
+    },
+    {
+      "name": "voice-settings-dialog-en",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "locale": "en",
+      "desktop": true,
+      "call": "Sofa jonas,mira:muted",
+      "actions": [
+        {
+          "click": "Call settings"
+        },
+        {
+          "clicktext": "All settings…"
+        }
+      ]
+    },
+    {
+      "name": "voice-diagnostics-idle-en",
+      "path": "/s/{home}/c/{Kino}",
+      "user": "lena",
+      "locale": "en",
+      "desktop": true,
+      "actions": [
+        {
+          "click": "Call settings"
+        },
+        {
+          "clicktext": "All settings…"
+        },
+        {
+          "clicktext": "Diagnostics"
         }
       ]
     }

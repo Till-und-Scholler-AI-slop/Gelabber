@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { setLocale } from "../i18n/locale.ts";
 
 import { inviteExpiry, inviteUses } from "./inviteText.ts";
 
@@ -20,5 +22,18 @@ describe("invite text", () => {
       "läuft in 10 Minuten ab",
     );
     expect(inviteExpiry(after(-HOUR), now)).toBe("abgelaufen");
+  });
+});
+
+describe("invite text in English", () => {
+  afterEach(() => setLocale("de", { persist: false }));
+
+  it("counts uses and says when the link runs out", () => {
+    setLocale("en", { persist: false });
+    expect(inviteUses({ uses: 1, max_uses: 5 })).toBe("1/5 used");
+    expect(inviteExpiry(null, now)).toBe("never expires");
+    expect(inviteExpiry(after(6 * 24 * HOUR), now)).toBe("expires in 6 days");
+    expect(inviteExpiry(after(5 * HOUR), now)).toBe("expires in 5 hours");
+    expect(inviteExpiry(after(-HOUR), now)).toBe("expired");
   });
 });

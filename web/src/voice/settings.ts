@@ -4,6 +4,8 @@
 // Capture devices are the browser's own list.
 
 import { create } from "zustand";
+import type { voiceSettings } from "../i18n/catalogs/voiceSettings.ts";
+import { formatNumber } from "../i18n/format.ts";
 import {
   createJSONStorage,
   persist,
@@ -12,46 +14,47 @@ import {
 import {
   asVoiceInputMode,
   clampReleaseDelay,
+  keptKeyLabel,
   PTT_RELEASE_DELAY_DEFAULT,
   pushToTalkKeyLabel,
   type VoiceInputMode,
 } from "./pushToTalk.ts";
 
+type VoiceSettingsKey = keyof typeof voiceSettings.de;
+
 /** Explicit economy presets retained for migration; never applied by default. */
 export const AUDIO_QUALITY = {
   phone: {
     bitrate: 24_000,
-    label: "Telefon",
-    hint: "24 kbit/s",
   },
   normal: {
     bitrate: 64_000,
-    label: "Normal",
-    hint: "64 kbit/s",
   },
   high: {
     bitrate: 128_000,
-    label: "Hoch",
-    hint: "128 kbit/s",
   },
 } as const;
 
 export type AudioQuality = keyof typeof AUDIO_QUALITY;
 export type AudioProcessingMode = "enhanced" | "browser" | "original";
+/** Each mode's name and hint, as `voiceSettings` catalog keys. */
 export const AUDIO_PROCESSING = {
   enhanced: {
-    label: "Verbesserte Sprache",
-    hint: "Lokale Rauschunterdrückung und Auto-Gain; Browserfilter als Ersatz",
+    label: "mode.enhanced",
+    hint: "mode.enhancedHint",
   },
   browser: {
-    label: "Browserfilter",
-    hint: "Rauschunterdrückung und Auto-Gain deines Browsers",
+    label: "mode.browser",
+    hint: "mode.browserHint",
   },
   original: {
-    label: "Original / Musik",
-    hint: "Stereo sofern unterstützt, ohne Rauschfilter, Auto-Gain oder Sprechpausen-Erkennung",
+    label: "mode.original",
+    hint: "mode.originalHint",
   },
-} as const;
+} as const satisfies Record<
+  AudioProcessingMode,
+  { label: VoiceSettingsKey; hint: VoiceSettingsKey }
+>;
 export function asProcessingMode(value: unknown): AudioProcessingMode {
   return value === "browser" || value === "original" ? value : "enhanced";
 }
@@ -78,7 +81,6 @@ export type VideoResolution = (typeof VIDEO_RESOLUTIONS)[number];
 export type VideoFrameRate = (typeof VIDEO_FRAME_RATES)[number];
 type ExplicitProfileId = `${VideoResolution}p${VideoFrameRate}`;
 type StreamProfile = {
-  label: string;
   width: number;
   height: number;
   fps: number;
@@ -101,7 +103,6 @@ const explicitProfiles = Object.fromEntries(
     VIDEO_FRAME_RATES.map((fps) => [
       explicitStreamProfile(height, fps),
       {
-        label: `${height === 2160 ? "4K" : `${height}p`} · ${fps} FPS`,
         width: resolutionSpecs[height].width,
         height,
         fps,
@@ -111,19 +112,16 @@ const explicitProfiles = Object.fromEntries(
 ) as Record<ExplicitProfileId, StreamProfile>;
 export const STREAM_PROFILES = {
   economy: {
-    label: "Sparsam",
     width: 854,
     height: 480,
     fps: 15,
   },
   balanced: {
-    label: "Automatisch",
     width: 1280,
     height: 720,
     fps: 30,
   },
   detail: {
-    label: "Detail",
     width: 1920,
     height: 1080,
     fps: 30,
@@ -626,8 +624,7 @@ export const useMediaSettings = create<MediaSettingsState>()(
           sourceAudioMuted: stored.sourceAudioMuted === true,
           voiceInput: asVoiceInputMode(stored.voiceInput),
           pttKey: typeof stored.pttKey === "string" ? stored.pttKey : "",
-          pttKeyLabel:
-            typeof stored.pttKeyLabel === "string" ? stored.pttKeyLabel : "",
+          pttKeyLabel: keptKeyLabel(stored.pttKeyLabel),
           pttReleaseDelay: clampReleaseDelay(
             stored.pttReleaseDelay ?? PTT_RELEASE_DELAY_DEFAULT,
           ),
@@ -781,9 +778,10 @@ export function streamEstimate(
 
 export function formatVideoBitrate(bitsPerSecond: number): string {
   const rounded = Math.round((bitsPerSecond / 1_000_000) * 10) / 10;
-  const text = Number.isInteger(rounded)
-    ? String(rounded)
-    : rounded.toFixed(1).replace(".", ",");
+  const text = formatNumber(rounded, {
+    maximumFractionDigits: 1,
+    useGrouping: false,
+  });
   return `${text} Mbit/s`;
 }
 

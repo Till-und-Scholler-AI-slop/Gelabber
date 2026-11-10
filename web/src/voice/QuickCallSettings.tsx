@@ -19,6 +19,8 @@ import { IconButton } from "../components/ui/IconButton.tsx";
 import { Popover } from "../components/ui/Popover.tsx";
 import { Select } from "../components/ui/Select.tsx";
 import { useTooltip } from "../components/ui/Tooltip.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { voiceSettings } from "../i18n/catalogs/voiceSettings.ts";
 import { canChooseSpeaker, useCapabilities } from "./capabilities.ts";
 import {
   deviceChoices,
@@ -45,16 +47,17 @@ export function QuickCallSettingsButton({
   className?: string;
   variant?: "ghost" | "secondary";
 }) {
+  const t = useT(voiceSettings);
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
-  const tip = useTooltip({ label: "Anrufeinstellungen", disabled: open });
+  const tip = useTooltip({ label: t("quick.callSettings"), disabled: open });
   return (
     <>
       <IconButton
         {...tip.trigger}
         ref={anchor}
         variant={variant}
-        label="Anrufeinstellungen"
+        label={t("quick.callSettings")}
         title={false}
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -67,7 +70,7 @@ export function QuickCallSettingsButton({
         open={open}
         onClose={() => setOpen(false)}
         anchor={anchor}
-        label="Anrufeinstellungen"
+        label={t("quick.callSettings")}
         placement="top-end"
         className="voice-quick-settings"
       >
@@ -80,16 +83,17 @@ export function QuickCallSettingsButton({
 /** The speaker in the call bar while someone's Live plays here: both
  * volumes and the stream's mute, without the rest of the settings. */
 export function CallSoundButton({ className }: { className?: string }) {
+  const t = useT(voiceSettings);
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
   const muted = useMediaSettings((s) => s.sourceAudioMuted);
-  const tip = useTooltip({ label: "Lautstärke", disabled: open });
+  const tip = useTooltip({ label: t("quick.volume"), disabled: open });
   return (
     <>
       <IconButton
         {...tip.trigger}
         ref={anchor}
-        label="Lautstärke"
+        label={t("quick.volume")}
         title={false}
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -102,7 +106,7 @@ export function CallSoundButton({ className }: { className?: string }) {
         open={open}
         onClose={() => setOpen(false)}
         anchor={anchor}
-        label="Lautstärke"
+        label={t("quick.volume")}
         placement="top-end"
         className="voice-quick-settings voice-quick-sound"
       >
@@ -113,6 +117,7 @@ export function CallSoundButton({ className }: { className?: string }) {
 }
 
 export function CallSound() {
+  const t = useT(voiceSettings);
   const ids = useId();
   const settings = useMediaSettings();
   const deafened = useVoice((s) => s.deafened);
@@ -121,14 +126,14 @@ export function CallSound() {
     <div className="voice-quick">
       <Volume
         id={`${ids}-voices`}
-        label="Gespräche"
+        label={t("output.calls")}
         value={settings.outputVolume}
         disabled={deafened}
         onChange={(outputVolume) => settings.patch({ outputVolume })}
       />
       <Volume
         id={`${ids}-stream`}
-        label="Live-Ton"
+        label={t("output.liveSound")}
         value={settings.sourceAudioVolume}
         disabled={deafened || muted}
         onChange={(sourceAudioVolume) => settings.patch({ sourceAudioVolume })}
@@ -136,11 +141,9 @@ export function CallSound() {
           <button
             type="button"
             aria-pressed={muted}
-            aria-label="Live-Ton stummschalten"
+            aria-label={t("output.muteLiveSound")}
             title={
-              muted
-                ? "Live-Ton wieder einschalten"
-                : "Live-Ton stummschalten"
+              muted ? t("quick.unmuteLiveSound") : t("output.muteLiveSound")
             }
             className={`voice-control voice-control-compact${muted ? " is-off" : ""}`}
             onClick={() => settings.patch({ sourceAudioMuted: !muted })}
@@ -149,12 +152,15 @@ export function CallSound() {
           </button>
         }
       />
-      {deafened ? <p className="voice-quick-note">Taubgeschaltet.</p> : null}
+      {deafened ? (
+        <p className="voice-quick-note">{t("quick.deafened")}</p>
+      ) : null}
     </div>
   );
 }
 
 export function QuickCallSettings({ onMore }: { onMore: () => void }) {
+  const t = useT(voiceSettings);
   const ids = useId();
   const settings = useMediaSettings();
   const openDialog = useMediaSettings((s) => s.openDialog);
@@ -169,7 +175,7 @@ export function QuickCallSettings({ onMore }: { onMore: () => void }) {
   return (
     <div className="voice-quick">
       <div className="voice-quick-field">
-        <label htmlFor={`${ids}-mic`}>Mikrofon</label>
+        <label htmlFor={`${ids}-mic`}>{t("input.microphone")}</label>
         <Select
           id={`${ids}-mic`}
           value={microphone.value}
@@ -187,23 +193,21 @@ export function QuickCallSettings({ onMore }: { onMore: () => void }) {
         {loaded && needsDeviceLabels(devices.audioinput) ? (
           <div className="voice-quick-reveal">
             <span>
-              {denied
-                ? "Kein Zugriff aufs Mikrofon."
-                : "Namen zeigt der Browser erst nach deiner Erlaubnis."}
+              {denied ? t("quick.micDenied") : t("quick.namesAfterPermission")}
             </span>
             <Button
               size="sm"
               variant="ghost"
               onClick={() => void reveal("audio").then((ok) => setDenied(!ok))}
             >
-              Gerätenamen anzeigen
+              {t("devices.revealMic")}
             </Button>
           </div>
         ) : null}
       </div>
       {canChooseSpeaker() ? (
         <div className="voice-quick-field">
-          <label htmlFor={`${ids}-speaker`}>Lautsprecher</label>
+          <label htmlFor={`${ids}-speaker`}>{t("output.speaker")}</label>
           <Select
             id={`${ids}-speaker`}
             value={speaker.value}
@@ -221,7 +225,7 @@ export function QuickCallSettings({ onMore }: { onMore: () => void }) {
       ) : null}
       {capable.camera ? (
         <div className="voice-quick-field">
-          <label htmlFor={`${ids}-camera`}>Kamera</label>
+          <label htmlFor={`${ids}-camera`}>{t("camera.title")}</label>
           <Select
             id={`${ids}-camera`}
             value={camera.value}
@@ -242,38 +246,36 @@ export function QuickCallSettings({ onMore }: { onMore: () => void }) {
               className="voice-quick-camera-names"
               onClick={() => void reveal("video")}
             >
-              Kameranamen anzeigen
+              {t("devices.revealCamera")}
             </Button>
           ) : null}
         </div>
       ) : null}
       <Volume
         id={`${ids}-voices`}
-        label="Gespräche"
+        label={t("output.calls")}
         value={settings.outputVolume}
         onChange={(outputVolume) => settings.patch({ outputVolume })}
       />
       <Volume
         id={`${ids}-stream`}
-        label="Live-Ton"
+        label={t("output.liveSound")}
         value={settings.sourceAudioVolume}
         disabled={settings.sourceAudioMuted}
         onChange={(sourceAudioVolume) => settings.patch({ sourceAudioVolume })}
       />
       <ChipGroup<VoiceInputMode>
-        label="Sprachübertragung"
+        label={t("ptt.modeLabel")}
         className="voice-quick-mode"
         options={[
-          { value: "activity", label: "Sprachaktivierung" },
-          { value: "ptt", label: "Push-to-Talk" },
+          { value: "activity", label: t("ptt.activity") },
+          { value: "ptt", label: t("ptt.ptt") },
         ]}
         value={settings.voiceInput}
         onChange={(voiceInput) => settings.patch({ voiceInput })}
       />
       {settings.voiceInput === "ptt" && !settings.pttKey ? (
-        <p className="voice-quick-note">
-          Keine Taste festgelegt. Das Mikrofon bleibt stumm.
-        </p>
+        <p className="voice-quick-note">{t("quick.noKey")}</p>
       ) : null}
       <Button
         size="sm"
@@ -284,7 +286,7 @@ export function QuickCallSettings({ onMore }: { onMore: () => void }) {
           openDialog();
         }}
       >
-        Alle Einstellungen …
+        {t("quick.allSettings")}
       </Button>
     </div>
   );
@@ -306,11 +308,12 @@ function Volume({
   /** A button after the percentage, such as the volume's mute. */
   action?: ReactNode;
 }) {
-  const percent = Math.round(value * 100);
+  const t = useT(voiceSettings);
+  const percent = t("percent", { percent: Math.round(value * 100) });
   return (
     <div className={`voice-quick-volume${action ? " has-action" : ""}`}>
       <label htmlFor={id}>{label}</label>
-      <output htmlFor={id}>{percent} %</output>
+      <output htmlFor={id}>{percent}</output>
       {action}
       <input
         id={id}
@@ -318,7 +321,7 @@ function Volume({
         min={0}
         max={PLAYBACK_SLIDER_MAX}
         value={playbackSliderPosition(value)}
-        aria-valuetext={`${percent} %`}
+        aria-valuetext={percent}
         disabled={disabled}
         style={
           {
@@ -345,6 +348,7 @@ function sendTrack(): MediaStreamTrack | null {
  * call holds: no second capture, which a phone would take the first one
  * away for. */
 function SendLevel() {
+  const t = useT(voiceSettings);
   const [level, setLevel] = useState(0);
   const [track, setTrack] = useState(sendTrack);
   // Another microphone chosen here replaces the call's track a moment
@@ -380,7 +384,7 @@ function SendLevel() {
       max={100}
       low={8}
       value={track ? level : 0}
-      aria-label="Pegel, den die anderen hören"
+      aria-label={t("quick.sendLevel")}
     />
   );
 }

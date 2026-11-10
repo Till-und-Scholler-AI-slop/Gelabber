@@ -1,7 +1,9 @@
 // The language itself: the "Sprache" settings section, and the texts the
 // static pages show before the app runs (index.html's splash,
-// public/offline.html). Those pages carry the same texts as data-de and
-// data-en; src/bootSplash.test.mjs holds them equal to this catalog.
+// public/offline.html). Those pages carry each text twice, in blocks tagged
+// lang="de" and lang="en", and CSS shows the one <html lang> names, so the
+// German one shows without script; src/bootSplash.test.mjs holds them
+// equal to this catalog.
 import { defineCatalog } from "../catalog.ts";
 
 export const language = defineCatalog(

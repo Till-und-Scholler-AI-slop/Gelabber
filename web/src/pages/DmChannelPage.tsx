@@ -19,8 +19,11 @@ import type { DirectMessage } from "../dms/types.ts";
 import type { Member } from "../servers/types.ts";
 import { presenceOf, usePresenceStore } from "../ws/live.ts";
 import { useTypingInput } from "../ws/useLive.ts";
+import { useT } from "../i18n/catalog.ts";
+import { dms as dmsCatalog } from "../i18n/catalogs/dms.ts";
 
 export function DmChannelPage() {
+  const t = useT(dmsCatalog);
   const { channelId } = useParams({ from: "/workspace/d/$channelId" });
   const client = useQueryClient();
   const navigate = useNavigate();
@@ -56,7 +59,7 @@ export function DmChannelPage() {
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-center text-lr-muted">
         <LoadError
-          message="Diese Unterhaltung konnte nicht geladen werden."
+          message={t("conversation.loadFailed")}
           pending={isFetching}
           onRetry={() => void refetch()}
         />
@@ -69,6 +72,7 @@ export function DmChannelPage() {
 }
 
 function DmChat({ dm }: { dm: DirectMessage }) {
+  const t = useT(dmsCatalog);
   const typing = useTypingInput(dm.id, dm.id, true);
   const members = [peerMember(dm)];
   const status = usePresenceStore((s) =>
@@ -99,7 +103,7 @@ function DmChat({ dm }: { dm: DirectMessage }) {
                   type="button"
                   className="dm-peer-button"
                   aria-haspopup="dialog"
-                  title={`Profil von ${dm.peer.name}`}
+                  title={t("conversation.profileOf", { name: dm.peer.name })}
                   onClick={() => setProfileOpen(true)}
                 >
                   <PresenceAvatar

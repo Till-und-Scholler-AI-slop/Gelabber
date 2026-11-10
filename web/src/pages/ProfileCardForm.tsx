@@ -47,6 +47,9 @@ import { Button } from "../components/ui/Button.tsx";
 import { IconButton } from "../components/ui/IconButton.tsx";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
 import { Textarea } from "../components/ui/Textarea.tsx";
+import { translate, useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
+import { settings } from "../i18n/catalogs/settings.ts";
 
 /** What a color picker shows while no color is set. */
 const PICKER_DEFAULT = "#7c6cf2";
@@ -59,6 +62,8 @@ type Upload = { file: File; release: () => void };
  * banner image saves at once; everything else waits for the save bar.
  */
 export function ProfileCardForm({ user }: { user: User }) {
+  const t = useT(settings);
+  const tc = useT(common);
   const [form, setForm] = useState<CardForm>(() => cardFormOf(user));
   const [saved, setSaved] = useState(false);
   const [bannerSaved, setBannerSaved] = useState(false);
@@ -73,9 +78,9 @@ export function ProfileCardForm({ user }: { user: User }) {
     shouldBlockFn: async () =>
       dirty &&
       !(await confirmAction({
-        title: "Ungespeicherte Änderungen verwerfen?",
-        message: "Deine Änderungen an der Profilkarte gehen verloren.",
-        confirmLabel: "Verwerfen",
+        title: translate(settings, "card.discardTitle"),
+        message: translate(settings, "card.discardMessage"),
+        confirmLabel: translate(settings, "card.discard"),
       })),
     enableBeforeUnload: dirty,
   });
@@ -185,7 +190,7 @@ export function ProfileCardForm({ user }: { user: User }) {
       <div
         className={`profile-card-preview${previewOpen ? " is-open" : ""}`}
         role="group"
-        aria-label="Vorschau deiner Profilkarte"
+        aria-label={t("card.previewLabel")}
       >
         <ProfileCardView
           person={{
@@ -203,7 +208,7 @@ export function ProfileCardForm({ user }: { user: User }) {
           aria-expanded={previewOpen}
           onClick={() => setPreviewOpen((open) => !open)}
         >
-          Ganze Karte
+          {t("card.wholeCard")}
           <ChevronIcon size={14} />
         </button>
       </div>
@@ -212,19 +217,19 @@ export function ProfileCardForm({ user }: { user: User }) {
         onSubmit={onSubmit}
         noValidate
         className="settings-form"
-        aria-label="Profilkarte bearbeiten"
+        aria-label={t("card.formLabel")}
       >
         <div className="ui-form-field">
-          <span className="ui-label">Banner</span>
+          <span className="ui-label">{t("card.banner")}</span>
           <div className="settings-actions">
             <Button
               size="sm"
               onClick={() => picker.current?.click()}
               disabled={busy}
               pending={upload.isPending}
-              pendingLabel="Lädt hoch…"
+              pendingLabel={t("profile.uploading")}
             >
-              Bannerbild hochladen
+              {t("card.banner.upload")}
             </Button>
             {user.banner_url ? (
               <Button
@@ -233,15 +238,15 @@ export function ProfileCardForm({ user }: { user: User }) {
                 onClick={onRemoveBanner}
                 disabled={busy}
                 pending={removal.isPending}
-                pendingLabel="Entfernt…"
+                pendingLabel={t("profile.removing")}
               >
-                Bannerbild entfernen
+                {t("card.banner.remove")}
               </Button>
             ) : null}
             <InlineStatus
               status={
                 bannerSaved
-                  ? { tone: "success", message: "Banner gespeichert." }
+                  ? { tone: "success", message: t("card.banner.saved") }
                   : null
               }
             />
@@ -251,7 +256,7 @@ export function ProfileCardForm({ user }: { user: User }) {
             type="file"
             accept="image/png,image/jpeg,image/webp,image/gif"
             hidden
-            aria-label="Bannerbild auswählen"
+            aria-label={t("card.banner.pickLabel")}
             onChange={onPick}
           />
           {errors.fields.banner_url ? (
@@ -259,16 +264,15 @@ export function ProfileCardForm({ user }: { user: User }) {
               {errors.fields.banner_url}
             </p>
           ) : (
-            <p className="ui-hint">
-              Wird auf 3 : 1 zugeschnitten und sofort gespeichert.
-            </p>
+            <p className="ui-hint">{t("card.banner.hint")}</p>
           )}
         </div>
 
         <div className="settings-field-pair">
           <ColorField
             id="banner_color"
-            label="Bannerfarbe"
+            label={t("card.bannerColor")}
+            resetLabel={t("card.bannerColor.resetLabel")}
             value={form.banner_color}
             fallback={form.accent_color}
             // As ProfileCard draws a banner without its own color.
@@ -281,7 +285,8 @@ export function ProfileCardForm({ user }: { user: User }) {
           />
           <ColorField
             id="accent_color"
-            label="Akzentfarbe"
+            label={t("card.accentColor")}
+            resetLabel={t("card.accentColor.resetLabel")}
             value={form.accent_color}
             unsetSwatch="var(--lr-accent)"
             onChange={(value) => edit("accent_color", value)}
@@ -290,7 +295,7 @@ export function ProfileCardForm({ user }: { user: User }) {
         </div>
 
         <fieldset className="settings-fieldset">
-          <legend className="ui-label">Avatar-Rahmen</legend>
+          <legend className="ui-label">{t("card.decoration")}</legend>
           <div className="deco-picker">
             {(["", ...AVATAR_DECORATIONS] as const).map((decoration) => (
               <label key={decoration || "none"} className="deco-option">
@@ -318,7 +323,9 @@ export function ProfileCardForm({ user }: { user: User }) {
                   />
                 </AvatarFrame>
                 <span>
-                  {decoration ? DECORATION_LABEL[decoration] : "Keiner"}
+                  {decoration
+                    ? DECORATION_LABEL[decoration]
+                    : t("card.decoration.none")}
                 </span>
               </label>
             ))}
@@ -330,27 +337,27 @@ export function ProfileCardForm({ user }: { user: User }) {
 
         <Field
           id="pronouns"
-          label="Pronomen"
+          label={t("card.pronouns")}
           type="text"
           maxLength={PRONOUNS_MAX}
-          placeholder="z. B. sie/ihr"
+          placeholder={t("card.pronouns.placeholder")}
           value={form.pronouns}
           onChange={(event) => edit("pronouns", event.target.value)}
           error={errors.fields.pronouns}
         />
         <Field
           id="status_text"
-          label="Status"
+          label={t("card.status")}
           type="text"
           maxLength={STATUS_TEXT_MAX}
           value={form.status_text}
           onChange={(event) => edit("status_text", event.target.value)}
           error={errors.fields.status_text}
-          hint="Steht in der Mitgliederliste unter deinem Namen."
+          hint={t("card.status.hint")}
         />
         <div className="ui-form-field">
           <label htmlFor="bio" className="ui-label">
-            Über mich
+            {t("card.bio")}
           </label>
           <Textarea
             id="bio"
@@ -370,7 +377,11 @@ export function ProfileCardForm({ user }: { user: User }) {
             id={bioCountId}
             className={bioLength > BIO_MAX ? "ui-field-error" : "ui-hint"}
           >
-            {bioLength} / {BIO_MAX} Zeichen
+            {t("card.bio.count", {
+              // Strings: counts stay unformatted, as before.
+              length: String(bioLength),
+              max: String(BIO_MAX),
+            })}
           </p>
         </div>
 
@@ -382,7 +393,7 @@ export function ProfileCardForm({ user }: { user: User }) {
           {dirty || mutation.isPending ? (
             <>
               <span className="settings-save-bar__text">
-                Ungespeicherte Änderungen
+                {t("card.unsaved")}
               </span>
               <Button
                 variant="ghost"
@@ -392,22 +403,20 @@ export function ProfileCardForm({ user }: { user: User }) {
                   clear();
                 }}
               >
-                Verwerfen
+                {t("card.discard")}
               </Button>
               <SubmitButton
                 pending={mutation.isPending}
-                pendingLabel="Speichern…"
+                pendingLabel={t("profile.saving")}
                 disabled={busy && !mutation.isPending}
               >
-                Speichern
+                {tc("save")}
               </SubmitButton>
             </>
           ) : null}
           <InlineStatus
             status={
-              saved && !dirty
-                ? { tone: "success", message: "Gespeichert." }
-                : null
+              saved && !dirty ? { tone: "success", message: tc("saved") } : null
             }
           />
         </div>
@@ -419,6 +428,7 @@ export function ProfileCardForm({ user }: { user: User }) {
 function ColorField({
   id,
   label,
+  resetLabel,
   value,
   fallback,
   unsetSwatch,
@@ -427,6 +437,7 @@ function ColorField({
 }: {
   id: string;
   label: string;
+  resetLabel: string;
   value: string;
   /** Where the picker starts while this color is unset. */
   fallback?: string | undefined;
@@ -436,6 +447,7 @@ function ColorField({
   onChange: (value: string) => void;
   error?: string | undefined;
 }) {
+  const t = useT(settings);
   return (
     <div className="ui-form-field">
       <label htmlFor={id} className="ui-label">
@@ -457,12 +469,12 @@ function ColorField({
           }
         />
         <span id={`${id}-value`} className="settings-hint">
-          {value ? value.toLowerCase() : "Standard"}
+          {value ? value.toLowerCase() : t("card.color.unset")}
         </span>
         {value ? (
           <IconButton
             size="sm"
-            label={`${label} zurücksetzen`}
+            label={resetLabel}
             icon={<CloseIcon size={16} />}
             onClick={() => onChange("")}
           />

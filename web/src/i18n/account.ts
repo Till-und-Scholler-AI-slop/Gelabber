@@ -49,11 +49,21 @@ export function useAccountLocaleBridge(): void {
   }, [userId]);
 }
 
+// Only the newest change speaks for the account: an older answer that
+// arrives late must not undo a newer choice.
+let latestChange = 0;
+let latestSettled = 0;
+// What the server confirmed for an older change while a newer one was
+// still in flight, so a failing newer change knows what is really saved.
+let savedMeanwhile: { userId?: string; locale: Locale } | null = null;
+
 /**
  * Switches the interface at once and saves the choice with the account.
- * A failed save switches back; resolves whether it was saved.
+ * A failed save switches back to the language the server last confirmed;
+ * resolves whether it was saved.
  */
 export async function changeAccountLocale(next: Locale): Promise<boolean> {
+  const change = ++latestChange;
   const previous = currentLocale();
   const stamp = takeStamp();
   setLocale(next);
@@ -62,12 +72,32 @@ export async function changeAccountLocale(next: Locale): Promise<boolean> {
       method: "PUT",
       body: { locale: next },
     });
-    if (stampHolds(stamp) && isLocale(saved.locale))
-      recordOnUser(saved.locale, stamp.userId);
+    const confirmed =
+      stampHolds(stamp) && isLocale(saved.locale) ? saved.locale : null;
+    if (change === latestChange) {
+      latestSettled = change;
+      savedMeanwhile = null;
+      if (confirmed) recordOnUser(confirmed, stamp?.userId);
+    } else if (confirmed && latestSettled !== latestChange) {
+      savedMeanwhile = { userId: stamp?.userId, locale: confirmed };
+    }
     return true;
   } catch {
-    // Only while nothing newer chose a language meanwhile.
-    if (currentLocale() === next) setLocale(previous);
+    if (change !== latestChange) return false;
+    latestSettled = change;
+    const meanwhile =
+      savedMeanwhile &&
+      stampHolds(stamp) &&
+      savedMeanwhile.userId === stamp.userId
+        ? savedMeanwhile.locale
+        : null;
+    savedMeanwhile = null;
+    const user = useSession.getState().user;
+    const confirmed =
+      meanwhile ?? (isLocale(user?.locale) ? user.locale : previous);
+    // Only while nothing else chose a language meanwhile.
+    if (currentLocale() === next) setLocale(confirmed);
+    if (meanwhile && stampHolds(stamp)) recordOnUser(meanwhile, stamp.userId);
     return false;
   }
 }

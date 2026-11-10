@@ -19,6 +19,8 @@ import { IconButton } from "../components/ui/IconButton.tsx";
 import { SkeletonRows } from "../components/ui/Skeleton.tsx";
 import { useMediaQuery } from "../components/useMediaQuery.ts";
 import { UserPanel } from "../components/UserPanel.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { settings } from "../i18n/catalogs/settings.ts";
 import { useInstallation } from "../pwa/install.ts";
 import {
   DEFAULT_SETTINGS_AREA,
@@ -49,16 +51,17 @@ function SettingsNavigation({
   current?: SettingsArea | undefined;
   list?: boolean;
 }) {
+  const t = useT(settings);
   const areas = visibleSettingsAreas(useInstallable(), current);
   return (
     <nav
       className={list ? "settings-nav settings-nav--list" : "settings-nav"}
-      aria-label="Einstellungsbereiche"
+      aria-label={t("nav.label")}
     >
       {SETTINGS_GROUPS.map((group) => (
         <div key={group.id} className="settings-nav-group">
           <h2 className="settings-nav-heading" id={`settings-nav-${group.id}`}>
-            {group.label}
+            {t(`group.${group.id}`)}
           </h2>
           <ul aria-labelledby={`settings-nav-${group.id}`}>
             {areas
@@ -71,7 +74,7 @@ function SettingsNavigation({
                     state={list ? { settingsList: true } : undefined}
                     className="settings-nav-link"
                   >
-                    <span>{area.label}</span>
+                    <span>{t(`area.${area.id}.label`)}</span>
                     {list ? <ChevronIcon size={18} /> : null}
                   </Link>
                 </li>
@@ -87,9 +90,13 @@ function SettingsNavigation({
 export function SettingsSidebar() {
   const params = useParams({ strict: false });
   const current = isSettingsArea(params.area) ? params.area : undefined;
+  const t = useT(settings);
   return (
-    <aside className="channel-sidebar settings-sidebar" aria-label="Navigation">
-      <div className="sidebar-brand">Einstellungen</div>
+    <aside
+      className="channel-sidebar settings-sidebar"
+      aria-label={t("sidebar.label")}
+    >
+      <div className="sidebar-brand">{t("title")}</div>
       <div className="settings-sidebar-scroll">
         <SettingsNavigation current={current} />
       </div>
@@ -102,6 +109,7 @@ export function SettingsSidebar() {
  * default area, whose sidebar already is this list. */
 export function SettingsListPage() {
   const listFirst = useMediaQuery(SETTINGS_LIST_QUERY);
+  const t = useT(settings);
   if (!listFirst)
     return (
       <Navigate
@@ -113,7 +121,7 @@ export function SettingsListPage() {
   return (
     <div className="settings-screen">
       <header className="lr-channel-header settings-header">
-        <h1>Einstellungen</h1>
+        <h1>{t("title")}</h1>
       </header>
       <div className="settings-scroll">
         <SettingsNavigation list />
@@ -127,10 +135,11 @@ function BackToList() {
   const canGoBack = useCanGoBack();
   const fromList = useLocation({ select: (l) => l.state.settingsList });
   const navigate = useNavigate();
+  const t = useT(settings);
   return (
     <IconButton
       className="settings-back"
-      label="Alle Einstellungen"
+      label={t("backLabel")}
       icon={<ChevronIcon size={20} />}
       onClick={() => {
         // Opened from the list: going back keeps the history as it was.
@@ -146,6 +155,7 @@ export function UserSettingsPage() {
   // The route only matches known areas.
   const current = isSettingsArea(area) ? area : DEFAULT_SETTINGS_AREA;
   const info = settingsArea(current);
+  const t = useT(settings);
   const listFirst = useMediaQuery(SETTINGS_LIST_QUERY);
   const heading = useRef<HTMLHeadingElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -162,7 +172,7 @@ export function UserSettingsPage() {
       <header className="lr-channel-header settings-header">
         {listFirst ? <BackToList /> : null}
         {/* Beside the sidebar, its title already names the page. */}
-        <h1 className={listFirst ? undefined : "sr-only"}>Einstellungen</h1>
+        <h1 className={listFirst ? undefined : "sr-only"}>{t("title")}</h1>
       </header>
       <div ref={scroller} className="settings-scroll">
         <section
@@ -172,11 +182,11 @@ export function UserSettingsPage() {
           <header className="settings-area-heading">
             <div className="settings-area-title">
               <h2 id="settings-area-heading" ref={heading} tabIndex={-1}>
-                {info.label}
+                {t(`area.${current}.label`)}
               </h2>
               {"scope" in info ? <ScopeTag scope={info.scope} /> : null}
             </div>
-            <p>{info.description}</p>
+            <p>{t(`area.${current}.description`)}</p>
           </header>
           <SettingsAreaPart.Component
             area={current}

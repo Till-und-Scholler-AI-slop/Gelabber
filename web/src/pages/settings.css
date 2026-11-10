@@ -378,7 +378,9 @@
 .settings-mode-options + .settings-hint {
   margin-top: 10px;
 }
-/* Deutsch / English: two cards in the columns of the mode cards above. */
+/* Deutsch / English: two cards in the columns of the mode cards above. The
+   RadioCard height and the gap between groups stay as shipped, looser than
+   the reference drawing (#515: everything else stays as shipped). */
 .settings-language-options {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

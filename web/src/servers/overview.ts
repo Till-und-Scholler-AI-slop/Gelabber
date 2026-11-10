@@ -1,3 +1,6 @@
+import { translate } from "../i18n/catalog.ts";
+import { servers } from "../i18n/catalogs/servers.ts";
+import { formatDate, formatTime } from "../i18n/format.ts";
 import { plainText } from "../messages/markdown.ts";
 import { readableMentions, type MentionMember } from "../messages/mentions.ts";
 import type { Badge } from "../messages/notifyLevel.ts";
@@ -65,11 +68,17 @@ export function overviewLine(
         : roster[member.user_id]?.channelId;
     if (channelId && rooms.has(channelId)) where.set(member.user_id, channelId);
   }
-  const count = server.members.length;
-  const members = `${count} ${count === 1 ? "Mitglied" : "Mitglieder"}`;
+  const members = translate(servers, "overview.members", {
+    count: server.members.length,
+  });
   if (where.size === 0) return members;
   const spread = new Set(where.values()).size > 1;
-  return `${members} · ${where.size} ${spread ? "in Sprachkanälen" : "im Sprachkanal"}`;
+  const voice = translate(
+    servers,
+    spread ? "overview.inVoiceRooms" : "overview.inVoice",
+    { count: where.size },
+  );
+  return `${members} · ${voice}`;
 }
 
 /** Text channels with something unread, as the sidebar marks them: the
@@ -114,10 +123,13 @@ export function messagePreview(
     (message.gif
       ? "GIF"
       : asAttachmentList(message.attachments).length > 0
-        ? "Anhang"
+        ? translate(servers, "overview.attachment")
         : "");
   return {
-    author: message.author.id === selfId ? "Du" : message.author.name,
+    author:
+      message.author.id === selfId
+        ? translate(servers, "overview.you")
+        : message.author.name,
     text,
   };
 }
@@ -132,16 +144,13 @@ export function shortWhen(iso: string, now = new Date()): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
   if (sameDay(date, now))
-    return new Intl.DateTimeFormat("de-DE", {
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(date);
+    return formatTime(date, { hour: "2-digit", minute: "2-digit" });
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  if (sameDay(date, yesterday)) return "Gestern";
-  return new Intl.DateTimeFormat("de-DE", {
+  if (sameDay(date, yesterday)) return translate(servers, "overview.yesterday");
+  return formatDate(date, {
     day: "2-digit",
     month: "2-digit",
     ...(date.getFullYear() === now.getFullYear() ? {} : { year: "2-digit" }),
-  }).format(date);
+  });
 }

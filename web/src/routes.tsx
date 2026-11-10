@@ -42,6 +42,8 @@ import { VerifyEmailPage } from "./pages/VerifyEmailPage.tsx";
 import { WorkspaceIndexPage } from "./pages/WorkspaceIndexPage.tsx";
 import { WorkspaceLayout } from "./pages/WorkspaceLayout.tsx";
 import { placeFromPath, useLastPlace } from "./servers/lastPlace.ts";
+import { translate } from "./i18n/catalog.ts";
+import { shell } from "./i18n/catalogs/shell.ts";
 
 // Server settings are a chunk of their own. Not `lazyRouteComponent`: it
 // reloads the page when a deploy removed the chunk, which ends a call.
@@ -50,7 +52,7 @@ const ServerSettings = lazyPart(
     import("./pages/ServerSettingsPage.tsx").then(
       (module) => module.ServerSettingsPage,
     ),
-  "Die Servereinstellungen konnten nicht geladen werden.",
+  () => translate(shell, "lazyPart.serverSettingsFailed"),
 );
 
 const rootRoute = createRootRoute({

@@ -37,7 +37,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' ||
        (github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.head_repository.full_name == github.repository))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       actions: read
@@ -75,7 +75,7 @@ jobs:
     name: GitHub release
     needs: decide
     if: needs.decide.outputs.tag != ''
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       # write: dispatches the desktop workflow for the new release.

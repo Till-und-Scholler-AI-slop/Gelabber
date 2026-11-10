@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { setLocale } from "../i18n/locale.ts";
 
 import {
   DEFAULT_INVITE_TERMS,
@@ -27,6 +29,23 @@ describe("invite terms", () => {
     );
     expect(termsSummary({ expiry: "24h", uses: "25" })).toBe(
       "gültig 24 Stunden · 25-mal nutzbar",
+    );
+  });
+});
+
+describe("invite terms in English", () => {
+  afterEach(() => setLocale("de", { persist: false }));
+
+  it("sums them up", () => {
+    setLocale("en", { persist: false });
+    expect(termsSummary(DEFAULT_INVITE_TERMS)).toBe(
+      "valid for 7 days · unlimited uses",
+    );
+    expect(termsSummary({ expiry: "never", uses: "1" })).toBe(
+      "never expires · 1 use",
+    );
+    expect(termsSummary({ expiry: "1h", uses: "25" })).toBe(
+      "valid for 1 hour · 25 uses",
     );
   });
 });

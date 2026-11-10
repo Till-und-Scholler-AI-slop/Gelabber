@@ -2,6 +2,8 @@
 
 import { useVoice } from "../voice/session.ts";
 import { Button } from "./ui/Button.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 export function LazyPartFailed({ failure }: { failure: string }) {
   const inCall = useVoice((s) => s.status === "joined");
@@ -15,17 +17,16 @@ export function LazyPartFailedView({
   failure: string;
   inCall: boolean;
 }) {
+  const t = useT(shell);
   return (
     <div role="alert" className="ui-load-error">
       <p>
         {failure}{" "}
-        {inCall
-          ? "Vermutlich gibt es eine neue Version. Lade die Seite nach dem Anruf neu."
-          : "Vermutlich gibt es eine neue Version."}
+        {t(inCall ? "lazyPart.newVersionInCall" : "lazyPart.newVersion")}
       </p>
       {inCall ? null : (
         <Button size="sm" onClick={() => window.location.reload()}>
-          Seite neu laden
+          {t("lazyPart.reload")}
         </Button>
       )}
     </div>

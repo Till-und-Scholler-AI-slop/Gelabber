@@ -3,6 +3,9 @@ import { useId, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { useSession } from "../auth/session.ts";
+import { useT } from "../i18n/catalog.ts";
+import { members as membersCatalog } from "../i18n/catalogs/members.ts";
+import { useCurrentLocale } from "../i18n/locale.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import {
   EMPTY_LIVE,
@@ -22,16 +25,15 @@ import { WorkspaceDrawer } from "./WorkspaceNavigation.tsx";
 
 /** Header button: show or hide the member list on wide screens. */
 export function MemberPanelToggle() {
+  const t = useT(membersCatalog);
   const hidden = useMemberPanelHidden();
   return (
     <button
       type="button"
       className={`lr-header-icon member-panel-toggle${hidden ? "" : " is-on"}`}
       aria-pressed={!hidden}
-      aria-label="Mitgliederliste"
-      title={
-        hidden ? "Mitgliederliste einblenden" : "Mitgliederliste ausblenden"
-      }
+      aria-label={t("toggle.label")}
+      title={hidden ? t("toggle.show") : t("toggle.hide")}
       onClick={() => toggleMemberPanel()}
     >
       <UsersIcon size={18} />
@@ -48,6 +50,7 @@ export function MemberPanel({
    * conversations. */
   forceVisible?: boolean;
 }) {
+  const t = useT(membersCatalog);
   const hidden = useMemberPanelHidden() && !forceVisible;
   const serverId = server.id;
   const members = server.members;
@@ -75,9 +78,12 @@ export function MemberPanel({
     () => new Map(server.channels.map((channel) => [channel.id, channel.name])),
     [server.channels],
   );
+  // The group headings and their order are in the current language.
+  const locale = useCurrentLocale();
   const groups = useMemo(
     () => groupMembers(members, (id) => presenceOf(byServer, serverId, id)),
-    [members, byServer, serverId],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see locale
+    [members, byServer, serverId, locale],
   );
 
   return (
@@ -85,26 +91,26 @@ export function MemberPanel({
       <button
         type="button"
         className="member-drawer-trigger"
-        aria-label={`Mitglieder (${members.length})`}
+        aria-label={t("panel.countLabel", { count: members.length })}
         aria-expanded={drawerOpen}
         aria-controls={drawerId}
         onClick={() => setDrawerOpen(true)}
       >
         <UsersIcon size={18} />
-        <span className="member-drawer-trigger-label">Mitglieder</span>
+        <span className="member-drawer-trigger-label">{t("panel.title")}</span>
         <span className="member-drawer-trigger-count">{members.length}</span>
       </button>
       <WorkspaceDrawer
         id={drawerId}
-        title="Mitglieder"
+        title={t("panel.title")}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         breakpoint={1130}
         className={`member-panel-drawer${hidden ? " is-collapsed" : ""}`}
       >
-        <aside className="member-panel" aria-label="Mitglieder">
+        <aside className="member-panel" aria-label={t("panel.title")}>
           <header className="member-panel-heading">
-            <h2>Mitglieder</h2>
+            <h2>{t("panel.title")}</h2>
             <p>{members.length}</p>
           </header>
           <ul className="member-panel-list">
@@ -146,8 +152,10 @@ export function MemberPanel({
                       >
                         <button
                           type="button"
-                          title={`Profil von ${member.name}`}
-                          aria-label={`Profil von ${member.name}`}
+                          title={t("row.profileLabel", { name: member.name })}
+                          aria-label={t("row.profileLabel", {
+                            name: member.name,
+                          })}
                           aria-haspopup="dialog"
                           onClick={() => {
                             setDrawerOpen(false);
@@ -167,7 +175,7 @@ export function MemberPanel({
                           <span className="member-description">
                             <strong>
                               {member.name}
-                              {self && <small> · Du</small>}
+                              {self && <small> · {t("row.you")}</small>}
                             </strong>
                             {/* The group's heading says who is online; a
                                 row repeats only what is its own. */}
@@ -181,14 +189,17 @@ export function MemberPanel({
                             ) : null}
                             {isLive ? (
                               <small>
-                                Live
                                 {flags
-                                  ? ` in ${names.get(flags.channelId) ?? "einem Sprachkanal"}`
-                                  : ""}
+                                  ? t("row.liveIn", {
+                                      channel:
+                                        names.get(flags.channelId) ??
+                                        t("row.aVoiceChannel"),
+                                    })
+                                  : t("row.live")}
                               </small>
                             ) : flags ? (
                               <small>
-                                {names.get(flags.channelId) ?? "Im Sprachkanal"}
+                                {names.get(flags.channelId) ?? t("row.inVoice")}
                               </small>
                             ) : null}
                           </span>
@@ -204,7 +215,7 @@ export function MemberPanel({
                             {isLive && (
                               <LiveIcon
                                 size={20}
-                                aria-label="Live"
+                                aria-label={t("row.live")}
                                 aria-hidden={false}
                               />
                             )}

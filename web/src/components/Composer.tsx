@@ -49,6 +49,8 @@ import { useMentions } from "./mentionContext.ts";
 import { useMentionSuggestions } from "./useMentionSuggestions.tsx";
 import { fromWire, toWire } from "../messages/mentions.ts";
 import { type ComposerHandle } from "./messagePaneContext.ts";
+import { T, useT } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
 
 export function Composer({
   handle,
@@ -79,6 +81,7 @@ export function Composer({
   onDraftChange?: (value: string) => void;
   onDraftStop?: () => void;
 }) {
+  const t = useT(chat);
   const send = useSendMessage(
     channelId,
     author ?? { id: "", name: "", avatar_url: null },
@@ -197,7 +200,9 @@ export function Composer({
       kept = [...kept, candidate];
     }
     for (const [reason, names] of over)
-      notes.push(`Nicht angehängt: ${names.join(", ")}. ${reason}`);
+      notes.push(
+        t("composer.notAttached", { names: names.join(", "), reason }),
+      );
     if (notes.length > 0) setFileError(notes.join(" "));
     setFiles(kept);
   };
@@ -324,11 +329,7 @@ export function Composer({
   };
 
   if (!canSend) {
-    return (
-      <p className="lr-composer-readonly">
-        Du kannst in diesem Kanal nicht schreiben.
-      </p>
-    );
+    return <p className="lr-composer-readonly">{t("composer.readOnly")}</p>;
   }
 
   return (
@@ -342,27 +343,30 @@ export function Composer({
         {unsent.length > 0 ? (
           <div role="alert" className="lr-send-summary">
             <WarningIcon size={14} />
-            <span>
-              {unsent.length === 1
-                ? "1 Nachricht nicht gesendet"
-                : `${unsent.length} Nachrichten nicht gesendet`}
-            </span>
+            <span>{t("composer.unsent", { count: unsent.length })}</span>
             <button type="button" onClick={() => onShowAttempt(unsent[0]!.id)}>
-              Anzeigen
+              {t("composer.showUnsent")}
             </button>
           </div>
         ) : null}
         <label className="sr-only" htmlFor={`compose-${channelId}`}>
-          Nachricht an {mention}
-          {channelName}
+          {t("composer.messageTo", { target: `${mention}${channelName}` })}
         </label>
         <div className="lr-composer-field">
           {replyTarget ? (
             <div className="lr-composer-reply">
               <ReplyIcon size={14} />
               <p>
-                Antwort an <strong>{replyTarget.author.name}</strong>
-                <span className="lr-composer-reply-hint"> · Esc bricht ab</span>
+                <T
+                  catalog={chat}
+                  k="composer.replyTo"
+                  params={{ name: replyTarget.author.name }}
+                  tags={{ b: (name) => <strong>{name}</strong> }}
+                />
+                <span className="lr-composer-reply-hint">
+                  {" "}
+                  {t("composer.replyHint")}
+                </span>
               </p>
               <button
                 type="button"
@@ -370,8 +374,8 @@ export function Composer({
                   setReplyTarget(channelId, null);
                   composerInput.current?.focus();
                 }}
-                aria-label="Antworten abbrechen"
-                title="Antworten abbrechen"
+                aria-label={t("composer.cancelReplyLabel")}
+                title={t("composer.cancelReplyLabel")}
               >
                 <CloseIcon size={14} />
               </button>
@@ -379,11 +383,14 @@ export function Composer({
           ) : null}
           {dropping ? (
             <p className="lr-composer-drop" aria-hidden="true">
-              Loslassen zum Anhängen
+              {t("composer.dropHint")}
             </p>
           ) : null}
           {files.length > 0 ? (
-            <ul className="lr-composer-attachments" aria-label="Anhänge">
+            <ul
+              className="lr-composer-attachments"
+              aria-label={t("composer.attachmentsLabel")}
+            >
               {files.map((attached, index) => {
                 const preview = previews.get(attached);
                 return (
@@ -399,8 +406,10 @@ export function Composer({
                     <button
                       type="button"
                       onClick={() => removeFile(index)}
-                      aria-label={`${attached.name} entfernen`}
-                      title="Anhang entfernen"
+                      aria-label={t("composer.removeFileLabel", {
+                        name: attached.name,
+                      })}
+                      title={t("composer.removeFile")}
                     >
                       <CloseIcon size={14} />
                     </button>
@@ -428,8 +437,8 @@ export function Composer({
                 />
                 <button
                   type="button"
-                  title="Datei anhängen"
-                  aria-label="Datei anhängen"
+                  title={t("composer.attachFile")}
+                  aria-label={t("composer.attachFile")}
                   onClick={() => fileInput.current?.click()}
                   className="lr-composer-icon"
                 >
@@ -460,12 +469,14 @@ export function Composer({
                 addFiles(pasted);
               }}
               rows={1}
-              placeholder={`Nachricht an ${mention}${channelName}`}
+              placeholder={t("composer.messageTo", {
+                target: `${mention}${channelName}`,
+              })}
             />
             <button
               type="button"
-              title="Emoji einfügen"
-              aria-label="Emoji einfügen"
+              title={t("composer.insertEmoji")}
+              aria-label={t("composer.insertEmoji")}
               onClick={() => setEmojiOpen(true)}
               className="lr-composer-icon"
             >
@@ -474,19 +485,19 @@ export function Composer({
             {gifsEnabled ? (
               <button
                 type="button"
-                title="GIF senden"
-                aria-label="GIF senden"
+                title={t("composer.sendGif")}
+                aria-label={t("composer.sendGif")}
                 onClick={() => setGifOpen(true)}
                 className="lr-composer-icon lr-composer-gif"
               >
-                <span aria-hidden="true">GIF</span>
+                <span aria-hidden="true">GIF{/* i18n-ok */}</span>
               </button>
             ) : null}
             <button
               type="submit"
               disabled={disabled}
-              aria-label="Senden"
-              title="Senden"
+              aria-label={t("composer.send")}
+              title={t("composer.send")}
               // A tap would move focus to the button and close the on-screen
               // keyboard after every message.
               onPointerDown={(event) => {
@@ -509,8 +520,8 @@ export function Composer({
               aria-live={remaining < 20 ? "polite" : "off"}
             >
               {remaining < 0
-                ? `${-remaining} Zeichen zu viel`
-                : `${remaining} Zeichen übrig`}
+                ? t("composer.charsOver", { count: -remaining })
+                : t("composer.charsLeft", { count: remaining })}
             </span>
           ) : null}
           {error ? (
@@ -530,7 +541,7 @@ export function Composer({
       <Modal
         open={emojiOpen}
         onClose={() => setEmojiOpen(false)}
-        title="Emoji einfügen"
+        title={t("composer.insertEmoji")}
         wide
       >
         {emojiOpen ? (
@@ -546,7 +557,7 @@ export function Composer({
         <Modal
           open={gifOpen}
           onClose={() => setGifOpen(false)}
-          title="GIF senden"
+          title={t("composer.sendGif")}
           wide
         >
           {gifOpen ? <GifPicker onSelect={sendGif} /> : null}

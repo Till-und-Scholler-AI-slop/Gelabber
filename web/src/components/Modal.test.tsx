@@ -6,7 +6,7 @@ import { Modal } from "./Modal.tsx";
 import {
   backdropClicks,
   closesOnBackdrop,
-  DISCARD_CHANGES,
+  discardChanges,
   focusLeftWith,
   requestClose,
   restoreFocus,
@@ -112,7 +112,7 @@ describe("closing a modal", () => {
     useConfirm.getState().answer(useConfirm.getState().pending!.id, true);
     expect(await discarding).toBe(true);
     expect(onClose).toHaveBeenCalledOnce();
-    expect(DISCARD_CHANGES.confirmLabel).toBe("Verwerfen");
+    expect(discardChanges().confirmLabel).toBe("Verwerfen");
   });
 
   it("returns focus to the opener while it is still on screen", () => {

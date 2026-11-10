@@ -5,6 +5,8 @@
 // about the cause.
 
 import { Button } from "../components/ui/Button.tsx";
+import { useT, type TFunction } from "../i18n/catalog.ts";
+import { diagnostics } from "../i18n/catalogs/diagnostics.ts";
 import { useAudioProcessing } from "./audioProcessing.ts";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { flowGroups, lossTone, type FlowGroup } from "./connectionSummary.ts";
@@ -26,6 +28,7 @@ import {
   formatMs,
   formatQualityLimit,
   formatRatio,
+  unknownValue,
   useVoiceDiagnostics,
   type ConnectionSnapshot,
   type FlowStats,
@@ -34,18 +37,29 @@ import {
 import "./connection.css";
 import "./quality.css";
 
-const onOff = (value: boolean | null | undefined) =>
-  value === null || value === undefined ? "–" : value ? "an" : "aus";
+type T = TFunction<typeof diagnostics.de>;
 
-const yesNo = (value: boolean | null | undefined) =>
-  value === null || value === undefined ? "–" : value ? "ja" : "nein";
+const onOff = (t: T, value: boolean | null | undefined) =>
+  value === null || value === undefined
+    ? "–"
+    : value
+      ? t("value.on")
+      : t("value.off");
+
+const yesNo = (t: T, value: boolean | null | undefined) =>
+  value === null || value === undefined
+    ? "–"
+    : value
+      ? t("value.yes")
+      : t("value.no");
 
 /** A figure the browser did not report reads as a dash, not "unbekannt". */
-const known = (text: string) => (text === "unbekannt" ? "–" : text);
+const known = (text: string) => (text === unknownValue() ? "–" : text);
 
 export function VoiceDiagnostics() {
+  const t = useT(diagnostics);
   return (
-    <section aria-label="Sprachdiagnose" className="voice-diagnostics">
+    <section aria-label={t("ui.label")} className="voice-diagnostics">
       <ConnectionStatus>
         <UploadTip />
       </ConnectionStatus>
@@ -57,9 +71,9 @@ export function VoiceDiagnostics() {
           size="sm"
           variant="ghost"
           onClick={downloadDiagnostics}
-          title="Speichert die Messwerte als JSON-Datei, etwa für einen Fehlerbericht."
+          title={t("ui.downloadTitle")}
         >
-          Diagnose herunterladen
+          {t("ui.download")}
         </Button>
       </footer>
     </section>
@@ -69,6 +83,7 @@ export function VoiceDiagnostics() {
 /** Loss on the way out of a weak call: the economy mode is the setting
  * that helps, and it sits on the video tab. */
 function UploadTip() {
+  const t = useT(diagnostics);
   const voice = useVoiceDiagnostics((state) => state.latest?.voice ?? null);
   const measuring = useVoiceDiagnostics((state) => state.polling.voice);
   const economy = useMediaSettings((s) => s.economyMode);
@@ -89,15 +104,16 @@ function UploadTip() {
     return null;
   return (
     <div className="connection-tip">
-      <p>Viel Verlust beim Senden? Der Sparmodus begrenzt deinen Upload.</p>
+      <p>{t("tip.text")}</p>
       <Button size="sm" onClick={() => openDialog("video")}>
-        Zum Sparmodus
+        {t("tip.action")}
       </Button>
     </div>
   );
 }
 
 function Flows() {
+  const t = useT(diagnostics);
   const latest = useVoiceDiagnostics((state) => state.latest);
   const polling = useVoiceDiagnostics((state) => state.polling);
   const mediaSettings = useMediaSettings();
@@ -109,38 +125,42 @@ function Flows() {
   ];
   const measuring = polling.voice || polling.watch;
   const limits = [
-    audioCap === null ? null : `Sprache ${formatBps(audioCap)}`,
-    videoCap === null ? null : `Video ${formatBps(videoCap)}`,
-  ].filter(Boolean);
+    audioCap === null
+      ? null
+      : t("flows.limitVoice", { bitrate: formatBps(audioCap) }),
+    videoCap === null
+      ? null
+      : t("flows.limitVideo", { bitrate: formatBps(videoCap) }),
+  ].filter((limit) => limit !== null);
   return (
     <section aria-labelledby="connection-flows-title">
       <div className="connection-block-head">
-        <h3 id="connection-flows-title">Übertragung</h3>
-        {groups.length > 0 && !measuring ? <span>letzte Messung</span> : null}
+        <h3 id="connection-flows-title">{t("flows.title")}</h3>
+        {groups.length > 0 && !measuring ? (
+          <span>{t("flows.lastMeasurement")}</span>
+        ) : null}
       </div>
       {groups.length === 0 ? (
         <p className="connection-empty">
-          {measuring
-            ? "Noch nichts gemessen. Die ersten Werte kommen nach zwei Sekunden."
-            : "Keine laufende Messung. Werte gibt es, sobald du in einem Anruf bist."}
+          {measuring ? t("flows.waiting") : t("flows.idle")}
         </p>
       ) : (
         <div className="connection-flows-box">
           <table className="connection-flows">
             <thead>
               <tr>
-                <th scope="col">Spur</th>
+                <th scope="col">{t("flows.track")}</th>
                 <th scope="col" className="is-codec">
-                  Codec
+                  {t("flows.codec")}
                 </th>
                 <th scope="col" className="is-number">
-                  Bitrate
+                  {t("flows.bitrate")}
                 </th>
                 <th scope="col" className="is-number">
-                  Verlust
+                  {t("flows.loss")}
                 </th>
                 <th scope="col" className="is-number">
-                  Jitter
+                  {t("flows.jitter")}
                 </th>
               </tr>
             </thead>
@@ -154,21 +174,25 @@ function Flows() {
       )}
       <p className="connection-note">
         {limits.length === 0
-          ? "Gelabber setzt keine Bitratengrenze."
-          : `Obergrenze${limits.length > 1 ? "n" : ""}: ${limits.join(", ")}.`}{" "}
-        Video höchstens {VIDEO_MAX_FPS} FPS.
+          ? t("flows.noLimit")
+          : t("flows.limits", {
+              count: limits.length,
+              limits: limits.join(", "),
+            })}{" "}
+        {t("flows.maxFps", { fps: VIDEO_MAX_FPS })}
       </p>
     </section>
   );
 }
 
 function FlowRow({ group }: { group: FlowGroup }) {
+  const t = useT(diagnostics);
   const send = group.direction === "send";
   const count =
     group.count < 2
       ? null
       : send && group.kind === "video"
-        ? `${group.count} Schichten`
+        ? t("flows.layers", { count: group.count })
         : `×${group.count}`;
   const picture =
     group.kind === "video"
@@ -185,7 +209,9 @@ function FlowRow({ group }: { group: FlowGroup }) {
         <span className="connection-dir" aria-hidden="true">
           {send ? "↑" : "↓"}
         </span>
-        <span className="sr-only">{send ? "Senden: " : "Empfangen: "}</span>
+        <span className="sr-only">
+          {send ? t("flows.sending") : t("flows.receiving")}{" "}
+        </span>
         {group.name}
         {count ? <small> {count}</small> : null}
         {picture.length > 0 || group.limitedBy ? (
@@ -193,7 +219,9 @@ function FlowRow({ group }: { group: FlowGroup }) {
             {picture.length > 0 ? <span>{picture.join(" · ")}</span> : null}
             {group.limitedBy ? (
               <span className="connection-chip">
-                gebremst durch {formatQualityLimit(group.limitedBy)}
+                {t("flows.limitedBy", {
+                  reason: formatQualityLimit(group.limitedBy),
+                })}
               </span>
             ) : null}
           </span>
@@ -213,51 +241,54 @@ function FlowRow({ group }: { group: FlowGroup }) {
 }
 
 function Microphone() {
+  const t = useT(diagnostics);
   const processing = useAudioProcessing();
   const format = [
     processing.sampleRate === null
       ? null
-      : `${(processing.sampleRate / 1000).toLocaleString("de-DE")} kHz`,
+      : t("mic.kiloHertz", { rate: processing.sampleRate / 1000 }),
     processing.channels === null
       ? null
       : processing.channels === 1
-        ? "Mono"
+        ? t("mic.mono")
         : processing.channels === 2
-          ? "Stereo"
-          : `${processing.channels} Kanäle`,
+          ? t("mic.stereo")
+          : t("mic.channels", { count: processing.channels }),
   ].filter(Boolean);
   return (
     <section aria-labelledby="connection-mic-title">
       <div className="connection-block-head">
-        <h3 id="connection-mic-title">Mikrofon</h3>
+        <h3 id="connection-mic-title">{t("mic.title")}</h3>
       </div>
       <dl className="connection-facts">
         <div className="is-wide">
-          <dt>Verarbeitung</dt>
+          <dt>{t("mic.processing")}</dt>
           <dd>{processing.message}</dd>
         </div>
         <div>
-          <dt>Format</dt>
+          <dt>{t("mic.format")}</dt>
           <dd>{format.length > 0 ? format.join(", ") : "–"}</dd>
         </div>
         <div>
-          <dt>Echo-Unterdrückung</dt>
-          <dd>{onOff(processing.echoCancellation)}</dd>
+          <dt>{t("mic.echo")}</dt>
+          <dd>{onOff(t, processing.echoCancellation)}</dd>
         </div>
         <div>
-          <dt>Rauschfilter (Browser)</dt>
-          <dd>{onOff(processing.noiseSuppression)}</dd>
+          <dt>{t("mic.noise")}</dt>
+          <dd>{onOff(t, processing.noiseSuppression)}</dd>
         </div>
         <div>
-          <dt>Auto-Gain (Browser)</dt>
-          <dd>{onOff(processing.autoGainControl)}</dd>
+          <dt>{t("mic.autoGain")}</dt>
+          <dd>{onOff(t, processing.autoGainControl)}</dd>
         </div>
         <div>
-          <dt>Mikrofonverstärkung</dt>
-          <dd>{Math.round(processing.inputGain * 100)} %</dd>
+          <dt>{t("mic.gain")}</dt>
+          <dd>
+            {t("percent", { percent: Math.round(processing.inputGain * 100) })}
+          </dd>
         </div>
         <div>
-          <dt>Filter-Puffer</dt>
+          <dt>{t("mic.buffer")}</dt>
           <dd>
             {processing.addedBufferMs === null
               ? "–"
@@ -270,6 +301,7 @@ function Microphone() {
 }
 
 function Debug() {
+  const t = useT(diagnostics);
   const latest = useVoiceDiagnostics((state) => state.latest);
   const samples = useVoiceDiagnostics((state) => state.samples);
   const phases = useVoiceDiagnostics((state) => state.phases);
@@ -283,39 +315,39 @@ function Debug() {
   return (
     <details className="media-disclosure">
       <summary>
-        Für die Fehlersuche
-        <small>Codecs, Prioritäten, Verlauf, Ereignisse</small>
+        {t("debug.title")}
+        <small>{t("debug.subtitle")}</small>
       </summary>
       <div className="connection-debug">
         {latest?.caps.video ? (
           <section>
-            <h4>Video auf diesem Gerät</h4>
+            <h4>{t("debug.video")}</h4>
             <VideoFacts video={latest.caps.video} />
           </section>
         ) : null}
         <section>
-          <h4>Verbindungen</h4>
+          <h4>{t("debug.connections")}</h4>
           <dl className="connection-facts">
             <Transport
-              title="Sprache"
+              title={t("source.voice")}
               snapshot={latest?.voice ?? null}
               live={polling.voice}
             />
             <Transport
-              title="Watch"
+              title={t("source.watch")}
               snapshot={latest?.watch ?? null}
               live={polling.watch}
             />
             <div className="is-wide">
-              <dt>Audio-Graph</dt>
-              <dd>{processing.contextState ?? "ohne Graph"}</dd>
+              <dt>{t("debug.audioGraph")}</dt>
+              <dd>{processing.contextState ?? t("debug.noGraph")}</dd>
             </div>
           </dl>
         </section>
         <section>
-          <h4>Spuren einzeln</h4>
+          <h4>{t("debug.tracks")}</h4>
           {flows.length === 0 ? (
-            <p>Keine RTP-Statistik.</p>
+            <p>{t("debug.noRtp")}</p>
           ) : (
             <ul className="connection-flow-lines">
               {flows.map(({ flow, watch }, index) => (
@@ -327,27 +359,24 @@ function Debug() {
               ))}
             </ul>
           )}
-          <p className="connection-debug-hint">
-            Obergrenze meint die eingestellte Grenze, nicht die gemessene
-            Bitrate. Prioritätswunsch: Audio hoch, Video normal. Browser und
-            Netzwerk können diese Hinweise ignorieren; das garantiert keine
-            Priorisierung auf dem SFU oder im Internet.
-          </p>
+          <p className="connection-debug-hint">{t("debug.hint")}</p>
         </section>
         <section>
-          <h4>Verlauf</h4>
+          <h4>{t("debug.history")}</h4>
           {phases.length === 0 ? (
-            <p>noch kein Verlauf</p>
+            <p>{t("debug.noHistory")}</p>
           ) : (
             <ul className="connection-log">
               {phases.map((phase) => (
                 <li key={`${phase.at}-${phase.phase}`}>
                   <span>{formatClock(phase.at)}</span>
                   <span>
-                    {PHASE_LABEL[phase.phase]} · Senden{" "}
-                    {formatBps(phase.audioSendBps)} · Empfang{" "}
-                    {formatBps(phase.audioRecvBps)} · Video{" "}
-                    {formatBps(phase.videoSendBps)}
+                    {t("debug.phaseLine", {
+                      phase: t(PHASE_LABEL[phase.phase]),
+                      send: formatBps(phase.audioSendBps),
+                      recv: formatBps(phase.audioRecvBps),
+                      video: formatBps(phase.videoSendBps),
+                    })}
                   </span>
                 </li>
               ))}
@@ -358,18 +387,18 @@ function Debug() {
               <table>
                 <thead>
                   <tr>
-                    <th scope="col">Zeit</th>
-                    <th scope="col">Phase</th>
-                    <th scope="col">Sprache senden</th>
-                    <th scope="col">Sprache empfangen</th>
-                    <th scope="col">Eigenes Video</th>
+                    <th scope="col">{t("debug.time")}</th>
+                    <th scope="col">{t("debug.phase")}</th>
+                    <th scope="col">{t("debug.voiceSent")}</th>
+                    <th scope="col">{t("debug.voiceReceived")}</th>
+                    <th scope="col">{t("debug.ownVideo")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {samples.map((sample, index) => (
                     <tr key={`${sample.at}-${index}`}>
                       <td>{formatClock(sample.at)}</td>
-                      <td>{PHASE_LABEL[sample.phase]}</td>
+                      <td>{t(PHASE_LABEL[sample.phase])}</td>
                       <td>{formatBps(sum(sample.voice, "audio", "send"))}</td>
                       <td>{formatBps(sum(sample.voice, "audio", "recv"))}</td>
                       <td>{formatBps(sum(sample.voice, "video", "send"))}</td>
@@ -381,18 +410,20 @@ function Debug() {
           ) : null}
         </section>
         <section>
-          <h4>Ereignisse</h4>
+          <h4>{t("debug.events")}</h4>
           {events.length === 0 ? (
-            <p>noch keine Ereignisse</p>
+            <p>{t("debug.noEvents")}</p>
           ) : (
             <ul className="connection-log">
               {events.slice(-8).map((event, index) => (
                 <li key={`${event.at}-${event.kind}-${event.detail}-${index}`}>
                   <span>{formatClock(event.at)}</span>
                   <span>
-                    {eventLabel(event.kind)} ·{" "}
-                    {event.connection === "voice" ? "Sprache" : "Watch"} ·{" "}
-                    {event.detail}
+                    {eventLabel(t, event.kind)} ·{" "}
+                    {event.connection === "voice"
+                      ? t("source.voice")
+                      : t("source.watch")}{" "}
+                    · {event.detail}
                   </span>
                 </li>
               ))}
@@ -405,11 +436,12 @@ function Debug() {
 }
 
 function VideoFacts({ video }: { video: VideoChoice }) {
+  const t = useT(diagnostics);
   const encoders = video.encoders;
   return (
     <dl className="connection-facts">
       <div className="is-wide">
-        <dt>Raum-Codecs</dt>
+        <dt>{t("debug.roomCodecs")}</dt>
         <dd>
           {video.roomCodecs
             ? video.roomCodecs
@@ -419,20 +451,20 @@ function VideoFacts({ video }: { video: VideoChoice }) {
         </dd>
       </div>
       <div>
-        <dt>AV1 in Hardware</dt>
-        <dd>{yesNo(encoders?.av1)}</dd>
+        <dt>{t("debug.av1Hardware")}</dt>
+        <dd>{yesNo(t, encoders?.av1)}</dd>
       </div>
       <div>
-        <dt>H.264 in Hardware</dt>
-        <dd>{yesNo(encoders?.h264)}</dd>
+        <dt>{t("debug.h264Hardware")}</dt>
+        <dd>{yesNo(t, encoders?.h264)}</dd>
       </div>
       <div>
-        <dt>VP9 in Schichten</dt>
-        <dd>{yesNo(encoders?.vp9Svc)}</dd>
+        <dt>{t("debug.vp9Layers")}</dt>
+        <dd>{yesNo(t, encoders?.vp9Svc)}</dd>
       </div>
       <div>
-        <dt>AV1 empfangen</dt>
-        <dd>{yesNo(video.decodesAv1)}</dd>
+        <dt>{t("debug.av1Receive")}</dt>
+        <dd>{yesNo(t, video.decodesAv1)}</dd>
       </div>
     </dl>
   );
@@ -447,6 +479,7 @@ function Transport({
   snapshot: ConnectionSnapshot | null;
   live: boolean;
 }) {
+  const t = useT(diagnostics);
   if (!snapshot) return null;
   const { path, rttMs, availableOutgoingBps, availableIncomingBps } =
     snapshot.transport;
@@ -454,67 +487,102 @@ function Transport({
     <div className="is-wide">
       <dt>{title}</dt>
       <dd>
-        {path === "direct" ? "direkt" : path === "turn" ? "TURN" : "–"} · RTT{" "}
-        {known(formatMs(rttMs))} · Bandbreite senden{" "}
-        {known(formatBps(availableOutgoingBps))}, empfangen{" "}
-        {known(formatBps(availableIncomingBps))}
-        {live ? "" : " · letzte Messung"}
+        {t("transport.line", {
+          path:
+            path === "direct"
+              ? t("transport.direct")
+              : path === "turn"
+                ? "TURN"
+                : "–",
+          rtt: known(formatMs(rttMs)),
+          up: known(formatBps(availableOutgoingBps)),
+          down: known(formatBps(availableIncomingBps)),
+        })}
+        {live ? "" : ` · ${t("flows.lastMeasurement")}`}
       </dd>
     </div>
   );
 }
 
 function FlowLine({ flow, watch }: { flow: FlowStats; watch: boolean }) {
-  const direction = flow.direction === "send" ? "Senden" : "Empfangen";
+  const t = useT(diagnostics);
+  const direction =
+    flow.direction === "send" ? t("line.send") : t("line.receive");
+  const source = watch ? t("source.watch") : t(SOURCE_LABEL[flow.source]);
+  const dot = (parts: (string | null)[]) =>
+    parts.filter((part) => part !== null).join(" · ");
+  const notReported = t("line.notReported");
   return (
     <>
       <strong>
-        {watch ? "Watch" : SOURCE_LABEL[flow.source]}
-        {flow.kind === "video" && !watch ? " (Video)" : ""} · {direction}
+        {flow.kind === "video" && !watch
+          ? t("line.video", { name: source })
+          : source}{" "}
+        · {direction}
       </strong>
       <span>
-        Codec: {flow.codec ?? "unbekannt"} · Bitrate:{" "}
-        {formatBps(flow.measuredBitrateBps)}
-        {flow.configuredMaxBitrateBps !== null
-          ? ` · Obergrenze: ${formatBps(flow.configuredMaxBitrateBps)}`
-          : flow.direction === "send"
-            ? " · keine Gelabber-Bitratengrenze"
-            : ""}
+        {dot([
+          t("line.codec", { codec: flow.codec ?? unknownValue() }),
+          t("line.bitrate", { bitrate: formatBps(flow.measuredBitrateBps) }),
+          flow.configuredMaxBitrateBps !== null
+            ? t("line.cap", { cap: formatBps(flow.configuredMaxBitrateBps) })
+            : flow.direction === "send"
+              ? t("line.noCap")
+              : null,
+        ])}
       </span>
       <span>
-        Paketverlust: {formatRatio(flow.packetLoss)}
-        {flow.packetsLost !== null
-          ? ` (${formatCount(flow.packetsLost)} Pakete)`
-          : ""}{" "}
-        · Jitter: {formatMs(flow.jitterMs)} · RTT: {formatMs(flow.rttMs)}
+        {dot([
+          flow.packetsLost !== null
+            ? t("line.lossPackets", {
+                loss: formatRatio(flow.packetLoss),
+                packets: formatCount(flow.packetsLost),
+              })
+            : t("line.loss", { loss: formatRatio(flow.packetLoss) }),
+          t("line.jitter", { jitter: formatMs(flow.jitterMs) }),
+          t("line.rtt", { rtt: formatMs(flow.rttMs) }),
+        ])}
       </span>
       {flow.direction === "send" ? (
         <span>
-          Senderpriorität: {flow.senderPriority ?? "nicht gemeldet"} ·
-          Netzpriorität: {flow.senderNetworkPriority ?? "nicht gemeldet"}
+          {dot([
+            t("line.senderPriority", {
+              priority: flow.senderPriority ?? notReported,
+            }),
+            t("line.networkPriority", {
+              priority: flow.senderNetworkPriority ?? notReported,
+            }),
+          ])}
         </span>
       ) : null}
       {flow.kind === "audio" && flow.direction === "recv" ? (
         <span>
-          Ersetzte Samples:{" "}
-          {flow.concealedRatio === null ||
-          flow.concealedSamples === null ||
-          flow.totalSamplesReceived === null
-            ? "unbekannt"
-            : `${formatRatio(flow.concealedRatio)} (${formatCount(flow.concealedSamples)} / ${formatCount(flow.totalSamplesReceived)})`}
+          {t("line.concealed", {
+            value:
+              flow.concealedRatio === null ||
+              flow.concealedSamples === null ||
+              flow.totalSamplesReceived === null
+                ? unknownValue()
+                : `${formatRatio(flow.concealedRatio)} (${formatCount(flow.concealedSamples)} / ${formatCount(flow.totalSamplesReceived)})`,
+          })}
         </span>
       ) : null}
       {flow.kind === "video" ? (
         <span>
-          {flow.width !== null && flow.height !== null
-            ? `${flow.width}×${flow.height}`
-            : "Auflösung unbekannt"}{" "}
-          ·{" "}
-          {flow.fps !== null ? `${formatCount(flow.fps)} FPS` : "FPS unbekannt"}
-          {flow.configuredMaxFps !== null
-            ? ` · FPS-Obergrenze: ${flow.configuredMaxFps}`
-            : ""}{" "}
-          · Qualitätslimit: {formatQualityLimit(flow.qualityLimitationReason)}
+          {dot([
+            flow.width !== null && flow.height !== null
+              ? `${flow.width}×${flow.height}`
+              : t("line.resolutionUnknown"),
+            flow.fps !== null
+              ? `${formatCount(flow.fps)} FPS`
+              : t("line.fpsUnknown"),
+            flow.configuredMaxFps !== null
+              ? t("line.fpsCap", { fps: flow.configuredMaxFps })
+              : null,
+            t("line.qualityLimit", {
+              limit: formatQualityLimit(flow.qualityLimitationReason),
+            }),
+          ])}
         </span>
       ) : null}
     </>
@@ -538,20 +606,20 @@ function sum(
   );
 }
 
-function eventLabel(kind: string): string {
+function eventLabel(t: T, kind: string): string {
   switch (kind) {
     case "stream-start":
-      return "Streamstart";
+      return t("event.streamStart");
     case "stream-stop":
-      return "Streamstopp";
+      return t("event.streamStop");
     case "device-change":
-      return "Gerätewechsel";
+      return t("event.deviceChange");
     case "sdp-error":
-      return "SDP-Fehler";
+      return t("event.sdpError");
     case "ice-error":
-      return "ICE-Fehler";
+      return t("event.iceError");
     case "recovery":
-      return "Recovery";
+      return t("event.recovery");
     default:
       return kind;
   }

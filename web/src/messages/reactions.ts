@@ -1,6 +1,8 @@
 import { api } from "../api/client.ts";
 import { stampHolds, type ScopeStamp } from "../auth/scope.ts";
 import { notifyError } from "../components/toasts.ts";
+import { translate } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
 import type { QueryClient, InfiniteData } from "@tanstack/react-query";
 import { applyMessageEdited, messageKeys } from "./queries.ts";
 import {
@@ -48,15 +50,22 @@ export function reactorNames(
   shown = 3,
 ): string {
   const names = userIds.flatMap((id) => {
-    const name = id === me ? "du" : nameOf(id);
+    const name = id === me ? translate(chat, "reactions.you") : nameOf(id);
     return name ? [name] : [];
   });
   const rest = userIds.length - Math.min(names.length, shown);
   const listed = names.slice(0, shown);
   if (listed.length === 0) return "";
-  if (rest > 0) return `${listed.join(", ")} und ${rest} weitere`;
+  if (rest > 0)
+    return translate(chat, "reactions.namesAndMore", {
+      names: listed.join(", "),
+      rest,
+    });
   if (listed.length === 1) return listed[0]!;
-  return `${listed.slice(0, -1).join(", ")} und ${listed.at(-1)}`;
+  return translate(chat, "reactions.namesAnd", {
+    names: listed.slice(0, -1).join(", "),
+    last: listed.at(-1)!,
+  });
 }
 
 export function reactionMutationOptions(
@@ -112,8 +121,8 @@ export function reactionMutationOptions(
       // The message, its conversation or your access to it is gone.
       notifyError(
         error,
-        "Reaktion nicht gespeichert.",
-        "Die Nachricht gibt es nicht mehr.",
+        translate(chat, "reactions.notSaved"),
+        translate(chat, "reactions.gone"),
       );
       void client.invalidateQueries({
         queryKey: messageKeys.channel(

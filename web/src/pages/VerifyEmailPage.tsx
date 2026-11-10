@@ -13,6 +13,8 @@ import { FormError } from "../components/FormError.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { notify } from "../components/toasts.ts";
 import { PasswordField } from "../components/ui/PasswordField.tsx";
+import { translate, useT } from "../i18n/catalog.ts";
+import { auth } from "../i18n/catalogs/auth.ts";
 
 /**
  * Landing page of the confirmation mail. Confirming takes the account's
@@ -21,6 +23,7 @@ import { PasswordField } from "../components/ui/PasswordField.tsx";
  * Afterwards it continues to the invite the account was made for, if any.
  */
 export function VerifyEmailPage() {
+  const t = useT(auth);
   const navigate = useNavigate();
   const token = useLinkToken();
   const [password, setPassword] = useState("");
@@ -32,7 +35,7 @@ export function VerifyEmailPage() {
   const mutation = useMutation({
     mutationFn: () => verifyEmail(token, password),
     onSuccess: () => {
-      notify("E-Mail-Adresse bestätigt.");
+      notify(translate(auth, "verify.done"));
       void navigate({ href: takePendingRedirect() ?? "/", replace: true });
     },
     onError: (error) => {
@@ -57,12 +60,12 @@ export function VerifyEmailPage() {
 
   return (
     <section className="lr-auth-card">
-      <h1>E-Mail-Adresse bestätigen</h1>
-      <p className="auth-lead">Gib zur Bestätigung dein Passwort ein.</p>
+      <h1>{t("verify.title")}</h1>
+      <p className="auth-lead">{t("verify.lead")}</p>
       <form ref={form} onSubmit={onSubmit} noValidate className="auth-form">
         <PasswordField
           id="password"
-          label="Passwort"
+          label={t("fieldLabel.password")}
           autoComplete="current-password"
           autoFocus
           value={password}
@@ -76,14 +79,14 @@ export function VerifyEmailPage() {
         <SubmitButton
           size="lg"
           pending={mutation.isPending}
-          pendingLabel="Wird bestätigt…"
+          pendingLabel={t("verify.submitting")}
           cooldown={cooldown}
         >
-          Bestätigen
+          {t("verify.submit")}
         </SubmitButton>
         <p className="auth-recovery">
           <Link to="/forgot-password" className="auth-link">
-            Passwort vergessen?
+            {t("page.forgotPassword")}
           </Link>
         </p>
       </form>
@@ -92,19 +95,20 @@ export function VerifyEmailPage() {
 }
 
 function DeadVerifyLink() {
+  const t = useT(auth);
   const heading = useFocusOnMount<HTMLHeadingElement>();
   return (
     <section className="lr-auth-card">
       <h1 ref={heading} tabIndex={-1}>
-        Link abgelaufen
+        {t("page.linkExpired")}
       </h1>
       <div className="auth-result">
-        <p>Dieser Link ist abgelaufen oder wurde schon benutzt.</p>
-        <p className="auth-quiet">Melde dich an, um einen neuen zu erhalten.</p>
+        <p>{t("page.linkUsed")}</p>
+        <p className="auth-quiet">{t("verify.signInForNew")}</p>
       </div>
       <div className="auth-actions">
         <Link to="/login" className="auth-link self-start">
-          Zur Anmeldung
+          {t("page.toSignIn")}
         </Link>
       </div>
     </section>

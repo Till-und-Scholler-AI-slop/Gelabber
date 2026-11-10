@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { useT } from "../../i18n/catalog.ts";
+import { common } from "../../i18n/catalogs/common.ts";
 import { CheckIcon, CopyIcon } from "../Icons.tsx";
 import { Button, type ButtonProps } from "./Button.tsx";
 import { useCopied } from "./useCopied.ts";
@@ -20,6 +22,7 @@ export function CopyLabel({
   /** 0 for none. */
   iconSize?: number;
 }) {
+  const t = useT(common);
   return (
     <>
       {iconSize > 0 ? (
@@ -30,7 +33,7 @@ export function CopyLabel({
       ) : null}
       <span className="ui-copy-label" data-copied={copied}>
         <span aria-hidden={copied || undefined}>{children}</span>
-        <span aria-hidden={!copied || undefined}>Kopiert</span>
+        <span aria-hidden={!copied || undefined}>{t("copied")}</span>
       </span>
     </>
   );
@@ -54,6 +57,7 @@ export function CopyButton({
   iconSize?: number;
   children: ReactNode;
 }) {
+  const t = useT(common);
   const { copied, flash } = useCopied();
   return (
     <>
@@ -71,7 +75,7 @@ export function CopyButton({
       </Button>
       {announce ? (
         <span role="status" className="sr-only">
-          {copied ? "Kopiert" : ""}
+          {copied ? t("copied") : ""}
         </span>
       ) : null}
     </>

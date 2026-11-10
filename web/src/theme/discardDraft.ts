@@ -1,10 +1,12 @@
 import { confirmAction } from "../components/confirm.ts";
+import { translate } from "../i18n/catalog.ts";
+import { themes } from "../i18n/catalogs/themes.ts";
 
 export function confirmDiscardThemeDraft(): Promise<boolean> {
   return confirmAction({
-    title: "Ungespeicherten Theme-Entwurf verwerfen?",
-    message: "Deine Änderungen an diesem Theme gehen verloren.",
-    confirmLabel: "Verwerfen",
+    title: translate(themes, "draft.discardTitle"),
+    message: translate(themes, "draft.discardMessage"),
+    confirmLabel: translate(themes, "draft.discard"),
   });
 }
 

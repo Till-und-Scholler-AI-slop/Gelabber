@@ -1,6 +1,8 @@
 import { useCallback, useState, type RefObject } from "react";
 
 import { ApiError } from "../api/client.ts";
+import { translate } from "../i18n/catalog.ts";
+import { auth } from "../i18n/catalogs/auth.ts";
 import { errorMessage, fieldMessages } from "./rules.ts";
 import { useCooldown } from "./useCooldown.ts";
 
@@ -18,7 +20,7 @@ const EMPTY: FormErrors = { form: null, fields: {} };
  */
 export function fieldSummary(fields: Record<string, string>): string | null {
   return Object.keys(fields).length > 1
-    ? "Bitte die markierten Felder prüfen."
+    ? translate(auth, "error.validationFailed")
     : null;
 }
 
@@ -69,7 +71,7 @@ export function useFormErrors(form?: RefObject<HTMLFormElement | null>) {
           const seconds = Math.ceil(error.retryAfter);
           startCooldown(seconds);
           setErrors({
-            form: `Zu viele Versuche. Bitte ${seconds} Sekunden warten.`,
+            form: translate(auth, "form.rateLimited", { count: seconds }),
             fields: {},
           });
           return;

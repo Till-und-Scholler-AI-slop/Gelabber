@@ -2,6 +2,8 @@
 // mean for its badge, the totals outside the page and its notifications.
 // The server sends the effective level and mute with every unread row
 // (backend/api/src/messages/workflows.rs); nothing here asks for more.
+import { translate } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
 import type { ReadState } from "./readState.ts";
 
 export type NotifyLevel = "all" | "mentions" | "none";
@@ -43,10 +45,9 @@ export type Badge = {
  * since the dot or the bold row alone says nothing to it. The native app
  * says the same (desktop/ui/src/screens/shell/common.rs). */
 export function unreadLabel({ count, dot }: Badge): string | null {
-  if (count > 99) return "Mehr als 99 ungelesene Benachrichtigungen";
-  if (count === 1) return "1 ungelesene Benachrichtigung";
-  if (count > 0) return `${count} ungelesene Benachrichtigungen`;
-  return dot ? "Ungelesene Nachrichten" : null;
+  if (count > 99) return translate(chat, "unread.notificationsMany");
+  if (count > 0) return translate(chat, "unread.notifications", { count });
+  return dot ? translate(chat, "unread.messages") : null;
 }
 
 /**

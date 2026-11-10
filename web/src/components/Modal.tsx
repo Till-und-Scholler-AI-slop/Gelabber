@@ -18,6 +18,8 @@ import {
 import { IconButton } from "./ui/IconButton.tsx";
 import { useLastOpen, usePresence } from "./ui/usePresence.ts";
 import "./ui/ui.css";
+import { useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
 
 export { GhostButton } from "./ui/Button.tsx";
 
@@ -64,6 +66,7 @@ export function Modal({
   const ref = useRef<HTMLDialogElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
+  const t = useT(common);
   const latest = useRef({ open, onClose });
   useLayoutEffect(() => {
     latest.current = { open, onClose };
@@ -160,7 +163,7 @@ export function Modal({
               drawn in the header's corner. */}
           <IconButton
             className="gel-modal__close"
-            label="Schließen"
+            label={t("close")}
             icon={<CloseIcon size={18} />}
             onClick={close}
           />

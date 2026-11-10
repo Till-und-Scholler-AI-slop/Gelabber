@@ -10,6 +10,8 @@ import {
 import { useCooldown } from "../auth/useCooldown.ts";
 import { AuthFrame } from "../pages/AuthLayout.tsx";
 import { Button } from "./ui/Button.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 /**
  * Wraps the page. While the session cannot be checked, the page gives way
@@ -48,6 +50,7 @@ const secondsUntil = (at: number | null) =>
   at === null ? 0 : Math.max(0, Math.round((at - Date.now()) / 1000));
 
 function SessionCheckFailed() {
+  const t = useT(shell);
   const online = useOnline();
   const checking = useSessionProblems((state) => state.checking);
   const [firstWait] = useState(() =>
@@ -70,26 +73,24 @@ function SessionCheckFailed() {
     <AuthFrame>
       <section className="lr-auth-card" aria-labelledby="session-check-title">
         <h1 id="session-check-title">
-          {online ? "Server antwortet nicht" : "Keine Verbindung zu Gelabber"}
+          {t(online ? "recovery.noAnswer" : "recovery.offline")}
         </h1>
         <p className="auth-lead">
-          {online
-            ? "Gelabber ist nicht erreichbar. Möglicherweise startet der Server neu."
-            : "Dein Gerät ist offline. Sobald es wieder verbunden ist, geht es weiter."}
+          {t(online ? "recovery.noAnswerLead" : "recovery.offlineLead")}
         </p>
         <p className="session-recovery__status">
           <span aria-hidden="true">
             {checking
-              ? "Wird geprüft…"
+              ? t("recovery.checking")
               : seconds > 0
-                ? `Neuer Versuch in ${seconds} s`
+                ? t("recovery.retryIn", { seconds })
                 : null}
           </span>
           <span role="status" className="sr-only">
             {checking
-              ? "Wird geprüft…"
+              ? t("recovery.checking")
               : planned > 0
-                ? `Neuer Versuch in ${planned} Sekunden`
+                ? t("recovery.retryInSeconds", { count: planned })
                 : null}
           </span>
         </p>
@@ -98,10 +99,10 @@ function SessionCheckFailed() {
             variant="primary"
             size="lg"
             pending={checking}
-            pendingLabel="Wird geprüft…"
+            pendingLabel={t("recovery.checking")}
             onClick={() => void retrySession()}
           >
-            Jetzt erneut versuchen
+            {t("recovery.retryNow")}
           </Button>
         </div>
       </section>
@@ -110,6 +111,7 @@ function SessionCheckFailed() {
 }
 
 function LogoutFailed() {
+  const t = useT(shell);
   const router = useRouter();
   const problem = useSessionProblems((state) => state.logout);
   const [pending, setPending] = useState(false);
@@ -129,10 +131,10 @@ function LogoutFailed() {
       <Button
         size="sm"
         pending={pending}
-        pendingLabel="Wird abgemeldet…"
+        pendingLabel={t("recovery.signingOut")}
         onClick={() => void retry()}
       >
-        Erneut abmelden
+        {t("recovery.signOutAgain")}
       </Button>
     </section>
   );

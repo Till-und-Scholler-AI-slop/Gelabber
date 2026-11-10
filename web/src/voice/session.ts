@@ -18,6 +18,8 @@ import {
 import { ApiError, type ApiErrorCode } from "../api/client.ts";
 import { errorMessage } from "../auth/rules.ts";
 import { notifyError } from "../components/toasts.ts";
+import { translate } from "../i18n/catalog.ts";
+import { voice as texts } from "../i18n/catalogs/voice.ts";
 import { getGateway } from "../ws/client.ts";
 import type { ErrFrame, SigEvent, TrackKind } from "../ws/protocol.ts";
 import { applyVoiceJoin, applyVoiceLeave } from "./roster.ts";
@@ -137,8 +139,6 @@ export {
   type VoiceState,
   type VoiceStatus,
 } from "./voiceStore.ts";
-
-const LIVE_FORBIDDEN_MESSAGE = "In diesem Server darfst du nicht live gehen.";
 
 const ICE_DISCONNECTED_RESTART_DELAY_MS = 2000;
 
@@ -531,7 +531,7 @@ function onErr(err: ErrFrame): void {
     // Refused to go live: the seat stays, the screen capture ends.
     voice.awaitingScreen = null;
     if (useVoice.getState().sharing) stopLocalVideo("s");
-    voice.deps?.onError?.(new Error(LIVE_FORBIDDEN_MESSAGE));
+    voice.deps?.onError?.(new Error(translate(texts, "live.notAllowed")));
   }
 }
 
@@ -907,7 +907,8 @@ function rollbackSeat(error?: unknown, lost = false): void {
           lostCall: {
             serverId,
             channelId,
-            channelName: state.channelName ?? "Sprachkanal",
+            channelName:
+              state.channelName ?? translate(texts, "call.voiceChannel"),
           },
         }
       : {}),
@@ -1163,11 +1164,7 @@ function onMediaFrame(frame: MediaServerFrame): void {
     return;
   }
   if (frame.e === "update_required") {
-    rollbackSeat(
-      new Error(
-        "Bitte Gelabber aktualisieren und den Sprachkanal erneut betreten.",
-      ),
-    );
+    rollbackSeat(new Error(translate(texts, "error.update")));
     return;
   }
   if (frame.e === "unauthorized" || frame.e === "gone") {
@@ -1187,7 +1184,7 @@ function onMediaFrame(frame: MediaServerFrame): void {
       scheduleSeatRebuild();
       return;
     }
-    voice.deps?.onError?.(new Error("Kein freier Sprachplatz."));
+    voice.deps?.onError?.(new Error(translate(texts, "error.unavailable")));
     retractAnnouncedMedia();
     stopPeer();
     setConnection("failed");
@@ -1544,12 +1541,7 @@ function scheduleSeatRebuild(): void {
       void startPeer(state.serverId!, state.channelId!, true);
     },
     () =>
-      rollbackSeat(
-        new Error(
-          "Die Sprachverbindung konnte nicht wiederhergestellt werden. Bitte erneut beitreten.",
-        ),
-        true,
-      ),
+      rollbackSeat(new Error(translate(texts, "error.reconnectFailed")), true),
   );
 }
 
@@ -1636,11 +1628,7 @@ async function startPeer(
     if (voice.seat.generation !== mine) return;
     voice.seatStarting = 0;
     if (error instanceof MediaError && error.code === "update_required") {
-      rollbackSeat(
-        new Error(
-          "Bitte Gelabber aktualisieren und den Sprachkanal erneut betreten.",
-        ),
-      );
+      rollbackSeat(new Error(translate(texts, "error.update")));
       return;
     }
     const unloaded = sdkLoadError(error);

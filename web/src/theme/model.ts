@@ -1,4 +1,6 @@
 import { randomUuid } from "../lib/uuid.ts";
+import { translate } from "../i18n/catalog.ts";
+import { themes } from "../i18n/catalogs/themes.ts";
 
 export const COLOR_KEYS = [
   "background",
@@ -92,17 +94,15 @@ export function isThemeDocument(
 }
 export function importTheme(text: string): ThemeDefinition {
   if (new TextEncoder().encode(text).length > MAX_IMPORT_BYTES)
-    throw new Error("Die Datei darf höchstens 64 KiB groß sein.");
+    throw new Error(translate(themes, "error.fileTooLarge"));
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new Error("Die Datei enthält kein gültiges JSON.");
+    throw new Error(translate(themes, "error.invalidJson"));
   }
   if (!isTheme(parsed))
-    throw new Error(
-      "Das Theme-Format ist ungültig oder wird noch nicht unterstützt.",
-    );
+    throw new Error(translate(themes, "error.invalidFormat"));
   return { ...parsed, id: `custom-${randomUuid()}` };
 }
 export function luminance(hex: string): number {
@@ -289,23 +289,23 @@ export function contrastIssues(theme: ThemeDefinition): string[] {
     backgrounds = [c.background, c.panel, c.surface, c.rail];
   const issues = [];
   if (backgrounds.some((bg) => contrast(c.text, bg) < 4.5))
-    issues.push("Text ist auf mindestens einer Fläche schwer lesbar.");
+    issues.push(translate(themes, "issue.text"));
   if (backgrounds.some((bg) => contrast(c.muted, bg) < 4.5))
-    issues.push("Sekundärtext braucht mehr Kontrast.");
+    issues.push(translate(themes, "issue.muted"));
   if (contrast(d.accentInk, c.accent) < 4.5)
-    issues.push("Schrift auf der Akzentfarbe ist schwer lesbar.");
+    issues.push(translate(themes, "issue.accentInk"));
   if (
     [c.background, c.panel, c.surface, d.selected].some(
       (bg) => contrast(d.accentText, bg) < 4.5,
     )
   )
-    issues.push("Links in der Akzentfarbe heben sich zu wenig ab.");
+    issues.push(translate(themes, "issue.accentText"));
   if (
     [c.background, c.panel, c.surface, d.elevated].some(
       (bg) => contrast(d.borderStrong, bg) < 3,
     )
   )
-    issues.push("Rahmen von Eingabefeldern heben sich zu wenig ab.");
+    issues.push(translate(themes, "issue.border"));
   return issues;
 }
 /**

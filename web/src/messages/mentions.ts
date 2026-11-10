@@ -3,6 +3,8 @@
 // `@everyone` (all members) and `@here` (members online) stay as written.
 // The server decides who is mentioned (backend/api/src/messages/mentions.rs) and
 // sends the result with the message as `mentions` / `mention_everyone`.
+import { translate } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
 import { linkLengthAt } from "./markdown.ts";
 import type { Message } from "./types.ts";
 
@@ -130,7 +132,10 @@ export function readableMentions(
   content: string,
   members: readonly MentionMember[],
 ): string {
-  return fromWire(content, members).replace(TOKEN, "@Unbekannt");
+  return fromWire(content, members).replace(
+    TOKEN,
+    `@${translate(chat, "mention.unknown")}`,
+  );
 }
 
 /** Who each `@Name` of `content` names, from its tokens: an edit keeps the

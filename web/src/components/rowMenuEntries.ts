@@ -3,6 +3,9 @@
 import type { NotifyLevel } from "../messages/notifyLevel.ts";
 import { LEVELS, MUTES, levelName, mutedLine } from "./notificationActions.ts";
 import type { NotificationTarget } from "./notificationTarget.ts";
+import { translate } from "../i18n/catalog.ts";
+import { notifications } from "../i18n/catalogs/notifications.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 export type MenuIcon =
   "check-check" | "bell" | "bell-off" | "gear" | "pencil" | "plus" | "trash";
@@ -56,17 +59,20 @@ export function notificationEntries(
   failed: (what: string) => (error: unknown) => void,
 ): MenuEntry[] {
   const saving = (promise: Promise<unknown>) =>
-    void promise.catch(failed("Nicht gespeichert."));
+    void promise.catch(failed(translate(shell, "rowMenu.notSaved")));
   const entries: MenuEntry[] = [
     {
       kind: "item",
-      label: target.allDms
-        ? "Alle Direktnachrichten als gelesen markieren"
-        : "Als gelesen markieren",
+      label: translate(
+        shell,
+        target.allDms ? "rowMenu.markAllDmsRead" : "rowMenu.markRead",
+      ),
       icon: "check-check",
       disabled: !actions.unread,
       onSelect: () =>
-        void actions.markRead().catch(failed("Nicht als gelesen markiert.")),
+        void actions
+          .markRead()
+          .catch(failed(translate(shell, "rowMenu.notMarkedRead"))),
     },
   ];
   if (target.allDms) return entries;
@@ -74,7 +80,7 @@ export function notificationEntries(
     actions.muted
       ? {
           kind: "item",
-          label: "Stummschaltung aufheben",
+          label: translate(shell, "rowMenu.unmute"),
           hint: mutedLine(actions.own.muted_until),
           // Where "Stummschalten" was, with its icon: the levels keep the
           // bell.
@@ -83,7 +89,7 @@ export function notificationEntries(
         }
       : {
           kind: "submenu",
-          label: "Stummschalten",
+          label: translate(shell, "rowMenu.mute"),
           icon: "bell-off",
           entries: MUTES.map((mute) => ({
             kind: "item",
@@ -96,14 +102,16 @@ export function notificationEntries(
   if (!target.dm)
     entries.push({
       kind: "submenu",
-      label: "Benachrichtigungen",
+      label: translate(shell, "rowMenu.notifications"),
       icon: "bell",
       entries: [
         ...(target.serverId
           ? [
               {
                 kind: "radio" as const,
-                label: `Wie der Server (${levelName(actions.inherited)})`,
+                label: translate(notifications, "level.inherit", {
+                  level: levelName(actions.inherited),
+                }),
                 checked: actions.isLevel(null),
                 onSelect: () => saving(actions.setLevel(null)),
               },
@@ -119,7 +127,7 @@ export function notificationEntries(
     });
   entries.push({
     kind: "item",
-    label: "Benachrichtigungseinstellungen…",
+    label: translate(shell, "rowMenu.notificationSettings"),
     icon: "gear",
     onSelect: actions.openSettings,
   });
