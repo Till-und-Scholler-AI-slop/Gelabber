@@ -27,7 +27,7 @@ env:
 jobs:
   changes:
     name: Changed areas
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       backend: ${{ steps.areas.outputs.backend }}
@@ -61,7 +61,7 @@ jobs:
     name: Rust lint
     needs: changes
     if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -87,7 +87,7 @@ jobs:
     name: Rust tests
     needs: changes
     if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -240,7 +240,7 @@ jobs:
     name: Deploy config
     needs: changes
     if: needs.changes.outputs.deploy == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -271,7 +271,7 @@ jobs:
     name: Frontend
     needs: changes
     if: needs.changes.outputs.web == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     defaults:
       run:
@@ -311,7 +311,7 @@ jobs:
     name: Image ${{ matrix.name }}
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.images != '[]'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -385,7 +385,7 @@ jobs:
     name: ci-ok
     if: always()
     needs: [changes, lint, rust, web, deploy, images, minio, desktop]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Every job that ran passed
