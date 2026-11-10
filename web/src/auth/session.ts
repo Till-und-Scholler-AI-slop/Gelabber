@@ -119,8 +119,17 @@ export function loggedOutOnPurpose(): boolean {
   return loggedOutHere;
 }
 
-function applySession(user: User | null, force = false): void {
-  const previousId = useSession.getState().user?.id ?? null;
+/**
+ * `operator` comes with session payloads; without it (a profile write that
+ * answered with a user) the same account keeps the flag it had.
+ */
+function applySession(
+  user: User | null,
+  force = false,
+  operator?: boolean,
+): void {
+  const previous = useSession.getState();
+  const previousId = previous.user?.id ?? null;
   const nextId = user?.id ?? null;
   if (user) loggedOutHere = false;
   stopSessionRetry();
@@ -132,6 +141,9 @@ function applySession(user: User | null, force = false): void {
   useSession.setState({
     status: user ? "authenticated" : "anonymous",
     user,
+    operator:
+      user !== null &&
+      (operator ?? (previousId === nextId && previous.operator)),
   });
   // Same account (profile rename, CSRF refresh) keeps its cache. A different
   // id, or nobody, drops the previous account before the next paint.
@@ -164,7 +176,7 @@ function receiveSession(value: unknown, options?: SessionSinkOptions): void {
     // invalidate the request the route guard is waiting for.
     if (previous.status === "unknown") return;
     if (activeAuthIntent === null || previous.user !== null) {
-      useSession.setState({ status: "unknown", user: null });
+      useSession.setState({ status: "unknown", user: null, operator: false });
     }
     if (options.force || previous.user !== null) releaseUserScope(null);
     return;
@@ -172,7 +184,7 @@ function receiveSession(value: unknown, options?: SessionSinkOptions): void {
   const user = isUser(value) ? value : null;
   // Foreign cookies must not replace an explicitly requested login/register.
   if (options?.shared && user && activeAuthIntent !== null) return;
-  applySession(user, options?.force);
+  applySession(user, options?.force, options?.operator);
 }
 setSessionSink(receiveSession);
 setSessionScope(takeSessionStamp);
@@ -512,6 +524,6 @@ export function resetSessionForTests(): void {
   setCsrfToken(null);
   setSessionSink(receiveSession);
   setSessionScope(takeSessionStamp);
-  useSession.setState({ status: "unknown", user: null });
+  useSession.setState({ status: "unknown", user: null, operator: false });
   releaseUserScope(null);
 }

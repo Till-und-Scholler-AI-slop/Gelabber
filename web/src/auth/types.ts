@@ -40,6 +40,8 @@ export type PublicProfile = ProfileCard & {
 export type SessionResponse = {
   user: User | null;
   csrf_token: string;
+  /** An instance operator, who may open "Betrieb" (v0.10). */
+  operator?: boolean;
 };
 
 /**

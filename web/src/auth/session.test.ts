@@ -84,11 +84,37 @@ describe("session store", () => {
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: ada,
+      operator: false,
     });
     expect(getCsrfToken()).toBe("c1");
 
     await ensureSession();
     expect(calls).toHaveLength(1);
+  });
+
+  it("keeps the operator flag next to the user", async () => {
+    fakeApi({
+      "GET /api/auth/session": () =>
+        json(200, { user: ada, csrf_token: "c1", operator: true }),
+      "PATCH /api/me": () => json(200, { ...ada, name: "Ada L." }),
+      "POST /api/auth/logout": () => json(200, { csrf_token: "c2" }),
+    });
+
+    await ensureSession();
+    expect(useSession.getState().operator).toBe(true);
+    // A profile write answers with the user alone; the flag stays.
+    await updateProfile({ name: "Ada L." });
+    expect(useSession.getState().operator).toBe(true);
+    await logout();
+    expect(useSession.getState().operator).toBe(false);
+  });
+
+  it("knows no operator when the session does not say so", async () => {
+    fakeApi({
+      "GET /api/auth/session": () => json(200, { user: ada, csrf_token: "c1" }),
+    });
+    await ensureSession();
+    expect(useSession.getState().operator).toBe(false);
   });
 
   it("keeps an unreachable session unresolved and retries authoritatively", async () => {
@@ -199,6 +225,7 @@ describe("session store", () => {
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: ada,
+      operator: false,
     });
     expect(getCsrfToken()).toBe("c2");
   });
@@ -215,7 +242,11 @@ describe("session store", () => {
     await expect(login("ada@example.com", "nope")).rejects.toMatchObject({
       code: "invalid_credentials",
     });
-    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    expect(useSession.getState()).toEqual({
+      status: "anonymous",
+      user: null,
+      operator: false,
+    });
   });
 
   it("register signs in like login", async () => {
@@ -260,13 +291,18 @@ describe("session store", () => {
 
     const user = await register("ada@example.com", "password123", "Ada");
     expect(user).toBeNull();
-    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    expect(useSession.getState()).toEqual({
+      status: "anonymous",
+      user: null,
+      operator: false,
+    });
     expect(getCsrfToken()).toBe("c3");
 
     expect(await verifyEmail("f".repeat(64), "password123")).toEqual(ada);
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: ada,
+      operator: false,
     });
     expect(getCsrfToken()).toBe("c4");
   });
@@ -301,7 +337,11 @@ describe("session store", () => {
     await login("ada@example.com", "password123");
 
     const done = logout();
-    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    expect(useSession.getState()).toEqual({
+      status: "anonymous",
+      user: null,
+      operator: false,
+    });
 
     release?.();
     await done;
@@ -316,7 +356,11 @@ describe("session store", () => {
     await login("ada@example.com", "password123");
 
     const done = logoutEverywhere();
-    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    expect(useSession.getState()).toEqual({
+      status: "anonymous",
+      user: null,
+      operator: false,
+    });
     await done;
     expect(calls).toContain("POST /api/auth/logout-all");
     expect(getCsrfToken()).toBe("c5");
@@ -338,6 +382,7 @@ describe("session store", () => {
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: ada,
+      operator: false,
     });
     expect(getCsrfToken()).toBe("c6");
     // The change ended every session, and with them this browser's push row.
@@ -470,12 +515,17 @@ describe("session store", () => {
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: ada,
+      operator: false,
     });
     expect(scopeGeneration()).toBe(generation);
 
     user = null;
     await checkSession();
-    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    expect(useSession.getState()).toEqual({
+      status: "anonymous",
+      user: null,
+      operator: false,
+    });
   });
 
   it("a 401 from any request flips the tab to anonymous", async () => {
@@ -490,7 +540,11 @@ describe("session store", () => {
     await expect(updateProfile({ name: "X" })).rejects.toMatchObject({
       code: "unauthenticated",
     });
-    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    expect(useSession.getState()).toEqual({
+      status: "anonymous",
+      user: null,
+      operator: false,
+    });
   });
 
   it("a csrf re-bootstrap without a user flips the tab to anonymous", async () => {
@@ -511,7 +565,11 @@ describe("session store", () => {
     await expect(updateProfile({ name: "X" })).rejects.toMatchObject({
       name: "AbortError",
     });
-    expect(useSession.getState()).toEqual({ status: "anonymous", user: null });
+    expect(useSession.getState()).toEqual({
+      status: "anonymous",
+      user: null,
+      operator: false,
+    });
     expect(getCsrfToken()).toBe("c9");
     expect(calls.filter((call) => call === "PATCH /api/me")).toHaveLength(1);
   });
@@ -536,6 +594,7 @@ describe("session store", () => {
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: { ...renamed, name: "X" },
+      operator: false,
     });
   });
 
@@ -644,6 +703,7 @@ describe("password change across tabs", () => {
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: ada,
+      operator: false,
     });
     expect(scopeGeneration()).toBe(generation);
   });
@@ -731,6 +791,7 @@ describe("password change across tabs", () => {
     expect(useSession.getState()).toEqual({
       status: "authenticated",
       user: ada,
+      operator: false,
     });
     expect(scopeGeneration()).toBe(generation);
 

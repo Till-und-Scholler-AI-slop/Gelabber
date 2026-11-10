@@ -11,9 +11,12 @@ export type SessionStatus = "unknown" | "anonymous" | "authenticated";
 export type SessionState = {
   status: SessionStatus;
   user: User | null;
+  /** An instance operator (`SessionResponse.operator`, v0.10). */
+  operator: boolean;
 };
 
 export const useSession = create<SessionState>(() => ({
   status: "unknown",
   user: null,
+  operator: false,
 }));
