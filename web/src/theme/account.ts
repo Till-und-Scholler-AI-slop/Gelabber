@@ -39,6 +39,8 @@ let generation = 0;
 let readId = 0;
 let busy = false;
 const key = (owner: string) => `gelabber.themes.v1:${owner}`;
+/** A sending mark older than this belongs to a tab that went away mid-save. */
+const SENDING_STALE_MS = 30_000;
 function validOperation(v: unknown): v is Operation {
   if (!v || typeof v !== "object" || !("kind" in v)) return false;
   return v.kind === "save"
@@ -47,7 +49,8 @@ function validOperation(v: unknown): v is Operation {
         "id" in v &&
         typeof v.id === "string";
 }
-/** `sending`: the PUT is in flight, so another tab must not adopt it. */
+/** `sending`: when the PUT went out, so another tab does not adopt it while
+ * it is in flight. */
 function cache(sending = false): void {
   const s = useAccountThemes.getState();
   if (!s.owner) return;
@@ -57,7 +60,7 @@ function cache(sending = false): void {
       JSON.stringify({
         doc: s.doc,
         pending: s.pending,
-        ...(sending ? { sending: true } : {}),
+        ...(sending ? { sending: Date.now() } : {}),
       }),
     );
   } catch {
@@ -83,11 +86,13 @@ export function bindThemeAccount(owner: string | null): void {
         isThemeDocument(saved.doc, BUILTIN_IDS)
       ) {
         doc = saved.doc;
-        if (
-          "pending" in saved &&
-          validOperation(saved.pending) &&
-          !("sending" in saved && saved.sending === true)
-        )
+        // A save still marked as sending after a while never finished: the
+        // tab closed or switched account, so this one takes the change over.
+        const sending =
+          "sending" in saved &&
+          typeof saved.sending === "number" &&
+          Date.now() - saved.sending < SENDING_STALE_MS;
+        if ("pending" in saved && validOperation(saved.pending) && !sending)
           pending = saved.pending;
       }
     } catch {
