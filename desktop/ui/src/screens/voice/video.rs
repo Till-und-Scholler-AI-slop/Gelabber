@@ -920,6 +920,8 @@ mod tests {
                     );
                 }
             });
+        // The test's clock: every draw lies between these two.
+        let first = Instant::now();
         harness.run();
         harness.render().expect("render");
         let tiles = |rs: &egui_wgpu::RenderState| {
@@ -933,9 +935,10 @@ mod tests {
         shown.store(false, std::sync::atomic::Ordering::Relaxed);
         harness.run();
         harness.render().expect("render");
-        sweep_gpu(&render_state);
+        let last = Instant::now();
+        sweep_gpu_at(&render_state, first);
         assert_eq!(tiles(&render_state), 1, "kept for a moment");
-        sweep_gpu_at(&render_state, Instant::now() + KEEP * 2);
+        sweep_gpu_at(&render_state, last + KEEP * 2);
         assert_eq!(tiles(&render_state), 0);
     }
 
