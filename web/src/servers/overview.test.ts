@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { setLocale } from "../i18n/locale.ts";
 import type { Message } from "../messages/types.ts";
 import type { Channel, Member, ServerDetail } from "./types.ts";
 import {
@@ -191,5 +192,46 @@ describe("community overview", () => {
       "31.12.25",
     );
     expect(shortWhen("nonsense", now)).toBe("");
+  });
+});
+
+describe("community overview in English", () => {
+  afterEach(() => setLocale("de", { persist: false }));
+
+  it("counts members and who is in a voice channel", () => {
+    setLocale("en", { persist: false });
+    expect(overviewLine(server, roster, idle, "me")).toBe(
+      "3 members · 1 in a voice channel",
+    );
+    expect(
+      overviewLine(
+        { ...server, members: [members[0]!] },
+        {},
+        { status: "joined", serverId: "s", channelId: "living" },
+        "me",
+      ),
+    ).toBe("1 member · 1 in a voice channel");
+  });
+
+  it("names the own message, an attachment and yesterday", () => {
+    setLocale("en", { persist: false });
+    expect(
+      messagePreview(
+        {
+          author: { id: "me", name: "Rafi", avatar_url: null },
+          content: "",
+          attachments: [{ id: "f" }],
+        } as Message,
+        [],
+        "me",
+      ),
+    ).toEqual({ author: "You", text: "Attachment" });
+    const now = new Date(2026, 9, 29, 20, 0);
+    expect(shortWhen(new Date(2026, 9, 28, 23, 59).toISOString(), now)).toBe(
+      "Yesterday",
+    );
+    expect(shortWhen(new Date(2026, 9, 21, 9, 0).toISOString(), now)).toBe(
+      "21/10",
+    );
   });
 });

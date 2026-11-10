@@ -25,6 +25,21 @@ vi.mock("../servers/queries.ts", () => ({
   useBanMember: () => ({ isPending: fixture.banPending, mutate: fixture.ban }),
 }));
 vi.mock("./confirm.ts", () => ({ confirmAction: fixture.confirm }));
+// `handlers()` calls the component outside a render: useT without React.
+vi.mock("../i18n/catalog.ts", async (original) => {
+  const actual = await original<typeof import("../i18n/catalog.ts")>();
+  return {
+    ...actual,
+    useT:
+      (catalog: Parameters<typeof actual.translate>[0]) =>
+      (key: string, params?: Record<string, string>) =>
+        (actual.translate as (...args: unknown[]) => string)(
+          catalog,
+          key,
+          params,
+        ),
+  };
+});
 
 import { MemberActions } from "./MemberActions.tsx";
 

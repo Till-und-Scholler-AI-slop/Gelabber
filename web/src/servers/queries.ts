@@ -22,6 +22,8 @@ import {
   useUserId,
 } from "../auth/scope.ts";
 import { notifyError } from "../components/toasts.ts";
+import { translate } from "../i18n/catalog.ts";
+import { servers } from "../i18n/catalogs/servers.ts";
 import { randomUuid } from "../lib/uuid.ts";
 import * as remote from "./api.ts";
 import { slugifyChannelName } from "./rules.ts";
@@ -390,7 +392,7 @@ export function useUpdateServer(serverId: string) {
       if (lastInFlight() && !resync.current)
         restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
       else resync.current = true;
-      notifyError(error, "Server nicht gespeichert.");
+      notifyError(error, translate(servers, "error.serverNotSaved"));
     },
     onSuccess: (server, _patch, ctx) => {
       if (!stampHolds(ctx)) return;
@@ -447,7 +449,7 @@ export function useDeleteServer() {
     onError: (error, serverId, ctx) => {
       if (!stampHolds(ctx)) return;
       restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
-      notifyError(error, "Server nicht gelöscht.");
+      notifyError(error, translate(servers, "error.serverNotDeleted"));
     },
   });
 }
@@ -466,7 +468,7 @@ export function useLeaveServer() {
     onError: (error, serverId, ctx) => {
       if (!stampHolds(ctx)) return;
       restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
-      notifyError(error, "Server nicht verlassen.");
+      notifyError(error, translate(servers, "error.serverNotLeft"));
     },
   });
 }
@@ -527,7 +529,7 @@ export function useCreateCategory(serverId: string) {
         ...detail,
         categories: replaceRow(detail.categories, ctx.tmp, null),
       }));
-      notifyError(error, "Kategorie nicht erstellt.");
+      notifyError(error, translate(servers, "error.categoryNotCreated"));
     },
   });
 }
@@ -558,7 +560,7 @@ export function useUpdateCategory(serverId: string) {
     onError: (error, _vars, ctx) => {
       if (!stampHolds(ctx)) return;
       restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
-      notifyError(error, "Kategorie nicht gespeichert.");
+      notifyError(error, translate(servers, "error.categoryNotSaved"));
     },
     onSuccess: (category, _vars, ctx) => {
       if (!stampHolds(ctx)) return;
@@ -599,7 +601,7 @@ export function useDeleteCategory(serverId: string) {
     onError: (error, _id, ctx) => {
       if (!stampHolds(ctx)) return;
       restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
-      notifyError(error, "Kategorie nicht gelöscht.");
+      notifyError(error, translate(servers, "error.categoryNotDeleted"));
     },
   });
 }
@@ -652,7 +654,7 @@ export function useCreateChannel(serverId: string) {
         ...detail,
         channels: replaceRow(detail.channels, ctx.tmp, null),
       }));
-      notifyError(error, "Kanal nicht erstellt.");
+      notifyError(error, translate(servers, "error.channelNotCreated"));
     },
   });
 }
@@ -692,7 +694,7 @@ export function useUpdateChannel(serverId: string) {
     onError: (error, _vars, ctx) => {
       if (!stampHolds(ctx)) return;
       restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
-      notifyError(error, "Kanal nicht gespeichert.");
+      notifyError(error, translate(servers, "error.channelNotSaved"));
     },
     onSuccess: (channel, _vars, ctx) => {
       if (!stampHolds(ctx)) return;
@@ -729,7 +731,7 @@ export function useDeleteChannel(serverId: string) {
     onError: (error, _id, ctx) => {
       if (!stampHolds(ctx)) return;
       restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
-      notifyError(error, "Kanal nicht gelöscht.");
+      notifyError(error, translate(servers, "error.channelNotDeleted"));
     },
   });
 }
@@ -777,7 +779,7 @@ export function useRevokeInvite(serverId: string) {
           ctx.previous,
         );
       }
-      notifyError(error, "Einladung nicht widerrufen.");
+      notifyError(error, translate(servers, "error.inviteNotRevoked"));
     },
   });
 }
@@ -825,7 +827,7 @@ export function useKickMember(serverId: string) {
     onError: (error, _memberId, ctx) => {
       if (!stampHolds(ctx)) return;
       restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
-      notifyError(error, "Mitglied nicht entfernt.");
+      notifyError(error, translate(servers, "error.memberNotKicked"));
     },
   });
 }
@@ -844,7 +846,7 @@ export function useBanMember(serverId: string) {
     onError: (error, _memberId, ctx) => {
       if (!stampHolds(ctx)) return;
       restore(client, ctx.userId, ctx.generation, serverId, ctx.snap);
-      notifyError(error, "Mitglied nicht gesperrt.");
+      notifyError(error, translate(servers, "error.memberNotBanned"));
     },
     onSuccess: (_data, _memberId, ctx) => {
       if (!stampHolds(ctx)) return;
@@ -879,7 +881,7 @@ export function useUnbanMember(serverId: string) {
           ctx.previous,
         );
       }
-      notifyError(error, "Mitglied nicht entsperrt.");
+      notifyError(error, translate(servers, "error.memberNotUnbanned"));
     },
   });
 }

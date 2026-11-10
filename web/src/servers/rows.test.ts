@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { setLocale } from "../i18n/locale.ts";
 
 import { buildRows, channelOrder, pickChannel, sidebarRows } from "./rows.ts";
 import type { Category, Channel, ServerDetail } from "./types.ts";
@@ -171,5 +173,38 @@ describe("sidebar order", () => {
       "cat-rooms",
       "zocken",
     ]);
+  });
+
+  describe("in either language", () => {
+    afterEach(() => setLocale("de", { persist: false }));
+
+    it("names the heading in the interface's language", () => {
+      setLocale("en", { persist: false });
+      expect(
+        sidebarRows(withLooseVoice).flatMap((row) =>
+          row.kind === "section" ? [row.label] : [],
+        ),
+      ).toEqual(["Voice channels"]);
+    });
+
+    it.each([
+      ["de", "Voice channels"],
+      ["en", "Sprachkanäle"],
+      ["en", " voice CHANNELS "],
+    ] as const)(
+      "merges into a category named after it (%s, %j)",
+      (locale, name) => {
+        setLocale(locale, { persist: false });
+        const named: ServerDetail = {
+          ...withLooseVoice,
+          categories: [category("cat-rooms", name)],
+          channels: [channel("zocken", null, "Zocken", "voice")],
+        };
+        expect(sidebarRows(named).map((row) => row.key)).toEqual([
+          "cat-rooms",
+          "zocken",
+        ]);
+      },
+    );
   });
 });

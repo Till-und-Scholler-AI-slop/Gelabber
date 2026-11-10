@@ -13,6 +13,8 @@ import "../components/chat.css";
 import { Redirect } from "../components/Redirect.tsx";
 import { TypingBar } from "../components/TypingBar.tsx";
 import { MainSkeleton, SkeletonRows } from "../components/ui/Skeleton.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { servers } from "../i18n/catalogs/servers.ts";
 import { VoiceRoomPart } from "../voice/voiceRoomPart.ts";
 import { LiveHint } from "../voice/LiveHint.tsx";
 import { useLastChannel } from "../servers/lastChannel.ts";
@@ -26,6 +28,7 @@ export function ChannelPage() {
     from: "/workspace/s/$serverId/c/$channelId",
   });
   const { data: server, error, isFetching, refetch } = useServer(serverId);
+  const t = useT(servers);
   const userId = useUserId();
   const remember = useLastChannel((s) => s.remember);
   const channel = server?.channels.find((c) => c.id === channelId);
@@ -38,7 +41,7 @@ export function ChannelPage() {
     return (
       <div className="p-6">
         <LoadError
-          message="Dieser Kanal konnte nicht geladen werden."
+          message={t("load.channel")}
           pending={isFetching}
           onRetry={() => void refetch()}
         />
