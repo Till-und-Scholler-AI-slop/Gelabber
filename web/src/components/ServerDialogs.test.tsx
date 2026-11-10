@@ -151,6 +151,7 @@ describe("channelRequest", () => {
     categoryId: "cat",
     initialAccess: null,
     access: null,
+    roles: [{ id: "r-mod" }, { id: "r-reg" }],
   };
 
   it("sends the chosen roles with the other fields in one call", () => {
@@ -184,6 +185,25 @@ describe("channelRequest", () => {
       { ...form, initialAccess: ["r-mod"], access: null },
     );
     expect(request.mode === "edit" && request.patch.role_ids).toEqual([]);
+  });
+
+  it("drops roles deleted while the dialog was open", () => {
+    const edit = channelRequest(
+      { id: "spiele" },
+      { ...form, initialAccess: ["r-old"], access: ["r-old", "r-mod"] },
+    );
+    expect(edit.mode === "edit" && edit.patch.role_ids).toEqual(["r-mod"]);
+    // Only deleted roles chosen: the server refuses instead of `[]` opening it.
+    const create = channelRequest(null, { ...form, access: ["r-old"] });
+    expect(create.mode === "create" && create.input.role_ids).toEqual([
+      "r-old",
+    ]);
+    // A channel whose roles are all gone, left alone, stays as it is.
+    const kept = channelRequest(
+      { id: "spiele" },
+      { ...form, initialAccess: ["r-old"], access: ["r-old"] },
+    );
+    expect(kept.mode === "edit" && kept.patch.role_ids).toBeUndefined();
   });
 
   it("leaves access out while it is unchanged", () => {

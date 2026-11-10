@@ -501,6 +501,7 @@ function ChannelForm({
       categoryId: parentId,
       initialAccess,
       access,
+      roles: server.roles,
     });
     if (request.mode === "edit") {
       update.mutate({ id: request.id, patch: request.patch });
