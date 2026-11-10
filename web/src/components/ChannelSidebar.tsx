@@ -98,6 +98,9 @@ import {
   type ChannelDialogState,
 } from "./ServerDialogs.tsx";
 import "./shell.css";
+import { translate, useT } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
+import { compareNames } from "../i18n/format.ts";
 
 type ParticipantRow = {
   kind: "participant";
@@ -121,7 +124,7 @@ function withParticipants(
   for (const [userId, flags] of Object.entries(occupancy)) {
     const member = members.get(userId) ?? {
       user_id: userId,
-      name: "Jemand",
+      name: translate(shell, "someone"),
       avatar_url: null,
     };
     const list = byChannel.get(flags.channelId) ?? [];
@@ -139,7 +142,7 @@ function withParticipants(
     if (row.kind !== "channel" || row.channel.kind !== "voice") return [row];
     const inside = byChannel.get(row.channel.id);
     if (!inside) return [row];
-    inside.sort((a, b) => a.member.name.localeCompare(b.member.name, "de"));
+    inside.sort((a, b) => compareNames(a.member.name, b.member.name));
     return [row, ...inside];
   });
 }
@@ -169,6 +172,7 @@ export function ChannelSidebar({
   server: ServerDetail;
   activeChannelId: string | undefined;
 }) {
+  const t = useT(shell);
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
@@ -208,23 +212,29 @@ export function ChannelSidebar({
       ?.category_id ?? null;
 
   return (
-    <aside aria-label="Kanäle" className="channel-sidebar">
+    <aside aria-label={t("channels.label")} className="channel-sidebar">
       <header className="server-sidebar-heading">
         <details ref={serverMenu} className="server-sidebar-menu">
           <summary className="server-sidebar-menu-button" title={server.name}>
             <h2 className="server-sidebar-name">{server.name}</h2>
             {serverMuted ? (
-              <span className="server-sidebar-muted" title="Stummgeschaltet">
+              <span
+                className="server-sidebar-muted"
+                title={t("serverMenu.muted")}
+              >
                 <BellOffIcon size={15} />
-                <span className="sr-only">(stummgeschaltet)</span>
+                <span className="sr-only">{t("serverMenu.mutedNote")}</span>
               </span>
             ) : null}
             <ChevronIcon size={16} className="server-sidebar-chevron" />
           </summary>
-          <nav aria-label={`Menü für ${server.name}`} className="shell-menu">
+          <nav
+            aria-label={t("serverMenu.label", { name: server.name })}
+            className="shell-menu"
+          >
             <button type="button" className="shell-menu-item" onClick={invite}>
               <LinkIcon size={16} />
-              Einladen
+              {t("serverMenu.invite")}
             </button>
             <button
               type="button"
@@ -240,7 +250,7 @@ export function ChannelSidebar({
               }
             >
               {serverMuted ? <BellOffIcon size={16} /> : <BellIcon size={16} />}
-              Benachrichtigungen…
+              {t("serverMenu.notifications")}
             </button>
             {manageChannels ? (
               <>
@@ -257,7 +267,7 @@ export function ChannelSidebar({
                   }
                 >
                   <PlusIcon size={16} />
-                  Kanal erstellen
+                  {t("serverMenu.createChannel")}
                 </button>
                 <button
                   type="button"
@@ -267,7 +277,7 @@ export function ChannelSidebar({
                   }
                 >
                   <PlusIcon size={16} />
-                  Kategorie erstellen
+                  {t("serverMenu.createCategory")}
                 </button>
               </>
             ) : null}
@@ -277,11 +287,11 @@ export function ChannelSidebar({
               className="shell-menu-item"
             >
               {manageServer ? <GearIcon size={16} /> : <UsersIcon size={16} />}
-              {manageServer ? "Servereinstellungen" : "Mitglieder"}
+              {t(manageServer ? "serverMenu.settings" : "serverMenu.members")}
             </Link>
           </nav>
         </details>
-        <IconButton label="Einladen" onClick={invite}>
+        <IconButton label={t("serverMenu.invite")} onClick={invite}>
           <LinkIcon />
         </IconButton>
       </header>
@@ -294,7 +304,7 @@ export function ChannelSidebar({
         activeOptions={{ exact: true }}
       >
         <ChatIcon size={20} />
-        Übersicht
+        {t("overview")}
       </Link>
       <ChannelList
         server={server}
@@ -399,6 +409,7 @@ export function ChannelList({
   /** The notification dialog of a text channel, from its menu. */
   onChannelNotifications: (channel: Channel) => void;
 }) {
+  const t = useT(shell);
   const scrollRef = useRef<HTMLDivElement>(null);
   const touch = useSyncExternalStore(
     subscribeTouchRows,
@@ -434,9 +445,9 @@ export function ChannelList({
     (row) => row.kind === "channel" && row.channel.kind === "text",
   );
   const holdHint = manageChannels
-    ? "Gedrückt halten für Bearbeiten, Benachrichtigungen oder Löschen."
+    ? t("channels.holdHintManage")
     : hasText
-      ? "Gedrückt halten für Benachrichtigungen."
+      ? t("channels.holdHint")
       : null;
   // The key hint is read once, on the list's first row, not on every Tab
   // stop.
@@ -470,18 +481,18 @@ export function ChannelList({
   }, [rows]);
 
   if (rows.length === 0) {
-    return <p className="sidebar-empty">Noch keine Kanäle.</p>;
+    return <p className="sidebar-empty">{t("channels.empty")}</p>;
   }
 
   const removeChannel = async (channel: Channel) => {
     if (
       !(await confirmAction({
-        title: `Kanal „${channel.name}“ löschen?`,
+        title: t("channels.deleteChannel.title", { name: channel.name }),
         message:
           channel.kind === "text"
-            ? "Alle Nachrichten darin werden gelöscht."
+            ? t("channels.deleteChannel.message")
             : undefined,
-        confirmLabel: "Kanal löschen",
+        confirmLabel: t("channels.deleteChannel.confirm"),
       }))
     )
       return;
@@ -496,9 +507,9 @@ export function ChannelList({
   const removeCategory = async (category: Category) => {
     if (
       await confirmAction({
-        title: `Kategorie „${category.name}“ löschen?`,
-        message: "Die Kanäle darin bleiben erhalten.",
-        confirmLabel: "Kategorie löschen",
+        title: t("channels.deleteCategory.title", { name: category.name }),
+        message: t("channels.deleteCategory.message"),
+        confirmLabel: t("channels.deleteCategory.confirm"),
       })
     )
       deleteCategory.mutate(category.id);
@@ -507,13 +518,15 @@ export function ChannelList({
   return (
     <div ref={scrollRef} className="sidebar-list-scroll">
       <p id={rowHintId} className="sr-only">
-        {manageChannels || hasText
-          ? "Pfeiltasten hoch und runter wechseln zwischen den Einträgen, links und rechts zwischen einem Eintrag und seinen Aktionen. Pos1 und Ende springen an den Anfang und das Ende der Zeile."
-          : "Pfeiltasten hoch und runter wechseln zwischen den Einträgen."}
+        {t(
+          manageChannels || hasText
+            ? "channels.keyHintActions"
+            : "channels.keyHint",
+        )}
       </p>
       <div
         role="list"
-        aria-label="Kanäle"
+        aria-label={t("channels.label")}
         style={{ height: virtualizer.getTotalSize() }}
         className="relative"
         onKeyDown={moveWithinList}
@@ -568,7 +581,7 @@ export function ChannelList({
                   ).map(
                     (id) =>
                       server.members.find((member) => member.user_id === id)
-                        ?.name ?? "Jemand",
+                        ?.name ?? t("someone"),
                   )}
                   manage={manageChannels}
                   coarse={touch}
@@ -592,7 +605,9 @@ export function ChannelList({
                   onOpenProfile={onOpenProfile}
                 />
               ) : (
-                <p className="sidebar-empty-category">Leer</p>
+                <p className="sidebar-empty-category">
+                  {t("channels.emptyCategory")}
+                </p>
               )}
             </div>
           );
@@ -651,6 +666,7 @@ function SidebarRowMenu({
   onDeleteChannel: (channel: Channel) => void;
   onNotifications: (channel: Channel) => void;
 }) {
+  const t = useT(shell);
   if (menu.kind === "category") {
     const { category } = menu;
     return (
@@ -658,24 +674,24 @@ function SidebarRowMenu({
         open
         onClose={onClose}
         anchor={anchor}
-        label={`Kategorie ${category.name}`}
+        label={t("rowMenu.categoryLabel", { name: category.name })}
         entries={[
           {
             kind: "item",
-            label: "Kanal hier erstellen",
+            label: t("rowMenu.createChannelHere"),
             icon: "plus",
             onSelect: () => onAdd(category),
           },
           {
             kind: "item",
-            label: "Kategorie umbenennen",
+            label: t("rowMenu.renameCategory"),
             icon: "pencil",
             onSelect: () => onEditCategory(category),
           },
           { kind: "separator" },
           {
             kind: "item",
-            label: "Kategorie löschen",
+            label: t("channels.deleteCategory.confirm"),
             icon: "trash",
             danger: true,
             onSelect: () => onDeleteCategory(category),
@@ -689,14 +705,14 @@ function SidebarRowMenu({
     ? [
         {
           kind: "item",
-          label: "Kanal bearbeiten",
+          label: t("rowMenu.editChannel"),
           icon: "pencil",
           onSelect: () => onEditChannel(channel),
         },
         { kind: "separator" },
         {
           kind: "item",
-          label: "Kanal löschen",
+          label: t("channels.deleteChannel.confirm"),
           icon: "trash",
           danger: true,
           onSelect: () => onDeleteChannel(channel),
@@ -741,10 +757,15 @@ export function ParticipantRowView({
   hintId?: string;
   onOpenProfile: (memberId: string) => void;
 }) {
+  const t = useT(shell);
   const me = useSession((s) => s.user?.id);
   const self = row.member.user_id === me;
   const { member, flags, live } = row;
-  const state = flags.deafened ? "taub" : flags.muted ? "stumm" : null;
+  const state = flags.deafened
+    ? t("participant.deafened")
+    : flags.muted
+      ? t("participant.muted")
+      : null;
   const speaking =
     useSpeaking(serverId, flags.channelId, member.user_id) && state === null;
   return (
@@ -753,7 +774,7 @@ export function ParticipantRowView({
     <button
       type="button"
       className={`sidebar-participant${speaking ? " is-speaking" : ""}`}
-      title={self ? "Dein Profil" : "Profil und Lautstärke"}
+      title={t(self ? "participant.ownProfile" : "participant.profile")}
       tabIndex={stop ? 0 : -1}
       aria-describedby={hintId}
       onClick={() => onOpenProfile(member.user_id)}
@@ -773,19 +794,22 @@ export function ParticipantRowView({
           in words for screen readers. A speaker icon would read as "in
           the channel", as in the member list. */}
       {speaking ? (
-        <span className="sidebar-participant-speaking" title="spricht">
+        <span
+          className="sidebar-participant-speaking"
+          title={t("participant.speaking")}
+        >
           <span className="speaking-bars" aria-hidden="true">
             <span />
             <span />
             <span />
           </span>
-          <span className="sr-only">spricht</span>
+          <span className="sr-only">{t("participant.speaking")}</span>
         </span>
       ) : null}
       {live ? (
-        <span className="sidebar-participant-live" title="Live">
+        <span className="sidebar-participant-live" title="Live" /* i18n-ok */>
           <LiveIcon size={13} />
-          <span className="sr-only">Live</span>
+          <span className="sr-only">Live{/* i18n-ok */}</span>
         </span>
       ) : null}
       {self ? null : <LocallyMutedIcon userId={row.member.user_id} />}
@@ -823,6 +847,7 @@ function CategoryRow({
   onAdd: () => void;
   onMenu: (anchor: HTMLElement) => void;
 }) {
+  const t = useT(shell);
   const pending = isPendingId(category.id);
   const actions = manage && !pending;
   const roving = useRovingRow(actions, stop);
@@ -842,7 +867,7 @@ function CategoryRow({
       {!actions ? null : coarse ? (
         <span className={TOUCH_ACTIONS}>
           <IconButton
-            label={`Aktionen für Kategorie „${category.name}“`}
+            label={t("category.actionsLabel", { name: category.name })}
             onClick={(event) => onMenu(event.currentTarget)}
             small
             describedBy={hintId}
@@ -857,7 +882,7 @@ function CategoryRow({
         // menu.
         <span className={HOVER_ACTIONS}>
           <IconButton
-            label={`Kanal in „${category.name}“ erstellen`}
+            label={t("category.createChannelLabel", { name: category.name })}
             onClick={onAdd}
             small
             describedBy={hintId}
@@ -866,7 +891,7 @@ function CategoryRow({
             <PlusIcon size={14} />
           </IconButton>
           <IconButton
-            label={`Aktionen für Kategorie „${category.name}“`}
+            label={t("category.actionsLabel", { name: category.name })}
             onClick={(event) => onMenu(event.currentTarget)}
             small
             expanded={menuOpen}
@@ -909,6 +934,7 @@ export function ChannelRow({
   onEdit: () => void;
   onMenu: (anchor: HTMLElement) => void;
 }) {
+  const t = useT(shell);
   const pending = isPendingId(channel.id);
   const muted = useChannelMuted(channel.id);
   const text = channel.kind === "text";
@@ -922,15 +948,15 @@ export function ChannelRow({
       <Icon size={25} className="channel-row-icon" />
       <span className="channel-row-name">{channel.name}</span>
       {draft ? (
-        <span className="channel-row-draft" title="Entwurf">
+        <span className="channel-row-draft" title={t("channel.draft")}>
           <PencilIcon size={13} />
-          <span className="sr-only">Entwurf</span>
+          <span className="sr-only">{t("channel.draft")}</span>
         </span>
       ) : null}
       {text ? <UnreadBadge channelId={channel.id} showDot={false} /> : null}
       {live.length > 0 ? (
         <span className="channel-row-live" title={liveSentence(live, false)}>
-          <span aria-hidden="true">Live</span>
+          <span aria-hidden="true">Live{/* i18n-ok */}</span>
           <span className="sr-only">{liveSentence(live, false)}</span>
         </span>
       ) : null}
@@ -968,7 +994,9 @@ export function ChannelRow({
           params={{ serverId: channel.server_id, channelId: channel.id }}
           aria-current={active ? "page" : undefined}
           aria-describedby={hintId}
-          title={inVoice ? `${channel.name} · verbunden` : undefined}
+          title={
+            inVoice ? t("channel.connected", { name: channel.name }) : undefined
+          }
           tabIndex={roving.tabIndex(0)}
           className="channel-row-link"
           {...hold}
@@ -980,7 +1008,7 @@ export function ChannelRow({
       {!actions ? null : coarse ? (
         <span className={TOUCH_ACTIONS}>
           <IconButton
-            label={`Aktionen für ${label}`}
+            label={t("channel.actionsLabel", { name: label })}
             onClick={(event) => onMenu(event.currentTarget)}
             small
             expanded={menuOpen}
@@ -995,7 +1023,7 @@ export function ChannelRow({
         <span className={HOVER_ACTIONS}>
           {manage ? (
             <IconButton
-              label={`${label} bearbeiten`}
+              label={t("channel.editLabel", { name: label })}
               onClick={onEdit}
               small
               tabIndex={roving.tabIndex(1)}
@@ -1004,7 +1032,7 @@ export function ChannelRow({
             </IconButton>
           ) : null}
           <IconButton
-            label={`Aktionen für ${label}`}
+            label={t("channel.actionsLabel", { name: label })}
             onClick={(event) => onMenu(event.currentTarget)}
             small
             expanded={menuOpen}

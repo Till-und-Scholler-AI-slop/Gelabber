@@ -1,4 +1,6 @@
 import { Button } from "./ui/Button.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
 
 export function LoadError({
   message,
@@ -9,16 +11,17 @@ export function LoadError({
   pending?: boolean;
   onRetry: () => void;
 }) {
+  const t = useT(common);
   return (
     <div role="alert" className="ui-load-error">
       <p>{message}</p>
       <Button
         size="sm"
         pending={pending}
-        pendingLabel="Wird geladen…"
+        pendingLabel={t("loading")}
         onClick={onRetry}
       >
-        Erneut versuchen
+        {t("tryAgain")}
       </Button>
     </div>
   );

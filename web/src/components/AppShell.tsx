@@ -31,6 +31,8 @@ import { Toasts } from "./Toasts.tsx";
 import { VoiceSettingsDialog } from "./VoiceSettingsDialog.tsx";
 import { VoiceSessionControls } from "./VoiceSessionControls.tsx";
 import { SessionRecoveryNotice } from "./SessionRecoveryNotice.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 function AuthenticatedRealtime() {
   useAuthenticatedSubscriptions();
@@ -42,6 +44,7 @@ function AuthenticatedRealtime() {
 }
 
 export function AppShell() {
+  const t = useT(shell);
   const user = useSession((state) => state.user);
   const workspace = useRouterState({
     select: (state) =>
@@ -85,13 +88,13 @@ export function AppShell() {
         className="shell-skip-link"
         href={workspace ? "#workspace-content" : "#app-content"}
       >
-        Zum Inhalt springen
+        {t("skipLink")}
       </a>
       {!workspace && !bare ? (
         <header className="app-header">
           <div className="flex h-full items-center justify-between px-4">
             <Link to="/" className="text-lg font-semibold tracking-tight">
-              Gelabber
+              Gelabber{/* i18n-ok */}
             </Link>
           </div>
         </header>

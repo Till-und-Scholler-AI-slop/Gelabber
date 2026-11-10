@@ -27,6 +27,8 @@ import { NotificationRowMenu } from "./RowMenu.tsx";
 import { LIST_ROW, ROW_ITEM, listStop, moveWithinList } from "./rowKeys.ts";
 import { useRowMenu } from "./rowMenuTrigger.ts";
 import { TIP_GRACE_MS, TIP_WARM_MS, tipDelay } from "./tooltipTiming.ts";
+import { useT } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 const TILE_PX = 60;
 
@@ -37,10 +39,11 @@ export function ServerRail({
   activeId: string | undefined;
   dmActive: boolean;
 }) {
+  const t = useT(shell);
   const { data: servers, isPending } = useServers();
   const [adding, setAdding] = useState(false);
   return (
-    <nav aria-label="Server" className="server-rail">
+    <nav aria-label={t("rail.label")} className="server-rail">
       <HomeTile active={dmActive} />
       {isPending ? (
         <RailPlaceholder />
@@ -51,8 +54,8 @@ export function ServerRail({
         <button
           type="button"
           onClick={() => setAdding(true)}
-          title="Server hinzufügen"
-          aria-label="Server hinzufügen"
+          title={t("rail.addServer")}
+          aria-label={t("rail.addServer")}
           className="server-create-button"
         >
           <PlusIcon size={20} />
@@ -77,6 +80,7 @@ function RailPlaceholder() {
 }
 
 function HomeTile({ active }: { active: boolean }) {
+  const t = useT(shell);
   const unreadId = useId();
   const client = useQueryClient();
   const userId = useUserId();
@@ -95,8 +99,8 @@ function HomeTile({ active }: { active: boolean }) {
         params={openId ? { channelId: openId } : undefined}
         state={drawer.keepOpen}
         replace={drawer.open}
-        title="Direktnachrichten"
-        aria-label="Direktnachrichten"
+        title={t("rail.dms")}
+        aria-label={t("rail.dms")}
         aria-describedby={unreadId}
         aria-current={active ? "page" : undefined}
         onMouseEnter={() => {
@@ -120,7 +124,7 @@ function HomeTile({ active }: { active: boolean }) {
           target={{
             scope: "channel",
             id: "dms",
-            name: "Direktnachrichten",
+            name: t("rail.dms"),
             allDms: true,
           }}
           anchor={menu.anchor}
@@ -276,6 +280,7 @@ function ServerTile({
   ) => void;
   onTipEnd: () => void;
 }) {
+  const t = useT(shell);
   const unreadId = useId();
   const client = useQueryClient();
   const userId = useUserId();
@@ -292,11 +297,13 @@ function ServerTile({
   const drawer = useNavigationDrawer();
   const summary =
     badge.count > 0
-      ? `${badge.count > 99 ? "Mehr als 99" : badge.count} ${badge.count === 1 ? "Erwähnung" : "Erwähnungen"}`
+      ? badge.count > 99
+        ? t("rail.mentionsOver99")
+        : t("rail.mentions", { count: badge.count })
       : badge.dot
-        ? "Ungelesene Nachrichten"
+        ? t("rail.unread")
         : muted
-          ? "Stummgeschaltet"
+          ? t("serverMenu.muted")
           : null;
   // Its menu (mark read, mute, notifications) takes the tooltip's place;
   // the tooltip also ends when the finger leaves.

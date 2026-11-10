@@ -2,12 +2,8 @@ import type { PresenceStatus } from "../ws/protocol.ts";
 import type { AvatarDecoration } from "../auth/types.ts";
 import { Avatar, type AvatarSize } from "./Avatar.tsx";
 import { AvatarFrame } from "./AvatarFrame.tsx";
-
-const LABEL: Record<PresenceStatus, string> = {
-  o: "Online",
-  i: "Abwesend",
-  x: "Offline",
-};
+import { useT } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 export function PresenceAvatar({
   name,
@@ -26,6 +22,7 @@ export function PresenceAvatar({
   decoration?: AvatarDecoration | null | undefined;
   accent?: string | null | undefined;
 }) {
+  const t = useT(shell);
   return (
     <span className={`gel-presence-avatar ${className}`}>
       <AvatarFrame decoration={decoration} accent={accent}>
@@ -33,8 +30,8 @@ export function PresenceAvatar({
       </AvatarFrame>
       <span
         className={`gel-presence-dot gel-presence-${status}`}
-        title={LABEL[status]}
-        aria-label={LABEL[status]}
+        title={t(`presence.${status}`)}
+        aria-label={t(`presence.${status}`)}
       />
     </span>
   );

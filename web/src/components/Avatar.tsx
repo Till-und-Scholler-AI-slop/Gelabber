@@ -1,6 +1,8 @@
 import { useState, type CSSProperties } from "react";
 
 import { initials, personTint } from "./initials.ts";
+import { useT } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 export type AvatarSize = "sm" | "md" | "lg" | "hero" | "room";
 
@@ -25,6 +27,7 @@ export function Avatar({
   className = "",
   decorative = false,
 }: AvatarProps) {
+  const t = useT(shell);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const showImage = url !== null && url.length > 0 && failedUrl !== url;
 
@@ -41,7 +44,7 @@ export function Avatar({
       {showImage ? (
         <img
           src={url}
-          alt={decorative ? "" : `Avatar von ${name}`}
+          alt={decorative ? "" : t("avatar.alt", { name })}
           // Avatar URLs may point anywhere (#208); do not tell that host
           // which Gelabber page the viewer is on.
           referrerPolicy="no-referrer"

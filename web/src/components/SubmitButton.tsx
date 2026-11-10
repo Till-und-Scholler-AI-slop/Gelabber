@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 
 import { Button, type ButtonProps } from "./ui/Button.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 type SubmitButtonProps = Omit<
   ButtonProps,
@@ -24,6 +26,7 @@ export function SubmitButton({
   children,
   ...props
 }: SubmitButtonProps) {
+  const t = useT(shell);
   return (
     <Button
       type="submit"
@@ -31,7 +34,7 @@ export function SubmitButton({
       disabled={disabled || cooldown > 0}
       {...props}
     >
-      {cooldown > 0 ? `Erneut versuchen in ${cooldown} s` : children}
+      {cooldown > 0 ? t("submit.cooldown", { seconds: cooldown }) : children}
     </Button>
   );
 }
