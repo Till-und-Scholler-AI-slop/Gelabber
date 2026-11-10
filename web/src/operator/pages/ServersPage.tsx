@@ -11,7 +11,7 @@ import { ChipGroup } from "../../components/ui/ChipGroup.tsx";
 import { SkeletonRows } from "../../components/ui/Skeleton.tsx";
 import { useT } from "../../i18n/catalog.ts";
 import { operator } from "../../i18n/catalogs/operator.ts";
-import { OperatorPageFrame } from "../OperatorArea.tsx";
+import { OperatorPageFrame } from "../OperatorPageFrame.tsx";
 import { formatBytes, formatCount } from "../format.ts";
 import {
   Pager,

@@ -12,7 +12,7 @@ import { SkeletonRows } from "../../components/ui/Skeleton.tsx";
 import { useT } from "../../i18n/catalog.ts";
 import { operator } from "../../i18n/catalogs/operator.ts";
 import { formatDate } from "../../i18n/format.ts";
-import { OperatorPageFrame } from "../OperatorArea.tsx";
+import { OperatorPageFrame } from "../OperatorPageFrame.tsx";
 import { formatWhen } from "../format.ts";
 import { usePaging } from "../paging.ts";
 import { Pager, RowMenuButton, ServerName } from "../parts.tsx";
