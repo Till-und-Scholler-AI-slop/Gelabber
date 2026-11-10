@@ -11,6 +11,8 @@ import {
   type RefObject,
 } from "react";
 
+import { useT } from "../i18n/catalog.ts";
+import { voice } from "../i18n/catalogs/voice.ts";
 import type { Member } from "../servers/types.ts";
 import { VoiceStateIcons } from "../components/VoiceStateIcons.tsx";
 import { Avatar } from "../components/Avatar.tsx";
@@ -89,20 +91,21 @@ export function Participant({
   className?: string;
   style?: CSSProperties;
 }) {
+  const t = useT(voice);
   const [menu, setMenu] = useState(false);
   const menuAnchor = useRef<HTMLButtonElement>(null);
   const hasMenu = Boolean(member) && !self;
   const [press] = useState(() => createLongPress(() => setMenu(true)));
   // Someone who leaves mid-press opens nothing.
   useEffect(() => press.up, [press]);
-  const name = member?.name ?? (self ? fallbackName : "Mitglied");
+  const name = member?.name ?? (self ? fallbackName : t("people.member"));
   const status = deafened
-    ? "Taub"
+    ? t("participant.deafened")
     : muted
-      ? "Stumm"
+      ? t("participant.muted")
       : speaking
-        ? "Spricht"
-        : "Im Raum";
+        ? t("participant.speaking")
+        : t("participant.present");
   const profile = () => {
     if (press.consumeClick()) return;
     if (member) onProfile(id);
@@ -166,7 +169,7 @@ export function Participant({
         <button
           type="button"
           className="voice-room-avatar"
-          aria-label={`Profil von ${name}`}
+          aria-label={t("participant.profileLabel", { name })}
           disabled={!member}
           onClick={profile}
         >
@@ -189,7 +192,9 @@ export function Participant({
             onClick={profile}
           >
             {name}
-            {self ? <span className="voice-room-self"> (du)</span> : null}
+            {self ? (
+              <span className="voice-room-self"> {t("participant.self")}</span>
+            ) : null}
           </button>
         </strong>
         {/* The state, then a camera or a Live. A tile and a chip say it to
@@ -205,7 +210,7 @@ export function Participant({
           <IconButton
             ref={menuAnchor}
             size="xs"
-            label={`Optionen für ${name}`}
+            label={t("participant.optionsLabel", { name })}
             aria-haspopup="dialog"
             aria-expanded={menu}
             icon={<MoreIcon size={16} />}
@@ -244,6 +249,7 @@ function ParticipantMenu({
   name: string;
   onProfile: () => void;
 }) {
+  const t = useT(voice);
   // A bottom sheet shows the name as its title already.
   const sheet = useMediaQuery(POPOVER_SHEET_QUERY);
   return (
@@ -265,7 +271,7 @@ function ParticipantMenu({
         className="voice-participant-profile"
         onClick={onProfile}
       >
-        Profil ansehen
+        {t("participant.viewProfile")}
       </Button>
     </Popover>
   );
@@ -273,12 +279,16 @@ function ParticipantMenu({
 
 /** A volume other than 100 % stays in sight on the card. */
 function VolumeChip({ userId }: { userId: string }) {
+  const t = useT(voice);
   const level = useUserVolumes((s) => userVolumeOf(userId, s.users));
   if (level.muted || level.volume === 1) return null;
   return (
-    <span className="voice-room-volume-chip" title="Lokale Lautstärke">
-      <span className="sr-only">Lautstärke </span>
-      {Math.round(level.volume * 100)} %
+    <span
+      className="voice-room-volume-chip"
+      title={t("participant.localVolume")}
+    >
+      <span className="sr-only">{t("userVolume.volume")} </span>
+      {t("percent", { percent: Math.round(level.volume * 100) })}
     </span>
   );
 }

@@ -2,13 +2,11 @@
 # The batch deletes this list when it is done (docs/i18n.md).
 src/voice/ConnectionStatus.tsx
 src/voice/MicrophoneTest.tsx
-src/voice/Participant.tsx
 src/voice/PushToTalkSettings.tsx
 src/voice/QuickCallSettings.tsx
 src/voice/VoiceDiagnostics.tsx
 src/voice/VoiceSettings.tsx
 src/voice/VoiceSettingsPanel.tsx
-src/voice/VoiceTile.tsx
 src/voice/audioProcessing.ts
 src/voice/callMicrophone.ts
 src/voice/callShortcuts.ts
