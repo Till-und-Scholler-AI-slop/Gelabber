@@ -7,16 +7,20 @@ import type { Message } from "../messages/types.ts";
 import { SmileIcon } from "./Icons.tsx";
 import { Modal } from "./Modal.tsx";
 import { EmojiPickerPart } from "./emojiPickerPart.ts";
+import { useT } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
+import { emoji as emojiCatalog } from "../i18n/catalogs/emoji.ts";
 
 export function EmojiPickerLoader({
   onSelect,
 }: {
   onSelect: (emoji: string) => void;
 }) {
+  const t = useT(emojiCatalog);
   return (
     <EmojiPickerPart.Component
       onSelect={onSelect}
-      fallback={<p role="status">Emoji-Auswahl wird geladen…</p>}
+      fallback={<p role="status">{t("picker.loading")}</p>}
     />
   );
 }
@@ -44,6 +48,7 @@ export function ReactionBar({
     popped,
     popDone,
   } = reaction;
+  const t = useT(chat);
   const { members } = useMentions();
   const addButton = useRef<HTMLButtonElement>(null);
   const reactions = displayedReactions(message.reactions, userId, intent);
@@ -58,7 +63,7 @@ export function ReactionBar({
   return (
     <div
       className={`lr-reactions${reactions.length === 0 ? " is-empty" : ""}`}
-      aria-label="Reaktionen"
+      aria-label={t("reactions.label")}
     >
       {reactions.map(({ emoji, user_ids }) => {
         const mine = user_ids.includes(userId);
@@ -69,7 +74,10 @@ export function ReactionBar({
             key={emoji}
             type="button"
             aria-pressed={mine}
-            aria-label={`${emoji}: ${user_ids.length} ${user_ids.length === 1 ? "Reaktion" : "Reaktionen"}${mine ? ", du hast reagiert" : ""}`}
+            aria-label={t(
+              mine ? "reactions.chipMineLabel" : "reactions.chipLabel",
+              { emoji, count: user_ids.length },
+            )}
             title={who ? who[0]!.toUpperCase() + who.slice(1) : undefined}
             disabled={!mine && !canSend}
             aria-disabled={busy || undefined}
@@ -100,8 +108,8 @@ export function ReactionBar({
               <button
                 ref={addButton}
                 type="button"
-                aria-label="Reaktion hinzufügen"
-                title="Reaktion hinzufügen"
+                aria-label={t("reactions.add")}
+                title={t("reactions.add")}
                 // Transient API work must not make the modal's opener unfocusable.
                 aria-disabled={busy || undefined}
                 onClick={() => {
@@ -118,7 +126,7 @@ export function ReactionBar({
       <Modal
         open={picking}
         onClose={() => setPicking(false)}
-        title="Reaktion auswählen"
+        title={t("reactions.pick")}
         wide
       >
         {picking && (

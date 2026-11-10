@@ -20,6 +20,8 @@ import {
   messagePing,
 } from "../components/mentionRenderer.tsx";
 import { useMentions } from "../components/mentionContext.ts";
+import { useT } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
 
 /**
  * The hits for `q` in one conversation, shown where its history was. The
@@ -36,6 +38,7 @@ export function MessageSearch({
   onClose: () => void;
   renderMessage: (message: Message) => ReactNode;
 }) {
+  const t = useT(chat);
   const userId = useUserId();
   const { members, me } = useMentions();
   const generation = scopeGeneration();
@@ -86,11 +89,11 @@ export function MessageSearch({
       />
     );
   return (
-    <section className="lr-search" aria-label="Nachrichten suchen">
+    <section className="lr-search" aria-label={t("search.label")}>
       <p className="lr-search-summary">
-        <span>Treffer in dieser Unterhaltung</span>
+        <span>{t("search.summary")}</span>
         <button type="button" onClick={onClose} className="lr-search-close">
-          Zurück zum Chat
+          {t("pane.backToChat")}
         </button>
       </p>
       <div
@@ -98,10 +101,10 @@ export function MessageSearch({
         aria-live="polite"
         aria-busy={query.isFetching || undefined}
       >
-        {query.isPending ? <p>Suche läuft…</p> : null}
+        {query.isPending ? <p>{t("search.running")}</p> : null}
         {query.error ? (
           <div role="alert">
-            <p>Die Suche konnte nicht geladen werden.</p>
+            <p>{t("search.failed")}</p>
             <button
               type="button"
               onClick={() =>
@@ -110,12 +113,12 @@ export function MessageSearch({
                   : void query.refetch()
               }
             >
-              Erneut laden
+              {t("list.reload")}
             </button>
           </div>
         ) : null}
         {query.isSuccess && rows.length === 0 ? (
-          <p>Keine Nachrichten gefunden.</p>
+          <p>{t("search.none")}</p>
         ) : null}
         {rows.map((message) => (
           <article key={message.id}>
@@ -126,7 +129,12 @@ export function MessageSearch({
                 else resultButtons.current.delete(message.id);
               }}
               onClick={() => setOpened({ q, id: message.id })}
-              aria-label={`Zur Nachricht von ${message.author.name}: ${readableMentions(plainText(message.content), members) || "Datei"}`}
+              aria-label={t("search.hitLabel", {
+                name: message.author.name,
+                text:
+                  readableMentions(plainText(message.content), members) ||
+                  t("notify.file"),
+              })}
               className="lr-search-hit"
             >
               <p>
@@ -148,7 +156,7 @@ export function MessageSearch({
                   highlight={terms}
                 />
               </p>
-              <span>Nachricht im Kontext öffnen</span>
+              <span>{t("search.openInContext")}</span>
             </button>
           </article>
         ))}
@@ -159,7 +167,9 @@ export function MessageSearch({
             onClick={() => void query.fetchNextPage()}
             className="lr-button-secondary"
           >
-            {query.isFetchingNextPage ? "Lädt…" : "Ältere Treffer"}
+            {t(
+              query.isFetchingNextPage ? "search.loadingMore" : "search.older",
+            )}
           </button>
         ) : null}
       </div>

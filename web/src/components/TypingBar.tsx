@@ -4,6 +4,8 @@
 import { useMemo } from "react";
 
 import { useSession } from "../auth/session.ts";
+import { useT } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
 import type { Member } from "../servers/types.ts";
 import {
   TYPING_BAR_PX,
@@ -19,14 +21,15 @@ export function TypingBar({
   channelId: string;
   members: Member[];
 }) {
+  const t = useT(chat);
   const me = useSession((s) => s.user?.id);
   const byChannel = useTypingStore((s) => s.byChannel);
   const now = useTypingStore((s) => s.now);
   const names = useMemo(() => {
     const ids = typingUserIds(byChannel, channelId, now, me);
     const lookup = new Map(members.map((m) => [m.user_id, m.name]));
-    return ids.map((id) => lookup.get(id) ?? "Jemand");
-  }, [byChannel, channelId, me, members, now]);
+    return ids.map((id) => lookup.get(id) ?? t("typing.someone"));
+  }, [byChannel, channelId, me, members, now, t]);
 
   return (
     <div

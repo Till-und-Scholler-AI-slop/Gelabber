@@ -431,7 +431,9 @@ export function MessagePane({
               aria-keyshortcuts="Control+F Meta+F"
             />
             {searchText ? null : (
-              <kbd aria-hidden="true">{searchKeys.mod} F</kbd>
+              <kbd aria-hidden="true">
+                {searchKeys.mod} F{/* i18n-ok: a key name */}
+              </kbd>
             )}
           </label>
           {notify ? <NotificationBell target={notify} muted={muted} /> : null}
@@ -489,7 +491,7 @@ export function MessagePane({
                       }}
                     >
                       {t("pane.markRead")}
-                      <kbd aria-hidden="true">Esc</kbd>
+                      <kbd aria-hidden="true">Esc{/* i18n-ok */}</kbd>
                     </Button>
                   </section>
                 ) : null}

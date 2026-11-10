@@ -2,6 +2,9 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { CopyLabel } from "../components/ui/CopyButton.tsx";
 import { COPIED_MS, useCopied } from "../components/ui/useCopied.ts";
+import { useT } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
+import { common } from "../i18n/catalogs/common.ts";
 import { copyText } from "../servers/clipboard.ts";
 import { isTauriApp } from "../tauriApp.ts";
 import { parseMessage, type Block, type Inline } from "./markdown.ts";
@@ -159,6 +162,7 @@ function Spoiler({
   interactive: boolean;
   children: ReactNode;
 }) {
+  const t = useT(chat);
   const [shown, setShown] = useState(false);
   if (!interactive) return <span className="lr-md-spoiler">{children}</span>;
   // One element before and after revealing: it keeps the keyboard focus
@@ -168,7 +172,7 @@ function Spoiler({
       className={`lr-md-spoiler${shown ? " lr-md-spoiler-shown" : ""}`}
       role={shown ? undefined : "button"}
       tabIndex={shown ? -1 : 0}
-      aria-label={shown ? undefined : "Spoiler anzeigen"}
+      aria-label={shown ? undefined : t("content.showSpoilerLabel")}
       onClick={(event) => {
         if (shown) return;
         event.stopPropagation();
@@ -202,6 +206,8 @@ function CodeBlock({
   text: string;
   interactive: boolean;
 }) {
+  const t = useT(chat);
+  const tc = useT(common);
   const { copied, flash } = useCopied();
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -231,10 +237,10 @@ function CodeBlock({
           }
         >
           {failed ? (
-            "Kopieren nicht möglich"
+            t("content.copyFailed")
           ) : (
             <CopyLabel copied={copied} iconSize={13}>
-              Kopieren
+              {tc("copy")}
             </CopyLabel>
           )}
         </button>

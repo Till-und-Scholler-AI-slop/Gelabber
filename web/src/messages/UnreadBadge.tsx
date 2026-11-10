@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { Badge as Pill } from "../components/ui/Badge.tsx";
+import { useCurrentLocale } from "../i18n/locale.ts";
 import { badgeSeen } from "./badgeEntrance.ts";
 import { unreadLabel } from "./notifyLevel.ts";
 import { useReadState } from "./readState.ts";
@@ -22,6 +23,8 @@ export function UnreadBadge({
   className?: string;
 }) {
   const { count, dot } = useBadge(scope);
+  // unreadLabel speaks the interface's language: a switch redraws it.
+  useCurrentLocale();
   // A badge that appears while the list is on screen scales in once.
   const loaded = useReadState().data !== undefined;
   const shown = count > 0 || dot;
