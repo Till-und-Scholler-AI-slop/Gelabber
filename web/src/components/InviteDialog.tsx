@@ -91,8 +91,8 @@ export function InvitePromptHost() {
 
 /**
  * Creates a link as it mounts and shows it ready to copy. Changing the
- * terms makes a new link; the previous one is revoked unless it was
- * already copied or shared, since someone may be holding it. Closing
+ * terms makes a new link; the previous one is revoked unless a copy or
+ * share of it was started, since someone may be holding it. Closing
  * revokes a link nobody took (inviteSession.ts).
  */
 export function InviteLinkPanel({ server }: { server: InviteServer }) {
@@ -164,8 +164,9 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
       return false;
     }
     if (!link) return false;
+    // Taken from the start: the dialog may close before the copy settles.
+    session.current?.handOut();
     if (await copyText(link)) {
-      session.current?.handOut();
       show({ tone: "success", message: `Link kopiert · ${summary}` });
       return true;
     }
@@ -217,17 +218,17 @@ export function InviteLinkPanel({ server }: { server: InviteServer }) {
       {canShare() ? (
         <Button
           icon={<ShareIcon size={16} />}
-          onClick={() =>
-            link &&
-            !making &&
+          onClick={() => {
+            if (!link || making) return;
+            // Taken as the sheet opens: closing the dialog behind it must
+            // not revoke the link being shared.
+            session.current?.handOut();
             void share({
               title: `Einladung zu ${server.name}`,
               text: `Tritt ${server.name} auf Gelabber bei:`,
               url: link,
-            }).then((shared) => {
-              if (shared) session.current?.handOut();
-            })
-          }
+            });
+          }}
         >
           Teilen…
         </Button>
