@@ -570,8 +570,9 @@ fn invalid() -> ApiError {
 /// The upload link stays valid until its expiry, so the uploader could
 /// still replace the bytes with others of the same signed length after
 /// this check. The served type (always the checked type, text as plain
-/// text), `nosniff` and the download link's signed `identity` coding keep
-/// that harmless; this check catches mistakes.
+/// text), `nosniff` and the download link's signed `identity` coding stop
+/// swapped bytes from running as another type, but not e.g. an image too
+/// large to decode: this check catches mistakes, not a determined uploader.
 pub async fn check_uploads(
     db: &PgPool,
     store: &ObjectStore,
