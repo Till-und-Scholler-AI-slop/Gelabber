@@ -890,7 +890,7 @@ async fn the_voice_roster_leaves_out_hidden_rooms(pool: PgPool) {
     let hidden = id(&hidden.body["id"]);
     let lobby = create_channel(&mut ada, sid, json!({"name": "Lobby", "kind": "voice"})).await;
     let lobby = id(&lobby.body["id"]);
-    let _cara_seat = join_voice(addr, &cara, sid, hidden).await;
+    let mut cara_seat = join_voice(addr, &cara, sid, hidden).await;
     let _ada_seat = join_voice(addr, &ada, sid, lobby).await;
 
     // The subscribe snapshot shows the open room, not the hidden one.
@@ -914,6 +914,22 @@ async fn the_voice_roster_leaves_out_hidden_rooms(pool: PgPool) {
     .await;
     // A quiet socket also ends here: the outer timeout comes before `until`'s.
     assert!(leaked.is_err(), "hidden seat leaked: {leaked:?}");
+
+    // Cara mutes in the hidden room: Bob's filtered roster is unchanged, so
+    // no roster frame tells him something happened there.
+    send(
+        &mut cara_seat,
+        json!({"op": "sig", "t": "m", "s": sid, "c": hidden, "on": true}),
+    )
+    .await;
+    until(&mut cara_seat, |f| f["op"] == "sig" && f["t"] == "m").await;
+    state.gateway.refresh_rosters().await;
+    let resent = tokio::time::timeout(
+        Duration::from_millis(700),
+        until(&mut ws, |f| f["op"] == "sig" && f["t"] == "r"),
+    )
+    .await;
+    assert!(resent.is_err(), "roster for a hidden change: {resent:?}");
 
     // Given the role, Bob's next roster shows Cara without a reconnect.
     set_roles(&mut ada, sid, bob.user_id(), json!([r])).await;
