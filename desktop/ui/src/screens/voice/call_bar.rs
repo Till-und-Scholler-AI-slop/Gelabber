@@ -709,14 +709,12 @@ fn follow(
 /// it does not follow the key (no call, no microphone, push-to-talk off).
 /// The global hook's hold is its own.
 pub fn release_window(ctx: &egui::Context, call: &gelabber_call::Call) {
-    let was: bool = ctx.data(|d| d.get_temp(window_id())).unwrap_or(false);
     ctx.data_mut(|d| {
         d.insert_temp(place_id(), Hold::default());
         d.insert_temp(window_id(), false);
     });
-    if was {
-        push_to_talk_from(ctx, call, PttSource::Window, false);
-    }
+    // Tells the call only when the window's hold changes.
+    push_to_talk_from(ctx, call, PttSource::Window, false);
 }
 
 fn push_to_talk(ui: &Ui, app: &AppCtx, active: bool) {

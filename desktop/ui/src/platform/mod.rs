@@ -339,6 +339,12 @@ impl Platform {
             call.play_sound(gelabber_call::Sound::LiveStart);
         }
         self.ptt.tick(ctx, &call, &p);
+        // Hidden, minimised or behind another window, the window sees no
+        // key's release (no paint runs then): its hold ends here. The
+        // global hook's hold is its own and goes on.
+        if !in_front || joined.is_none() {
+            crate::screens::voice::call_bar::release_window(ctx, &call);
+        }
         if self.next_tick.is_none_or(|next| now >= next) {
             self.next_tick = Some(now + Duration::from_millis(500));
             self.tick(ctx, &client, in_front);
@@ -651,6 +657,49 @@ mod tests {
         std::thread::sleep(Duration::from_millis(600));
         pass(&mut platform, &mut app, egui::vec2(1000.0, 700.0));
         assert_eq!(platform.stored.window.unwrap().width, 1000.0);
+        drop(config);
+    }
+
+    /// A key held in the window as it is minimised: the logic pass, which
+    /// runs without a paint, lets the window's hold go; the hook's stays.
+    #[test]
+    fn a_hidden_window_lets_its_push_to_talk_key_go() {
+        use crate::screens::voice::call_bar::{PttSource, push_to_talk_from};
+        let config = paths::testing::TempConfig::new("platform-ptt-hidden");
+        let ctx = Context::default();
+        let client = Client::new("http://127.0.0.1:9").unwrap();
+        let mut platform = Platform::new(None);
+        let mut app = GelabberApp::with_context(&ctx, client, None);
+        let call = app.call().clone();
+        call.set_state(gelabber_call::CallState {
+            status: gelabber_call::CallStatus::Connected,
+            server: Some(uuid::Uuid::from_u128(0xa0)),
+            channel: Some(uuid::Uuid::from_u128(0xb1)),
+            ..gelabber_call::CallState::default()
+        });
+        let pass = |platform: &mut Platform, app: &mut GelabberApp, minimized: bool| {
+            let mut input = egui::RawInput::default();
+            input
+                .viewports
+                .entry(egui::ViewportId::ROOT)
+                .or_default()
+                .minimized = Some(minimized);
+            let mut out = ctx.run_ui(input, |ui| platform.logic(ui.ctx(), Some(app)));
+            out.textures_delta.clear();
+        };
+        prefs::update(&ctx, |p| {
+            p.voice_input = "ptt".into();
+            p.ptt_key = "KeyA".into();
+        });
+        call.set_settings(crate::screens::voice::sync::settings(&prefs::get(&ctx)));
+        push_to_talk_from(&ctx, &call, PttSource::Window, true);
+        pass(&mut platform, &mut app, false);
+        assert!(call.push_to_talk_held(), "shown: the window keeps it");
+        pass(&mut platform, &mut app, true);
+        assert!(!call.push_to_talk_held(), "minimised: let go");
+        push_to_talk_from(&ctx, &call, PttSource::Hook, true);
+        pass(&mut platform, &mut app, true);
+        assert!(call.push_to_talk_held(), "the hook holds while hidden");
         drop(config);
     }
 
