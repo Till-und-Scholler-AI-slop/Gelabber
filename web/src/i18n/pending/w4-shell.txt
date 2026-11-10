@@ -1,12 +1,6 @@
 # W4: files whose UI text is not in the catalogs yet.
 # The batch deletes this list when it is done (docs/i18n.md).
 src/api/client.ts
-src/dms/api.ts
-src/dms/lastDm.ts
-src/dms/open.ts
-src/dms/people.ts
-src/dms/queries.ts
-src/dms/types.ts
 src/lib/localDay.ts
 src/lib/uuid.ts
 src/main.tsx
