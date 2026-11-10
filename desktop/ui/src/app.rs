@@ -371,6 +371,8 @@ impl GelabberApp {
         theme::ensure(ctx);
         // A new server's account: its own theme document.
         screens::settings::forget_account(ctx);
+        // The old call's video windows would keep it and its client alive.
+        screens::voice::window::forget(ctx);
         let repaint_ctx = ctx.clone();
         client.set_repaint(std::sync::Arc::new(move || {
             repaint_ctx.request_repaint();
