@@ -12,8 +12,8 @@ import {
   PASSWORD_MIN,
   errorMessage,
   fieldMessage,
-  validateEmail,
   validateName,
+  validateNewEmail,
   validatePassword,
 } from "../auth/rules.ts";
 import { login, register } from "../auth/session.ts";
@@ -61,7 +61,7 @@ export function RegisterPage() {
     const fields: Record<string, string> = {};
     const checks = [
       ["name", validateName(name)],
-      ["email", validateEmail(email)],
+      ["email", validateNewEmail(email)],
       ["password", validatePassword(password)],
     ] as const;
     for (const [field, code] of checks) {

@@ -3270,11 +3270,14 @@ describe("source and transport continuity", () => {
     const env = await connected();
     for (let rebuilt = 1; rebuilt <= 3; rebuilt += 1) {
       env.emitMedia({ op: "err", e: "unauthorized" });
-      // The fake never reports "connected", so the backoff grows each time.
       await vi.waitFor(() => expect(env.peers[rebuilt]?.audio).toBeTruthy(), {
         timeout: 5000,
       });
+      // Each rebuilt seat comes up: "connected" must not clear the count.
+      env.peers[rebuilt]!.setTransportState("send", "connected");
+      env.peers[rebuilt]!.setTransportState("recv", "connected");
       expect(useVoice.getState().status).toBe("joined");
+      expect(useVoice.getState().connection).toBe("connected");
     }
     // The fourth within a minute: the call ends with a way back.
     env.emitMedia({ op: "err", e: "unauthorized" });

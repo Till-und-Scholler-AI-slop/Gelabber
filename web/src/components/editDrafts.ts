@@ -4,6 +4,8 @@
 
 import { create } from "zustand";
 
+import { scopeGeneration } from "../auth/scope.ts";
+
 type EditDraftState = {
   byMessage: Record<string, { channelId: string; text: string }>;
 };
@@ -40,6 +42,11 @@ export function clearEditDrafts(channelId: string): void {
   }));
 }
 
+/** Account switch: an open edit must not follow into another account. */
+export function resetEditDrafts(): void {
+  useEditDrafts.setState({ byMessage: {} });
+}
+
 type EditMutation = {
   mutateAsync: (input: { id: string; content: string }) => Promise<unknown>;
 };
@@ -50,6 +57,12 @@ type EditMutation = {
  * its latest call, so a second save would drop the first one's recovery.
  */
 export function saveEdit(edit: EditMutation, id: string) {
-  return (content: string, failed: () => void): void =>
-    void edit.mutateAsync({ id, content }).catch(failed);
+  return (content: string, failed: () => void): void => {
+    // A save that fails after an account switch stays closed: reopening it
+    // would show the old account's text to the next one.
+    const generation = scopeGeneration();
+    void edit.mutateAsync({ id, content }).catch(() => {
+      if (scopeGeneration() === generation) failed();
+    });
+  };
 }

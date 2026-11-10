@@ -116,4 +116,31 @@ describe("an invite dialog's links", () => {
     await vi.waitFor(() => expect(shown).toHaveBeenCalledOnce());
     expect(revoke).not.toHaveBeenCalled();
   });
+
+  it("makes no new link when the chips come back to the shown terms", async () => {
+    const { session, create, answers, invite, revoke, shown } = setup();
+    session.request(WEEK, false);
+    answers[0]!.resolve(invite());
+    await vi.waitFor(() => expect(shown).toHaveBeenCalledOnce());
+    session.request(DAY, true);
+    session.request({ ...WEEK }, true);
+    vi.advanceTimersByTime(INVITE_TERMS_DELAY_MS);
+    expect(create).toHaveBeenCalledOnce();
+    expect(revoke).not.toHaveBeenCalled();
+  });
+
+  it("drops a link on its way when the chips come back to the shown terms", async () => {
+    const { session, create, answers, invite, revoke, shown } = setup();
+    session.request(WEEK, false);
+    answers[0]!.resolve(invite());
+    await vi.waitFor(() => expect(shown).toHaveBeenCalledOnce());
+    session.request(DAY, false);
+    session.request(WEEK, true);
+    vi.advanceTimersByTime(INVITE_TERMS_DELAY_MS);
+    expect(create).toHaveBeenCalledTimes(2);
+    const unwanted = invite();
+    answers[1]!.resolve(unwanted);
+    await vi.waitFor(() => expect(revoke).toHaveBeenCalledWith(unwanted.code));
+    expect(shown).toHaveBeenCalledOnce();
+  });
 });

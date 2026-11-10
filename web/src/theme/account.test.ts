@@ -216,6 +216,29 @@ describe("account theme sync", () => {
     pending.resolve(doc("nord", 2));
     await save;
   });
+  it("takes over a change whose sending tab went away mid-save", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      bindThemeAccount("a");
+      call.mockResolvedValueOnce(doc());
+      await syncThemes();
+      const pending = deferred<ThemeDocument>();
+      call.mockReturnValueOnce(pending.promise);
+      void changeTheme({ kind: "apply", id: "nord" });
+      // The sending tab closed: its marker stays in the cache.
+      const cached = localStorage.getItem("gelabber.themes.v1:a");
+      bindThemeAccount(null);
+      localStorage.setItem("gelabber.themes.v1:a", cached!);
+      vi.advanceTimersByTime(31_000);
+      bindThemeAccount("a");
+      expect(useAccountThemes.getState()).toMatchObject({
+        pending: { kind: "apply", id: "nord" },
+        status: "error",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("discards corrupt cache and never overwrites an existing account during migration", async () => {
     localStorage.setItem("gelabber.themes.v1:a", "{broken");
     localStorage.setItem("gelabber.theme", "light");

@@ -481,7 +481,7 @@ Content normalisation (server): `\r\n` and `\r` → `\n`, then trim. Optimistic 
 
 | Method & path | Request | Success | Errors |
 |---|---|---|---|
-| `GET /api/channels/{id}/messages/search?q=&limit=&before=` | `q` trimmed 1..=200 chars (PostgreSQL `websearch_to_tsquery('simple', q)`); web sends `limit=25`; next page `before={oldest.created_at}\|{oldest.id}` while `has_more` | `200 MessagePage` (oldest → newest within the page, newest hits first page) | `422 q: required\|too_long`, `limit`, `before` |
+| `GET /api/channels/{id}/messages/search?q=&limit=&before=` | `q` trimmed 1..=200 chars (PostgreSQL `websearch_to_tsquery('simple', q)`); web sends `limit=25`; next page `before={oldest.created_at}\|{oldest.id}` while `has_more` | `200 MessagePage` (oldest → newest within the page, newest hits first page) | `422 q: required\|too_long\|invalid`, `limit`, `before`, all in the JSON envelope (1.5). A missing `q` is `q: required`, not a plain 400; `invalid` is a control character in `q` |
 | `GET /api/channels/{id}/messages/{message_id}/context` | — | `200 {target_id: uuid, messages: Message[] (≤ 30 older + target + ≤ 30 newer, oldest → newest), before: "ts\|uuid", after: "ts\|uuid"}` — use `before`/`after` as cursors for further history | `404` message not in channel |
 
 ---

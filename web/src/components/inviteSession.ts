@@ -12,7 +12,7 @@ export const INVITE_TERMS_DELAY_MS = 400;
 export type InviteSession = {
   /** A link with these terms: now, or once the terms rested (`wait`). */
   request: (terms: InviteTerms, wait: boolean) => void;
-  /** The link on screen was copied or shared: someone may hold it. */
+  /** A copy or share of the link on screen started: someone may hold it. */
   handOut: () => void;
   /** The dialog closed: an untaken link is revoked, one on its way too. */
   close: () => void;
@@ -63,6 +63,16 @@ export function inviteSession({
   return {
     request(terms, wait) {
       clearTimeout(timer);
+      // Back to the link on screen: it serves, and one still on its way for
+      // other terms is revoked when it arrives.
+      if (
+        current &&
+        current.terms.expiry === terms.expiry &&
+        current.terms.uses === terms.uses
+      ) {
+        latest++;
+        return;
+      }
       if (wait) timer = setTimeout(() => make(terms), INVITE_TERMS_DELAY_MS);
       else make(terms);
     },
