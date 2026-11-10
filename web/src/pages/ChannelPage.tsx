@@ -83,6 +83,18 @@ export function ChannelPage() {
       {pill}
     </>
   );
+  // The voice room's page before the room draws it: the plain header over
+  // what loads, or over why it did not.
+  const voiceFrame = (body: ReactNode) => (
+    <>
+      <header className="lr-channel-header">
+        {title}
+        <span className="lr-channel-header-spacer" />
+        <MemberPanelToggle />
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto">{body}</div>
+    </>
+  );
 
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -97,18 +109,8 @@ export function ChannelPage() {
             title={name}
             hint={pill}
             actions={<MemberPanelToggle />}
-            fallback={
-              <>
-                <header className="lr-channel-header">
-                  {title}
-                  <span className="lr-channel-header-spacer" />
-                  <MemberPanelToggle />
-                </header>
-                <div className="min-h-0 flex-1 overflow-y-auto">
-                  <SkeletonRows count={3} avatars />
-                </div>
-              </>
-            }
+            fallback={voiceFrame(<SkeletonRows count={3} avatars />)}
+            failedFrame={voiceFrame}
           />
         ) : (
           <div className="relative min-h-0 flex-1">
