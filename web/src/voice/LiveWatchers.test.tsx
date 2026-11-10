@@ -149,10 +149,15 @@ describe("who watches a Live", () => {
       }),
     );
     expect(list.watching.map((person) => person.name)).toEqual(["Mira", "Tom"]);
-    // The own join counts before the roster's echo, as "(du)".
-    expect(list.notWatching.map((person) => person.name)).toEqual([
+    // The own join counts before the roster's echo, as "(du)"; the avatar
+    // keeps the plain name.
+    expect(list.notWatching.map((person) => person.label)).toEqual([
       "Ada",
       "Lena (du)",
+    ]);
+    expect(list.notWatching.map((person) => person.name)).toEqual([
+      "Ada",
+      "Lena",
     ]);
   });
 
@@ -192,10 +197,10 @@ describe("who watches a Live", () => {
 describe("the watchers' list", () => {
   const people = {
     watching: [
-      { id: "mira", name: "Mira", url: null },
-      { id: "tom", name: "Tom", url: null },
+      { id: "mira", name: "Mira", label: "Mira", url: null },
+      { id: "tom", name: "Tom", label: "Tom", url: null },
     ],
-    notWatching: [{ id: "ada", name: "Ada", url: null }],
+    notWatching: [{ id: "ada", name: "Ada", label: "Ada", url: null }],
   };
   const props = (own: boolean, list = people) => ({
     open: true,

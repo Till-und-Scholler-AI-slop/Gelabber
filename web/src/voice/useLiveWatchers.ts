@@ -15,7 +15,14 @@ import {
 } from "./roster.ts";
 import { watchersOf } from "./watchers.ts";
 
-export type WatchPerson = { id: string; name: string; url: string | null };
+/** `name` is the plain name, for the avatar and the order; `label` is what
+ * the row reads, "(du)" on the own one. */
+export type WatchPerson = {
+  id: string;
+  name: string;
+  label: string;
+  url: string | null;
+};
 export type LiveWatcherList = {
   watching: WatchPerson[];
   notWatching: WatchPerson[];
@@ -73,7 +80,8 @@ export function useLiveWatchers({
     const name = member?.name ?? t("people.someone");
     return {
       id,
-      name: id === me ? t("people.you", { name }) : name,
+      name,
+      label: id === me ? t("people.you", { name }) : name,
       url: member?.avatar_url ?? null,
     };
   };

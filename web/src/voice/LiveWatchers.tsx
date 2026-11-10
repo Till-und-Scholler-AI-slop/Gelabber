@@ -104,7 +104,7 @@ function People({ people }: { people: WatchPerson[] }) {
       {people.map((person) => (
         <li key={person.id}>
           <Avatar name={person.name} url={person.url} decorative />
-          <span>{person.name}</span>
+          <span>{person.label}</span>
         </li>
       ))}
     </ul>
