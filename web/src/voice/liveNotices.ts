@@ -18,7 +18,7 @@ import { can } from "../servers/permissions.ts";
 import type { ServerDetail } from "../servers/types.ts";
 import type { SigEvent, VoiceEntry } from "../ws/protocol.ts";
 import { translate } from "../i18n/catalog.ts";
-import { voice } from "../i18n/catalogs/voice.ts";
+import { voice as texts } from "../i18n/catalogs/voice.ts";
 import { liveSentence } from "./roomSummary.ts";
 
 /** Once per person and voice channel until they have been off Live there
@@ -188,7 +188,7 @@ export function liveSoundWanted(
 
 /** "Ada ist live in Lounge.", as the chat notice said. */
 export function liveText(author: string, voiceName: string): string {
-  return translate(voice, "live.inChannel", {
+  return translate(texts, "live.inChannel", {
     sentence: liveSentence([author], false),
     channel: voiceName,
   });
@@ -270,7 +270,7 @@ export function createLiveNotices(
     const voice = server.channels.find((c) => c.id === start.channelId);
     if (!voice) return;
     const member = server.members.find((m) => m.user_id === start.userId);
-    const author = member?.name ?? "Jemand";
+    const author = member?.name ?? translate(texts, "people.someone");
     const text = liveText(author, voice.name);
     if (decision.toast)
       deps.toast({
