@@ -816,16 +816,20 @@ impl Gateway {
             })
             .chain(rooms.iter().map(|(cid, _)| *cid))
             .collect();
-        // DMs are channel rows too.
+        // DMs are channel rows too. A channel limited to roles the user does
+        // not hold counts as gone.
         let existing: HashSet<Uuid> = if wanted.is_empty() {
             HashSet::new()
         } else {
-            sqlx::query_scalar("SELECT id FROM channels WHERE id = ANY($1)")
-                .bind(&wanted)
-                .fetch_all(&mut *db)
-                .await?
-                .into_iter()
-                .collect()
+            sqlx::query_scalar(
+                "SELECT id FROM channels WHERE id = ANY($1) AND channel_visible_to(id, $2)",
+            )
+            .bind(&wanted)
+            .bind(user_id)
+            .fetch_all(&mut *db)
+            .await?
+            .into_iter()
+            .collect()
         };
         for (sid, revision) in access {
             let current = revisions.get(&sid).copied();
