@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { setLocale } from "../i18n/locale.ts";
 
 import {
   PASSWORD_MAX,
@@ -177,5 +179,23 @@ describe("avatar removal", () => {
     expect(avatarFieldAfterRemoval(link)).toBe(link);
     expect(avatarFieldAfterRemoval("https://cdn.exa")).toBe("https://cdn.exa");
     expect(avatarFieldAfterRemoval("")).toBe("");
+  });
+});
+
+describe("copy in English", () => {
+  afterEach(() => setLocale("de", { persist: false }));
+
+  it("field and error messages follow the interface's language", () => {
+    expect(fieldMessage("name", "required")).toBe("Name fehlt.");
+    setLocale("en", { persist: false });
+    expect(fieldMessage("email", "required")).toBe("Email address is missing.");
+    expect(fieldMessage("password", "too_short")).toBe(
+      "At least 8 characters.",
+    );
+    expect(fieldMessage("whatever", "invalid")).toBe("Input is invalid.");
+    expect(errorMessage("invalid_credentials")).toBe(
+      "Wrong email or password.",
+    );
+    expect(errorMessage("bad_request")).toBe(errorMessage("internal"));
   });
 });

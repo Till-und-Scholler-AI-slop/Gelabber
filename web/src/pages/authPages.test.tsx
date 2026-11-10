@@ -1,7 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { setLocale } from "../i18n/locale.ts";
 
 const fixture = vi.hoisted(() => ({
   search: {} as Record<string, unknown>,
@@ -142,5 +144,38 @@ describe("mail sent", () => {
     );
     expect(html).toContain(">Andere Adresse verwenden</button>");
     expect(html).toContain('role="status"');
+  });
+});
+
+describe("in English", () => {
+  afterEach(() => setLocale("de", { persist: false }));
+
+  it("signs in and registers in English", () => {
+    setLocale("en", { persist: false });
+    fixture.mail = false;
+    const login = render(<LoginPage />);
+    expect(login).toContain("<h1>Sign in</h1>");
+    expect(login).toContain("No account yet?");
+    expect(login).toContain("Ask the person who runs this Gelabber server.");
+    expect(login).not.toContain("Anmelden");
+    const register = render(<RegisterPage />);
+    expect(register).toContain("<h1>Create account</h1>");
+    expect(register).toContain("At least 8 characters.");
+  });
+
+  it("names the address in bold in the mail-sent text", () => {
+    setLocale("en", { persist: false });
+    const html = render(
+      <MailSent
+        email="new@example.org"
+        password="secret-secret"
+        redirect={undefined}
+        onOtherAddress={() => {}}
+      />,
+    );
+    expect(html).toContain(
+      "Confirmation link sent to <strong>new@example.org</strong>. It is valid for 24 hours.",
+    );
+    expect(html).toMatch(/>Send again \(60 s\)<\/button>/);
   });
 });
