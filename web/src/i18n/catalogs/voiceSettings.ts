@@ -10,6 +10,7 @@ export const voiceSettings = defineCatalog(
     "tabs.audio": "Audio",
     "tabs.video": "Video & Live",
     "tabs.diagnostics": "Diagnose",
+    "panel.loadFailed": "Die Einstellungen konnten nicht geladen werden.",
   },
   {
     "dialog.title": "Audio & video",
@@ -17,5 +18,6 @@ export const voiceSettings = defineCatalog(
     "tabs.audio": "Audio",
     "tabs.video": "Video & Live",
     "tabs.diagnostics": "Diagnostics",
+    "panel.loadFailed": "The settings could not be loaded.",
   },
 );

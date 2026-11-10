@@ -159,6 +159,32 @@ export const voice = defineCatalog(
     "tile.muteLiveSound": "Live-Ton stummschalten",
     "tile.unmuteLiveSound": "Live-Ton wieder einschalten",
     "tile.liveSoundVolume": "Live-Ton-Lautstärke",
+    "error.failed": "Die Sprachverbindung ist fehlgeschlagen.",
+    "error.slow":
+      "Der Sprachserver antwortet nicht. Bitte noch einmal versuchen.",
+    "error.busy":
+      "Die Sprachverbindung ist überlastet. Bitte noch einmal versuchen.",
+    "error.update":
+      "Bitte Gelabber aktualisieren und den Sprachkanal erneut betreten.",
+    "error.forbidden":
+      "Dafür fehlt dir in diesem Sprachkanal die Berechtigung.",
+    "error.unsupportedCodec":
+      "Dein Browser kann kein Format senden, das dieser Sprachkanal empfängt.",
+    "error.unavailable": "Kein freier Sprachplatz.",
+    "error.unauthorized":
+      "Der Sprachserver hat die Verbindung nicht zugelassen.",
+    "error.gone": "Der Sprachserver ist gerade nicht erreichbar.",
+    "error.connectionClosed":
+      "Die Verbindung zum Sprachserver ist abgebrochen.",
+    "error.sdkLoadFailed":
+      "Die Anruffunktion konnte nicht geladen werden. Bitte Gelabber neu laden und den Sprachkanal erneut betreten.",
+    "error.sdkLoadTimeout":
+      "Die Anruffunktion lädt gerade sehr langsam. Bitte gleich den Sprachkanal erneut betreten.",
+    "error.reconnectFailed":
+      "Die Sprachverbindung konnte nicht wiederhergestellt werden. Bitte erneut beitreten.",
+    "error.streamFailed":
+      "Der Stream konnte nicht verbunden werden. Der Sprachkanal bleibt aktiv.",
+    "error.roomLoadFailed": "Der Sprachkanal konnte nicht geladen werden.",
   },
   {
     percent: "{percent}%",
@@ -315,5 +341,26 @@ export const voice = defineCatalog(
     "tile.muteLiveSound": "Mute Live audio",
     "tile.unmuteLiveSound": "Unmute Live audio",
     "tile.liveSoundVolume": "Live audio volume",
+    "error.failed": "The voice connection failed.",
+    "error.slow": "The voice server isn’t responding. Please try again.",
+    "error.busy": "The voice connection is overloaded. Please try again.",
+    "error.update": "Please update Gelabber and join the voice channel again.",
+    "error.forbidden":
+      "You don’t have permission for that in this voice channel.",
+    "error.unsupportedCodec":
+      "Your browser can’t send any format this voice channel receives.",
+    "error.unavailable": "No free voice seat.",
+    "error.unauthorized": "The voice server refused the connection.",
+    "error.gone": "The voice server can’t be reached right now.",
+    "error.connectionClosed": "The connection to the voice server dropped.",
+    "error.sdkLoadFailed":
+      "Calls could not be loaded. Please reload Gelabber and join the voice channel again.",
+    "error.sdkLoadTimeout":
+      "Calls are loading very slowly right now. Please join the voice channel again in a moment.",
+    "error.reconnectFailed":
+      "The voice connection could not be restored. Please join again.",
+    "error.streamFailed":
+      "The stream could not be connected. The voice channel stays active.",
+    "error.roomLoadFailed": "The voice channel could not be loaded.",
   },
 );

@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useLocale } from "../i18n/locale.ts";
 import {
   decodeMediaFrame,
   MEDIA_VERSION,
   MediaError,
+  mediaErrorMessage,
   type MediaClientFrame,
   type MediaServerFrame,
   type MediaSocket,
@@ -355,5 +357,18 @@ describe("owned correlated media RPC", () => {
     expect(await last).toMatchObject({ code: "connection_closed" });
     expect(f.peer.isOpen()).toBe(false);
     expect(f.sent).toHaveLength(2);
+  });
+});
+
+describe("media error messages", () => {
+  afterEach(() => useLocale.setState({ locale: "de" }));
+
+  it("say what a code means, in the interface's language", () => {
+    expect(mediaErrorMessage("unavailable")).toBe("Kein freier Sprachplatz.");
+    expect(mediaErrorMessage("publication_replaced")).toBeNull();
+    useLocale.setState({ locale: "en" });
+    expect(mediaErrorMessage("unavailable")).toBe("No free voice seat.");
+    // A code it does not know reads as the connection failing.
+    expect(mediaErrorMessage("whatever")).toBe("The voice connection failed.");
   });
 });

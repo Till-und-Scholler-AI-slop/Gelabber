@@ -18,7 +18,6 @@ src/voice/devices.ts
 src/voice/diagnostics.ts
 src/voice/localSourceAudio.ts
 src/voice/localVideo.ts
-src/voice/media.ts
 src/voice/mediaPeer.ts
 src/voice/mediaPriority.ts
 src/voice/mediasoupConnection.ts
@@ -27,8 +26,6 @@ src/voice/microphoneComparison.ts
 src/voice/playbackBoost.ts
 src/voice/receivedAudio.ts
 src/voice/roster.ts
-src/voice/session.ts
-src/voice/sessionState.ts
 src/voice/settings.ts
 src/voice/settingsLayout.tsx
 src/voice/speaking.ts
@@ -39,7 +36,5 @@ src/voice/useWake.ts
 src/voice/userVolume.ts
 src/voice/videoCodec.ts
 src/voice/videoLimits.ts
-src/voice/voiceRoomPart.ts
-src/voice/voiceSettingsPanelPart.ts
 src/voice/voiceStore.ts
 src/voice/wakeLock.ts

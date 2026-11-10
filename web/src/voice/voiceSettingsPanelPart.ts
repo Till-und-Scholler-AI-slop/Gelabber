@@ -2,11 +2,13 @@
 // opening (see VoiceSettingsDialog).
 
 import { lazyPart } from "../components/lazyPart.tsx";
+import { translate } from "../i18n/catalog.ts";
+import { voiceSettings } from "../i18n/catalogs/voiceSettings.ts";
 
 export const VoiceSettingsPanelPart = lazyPart(
   () =>
     import("./VoiceSettingsPanel.tsx").then(
       (module) => module.VoiceSettingsPanel,
     ),
-  "Die Einstellungen konnten nicht geladen werden.",
+  translate(voiceSettings, "panel.loadFailed"),
 );
