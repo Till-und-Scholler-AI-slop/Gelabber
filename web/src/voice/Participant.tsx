@@ -1,7 +1,7 @@
 // One person in a voice room: a card with their avatar, or their camera in
 // its place; on the channel's stage a camera tile or a chip in the row of
-// people without one. "…", a long press or a right click opens their
-// volume and profile.
+// people without one, and in a call without pictures a tile of its own.
+// "…", a long press or a right click opens their volume and profile.
 
 import {
   useEffect,
@@ -66,6 +66,7 @@ export function Participant({
   onSelect,
   className,
   style,
+  fill,
 }: {
   id: string;
   member: Member | undefined;
@@ -90,6 +91,9 @@ export function Participant({
   onSelect?: () => void;
   className?: string;
   style?: CSSProperties;
+  /** A tile of the people stage, in a call without pictures: the avatar
+   * this many pixels across, and `small` drops the status line. */
+  fill?: { avatar: number; small: boolean };
 }) {
   const t = useT(voice);
   const [menu, setMenu] = useState(false);
@@ -128,11 +132,20 @@ export function Participant({
         "voice-room-participant",
         speaking ? "is-speaking" : "",
         camera ? "has-video" : "",
+        fill ? "is-fill" : "",
+        fill?.small ? "is-small" : "",
         className,
       ]
         .filter(Boolean)
         .join(" ")}
-      style={style}
+      style={
+        fill
+          ? ({
+              ...style,
+              "--person-avatar": `${fill.avatar}px`,
+            } as CSSProperties)
+          : style
+      }
       onPointerDown={hasMenu ? (event) => press.down(event) : undefined}
       onPointerMove={hasMenu ? (event) => press.move(event) : undefined}
       onPointerUp={hasMenu ? press.up : undefined}

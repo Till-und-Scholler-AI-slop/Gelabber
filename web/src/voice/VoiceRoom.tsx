@@ -7,7 +7,10 @@
 // camera line up under it (Raster). In Fokus one picture fills the stage
 // over a row of the others and the people; it is the view while someone
 // else is live, unless the user picked one in this call. Kino (K, Esc)
-// gives that picture the window but for the call bar. The overview keeps its Lives in a spotlight and
+// gives that picture the window but for the call bar. In a call of two or
+// more without pictures the people fill the stage as tiles of the same
+// grid; a phone whose tiles would be too small keeps the cards. The
+// overview keeps its Lives in a spotlight and
 // a filmstrip, and a camera in its owner's place. A Live is watched in the
 // room: outside it, the room only says who is live.
 
@@ -61,6 +64,8 @@ import {
   focusRects,
   kinoKey,
   kinoRects,
+  peopleStageFits,
+  personTile,
   rasterOrder,
   rasterRects,
   type Rect,
@@ -415,6 +420,15 @@ export function VoiceRoom({
       : roomSummary(others, { here });
   // Nobody else here: the space under the room asks for company.
   const askCompany = !overview && !staged && others.length === 0;
+  // No pictures, and company: the people fill the stage, in the grid the
+  // pictures use. Alone, the card and the invite stay.
+  const peopleStage = !overview && here && !staged && occupants.length >= 2;
+  const [peopleRef, peopleSize] = useBoxSize<HTMLDivElement>(peopleStage);
+  const peopleRects = peopleSize
+    ? rasterRects(occupants.length, peopleSize.width, peopleSize.height)
+    : [];
+  // A phone's tiles below the floor: the cards, with the page scrolling.
+  const peopleCards = narrow && !peopleStageFits(peopleRects);
 
   const person = (id: string, flags: { muted: boolean; deafened: boolean }) => {
     const camera = cameras.get(id);
@@ -436,6 +450,28 @@ export function VoiceRoom({
   };
   const flagsOf = new Map(occupants);
   const noFlags = { muted: false, deafened: false };
+  /** The people as cards: before joining, alone in the call, and on a
+   * phone whose stage would be too small. */
+  const cards = (
+    <ul className="voice-room-participants" aria-label={t("room.participants")}>
+      {occupants.map(([id, flags]) => {
+        const camera = cameras.get(id);
+        return (
+          <Participant
+            key={id}
+            {...person(id, flags)}
+            camera={camera && camera !== spotlight ? camera : null}
+          />
+        );
+      })}
+      {Array.from({ length: freeSeats }, (_, seat) => (
+        <li key={`seat-${seat}`} className="voice-room-seat" aria-hidden>
+          <span className="voice-room-seat-circle" />
+          <span>{t("room.freeSeat")}</span>
+        </li>
+      ))}
+    </ul>
+  );
 
   const room = (
     <section
@@ -443,7 +479,7 @@ export function VoiceRoom({
       aria-label={channelName}
       data-joined={here || undefined}
       data-page={!overview || undefined}
-      data-stage={staged || undefined}
+      data-stage={staged || (peopleStage ? "people" : undefined)}
       data-kino={kino || undefined}
       data-awake={(kino && awake) || undefined}
       onPointerMove={kino ? wake : undefined}
@@ -610,28 +646,35 @@ export function VoiceRoom({
               ))}
           </ul>
         ) : null
+      ) : peopleStage ? (
+        <div ref={peopleRef} className="voice-people">
+          {peopleCards ? (
+            cards
+          ) : (
+            <ul
+              className="voice-stage"
+              aria-label={t("room.stage")}
+              data-view="people"
+              data-measured={peopleSize ? "" : undefined}
+            >
+              {occupants.map(([id, flags], index) => {
+                const rect = peopleRects[index];
+                return (
+                  <Participant
+                    key={id}
+                    {...person(id, flags)}
+                    camera={null}
+                    fill={personTile(rect?.height ?? 0)}
+                    className="voice-stage-item"
+                    style={at(rect)}
+                  />
+                );
+              })}
+            </ul>
+          )}
+        </div>
       ) : occupants.length > 0 || freeSeats > 0 ? (
-        <ul
-          className="voice-room-participants"
-          aria-label={t("room.participants")}
-        >
-          {occupants.map(([id, flags]) => {
-            const camera = cameras.get(id);
-            return (
-              <Participant
-                key={id}
-                {...person(id, flags)}
-                camera={camera && camera !== spotlight ? camera : null}
-              />
-            );
-          })}
-          {Array.from({ length: freeSeats }, (_, seat) => (
-            <li key={`seat-${seat}`} className="voice-room-seat" aria-hidden>
-              <span className="voice-room-seat-circle" />
-              <span>{t("room.freeSeat")}</span>
-            </li>
-          ))}
-        </ul>
+        cards
       ) : null}
       {!here && allowed && elsewhere ? (
         <p className="voice-room-muted voice-room-switch-note">

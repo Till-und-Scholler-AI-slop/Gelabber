@@ -1026,4 +1026,82 @@ describe("active media UI", () => {
     // must not close it under the hand that copies the link.
     expect(page()).toContain('data-invite-dialog="closed"');
   });
+
+  it("puts the people on the stage in a call without pictures", () => {
+    fixture.live = {};
+    const members = ["alice", "bob"].map((id) => ({
+      user_id: id,
+      name: id[0]!.toUpperCase() + id.slice(1),
+      avatar_url: null,
+      joined_at: "",
+      role: "member",
+    }));
+    fixture.roster = {
+      a: {
+        alice: { channelId: "stage", muted: false, deafened: false },
+        bob: { channelId: "stage", muted: true, deafened: false },
+      },
+    };
+    fixture.speaking = { call: "a/stage", users: { alice: true } };
+    const page = () =>
+      renderToStaticMarkup(
+        <VoiceRoom
+          server={{ ...server, members } as unknown as ServerDetail}
+          channelId="stage"
+          channelName="Stage"
+        />,
+      );
+
+    // Before joining: the cards, as shipped.
+    const outside = page();
+    expect(outside).not.toContain("data-stage");
+    expect(outside).toContain('aria-label="Teilnehmer im Sprachkanal"');
+
+    Object.assign(fixture.voice, {
+      status: "joined",
+      serverId: "a",
+      channelId: "stage",
+    });
+    const html = page();
+    expect(html).toMatch(/<section class="voice-room"[^>]*data-stage="people"/);
+    expect(html).toContain(
+      '<div class="voice-people"><ul class="voice-stage" aria-label="Bühne" data-view="people">',
+    );
+    expect(html).not.toContain("voice-room-participants");
+    // Every occupant a tile, in the roster's order, the own one too; before
+    // the first measure each is small, its avatar 36 pixels.
+    expect(
+      html.match(/<li class="voice-room-participant[^"]*"[^>]*>/g),
+    ).toEqual([
+      '<li class="voice-room-participant is-speaking is-fill is-small voice-stage-item" style="--person-avatar:36px">',
+      '<li class="voice-room-participant is-fill is-small voice-stage-item" style="--person-avatar:36px">',
+      '<li class="voice-room-participant is-fill is-small voice-stage-item" style="--person-avatar:36px">',
+    ]);
+    expect(html).toContain("gel-avatar-lg is-speaking");
+    expect(html).toContain(">Spricht<");
+    expect(html).toContain(">Stumm<");
+    expect(html).toContain(">Im Raum<");
+    expect(html).toContain('<span class="voice-room-self"> (du)</span>');
+    // Volume and profile stay a press away.
+    expect(html).toContain('aria-label="Optionen für Alice"');
+    expect(html).toContain('aria-label="Profil von Bob"');
+    expect(html).not.toContain("voice-room-invite");
+
+    // A picture brings the pictures' stage back.
+    fixture.voice.participants = { alice: { pubs: ["v"] } };
+    fixture.voice.remote = { alice: { v: stream } };
+    const camera = page();
+    expect(camera).not.toContain('data-view="people"');
+    expect(camera).not.toContain("is-fill");
+    expect(camera).toMatch(/<section class="voice-room"[^>]*data-stage="true"/);
+
+    // Alone in the call: the shipped card and the invite.
+    fixture.voice.participants = {};
+    fixture.voice.remote = {};
+    fixture.roster = {};
+    const alone = page();
+    expect(alone).not.toContain("data-stage");
+    expect(alone).toContain('aria-label="Teilnehmer im Sprachkanal"');
+    expect(alone).toContain('class="voice-room-invite"');
+  });
 });
