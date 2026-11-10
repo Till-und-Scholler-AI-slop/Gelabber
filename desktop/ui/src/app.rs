@@ -801,6 +801,9 @@ impl eframe::App for GelabberApp {
             screens::voice::video::install(render_state);
             self.video_ready = true;
         }
+        if let Some(render_state) = frame.wgpu_render_state() {
+            screens::voice::video::sweep_gpu(render_state);
+        }
         self.frame(ui);
     }
 

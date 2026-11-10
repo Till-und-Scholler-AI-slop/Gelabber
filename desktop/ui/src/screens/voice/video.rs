@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use eframe::egui_wgpu::{self, CallbackResources, CallbackTrait, ScreenDescriptor, wgpu};
 use egui::{Rect, Ui, vec2};
@@ -96,6 +97,28 @@ struct Resources {
     tiles: HashMap<egui::Id, Planes>,
 }
 
+impl Resources {
+    fn drop_unused(&mut self, now: Instant) {
+        self.tiles
+            .retain(|_, p| now.saturating_duration_since(p.used) <= KEEP);
+    }
+}
+
+/// Once a frame of the app: frees the GPU copies of tiles no window draws
+/// any more, also after the last one went (no draw runs then).
+pub fn sweep_gpu(render_state: &egui_wgpu::RenderState) {
+    sweep_gpu_at(render_state, Instant::now());
+}
+
+fn sweep_gpu_at(render_state: &egui_wgpu::RenderState, now: Instant) {
+    let mut renderer = render_state.renderer.write();
+    if let Some(res) = renderer.callback_resources.get_mut::<Resources>()
+        && !res.tiles.is_empty()
+    {
+        res.drop_unused(now);
+    }
+}
+
 /// One tile's GPU copy of its picture.
 struct Planes {
     width: u32,
@@ -104,9 +127,13 @@ struct Planes {
     textures: [wgpu::Texture; 3],
     params: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
-    /// The egui frame that drew it last; tiles gone for a while are freed.
-    used: u64,
+    /// When a tile drew it last; tiles gone for [`KEEP`] are freed. A
+    /// clock, not egui's frame number, which each window counts for itself.
+    used: Instant,
 }
+
+/// How long the GPU copy of a tile that is no longer drawn stays.
+const KEEP: Duration = Duration::from_secs(2);
 
 /// The pipeline is in a renderer: pictures draw at their size.
 static INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -278,7 +305,7 @@ impl Planes {
             textures,
             params,
             bind_group,
-            used: 0,
+            used: Instant::now(),
         }
     }
 
@@ -377,7 +404,7 @@ struct Draw {
     id: egui::Id,
     frame: Arc<Frame>,
     params: Params,
-    egui_frame: u64,
+    at: Instant,
 }
 
 impl CallbackTrait for Draw {
@@ -405,15 +432,14 @@ impl CallbackTrait for Draw {
             res.tiles.insert(self.id, planes);
         }
         let srgb = res.srgb;
-        let frame_nr = self.egui_frame;
         if let Some(planes) = res.tiles.get_mut(&self.id) {
             if planes.serial != Some(self.frame.serial) {
                 planes.upload(queue, &self.frame);
             }
-            planes.used = frame_nr;
+            planes.used = planes.used.max(self.at);
             queue.write_buffer(&planes.params, 0, &self.params.bytes(srgb));
         }
-        res.tiles.retain(|_, p| p.used + 120 >= frame_nr);
+        res.drop_unused(self.at);
         Vec::new()
     }
 
@@ -516,7 +542,7 @@ pub fn paint(
         id,
         frame,
         params,
-        egui_frame: ui.ctx().cumulative_frame_nr(),
+        at: Instant::now(),
     };
     ui.painter()
         .add(egui_wgpu::Callback::new_paint_callback(rect, draw));
@@ -848,6 +874,56 @@ mod tests {
         let [r, g, b, _] = px(220, 60);
         assert!(r < 25 && g > 230 && b < 25, "green: {r} {g} {b}");
         assert_eq!(&px(160, 60)[..3], &[11, 13, 14]);
+    }
+
+    /// The GPU copies of tiles go a while after the last draw, through the
+    /// app's sweep: no tile's draw is left to free them.
+    #[test]
+    fn copies_of_tiles_no_one_draws_are_freed() {
+        let red = Arc::new(solid(64, 36, 81, 90, 240, 1));
+        let render_state = egui_kittest::wgpu::create_render_state(
+            egui_kittest::wgpu::default_wgpu_setup(),
+            egui_wgpu::RendererOptions::PREDICTABLE,
+        );
+        install(&render_state);
+        let shown = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let on = shown.clone();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(vec2(120.0, 120.0))
+            .renderer(egui_kittest::wgpu::WgpuTestRenderer::from_render_state(
+                render_state.clone(),
+            ))
+            .build_ui(move |ui| {
+                if on.load(std::sync::atomic::Ordering::Relaxed) {
+                    let tile = Rect::from_min_size(pos2(10.0, 10.0), vec2(100.0, 100.0));
+                    paint(
+                        ui,
+                        egui::Id::unique("video-test-sweep"),
+                        tile,
+                        red.clone(),
+                        Fit::Cover,
+                        false,
+                        0.0,
+                    );
+                }
+            });
+        harness.run();
+        harness.render().expect("render");
+        let tiles = |rs: &egui_wgpu::RenderState| {
+            rs.renderer
+                .read()
+                .callback_resources
+                .get::<Resources>()
+                .map_or(0, |r| r.tiles.len())
+        };
+        assert_eq!(tiles(&render_state), 1);
+        shown.store(false, std::sync::atomic::Ordering::Relaxed);
+        harness.run();
+        harness.render().expect("render");
+        sweep_gpu(&render_state);
+        assert_eq!(tiles(&render_state), 1, "kept for a moment");
+        sweep_gpu_at(&render_state, Instant::now() + KEEP * 2);
+        assert_eq!(tiles(&render_state), 0);
     }
 
     /// A tile reaching past the window's edge keeps its scale: egui clamps
