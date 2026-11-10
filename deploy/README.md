@@ -337,6 +337,49 @@ Migration 0021 adds `users.email_verified_at` and the `account_tokens` table. As
 
 The API keeps up to `API_DB_MAX_CONNECTIONS` (default 20) Postgres connections; every open WebSocket checks its session once a second. The stack runs one API process, so keep the value well below Postgres' `max_connections` (100 in the bundled Postgres). After changing it, recreate the API: `docker compose up -d --no-deps --force-recreate api`.
 
+## Public pages
+
+An instance can publish a landing page and the legal pages Impressum, Datenschutz (privacy) and Nutzungsbedingungen (terms), in German and English. They are static HTML without any script. The web container builds them at every start from values in `.env` and text files in `deploy/compose/legal/`; Gelabber ships no legal texts of its own. With none of it set, nothing changes: `/` goes to sign-in, and no links appear.
+
+| Page | German | English |
+|---|---|---|
+| Landing | `/de/` | `/en/` |
+| Impressum | `/de/impressum` | `/en/imprint` |
+| Datenschutz | `/de/datenschutz` | `/en/privacy` |
+| Nutzungsbedingungen | `/de/nutzungsbedingungen` | `/en/terms` |
+
+Values, all empty by default (commented in `.env.example`):
+
+| Variable | Use | When empty |
+|---|---|---|
+| `GELABBER_LANDING` | `true` turns the landing page on | `/` goes to sign-in; `/de/` and `/en/` show the app's not-found page |
+| `GELABBER_OPERATOR_NAME`, `GELABBER_OPERATOR_STREET`, `GELABBER_OPERATOR_CITY`, `GELABBER_OPERATOR_EMAIL` | Impressum: operator (person or company), street and number, postcode and city, email | Any one missing: no Impressum |
+| `GELABBER_OPERATOR_PHONE` | Impressum phone line | the line is left out |
+| `GELABBER_CONTENT_RESPONSIBLE` | Impressum "Verantwortlich für den Inhalt", one line with name and address | operator name, street and city |
+| `GELABBER_REPORT_EMAIL` | address for reporting content, in the Impressum | `GELABBER_OPERATOR_EMAIL` |
+| `GELABBER_CONTACT_EMAIL` | landing page "Write to …", for instances you run for others | that column is left out |
+| `GELABBER_INVITE_REQUEST` | target of "Request an invite": an `https://` URL, or an email address (opened as a mail) | `GELABBER_CONTACT_EMAIL`; with neither, both buttons are left out |
+| `GELABBER_SOURCE_URL` | "Source code" links | the Gelabber repository on GitHub |
+| `GELABBER_OPERATOR_GUIDE_URL` | "Read the operator guide" | this file on GitHub |
+| `APP_PUBLIC_URL` | the same value as for account mail; absolute canonical and language links, and the sitemap | those links and the sitemap are left out |
+
+Text files in `deploy/compose/legal/`, mounted read-only into `web` (details in `legal/README.md`; `.gitignore` keeps them out of commits):
+
+- `privacy.de.html`, `privacy.en.html`: Datenschutz / Privacy.
+- `terms.de.html`, `terms.en.html`: Nutzungsbedingungen / Terms.
+- `imprint.de.html`, `imprint.en.html`: optional sections added to the end of the Impressum, such as a register entry or a VAT ID.
+
+They are UTF-8 HTML fragments (headings from `h2`, paragraphs, lists, links), inserted as they are. Without a file in either language the page is not published. A file in one language only is shown under both languages' addresses, with a notice that the text exists only in that language.
+
+What is left out when something is missing: a page that is not published has no file, so its addresses show the app's not-found page and no link to it appears, neither on the public pages nor under the sign-in card. Placeholders are never shown. The landing page can be on without an Impressum (outside Germany one may not be needed); the log then warns.
+
+- **Who sees the landing page:** `/` serves it only to visitors without a session cookie and without a query string, in German when the browser's first language is German, otherwise in English. Signed-in people get the app as before.
+- **Search engines:** `/robots.txt` allows only `/`, `/de/`, `/en/` and the published legal pages while the landing page is on, and points to `/sitemap.xml` when `APP_PUBLIC_URL` is set. With the landing page off it answers `Disallow: /`.
+- **`/public-pages.json`** says which pages are published; the sign-in pages and the desktop app read it for their links.
+- **Proxies:** the bundled Caddy and `Caddyfile.homelab` already hand these paths to `web`; a proxy of your own needs no change either, as long as it sends everything that is not `/api`, `/ws` or `/media` to `web`.
+
+Apply a changed value with `docker compose up -d web`. The pages are built only at start, so after editing a text file run `docker compose restart web`. Check the result with `docker compose logs web | grep public-pages`: every page that is left out has one line naming the reason (the missing values or files), and the last line lists the published legal pages.
+
 ## Backup
 
 PostgreSQL metadata and MinIO attachments form **one snapshot pair**. Before
