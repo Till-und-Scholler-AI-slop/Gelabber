@@ -1,5 +1,5 @@
-// Server settings (`/s/$serverId/settings`): name and picture, member
-// permissions, invites, members, bans, leaving and deleting.
+// Server settings (`/s/$serverId/settings`): name and picture, roles,
+// invites, members, bans, leaving and deleting.
 import { defineCatalog } from "../catalog.ts";
 
 export const serverSettings = defineCatalog(
@@ -11,7 +11,7 @@ export const serverSettings = defineCatalog(
 
     // The section anchors; the URL fragments stay German.
     "section.general": "Allgemein",
-    "section.permissions": "Rechte",
+    "section.roles": "Rollen",
     "section.invites": "Einladungen",
     "section.members": "Mitglieder",
     "section.bans": "Sperren",
@@ -27,9 +27,6 @@ export const serverSettings = defineCatalog(
     "icon.removing": "Entfernt…",
     "icon.pickLabel": "Serverbild auswählen",
 
-    "permissions.title": "Rechte für Mitglieder",
-    "permissions.hint":
-      "Gilt für alle Mitglieder außer dem Inhaber. Änderungen wirken sofort.",
     "permission.manageServer.label": "Server verwalten",
     "permission.manageServer.hint": "Umbenennen, Rollen ändern, Einladungen.",
     "permission.manageChannels.label": "Kanäle verwalten",
@@ -54,6 +51,26 @@ export const serverSettings = defineCatalog(
     "permission.moderateMembers.hint":
       "Mitglieder vom Server entfernen und sperren.",
 
+    "roles.hint":
+      "Eine Rolle bündelt Rechte. Wer mehrere Rollen hat, bekommt die Rechte aller zusammen.",
+    "roles.new": "Neue Rolle",
+    "roles.delete": "Rolle löschen",
+    "roles.nameLabel": "Name",
+    "roles.colorLabel": "Farbe",
+    "roles.permissionsLabel": "Rechte",
+    "roles.inherited": "über „{role}“",
+    "roles.ownerText":
+      "Der Inhaber hat immer alle Rechte und sieht jeden Kanal.",
+    "roles.deleteTitle": "Rolle „{name}“ löschen?",
+    "roles.deleteMessage":
+      "Mitglieder verlieren die Rechte dieser Rolle. Kanäle, die nur für diese Rolle sind, sieht danach nur der Inhaber.",
+    "roles.colorName.amber": "Bernstein",
+    "roles.colorName.blue": "Blau",
+    "roles.colorName.green": "Grün",
+    "roles.colorName.pink": "Rosa",
+    "roles.colorName.violet": "Violett",
+    "roles.colorName.coral": "Koralle",
+
     "invites.hint": "Alle aktiven Links. Jedes Mitglied kann Links erstellen.",
     "invites.create": "Neuen Link erstellen",
     "invites.copyFailed": "Kopieren ging nicht. Der Code ist {code}.",
@@ -68,7 +85,11 @@ export const serverSettings = defineCatalog(
 
     "members.title": "Mitglieder ({count})",
     "members.owner": "Inhaber",
-    "members.member": "Mitglied",
+    "members.hint":
+      "Hier vergibst du Rollen. Was eine Rolle darf, stellst du unter „Rollen“ ein.",
+    "members.rolesFor": "Rollen für {name}",
+    "members.manageRoles": "Rollen verwalten",
+    "members.noRoles": "Noch keine Rollen.",
 
     "bans.title": "Gesperrte Konten",
     "bans.hint":
@@ -99,7 +120,7 @@ export const serverSettings = defineCatalog(
     navLabel: "Sections",
 
     "section.general": "General",
-    "section.permissions": "Permissions",
+    "section.roles": "Roles",
     "section.invites": "Invites",
     "section.members": "Members",
     "section.bans": "Bans",
@@ -115,9 +136,6 @@ export const serverSettings = defineCatalog(
     "icon.removing": "Removing…",
     "icon.pickLabel": "Choose server picture",
 
-    "permissions.title": "Member permissions",
-    "permissions.hint":
-      "Applies to every member except the owner. Changes take effect at once.",
     "permission.manageServer.label": "Manage server",
     "permission.manageServer.hint": "Rename, change roles, invites.",
     "permission.manageChannels.label": "Manage channels",
@@ -142,6 +160,26 @@ export const serverSettings = defineCatalog(
     "permission.moderateMembers.hint":
       "Remove members from the server and ban them.",
 
+    "roles.hint":
+      "A role bundles permissions. Whoever has several roles gets all of them together.",
+    "roles.new": "New role",
+    "roles.delete": "Delete role",
+    "roles.nameLabel": "Name",
+    "roles.colorLabel": "Colour",
+    "roles.permissionsLabel": "Permissions",
+    "roles.inherited": "via “{role}”",
+    "roles.ownerText":
+      "The owner always has every permission and sees every channel.",
+    "roles.deleteTitle": "Delete role “{name}”?",
+    "roles.deleteMessage":
+      "Members lose this role’s permissions. Channels that are only for this role will then be seen by the owner alone.",
+    "roles.colorName.amber": "Amber",
+    "roles.colorName.blue": "Blue",
+    "roles.colorName.green": "Green",
+    "roles.colorName.pink": "Pink",
+    "roles.colorName.violet": "Violet",
+    "roles.colorName.coral": "Coral",
+
     "invites.hint": "All active links. Any member can create links.",
     "invites.create": "Create new link",
     "invites.copyFailed": "Couldn’t copy. The code is {code}.",
@@ -155,7 +193,11 @@ export const serverSettings = defineCatalog(
 
     "members.title": "Members ({count})",
     "members.owner": "Owner",
-    "members.member": "Member",
+    "members.hint":
+      "Assign roles here. What a role may do is set under “Roles”.",
+    "members.rolesFor": "Roles for {name}",
+    "members.manageRoles": "Manage roles",
+    "members.noRoles": "No roles yet.",
 
     "bans.title": "Banned accounts",
     "bans.hint": "Banned people can’t rejoin, not even with an invite link.",
