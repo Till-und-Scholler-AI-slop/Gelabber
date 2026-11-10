@@ -32,9 +32,10 @@
   gap: 12px;
   width: 100%;
   min-height: 40px;
-  padding: 0 12px 0 16px;
+  padding: 0 12px;
   border-radius: var(--lr-radius-md);
-  font: var(--lr-type-ui);
+  /* The reference's list type: larger than --lr-type-ui, regular weight. */
+  font: 400 15px / 1.35 var(--lr-font);
   text-align: left;
   color: var(--lr-text);
   cursor: pointer;
@@ -182,6 +183,22 @@
 }
 .role-picker {
   min-width: 216px;
+}
+/* Anchored (not the sheet): the reference's width and its smaller boxes. */
+.ui-popover.role-picker {
+  width: 232px;
+  padding: 12px;
+}
+.ui-popover.role-picker .ui-check {
+  width: 16px;
+  height: 16px;
+}
+.ui-popover.role-picker .ui-check::before {
+  width: 10px;
+  height: 10px;
+}
+.role-picker .ui-choice-text {
+  font: var(--lr-type-body);
 }
 .role-picker__title {
   padding: 4px 4px 6px;
