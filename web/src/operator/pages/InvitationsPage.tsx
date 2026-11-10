@@ -131,7 +131,12 @@ export function ModeNotice({
   return (
     <p className="operator-notice">
       <strong>{t(`invitations.mode.${registration}`)}</strong>
-      {registration === "open" ? <> {t("invitations.mode.openHint")}</> : null}
+      {registration === "open" ? (
+        <span className="operator-muted">
+          {" · "}
+          {t("invitations.mode.openHint")}
+        </span>
+      ) : null}
     </p>
   );
 }

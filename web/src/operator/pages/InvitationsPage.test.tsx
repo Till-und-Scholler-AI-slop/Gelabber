@@ -91,7 +91,7 @@ describe("Beta-Einladungen page", () => {
     expect(text(render())).toContain("Registrierung: nur mit Einladung");
     fixture.overview = overview({ registration: "open" });
     expect(text(render())).toContain(
-      "Registrierung: offen für alle Einladungen füllen dann nur das Formular vor.",
+      "Registrierung: offen für alle · Einladungen füllen dann nur das Formular vor.",
     );
     fixture.overview = undefined;
     expect(render()).not.toContain("Registrierung:");
