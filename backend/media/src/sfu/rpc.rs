@@ -31,6 +31,31 @@ impl Sfu {
             self.leave(id, channel).await;
             return Err(error);
         }
+        let result = self
+            .dispatch(room.clone(), peer.clone(), id, channel, frame)
+            .await;
+        self.settle(&room, result)
+    }
+    /// A peer found removed or revoked after the first check because its
+    /// worker was lost or the pool drains is recoverable, not a "no".
+    pub(super) fn settle(
+        &self,
+        room: &Room,
+        result: Result<Value, SfuError>,
+    ) -> Result<Value, SfuError> {
+        match result {
+            Err(SfuError::Revoked) if !self.room_ready(room) => Err(SfuError::Gone),
+            result => result,
+        }
+    }
+    async fn dispatch(
+        self: &Arc<Self>,
+        room: Arc<Room>,
+        peer: Arc<Peer>,
+        id: PeerId,
+        channel: Uuid,
+        frame: ClientFrame,
+    ) -> Result<Value, SfuError> {
         match frame {
             ClientFrame::Capabilities { rtp, .. } => {
                 let caps: RtpCapabilities =

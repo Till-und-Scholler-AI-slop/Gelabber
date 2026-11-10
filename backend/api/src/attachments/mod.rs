@@ -394,7 +394,7 @@ async fn upload(
     let UploadRow { row, transfer_secs } = sqlx::query_as::<_, UploadRow>(
         "SELECT id, message_id, channel_id, uploader_id, object_key, \
                 filename, content_type, size_bytes, \
-                EXTRACT(EPOCH FROM expires_at + interval '15 minutes' - now())::float8 \
+                EXTRACT(EPOCH FROM expires_at + interval '14 minutes' - now())::float8 \
                   AS transfer_secs \
          FROM attachments \
          WHERE id = $1 AND uploader_id = $2 AND message_id IS NULL \
@@ -437,8 +437,8 @@ async fn upload(
             &row.content_type,
             row.size_bytes as u64,
             body,
-            // The expiry cleanup's grace: an upload that lands later may
-            // find its row refunded and gone.
+            // A minute inside the expiry cleanup's 15-minute grace, so an
+            // upload never lands as its row is refunded and forgotten.
             Duration::from_secs_f64(transfer_secs.max(0.0)),
         )
         .await
@@ -570,8 +570,9 @@ fn invalid() -> ApiError {
 /// The upload link stays valid until its expiry, so the uploader could
 /// still replace the bytes with others of the same signed length after
 /// this check. The served type (always the checked type, text as plain
-/// text), `nosniff` and the download link's signed `identity` coding keep
-/// that harmless; this check catches mistakes.
+/// text), `nosniff` and the download link's signed `identity` coding stop
+/// swapped bytes from running as another type, but not e.g. an image too
+/// large to decode: this check catches mistakes, not a determined uploader.
 pub async fn check_uploads(
     db: &PgPool,
     store: &ObjectStore,

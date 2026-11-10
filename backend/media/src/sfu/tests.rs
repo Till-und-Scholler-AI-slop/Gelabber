@@ -995,6 +995,50 @@ async fn rpc_on_a_lost_workers_room_answers_gone() {
     assert!(!sfu.peer_present(peer.id, channel).await);
 }
 
+/// A peer an RPC finds removed or revoked after its first check is gone, not
+/// unauthorized, once its worker is lost or the pool drains.
+#[tokio::test]
+async fn an_rpc_that_loses_its_peer_to_a_lost_worker_or_drain_answers_gone() {
+    let sfu = pool(2).await;
+    let engine = first_engine(&sfu);
+    let (channel, _peer, _rx) = seat(&sfu, &engine).await;
+    let room = sfu.room(channel).await.unwrap();
+    let settle = |result: Result<Value, SfuError>| sfu.settle(&room, result);
+    assert!(matches!(
+        settle(Err(SfuError::Revoked)),
+        Err(SfuError::Revoked)
+    ));
+    engine.lost.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        settle(Err(SfuError::Revoked)),
+        Err(SfuError::Gone)
+    ));
+    assert!(matches!(
+        settle(Err(SfuError::Forbidden)),
+        Err(SfuError::Forbidden)
+    ));
+    assert!(settle(Ok(json!({}))).is_ok());
+    engine.lost.store(false, Ordering::SeqCst);
+    sfu.draining.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        settle(Err(SfuError::Revoked)),
+        Err(SfuError::Gone)
+    ));
+}
+
+#[tokio::test]
+async fn a_join_on_a_draining_pool_answers_gone() {
+    let sfu = pool(1).await;
+    let engine = first_engine(&sfu);
+    let (_channel, peer, _rx) = seat(&sfu, &engine).await;
+    sfu.draining.store(true, Ordering::SeqCst);
+    let (out, _rx) = mpsc::channel(16);
+    let joined = sfu
+        .join_authorized_version(peer.authority.clone(), MEDIA_PROTOCOL_VERSION, out)
+        .await;
+    assert!(matches!(joined, Err(SfuError::Gone)), "{joined:?}");
+}
+
 #[tokio::test]
 async fn authority_watch_on_a_draining_pool_sends_gone() {
     let sfu = pool(1).await;

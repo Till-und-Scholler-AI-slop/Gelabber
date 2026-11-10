@@ -94,6 +94,29 @@ async fn connect(addr: std::net::SocketAddr, cookie: &str, origin: Option<&str>)
     ws
 }
 
+/// [`connect`] with a small receive buffer, so the server's writes block
+/// once a few MB are unread.
+async fn connect_reading_slowly(addr: std::net::SocketAddr, cookie: &str) -> Ws {
+    let socket = tokio::net::TcpSocket::new_v4().expect("socket");
+    socket.set_recv_buffer_size(4096).expect("receive buffer");
+    let stream = socket.connect(addr).await.expect("tcp connect");
+    let mut request = format!("ws://{addr}/ws")
+        .into_client_request()
+        .expect("ws request");
+    request.headers_mut().insert(
+        COOKIE,
+        format!("{SESSION}={cookie}")
+            .parse()
+            .expect("cookie header"),
+    );
+    let (ws, response) =
+        tokio_tungstenite::client_async(request, tokio_tungstenite::MaybeTlsStream::Plain(stream))
+            .await
+            .unwrap_or_else(|err| panic!("ws connect failed: {err}"));
+    assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+    ws
+}
+
 async fn recv_json(ws: &mut Ws) -> Value {
     let msg = tokio::time::timeout(Duration::from_secs(2), ws.next())
         .await
@@ -698,15 +721,18 @@ async fn a_replay_past_its_deadline_ends_the_socket(pool: PgPool) {
     let server = create_server(&mut owner, "Slow").await;
     let (s, c) = ids(&server);
     // Silence alone must not close it within the test.
-    let (addr, state) = common::serve_ws_with_dead(pool, 60_000).await;
-    // More than the loopback socket buffers hold: the replay write blocks.
-    let big = "x".repeat(4 * 1024 * 1024);
-    for _ in 0..8 {
+    let mut state = common::ws_state_with_dead(pool, 60_000);
+    state.ws_replay_deadline = Duration::from_millis(300);
+    let addr = common::serve_ws_state(state.clone()).await;
+    // More than the loopback socket buffers hold with the client's receive
+    // buffer kept small: the replay write blocks.
+    let big = "x".repeat(1024 * 1024);
+    for _ in 0..6 {
         publish(&state, s, c, EventKind::C, &big).await;
     }
-    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+    let mut ws = connect_reading_slowly(addr, &session_cookie(&owner)).await;
     send_json(&mut ws, json!({ "op": "s", "s": s, "c": c, "n": 0 })).await;
-    tokio::time::sleep(Duration::from_secs(7)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     let mut subscribed = false;
     let ended = tokio::time::timeout(Duration::from_secs(10), async {
@@ -730,6 +756,21 @@ async fn a_replay_past_its_deadline_ends_the_socket(pool: PgPool) {
         }
     })
     .await;
+
+    let topic = gelabber_api::gateway::Topic::Channel(c);
+    let mut redis = state
+        .redis
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    redis::cmd("DEL")
+        .arg(topic.seq_key())
+        .arg(topic.log_key())
+        .arg(topic.epoch_key())
+        .arg(topic.delivery_key())
+        .query_async::<i32>(&mut redis)
+        .await
+        .unwrap();
     assert!(!subscribed, "the replay was not supposed to finish");
     assert!(
         ended.is_ok(),

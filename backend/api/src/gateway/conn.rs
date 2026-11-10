@@ -32,12 +32,6 @@ pub(super) const MAX_CLIENT_BYTES: usize = 16 * 1024;
 /// Seat holders are the few sockets in a call, so that poll stays cheap.
 const SECURITY_BACKSTOP: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// One subscribe's replay, gap and `ok` together, written while the frame's
-/// transaction holds the session and server rows. A client that reads too
-/// slowly for it loses the socket instead of keeping the rows and a pool
-/// connection for minutes.
-const REPLAY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
-
 enum FrameEffect {
     /// Heartbeat: keep the socket and Redis TTL, do not reset idle.
     Liveness,
@@ -485,7 +479,7 @@ async fn subscribe(
     texts.push(to_json(
         &ServerFrame::subscribed(server_id, channel_id, current).with_epoch(epoch),
     )?);
-    send_texts_within(sink, texts, REPLAY_DEADLINE)
+    send_texts_within(sink, texts, state.ws_replay_deadline)
         .await
         .map_err(SubscribeError::Write)?;
 

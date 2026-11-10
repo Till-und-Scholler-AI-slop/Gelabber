@@ -11,8 +11,9 @@ Redis-time expiration check. Invalid tickets remain one-use. Rust additionally
 validates UUIDs and the complete envelope. Join revalidates after building the
 peer connection and waiting for the room attach lock. Every active peer checks
 the same authority once per second; each Redis operation has a 500 ms deadline.
-Missing authority, mismatched generations, session expiration or Redis failure
-revokes the peer. Only successful validation refreshes demand with EX 35.
+Missing authority, mismatched generations or session expiration revokes the
+peer with `unauthorized`. A check that errors (Redis failure) also removes the
+peer, but tells it `gone`, so the client rejoins with a new ticket. Only successful validation refreshes demand with EX 35.
 Media never renews the three-second session lease or deletes shared demand on
 one tab's leave. Media ignores the old 120-second deny key, which the API
 stopped writing in v0.7.1; a fresh generation rejoins immediately.
@@ -20,8 +21,8 @@ stopped writing in v0.7.1; a fresh generation rejoins immediately.
 Revocation removes the room peer and publications, signals both forwarding
 directions to stop, then waits for SDP cleanup and actual peer close. Gathering
 also observes that stop signal. A busy SDP gate therefore cannot keep RTP
-authorized while teardown waits. The server sends an unauthorized error and
-WebSocket Close; the negative clients do not voluntarily leave.
+authorized while teardown waits. The server sends an unauthorized error (`gone`
+after a check that errored) and WebSocket Close; the negative clients do not voluntarily leave.
 
 ## Reproduction and checks
 

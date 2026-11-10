@@ -51,7 +51,7 @@ pub fn email(raw: &str, errors: &mut FieldErrors) -> Option<String> {
 /// be one bare address as the mailer reads it, and is stored with the ASCII
 /// (IDNA) form of its domain. Display names (`a<x@y>`), quoted local parts
 /// (`"x"@y`, the same mailbox as `x@y`) and other spellings of a domain
-/// (`bücher.de` / `xn--bcher-kva.de`, fullwidth letters) would give one
+/// (`bücher.de` / `xn--bcher-kva.de`, fullwidth letters, `%61`) would give one
 /// inbox any number of accounts and per-address mail budgets. Sign-in keeps
 /// the lenient [`email`], so older accounts stay reachable.
 pub fn new_email(raw: &str, errors: &mut FieldErrors) -> Option<String> {
@@ -60,11 +60,15 @@ pub fn new_email(raw: &str, errors: &mut FieldErrors) -> Option<String> {
         && value
             .parse::<lettre::Address>()
             .is_ok_and(|address| address.as_ref() == value);
-    if !bare {
+    // The URL parser percent-decodes a domain (`ex%61mple.org`), and one
+    // without an ASCII form would be stored as typed.
+    let domain = value.rsplit_once('@').map_or("", |(_, domain)| domain);
+    let ascii = ascii_domain(&value);
+    if !bare || domain.contains('%') || (!domain.is_ascii() && ascii.is_none()) {
         errors.insert("email", "invalid");
         return None;
     }
-    Some(ascii_domain(&value).unwrap_or(value))
+    Some(ascii.unwrap_or(value))
 }
 
 /// The form an address is counted under (failed guesses, mail budgets):
@@ -317,6 +321,26 @@ mod tests {
             Some("victim@example.org")
         );
         assert_eq!(ascii_domain("victim@example.org"), None);
+    }
+
+    #[test]
+    fn a_new_address_needs_a_domain_idna_accepts_as_typed() {
+        // `%61` is decoded to `a` by the URL parser: another spelling of
+        // example.org. The others have no ASCII form, so they would be
+        // stored as typed.
+        for raw in [
+            "victim@ex%61mple.org",
+            "victim@%65xample.org",
+            "victim@b\u{00fc}cher\u{0378}.de",
+            "victim@\u{2488}example.org",
+            "victim@xn--b\u{00fc}cher.de",
+        ] {
+            let (value, errors) = run(|e| new_email(raw, e));
+            assert!(value.is_none(), "{raw:?} gave {value:?}");
+            assert_eq!(errors.get("email"), Some(&"invalid"), "{raw:?}");
+        }
+        // Sign-in stays lenient.
+        assert!(run(|e| email("victim@ex%61mple.org", e)).0.is_some());
     }
 
     #[test]
