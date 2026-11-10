@@ -288,8 +288,15 @@ function ConnectionButton({
   const sample = useVoiceDiagnostics((s) => s.latest?.voice ?? null);
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
-  const quality = callQuality(sample);
-  const label = quality ? callQualitySummary(quality) : t("quality.measuring");
+  // The last sample speaks only for a live connection: otherwise the button
+  // says the state it shows.
+  const quality = connection === "connected" ? callQuality(sample) : null;
+  const label =
+    connection !== "connected"
+      ? state
+      : quality
+        ? callQualitySummary(quality)
+        : t("quality.measuring");
   const tip = useTooltip({ label, disabled: open });
   return (
     <>

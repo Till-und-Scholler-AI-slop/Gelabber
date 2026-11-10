@@ -801,6 +801,11 @@ describe("active media UI", () => {
     expect(render()).not.toContain("voice-quality-bars");
     fixture.voice.connection = "reconnecting";
     expect(render()).toContain("Verbindung wird wiederhergestellt …");
+    // Away from a live connection the button names the state it shows,
+    // not the last measurement.
+    expect(render()).toContain(
+      'aria-label="Verbindung wird wiederhergestellt … – Details anzeigen"',
+    );
     fixture.voice.connection = "connected";
     expect(render()).toContain(">Verbunden<");
     expect(render()).toContain(
