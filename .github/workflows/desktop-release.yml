@@ -21,6 +21,8 @@ env:
 
 jobs:
   build:
+    # Other releases (the build-deps mirror) are no app version.
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v')
     uses: ./.github/workflows/desktop-native.yml
     with:
       release_tag: ${{ github.event.release.tag_name || inputs.release_tag }}

@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -85,6 +86,13 @@ class Gates(unittest.TestCase):
         self.assertIn('deploy', changed_areas('deploy/compose/compose.yaml'))
         text = (ROOT / '.github/workflows/ci.yml').read_text()
         self.assertNotIn('paths:', text.split('\non:\n', 1)[1].split('concurrency:', 1)[0])
+
+    def test_only_version_releases_start_the_desktop_build(self):
+        # Publishing the build-deps mirror release once ran the whole desktop build.
+        text = (ROOT / '.github/workflows/desktop-release.yml').read_text()
+        build = re.split(r'\n  \S', text.split('\n  build:\n', 1)[1], maxsplit=1)[0]
+        self.assertIn("    if: github.event_name != 'release' || "
+                      "startsWith(github.event.release.tag_name, 'v')\n", build)
 
 
 class Promotion(unittest.TestCase):
@@ -204,6 +212,35 @@ class Promotion(unittest.TestCase):
             for call in alias_calls:
                 self.assertTrue(call[-2].endswith(':latest'))
                 self.assertTrue(call[-1].endswith('@' + DIGEST))
+
+    def test_pre_release_is_flagged_and_never_latest(self):
+        """deploy/README.md: pre-releases are started by hand with tag and image_run_id."""
+        self.prepare_release()
+        Path('backend/Cargo.toml').write_text('[workspace.package]\nversion="0.2.5-rc.1"\n')
+        manifest = json.loads(Path('image-set.json').read_text())
+        Path('image-set.json').write_text(json.dumps({**manifest, 'version': 'v0.2.5-rc.1'}))
+        for existing in ([], [{'tag_name': 'v0.2.5-rc.1'}]):
+            def api(path):
+                return existing if path == 'releases?per_page=100' else self.release_api(path)
+            with self.subTest(existing=existing), patch.dict(os.environ, RELEASE_TAG='v0.2.5-rc.1'), patch.object(m, 'api', side_effect=api), patch.object(m, 'tag_sha', return_value=None), patch.object(m, 'registry_digest', return_value=DIGEST), patch.object(m, 'run', return_value=SHA) as writes:
+                m.release()
+                calls = [c.args for c in writes.call_args_list]
+                self.assertFalse(any(c[0] == 'docker' for c in calls))
+                created = [c for c in calls if c[:3] == ('gh', 'release', 'create')]
+                if existing:
+                    self.assertEqual(created, [])
+                else:
+                    self.assertEqual(created[0][3], 'v0.2.5-rc.1')
+                    self.assertIn('--prerelease', created[0])
+                    self.assertIn('--latest=false', created[0])
+
+    def test_stable_release_is_not_a_pre_release(self):
+        self.prepare_release()
+        with patch.dict(os.environ, RELEASE_TAG='v0.2.4'), patch.object(m, 'api', side_effect=self.release_api), patch.object(m, 'tag_sha', side_effect=[None, SHA]), patch.object(m, 'registry_digest', return_value=DIGEST), patch.object(m, 'run', return_value=SHA) as writes:
+            m.release()
+            args = next(call.args for call in writes.call_args_list if call.args[:3] == ('gh', 'release', 'create'))
+            self.assertNotIn('--prerelease', args)
+            self.assertNotIn('--latest=false', args)
 
     def latest_run(self, api=None, digest=None, run=None, tag=SHA):
         with patch.dict(os.environ, RELEASE_TAG='v0.2.4'), patch.object(m, 'api', side_effect=api or self.release_api), patch.object(m, 'tag_sha', return_value=tag), patch.object(m, 'registry_digest', side_effect=digest or (lambda ref: DIGEST)), patch.object(m, 'run', side_effect=run or (lambda *args: SHA)) as calls:

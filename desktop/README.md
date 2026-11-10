@@ -479,7 +479,7 @@ separate decision.
   voice engine applies a source's options to the shared APM.
 - Source audio (Linux): PipeWire, dlopened like libwebrtc does. One passive
   capture stream per playback node of the chosen application ("" = every
-  application), mixed to 48 kHz stereo and produced as the `sa`/`la` Opus
+  application), mixed to 48 kHz stereo and produced as the `sa` Opus
   stereo track. Streams the application opens later are picked up. Whose a
   playback node is comes from its client object: the registry lists the node
   with `application.name` and `client.id` only, the client's info has
@@ -541,7 +541,7 @@ separate decision.
 - Source audio (Windows): WASAPI process loopback
   (`ActivateAudioInterfaceAsync` on `VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK`,
   `native/src/app_audio_win.cc`), mixed by the same code as on Linux
-  (`native/src/app_audio_mix.h`) to the same `sa`/`la` track. "" (every
+  (`native/src/app_audio_mix.h`) to the same `sa` track. "" (every
   application) is one loopback client that excludes Gelabber's own process
   tree, so the call's playout stays out. An
   application is chosen by its binary (`firefox.exe`, lowercased): one

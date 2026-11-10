@@ -1,10 +1,12 @@
 """The areas ci.yml runs for a pull request (.github/workflows/scripts/changes.py)."""
 import importlib.util
 import json
+import os
 import re
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -122,6 +124,37 @@ class Workflow(unittest.TestCase):
         self.assertEqual(sorted(name.strip() for name in needs.split(',')),
                          sorted(job for job in jobs if job != 'ci-ok'))
         self.assertIn('if: always()', block)
+
+    def test_every_deployment_test_suite_runs(self):
+        for suite in sorted((ROOT / 'deploy').glob('**/tests/test_*.py')):
+            folder = suite.parent.relative_to(ROOT).as_posix()
+            with self.subTest(folder=folder):
+                self.assertIn(f'python3 -m unittest discover -s {folder} ', self.ci)
+
+    def test_moved_and_non_ascii_paths_start_their_areas(self):
+        """The pull request's diff command, run on a scratch repository: a
+        move names its source too, and a non-ASCII path stays unquoted."""
+        command = re.search(r'^\s*(git .*diff .*HEAD\^1 HEAD) \|', self.ci, re.M).group(1)
+        # Git's defaults as on a runner, not this machine's settings.
+        env = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'}
+        with tempfile.TemporaryDirectory() as tmp:
+            def git(*args):
+                subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@t', *args],
+                               cwd=tmp, env=env, check=True, capture_output=True)
+            git('init', '-q')
+            (Path(tmp) / 'backend').mkdir()
+            (Path(tmp) / 'docs').mkdir()
+            (Path(tmp) / 'backend/helper.rs').write_text('fn helper() {}\n' * 20)
+            git('add', '.')
+            git('commit', '-q', '-m', 'base')
+            git('mv', 'backend/helper.rs', 'docs/helper.rs')
+            (Path(tmp) / 'web/public/audio').mkdir(parents=True)
+            (Path(tmp) / 'web/public/audio/Glöckchen.txt').write_text('x\n')
+            git('add', '.')
+            git('commit', '-q', '-m', 'change')
+            paths = subprocess.run(command, shell=True, cwd=tmp, env=env, check=True,
+                                   capture_output=True, text=True).stdout.splitlines()
+        self.assertEqual(changed_areas(*paths), {'backend', 'deploy', 'web'})
 
 
 if __name__ == '__main__':
