@@ -318,7 +318,7 @@ APP_PUBLIC_URL=https://chat.example.org
 
 - `SMTP_SECURITY`: `starttls` (default, port 587, the upgrade must succeed), `tls` (port 465) or `none` (port 25, only for a relay on a private network; refused together with `SMTP_PASSWORD`). `SMTP_PORT` overrides the port.
 - `MAIL_FROM`: the sender. Most providers only accept addresses they host; set SPF/DKIM for its domain or the mails land in spam.
-- `APP_PUBLIC_URL`: the address people open Gelabber at. The links in the mails point there, never at the host a request named. It must be `https://` while `API_COOKIE_SECURE=true`.
+- `APP_PUBLIC_URL`: the address people open Gelabber at. The links in the mails point there, never at the host a request named, and so do beta invitation links (see Betrieb). It must be `https://` while `API_COOKIE_SECURE=true`. Since v0.10 the API checks it also without `SMTP_HOST`: a value that is not an http(s) URL, or `http://` while `API_COOKIE_SECURE=true`, now stops the API at start where it used to be ignored.
 
 Then `docker compose up -d --no-deps --force-recreate api`. A wrong value stops the API at start with the variable's name; an unreachable relay does not, failed mails are logged (`account mail failed`, with the user id, never the address).
 
