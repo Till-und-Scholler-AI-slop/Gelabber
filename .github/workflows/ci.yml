@@ -170,7 +170,9 @@ jobs:
           load: true
           provenance: false
           tags: gelabber-native-ci-toolchain:local
-          cache-from: type=gha,scope=media
+          cache-from: |
+            type=registry,ref=ghcr.io/till-und-scholler-ai-slop/gelabber/media:buildcache
+            type=gha,scope=media
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -354,8 +356,11 @@ jobs:
             OCI_VERSION=${{ env.GELABBER_VERSION }}
             OCI_CREATED=${{ env.OCI_CREATED }}
             OCI_SOURCE=https://github.com/${{ github.repository }}
-          # Pull requests read the layer cache; main writes it.
-          cache-from: type=gha,scope=${{ matrix.name }}
+          # Pull requests read the layer cache; main writes it. The Actions
+          # cache is read until the first publish has filled the registry's.
+          cache-from: |
+            type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache
+            type=gha,scope=${{ matrix.name }}
 
       - name: Verify actual media image readiness and normal shutdown
         if: matrix.name == 'media'

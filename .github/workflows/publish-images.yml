@@ -81,9 +81,13 @@ jobs:
             OCI_VERSION=${{ env.GELABBER_VERSION }}
             OCI_CREATED=${{ env.OCI_CREATED }}
             OCI_SOURCE=https://github.com/${{ github.repository }}
-          cache-from: type=gha,scope=${{ matrix.name }}
-          # Only main writes the layer cache (quota); pull requests read it.
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          # The layer cache is the image's own buildcache tag: the registry
+          # keeps it, where the Actions cache evicted it under its quota.
+          # Only main writes it; pull requests read it.
+          cache-from: |
+            type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache
+            type=gha,scope=${{ matrix.name }}
+          cache-to: type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache,mode=max
       - name: Record digest
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
