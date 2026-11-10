@@ -1,9 +1,12 @@
 //! Runtime configuration. Everything comes from the environment (Compose
 //! injects the same names as `api/.env.example`); there is no config file.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::net::SocketAddr;
 use std::time::Duration;
+
+use serde::Serialize;
 
 use crate::limits::Limits;
 use gelabber_shared::ice::{IceServer, parse_ice_servers};
@@ -75,6 +78,10 @@ pub const APP_PUBLIC_URL: &str = "APP_PUBLIC_URL";
 /// Read by `telemetry::init`, not by `Config`, because the subscriber has to
 /// exist before anything else can be logged.
 pub const RUST_LOG: &str = "RUST_LOG";
+/// Comma-separated addresses of the instance operators (v0.10 "Betrieb").
+pub const API_OPERATOR_EMAILS: &str = "API_OPERATOR_EMAILS";
+/// `open` (default) or `invitation`: who may create an account.
+pub const API_REGISTRATION: &str = "API_REGISTRATION";
 
 const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
@@ -159,6 +166,36 @@ pub struct Config {
     /// Account mail (#195): address confirmation and password reset.
     /// `None` without `SMTP_HOST`; registration then signs in at once.
     pub mail: Option<MailConfig>,
+    /// `APP_PUBLIC_URL`: where people open Gelabber. Links the API hands
+    /// out (mails, beta invitations) point here. Required with account
+    /// mail, optional otherwise.
+    pub public_url: Option<url::Url>,
+    /// `API_OPERATOR_EMAILS`, each in the form addresses are counted under
+    /// (`auth::validate::canonical`). Empty: the instance has no operator.
+    pub operators: HashSet<String>,
+    /// `API_REGISTRATION`.
+    pub registration: RegistrationMode,
+}
+
+/// Who may create an account (`API_REGISTRATION`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RegistrationMode {
+    /// Anyone; invitation codes are ignored.
+    #[default]
+    Open,
+    /// Only with a beta invitation or a server invite of a server that is
+    /// not blocked (`operator::admission`).
+    Invitation,
+}
+
+impl RegistrationMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Invitation => "invitation",
+        }
+    }
 }
 
 /// How the API reaches the SMTP relay.
@@ -515,7 +552,23 @@ impl Config {
         let gifs = parse_gifs(&get)?;
         let push = parse_push(&get)?;
         let previews = parse_previews(&get, &[&database_url, &redis_url], minio.as_ref())?;
-        let mail = parse_mail(&get, cookie_secure)?;
+        let public_url = parse_public_url(&get, cookie_secure)?;
+        let mail = parse_mail(&get, public_url.as_ref())?;
+        let operators = parse_operators(&get)?;
+        let registration = match get(API_REGISTRATION) {
+            Some(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+                "open" => RegistrationMode::Open,
+                "invitation" => RegistrationMode::Invitation,
+                _ => {
+                    return Err(invalid(
+                        API_REGISTRATION,
+                        &raw,
+                        "expected open or invitation",
+                    ));
+                }
+            },
+            None => RegistrationMode::Open,
+        };
         if cookie_secure {
             refuse_public_defaults(
                 &database_url,
@@ -552,13 +605,61 @@ impl Config {
             push,
             previews,
             mail,
+            public_url,
+            operators,
+            registration,
         })
     }
 }
 
-fn parse_mail(
+/// `APP_PUBLIC_URL`, parsed once for every link the API hands out.
+fn parse_public_url(
     get: &impl Fn(&str) -> Option<String>,
     cookie_secure: bool,
+) -> Result<Option<url::Url>, ConfigError> {
+    let Some(raw_url) = get(APP_PUBLIC_URL) else {
+        return Ok(None);
+    };
+    let public_url = url::Url::parse(raw_url.trim())
+        .ok()
+        .filter(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+        .filter(|url| url.query().is_none() && url.fragment().is_none())
+        .ok_or_else(|| invalid(APP_PUBLIC_URL, &raw_url, "expected an http(s) URL"))?;
+    if cookie_secure && public_url.scheme() != "https" {
+        return Err(invalid(
+            APP_PUBLIC_URL,
+            &raw_url,
+            format!("must be https:// while {API_COOKIE_SECURE}=true"),
+        ));
+    }
+    Ok(Some(public_url))
+}
+
+/// `API_OPERATOR_EMAILS`: comma-separated, empty entries skipped. Each entry
+/// follows the sign-in rules for an address (`auth::validate::email`); one
+/// that does not fails startup rather than leaving an operator locked out.
+fn parse_operators(get: &impl Fn(&str) -> Option<String>) -> Result<HashSet<String>, ConfigError> {
+    let mut operators = HashSet::new();
+    for entry in get(API_OPERATOR_EMAILS).unwrap_or_default().split(',') {
+        if entry.trim().is_empty() {
+            continue;
+        }
+        let mut errors = crate::error::FieldErrors::new();
+        let Some(email) = crate::auth::validate::email(entry, &mut errors) else {
+            return Err(invalid(
+                API_OPERATOR_EMAILS,
+                entry.trim(),
+                "expected comma-separated e-mail addresses",
+            ));
+        };
+        operators.insert(crate::auth::validate::canonical(&email));
+    }
+    Ok(operators)
+}
+
+fn parse_mail(
+    get: &impl Fn(&str) -> Option<String>,
+    public_url: Option<&url::Url>,
 ) -> Result<Option<MailConfig>, ConfigError> {
     let Some(host) = get(SMTP_HOST).map(|host| host.trim().to_owned()) else {
         return Ok(None);
@@ -604,19 +705,9 @@ fn parse_mail(
             "expected an address like noreply@example.org or Gelabber <noreply@example.org>",
         ));
     }
-    let raw_url = get(APP_PUBLIC_URL).ok_or(ConfigError::Missing(APP_PUBLIC_URL))?;
-    let public_url = url::Url::parse(raw_url.trim())
-        .ok()
-        .filter(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
-        .filter(|url| url.query().is_none() && url.fragment().is_none())
-        .ok_or_else(|| invalid(APP_PUBLIC_URL, &raw_url, "expected an http(s) URL"))?;
-    if cookie_secure && public_url.scheme() != "https" {
-        return Err(invalid(
-            APP_PUBLIC_URL,
-            &raw_url,
-            format!("must be https:// while {API_COOKIE_SECURE}=true"),
-        ));
-    }
+    let public_url = public_url
+        .cloned()
+        .ok_or(ConfigError::Missing(APP_PUBLIC_URL))?;
     Ok(Some(MailConfig {
         host,
         port,
@@ -1792,6 +1883,142 @@ mod tests {
         assert_eq!(
             hosts(Some(" Push.Example ")),
             vec!["push.example".to_owned()]
+        );
+    }
+
+    fn base(extra: &[(&'static str, &'static str)]) -> Result<Config, ConfigError> {
+        let mut pairs = vec![
+            (DATABASE_URL, "postgres://u:p@localhost/db"),
+            (REDIS_URL, "redis://localhost"),
+        ];
+        pairs.extend_from_slice(extra);
+        Config::from_source(source(&pairs))
+    }
+
+    #[test]
+    fn registration_is_open_unless_set_to_invitation() {
+        assert_eq!(base(&[]).unwrap().registration, RegistrationMode::Open);
+        // Compose passes an unset variable through as an empty value.
+        assert_eq!(
+            base(&[(API_REGISTRATION, "")]).unwrap().registration,
+            RegistrationMode::Open
+        );
+        assert_eq!(
+            base(&[(API_REGISTRATION, "open")]).unwrap().registration,
+            RegistrationMode::Open
+        );
+        assert_eq!(
+            base(&[(API_REGISTRATION, " Invitation ")])
+                .unwrap()
+                .registration,
+            RegistrationMode::Invitation
+        );
+        for raw in ["closed", "invite", "true"] {
+            let err = base(&[(API_REGISTRATION, raw)]).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ConfigError::Invalid {
+                        key: API_REGISTRATION,
+                        ..
+                    }
+                ),
+                "{raw}: {err}"
+            );
+        }
+        assert_eq!(RegistrationMode::Invitation.as_str(), "invitation");
+        assert_eq!(
+            serde_json::to_value(RegistrationMode::Open).unwrap(),
+            "open"
+        );
+    }
+
+    #[test]
+    fn operator_emails_are_trimmed_lower_cased_and_skip_empty_entries() {
+        assert!(base(&[]).unwrap().operators.is_empty());
+        assert!(
+            base(&[(API_OPERATOR_EMAILS, " , ")])
+                .unwrap()
+                .operators
+                .is_empty()
+        );
+        let operators = base(&[(
+            API_OPERATOR_EMAILS,
+            " Lena@Example.TEST,,tom@example.test , lena@example.test",
+        )])
+        .unwrap()
+        .operators;
+        let mut sorted: Vec<_> = operators.into_iter().collect();
+        sorted.sort();
+        assert_eq!(sorted, ["lena@example.test", "tom@example.test"]);
+        // The domain in its ASCII form, as registration stores it.
+        let operators = base(&[(API_OPERATOR_EMAILS, "ada@Bücher.de")])
+            .unwrap()
+            .operators;
+        assert!(operators.contains("ada@xn--bcher-kva.de"), "{operators:?}");
+    }
+
+    #[test]
+    fn an_invalid_operator_email_fails_startup() {
+        for raw in [
+            "lena",
+            "lena@example.test, tom@",
+            "a@b@example.test",
+            "x@nodot",
+        ] {
+            let err = base(&[(API_OPERATOR_EMAILS, raw)]).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ConfigError::Invalid {
+                        key: API_OPERATOR_EMAILS,
+                        ..
+                    }
+                ),
+                "{raw}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn public_url_is_parsed_without_mail_and_shared_with_it() {
+        assert_eq!(base(&[]).unwrap().public_url, None);
+        let config = base(&[(APP_PUBLIC_URL, " https://chat.example.org ")]).unwrap();
+        assert!(config.mail.is_none());
+        assert_eq!(
+            config.public_url.as_ref().map(url::Url::as_str),
+            Some("https://chat.example.org/")
+        );
+        let config = Config::from_source(mail_source(&[])).unwrap();
+        assert_eq!(
+            config.public_url.as_ref(),
+            Some(&config.mail.as_ref().unwrap().public_url)
+        );
+        let err = base(&[(APP_PUBLIC_URL, "chat.example.org")]).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConfigError::Invalid {
+                    key: APP_PUBLIC_URL,
+                    ..
+                }
+            ),
+            "{err}"
+        );
+        let err = Config::from_source(secure_source(&[(
+            APP_PUBLIC_URL,
+            "http://chat.example.org",
+        )]))
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConfigError::Invalid {
+                    key: APP_PUBLIC_URL,
+                    ..
+                }
+            ),
+            "{err}"
         );
     }
 }
