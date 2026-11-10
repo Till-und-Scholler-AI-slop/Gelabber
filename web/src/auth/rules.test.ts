@@ -109,6 +109,19 @@ describe("copy", () => {
     );
   });
 
+  it("has copy for the role routes' field codes", () => {
+    expect(fieldMessage("name", "taken")).toBe(
+      "Diesen Namen hat schon eine Rolle.",
+    );
+    expect(fieldMessage("roles", "too_many")).toBe(
+      "Ein Server hat höchstens 50 Rollen.",
+    );
+    expect(fieldMessage("role_ids", "invalid")).toMatch(/gibt es nicht mehr/);
+    expect(fieldMessage("color", "invalid")).toBe("Farbe ist ungültig.");
+    expect(fieldMessage("permissions", "invalid")).toBe("Rechte ist ungültig.");
+    expect(fieldMessage("name", "too_long")).toBe("Name ist zu lang.");
+  });
+
   // The server's bind turns down an image too large in pixels by its place.
   it("names an image with too many pixels", () => {
     expect(fieldMessage("attachment_ids.1", "too_long")).toBe(

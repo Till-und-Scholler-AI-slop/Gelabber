@@ -67,6 +67,9 @@ export const auth = defineCatalog(
     "fieldLabel.q": "Suche",
     "fieldLabel.token": "Link",
     "fieldLabel.other": "Eingabe",
+    "fieldLabel.color": "Farbe",
+    "fieldLabel.roles": "Rollen",
+    "fieldLabel.roleIds": "Zugriff",
 
     // Field codes (auth/rules.ts `fieldMessage`).
     "fieldError.required": "{label} fehlt.",
@@ -94,6 +97,10 @@ export const auth = defineCatalog(
     "fieldError.lineInvalid": "Nur eine Zeile Text, keine Steuerzeichen.",
     "fieldError.contentTypeInvalid": "Dieser Dateityp ist nicht erlaubt.",
     "fieldError.invalid": "{label} ist ungültig.",
+    "fieldError.roleNameTaken": "Diesen Namen hat schon eine Rolle.",
+    "fieldError.tooManyRoles": "Ein Server hat höchstens 50 Rollen.",
+    "fieldError.roleIdsInvalid":
+      "Eine der Rollen gibt es nicht mehr. Lade die Seite neu.",
 
     // A rate limit with a known wait (auth/useFormErrors.ts).
     "form.rateLimited": {
@@ -261,6 +268,9 @@ export const auth = defineCatalog(
     "fieldLabel.q": "Search",
     "fieldLabel.token": "Link",
     "fieldLabel.other": "Input",
+    "fieldLabel.color": "Colour",
+    "fieldLabel.roles": "Roles",
+    "fieldLabel.roleIds": "Access",
 
     "fieldError.required": "{label} is missing.",
     "fieldError.passwordTooShort": "At least {min} characters.",
@@ -287,6 +297,10 @@ export const auth = defineCatalog(
     "fieldError.lineInvalid": "Only one line of text, no control characters.",
     "fieldError.contentTypeInvalid": "This file type isn’t allowed.",
     "fieldError.invalid": "{label} is invalid.",
+    "fieldError.roleNameTaken": "A role already has this name.",
+    "fieldError.tooManyRoles": "A server has at most 50 roles.",
+    "fieldError.roleIdsInvalid":
+      "One of the roles no longer exists. Reload the page.",
 
     "form.rateLimited": {
       one: "Too many attempts. Please wait {count} second.",

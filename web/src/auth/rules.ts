@@ -305,7 +305,11 @@ type FieldName =
   | "attachment_ids"
   | "gif"
   | "q"
-  | "token";
+  | "token"
+  | "color"
+  | "permissions"
+  | "roles"
+  | "role_ids";
 
 type LabelKey = Extract<keyof typeof auth.de, `fieldLabel.${string}`>;
 
@@ -339,6 +343,10 @@ const FIELD_LABEL: Record<FieldName, LabelKey> = {
   gif: "fieldLabel.gif",
   q: "fieldLabel.q",
   token: "fieldLabel.token",
+  color: "fieldLabel.color",
+  permissions: "fieldLabel.memberPermissions",
+  roles: "fieldLabel.roles",
+  role_ids: "fieldLabel.roleIds",
 };
 
 /** Inline copy for a field code. Unknown fields fall back to generic text. */
@@ -367,7 +375,12 @@ export function fieldMessage(field: string, code: FieldCode): string {
     case "mismatch":
       return translate(auth, "fieldError.mismatch");
     case "taken":
-      return translate(auth, "fieldError.taken");
+      // Only a role's name is taken by name; an address by email.
+      return field === "name"
+        ? translate(auth, "fieldError.roleNameTaken")
+        : translate(auth, "fieldError.taken");
+    case "too_many":
+      return translate(auth, "fieldError.tooManyRoles");
     case "wrong":
       return translate(auth, "fieldError.wrong");
     case "stale":
@@ -395,6 +408,8 @@ export function fieldMessage(field: string, code: FieldCode): string {
             : translate(auth, "fieldError.lineInvalid");
         case "content_type":
           return translate(auth, "fieldError.contentTypeInvalid");
+        case "role_ids":
+          return translate(auth, "fieldError.roleIdsInvalid");
         default:
           return translate(auth, "fieldError.invalid", { label });
       }
