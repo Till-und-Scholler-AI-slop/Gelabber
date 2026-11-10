@@ -9,6 +9,8 @@ CONFIG = ROOT.parents[1] / 'backend/api/src/config.rs'
 
 # Read by Compose itself, or by the host's own Caddy (Caddyfile.homelab).
 NOT_FOR_A_SERVICE = {'COMPOSE_FILE', 'COMPOSE_PROFILES', 'GELABBER_MINIO_DOMAIN'}
+# Lets the API start without an object store; the stack always runs MinIO.
+NOT_FORWARDED = {'API_ALLOW_MEMORY_STORE'}
 
 
 def compose_text():
@@ -41,7 +43,10 @@ class EnvKeys(unittest.TestCase):
                                   CONFIG.read_text(), re.M))
         wanted = {key for key in settings if key.startswith('API_')} | {'RUST_LOG'}
         self.assertIn('API_ALLOW_PLAIN_HTTP', wanted)
-        self.assertEqual(sorted(wanted - api_environment()), [])
+        self.assertLessEqual(NOT_FORWARDED, settings)
+        env = api_environment()
+        self.assertEqual(sorted(wanted - NOT_FORWARDED - env), [])
+        self.assertEqual(sorted(NOT_FORWARDED & env), [])
 
 
 if __name__ == '__main__':
