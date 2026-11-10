@@ -1,0 +1,23 @@
+# W1: files whose UI text is not in the catalogs yet.
+# The batch deletes this list when it is done (docs/i18n.md).
+src/auth/avatarImage.ts
+src/auth/mail.ts
+src/auth/redirect.ts
+src/auth/release.ts
+src/auth/rules.ts
+src/auth/scope.ts
+src/auth/session.ts
+src/auth/store.ts
+src/auth/types.ts
+src/auth/useCooldown.ts
+src/auth/useFocusOnMount.ts
+src/auth/useFormErrors.ts
+src/pages/AuthLayout.tsx
+src/pages/ForgotPasswordPage.tsx
+src/pages/InvitePage.tsx
+src/pages/LoginPage.tsx
+src/pages/NotFoundPage.tsx
+src/pages/RegisterPage.tsx
+src/pages/ResetPasswordPage.tsx
+src/pages/RouteErrorPage.tsx
+src/pages/VerifyEmailPage.tsx

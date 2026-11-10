@@ -1,0 +1,28 @@
+# W5: files whose UI text is not in the catalogs yet.
+# The batch deletes this list when it is done (docs/i18n.md).
+src/components/InviteDialog.tsx
+src/components/MemberActions.tsx
+src/components/MemberPanel.tsx
+src/components/MemberProfileDialog.tsx
+src/components/ProfileCard.tsx
+src/components/ServerDialogs.tsx
+src/components/UserProfileDialog.tsx
+src/components/inviteSession.ts
+src/pages/ChannelPage.tsx
+src/pages/CommunityOverview.tsx
+src/pages/ServerPage.tsx
+src/pages/ServerSettingsPage.tsx
+src/servers/api.ts
+src/servers/clipboard.ts
+src/servers/inviteCode.ts
+src/servers/invitePrompt.ts
+src/servers/inviteTerms.ts
+src/servers/inviteText.ts
+src/servers/lastChannel.ts
+src/servers/lastPlace.ts
+src/servers/overview.ts
+src/servers/permissions.ts
+src/servers/queries.ts
+src/servers/rows.ts
+src/servers/rules.ts
+src/servers/types.ts
