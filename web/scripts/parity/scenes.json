@@ -2243,6 +2243,114 @@
       "name": "channel-hidden-for-member",
       "path": "/s/{home}/c/{allgemein}",
       "user": "ada"
+    },
+    {
+      "name": "voice-four",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted,tom",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        }
+      ]
+    },
+    {
+      "name": "voice-watching-live",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:live,mira:muted:watch,tom:watch",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Zuschauen"
+        },
+        {
+          "wait": 3000
+        }
+      ],
+      "mask": [[312, 72, 944, 530]]
+    },
+    {
+      "name": "voice-live-viewers",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:live,mira:muted:watch",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Zuschauen"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "/schau(t|en) zu – Liste anzeigen$/"
+        }
+      ],
+      "mask": [[312, 72, 944, 530]]
+    },
+    {
+      "name": "voice-live-own-watchers",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas:watch,mira:muted:watch,tom",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Live gehen"
+        },
+        {
+          "menuitem": "Live gehen"
+        },
+        {
+          "wait": 4000
+        },
+        {
+          "click": "Live gehen"
+        }
+      ],
+      "mask": [[312, 72, 944, 530]]
+    },
+    {
+      "name": "voice-user-panel-call-settings",
+      "path": "/s/{home}/c/{Sofa}",
+      "user": "lena",
+      "call": "Sofa jonas,mira:muted",
+      "media": true,
+      "actions": [
+        {
+          "click": "Beitreten"
+        },
+        {
+          "wait": 3000
+        },
+        {
+          "click": "Anrufeinstellungen"
+        }
+      ]
     }
   ]
 }
