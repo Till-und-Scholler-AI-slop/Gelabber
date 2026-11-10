@@ -606,9 +606,12 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             );
             gap(ui);
             let silent = off || p.call_sound_volume == 0.0 || p.output_volume == 0.0;
-            controls::row(ui, 0.0, 36.0, |ui| {
+            // `VoiceSettings.tsx`: the test tone is the own join's cue.
+            if controls::row(ui, 0.0, 36.0, |ui| {
                 button(ui, "Testton abspielen", false, silent)
-            });
+            }) {
+                app.call.play_sound(gelabber_call::Sound::JoinSelf);
+            }
         });
         ui.add_space(20.0);
         disclosure(ui, s, &mut p);
