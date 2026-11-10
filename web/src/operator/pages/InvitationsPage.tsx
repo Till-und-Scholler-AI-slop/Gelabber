@@ -275,7 +275,7 @@ export function InvitationCreator({
   );
 }
 
-function CreatedLink({
+export function CreatedLink({
   link,
   mailedTo,
 }: {
