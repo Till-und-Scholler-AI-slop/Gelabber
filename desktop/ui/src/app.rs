@@ -529,7 +529,10 @@ impl GelabberApp {
         }
         // The mouse's back and forward buttons and Alt+←/→, as in the browser.
         let ptt = screens::voice::call_bar::ptt_side_button(&ctx, &self.call);
-        let side = |i: &egui::InputState, b| ptt != Some(b) && i.pointer.button_pressed(b);
+        // While the settings record a key, a side button is the key.
+        let recording = screens::settings::media::recording_key(&ctx);
+        let side =
+            |i: &egui::InputState, b| !recording && ptt != Some(b) && i.pointer.button_pressed(b);
         let (back, forward) = ctx.input(|i| {
             (
                 side(i, egui::PointerButton::Extra1)

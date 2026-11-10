@@ -56,6 +56,17 @@ pub fn set_in_dialog(ctx: &egui::Context, on: bool) {
     ctx.data_mut(|d| d.insert_temp(dialog_id(), on));
 }
 
+fn recording_id() -> Id {
+    Id::unique("gelabber-ptt-recording")
+}
+
+/// A push-to-talk key is being recorded (the recorder drew last frame): the
+/// mouse's side buttons are its to take, not the window's back and forward.
+pub fn recording_key(ctx: &egui::Context) -> bool {
+    let drawn: Option<u64> = ctx.data(|d| d.get_temp(recording_id()));
+    drawn.is_some_and(|f| f + 1 >= ctx.cumulative_frame_nr())
+}
+
 fn in_dialog(ui: &Ui) -> bool {
     ui.ctx().data(|d| d.get_temp(dialog_id())).unwrap_or(false)
 }
@@ -440,6 +451,10 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 };
                 if button(ui, &label, false, false) {
                     s.recording = !s.recording;
+                }
+                if s.recording {
+                    let frame = ui.ctx().cumulative_frame_nr();
+                    ui.ctx().data_mut(|d| d.insert_temp(recording_id(), frame));
                 }
                 if s.recording
                     && let Some((code, label)) = record_key(ui.ctx(), s)

@@ -133,3 +133,30 @@ fn more_themes_leads_to_the_themes_area() {
         assert_eq!(world.borrow().nav.location().path, "/settings/themes");
     });
 }
+
+/// While "Taste festlegen" records, the window's back and forward leave the
+/// side mouse buttons alone (app.rs asks `recording_key`).
+#[test]
+fn recording_a_key_claims_the_side_buttons() {
+    within(30, || {
+        let _config = crate::platform::paths::testing::TempConfig::new("ptt-record");
+        let (mut h, _world, _client, _call) = harness("/settings/audio", settings_page("audio"));
+        super::prefs::update(&h.ctx, |p| p.voice_input = "ptt".into());
+        h.run_steps(4);
+        assert!(!super::media::recording_key(&h.ctx));
+        h.get_by_label("Taste festlegen").click();
+        h.run_steps(2);
+        assert!(super::media::recording_key(&h.ctx));
+        h.event(egui::Event::PointerButton {
+            pos: egui::pos2(640.0, 400.0),
+            button: egui::PointerButton::Extra1,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        // The frame that takes the button still counts as recording.
+        assert!(super::media::recording_key(&h.ctx));
+        h.run_steps(3);
+        assert!(!super::media::recording_key(&h.ctx));
+        assert_eq!(super::prefs::get(&h.ctx).ptt_key, "Mouse4");
+    });
+}
