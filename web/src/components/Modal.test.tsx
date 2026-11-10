@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useConfirm } from "./confirm.ts";
 import { Modal } from "./Modal.tsx";
 import {
+  backdropClicks,
   closesOnBackdrop,
   DISCARD_CHANGES,
   focusLeftWith,
@@ -71,6 +72,23 @@ describe("closing a modal", () => {
     expect(closesOnBackdrop({ clientX: 50, clientY: 200 }, box, true)).toBe(
       false,
     );
+  });
+
+  // A text selection dragged out of a field and released over the backdrop
+  // clicks the dialog, the common ancestor.
+  it("counts a click on the dialog only when the press began there too", () => {
+    const dialog = {};
+    const field = {};
+    const on = (target: object) => ({ target, currentTarget: dialog });
+    const clicks = backdropClicks();
+    clicks.press(on(field));
+    expect(clicks.onDialog(on(dialog))).toBe(false);
+    clicks.press(on(dialog));
+    expect(clicks.onDialog(on(dialog))).toBe(true);
+    clicks.press(on(dialog));
+    expect(clicks.onDialog(on(field))).toBe(false);
+    // A click with no press before it does not count.
+    expect(clicks.onDialog(on(dialog))).toBe(false);
   });
 
   it("closes at once on Esc without unsaved input", async () => {

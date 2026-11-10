@@ -44,6 +44,7 @@ encoded = json.dumps(output, ensure_ascii=False, separators=(",", ":")) + "\n"
 outputs = {
     ROOT / "backend/shared/data/emoji-18.0.json": encoded.encode("utf-8"),
     ROOT / "web/src/messages/emoji-data.json": encoded.encode("utf-8"),
+    ROOT / "desktop/ui/assets/emoji/emoji-data.json": encoded.encode("utf-8"),
     ROOT / "web/public/emoji-license.txt": (SOURCE / "LICENSE.txt").read_bytes(),
 }
 if "--check" in sys.argv:

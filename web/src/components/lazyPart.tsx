@@ -3,9 +3,9 @@
 //
 // No automatic page reload on a failed load. After a deploy this tab may ask
 // for a chunk the server no longer has, and a reload would end a running
-// call. The part says so and offers a reload only while no call runs. There
-// is no retry: browsers keep a failed module fetch for the page's lifetime.
-// The idle preload is what keeps this rare.
+// call. The part says so and offers a reload only while no call runs. A
+// failed load is not kept: the part's next use asks again. The idle preload
+// is what keeps this rare.
 
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 
@@ -30,7 +30,13 @@ export function lazyPart<P extends object>(
   let ready: ComponentType<P> | null = null;
   let pending: Promise<ComponentType<P>> | null = null;
   const start = () =>
-    (pending ??= load().then((component) => (ready = component)));
+    (pending ??= load().then(
+      (component) => (ready = component),
+      (error: unknown) => {
+        pending = null;
+        throw error;
+      },
+    ));
 
   function Component({
     fallback = null,

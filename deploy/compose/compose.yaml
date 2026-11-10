@@ -23,13 +23,13 @@ services:
     restart: unless-stopped
 
   web:
-    image: ${GELABBER_WEB_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.9.2}
+    image: ${GELABBER_WEB_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/web:v0.9.3}
     pull_policy: missing
     build:
       context: ../../web
       dockerfile: Dockerfile
       tags:
-        - gelabber/web:v0.9.2
+        - gelabber/web:v0.9.3
     environment:
       # The same values as the API's: the app shell's Content-Security-Policy
       # allows uploads and attachments on this origin only (#288), or on the
@@ -41,13 +41,13 @@ services:
     restart: unless-stopped
 
   api:
-    image: ${GELABBER_API_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.9.2}
+    image: ${GELABBER_API_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/api:v0.9.3}
     pull_policy: missing
     build:
       context: ../..
       dockerfile: backend/api/Dockerfile
       tags:
-        - gelabber/api:v0.9.2
+        - gelabber/api:v0.9.3
     environment:
       API_ADDR: 0.0.0.0:8080
       DATABASE_URL: postgres://${POSTGRES_USER:-gelabber}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (see deploy/README.md)}@postgres:5432/${POSTGRES_DB:-gelabber}
@@ -98,6 +98,22 @@ services:
       API_LINK_PREVIEWS: ${API_LINK_PREVIEWS:-true}
       API_LINK_PREVIEW_DENY_HOSTS: ${API_LINK_PREVIEW_DENY_HOSTS:-}
       API_RATE_PREVIEW_PER_MIN: ${API_RATE_PREVIEW_PER_MIN:-10}
+      # Documented settings; empty keeps the API default (deploy/README.md).
+      API_ALLOW_PLAIN_HTTP: ${API_ALLOW_PLAIN_HTTP:-}
+      API_RATE_AUTH_PER_MIN: ${API_RATE_AUTH_PER_MIN:-}
+      API_RATE_API_PER_MIN: ${API_RATE_API_PER_MIN:-}
+      API_RATE_MSG_PER_MIN: ${API_RATE_MSG_PER_MIN:-}
+      API_RATE_UPLOAD_PER_HOUR: ${API_RATE_UPLOAD_PER_HOUR:-}
+      API_RATE_LOGIN_FAILURES_PER_ACCOUNT: ${API_RATE_LOGIN_FAILURES_PER_ACCOUNT:-}
+      API_UPLOAD_QUOTA_BYTES_PER_DAY: ${API_UPLOAD_QUOTA_BYTES_PER_DAY:-}
+      API_READY_TIMEOUT_MS: ${API_READY_TIMEOUT_MS:-}
+      API_WS_HEARTBEAT_MS: ${API_WS_HEARTBEAT_MS:-}
+      API_WS_DEAD_MS: ${API_WS_DEAD_MS:-}
+      API_WS_REPLAY: ${API_WS_REPLAY:-}
+      API_WS_IDLE_MS: ${API_WS_IDLE_MS:-}
+      API_WS_PRESENCE_TTL_MS: ${API_WS_PRESENCE_TTL_MS:-}
+      API_WS_TYPING_TTL_MS: ${API_WS_TYPING_TTL_MS:-}
+      RUST_LOG: ${RUST_LOG:-}
     expose:
       - "8080"
     depends_on:
@@ -110,13 +126,13 @@ services:
     restart: unless-stopped
 
   media:
-    image: ${GELABBER_MEDIA_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.9.2}
+    image: ${GELABBER_MEDIA_IMAGE:-ghcr.io/till-und-scholler-ai-slop/gelabber/media:v0.9.3}
     pull_policy: missing
     build:
       context: ../..
       dockerfile: backend/media/Dockerfile
       tags:
-        - gelabber/media:v0.9.2
+        - gelabber/media:v0.9.3
     environment:
       MEDIA_ADDR: 0.0.0.0:8081
       REDIS_URL: redis://redis:6379
@@ -126,6 +142,8 @@ services:
       MEDIA_WORKERS: ${MEDIA_WORKERS:-1}
       MEDIA_ICE_PORT_MAX: ${MEDIA_ICE_PORT_MAX:-10000}
       MEDIA_ADVERTISED_IP: ${MEDIA_ADVERTISED_IP:-127.0.0.1}
+      # Empty: info.
+      RUST_LOG: ${RUST_LOG:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     expose:
@@ -152,6 +170,9 @@ services:
       TURN_EXTERNAL_IP: ${TURN_EXTERNAL_IP:-127.0.0.1}
       TURN_RELAY_MIN: ${TURN_RELAY_MIN:-49160}
       TURN_RELAY_MAX: ${TURN_RELAY_MAX:-49200}
+      # Private relay targets are refused; the SFU's address and this list stay allowed.
+      MEDIA_ADVERTISED_IP: ${MEDIA_ADVERTISED_IP:-127.0.0.1}
+      TURN_ALLOWED_PEER_IPS: ${TURN_ALLOWED_PEER_IPS:-}
     volumes:
       - ./coturn-entry.sh:/coturn-entry.sh:ro
     entrypoint: ["/bin/sh", "/coturn-entry.sh"]

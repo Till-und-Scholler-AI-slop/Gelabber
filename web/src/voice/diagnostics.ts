@@ -1129,7 +1129,9 @@ function browserInfo(): DiagnosticExport["browser"] {
   };
 }
 
-function scrubString(value: string): string {
+/** `versions`: the browser's own fields, where "Chrome/141.0.0.0" is a
+ * version and not an address. */
+function scrubString(value: string, versions = false): string {
   if (/bearer\s+\S+|cookie|csrf|token=/i.test(value)) return "unbekannt";
   if (
     /v=0/.test(value) ||
@@ -1138,7 +1140,8 @@ function scrubString(value: string): string {
   ) {
     return "redacted";
   }
-  if (/\b(?:\d{1,3}\.){3}\d{1,3}\b/.test(value)) return "unbekannt";
+  if (!versions && /\b(?:\d{1,3}\.){3}\d{1,3}\b/.test(value))
+    return "unbekannt";
   return value;
 }
 
@@ -1167,7 +1170,15 @@ export function buildDiagnosticExport(now = new Date()): DiagnosticExport {
     events: state.events,
     samples: state.samples,
   };
-  return scrub(payload) as DiagnosticExport;
+  const browser = payload.browser;
+  return {
+    ...(scrub(payload) as DiagnosticExport),
+    browser: {
+      userAgent: scrubString(browser.userAgent, true),
+      platform: scrubString(browser.platform, true),
+      language: scrubString(browser.language, true),
+    },
+  };
 }
 
 export function formatBps(bps: number | null): string {

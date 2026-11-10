@@ -596,14 +596,21 @@ async fn layers_by_size(server: &Server) {
             .unwrap()
     };
 
-    // Width, height and the scale factor of the small layer.
-    for (width, height, factor) in [
-        (1366u32, 768u32, 4u64),
-        (1894, 1012, 4),
-        (480, 270, 4),
-        (1366, 768, 8),
-    ] {
-        let name = format!("{width}x{height} over {factor} and 1");
+    // Codec, width, height and the scale factor of the small layer.
+    let mut sizes = vec![
+        ("VP8", 1366u32, 768u32, 4u64),
+        ("VP8", 1894, 1012, 4),
+        ("VP8", 480, 270, 4),
+        ("VP8", 1366, 768, 8),
+    ];
+    // A small H264 layer whose width is not a multiple of four (250), which
+    // GStreamer pads its rows to. The sides divide by 8, the alignment
+    // libwebrtc asks of these layers, so the first size is the last.
+    if h264_under_test(&device.rtp_capabilities().unwrap()) {
+        sizes.push(("H264", 1000, 704, 4));
+    }
+    for (codec, width, height, factor) in sizes {
+        let name = format!("{codec} {width}x{height} over {factor} and 1");
         // Ten pictures a second, so that a slow machine does not step the
         // picture down before its size is read.
         let source = Source::test_pattern(&engine, width, height, 10).unwrap();
@@ -611,7 +618,7 @@ async fn layers_by_size(server: &Server) {
         // test is their sizes, not how soon the bandwidth estimate of a new
         // transport lets the large one start.
         let options = json!({
-            "codec": "video/VP8",
+            "codec": format!("video/{codec}"),
             "encodings": [{ "scaleResolutionDownBy": factor }, { "scaleResolutionDownBy": 1 }],
             "codecOptions": { "videoGoogleStartBitrate": 3000 },
         });

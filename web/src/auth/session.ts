@@ -13,6 +13,7 @@ import {
   synchronizeSharedSession,
   type SessionSinkOptions,
 } from "../api/client.ts";
+import { syncPush } from "../pwa/push.ts";
 import { releaseUserScope } from "./release.ts";
 import {
   invalidateSessionRequests,
@@ -232,6 +233,21 @@ export function ensureSession(): Promise<void> {
   return bootstrap;
 }
 
+/**
+ * Asks the server whether this tab's session still holds, for a signed-in
+ * tab with no request of its own that would notice (a refused socket). A
+ * session that ended signs the tab out; a failure leaves it as it is.
+ */
+export async function checkSession(): Promise<void> {
+  if (useSession.getState().status !== "authenticated") return;
+  if (activeAuthIntent !== null || bootstrap) return;
+  try {
+    await api<SessionResponse>("/auth/session");
+  } catch {
+    // Offline or superseded: the socket keeps retrying.
+  }
+}
+
 function startAuthIntent(): number {
   invalidateSessionRequests();
   bootstrap = null;
@@ -362,6 +378,10 @@ export async function changePassword(
   const session = await api<SessionResponse>("/auth/password", {
     method: "POST",
     body: { current_password: currentPassword, password },
+  });
+  // Ending the old sessions dropped this browser's push subscription too.
+  void syncPush().catch(() => {
+    // Push is extra; the next start subscribes again.
   });
   return session.user as User;
 }

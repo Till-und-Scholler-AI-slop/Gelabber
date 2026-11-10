@@ -282,8 +282,15 @@ namespace gelabber
 					scaled->ScaleFrom(*i420);
 					i420 = scaled;
 				}
-				const size_t ySize = static_cast<size_t>(width) * height;
-				GstBuffer* buffer  = gst.buffer_new_allocate(nullptr, ySize + ySize / 2, nullptr);
+				// GStreamer's default layout for the caps, which the elements map the
+				// buffer with (no GstVideoMeta): rows padded to four bytes, planes back to back.
+				const auto round4  = [](int value) { return (value + 3) & ~3; };
+				const int strideY  = round4(width);
+				const int strideC  = TakesI420(element) ? round4(width / 2) : strideY;
+				const size_t ySize = static_cast<size_t>(strideY) * height;
+				const size_t cSize = static_cast<size_t>(strideC) * (height / 2);
+				GstBuffer* buffer  = gst.buffer_new_allocate(
+				  nullptr, ySize + (TakesI420(element) ? 2 * cSize : cSize), nullptr);
 				GstMapInfo map{};
 				if (!buffer || !gst.buffer_map(buffer, &map, kMapWrite))
 				{
@@ -300,11 +307,11 @@ namespace gelabber
 					  i420->DataV(),
 					  i420->StrideV(),
 					  map.data,
-					  width,
+					  strideY,
 					  map.data + ySize,
-					  width / 2,
-					  map.data + ySize + ySize / 4,
-					  width / 2,
+					  strideC,
+					  map.data + ySize + cSize,
+					  strideC,
 					  width,
 					  height);
 				else
@@ -316,9 +323,9 @@ namespace gelabber
 					  i420->DataV(),
 					  i420->StrideV(),
 					  map.data,
-					  width,
+					  strideY,
 					  map.data + ySize,
-					  width,
+					  strideC,
 					  width,
 					  height);
 				gst.buffer_unmap(buffer, &map);

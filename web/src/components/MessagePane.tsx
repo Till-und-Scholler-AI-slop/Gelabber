@@ -66,6 +66,7 @@ import { isMuted } from "../messages/notifyLevel.ts";
 import "./chat.css";
 import { Composer } from "./Composer.tsx";
 import { MessageRow } from "./MessageRow.tsx";
+import { clearEditDrafts, saveEdit } from "./editDrafts.ts";
 import {
   AttemptActionsContext,
   JumpTo,
@@ -126,6 +127,9 @@ export function MessagePane({
   const user = useSession((s) => s.user);
   const query = useMessages(channelId, true);
   const searchScope = `${user?.id ?? "anonymous"}:${channelId}`;
+  // Open edits stay while their rows scroll out of view, not past the
+  // conversation or the account.
+  useEffect(() => () => clearEditDrafts(channelId), [channelId, user?.id]);
   // What the header's search field holds, per channel and account; the
   // list shows its hits as soon as typing pauses (#377).
   const [search, setSearch] = useState<{ scope: string; text: string }>({
@@ -180,7 +184,8 @@ export function MessagePane({
     searchField.current?.focus({ preventScroll: true });
   }, [setSearchText]);
   // Strg/⌘+F searches this conversation instead of the page; Strg+K stays
-  // the quick switcher (#324).
+  // the quick switcher (#324). Only a modal dialog blocks it: the desktop
+  // drawers are dialogs that stay open.
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (
@@ -188,7 +193,7 @@ export function MessagePane({
         !event.shiftKey &&
         !event.altKey &&
         event.key.toLowerCase() === "f" &&
-        !document.querySelector("dialog[open]")
+        !document.querySelector("dialog:modal")
       ) {
         event.preventDefault();
         searchField.current?.focus();
@@ -219,7 +224,10 @@ export function MessagePane({
         event.ctrlKey ||
         event.metaKey ||
         event.altKey ||
-        document.querySelector("dialog[open], details[open]")
+        // An expanded text attachment is not a menu that Esc closes.
+        document.querySelector(
+          "dialog:modal, details[open]:not(.lr-attachment-text)",
+        )
       )
         return;
       markByKey(event.shiftKey);
@@ -539,12 +547,7 @@ export function MessagePane({
                           canDelete={
                             message.author.id === user?.id || canModerate
                           }
-                          onEdit={(content, failed) =>
-                            contextEdit.mutate(
-                              { id: message.id, content },
-                              { onError: failed },
-                            )
-                          }
+                          onEdit={saveEdit(contextEdit, message.id)}
                           onDelete={async (skipConfirm) => {
                             if (
                               skipConfirm ||
@@ -574,12 +577,7 @@ export function MessagePane({
                           canDelete={
                             message.author.id === user?.id || canModerate
                           }
-                          onEdit={(content, failed) =>
-                            contextEdit.mutate(
-                              { id: message.id, content },
-                              { onError: failed },
-                            )
-                          }
+                          onEdit={saveEdit(contextEdit, message.id)}
                           onDelete={async (skipConfirm) => {
                             if (
                               skipConfirm ||
@@ -852,9 +850,7 @@ function MessageList({
                 canSend={canSend}
                 canDelete={message.author.id === meId || canModerate}
                 attempt={attempts.get(message.id)}
-                onEdit={(content, failed) =>
-                  edit.mutate({ id: message.id, content }, { onError: failed })
-                }
+                onEdit={saveEdit(edit, message.id)}
                 onDelete={async (skipConfirm) => {
                   if (skipConfirm || (await confirmDelete(message, meId)))
                     remove.mutate(message.id);

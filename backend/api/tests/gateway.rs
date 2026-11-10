@@ -94,6 +94,29 @@ async fn connect(addr: std::net::SocketAddr, cookie: &str, origin: Option<&str>)
     ws
 }
 
+/// [`connect`] with a small receive buffer, so the server's writes block
+/// once a few MB are unread.
+async fn connect_reading_slowly(addr: std::net::SocketAddr, cookie: &str) -> Ws {
+    let socket = tokio::net::TcpSocket::new_v4().expect("socket");
+    socket.set_recv_buffer_size(4096).expect("receive buffer");
+    let stream = socket.connect(addr).await.expect("tcp connect");
+    let mut request = format!("ws://{addr}/ws")
+        .into_client_request()
+        .expect("ws request");
+    request.headers_mut().insert(
+        COOKIE,
+        format!("{SESSION}={cookie}")
+            .parse()
+            .expect("cookie header"),
+    );
+    let (ws, response) =
+        tokio_tungstenite::client_async(request, tokio_tungstenite::MaybeTlsStream::Plain(stream))
+            .await
+            .unwrap_or_else(|err| panic!("ws connect failed: {err}"));
+    assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+    ws
+}
+
 async fn recv_json(ws: &mut Ws) -> Value {
     let msg = tokio::time::timeout(Duration::from_secs(2), ws.next())
         .await
@@ -121,6 +144,13 @@ async fn recv_until(ws: &mut Ws, pred: impl Fn(&Value) -> bool) -> Value {
             return frame;
         }
     }
+}
+
+/// [`recv_until`] that fails instead of waiting through heartbeats forever.
+async fn recv_within(ws: &mut Ws, pred: impl Fn(&Value) -> bool) -> Value {
+    tokio::time::timeout(Duration::from_secs(5), recv_until(ws, pred))
+        .await
+        .expect("expected frame within 5 s")
 }
 
 async fn send_json(ws: &mut Ws, value: Value) {
@@ -151,7 +181,9 @@ async fn publish(
         server_id,
         channel_id,
         kind,
-        Some(Uuid::from_u128(0xE01)),
+        // A message of its own: an edit or delete rewrites its message's
+        // earlier entries in the replay log.
+        Some(Uuid::new_v4()),
         Some(json!({ "b": body })),
     )
     .await
@@ -408,6 +440,64 @@ async fn events_only_reach_matching_subscribers(pool: PgPool) {
     }
 }
 
+/// A subscribe that fails names its scope, and a presence or voice snapshot
+/// that fails after `ok` leaves the chat subscription standing.
+#[sqlx::test]
+async fn subscribe_failures_name_the_scope_and_spare_a_live_subscription(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Fail").await;
+    let (server_id, channel_id) = ids(&server);
+    let (addr, state) = common::serve_ws(pool).await;
+    let mut redis = state
+        .redis
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+
+    // The replay log cannot be read: nothing was subscribed, and the error
+    // says which subscribe failed.
+    let log = gelabber_api::gateway::Topic::Channel(channel_id).log_key();
+    redis::cmd("SET")
+        .arg(&log)
+        .arg("not a list")
+        .query_async::<()>(&mut redis)
+        .await
+        .unwrap();
+    send_json(
+        &mut ws,
+        json!({ "op": "s", "s": server_id, "c": channel_id }),
+    )
+    .await;
+    let err = recv_within(&mut ws, |f| f["op"] == "err").await;
+    assert_eq!(err["e"], "internal", "{err}");
+    assert_eq!(err["s"], server_id.to_string(), "{err}");
+    assert_eq!(err["c"], channel_id.to_string(), "{err}");
+    redis::cmd("DEL")
+        .arg(&log)
+        .query_async::<()>(&mut redis)
+        .await
+        .unwrap();
+
+    // The server's presence set cannot be written: the subscription stays.
+    redis::cmd("SET")
+        .arg(format!("gb:p:s:{server_id}"))
+        .arg("not a set")
+        .query_async::<()>(&mut redis)
+        .await
+        .unwrap();
+    send_json(
+        &mut ws,
+        json!({ "op": "s", "s": server_id, "c": channel_id }),
+    )
+    .await;
+    recv_within(&mut ws, |f| f["op"] == "ok").await;
+    let n = publish(&state, server_id, channel_id, EventKind::C, "still here").await;
+    let event = recv_within(&mut ws, |f| f["op"] == "e" || f["op"] == "err").await;
+    assert_eq!(event["op"], "e", "{event}");
+    assert_eq!(event["n"], n);
+}
+
 #[sqlx::test]
 async fn subscribe_is_membership_scoped(pool: PgPool) {
     let (mut owner, member) = two_users(pool.clone()).await;
@@ -516,6 +606,200 @@ async fn reconnect_signals_gap_when_the_buffer_cannot_fill_it(pool: PgPool) {
     assert_eq!(gap["op"], "gap", "{gap}");
     let ok = recv_until(&mut ws, |f| f["op"] == "ok").await;
     assert_eq!(ok["n"], 10);
+}
+
+/// On shutdown every socket closes with 1012 (service restart) and runs its
+/// normal cleanup, so its presence goes with it instead of timing out.
+#[sqlx::test]
+async fn shutdown_closes_sockets_with_service_restart_and_cleans_up(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Restart").await;
+    let (server_id, _) = ids(&server);
+    let (addr, state) = common::serve_ws(pool).await;
+    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+    send_json(&mut ws, json!({ "op": "s", "s": server_id })).await;
+    recv_within(&mut ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+    let mut redis = state
+        .redis
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let status = format!("gb:p:u:{}", owner.user_id());
+    let online: bool = redis::cmd("EXISTS")
+        .arg(&status)
+        .query_async(&mut redis)
+        .await
+        .unwrap();
+    assert!(online);
+
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        state.gateway.drain(Duration::from_secs(3)),
+    )
+    .await
+    .expect("drain returns");
+    let close = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match ws.next().await {
+                Some(Ok(Message::Close(frame))) => return frame,
+                Some(Ok(_)) => {}
+                other => panic!("expected a close frame, got {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("close frame");
+    assert_eq!(u16::from(close.expect("close code").code), 1012);
+    let online: bool = redis::cmd("EXISTS")
+        .arg(&status)
+        .query_async(&mut redis)
+        .await
+        .unwrap();
+    assert!(!online, "presence cleared on the way out");
+
+    // A client reconnecting at once lands elsewhere, not on this process.
+    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+    request.headers_mut().insert(
+        COOKIE,
+        format!("{SESSION}={}", session_cookie(&owner))
+            .parse()
+            .unwrap(),
+    );
+    let err = tokio_tungstenite::connect_async(request)
+        .await
+        .expect_err("upgrade during shutdown");
+    assert!(err.to_string().contains("503"), "{err}");
+}
+
+/// One account holds a bounded number of sockets on a process; the upgrade
+/// beyond it is refused, and a closed socket frees its place.
+#[sqlx::test]
+async fn sockets_per_account_are_capped(pool: PgPool) {
+    let (owner, member) = two_users(pool.clone()).await;
+    let (addr, _) = common::serve_ws(pool).await;
+    let cookie = session_cookie(&owner);
+    let mut open = Vec::new();
+    for _ in 0..gelabber_api::gateway::MAX_SOCKETS_PER_ACCOUNT {
+        open.push(connect(addr, &cookie, None).await);
+    }
+    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+    request
+        .headers_mut()
+        .insert(COOKIE, format!("{SESSION}={cookie}").parse().unwrap());
+    let err = tokio_tungstenite::connect_async(request)
+        .await
+        .expect_err("one socket over the cap");
+    assert!(err.to_string().contains("429"), "{err}");
+    // Another account is not affected.
+    let _other = connect(addr, &session_cookie(&member), None).await;
+
+    let mut first = open.remove(0);
+    first.close(None).await.ok();
+    while first.next().await.is_some() {}
+    let freed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+            request
+                .headers_mut()
+                .insert(COOKIE, format!("{SESSION}={cookie}").parse().unwrap());
+            if let Ok((ws, _)) = tokio_tungstenite::connect_async(request).await {
+                return ws;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    assert!(freed.is_ok(), "a closed socket gives its place back");
+}
+
+/// A subscribe whose replay the client does not read within the deadline
+/// ends the socket, so the client reconnects and resumes, instead of leaving
+/// it open without the topic.
+#[sqlx::test]
+async fn a_replay_past_its_deadline_ends_the_socket(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Slow").await;
+    let (s, c) = ids(&server);
+    // Silence alone must not close it within the test.
+    let mut state = common::ws_state_with_dead(pool, 60_000);
+    state.ws_replay_deadline = Duration::from_millis(300);
+    let addr = common::serve_ws_state(state.clone()).await;
+    // More than the loopback socket buffers hold with the client's receive
+    // buffer kept small: the replay write blocks.
+    let big = "x".repeat(1024 * 1024);
+    for _ in 0..6 {
+        publish(&state, s, c, EventKind::C, &big).await;
+    }
+    let mut ws = connect_reading_slowly(addr, &session_cookie(&owner)).await;
+    send_json(&mut ws, json!({ "op": "s", "s": s, "c": c, "n": 0 })).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let mut subscribed = false;
+    let ended = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match ws.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                Some(Ok(Message::Text(text))) => {
+                    let frame: Value = serde_json::from_str(text.as_str()).unwrap();
+                    match frame["op"].as_str() {
+                        Some("ok") => subscribed = true,
+                        Some("h") => {
+                            let _ = ws
+                                .send(Message::Text(json!({"op":"h"}).to_string().into()))
+                                .await;
+                        }
+                        _ => {}
+                    }
+                }
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await;
+
+    let topic = gelabber_api::gateway::Topic::Channel(c);
+    let mut redis = state
+        .redis
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    redis::cmd("DEL")
+        .arg(topic.seq_key())
+        .arg(topic.log_key())
+        .arg(topic.epoch_key())
+        .arg(topic.delivery_key())
+        .query_async::<i32>(&mut redis)
+        .await
+        .unwrap();
+    assert!(!subscribed, "the replay was not supposed to finish");
+    assert!(
+        ended.is_ok(),
+        "the socket stayed open after a failed replay"
+    );
+}
+
+/// A client frame over 16 KiB is refused by the WebSocket layer before it is
+/// buffered, and the socket closes.
+#[sqlx::test]
+async fn an_oversized_client_frame_closes_the_socket(pool: PgPool) {
+    let (owner, _) = two_users(pool.clone()).await;
+    let (addr, _) = common::serve_ws(pool).await;
+    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+    let big = json!({ "op": "p", "x": "a".repeat(20 * 1024) }).to_string();
+    ws.send(Message::Text(big.into())).await.expect("ws send");
+    let closed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match ws.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                Some(Ok(Message::Text(text))) => {
+                    assert!(!text.contains("bad_request"), "socket stayed open: {text}");
+                }
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await;
+    assert!(closed.is_ok(), "socket stayed open");
 }
 
 #[sqlx::test]
@@ -1006,6 +1290,19 @@ async fn typing_broadcasts_fast_and_clears_on_stop(pool: PgPool) {
     );
     assert_eq!(seen["c"], channel_id.to_string());
     assert!(seen.get("n").is_none(), "{seen}");
+    // Typing is Pub/Sub only: clients expire it, detach stops it from the
+    // socket's own set. Nothing reads a Redis key for it.
+    let mut redis = state
+        .redis
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let keys: Vec<String> = redis::cmd("KEYS")
+        .arg(format!("gb:y:{channel_id}:*"))
+        .query_async(&mut redis)
+        .await
+        .unwrap();
+    assert!(keys.is_empty(), "{keys:?}");
 
     send_json(
         &mut member_ws,
@@ -1241,6 +1538,49 @@ async fn dm_uses_the_same_subscribe_and_message_paths(pool: PgPool) {
     assert_eq!(err["e"], "not_found");
 }
 
+/// A DM peer's presence is published on the DM id and passes the dequeue
+/// check as a DM, not as a server that does not exist.
+#[sqlx::test]
+async fn dm_presence_arrives_live(pool: PgPool) {
+    let (addr, state) = common::serve_ws(pool.clone()).await;
+    let mut ada = Client::with_state(state.clone());
+    ada.bootstrap().await;
+    let res = ada
+        .register("ada-dmp@example.com", "password123", "Ada")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let mut bob = Client::with_state(state.clone());
+    bob.bootstrap().await;
+    let res = bob
+        .register("bob-dmp@example.com", "password123", "Bob")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let opened = ada
+        .send(
+            Method::POST,
+            "/api/dms",
+            Some(json!({ "user_id": bob.user_id() })),
+        )
+        .await;
+    assert_eq!(opened.status, StatusCode::CREATED, "{}", opened.body);
+    let dm = opened.body["id"].as_str().unwrap().to_owned();
+
+    let mut ada_ws = connect(addr, &session_cookie(&ada), None).await;
+    send_json(&mut ada_ws, json!({ "op": "s", "s": dm, "c": dm })).await;
+    recv_until(&mut ada_ws, |f| f["op"] == "p" && f.get("snap").is_some()).await;
+
+    let mut bob_ws = connect(addr, &session_cookie(&bob), None).await;
+    send_json(&mut bob_ws, json!({ "op": "s", "s": dm, "c": dm })).await;
+    recv_until(&mut bob_ws, |f| f["op"] == "ok").await;
+    let online = recv_within(&mut ada_ws, |f| f["op"] == "p" && f["u"] == bob.user_id()).await;
+    assert_eq!(online["s"], dm, "{online}");
+    assert_eq!(online["st"], "o", "{online}");
+
+    send_json(&mut bob_ws, json!({ "op": "p", "st": "i" })).await;
+    let idle = recv_within(&mut ada_ws, |f| f["op"] == "p" && f["u"] == bob.user_id()).await;
+    assert_eq!(idle["st"], "i", "{idle}");
+}
+
 #[sqlx::test]
 async fn redis_topic_reset_changes_epoch_and_old_cursor_gets_gap(pool: PgPool) {
     let (mut owner, _) = two_users(pool.clone()).await;
@@ -1310,6 +1650,225 @@ async fn publish_substitutes_only_the_envelope_placeholders(pool: PgPool) {
     assert!(log[0].n >= 1);
     assert!(log[0].ep.is_some());
     assert_eq!(log[0].d, Some(delta));
+}
+
+/// Subscribe with cursor 0 and collect the replayed `(n, t, body)` up to `ok`.
+async fn replay_from_zero(ws: &mut Ws, s: Uuid, c: Uuid) -> Vec<(u64, String, Option<String>)> {
+    send_json(ws, json!({ "op": "s", "s": s, "c": c, "n": 0 })).await;
+    let mut out = Vec::new();
+    loop {
+        let frame = recv_within(ws, |f| f["op"] == "e" || f["op"] == "ok").await;
+        if frame["op"] == "ok" {
+            return out;
+        }
+        out.push((
+            frame["n"].as_u64().unwrap(),
+            frame["t"].as_str().unwrap().to_owned(),
+            frame["d"]["b"].as_str().map(str::to_owned),
+        ));
+    }
+}
+
+/// A client that resumes from before a message was created gets a create
+/// with the current body after an edit, and only deletes once it is gone.
+#[sqlx::test]
+async fn resume_from_before_a_create_gets_the_current_create(pool: PgPool) {
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Resume").await;
+    let (s, c) = ids(&server);
+    let (addr, state) = common::serve_ws(pool).await;
+    let message = Uuid::new_v4();
+    let publish = |kind, body: Option<&str>| {
+        let state = state.clone();
+        let delta = body.map(|body| json!({ "b": body }));
+        async move {
+            publish_channel(&state, s, c, kind, Some(message), delta)
+                .await
+                .expect("publish")
+        }
+    };
+    publish(EventKind::C, Some("neu")).await;
+    publish(EventKind::E, Some("korrigiert")).await;
+    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+    assert_eq!(
+        replay_from_zero(&mut ws, s, c).await,
+        [
+            (1, "c".to_owned(), Some("korrigiert".to_owned())),
+            (2, "e".to_owned(), Some("korrigiert".to_owned())),
+        ]
+    );
+    publish(EventKind::D, None).await;
+    let mut ws = connect(addr, &session_cookie(&owner), None).await;
+    let rows = replay_from_zero(&mut ws, s, c).await;
+    assert_eq!(rows.iter().map(|r| r.0).collect::<Vec<_>>(), [1, 2, 3]);
+    assert!(rows.iter().all(|r| r.1 == "d" && r.2.is_none()), "{rows:?}");
+}
+
+/// A deleted channel ends with no realtime keys, and no queued outbox row of
+/// it is left to bring them back.
+#[sqlx::test]
+async fn a_deleted_channel_keeps_no_realtime_keys(pool: PgPool) {
+    use gelabber_api::EventDraft;
+    use gelabber_api::gateway::{Topic, delivery};
+    let (mut owner, _) = two_users(pool.clone()).await;
+    let server = create_server(&mut owner, "Gone").await;
+    let (s, c) = ids(&server);
+    let (_, state) = common::serve_ws(pool.clone()).await;
+    let posted = owner
+        .send(
+            Method::POST,
+            &format!("/api/channels/{c}/messages"),
+            Some(json!({ "content": "letzte Worte" })),
+        )
+        .await;
+    assert_eq!(posted.status, StatusCode::CREATED, "{}", posted.body);
+    let _ = delivery::deliver_pending(&state, 32).await;
+    let topic = Topic::Channel(c);
+    let mut redis = state
+        .redis
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let keys = |redis: &mut redis::aio::MultiplexedConnection| {
+        let mut redis = redis.clone();
+        async move {
+            redis::cmd("EXISTS")
+                .arg(topic.seq_key())
+                .arg(topic.log_key())
+                .arg(topic.epoch_key())
+                .arg(topic.delivery_key())
+                .query_async::<i64>(&mut redis)
+                .await
+                .unwrap()
+        }
+    };
+    assert!(keys(&mut redis).await > 0, "the message reached the log");
+
+    // A row of the channel still queued at the delete (the outbox has no
+    // foreign key), held back so no worker delivers it first.
+    let mut tx = pool.begin().await.unwrap();
+    let id = delivery::revision(&mut tx).await.unwrap();
+    delivery::enqueue(
+        &mut tx,
+        id,
+        EventDraft {
+            kind: EventKind::E,
+            server_id: s,
+            channel_id: Some(c),
+            entity_id: Some(Uuid::new_v4()),
+            delta: Some(json!({ "b": "noch da" })),
+        },
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE gateway_outbox SET next_attempt = now() + interval '1 hour' WHERE id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let deleted = owner
+        .send(Method::DELETE, &format!("/api/channels/{c}"), None)
+        .await;
+    assert_eq!(deleted.status, StatusCode::NO_CONTENT, "{}", deleted.body);
+    assert_eq!(keys(&mut redis).await, 0);
+    let queued: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM gateway_outbox WHERE channel_id = $1")
+            .bind(c)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(queued, 0, "the delete drops the channel's queued rows");
+}
+
+/// An edit or a delete leaves no earlier body of that message in the replay
+/// log: its entries become copies of the newest event under their own `n`,
+/// so a resume still replays a contiguous run.
+#[sqlx::test]
+async fn edit_and_delete_rewrite_the_messages_earlier_log_entries(pool: PgPool) {
+    use gelabber_api::EventDraft;
+    use gelabber_api::gateway::Topic;
+    use gelabber_api::gateway::protocol::CatchUp;
+    let state = common::ws_state(pool);
+    let (s, c, message, other) = (
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+    );
+    let publish = |kind, entity, body: Option<&str>| {
+        let state = state.clone();
+        let delta = body.map(|body| json!({ "b": body }));
+        async move {
+            state
+                .gateway
+                .publish(EventDraft {
+                    kind,
+                    server_id: s,
+                    channel_id: Some(c),
+                    entity_id: Some(entity),
+                    delta,
+                })
+                .await
+                .expect("publish")
+        }
+    };
+    let topic = Topic::of(s, Some(c));
+    let bodies = |log: &[gelabber_api::Event]| -> Vec<(u64, String, Option<String>)> {
+        let mut rows: Vec<_> = log
+            .iter()
+            .map(|event| {
+                (
+                    event.n,
+                    event.t.as_str().to_owned(),
+                    event
+                        .d
+                        .as_ref()
+                        .map(|d| d["b"].as_str().unwrap().to_owned()),
+                )
+            })
+            .collect();
+        rows.sort();
+        rows
+    };
+    // The other message's body spells the searched patterns; only envelopes
+    // are searched, so it stays as it is.
+    let bleibt = format!(r#""i":"{message}","n":0,"d": %1 ,"t":"e""#);
+    publish(EventKind::C, message, Some("geheim")).await;
+    publish(EventKind::C, other, Some(&bleibt)).await;
+    publish(EventKind::E, message, Some("anders")).await;
+    let log = state.gateway.load_log(topic).await.unwrap();
+    assert_eq!(
+        bodies(&log),
+        [
+            // The create stays a create, with the current body.
+            (1, "c".into(), Some("anders".into())),
+            (2, "c".into(), Some(bleibt.clone())),
+            (3, "e".into(), Some("anders".into())),
+        ]
+    );
+    publish(EventKind::D, message, None).await;
+    let log = state.gateway.load_log(topic).await.unwrap();
+    assert_eq!(
+        bodies(&log),
+        [
+            (1, "d".into(), None),
+            (2, "c".into(), Some(bleibt.clone())),
+            (3, "d".into(), None),
+            (4, "d".into(), None),
+        ]
+    );
+    let epoch = log[0].ep;
+    assert!(log.iter().all(|event| event.ep == epoch));
+    let (current, plan) = state.gateway.catch_up(topic, Some(0)).await.unwrap();
+    assert_eq!(current, 4);
+    match plan {
+        CatchUp::Replay(events) => {
+            assert_eq!(events.iter().map(|e| e.n).collect::<Vec<_>>(), [1, 2, 3, 4])
+        }
+        other => panic!("expected a replay, got {other:?}"),
+    }
 }
 
 #[sqlx::test]

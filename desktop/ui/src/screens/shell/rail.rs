@@ -117,6 +117,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
             .collect::<Vec<_>>()
     });
     let loaded = app.client.with_state(|s| s.servers_loaded);
+    // A failed load shows its error on the page: the placeholders rest.
+    let failed = !loaded && super::home::bootstrap_failed(ui.ctx(), app.client, loaded);
     let list_top = rect.top() + 52.0;
     let footer_h = 5.0 + TILE + 16.0;
     let count = if loaded { servers.len() } else { 3 };
@@ -156,7 +158,11 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
                 // `lr-placeholder-pulse`: 1 → .45, 1.4s alternate.
                 let phase = (t / 1.4) % 2.0;
                 let k = if phase < 1.0 { phase } else { 2.0 - phase };
-                let alpha = 1.0 - 0.55 * (0.5 - 0.5 * (k * std::f32::consts::PI).cos());
+                let alpha = if failed {
+                    1.0
+                } else {
+                    1.0 - 0.55 * (0.5 - 0.5 * (k * std::f32::consts::PI).cos())
+                };
                 for i in 0..3 {
                     let tile = Rect::from_min_size(
                         pos2(area.left() + 10.0, area.top() + 16.0 + ROW * i as f32),
@@ -168,7 +174,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
                         c.surface.gamma_multiply(alpha),
                     );
                 }
-                ui.ctx().request_repaint();
+                if !failed {
+                    ui.ctx().request_repaint();
+                }
                 return;
             }
             for (i, (id, name, icon, badge, muted, in_voice)) in servers.iter().enumerate() {

@@ -166,14 +166,14 @@ async fn stopping_fixture() -> (
     .unwrap();
     let engine = first_engine(&sfu);
     let router = engine
-        .native(engine.worker.clone(), |worker| async move {
+        .native(engine.worker().unwrap(), |worker| async move {
             worker
                 .create_router(RouterOptions::new(router_codecs().unwrap()))
                 .await
         })
         .await
         .unwrap();
-    let mut options = WebRtcTransportOptions::new_with_server(engine.server.clone());
+    let mut options = WebRtcTransportOptions::new_with_server(engine.server().unwrap());
     options.app_data = AppData::new(AtomicU64::new(0));
     let transport = engine
         .native(router.clone(), move |router| async move {
@@ -318,7 +318,7 @@ impl Viewer {
             .await
             .unwrap();
         let router = room.router.get().unwrap();
-        let mut options = WebRtcTransportOptions::new_with_server(room.engine.server.clone());
+        let mut options = WebRtcTransportOptions::new_with_server(room.engine.server().unwrap());
         options.app_data = AppData::new(AtomicU64::new(0));
         let transport = room
             .engine
@@ -727,14 +727,14 @@ async fn seat(
     engine: &Arc<Engine>,
 ) -> (Uuid, Arc<Peer>, mpsc::Receiver<ServerFrame>) {
     let router = engine
-        .native(engine.worker.clone(), |worker| async move {
+        .native(engine.worker().unwrap(), |worker| async move {
             worker
                 .create_router(RouterOptions::new(router_codecs().unwrap()))
                 .await
         })
         .await
         .unwrap();
-    let mut options = WebRtcTransportOptions::new_with_server(engine.server.clone());
+    let mut options = WebRtcTransportOptions::new_with_server(engine.server().unwrap());
     options.app_data = AppData::new(AtomicU64::new(0));
     let transport = engine
         .native(router.clone(), move |router| async move {
@@ -891,6 +891,49 @@ async fn lost_worker_closes_only_its_rooms_and_is_replaced() {
     assert_eq!(sfu.pick_engine().unwrap().slot, 0);
 }
 
+/// Two free consecutive UDP ports on loopback, for workers on fixed ports.
+fn free_udp_pair() -> u16 {
+    for _ in 0..50 {
+        let first = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = first.local_addr().unwrap().port();
+        if port < u16::MAX && std::net::UdpSocket::bind(("127.0.0.1", port + 1)).is_ok() {
+            return port;
+        }
+    }
+    panic!("no free UDP port pair");
+}
+
+#[tokio::test]
+async fn a_lost_but_responsive_worker_frees_its_port_for_the_replacement() {
+    let port = free_udp_pair();
+    let (bind, max) = (format!("127.0.0.1:{port}"), (port + 1).to_string());
+    let config = Config::from_source(|key| match key {
+        "REDIS_URL" => Some(std::env::var(key).expect("isolated REDIS_URL required")),
+        "MEDIA_ICE_BIND" => Some(bind.clone()),
+        "MEDIA_ICE_PORT_MAX" => Some(max.clone()),
+        "MEDIA_WORKERS" => Some("2".into()),
+        _ => None,
+    })
+    .unwrap();
+    let sfu = Sfu::with_redis(
+        &config,
+        redis::Client::open(config.redis_url.as_str()).unwrap(),
+    )
+    .await
+    .unwrap();
+    let lost = first_engine(&sfu);
+    // A worker that only missed the heartbeat still holds its UDP port.
+    sfu.engine_lost(&lost, "test: heartbeat missed").await;
+    drop(lost);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while sfu.workers().live < 2 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the replacement binds the same port");
+}
+
 #[tokio::test]
 async fn worker_exit_seen_by_a_heartbeat_tick_first_still_closes_its_rooms() {
     let sfu = pool(2).await;
@@ -930,6 +973,89 @@ async fn rooms_of_a_lost_worker_refuse_rpcs_while_the_pool_stays_ready() {
     engine.lost.store(true, Ordering::SeqCst);
     assert!(!sfu.room_ready(&room));
     assert!(sfu.ready());
+}
+
+#[tokio::test]
+async fn rpc_on_a_lost_workers_room_answers_gone() {
+    let sfu = pool(2).await;
+    let engine = first_engine(&sfu);
+    let (channel, peer, _rx) = seat(&sfu, &engine).await;
+    engine.lost.store(true, Ordering::SeqCst);
+    let rpc = sfu
+        .rpc(
+            peer.id,
+            channel,
+            ClientFrame::Capabilities {
+                id: 1,
+                rtp: json!({}),
+            },
+        )
+        .await;
+    assert!(matches!(rpc, Err(SfuError::Gone)), "{rpc:?}");
+    assert!(!sfu.peer_present(peer.id, channel).await);
+}
+
+/// A peer an RPC finds removed or revoked after its first check is gone, not
+/// unauthorized, once its worker is lost or the pool drains.
+#[tokio::test]
+async fn an_rpc_that_loses_its_peer_to_a_lost_worker_or_drain_answers_gone() {
+    let sfu = pool(2).await;
+    let engine = first_engine(&sfu);
+    let (channel, _peer, _rx) = seat(&sfu, &engine).await;
+    let room = sfu.room(channel).await.unwrap();
+    let settle = |result: Result<Value, SfuError>| sfu.settle(&room, result);
+    assert!(matches!(
+        settle(Err(SfuError::Revoked)),
+        Err(SfuError::Revoked)
+    ));
+    engine.lost.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        settle(Err(SfuError::Revoked)),
+        Err(SfuError::Gone)
+    ));
+    assert!(matches!(
+        settle(Err(SfuError::Forbidden)),
+        Err(SfuError::Forbidden)
+    ));
+    assert!(settle(Ok(json!({}))).is_ok());
+    engine.lost.store(false, Ordering::SeqCst);
+    sfu.draining.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        settle(Err(SfuError::Revoked)),
+        Err(SfuError::Gone)
+    ));
+}
+
+#[tokio::test]
+async fn a_join_on_a_draining_pool_answers_gone() {
+    let sfu = pool(1).await;
+    let engine = first_engine(&sfu);
+    let (_channel, peer, _rx) = seat(&sfu, &engine).await;
+    sfu.draining.store(true, Ordering::SeqCst);
+    let (out, _rx) = mpsc::channel(16);
+    let joined = sfu
+        .join_authorized_version(peer.authority.clone(), MEDIA_PROTOCOL_VERSION, out)
+        .await;
+    assert!(matches!(joined, Err(SfuError::Gone)), "{joined:?}");
+}
+
+#[tokio::test]
+async fn authority_watch_on_a_draining_pool_sends_gone() {
+    let sfu = pool(1).await;
+    let engine = first_engine(&sfu);
+    let (channel, peer, mut rx) = seat(&sfu, &engine).await;
+    // Draining, but shutdown has not reached this peer yet.
+    sfu.draining.store(true, Ordering::SeqCst);
+    Sfu::watch_authority(Arc::downgrade(&sfu), channel, Arc::downgrade(&peer));
+    let frame = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(&frame, ServerFrame::Err { e, .. } if e == "gone"),
+        "{frame:?}"
+    );
+    assert!(!sfu.peer_present(peer.id, channel).await);
 }
 
 #[test]
@@ -1012,7 +1138,7 @@ async fn video_consumers_start_on_the_highest_layer() {
 #[tokio::test]
 async fn gateway_transports_start_with_a_high_outgoing_estimate() {
     let (sfu, _owner, _publication, _owner_events) = stopping_fixture().await;
-    let options = gateway_transport_options(first_engine(&sfu).server.clone());
+    let options = gateway_transport_options(first_engine(&sfu).server().unwrap());
     assert_eq!(options.initial_available_outgoing_bitrate, 8_000_000);
     assert!(!options.enable_tcp);
     assert!(options.prefer_udp);

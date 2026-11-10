@@ -14,7 +14,11 @@ import { dmKeys } from "../dms/queries.ts";
 import type { DirectMessage } from "../dms/types.ts";
 import { listServers } from "../servers/api.ts";
 import { serverKeys } from "../servers/queries.ts";
-import { applyChannelEvent, messageQueryOptions } from "../messages/queries.ts";
+import {
+  applyChannelEvent,
+  messageKeys,
+  messageQueryOptions,
+} from "../messages/queries.ts";
 import { applyMemberRemoved, forgetServer } from "../servers/queries.ts";
 import { leaveVoice, useVoice } from "../voice/session.ts";
 import { getGateway, type GapRecovery, type Gateway } from "./client.ts";
@@ -266,6 +270,17 @@ export function attachRealtimeRecovery(
     });
   };
   const offGap = gateway.onGap(() => schedule());
+  // A first subscribe races the history read that left with it: read again.
+  const offFresh = gateway.onFresh((topic) => {
+    if (!alive() || !topic.c) return;
+    void client.invalidateQueries(
+      {
+        queryKey: messageKeys.channel(stamp.userId, stamp.generation, topic.c),
+        refetchType: "active",
+      },
+      { cancelRefetch: true, throwOnError: false },
+    );
+  });
   const offReady = gateway.onReady(() => schedule(true));
   const offResync = gateway.onResync(() => {
     rediscover = true;
@@ -284,6 +299,7 @@ export function attachRealtimeRecovery(
   return () => {
     active = false;
     offGap();
+    offFresh();
     offReady();
     offResync();
     offDm();

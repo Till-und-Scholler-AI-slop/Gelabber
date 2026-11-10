@@ -320,9 +320,7 @@ pub fn show(
                     c.muted,
                 );
                 if resp.clicked() {
-                    ui.ctx().open_url(egui::OpenUrl::new_tab(
-                        "https://www.unicode.org/license.txt",
-                    ));
+                    crate::platform::open_url_logged("https://www.unicode.org/license.txt");
                 }
             },
             None,

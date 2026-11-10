@@ -346,6 +346,10 @@ impl Gifs {
     /// run at once; with Klipy hanging, further ones are dropped rather than
     /// piling up. Shutdown does not wait for them.
     pub fn shared(&self, slug: &str, query: &str, user_id: Uuid) {
+        if self.quota_check().is_err() {
+            debug!("gif share trigger dropped: klipy quota pause");
+            return;
+        }
         let Ok(permit) = self.inner.shares.clone().try_acquire_owned() else {
             debug!("gif share trigger dropped: too many in flight");
             return;
@@ -841,6 +845,31 @@ mod tests {
         *gifs.inner.quota_until.lock().unwrap() = Some(Instant::now());
         assert!(gifs.quota_check().is_ok(), "an expired pause lifts itself");
         assert!(gifs.inner.quota_until.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn the_share_trigger_waits_out_a_429_pause() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gifs = Gifs::new(
+            &GifConfig {
+                api_key: "key".into(),
+                api_base: format!("http://{}", listener.local_addr().unwrap()),
+                media_origins: vec![],
+                content_filter: "medium".into(),
+                cache_ttl: Duration::ZERO,
+            },
+            Arc::new(HttpMetrics::new()),
+        )
+        .unwrap();
+        let connected = || tokio::time::timeout(Duration::from_millis(300), listener.accept());
+
+        gifs.quota_exhausted(None);
+        gifs.shared("hello-hi-662", "hallo", Uuid::from_u128(7));
+        assert!(connected().await.is_err(), "no call during the pause");
+
+        *gifs.inner.quota_until.lock().unwrap() = Some(Instant::now());
+        gifs.shared("hello-hi-662", "hallo", Uuid::from_u128(7));
+        assert!(connected().await.is_ok(), "the trigger runs again after it");
     }
 
     #[test]

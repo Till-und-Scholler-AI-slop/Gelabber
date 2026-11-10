@@ -2,8 +2,11 @@
 //! (`app_config_dir()` of the bundle identifier), so its `desktop.json` and
 //! `legacy-settings.json` are found. `GELABBER_CONFIG_DIR` replaces it (tests, parity runs).
 
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+
+use parking_lot::{Condvar, Mutex};
 
 /// The Tauri app's bundle `identifier` (up to 0.8); fixed for its installs.
 pub const IDENTIFIER: &str = "io.github.till-und-scholler-ai-slop.gelabber";
@@ -98,6 +101,71 @@ pub fn write_atomic(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> 
     done
 }
 
+/// The bytes still to write and whether the file is private.
+type Job = (Vec<u8>, bool);
+
+/// Per file, the job still to do; a file in here has its writer running.
+static QUEUED: Mutex<Option<HashMap<PathBuf, Option<Job>>>> = Mutex::new(None);
+static WRITTEN: Condvar = Condvar::new();
+
+/// Writes `bytes` off the UI thread with [`write_atomic`]. One writer per
+/// file takes the newest bytes queued, so writes land in order and the last
+/// one wins; a change made while one is written replaces what waits.
+pub fn write_latest(path: PathBuf, bytes: Vec<u8>, private: bool) {
+    let mut queued = QUEUED.lock();
+    let files = queued.get_or_insert_with(HashMap::new);
+    let running = files.contains_key(&path);
+    files.insert(path.clone(), Some((bytes, private)));
+    if running {
+        return;
+    }
+    drop(queued);
+    let writer = path.clone();
+    let spawned = std::thread::Builder::new()
+        .name("gelabber-write".into())
+        .spawn(move || write_queued(&writer));
+    if let Err(e) = spawned {
+        tracing::warn!(
+            "{}: no thread to write it ({e}), written here",
+            path.display()
+        );
+        write_queued(&path);
+    }
+}
+
+fn write_queued(path: &Path) {
+    loop {
+        let next = {
+            let mut queued = QUEUED.lock();
+            let files = queued.get_or_insert_with(HashMap::new);
+            match files.get_mut(path).and_then(Option::take) {
+                Some(next) => next,
+                None => {
+                    files.remove(path);
+                    WRITTEN.notify_all();
+                    return;
+                }
+            }
+        };
+        if let Err(e) = write_atomic(path, &next.0, next.1) {
+            tracing::warn!("{}: {e}", path.display());
+        }
+    }
+}
+
+/// Waits up to `limit` for the writes [`write_latest`] has queued; false when
+/// some are still running then.
+pub fn flush(limit: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + limit;
+    let mut queued = QUEUED.lock();
+    while queued.as_ref().is_some_and(|files| !files.is_empty()) {
+        if WRITTEN.wait_until(&mut queued, deadline).timed_out() {
+            return queued.as_ref().is_none_or(HashMap::is_empty);
+        }
+    }
+    true
+}
+
 /// A JSON file of the config directory; `Null` when missing or unreadable.
 pub fn read_json(name: &str) -> serde_json::Value {
     file(name)
@@ -175,5 +243,22 @@ mod tests {
             left.into_iter()
                 .all(|e| !e.file_name().to_string_lossy().ends_with(".partial"))
         );
+    }
+
+    #[test]
+    fn queued_writes_land_in_order_and_the_last_one_stays() {
+        let config = testing::TempConfig::new("write-latest");
+        let (a, b) = (file("a.json").unwrap(), file("b.json").unwrap());
+        for n in 0..300 {
+            // Longer texts first: a mixed write would leave their tails.
+            let text = format!("{n}{}", " ".repeat(300 - n));
+            write_latest(a.clone(), text.clone().into_bytes(), false);
+            write_latest(b.clone(), text.into_bytes(), true);
+        }
+        assert!(flush(std::time::Duration::from_secs(10)));
+        let expect = "299 ";
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), expect);
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), expect);
+        drop(config);
     }
 }

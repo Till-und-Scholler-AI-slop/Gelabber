@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { api } from "../api/client.ts";
+import { setEditDraft, useEditDrafts } from "../components/editDrafts.ts";
 import { clearToasts, useToasts } from "../components/toasts.ts";
 import { cacheOpenedDm, dmKeys } from "../dms/queries.ts";
 import { lastDmId, useLastDm } from "../dms/lastDm.ts";
@@ -163,6 +164,7 @@ describe("account switch drops the previous user's state", () => {
     const stamp = takeStamp();
 
     addPending("chan-a", secretMessage());
+    setEditDraft("chan-a", "msg-a", "secret-from-a");
     useMessageToasts.getState().push({
       channelId: "chan-a",
       serverId: "srv-a",
@@ -184,6 +186,7 @@ describe("account switch drops the previous user's state", () => {
     expect(cacheDump()).not.toContain("secret-from-a");
     expect(cacheDump()).not.toContain("secret-server-a");
     expect(usePendingMessages.getState().byChannel).toEqual({});
+    expect(useEditDrafts.getState().byMessage).toEqual({});
     expect(useMessageToasts.getState().toasts).toEqual([]);
     expect(useToasts.getState().toasts).toEqual([]);
     expect(getGateway().cursorsSnapshot.size).toBe(0);

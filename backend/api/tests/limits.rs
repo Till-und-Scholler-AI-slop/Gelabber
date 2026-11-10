@@ -92,6 +92,38 @@ async fn auth_rate_limit_returns_429_with_code_and_retry_after(pool: PgPool) {
     assert!(retry.parse::<u64>().unwrap() >= 1);
 }
 
+/// Another site can make a visitor's browser post to the API, but the CSRF
+/// check refuses it; it must not use up the visitor's sign-in window first.
+#[sqlx::test]
+async fn cross_site_posts_do_not_count_against_the_auth_window(pool: PgPool) {
+    let state = state_with(pool, &[("API_RATE_AUTH_PER_MIN", "2")]);
+    let mut stranger = Client::from_state(state.clone());
+    for _ in 0..4 {
+        let res = stranger
+            .send_with(
+                Method::POST,
+                "/api/auth/login",
+                Some(json!({ "email": "ada@example.com", "password": "password123" })),
+                |builder| {
+                    builder
+                        .headers_mut()
+                        .unwrap()
+                        .insert("sec-fetch-site", "cross-site".parse().unwrap());
+                },
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+        assert_eq!(res.body["error"], "csrf_invalid");
+    }
+
+    let mut visitor = Client::from_state(state);
+    visitor.bootstrap().await;
+    let res = visitor
+        .register("ada@example.com", "password123", "Ada")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+}
+
 #[sqlx::test]
 async fn message_rate_limit_clears_without_a_hang(pool: PgPool) {
     let mut client = Client::from_state(state_with(pool, &[("API_RATE_MSG_PER_MIN", "1")]));

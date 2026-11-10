@@ -301,6 +301,30 @@ async fn postgres_search_tracks_edits_deletes_and_pages_stably(pool: PgPool) {
         .status,
         StatusCode::UNPROCESSABLE_ENTITY
     );
+    // Postgres refuses NUL in text; that is the caller's error, not a 500.
+    let nul = b
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel}/messages/search?q=a%00b"),
+            None,
+        )
+        .await;
+    assert_eq!(nul.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", nul.body);
+    assert_eq!(nul.body["fields"]["q"], "invalid");
+    let missing = b
+        .send(
+            Method::GET,
+            &format!("/api/channels/{channel}/messages/search"),
+            None,
+        )
+        .await;
+    assert_eq!(
+        missing.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        missing.body
+    );
+    assert_eq!(missing.body["fields"]["q"], "required");
 }
 
 #[sqlx::test]

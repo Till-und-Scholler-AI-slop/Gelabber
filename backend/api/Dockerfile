@@ -4,6 +4,8 @@ FROM rust:1.98.1-slim-trixie@sha256:4cd829461bd5c4d511c32e269da9cb8929223b666519
 FROM toolchain AS base
 COPY backend/build/debian-snapshot.sources /etc/apt/sources.list.d/debian.sources
 COPY backend/build/rust-build-ca.sh /tmp/rust-build-ca.sh
+# true trusts the chain crates.io presents (a TLS-inspecting proxy); never in CI.
+ARG TRUST_PRESENTED_CRATES_CA=false
 RUN sh /tmp/rust-build-ca.sh
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_DIR=/etc/ssl/certs \

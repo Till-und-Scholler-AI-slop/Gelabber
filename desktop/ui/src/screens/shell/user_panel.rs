@@ -33,6 +33,11 @@ fn draft_id() -> Id {
     Id::unique("gelabber-user-status")
 }
 
+/// Another account signed in: the status card's draft goes.
+pub(super) fn switch_account(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove::<StatusDraft>(draft_id()));
+}
+
 /// `rect` is the 56px strip at the bottom of the sidebar column; `context`
 /// the server or DM whose presence counts (`ownPresence`).
 pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
@@ -596,6 +601,64 @@ mod tests {
         wait_for(&mut harness, "the strip to go", |h| {
             h.query_by_label(text).is_none()
         });
+    }
+
+    /// "Auf allen Geräten abmelden" leaves for /login before the server
+    /// answers: a failure says the other devices are not signed out yet,
+    /// and "Erneut abmelden" repeats `logout-all`.
+    #[test]
+    fn a_failed_logout_everywhere_says_so_and_is_retried_as_one() {
+        let _config = TempConfig::new("logout-all-failed");
+        let fail = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let failing = fail.clone();
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("POST", "/auth/logout-all") if failing.load(std::sync::atomic::Ordering::SeqCst) => {
+                Some(Reply::error(500, "internal"))
+            }
+            ("POST", "/auth/logout-all") => {
+                Some(Reply::json(serde_json::json!({"csrf_token": "csrf"})))
+            }
+            _ => None,
+        });
+        // A real session: the held sign-out carries its cookie.
+        let client = gelabber_client::Client::new(&api.origin).expect("client");
+        client.http().restore_session_cookie("tok");
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .with_max_steps(10_000)
+            .with_step_dt(1.0 / 60.0)
+            .build_eframe(move |cc| {
+                crate::Launcher::with_app(cc, client.clone(), Some("/settings/konto".into()))
+            });
+        wait_for_label(&mut harness, "Auf allen Geräten abmelden");
+        harness
+            .get_by_role_and_label(Role::Button, "Auf allen Geräten abmelden")
+            .click();
+        wait_for_label(&mut harness, "Überall abmelden");
+        harness
+            .get_by_role_and_label(Role::Button, "Überall abmelden")
+            .click();
+        let text = "Die Abmeldung auf allen Geräten konnte nicht bestätigt werden. Bitte versuche es erneut.";
+        wait_for_label(&mut harness, text);
+        fail.store(false, std::sync::atomic::Ordering::SeqCst);
+        harness
+            .get_by_role_and_label(Role::Button, "Erneut abmelden")
+            .click();
+        wait_for(&mut harness, "the strip to go", |h| {
+            h.query_by_label(text).is_none()
+        });
+        let posts: Vec<String> = api
+            .seen
+            .lock()
+            .iter()
+            .filter(|r| r.starts_with("POST /auth/logout"))
+            .cloned()
+            .collect();
+        assert_eq!(posts.len(), 2, "{posts:?}");
+        assert!(
+            posts.iter().all(|p| p.starts_with("POST /auth/logout-all")),
+            "{posts:?}"
+        );
     }
 
     /// Esc closes the open menu and is used up there: the conversation

@@ -19,7 +19,7 @@ use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 pub use api::HistoryQuery;
 pub use commands::SettingTarget;
 pub use gateway::{Gateway, GatewayConfig, GatewayEvent, GatewayStatus};
-pub use http::{ApiError, Http, error_message};
+pub use http::{ApiError, Download, Http, error_message};
 pub use models::*;
 pub use store::{
     ChannelMessages, Notice, OpState, OutgoingFile, PendingMessage, Session, State, View,
@@ -61,6 +61,8 @@ struct Local {
 struct Recovery {
     running: bool,
     rerun: bool,
+    /// The waiting retry's token; a new round makes it stale.
+    retry: u64,
 }
 
 struct Inner {
@@ -79,9 +81,8 @@ struct Inner {
     notices: Mutex<Vec<Notice>>,
     /// Views being opened, so a call every frame spawns one load.
     opening: Mutex<std::collections::HashSet<View>>,
-    /// Debounce generations for unread refreshes and read marks.
+    /// Debounce generation for unread refreshes.
     unread_generation: AtomicU64,
-    read_generation: AtomicU64,
     /// Bumped on every gateway start and stop: events of a socket that was
     /// already replaced are dropped.
     gateway_generation: AtomicU64,
@@ -131,7 +132,6 @@ impl Client {
                 notices: Mutex::new(Vec::new()),
                 opening: Mutex::new(Default::default()),
                 unread_generation: AtomicU64::new(0),
-                read_generation: AtomicU64::new(0),
                 gateway_generation: AtomicU64::new(0),
                 event_tap: RwLock::new(None),
             }),
@@ -243,6 +243,7 @@ impl Client {
     pub fn login_blocking(&self, email: &str, password: &str) -> Result<(), ApiError> {
         let http = self.inner.http.clone();
         let session = self.block_on(async move { http.login(email, password).await })?;
+        self.inner.http.forget_sign_out();
         if let Some(user) = session
             .get("user")
             .cloned()
@@ -259,8 +260,8 @@ impl Client {
     }
 
     /// The state to draw. Hold the guard only while drawing: the runtime
-    /// waits for it to write. Commands never write on the calling thread,
-    /// so calling them while holding it is safe.
+    /// waits for it to write. `bootstrap` and the commands built on `run`
+    /// write on the calling thread: never call them while holding it.
     pub fn state(&self) -> RwLockReadGuard<'_, State> {
         self.inner.state.read()
     }
@@ -384,6 +385,180 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(client.with_state(|s| !s.servers.is_empty()));
+    }
+
+    /// Answers every request with `body`, keeping each request line.
+    fn recording_server(body: &'static str) -> (String, Arc<Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let log = log.clone();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]);
+                    log.lock()
+                        .push(head.lines().next().unwrap_or("").to_owned());
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                });
+            }
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    /// A named operation is pending as soon as it was asked for, before
+    /// its task runs, so a frame in between does not start it again.
+    #[test]
+    fn an_op_is_pending_when_run_returns() {
+        let client = Client::new("http://127.0.0.1:9").unwrap();
+        client.run(
+            "waits",
+            std::future::pending::<Result<(), ApiError>>(),
+            |_, ()| {},
+        );
+        assert_eq!(
+            client.with_state(|s| s.op("waits").cloned()),
+            Some(OpState::Pending)
+        );
+    }
+
+    /// A server whose detail failed to load is not fetched again because
+    /// the view moved away and back; `refresh_server` retries it.
+    #[test]
+    fn a_failed_server_load_is_not_retried_by_the_view() {
+        let (url, seen) = recording_server("kaputt");
+        let client = Client::new(&url).unwrap();
+        let id = uuid::Uuid::from_u128(3);
+        let key = format!("server:{id}");
+        let wait = |done: &dyn Fn() -> bool| {
+            let start = Instant::now();
+            while !done() && start.elapsed() < std::time::Duration::from_secs(5) {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+        client.open_server(id);
+        wait(&|| client.with_state(|s| matches!(s.op(&key), Some(OpState::Failed(_)))));
+        for _ in 0..3 {
+            client.close_view();
+            wait(&|| client.with_state(|s| s.view.server.is_none()));
+            client.open_server(id);
+            wait(&|| client.with_state(|s| s.view.server == Some(id)) && !client.busy());
+        }
+        let loads = seen
+            .lock()
+            .iter()
+            .filter(|l| l.starts_with(&format!("GET /api/servers/{id}")))
+            .count();
+        assert_eq!(loads, 1);
+    }
+
+    /// A server shown longer than a minute after its detail came is
+    /// fetched again: channels and members change without an event.
+    #[test]
+    fn a_stale_server_detail_is_fetched_again_when_shown() {
+        let (url, seen) = recording_server("kaputt");
+        let client = Client::new(&url).unwrap();
+        let detail: ServerDetail =
+            serde_json::from_str(include_str!("../tests/fixtures/server_detail.json")).unwrap();
+        let id = detail.server.id;
+        let loads = || {
+            seen.lock()
+                .iter()
+                .filter(|l| l.starts_with(&format!("GET /api/servers/{id}")))
+                .count()
+        };
+        client.write(|s| {
+            s.server_details.insert(id, detail);
+            s.server_fetched.insert(id, Instant::now());
+            s.view = View {
+                server: Some(id),
+                channel: None,
+            };
+        });
+        client.open_server(id);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert_eq!(loads(), 0);
+        let old = Instant::now().checked_sub(std::time::Duration::from_secs(61));
+        let Some(old) = old else { return };
+        client.write(|s| s.server_fetched.insert(id, old));
+        for _ in 0..5 {
+            client.open_server(id);
+        }
+        let start = Instant::now();
+        while loads() == 0 && start.elapsed() < std::time::Duration::from_secs(5) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert_eq!(loads(), 1);
+        // A failed refetch keeps what was there.
+        assert!(client.with_state(|s| s.server_details.contains_key(&id)));
+    }
+
+    /// Opening a conversation and a message arriving in it while the app
+    /// is in front mark nothing read: the pane does, at the newest row.
+    #[test]
+    fn the_core_marks_nothing_read_by_itself() {
+        let (url, seen) = recording_server(r#"{"messages":[],"has_more":false}"#);
+        let client = Client::new(&url).unwrap();
+        let dm = uuid::Uuid::from_u128(5);
+        let me = uuid::Uuid::from_u128(1);
+        client.write(|s| {
+            s.session = Session::Authenticated(Box::new(
+                serde_json::from_value(serde_json::json!({
+                    "id": me, "email": "ich@example.test", "name": "Ich",
+                    "created_at": "2026-10-01T00:00:00Z",
+                }))
+                .unwrap(),
+            ));
+            s.dms = vec![
+                serde_json::from_value(serde_json::json!({
+                    "id": dm, "kind": "dm", "created_at": "2026-10-01T00:00:00Z",
+                    "peer": {"id": uuid::Uuid::from_u128(2), "name": "Lena"},
+                }))
+                .unwrap(),
+            ];
+        });
+        client.set_focused(true);
+        client.open_dm(dm);
+        let start = Instant::now();
+        while !client.with_state(|s| s.messages(dm).is_some_and(|h| h.loaded))
+            && start.elapsed() < std::time::Duration::from_secs(5)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let message = serde_json::json!({
+            "id": uuid::Uuid::from_u128(9), "channel_id": dm,
+            "author": {"id": uuid::Uuid::from_u128(2), "name": "Lena"},
+            "content": "Hallo", "created_at": "2026-11-01T00:00:00Z",
+            "revision": 1, "created_order": 1,
+        });
+        client.on_gateway(GatewayEvent::Event(EventFrame {
+            t: EventKind::C,
+            s: dm,
+            c: Some(dm),
+            n: 1,
+            ep: None,
+            i: Some(uuid::Uuid::from_u128(9)),
+            d: Some(message),
+            r: None,
+        }));
+        // Longer than the old 750 ms debounce.
+        std::thread::sleep(std::time::Duration::from_millis(1_200));
+        let seen = seen.lock().clone();
+        assert!(
+            seen.iter().any(|l| l.starts_with("GET /api/channels/")),
+            "{seen:?}"
+        );
+        assert!(!seen.iter().any(|l| l.contains("/read")), "{seen:?}");
     }
 
     /// A conversation marked read from its menu says so when it fails, as

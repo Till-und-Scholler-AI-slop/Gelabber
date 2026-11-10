@@ -146,6 +146,7 @@ struct Job {
     object_key: String,
     claim: Uuid,
     reserved_bytes: i64,
+    attempts: i32,
 }
 
 /// Claim a bounded batch, release the DB connection, then perform I/O. Claim
@@ -164,7 +165,7 @@ pub async fn delete_pending(state: &AppState, limit: i64) -> Result<(), ApiError
            ORDER BY next_attempt, object_key LIMIT $1 FOR UPDATE SKIP LOCKED) \
          UPDATE storage_cleanup j SET claim=gen_random_uuid(), claimed_until=now()+interval '6 minutes', \
              attempts=attempts+1 FROM due WHERE j.object_key=due.object_key \
-         RETURNING j.object_key, j.claim, j.reserved_bytes",
+         RETURNING j.object_key, j.claim, j.reserved_bytes, j.attempts",
     ).bind(limit.clamp(0, BATCH)).fetch_all(&state.db).await?;
     let work = stream::iter(jobs)
         .map(|job| async move { delete_one(state, job).await })
@@ -186,6 +187,12 @@ async fn finish(
         Some(err) => Err(err),
         None => Ok(()),
     }
+}
+
+/// Seconds until a failed delete is tried again: doubling per attempt from
+/// one second, at most five minutes, so a store outage is not polled forever.
+fn retry_delay(attempts: i32) -> f64 {
+    2f64.powi(attempts.clamp(1, 10) - 1).min(300.0)
 }
 
 async fn delete_one(state: &AppState, job: Job) -> Result<(), ApiError> {
@@ -243,7 +250,11 @@ async fn delete_one(state: &AppState, job: Job) -> Result<(), ApiError> {
     )
     .bind(&job.object_key)
     .bind(job.claim)
-    .bind(if deleted { 10.0f64 } else { 1.0f64 })
+    .bind(if deleted {
+        10.0f64
+    } else {
+        retry_delay(job.attempts)
+    })
     .execute(&state.db)
     .await?;
     Ok(())

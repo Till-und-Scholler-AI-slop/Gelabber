@@ -718,6 +718,51 @@ async fn declared_type_must_match_the_bytes(pool: PgPool) {
     assert!(page.body["messages"].as_array().unwrap().is_empty());
 }
 
+/// A small file can declare a canvas every viewer's browser would have to
+/// decode: past 16384 px a side or 64 megapixels it is refused at bind.
+#[sqlx::test]
+async fn an_image_too_large_to_decode_is_refused(pool: PgPool) {
+    use gelabber_api::image_size::fixtures;
+    let (mut owner, _) = two_users(pool).await;
+    let server = create_server(&mut owner, "Team").await;
+    let channel_id = text_channel_id(&server);
+    // The frame header behind 2 KiB of EXIF, past the usual 512-byte prefix.
+    let mut jpeg = vec![0xff, 0xd8, 0xff, 0xe1, 0x08, 0x02];
+    jpeg.resize(4 + 0x0802, 0);
+    jpeg.extend_from_slice(&fixtures::jpeg(16000, 16000)[8..]);
+    let mut gif = b"GIF89a".to_vec();
+    gif.extend_from_slice(&20000u16.to_le_bytes());
+    gif.extend_from_slice(&10u16.to_le_bytes());
+    gif.extend_from_slice(&[0, 0, 0, b';']);
+    let refused: [(&str, &str, Vec<u8>); 5] = [
+        ("wide.png", "image/png", fixtures::png(16385, 1)),
+        ("area.png", "image/png", fixtures::png(9000, 9000)),
+        ("big.webp", "image/webp", fixtures::webp(16383, 16383)),
+        ("exif.jpg", "image/jpeg", jpeg),
+        ("wide.gif", "image/gif", gif),
+    ];
+    for (name, content_type, bytes) in refused {
+        let ok = upload(&mut owner, &channel_id, "ok.png", "image/png", PNG).await;
+        let big = upload(&mut owner, &channel_id, name, content_type, &bytes).await;
+        let (status, body) = post_files(&mut owner, &channel_id, &[ok, big]).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{name}: {body}");
+        assert_eq!(
+            body["fields"]["attachment_ids.1"], "too_long",
+            "{name}: {body}"
+        );
+    }
+    // At the bounds, and where the size is not in the prefix, as before.
+    for (name, content_type, bytes) in [
+        ("edge.png", "image/png", fixtures::png(16384, 4096)),
+        ("square.png", "image/png", fixtures::png(8192, 8192)),
+        ("short.png", "image/png", PNG.to_vec()),
+    ] {
+        let id = upload(&mut owner, &channel_id, name, content_type, &bytes).await;
+        let (status, body) = post_files(&mut owner, &channel_id, &[id]).await;
+        assert_eq!(status, StatusCode::CREATED, "{name}: {body}");
+    }
+}
+
 #[sqlx::test]
 async fn renamed_html_is_served_as_plain_text_download(pool: PgPool) {
     let (mut owner, mut member) = two_users(pool).await;

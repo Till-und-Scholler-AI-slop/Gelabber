@@ -29,6 +29,7 @@ import {
 } from "../messages/pages.ts";
 import type { Message } from "../messages/types.ts";
 import { anchoredScrollTop } from "./scrollAnchor.ts";
+import { inList, scrollsList } from "./listInput.ts";
 
 export function useMessageScroll({
   active,
@@ -375,8 +376,15 @@ export function useMessageScroll({
     handlers: {
       onWheelCapture: (event: WheelEvent<HTMLDivElement>) => {
         if (
-          event.target instanceof Element &&
-          event.target.closest("dialog:modal")
+          (event.target instanceof Element &&
+            event.target.closest("dialog:modal")) ||
+          // A text attachment's own scrolling, or a menu portaled out of
+          // its row, leaves the list where it is.
+          !scrollsList(
+            event.target,
+            event.currentTarget,
+            event.deltaY < 0 ? "up" : "down",
+          )
         )
           return;
         release();
@@ -396,10 +404,12 @@ export function useMessageScroll({
       },
       onKeyDownCapture: (event: KeyboardEvent<HTMLDivElement>) => {
         if (
-          event.target instanceof HTMLElement &&
-          event.target.closest(
-            "dialog:modal,input,textarea,select,[contenteditable='true']",
-          )
+          (event.target instanceof HTMLElement &&
+            event.target.closest(
+              "dialog:modal,input,textarea,select,[contenteditable='true']",
+            )) ||
+          // The action menu, portaled out of its row, has its own arrow keys.
+          !inList(event.target, event.currentTarget)
         )
           return;
         release();

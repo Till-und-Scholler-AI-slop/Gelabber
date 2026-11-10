@@ -373,7 +373,14 @@ async fn delete_channel(
         .bind(channel_id)
         .execute(&mut *tx)
         .await?;
+    // After the row: writers that held it have committed their outbox rows.
+    // Delivered later, a row would bring back the realtime keys dropped below.
+    sqlx::query("DELETE FROM gateway_outbox WHERE channel_id = $1")
+        .bind(channel_id)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
+    state.gateway.drop_channel_log(channel_id).await;
     state
         .gateway
         .announce_recheck(Recheck::Channel(channel_id))

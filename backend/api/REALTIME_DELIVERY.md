@@ -82,10 +82,11 @@ DB revision and compact event. DM deduplication uses
 loss is handled by the epoch/REST contract. Tests modify only UUID-scoped keys,
 never FLUSHALL or unrelated clients.
 
-Production socket output is a bounded 128-frame channel. Catch-up has an
+Production socket output is a bounded 1024-frame channel. Catch-up has an
 aggregate 128-event limit per socket, across topics. Overflow cancels that
 socket rather than dropping arbitrary messages or blocking fan-out to another
-client. Socket sends have a one-second deadline. Reconnection uses the same
+client. Socket sends have a one-second deadline; a subscribe's replay, gap and
+`ok` share one five-second deadline. Reconnection uses the same
 REST/catch-up contract. Outbox batches are bounded; persistent outage can retain
 more durable database rows, intentionally, until successful acknowledgement.
 

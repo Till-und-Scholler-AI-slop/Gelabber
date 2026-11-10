@@ -7,6 +7,7 @@ import { useShallow } from "zustand/react/shallow";
 
 import { ApiError } from "../api/client.ts";
 import { scopeGeneration } from "../auth/scope.ts";
+import { checkSession } from "../auth/session.ts";
 import { useDms } from "../dms/queries.ts";
 import type { DirectMessage } from "../dms/types.ts";
 import { useServer } from "../servers/queries.ts";
@@ -22,8 +23,11 @@ export function useGatewaySession(userId: string | null): void {
   useEffect(() => {
     const gateway = getGateway();
     if (userId) {
+      // A 401 handshake (session ended elsewhere) only shows as a close.
+      const offRefused = gateway.onRefused(() => void checkSession());
       gateway.start();
       return () => {
+        offRefused();
         gateway.resetSession();
       };
     }

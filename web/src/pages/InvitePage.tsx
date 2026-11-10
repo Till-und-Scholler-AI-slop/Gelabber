@@ -49,7 +49,8 @@ export function InvitePage() {
     return <SkeletonCard className="invite-skeleton" />;
   }
 
-  if (preview.isError || (joinFailure && DEAD_INVITE.includes(joinFailure))) {
+  // A failed background refetch keeps the invite that is shown.
+  if (!preview.data || (joinFailure && DEAD_INVITE.includes(joinFailure))) {
     const failure = joinFailure ?? errorCode(preview.error);
     return DEAD_INVITE.includes(failure) ? (
       <DeadInvite code={failure} />

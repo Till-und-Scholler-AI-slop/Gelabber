@@ -85,10 +85,17 @@ export type VoiceSession = {
   seat: MediaPeer;
   seatRecoverySlot: RecoverySlot;
   seatRetry: MediaRetry;
+  /** When the media server revoked the seat unasked (`unauthorized`,
+   * `gone`). "connected" does not clear it: a server that revokes every
+   * rebuilt seat would otherwise loop for ever. */
+  seatRevocations: number[];
   /** Seat connections whose `start` is through. Before that a connection is
    * the seat's already, for the server's events, but its device has not
    * loaded and it turns every publication down. */
   startedConnections: WeakSet<MediaConnection>;
+  /** The seat generation whose start has not reached its connection yet;
+   * 0 when none is under way. A gateway reconnect leaves such a start be. */
+  seatStarting: number;
   videoBudget: VideoLimits;
   /** Each browser capture lifetime has one UUID, shared with its source
    * audio. */
@@ -107,8 +114,15 @@ export type VoiceSession = {
    * join (another channel, or leaving and joining again) moves it on, so an
    * answer from an earlier join never takes over the current one's capture. */
   micJoin: number;
+  /** The join whose own microphone capture has begun. A rebuild that
+   * overtook a start before that step captures for it. */
+  micCaptureJoin: number;
   /** Why the call has no microphone, until one is captured again. */
   micFailure: "unavailable" | "denied" | null;
+  /** The audio inputs when the microphone last failed, `null` if unknown.
+   * A device change retries only once these differ: a microphone busy in
+   * another app is not asked again for each speaker or webcam. */
+  micFailureInputs: string | null;
   /** The chosen microphone went away and the default one stands in: it comes
    * back when the chosen one does. */
   micFellBack: boolean;
@@ -172,7 +186,9 @@ export function createVoiceSession(previous?: VoiceSession): VoiceSession {
     seat: new MediaPeer(),
     seatRecoverySlot: new Map(),
     seatRetry: new MediaRetry(),
+    seatRevocations: [],
     startedConnections: new WeakSet(),
+    seatStarting: 0,
     videoBudget: new VideoLimits(() => session.seat, profileForVideoTrack),
     captureEpochs: new WeakMap(),
 
@@ -183,7 +199,9 @@ export function createVoiceSession(previous?: VoiceSession): VoiceSession {
     micEpoch: 0,
     micOvertaken: false,
     micJoin: 0,
+    micCaptureJoin: -1,
     micFailure: null,
+    micFailureInputs: null,
     micFellBack: false,
     micLossHandled: new WeakSet(),
     pendingMicRaw: new Set(),

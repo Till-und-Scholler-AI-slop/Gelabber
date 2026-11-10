@@ -6,6 +6,7 @@
 
 #include "gelabber_media.h"
 
+#include "MediaSoupClientErrors.hpp"
 #include "mediasoupclient.hpp"
 
 #include <cstdint>
@@ -80,16 +81,18 @@ namespace gelabber
 			}
 			if (auto it = produces.find(request); it != produces.end())
 			{
+				// MediaSoupClientError: only for that type does Transport::Produce
+				// stop the sender it already negotiated (StopSending).
 				if (error)
 				{
-					it->second.set_exception(std::make_exception_ptr(std::runtime_error(error)));
+					it->second.set_exception(std::make_exception_ptr(MediaSoupClientError(error)));
 				}
 				else
 				{
 					auto result = json::parse(resultJson);
 					if (!result.contains("id") || !result["id"].is_string())
 						it->second.set_exception(
-						  std::make_exception_ptr(std::runtime_error("produce result without id")));
+						  std::make_exception_ptr(MediaSoupClientError("produce result without id")));
 					else
 						it->second.set_value(result["id"].get<std::string>());
 				}

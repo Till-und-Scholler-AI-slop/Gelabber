@@ -123,6 +123,196 @@ fn without_a_microphone_the_bar_says_why_and_retries() {
     assert!(h.query_by_label("Kein Mikrofon").is_none());
 }
 
+/// Push-to-talk on `KeyA`, the call following the device settings.
+fn push_to_talk_on(ctx: &egui::Context, call: &Call) {
+    use crate::screens::settings::prefs;
+    prefs::update(ctx, |p| {
+        p.voice_input = "ptt".into();
+        p.ptt_key = "KeyA".into();
+    });
+    call.set_settings(crate::screens::voice::sync::settings(&prefs::get(ctx)));
+}
+
+/// Holding the key in the window opens the microphone; reading the
+/// keyboard focus inside the input lock once hung the UI thread.
+#[test]
+fn holding_the_push_to_talk_key_opens_the_microphone() {
+    let _config = crate::platform::paths::testing::TempConfig::new("ptt-held");
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call.clone(), bar);
+    push_to_talk_on(&h.ctx, &call);
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held());
+    h.key_down(egui::Key::A);
+    h.run_steps(2);
+    assert!(call.push_to_talk_held(), "held in the window");
+    h.key_up(egui::Key::A);
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held());
+}
+
+fn key_event(logical: egui::Key, physical: Option<egui::Key>, pressed: bool) -> egui::Event {
+    egui::Event::Key {
+        key: logical,
+        physical_key: physical,
+        pressed,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+/// `code` and its label as the settings store them, the call following.
+fn push_to_talk_key(ctx: &egui::Context, call: &Call, code: &str, label: &str) {
+    use crate::screens::settings::prefs;
+    prefs::update(ctx, |p| {
+        p.voice_input = "ptt".into();
+        p.ptt_key = code.into();
+        p.ptt_key_label = label.into();
+    });
+    call.set_settings(crate::screens::voice::sync::settings(&prefs::get(ctx)));
+}
+
+/// QWERTZ: Z recorded at the place KeyY holds the window's microphone on
+/// the key labelled Z, not on the one labelled Y.
+#[test]
+fn the_window_holds_push_to_talk_on_the_key_that_was_recorded() {
+    use egui::Key;
+    let _config = crate::platform::paths::testing::TempConfig::new("ptt-qwertz");
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call.clone(), bar);
+    push_to_talk_key(&h.ctx, &call, "KeyY", "Z");
+    h.run_steps(2);
+    // The key labelled Y (logical Y at the place KeyZ).
+    h.event(key_event(Key::Y, Some(Key::Z), true));
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held(), "not the key labelled Y");
+    h.event(key_event(Key::Y, Some(Key::Z), false));
+    h.event(key_event(Key::Z, Some(Key::Y), true));
+    h.run_steps(2);
+    assert!(call.push_to_talk_held(), "the key labelled Z");
+    h.event(key_event(Key::Z, Some(Key::Y), false));
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held());
+
+    // Ü has no egui key: its place holds, until the window loses the focus.
+    push_to_talk_key(&h.ctx, &call, "BracketLeft", "Ü");
+    h.run_steps(2);
+    h.event(key_event(Key::OpenBracket, Some(Key::OpenBracket), true));
+    h.run_steps(2);
+    assert!(call.push_to_talk_held(), "held at its place");
+    h.event(egui::Event::WindowFocused(false));
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held(), "the focus went with the key");
+}
+
+/// A place key released while the microphone failed does not keep it open
+/// once it works again.
+#[test]
+fn a_key_released_while_the_microphone_failed_is_not_held() {
+    use egui::Key;
+    let _config = crate::platform::paths::testing::TempConfig::new("ptt-mic-lost");
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call.clone(), bar);
+    push_to_talk_key(&h.ctx, &call, "BracketLeft", "Ü");
+    h.run_steps(2);
+    h.event(key_event(Key::OpenBracket, Some(Key::OpenBracket), true));
+    h.run_steps(2);
+    assert!(call.push_to_talk_held());
+    call.set_state(in_sofa(MicStatus::Unavailable));
+    h.run_steps(2);
+    h.event(key_event(Key::OpenBracket, Some(Key::OpenBracket), false));
+    h.run_steps(2);
+    call.set_state(in_sofa(MicStatus::Live));
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held(), "released, not open");
+}
+
+/// A key held as the call ended: the next call's first press holds.
+#[test]
+fn the_next_call_starts_without_the_last_ones_key() {
+    use egui::Key;
+    let _config = crate::platform::paths::testing::TempConfig::new("ptt-next-call");
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call.clone(), bar);
+    push_to_talk_key(&h.ctx, &call, "BracketLeft", "Ü");
+    h.run_steps(2);
+    h.event(key_event(Key::OpenBracket, Some(Key::OpenBracket), true));
+    h.run_steps(2);
+    call.set_state(gelabber_call::CallState::default());
+    h.run_steps(2);
+    h.event(key_event(Key::OpenBracket, Some(Key::OpenBracket), false));
+    h.run_steps(2);
+    call.set_state(in_sofa(MicStatus::Live));
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held());
+    h.event(key_event(Key::OpenBracket, Some(Key::OpenBracket), true));
+    h.run_steps(2);
+    assert!(call.push_to_talk_held(), "the first press holds");
+}
+
+/// Shift let go of "1" comes as "!": the release still counts by its place.
+#[test]
+fn a_digit_released_with_shift_held_lets_go() {
+    use egui::Key;
+    let _config = crate::platform::paths::testing::TempConfig::new("ptt-shift");
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call.clone(), bar);
+    push_to_talk_key(&h.ctx, &call, "Digit1", "1");
+    h.run_steps(2);
+    h.event(key_event(Key::Num1, Some(Key::Num1), true));
+    h.run_steps(2);
+    assert!(call.push_to_talk_held());
+    h.event(key_event(Key::ShiftLeft, Some(Key::ShiftLeft), true));
+    h.event(key_event(Key::Exclamationmark, Some(Key::Num1), false));
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held(), "let go by its place");
+}
+
+/// A key recorded before places (an egui name) holds as it did.
+#[test]
+fn an_old_push_to_talk_key_holds_as_before() {
+    let _config = crate::platform::paths::testing::TempConfig::new("ptt-old");
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call.clone(), bar);
+    push_to_talk_key(&h.ctx, &call, "Backtick", "Backtick");
+    h.run_steps(2);
+    h.key_down(egui::Key::Backtick);
+    h.run_steps(2);
+    assert!(call.push_to_talk_held());
+    h.key_up(egui::Key::Backtick);
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held());
+}
+
+/// The window's keys and the global hook each hold the key for themselves:
+/// the window losing it (focus gone) leaves the hook's microphone open.
+#[test]
+fn the_window_and_the_global_hook_hold_push_to_talk_apart() {
+    use crate::screens::voice::call_bar::{PttSource, push_to_talk_from};
+    let _config = crate::platform::paths::testing::TempConfig::new("ptt-sources");
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let mut h = harness(client, call.clone(), bar);
+    push_to_talk_on(&h.ctx, &call);
+    h.run_steps(2);
+    h.key_down(egui::Key::A);
+    h.run_steps(2);
+    push_to_talk_from(&h.ctx, &call, PttSource::Hook, true);
+    h.key_up(egui::Key::A);
+    h.run_steps(2);
+    assert!(call.push_to_talk_held(), "the hook still holds it");
+    assert!(call.state().push_to_talk_open);
+    push_to_talk_from(&h.ctx, &call, PttSource::Hook, false);
+    h.run_steps(2);
+    assert!(!call.push_to_talk_held());
+}
+
 #[test]
 fn a_lost_call_offers_to_rejoin_and_goes_away() {
     let (client, call) = offline();
@@ -275,7 +465,13 @@ fn jonas_camera() -> (Person, Picture) {
 /// as the shell does; `embed` stands for a backend without windows.
 fn camera_stage(embed: bool) -> H {
     let (client, call) = offline();
-    call.set_state(in_sofa(MicStatus::Live));
+    let mut state = in_sofa(MicStatus::Live);
+    state.participants.push(Participant {
+        user: JONAS,
+        camera: Some(VideoKey::camera(JONAS)),
+        ..Participant::default()
+    });
+    call.set_state(state);
     let (jonas, camera) = jonas_camera();
     harness(client, call, move |ui, app| {
         ui.ctx().set_embed_viewports(embed);
@@ -690,4 +886,72 @@ fn only_a_room_nobody_else_is_in_asks_for_company() {
     let busy = draw(SOFA);
     busy.get_by_label("Beitreten");
     assert!(busy.query_by_label("Einladen").is_none());
+}
+
+/// With Jonas' camera in the large view, its tile on the stage under it
+/// neither asks for its own size nor draws: one ask per video, not two
+/// that reset the core's limits every frame.
+#[test]
+fn the_large_view_has_the_video_to_itself() {
+    let key = VideoKey::camera(JONAS);
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let (jonas, camera) = jonas_camera();
+    let id = camera.id;
+    let mut h = harness(client, call.clone(), move |ui, app| {
+        tile::picture(
+            ui,
+            app,
+            stage_rect(),
+            &camera,
+            Some(&jonas),
+            tile::Place::Grid,
+            false,
+            false,
+            1.0,
+        );
+    });
+    h.run_steps(2);
+    assert!(call.video_request(key).is_some(), "the tile asks");
+    crate::screens::voice::video::forget(&h.ctx, &call, key);
+    crate::screens::voice::page::open_fullscreen(&h.ctx, id);
+    h.run_steps(2);
+    assert_eq!(call.video_request(key), None);
+}
+
+/// A picture that never came: a watched Live offers "Neu laden" (watch it
+/// again); a camera does not, as nothing would ask for it anew.
+#[test]
+fn only_a_live_offers_to_reload_a_missing_picture() {
+    for live in [false, true] {
+        let (client, call) = offline();
+        call.set_state(in_sofa(MicStatus::Live));
+        let mut pic = if live {
+            picture(JONAS, Kind::Live, "Jonas — Live", false)
+        } else {
+            picture(JONAS, Kind::Camera, "Jonas", false)
+        };
+        pic.watching = true;
+        let jonas = person(JONAS, "Jonas", false);
+        let mut h = harness(client, call, move |ui, app| {
+            tile::picture(
+                ui,
+                app,
+                stage_rect(),
+                &pic,
+                Some(&jonas),
+                tile::Place::Grid,
+                false,
+                false,
+                1.0,
+            );
+        });
+        // Past `FRAME_STALLED` (8 s) at 60 frames a second.
+        h.run_steps(500);
+        assert_eq!(
+            h.query_by_label("Neu laden").is_some(),
+            live,
+            "live: {live}"
+        );
+    }
 }

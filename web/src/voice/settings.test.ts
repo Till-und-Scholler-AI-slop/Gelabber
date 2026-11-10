@@ -6,6 +6,7 @@ import {
   VIDEO_FRAME_RATES,
   explicitStreamProfile,
   clampVideoUploadLimit,
+  uploadLimitFromField,
   allocateVideoBitrates,
   audioBitrate,
   sourceAudioBitrate,
@@ -79,6 +80,14 @@ describe("capture and explicit bandwidth preferences", () => {
     expect(clampVideoUploadLimit(-1)).toBe(0);
     useMediaSettings.getState().patch({ economyMode: false });
     expect(audioBitrate()).toBeNull();
+  });
+  it("reads the custom upload limit field only once it holds a limit", () => {
+    // Half-typed: kept as text, the stored limit and its mode stay.
+    for (const text of ["", "0", "0.", "-", "abc"])
+      expect(uploadLimitFromField(text)).toBeNull();
+    expect(uploadLimitFromField("0.5")).toBe(500_000);
+    expect(uploadLimitFromField("12")).toBe(12_000_000);
+    expect(uploadLimitFromField("1,5")).toBe(1_500_000);
   });
   it("keeps every capture resolution/FPS independent of bandwidth", () => {
     for (const height of VIDEO_RESOLUTIONS)
@@ -164,6 +173,65 @@ describe("capture and explicit bandwidth preferences", () => {
       videoUploadLimit: 75000000,
     });
     expect(audioBitrate()).toBe(24000);
+  });
+  it("does not restore a corrupted entry's values or unknown keys", async () => {
+    const storage = useMediaSettings.persist.getOptions().storage!;
+    await storage.setItem("gelabber.media", {
+      state: {
+        inputGain: 50,
+        audioInputId: 7,
+        audioOutputId: null,
+        videoInputId: { id: "cam" },
+        echoCancellation: "no",
+        noiseSuppression: 0,
+        autoGainControl: "yes",
+        messageToasts: "off",
+        desktopNotify: 1,
+        injected: "value",
+      } as never,
+    });
+    await useMediaSettings.persist.rehydrate();
+    const state = useMediaSettings.getState();
+    expect(state).toMatchObject({
+      inputGain: 2,
+      audioInputId: DEFAULT_MEDIA_SETTINGS.audioInputId,
+      audioOutputId: DEFAULT_MEDIA_SETTINGS.audioOutputId,
+      videoInputId: DEFAULT_MEDIA_SETTINGS.videoInputId,
+      echoCancellation: DEFAULT_MEDIA_SETTINGS.echoCancellation,
+      noiseSuppression: DEFAULT_MEDIA_SETTINGS.noiseSuppression,
+      autoGainControl: DEFAULT_MEDIA_SETTINGS.autoGainControl,
+      messageToasts: DEFAULT_MEDIA_SETTINGS.messageToasts,
+      desktopNotify: DEFAULT_MEDIA_SETTINGS.desktopNotify,
+    });
+    expect(state).not.toHaveProperty("injected");
+  });
+  it("restores valid devices, filters and notices", async () => {
+    const storage = useMediaSettings.persist.getOptions().storage!;
+    await storage.setItem("gelabber.media", {
+      state: {
+        inputGain: 1.5,
+        audioInputId: "mic",
+        audioOutputId: "speaker",
+        videoInputId: "cam",
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        messageToasts: false,
+        desktopNotify: true,
+      } as never,
+    });
+    await useMediaSettings.persist.rehydrate();
+    expect(useMediaSettings.getState()).toMatchObject({
+      inputGain: 1.5,
+      audioInputId: "mic",
+      audioOutputId: "speaker",
+      videoInputId: "cam",
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      messageToasts: false,
+      desktopNotify: true,
+    });
   });
   it("persists the new modes and independent playback/call-sound choices", async () => {
     useMediaSettings.getState().patch({

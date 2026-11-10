@@ -3,11 +3,13 @@ import {
   useId,
   useLayoutEffect,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
 
 import { CloseIcon } from "./Icons.tsx";
 import {
+  backdropClicks,
   closesOnBackdrop,
   focusLeftWith,
   requestClose,
@@ -67,6 +69,7 @@ export function Modal({
     latest.current = { open, onClose };
   });
   const close = () => void requestClose({ dirty, onClose });
+  const [backdrop] = useState(backdropClicks);
   const { mounted, state } = usePresence(open, ref);
   const [shownTitle, shownChildren, shownFooter] = useLastOpen(open, [
     title,
@@ -123,10 +126,11 @@ export function Modal({
         if (event.currentTarget.open) return;
         if (latest.current.open) latest.current.onClose();
       }}
+      onPointerDown={backdrop.press}
       onClick={(event) => {
         if (
+          backdrop.onDialog(event) &&
           open &&
-          event.target === event.currentTarget &&
           closesOnBackdrop(
             event,
             event.currentTarget.getBoundingClientRect(),

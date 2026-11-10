@@ -359,8 +359,39 @@ fn fill(path: &str, fixture: &Fixture) -> String {
     out
 }
 
+/// Names in `only` that no scene has: a typo would otherwise run nothing
+/// and pass.
+fn unknown_scenes(scenes: &[Scene], only: Option<&[String]>) -> Vec<String> {
+    only.unwrap_or_default()
+        .iter()
+        .filter(|name| !scenes.iter().any(|s| &s.name == *name))
+        .cloned()
+        .collect()
+}
+
+fn check_only(scenes: &[Scene], only: Option<&[String]>) {
+    let unknown = unknown_scenes(scenes, only);
+    if !unknown.is_empty() {
+        eprintln!("no such scene: {}", unknown.join(","));
+        std::process::exit(2);
+    }
+}
+
+/// A mask in window coordinates, moved into an image cropped at
+/// `(x, y)` and cut to its `w × h`; `None` when it lies outside.
+fn crop_mask(mask: [u32; 4], crop: [u32; 4]) -> Option<[u32; 4]> {
+    let [mx, my, mw, mh] = mask;
+    let [cx, cy, cw, ch] = crop;
+    let left = mx.max(cx);
+    let top = my.max(cy);
+    let right = (mx + mw).min(cx + cw);
+    let bottom = (my + mh).min(cy + ch);
+    (left < right && top < bottom).then(|| [left - cx, top - cy, right - left, bottom - top])
+}
+
 fn render(out: &Path, only: Option<Vec<String>>) {
     let scenes: Scenes = read("scenes.json");
+    check_only(&scenes.scenes, only.as_deref());
     let fixture: Fixture = read("fixture.json");
     std::fs::create_dir_all(out).expect("create output directory");
     // Device settings start empty in every scene, as in a fresh browser
@@ -800,8 +831,10 @@ fn compare(
     crop: Option<[u32; 4]>,
 ) -> bool {
     let scenes: Scenes = read("scenes.json");
+    check_only(&scenes.scenes, only);
     std::fs::create_dir_all(report).expect("create report directory");
     let mut all = true;
+    let mut compared = 0;
     let mut lines = vec![
         "| scene | SSIM | pixels | edges | result |".to_owned(),
         "|---|---|---|---|---|".to_owned(),
@@ -819,6 +852,7 @@ fn compare(
             all = false;
             continue;
         };
+        compared += 1;
         let (mut a, mut b) = (a.to_rgba8(), b.to_rgba8());
         if let Some([x, y, w, h]) = crop {
             a = image::imageops::crop_imm(&a, x, y, w, h).to_image();
@@ -834,7 +868,16 @@ fn compare(
             all = false;
             continue;
         }
-        for &[x, y, w, h] in &scene.mask {
+        // Masks are in window coordinates; a crop moves the image's origin.
+        let masks = scene
+            .mask
+            .iter()
+            .filter_map(|&m| match crop {
+                Some(c) => crop_mask(m, c),
+                None => Some(m),
+            })
+            .collect::<Vec<_>>();
+        for &[x, y, w, h] in &masks {
             for img in [&mut a, &mut b] {
                 for py in y..(y + h).min(img.height()) {
                     for px in x..(x + w).min(img.width()) {
@@ -866,6 +909,10 @@ fn compare(
     let table = lines.join("\n");
     println!("{table}");
     std::fs::write(report.join("report.md"), table + "\n").expect("write report");
+    if compared == 0 {
+        eprintln!("no scene was compared");
+        return false;
+    }
     all
 }
 
@@ -915,5 +962,36 @@ fn main() {
             );
             std::process::exit(2);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_mask_follows_the_crop() {
+        let crop = [100, 50, 200, 100];
+        // Inside: shifted by the crop's origin.
+        assert_eq!(crop_mask([120, 60, 10, 10], crop), Some([20, 10, 10, 10]));
+        // Across the crop's edge: cut to the part inside.
+        assert_eq!(crop_mask([90, 40, 20, 20], crop), Some([0, 0, 10, 10]));
+        assert_eq!(crop_mask([290, 140, 50, 50], crop), Some([190, 90, 10, 10]));
+        // Outside: nothing to paint.
+        assert_eq!(crop_mask([0, 0, 50, 50], crop), None);
+    }
+
+    #[test]
+    fn an_unknown_scene_name_is_named() {
+        let scenes: Vec<Scene> = serde_json::from_value(serde_json::json!([
+            {"name": "login"}, {"name": "dm"}
+        ]))
+        .unwrap();
+        let only = ["dm".to_owned(), "lgoin".to_owned()];
+        assert_eq!(
+            unknown_scenes(&scenes, Some(&only)),
+            vec!["lgoin".to_owned()]
+        );
+        assert!(unknown_scenes(&scenes, None).is_empty());
     }
 }

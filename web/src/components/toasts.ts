@@ -5,6 +5,7 @@ import { create } from "zustand";
 
 import { ApiError } from "../api/client.ts";
 import { errorMessage, fieldMessages } from "../auth/rules.ts";
+import { MediaError, mediaErrorMessage } from "../voice/media.ts";
 
 export type ToastAction = { label: string; onClick: () => void };
 
@@ -129,6 +130,7 @@ export function notify(message: string, options?: ToastOptions): void {
 }
 
 function toastText(error: unknown): string | null {
+  if (error instanceof MediaError) return mediaErrorMessage(error.code);
   if (!(error instanceof ApiError)) {
     return error instanceof Error && error.message
       ? error.message

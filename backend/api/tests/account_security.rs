@@ -147,6 +147,157 @@ async fn failed_logins_are_limited_per_account_across_addresses(pool: PgPool) {
     assert_eq!(other.status, StatusCode::UNAUTHORIZED, "{}", other.body);
 }
 
+/// `count` POSTs to `path` with `body`, all in flight at once, each from its
+/// own address and with the client's cookies and CSRF token.
+async fn concurrently(
+    client: &Client,
+    path: &str,
+    body: serde_json::Value,
+    count: usize,
+) -> Vec<StatusCode> {
+    use axum::body::Body;
+    use axum::http::Request;
+    use axum::http::header::{CONTENT_TYPE, COOKIE};
+    use tower::ServiceExt;
+
+    let cookie = client
+        .jar
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let requests = (0..count).map(|i| {
+        let mut builder = Request::post(path)
+            .header(CONTENT_TYPE, "application/json")
+            .header("x-forwarded-for", format!("198.51.100.{i}"));
+        if !cookie.is_empty() {
+            builder = builder.header(COOKIE, &cookie);
+        }
+        if let Some(token) = &client.csrf {
+            builder = builder.header("x-csrf-token", token);
+        }
+        let request = builder.body(Body::from(body.to_string())).unwrap();
+        client.app.clone().oneshot(request)
+    });
+    futures_util::future::join_all(requests)
+        .await
+        .into_iter()
+        .map(|response| response.unwrap().status())
+        .collect()
+}
+
+fn tally(statuses: &[StatusCode], wanted: StatusCode) -> usize {
+    statuses.iter().filter(|status| **status == wanted).count()
+}
+
+/// Guesses that arrive together must not all pass the check before the
+/// first failure is counted.
+#[sqlx::test]
+async fn concurrent_login_guesses_stop_at_the_account_limit(pool: PgPool) {
+    let mut client = signed_up(state_with(
+        pool,
+        &[("API_RATE_LOGIN_FAILURES_PER_ACCOUNT", "3")],
+    ))
+    .await;
+    client.send(Method::POST, "/api/auth/logout", None).await;
+
+    let statuses = concurrently(
+        &client,
+        "/api/auth/login",
+        json!({ "email": "ada@example.com", "password": "wrong guess" }),
+        12,
+    )
+    .await;
+    assert_eq!(
+        tally(&statuses, StatusCode::UNAUTHORIZED),
+        3,
+        "{statuses:?}"
+    );
+    assert_eq!(
+        tally(&statuses, StatusCode::TOO_MANY_REQUESTS),
+        9,
+        "{statuses:?}"
+    );
+}
+
+#[sqlx::test]
+async fn concurrent_password_change_guesses_stop_at_the_account_limit(pool: PgPool) {
+    let client = signed_up(state_with(
+        pool,
+        &[("API_RATE_LOGIN_FAILURES_PER_ACCOUNT", "3")],
+    ))
+    .await;
+
+    let statuses = concurrently(
+        &client,
+        "/api/auth/password",
+        json!({ "current_password": "wrong guess", "password": "battery staple" }),
+        12,
+    )
+    .await;
+    assert_eq!(
+        tally(&statuses, StatusCode::UNPROCESSABLE_ENTITY),
+        3,
+        "{statuses:?}"
+    );
+    assert_eq!(
+        tally(&statuses, StatusCode::TOO_MANY_REQUESTS),
+        9,
+        "{statuses:?}"
+    );
+}
+
+/// A row stored with capitals (before addresses were normalised) has one
+/// failure count, whether the guess comes through login or password change.
+#[sqlx::test]
+async fn guesses_share_one_count_for_an_address_stored_with_capitals(pool: PgPool) {
+    let mut client = signed_up(state_with(
+        pool.clone(),
+        &[("API_RATE_LOGIN_FAILURES_PER_ACCOUNT", "2")],
+    ))
+    .await;
+    sqlx::query("UPDATE users SET email = 'Ada@Example.com'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        let res = client
+            .send(
+                Method::POST,
+                "/api/auth/password",
+                Some(json!({ "current_password": "wrong guess", "password": "battery staple" })),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    }
+    let blocked = client.login("ada@example.com", "correct horse").await;
+    assert_eq!(
+        blocked.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{}",
+        blocked.body
+    );
+}
+
+/// A right password leaves the failure count where it was, so a correct
+/// login never uses up the account's allowance.
+#[sqlx::test]
+async fn correct_logins_do_not_count_as_failures(pool: PgPool) {
+    let mut client = signed_up(state_with(
+        pool,
+        &[("API_RATE_LOGIN_FAILURES_PER_ACCOUNT", "2")],
+    ))
+    .await;
+    for _ in 0..4 {
+        let res = client.login("ada@example.com", "correct horse").await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    }
+    let wrong = client.login("ada@example.com", "wrong guess").await;
+    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED, "{}", wrong.body);
+    let right = client.login("ada@example.com", "correct horse").await;
+    assert_eq!(right.status, StatusCode::OK, "{}", right.body);
+}
+
 #[sqlx::test]
 async fn made_up_session_cookies_share_the_address_window(pool: PgPool) {
     let state = state_with(pool, &[("API_RATE_API_PER_MIN", "3")]);
@@ -154,7 +305,7 @@ async fn made_up_session_cookies_share_the_address_window(pool: PgPool) {
     let mut forger = Client::from_state(state);
     forger.bootstrap().await;
 
-    // `limits::gate` runs before CSRF, so the 429 comes first either way.
+    // The forger has a valid CSRF pair, so only the gate can refuse.
     let from_one_address = |builder: &mut axum::http::request::Builder| {
         builder
             .headers_mut()

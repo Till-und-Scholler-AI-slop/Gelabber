@@ -4,9 +4,10 @@
 //! compact JSON frames, Redis 8.10.1 Pub/Sub for fan-out, bounded Redis
 //! lists for reconnect catch-up. No Socket.IO, no LiveKit.
 //!
-//! **Issue 5 (REST messages)** owns create/edit/delete persistence. After a
-//! successful write it should call [`publish_channel`]. This module does
-//! not add message tables or `/api/.../messages` routes.
+//! **Issue 5 (REST messages)** owns create/edit/delete persistence. A write
+//! queues its event in the transactional outbox ([`delivery`]), whose worker
+//! publishes it. This module does not add message tables or
+//! `/api/.../messages` routes.
 //!
 //! **Issue 8 (presence / typing)** uses ephemeral `op: "p"` / `op: "y"`
 //! over Redis keys + TTL and Pub/Sub. They are not sequenced and never
@@ -29,7 +30,7 @@ use axum::extract::State;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::http::HeaderMap;
 use axum::http::header::{HOST, ORIGIN};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use serde_json::Value;
 use uuid::Uuid;
@@ -39,6 +40,11 @@ use crate::error::ApiError;
 use crate::state::AppState;
 
 pub use hub::{ConnTable, EventLog, Gateway, Recheck, VoiceRoster};
+
+/// Sockets one account may hold on one API process: several tabs, a phone
+/// and the desktop app fit. Each socket can hold a pool connection while it
+/// writes, so an account must not be able to take the whole pool.
+pub const MAX_SOCKETS_PER_ACCOUNT: usize = 16;
 pub use protocol::{Event, EventDraft, EventKind, PresenceStatus, Topic};
 
 pub fn router() -> Router<AppState> {
@@ -69,7 +75,28 @@ async fn upgrade(
             "Cross-origin WebSocket is not allowed.",
         ));
     }
-    Ok(ws.on_upgrade(move |socket| conn::run(socket, state, session)))
+    // Draining for shutdown: a socket opened now would be closed at once.
+    if state.gateway.is_shutting_down() {
+        return Ok((
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            [(axum::http::header::RETRY_AFTER, "1")],
+        )
+            .into_response());
+    }
+    let Some(slot) = state
+        .gateway
+        .reserve_socket(session.user.id, MAX_SOCKETS_PER_ACCOUNT)
+    else {
+        tracing::warn!(user_id = %session.user.id, "refused WebSocket upgrade: socket limit");
+        return Err(ApiError::RateLimited { retry_after: 5 });
+    };
+    Ok(ws
+        .max_message_size(conn::MAX_CLIENT_BYTES)
+        .max_frame_size(conn::MAX_CLIENT_BYTES)
+        .on_upgrade(move |socket| async move {
+            conn::run(socket, state, session).await;
+            drop(slot);
+        }))
 }
 
 /// Same-origin check when the browser sends `Origin`. Non-browser clients
@@ -133,8 +160,9 @@ fn is_loopback(authority: &str) -> bool {
             .is_ok_and(|address| address.is_loopback())
 }
 
-/// Publish a compact create/edit/delete event on a **channel** topic.
-/// Issue 5 calls this after REST create/edit/delete of a message.
+/// Publish a compact create/edit/delete event on a **channel** topic right
+/// away. Messages go through the outbox ([`delivery`]) instead; this direct
+/// path is for tests.
 pub async fn publish_channel(
     state: &AppState,
     server_id: Uuid,

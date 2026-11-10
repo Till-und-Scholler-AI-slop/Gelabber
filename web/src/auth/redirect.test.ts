@@ -27,6 +27,10 @@ describe("safe redirect", () => {
     expect(safeRedirect("https://evil.example/")).toBeUndefined();
     expect(safeRedirect("//evil.example/")).toBeUndefined();
     expect(safeRedirect("/\\evil.example/")).toBeUndefined();
+    // URL parsing drops tabs and newlines, so these read as `//evil.example/`.
+    expect(safeRedirect("/\t/evil.example/")).toBeUndefined();
+    expect(safeRedirect("/\n/evil.example/")).toBeUndefined();
+    expect(safeRedirect("/\r\\evil.example/")).toBeUndefined();
     expect(safeRedirect("invite/abc")).toBeUndefined();
     expect(safeRedirect(42)).toBeUndefined();
   });

@@ -19,17 +19,43 @@ impl Sfu {
             .peer
             .clone();
         let _rpc = peer.rpc_gate.lock().await;
-        if !peer.grant.valid() || !self.room_ready(&room) {
+        // Drain and a lost engine are recoverable: the client rejoins.
+        let verdict = if !self.room_ready(&room) {
+            Err(SfuError::Gone)
+        } else if !peer.grant.valid() {
+            Err(SfuError::Revoked)
+        } else {
+            self.authorize(&peer.authority).await
+        };
+        if let Err(error) = verdict {
             self.leave(id, channel).await;
-            return Err(SfuError::Revoked);
+            return Err(error);
         }
-        if !crate::ticket::validate_authority(&self.redis, &peer.authority)
-            .await
-            .unwrap_or(false)
-        {
-            self.leave(id, channel).await;
-            return Err(SfuError::Revoked);
+        let result = self
+            .dispatch(room.clone(), peer.clone(), id, channel, frame)
+            .await;
+        self.settle(&room, result)
+    }
+    /// A peer found removed or revoked after the first check because its
+    /// worker was lost or the pool drains is recoverable, not a "no".
+    pub(super) fn settle(
+        &self,
+        room: &Room,
+        result: Result<Value, SfuError>,
+    ) -> Result<Value, SfuError> {
+        match result {
+            Err(SfuError::Revoked) if !self.room_ready(room) => Err(SfuError::Gone),
+            result => result,
         }
+    }
+    async fn dispatch(
+        self: &Arc<Self>,
+        room: Arc<Room>,
+        peer: Arc<Peer>,
+        id: PeerId,
+        channel: Uuid,
+        frame: ClientFrame,
+    ) -> Result<Value, SfuError> {
         match frame {
             ClientFrame::Capabilities { rtp, .. } => {
                 let caps: RtpCapabilities =
@@ -65,7 +91,7 @@ impl Sfu {
                 {
                     return Err(SfuError::BadAnnounce);
                 }
-                let opts = gateway_transport_options(room.engine.server.clone());
+                let opts = gateway_transport_options(room.engine.server()?);
                 let transport = room
                     .engine
                     .native(
@@ -371,13 +397,13 @@ impl Sfu {
                 gate: Mutex::new(()),
                 packet_samples: StdMutex::new(HashMap::new()),
             });
-            if !crate::ticket::validate_authority(&self.redis, &peer.authority)
-                .await
-                .unwrap_or(false)
-                || !pubn.valid()
-            {
+            let verdict = match self.authorize(&peer.authority).await {
+                Ok(()) if !pubn.valid() => Err(SfuError::Revoked),
+                verdict => verdict,
+            };
+            if let Err(error) = verdict {
                 stop_producer(&pubn.producer).await;
-                return Err(SfuError::Revoked);
+                return Err(error);
             }
             // Atomically replace the slot with a still-paused new Producer. This actual
             // ID fences timeout/close callbacks from the retired Producer, even if the

@@ -8,8 +8,7 @@ German strings appear only where the REST/auth flow produces them.
 Conventions in this file
 
 - Paths are relative to the API origin. The web client prefixes every call with
-  `API_BASE = (VITE_API_BASE_URL ?? "/api")` with trailing slashes stripped
-  (`web/src/api/client.ts:71-72`). In the web code `api("/servers")` means
+  `API_BASE = "/api"` (`web/src/api/client.ts`). In the web code `api("/servers")` means
   `GET /api/servers`. This spec always writes the full `/api/...` path.
 - `uuid` = lower-case hyphenated UUID string (serde `uuid` default).
 - `ts` = RFC 3339 UTC timestamp as chrono serialises `DateTime<Utc>`:
@@ -482,7 +481,7 @@ Content normalisation (server): `\r\n` and `\r` → `\n`, then trim. Optimistic 
 
 | Method & path | Request | Success | Errors |
 |---|---|---|---|
-| `GET /api/channels/{id}/messages/search?q=&limit=&before=` | `q` trimmed 1..=200 chars (PostgreSQL `websearch_to_tsquery('simple', q)`); web sends `limit=25`; next page `before={oldest.created_at}\|{oldest.id}` while `has_more` | `200 MessagePage` (oldest → newest within the page, newest hits first page) | `422 q: required\|too_long`, `limit`, `before` |
+| `GET /api/channels/{id}/messages/search?q=&limit=&before=` | `q` trimmed 1..=200 chars (PostgreSQL `websearch_to_tsquery('simple', q)`); web sends `limit=25`; next page `before={oldest.created_at}\|{oldest.id}` while `has_more` | `200 MessagePage` (oldest → newest within the page, newest hits first page) | `422 q: required\|too_long\|invalid`, `limit`, `before`, all in the JSON envelope (1.5). A missing `q` is `q: required`, not a plain 400; `invalid` is a control character in `q` |
 | `GET /api/channels/{id}/messages/{message_id}/context` | — | `200 {target_id: uuid, messages: Message[] (≤ 30 older + target + ≤ 30 newer, oldest → newest), before: "ts\|uuid", after: "ts\|uuid"}` — use `before`/`after` as cursors for further history | `404` message not in channel |
 
 ---

@@ -1,9 +1,10 @@
 //! `GET /health` (process is up) and `/ready` (Redis plus native media engine).
 //! Caddy proxies `/media` and `/media/*`, so both prefixes are registered.
 //! `/ready` stays 200 while at least one worker is live; `workers` shows a
-//! degraded pool (a lost worker that is being replaced).
+//! degraded pool (a lost worker that is being replaced). `/media/ready` is
+//! public, so the Redis probe runs at most once per [`PROBE_REUSE`].
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::extract::State;
@@ -49,7 +50,7 @@ pub struct Checks {
     pub media: CheckResult,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CheckResult {
     Ok {
@@ -68,32 +69,25 @@ async fn health() -> Json<HealthResponse> {
     })
 }
 
-async fn ready(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse>) {
-    let started = Instant::now();
-    let outcome = timeout(state.ready_timeout, ping_redis(&state)).await;
-    let latency_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
+/// How long one Redis probe answers `/ready`.
+pub const PROBE_REUSE: Duration = Duration::from_secs(1);
 
-    let redis = match outcome {
-        Ok(Ok(())) => {
-            info!(check = "redis", latency_ms, "ready check passed");
-            CheckResult::Ok { latency_ms }
-        }
-        Ok(Err(detail)) => {
-            warn!(check = "redis", latency_ms, error = %detail, "ready check failed");
-            CheckResult::Error {
-                error: class_of(&detail),
-                latency_ms,
-            }
-        }
-        Err(_) => {
-            warn!(check = "redis", latency_ms, "ready check timed out");
-            CheckResult::Error {
-                error: "timed_out",
-                latency_ms,
+/// The last Redis probe. Its lock also makes concurrent requests share one.
+#[derive(Default)]
+pub struct RedisProbe(tokio::sync::Mutex<Option<(Instant, CheckResult)>>);
+
+async fn ready(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse>) {
+    let redis = {
+        let mut last = state.redis_probe.0.lock().await;
+        match &*last {
+            Some((at, result)) if at.elapsed() < PROBE_REUSE => result.clone(),
+            _ => {
+                let result = probe_redis(&state).await;
+                *last = Some((Instant::now(), result.clone()));
+                result
             }
         }
     };
-
     let workers = state.sfu.workers();
     if workers.live < workers.total {
         warn!(
@@ -127,6 +121,32 @@ async fn ready(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse
             },
         }),
     )
+}
+
+async fn probe_redis(state: &AppState) -> CheckResult {
+    let started = Instant::now();
+    let outcome = timeout(state.ready_timeout, ping_redis(state)).await;
+    let latency_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
+    match outcome {
+        Ok(Ok(())) => {
+            info!(check = "redis", latency_ms, "ready check passed");
+            CheckResult::Ok { latency_ms }
+        }
+        Ok(Err(detail)) => {
+            warn!(check = "redis", latency_ms, error = %detail, "ready check failed");
+            CheckResult::Error {
+                error: class_of(&detail),
+                latency_ms,
+            }
+        }
+        Err(_) => {
+            warn!(check = "redis", latency_ms, "ready check timed out");
+            CheckResult::Error {
+                error: "timed_out",
+                latency_ms,
+            }
+        }
+    }
 }
 
 /// Probes over a fresh connection on purpose, not the engine's cached one:

@@ -73,6 +73,11 @@ pub async fn serve_ws(pool: PgPool) -> (std::net::SocketAddr, AppState) {
 
 pub async fn serve_ws_with_dead(pool: PgPool, dead_ms: u64) -> (std::net::SocketAddr, AppState) {
     let state = ws_state_with_dead(pool, dead_ms);
+    (serve_ws_state(state.clone()).await, state)
+}
+
+/// Serve a state the test has adjusted.
+pub async fn serve_ws_state(state: AppState) -> std::net::SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind test listener");
@@ -86,7 +91,7 @@ pub async fn serve_ws_with_dead(pool: PgPool, dead_ms: u64) -> (std::net::Socket
         .wait_ready(std::time::Duration::from_secs(2))
         .await
         .expect("redis pub/sub");
-    (addr, state)
+    addr
 }
 
 /// Like [`ws_state`] but with a short per-client idle so presence tests finish quickly.

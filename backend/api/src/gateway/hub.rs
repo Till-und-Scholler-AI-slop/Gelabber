@@ -58,6 +58,33 @@ pub(super) struct Inner {
     pub(super) sockets: RwLock<HashMap<ConnId, Socket>>,
     pub(super) voice_ops: Mutex<()>,
     media_sessions: Mutex<HashMap<String, (Uuid, std::time::Instant)>>,
+    /// Sockets per account on this process, upgrades in flight included.
+    per_account: std::sync::Mutex<HashMap<Uuid, usize>>,
+    /// Set once the process shuts down ([`Gateway::drain`]).
+    shutdown: tokio::sync::watch::Sender<bool>,
+}
+
+/// One account's place among its sockets ([`Gateway::reserve_socket`]),
+/// given back on drop.
+pub struct SocketSlot {
+    inner: Arc<Inner>,
+    user_id: Uuid,
+}
+
+impl Drop for SocketSlot {
+    fn drop(&mut self) {
+        let mut counts = self
+            .inner
+            .per_account
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(count) = counts.get_mut(&self.user_id) {
+            *count -= 1;
+            if *count == 0 {
+                counts.remove(&self.user_id);
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -85,7 +112,7 @@ pub(super) struct Socket {
     pub(super) voice_rosters: HashMap<Uuid, Vec<VoiceEntry>>,
     /// Channels this socket started typing in (`server`, `channel`).
     typing: HashSet<(Uuid, Uuid)>,
-    topics: HashSet<Topic>,
+    pub(super) topics: HashSet<Topic>,
     epochs: HashMap<Topic, Uuid>,
     closed: tokio::sync::watch::Sender<bool>,
     /// Wakes the socket for an immediate session and access check after a
@@ -152,6 +179,8 @@ impl ConnTable {
                 sockets: RwLock::new(HashMap::new()),
                 voice_ops: Mutex::new(()),
                 media_sessions: Mutex::new(HashMap::new()),
+                per_account: std::sync::Mutex::new(HashMap::new()),
+                shutdown: tokio::sync::watch::channel(false).0,
             }),
         }
     }
@@ -559,6 +588,50 @@ impl Gateway {
         }
     }
 
+    /// Resolves once the process shuts down.
+    pub fn shutdown_signal(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.connections.inner.shutdown.subscribe()
+    }
+
+    /// Whether [`Self::drain`] has begun.
+    pub fn is_shutting_down(&self) -> bool {
+        *self.connections.inner.shutdown.borrow()
+    }
+
+    /// Close every socket of this process with 1012 and wait, at most
+    /// `timeout`, until they ran their cleanup. HTTP graceful shutdown does
+    /// not wait for upgraded sockets, so the caller runs this first.
+    pub async fn drain(&self, timeout: Duration) {
+        self.connections.inner.shutdown.send_replace(true);
+        let deadline = tokio::time::Instant::now() + timeout;
+        while tokio::time::Instant::now() < deadline
+            && !self.connections.inner.sockets.read().await.is_empty()
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// A place for one more socket of `user_id`, or `None` once the account
+    /// holds `limit` on this process. Held from the upgrade until the socket
+    /// ends, so concurrent upgrades cannot pass the limit together.
+    pub fn reserve_socket(&self, user_id: Uuid, limit: usize) -> Option<SocketSlot> {
+        let mut counts = self
+            .connections
+            .inner
+            .per_account
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let count = counts.entry(user_id).or_default();
+        if *count >= limit {
+            return None;
+        }
+        *count += 1;
+        Some(SocketSlot {
+            inner: self.connections.inner.clone(),
+            user_id,
+        })
+    }
+
     pub async fn attach_session(
         &self,
         user_id: Uuid,
@@ -855,26 +928,62 @@ impl Gateway {
 
     pub async fn revoke_channel(&self, server_id: Uuid, channel_id: Uuid) -> Result<(), ApiError> {
         crate::media::revoke_channel(&self.connections.redis, channel_id).await?;
-        let conns: Vec<(ConnId, Uuid)> = self
+        let topic = Topic::Channel(channel_id);
+        // Only sockets holding the topic, a seat or a typing entry there.
+        let conns: Vec<(ConnId, Uuid, bool, bool)> = self
             .connections
             .inner
             .sockets
             .read()
             .await
             .iter()
-            .map(|(id, socket)| (*id, socket.user_id))
+            .filter_map(|(id, socket)| {
+                let seated = socket.rooms.contains_key(&channel_id);
+                let typing = socket.typing.contains(&(server_id, channel_id));
+                (seated || typing || socket.topics.contains(&topic)).then_some((
+                    *id,
+                    socket.user_id,
+                    seated,
+                    typing,
+                ))
+            })
             .collect();
-        for (id, uid) in conns {
-            self.unsubscribe(id, Topic::Channel(channel_id)).await;
-            if let Err(err) = self.leave_voice(id, uid, server_id, channel_id).await {
+        for (id, uid, seated, typing) in conns {
+            self.unsubscribe(id, topic).await;
+            if seated && let Err(err) = self.leave_voice(id, uid, server_id, channel_id).await {
                 warn!(error = err.code(), "deleted channel voice cleanup failed");
             }
-            self.note_typing(id, server_id, channel_id, false).await;
-            if let Err(err) = self.stop_typing(server_id, channel_id, uid).await {
-                warn!(error = err.code(), "deleted channel typing cleanup failed");
+            if typing {
+                self.note_typing(id, server_id, channel_id, false).await;
+                if let Err(err) = self.stop_typing(server_id, channel_id, uid).await {
+                    warn!(error = err.code(), "deleted channel typing cleanup failed");
+                }
             }
         }
         Ok(())
+    }
+
+    /// Drop a deleted channel's seq, replay log, epoch and delivery keys,
+    /// which would otherwise keep its last bodies. Call it after the delete,
+    /// which also removed the channel's queued outbox rows, has committed.
+    /// Best effort.
+    pub async fn drop_channel_log(&self, channel_id: Uuid) {
+        let topic = Topic::Channel(channel_id);
+        let dropped = self
+            .connections
+            .with_conn(|mut conn| async move {
+                redis::cmd("DEL")
+                    .arg(topic.seq_key())
+                    .arg(topic.log_key())
+                    .arg(topic.epoch_key())
+                    .arg(topic.delivery_key())
+                    .query_async::<()>(&mut conn)
+                    .await
+            })
+            .await;
+        if let Err(err) = dropped {
+            warn!(error = %err, %channel_id, "deleted channel's realtime keys not dropped");
+        }
     }
 
     pub fn ensure_subscriber(&self) {
@@ -907,6 +1016,18 @@ impl Gateway {
 
     pub async fn socket_meta(&self, id: ConnId) -> Option<(Uuid, HashSet<Uuid>)> {
         self.connections.socket_meta(id).await
+    }
+
+    /// The DMs this socket subscribed to.
+    pub async fn socket_dms(&self, id: ConnId) -> HashSet<Uuid> {
+        self.connections
+            .inner
+            .sockets
+            .read()
+            .await
+            .get(&id)
+            .map(|socket| socket.dms.clone())
+            .unwrap_or_default()
     }
 
     pub async fn note_typing(&self, id: ConnId, server_id: Uuid, channel_id: Uuid, on: bool) {
@@ -1280,6 +1401,71 @@ mod resilience_tests {
         assert!(!woke(theirs_signal).await);
         b.detach(mine).await;
         b.detach(theirs).await;
+    }
+
+    /// A channel delete touches only the sockets that hold something of
+    /// that channel, and drops the channel's sequenced log with it.
+    #[tokio::test]
+    async fn revoke_channel_stops_only_its_own_typers_and_drops_its_log() {
+        let g = gateway();
+        g.wait_ready(Duration::from_secs(2)).await.unwrap();
+        let (s, c, typer, bystander) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let topic = Topic::Channel(c);
+        let (tx, _rx) = mpsc::channel(128);
+        let (typing, _) = g.attach_session(typer, "typer".into(), tx).await;
+        g.watch_topic(typing, s, topic).await;
+        g.begin_catch_up(typing, topic).await;
+        g.finish_catch_up(typing, topic, 0).await;
+        g.note_typing(typing, s, c, true).await;
+        let (tx, _rx2) = mpsc::channel(128);
+        let (other, _) = g.attach_session(bystander, "bystander".into(), tx).await;
+        g.publish(EventDraft {
+            kind: super::super::protocol::EventKind::C,
+            server_id: s,
+            channel_id: Some(c),
+            entity_id: Some(Uuid::new_v4()),
+            delta: None,
+        })
+        .await
+        .unwrap();
+
+        let client = redis::Client::open(std::env::var("REDIS_URL").unwrap()).unwrap();
+        let mut pubsub = client.get_async_pubsub().await.unwrap();
+        pubsub
+            .subscribe(super::super::protocol::LiveTopic::Typing(c).redis_channel())
+            .await
+            .unwrap();
+        g.revoke_channel(s, c).await.unwrap();
+        g.drop_channel_log(c).await;
+        let mut stops = Vec::new();
+        {
+            let mut messages = pubsub.on_message();
+            while let Ok(Some(message)) =
+                tokio::time::timeout(Duration::from_millis(300), messages.next()).await
+            {
+                stops.push(message.get_payload::<String>().unwrap());
+            }
+        }
+        assert_eq!(stops.len(), 1, "{stops:?}");
+        assert!(stops[0].contains(&typer.to_string()), "{stops:?}");
+
+        let mut conn = client.get_multiplexed_async_connection().await.unwrap();
+        let left: i64 = redis::cmd("EXISTS")
+            .arg(topic.seq_key())
+            .arg(topic.log_key())
+            .arg(topic.epoch_key())
+            .arg(topic.delivery_key())
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(left, 0);
+        g.detach(typing).await;
+        g.detach(other).await;
     }
 
     #[tokio::test]

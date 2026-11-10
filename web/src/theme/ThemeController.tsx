@@ -23,9 +23,11 @@ export function ThemeController() {
       if (document.visibilityState === "visible") void syncThemes();
     };
     window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => {
       window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
   }, [user, sessionStatus]);
@@ -49,7 +51,7 @@ export function ThemeController() {
       const switched = appliedId.current !== null && appliedId.current !== id;
       appliedId.current = id;
       const busy =
-        fromSystem && document.querySelector("dialog[open]") !== null;
+        fromSystem && document.querySelector("dialog:modal") !== null;
       if (switched && !reduced && !busy && document.startViewTransition)
         document.startViewTransition(put);
       else put();

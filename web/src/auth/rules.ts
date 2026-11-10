@@ -36,6 +36,32 @@ export function validateEmail(raw: string): FieldCode | null {
   return null;
 }
 
+// RFC 5322 atext, plus any non-ASCII character as RFC 6531 allows.
+const ATOM = /^(?:[A-Za-z0-9!#$%&'*+\-/=?^_`{|}~]|\P{ASCII})+$/u;
+const LOCAL_PART_MAX_BYTES = 64;
+
+/**
+ * `validateEmail` for registration, mirroring the server's `new_email`:
+ * one bare address, no display name (`a<x@y>`), quoted local part,
+ * comment, or `%` in the domain. Sign-in keeps the lenient check.
+ */
+export function validateNewEmail(raw: string): FieldCode | null {
+  const code = validateEmail(raw);
+  if (code) return code;
+  const value = raw.trim().toLowerCase();
+  const at = value.indexOf("@");
+  const local = value.slice(0, at);
+  const domain = value.slice(at + 1);
+  if (
+    new TextEncoder().encode(local).length > LOCAL_PART_MAX_BYTES ||
+    !local.split(".").every((atom) => ATOM.test(atom)) ||
+    /[%"(),:;<>\\]/.test(domain)
+  ) {
+    return "invalid";
+  }
+  return null;
+}
+
 export function validatePassword(raw: string): FieldCode | null {
   const count = chars(raw);
   if (count === 0) return "required";
@@ -325,7 +351,9 @@ export function fieldMessage(field: string, code: FieldCode): string {
         ? "Die Datei ist zu groß (max. 25 MB)."
         : field === "attachment_ids"
           ? "Höchstens 10 Dateien pro Nachricht."
-          : `${label} ist zu lang.`;
+          : field.startsWith("attachment_ids.")
+            ? "Das Bild hat zu viele Pixel (max. 16384 px pro Seite, 64 Megapixel)."
+            : `${label} ist zu lang.`;
     case "too_large":
       return "Alle Dateien zusammen sind zu groß (max. 100 MB).";
     case "mismatch":

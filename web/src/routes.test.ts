@@ -37,6 +37,18 @@ describe("router", () => {
     expect(html).toContain('<span role="status">Verbinde…</span>');
   });
 
+  it("shows a German error with a reload when a page throws", () => {
+    // TanStack's own fallback is an English "Something went wrong!".
+    const failed = router.options.defaultErrorComponent;
+    expect(failed).toBeDefined();
+    const html = renderToStaticMarkup(
+      createElement(failed!, { error: new Error("kaputt"), reset: () => {} }),
+    );
+    expect(html).toContain("Etwas ist schiefgelaufen");
+    expect(html).toContain("Seite neu laden");
+    expect(html).not.toContain("kaputt");
+  });
+
   it("sends a signed-out invitee to registration and back", async () => {
     useSession.setState({ status: "anonymous", user: null });
     const guard = router.routesById["/auth/invite/$code"].options.beforeLoad;
@@ -51,6 +63,23 @@ describe("router", () => {
       to: "/register",
       search: { redirect: "/invite/x" },
     });
+  });
+
+  it("lets a signed-in user ask for a new password", async () => {
+    // Expired reset links and the verify page link here signed in too.
+    useSession.setState({
+      status: "authenticated",
+      user: { id: "u1", name: "Ada", email: "ada@example.org" } as never,
+    });
+    try {
+      await expect(
+        router.routesById["/auth/forgot-password"].options.beforeLoad?.({
+          search: {},
+        } as never),
+      ).resolves.toBeUndefined();
+    } finally {
+      useSession.setState({ status: "anonymous", user: null });
+    }
   });
 
   it("keeps only known auth search values", () => {

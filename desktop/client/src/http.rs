@@ -12,6 +12,8 @@ use reqwest::{Method, StatusCode, header};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::models::CsrfResponse;
+
 /// Per REST request, as the web (`REQUEST_TIMEOUT_MS`).
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// Uploads of attachment bytes (web `messages/api.ts`).
@@ -161,17 +163,48 @@ pub fn error_message(code: &str) -> &'static str {
 
 type Hook = Arc<dyn Fn() + Send + Sync>;
 
+/// What a download is for; each kind has its own byte cap.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Download {
+    /// Avatars, icons, banners, picture attachments, GIFs.
+    Image,
+    /// A text attachment shown inline (`TEXT_PREVIEW_MAX`).
+    Text,
+    /// Any attachment saved to disk.
+    File,
+}
+
+impl Download {
+    pub const fn max_bytes(self) -> usize {
+        match self {
+            // An attachment's limit (attachments/validate.rs `SIZE_MAX`).
+            Self::Image | Self::File => 25 * 1024 * 1024,
+            Self::Text => 100 * 1024,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Http {
     base: url::Url,
     client: reqwest::Client,
     /// Without cookies: presigned uploads go to another origin (MinIO).
     plain: reqwest::Client,
+    /// Downloads from other origins: no cookies, no redirects.
+    foreign: reqwest::Client,
     jar: Arc<reqwest::cookie::Jar>,
     csrf: Arc<RwLock<Option<String>>>,
     /// Server clock minus local clock in ms, from each `Date` header.
     clock_offset: Arc<AtomicI64>,
     unauthenticated: Arc<RwLock<Option<Hook>>>,
+    /// A sign-out the server has not confirmed yet; see [`Http::sign_out`].
+    held: Arc<RwLock<Option<HeldSignOut>>>,
+}
+
+#[derive(Clone)]
+struct HeldSignOut {
+    cookie: String,
+    everywhere: bool,
 }
 
 impl Http {
@@ -201,14 +234,22 @@ impl Http {
             .timeout(UPLOAD_TIMEOUT)
             .build()
             .map_err(|e| ApiError::Transport(e.to_string()))?;
+        let foreign = reqwest::Client::builder()
+            .user_agent(user_agent)
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(UPLOAD_TIMEOUT)
+            .build()
+            .map_err(|e| ApiError::Transport(e.to_string()))?;
         Ok(Self {
             base,
             client,
             plain,
+            foreign,
             jar,
             csrf: Arc::new(RwLock::new(None)),
             clock_offset: Arc::new(AtomicI64::new(0)),
             unauthenticated: Arc::new(RwLock::new(None)),
+            held: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -296,6 +337,15 @@ impl Http {
         *self.unauthenticated.write() = Some(hook);
     }
 
+    /// Runs the hook of [`Self::set_unauthenticated_hook`] (a 401 that did
+    /// not come over REST, e.g. on the gateway upgrade).
+    pub(crate) fn report_unauthenticated(&self) {
+        let hook = self.unauthenticated.read().clone();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+
     pub async fn request<B: Serialize, T: DeserializeOwned>(
         &self,
         method: Method,
@@ -320,6 +370,17 @@ impl Http {
         path: &str,
         body: Option<Body>,
     ) -> Result<Vec<u8>, ApiError> {
+        self.execute_as(method, path, body, None).await
+    }
+
+    /// [`Self::execute`] with a session cookie that is no longer in the jar.
+    async fn execute_as(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Body>,
+        session: Option<&str>,
+    ) -> Result<Vec<u8>, ApiError> {
         let write = method != Method::GET && method != Method::HEAD;
         if write && self.csrf.read().is_none() {
             self.refresh_csrf().await?;
@@ -331,6 +392,12 @@ impl Http {
                 .request(method.clone(), self.url(&format!("/api{path}")));
             if write && let Some(token) = self.csrf.read().clone() {
                 req = req.header("X-CSRF-Token", token);
+            }
+            if let Some(session) = session {
+                // A Cookie header of our own replaces the jar's: send both.
+                let jar = self.cookie_header().map(|c| format!("{c}; "));
+                let value = format!("{}gelabber_session={session}", jar.unwrap_or_default());
+                req = req.header(header::COOKIE, value);
             }
             match &body {
                 Some(Body::Json(json)) => {
@@ -472,6 +539,55 @@ impl Http {
         Ok(session)
     }
 
+    /// Signs out on the server. The session cookie leaves the jar at once
+    /// (so it is not kept across a restart either) and stays in memory only
+    /// until the server confirms; until then a retry, also a plain one,
+    /// repeats "everywhere" if that was asked for.
+    pub async fn sign_out(&self, everywhere: bool) -> Result<CsrfResponse, ApiError> {
+        let held = {
+            let mut held = self.held.write();
+            let everywhere = everywhere || held.as_ref().is_some_and(|h| h.everywhere);
+            match self.session_cookie() {
+                Some(cookie) => {
+                    self.jar
+                        .add_cookie_str("gelabber_session=; Path=/; Max-Age=0", &self.base);
+                    *held = Some(HeldSignOut { cookie, everywhere });
+                }
+                None => {
+                    if let Some(h) = held.as_mut() {
+                        h.everywhere = everywhere;
+                    }
+                }
+            }
+            held.clone()
+        };
+        let everywhere = everywhere || held.as_ref().is_some_and(|h| h.everywhere);
+        let path = if everywhere {
+            "/auth/logout-all"
+        } else {
+            "/auth/logout"
+        };
+        let cookie = held.as_ref().map(|h| h.cookie.as_str());
+        let bytes = self.execute_as(Method::POST, path, None, cookie).await?;
+        let mut current = self.held.write();
+        if current.as_ref().map(|h| &h.cookie) == held.as_ref().map(|h| &h.cookie) {
+            *current = None;
+        }
+        drop(current);
+        decode(path, &bytes)
+    }
+
+    /// Whether the sign-out the server has not confirmed yet ends every
+    /// session of the account (a retry repeats that variant).
+    pub fn unconfirmed_sign_out_everywhere(&self) -> bool {
+        self.held.read().as_ref().is_some_and(|h| h.everywhere)
+    }
+
+    /// A new sign-in: an old unconfirmed sign-out is not retried with it.
+    pub fn forget_sign_out(&self) {
+        *self.held.write() = None;
+    }
+
     async fn refresh_csrf(&self) -> Result<(), ApiError> {
         self.session().await.map(|_| ())
     }
@@ -490,27 +606,46 @@ impl Http {
         self.session().await
     }
 
-    /// Raw bytes of a same-origin resource (avatars, attachments, images).
-    pub async fn bytes(&self, path_or_url: &str) -> Result<Vec<u8>, ApiError> {
-        let url = if path_or_url.starts_with("http://") || path_or_url.starts_with("https://") {
+    /// Raw bytes of a resource (avatars, attachments, images), at most
+    /// `kind`'s cap. Another origin (a member's avatar URL, a GIF CDN) gets
+    /// neither the session cookie nor a redirect followed.
+    pub async fn bytes(&self, path_or_url: &str, kind: Download) -> Result<Vec<u8>, ApiError> {
+        let absolute = path_or_url.starts_with("http://") || path_or_url.starts_with("https://");
+        let url = if absolute {
             path_or_url.to_owned()
         } else {
             self.url(path_or_url)
         };
+        let same_origin = url::Url::parse(&url).is_ok_and(|u| u.origin() == self.base.origin());
+        let client = if same_origin {
+            &self.client
+        } else {
+            &self.foreign
+        };
         // Attachments can be large: the upload timeout, not the REST one.
-        let res = self
-            .client
+        let mut res = client
             .get(url)
             .timeout(UPLOAD_TIMEOUT)
             .send()
             .await
             .map_err(ApiError::from_reqwest)?;
         let status = res.status();
-        let bytes = res.bytes().await.map_err(ApiError::from_reqwest)?;
+        let max = kind.max_bytes();
+        let too_large = || ApiError::Decode(format!("mehr als {max} Bytes"));
+        if res.content_length().is_some_and(|n| n > max as u64) {
+            return Err(too_large());
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = res.chunk().await.map_err(ApiError::from_reqwest)? {
+            if bytes.len() + chunk.len() > max {
+                return Err(too_large());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
         if !status.is_success() {
             return Err(envelope(status, &bytes, None));
         }
-        Ok(bytes.to_vec())
+        Ok(bytes)
     }
 
     /// Any successful body with a `csrf_token` string replaces the token
@@ -592,6 +727,28 @@ fn envelope(status: StatusCode, bytes: &[u8], header_wait: Option<f64>) -> ApiEr
             .cloned()
             .unwrap_or(serde_json::Value::Null),
     }
+}
+
+/// TLS for `/ws` and `/media/ws`, verified like REST (reqwest's
+/// `rustls-platform-verifier`): a private CA in the OS store works for both.
+pub fn ws_connector() -> Result<tokio_tungstenite::Connector, String> {
+    static CONFIG: std::sync::OnceLock<Result<Arc<rustls::ClientConfig>, String>> =
+        std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            use rustls_platform_verifier::BuilderVerifierExt;
+            let provider = rustls::crypto::CryptoProvider::get_default()
+                .cloned()
+                .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
+            rustls::ClientConfig::builder_with_provider(provider)
+                .with_safe_default_protocol_versions()
+                .map_err(|e| e.to_string())?
+                .with_platform_verifier()
+                .map(|b| Arc::new(b.with_no_client_auth()))
+                .map_err(|e| e.to_string())
+        })
+        .clone()
+        .map(tokio_tungstenite::Connector::Rustls)
 }
 
 /// `encodeURIComponent` for path segments (emoji, invite codes).
@@ -700,6 +857,150 @@ mod tests {
         );
         assert_eq!(header_only.retry_after(), Some(3.0));
         assert_eq!(ApiError::Transport("x".into()).retry_after(), None);
+    }
+
+    /// Serves each connection with `answer(request head)`; what came in is
+    /// kept in the returned list.
+    fn serve(
+        answer: impl Fn(&str) -> Vec<u8> + Send + Sync + 'static,
+    ) -> (String, Arc<parking_lot::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let answer = Arc::new(answer);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let (log, answer) = (log.clone(), answer.clone());
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+                    log.lock().push(head.clone());
+                    let _ = stream.write_all(&answer(&head));
+                });
+            }
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    fn ok_body(len: usize) -> Vec<u8> {
+        let mut out = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nConnection: close\r\nContent-Length: {len}\r\n\r\n"
+        )
+        .into_bytes();
+        out.resize(out.len() + len, b'x');
+        out
+    }
+
+    #[test]
+    fn downloads_stop_at_their_cap() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let cap = Download::Text.max_bytes();
+        let (base, _) = serve(move |head| {
+            if head.starts_with("GET /small") {
+                ok_body(cap)
+            } else {
+                // Declares nothing: the cap must hold while reading.
+                let mut out = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_vec();
+                out.resize(out.len() + cap + 1, b'x');
+                out
+            }
+        });
+        let http = Http::new(&base).unwrap();
+        let small = runtime.block_on(http.bytes("/small", Download::Text));
+        assert_eq!(small.unwrap().len(), cap);
+        let large = runtime.block_on(http.bytes("/large", Download::Text));
+        assert!(large.is_err(), "{large:?}");
+        // The same body is fine for a picture.
+        let image = runtime.block_on(http.bytes("/large", Download::Image));
+        assert_eq!(image.unwrap().len(), cap + 1);
+    }
+
+    #[test]
+    fn a_foreign_download_carries_no_cookie_and_follows_no_redirect() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (api, api_seen) = serve(|_| ok_body(1));
+        let target = format!("{api}/api/auth/logout");
+        let (foreign, foreign_seen) = serve(move |_| {
+            format!(
+                "HTTP/1.1 302 Found\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .into_bytes()
+        });
+        let http = Http::new(&api).unwrap();
+        http.restore_session_cookie("secret");
+        let answer =
+            runtime.block_on(http.bytes(&format!("{foreign}/avatar.png"), Download::Image));
+        assert!(answer.is_err(), "{answer:?}");
+        let heads = foreign_seen.lock().clone();
+        assert_eq!(heads.len(), 1);
+        assert!(
+            !heads[0].to_ascii_lowercase().contains("cookie"),
+            "{}",
+            heads[0]
+        );
+        assert!(api_seen.lock().is_empty());
+        // The own origin still gets the session.
+        runtime
+            .block_on(http.bytes(&format!("{api}/api/avatars/x"), Download::Image))
+            .unwrap();
+        assert!(api_seen.lock()[0].contains("gelabber_session=secret"));
+    }
+
+    /// "Sign out everywhere" that the server did not confirm: the cookie is
+    /// gone from the jar at once, and the retry (the strip's plain one) is
+    /// again "everywhere", with the old session.
+    #[test]
+    fn an_unconfirmed_sign_out_everywhere_is_retried_as_one() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let fail = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let failing = fail.clone();
+        let (base, seen) = serve(move |head| {
+            let json = |status: &str, body: &str| {
+                format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .into_bytes()
+            };
+            if head.starts_with("GET ") {
+                json("200 OK", r#"{"user":null,"csrf_token":"c"}"#)
+            } else if failing.load(Ordering::SeqCst) {
+                json("503 Service Unavailable", r#"{"error":"internal"}"#)
+            } else {
+                json("200 OK", r#"{"csrf_token":"d"}"#)
+            }
+        });
+        let posts = || -> Vec<String> {
+            seen.lock()
+                .iter()
+                .filter(|h| h.starts_with("POST"))
+                .cloned()
+                .collect()
+        };
+        let http = Http::new(&base).unwrap();
+        http.restore_session_cookie("tok");
+        assert!(runtime.block_on(http.sign_out(true)).is_err());
+        assert!(http.unconfirmed_sign_out_everywhere());
+        assert!(!http.has_session_cookie());
+        assert_eq!(http.session_cookie(), None);
+        fail.store(false, Ordering::SeqCst);
+        runtime.block_on(http.sign_out(false)).unwrap();
+        let sent = posts();
+        assert_eq!(sent.len(), 2);
+        for head in &sent {
+            assert!(head.starts_with("POST /api/auth/logout-all "), "{head}");
+            assert!(head.contains("gelabber_session=tok"), "{head}");
+        }
+        // Confirmed: nothing is held any more.
+        assert!(!http.unconfirmed_sign_out_everywhere());
+        runtime.block_on(http.sign_out(false)).unwrap();
+        let last = posts().pop().unwrap();
+        assert!(last.starts_with("POST /api/auth/logout "), "{last}");
+        assert!(!last.contains("gelabber_session"), "{last}");
     }
 
     #[test]

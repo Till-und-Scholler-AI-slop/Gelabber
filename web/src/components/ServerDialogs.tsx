@@ -4,7 +4,7 @@
 // moment the form is valid.
 
 import { useNavigate } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import { currentUserId, useUserId } from "../auth/scope.ts";
 import { fieldMessage } from "../auth/rules.ts";
@@ -55,6 +55,7 @@ export function AddServerDialog({
   const [step, setStep] = useState<"choose" | "create" | "join">("choose");
   // After "Zurück", focus returns to the choice that was taken.
   const [from, setFrom] = useState<"create" | "join" | null>(null);
+  const [dirty, setDirty] = useState(false);
   const close = () => {
     onClose();
     setStep("choose");
@@ -71,11 +72,16 @@ export function AddServerDialog({
         ? "Server beitreten"
         : "Server hinzufügen";
   return (
-    <Modal open={open} onClose={close} title={title}>
+    <Modal open={open} onClose={close} title={title} dirty={dirty}>
       {!open ? null : step === "create" ? (
-        <CreateServerForm onClose={close} onBack={back} />
+        <CreateServerForm onClose={close} onBack={back} onDirty={setDirty} />
       ) : step === "join" ? (
-        <JoinServerForm autoFocus onJoin={close} onBack={back} />
+        <JoinServerForm
+          autoFocus
+          onJoin={close}
+          onBack={back}
+          onDirty={setDirty}
+        />
       ) : (
         <div className="add-server-choices">
           <button
@@ -115,14 +121,25 @@ export function CreateServerDialog({
   open: boolean;
   onClose: () => void;
 }) {
+  const [dirty, setDirty] = useState(false);
   return (
-    <Modal open={open} onClose={onClose} title="Server erstellen">
-      {open ? <CreateServerForm onClose={onClose} /> : null}
+    <Modal open={open} onClose={onClose} title="Server erstellen" dirty={dirty}>
+      {open ? <CreateServerForm onClose={onClose} onDirty={setDirty} /> : null}
     </Modal>
   );
 }
 
 const CREATE_HINT = "Mit #allgemein und einem Sprachkanal.";
+
+/** Tells the dialog around a form whether closing it would lose typed
+ *  text: the backdrop then leaves it open, and Esc asks first. */
+function useReportDirty(
+  onDirty: ((dirty: boolean) => void) | undefined,
+  dirty: boolean,
+) {
+  useEffect(() => onDirty?.(dirty), [onDirty, dirty]);
+  useEffect(() => () => onDirty?.(false), [onDirty]);
+}
 
 /**
  * Creates the server, opens its overview and offers an invite link right
@@ -131,14 +148,17 @@ const CREATE_HINT = "Mit #allgemein und einem Sprachkanal.";
 function CreateServerForm({
   onClose,
   onBack,
+  onDirty,
 }: {
   onClose: () => void;
   onBack?: () => void;
+  onDirty?: (dirty: boolean) => void;
 }) {
   const navigate = useNavigate();
   const userId = useUserId();
   const remember = useLastChannel((s) => s.remember);
   const [name, setName] = useState("");
+  useReportDirty(onDirty, name !== "");
   const { errors, clearField, setFields, fromError } = useFormErrors();
   const mutation = useCreateServer();
 
@@ -200,16 +220,19 @@ export function JoinServerForm({
   autoFocus,
   onJoin,
   onBack,
+  onDirty,
   inline = false,
 }: {
   autoFocus?: boolean;
   onJoin?: () => void;
   onBack?: () => void;
+  onDirty?: (dirty: boolean) => void;
   /** Field and button side by side, without a dialog's button row. */
   inline?: boolean;
 }) {
   const navigate = useNavigate();
   const [value, setValue] = useState("");
+  useReportDirty(onDirty, value !== "");
   const [error, setError] = useState<string | undefined>();
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -280,10 +303,16 @@ export function CategoryDialog({
 }) {
   const title =
     state?.mode === "edit" ? "Kategorie umbenennen" : "Kategorie erstellen";
+  const [dirty, setDirty] = useState(false);
   return (
-    <Modal open={state !== null} onClose={onClose} title={title}>
+    <Modal open={state !== null} onClose={onClose} title={title} dirty={dirty}>
       {state ? (
-        <CategoryForm server={server} state={state} onClose={onClose} />
+        <CategoryForm
+          server={server}
+          state={state}
+          onClose={onClose}
+          onDirty={setDirty}
+        />
       ) : null}
     </Modal>
   );
@@ -293,14 +322,18 @@ function CategoryForm({
   server,
   state,
   onClose,
+  onDirty,
 }: {
   server: ServerDetail;
   state: CategoryDialogState;
   onClose: () => void;
+  onDirty: (dirty: boolean) => void;
 }) {
-  const [name, setName] = useState(
+  const [initialName] = useState(
     state.mode === "edit" ? state.category.name : "",
   );
+  const [name, setName] = useState(initialName);
+  useReportDirty(onDirty, name !== initialName);
   const { errors, clearField, setFields } = useFormErrors();
   const create = useCreateCategory(server.id);
   const update = useUpdateCategory(server.id);
@@ -363,10 +396,16 @@ export function ChannelDialog({
   onClose: () => void;
 }) {
   const title = state?.mode === "edit" ? "Kanal bearbeiten" : "Kanal erstellen";
+  const [dirty, setDirty] = useState(false);
   return (
-    <Modal open={state !== null} onClose={onClose} title={title}>
+    <Modal open={state !== null} onClose={onClose} title={title} dirty={dirty}>
       {state ? (
-        <ChannelForm server={server} state={state} onClose={onClose} />
+        <ChannelForm
+          server={server}
+          state={state}
+          onClose={onClose}
+          onDirty={setDirty}
+        />
       ) : null}
     </Modal>
   );
@@ -376,13 +415,17 @@ function ChannelForm({
   server,
   state,
   onClose,
+  onDirty,
 }: {
   server: ServerDetail;
   state: ChannelDialogState;
   onClose: () => void;
+  onDirty: (dirty: boolean) => void;
 }) {
   const editing = state.mode === "edit" ? state.channel : null;
-  const [name, setName] = useState(editing?.name ?? "");
+  const [initialName] = useState(editing?.name ?? "");
+  const [name, setName] = useState(initialName);
+  useReportDirty(onDirty, name !== initialName);
   const [kind, setKind] = useState<ChannelKind>(
     state.mode === "edit" ? state.channel.kind : (state.kind ?? "text"),
   );

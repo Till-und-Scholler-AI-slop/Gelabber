@@ -247,6 +247,109 @@ async fn ban_blocks_invite_rejoin(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn ban_revokes_the_banned_members_invites(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let server_id = server["id"].as_str().unwrap().to_owned();
+    let member_id = me_id(&mut member).await;
+
+    let own = member
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server_id}/invites"),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(own.status, StatusCode::CREATED, "{}", own.body);
+    let own_code = own.body["code"].as_str().unwrap().to_owned();
+
+    let banned = owner
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server_id}/ban"),
+            Some(json!({ "user_id": member_id })),
+        )
+        .await;
+    assert_eq!(banned.status, StatusCode::NO_CONTENT, "{}", banned.body);
+
+    // A second account must not get back in through the banned user's link.
+    let mut second = Client::new(pool);
+    second.bootstrap().await;
+    let res = second
+        .register("second@example.com", "password123", "Bob2")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let join = second
+        .send(Method::POST, &format!("/api/invites/{own_code}/join"), None)
+        .await;
+    assert_eq!(join.status, StatusCode::NOT_FOUND, "{}", join.body);
+
+    // The owner's own invites stay.
+    let list = owner
+        .send(
+            Method::GET,
+            &format!("/api/servers/{server_id}/invites"),
+            None,
+        )
+        .await;
+    assert_eq!(list.status, StatusCode::OK);
+    let codes: Vec<&str> = list
+        .body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|invite| invite["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes.len(), 1, "{}", list.body);
+    assert_ne!(codes[0], own_code);
+}
+
+#[sqlx::test]
+async fn a_held_server_row_cannot_stall_a_ban(pool: PgPool) {
+    let (mut owner, mut member) = two_users(pool.clone()).await;
+    let server = server_with_member(&mut owner, &mut member).await;
+    let server_id = server["id"].as_str().unwrap().to_owned();
+    let member_id = me_id(&mut member).await;
+
+    // A reader that keeps its share lock, as a member's socket could.
+    let mut reader = pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM servers WHERE id = $1::uuid FOR SHARE")
+        .bind(&server_id)
+        .fetch_one(&mut *reader)
+        .await
+        .unwrap();
+    let path = format!("/api/servers/{server_id}/ban");
+    let body = json!({ "user_id": member_id });
+    for route in ["ban", "kick"] {
+        let res = tokio::time::timeout(
+            Duration::from_secs(15),
+            owner.send(
+                Method::POST,
+                &format!("/api/servers/{server_id}/{route}"),
+                Some(body.clone()),
+            ),
+        )
+        .await
+        .expect("the moderation request gives up on the lock");
+        assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.body);
+        assert_eq!(res.body["error"], "rate_limited");
+        assert_eq!(res.body["retry_after"], 1);
+    }
+    let res = tokio::time::timeout(
+        Duration::from_secs(15),
+        owner.send(Method::DELETE, &format!("/api/servers/{server_id}"), None),
+    )
+    .await
+    .expect("the delete gives up on the lock");
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.body);
+    reader.rollback().await.unwrap();
+
+    // Once the row is free the retry goes through.
+    let res = owner.send(Method::POST, &path, Some(body)).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+}
+
+#[sqlx::test]
 async fn kick_and_ban_are_admin_only_and_cannot_target_owner(pool: PgPool) {
     let (mut owner, mut member) = two_users(pool).await;
     let server = server_with_member(&mut owner, &mut member).await;

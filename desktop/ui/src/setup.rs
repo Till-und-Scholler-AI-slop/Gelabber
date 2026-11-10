@@ -373,9 +373,16 @@ fn check_reachable(origin: &str) -> Result<(), Failure> {
     })
 }
 
+/// A redirect the check follows: within the typed origin, or the same host
+/// from http to https. Anything else could be anyone on the path.
+fn redirect_allowed(first: &reqwest::Url, to: &reqwest::Url) -> bool {
+    to.origin() == first.origin()
+        || (first.scheme() == "http" && to.scheme() == "https" && to.host() == first.host())
+}
+
 /// Whether Gelabber answers at `origin`: `GET /api/auth/mail`, which every
-/// server answers signed out. A redirect (http to https) is followed, and
-/// its origin is the one to use.
+/// server answers signed out. A redirect from http to https on the same host
+/// is followed, and its origin is the one to use; another one is named.
 fn check_gelabber(origin: &str) -> Result<String, Failure> {
     let failed = |e: String| Failure::new(UNREACHABLE, Some(e));
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -383,9 +390,22 @@ fn check_gelabber(origin: &str) -> Result<String, Failure> {
         .build()
         .map_err(|e| failed(e.to_string()))?;
     runtime.block_on(async {
+        let policy = reqwest::redirect::Policy::custom(|attempt| {
+            let allowed = attempt.previous().len() < 10
+                && attempt
+                    .previous()
+                    .first()
+                    .is_some_and(|first| redirect_allowed(first, attempt.url()));
+            if allowed {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        });
         let http = reqwest::Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
+            .redirect(policy)
             .build()
             .map_err(|e| failed(e.to_string()))?;
         let response = http
@@ -396,6 +416,23 @@ fn check_gelabber(origin: &str) -> Result<String, Failure> {
         let status = response.status();
         let landed = response.url().origin().ascii_serialization();
         let detail = Some(format!("HTTP {status}"));
+        if status.is_redirection() {
+            let to = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|l| l.to_str().ok())
+                .and_then(|l| response.url().join(l).ok());
+            return Err(match to {
+                Some(to) => Failure::new(
+                    format!(
+                        "Der Server leitet auf {} weiter. Gib diese Adresse ein, wenn du ihr vertraust.",
+                        to.origin().ascii_serialization()
+                    ),
+                    detail,
+                ),
+                None => Failure::new(NOT_GELABBER, detail),
+            });
+        }
         if status.is_server_error() {
             return Err(Failure::new(SERVER_TROUBLE, detail));
         }
@@ -477,6 +514,8 @@ impl eframe::App for Launcher {
                     // Leaving for the setup page ends the call, as the
                     // Tauri window's navigation does; the server is told.
                     app.call().leave();
+                    // Its video windows close and let the old call go.
+                    crate::screens::voice::window::forget(&ctx);
                 }
                 if switch {
                     self.show_setup(origin, None);
@@ -659,7 +698,8 @@ fn updates_section(ui: &mut Ui, view: &SetupView) {
 mod tests {
     use super::{
         Failure, Launcher, NO_ADDRESS, NOT_GELABBER, REFUSED, SERVER_TROUBLE, TIMED_OUT, TLS,
-        TLS_CERTIFICATE, check_gelabber, classify, host_of, request_failure, server_origin,
+        TLS_CERTIFICATE, check_gelabber, classify, host_of, redirect_allowed, request_failure,
+        server_origin,
     };
     use crate::app::testkit::{FakeApi, Reply, launcher, wait_for, wait_for_label};
     use crate::platform::paths::testing::TempConfig;
@@ -879,6 +919,55 @@ mod tests {
         let trouble = |status: &str| Err(Failure::new(SERVER_TROUBLE, Some(status.into())));
         assert_eq!(at("proxy"), trouble("HTTP 429 Too Many Requests"));
         assert_eq!(at("broken"), trouble("HTTP 502 Bad Gateway"));
+    }
+
+    /// Only the same host going from http to https is followed; another
+    /// address is named, not taken (a redirect anyone on the path can send).
+    #[test]
+    fn a_redirect_to_another_address_is_named_not_taken() {
+        let good = FakeApi::start(true, |_, _, _| None);
+        let target = format!("{}/api/auth/mail", good.origin);
+        let evil = FakeApi::start(true, move |_, path, _| match path {
+            "/auth/mail" => {
+                Some(Reply::status(302, serde_json::json!({})).header("location", target.clone()))
+            }
+            "/moved/api/auth/mail" => Some(
+                Reply::status(301, serde_json::json!({})).header("location", "/ok/api/auth/mail"),
+            ),
+            "/ok/api/auth/mail" => Some(Reply::json(serde_json::json!({"enabled": true}))),
+            _ => None,
+        });
+        let failure = check_gelabber(&evil.origin).unwrap_err();
+        assert!(
+            failure.message.contains(&good.origin),
+            "{}",
+            failure.message
+        );
+        assert!(!good.saw("GET /auth/mail"), "not followed");
+        // Within the same origin a redirect is fine.
+        let moved = check_gelabber(&format!("{}/moved", evil.origin));
+        assert_eq!(moved, Ok(evil.origin.clone()));
+
+        let url = |u: &str| reqwest::Url::parse(u).unwrap();
+        let from = url("http://chat.example/api/auth/mail");
+        assert!(redirect_allowed(
+            &from,
+            &url("https://chat.example/api/auth/mail")
+        ));
+        assert!(redirect_allowed(&from, &url("http://chat.example/x")));
+        assert!(!redirect_allowed(
+            &from,
+            &url("https://evil.example/api/auth/mail")
+        ));
+        assert!(!redirect_allowed(
+            &from,
+            &url("http://chat.example:8080/api/auth/mail")
+        ));
+        let secure = url("https://chat.example/api/auth/mail");
+        assert!(!redirect_allowed(
+            &secure,
+            &url("http://chat.example/api/auth/mail")
+        ));
     }
 
     /// TLS words count in the causes only, not in the URL reqwest names.

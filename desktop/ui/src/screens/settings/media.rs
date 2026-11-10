@@ -52,8 +52,22 @@ fn dialog_id() -> Id {
 
 /// The forms inside the Audio & Video dialog: fields on the page colour,
 /// buttons and chips without the settings page's accent text.
+/// The dialog draws over the page's own form: its controls get ids of
+/// their own.
 pub fn set_in_dialog(ctx: &egui::Context, on: bool) {
     ctx.data_mut(|d| d.insert_temp(dialog_id(), on));
+    controls::set_id_scope(ctx, on.then_some("media-dialog"));
+}
+
+fn recording_id() -> Id {
+    Id::unique("gelabber-ptt-recording")
+}
+
+/// A push-to-talk key is being recorded (the recorder drew last frame): the
+/// mouse's side buttons are its to take, not the window's back and forward.
+pub fn recording_key(ctx: &egui::Context) -> bool {
+    let drawn: Option<u64> = ctx.data(|d| d.get_temp(recording_id()));
+    drawn.is_some_and(|f| f + 1 >= ctx.cumulative_frame_nr())
 }
 
 fn in_dialog(ui: &Ui) -> bool {
@@ -441,6 +455,10 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 if button(ui, &label, false, false) {
                     s.recording = !s.recording;
                 }
+                if s.recording {
+                    let frame = ui.ctx().cumulative_frame_nr();
+                    ui.ctx().data_mut(|d| d.insert_temp(recording_id(), frame));
+                }
                 if s.recording
                     && let Some((code, label)) = record_key(ui.ctx(), s)
                 {
@@ -606,9 +624,12 @@ pub fn audio(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
             );
             gap(ui);
             let silent = off || p.call_sound_volume == 0.0 || p.output_volume == 0.0;
-            controls::row(ui, 0.0, 36.0, |ui| {
+            // `VoiceSettings.tsx`: the test tone is the own join's cue.
+            if controls::row(ui, 0.0, 36.0, |ui| {
                 button(ui, "Testton abspielen", false, silent)
-            });
+            }) {
+                app.call.play_sound(gelabber_call::Sound::JoinSelf);
+            }
         });
         ui.add_space(20.0);
         disclosure(ui, s, &mut p);
@@ -625,7 +646,7 @@ fn disclosure(ui: &mut Ui, s: &mut State, p: &mut Prefs) {
     let width = ui.available_width();
     let top = ui.cursor().min;
     let summary = Rect::from_min_size(top + vec2(1.0, 1.0), vec2(width - 2.0, 44.0));
-    let id = Id::unique("gelabber-media-disclosure");
+    let id = controls::scoped(ui.ctx(), Id::unique("gelabber-media-disclosure"));
     let response = ui.interact(summary, id, Sense::click());
     if response.clicked() {
         s.advanced_open = !s.advanced_open;
@@ -777,23 +798,6 @@ pub fn global_key_note(
     }
 }
 
-/// Web `KeyboardEvent.code` names for egui keys, as the PTT core expects.
-fn key_code(key: egui::Key) -> Option<String> {
-    use egui::Key;
-    let name = key.name();
-    match key {
-        Key::Escape | Key::Enter | Key::Backspace => None,
-        Key::Space => Some("Space".into()),
-        _ if name.len() == 1 && name.chars().all(|c| c.is_ascii_alphabetic()) => {
-            Some(format!("Key{}", name.to_ascii_uppercase()))
-        }
-        _ if name.len() == 1 && name.chars().all(|c| c.is_ascii_digit()) => {
-            Some(format!("Digit{name}"))
-        }
-        _ => Some(name.replace(' ', "")),
-    }
-}
-
 /// `usePushToTalkKeyName`: the key push-to-talk holds, as the settings
 /// name it; `None` while push-to-talk is off or has no key.
 pub fn push_to_talk_key_name(ctx: &egui::Context) -> Option<String> {
@@ -819,55 +823,131 @@ fn key_label(code: &str) -> String {
                 .filter(|r| r.len() == 1)
                 .or_else(|| code.strip_prefix("Digit").filter(|r| r.len() == 1))
                 .unwrap_or(code);
-            c.replacen("Numpad", "Num ", 1)
+            let c = c.replacen("Numpad", "Num ", 1);
+            if let Some(side) = c.strip_suffix("Left") {
+                format!("{side} links")
+            } else if let Some(side) = c.strip_suffix("Right") {
+                format!("{side} rechts")
+            } else {
+                c
+            }
         }
     }
 }
 
-/// The next key or side mouse button while recording; Esc cancels.
-fn record_key(ctx: &egui::Context, s: &mut State) -> Option<(String, String)> {
-    let mut out = None;
-    ctx.input(|i| {
-        for e in &i.events {
-            match e {
-                egui::Event::Key {
-                    key: egui::Key::Escape,
-                    pressed: true,
-                    ..
-                } => {
-                    s.recording = false;
-                    return;
-                }
-                egui::Event::Key {
-                    key, pressed: true, ..
-                } => {
-                    if let Some(code) = key_code(*key) {
-                        let label = key_label(&code);
-                        out = Some((code, label));
-                        return;
-                    }
-                }
-                egui::Event::PointerButton {
-                    button,
-                    pressed: true,
-                    ..
-                } => {
-                    let code = match button {
-                        egui::PointerButton::Extra1 => "Mouse4",
-                        egui::PointerButton::Extra2 => "Mouse5",
-                        _ => continue,
-                    };
-                    out = Some((code.to_owned(), key_label(code)));
-                    return;
-                }
-                _ => {}
-            }
+/// How the window tells the push-to-talk key (Maustaste 4/5 aside).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowKey {
+    /// The key that types the stored label, as egui's `key` names it.
+    Logical(egui::Key),
+    /// The key at the stored place, as egui's `physical_key` names it.
+    Place(egui::Key),
+}
+
+/// The window's push-to-talk key, from what the settings store: the place
+/// code and the label the user saw. The key that typed a one-character
+/// label is the one that was pressed, whatever the layout (QWERTZ "Z" is
+/// stored at the place `KeyY`). An older name (`Backtick`, `Up`) or a
+/// label that is only the code's name matches as before, by egui's key.
+/// Anything else (Ü, ß, a dead key) matches by place.
+pub fn window_key(code: &str, label: &str) -> Option<WindowKey> {
+    let typed = {
+        let mut chars = label.chars();
+        match (chars.next(), chars.next()) {
+            (Some(c), None) if !c.is_whitespace() => egui::Key::from_name(&c.to_string()),
+            _ => None,
         }
-    });
-    if out.is_some() {
-        s.recording = false;
+    };
+    if !crate::platform::ptt::known(code) || label.is_empty() || label == key_label(code) {
+        return egui::Key::from_name(code).map(WindowKey::Logical);
     }
-    out
+    if let Some(key) = typed {
+        return Some(WindowKey::Logical(key));
+    }
+    egui::Key::from_name(code).map(WindowKey::Place)
+}
+
+/// The name of a key that typed nothing as it was pressed. The dead keys
+/// of a German keyboard show their mark, as the keycap does.
+fn silent_key_label(code: &str) -> String {
+    match code {
+        "Backquote" => "^".into(),
+        "Equal" => "´".into(),
+        _ => key_label(code),
+    }
+}
+
+/// What the recorder makes of a frame's events.
+#[derive(Debug, PartialEq)]
+enum Recorded {
+    Nothing,
+    Cancel,
+    Key(String, String),
+}
+
+/// The next key or side mouse button: the key's place as the global
+/// binding knows it (`KeyboardEvent.code`), named by the character it
+/// types, as `PushToTalkSettings` does. Esc cancels.
+fn recorded(events: &[egui::Event]) -> Recorded {
+    for (at, e) in events.iter().enumerate() {
+        match e {
+            egui::Event::Key {
+                key,
+                physical_key,
+                pressed: true,
+                ..
+            } => {
+                if *key == egui::Key::Escape || *physical_key == Some(egui::Key::Escape) {
+                    return Recorded::Cancel;
+                }
+                let Some(code) = physical_key.and_then(crate::platform::ptt::code_of) else {
+                    continue;
+                };
+                if code == "Enter" || code == "NumpadEnter" || code == "Backspace" {
+                    continue;
+                }
+                // The text the press typed, if it is one visible character.
+                let typed = events[at + 1..].iter().find_map(|e| match e {
+                    egui::Event::Text(t) => Some(t.as_str()),
+                    _ => None,
+                });
+                let label = match typed {
+                    Some(t) if t.chars().count() == 1 && t != " " => t.to_uppercase(),
+                    _ => silent_key_label(code),
+                };
+                return Recorded::Key(code.to_owned(), label);
+            }
+            egui::Event::PointerButton {
+                button,
+                pressed: true,
+                ..
+            } => {
+                let code = match button {
+                    egui::PointerButton::Extra1 => "Mouse4",
+                    egui::PointerButton::Extra2 => "Mouse5",
+                    _ => continue,
+                };
+                return Recorded::Key(code.to_owned(), key_label(code));
+            }
+            _ => {}
+        }
+    }
+    Recorded::Nothing
+}
+
+/// [`recorded`] for this frame; recording ends with a key or Esc.
+fn record_key(ctx: &egui::Context, s: &mut State) -> Option<(String, String)> {
+    match ctx.input(|i| recorded(&i.events)) {
+        Recorded::Nothing => None,
+        Recorded::Cancel => {
+            s.recording = false;
+            None
+        }
+        Recorded::Key(code, label) => {
+            s.recording = false;
+            Some((code, label))
+        }
+    }
 }
 
 // ----------------------------------------------------------------- video
@@ -1122,7 +1202,7 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                 let b = Block::single(ui, label, text::UI, c.text);
                 let w = 1.0 + 12.0 + 20.0 + 8.0 + b.width() + 12.0 + 1.0;
                 let rect = Rect::from_min_size(pos2(x, top.y), vec2(w, 36.0));
-                let id = Id::unique(("gelabber-upload-mode", i));
+                let id = controls::scoped(ui.ctx(), Id::unique(("gelabber-upload-mode", i)));
                 let response = ui.interact(rect, id, Sense::click());
                 let painter = ui.painter();
                 painter.rect(
@@ -1163,8 +1243,8 @@ pub fn video(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
                         .unwrap_or_else(|| format!("{}", p.video_upload_limit / 1_000_000.0));
                     let rect = Rect::from_min_size(ui.cursor().min, vec2(128.0, 37.0));
                     let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
-                    let out = crate::widgets::TextField::new("video-upload-limit", &mut t)
-                        .show(&mut child);
+                    let field = ("video-upload-limit", controls::id_scope(ui.ctx()));
+                    let out = crate::widgets::TextField::new(field, &mut t).show(&mut child);
                     ui.advance_cursor_after_rect(rect);
                     if out.response.changed() {
                         if let Ok(v) = t.replace(',', ".").parse::<f64>()
@@ -1261,6 +1341,104 @@ mod tests {
         assert_eq!(mbit(2_500_000.0), "2,5 Mbit/s");
         assert_eq!(mbit(10_000_000.0), "10 Mbit/s");
         assert_eq!(key_label("KeyV"), "V");
-        assert_eq!(key_code(egui::Key::V).as_deref(), Some("KeyV"));
+        assert_eq!(key_label("ControlLeft"), "Control links");
+        assert_eq!(key_label("Numpad0"), "Num 0");
+    }
+
+    #[test]
+    fn the_window_matches_what_was_pressed_and_old_keys_as_before() {
+        use egui::Key;
+        // QWERTZ: Z recorded at the place KeyY is the key that types Z.
+        assert_eq!(window_key("KeyY", "Z"), Some(WindowKey::Logical(Key::Z)));
+        // Recorded before places: the stored names match as they did.
+        assert_eq!(window_key("KeyZ", "Z"), Some(WindowKey::Logical(Key::Z)));
+        assert_eq!(window_key("KeyA", ""), Some(WindowKey::Logical(Key::A)));
+        assert_eq!(
+            window_key("Backtick", "Backtick"),
+            Some(WindowKey::Logical(Key::Backtick))
+        );
+        assert_eq!(
+            window_key("Up", "Up"),
+            Some(WindowKey::Logical(Key::ArrowUp))
+        );
+        assert_eq!(
+            window_key("Minus", "Minus"),
+            Some(WindowKey::Logical(Key::Minus))
+        );
+        assert_eq!(
+            window_key("Space", "Leertaste"),
+            Some(WindowKey::Logical(Key::Space))
+        );
+        // Keys without a character of their own in egui go by place.
+        assert_eq!(
+            window_key("BracketLeft", "Ü"),
+            Some(WindowKey::Place(Key::OpenBracket))
+        );
+        assert_eq!(
+            window_key("Backquote", "^"),
+            Some(WindowKey::Place(Key::Backtick))
+        );
+        assert_eq!(
+            window_key("Minus", "SS"),
+            Some(WindowKey::Place(Key::Minus))
+        );
+        assert_eq!(window_key("", ""), None);
+    }
+
+    fn press(logical: egui::Key, physical: Option<egui::Key>) -> egui::Event {
+        egui::Event::Key {
+            key: logical,
+            physical_key: physical,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    /// The key's place is recorded, as the global binding listens by place.
+    #[test]
+    fn the_recorder_keeps_the_place_and_names_the_character() {
+        use egui::Key;
+        let key = |code: &str, label: &str| Recorded::Key(code.into(), label.into());
+        // QWERTZ: the key labelled Z sits where US keyboards have Y.
+        assert_eq!(
+            recorded(&[press(Key::Z, Some(Key::Y)), egui::Event::Text("z".into())]),
+            key("KeyY", "Z")
+        );
+        assert_eq!(
+            recorded(&[press(Key::ArrowUp, Some(Key::ArrowUp))]),
+            key("ArrowUp", "ArrowUp")
+        );
+        assert_eq!(
+            recorded(&[press(Key::Backtick, Some(Key::Backtick))]),
+            key("Backquote", "^")
+        );
+        // On a US keyboard the same place types a character, which names it.
+        assert_eq!(
+            recorded(&[
+                press(Key::Backtick, Some(Key::Backtick)),
+                egui::Event::Text("`".into())
+            ]),
+            key("Backquote", "`")
+        );
+        assert_eq!(
+            recorded(&[press(Key::ShiftLeft, Some(Key::ShiftLeft))]),
+            key("ShiftLeft", "Shift links")
+        );
+        assert_eq!(
+            recorded(&[
+                press(Key::Space, Some(Key::Space)),
+                egui::Event::Text(" ".into())
+            ]),
+            key("Space", "Leertaste")
+        );
+        assert_eq!(
+            recorded(&[press(Key::Escape, Some(Key::Escape))]),
+            Recorded::Cancel
+        );
+        assert_eq!(
+            recorded(&[press(Key::Enter, Some(Key::Enter))]),
+            Recorded::Nothing
+        );
     }
 }

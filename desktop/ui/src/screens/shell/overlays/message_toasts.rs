@@ -335,7 +335,7 @@ fn incoming(app: &AppCtx, server: Uuid, message: &Message) -> Option<Incoming> {
             && match level {
                 NotificationLevel::None => false,
                 NotificationLevel::Mentions => dm.is_some() || mentioned,
-                NotificationLevel::All => true,
+                NotificationLevel::All | NotificationLevel::Unknown => true,
             };
         if !wanted {
             return None;

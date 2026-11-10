@@ -3,6 +3,7 @@
 //! playback slider's mapping (voice/settings.ts): 100 % in the middle.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use egui::{Color32, Id, Sense, Ui, UiBuilder, vec2};
@@ -18,7 +19,8 @@ use crate::widgets::Checkbox;
 pub const MAX_PLAYBACK: f64 = 4.0;
 /// `SAVE_DELAY_MS`: a slider drag is written once it rests.
 const SAVE_DELAY: Duration = Duration::from_millis(400);
-const FILE: &str = "user-volumes.json";
+/// Per account; the Tauri import writes it too (platform/legacy.rs).
+pub(crate) const FILE: &str = "user-volumes.json";
 
 /// `playbackSliderPosition` (0..200).
 pub fn position(volume: f64) -> f64 {
@@ -174,36 +176,37 @@ fn parse(saved: &Value) -> HashMap<Uuid, Level> {
         .collect()
 }
 
+/// The whole file as this process last queued it, so that a queued write of
+/// one account never drops another's.
+static WRITTEN: parking_lot::Mutex<Option<(PathBuf, Map<String, Value>)>> =
+    parking_lot::Mutex::new(None);
+
 fn save(account: Uuid, levels: HashMap<Uuid, Level>) {
     let Some(path) = prefs::config_file(FILE) else {
         return;
     };
-    // Off the UI thread; a failed write only loses the levels on restart.
-    std::thread::spawn(move || {
-        let mut all = read_file();
-        let entries: Map<String, Value> = levels
-            .iter()
-            .map(|(u, l)| {
-                (
-                    u.to_string(),
-                    json!({ "volume": l.volume, "muted": l.muted }),
-                )
-            })
-            .collect();
-        if entries.is_empty() {
-            all.remove(&account.to_string());
-        } else {
-            all.insert(account.to_string(), Value::Object(entries));
-        }
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let tmp = path.with_extension("json.tmp");
-        let text = serde_json::to_string_pretty(&Value::Object(all)).unwrap_or_default();
-        if std::fs::write(&tmp, text).is_ok() {
-            let _ = std::fs::rename(&tmp, &path);
-        }
-    });
+    let mut written = WRITTEN.lock();
+    let all = match &mut *written {
+        Some((at, all)) if *at == path => all,
+        slot => &mut slot.insert((path.clone(), read_file())).1,
+    };
+    let entries: Map<String, Value> = levels
+        .iter()
+        .map(|(u, l)| {
+            (
+                u.to_string(),
+                json!({ "volume": l.volume, "muted": l.muted }),
+            )
+        })
+        .collect();
+    if entries.is_empty() {
+        all.remove(&account.to_string());
+    } else {
+        all.insert(account.to_string(), Value::Object(entries));
+    }
+    let text = serde_json::to_vec_pretty(&Value::Object(all.clone())).unwrap_or_default();
+    // Off the UI thread and in order; a failed write only loses the levels on restart.
+    crate::platform::paths::write_latest(path, text, false);
 }
 
 /// `UserVolumeControl`: "Lautstärke" and the percentage, the slider,

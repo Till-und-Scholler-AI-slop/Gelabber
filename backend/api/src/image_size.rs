@@ -85,10 +85,11 @@ fn jpeg(bytes: &[u8]) -> Option<(u32, u32)> {
                 // length, precision, height, width
                 return Some((be16(bytes, at + 5)?, be16(bytes, at + 3)?));
             }
-            // Other frame types (lossless, hierarchical, arithmetic) and
-            // DHP: not something a canvas encoder produces.
-            0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf | 0xde => return None,
-            _ => at += length,
+            // Only segments a decoder skips by length too: DHT, DQT, DNL,
+            // DRI, APPn, COM. Anything else (`FF 00` stuffing included) a
+            // decoder may read differently, so the size is not proven.
+            0xc4 | 0xdb..=0xdd | 0xe0..=0xef | 0xfe => at += length,
+            _ => return None,
         }
     }
 }
@@ -221,6 +222,28 @@ mod tests {
         );
         assert_eq!(dimensions(b"RIFF\0\0\0\0WEBPALPH\0\0\0\0"), None);
         assert_eq!(dimensions(b"GIF89a"), None);
+    }
+
+    #[test]
+    fn jpeg_skips_only_segments_decoders_skip() {
+        // libjpeg treats `FF 00` as stuffing and reads the 16000×16000 frame
+        // behind it; skipping 0x00 by "length" would land on the small one.
+        let mut bytes = vec![0xff, 0xd8, 0xff, 0x00, 0x00, 0x1a];
+        bytes.extend_from_slice(&fixtures::jpeg(16000, 16000)[8..]);
+        bytes.extend_from_slice(&[0xff, 0xfe, 0x00, 0x15]);
+        bytes.extend_from_slice(&fixtures::jpeg(16, 16)[8..]);
+        assert_eq!(dimensions(&bytes), None);
+        // An unknown marker is not skipped either.
+        let mut unknown = fixtures::jpeg(16, 16);
+        unknown[3] = 0xc8;
+        assert_eq!(dimensions(&unknown), None);
+        // Tables and comments before the frame are still skipped.
+        let mut tables = vec![0xff, 0xd8];
+        for marker in [0xdb, 0xc4, 0xdd, 0xfe, 0xe1] {
+            tables.extend_from_slice(&[0xff, marker, 0x00, 0x04, 0x00, 0x00]);
+        }
+        tables.extend_from_slice(&fixtures::jpeg(64, 32)[8..]);
+        assert_eq!(dimensions(&tables), Some((64, 32)));
     }
 
     #[test]

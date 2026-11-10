@@ -189,7 +189,7 @@ impl Http {
     // ---------------------------------------------------------- servers
 
     pub async fn servers(&self) -> Result<Vec<Server>> {
-        self.get("/servers").await
+        self.get("/servers").await.map(|Lenient(v)| v)
     }
 
     pub async fn server(&self, id: Uuid) -> Result<ServerDetail> {
@@ -256,7 +256,9 @@ impl Http {
     }
 
     pub async fn bans(&self, server: Uuid) -> Result<Vec<Ban>> {
-        self.get(&format!("/servers/{server}/bans")).await
+        self.get(&format!("/servers/{server}/bans"))
+            .await
+            .map(|Lenient(v)| v)
     }
 
     pub async fn unban(&self, server: Uuid, user: Uuid) -> Result<()> {
@@ -325,7 +327,9 @@ impl Http {
     // ----------------------------------------------------------- invites
 
     pub async fn invites(&self, server: Uuid) -> Result<Vec<Invite>> {
-        self.get(&format!("/servers/{server}/invites")).await
+        self.get(&format!("/servers/{server}/invites"))
+            .await
+            .map(|Lenient(v)| v)
     }
 
     /// `max_uses` 1..=10000, `expires_in_hours` 1..=8760; `None` = unlimited.
@@ -383,7 +387,7 @@ impl Http {
     // --------------------------------------------------------------- DMs
 
     pub async fn dms(&self) -> Result<Vec<DirectMessage>> {
-        self.get("/dms").await
+        self.get("/dms").await.map(|Lenient(v)| v)
     }
 
     pub async fn dm(&self, id: Uuid) -> Result<DirectMessage> {
@@ -474,7 +478,7 @@ impl Http {
     // -------------------------------------------------------- read state
 
     pub async fn unread(&self) -> Result<Vec<ReadState>> {
-        self.get("/messages/unread").await
+        self.get("/messages/unread").await.map(|Lenient(v)| v)
     }
 
     /// Up to the newest message (`None`) or to `message`; forward only.
@@ -491,17 +495,19 @@ impl Http {
     pub async fn mark_server_read(&self, server: Uuid) -> Result<Vec<ReadState>> {
         self.send_empty(Method::PUT, &format!("/servers/{server}/read"))
             .await
+            .map(|Lenient(v)| v)
     }
 
     pub async fn mark_all_read(&self, scope: ReadScope) -> Result<Vec<ReadState>> {
         self.send(Method::PUT, "/messages/read-all", &json!({"scope": scope}))
             .await
+            .map(|Lenient(v)| v)
     }
 
     // --------------------------------------------- notification settings
 
     pub async fn notification_settings(&self) -> Result<Vec<NotificationSetting>> {
-        self.get("/notification-settings").await
+        self.get("/notification-settings").await.map(|Lenient(v)| v)
     }
 
     pub async fn set_server_notifications(

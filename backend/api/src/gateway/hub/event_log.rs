@@ -2,8 +2,17 @@
 //! and read in one Lua turn each.
 
 use super::*;
+use crate::gateway::protocol::EventKind;
 
 /// One Redis turn: assign seq, append the replay list, PUBLISH.
+/// `ARGV[5]`, when not empty, is the message an edit or delete is about: its
+/// earlier entries of this epoch take the new body under their own `n`, so no
+/// old body stays replayable and the seqs stay contiguous. An edit keeps each
+/// entry's kind (a create stays a create a resuming client can insert); a
+/// delete turns them all into deletes. They are found in the envelope before
+/// `"d":`, whose fields are ids and numbers only, without decoding the event.
+/// This reads the whole log (at most `ws_replay` rows) per edit, reactions
+/// included.
 /// `ARGV[1]` is compact event JSON with the placeholders `"n":0` and
 /// `"ep":null`. Seq and epoch are string-substituted — Lua cjson would turn
 /// `[]` into `{}` — and only the FIRST match of each is replaced. That is
@@ -30,6 +39,24 @@ local raw = string.gsub(ARGV[1], '"n":0', '"n":' .. n, 1)
 raw = string.gsub(raw, '"ep":null', '"ep":"' .. epoch .. '"', 1)
 redis.call('LPUSH', KEYS[2], raw)
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[2]))
+if ARGV[5] ~= '' then
+  local entity = '"i":"' .. ARGV[5] .. '"'
+  local same_epoch = '"ep":"' .. epoch .. '"'
+  for index, row in ipairs(redis.call('LRANGE', KEYS[2], 1, -1)) do
+    local cut = string.find(row, ',"d":', 1, true)
+    local head = cut and string.sub(row, 1, cut) or row
+    local old = string.match(head, '"n":(%d+)')
+    if old and string.find(head, entity, 1, true) and string.find(head, same_epoch, 1, true) then
+      local copy = string.gsub(ARGV[1], '"n":0', '"n":' .. old, 1)
+      copy = string.gsub(copy, '"ep":null', '"ep":"' .. epoch .. '"', 1)
+      local kind = string.match(head, '^{"t":"(%a)"')
+      if kind and string.sub(ARGV[1], 1, 9) == '{"t":"e",' then
+        copy = '{"t":"' .. kind .. '",' .. string.sub(copy, 10)
+      end
+      redis.call('LSET', KEYS[2], index, copy)
+    end
+  end
+end
 redis.call('PUBLISH', KEYS[3], raw)
 if tonumber(ARGV[4]) > 0 then redis.call('HSET', KEYS[5], 'r', ARGV[4], 'raw', raw) end
 return {n, raw}
@@ -79,6 +106,10 @@ impl EventLog {
         let seq_key = topic.seq_key();
         let log_key = topic.log_key();
         let channel = topic.redis_channel();
+        let rewrites = match (draft.kind, draft.channel_id, draft.entity_id) {
+            (EventKind::E | EventKind::D, Some(_), Some(entity)) => entity.to_string(),
+            _ => String::new(),
+        };
 
         let (n, raw): (u64, String) = self
             .connections
@@ -87,6 +118,7 @@ impl EventLog {
                 let log_key = log_key.clone();
                 let channel = channel.clone();
                 let template = template.clone();
+                let rewrites = rewrites.clone();
                 async move {
                     redis::Script::new(PUBLISH_LUA)
                         .key(seq_key)
@@ -98,6 +130,7 @@ impl EventLog {
                         .arg(replay_end)
                         .arg(Uuid::new_v4().to_string())
                         .arg(revision.unwrap_or(0))
+                        .arg(rewrites)
                         .invoke_async(&mut conn)
                         .await
                 }

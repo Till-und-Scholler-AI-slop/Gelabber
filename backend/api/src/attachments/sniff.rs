@@ -6,6 +6,80 @@
 
 /// Bytes read from the start of an object; `ustar` sits at offset 257.
 pub const PREFIX_LEN: usize = 512;
+/// A JPEG's frame header comes after its EXIF, XMP and ICC segments (up to
+/// 64 KiB each), so more of it is read to find the size.
+const JPEG_PREFIX_LEN: usize = 256 * 1024;
+/// A GIF's first frame comes after its colour table (up to 768 bytes) and
+/// any extensions before it.
+const GIF_PREFIX_LEN: usize = 4096;
+/// Images shown inline must decode in every viewer's browser: at most this
+/// many pixels a side, and 8192² in all.
+const IMAGE_EDGE_MAX: u32 = 16384;
+const IMAGE_PIXELS_MAX: u64 = 1 << 26;
+
+/// How many leading bytes `matches` and `too_many_pixels` want.
+pub fn prefix_len(content_type: &str) -> usize {
+    match content_type {
+        "image/jpeg" => JPEG_PREFIX_LEN,
+        "image/gif" => GIF_PREFIX_LEN,
+        _ => PREFIX_LEN,
+    }
+}
+
+/// Whether an image declares a canvas past the bounds. A size the prefix
+/// does not show is let through: the check cannot prove it.
+pub fn too_many_pixels(content_type: &str, head: &[u8]) -> bool {
+    let size = match content_type {
+        "image/gif" => gif_size(head),
+        t if t.starts_with("image/") => crate::image_size::dimensions(head),
+        _ => None,
+    };
+    size.is_some_and(|(width, height)| {
+        width > IMAGE_EDGE_MAX
+            || height > IMAGE_EDGE_MAX
+            || u64::from(width) * u64::from(height) > IMAGE_PIXELS_MAX
+    })
+}
+
+/// A GIF's canvas: the logical screen, enlarged to the first frame as
+/// browsers do when that frame is larger. Without the frame in `head`, the
+/// screen alone.
+fn gif_size(head: &[u8]) -> Option<(u32, u32)> {
+    let word = |at: usize| {
+        head.get(at..at + 2)
+            .map(|b| u32::from(u16::from_le_bytes([b[0], b[1]])))
+    };
+    let (width, height) = (word(6)?, word(8)?);
+    let flags = *head.get(10)?;
+    let mut at = 13;
+    if flags & 0x80 != 0 {
+        at += 3 << ((flags & 0x07) + 1);
+    }
+    // Extensions (0x21, label, sub-blocks ending in an empty one) may
+    // precede the first image descriptor (0x2C).
+    while head.get(at) == Some(&0x21) {
+        at += 2;
+        loop {
+            let Some(&len) = head.get(at) else {
+                return Some((width, height));
+            };
+            at += 1 + usize::from(len);
+            if len == 0 {
+                break;
+            }
+        }
+    }
+    if head.get(at) != Some(&0x2C) {
+        return Some((width, height));
+    }
+    match (word(at + 1), word(at + 3), word(at + 5), word(at + 7)) {
+        (Some(left), Some(top), Some(frame_width), Some(frame_height)) => Some((
+            width.max(left + frame_width),
+            height.max(top + frame_height),
+        )),
+        _ => Some((width, height)),
+    }
+}
 
 pub fn matches(content_type: &str, head: &[u8]) -> bool {
     let at = |offset: usize, magic: &[u8]| head.get(offset..offset + magic.len()) == Some(magic);
@@ -89,5 +163,42 @@ mod tests {
         assert!(matches("text/csv", b"\xFF\xFEa\0,\0b\0"));
         assert!(!matches("text/plain", b"MZ\x90\0\x03"));
         assert!(!matches("text/plain", b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"));
+    }
+
+    /// A GIF: 1x1 screen with a 256-colour table, a graphic control
+    /// extension, then a first frame at (left, top) of the given size.
+    fn gif(left: u16, top: u16, width: u16, height: u16) -> Vec<u8> {
+        let mut gif = b"GIF89a".to_vec();
+        gif.extend_from_slice(&1u16.to_le_bytes());
+        gif.extend_from_slice(&1u16.to_le_bytes());
+        gif.extend_from_slice(&[0xF7, 0, 0]);
+        gif.extend_from_slice(&[0; 768]);
+        gif.extend_from_slice(&[0x21, 0xF9, 4, 0, 0, 0, 0, 0]);
+        gif.push(0x2C);
+        for value in [left, top, width, height] {
+            gif.extend_from_slice(&value.to_le_bytes());
+        }
+        gif.extend_from_slice(&[0, 2, 2, 0x4C, 0x01, 0, b';']);
+        gif
+    }
+
+    #[test]
+    fn a_gif_is_bounded_by_its_first_frame_too() {
+        assert!(!super::too_many_pixels("image/gif", &gif(0, 0, 1, 1)));
+        assert!(!super::too_many_pixels("image/gif", &gif(0, 0, 8000, 8000)));
+        // Browsers enlarge the canvas to a larger first frame.
+        assert!(super::too_many_pixels(
+            "image/gif",
+            &gif(0, 0, 20000, 20000)
+        ));
+        assert!(super::too_many_pixels("image/gif", &gif(0, 0, 17000, 1)));
+        assert!(super::too_many_pixels(
+            "image/gif",
+            &gif(9000, 9000, 9000, 9000)
+        ));
+        let head = gif(0, 0, 20000, 20000);
+        assert!(head.len() <= super::prefix_len("image/gif"));
+        // A frame the prefix does not reach cannot be proved too large.
+        assert!(!super::too_many_pixels("image/gif", &head[..785]));
     }
 }

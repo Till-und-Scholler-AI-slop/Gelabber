@@ -32,7 +32,8 @@ class SafetyTests(unittest.TestCase):
     @unittest.skipUnless(Path('/proc').exists() and shutil.which('sleep'), 'Linux process identity guard')
     def test_shared_cache_refuses_to_replace_a_running_executable(self):
         with tempfile.TemporaryDirectory() as tmp:
-            binary = Path(tmp) / 'gelabber-api'
+            # The copy keeps the name: a multi-call coreutils picks its program by it.
+            binary = Path(tmp) / 'sleep'
             shutil.copy2(shutil.which('sleep'), binary)
             process = subprocess.Popen([str(binary), '30'])
             try:
