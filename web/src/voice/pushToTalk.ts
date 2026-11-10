@@ -44,6 +44,13 @@ export function pushToTalkKeyLabel(code: string): string {
   return key;
 }
 
+/** The label kept for a key: only a single printed character. Named keys
+ * keep none, so `pushToTalkKeyLabel` names them in the current language;
+ * this also drops the German names saved before v0.10. */
+export function keptKeyLabel(label: unknown): string {
+  return typeof label === "string" && [...label].length === 1 ? label : "";
+}
+
 /** A key event's binding, or null for keys that cannot be one. */
 export function pushToTalkCode(event: { code: string }): string | null {
   const code = event.code;

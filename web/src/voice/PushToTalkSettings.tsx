@@ -7,6 +7,7 @@ import { useT } from "../i18n/catalog.ts";
 import { voiceSettings } from "../i18n/catalogs/voiceSettings.ts";
 import { ChipGroup } from "../components/ui/ChipGroup.tsx";
 import {
+  keptKeyLabel,
   PTT_RELEASE_DELAY_MAX,
   pushToTalkCode,
   pushToTalkKeyLabel,
@@ -56,15 +57,15 @@ export function PushToTalkSettings() {
       if (!code) return;
       const label =
         event.key.length === 1 && event.key !== " "
-          ? event.key.toUpperCase()
-          : pushToTalkKeyLabel(code);
+          ? keptKeyLabel(event.key.toUpperCase())
+          : "";
       take(code, label);
     };
     const onMouse = (event: MouseEvent) => {
       const code = pushToTalkMouseCode(event.button);
       if (!code) return;
       event.preventDefault();
-      take(code, pushToTalkKeyLabel(code));
+      take(code, "");
     };
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("mousedown", onMouse, true);

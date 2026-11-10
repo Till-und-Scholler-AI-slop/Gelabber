@@ -14,6 +14,7 @@ import {
 import {
   asVoiceInputMode,
   clampReleaseDelay,
+  keptKeyLabel,
   PTT_RELEASE_DELAY_DEFAULT,
   pushToTalkKeyLabel,
   type VoiceInputMode,
@@ -623,8 +624,7 @@ export const useMediaSettings = create<MediaSettingsState>()(
           sourceAudioMuted: stored.sourceAudioMuted === true,
           voiceInput: asVoiceInputMode(stored.voiceInput),
           pttKey: typeof stored.pttKey === "string" ? stored.pttKey : "",
-          pttKeyLabel:
-            typeof stored.pttKeyLabel === "string" ? stored.pttKeyLabel : "",
+          pttKeyLabel: keptKeyLabel(stored.pttKeyLabel),
           pttReleaseDelay: clampReleaseDelay(
             stored.pttReleaseDelay ?? PTT_RELEASE_DELAY_DEFAULT,
           ),
