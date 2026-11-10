@@ -429,7 +429,7 @@ the same seat; unpublishing `s` also removes `sa`).
 | `m on` | seat in room | `m` with aggregated `on` (AND over the user's seats) | `leases.rs:338-401` |
 | `d on=true` | seat in room | `d` then `m` (deafen implies mute) | same, `leases.rs:87-88` |
 | `d on=false` | seat in room | `d` only (mute unchanged) | same |
-| `w` | seat in room (same checks as `l`, so a room hidden by roles is `not_found`); `o` and `on` present, `k` is `s` or absent, `o` is not the sender, else `bad_request`; at most 64 owners per seat (the media `WATCH_LIMIT`), the 65th → `bad_request`. No `go_live` check, and the owner need not be live or in the room: the watch is an intent that outlives a restarted Live | `{"op":"sig","t":"w","s","c","u":<me>,"w":[…]}`: the complete, sorted union of owners over all of the user's seats in `c`; `[]` means none. Idempotent | `signal.rs` `watch`, `leases.rs` `set_voice_watch` |
+| `w` | seat in room (same checks as `l`, so a room hidden by roles is `not_found`); `o` and `on` present, `k` is `s` or absent, `o` is not the sender, else `bad_request`; at most 64 owners per seat (the media `WATCH_LIMIT`), the 65th → `bad_request`. No `go_live` check, and the owner need not be live or in the room: the watch is an intent that outlives a restarted Live | `{"op":"sig","t":"w","s","c","u":<me>,"w":[…]}`: the complete, sorted union of owners over all of the user's seats in `c`; `[]` means none. Idempotent; a frame that changes nothing publishes nothing | `signal.rs` `watch`, `leases.rs` `set_voice_watch` |
 
 Audience for broadcast `sig`: sockets that subscribed any topic of server `s`, plus sockets holding a seat in `c` (`hub/fanout.rs:190-203`, `hub.rs:668-677`).
 
@@ -443,7 +443,10 @@ publications. The media service keeps its own grants and still enforces them;
 the gateway only announces the intent. A client drops a leaving user's watches
 on `l`. The snapshot `t:"r"` carries no watches. Clients that do not send `w`
 do not count as watchers; old clients ignore the frame (web: the
-`applyVoiceSig` default; native: `SigKind::Unknown`).
+`applyVoiceSig` default; native: `SigKind::Unknown`). A seat whose lease
+expires without a leave (its API process died) publishes nothing; while the
+same user keeps another seat in that channel, clients keep the expired seat's
+owners in that user's set until their next `w` or leave.
 
 Seats are 5 s leases renewed by the socket's 1 s security tick (`conn.rs:275-320`).
 If the gateway socket dies the seat expires ≤ 5 s later and others see `l`

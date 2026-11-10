@@ -516,8 +516,13 @@ impl VoiceRoster {
             };
             seat.clone()
         };
+        // A frame that changes nothing writes and publishes nothing: the set
+        // others hold is already current.
+        if seat.watches.contains(&owner) == on {
+            return Ok(true);
+        }
         if on {
-            if !seat.watches.contains(&owner) && seat.watches.len() >= WATCH_LIMIT {
+            if seat.watches.len() >= WATCH_LIMIT {
                 return Ok(false);
             }
             seat.watches.insert(owner);
@@ -1137,6 +1142,13 @@ mod tests {
         // Another server's id for the same room is no seat either.
         assert!(
             !g.set_voice_watch(id, u, Uuid::new_v4(), c, a, true)
+                .await
+                .unwrap()
+        );
+        // Frames that change nothing still succeed but publish nothing.
+        assert!(g.set_voice_watch(id, u, s, c, a, true).await.unwrap());
+        assert!(
+            g.set_voice_watch(id, u, s, c, Uuid::new_v4(), false)
                 .await
                 .unwrap()
         );
