@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use sqlx::{FromRow, PgPool};
+use sqlx::{FromRow, PgConnection, PgPool};
 use uuid::Uuid;
 
 use crate::error::ApiError;
@@ -125,6 +125,19 @@ pub async fn insert(
     password_hash: &str,
     locale: Locale,
 ) -> Result<User, ApiError> {
+    let mut conn = db.acquire().await?;
+    insert_in(&mut conn, email, name, password_hash, locale).await
+}
+
+/// [`insert`] on the caller's connection, so registration can redeem its
+/// invitation in the same transaction (`operator::admission::redeem`).
+pub async fn insert_in(
+    conn: &mut PgConnection,
+    email: &str,
+    name: &str,
+    password_hash: &str,
+    locale: Locale,
+) -> Result<User, ApiError> {
     sqlx::query_as::<_, User>(
         "INSERT INTO users (email, name, password_hash, locale) VALUES ($1, $2, $3, $4) \
          RETURNING id, email, name, avatar_url, created_at, bio, pronouns, status_text, \
@@ -134,7 +147,7 @@ pub async fn insert(
     .bind(name)
     .bind(password_hash)
     .bind(locale)
-    .fetch_one(db)
+    .fetch_one(&mut *conn)
     .await
     .map_err(|err| match &err {
         // SQLSTATE 23505 = unique_violation.
@@ -161,6 +174,19 @@ pub async fn insert_unverified(
     locale: Locale,
 ) -> Result<Option<Uuid>, ApiError> {
     let mut tx = db.begin().await?;
+    let id = insert_unverified_in(&mut tx, email, name, password_hash, locale).await?;
+    tx.commit().await?;
+    Ok(id)
+}
+
+/// [`insert_unverified`] inside the caller's transaction.
+pub async fn insert_unverified_in(
+    conn: &mut PgConnection,
+    email: &str,
+    name: &str,
+    password_hash: &str,
+    locale: Locale,
+) -> Result<Option<Uuid>, ApiError> {
     let id: Option<Uuid> = sqlx::query_scalar(
         "INSERT INTO users (email, name, password_hash, registration_pending, locale) \
          VALUES ($1, $2, $3, true, $4) \
@@ -174,15 +200,14 @@ pub async fn insert_unverified(
     .bind(name)
     .bind(password_hash)
     .bind(locale)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut *conn)
     .await?;
     if let Some(id) = id {
         sqlx::query("DELETE FROM account_tokens WHERE user_id = $1 AND purpose = 'verify_email'")
             .bind(id)
-            .execute(&mut *tx)
+            .execute(&mut *conn)
             .await?;
     }
-    tx.commit().await?;
     Ok(id)
 }
 

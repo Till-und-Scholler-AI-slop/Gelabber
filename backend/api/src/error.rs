@@ -73,6 +73,12 @@ pub enum ApiError {
     /// 403: an operator disabled the account (`users.disabled_at`). Only
     /// answered to someone who proved the password or held a mailed link.
     AccountDisabled,
+    /// 403: registration on an invitation-only instance without a beta
+    /// invitation or a server invite (`operator::admission`).
+    InvitationRequired,
+    /// 410: the registration's invitation code is unknown, used, revoked,
+    /// expired, for another address, or a blocked server's invite.
+    InvitationInvalid,
 }
 
 #[derive(Debug, Serialize)]
@@ -108,6 +114,8 @@ impl ApiError {
             Self::UpstreamQuota { .. } => "upstream_quota",
             Self::Internal(_) => "internal",
             Self::AccountDisabled => "account_disabled",
+            Self::InvitationRequired => "invitation_required",
+            Self::InvitationInvalid => "invitation_invalid",
         }
     }
 
@@ -129,6 +137,8 @@ impl ApiError {
             Self::UpstreamQuota { .. } => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::AccountDisabled => StatusCode::FORBIDDEN,
+            Self::InvitationRequired => StatusCode::FORBIDDEN,
+            Self::InvitationInvalid => StatusCode::GONE,
         }
     }
 
@@ -158,6 +168,8 @@ impl ApiError {
             }
             Self::Internal(_) => "Something went wrong on our side.",
             Self::AccountDisabled => "This account has been disabled.",
+            Self::InvitationRequired => "Registration needs an invitation.",
+            Self::InvitationInvalid => "This invitation is unknown, expired or already used.",
         }
     }
 
@@ -165,6 +177,8 @@ impl ApiError {
         let fields = match self {
             Self::Validation(fields) => fields.clone(),
             Self::EmailTaken => BTreeMap::from([("email", "taken")]),
+            Self::InvitationRequired => BTreeMap::from([("invitation", "required")]),
+            Self::InvitationInvalid => BTreeMap::from([("invitation", "invalid")]),
             _ => BTreeMap::new(),
         };
         let retry_after = match self {
@@ -256,5 +270,20 @@ mod tests {
         assert_eq!(json["error"], "account_disabled");
         assert!(json.get("fields").is_none());
         assert_eq!(err.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn invitation_errors_name_the_invitation_field() {
+        let err = ApiError::InvitationRequired;
+        let json = serde_json::to_value(err.body()).unwrap();
+        assert_eq!(json["error"], "invitation_required");
+        assert_eq!(json["fields"]["invitation"], "required");
+        assert_eq!(err.status(), StatusCode::FORBIDDEN);
+
+        let err = ApiError::InvitationInvalid;
+        let json = serde_json::to_value(err.body()).unwrap();
+        assert_eq!(json["error"], "invitation_invalid");
+        assert_eq!(json["fields"]["invitation"], "invalid");
+        assert_eq!(err.status(), StatusCode::GONE);
     }
 }

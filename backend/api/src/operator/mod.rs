@@ -4,6 +4,7 @@
 
 pub mod access;
 pub mod accounts;
+pub mod admission;
 pub mod audit;
 
 use axum::Router;

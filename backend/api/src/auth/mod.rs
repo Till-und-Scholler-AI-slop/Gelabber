@@ -33,6 +33,7 @@ use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+use crate::config::RegistrationMode;
 use crate::cookies::{self, CSRF_COOKIE, SESSION_COOKIE, SetCookie};
 use crate::error::{ApiError, FieldErrors};
 use crate::i18n::{self, Locale};
@@ -67,6 +68,7 @@ pub fn router() -> Router<AppState> {
             "/api/auth/password-reset/confirm",
             post(confirm_password_reset),
         )
+        .route("/api/auth/registration", get(registration_status))
 }
 
 /// Request bodies with a password print it as `<redacted>`.
@@ -90,6 +92,14 @@ pub struct RegisterBody {
     /// without that German (clients older than v0.10).
     #[serde(default)]
     pub locale: Option<String>,
+    /// A beta invitation's code (`operator::admission`); only an
+    /// invitation-only instance needs one.
+    #[serde(default)]
+    pub invitation: Option<String>,
+    /// The code of the server invite that led here, which admits a new
+    /// account on an invitation-only instance as well.
+    #[serde(default)]
+    pub server_invite: Option<String>,
 }
 
 impl std::fmt::Debug for RegisterBody {
@@ -99,6 +109,8 @@ impl std::fmt::Debug for RegisterBody {
             .field("password", &Redacted)
             .field("name", &self.name)
             .field("locale", &self.locale)
+            .field("invitation", &Redacted)
+            .field("server_invite", &Redacted)
             .finish()
     }
 }
@@ -210,6 +222,12 @@ pub struct MailStatus {
     pub enabled: bool,
 }
 
+/// `GET /api/auth/registration`: whether registering needs an invitation.
+#[derive(Debug, Serialize)]
+pub struct RegistrationStatus {
+    pub mode: RegistrationMode,
+}
+
 async fn register(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -239,10 +257,25 @@ async fn register(
         pw.expect("validated"),
         locale.expect("validated"),
     );
+    // Before any account lookup, so a refusal tells nothing about one.
+    let admitted = {
+        let mut conn = state.db.acquire().await?;
+        operator::admission::admit(
+            &state,
+            &mut conn,
+            &email,
+            body.invitation.as_deref(),
+            body.server_invite.as_deref(),
+        )
+        .await?
+    };
 
     let hash = password::hash(pw).await?;
     let Some(mailer) = state.mail.as_ref() else {
-        let user = user::insert(&state.db, &email, &name, &hash, locale).await?;
+        let mut tx = state.db.begin().await?;
+        let user = user::insert_in(&mut tx, &email, &name, &hash, locale).await?;
+        operator::admission::redeem(&mut tx, &admitted, user.id).await?;
+        tx.commit().await?;
         info!(user_id = %user.id, "user registered");
         return signed_in(&state, &headers, user, StatusCode::CREATED).await;
     };
@@ -251,9 +284,11 @@ async fn register(
     // address keeps its account untouched, whoever typed it; a pending one
     // now carries this registrant's credentials. Once the address had its
     // hourly mails nothing is written either: a takeover without a new
-    // link would leave the owner without a working one.
+    // link would leave the owner without a working one. Only a new or
+    // taken-over pending row uses up an invitation.
     if limits::mail_allowed(&state, MailBudget::Registration, &email) {
-        let outgoing = match user::insert_unverified(&state.db, &email, &name, &hash, locale).await
+        let outgoing = match register_unverified(&state, &email, &name, &hash, locale, &admitted)
+            .await
         {
             Ok(Some(user_id)) => {
                 info!(%user_id, "user registered, awaiting confirmation");
@@ -297,6 +332,25 @@ async fn register(
         verification_sent: true,
     };
     Ok((StatusCode::ACCEPTED, cookies, Json(body)).into_response())
+}
+
+/// [`user::insert_unverified_in`] and, for a new or taken-over pending row,
+/// [`operator::admission::redeem`] in one transaction.
+async fn register_unverified(
+    state: &AppState,
+    email: &str,
+    name: &str,
+    hash: &str,
+    locale: Locale,
+    admitted: &operator::admission::Admitted,
+) -> Result<Option<uuid::Uuid>, ApiError> {
+    let mut tx = state.db.begin().await?;
+    let id = user::insert_unverified_in(&mut tx, email, name, hash, locale).await?;
+    if let Some(id) = id {
+        operator::admission::redeem(&mut tx, admitted, id).await?;
+    }
+    tx.commit().await?;
+    Ok(id)
 }
 
 /// An account mail before its link's token exists.
@@ -353,6 +407,34 @@ fn send_mail(
             Err((kind, err)) => {
                 limits::mail_unsent(&state, budget, &email);
                 warn!(%user_id, kind, error = %err, "account mail failed");
+            }
+        }
+    });
+}
+
+/// Sends `mail` to an address without an account (a beta invitation) in
+/// `locale`, after the response. The caller reserved it from `budget`
+/// ([`limits::mail_allowed`]); a mail that cannot be sent gives the
+/// reservation back. Does nothing without account mail.
+pub fn send_mail_to(
+    state: &AppState,
+    address: &str,
+    locale: Locale,
+    mail: Mail,
+    budget: MailBudget,
+) {
+    let Some(mailer) = state.mail.clone() else {
+        limits::mail_unsent(state, budget, address);
+        return;
+    };
+    let (state, address) = (state.clone(), address.to_owned());
+    tokio::spawn(async move {
+        let kind = mail.kind();
+        match mailer.send(&address, &mail, locale).await {
+            Ok(()) => info!(kind, "mail sent"),
+            Err(err) => {
+                limits::mail_unsent(&state, budget, &address);
+                warn!(kind, error = %err, "mail failed");
             }
         }
     });
@@ -554,6 +636,14 @@ async fn logout_all(
     session::revoke_all(&state, current.user.id).await?;
     info!(user_id = %current.user.id, "signed out everywhere");
     Ok(signed_out(&state))
+}
+
+/// Whether registering needs an invitation (`API_REGISTRATION`); the
+/// clients show the invitation field then.
+async fn registration_status(State(state): State<AppState>) -> Json<RegistrationStatus> {
+    Json(RegistrationStatus {
+        mode: state.registration,
+    })
 }
 
 /// Whether this instance sends account mail; the web client offers "forgot
