@@ -43,8 +43,9 @@ worker UUID. Logout cleanup targets a permanently deleted session hash.
    against both nonces, exact session-key user UUID and Redis time `< expires_at`.
 2. Validate again before SFU attach; consuming a ticket is not a lasting grant.
 3. Every second throughout peer lifetime, atomically revalidate those conditions
-   before refreshing demand. Missing/mismatched authority, expiration or Redis
-   failure closes the media peer and its publications; do not fail open.
+   before refreshing demand. Missing/mismatched authority or expiration closes
+   the media peer and its publications with `unauthorized`; a Redis failure
+   closes them too, with `gone` so the client rejoins. Do not fail open.
 4. Refreshing demand does not itself renew a session lease. Only the API can do
    that after DB validation. API/DB failure therefore revokes within the 3-second
    authority TTL plus the media check interval; this bound needs media testing.
