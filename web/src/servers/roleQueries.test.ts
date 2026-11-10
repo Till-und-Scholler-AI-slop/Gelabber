@@ -7,6 +7,7 @@ import {
   createRoleOptions,
   deleteRoleOptions,
   isPendingId,
+  refetchOnAccessChange,
   serverKeys,
   setMemberRolesOptions,
   updateRoleOptions,
@@ -267,6 +268,41 @@ describe("useUpdateRole", () => {
     second.resolve(json({ ...regulars, color: "violet" }));
     await doneB;
     expect(client.getQueryState(keys().detail)?.isInvalidated).toBe(true);
+  });
+});
+
+describe("access changes during a burst", () => {
+  const detailStale = () => client.getQueryState(keys().detail)?.isInvalidated;
+
+  it("read the server again at once when no write is in flight", () => {
+    const { userId, generation } = takeStamp()!;
+    refetchOnAccessChange(client, userId, generation, "s1");
+    expect(detailStale()).toBe(true);
+    expect(listStale()).toBe(true);
+  });
+
+  it("wait for the caller's own role writes, so a refetch cannot land between two clicks", async () => {
+    const reply = held();
+    respond = (url) =>
+      url.pathname === "/api/servers/s1" ? json(detail) : reply.promise;
+    const observer = new MutationObserver(
+      client,
+      updateRoleOptions(client, me.id, "s1"),
+    );
+    const done = observer.mutate({ id: "r-reg", patch: { color: "violet" } });
+    await vi.waitFor(() =>
+      expect(cachedDetail().roles[1]).toMatchObject({ color: "violet" }),
+    );
+
+    // Our own PATCH announces {"k":"a"} while it is still in flight.
+    const { userId, generation } = takeStamp()!;
+    refetchOnAccessChange(client, userId, generation, "s1");
+    expect(detailStale()).toBe(false);
+    expect(listStale()).toBe(false);
+
+    reply.resolve(json({ ...regulars, color: "violet" }));
+    await done;
+    expect(detailStale()).toBe(true);
   });
 });
 

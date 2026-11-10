@@ -415,14 +415,9 @@ export function useUpdateServer(serverId: string) {
     },
     onSettled: (_data, _error, _patch, ctx) => {
       if (!stampHolds(ctx)) return;
-      if (!lastInFlight() || !resync.current) return;
-      resync.current = false;
-      void client.invalidateQueries({
-        queryKey: serverKeys.detail(ctx.userId, ctx.generation, serverId),
-      });
-      void client.invalidateQueries({
-        queryKey: serverKeys.list(ctx.userId, ctx.generation),
-      });
+      const failed = lastInFlight() && resync.current;
+      if (failed) resync.current = false;
+      settleBurst(client, ctx, serverId, failed);
     },
   });
 }
@@ -1026,6 +1021,66 @@ function refetchServer(
   });
 }
 
+/** The caller's role and server writes of a server still in flight. */
+function writesInFlight(
+  client: QueryClient,
+  userId: string,
+  serverId: string,
+): number {
+  return (
+    client.isMutating({ mutationKey: ["servers", "roles", userId, serverId] }) +
+    client.isMutating({ mutationKey: ["servers", "update", userId, serverId] })
+  );
+}
+
+const deferredAccess = new Set<string>();
+
+/**
+ * The access-changed event (`{"k":"a"}`) reads the server and the list
+ * again. Our own writes announce it too, so during a burst the refetch
+ * could land between two PATCHes and the next click would build on it;
+ * it waits until the burst has settled.
+ */
+export function refetchOnAccessChange(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  serverId: string,
+): void {
+  if (writesInFlight(client, userId, serverId) > 0) {
+    deferredAccess.add(`${userId}/${serverId}`);
+    return;
+  }
+  refetchServer(client, userId, generation, serverId);
+}
+
+/** On settle of a burst write: true when an access change waited for the
+ * last write of the server to end. */
+function takeDeferredAccess(
+  client: QueryClient,
+  userId: string,
+  serverId: string,
+): boolean {
+  const id = `${userId}/${serverId}`;
+  if (!deferredAccess.has(id) || writesInFlight(client, userId, serverId) > 1)
+    return false;
+  deferredAccess.delete(id);
+  return true;
+}
+
+/** The end of a burst write: refetch after a failure in the burst or an
+ * access change that waited for it. */
+function settleBurst(
+  client: QueryClient,
+  ctx: { userId: string; generation: number },
+  serverId: string,
+  failed: boolean,
+): void {
+  const deferred = takeDeferredAccess(client, ctx.userId, serverId);
+  if (failed || deferred)
+    refetchServer(client, ctx.userId, ctx.generation, serverId);
+}
+
 /** The caller's own flags may change with any role write. */
 function refetchList(
   client: QueryClient,
@@ -1146,8 +1201,7 @@ export function updateRoleOptions(
     },
     onSettled: (_data, _error, _vars, ctx) => {
       if (!stampHolds(ctx)) return;
-      if (burst.settled())
-        refetchServer(client, ctx.userId, ctx.generation, serverId);
+      settleBurst(client, ctx, serverId, burst.settled());
     },
   });
 }
@@ -1206,8 +1260,7 @@ export function deleteRoleOptions(
     },
     onSettled: (_data, _error, _id, ctx) => {
       if (!stampHolds(ctx)) return;
-      if (burst.settled())
-        refetchServer(client, ctx.userId, ctx.generation, serverId);
+      settleBurst(client, ctx, serverId, burst.settled());
     },
   });
 }
@@ -1269,8 +1322,7 @@ export function setMemberRolesOptions(
     },
     onSettled: (_data, _error, _vars, ctx) => {
       if (!stampHolds(ctx)) return;
-      if (burst.settled())
-        refetchServer(client, ctx.userId, ctx.generation, serverId);
+      settleBurst(client, ctx, serverId, burst.settled());
     },
   });
 }

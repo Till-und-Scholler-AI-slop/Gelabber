@@ -19,7 +19,11 @@ import {
   messageKeys,
   messageQueryOptions,
 } from "../messages/queries.ts";
-import { applyMemberRemoved, forgetServer } from "../servers/queries.ts";
+import {
+  applyMemberRemoved,
+  forgetServer,
+  refetchOnAccessChange,
+} from "../servers/queries.ts";
 import { leaveVoice, useVoice } from "../voice/session.ts";
 import { getGateway, type GapRecovery, type Gateway } from "./client.ts";
 import type { ChatEvent } from "./protocol.ts";
@@ -48,21 +52,17 @@ export function isAccessChange(event: ChatEvent): boolean {
   );
 }
 
-/** Reads the server's detail and the server list again: the caller's
- * rights and the channels they see may have changed. An open channel that
- * is gone sends `ChannelPage` back to the server. */
+/** Reads the server's detail and the server list again, after the caller's
+ * own role or server writes of it have settled: the caller's rights and the
+ * channels they see may have changed. An open channel that is gone sends
+ * `ChannelPage` back to the server. */
 export function applyAccessChange(
   client: QueryClient,
   userId: string,
   generation: number,
   serverId: string,
 ): void {
-  void client.invalidateQueries({
-    queryKey: serverKeys.detail(userId, generation, serverId),
-  });
-  void client.invalidateQueries({
-    queryKey: serverKeys.list(userId, generation),
-  });
+  refetchOnAccessChange(client, userId, generation, serverId);
 }
 
 /** Upper bound of the random wait before a reconnect refetches. */
