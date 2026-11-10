@@ -107,6 +107,84 @@ export const voiceSettings = defineCatalog(
     "mode.original": "Original / Musik",
     "mode.originalHint":
       "Stereo sofern unterstützt, ohne Rauschfilter, Auto-Gain oder Sprechpausen-Erkennung",
+    "ptt.send": "Senden",
+    "ptt.modeLabel": "Sprachübertragung",
+    "ptt.activity": "Sprachaktivierung",
+    "ptt.activityHint": "Das Mikrofon sendet, sobald du sprichst.",
+    "ptt.ptt": "Push-to-Talk",
+    "ptt.pttHint": "Das Mikrofon sendet nur, solange du die Taste hältst.",
+    "ptt.key": "Taste",
+    "ptt.recording": "Taste oder Maustaste drücken … (Esc bricht ab)",
+    "ptt.setKey": "Taste festlegen",
+    "ptt.noKeyHint": "Ohne Taste bleibt dein Mikrofon im Gespräch stumm.",
+    "ptt.keyHint":
+      "Im Browser wirkt die Taste nur, solange Gelabber im Vordergrund ist. Die Desktop-App hört sie auch im Hintergrund.",
+    "ptt.releaseDelay": "Nachlaufzeit",
+    "ptt.releaseDelayHint":
+      "So lange sendet das Mikrofon nach dem Loslassen weiter.",
+    "micTest.title": "Mikrofon testen",
+    "micTest.intro": "Prüfe dein Mikrofon und vergleiche die Verarbeitung.",
+    "micTest.stopped":
+      "Test beendet. Mikrofon und Aufnahmen wurden freigegeben.",
+    "micTest.local":
+      "Der Test läuft lokal, ohne Übertragung. Aufnahmen dauern höchstens acht Sekunden und werden beim Schließen gelöscht.",
+    "micTest.inputLevel": "Eingangspegel",
+    "micTest.processed": "Nach Verarbeitung",
+    "micTest.processing": "Verarbeitung",
+    "micTest.clipping":
+      "Übersteuerung erkannt. Verringere die Mikrofonverstärkung oder den Gerätepegel.",
+    "micTest.stop": "Test beenden",
+    "micTest.start": "Test starten",
+    "micTest.stopRecording": "Aufnahme beenden",
+    "micTest.startRecording": "A/B-Aufnahme starten",
+    "micTest.recording": "Lokale Aufnahme läuft (maximal acht Sekunden).",
+    "micTest.comparison": "Lokaler Audiovergleich",
+    "micTest.inputClip": "Eingang (einschließlich Browser-Capture)",
+    "micTest.deleteClips": "Aufnahmen löschen",
+    "micTest.switchNote":
+      "Ein Wechsel der Verarbeitung startet den Test neu und löscht die Aufnahmen.",
+    "micTest.error.notAllowed":
+      "Der Mikrofonzugriff wurde nicht erlaubt. Du kannst die Berechtigung in den Browser-Einstellungen ändern und es erneut versuchen.",
+    "micTest.error.notFound":
+      "Es wurde kein Mikrofon gefunden. Schließe ein Mikrofon an und versuche es erneut.",
+    "micTest.error.notReadable":
+      "Das Mikrofon ist gerade nicht verfügbar. Prüfe, ob eine andere Anwendung darauf zugreift.",
+    "micTest.error.security":
+      "Der Browser erlaubt hier keinen Mikrofonzugriff. Der Test benötigt eine sichere Verbindung oder localhost.",
+    "micTest.error.unsupported":
+      "Dein Browser unterstützt hier keinen Mikrofonzugriff. Nutze einen aktuellen Browser mit HTTPS oder localhost.",
+    "micTest.error.ended":
+      "Die Mikrofonverbindung wurde beendet. Du kannst den Test erneut starten.",
+    "micTest.error.failed":
+      "Der Mikrofontest konnte nicht gestartet werden. Prüfe dein Audiogerät und versuche es erneut.",
+    "micTest.allowBrowser":
+      "Bitte erlaube den lokalen Mikrofonzugriff im Browser.",
+    "micTest.speak": "Sprich, um den Pegel zu prüfen.",
+    "micTest.allow": "Bitte erlaube den lokalen Mikrofonzugriff.",
+    "micTest.error.noiseFilter":
+      "Rauschfilter ausgefallen. Beende den Test und starte ihn erneut.",
+    "micTest.error.connectionEnded":
+      "Mikrofonverbindung beendet. Starte den Test erneut.",
+    "micTest.error.denied":
+      "Mikrofonzugriff nicht erlaubt. Prüfe die Browserberechtigung.",
+    "micTest.error.startFailed":
+      "Mikrofontest konnte nicht starten. Prüfe Gerät und Berechtigung.",
+    "micTest.recordingUnsupported":
+      "Dieser Browser unterstützt keine lokale Aufnahme.",
+    "micTest.recordingFailed":
+      "Aufnahme fehlgeschlagen; Mikrofontest läuft weiter.",
+    "micTest.recordingUnsupportedHere":
+      "Lokale Aufnahme wird hier nicht unterstützt.",
+    "quick.callSettings": "Anrufeinstellungen",
+    "quick.volume": "Lautstärke",
+    "quick.unmuteLiveSound": "Live-Ton wieder einschalten",
+    "quick.deafened": "Taubgeschaltet.",
+    "quick.micDenied": "Kein Zugriff aufs Mikrofon.",
+    "quick.namesAfterPermission":
+      "Namen zeigt der Browser erst nach deiner Erlaubnis.",
+    "quick.noKey": "Keine Taste festgelegt. Das Mikrofon bleibt stumm.",
+    "quick.allSettings": "Alle Einstellungen …",
+    "quick.sendLevel": "Pegel, den die anderen hören",
   },
   {
     "dialog.title": "Audio & video",
@@ -210,5 +288,82 @@ export const voiceSettings = defineCatalog(
     "mode.original": "Original / music",
     "mode.originalHint":
       "Stereo where supported, without noise filter, auto gain or silence detection",
+    "ptt.send": "Send",
+    "ptt.modeLabel": "Voice transmission",
+    "ptt.activity": "Voice activity",
+    "ptt.activityHint": "Your microphone sends as soon as you speak.",
+    "ptt.ptt": "Push to talk",
+    "ptt.pttHint": "Your microphone sends only while you hold the key.",
+    "ptt.key": "Key",
+    "ptt.recording": "Press a key or mouse button… (Esc cancels)",
+    "ptt.setKey": "Set key",
+    "ptt.noKeyHint": "Without a key, your microphone stays muted in calls.",
+    "ptt.keyHint":
+      "In the browser, the key only works while Gelabber is in front. The desktop app hears it in the background too.",
+    "ptt.releaseDelay": "Release delay",
+    "ptt.releaseDelayHint":
+      "How long your microphone keeps sending after you let go.",
+    "micTest.title": "Test microphone",
+    "micTest.intro": "Check your microphone and compare the processing.",
+    "micTest.stopped":
+      "Test ended. Microphone and recordings have been released.",
+    "micTest.local":
+      "The test runs locally and sends nothing. Recordings last eight seconds at most and are deleted when you close it.",
+    "micTest.inputLevel": "Input level",
+    "micTest.processed": "After processing",
+    "micTest.processing": "Processing",
+    "micTest.clipping":
+      "Clipping detected. Lower the microphone gain or the device level.",
+    "micTest.stop": "Stop test",
+    "micTest.start": "Start test",
+    "micTest.stopRecording": "Stop recording",
+    "micTest.startRecording": "Start A/B recording",
+    "micTest.recording": "Recording locally (eight seconds at most).",
+    "micTest.comparison": "Local audio comparison",
+    "micTest.inputClip": "Input (including browser capture)",
+    "micTest.deleteClips": "Delete recordings",
+    "micTest.switchNote":
+      "Switching the processing restarts the test and deletes the recordings.",
+    "micTest.error.notAllowed":
+      "Microphone access was not allowed. You can change the permission in your browser settings and try again.",
+    "micTest.error.notFound":
+      "No microphone was found. Connect a microphone and try again.",
+    "micTest.error.notReadable":
+      "The microphone isn’t available right now. Check whether another app is using it.",
+    "micTest.error.security":
+      "Your browser doesn’t allow microphone access here. The test needs a secure connection or localhost.",
+    "micTest.error.unsupported":
+      "Your browser doesn’t support microphone access here. Use a current browser with HTTPS or localhost.",
+    "micTest.error.ended":
+      "The microphone connection ended. You can start the test again.",
+    "micTest.error.failed":
+      "The microphone test could not start. Check your audio device and try again.",
+    "micTest.allowBrowser":
+      "Please allow local microphone access in your browser.",
+    "micTest.speak": "Speak to check the level.",
+    "micTest.allow": "Please allow local microphone access.",
+    "micTest.error.noiseFilter":
+      "Noise filter failed. Stop the test and start it again.",
+    "micTest.error.connectionEnded":
+      "Microphone connection ended. Start the test again.",
+    "micTest.error.denied":
+      "Microphone access not allowed. Check the browser permission.",
+    "micTest.error.startFailed":
+      "The microphone test couldn’t start. Check the device and permission.",
+    "micTest.recordingUnsupported":
+      "This browser doesn’t support local recording.",
+    "micTest.recordingFailed":
+      "Recording failed; the microphone test keeps running.",
+    "micTest.recordingUnsupportedHere": "Local recording isn’t supported here.",
+    "quick.callSettings": "Call settings",
+    "quick.volume": "Volume",
+    "quick.unmuteLiveSound": "Unmute Live audio",
+    "quick.deafened": "Deafened.",
+    "quick.micDenied": "No access to the microphone.",
+    "quick.namesAfterPermission":
+      "Your browser shows names once you allow access.",
+    "quick.noKey": "No key set. Your microphone stays muted.",
+    "quick.allSettings": "All settings…",
+    "quick.sendLevel": "Level the others hear",
   },
 );

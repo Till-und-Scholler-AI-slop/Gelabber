@@ -1,3 +1,6 @@
+import { translate } from "../i18n/catalog.ts";
+import { voiceSettings } from "../i18n/catalogs/voiceSettings.ts";
+
 export type MicrophoneTestState = {
   phase: "idle" | "pending" | "active" | "error";
   message: string;
@@ -10,15 +13,11 @@ type MicrophoneEnvironment = {
   cancelFrame: typeof cancelAnimationFrame;
 };
 
-const errorMessages: Record<string, string> = {
-  NotAllowedError:
-    "Der Mikrofonzugriff wurde nicht erlaubt. Du kannst die Berechtigung in den Browser-Einstellungen ändern und es erneut versuchen.",
-  NotFoundError:
-    "Es wurde kein Mikrofon gefunden. Schließe ein Mikrofon an und versuche es erneut.",
-  NotReadableError:
-    "Das Mikrofon ist gerade nicht verfügbar. Prüfe, ob eine andere Anwendung darauf zugreift.",
-  SecurityError:
-    "Der Browser erlaubt hier keinen Mikrofonzugriff. Der Test benötigt eine sichere Verbindung oder localhost.",
+const errorMessages: Record<string, keyof typeof voiceSettings.de> = {
+  NotAllowedError: "micTest.error.notAllowed",
+  NotFoundError: "micTest.error.notFound",
+  NotReadableError: "micTest.error.notReadable",
+  SecurityError: "micTest.error.security",
 };
 
 /** Local, disposable meter. A late permission result never revives a closed test. */
@@ -67,14 +66,13 @@ export function createMicrophoneSession(
     if (!environment.mediaDevices?.getUserMedia) {
       onState({
         phase: "error",
-        message:
-          "Dein Browser unterstützt hier keinen Mikrofonzugriff. Nutze einen aktuellen Browser mit HTTPS oder localhost.",
+        message: translate(voiceSettings, "micTest.error.unsupported"),
       });
       return;
     }
     onState({
       phase: "pending",
-      message: "Bitte erlaube den lokalen Mikrofonzugriff im Browser.",
+      message: translate(voiceSettings, "micTest.allowBrowser"),
     });
     try {
       // Resume in the explicit click gesture, before waiting for permission.
@@ -95,8 +93,7 @@ export function createMicrophoneSession(
           if (!disposed)
             onState({
               phase: "error",
-              message:
-                "Die Mikrofonverbindung wurde beendet. Du kannst den Test erneut starten.",
+              message: translate(voiceSettings, "micTest.error.ended"),
             });
           stop();
         };
@@ -117,7 +114,7 @@ export function createMicrophoneSession(
       const values = new Uint8Array(meter.fftSize);
       onState({
         phase: "active",
-        message: "Sprich, um den Pegel zu prüfen.",
+        message: translate(voiceSettings, "micTest.speak"),
       });
       function measure(time: number) {
         if (disposed) return;
@@ -140,9 +137,12 @@ export function createMicrophoneSession(
         const name = error instanceof Error ? error.name : "";
         onState({
           phase: "error",
-          message:
-            errorMessages[name] ??
-            "Der Mikrofontest konnte nicht gestartet werden. Prüfe dein Audiogerät und versuche es erneut.",
+          message: translate(
+            voiceSettings,
+            Object.hasOwn(errorMessages, name)
+              ? errorMessages[name]
+              : "micTest.error.failed",
+          ),
         });
         stop();
       }
