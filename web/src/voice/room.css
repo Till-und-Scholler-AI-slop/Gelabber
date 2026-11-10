@@ -67,6 +67,15 @@
   min-height: 360px;
   padding: 16px 24px;
 }
+/* The people stage keeps the references' inset: 696x648 at 1280x800. */
+.voice-room[data-stage="people"] {
+  padding: 20px 24px 24px;
+}
+/* In the call the header carries the facts, so a card alone starts where
+   the people stage does. */
+.voice-room[data-joined] > .voice-room-participants:first-child {
+  margin-top: 0;
+}
 /* In the call the channel header carries the room's facts after its name,
    and its view and Kino at the right end. */
 .voice-header-facts {
@@ -1546,6 +1555,12 @@ a.voice-session-link:hover > span {
   flex-direction: column;
   gap: 6px;
 }
+/* A long device name ends in an ellipsis before the chevron. */
+.voice-quick-field select {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .voice-quick-field > label,
 .voice-quick-volume > label {
   color: var(--lr-muted);
@@ -2082,18 +2097,25 @@ html[data-reduced-motion="true"] .voice-video-tile.is-speaking::before {
   font-variant-numeric: tabular-nums;
 }
 /* Fokus's row: a person without a camera as their avatar, then the name
-   and one status line: live, watching the Live in front, or their state. */
-.voice-stage > .voice-room-participant.is-strip:not(.has-video) {
+   and one status line: live, watching the Live in front, or their state.
+   Kino's small thumbnail keeps the shipped avatar over the name. */
+.voice-room:not([data-kino])
+  .voice-stage
+  > .voice-room-participant.is-strip:not(.has-video) {
   flex-direction: row;
   justify-content: flex-start;
   gap: 10px;
   padding: 0 14px;
   text-align: left;
 }
-.voice-stage > .is-strip:not(.has-video) .voice-room-participant-text {
+.voice-room:not([data-kino])
+  .voice-stage
+  > .is-strip:not(.has-video)
+  .voice-room-participant-text {
   align-items: flex-start;
 }
-.voice-stage
+.voice-room:not([data-kino])
+  .voice-stage
   > .is-strip:not(.has-video)
   .voice-room-participant-text
   > .voice-room-participant-status {
