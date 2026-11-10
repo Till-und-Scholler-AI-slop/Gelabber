@@ -621,6 +621,11 @@
   display: flex;
   gap: 8px;
 }
+/* The width of a member row's "…" (a small IconButton), where it has none. */
+.server-settings-row__menu-slot {
+  flex-shrink: 0;
+  width: var(--lr-control-sm);
+}
 .server-settings-code {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 13px;

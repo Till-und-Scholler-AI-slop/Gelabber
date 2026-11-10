@@ -562,6 +562,8 @@ function MembersSection({
   const t = useT(serverSettings);
   const byServer = usePresenceStore((s) => s.byServer);
   const manage = can(server, "manage_server");
+  const moderate = can(server, "moderate_members");
+  const me = useSession((s) => s.user?.id);
   return (
     <Section
       id="mitglieder"
@@ -591,7 +593,12 @@ function MembersSection({
                 ) : null}
               </>
             )}
-            <MemberActionsMenu server={server} member={member} />
+            {moderate && (member.role === "owner" || member.user_id === me) ? (
+              // No "…" here: keep its column, so the badge and chips line up.
+              <span className="server-settings-row__menu-slot" aria-hidden />
+            ) : (
+              <MemberActionsMenu server={server} member={member} />
+            )}
           </li>
         ))}
       </ul>
