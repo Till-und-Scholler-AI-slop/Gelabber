@@ -26,9 +26,10 @@ use crate::state::AppState;
 
 use super::permissions::{Permission, Permissions};
 
-/// What every non-owner member of a server may do and see: their effective
-/// flags and the ids of the channels visible to them. The owner always holds
-/// everything and is left out.
+/// What every non-owner member of a server may do and where they may talk:
+/// their effective flags and the ids of the voice rooms visible to them.
+/// Text channels are left to the recheck. The owner always holds everything
+/// and is left out.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Snapshot(HashMap<Uuid, (Permissions, HashSet<Uuid>)>);
 
@@ -49,17 +50,18 @@ impl Snapshot {
             .collect()
     }
 
-    /// Whether `user` saw `channel` before and does not after.
-    fn lost_sight(&self, after: &Snapshot, user: Uuid, channel: Uuid) -> bool {
-        let saw = self
-            .0
-            .get(&user)
-            .is_some_and(|(_, seen)| seen.contains(&channel));
-        let sees = after
-            .0
-            .get(&user)
-            .is_some_and(|(_, seen)| seen.contains(&channel));
-        saw && !sees
+    /// Members who saw a voice room before and do not after.
+    fn lost_voice_rooms(&self, after: &Snapshot) -> Vec<Uuid> {
+        self.0
+            .iter()
+            .filter(|(user, (_, saw))| {
+                after
+                    .0
+                    .get(*user)
+                    .is_some_and(|(_, sees)| !saw.is_subset(sees))
+            })
+            .map(|(user, _)| *user)
+            .collect()
     }
 }
 
@@ -69,7 +71,8 @@ pub async fn snapshot(db: &mut PgConnection, server_id: Uuid) -> Result<Snapshot
     let rows: Vec<(Uuid, i32, Vec<Uuid>)> = sqlx::query_as(
         "SELECT m.user_id, server_member_bits(m.server_id, m.user_id), \
              ARRAY(SELECT c.id FROM channels c \
-                    WHERE c.server_id = $1 AND channel_visible_to(c.id, m.user_id)) \
+                    WHERE c.server_id = $1 AND c.kind = 'voice' \
+                      AND channel_visible_to(c.id, m.user_id)) \
          FROM server_members m JOIN servers s ON s.id = m.server_id \
          WHERE m.server_id = $1 AND m.user_id <> s.owner_id",
     )
@@ -89,10 +92,12 @@ pub async fn snapshot(db: &mut PgConnection, server_id: Uuid) -> Result<Snapshot
 }
 
 /// Cuts the voice access the change took away, before the commit: members
-/// who lost `JoinVoice` or `GoLive`, and members seated in a voice room they
-/// can no longer see. Both rotate the member's media authority and leave the
-/// seat (`revoke_voice_access`). Text topics are left to the recheck that
-/// [`announce`] starts.
+/// who lost `JoinVoice` or `GoLive`, and members who lost sight of a voice
+/// room, seated in it or not. Both rotate the member's media authority and
+/// leave their seats (`revoke_voice_access`). The rotation also voids an
+/// unused ticket and a media connection without a gateway seat, which the
+/// media service checks by authority alone. Text topics are left to the
+/// recheck that [`announce`] starts.
 pub async fn after_change(
     state: &AppState,
     server_id: Uuid,
@@ -100,22 +105,12 @@ pub async fn after_change(
     after: &Snapshot,
 ) -> Result<(), ApiError> {
     let mut users = before.lost_voice_rights(after);
-    // Seats are read only when somebody lost sight of a channel.
-    let hidden_any = before.0.iter().any(|(user, (_, seen))| {
-        seen.iter()
-            .any(|channel| before.lost_sight(after, *user, *channel))
-    });
-    if hidden_any {
-        for seat in state.gateway.voice_snapshot(server_id).await? {
-            if before.lost_sight(after, seat.u, seat.c) && !users.contains(&seat.u) {
-                users.push(seat.u);
-            }
-        }
-    }
+    users.extend(before.lost_voice_rooms(after));
     if users.is_empty() {
         return Ok(());
     }
     users.sort_unstable();
+    users.dedup();
     state.gateway.revoke_voice_access(&users, server_id).await
 }
 
@@ -204,13 +199,11 @@ mod tests {
     }
 
     #[test]
-    fn lost_sight_is_seen_before_and_hidden_after() {
+    fn lost_voice_rooms_are_seen_before_and_hidden_after() {
         let bits = Permissions::DEFAULT_MEMBER;
-        let before = snap(&[(1, bits, &[10, 11]), (2, bits, &[10])]);
+        let before = snap(&[(1, bits, &[10, 11]), (2, bits, &[10]), (9, bits, &[10])]);
         let after = snap(&[(1, bits, &[11]), (2, bits, &[10, 11])]);
-        assert!(before.lost_sight(&after, uid(1), uid(10)));
-        assert!(!before.lost_sight(&after, uid(1), uid(11)));
-        assert!(!before.lost_sight(&after, uid(2), uid(11)), "never saw it");
-        assert!(!before.lost_sight(&after, uid(9), uid(10)), "not a member");
+        assert_eq!(before.lost_voice_rooms(&after), vec![uid(1)]);
+        assert_eq!(after.lost_voice_rooms(&before), vec![uid(2)], "reversed");
     }
 }

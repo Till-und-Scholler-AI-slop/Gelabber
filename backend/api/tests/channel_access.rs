@@ -739,6 +739,56 @@ async fn the_socket_loses_a_channel_once_it_is_limited(pool: PgPool) {
     until(&mut ws, |f| f["op"] == "e" && f["c"] == text.to_string()).await;
 }
 
+/// Media checks a ticket and a connection by authority alone, not by the
+/// gateway seat: losing sight of a voice room rotates the member authority
+/// even for a member who holds a ticket there without sitting in the room.
+#[sqlx::test]
+async fn losing_a_voice_room_voids_an_unused_ticket(pool: PgPool) {
+    let state = common::state(pool.clone());
+    let Team {
+        mut ada,
+        mut cara,
+        sid,
+        ..
+    } = team(&state).await;
+    let r = role(&mut ada, sid, "Stammgäste").await;
+    let voice = create_channel(
+        &mut ada,
+        sid,
+        json!({"name": "Raum", "kind": "voice", "role_ids": [r]}),
+    )
+    .await;
+    assert_eq!(voice.status, StatusCode::CREATED, "{}", voice.body);
+    let voice = id(&voice.body["id"]);
+    set_roles(&mut ada, sid, cara.user_id(), json!([r])).await;
+    let ticket = cara
+        .send(
+            Method::POST,
+            &format!("/api/channels/{voice}/media-ticket"),
+            None,
+        )
+        .await;
+    assert_eq!(ticket.status, StatusCode::OK, "{}", ticket.body);
+    let raw = redis_get(gelabber_shared::ticket::redis_key(
+        ticket.body["ticket"].as_str().unwrap(),
+    ))
+    .await
+    .expect("ticket in Redis");
+    let claim: Value = serde_json::from_str(&raw).unwrap();
+    let minted = claim["auth"]["member"].as_str().unwrap().to_owned();
+    let key = member_authority_key(sid, cara.user_id().parse().unwrap());
+    assert_eq!(
+        redis_get(key.clone()).await.as_deref(),
+        Some(minted.as_str())
+    );
+
+    // Not seated on the gateway, yet the old ticket stops matching.
+    set_roles(&mut ada, sid, cara.user_id(), json!([])).await;
+    let now = redis_get(key).await;
+    assert!(now.is_some());
+    assert_ne!(now.as_deref(), Some(minted.as_str()));
+}
+
 #[sqlx::test]
 async fn unread_and_read_all_skip_a_hidden_channel(pool: PgPool) {
     let state = common::state(pool.clone());
