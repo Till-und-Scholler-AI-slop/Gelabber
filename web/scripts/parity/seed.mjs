@@ -3,6 +3,8 @@
 // roles with a channel limited to them.
 // Run in web/: node scripts/parity/seed.mjs [base-url] [out.json]
 // The base URL is the web origin (Vite proxies /api), default 127.0.0.1:5180.
+// Start that Vite with GELABBER_DEV_PUBLIC_PAGES=scripts/parity/public-pages.json:
+// the sign-in scenes show the legal links of all three pages.
 /* global process, console, fetch */
 import { writeFile } from "node:fs/promises";
 
