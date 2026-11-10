@@ -123,6 +123,12 @@ export const auth = defineCatalog(
     "layout.inviteBanner":
       "Einladung erhalten. Melde dich an oder registriere dich, um beizutreten.",
 
+    // The legal pages' links under the card (public/pages.ts).
+    "legal.label": "Rechtliches",
+    "legal.imprint": "Impressum",
+    "legal.privacy": "Datenschutz",
+    "legal.terms": "Nutzungsbedingungen",
+
     // Shared by the auth pages.
     "page.passwordHint": "Mindestens {min} Zeichen.",
     "page.sending": "Wird gesendet…",
@@ -317,6 +323,11 @@ export const auth = defineCatalog(
       "The server couldn’t confirm the sign-out. Please try again.",
 
     "layout.inviteBanner": "You’ve been invited. Sign in or register to join.",
+
+    "legal.label": "Legal",
+    "legal.imprint": "Imprint",
+    "legal.privacy": "Privacy",
+    "legal.terms": "Terms",
 
     "page.passwordHint": "At least {min} characters.",
     "page.sending": "Sending…",

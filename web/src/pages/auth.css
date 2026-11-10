@@ -143,6 +143,25 @@
   background: color-mix(in srgb, var(--lr-accent) 14%, var(--lr-panel));
 }
 
+/* The legal pages under the card; the column's gap sets it off. */
+.auth-legal {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--lr-space-1) 18px;
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+  font-size: 13px;
+}
+.auth-legal a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.auth-legal a:hover {
+  color: var(--lr-text);
+}
+
 @media (pointer: coarse) {
   /* 44px hit areas for text links, without loosening the layout. */
   .auth-link {
@@ -152,6 +171,11 @@
   }
   .auth-recovery {
     min-height: 20px;
+  }
+  .auth-legal a {
+    display: inline-block;
+    padding-block: 12px;
+    margin-block: -12px;
   }
 }
 
