@@ -9,7 +9,7 @@ const OFFLINE_URL = "/offline.html";
 // Pages of the app itself. API, gateway/media traffic, attachment downloads
 // and static files never match.
 const APP_PAGE =
-  /^(?:\/(?:login|register|forgot-password|reset-password|verify-email|profile)\/?|\/(?:s|d|invite|settings)(?:\/.*)?|\/)$/;
+  /^(?:\/(?:login|register|forgot-password|reset-password|verify-email|profile)\/?|\/(?:s|d|invite|settings|betrieb)(?:\/.*)?|\/)$/;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

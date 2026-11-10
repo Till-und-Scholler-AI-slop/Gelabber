@@ -44,6 +44,8 @@ import { WorkspaceLayout } from "./pages/WorkspaceLayout.tsx";
 import { placeFromPath, useLastPlace } from "./servers/lastPlace.ts";
 import { translate } from "./i18n/catalog.ts";
 import { shell } from "./i18n/catalogs/shell.ts";
+import { operator } from "./i18n/catalogs/operator.ts";
+import { DEFAULT_OPERATOR_PAGE, isOperatorPage } from "./operator/areas.ts";
 
 // Server settings are a chunk of their own. Not `lazyRouteComponent`: it
 // reloads the page when a deploy removed the chunk, which ends a call.
@@ -53,6 +55,13 @@ const ServerSettings = lazyPart(
       (module) => module.ServerSettingsPage,
     ),
   () => translate(shell, "lazyPart.serverSettingsFailed"),
+);
+
+// The operator area "Betrieb" is one chunk too, like the server settings.
+const OperatorArea = lazyPart(
+  () =>
+    import("./operator/OperatorArea.tsx").then((module) => module.OperatorArea),
+  () => translate(operator, "lazyPartFailed"),
 );
 
 const rootRoute = createRootRoute({
@@ -269,6 +278,44 @@ const dmRoute = createRoute({
   component: DmChannelPage,
 });
 
+/**
+ * Guard for the operator area: anyone who is not an operator, and every
+ * unknown page, gets "not found", so the area is not confirmed to exist.
+ */
+async function requireOperator(page?: string) {
+  await ensureSession();
+  if (!useSession.getState().operator) throw notFound();
+  if (page !== undefined && !isOperatorPage(page)) throw notFound();
+}
+
+const operatorRoute = createRoute({
+  getParentRoute: () => workspaceLayout,
+  path: "/betrieb",
+  beforeLoad: async () => {
+    await requireOperator();
+    throw redirect({
+      to: "/betrieb/$page",
+      params: { page: DEFAULT_OPERATOR_PAGE },
+      replace: true,
+    });
+  },
+});
+
+const operatorPageRoute = createRoute({
+  getParentRoute: () => workspaceLayout,
+  path: "/betrieb/$page",
+  beforeLoad: ({ params }) => requireOperator(params.page),
+  component: function OperatorPageRoute() {
+    const { page } = operatorPageRoute.useParams();
+    return isOperatorPage(page) ? (
+      <OperatorArea.Component
+        page={page}
+        fallback={<MainSkeleton kind="list" />}
+      />
+    ) : null;
+  },
+});
+
 const routeTree = rootRoute.addChildren([
   profileRoute,
   authLayout.addChildren([
@@ -288,6 +335,8 @@ const routeTree = rootRoute.addChildren([
     userSettingsAreaRoute,
     dmIndexRoute,
     dmRoute,
+    operatorRoute,
+    operatorPageRoute,
   ]),
 ]);
 

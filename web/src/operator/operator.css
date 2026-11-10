@@ -1,0 +1,44 @@
+/* The operator area "Betrieb": its sidebar reuses the settings sidebar's
+   rows; the pages share one frame. */
+.operator-nav-count {
+  margin-left: auto;
+  background: var(--lr-danger-bg);
+  color: var(--lr-on-danger);
+}
+
+.operator-screen {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.operator-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.operator-page {
+  padding: 32px 40px 40px;
+}
+.operator-page-head h1 {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.2px;
+  color: var(--lr-text);
+}
+.operator-page-head p {
+  margin-top: 6px;
+  font-size: 14px;
+  color: var(--lr-muted);
+}
+/* Phones have the top bar with the drawer button instead. */
+@media (max-width: 800px) {
+  .operator-header {
+    display: none;
+  }
+  .operator-page {
+    padding: 20px 16px 32px;
+  }
+}

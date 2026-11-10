@@ -16,6 +16,7 @@ import {
 
 import { ApiError } from "../api/client.ts";
 import { useUserId } from "../auth/scope.ts";
+import { useSession } from "../auth/session.ts";
 import { ChannelSidebar } from "../components/ChannelSidebar.tsx";
 import { DmSidebar } from "../components/DmSidebar.tsx";
 import { MenuIcon } from "../components/Icons.tsx";
@@ -44,6 +45,7 @@ import { useReadState, useReadingChannel } from "../messages/readState.ts";
 import { unreadMark } from "../messages/unreadIndicators.ts";
 import { forgetServer, useServer, useServers } from "../servers/queries.ts";
 import { SettingsSidebar } from "./UserSettingsPage.tsx";
+import { OperatorSidebar } from "../operator/OperatorSidebar.tsx";
 import { translate, useT } from "../i18n/catalog.ts";
 import { shell } from "../i18n/catalogs/shell.ts";
 
@@ -85,6 +87,10 @@ function Workspace() {
   const onDms = pathname === "/d" || pathname.startsWith("/d/");
   const onSettings =
     pathname === "/settings" || pathname.startsWith("/settings/");
+  // Only for an operator: everyone else sees "not found" in the plain frame.
+  const operator = useSession((state) => state.operator);
+  const onOperator =
+    operator && (pathname === "/betrieb" || pathname.startsWith("/betrieb/"));
   // Before the early returns so hooks keep their order; the rail shares it.
   const { data: servers } = useServers();
   // Voice room and settings load in the background once the first screen is
@@ -100,6 +106,13 @@ function Workspace() {
       <WorkspaceFrame
         place={t("place.settings")}
         sidebar={<SettingsSidebar />}
+      />
+    );
+  if (onOperator)
+    return (
+      <WorkspaceFrame
+        place={t("place.operator")}
+        sidebar={<OperatorSidebar />}
       />
     );
   return (
