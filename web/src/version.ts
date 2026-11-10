@@ -1,2 +1,2 @@
 /** Shipped web version. Keep equal to `web/package.json`. */
-export const APP_VERSION = "0.9.2";
+export const APP_VERSION = "0.9.3";
