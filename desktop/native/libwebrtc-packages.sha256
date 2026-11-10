@@ -1,0 +1,5 @@
+# SHA-256 of the stored libwebrtc packages, the assets of the
+# libwebrtc-packages release. CI fetches a package only when its line is
+# here and its hash matches; any other package is built from source. The run
+# that stores a new package prints the line to add.
+20e4f0f23d39b52cff5ecea6ba5b91837d161b8e2fef75eebca8e30d05bcbcc8  libwebrtc-windows-x64-54d30fc8b041a3cc4974635df7b938604afd7bdcfdcf02b0df92de74d2fa3fd2.tar.gz

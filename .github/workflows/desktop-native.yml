@@ -51,7 +51,9 @@ jobs:
           lookup-only: true
 
       # The cache is evicted under the quota; the libwebrtc-packages release
-      # keeps every package, so a miss costs a download, not a build.
+      # keeps every package, so a miss costs a download, not a build. Anyone
+      # with write access can replace an asset, so only one whose SHA-256 the
+      # repository lists is taken.
       - name: Fetch the stored package
         id: stored
         if: steps.cache.outputs.cache-hit != 'true'
@@ -62,8 +64,13 @@ jobs:
           set -euo pipefail
           sudo mkdir -p /mnt/libwebrtc-package /mnt/libwebrtc-fetch
           sudo chown -R "$USER" /mnt/libwebrtc-package /mnt/libwebrtc-fetch
-          if gh release download libwebrtc-packages --repo "$GITHUB_REPOSITORY" \
+          pin=$(grep -F "  $KEY.tar.zst" desktop/native/libwebrtc-packages.sha256 || true)
+          if [ -z "$pin" ]; then
+            echo "desktop/native/libwebrtc-packages.sha256 lists no $KEY.tar.zst, so the package is built."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          elif gh release download libwebrtc-packages --repo "$GITHUB_REPOSITORY" \
             --pattern "$KEY.tar.zst" --dir /mnt/libwebrtc-fetch; then
+            (cd /mnt/libwebrtc-fetch && printf '%s\n' "$pin" | sha256sum --check --strict)
             tar --zstd -xf "/mnt/libwebrtc-fetch/$KEY.tar.zst" -C /mnt/libwebrtc-package
             test -f /mnt/libwebrtc-package/lib/libwebrtc.a
             echo "found=true" >> "$GITHUB_OUTPUT"
@@ -153,7 +160,11 @@ jobs:
           sudo mkdir -p /mnt/libwebrtc-store
           sudo chown "$USER" /mnt/libwebrtc-store
           tar -I 'zstd -T0' -cf "/mnt/libwebrtc-store/$KEY.tar.zst" -C /mnt/libwebrtc-package .
-          ls -l "/mnt/libwebrtc-store/$KEY.tar.zst"
+          line=$(cd /mnt/libwebrtc-store && sha256sum "$KEY.tar.zst")
+          echo "$line"
+          if ! grep -qxF "$line" desktop/native/libwebrtc-packages.sha256; then
+            echo "::warning::Add this line to desktop/native/libwebrtc-packages.sha256, or the stored package is never fetched: $line"
+          fi
           # A run beside this one may have stored it first.
           gh release upload libwebrtc-packages "/mnt/libwebrtc-store/$KEY.tar.zst" --repo "$GITHUB_REPOSITORY" \
             || gh release view libwebrtc-packages --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qxF "$KEY.tar.zst"
@@ -230,11 +241,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           KEY: ${{ steps.key.outputs.key }}
         run: |
+          $name = "$($env:KEY).tar.gz"
           $fetch = Join-Path $env:RUNNER_TEMP libwebrtc-fetch
           New-Item -ItemType Directory -Force C:\libwebrtc-package, $fetch | Out-Null
-          gh release download libwebrtc-packages --repo $env:GITHUB_REPOSITORY --pattern "$($env:KEY).tar.gz" --dir $fetch
+          # Only a package whose SHA-256 the repository lists is taken (see Linux).
+          $pin = Select-String -Path desktop\native\libwebrtc-packages.sha256 -SimpleMatch "  $name" | Select-Object -First 1
+          if ($pin) {
+            gh release download libwebrtc-packages --repo $env:GITHUB_REPOSITORY --pattern $name --dir $fetch
+          } else {
+            "desktop/native/libwebrtc-packages.sha256 lists no $name, so the package is built."
+            $global:LASTEXITCODE = 1
+          }
           if ($LASTEXITCODE -eq 0) {
-            & "$env:SystemRoot\System32\tar.exe" -xzf (Join-Path $fetch "$($env:KEY).tar.gz") -C C:\libwebrtc-package
+            $want = ($pin.Line -split '\s+')[0]
+            $have = (Get-FileHash -Algorithm SHA256 (Join-Path $fetch $name)).Hash.ToLower()
+            if ($have -ne $want) { throw "the stored package's SHA-256 is $have, not the listed $want" }
+            & "$env:SystemRoot\System32\tar.exe" -xzf (Join-Path $fetch $name) -C C:\libwebrtc-package
             if ($LASTEXITCODE -ne 0) { throw "the stored package does not unpack" }
             if (-not (Test-Path C:\libwebrtc-package\lib\webrtc.lib)) { throw "the stored package has no webrtc.lib" }
             "found=true" >> $env:GITHUB_OUTPUT
@@ -308,7 +330,11 @@ jobs:
           $archive = Join-Path $env:RUNNER_TEMP "$($env:KEY).tar.gz"
           & "$env:SystemRoot\System32\tar.exe" -czf $archive -C C:\libwebrtc-package .
           if ($LASTEXITCODE -ne 0) { throw "the package does not pack" }
-          Get-Item $archive | Select-Object Name, Length
+          $line = "$((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower())  $($env:KEY).tar.gz"
+          $line
+          if (-not (Select-String -Path desktop\native\libwebrtc-packages.sha256 -SimpleMatch $line -Quiet)) {
+            "::warning::Add this line to desktop/native/libwebrtc-packages.sha256, or the stored package is never fetched: $line"
+          }
           gh release upload libwebrtc-packages $archive --repo $env:GITHUB_REPOSITORY
           if ($LASTEXITCODE -ne 0) {
             # A run beside this one may have stored it first.
