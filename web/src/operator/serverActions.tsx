@@ -124,9 +124,10 @@ export function reportMenuEntries(
 
 /**
  * Asks, then calls the route, says so, and refetches the area. `false` when
- * the operator said no or the call failed (a toast says which).
+ * the operator said no or the call failed (a toast says which). `gone` is
+ * what a `not_found` means; by default the server is gone.
  */
-async function askThenRun({
+export async function askThenRun({
   title,
   message,
   confirmLabel,
@@ -134,6 +135,7 @@ async function askThenRun({
   run,
   done,
   failed,
+  gone = translate(operator, "toasts.serverGone"),
   refresh,
 }: {
   title: string;
@@ -143,6 +145,7 @@ async function askThenRun({
   run: () => Promise<unknown>;
   done: string;
   failed: string;
+  gone?: string;
   refresh: () => void;
 }): Promise<boolean> {
   if (!(await confirmAction({ title, message, confirmLabel, tone })))
@@ -152,7 +155,7 @@ async function askThenRun({
     notify(done);
     return true;
   } catch (error) {
-    notifyError(error, failed, translate(operator, "toasts.serverGone"));
+    notifyError(error, failed, gone);
     return false;
   } finally {
     refresh();
@@ -253,7 +256,7 @@ export function dismissRequest(
 }
 
 /** Opens (or finds) the conversation with someone and goes there. */
-function useMessagePerson() {
+export function useMessagePerson() {
   const me = useSession((state) => state.user?.id);
   const client = useQueryClient();
   const navigate = useNavigate();

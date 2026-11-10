@@ -187,6 +187,117 @@
   margin-top: var(--lr-space-5);
 }
 
+/* Konten and Beta-Einladungen: a person, an address, a link. */
+.operator-person {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.operator-table .is-email {
+  overflow-wrap: anywhere;
+}
+.operator-table .is-link {
+  max-width: 260px;
+}
+.operator-link {
+  display: block;
+  overflow: hidden;
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One line above the content: the registration mode. */
+.operator-notice {
+  margin-top: var(--lr-space-5);
+  padding: var(--lr-space-3) var(--lr-space-4);
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius);
+  background: var(--lr-panel);
+  color: var(--lr-text);
+  font: var(--lr-type-ui);
+}
+.operator-notice strong {
+  font-weight: 600;
+}
+
+/* The invitation form and the link it made. */
+.operator-form {
+  max-width: 640px;
+  margin-top: var(--lr-space-6);
+}
+.operator-form h2,
+.operator-stats h2 {
+  color: var(--lr-text);
+  font: var(--lr-type-title-sm);
+}
+.operator-form form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-4);
+  margin-top: var(--lr-space-4);
+}
+.operator-form-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--lr-space-4);
+}
+.operator-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-3);
+}
+.operator-form-actions {
+  display: flex;
+}
+.operator-created {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-2);
+  margin-top: var(--lr-space-5);
+}
+.operator-created-link {
+  display: flex;
+  gap: var(--lr-space-2);
+}
+.operator-created-link .ui-field {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Auslastung: labelled numbers in groups. */
+.operator-stats {
+  margin-top: var(--lr-space-6);
+}
+.operator-stats dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--lr-space-3);
+  margin-top: var(--lr-space-3);
+}
+.operator-stat {
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-end;
+  gap: var(--lr-space-1);
+  padding: var(--lr-space-3) var(--lr-space-4);
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius);
+  background: var(--lr-panel);
+}
+.operator-stat dd {
+  color: var(--lr-text);
+  font: var(--lr-type-title);
+  font-variant-numeric: tabular-nums;
+}
+.operator-stat dt {
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+
 /* Phones: every row becomes a card, each cell labelled by its column. */
 @media (max-width: 640px) {
   .operator-search {
@@ -252,5 +363,18 @@
   .operator-table .is-details::before {
     display: block;
     margin-bottom: 2px;
+  }
+}
+
+@media (max-width: 640px) {
+  .operator-form-fields {
+    grid-template-columns: 1fr;
+  }
+  .operator-created-link {
+    flex-direction: column;
+  }
+  .operator-table .is-link {
+    max-width: none;
+    min-width: 0;
   }
 }

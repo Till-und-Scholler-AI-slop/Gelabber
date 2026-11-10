@@ -2,9 +2,11 @@
 // Each page sits in `OperatorPageFrame`.
 
 import type { OperatorPage } from "./areas.ts";
-import { OperatorPageFrame } from "./OperatorPageFrame.tsx";
+import { AccountsPage } from "./pages/AccountsPage.tsx";
+import { InvitationsPage } from "./pages/InvitationsPage.tsx";
 import { ReportsPage } from "./pages/ReportsPage.tsx";
 import { ServersPage } from "./pages/ServersPage.tsx";
+import { UsagePage } from "./pages/UsagePage.tsx";
 import "./operator.css";
 
 export function OperatorArea({ page, q }: { page: OperatorPage; q?: string }) {
@@ -14,7 +16,11 @@ export function OperatorArea({ page, q }: { page: OperatorPage; q?: string }) {
       return <ServersPage key={q ?? ""} q={q} />;
     case "meldungen":
       return <ReportsPage />;
-    default:
-      return <OperatorPageFrame page={page} />;
+    case "konten":
+      return <AccountsPage />;
+    case "einladungen":
+      return <InvitationsPage />;
+    case "auslastung":
+      return <UsagePage />;
   }
 }
