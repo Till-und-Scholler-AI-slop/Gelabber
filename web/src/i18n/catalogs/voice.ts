@@ -216,6 +216,19 @@ export const voice = defineCatalog(
     "mic.failureNotAllowed": "Mikrofonzugriff nicht erlaubt, {consequence}.",
     "mic.failureUnavailable":
       "Das Mikrofon ist gerade nicht verfügbar, {consequence}.",
+    "watchers.title": { one: "{count} schaut zu", other: "{count} schauen zu" },
+    "watchers.titleNone": "Niemand schaut zu",
+    "watchers.countLabel": {
+      one: "{count} schaut zu – Liste anzeigen",
+      other: "{count} schauen zu – Liste anzeigen",
+    },
+    "watchers.countLabelNone": "Niemand schaut zu – Liste anzeigen",
+    "watchers.ownSubtitle": "Dein Live in {channel}",
+    "watchers.subtitle": "Live von {name} in {channel}",
+    "watchers.notWatching": "Im Kanal, schaut nicht zu",
+    "live.youAreLiveWatchers": "Du bist live · {watchers}",
+    "strip.isLive": "Ist live",
+    "strip.watching": "Schaut zu",
   },
   {
     percent: "{percent}%",
@@ -421,5 +434,18 @@ export const voice = defineCatalog(
     "mic.failureNotAllowed": "Microphone access not allowed, {consequence}.",
     "mic.failureUnavailable":
       "The microphone isn’t available right now, {consequence}.",
+    "watchers.title": { one: "{count} watching", other: "{count} watching" },
+    "watchers.titleNone": "Nobody’s watching",
+    "watchers.countLabel": {
+      one: "{count} watching – show list",
+      other: "{count} watching – show list",
+    },
+    "watchers.countLabelNone": "Nobody’s watching – show list",
+    "watchers.ownSubtitle": "Your Live in {channel}",
+    "watchers.subtitle": "{name}’s Live in {channel}",
+    "watchers.notWatching": "In the channel, not watching",
+    "live.youAreLiveWatchers": "You’re live · {watchers}",
+    "strip.isLive": "Live now",
+    "strip.watching": "Watching",
   },
 );

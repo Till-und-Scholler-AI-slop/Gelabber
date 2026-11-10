@@ -134,6 +134,7 @@ export function VoiceSessionControls() {
             <VoiceControls
               canLive={can(server, "go_live")}
               streamSound={streamSound}
+              server={server}
             />
             <LeaveButton />
           </div>

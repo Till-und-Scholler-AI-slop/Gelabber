@@ -25,6 +25,7 @@ import {
   CameraIcon,
   CameraOffIcon,
   ChevronIcon,
+  EyeIcon,
   HeadsetIcon,
   HeadsetOffIcon,
   LiveIcon,
@@ -43,6 +44,11 @@ import {
   useVoice,
 } from "../voice/session.ts";
 import { useCapabilities } from "../voice/capabilities.ts";
+import { LiveWatchersPopover } from "../voice/LiveWatchers.tsx";
+import { useLiveWatchers, watchersTitle } from "../voice/useLiveWatchers.ts";
+import { formatNumber } from "../i18n/format.ts";
+import { useUserId } from "../auth/scope.ts";
+import type { ServerDetail } from "../servers/types.ts";
 import {
   CallSoundButton,
   QuickCallSettingsButton,
@@ -217,9 +223,12 @@ type LiveProps = {
 export function VoiceControls({
   canLive = false,
   streamSound = false,
+  server,
 }: LiveProps & {
   /** Someone's Live plays here, so its sound gets a control of its own. */
   streamSound?: boolean;
+  /** The call's server: the own Live's watchers by name. */
+  server?: ServerDetail;
 }) {
   const t = useT(voice);
   const camera = useVoice((s) => s.camera);
@@ -246,7 +255,7 @@ export function VoiceControls({
           {cameraTip.tooltip}
         </>
       ) : null}
-      <LiveControl canLive={canLive} />
+      <LiveControl canLive={canLive} server={server} />
       {streamSound ? <CallSoundButton className={BUTTON} /> : null}
       <QuickCallSettingsButton className={BUTTON} />
     </div>
@@ -262,7 +271,10 @@ function liveUnavailable(canLive: boolean): string | null {
  * several people at once. Where a Live can carry sound it is a menu, so
  * that choice is in sight before the picker opens; otherwise one toggle.
  * Ending a Live is always offered. */
-function LiveControl({ canLive = false }: LiveProps) {
+function LiveControl({
+  canLive = false,
+  server,
+}: LiveProps & { server?: ServerDetail }) {
   const t = useT(voice);
   const live = useVoice((s) => s.sharing);
   const capable = useCapabilities();
@@ -281,6 +293,8 @@ function LiveControl({ canLive = false }: LiveProps) {
           detail: live ? null : t("live.hint"),
         },
   );
+  // While live a press lists who watches, with the way to end it.
+  if (live) return <OwnLiveControl server={server} />;
   // A phone browser cannot capture a screen: nothing to offer, nothing to
   // explain.
   if (!live && !capable.screen) return null;
@@ -338,6 +352,65 @@ function LiveControl({ canLive = false }: LiveProps) {
       >
         <LiveMenuItems canLive={canLive} onDone={() => setOpen(false)} />
       </Popover>
+    </>
+  );
+}
+
+/** The own Live on the call bar: how many watch it, and a press lists them
+ * with "Live beenden" and, where a Live can carry sound, that switch. */
+function OwnLiveControl({ server }: { server?: ServerDetail }) {
+  const t = useT(voice);
+  const serverId = useVoice((s) => s.serverId) ?? "";
+  const channelId = useVoice((s) => s.channelId) ?? "";
+  const channelName = useVoice((s) => s.channelName) ?? t("call.voiceChannel");
+  const me = useUserId();
+  const capable = useCapabilities();
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLButtonElement>(null);
+  const list = useLiveWatchers({
+    serverId,
+    channelId,
+    owner: me,
+    members: server?.members,
+  });
+  const count = list.watching.length;
+  const tip = useTooltip({
+    label: t("live.youAreLiveWatchers", { watchers: watchersTitle(t, count) }),
+    disabled: open,
+  });
+  return (
+    <>
+      <button
+        {...tip.trigger}
+        ref={anchor}
+        type="button"
+        aria-pressed
+        aria-label={t("live.goLive")}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className={`${BUTTON} voice-control-live`}
+      >
+        <LiveIcon size={17} />
+        <span className="voice-control-text">{t("live.badge")}</span>
+        <span className="voice-control-watchers">
+          <EyeIcon size={15} />
+          {formatNumber(count)}
+        </span>
+        <ChevronIcon size={12} className="voice-control-caret" />
+      </button>
+      {tip.tooltip}
+      <LiveWatchersPopover
+        open={open}
+        onClose={() => setOpen(false)}
+        anchor={anchor}
+        placement="top-end"
+        own
+        ownerName=""
+        channelName={channelName}
+        list={list}
+        extra={capable.appAudio ? <ShareSoundSwitch role="switch" /> : null}
+      />
     </>
   );
 }
@@ -406,20 +479,8 @@ export function LiveMenuItems({
 }: LiveProps & { onDone?: () => void }) {
   const t = useT(voice);
   const live = useVoice((s) => s.sharing);
-  const localScreen = useVoice((s) => s.localScreen);
-  const sourceAudio = useVoice((s) => s.sourceAudio);
-  const sourceAudioShare = useMediaSettings((s) => s.sourceAudioShare);
-  const patch = useMediaSettings((s) => s.patch);
   const capable = useCapabilities();
-  const soundHintId = useId();
-  const sound = sharesSourceAudio({ sourceAudioShare });
   const reason = liveUnavailable(canLive);
-  // A browser hands sound over in its picker only: switched on during a
-  // Live, it comes with the next one.
-  const nextLive = sound && localScreen && sourceAudio.s === "off";
-  const soundHint = nextLive
-    ? t("live.soundHintNextLive")
-    : t("live.soundHint");
   const done = (action: () => void) => () => {
     onDone();
     action();
@@ -446,26 +507,49 @@ export function LiveMenuItems({
       {capable.appAudio ? (
         <>
           <div role="separator" className="voice-menu-separator" />
-          <button
-            type="button"
-            role="menuitemcheckbox"
-            aria-label={t("live.shareSound")}
-            aria-checked={sound}
-            aria-describedby={soundHintId}
-            onClick={() =>
-              patch({ sourceAudioShare: sourceAudioChoice(!sound) })
-            }
-            className="voice-menu-item voice-menu-switch"
-          >
-            <span>
-              <strong>{t("live.shareSound")}</strong>
-              <small id={soundHintId}>{soundHint}</small>
-            </span>
-            <span className="voice-menu-switch-track" aria-hidden="true" />
-          </button>
+          <ShareSoundSwitch role="menuitemcheckbox" />
         </>
       ) : null}
     </div>
+  );
+}
+
+/** "Ton mitsenden": whether a Live carries sound. An entry of the Live menu,
+ * or a switch in the own Live's list of watchers. */
+export function ShareSoundSwitch({
+  role,
+}: {
+  role: "menuitemcheckbox" | "switch";
+}) {
+  const t = useT(voice);
+  const localScreen = useVoice((s) => s.localScreen);
+  const sourceAudio = useVoice((s) => s.sourceAudio);
+  const sourceAudioShare = useMediaSettings((s) => s.sourceAudioShare);
+  const patch = useMediaSettings((s) => s.patch);
+  const soundHintId = useId();
+  const sound = sharesSourceAudio({ sourceAudioShare });
+  // A browser hands sound over in its picker only: switched on during a
+  // Live, it comes with the next one.
+  const nextLive = sound && localScreen && sourceAudio.s === "off";
+  const soundHint = nextLive
+    ? t("live.soundHintNextLive")
+    : t("live.soundHint");
+  return (
+    <button
+      type="button"
+      role={role}
+      aria-label={t("live.shareSound")}
+      aria-checked={sound}
+      aria-describedby={soundHintId}
+      onClick={() => patch({ sourceAudioShare: sourceAudioChoice(!sound) })}
+      className="voice-menu-item voice-menu-switch"
+    >
+      <span>
+        <strong>{t("live.shareSound")}</strong>
+        <small id={soundHintId}>{soundHint}</small>
+      </span>
+      <span className="voice-menu-switch-track" aria-hidden="true" />
+    </button>
   );
 }
 

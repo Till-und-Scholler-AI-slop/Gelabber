@@ -1920,3 +1920,155 @@ html[data-reduced-motion="true"]
 html[data-reduced-motion="true"] .voice-video-tile.is-speaking::before {
   animation: none;
 }
+
+/* Who watches a Live (#521). On the stage a Live's caption is the LIVE
+   badge, the owner's name and, after a divider, the eye and the count: a
+   button, so the caption takes presses there only. */
+.voice-stage .voice-live-caption {
+  gap: 8px;
+  padding: 0 8px;
+}
+.voice-live-caption-badge {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: var(--lr-radius-xs);
+  background: var(--lr-live);
+  color: var(--lr-on-live);
+  font: var(--lr-type-caps);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.voice-live-caption-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.voice-live-count {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 18px;
+  padding-left: 8px;
+  border-left: 1px solid rgb(255 255 255 / 0.3);
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.voice-live-count:hover > svg,
+.voice-live-count[aria-expanded="true"] > svg {
+  color: var(--lr-live-text);
+}
+.voice-stage > .is-strip .voice-live-caption {
+  gap: 5px;
+}
+.voice-stage > .is-strip .voice-live-count {
+  height: 14px;
+  padding-left: 5px;
+}
+/* The list: a title, where the Live runs, who watches and then the others
+   in the channel; the own Live's ends with "Live beenden". */
+.ui-popover.voice-watchers {
+  width: 272px;
+}
+.voice-watchers-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px 8px;
+}
+.voice-watchers-head strong {
+  font: var(--lr-type-ui);
+  font-weight: 600;
+}
+.voice-watchers-head small {
+  color: var(--lr-muted);
+  font: var(--lr-type-meta);
+}
+.voice-watchers-people {
+  display: flex;
+  flex-direction: column;
+}
+.voice-watchers-people > li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px;
+  font: var(--lr-type-ui);
+}
+.voice-watchers-people > li > .gel-avatar {
+  --avatar-size: 24px;
+  font-size: 10px;
+}
+.voice-watchers-people > li > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.voice-watchers-others > h3 {
+  padding: 10px 8px 2px;
+  color: var(--lr-muted);
+  font: var(--lr-type-caps);
+  text-transform: uppercase;
+}
+.voice-watchers-others .voice-watchers-people > li {
+  color: var(--lr-muted);
+}
+.voice-watchers-end {
+  align-items: center;
+}
+.voice-watchers-end > svg {
+  margin-top: 0;
+}
+/* The own Live on the call bar: its count after a divider. */
+.voice-control-watchers {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 7px;
+  border-left: 1px solid color-mix(in srgb, var(--lr-on-live) 40%, transparent);
+  font: var(--lr-type-ui);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* Fokus's row: a person without a camera as their avatar, then the name
+   and one status line: live, watching the Live in front, or their state. */
+.voice-stage > .voice-room-participant.is-strip:not(.has-video) {
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 14px;
+  text-align: left;
+}
+.voice-stage > .is-strip:not(.has-video) .voice-room-participant-text {
+  align-items: flex-start;
+}
+.voice-stage
+  > .is-strip:not(.has-video)
+  .voice-room-participant-text
+  > .voice-room-participant-status {
+  position: static;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  overflow: hidden;
+  clip-path: none;
+  text-overflow: ellipsis;
+}
+.voice-room-participant-status > svg {
+  flex: none;
+}
+.voice-room-participant-status.is-live,
+.voice-room-participant.is-speaking .voice-room-participant-status.is-live {
+  color: var(--lr-live-text);
+}
+.voice-room-participant.is-speaking .voice-room-participant-status.is-watching {
+  color: var(--lr-muted);
+}

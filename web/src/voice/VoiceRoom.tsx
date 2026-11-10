@@ -50,10 +50,12 @@ import { joinVoice, useVoice, toggleSourceWatch } from "./session.ts";
 import {
   EMPTY_LIVE_PEOPLE,
   EMPTY_OCCUPANCY,
+  EMPTY_WATCHES,
   useVoiceRoster,
 } from "./roster.ts";
 import { useSpeakingUsers } from "./speaking.ts";
 import { VoiceTile } from "./VoiceTile.tsx";
+import { LiveWatchCount } from "./LiveWatchers.tsx";
 import { Participant } from "./Participant.tsx";
 import { MicrophoneTest } from "./MicrophoneTest.tsx";
 import { QuickCallSettingsButton } from "./QuickCallSettings.tsx";
@@ -81,6 +83,7 @@ import {
 } from "./stageView.ts";
 import { useMediaSettings } from "./settings.ts";
 import { useWake } from "./useWake.ts";
+import { watchersOf } from "./watchers.ts";
 import "./room.css";
 
 type StageTile = {
@@ -133,6 +136,7 @@ export function VoiceRoom({
   const livePeople = useVoiceRoster(
     (s) => s.live[server.id]?.[channelId] ?? EMPTY_LIVE_PEOPLE,
   );
+  const watches = useVoiceRoster((s) => s.watches[server.id] ?? EMPTY_WATCHES);
   const here =
     voice.status === "joined" &&
     voice.serverId === server.id &&
@@ -175,6 +179,10 @@ export function VoiceRoom({
   const openProfile = (memberId: string) =>
     setProfile({ serverId: server.id, memberId });
 
+  /** A name without "(du)". */
+  const plainName = (id: string) =>
+    members.get(id)?.name ??
+    (id === me ? (user?.name ?? t("names.you")) : t("people.member"));
   const nameOf = (id: string) =>
     id === me
       ? t("people.you", {
@@ -347,6 +355,19 @@ export function VoiceRoom({
   // camera in the row under it.
   const strip = ordered.filter((tile) => tile !== focus);
   const stripPeople = focus ? occupants.filter(([id]) => !cameras.has(id)) : [];
+  // The row says who watches the Live in front; a camera in front, nobody.
+  const watchingFocus = new Set(
+    focus?.kind === "live"
+      ? watchersOf({
+          owner: focus.userId,
+          channelId,
+          occupancy: Object.fromEntries(occupants),
+          watches,
+          me,
+          myWatches: voice.sourceSubscriptions,
+        }).watching
+      : [],
+  );
   const layout = !stageSize
     ? null
     : kino
@@ -531,6 +552,20 @@ export function VoiceRoom({
                   label={tile.name}
                   screen
                   live
+                  liveCaption={{
+                    name: nameOf(tile.userId),
+                    watchers: (
+                      <LiveWatchCount
+                        serverId={server.id}
+                        channelId={channelId}
+                        channelName={channelName}
+                        owner={tile.userId}
+                        ownerName={plainName(tile.userId)}
+                        own={tile.userId === me}
+                        members={server.members}
+                      />
+                    ),
+                  }}
                   spotlight={tile === focus}
                   pinned={pinned === tile.id}
                   onTogglePin={
@@ -560,6 +595,7 @@ export function VoiceRoom({
               key={id}
               {...person(id, flags)}
               camera={null}
+              strip={{ live: isLive(id), watching: watchingFocus.has(id) }}
               className="voice-stage-item is-strip"
               style={at(layout?.strip[strip.length + index])}
             />

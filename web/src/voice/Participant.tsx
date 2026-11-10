@@ -16,7 +16,7 @@ import { voice } from "../i18n/catalogs/voice.ts";
 import type { Member } from "../servers/types.ts";
 import { VoiceStateIcons } from "../components/VoiceStateIcons.tsx";
 import { Avatar } from "../components/Avatar.tsx";
-import { MoreIcon } from "../components/Icons.tsx";
+import { EyeIcon, LiveIcon, MoreIcon } from "../components/Icons.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { IconButton } from "../components/ui/IconButton.tsx";
 import { Popover } from "../components/ui/Popover.tsx";
@@ -67,6 +67,7 @@ export function Participant({
   className,
   style,
   fill,
+  strip,
 }: {
   id: string;
   member: Member | undefined;
@@ -94,6 +95,9 @@ export function Participant({
   /** A tile of the people stage, in a call without pictures: the avatar
    * this many pixels across, and `small` drops the status line. */
   fill?: { avatar: number; small: boolean };
+  /** In Fokus's row: one status line under the name, that they are live,
+   * else that they watch the Live in front, else their state. */
+  strip?: { live: boolean; watching: boolean };
 }) {
   const t = useT(voice);
   const [menu, setMenu] = useState(false);
@@ -110,6 +114,7 @@ export function Participant({
       : speaking
         ? t("participant.speaking")
         : t("participant.present");
+  const stripState = strip?.live ? "live" : strip?.watching ? "watching" : null;
   const profile = () => {
     if (press.consumeClick()) return;
     if (member) onProfile(id);
@@ -211,11 +216,27 @@ export function Participant({
           </button>
         </strong>
         {/* The state, then a camera or a Live. A tile and a chip say it to
-            a screen reader only. */}
-        <span className="voice-room-participant-status">
-          {status}
-          {media ? ` · ${media}` : ""}
-        </span>
+            a screen reader only; Fokus's row shows its one line. */}
+        {strip ? (
+          <span
+            className={`voice-room-participant-status${stripState ? ` is-${stripState}` : ""}`}
+          >
+            {stripState === "live" ? <LiveIcon size={12} /> : null}
+            {stripState === "watching" ? <EyeIcon size={12} /> : null}
+            {stripState === "live"
+              ? self
+                ? t("live.youAreLive")
+                : t("strip.isLive")
+              : stripState === "watching"
+                ? t("strip.watching")
+                : status}
+          </span>
+        ) : (
+          <span className="voice-room-participant-status">
+            {status}
+            {media ? ` · ${media}` : ""}
+          </span>
+        )}
       </span>
       {tile ? null : marks}
       {hasMenu ? (

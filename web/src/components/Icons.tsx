@@ -476,3 +476,12 @@ export function LockIcon(props: IconProps) {
     </svg>
   );
 }
+
+/** Ends something that runs, as "Live beenden" (v0.10). */
+export function StopIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+    </svg>
+  );
+}

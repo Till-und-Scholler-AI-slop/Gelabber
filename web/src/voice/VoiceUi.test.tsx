@@ -16,6 +16,8 @@ const fixture = vi.hoisted(() => ({
     string,
     Record<string, Record<string, Partial<Record<"s" | "l", true>>>>
   >,
+  /** The roster's watches: per server, per watcher, whose Lives. */
+  watches: {} as Record<string, Record<string, readonly string[]>>,
   speaking: { call: null as string | null, users: {} as Record<string, true> },
   /** The window's width for `max-width` queries; null matches none. */
   width: null as number | null,
@@ -68,8 +70,13 @@ vi.mock("../components/useMediaQuery.ts", () => ({
 vi.mock("./roster.ts", () => ({
   EMPTY_OCCUPANCY: {},
   EMPTY_LIVE_PEOPLE: {},
+  EMPTY_WATCHES: {},
   useVoiceRoster: (select: (state: unknown) => unknown) =>
-    select({ byServer: fixture.roster, live: fixture.live }),
+    select({
+      byServer: fixture.roster,
+      live: fixture.live,
+      watches: fixture.watches,
+    }),
 }));
 vi.mock("./speaking.ts", () => ({
   useSpeakingUsers: (serverId: string, channelId: string) =>
@@ -175,6 +182,7 @@ beforeEach(() => {
     playbackBlocked: false,
   };
   fixture.roster = {};
+  fixture.watches = {};
   fixture.live = {
     a: { stage: { alice: { l: true } } },
     b: { stage: { bob: { s: true } } },
@@ -282,7 +290,8 @@ describe("active media UI", () => {
     expect(html).toContain(
       '<p class="voice-header-facts">3 im Kanal · 2 Live</p>',
     );
-    expect(html.match(/· Live</g)).toHaveLength(2);
+    // The row says who is live, in a line of its own (#521).
+    expect(html.match(/>Ist live<\/span>/g)).toHaveLength(2);
     // The overview keeps the spotlight for whoever went live first.
     const overview = renderToStaticMarkup(
       <VoiceRoom
@@ -684,7 +693,8 @@ describe("active media UI", () => {
     // A camera that is on wears the accent pill, a Live the red one.
     expect(camera).toContain("is-on");
     expect(live).toContain("voice-control-live");
-    expect(live).toContain('aria-haspopup="menu"');
+    // While live a press lists the watchers, with "Live beenden" (#521).
+    expect(live).toContain('aria-haspopup="dialog"');
   });
   it("says Stumm or Taub beside a closed microphone or headset", () => {
     Object.assign(fixture.voice, {
