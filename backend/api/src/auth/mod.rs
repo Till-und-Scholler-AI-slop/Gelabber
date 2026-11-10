@@ -39,6 +39,7 @@ use crate::i18n::{self, Locale};
 use crate::json::Body;
 use crate::limits::{self, MailBudget};
 use crate::mail::{Mail, Mailer};
+use crate::operator;
 use crate::password;
 use crate::state::AppState;
 use crate::token;
@@ -185,6 +186,9 @@ impl std::fmt::Debug for ResetConfirmBody {
 pub struct SessionResponse {
     pub user: Option<User>,
     pub csrf_token: String,
+    /// Whether `user` is an instance operator (`operator::access`); the
+    /// clients offer the area "Betrieb" only then.
+    pub operator: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -427,6 +431,7 @@ async fn signed_in(
     user: User,
     status: StatusCode,
 ) -> Result<Response, ApiError> {
+    let operator = operator::access::is_signed_in_operator(state, &user).await?;
     let previous = cookies::get(headers, SESSION_COOKIE);
     session::revoke_current(state, previous.as_deref()).await?;
     // Expired-row housekeeping is separate from the targeted logout.
@@ -445,6 +450,7 @@ async fn signed_in(
     let body = SessionResponse {
         user: Some(user),
         csrf_token,
+        operator,
     };
     Ok((status, cookies, Json(body)).into_response())
 }
@@ -673,7 +679,7 @@ async fn current_session(
     State(state): State<AppState>,
     headers: HeaderMap,
     MaybeUser(user): MaybeUser,
-) -> Response {
+) -> Result<Response, ApiError> {
     let existing = cookies::get(&headers, CSRF_COOKIE).filter(|value| token::is_valid(value));
     let (csrf_token, set_cookie) = match existing {
         Some(value) => (value, None),
@@ -684,11 +690,19 @@ async fn current_session(
         }
     };
 
-    let body = Json(SessionResponse { user, csrf_token });
-    match set_cookie {
+    let operator = match &user {
+        Some(user) => operator::access::is_signed_in_operator(&state, user).await?,
+        None => false,
+    };
+    let body = Json(SessionResponse {
+        user,
+        csrf_token,
+        operator,
+    });
+    Ok(match set_cookie {
         Some(cookie) => (AppendHeaders([cookie.header()]), body).into_response(),
         None => body.into_response(),
-    }
+    })
 }
 
 fn csrf_cookie(state: &AppState, value: &str) -> SetCookie {
