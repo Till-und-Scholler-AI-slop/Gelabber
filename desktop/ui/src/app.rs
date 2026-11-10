@@ -735,8 +735,13 @@ fn logout_failed(ui: &mut Ui, client: &Client, signed_in: bool) {
         .data_mut(|d| d.insert_temp(egui::Id::unique("gelabber-logout-failed"), true));
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
-    let message =
-        "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut.";
+    // "Überall abmelden" left for /login at once; until the server confirms,
+    // the other devices are still signed in, and the retry repeats it.
+    let message = if client.http().unconfirmed_sign_out_everywhere() {
+        "Die Abmeldung auf allen Geräten konnte nicht bestätigt werden. Bitte versuche es erneut."
+    } else {
+        "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut."
+    };
     let screen = ui.ctx().content_rect();
     // margin 12px 16px, padding 12px 16px, the 3px warning bar on the left.
     let outer = egui::Rect::from_min_max(
