@@ -56,6 +56,72 @@ describe("changeAccountLocale", () => {
   });
 });
 
+describe("overlapping changeAccountLocale", () => {
+  function answers() {
+    const calls: Array<{
+      resolve: (value: unknown) => void;
+      reject: (error: unknown) => void;
+    }> = [];
+    api.mockImplementation(
+      () => new Promise((resolve, reject) => calls.push({ resolve, reject })),
+    );
+    return calls;
+  }
+
+  it("keeps the newer choice when the older answer arrives last", async () => {
+    const calls = answers();
+    const stop = followAccountLocale();
+    try {
+      const first = changeAccountLocale("en");
+      const second = changeAccountLocale("de");
+      calls[1].resolve({ locale: "de" });
+      expect(await second).toBe(true);
+      calls[0].resolve({ locale: "en" });
+      expect(await first).toBe(true);
+      expect(currentLocale()).toBe("de");
+      expect(useSession.getState().user?.locale).toBe("de");
+    } finally {
+      stop();
+    }
+  });
+
+  it("switches back to the saved language when both saves fail", async () => {
+    const calls = answers();
+    const stop = followAccountLocale();
+    try {
+      const first = changeAccountLocale("en");
+      const second = changeAccountLocale("de");
+      calls[0].reject(new Error("offline"));
+      expect(await first).toBe(false);
+      expect(currentLocale()).toBe("de");
+      calls[1].reject(new Error("offline"));
+      expect(await second).toBe(false);
+      expect(currentLocale()).toBe("de");
+      expect(useSession.getState().user?.locale).toBe("de");
+    } finally {
+      stop();
+    }
+  });
+
+  it("falls back to an older saved choice when the newer save fails", async () => {
+    const calls = answers();
+    const stop = followAccountLocale();
+    try {
+      const first = changeAccountLocale("en");
+      const second = changeAccountLocale("de");
+      calls[0].resolve({ locale: "en" });
+      expect(await first).toBe(true);
+      expect(currentLocale()).toBe("de");
+      calls[1].reject(new Error("offline"));
+      expect(await second).toBe(false);
+      expect(currentLocale()).toBe("en");
+      expect(useSession.getState().user?.locale).toBe("en");
+    } finally {
+      stop();
+    }
+  });
+});
+
 describe("followAccountLocale", () => {
   it("shows the language of the account that signs in, and keeps it after", () => {
     useSession.setState({ status: "anonymous", user: null });
