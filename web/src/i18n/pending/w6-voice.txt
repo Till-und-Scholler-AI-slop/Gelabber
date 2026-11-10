@@ -5,14 +5,12 @@ src/voice/MicrophoneTest.tsx
 src/voice/PushToTalkSettings.tsx
 src/voice/QuickCallSettings.tsx
 src/voice/VoiceDiagnostics.tsx
-src/voice/VoiceSettings.tsx
 src/voice/VoiceSettingsPanel.tsx
 src/voice/callShortcuts.ts
 src/voice/callSoundSynth.ts
 src/voice/callSounds.ts
 src/voice/capabilities.ts
 src/voice/connectionSummary.ts
-src/voice/devices.ts
 src/voice/diagnostics.ts
 src/voice/localSourceAudio.ts
 src/voice/mediaPeer.ts
@@ -23,8 +21,6 @@ src/voice/microphoneComparison.ts
 src/voice/playbackBoost.ts
 src/voice/receivedAudio.ts
 src/voice/roster.ts
-src/voice/settings.ts
-src/voice/settingsLayout.tsx
 src/voice/speaking.ts
 src/voice/stage.ts
 src/voice/stageView.ts
