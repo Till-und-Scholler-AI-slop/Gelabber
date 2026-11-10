@@ -21,6 +21,8 @@ const MODES: [(&str, &str, &str); 3] = [
 pub struct State {
     status: Status,
     waiting: bool,
+    /// "Weitere Themes" was chosen; the page navigates after the draw.
+    pub(super) navigate: Option<&'static str>,
 }
 
 /// `ModeSwatch`: page, panel strip, a text bar and an accent bar.
@@ -244,7 +246,7 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         );
         let id = Id::unique("gelabber-more-themes");
         if Link::interact(ui, r, id, "Weitere Themes").clicked() {
-            super::go(ui.ctx(), app, "/settings/themes");
+            s.navigate = Some("/settings/themes");
         }
     }
     let w = ui.available_width();

@@ -10,6 +10,8 @@ pub mod media;
 pub mod notifications;
 pub mod prefs;
 pub mod profile;
+#[cfg(test)]
+mod tests_drawn;
 pub mod themes;
 
 use std::sync::Arc;
@@ -324,6 +326,11 @@ pub fn sidebar(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
 pub(crate) fn go(ctx: &egui::Context, app: &mut AppCtx, href: &str) {
     let shared = page_state(ctx);
     let mut s = shared.lock();
+    leave(ctx, app, &mut s, href);
+}
+
+/// [`go`] for an area drawn under the page's lock, which it already holds.
+fn leave(ctx: &egui::Context, app: &mut AppCtx, s: &mut PageState, href: &str) {
     if s.area == "profilkarte" && s.card.dirty {
         s.leave_to = Some(href.to_owned());
         controls::ask(
@@ -347,7 +354,6 @@ pub(crate) fn go(ctx: &egui::Context, app: &mut AppCtx, href: &str) {
             ),
         );
     } else {
-        drop(s);
         app.nav.navigate(href);
     }
 }
@@ -442,6 +448,10 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
             pos2(left + width, used.bottom() + 48.0),
         ));
     });
+    // An area's link: the page's state is locked here, so not through `go`.
+    if let Some(href) = s.appearance.navigate.take() {
+        leave(&ctx, app, &mut s, href);
+    }
     drop(s);
     controls::show_confirm(&ctx);
 }
