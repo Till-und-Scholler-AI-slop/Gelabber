@@ -1,5 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { setLocale } from "../i18n/locale.ts";
 
 import { AvatarFrame } from "./AvatarFrame.tsx";
 import { ProfileCardView } from "./ProfileCard.tsx";
@@ -70,5 +72,31 @@ describe("profile card", () => {
       </AvatarFrame>,
     );
     expect(html).toBe("<span>avatar</span>");
+  });
+});
+
+describe("profile card in English", () => {
+  afterEach(() => setLocale("de", { persist: false }));
+
+  it("names the presence and the bio in English", () => {
+    setLocale("en", { persist: false });
+    const html = renderToStaticMarkup(
+      <ProfileCardView
+        person={{
+          name: "Ada",
+          avatar_url: null,
+          pronouns: null,
+          status_text: null,
+          bio: "Mathematician.",
+          accent_color: null,
+          banner_url: null,
+          avatar_decoration: null,
+        }}
+        presence="i"
+      />,
+    );
+    expect(html).toContain("About me");
+    expect(html).toContain("Away");
+    expect(html).not.toContain("Über mich");
   });
 });
