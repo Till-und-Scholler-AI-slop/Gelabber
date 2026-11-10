@@ -220,6 +220,18 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, s: &mut State) {
         ui.add_space(6.0);
         let w = ui.available_width();
         controls::paragraph(ui, error, text::META, c.danger, w);
+        // The retry the Themes area offers, here too.
+        if !sync.saving {
+            ui.add_space(8.0);
+            let label = if sync.pending {
+                "Erneut anwenden"
+            } else {
+                "Erneut versuchen"
+            };
+            if ui.add(crate::widgets::Button::new(label).small()).clicked() {
+                themes::retry(ui.ctx(), app);
+            }
+        }
     }
     ui.add_space(10.0);
     // "Gerade aktiv: …" + the link to Themes.

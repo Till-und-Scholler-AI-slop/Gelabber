@@ -502,7 +502,7 @@ pub fn change(ctx: &egui::Context, app: &AppCtx, op: Op) -> bool {
 }
 
 /// "Erneut versuchen" / "Erneut anwenden": reload, then resend a pending change.
-fn retry(ctx: &egui::Context, app: &AppCtx) {
+pub(super) fn retry(ctx: &egui::Context, app: &AppCtx) {
     let shared = sync(ctx);
     let mut s = shared.lock();
     s.reapply = s.pending.is_some();
@@ -1928,6 +1928,35 @@ mod tests {
         });
         harness.run_steps(2);
         assert!(harness.query_by_label(LOAD_FAILED).is_none());
+    }
+
+    /// Darstellung says the themes did not load, and loads them again.
+    #[test]
+    fn darstellung_offers_to_load_the_themes_again() {
+        use crate::app::testkit::{FakeApi, Reply, launcher, wait_for, wait_for_label};
+        use egui::accesskit::Role;
+        use egui_kittest::kittest::Queryable;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _config = crate::platform::paths::testing::TempConfig::new("themes-unloaded-mode");
+        let up = std::sync::Arc::new(AtomicBool::new(false));
+        let serve = up.clone();
+        let api = FakeApi::start(true, move |method, path, _| match (method, path) {
+            ("GET", "/me/themes") if !serve.load(Ordering::SeqCst) => {
+                Some(Reply::error(503, "unavailable"))
+            }
+            _ => None,
+        });
+        let mut harness = launcher(&api, "/settings/darstellung");
+        wait_for_label(&mut harness, "Erneut versuchen");
+        up.store(true, Ordering::SeqCst);
+        harness
+            .get_by_role_and_label(Role::Button, "Erneut versuchen")
+            .click();
+        wait_for(&mut harness, "the themes", |h| {
+            sync(&h.ctx).lock().local.is_some()
+        });
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Erneut versuchen").is_none());
     }
 
     /// Another account (a new store epoch) does not inherit the last one's
