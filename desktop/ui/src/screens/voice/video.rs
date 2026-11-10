@@ -570,13 +570,14 @@ const COVER_SLACK: f32 = 1.03;
 /// What to ask the core for so the picture fills a `tile` (physical
 /// pixels) drawn with `fit`: the core shrinks the picture to fit inside,
 /// aspect kept, sides rounded down to even, and 0 leaves a side open.
-/// Only the tile, the picture's turn and (for cover) which side is longer
-/// decide, never the delivered size, which carries the core's rounding.
+/// The limits are for the picture as displayed (the core swaps them for a
+/// sideways one). Only the tile and (for cover) which side of the shown
+/// picture is longer decide, never the delivered size, which carries the
+/// core's rounding.
 /// `wide_before` is the last cover decision; returns the size and this one.
 pub fn ask(
     tile: (u32, u32),
     shown: Option<(f32, f32)>,
-    turned: bool,
     fit: Fit,
     wide_before: Option<bool>,
 ) -> ((u32, u32), Option<bool>) {
@@ -594,8 +595,6 @@ pub fn ask(
         }
         _ => ((tw, th), None),
     };
-    // The core scales the picture before it is turned.
-    let size = if turned { (size.1, size.0) } else { size };
     (size, wide)
 }
 
@@ -624,7 +623,6 @@ pub fn request_fit(
     let (wh, wide) = ask(
         tile_px,
         frame.map(shown_size),
-        frame.is_some_and(|f| (f.rotation / 90) % 2 == 1),
         fit,
         before.and_then(|(_, _, wide)| wide),
     );
@@ -743,9 +741,12 @@ mod tests {
         assert_eq!(call.video_request(key), Some((320, 180, 30)));
     }
 
-    /// The core's `Fit` (gelabber_media.cc): shrink into the limits (0:
-    /// none), aspect kept, to even sides; a picture that fits stays.
-    fn core_fit(max: (u32, u32), source: (u32, u32)) -> (u32, u32) {
+    /// The core's sink (gelabber_media.cc `OnFrame`, `Fit`): the limits are
+    /// for the picture as displayed, so a sideways one reads them swapped;
+    /// shrink into them (0: none), aspect kept, to even sides; a picture
+    /// that fits stays. Returns the frame as delivered, before its turn.
+    fn core_fit(max: (u32, u32), source: (u32, u32), sideways: bool) -> (u32, u32) {
+        let max = if sideways { (max.1, max.0) } else { max };
         let (mw, mh) = (i64::from(max.0), i64::from(max.1));
         let (w, h) = (i64::from(source.0), i64::from(source.1));
         let wide = mw > 0 && w > mw;
@@ -763,10 +764,12 @@ mod tests {
 
     /// Asked, delivered, asked again: the ask settles at once for every
     /// tile size (the stage's 944×612 used to flip every frame), a cover
-    /// picture covers its tile and a contained one fits.
+    /// picture covers its tile and a contained one fits, also turned.
     #[test]
     fn the_ask_settles_and_fills_the_tile() {
-        for source in [(1920, 1080), (1280, 720), (640, 480), (1080, 1920)] {
+        let sources = [(1920, 1080), (1280, 720), (640, 480), (1080, 1920)];
+        for (source, sideways) in sources.into_iter().flat_map(|s| [(s, false), (s, true)]) {
+            let turn = |(w, h): (u32, u32)| if sideways { (h, w) } else { (w, h) };
             for fit in [Fit::Contain, Fit::Cover] {
                 for tw in (120..1400).step_by(37) {
                     for th in (90..900).step_by(29) {
@@ -774,35 +777,42 @@ mod tests {
                         let mut wide = None;
                         let mut asks = Vec::new();
                         for _ in 0..4 {
-                            let shown = frame.map(|(w, h)| (w as f32, h as f32));
-                            let (size, w) = ask((tw, th), shown, false, fit, wide);
+                            let shown = frame.map(|f| {
+                                let (w, h) = turn(f);
+                                (w as f32, h as f32)
+                            });
+                            let (size, w) = ask((tw, th), shown, fit, wide);
                             wide = w;
                             asks.push(size);
-                            frame = Some(core_fit(size, source));
+                            frame = Some(core_fit(size, source, sideways));
                         }
-                        assert_eq!(asks[1], asks[3], "{source:?} {fit:?} {tw}×{th}: {asks:?}");
-                        assert_eq!(asks[2], asks[3], "{source:?} {fit:?} {tw}×{th}: {asks:?}");
-                        let (w, h) = frame.unwrap();
+                        let what = format!("{source:?} {sideways} {fit:?} {tw}×{th}: {asks:?}");
+                        assert_eq!(asks[1], asks[3], "{what}");
+                        assert_eq!(asks[2], asks[3], "{what}");
+                        let (w, h) = turn(frame.unwrap());
                         // No upscaling beyond the source itself.
-                        let shrunk = w < source.0;
+                        let shrunk = w < turn(source).0;
                         match fit {
-                            Fit::Contain => assert!(w <= tw && h <= th),
+                            Fit::Contain => assert!(w <= tw && h <= th, "{what}: {w}×{h}"),
                             Fit::Cover if shrunk => assert!(
                                 // 3 % of slack near the tile's own shape.
                                 w as f32 * 1.04 >= tw as f32 && h as f32 * 1.04 >= th as f32,
-                                "{source:?} {tw}×{th}: {w}×{h}"
+                                "{what}: {w}×{h}"
                             ),
                             Fit::Cover => {}
+                        }
+                        // Contained, it fills the tile on one side at least.
+                        if fit == Fit::Contain && shrunk {
+                            assert!(w + 2 >= tw || h + 2 >= th, "{what}: {w}×{h}");
                         }
                     }
                 }
             }
         }
-        // A turned picture is scaled before the turn: the sides swap.
-        assert_eq!(
-            ask((400, 300), Some((300.0, 400.0)), true, Fit::Contain, None).0,
-            (300, 400)
-        );
+        // A portrait phone camera (sideways 1920×1080) in a 300×600 tile.
+        let (size, _) = ask((300, 600), Some((1080.0, 1920.0)), Fit::Contain, None);
+        assert_eq!(size, (300, 600));
+        assert_eq!(core_fit(size, (1920, 1080), true), (532, 300));
     }
 
     #[test]
