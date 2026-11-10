@@ -204,8 +204,9 @@ export function attachRealtimeRecovery(
           ),
         ]);
         if (!alive() || attempt !== version) return;
-        // Removed channels/DMs are authoritative absence, not an outage that
-        // should prevent every remaining topic from recovering forever.
+        // Removed channels/DMs and blocked servers are authoritative absence,
+        // not an outage that should prevent every remaining topic from
+        // recovering forever.
         for (const query of client.getQueryCache().findAll(filters)) {
           if (skipped(query)) continue;
           // Not read in this round: an old error is not this round's outcome.
@@ -216,7 +217,7 @@ export function attachRealtimeRecovery(
           const error = query.state.error;
           if (
             !(error instanceof ApiError) ||
-            !["not_found", "forbidden"].includes(error.code)
+            !["not_found", "forbidden", "server_blocked"].includes(error.code)
           )
             throw error;
           const key = query.queryKey;

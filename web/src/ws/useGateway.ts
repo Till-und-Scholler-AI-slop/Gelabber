@@ -126,7 +126,9 @@ export function useAuthenticatedSubscriptions(): void {
 
   const serverGone =
     serverError instanceof ApiError &&
-    (serverError.code === "not_found" || serverError.code === "forbidden");
+    (serverError.code === "not_found" ||
+      serverError.code === "forbidden" ||
+      serverError.code === "server_blocked");
   if (serverGone && rememberedServerId && !routeServerId) {
     setRememberedServerId(undefined);
   }
