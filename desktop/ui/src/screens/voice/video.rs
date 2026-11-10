@@ -522,9 +522,10 @@ pub fn paint(
         .add(egui_wgpu::Callback::new_paint_callback(rect, draw));
 }
 
-/// The size each key was last asked for and when (`input.time`).
+/// The size each key was last asked for, when (`input.time`), and for a
+/// cover tile whether the picture counted as wider than it.
 #[derive(Clone, Default)]
-struct Asked(HashMap<gelabber_call::VideoKey, ((u32, u32, u32), f64)>);
+struct Asked(HashMap<gelabber_call::VideoKey, ((u32, u32, u32), f64, Option<bool>)>);
 
 fn asked_id() -> egui::Id {
     egui::Id::unique("gelabber-video-requests")
@@ -533,9 +534,83 @@ fn asked_id() -> egui::Id {
 /// A key no tile asked for this long has no tile any more.
 const GONE_AFTER: f64 = 0.5;
 
-/// Asks the call for the size a tile shows `key` at, in physical pixels,
-/// once per change: the core scales and drops frames before they reach
-/// Rust, and the SFU sends a fitting layer.
+/// How far a picture's shape may stray from the tile's before a cover tile
+/// switches the side it fills by: more than the core's rounding moves it.
+const COVER_SLACK: f32 = 1.03;
+
+/// What to ask the core for so the picture fills a `tile` (physical
+/// pixels) drawn with `fit`: the core shrinks the picture to fit inside,
+/// aspect kept, sides rounded down to even, and 0 leaves a side open.
+/// Only the tile, the picture's turn and (for cover) which side is longer
+/// decide, never the delivered size, which carries the core's rounding.
+/// `wide_before` is the last cover decision; returns the size and this one.
+pub fn ask(
+    tile: (u32, u32),
+    shown: Option<(f32, f32)>,
+    turned: bool,
+    fit: Fit,
+    wide_before: Option<bool>,
+) -> ((u32, u32), Option<bool>) {
+    let (tw, th) = tile;
+    let (size, wide) = match (fit, shown) {
+        (Fit::Cover, Some((w, h))) if w > 0.0 && h > 0.0 => {
+            let (picture, room) = (w / h, tw as f32 / th as f32);
+            let wide = match wide_before {
+                Some(true) => picture * COVER_SLACK > room,
+                Some(false) => picture > room * COVER_SLACK,
+                None => picture > room,
+            };
+            // The tile's height (wide) or width, the other side open.
+            ((if wide { (0, th) } else { (tw, 0) }), Some(wide))
+        }
+        _ => ((tw, th), None),
+    };
+    // The core scales the picture before it is turned.
+    let size = if turned { (size.1, size.0) } else { size };
+    (size, wide)
+}
+
+/// Asks the call for the size a tile shows `key` at (see [`ask`]), once
+/// per change: the core scales and drops frames before they reach Rust.
+/// `frame` is the picture the tile shows, when it has one.
+pub fn request_fit(
+    ui: &Ui,
+    call: &gelabber_call::Call,
+    key: gelabber_call::VideoKey,
+    tile: Rect,
+    frame: Option<&Frame>,
+    fit: Fit,
+    fps: u32,
+) {
+    let ppp = ui.ctx().pixels_per_point();
+    let tile_px = (
+        (tile.width() * ppp).round().max(1.0) as u32,
+        (tile.height() * ppp).round().max(1.0) as u32,
+    );
+    let now = ui.ctx().input(|i| i.time);
+    let before = ui.ctx().data(|d| {
+        d.get_temp::<Asked>(asked_id())
+            .and_then(|a| a.0.get(&key).copied())
+    });
+    let (wh, wide) = ask(
+        tile_px,
+        frame.map(shown_size),
+        frame.is_some_and(|f| (f.rotation / 90) % 2 == 1),
+        fit,
+        before.and_then(|(_, _, wide)| wide),
+    );
+    let size = (wh.0, wh.1, fps);
+    ui.ctx().data_mut(|d| {
+        d.get_temp_mut_or_default::<Asked>(asked_id())
+            .0
+            .insert(key, (size, now, wide))
+    });
+    if before.map(|(size, _, _)| size) != Some(size) {
+        call.request_video(key, size.0, size.1, size.2);
+    }
+}
+
+/// [`request_fit`] for the whole of `tile`, before a picture shows.
 pub fn request(
     ui: &Ui,
     call: &gelabber_call::Call,
@@ -543,22 +618,7 @@ pub fn request(
     tile: Rect,
     fps: u32,
 ) {
-    let ppp = ui.ctx().pixels_per_point();
-    let size = (
-        (tile.width() * ppp).round().max(1.0) as u32,
-        (tile.height() * ppp).round().max(1.0) as u32,
-        fps,
-    );
-    let now = ui.ctx().input(|i| i.time);
-    let last = ui.ctx().data_mut(|d| {
-        d.get_temp_mut_or_default::<Asked>(asked_id())
-            .0
-            .insert(key, (size, now))
-            .map(|(size, _)| size)
-    });
-    if last != Some(size) {
-        call.request_video(key, size.0, size.1, size.2);
-    }
+    request_fit(ui, call, key, tile, None, Fit::Contain, fps);
 }
 
 /// Forgets the last size asked for `key`, here and in the call, so the
@@ -580,10 +640,10 @@ pub fn sweep(ctx: &egui::Context, call: &gelabber_call::Call) {
         let asked = &mut d.get_temp_mut_or_default::<Asked>(asked_id()).0;
         let gone = asked
             .iter()
-            .filter(|(_, (_, at))| now - at > GONE_AFTER)
+            .filter(|(_, (_, at, _))| now - at > GONE_AFTER)
             .map(|(k, _)| *k)
             .collect();
-        asked.retain(|_, (_, at)| now - *at <= GONE_AFTER);
+        asked.retain(|_, (_, at, _)| now - *at <= GONE_AFTER);
         gone
     });
     for key in gone {
@@ -652,6 +712,68 @@ mod tests {
         assert_eq!(call.video_request(key), None);
         frame(1.1, true);
         assert_eq!(call.video_request(key), Some((320, 180, 30)));
+    }
+
+    /// The core's `Fit` (gelabber_media.cc): shrink into the limits (0:
+    /// none), aspect kept, to even sides; a picture that fits stays.
+    fn core_fit(max: (u32, u32), source: (u32, u32)) -> (u32, u32) {
+        let (mw, mh) = (i64::from(max.0), i64::from(max.1));
+        let (w, h) = (i64::from(source.0), i64::from(source.1));
+        let wide = mw > 0 && w > mw;
+        let tall = mh > 0 && h > mh;
+        if !wide && !tall {
+            return source;
+        }
+        let (w, h) = if wide && (!tall || mw * h <= mh * w) {
+            (mw, h * mw / w)
+        } else {
+            (w * mh / h, mh)
+        };
+        ((w & !1).max(2) as u32, (h & !1).max(2) as u32)
+    }
+
+    /// Asked, delivered, asked again: the ask settles at once for every
+    /// tile size (the stage's 944×612 used to flip every frame), a cover
+    /// picture covers its tile and a contained one fits.
+    #[test]
+    fn the_ask_settles_and_fills_the_tile() {
+        for source in [(1920, 1080), (1280, 720), (640, 480), (1080, 1920)] {
+            for fit in [Fit::Contain, Fit::Cover] {
+                for tw in (120..1400).step_by(37) {
+                    for th in (90..900).step_by(29) {
+                        let mut frame = None::<(u32, u32)>;
+                        let mut wide = None;
+                        let mut asks = Vec::new();
+                        for _ in 0..4 {
+                            let shown = frame.map(|(w, h)| (w as f32, h as f32));
+                            let (size, w) = ask((tw, th), shown, false, fit, wide);
+                            wide = w;
+                            asks.push(size);
+                            frame = Some(core_fit(size, source));
+                        }
+                        assert_eq!(asks[1], asks[3], "{source:?} {fit:?} {tw}×{th}: {asks:?}");
+                        assert_eq!(asks[2], asks[3], "{source:?} {fit:?} {tw}×{th}: {asks:?}");
+                        let (w, h) = frame.unwrap();
+                        // No upscaling beyond the source itself.
+                        let shrunk = w < source.0;
+                        match fit {
+                            Fit::Contain => assert!(w <= tw && h <= th),
+                            Fit::Cover if shrunk => assert!(
+                                // 3 % of slack near the tile's own shape.
+                                w as f32 * 1.04 >= tw as f32 && h as f32 * 1.04 >= th as f32,
+                                "{source:?} {tw}×{th}: {w}×{h}"
+                            ),
+                            Fit::Cover => {}
+                        }
+                    }
+                }
+            }
+        }
+        // A turned picture is scaled before the turn: the sides swap.
+        assert_eq!(
+            ask((400, 300), Some((300.0, 400.0)), true, Fit::Contain, None).0,
+            (300, 400)
+        );
     }
 
     #[test]

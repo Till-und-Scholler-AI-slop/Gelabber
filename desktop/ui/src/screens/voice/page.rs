@@ -734,13 +734,7 @@ fn fullscreen(ui: &mut Ui, app: &mut AppCtx, room: &Room) {
             ui.allocate_rect(screen, Sense::click());
             if let Some(frame) = pic.key.and_then(|k| app.call.frame(k)) {
                 if let Some(key) = pic.key {
-                    video::request(
-                        ui,
-                        app.call,
-                        key,
-                        video::drawn_rect(screen, &frame, Fit::Contain),
-                        60,
-                    );
+                    video::request_fit(ui, app.call, key, screen, Some(&frame), Fit::Contain, 60);
                 }
                 video::paint(
                     ui,

@@ -725,7 +725,7 @@ pub fn picture(
             ui.ctx().data_mut(|d| d.remove::<f64>(wait_id));
             if let Some(key) = pic.key {
                 let fps = if place.strip() { 15 } else { 30 };
-                video::request(ui, app.call, key, video::drawn_rect(rect, frame, fit), fps);
+                video::request_fit(ui, app.call, key, rect, Some(frame), fit, fps);
             }
             video::paint(
                 ui,
