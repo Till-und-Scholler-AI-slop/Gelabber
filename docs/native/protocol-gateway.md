@@ -190,13 +190,13 @@ the same way (so a presence snapshot keyed by the DM id arrives; ignore or store
 
 | # | Frame | Condition |
 |---|---|---|
-| 0 | `{"op":"err","e":"not_found","s":S,"c":C}` and **stop** | server gone / not a member / channel not in server / not a DM participant (unknown and foreign are indistinguishable) |
+| 0 | `{"op":"err","e":"not_found","s":S,"c":C}` and **stop** | server gone / not a member / channel not in server / channel limited to roles the user does not hold / not a DM participant (unknown, foreign and hidden are indistinguishable) |
 | 1 | zero or more `{"op":"e",…}` | resume replay: contiguous events `n+1 ..= head` |
 | 1' | `{"op":"gap","s":S,"c":C,"ep":E}` | resume impossible (see §2.3) — instead of 1 |
 | 2 | `{"op":"ok","s":S,"c":C,"n":HEAD,"ep":E}` | always (`c` omitted for server topic) |
 | 3 | buffered live `e` frames that arrived during catch-up with `n > HEAD` (dups dropped); or `{"op":"resync"}` if any of them carries another epoch | |
 | 4 | `{"op":"p","s":S,"snap":[{"u":U,"st":"o"},…]}` | always — presence snapshot of S |
-| 5 | `{"op":"sig","t":"r","s":S,"snap":[{"u":U,"c":C,"m":true,"s":true},…]}` | always — voice occupancy snapshot of S |
+| 5 | `{"op":"sig","t":"r","s":S,"snap":[{"u":U,"c":C,"m":true,"s":true},…]}` | always — voice occupancy snapshot of S, without seats in channels limited to roles the user does not hold |
 
 Note: subscribing both `{s}` and `{s,c}` of the same server yields steps 4–5 twice; that is expected.
 
@@ -337,10 +337,11 @@ without orders compare `read_at`. Never move a cached read position backwards.
 | message deleted | channel | `d` | message id | omitted | yes | `messages/mod.rs:542-556` |
 | member kicked | server | `d` | kicked user id | `{"k":"k"}` | omitted | `servers/moderation.rs:256-276` |
 | member banned | server | `d` | banned user id | `{"k":"b"}` | omitted | same |
+| access changed: roles, role assignments, `member_permissions`, a channel's `role_ids` | server | `e` | omitted | `{"k":"a"}` | omitted | `servers/access.rs` |
 
 There are **no** gateway events for channel create/rename/delete, server
-rename, role/member changes other than kick/ban, profile changes, or member
-join. Those surfaces refresh via REST refetch on reconnect/gap (§6.4) or the
+rename, member changes other than kick, ban and access (`{"k":"a"}`: refetch
+the server detail and the server list), profile changes, or member join. Those surfaces refresh via REST refetch on reconnect/gap (§6.4) or the
 user's own mutations. (Gap: a native client cannot see another user's
 channel/server edits live; the web client cannot either.)
 
@@ -407,7 +408,7 @@ Client hardening (keep it): the web normalises lists defensively —
 | `u` | unpublish track | `s, c, k` | `s, c, u, k` |
 | `m` | mute flag | `s, c, on` | `s, c, u, on` |
 | `d` | deafen flag | `s, c, on` | `s, c, u, on` |
-| `r` | occupancy snapshot (server only) | — (→ `bad_request`) | `s, snap` |
+| `r` | occupancy snapshot (server only; seats in channels hidden from the user are left out) | — (→ `bad_request`) | `s, snap` |
 
 Track kinds `k` (`protocol.rs:187-222`): `a` microphone, `v` camera, `s` screen
 (= "Live"; several per channel), `sa` screen audio (requires `s` published by
