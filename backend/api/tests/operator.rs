@@ -1766,3 +1766,615 @@ async fn the_server_list_searches_filters_and_counts_storage(pool: PgPool) {
             .all(|row| row.1.is_none())
     );
 }
+
+async fn file_report(
+    client: &mut Client,
+    server: &str,
+    body: serde_json::Value,
+) -> common::Response {
+    client
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server}/reports"),
+            Some(body),
+        )
+        .await
+}
+
+async fn resolve_report(op: &mut Client, id: &str, body: serde_json::Value) -> common::Response {
+    op.send(
+        Method::POST,
+        &format!("/api/operator/reports/{id}/resolve"),
+        Some(body),
+    )
+    .await
+}
+
+/// Rows of `operator_audit` about reports as (action, target_report,
+/// target_server, detail).
+async fn report_audit(
+    pool: &PgPool,
+) -> Vec<(String, Option<Uuid>, Option<Uuid>, serde_json::Value)> {
+    sqlx::query_as(
+        "SELECT action, target_report, target_server, detail FROM operator_audit \
+         WHERE action LIKE 'reports.%' ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test]
+async fn the_report_routes_answer_401_and_404_like_the_area(pool: PgPool) {
+    let state = operator_state(pool.clone());
+    let mut tom = registered(&state, TOM, "Tom").await;
+    let abend = server_of(&mut tom, "Abend").await;
+    let filed = file_report(&mut tom, &abend.id, json!({ "reason": "spam" })).await;
+    assert_eq!(filed.status, StatusCode::CREATED, "{}", filed.body);
+    let id = filed.body["id"].as_str().unwrap();
+    let mut anonymous = Client::from_state(state.clone());
+    anonymous.bootstrap().await;
+    let routes = [
+        (Method::GET, "/api/operator/reports".to_owned(), None),
+        (
+            Method::POST,
+            format!("/api/operator/reports/{id}/resolve"),
+            Some(json!({ "status": "dismissed" })),
+        ),
+        (Method::GET, "/api/operator/usage".to_owned(), None),
+    ];
+    for (method, path, body) in routes {
+        let res = anonymous.send(method.clone(), &path, body.clone()).await;
+        assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{path}: {}", res.body);
+        let res = tom.send(method, &path, body).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{path}: {}", res.body);
+    }
+    // Filing needs an account too.
+    let res = file_report(&mut anonymous, &abend.id, json!({ "reason": "spam" })).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.body);
+    assert!(audit_rows(&pool).await.is_empty());
+    let (status, _) = report_status(&pool, Uuid::parse_str(id).unwrap()).await;
+    assert_eq!(status, "open");
+}
+
+#[sqlx::test]
+async fn members_report_a_server_once_while_it_is_open(pool: PgPool) {
+    let state = operator_state(pool.clone());
+    let mut tom = registered(&state, TOM, "Tom").await;
+    let mut ben = registered(&state, BEN, "Ben").await;
+    let mut kai = registered(&state, "kai@example.test", "Kai").await;
+    let abend = server_of(&mut tom, "Abend").await;
+    join_server(&mut ben, &abend.code).await;
+
+    let res = file_report(
+        &mut ben,
+        &abend.id,
+        json!({ "reason": "harassment", "details": "  Beleidigungen im Chat  " }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let id = res.body["id"].as_str().unwrap().to_owned();
+    assert!(res.body["created_at"].is_string());
+    let created_at = res.body["created_at"].clone();
+    let stored: (String, String, Option<serde_json::Value>, Option<Uuid>) =
+        sqlx::query_as("SELECT reason, details, snapshot, reporter_id FROM reports WHERE id = $1")
+            .bind(Uuid::parse_str(&id).unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(stored.0, "harassment");
+    assert_eq!(stored.1, "Beleidigungen im Chat");
+    assert_eq!(stored.2, None);
+    assert_eq!(stored.3, Some(Uuid::parse_str(ben.user_id()).unwrap()));
+
+    // Again while it is open: the same report, unchanged.
+    let res = file_report(&mut ben, &abend.id, json!({ "reason": "spam" })).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body, json!({ "id": id, "created_at": created_at }));
+    // The owner reports too: a report of its own.
+    let res = file_report(&mut tom, &abend.id, json!({ "reason": "illegal" })).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    assert_ne!(res.body["id"], id.as_str());
+
+    // Not a member, an unknown or a malformed server: 404, nothing stored.
+    for server in [
+        abend.id.clone(),
+        Uuid::new_v4().to_string(),
+        "nope".to_owned(),
+    ] {
+        let res = file_report(&mut kai, &server, json!({ "reason": "spam" })).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{server}: {}", res.body);
+    }
+
+    // Validation, once Kai is a member.
+    join_server(&mut kai, &abend.code).await;
+    for (body, field, code) in [
+        (json!({}), "reason", "invalid"),
+        (json!({ "reason": "abuse" }), "reason", "invalid"),
+        (json!({ "reason": "other" }), "details", "required"),
+        (
+            json!({ "reason": "other", "details": " " }),
+            "details",
+            "required",
+        ),
+        (
+            json!({ "reason": "spam", "details": "x".repeat(1001) }),
+            "details",
+            "too_long",
+        ),
+    ] {
+        let res = file_report(&mut kai, &abend.id, body.clone()).await;
+        assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(res.body["fields"][field], code, "{body}");
+    }
+    let res = file_report(
+        &mut kai,
+        &abend.id,
+        json!({ "reason": "other", "details": "Fake-Gewinnspiel" }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+
+    let count = |pool: PgPool| async move {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM reports")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    assert_eq!(count(pool.clone()).await, 3);
+    // Filing is no operator action.
+    assert!(audit_rows(&pool).await.is_empty());
+
+    // Deleting the server takes its reports along.
+    let res = tom
+        .send(Method::DELETE, &format!("/api/servers/{}", abend.id), None)
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    assert_eq!(count(pool).await, 0);
+}
+
+#[sqlx::test]
+async fn reporting_is_limited_per_account(pool: PgPool) {
+    let state = operator_state(pool.clone());
+    let mut tom = registered(&state, TOM, "Tom").await;
+    let abend = server_of(&mut tom, "Abend").await;
+    for _ in 0..10 {
+        let res = file_report(&mut tom, &abend.id, json!({ "reason": "spam" })).await;
+        assert!(res.status.is_success(), "{}", res.body);
+    }
+    let res = file_report(&mut tom, &abend.id, json!({ "reason": "spam" })).await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.body);
+    assert_eq!(res.body["error"], "rate_limited");
+}
+
+#[sqlx::test]
+async fn operators_list_and_resolve_reports(pool: PgPool) {
+    let state = operator_state(pool.clone());
+    let mut lena = registered(&state, LENA, "Lena").await;
+    let mut tom = registered(&state, TOM, "Tom").await;
+    let mut ben = registered(&state, BEN, "Ben").await;
+    let abend = server_of(&mut tom, "Abend").await;
+    let runde = server_of(&mut tom, "Runde").await;
+    join_server(&mut ben, &abend.code).await;
+    join_server(&mut ben, &runde.code).await;
+
+    let first = file_report(&mut ben, &abend.id, json!({ "reason": "spam" })).await;
+    let first = first.body["id"].as_str().unwrap().to_owned();
+    let second = file_report(
+        &mut ben,
+        &runde.id,
+        json!({ "reason": "other", "details": "Betrug" }),
+    )
+    .await;
+    let second = second.body["id"].as_str().unwrap().to_owned();
+    let third = file_report(&mut tom, &runde.id, json!({ "reason": "sexual" })).await;
+    let third = third.body["id"].as_str().unwrap().to_owned();
+    // Distinct creation times, oldest first.
+    for (id, minutes) in [(&first, 30), (&second, 20), (&third, 10)] {
+        sqlx::query(
+            "UPDATE reports SET created_at = now() - make_interval(mins => $2) WHERE id = $1",
+        )
+        .bind(Uuid::parse_str(id).unwrap())
+        .bind(minutes)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let ids = |res: &common::Response| -> Vec<String> {
+        res.body["reports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let res = lena.send(Method::GET, "/api/operator/reports", None).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["total"], 3);
+    assert_eq!(ids(&res), [first.clone(), second.clone(), third.clone()]);
+    let row = &res.body["reports"][1];
+    assert_eq!(
+        row["server"],
+        json!({
+            "id": runde.id, "name": "Runde", "icon_url": null,
+            "blocked": false, "directory": "off",
+        })
+    );
+    assert_eq!(
+        row["reporter"],
+        json!({ "id": ben.user_id(), "name": "Ben" })
+    );
+    assert_eq!(row["reason"], "other");
+    assert_eq!(row["details"], "Betrug");
+    assert_eq!(row["status"], "open");
+    assert!(row["created_at"].is_string());
+    assert!(row["resolved_at"].is_null());
+    assert!(row["resolved_by"].is_null());
+    assert!(row["resolution_note"].is_null());
+    let res = lena
+        .send(
+            Method::GET,
+            "/api/operator/reports?status=open&offset=2",
+            None,
+        )
+        .await;
+    assert_eq!(ids(&res), std::slice::from_ref(&third));
+    assert_eq!(res.body["total"], 3);
+
+    // Dismiss one with a note.
+    let res = resolve_report(
+        &mut lena,
+        &second,
+        json!({ "status": "dismissed", "note": "  Kein Verstoß  " }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["id"], second.as_str());
+    assert_eq!(res.body["status"], "dismissed");
+    assert_eq!(res.body["resolution_note"], "Kein Verstoß");
+    assert_eq!(
+        res.body["resolved_by"],
+        json!({ "id": lena.user_id(), "name": "Lena" })
+    );
+    assert!(res.body["resolved_at"].is_string());
+    // Resolving it again is refused and changes nothing.
+    let res = resolve_report(&mut lena, &second, json!({ "status": "actioned" })).await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    assert_eq!(res.body["fields"]["report"], "closed");
+    assert_eq!(
+        report_status(&pool, Uuid::parse_str(&second).unwrap())
+            .await
+            .0,
+        "dismissed"
+    );
+    // A closed report lets its reporter report the server again.
+    let res = file_report(&mut ben, &runde.id, json!({ "reason": "spam" })).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let fourth = res.body["id"].as_str().unwrap().to_owned();
+
+    // Refused requests: no change, no audit row.
+    let unknown = Uuid::new_v4().to_string();
+    for (id, body, status, field, code) in [
+        (
+            third.as_str(),
+            json!({ "status": "open" }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Some("status"),
+            "invalid",
+        ),
+        (
+            third.as_str(),
+            json!({}),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Some("status"),
+            "invalid",
+        ),
+        (
+            third.as_str(),
+            json!({ "status": "dismissed", "note": "x".repeat(501) }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Some("note"),
+            "too_long",
+        ),
+        (
+            unknown.as_str(),
+            json!({ "status": "dismissed" }),
+            StatusCode::NOT_FOUND,
+            None,
+            "not_found",
+        ),
+        (
+            "nope",
+            json!({ "status": "dismissed" }),
+            StatusCode::NOT_FOUND,
+            None,
+            "not_found",
+        ),
+    ] {
+        let res = resolve_report(&mut lena, id, body.clone()).await;
+        assert_eq!(res.status, status, "{body}: {}", res.body);
+        match field {
+            Some(field) => assert_eq!(res.body["fields"][field], code, "{body}"),
+            None => assert_eq!(res.body["error"], code, "{body}"),
+        }
+    }
+    assert_eq!(
+        report_status(&pool, Uuid::parse_str(&third).unwrap())
+            .await
+            .0,
+        "open"
+    );
+
+    // Blocking Runde closes its open reports as actioned.
+    let res = operate(
+        &mut lena,
+        &runde.id,
+        "block",
+        Some(json!({ "reason": "Betrug" })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let res = lena
+        .send(Method::GET, "/api/operator/reports?status=closed", None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["total"], 3);
+    let closed = ids(&res);
+    assert_eq!(closed.len(), 3);
+    assert_eq!(closed[2], second, "most recently closed first");
+    assert!(closed.contains(&third) && closed.contains(&fourth));
+    let blocked = &res.body["reports"][0];
+    assert_eq!(blocked["status"], "actioned");
+    assert_eq!(blocked["server"]["blocked"], true);
+    assert_eq!(blocked["resolved_by"]["name"], "Lena");
+    let res = lena.send(Method::GET, "/api/operator/reports", None).await;
+    assert_eq!(ids(&res), std::slice::from_ref(&first));
+    // A member cannot report the blocked server.
+    let res = file_report(&mut ben, &runde.id, json!({ "reason": "spam" })).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    assert_eq!(res.body["error"], "server_blocked");
+
+    let res = lena
+        .send(Method::GET, "/api/operator/reports?status=offen", None)
+        .await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(res.body["fields"]["status"], "invalid");
+    let res = lena
+        .send(Method::GET, "/api/operator/reports?offset=x", None)
+        .await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(res.body["fields"]["offset"], "invalid");
+
+    let audit = report_audit(&pool).await;
+    let actions: Vec<&str> = audit.iter().map(|row| row.0.as_str()).collect();
+    assert_eq!(
+        actions,
+        [
+            "reports.list",
+            "reports.list",
+            "reports.resolve",
+            "reports.list",
+            "reports.list",
+        ]
+    );
+    assert_eq!(audit[0].3, json!({ "status": "open", "offset": 0 }));
+    assert_eq!(audit[1].3, json!({ "status": "open", "offset": 2 }));
+    let resolve = &audit[2];
+    assert_eq!(resolve.1, Some(Uuid::parse_str(&second).unwrap()));
+    assert_eq!(resolve.2, Some(Uuid::parse_str(&runde.id).unwrap()));
+    assert_eq!(
+        resolve.3,
+        json!({ "status": "dismissed", "note": "Kein Verstoß" })
+    );
+    assert_eq!(audit[3].3, json!({ "status": "closed", "offset": 0 }));
+    assert!(
+        audit
+            .iter()
+            .filter(|row| row.0 == "reports.list")
+            .all(|row| row.1.is_none())
+    );
+}
+
+#[sqlx::test]
+async fn usage_counts_the_instance(pool: PgPool) {
+    use gelabber_api::gateway::protocol::{ServerFrame, TrackKind};
+
+    let state = operator_state(pool.clone());
+    let mut lena = registered(&state, LENA, "Lena").await;
+    let mut tom = registered(&state, TOM, "Tom").await;
+    let mut ben = registered(&state, BEN, "Ben").await;
+    let kai = registered(&state, "kai@example.test", "Kai").await;
+    let abend = server_of(&mut tom, "Abend").await;
+    let runde = server_of(&mut tom, "Runde").await;
+    join_server(&mut ben, &abend.code).await;
+
+    // Accounts: Kai disabled, Ben pending, Tom 10 and Ben 40 days old.
+    let res = disable(&mut lena, kai.user_id(), json!({})).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    for (user, days, pending) in [(tom.user_id(), 10, false), (ben.user_id(), 40, true)] {
+        sqlx::query(
+            "UPDATE users SET created_at = now() - make_interval(days => $2), \
+                 registration_pending = $3 WHERE id = $1",
+        )
+        .bind(Uuid::parse_str(user).unwrap())
+        .bind(days)
+        .bind(pending)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // Servers: Runde blocked, Abend delisted.
+    let res = operate(
+        &mut lena,
+        &runde.id,
+        "block",
+        Some(json!({ "reason": "x" })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let res = operate(&mut lena, &abend.id, "delist", Some(json!({}))).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    // Messages: one now, one two days ago, one too old; one DM.
+    let now = post_message(&mut tom, &abend.text, "jetzt").await;
+    let older = post_message(&mut ben, &abend.text, "vorgestern").await;
+    let old = post_message(&mut tom, &abend.text, "alt").await;
+    for (id, hours) in [(&older, 48), (&old, 24 * 8)] {
+        sqlx::query(
+            "UPDATE messages SET created_at = now() - make_interval(hours => $2) WHERE id = $1",
+        )
+        .bind(Uuid::parse_str(id).unwrap())
+        .bind(hours)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let dm = tom
+        .send(
+            Method::POST,
+            "/api/dms",
+            Some(json!({ "user_id": ben.user_id() })),
+        )
+        .await;
+    assert!(dm.status.is_success(), "{}", dm.body);
+    post_message(&mut tom, dm.body["id"].as_str().unwrap(), "hallo").await;
+
+    // Storage: 1000 bytes sent, 500 pending; 700 uploaded today, 300 before.
+    let channel = Uuid::parse_str(&abend.text).unwrap();
+    let uploader = Uuid::parse_str(tom.user_id()).unwrap();
+    for (message, size) in [
+        (Some(Uuid::parse_str(&now).unwrap()), 1000_i64),
+        (None, 500),
+    ] {
+        sqlx::query(
+            "INSERT INTO attachments (message_id, channel_id, uploader_id, object_key, \
+                 filename, content_type, size_bytes) \
+             VALUES ($1, $2, $3, $4, 'x.png', 'image/png', $5)",
+        )
+        .bind(message)
+        .bind(channel)
+        .bind(uploader)
+        .bind(format!("att/{}", Uuid::new_v4()))
+        .bind(size)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("DELETE FROM upload_daily_usage")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO upload_daily_usage (uploader_id, day, reserved, consumed) VALUES \
+             ($1, (now() AT TIME ZONE 'UTC')::date, 50, 700), \
+             ($2, (now() AT TIME ZONE 'UTC')::date - 1, 0, 300)",
+    )
+    .bind(uploader)
+    .bind(Uuid::parse_str(ben.user_id()).unwrap())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Now: two sockets of this process, both in Abend's voice, Tom live;
+    // a seat on a server this database does not know is not counted.
+    let gateway = &state.gateway;
+    let (sid, voice) = (
+        Uuid::parse_str(&abend.id).unwrap(),
+        Uuid::parse_str(&abend.voice).unwrap(),
+    );
+    let mut receivers = Vec::new();
+    let mut seat = |user: Uuid, hash: char| {
+        let gateway = gateway.clone();
+        let (tx, rx) = tokio::sync::mpsc::channel::<ServerFrame>(64);
+        receivers.push(rx);
+        async move {
+            let (id, _) = gateway
+                .attach_session(user, hash.to_string().repeat(64), tx)
+                .await;
+            id
+        }
+    };
+    let tom_id = Uuid::parse_str(tom.user_id()).unwrap();
+    let ben_id = Uuid::parse_str(ben.user_id()).unwrap();
+    let tom_socket = seat(tom_id, 'a').await;
+    let ben_socket = seat(ben_id, 'b').await;
+    let stranger = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let foreign = gelabber_api::gateway::Gateway::new(
+        redis::Client::open(common::redis_url()).unwrap(),
+        8,
+        Duration::from_secs(10),
+        Duration::from_secs(2),
+    );
+    let (tx, _foreign_rx) = tokio::sync::mpsc::channel::<ServerFrame>(64);
+    let (foreign_socket, _) = foreign.attach_session(stranger.0, "c".repeat(64), tx).await;
+    foreign
+        .join_voice(foreign_socket, stranger.0, stranger.1, stranger.2)
+        .await
+        .unwrap();
+    gateway
+        .join_voice(tom_socket, tom_id, sid, voice)
+        .await
+        .unwrap();
+    gateway
+        .join_voice(ben_socket, ben_id, sid, voice)
+        .await
+        .unwrap();
+    assert!(
+        gateway
+            .set_voice_pub(tom_socket, tom_id, sid, voice, TrackKind::S, true)
+            .await
+            .unwrap()
+    );
+    assert!(gateway.voice_servers().await.unwrap().contains(&stranger.1));
+
+    let res = lena.send(Method::GET, "/api/operator/usage", None).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let body = &res.body;
+    assert!(body["generated_at"].is_string());
+    assert_eq!(body["registration"], "open");
+    assert_eq!(
+        body["accounts"],
+        json!({
+            "total": 4, "pending": 1, "disabled": 1, "new_7d": 2, "new_30d": 3,
+            "with_live_session": 3,
+        })
+    );
+    assert_eq!(
+        body["servers"],
+        json!({ "total": 2, "blocked": 1, "delisted": 1 })
+    );
+    assert_eq!(
+        body["messages"],
+        json!({ "server_24h": 1, "server_7d": 2, "dm_7d": 1 })
+    );
+    assert_eq!(
+        body["storage"],
+        json!({ "attachment_bytes": 1000, "attachment_count": 1, "uploaded_today_bytes": 700 })
+    );
+    assert_eq!(
+        body["now"],
+        json!({ "sockets_this_process": 2, "in_voice": 2, "live": 1 })
+    );
+
+    gateway
+        .leave_voice(tom_socket, tom_id, sid, voice)
+        .await
+        .unwrap();
+    gateway
+        .leave_voice(ben_socket, ben_id, sid, voice)
+        .await
+        .unwrap();
+    foreign
+        .leave_voice(foreign_socket, stranger.0, stranger.1, stranger.2)
+        .await
+        .unwrap();
+
+    let audit: Vec<(String, serde_json::Value)> =
+        sqlx::query_as("SELECT action, detail FROM operator_audit WHERE action = 'usage.read'")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(audit, [("usage.read".to_owned(), json!({}))]);
+}
