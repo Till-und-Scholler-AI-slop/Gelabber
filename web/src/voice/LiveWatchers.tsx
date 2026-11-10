@@ -2,7 +2,13 @@
 // call bar button, and the list both open. Everyone else in the channel is
 // listed apart; the own Live's list ends with the way to stop it.
 
-import { useRef, useState, type ReactNode, type RefObject } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 
 import { useT } from "../i18n/catalog.ts";
 import { voice } from "../i18n/catalogs/voice.ts";
@@ -128,6 +134,19 @@ export function LiveWatchCount({
   const anchor = useRef<HTMLButtonElement>(null);
   const list = useLiveWatchers({ serverId, channelId, owner, members });
   const count = list.watching.length;
+  // A Live that ends with its list open takes the tile, the list and the
+  // way back with it: focus goes to the page instead of nowhere.
+  useEffect(() => {
+    if (!open) return;
+    const button = anchor.current;
+    return () => {
+      if (button?.isConnected || document.activeElement !== document.body)
+        return;
+      document
+        .getElementById("workspace-content")
+        ?.focus({ preventScroll: true });
+    };
+  }, [open]);
   return (
     <>
       <button

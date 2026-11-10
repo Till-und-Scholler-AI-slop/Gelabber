@@ -266,102 +266,28 @@ function liveUnavailable(canLive: boolean): string | null {
 /** "Live gehen": a screen or window, seen by everyone in the voice channel,
  * several people at once. Where a Live can carry sound it is a menu, so
  * that choice is in sight before the picker opens; otherwise one toggle.
- * Ending a Live is always offered. */
+ * While live a press lists who watches, with "Live beenden" and, where a
+ * Live can carry sound, that switch. One button in every state, so focus
+ * stays on it when a Live starts or ends. */
 function LiveControl({
   canLive = false,
   server,
 }: LiveProps & { server?: ServerDetail }) {
   const t = useT(voice);
   const live = useVoice((s) => s.sharing);
-  const capable = useCapabilities();
-  const [open, setOpen] = useState(false);
-  const anchor = useRef<HTMLButtonElement>(null);
-  // Where a Live can carry sound the button opens a menu; otherwise it
-  // toggles, and says what everyone sees.
-  const tip = useTooltip(
-    capable.appAudio
-      ? {
-          label: live ? t("live.youAreLive") : t("live.goLive"),
-          disabled: open,
-        }
-      : {
-          label: live ? t("live.end") : t("live.goLive"),
-          detail: live ? null : t("live.hint"),
-        },
-  );
-  // While live a press lists who watches, with the way to end it.
-  if (live) return <OwnLiveControl server={server} />;
-  // A phone browser cannot capture a screen: nothing to offer, nothing to
-  // explain.
-  if (!live && !capable.screen) return null;
-  const reason = live ? null : liveUnavailable(canLive);
-  const className = `${BUTTON}${live ? " voice-control-live" : ""}`;
-  const face = (
-    <>
-      <LiveIcon size={17} />
-      <span className="voice-control-text">{t("live.badge")}</span>
-    </>
-  );
-  // Only a Live that runs gets here: it can always be ended.
-  if (!capable.appAudio) {
-    return (
-      <>
-        <button
-          {...tip.trigger}
-          type="button"
-          aria-pressed={live}
-          aria-label={t("live.goLive")}
-          onClick={() => toggleShare()}
-          className={className}
-        >
-          {face}
-        </button>
-        {tip.tooltip}
-      </>
-    );
-  }
-  return (
-    <>
-      <button
-        {...tip.trigger}
-        ref={anchor}
-        type="button"
-        aria-pressed={live}
-        aria-label={t("live.goLive")}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-        className={`${className}${reason ? " opacity-50" : ""}`}
-      >
-        {face}
-        <ChevronIcon size={12} className="voice-control-caret" />
-      </button>
-      {tip.tooltip}
-      <Popover
-        open={open}
-        onClose={() => setOpen(false)}
-        anchor={anchor}
-        label={t("live.goLive")}
-        role="menu"
-        placement="top-end"
-        className="voice-share-menu"
-      >
-        <LiveMenuItems canLive={canLive} onDone={() => setOpen(false)} />
-      </Popover>
-    </>
-  );
-}
-
-/** The own Live on the call bar: how many watch it, and a press lists them
- * with "Live beenden" and, where a Live can carry sound, that switch. */
-function OwnLiveControl({ server }: { server?: ServerDetail }) {
-  const t = useT(voice);
   const serverId = useVoice((s) => s.serverId) ?? "";
   const channelId = useVoice((s) => s.channelId) ?? "";
   const channelName = useVoice((s) => s.channelName) ?? t("call.voiceChannel");
   const me = useUserId();
   const capable = useCapabilities();
   const [open, setOpen] = useState(false);
+  // A Live that starts or ends elsewhere (the browser's own stop) closes
+  // whichever list was open: the other state has a different one.
+  const [openFor, setOpenFor] = useState(live);
+  if (openFor !== live) {
+    setOpenFor(live);
+    setOpen(false);
+  }
   const anchor = useRef<HTMLButtonElement>(null);
   const list = useLiveWatchers({
     serverId,
@@ -370,43 +296,77 @@ function OwnLiveControl({ server }: { server?: ServerDetail }) {
     members: server?.members,
   });
   const count = list.watching.length;
-  const tip = useTooltip({
-    label: t("live.youAreLiveWatchers", { watchers: watchersTitle(t, count) }),
-    disabled: open,
-  });
+  // Where a Live can carry sound the button opens a menu; otherwise it
+  // toggles, and says what everyone sees.
+  const tip = useTooltip(
+    live
+      ? {
+          label: t("live.youAreLiveWatchers", {
+            watchers: watchersTitle(t, count),
+          }),
+          disabled: open,
+        }
+      : capable.appAudio
+        ? { label: t("live.goLive"), disabled: open }
+        : { label: t("live.goLive"), detail: t("live.hint") },
+  );
+  // A phone browser cannot capture a screen: nothing to offer, nothing to
+  // explain.
+  if (!live && !capable.screen) return null;
+  const reason = live ? null : liveUnavailable(canLive);
+  // Not live and no sound to choose: the button only toggles.
+  const toggles = !live && !capable.appAudio;
   return (
     <>
       <button
         {...tip.trigger}
         ref={anchor}
         type="button"
-        aria-pressed
+        aria-pressed={live}
         aria-label={t("live.goLive")}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-        className={`${BUTTON} voice-control-live`}
+        aria-haspopup={toggles ? undefined : live ? "dialog" : "menu"}
+        aria-expanded={toggles ? undefined : open}
+        onClick={() => (toggles ? toggleShare() : setOpen((value) => !value))}
+        className={`${BUTTON}${live ? " voice-control-live" : ""}${!toggles && reason ? " opacity-50" : ""}`}
       >
         <LiveIcon size={17} />
         <span className="voice-control-text">{t("live.badge")}</span>
-        <span className="voice-control-watchers">
-          <EyeIcon size={15} />
-          {formatNumber(count)}
-        </span>
-        <ChevronIcon size={12} className="voice-control-caret" />
+        {live ? (
+          <span className="voice-control-watchers">
+            <EyeIcon size={15} />
+            {formatNumber(count)}
+          </span>
+        ) : null}
+        {toggles ? null : (
+          <ChevronIcon size={12} className="voice-control-caret" />
+        )}
       </button>
       {tip.tooltip}
-      <LiveWatchersPopover
-        open={open}
-        onClose={() => setOpen(false)}
-        anchor={anchor}
-        placement="top-end"
-        own
-        ownerName=""
-        channelName={channelName}
-        list={list}
-        extra={capable.appAudio ? <ShareSoundSwitch role="switch" /> : null}
-      />
+      {live ? (
+        <LiveWatchersPopover
+          open={open}
+          onClose={() => setOpen(false)}
+          anchor={anchor}
+          placement="top-end"
+          own
+          ownerName=""
+          channelName={channelName}
+          list={list}
+          extra={capable.appAudio ? <ShareSoundSwitch role="switch" /> : null}
+        />
+      ) : capable.appAudio ? (
+        <Popover
+          open={open}
+          onClose={() => setOpen(false)}
+          anchor={anchor}
+          label={t("live.goLive")}
+          role="menu"
+          placement="top-end"
+          className="voice-share-menu"
+        >
+          <LiveMenuItems canLive={canLive} onDone={() => setOpen(false)} />
+        </Popover>
+      ) : null}
     </>
   );
 }
