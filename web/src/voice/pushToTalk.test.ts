@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { useLocale } from "../i18n/locale.ts";
 import {
   callShortcut,
   callShortcutKeys,
   callShortcutLabel,
+  callTip,
   clampReleaseDelay,
   configurePushToTalk,
   holdToTalk,
@@ -176,6 +178,20 @@ describe("push-to-talk", () => {
     expect(clampReleaseDelay(5000)).toBe(1000);
     expect(clampReleaseDelay(-1)).toBe(0);
     expect(clampReleaseDelay("x")).toBe(200);
+  });
+
+  it("names keys and tips in English", () => {
+    useLocale.setState({ locale: "en" });
+    try {
+      expect(pushToTalkKeyLabel("ControlLeft")).toBe("Left Control");
+      expect(pushToTalkKeyLabel("ShiftRight")).toBe("Right Shift");
+      expect(pushToTalkKeyLabel("Space")).toBe("Space");
+      expect(pushToTalkKeyLabel("Mouse4")).toBe("Mouse button 4");
+      expect(callTip("mute", true).label).toBe("Unmute");
+      expect(callTip("deafen", false).label).toBe("Deafen");
+    } finally {
+      useLocale.setState({ locale: "de" });
+    }
   });
 
   it("opens the microphone while the touch button is held, with or without a key", () => {

@@ -18,6 +18,9 @@ import {
   type ReactNode,
 } from "react";
 
+import { translate, useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
+import { voice } from "../i18n/catalogs/voice.ts";
 import {
   CameraIcon,
   CameraOffIcon,
@@ -70,6 +73,7 @@ export function VoiceAudioToggles({
    * fullscreen strip keeps to its icons, as the desktop app's does. */
   words?: boolean;
 }) {
+  const t = useT(voice);
   const muted = useVoice((s) => s.muted);
   const deafened = useVoice((s) => s.deafened);
   const mic = useVoice((s) => s.mic);
@@ -97,7 +101,7 @@ export function VoiceAudioToggles({
             {...muteTip.trigger}
             type="button"
             aria-pressed={micOff}
-            aria-label="Stummschalten"
+            aria-label={t("controls.mute")}
             aria-keyshortcuts={callShortcutKeys("mute")}
             onClick={() => toggleMute()}
             className={`${className}${micOff ? " is-off" : ""}${talking ? " is-talking" : ""}${idle ? " is-ptt-idle" : ""}`}
@@ -105,12 +109,12 @@ export function VoiceAudioToggles({
             {micOff ? <MicOffIcon size={17} /> : <MicIcon size={17} />}
             {words && muted && !deafened ? (
               <span className="voice-control-text" aria-hidden="true">
-                Stumm
+                {t("controls.muted")}
               </span>
             ) : null}
             {pushToTalk && !micOff ? (
               <span className="voice-control-badge" aria-hidden="true">
-                PTT
+                {t("controls.pttBadge")}
               </span>
             ) : null}
           </button>
@@ -121,7 +125,7 @@ export function VoiceAudioToggles({
         {...deafenTip.trigger}
         type="button"
         aria-pressed={deafened}
-        aria-label="Taubschalten"
+        aria-label={t("controls.deafen")}
         aria-keyshortcuts={callShortcutKeys("deafen")}
         onClick={() => toggleDeafen()}
         className={`${className}${deafened ? " is-off" : ""}`}
@@ -129,7 +133,7 @@ export function VoiceAudioToggles({
         {deafened ? <HeadsetOffIcon size={17} /> : <HeadsetIcon size={17} />}
         {words && deafened ? (
           <span className="voice-control-text" aria-hidden="true">
-            Taub
+            {t("controls.deafened")}
           </span>
         ) : null}
       </button>
@@ -147,17 +151,19 @@ function MicProblem({
   className: string;
   denied: boolean;
 }) {
+  const t = useT(voice);
+  const tc = useT(common);
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
   const openSettings = useMediaSettings((s) => s.openDialog);
-  const tip = useTooltip({ label: "Kein Mikrofon", disabled: open });
+  const tip = useTooltip({ label: t("mic.none"), disabled: open });
   return (
     <>
       <button
         {...tip.trigger}
         ref={anchor}
         type="button"
-        aria-label="Kein Mikrofon"
+        aria-label={t("mic.none")}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
@@ -165,22 +171,18 @@ function MicProblem({
       >
         <MicOffIcon size={17} />
         <span className="voice-control-dot" aria-hidden="true" />
-        <span className="voice-control-text">Kein Mikrofon</span>
+        <span className="voice-control-text">{t("mic.none")}</span>
       </button>
       {tip.tooltip}
       <Popover
         open={open}
         onClose={() => setOpen(false)}
         anchor={anchor}
-        label="Kein Mikrofon"
+        label={t("mic.none")}
         placement="top-start"
         className="voice-mic-problem"
       >
-        <p>
-          {!denied
-            ? "Mikrofon nicht gefunden oder belegt."
-            : "Der Browser blockiert das Mikrofon. Erlaube den Zugriff in den Website-Einstellungen."}
-        </p>
+        <p>{!denied ? t("mic.notFound") : t("mic.blocked")}</p>
         <div className="voice-mic-problem-actions">
           <Button
             size="sm"
@@ -189,7 +191,7 @@ function MicProblem({
               retryMicrophone();
             }}
           >
-            Erneut versuchen
+            {tc("tryAgain")}
           </Button>
           <Button
             size="sm"
@@ -199,7 +201,7 @@ function MicProblem({
               openSettings();
             }}
           >
-            Mikrofon wählen …
+            {t("mic.choose")}
           </Button>
         </div>
       </Popover>
@@ -219,10 +221,11 @@ export function VoiceControls({
   /** Someone's Live plays here, so its sound gets a control of its own. */
   streamSound?: boolean;
 }) {
+  const t = useT(voice);
   const camera = useVoice((s) => s.camera);
   const capable = useCapabilities();
   const cameraTip = useTooltip({
-    label: camera ? "Kamera ausschalten" : "Kamera einschalten",
+    label: camera ? t("controls.cameraOff") : t("controls.cameraOn"),
   });
 
   return (
@@ -234,7 +237,7 @@ export function VoiceControls({
             {...cameraTip.trigger}
             type="button"
             aria-pressed={camera}
-            aria-label="Kamera"
+            aria-label={t("controls.camera")}
             onClick={() => toggleCamera()}
             className={`${BUTTON}${camera ? " is-on" : ""}`}
           >
@@ -250,11 +253,9 @@ export function VoiceControls({
   );
 }
 
-const LIVE_HINT = "Sehen alle im Sprachkanal";
-
 /** Why going live is not on offer here, if it is not. */
 function liveUnavailable(canLive: boolean): string | null {
-  return canLive ? null : "In diesem Server darfst du nicht live gehen.";
+  return canLive ? null : translate(voice, "live.notAllowed");
 }
 
 /** "Live gehen": a screen or window, seen by everyone in the voice channel,
@@ -262,6 +263,7 @@ function liveUnavailable(canLive: boolean): string | null {
  * that choice is in sight before the picker opens; otherwise one toggle.
  * Ending a Live is always offered. */
 function LiveControl({ canLive = false }: LiveProps) {
+  const t = useT(voice);
   const live = useVoice((s) => s.sharing);
   const capable = useCapabilities();
   const [open, setOpen] = useState(false);
@@ -270,10 +272,13 @@ function LiveControl({ canLive = false }: LiveProps) {
   // toggles, and says what everyone sees.
   const tip = useTooltip(
     capable.appAudio
-      ? { label: live ? "Du bist live" : "Live gehen", disabled: open }
+      ? {
+          label: live ? t("live.youAreLive") : t("live.goLive"),
+          disabled: open,
+        }
       : {
-          label: live ? "Live beenden" : "Live gehen",
-          detail: live ? null : LIVE_HINT,
+          label: live ? t("live.end") : t("live.goLive"),
+          detail: live ? null : t("live.hint"),
         },
   );
   // A phone browser cannot capture a screen: nothing to offer, nothing to
@@ -284,7 +289,7 @@ function LiveControl({ canLive = false }: LiveProps) {
   const face = (
     <>
       <LiveIcon size={17} />
-      <span className="voice-control-text">Live</span>
+      <span className="voice-control-text">{t("live.badge")}</span>
     </>
   );
   // Only a Live that runs gets here: it can always be ended.
@@ -295,7 +300,7 @@ function LiveControl({ canLive = false }: LiveProps) {
           {...tip.trigger}
           type="button"
           aria-pressed={live}
-          aria-label="Live gehen"
+          aria-label={t("live.goLive")}
           onClick={() => toggleShare()}
           className={className}
         >
@@ -312,7 +317,7 @@ function LiveControl({ canLive = false }: LiveProps) {
         ref={anchor}
         type="button"
         aria-pressed={live}
-        aria-label="Live gehen"
+        aria-label={t("live.goLive")}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
@@ -326,7 +331,7 @@ function LiveControl({ canLive = false }: LiveProps) {
         open={open}
         onClose={() => setOpen(false)}
         anchor={anchor}
-        label="Live gehen"
+        label={t("live.goLive")}
         role="menu"
         placement="top-end"
         className="voice-share-menu"
@@ -399,6 +404,7 @@ export function LiveMenuItems({
   canLive = false,
   onDone = () => {},
 }: LiveProps & { onDone?: () => void }) {
+  const t = useT(voice);
   const live = useVoice((s) => s.sharing);
   const localScreen = useVoice((s) => s.localScreen);
   const sourceAudio = useVoice((s) => s.sourceAudio);
@@ -412,8 +418,8 @@ export function LiveMenuItems({
   // Live, it comes with the next one.
   const nextLive = sound && localScreen && sourceAudio.s === "off";
   const soundHint = nextLive
-    ? "Wähle den Ton im Freigabedialog des Browsers aus. Ab dem nächsten Live."
-    : "Wähle den Ton im Freigabedialog des Browsers aus.";
+    ? t("live.soundHintNextLive")
+    : t("live.soundHint");
   const done = (action: () => void) => () => {
     onDone();
     action();
@@ -424,15 +430,15 @@ export function LiveMenuItems({
       {live ? (
         <MenuEntry
           icon={<LiveIcon size={17} />}
-          label="Live beenden"
+          label={t("live.end")}
           danger
           onSelect={done(toggleShare)}
         />
       ) : (
         <MenuEntry
           icon={<LiveIcon size={17} />}
-          label="Live gehen"
-          hint={reason ?? LIVE_HINT}
+          label={t("live.goLive")}
+          hint={reason ?? t("live.hint")}
           disabled={reason !== null}
           onSelect={done(toggleShare)}
         />
@@ -443,7 +449,7 @@ export function LiveMenuItems({
           <button
             type="button"
             role="menuitemcheckbox"
-            aria-label="Ton mitsenden"
+            aria-label={t("live.shareSound")}
             aria-checked={sound}
             aria-describedby={soundHintId}
             onClick={() =>
@@ -452,7 +458,7 @@ export function LiveMenuItems({
             className="voice-menu-item voice-menu-switch"
           >
             <span>
-              <strong>Ton mitsenden</strong>
+              <strong>{t("live.shareSound")}</strong>
               <small id={soundHintId}>{soundHint}</small>
             </span>
             <span className="voice-menu-switch-track" aria-hidden="true" />
@@ -466,6 +472,7 @@ export function LiveMenuItems({
 /** Push-to-talk on a touch screen, which has no key to hold: a button to
  * hold instead. */
 export function HoldToTalk() {
+  const t = useT(voice);
   const held = usePushToTalk((s) => s.held);
   const release = () => holdToTalk(false);
   return (
@@ -492,7 +499,7 @@ export function HoldToTalk() {
       onContextMenu={(event) => event.preventDefault()}
     >
       <MicIcon size={18} />
-      {held ? "Du sprichst" : "Zum Sprechen gedrückt halten"}
+      {held ? t("holdToTalk.talking") : t("holdToTalk.hold")}
     </button>
   );
 }
