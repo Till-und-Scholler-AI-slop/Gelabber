@@ -1,5 +1,6 @@
-//! Kick, ban, unban (issue #15). Admin is `manage_server`. A ban row
-//! survives membership, so an invite cannot bring the user back.
+//! Kick, ban, unban (issue #15). They need `moderate_members` (v0.10; before,
+//! `manage_server`). A ban row survives membership, so an invite cannot bring
+//! the user back.
 
 use axum::Router;
 use axum::extract::State;
@@ -65,7 +66,7 @@ async fn kick_member(
 ) -> Result<StatusCode, ApiError> {
     let mut tx = membership::lock_server_bounded(&state.db, server_id).await?;
     let actor = membership::load(&mut *tx, server_id, user.id).await?;
-    actor.require(Permission::ManageServer)?;
+    actor.require(Permission::ModerateMembers)?;
     let target_id = parse_target(&body.user_id)?;
     guard_target(&actor, user.id, target_id)?;
 
@@ -97,7 +98,7 @@ async fn ban_member(
 ) -> Result<StatusCode, ApiError> {
     let mut tx = membership::lock_server_bounded(&state.db, server_id).await?;
     let actor = membership::load(&mut *tx, server_id, user.id).await?;
-    actor.require(Permission::ManageServer)?;
+    actor.require(Permission::ModerateMembers)?;
     let target_id = parse_target(&body.user_id)?;
     guard_target(&actor, user.id, target_id)?;
     ensure_user_exists(&mut tx, target_id).await?;
@@ -139,7 +140,7 @@ async fn list_bans(
     Id(server_id): Id,
 ) -> Result<Json<Vec<Ban>>, ApiError> {
     let member = membership::load(&state.db, server_id, user.id).await?;
-    member.require(Permission::ManageServer)?;
+    member.require(Permission::ModerateMembers)?;
     let rows = sqlx::query_as::<_, Ban>(
         "SELECT b.user_id, u.name, u.avatar_url, b.banned_by, b.banned_at \
          FROM server_bans b JOIN users u ON u.id = b.user_id \
@@ -158,7 +159,7 @@ async fn unban_member(
     Ids(server_id, target_id): Ids,
 ) -> Result<StatusCode, ApiError> {
     let member = membership::load(&state.db, server_id, user.id).await?;
-    member.require(Permission::ManageServer)?;
+    member.require(Permission::ModerateMembers)?;
 
     let deleted = sqlx::query("DELETE FROM server_bans WHERE server_id = $1 AND user_id = $2")
         .bind(server_id)
