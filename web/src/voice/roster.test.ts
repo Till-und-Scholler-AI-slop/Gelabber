@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   EMPTY_LIVE,
   EMPTY_OCCUPANCY,
+  EMPTY_WATCHES,
   VOICE_ICON_SLOT_PX,
   applyLiveStart,
   applyVoiceJoin,
@@ -168,5 +169,72 @@ describe("voice roster", () => {
       useVoiceRoster.getState().byServer.missing ?? EMPTY_OCCUPANCY,
     );
     expect(live).toBe(useVoiceRoster.getState().live.missing ?? EMPTY_LIVE);
+  });
+
+  it("replaces someone's watches with the set a w frame carries", () => {
+    const watches = () => useVoiceRoster.getState().watches.s1 ?? EMPTY_WATCHES;
+    const w = (u: string, owners?: string[]) =>
+      applyVoiceSig({ op: "sig", t: "w", s: "s1", c: "voice", u, w: owners });
+    w("u2", ["u1"]);
+    w("u3", ["u1", "u4"]);
+    expect(watches()).toEqual({ u2: ["u1"], u3: ["u1", "u4"] });
+    w("u3", ["u4"]);
+    expect(watches().u3).toEqual(["u4"]);
+    w("u2", []);
+    expect(watches().u2).toEqual([]);
+    // A frame without a set means none.
+    w("u3");
+    expect(watches().u3).toEqual([]);
+    // The same set again keeps the state.
+    const before = useVoiceRoster.getState();
+    w("u3", []);
+    expect(useVoiceRoster.getState()).toBe(before);
+  });
+
+  it("drops a watcher's set when they leave or a snapshot lacks them", () => {
+    applyVoiceJoin("s1", "u2", "voice");
+    applyVoiceJoin("s1", "u3", "voice");
+    applyVoiceSig({
+      op: "sig",
+      t: "w",
+      s: "s1",
+      c: "voice",
+      u: "u2",
+      w: ["u1"],
+    });
+    applyVoiceSig({
+      op: "sig",
+      t: "w",
+      s: "s1",
+      c: "voice",
+      u: "u3",
+      w: ["u1"],
+    });
+    applyVoiceSig({ op: "sig", t: "l", s: "s1", c: "voice", u: "u2" });
+    expect(useVoiceRoster.getState().watches.s1).toEqual({ u3: ["u1"] });
+    applyVoiceSig({
+      op: "sig",
+      t: "w",
+      s: "s1",
+      c: "voice",
+      u: "u5",
+      w: ["u1"],
+    });
+    applyVoiceSig({
+      op: "sig",
+      t: "r",
+      s: "s1",
+      snap: [{ u: "u3", c: "voice" }],
+    });
+    expect(useVoiceRoster.getState().watches.s1).toEqual({ u3: ["u1"] });
+    resetVoiceRoster();
+    expect(useVoiceRoster.getState().watches).toEqual({});
+  });
+
+  it("keeps watches when the leave is of a seat in another channel", () => {
+    applyVoiceJoin("s1", "u2", "b");
+    applyVoiceSig({ op: "sig", t: "w", s: "s1", c: "b", u: "u2", w: ["u1"] });
+    applyVoiceSig({ op: "sig", t: "l", s: "s1", c: "a", u: "u2" });
+    expect(useVoiceRoster.getState().watches.s1).toEqual({ u2: ["u1"] });
   });
 });

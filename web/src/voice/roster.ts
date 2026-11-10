@@ -25,17 +25,24 @@ export type LiveMap = Record<string, LivePeople>;
 export const EMPTY_OCCUPANCY: Record<string, VoiceFlags> = Object.freeze({});
 export const EMPTY_LIVE: LiveMap = Object.freeze({});
 export const EMPTY_LIVE_PEOPLE: LivePeople = Object.freeze({});
+/** watcherId → the owners whose Live they watch, for one server. */
+export const EMPTY_WATCHES: Record<string, readonly string[]> = Object.freeze(
+  {},
+);
 
 export const VOICE_ICON_SLOT_PX = 32;
 
 type RosterState = {
   byServer: Record<string, Record<string, VoiceFlags>>;
   live: Record<string, LiveMap>;
+  /** serverId → watcherId → the owners whose Live they watch (`sig t:"w"`). */
+  watches: Record<string, Record<string, readonly string[]>>;
 };
 
 export const useVoiceRoster = create<RosterState>(() => ({
   byServer: {},
   live: {},
+  watches: {},
 }));
 
 export function applyVoiceJoin(
@@ -94,18 +101,29 @@ export function applyVoiceLeave(
       if (channel && nextLive[channel]?.[userId])
         nextLive = withoutLive(nextLive, channel, userId);
     }
+    // Watches of a seat elsewhere stay: the channel they are shown in sends
+    // its own `w` frames.
     if (elsewhere)
       return nextLive === lives
         ? state
         : { live: { ...state.live, [serverId]: nextLive } };
-    if ((!current || !(userId in current)) && nextLive === lives) {
+    const watches = state.watches[serverId];
+    const watched = watches !== undefined && userId in watches;
+    if ((!current || !(userId in current)) && nextLive === lives && !watched) {
       return state;
     }
     const nextOccupancy = current ? { ...current } : {};
     delete nextOccupancy[userId];
+    let nextWatches = state.watches;
+    if (watched) {
+      const rest = { ...watches };
+      delete rest[userId];
+      nextWatches = { ...state.watches, [serverId]: rest };
+    }
     return {
       byServer: { ...state.byServer, [serverId]: nextOccupancy },
       live: { ...state.live, [serverId]: nextLive },
+      watches: nextWatches,
     };
   });
 }
@@ -215,6 +233,32 @@ function patchFlags(
   });
 }
 
+/** `userId` now watches exactly the Lives of `owners`: the gateway's full set. */
+export function applyVoiceWatches(
+  serverId: string,
+  userId: string,
+  owners: readonly string[],
+): void {
+  useVoiceRoster.setState((state) => {
+    const current = state.watches[serverId] ?? EMPTY_WATCHES;
+    const prev = current[userId];
+    if (
+      prev &&
+      prev.length === owners.length &&
+      prev.every((owner, i) => owner === owners[i])
+    ) {
+      return state;
+    }
+    return {
+      ...state,
+      watches: {
+        ...state.watches,
+        [serverId]: { ...current, [userId]: [...owners] },
+      },
+    };
+  });
+}
+
 export function applyVoiceSnap(serverId: string, entries: VoiceEntry[]): void {
   const next: Record<string, VoiceFlags> = {};
   const live: Record<string, LivePeople> = {};
@@ -226,10 +270,20 @@ export function applyVoiceSnap(serverId: string, entries: VoiceEntry[]): void {
     };
     if (entry.s) live[entry.c] = { ...live[entry.c], [entry.u]: { s: true } };
   }
-  useVoiceRoster.setState((state) => ({
-    byServer: { ...state.byServer, [serverId]: next },
-    live: { ...state.live, [serverId]: live },
-  }));
+  useVoiceRoster.setState((state) => {
+    // The snapshot carries no watches: keep those of people still in a call.
+    const watches: Record<string, readonly string[]> = {};
+    for (const [userId, owners] of Object.entries(
+      state.watches[serverId] ?? EMPTY_WATCHES,
+    )) {
+      if (userId in next) watches[userId] = owners;
+    }
+    return {
+      byServer: { ...state.byServer, [serverId]: next },
+      live: { ...state.live, [serverId]: live },
+      watches: { ...state.watches, [serverId]: watches },
+    };
+  });
 }
 
 export function applyVoiceSig(event: SigEvent): void {
@@ -262,6 +316,9 @@ export function applyVoiceSig(event: SigEvent): void {
     case "u":
       if (event.k === "s") applyLiveEnd(event.s, channelId, userId, event.k);
       return;
+    case "w":
+      applyVoiceWatches(event.s, userId, event.w ?? []);
+      return;
     default:
       return;
   }
@@ -290,5 +347,5 @@ export function isLiveIn(live: LiveMap, userId: string): boolean {
 }
 
 export function resetVoiceRoster(): void {
-  useVoiceRoster.setState({ byServer: {}, live: {} });
+  useVoiceRoster.setState({ byServer: {}, live: {}, watches: {} });
 }
