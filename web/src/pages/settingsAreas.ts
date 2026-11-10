@@ -38,7 +38,7 @@ export const SETTINGS_AREAS = [
     id: "darstellung",
     group: "app",
     label: "Darstellung",
-    description: "Farbschema, Textgröße und Bewegung.",
+    description: "Sprache, Farbschema, Textgröße und Bewegung.",
   },
   {
     id: "themes",

@@ -378,6 +378,28 @@
 .settings-mode-options + .settings-hint {
   margin-top: 10px;
 }
+/* Deutsch / English: two cards in the columns of the mode cards above. */
+.settings-language-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  max-width: 640px;
+  margin-top: 4px;
+}
+.settings-language-options .ui-radio-card {
+  align-items: center;
+}
+.settings-language-options .ui-radio-card:has(:checked) {
+  background: var(--lr-panel);
+  box-shadow: inset 0 0 0 1px var(--lr-accent);
+}
+.settings-language-options .ui-radio-card:has(:focus-visible) {
+  outline: 2px solid var(--lr-focus);
+  outline-offset: 2px;
+}
+.settings-language-options + .settings-hint {
+  margin-top: 10px;
+}
 
 /* Profilkarte: the form next to a preview that stays in view. */
 .profile-card-editor {
@@ -652,7 +674,8 @@
   .settings-area .media-settings-form fieldset {
     padding: 14px;
   }
-  .settings-mode-options {
+  .settings-mode-options,
+  .settings-language-options {
     gap: 8px;
   }
   .settings-mode-option {

@@ -5,8 +5,14 @@ import { SettingsGroup } from "../components/SettingsGroup.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { ChipGroup } from "../components/ui/ChipGroup.tsx";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
+import { RadioCard } from "../components/ui/RadioCard.tsx";
 import { Switch } from "../components/ui/Switch.tsx";
 import { useInlineStatus } from "../components/ui/useInlineStatus.ts";
+import { changeAccountLocale } from "../i18n/account.ts";
+import { translate, useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
+import { language } from "../i18n/catalogs/language.ts";
+import { LOCALES, useCurrentLocale } from "../i18n/locale.ts";
 import {
   useInterfacePreferences,
   type UiScale,
@@ -53,6 +59,46 @@ function ModeSwatch({ id }: { id: "light" | "dark" | "system" }) {
   );
 }
 
+/**
+ * The account's language. Each option is named in its own language, with
+ * its name in the interface's language below when that differs.
+ */
+function LanguageSettings() {
+  const t = useT(language);
+  const locale = useCurrentLocale();
+  const status = useInlineStatus();
+  return (
+    <SettingsGroup title={t("section.title")} scope="account">
+      <div className="settings-language-options">
+        {LOCALES.map((option) => {
+          const label = t(`option.${option}`);
+          const name = t(`name.${option}`);
+          // Not disabled while a choice saves: a disabled radio would drop
+          // the keyboard focus that just picked it.
+          return (
+            <RadioCard
+              key={option}
+              name="ui-language"
+              label={label}
+              description={name === label ? undefined : name}
+              checked={locale === option}
+              onChange={async () => {
+                const saved = await changeAccountLocale(option);
+                status.show({
+                  tone: saved ? "success" : "error",
+                  message: translate(common, saved ? "saved" : "notSaved"),
+                });
+              }}
+            />
+          );
+        })}
+      </div>
+      <p className="settings-hint">{t("hint")}</p>
+      <InlineStatus status={status.status} />
+    </SettingsGroup>
+  );
+}
+
 /** Settings area "Darstellung": light or dark, text size, room density. */
 export function AppearanceSettings() {
   const preferences = useInterfacePreferences();
@@ -77,6 +123,8 @@ export function AppearanceSettings() {
 
   return (
     <>
+      <LanguageSettings />
+
       <SettingsGroup title="Farbschema" scope="account">
         <div className="settings-mode-options">
           {MODES.map((mode) => (
