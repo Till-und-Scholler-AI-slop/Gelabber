@@ -2,7 +2,8 @@
 // read allgemein and nothing else, so spiele, musik and the DM stay unread.
 // Opening a channel marks it read, so both shot tools call this before every
 // scene; otherwise each run would change what the next one sees. Themes
-// (say.mjs theme) and notification settings go back to the seeded ones too.
+// (say.mjs theme), notification settings and the language (a scene's
+// `locale`) go back to the seeded ones too.
 // Run in web/: node scripts/parity/reset.mjs
 // GELABBER_PARITY_PSQL is the psql command line (default: the gnative-pg
 // container of the local stack).
@@ -33,6 +34,7 @@ where user_id in (${people})
 delete from notification_settings where user_id in (${people});
 update users set notifications_hide_content = false
 where id in (${people}) and notifications_hide_content;
+update users set locale = 'de' where id in (${people}) and locale <> 'de';
 delete from channel_read_state where user_id = ${lena} and channel_id <> ${allgemein};
 update channel_read_state r set message_id = m.id, message_at = m.created_at, created_order = m.created_order
 from (select id, created_at, created_order from messages where channel_id = ${allgemein}

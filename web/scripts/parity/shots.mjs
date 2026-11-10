@@ -147,6 +147,7 @@ for (const scene of scenes) {
   if (ONLY && !ONLY.includes(scene.name)) continue;
   // Every scene starts from the reference state (reset.mjs).
   execFileSync(process.execPath, [join(here, "reset.mjs")], { stdio: "inherit" });
+  let restoreLocale = null;
   // say.mjs words that set the scene up (a theme), undone by the next reset.
   if (scene.before) sayWords(scene.before);
   if (scene.media && !mediaBrowser)
@@ -157,7 +158,8 @@ for (const scene of scenes) {
     viewport: { width: size[0], height: size[1] },
     deviceScaleFactor: 1,
     reducedMotion: "reduce",
-    locale: "de-DE",
+    // `locale: "en"`: an English browser, as a signed-out scene needs it.
+    locale: scene.locale === "en" ? "en-GB" : "de-DE",
     timezoneId: "Europe/Berlin",
     // Playwright's default; the native tool sets the same system theme.
     colorScheme: scene.scheme ?? "light",
@@ -170,6 +172,19 @@ for (const scene of scenes) {
       headers: { "X-CSRF-Token": session.csrf_token },
     });
     if (!login.ok()) throw new Error(`login ${scene.user}: ${login.status()}`);
+    // `locale` on a signed-in scene: the account's language, German again
+    // after the shot (and reset.mjs puts it back should a scene fail early).
+    if (scene.locale) {
+      const { csrf_token } = await login.json();
+      const setLocale = (locale) =>
+        context.request.put("/api/me/locale", {
+          data: { locale },
+          headers: { "X-CSRF-Token": csrf_token },
+        });
+      const set = await setLocale(scene.locale);
+      if (!set.ok()) throw new Error(`locale ${scene.user}: ${set.status()}`);
+      restoreLocale = () => setLocale("de");
+    }
   }
   const call = scene.call ? await startCall(scene.call) : null;
   // A missing control fails the scene instead of waiting for ever.
@@ -359,6 +374,7 @@ for (const scene of scenes) {
     if (scene.before)
       execFileSync(process.execPath, [join(here, "reset.mjs")], { stdio: "inherit" });
     for (const started of calls) await stopCall(started);
+    if (restoreLocale) await restoreLocale();
   }
   console.log(`${scene.name}: ${page.url()}`);
   await context.close();
