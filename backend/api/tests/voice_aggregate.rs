@@ -37,6 +37,12 @@ async fn flags(sub: &mut redis::aio::PubSub, m: bool, d: bool) {
     let two = next(sub).await;
     assert_eq!((two.t, two.on), (SigKind::D, Some(d)));
 }
+/// A leave that keeps another seat: the flags, then the watch set (#521).
+async fn left(sub: &mut redis::aio::PubSub, m: bool, d: bool) {
+    flags(sub, m, d).await;
+    let set = next(sub).await;
+    assert_eq!((set.t, set.w), (SigKind::W, Some(Vec::new())));
+}
 async fn quiet(sub: &mut redis::aio::PubSub) {
     assert!(
         tokio::time::timeout(Duration::from_millis(150), sub.on_message().next())
@@ -74,7 +80,7 @@ async fn mute_deafen_and_leave_deltas_match_all_active_seats() {
     let delta = next(&mut sub).await;
     assert_eq!((delta.t, delta.on), (SigKind::M, Some(true)));
     g.leave_voice(b, u, s, c).await.unwrap();
-    flags(&mut sub, true, true).await;
+    left(&mut sub, true, true).await;
     let view = g.voice_snapshot(s).await.unwrap();
     assert!(view[0].m && view[0].d);
     // Idempotent join must preserve the existing muted/deafened aggregate.
@@ -112,7 +118,7 @@ async fn stale_refresh_and_leave_do_not_unpublish_same_user_replacement_screen()
     old_api.refresh_voice(old).await.unwrap();
     quiet(&mut sub).await;
     old_api.leave_voice(old, u, s, c).await.unwrap();
-    flags(&mut sub, false, false).await;
+    left(&mut sub, false, false).await;
     quiet(&mut sub).await;
     assert!(new_api.voice_snapshot(s).await.unwrap()[0].s);
     old_api.detach(old).await;
@@ -141,7 +147,7 @@ async fn unpublish_and_leave_keep_another_seats_camera_publication() {
         .unwrap();
     quiet(&mut sub).await;
     g.leave_voice(a, u, s, c).await.unwrap();
-    flags(&mut sub, false, false).await;
+    left(&mut sub, false, false).await;
     quiet(&mut sub).await;
     g.set_voice_pub(b, u, s, c, TrackKind::V, false)
         .await
@@ -182,7 +188,7 @@ async fn stale_audio_refresh_preserves_same_user_replacement_screen_audio() {
     old_api.refresh_voice(old).await.unwrap();
     quiet(&mut sub).await;
     old_api.leave_voice(old, u, s, c).await.unwrap();
-    flags(&mut sub, false, false).await;
+    left(&mut sub, false, false).await;
     quiet(&mut sub).await;
     let (observer_tx, _observer_rx) = mpsc::channel::<ServerFrame>(128);
     let observer_user = Uuid::new_v4();
