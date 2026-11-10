@@ -371,6 +371,8 @@ impl GelabberApp {
         theme::ensure(ctx);
         // A new server's account: its own theme document.
         screens::settings::forget_account(ctx);
+        // The old call's video windows would keep it and its client alive.
+        screens::voice::window::forget(ctx);
         let repaint_ctx = ctx.clone();
         client.set_repaint(std::sync::Arc::new(move || {
             repaint_ctx.request_repaint();
@@ -598,10 +600,12 @@ impl GelabberApp {
         screens::show(ui, &mut app, &mut self.screen);
         skip.paint(ui);
         if signed_in {
-            let status = self.client.with_state(|s| s.gateway);
-            screens::shell::connection::show(ui, status);
+            let (status, refused) = self
+                .client
+                .with_state(|s| (s.gateway, s.gateway_refused.clone()));
+            screens::shell::connection::show(ui, status, refused.as_deref());
         } else {
-            screens::shell::connection::show(ui, gelabber_client::GatewayStatus::Idle);
+            screens::shell::connection::show(ui, gelabber_client::GatewayStatus::Idle, None);
         }
         logout_failed(ui, &self.client, signed_in);
         // A file choice that no desktop chooser took: the path field.
@@ -733,8 +737,13 @@ fn logout_failed(ui: &mut Ui, client: &Client, signed_in: bool) {
         .data_mut(|d| d.insert_temp(egui::Id::unique("gelabber-logout-failed"), true));
     let theme = Theme::of(ui.ctx());
     let c = theme.c;
-    let message =
-        "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut.";
+    // "Überall abmelden" left for /login at once; until the server confirms,
+    // the other devices are still signed in, and the retry repeats it.
+    let message = if client.http().unconfirmed_sign_out_everywhere() {
+        "Die Abmeldung auf allen Geräten konnte nicht bestätigt werden. Bitte versuche es erneut."
+    } else {
+        "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut."
+    };
     let screen = ui.ctx().content_rect();
     // margin 12px 16px, padding 12px 16px, the 3px warning bar on the left.
     let outer = egui::Rect::from_min_max(

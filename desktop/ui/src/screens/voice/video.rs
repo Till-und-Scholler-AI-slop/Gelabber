@@ -663,14 +663,25 @@ pub fn forget(ctx: &egui::Context, call: &gelabber_call::Call, key: gelabber_cal
 /// a while is let go of, and its next tile asks for its size again.
 pub fn sweep(ctx: &egui::Context, call: &gelabber_call::Call) {
     let now = ctx.input(|i| i.time);
+    // An open video window asks only when a picture wakes it: a slow or
+    // still video would otherwise lose its request and never wake it again.
+    let windowed: Vec<gelabber_call::VideoKey> = ctx
+        .data(|d| d.get_temp::<Asked>(asked_id()))
+        .map(|a| a.0.into_keys().collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|k| super::window::is_open(ctx, *k))
+        .collect();
     let gone: Vec<gelabber_call::VideoKey> = ctx.data_mut(|d| {
         let asked = &mut d.get_temp_mut_or_default::<Asked>(asked_id()).0;
+        let held =
+            |k: &gelabber_call::VideoKey, at: f64| now - at <= GONE_AFTER || windowed.contains(k);
         let gone = asked
             .iter()
-            .filter(|(_, (_, at, _))| now - at > GONE_AFTER)
+            .filter(|(k, (_, at, _))| !held(k, *at))
             .map(|(k, _)| *k)
             .collect();
-        asked.retain(|_, (_, at, _)| now - *at <= GONE_AFTER);
+        asked.retain(|k, (_, at, _)| held(k, *at));
         gone
     });
     for key in gone {
@@ -739,6 +750,38 @@ mod tests {
         assert_eq!(call.video_request(key), None);
         frame(1.1, true);
         assert_eq!(call.video_request(key), Some((320, 180, 30)));
+    }
+
+    /// A video in its own window keeps its request between pictures,
+    /// however long a still picture lasts; closed, it lets go.
+    #[test]
+    fn an_open_window_holds_its_request() {
+        let call = gelabber_call::Call::new(
+            gelabber_client::Client::new("http://127.0.0.1:9").expect("client"),
+        );
+        let key = gelabber_call::VideoKey(9);
+        let ctx = egui::Context::default();
+        let tile = Rect::from_min_size(pos2(0.0, 0.0), vec2(960.0, 540.0));
+        let frame = |time: f64, drawn: bool| {
+            let input = egui::RawInput {
+                time: Some(time),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                sweep(ui.ctx(), &call);
+                if drawn {
+                    request(ui, &call, key, tile, 30);
+                }
+            });
+            out.textures_delta.clear();
+        };
+        super::super::window::toggle(&ctx, key, "Jonas");
+        frame(0.0, true);
+        frame(5.0, false);
+        assert_eq!(call.video_request(key), Some((960, 540, 30)));
+        super::super::window::close(&ctx, key);
+        frame(5.1, false);
+        assert_eq!(call.video_request(key), None);
     }
 
     /// The core's sink (gelabber_media.cc `OnFrame`, `Fit`): the limits are

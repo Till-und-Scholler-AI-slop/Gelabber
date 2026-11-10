@@ -170,13 +170,15 @@ pub enum Download {
     Image,
     /// A text attachment shown inline (`TEXT_PREVIEW_MAX`).
     Text,
+    /// Any attachment saved to disk.
+    File,
 }
 
 impl Download {
     pub const fn max_bytes(self) -> usize {
         match self {
             // An attachment's limit (attachments/validate.rs `SIZE_MAX`).
-            Self::Image => 25 * 1024 * 1024,
+            Self::Image | Self::File => 25 * 1024 * 1024,
             Self::Text => 100 * 1024,
         }
     }
@@ -573,6 +575,12 @@ impl Http {
         }
         drop(current);
         decode(path, &bytes)
+    }
+
+    /// Whether the sign-out the server has not confirmed yet ends every
+    /// session of the account (a retry repeats that variant).
+    pub fn unconfirmed_sign_out_everywhere(&self) -> bool {
+        self.held.read().as_ref().is_some_and(|h| h.everywhere)
     }
 
     /// A new sign-in: an old unconfirmed sign-out is not retried with it.
@@ -976,6 +984,7 @@ mod tests {
         let http = Http::new(&base).unwrap();
         http.restore_session_cookie("tok");
         assert!(runtime.block_on(http.sign_out(true)).is_err());
+        assert!(http.unconfirmed_sign_out_everywhere());
         assert!(!http.has_session_cookie());
         assert_eq!(http.session_cookie(), None);
         fail.store(false, Ordering::SeqCst);
@@ -987,6 +996,7 @@ mod tests {
             assert!(head.contains("gelabber_session=tok"), "{head}");
         }
         // Confirmed: nothing is held any more.
+        assert!(!http.unconfirmed_sign_out_everywhere());
         runtime.block_on(http.sign_out(false)).unwrap();
         let last = posts().pop().unwrap();
         assert!(last.starts_with("POST /api/auth/logout "), "{last}");

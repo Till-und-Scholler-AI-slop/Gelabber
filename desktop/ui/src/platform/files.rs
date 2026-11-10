@@ -432,6 +432,26 @@ fn free_path(dir: &Path, name: &str) -> PathBuf {
         .unwrap_or(first)
 }
 
+/// Writes `bytes` to a hidden file beside `path` and renames it: a write
+/// that fails (a full disk) leaves no partial file under the chosen name.
+/// The folder must exist, as for a plain write.
+fn write_whole(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // Short: the chosen name may already be near the file system's limit.
+    let partial = path.with_file_name(format!(".gelabber-{}-{n}.partial", std::process::id()));
+    let written = std::fs::File::create(&partial).and_then(|mut out| {
+        out.write_all(bytes)?;
+        out.sync_all()
+    });
+    let done = written.and_then(|()| std::fs::rename(&partial, path));
+    if done.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    done
+}
+
 /// What a save said, for the app's toasts: the text and whether it failed.
 type Notices = Arc<Mutex<Vec<(String, bool)>>>;
 
@@ -493,7 +513,7 @@ pub fn save(ctx: &egui::Context, title: &str, name: &str, bytes: Vec<u8>) {
             },
         };
         if let Some(path) = target {
-            let notice = match std::fs::write(&path, bytes) {
+            let notice = match write_whole(&path, &bytes) {
                 Ok(()) => (format!("Gespeichert unter {}.", path.display()), false),
                 Err(e) => {
                     tracing::warn!("save {}: {e}", path.display());
@@ -805,6 +825,8 @@ mod tests {
         );
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
         assert_eq!(std::fs::read(dir.join("theme.json")).unwrap(), b"old");
+        // Written beside it and renamed: nothing else is left.
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
         set_choosers(
             &ctx,
             Choosers {

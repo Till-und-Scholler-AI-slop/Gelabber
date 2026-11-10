@@ -96,6 +96,9 @@ impl MediaAction {
 /// A file name from the server as the save dialog's suggestion: no path,
 /// nothing Windows refuses, never empty.
 pub fn safe_file_name(name: &str) -> String {
+    // 200 bytes, not characters: file systems count bytes (255 at most),
+    // and " (2)" may still follow.
+    let mut bytes = 0;
     let cleaned: String = name
         .chars()
         .map(|c| {
@@ -105,7 +108,10 @@ pub fn safe_file_name(name: &str) -> String {
                 c
             }
         })
-        .take(200)
+        .take_while(|c| {
+            bytes += c.len_utf8();
+            bytes <= 200
+        })
         .collect();
     let cleaned = cleaned.trim().trim_end_matches('.').trim_start_matches('.');
     let stem = cleaned
@@ -143,7 +149,7 @@ pub fn download(ctx: &egui::Context, client: &gelabber_client::Client, url: &str
     let http = client.http().clone();
     let (url, name) = (url.to_owned(), safe_file_name(name));
     client.spawn(async move {
-        match http.bytes(&url).await {
+        match http.bytes(&url, gelabber_client::Download::File).await {
             Ok(bytes) => crate::platform::files::save(&ctx, "Datei speichern", &name, bytes),
             Err(e) => {
                 tracing::warn!("download {url}: {e}");
@@ -587,8 +593,9 @@ fn text_action(
     response
 }
 
-/// `AttachmentImageFailed`: name, "Bild konnte nicht geladen werden.",
-/// "Erneut laden" and "Herunterladen", centred in a dashed box.
+/// `AttachmentImageFailed`: name, "Bild konnte nicht geladen werden." (or
+/// why it never shows), "Erneut laden" and "Herunterladen", centred in a
+/// dashed box.
 fn paint_failed(
     ui: &mut Ui,
     images: &Images,
@@ -610,13 +617,12 @@ fn paint_failed(
     );
     name_job.wrap.max_rows = 1;
     let name = Block::new(ui, name_job, TextStyle::new(13.0, 400.0, 1.5));
-    let status = Block::wrapped(
-        ui,
-        "Bild konnte nicht geladen werden.",
-        STATE_STYLE,
-        c.muted,
-        inner.width(),
-    );
+    let said = if images.too_large(&attachment_url(att.id), Fit::Inline) {
+        "Bild ist zu groß zum Anzeigen."
+    } else {
+        "Bild konnte nicht geladen werden."
+    };
+    let status = Block::wrapped(ui, said, STATE_STYLE, c.muted, inner.width());
     let actions_h = STATE_STYLE.line_px();
     let total = 15.0 + 6.0 + name.height() + 6.0 + status.height() + 6.0 + actions_h;
     let mut y = rect.center().y - total / 2.0;
@@ -634,7 +640,7 @@ fn paint_failed(
     self::status(
         ui,
         Rect::from_min_size(pos2(inner.left(), y), status.size()),
-        "Bild konnte nicht geladen werden.",
+        said,
     );
     y += status.height() + 6.0;
     let mut action = None;
@@ -1558,6 +1564,10 @@ mod tests {
         assert_eq!(safe_file_name("bild.png. "), "bild.png");
         assert_eq!(safe_file_name("x\u{0}y"), "x_y");
         assert_eq!(safe_file_name(&"a".repeat(300)).len(), 200);
+        // Four bytes each: the cap is in bytes, at a character's end.
+        let wide = safe_file_name(&"😀".repeat(100));
+        assert_eq!(wide.len(), 200);
+        assert_eq!(safe_file_name(&format!("a{}", "😀".repeat(100))).len(), 197);
     }
 
     #[test]

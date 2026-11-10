@@ -105,7 +105,19 @@ enum Kind {
     Failed {
         at: Instant,
         failures: u32,
+        /// Why the bytes can never show: not fetched again by itself, only
+        /// by [`Images::retry`].
+        never: Option<Undecodable>,
     },
+}
+
+/// Why a picture's bytes can never show, however often they are fetched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Undecodable {
+    /// More pixels than [`MAX_PIXELS`], or more bytes than a download takes.
+    TooLarge,
+    /// No picture this app decodes, or a decoder gave up on it.
+    Unreadable,
 }
 
 struct Entry {
@@ -240,8 +252,12 @@ impl Images {
                     );
                 }
                 Kind::Loading => return (ImageState::Loading, entry.size),
-                Kind::Failed { at, failures } => {
-                    if at.elapsed() < retry_after(*failures) {
+                Kind::Failed {
+                    at,
+                    failures,
+                    never,
+                } => {
+                    if never.is_some() || at.elapsed() < retry_after(*failures) {
                         return (ImageState::Failed, entry.size);
                     }
                     *failures
@@ -289,11 +305,20 @@ impl Images {
             // Decoding a large PNG takes tens of milliseconds: not on the
             // UI thread and not on the two runtime workers.
             decode_off_thread(Box::new(move || {
-                let frames = bytes
-                    .ok()
+                let decoded = match bytes {
+                    // A download over its cap is the only `Decode` error of `bytes`.
+                    Err(gelabber_client::ApiError::Decode(_)) => Err(Some(Undecodable::TooLarge)),
+                    // No connection, a server error: worth asking again later.
+                    Err(_) => Err(None),
                     // A decoder that panics on a crafted file fails the picture, not the worker.
-                    .and_then(|b| std::panic::catch_unwind(|| decode_fitted(&b, &limit)).ok())
-                    .unwrap_or_default();
+                    Ok(b) => std::panic::catch_unwind(|| decode_checked(&b, &limit))
+                        .unwrap_or(Err(Undecodable::Unreadable))
+                        .map_err(Some),
+                };
+                let (frames, never) = match decoded {
+                    Ok(frames) => (frames, None),
+                    Err(never) => (Vec::new(), never),
+                };
                 let bytes: usize = frames.iter().map(|(i, _)| i.pixels.len() * 4).sum();
                 let name = match fit {
                     Fit::Full => url.clone(),
@@ -303,6 +328,7 @@ impl Images {
                     0 => Kind::Failed {
                         at: Instant::now(),
                         failures: failures + 1,
+                        never,
                     },
                     1 => {
                         let (image, _) = frames.into_iter().next().expect("one frame");
@@ -386,6 +412,21 @@ impl Images {
         let (texture, left) = animation.at(ctx.input(|i| i.time));
         ctx.request_repaint_after(Duration::from_secs_f64(left.max(0.01)));
         ImageState::Ready(texture.clone())
+    }
+
+    /// Whether the picture at `fit` failed for good because it is too
+    /// large to show, without counting as drawn.
+    pub fn too_large(&self, url: &str, fit: Fit) -> bool {
+        matches!(
+            self.cache.lock().entries.get(&(url.to_owned(), fit)),
+            Some(Entry {
+                kind: Kind::Failed {
+                    never: Some(Undecodable::TooLarge),
+                    ..
+                },
+                ..
+            })
+        )
     }
 
     /// Asks for a picture that failed again ("Erneut laden").
@@ -673,16 +714,24 @@ fn decode_animation(
 /// large to decode. Every frame is scaled to `limit`, and the dimensions
 /// are read before anything is decoded.
 pub fn decode_fitted(bytes: &[u8], limit: &Limit) -> Vec<(ColorImage, f64)> {
+    decode_checked(bytes, limit).unwrap_or_default()
+}
+
+/// [`decode_fitted`], with why nothing came out; `Ok` has a frame at least.
+pub fn decode_checked(bytes: &[u8], limit: &Limit) -> Result<Vec<(ColorImage, f64)>, Undecodable> {
     use image::{AnimationDecoder, ImageDecoder};
     let dimensions = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
         .ok()
         .and_then(|r| r.into_dimensions().ok());
     let Some((width, height)) = dimensions else {
-        return Vec::new();
+        return Err(Undecodable::Unreadable);
     };
-    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > MAX_PIXELS {
-        return Vec::new();
+    if width == 0 || height == 0 {
+        return Err(Undecodable::Unreadable);
+    }
+    if u64::from(width) * u64::from(height) > MAX_PIXELS {
+        return Err(Undecodable::TooLarge);
     }
     let cursor = || std::io::Cursor::new(bytes);
     let frames = match image::guess_format(bytes) {
@@ -698,10 +747,10 @@ pub fn decode_fitted(bytes: &[u8], limit: &Limit) -> Vec<(ColorImage, f64)> {
         _ => None,
     };
     match frames {
-        Some(frames) => frames,
+        Some(frames) => Ok(frames),
         None => decode_still(bytes, limit)
             .map(|i| vec![(i, 0.0)])
-            .unwrap_or_default(),
+            .ok_or(Undecodable::Unreadable),
     }
 }
 
@@ -967,6 +1016,73 @@ pub(crate) mod tests {
         run_until(&ctx, 2048, |ctx| images.get(ctx, "/gone.png"), failed);
         assert_eq!(retry_after(2), RETRY_FIRST * 2);
         assert_eq!(retry_after(30), RETRY_MAX);
+    }
+
+    /// A PNG that says it is `width`×`height` and holds no pixels: enough
+    /// for its size to be read.
+    fn png_header(width: u32, height: u32) -> Vec<u8> {
+        fn crc(bytes: &[u8]) -> u32 {
+            let mut c = !0u32;
+            for b in bytes {
+                c ^= u32::from(*b);
+                for _ in 0..8 {
+                    c = if c & 1 == 1 {
+                        0xEDB8_8320 ^ (c >> 1)
+                    } else {
+                        c >> 1
+                    };
+                }
+            }
+            !c
+        }
+        let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+        let mut chunk = |kind: &[u8], data: &[u8]| {
+            out.extend((data.len() as u32).to_be_bytes());
+            let mut body = kind.to_vec();
+            body.extend(data);
+            out.extend(&body);
+            out.extend(crc(&body).to_be_bytes());
+        };
+        let mut ihdr = width.to_be_bytes().to_vec();
+        ihdr.extend(height.to_be_bytes());
+        ihdr.extend([8, 6, 0, 0, 0]);
+        chunk(b"IHDR", &ihdr);
+        chunk(b"IDAT", &[]);
+        chunk(b"IEND", &[]);
+        out
+    }
+
+    /// Bytes that can never show (too many pixels, no picture) are not
+    /// fetched again by themselves, and a too large one says so.
+    #[test]
+    fn a_picture_that_can_never_show_is_not_asked_for_again() {
+        let origin = serve(vec![
+            ("/huge.png", png_header(8000, 8000)),
+            ("/text.png", b"kein Bild".to_vec()),
+        ]);
+        let images = Images::new(Client::new(&origin).expect("client"));
+        let ctx = egui::Context::default();
+        let failed = |s: &ImageState| matches!(s, ImageState::Failed);
+        for url in ["/huge.png", "/text.png"] {
+            run_until(&ctx, 2048, |ctx| images.get(ctx, url), failed);
+            if let Some(Entry {
+                kind: Kind::Failed { at, .. },
+                ..
+            }) = images
+                .cache
+                .lock()
+                .entries
+                .get_mut(&(url.into(), Fit::Full))
+            {
+                *at -= RETRY_MAX;
+            }
+            assert!(failed(&images.get(&ctx, url)), "{url} asked for again");
+        }
+        assert!(images.too_large("/huge.png", Fit::Full));
+        assert!(!images.too_large("/text.png", Fit::Full));
+        // "Erneut laden" still asks.
+        images.retry("/text.png");
+        assert!(matches!(images.get(&ctx, "/text.png"), ImageState::Loading));
     }
 
     #[test]

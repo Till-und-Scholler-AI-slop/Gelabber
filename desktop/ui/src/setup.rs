@@ -514,6 +514,8 @@ impl eframe::App for Launcher {
                     // Leaving for the setup page ends the call, as the
                     // Tauri window's navigation does; the server is told.
                     app.call().leave();
+                    // Its video windows close and let the old call go.
+                    crate::screens::voice::window::forget(&ctx);
                 }
                 if switch {
                     self.show_setup(origin, None);

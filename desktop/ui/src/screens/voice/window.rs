@@ -78,6 +78,12 @@ fn due(w: &Windows, serial: impl Fn(VideoKey) -> Option<u64>) -> Vec<VideoKey> {
         .collect()
 }
 
+/// A new app on this context ("Server wechseln"): the old call's windows
+/// close, and the old call (with its client) is not kept alive for them.
+pub fn forget(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove::<Windows>(id()));
+}
+
 /// Repaints the windows with a new picture; they do not poll. Called from
 /// the client's repaint hook on any thread, as each picture arrives: the
 /// main window's own passes slow down or stop while it is minimised,
@@ -283,6 +289,30 @@ mod tests {
                 .viewport_output
                 .contains_key(&viewport_id(key))
         );
+    }
+
+    /// "Server wechseln" makes a new app on the same context: the windows
+    /// let go of the old call, so it and its client can end.
+    #[test]
+    fn a_new_app_lets_the_old_call_go() {
+        let call = Call::new(Client::new("http://127.0.0.1:9").expect("client"));
+        let key = VideoKey(42);
+        sending(&call, Some(key));
+        let shown = call.clone();
+        let mut harness = Harness::new_ui(move |ui| {
+            ui.ctx().set_embed_viewports(false);
+            show(ui.ctx(), &shown);
+        });
+        toggle(&harness.ctx, key, "Jonas");
+        harness.step();
+        assert!(with(&harness.ctx, |w| w.call.is_some()));
+        let ctx = harness.ctx.clone();
+        let _app = crate::app::GelabberApp::with_context(
+            &ctx,
+            Client::new("http://127.0.0.1:9").expect("client"),
+            None,
+        );
+        assert!(with(&ctx, |w| w.call.is_none() && w.open.is_empty()));
     }
 
     /// The picture's arrival, not the main window's pass, wakes a window:

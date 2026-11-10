@@ -1641,8 +1641,8 @@ mod page_tests {
         harness.step();
         go.store(true, std::sync::atomic::Ordering::Release);
         wait_for_label(&mut harness, "Kommt ihr heute?");
-        // Opening marks once in the client core, focused or not; the pane
-        // marks nothing while the window is in the background.
+        // Opening marks nothing in the client core; the pane marks nothing
+        // while the window is in the background.
         let read = format!("PUT /channels/{ALLGEMEIN}/read");
         let marks = || api.seen.lock().iter().filter(|r| **r == read).count();
         for _ in 0..20 {
@@ -1650,7 +1650,7 @@ mod page_tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         let before = marks();
-        assert!(before <= 1, "{before}");
+        assert_eq!(before, 0);
         harness.input_mut().focused = true;
         wait_for(&mut harness, "the read mark", |_| marks() > before);
     }
