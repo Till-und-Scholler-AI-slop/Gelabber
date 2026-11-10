@@ -25,18 +25,23 @@ export type LiveMap = Record<string, LivePeople>;
 export const EMPTY_OCCUPANCY: Record<string, VoiceFlags> = Object.freeze({});
 export const EMPTY_LIVE: LiveMap = Object.freeze({});
 export const EMPTY_LIVE_PEOPLE: LivePeople = Object.freeze({});
-/** watcherId → the owners whose Live they watch, for one server. */
+/** watcherId → the owners whose Live they watch, for one channel. */
 export const EMPTY_WATCHES: Record<string, readonly string[]> = Object.freeze(
   {},
 );
 
 export const VOICE_ICON_SLOT_PX = 32;
 
+/** channelId → watcherId → the owners whose Live they watch there. */
+export type ChannelWatches = Record<string, Record<string, readonly string[]>>;
+
 type RosterState = {
   byServer: Record<string, Record<string, VoiceFlags>>;
   live: Record<string, LiveMap>;
-  /** serverId → watcherId → the owners whose Live they watch (`sig t:"w"`). */
-  watches: Record<string, Record<string, readonly string[]>>;
+  /** serverId → channelId → watcherId → the owners whose Live they watch
+   * there (`sig t:"w"`). Per channel: the gateway sends each room's set,
+   * and one person's seats can sit in two rooms. */
+  watches: Record<string, ChannelWatches>;
 };
 
 export const useVoiceRoster = create<RosterState>(() => ({
@@ -101,31 +106,59 @@ export function applyVoiceLeave(
       if (channel && nextLive[channel]?.[userId])
         nextLive = withoutLive(nextLive, channel, userId);
     }
-    // Watches of a seat elsewhere stay: the channel they are shown in sends
-    // its own `w` frames.
+    // Nobody watches from a channel they left; the watches of a seat in
+    // another channel stay, as that room's own `w` frames set them.
+    const watches = state.watches[serverId] ?? EMPTY_CHANNEL_WATCHES;
+    const nextWatches = withoutWatcher(watches, userId, channelId);
+    const watchesChanged = nextWatches !== watches;
     if (elsewhere)
-      return nextLive === lives
+      return nextLive === lives && !watchesChanged
         ? state
-        : { live: { ...state.live, [serverId]: nextLive } };
-    const watches = state.watches[serverId];
-    const watched = watches !== undefined && userId in watches;
-    if ((!current || !(userId in current)) && nextLive === lives && !watched) {
+        : {
+            live: { ...state.live, [serverId]: nextLive },
+            watches: { ...state.watches, [serverId]: nextWatches },
+          };
+    if (
+      (!current || !(userId in current)) &&
+      nextLive === lives &&
+      !watchesChanged
+    ) {
       return state;
     }
     const nextOccupancy = current ? { ...current } : {};
     delete nextOccupancy[userId];
-    let nextWatches = state.watches;
-    if (watched) {
-      const rest = { ...watches };
-      delete rest[userId];
-      nextWatches = { ...state.watches, [serverId]: rest };
-    }
     return {
       byServer: { ...state.byServer, [serverId]: nextOccupancy },
       live: { ...state.live, [serverId]: nextLive },
-      watches: nextWatches,
+      watches: watchesChanged
+        ? { ...state.watches, [serverId]: nextWatches }
+        : state.watches,
     };
   });
+}
+
+const EMPTY_CHANNEL_WATCHES: ChannelWatches = Object.freeze({});
+
+/** `watches` without what `userId` watches in `channelId`, or anywhere when
+ * no channel is named. */
+function withoutWatcher(
+  watches: ChannelWatches,
+  userId: string,
+  channelId: string | undefined,
+): ChannelWatches {
+  let next = watches;
+  for (const channel of channelId === undefined
+    ? Object.keys(watches)
+    : [channelId]) {
+    const people = next[channel];
+    if (!people || !(userId in people)) continue;
+    const rest = { ...people };
+    delete rest[userId];
+    next = { ...next };
+    if (Object.keys(rest).length === 0) delete next[channel];
+    else next[channel] = rest;
+  }
+  return next;
 }
 
 /** `live` without `userId` in `channelId`, or only without its `kind`. */
@@ -233,14 +266,17 @@ function patchFlags(
   });
 }
 
-/** `userId` now watches exactly the Lives of `owners`: the gateway's full set. */
+/** `userId` now watches exactly the Lives of `owners` in `channelId`: the
+ * gateway's full set for that room. */
 export function applyVoiceWatches(
   serverId: string,
+  channelId: string,
   userId: string,
   owners: readonly string[],
 ): void {
   useVoiceRoster.setState((state) => {
-    const current = state.watches[serverId] ?? EMPTY_WATCHES;
+    const server = state.watches[serverId] ?? EMPTY_CHANNEL_WATCHES;
+    const current = server[channelId] ?? EMPTY_WATCHES;
     const prev = current[userId];
     if (
       prev &&
@@ -253,7 +289,10 @@ export function applyVoiceWatches(
       ...state,
       watches: {
         ...state.watches,
-        [serverId]: { ...current, [userId]: [...owners] },
+        [serverId]: {
+          ...server,
+          [channelId]: { ...current, [userId]: [...owners] },
+        },
       },
     };
   });
@@ -272,11 +311,15 @@ export function applyVoiceSnap(serverId: string, entries: VoiceEntry[]): void {
   }
   useVoiceRoster.setState((state) => {
     // The snapshot carries no watches: keep those of people still in a call.
-    const watches: Record<string, readonly string[]> = {};
-    for (const [userId, owners] of Object.entries(
-      state.watches[serverId] ?? EMPTY_WATCHES,
+    const watches: ChannelWatches = {};
+    for (const [channel, people] of Object.entries(
+      state.watches[serverId] ?? EMPTY_CHANNEL_WATCHES,
     )) {
-      if (userId in next) watches[userId] = owners;
+      const kept: Record<string, readonly string[]> = {};
+      for (const [userId, owners] of Object.entries(people)) {
+        if (userId in next) kept[userId] = owners;
+      }
+      if (Object.keys(kept).length > 0) watches[channel] = kept;
     }
     return {
       byServer: { ...state.byServer, [serverId]: next },
@@ -317,7 +360,7 @@ export function applyVoiceSig(event: SigEvent): void {
       if (event.k === "s") applyLiveEnd(event.s, channelId, userId, event.k);
       return;
     case "w":
-      applyVoiceWatches(event.s, userId, event.w ?? []);
+      applyVoiceWatches(event.s, channelId, userId, event.w ?? []);
       return;
     default:
       return;

@@ -39,7 +39,9 @@ export function useLiveWatchers({
   const occupancy = useVoiceRoster(
     (s) => s.byServer[serverId] ?? EMPTY_OCCUPANCY,
   );
-  const watches = useVoiceRoster((s) => s.watches[serverId] ?? EMPTY_WATCHES);
+  const watches = useVoiceRoster(
+    (s) => s.watches[serverId]?.[channelId] ?? EMPTY_WATCHES,
+  );
   const myWatches = useVoice((s) => s.sourceSubscriptions);
   const here = useVoice(
     (s) =>

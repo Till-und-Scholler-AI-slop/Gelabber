@@ -14,7 +14,7 @@ export function watchersOf(args: {
   channelId: string;
   /** `byServer[serverId]` of the voice roster. */
   occupancy: Record<string, VoiceFlags>;
-  /** `watches[serverId]` of the voice roster. */
+  /** `watches[serverId][channelId]` of the voice roster. */
   watches: Record<string, readonly string[]>;
   me?: string;
   /** The own `sourceSubscriptions`. */

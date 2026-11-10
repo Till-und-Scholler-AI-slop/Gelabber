@@ -16,8 +16,11 @@ const fixture = vi.hoisted(() => ({
     string,
     Record<string, Record<string, Partial<Record<"s" | "l", true>>>>
   >,
-  /** The roster's watches: per server, per watcher, whose Lives. */
-  watches: {} as Record<string, Record<string, readonly string[]>>,
+  /** The roster's watches: per server, per channel, per watcher, whose Lives. */
+  watches: {} as Record<
+    string,
+    Record<string, Record<string, readonly string[]>>
+  >,
   speaking: { call: null as string | null, users: {} as Record<string, true> },
   /** The window's width for `max-width` queries; null matches none. */
   width: null as number | null,
@@ -1186,7 +1189,7 @@ describe("active media UI", () => {
       ),
     };
     // Mira's watch comes from the gateway, the own one from local state.
-    fixture.watches = { a: { mira: ["jonas"], tom: [] } };
+    fixture.watches = { a: { sofa: { mira: ["jonas"], tom: [] } } };
     Object.assign(fixture.voice, {
       status: "joined",
       serverId: "a",
@@ -1218,7 +1221,7 @@ describe("active media UI", () => {
     expect(status("Tom")).toEqual(["", "Im Raum"]);
 
     // The own Live: its button counts who watches, still "Live gehen".
-    fixture.watches = { a: { jonas: ["self"], mira: ["self"] } };
+    fixture.watches = { a: { sofa: { jonas: ["self"], mira: ["self"] } } };
     Object.assign(fixture.voice, {
       participants: {},
       remote: {},

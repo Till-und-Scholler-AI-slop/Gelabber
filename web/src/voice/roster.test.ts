@@ -172,7 +172,8 @@ describe("voice roster", () => {
   });
 
   it("replaces someone's watches with the set a w frame carries", () => {
-    const watches = () => useVoiceRoster.getState().watches.s1 ?? EMPTY_WATCHES;
+    const watches = () =>
+      useVoiceRoster.getState().watches.s1?.voice ?? EMPTY_WATCHES;
     const w = (u: string, owners?: string[]) =>
       applyVoiceSig({ op: "sig", t: "w", s: "s1", c: "voice", u, w: owners });
     w("u2", ["u1"]);
@@ -211,7 +212,9 @@ describe("voice roster", () => {
       w: ["u1"],
     });
     applyVoiceSig({ op: "sig", t: "l", s: "s1", c: "voice", u: "u2" });
-    expect(useVoiceRoster.getState().watches.s1).toEqual({ u3: ["u1"] });
+    expect(useVoiceRoster.getState().watches.s1).toEqual({
+      voice: { u3: ["u1"] },
+    });
     applyVoiceSig({
       op: "sig",
       t: "w",
@@ -226,7 +229,9 @@ describe("voice roster", () => {
       s: "s1",
       snap: [{ u: "u3", c: "voice" }],
     });
-    expect(useVoiceRoster.getState().watches.s1).toEqual({ u3: ["u1"] });
+    expect(useVoiceRoster.getState().watches.s1).toEqual({
+      voice: { u3: ["u1"] },
+    });
     resetVoiceRoster();
     expect(useVoiceRoster.getState().watches).toEqual({});
   });
@@ -235,6 +240,34 @@ describe("voice roster", () => {
     applyVoiceJoin("s1", "u2", "b");
     applyVoiceSig({ op: "sig", t: "w", s: "s1", c: "b", u: "u2", w: ["u1"] });
     applyVoiceSig({ op: "sig", t: "l", s: "s1", c: "a", u: "u2" });
-    expect(useVoiceRoster.getState().watches.s1).toEqual({ u2: ["u1"] });
+    expect(useVoiceRoster.getState().watches.s1).toEqual({
+      b: { u2: ["u1"] },
+    });
+  });
+
+  it("keeps each room's watches apart for one person's seats in two rooms", () => {
+    const w = (c: string, owners: string[]) =>
+      applyVoiceSig({ op: "sig", t: "w", s: "s1", c, u: "x", w: owners });
+    applyVoiceJoin("s1", "x", "one");
+    w("one", ["a"]);
+    // Another device's seat in a second room watches someone else there.
+    applyVoiceJoin("s1", "x", "two");
+    w("two", ["b"]);
+    expect(useVoiceRoster.getState().watches.s1).toEqual({
+      one: { x: ["a"] },
+      two: { x: ["b"] },
+    });
+    // That seat leaves: only its room's set goes.
+    applyVoiceSig({ op: "sig", t: "l", s: "s1", c: "two", u: "x" });
+    expect(useVoiceRoster.getState().watches.s1).toEqual({ one: { x: ["a"] } });
+  });
+
+  it("drops the old room's watches on a move whose leave comes last", () => {
+    applyVoiceJoin("s1", "x", "one");
+    applyVoiceSig({ op: "sig", t: "w", s: "s1", c: "one", u: "x", w: ["a"] });
+    applyVoiceSig({ op: "sig", t: "j", s: "s1", c: "two", u: "x" });
+    applyVoiceSig({ op: "sig", t: "l", s: "s1", c: "one", u: "x" });
+    expect(useVoiceRoster.getState().watches.s1).toEqual({});
+    expect(useVoiceRoster.getState().byServer.s1?.x?.channelId).toBe("two");
   });
 });

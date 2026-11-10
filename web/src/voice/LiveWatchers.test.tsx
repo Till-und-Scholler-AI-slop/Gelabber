@@ -13,7 +13,10 @@ import type { VoiceFlags } from "./roster.ts";
 const fixture = vi.hoisted(() => ({
   voice: {} as Record<string, unknown>,
   byServer: {} as Record<string, Record<string, VoiceFlags>>,
-  watches: {} as Record<string, Record<string, readonly string[]>>,
+  watches: {} as Record<
+    string,
+    Record<string, Record<string, readonly string[]>>
+  >,
 }));
 const session = vi.hoisted(() => ({
   useVoice: (select: (state: unknown) => unknown) => select(fixture.voice),
@@ -85,7 +88,7 @@ beforeEach(() => {
       bob: flags("kino"),
     },
   };
-  fixture.watches = { home: { tom: ["jonas"], mira: ["jonas"] } };
+  fixture.watches = { home: { sofa: { tom: ["jonas"], mira: ["jonas"] } } };
   session.toggleShare.mockClear();
 });
 
@@ -171,7 +174,7 @@ describe("who watches a Live", () => {
       'aria-label="2 schauen zu – Liste anzeigen"',
     );
     expect(count("jonas")).toContain("<span>2</span>");
-    fixture.watches = { home: { tom: ["jonas"] } };
+    fixture.watches = { home: { sofa: { tom: ["jonas"] } } };
     expect(count("jonas")).toContain(
       'aria-label="1 schaut zu – Liste anzeigen"',
     );

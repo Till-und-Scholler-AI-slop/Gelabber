@@ -136,7 +136,9 @@ export function VoiceRoom({
   const livePeople = useVoiceRoster(
     (s) => s.live[server.id]?.[channelId] ?? EMPTY_LIVE_PEOPLE,
   );
-  const watches = useVoiceRoster((s) => s.watches[server.id] ?? EMPTY_WATCHES);
+  const watches = useVoiceRoster(
+    (s) => s.watches[server.id]?.[channelId] ?? EMPTY_WATCHES,
+  );
   const here =
     voice.status === "joined" &&
     voice.serverId === server.id &&
