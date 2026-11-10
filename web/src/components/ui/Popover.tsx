@@ -47,6 +47,8 @@ type PopoverProps = {
   role?: "dialog" | "menu";
   children: ReactNode;
   className?: string;
+  /** As wide as the anchor at least, like a select's list. */
+  matchAnchorWidth?: boolean;
   /** Esc inside: true when the content took it (a submenu closed), so the
    * popover stays open. */
   onEscape?: () => boolean;
@@ -106,6 +108,7 @@ function AnchoredPopover({
   role = "dialog",
   children,
   className,
+  matchAnchorWidth = false,
   onEscape,
   onSurface,
   state,
@@ -142,8 +145,9 @@ function AnchoredPopover({
     if (!open || !element || !opener) return;
     const place = () => {
       const box = opener.getBoundingClientRect();
-      const size = { width: element.offsetWidth, height: element.offsetHeight };
       const zoom = pageZoom(element);
+      if (matchAnchorWidth) element.style.minWidth = `${box.width / zoom}px`;
+      const size = { width: element.offsetWidth, height: element.offsetHeight };
       const position = popoverPosition(
         box,
         size,
@@ -192,7 +196,7 @@ function AnchoredPopover({
       element.removeEventListener("focusout", onFocusOut);
       returnFocus(element, opener);
     };
-  }, [open, anchor, close, escape, placement, host]);
+  }, [open, anchor, close, escape, placement, matchAnchorWidth, host]);
 
   return (
     <>

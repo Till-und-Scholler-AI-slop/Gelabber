@@ -74,6 +74,7 @@ export function ChannelAccessField({
         anchor={button}
         label={t("channel.accessLabel")}
         className="channel-access"
+        matchAnchorWidth
       >
         <div className="channel-access__list">
           <Checkbox
