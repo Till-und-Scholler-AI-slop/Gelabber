@@ -194,6 +194,7 @@ pub async fn insert_unverified_in(
          SET name = EXCLUDED.name, password_hash = EXCLUDED.password_hash, \
              locale = EXCLUDED.locale, updated_at = now() \
          WHERE users.registration_pending AND users.email_verified_at IS NULL \
+             AND users.disabled_at IS NULL \
          RETURNING id",
     )
     .bind(email)

@@ -357,12 +357,14 @@ async fn create(
 }
 
 /// Whether `email` already belongs to an account that is not a pending
-/// registration: one confirmed, or one from a time without mail. A pending
-/// one is taken over by the next registration, so it may be invited.
+/// registration: one confirmed, one from a time without mail, or a disabled
+/// one. A pending one is taken over by the next registration, so it may be
+/// invited.
 async fn has_account(conn: &mut PgConnection, email: &str) -> Result<bool, ApiError> {
     Ok(sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM users WHERE lower(email) = $1 \
-             AND NOT (registration_pending AND email_verified_at IS NULL))",
+             AND NOT (registration_pending AND email_verified_at IS NULL \
+                      AND disabled_at IS NULL))",
     )
     .bind(email)
     .fetch_one(&mut *conn)

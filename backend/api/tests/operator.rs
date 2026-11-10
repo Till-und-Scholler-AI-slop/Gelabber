@@ -643,6 +643,18 @@ async fn a_disabled_account_cannot_confirm_or_reset_by_mail(pool: PgPool) {
     assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
     assert_eq!(res.body["error"], "account_disabled");
     assert!(res.set_cookie(SESSION).is_none());
+    // The address stays unconfirmed and the link unused.
+    let (pending, verified, tokens): (bool, bool, i64) = sqlx::query_as(
+        "SELECT registration_pending, email_verified_at IS NOT NULL, \
+             (SELECT count(*) FROM account_tokens t \
+              WHERE t.user_id = u.id AND t.purpose = 'verify_email') \
+         FROM users u WHERE email = $1",
+    )
+    .bind(TOM)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((pending, verified, tokens), (true, false, 1));
 
     // Login with the right password neither signs in nor mails a new link.
     let res = tom.login(TOM, PASSWORD).await;
@@ -650,6 +662,32 @@ async fn a_disabled_account_cannot_confirm_or_reset_by_mail(pool: PgPool) {
     assert_eq!(res.body["error"], "account_disabled");
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(mailer.outbox().len(), 2);
+
+    // Registering the disabled pending address again does not take the row
+    // over; the new link meets the same refusal.
+    let mut again = Client::from_state(state.clone());
+    again.bootstrap().await;
+    let res = again.register(TOM, "another horse", "Tom 2").await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let sent = outbox(&mailer, 3).await;
+    let res = again
+        .send(
+            Method::POST,
+            "/api/auth/verify-email",
+            Some(json!({ "token": mail_token(&sent[2]), "password": PASSWORD })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    assert_eq!(res.body["error"], "account_disabled");
+    let (name, hash, disabled): (String, String, bool) = sqlx::query_as(
+        "SELECT name, password_hash, disabled_at IS NOT NULL FROM users WHERE email = $1",
+    )
+    .bind(TOM)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((name.as_str(), disabled), ("Tom", true));
+    assert_eq!(hash, hash_before);
 }
 
 /// Mails go out in the background; wait until `count` have been taken.
@@ -937,10 +975,12 @@ async fn invitation_requests_are_validated(pool: PgPool) {
     let state = operator_state(pool.clone());
     let mut lena = registered(&state, LENA, "Lena").await;
     registered(&state, TOM, "Tom").await;
-    // A pending registration may still be invited; it is taken over.
+    // A pending registration may still be invited; it is taken over. A
+    // disabled one is not, so its address counts as taken.
     sqlx::query(
-        "INSERT INTO users (email, name, password_hash, registration_pending) \
-         VALUES ('pending@example.test', 'P', 'x', true)",
+        "INSERT INTO users (email, name, password_hash, registration_pending, disabled_at) \
+         VALUES ('pending@example.test', 'P', 'x', true, NULL), \
+                ('blocked@example.test', 'B', 'x', true, now())",
     )
     .execute(&pool)
     .await
@@ -949,6 +989,10 @@ async fn invitation_requests_are_validated(pool: PgPool) {
         (json!({ "email": "kein at" }), json!({ "email": "invalid" })),
         (
             json!({ "email": "Tom@Example.test" }),
+            json!({ "email": "taken" }),
+        ),
+        (
+            json!({ "email": "blocked@example.test" }),
             json!({ "email": "taken" }),
         ),
         (

@@ -686,6 +686,10 @@ async fn verify_email(
         )])));
     }
     limits::login_succeeded(&state, &key);
+    // A disabled account stays unconfirmed and keeps its link (#517).
+    if user::is_disabled(&state.db, user_id).await? {
+        return Err(ApiError::AccountDisabled);
+    }
 
     // Re-registering a pending address in the meantime replaced the token,
     // so this one may be gone already.
