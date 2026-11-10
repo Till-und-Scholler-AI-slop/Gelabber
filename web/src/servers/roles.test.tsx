@@ -21,6 +21,7 @@ import {
   roleColorVar,
   roleCounts,
   roleRename,
+  syncRoleName,
   rolesInOrder,
   rolesOf,
   sameAccess,
@@ -337,6 +338,24 @@ describe("roles editor helpers", () => {
     expect(roleRename(server, moderation, "x".repeat(33))).toEqual({
       code: "too_long",
     });
+  });
+
+  it("lets an untouched name field follow a rename made elsewhere", () => {
+    // Untouched: the field takes the new name, so a blur sends nothing.
+    const field = syncRoleName({ text: "Mod", synced: "Mod" }, "Moderation");
+    expect(field).toEqual({ text: "Moderation", synced: "Moderation" });
+    expect(
+      roleRename(server, { id: "r-mod", name: "Moderation" }, field.text),
+    ).toBeNull();
+    // One's own rename coming back, trimmed.
+    expect(syncRoleName({ text: "Mods ", synced: "Mod" }, "Mods")).toEqual({
+      text: "Mods",
+      synced: "Mods",
+    });
+    // Typed text that differs from both keeps its place.
+    expect(
+      syncRoleName({ text: "Gäste", synced: "Mod" }, "Moderation"),
+    ).toEqual({ text: "Gäste", synced: "Moderation" });
   });
 
   it("flips one flag and keeps the canonical order", () => {

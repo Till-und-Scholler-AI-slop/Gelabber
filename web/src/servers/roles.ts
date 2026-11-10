@@ -252,6 +252,23 @@ export function newRoleInput(
   };
 }
 
+/** The role name field: its text and the cached name it last took over. */
+export type RoleNameField = { text: string; synced: string };
+
+/**
+ * The name field when the cached name changes (a rename elsewhere, or the
+ * answer to one's own): an untouched field follows it, so a blur cannot
+ * send the old name back; text typed since keeps its place.
+ */
+export function syncRoleName(
+  field: RoleNameField,
+  incoming: string,
+): RoleNameField {
+  const untouched =
+    field.text === field.synced || field.text.trim() === incoming;
+  return { text: untouched ? incoming : field.text, synced: incoming };
+}
+
 /** A rename typed into the name field: `null` when nothing changed, the
  * field code when the name is not allowed, else the name to save. */
 export function roleRename(

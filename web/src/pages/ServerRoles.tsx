@@ -53,8 +53,10 @@ import {
   roleRename,
   rolesInOrder,
   rolesOf,
+  syncRoleName,
   toggleMemberRole,
   togglePermission,
+  type RoleNameField,
 } from "../servers/roles.ts";
 import type {
   Member,
@@ -312,8 +314,15 @@ function CustomRolePanel({
   const userId = useUserId();
   const update = useUpdateRole(server.id);
   const remove = useDeleteRole(server.id);
-  const [name, setName] = useState(role.name);
   const { errors, clearField, setFields, fromError } = useFormErrors();
+  const [name, setName] = useState<RoleNameField>({
+    text: role.name,
+    synced: role.name,
+  });
+  // A rename elsewhere (or our own coming back) reaches an untouched field;
+  // a refused name stays for its error.
+  if (name.synced !== role.name && !errors.fields.name)
+    setName(syncRoleName(name, role.name));
   const nameField = useRef<HTMLInputElement>(null);
   const colorId = useId();
 
@@ -335,7 +344,7 @@ function CustomRolePanel({
   } as const;
 
   const rename = () => {
-    const change = roleRename(server, latest(), name);
+    const change = roleRename(server, latest(), name.text);
     if (!change) return;
     if ("code" in change) {
       setFields({ name: fieldMessage("name", change.code) });
@@ -413,9 +422,10 @@ function CustomRolePanel({
           label={t("roles.nameLabel")}
           type="text"
           maxLength={ROLE_NAME_MAX}
-          value={name}
+          value={name.text}
           onChange={(event) => {
-            setName(event.target.value);
+            const text = event.target.value;
+            setName((field) => ({ ...field, text }));
             clearField("name");
           }}
           onBlur={rename}
