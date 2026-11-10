@@ -332,8 +332,10 @@ impl ConnTable {
     }
 
     /// Wake local sockets that `target` may concern for an immediate check.
-    fn recheck_local(sockets: &HashMap<ConnId, Socket>, target: &Recheck) {
-        for socket in sockets.values() {
+    /// A server-wide change may change which voice rooms a member sees, so
+    /// the next roster pass sends that server's roster again.
+    fn recheck_local(sockets: &mut HashMap<ConnId, Socket>, target: &Recheck) {
+        for socket in sockets.values_mut() {
             let wanted = match target {
                 Recheck::User(user_id) => socket.user_id == *user_id,
                 Recheck::Server(server_id) => {
@@ -354,6 +356,9 @@ impl ConnTable {
                     .is_some_and(|(session, _)| session == key),
             };
             if wanted {
+                if let Recheck::Server(server_id) = target {
+                    socket.voice_rosters.remove(server_id);
+                }
                 socket.recheck.notify_one();
             }
         }

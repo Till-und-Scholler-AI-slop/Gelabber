@@ -11,7 +11,9 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::hub::ConnId;
-use super::protocol::{CatchUp, ClientFrame, PresenceStatus, ServerFrame, Topic};
+use super::protocol::{
+    CatchUp, ClientFrame, PresenceStatus, ServerFrame, SigKind, Topic, VoiceEntry,
+};
 use crate::auth::session::CurrentSession;
 use crate::auth::user::User;
 use crate::error::ApiError;
@@ -505,12 +507,44 @@ async fn subscribe(
         Err(err) => warn!(error = err.code(), "presence snapshot on subscribe failed"),
     }
     match state.gateway.voice_snapshot(server_id).await {
-        Ok(voice) => send(sink, ServerFrame::voice_snap(server_id, voice))
-            .await
-            .map_err(SubscribeError::Write)?,
+        Ok(voice) => {
+            let voice = if _guard.is_some() {
+                visible_seats(voice, &hidden_rooms(&mut *db, server_id, user.id).await?)
+            } else {
+                voice
+            };
+            send(sink, ServerFrame::voice_snap(server_id, voice))
+                .await
+                .map_err(SubscribeError::Write)?
+        }
         Err(err) => warn!(error = err.code(), "voice snapshot on subscribe failed"),
     }
     Ok(())
+}
+
+/// The limited channels of `server_id` that `user_id` cannot see. Their
+/// seats leave the voice roster, so nobody learns who sits or is live there.
+async fn hidden_rooms(
+    db: &mut sqlx::PgConnection,
+    server_id: Uuid,
+    user_id: Uuid,
+) -> Result<HashSet<Uuid>, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM channels WHERE server_id = $1 AND limited AND NOT channel_visible_to(id, $2)",
+    )
+    .bind(server_id)
+    .bind(user_id)
+    .fetch_all(db)
+    .await?
+    .into_iter()
+    .collect())
+}
+
+fn visible_seats(seats: Vec<VoiceEntry>, hidden: &HashSet<Uuid>) -> Vec<VoiceEntry> {
+    seats
+        .into_iter()
+        .filter(|seat| !hidden.contains(&seat.c))
+        .collect()
 }
 
 async fn typing(
@@ -655,6 +689,7 @@ async fn deliver(
         state.gateway.reconcile_access(conn, &mut db).await?;
         checked = true;
         let mut allowed = HashMap::new();
+        let mut hidden: HashMap<Uuid, HashSet<Uuid>> = HashMap::new();
         let mut out = Vec::with_capacity(run.len());
         for (frame, json) in run {
             if !state.gateway.wants_frame(conn, &frame).await {
@@ -671,8 +706,33 @@ async fn deliver(
                         .or_insert(scope_allowed(&mut db, user_id, scope).await?),
                 },
             };
-            if ok {
-                out.push(json);
+            if !ok {
+                continue;
+            }
+            // A roster is server-wide: re-serialize it without hidden rooms.
+            match frame {
+                ServerFrame::Sig {
+                    t: SigKind::R,
+                    s,
+                    snap: Some(seats),
+                    ..
+                } => {
+                    let hidden = match hidden.entry(s) {
+                        std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                        std::collections::hash_map::Entry::Vacant(entry) => {
+                            entry.insert(hidden_rooms(&mut db, s, user_id).await?)
+                        }
+                    };
+                    if seats.iter().any(|seat| hidden.contains(&seat.c)) {
+                        out.push(to_json(&ServerFrame::voice_snap(
+                            s,
+                            visible_seats(seats, hidden),
+                        ))?);
+                    } else {
+                        out.push(json);
+                    }
+                }
+                _ => out.push(json),
             }
         }
         send_texts(sink, out).await?;

@@ -115,7 +115,7 @@ impl ConnTable {
         if channel == RECHECK_CHANNEL {
             match serde_json::from_str::<Recheck>(raw) {
                 Ok(target) => {
-                    Self::recheck_local(&*self.inner.sockets.read().await, &target);
+                    Self::recheck_local(&mut *self.inner.sockets.write().await, &target);
                 }
                 Err(_) => warn!(channel, "redis payload is not a recheck notice"),
             }

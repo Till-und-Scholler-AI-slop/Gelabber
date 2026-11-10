@@ -659,3 +659,151 @@ async fn the_socket_loses_a_channel_once_it_is_limited(pool: PgPool) {
         .unwrap();
     until(&mut ws, |f| f["op"] == "e" && f["c"] == text.to_string()).await;
 }
+
+#[sqlx::test]
+async fn unread_and_read_all_skip_a_hidden_channel(pool: PgPool) {
+    let state = common::state(pool.clone());
+    let Team {
+        mut ada,
+        mut bob,
+        mut cara,
+        sid,
+        text,
+    } = team(&state).await;
+    let res = ada
+        .send(
+            Method::POST,
+            &format!("/api/channels/{text}/messages"),
+            Some(json!({"content": "@everyone Essen"})),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let unread_row = |rows: &Value| {
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["channel_id"] == text.to_string())
+            .cloned()
+    };
+    let rows = bob.send(Method::GET, "/api/messages/unread", None).await;
+    assert_eq!(rows.status, StatusCode::OK, "{}", rows.body);
+    assert_eq!(unread_row(&rows.body).unwrap()["mention_count"], 1);
+
+    let r = role(&mut ada, sid, "Stammgäste").await;
+    set_roles(&mut ada, sid, cara.user_id(), json!([r])).await;
+    let res = patch_access(&mut ada, text, json!([r])).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+
+    // Bob no longer counts it, not even the @everyone; Cara still does.
+    let rows = bob.send(Method::GET, "/api/messages/unread", None).await;
+    assert_eq!(rows.status, StatusCode::OK, "{}", rows.body);
+    assert!(unread_row(&rows.body).is_none(), "{}", rows.body);
+    let rows = cara.send(Method::GET, "/api/messages/unread", None).await;
+    assert_eq!(unread_row(&rows.body).unwrap()["mention_count"], 1);
+
+    // Reading everything writes no position for the hidden channel.
+    for (path, body) in [
+        ("/api/messages/read-all".to_owned(), Some(json!({}))),
+        (format!("/api/servers/{sid}/read"), None),
+    ] {
+        let res = bob.send(Method::PUT, &path, body).await;
+        assert_eq!(res.status, StatusCode::OK, "{path}: {}", res.body);
+        assert_eq!(res.body, json!([]), "{path}");
+    }
+    let rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM channel_read_state WHERE channel_id = $1 AND user_id = $2",
+    )
+    .bind(text)
+    .bind(bob.user_id().parse::<Uuid>().unwrap())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows, 0);
+}
+
+fn seated(frame: &Value, user: &str) -> bool {
+    frame["snap"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|seat| seat["u"] == user)
+}
+
+async fn join_voice(addr: std::net::SocketAddr, client: &Client, sid: Uuid, room: Uuid) -> Ws {
+    let mut ws = connect(addr, client).await;
+    send(&mut ws, json!({"op": "sig", "t": "j", "s": sid, "c": room})).await;
+    until(&mut ws, |f| {
+        f["op"] == "sig" && f["t"] == "j" && f["u"] == client.user_id()
+    })
+    .await;
+    ws
+}
+
+#[sqlx::test]
+async fn the_voice_roster_leaves_out_hidden_rooms(pool: PgPool) {
+    let (addr, state) = common::serve_ws(pool.clone()).await;
+    let Team {
+        mut ada,
+        bob,
+        cara,
+        sid,
+        ..
+    } = team(&state).await;
+    let r = role(&mut ada, sid, "Stammgäste").await;
+    set_roles(&mut ada, sid, cara.user_id(), json!([r])).await;
+    let hidden = create_channel(
+        &mut ada,
+        sid,
+        json!({"name": "Hinterzimmer", "kind": "voice", "role_ids": [r]}),
+    )
+    .await;
+    assert_eq!(hidden.status, StatusCode::CREATED, "{}", hidden.body);
+    let hidden = id(&hidden.body["id"]);
+    let lobby = create_channel(&mut ada, sid, json!({"name": "Lobby", "kind": "voice"})).await;
+    let lobby = id(&lobby.body["id"]);
+    let _cara_seat = join_voice(addr, &cara, sid, hidden).await;
+    let _ada_seat = join_voice(addr, &ada, sid, lobby).await;
+
+    // The subscribe snapshot shows the open room, not the hidden one.
+    let mut ws = connect(addr, &bob).await;
+    send(&mut ws, json!({"op": "s", "s": sid})).await;
+    let snap = until(&mut ws, |f| f["op"] == "sig" && f["t"] == "r").await;
+    assert!(seated(&snap, ada.user_id()), "{snap}");
+    assert!(!seated(&snap, cara.user_id()), "{snap}");
+
+    // Neither the roster passes nor Cara's signaling tell Bob about her.
+    let cara_id = cara.user_id().to_owned();
+    let leaked = tokio::time::timeout(Duration::from_millis(2500), async {
+        loop {
+            state.gateway.refresh_rosters().await;
+            let frame = until(&mut ws, |f| f["op"] == "sig").await;
+            if frame["u"] == cara_id.as_str() || (frame["t"] == "r" && seated(&frame, &cara_id)) {
+                return frame;
+            }
+        }
+    })
+    .await;
+    // A quiet socket also ends here: the outer timeout comes before `until`'s.
+    assert!(leaked.is_err(), "hidden seat leaked: {leaked:?}");
+
+    // Given the role, Bob's next roster shows Cara without a reconnect.
+    set_roles(&mut ada, sid, bob.user_id(), json!([r])).await;
+    let roster = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            state.gateway.refresh_rosters().await;
+            let got = tokio::time::timeout(
+                Duration::from_millis(300),
+                until(&mut ws, |f| f["op"] == "sig" && f["t"] == "r"),
+            )
+            .await;
+            if let Ok(frame) = got
+                && seated(&frame, &cara_id)
+            {
+                return frame;
+            }
+        }
+    })
+    .await
+    .expect("a roster with the room");
+    assert!(seated(&roster, ada.user_id()), "{roster}");
+}
