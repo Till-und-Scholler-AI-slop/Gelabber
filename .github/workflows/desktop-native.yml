@@ -70,7 +70,8 @@ jobs:
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
-          rm -rf /mnt/libwebrtc-fetch
+          # /mnt is root's, so the directory itself goes with sudo.
+          sudo rm -rf /mnt/libwebrtc-fetch
 
       - name: Free disk space
         if: steps.cache.outputs.cache-hit != 'true' && steps.stored.outputs.found != 'true'
