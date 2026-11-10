@@ -159,7 +159,7 @@ export const themes = defineCatalog(
     "notice.saved": "Theme saved and applied.",
     "notice.deleted": "Theme deleted.",
     "notice.importFailed": "Import failed.",
-    "sync.saving": "Syncing with your account …",
+    "sync.saving": "Syncing with your account…",
     "discardPending.title": "Discard local change?",
     "discardPending.message":
       "Gelabber then loads your account’s themes again.",
@@ -202,7 +202,7 @@ export const themes = defineCatalog(
     "error.loadFailed": "Themes could not be loaded. Please try again.",
     "error.saveFailed": "Theme could not be saved.",
     "error.conflict":
-      "Changed on another device. Your change is kept. Apply again puts it on top of the current version.",
+      "Changed on another device. Your change is kept. “Apply again” puts it on top of the current version.",
     "error.offline": "Not synced yet. Your change is saved here.",
 
     "preview.channels": "CHANNELS",

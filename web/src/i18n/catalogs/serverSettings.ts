@@ -165,11 +165,11 @@ export const serverSettings = defineCatalog(
     "danger.ownerHint":
       "Permanently deletes channels, categories, messages, invites and memberships.",
     "danger.memberHint": "You can only rejoin with a new invite link.",
-    "danger.deleteTitle": "Delete server ‘{name}’ for good?",
+    "danger.deleteTitle": "Delete server “{name}” for good?",
     "danger.deleteMessage":
       "Channels, messages, invites and memberships will be deleted.",
     "danger.delete": "Delete server",
-    "danger.leaveTitle": "Leave server ‘{name}’?",
+    "danger.leaveTitle": "Leave server “{name}”?",
     "danger.leaveConfirm": "Leave",
     "danger.leave": "Leave server",
   },

@@ -398,9 +398,9 @@ export const chat = defineCatalog(
     "gif.animationLabel": "{label}, animation",
     "gif.search": "Search GIFs",
     "gif.gridLabel": "GIF picker",
-    "gif.loadingMore": "Loading …",
+    "gif.loadingMore": "Loading…",
     "gif.more": "Show more GIFs",
-    "gif.loading": "Loading GIFs …",
+    "gif.loading": "Loading GIFs…",
     "gif.rateLimited": "Too many GIF requests. Try again in {seconds} s.",
     "gif.quota":
       "This server has used up its GIF quota for now. Try again in {wait}.",

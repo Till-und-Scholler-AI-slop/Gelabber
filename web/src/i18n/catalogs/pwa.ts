@@ -59,7 +59,7 @@ export const pwa = defineCatalog(
     "desktop.label": "Desktop app",
     "desktop.title": "Desktop app for {platform}",
     "desktop.pushToTalk":
-      "Push-to-talk works even when Gelabber is in the background.",
+      "Push to talk works even when Gelabber is in the background.",
     "desktop.other": "For {platform}",
     "desktop.server":
       "On first start, the app asks for the server: <code>{server}</code>",

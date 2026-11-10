@@ -299,7 +299,7 @@ export const voiceSettings = defineCatalog(
     "ptt.setKey": "Set key",
     "ptt.noKeyHint": "Without a key, your microphone stays muted in calls.",
     "ptt.keyHint":
-      "In the browser, the key only works while Gelabber is in front. The desktop app hears it in the background too.",
+      "In the browser, the key only works while Gelabber is in the foreground. The desktop app hears it in the background too.",
     "ptt.releaseDelay": "Release delay",
     "ptt.releaseDelayHint":
       "How long your microphone keeps sending after you let go.",
