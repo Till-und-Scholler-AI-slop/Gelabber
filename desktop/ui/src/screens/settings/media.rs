@@ -835,6 +835,16 @@ fn key_label(code: &str) -> String {
     }
 }
 
+/// The name of a key that typed nothing as it was pressed. The dead keys
+/// of a German keyboard show their mark, as the keycap does.
+fn silent_key_label(code: &str) -> String {
+    match code {
+        "Backquote" => "^".into(),
+        "Equal" => "´".into(),
+        _ => key_label(code),
+    }
+}
+
 /// What the recorder makes of a frame's events.
 #[derive(Debug, PartialEq)]
 enum Recorded {
@@ -871,7 +881,7 @@ fn recorded(events: &[egui::Event]) -> Recorded {
                 });
                 let label = match typed {
                     Some(t) if t.chars().count() == 1 && t != " " => t.to_uppercase(),
-                    _ => key_label(code),
+                    _ => silent_key_label(code),
                 };
                 return Recorded::Key(code.to_owned(), label);
             }
@@ -1328,11 +1338,16 @@ mod tests {
             key("ArrowUp", "ArrowUp")
         );
         assert_eq!(
+            recorded(&[press(Key::Backtick, Some(Key::Backtick))]),
+            key("Backquote", "^")
+        );
+        // On a US keyboard the same place types a character, which names it.
+        assert_eq!(
             recorded(&[
                 press(Key::Backtick, Some(Key::Backtick)),
-                egui::Event::Text("^".into())
+                egui::Event::Text("`".into())
             ]),
-            key("Backquote", "^")
+            key("Backquote", "`")
         );
         assert_eq!(
             recorded(&[press(Key::ShiftLeft, Some(Key::ShiftLeft))]),
