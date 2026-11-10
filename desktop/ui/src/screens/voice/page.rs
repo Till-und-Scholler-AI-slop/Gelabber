@@ -680,7 +680,13 @@ fn fullscreen_open(ctx: &egui::Context) -> bool {
         .is_some()
 }
 
-fn open_fullscreen(ctx: &egui::Context, id: PicId) {
+/// The picture the large view shows, while it is open.
+pub(super) fn large_view(ctx: &egui::Context) -> Option<PicId> {
+    ctx.data(|d| d.get_temp::<Option<PicId>>(fullscreen_id()))
+        .flatten()
+}
+
+pub(super) fn open_fullscreen(ctx: &egui::Context, id: PicId) {
     ctx.data_mut(|d| d.insert_temp(fullscreen_id(), Some(id)));
     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
 }

@@ -685,9 +685,12 @@ pub fn picture(
     // Someone else's Live is watched by choice; until then, "Zuschauen".
     let needs_watch = live && !pic.own && !pic.watching;
     let in_window = pic.key.is_some_and(|k| window::is_open(ui.ctx(), k));
+    // The large view over the stage has the picture to itself: one ask
+    // and one GPU copy, not a second at the tile's size under it.
+    let in_large_view = super::page::large_view(ui.ctx()) == Some(pic.id);
     let frame = pic
         .key
-        .filter(|_| !in_window)
+        .filter(|_| !in_window && !in_large_view)
         .and_then(|k| app.call.frame(k));
     let wait_id = id.with("waiting");
     if in_window {
@@ -720,7 +723,7 @@ pub fn picture(
             window::close(ui.ctx(), key);
         }
     }
-    match (&frame, needs_watch || in_window) {
+    match (&frame, needs_watch || in_window || in_large_view) {
         (Some(frame), false) => {
             ui.ctx().data_mut(|d| d.remove::<f64>(wait_id));
             if let Some(key) = pic.key {
@@ -737,7 +740,7 @@ pub fn picture(
                 radius,
             );
         }
-        (_, true) if in_window => {}
+        (_, true) if in_window || in_large_view => {}
         (_, true) => {
             let label = Block::single(ui, "Zuschauen", text::UI.weight(600.0), c.accent_ink);
             let button = Rect::from_center_size(

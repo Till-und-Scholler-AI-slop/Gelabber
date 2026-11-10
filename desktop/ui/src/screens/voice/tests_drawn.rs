@@ -749,3 +749,34 @@ fn only_a_room_nobody_else_is_in_asks_for_company() {
     busy.get_by_label("Beitreten");
     assert!(busy.query_by_label("Einladen").is_none());
 }
+
+/// With Jonas' camera in the large view, its tile on the stage under it
+/// neither asks for its own size nor draws: one ask per video, not two
+/// that reset the core's limits every frame.
+#[test]
+fn the_large_view_has_the_video_to_itself() {
+    let key = VideoKey::camera(JONAS);
+    let (client, call) = offline();
+    call.set_state(in_sofa(MicStatus::Live));
+    let (jonas, camera) = jonas_camera();
+    let id = camera.id;
+    let mut h = harness(client, call.clone(), move |ui, app| {
+        tile::picture(
+            ui,
+            app,
+            stage_rect(),
+            &camera,
+            Some(&jonas),
+            tile::Place::Grid,
+            false,
+            false,
+            1.0,
+        );
+    });
+    h.run_steps(2);
+    assert!(call.video_request(key).is_some(), "the tile asks");
+    crate::screens::voice::video::forget(&h.ctx, &call, key);
+    crate::screens::voice::page::open_fullscreen(&h.ctx, id);
+    h.run_steps(2);
+    assert_eq!(call.video_request(key), None);
+}
