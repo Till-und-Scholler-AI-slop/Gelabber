@@ -3,6 +3,7 @@
 //! session, `404` for anyone who is not an operator.
 
 pub mod access;
+pub mod accounts;
 pub mod audit;
 
 use axum::Router;
@@ -18,7 +19,9 @@ use crate::state::AppState;
 pub use self::access::Operator;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/operator", get(overview))
+    Router::new()
+        .route("/api/operator", get(overview))
+        .merge(accounts::router())
 }
 
 /// `GET /api/operator`: what the area needs before its first page. The web

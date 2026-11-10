@@ -40,8 +40,13 @@ impl FromRequestParts<AppState> for Operator {
 
 /// Whether `user` is an operator, given whether its address is confirmed.
 pub fn is_operator(state: &AppState, user: &User, verified: bool) -> bool {
-    state.operators.contains(&validate::canonical(&user.email))
-        && (state.mail.is_none() || verified)
+    is_operator_address(state, &user.email, verified)
+}
+
+/// [`is_operator`] for an account known only by its stored address, as in
+/// the list of accounts.
+pub fn is_operator_address(state: &AppState, email: &str, verified: bool) -> bool {
+    state.operators.contains(&validate::canonical(email)) && (state.mail.is_none() || verified)
 }
 
 /// [`is_operator`] for a signed-in account. Reads the confirmation only for
