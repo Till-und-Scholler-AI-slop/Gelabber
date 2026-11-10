@@ -508,8 +508,9 @@ impl Platform {
 /// to the call beside the window's own ([`push_to_talk_from`]).
 #[derive(Default)]
 struct PttLink {
-    /// The key last bound or tried; a failed one is not tried every pass.
-    key: Option<String>,
+    /// The key and its label last bound or tried; a failed one is not tried
+    /// every pass.
+    key: Option<(String, String)>,
     binding: Option<ptt::Ptt>,
     events: Arc<Mutex<Vec<ptt::Event>>>,
     status: Option<PttStatus>,
@@ -540,8 +541,8 @@ impl PttLink {
             )
         });
         let want = (in_call && p.voice_input == "ptt" && !p.ptt_key.is_empty())
-            .then_some(p.ptt_key.as_str());
-        if self.key.as_deref() != want {
+            .then(|| (p.ptt_key.clone(), p.ptt_key_label.clone()));
+        if self.key != want {
             // The old binding ends before a new one starts.
             self.binding = None;
             self.events.lock().clear();
@@ -550,15 +551,15 @@ impl PttLink {
                 push_to_talk_from(ctx, call, PttSource::Hook, false);
             }
             self.status = None;
-            self.key = want.map(str::to_owned);
-            if let Some(key) = want {
+            self.key = want.clone();
+            if let Some((key, label)) = want {
                 let events = self.events.clone();
                 let wake = ctx.clone();
                 let report: ptt::Report = Arc::new(move |e| {
                     events.lock().push(e);
                     wake.request_repaint();
                 });
-                match ptt::bind(key, report) {
+                match ptt::bind(&key, &label, report) {
                     Ok(binding) => self.binding = Some(binding),
                     Err(reason) => self.status = Some(PttStatus::Failed { reason }),
                 }
@@ -660,7 +661,7 @@ mod tests {
         let config = paths::testing::TempConfig::new("platform-ptt-setup");
         let ctx = Context::default();
         let mut platform = Platform::new(None);
-        platform.ptt.key = Some("F13".into());
+        platform.ptt.key = Some(("F13".into(), "F13".into()));
         platform.ptt.status = Some(PttStatus::Bound { trigger: None });
         ctx.data_mut(|d| d.insert_temp(ptt_id(), platform.ptt.status.clone()));
         let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
