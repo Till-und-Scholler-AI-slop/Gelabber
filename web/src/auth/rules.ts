@@ -309,7 +309,8 @@ type FieldName =
   | "color"
   | "permissions"
   | "roles"
-  | "role_ids";
+  | "role_ids"
+  | "invitation";
 
 type LabelKey = Extract<keyof typeof auth.de, `fieldLabel.${string}`>;
 
@@ -347,6 +348,7 @@ const FIELD_LABEL: Record<FieldName, LabelKey> = {
   permissions: "fieldLabel.memberPermissions",
   roles: "fieldLabel.roles",
   role_ids: "fieldLabel.roleIds",
+  invitation: "fieldLabel.invitation",
 };
 
 /** Inline copy for a field code. Unknown fields fall back to generic text. */
@@ -357,6 +359,9 @@ export function fieldMessage(field: string, code: FieldCode): string {
   );
   switch (code) {
     case "required":
+      // The API's `{"invitation":"required"}` (invitation_required).
+      if (field === "invitation")
+        return translate(auth, "error.invitationRequired");
       return translate(auth, "fieldError.required", { label });
     case "too_short":
       return field === "password"
@@ -410,6 +415,8 @@ export function fieldMessage(field: string, code: FieldCode): string {
           return translate(auth, "fieldError.contentTypeInvalid");
         case "role_ids":
           return translate(auth, "fieldError.roleIdsInvalid");
+        case "invitation":
+          return translate(auth, "error.invitationInvalid");
         default:
           return translate(auth, "fieldError.invalid", { label });
       }
@@ -460,6 +467,14 @@ export function errorMessage(code: ApiErrorCode): string {
     case "bad_request":
     case "internal":
       return translate(auth, "error.internal");
+    case "invitation_required":
+      return translate(auth, "error.invitationRequired");
+    case "invitation_invalid":
+      return translate(auth, "error.invitationInvalid");
+    case "account_disabled":
+      return translate(auth, "error.accountDisabled");
+    case "server_blocked":
+      return translate(auth, "error.serverBlocked");
   }
 }
 

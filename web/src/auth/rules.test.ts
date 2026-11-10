@@ -212,3 +212,48 @@ describe("copy in English", () => {
     expect(errorMessage("bad_request")).toBe(errorMessage("internal"));
   });
 });
+
+describe("admission and operator codes (#517)", () => {
+  afterEach(() => setLocale("de", { persist: false }));
+
+  it("has German and English text for the new form-level codes", () => {
+    expect(errorMessage("invitation_required")).toBe(
+      "Zum Registrieren brauchst du eine Einladung.",
+    );
+    expect(errorMessage("invitation_invalid")).toBe(
+      "Diese Einladung ist unbekannt, abgelaufen oder schon benutzt.",
+    );
+    expect(errorMessage("account_disabled")).toBe("Dieses Konto ist gesperrt.");
+    expect(errorMessage("server_blocked")).toBe(
+      "Dieser Server wurde vom Betreiber gesperrt.",
+    );
+    setLocale("en", { persist: false });
+    expect(errorMessage("invitation_required")).toBe(
+      "You need an invitation to register.",
+    );
+    expect(errorMessage("invitation_invalid")).toBe(
+      "This invitation is unknown, expired or already used.",
+    );
+    expect(errorMessage("account_disabled")).toBe(
+      "This account has been disabled.",
+    );
+    expect(errorMessage("server_blocked")).toBe(
+      "This server has been blocked by the operator.",
+    );
+  });
+
+  it("puts the API's invitation field codes at the invitation field", () => {
+    expect(fieldMessages({ invitation: "required", email: "invalid" })).toEqual(
+      {
+        invitation: "Zum Registrieren brauchst du eine Einladung.",
+        email: fieldMessage("email", "invalid"),
+      },
+    );
+    expect(fieldMessage("invitation", "invalid")).toBe(
+      "Diese Einladung ist unbekannt, abgelaufen oder schon benutzt.",
+    );
+    expect(fieldMessage("invitation", "too_long")).toBe(
+      "Einladungscode ist zu lang.",
+    );
+  });
+});

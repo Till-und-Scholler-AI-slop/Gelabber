@@ -43,7 +43,11 @@ export type ApiErrorCode =
   | "upstream_quota"
   | "internal"
   | "network"
-  | "timeout";
+  | "timeout"
+  | "invitation_required"
+  | "invitation_invalid"
+  | "account_disabled"
+  | "server_blocked";
 
 export class ApiError extends Error {
   readonly code: ApiErrorCode;
@@ -367,6 +371,10 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
   "upstream_unavailable",
   "upstream_quota",
   "internal",
+  "invitation_required",
+  "invitation_invalid",
+  "account_disabled",
+  "server_blocked",
 ]);
 
 function toErrorCode(raw: string | undefined): ApiErrorCode {

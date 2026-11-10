@@ -8,6 +8,7 @@ import { setLocale } from "../i18n/locale.ts";
 const fixture = vi.hoisted(() => ({
   search: {} as Record<string, unknown>,
   mail: undefined as boolean | undefined,
+  registration: undefined as "open" | "invitation" | undefined,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -35,6 +36,10 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../auth/mail.ts", () => ({
   useAccountMailStatus: () => fixture.mail,
 }));
+vi.mock("../auth/registration.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../auth/registration.ts")>()),
+  useRegistrationMode: () => fixture.registration,
+}));
 
 import { LoginPage } from "./LoginPage.tsx";
 import { MailSent, RegisterPage } from "./RegisterPage.tsx";
@@ -52,6 +57,7 @@ const INVITE_BANNER = "Einladung erhalten.";
 beforeEach(() => {
   fixture.search = {};
   fixture.mail = undefined;
+  fixture.registration = undefined;
 });
 
 describe("login page", () => {
@@ -116,6 +122,88 @@ describe("register page", () => {
     const html = render(<RegisterPage />);
     expect(html).not.toContain(INVITE_BANNER);
     expect(html).not.toContain('role="alert"');
+  });
+});
+
+describe("register page on an invitation-only instance", () => {
+  const FIELD = /<label[^>]*for="invitation"[^>]*>Einladungscode<\/label>/;
+  const ONLY =
+    '<p role="status" class="auth-banner">Gelabber ist gerade nur mit Einladung offen.</p>';
+
+  it("asks for a code and says why", () => {
+    fixture.registration = "invitation";
+    const html = render(<RegisterPage />);
+    expect(html).toMatch(FIELD);
+    expect(html).toContain(ONLY);
+    expect(html).toMatch(/<input[^>]*id="invitation"[^>]*value=""/);
+    // The code field comes after the password, before the submit button.
+    expect(html.indexOf('id="invitation"')).toBeGreaterThan(
+      html.indexOf('id="password"'),
+    );
+  });
+
+  it("pre-fills the field from the link, open instance or not", () => {
+    for (const mode of ["open", "invitation", undefined] as const) {
+      fixture.registration = mode;
+      fixture.search = { invitation: "k7m2p9qrs4tx" };
+      const html = render(<RegisterPage />);
+      expect(html).toMatch(FIELD);
+      expect(html).toMatch(
+        /<input[^>]*id="invitation"[^>]*value="k7m2p9qrs4tx"/,
+      );
+      expect(html).not.toContain(ONLY);
+    }
+  });
+
+  it("lets a server invite admit without a code field", () => {
+    fixture.registration = "invitation";
+    fixture.search = { redirect: "/invite/k7xm2pqrstuv" };
+    const html = render(<RegisterPage />);
+    expect(html).toContain(INVITE_BANNER);
+    expect(html).not.toMatch(FIELD);
+    expect(html).not.toContain(ONLY);
+  });
+
+  it("shows no field on an open instance or before the mode is known", () => {
+    for (const mode of ["open", undefined] as const) {
+      fixture.registration = mode;
+      const html = render(<RegisterPage />);
+      expect(html).not.toContain('id="invitation"');
+      expect(html).not.toContain("nur mit Einladung");
+    }
+  });
+
+  it("says why a sign-in was refused, with the code field", () => {
+    fixture.search = { oidc_error: "invitation_required" };
+    let html = render(<RegisterPage />);
+    expect(html).toContain(
+      '<p role="alert" class="auth-banner">Zum Registrieren brauchst du eine Einladung.</p>',
+    );
+    expect(html).toMatch(FIELD);
+    fixture.registration = "invitation";
+    fixture.search = { oidc_error: "invitation_invalid", invitation: "abc" };
+    html = render(<RegisterPage />);
+    expect(html).toContain(
+      '<p role="alert" class="auth-banner">Diese Einladung ist unbekannt, abgelaufen oder schon benutzt.</p>',
+    );
+    expect(html).not.toContain(ONLY);
+    expect(html).toMatch(/<input[^>]*id="invitation"[^>]*value="abc"/);
+  });
+
+  it("speaks English too", () => {
+    setLocale("en", { persist: false });
+    try {
+      fixture.registration = "invitation";
+      const html = render(<RegisterPage />);
+      expect(html).toMatch(/>Invitation code<\/label>/);
+      expect(html).toContain("Gelabber is open by invitation only for now.");
+      fixture.search = { oidc_error: "invitation_invalid" };
+      expect(render(<RegisterPage />)).toContain(
+        "This invitation is unknown, expired or already used.",
+      );
+    } finally {
+      setLocale("de", { persist: false });
+    }
   });
 });
 

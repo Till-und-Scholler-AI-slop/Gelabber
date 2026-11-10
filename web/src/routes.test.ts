@@ -105,6 +105,30 @@ describe("router", () => {
     expect(validateAuthSearch({ email: "x".repeat(255) })).toEqual({});
   });
 
+  it("keeps an invitation code and a sign-in's admission refusal", () => {
+    expect(
+      validateAuthSearch({
+        invitation: "k7m2p9qrs4tx",
+        oidc_error: "invitation_invalid",
+      }),
+    ).toEqual({ invitation: "k7m2p9qrs4tx", oidc_error: "invitation_invalid" });
+    expect(validateAuthSearch({ oidc_error: "invitation_required" })).toEqual({
+      oidc_error: "invitation_required",
+    });
+    // The router parses an all-digit code as a number.
+    expect(validateAuthSearch({ invitation: 234567892345 })).toEqual({
+      invitation: "234567892345",
+    });
+    expect(
+      validateAuthSearch({
+        invitation: "<script>",
+        oidc_error: "registration_closed",
+      }),
+    ).toEqual({});
+    expect(validateAuthSearch({ invitation: "a".repeat(65) })).toEqual({});
+    expect(validateAuthSearch({ invitation: "" })).toEqual({});
+  });
+
   it("draws the front door without the app header", () => {
     for (const id of [
       "/auth/login",

@@ -16,6 +16,15 @@ import {
   validateNewEmail,
   validatePassword,
 } from "../auth/rules.ts";
+import {
+  admissionCodes,
+  isAdmissionError,
+  showsInvitationField,
+  showsInvitationOnly,
+  useRegistrationMode,
+  validateInvitation,
+  withoutInvitationField,
+} from "../auth/registration.ts";
 import { login, register } from "../auth/session.ts";
 import { RESEND_COOLDOWN_S, useCooldown } from "../auth/useCooldown.ts";
 import { useFocusOnMount } from "../auth/useFocusOnMount.ts";
@@ -34,10 +43,21 @@ import { InviteContextBanner } from "./AuthLayout.tsx";
 export function RegisterPage() {
   const t = useT(auth);
   const navigate = useNavigate();
-  const { redirect } = useSearch({ from: "/auth/register" });
+  const {
+    redirect,
+    invitation: invitationParam,
+    oidc_error: oidcError,
+  } = useSearch({ from: "/auth/register" });
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [invitation, setInvitation] = useState(invitationParam ?? "");
+  const mode = useRegistrationMode();
+  // A refusal for want of a code brings the field up even before (or
+  // without) the mode check.
+  const [asked, setAsked] = useState(oidcError !== undefined);
+  const codeState = { mode, invitation: invitationParam, redirect, asked };
+  const askCode = showsInvitationField(codeState);
   const form = useRef<HTMLFormElement>(null);
   const { errors, clearField, setFields, fromError, cooldown } =
     useFormErrors(form);
@@ -45,7 +65,13 @@ export function RegisterPage() {
   const invited = isInviteRedirect(redirect);
 
   const mutation = useMutation({
-    mutationFn: () => register(email, password, name),
+    mutationFn: () =>
+      register(
+        email,
+        password,
+        name,
+        admissionCodes(askCode ? invitation : null, redirect),
+      ),
     onSuccess: (user) => {
       // `null`: the server mailed a confirmation link and nobody is signed in.
       if (user === null) {
@@ -56,7 +82,17 @@ export function RegisterPage() {
       }
       void navigate({ href: redirect ?? "/", replace: true });
     },
-    onError: fromError,
+    onError: (error) => {
+      if (!isAdmissionError(error)) {
+        fromError(error);
+      } else if (showsInvitationField({ ...codeState, asked: true })) {
+        setAsked(true);
+        fromError(error);
+      } else {
+        // A server invite was followed: no field to point at.
+        fromError(withoutInvitationField(error));
+      }
+    },
   });
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -66,6 +102,10 @@ export function RegisterPage() {
       ["name", validateName(name)],
       ["email", validateNewEmail(email)],
       ["password", validatePassword(password)],
+      [
+        "invitation",
+        askCode ? validateInvitation(invitation, mode, redirect) : null,
+      ],
     ] as const;
     for (const [field, code] of checks) {
       if (code) fields[field] = fieldMessage(field, code);
@@ -97,6 +137,15 @@ export function RegisterPage() {
   return (
     <section className="lr-auth-card">
       {invited ? <InviteContextBanner /> : null}
+      {oidcError ? (
+        <p role="alert" className="auth-banner">
+          {errorMessage(oidcError)}
+        </p>
+      ) : showsInvitationOnly(codeState) ? (
+        <p role="status" className="auth-banner">
+          {t("register.invitationOnly")}
+        </p>
+      ) : null}
       <h1>{t("register.title")}</h1>
       <p className="auth-lead">
         {t("register.haveAccount")}{" "}
@@ -150,6 +199,23 @@ export function RegisterPage() {
           error={errors.fields.password}
           hint={t("page.passwordHint", { min: PASSWORD_MIN })}
         />
+        {askCode ? (
+          <Field
+            id="invitation"
+            label={t("fieldLabel.invitation")}
+            type="text"
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            maxLength={64}
+            value={invitation}
+            onChange={(event) => {
+              setInvitation(event.target.value);
+              clearField("invitation");
+            }}
+            error={errors.fields.invitation}
+          />
+        ) : null}
         <FormError message={errors.form} />
         <SubmitButton
           size="lg"

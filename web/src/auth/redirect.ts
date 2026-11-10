@@ -67,3 +67,10 @@ export function takePendingRedirect(now = Date.now()): string | undefined {
 export function isInviteRedirect(target: string | undefined): boolean {
   return target !== undefined && /^\/invite\/[^/?#]+/.test(target);
 }
+
+/** The server invite code of an `/invite/{code}` target, if it is one. */
+export function inviteCodeOf(target: string | undefined): string | undefined {
+  if (target === undefined) return undefined;
+  const match = /^\/invite\/([^/?#]+)/.exec(target);
+  return match?.[1];
+}

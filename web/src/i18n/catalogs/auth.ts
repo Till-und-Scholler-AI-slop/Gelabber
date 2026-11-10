@@ -36,6 +36,11 @@ export const auth = defineCatalog(
     "error.network": "Keine Verbindung zum Server.",
     "error.internal":
       "Da ist etwas schiefgelaufen. Bitte noch einmal versuchen.",
+    "error.invitationRequired": "Zum Registrieren brauchst du eine Einladung.",
+    "error.invitationInvalid":
+      "Diese Einladung ist unbekannt, abgelaufen oder schon benutzt.",
+    "error.accountDisabled": "Dieses Konto ist gesperrt.",
+    "error.serverBlocked": "Dieser Server wurde vom Betreiber gesperrt.",
 
     // Field names inside field messages (auth/rules.ts `FIELD_LABEL`).
     "fieldLabel.email": "E-Mail-Adresse",
@@ -70,6 +75,7 @@ export const auth = defineCatalog(
     "fieldLabel.color": "Farbe",
     "fieldLabel.roles": "Rollen",
     "fieldLabel.roleIds": "Zugriff",
+    "fieldLabel.invitation": "Einladungscode",
 
     // Field codes (auth/rules.ts `fieldMessage`).
     "fieldError.required": "{label} fehlt.",
@@ -161,6 +167,7 @@ export const auth = defineCatalog(
       "Bestätigungslink an <b>{email}</b> gesendet. Er gilt 24 Stunden.",
     "register.thenInvite": "Danach geht es weiter zur Einladung.",
     "register.resend": "Link erneut senden",
+    "register.invitationOnly": "Gelabber ist gerade nur mit Einladung offen.",
 
     // /forgot-password
     "forgot.title": "Passwort vergessen",
@@ -238,6 +245,11 @@ export const auth = defineCatalog(
     "error.timeout": "The server isn’t responding. Please try again.",
     "error.network": "No connection to the server.",
     "error.internal": "Something went wrong. Please try again.",
+    "error.invitationRequired": "You need an invitation to register.",
+    "error.invitationInvalid":
+      "This invitation is unknown, expired or already used.",
+    "error.accountDisabled": "This account has been disabled.",
+    "error.serverBlocked": "This server has been blocked by the operator.",
 
     "fieldLabel.email": "Email address",
     "fieldLabel.password": "Password",
@@ -271,6 +283,7 @@ export const auth = defineCatalog(
     "fieldLabel.color": "Colour",
     "fieldLabel.roles": "Roles",
     "fieldLabel.roleIds": "Access",
+    "fieldLabel.invitation": "Invitation code",
 
     "fieldError.required": "{label} is missing.",
     "fieldError.passwordTooShort": "At least {min} characters.",
@@ -352,6 +365,7 @@ export const auth = defineCatalog(
       "Confirmation link sent to <b>{email}</b>. It is valid for 24 hours.",
     "register.thenInvite": "After that, you’ll continue to the invite.",
     "register.resend": "Send link again",
+    "register.invitationOnly": "Gelabber is open by invitation only for now.",
 
     "forgot.title": "Forgot password",
     "forgot.lead": "You’ll get a link to set a new password.",

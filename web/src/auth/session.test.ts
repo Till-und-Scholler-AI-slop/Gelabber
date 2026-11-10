@@ -278,6 +278,28 @@ describe("session store", () => {
     expect(body).toMatchObject({ name: "Ada", locale: "en" });
   });
 
+  it("register sends the admission codes it is given, and none otherwise", async () => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return Promise.resolve(json(201, { user: ada, csrf_token: "c3" }));
+      }),
+    );
+    await register("ada@example.com", "password123", "Ada", {
+      invitation: "k7m2p9qrs4tx",
+      server_invite: "abcdefghjkmn",
+    });
+    await register("ada@example.com", "password123", "Ada");
+    expect(bodies[0]).toMatchObject({
+      invitation: "k7m2p9qrs4tx",
+      server_invite: "abcdefghjkmn",
+    });
+    expect(bodies[1]).not.toHaveProperty("invitation");
+    expect(bodies[1]).not.toHaveProperty("server_invite");
+  });
+
   it("register with account mail stays signed out until the link is opened", async () => {
     fakeApi({
       "GET /api/auth/session": () =>

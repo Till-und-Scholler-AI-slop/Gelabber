@@ -306,6 +306,7 @@ export function register(
   email: string,
   password: string,
   name: string,
+  codes: AdmissionCodes = {},
 ): Promise<User | null> {
   // The new account keeps the language this device shows.
   return signIn("/auth/register", {
@@ -313,8 +314,13 @@ export function register(
     password,
     name,
     locale: currentLocale(),
+    ...codes,
   });
 }
+
+/** What admits a new account on an invitation-only instance: a beta
+ * invitation's code, or the code of the server invite being followed. */
+export type AdmissionCodes = { invitation?: string; server_invite?: string };
 
 /**
  * Opens a mailed confirmation link with the account's password; this tab

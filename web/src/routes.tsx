@@ -78,7 +78,15 @@ export type AuthSearch = {
   reason?: "expired";
   /** Carried from sign-in to "Passwort vergessen", so it is not retyped. */
   email?: string;
+  /** A beta invitation's code (`/register?invitation=…`), which pre-fills
+   * the register page's invitation field. */
+  invitation?: string;
+  /** Why a Google sign-in sent the visitor here instead of signing in. */
+  oidc_error?: OidcError;
 };
+
+/** The admission refusals a sign-in redirects to `/register` with. */
+export type OidcError = "invitation_required" | "invitation_invalid";
 
 export const validateAuthSearch = (
   search: Record<string, unknown>,
@@ -93,6 +101,19 @@ export const validateAuthSearch = (
     search.email.length <= 254
   )
     out.email = search.email;
+  // The router reads an all-digit code as a number.
+  const invitation =
+    typeof search.invitation === "number" &&
+    Number.isSafeInteger(search.invitation)
+      ? String(search.invitation)
+      : search.invitation;
+  if (typeof invitation === "string" && /^[A-Za-z0-9]{1,64}$/.test(invitation))
+    out.invitation = invitation;
+  if (
+    search.oidc_error === "invitation_required" ||
+    search.oidc_error === "invitation_invalid"
+  )
+    out.oidc_error = search.oidc_error;
   return out;
 };
 
