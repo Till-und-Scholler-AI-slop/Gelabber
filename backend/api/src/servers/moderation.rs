@@ -221,7 +221,7 @@ pub(super) async fn after_removal(
 }
 
 /// The server's channels, whose voice and subscriptions a removal revokes.
-pub(super) async fn channel_ids(
+pub(crate) async fn channel_ids(
     db: &mut sqlx::PgConnection,
     server_id: Uuid,
 ) -> Result<Vec<Uuid>, ApiError> {
@@ -237,7 +237,7 @@ pub(super) async fn channel_ids(
 /// loaded, so a server delete reads them once, rotates every member's media
 /// generation in one pipeline, scans the socket table once and cleans up
 /// presence once per member instead of once per socket (#294).
-pub(super) async fn after_removal_with(
+pub(crate) async fn after_removal_with(
     state: &AppState,
     server_id: Uuid,
     user_ids: &[Uuid],

@@ -163,7 +163,7 @@ pub struct AccountPage {
 
 /// `q` for `ILIKE`: trimmed, `None` when empty, with `\`, `%` and `_`
 /// matched literally.
-fn search_pattern(raw: Option<&str>, errors: &mut FieldErrors) -> Option<String> {
+pub(super) fn search_pattern(raw: Option<&str>, errors: &mut FieldErrors) -> Option<String> {
     let q = raw.unwrap_or_default().trim();
     if q.chars().count() > QUERY_MAX {
         errors.insert("q", "too_long");

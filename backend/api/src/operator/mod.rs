@@ -7,6 +7,7 @@ pub mod accounts;
 pub mod admission;
 pub mod audit;
 pub mod invitations;
+pub mod servers;
 
 use axum::Router;
 use axum::extract::State;
@@ -25,6 +26,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/operator", get(overview))
         .merge(accounts::router())
         .merge(invitations::router())
+        .merge(servers::router())
 }
 
 /// `GET /api/operator`: what the area needs before its first page. The web
