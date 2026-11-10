@@ -144,6 +144,16 @@ export const shell = defineCatalog(
     "recovery.retryNow": "Jetzt erneut versuchen",
     "recovery.signingOut": "Wird abgemeldet…",
     "recovery.signOutAgain": "Erneut abmelden",
+    "typing.one": "{name} tippt…",
+    "typing.two": "{first} und {second} tippen…",
+    "typing.more": {
+      one: "{first}, {second} und {count} weitere tippen…",
+      other: "{first}, {second} und {count} weitere tippen…",
+    },
+    "removed.banned": "Du wurdest vom Server gesperrt.",
+    "removed.kicked": "Du wurdest vom Server entfernt.",
+    tauriOutdated:
+      "Die Desktop-App ist veraltet. Ab 0.9 gibt es eine neue Desktop-App: unter Windows ab v0.7 über das App-Update, unter Arch mit pacman -Syu, sonst gelabber-native-* aus dem GitHub-Release.",
   },
   {
     "password.show": "Show password",
@@ -282,5 +292,15 @@ export const shell = defineCatalog(
     "recovery.retryNow": "Try again now",
     "recovery.signingOut": "Signing out…",
     "recovery.signOutAgain": "Sign out again",
+    "typing.one": "{name} is typing…",
+    "typing.two": "{first} and {second} are typing…",
+    "typing.more": {
+      one: "{first}, {second} and {count} other are typing…",
+      other: "{first}, {second} and {count} others are typing…",
+    },
+    "removed.banned": "You were banned from the server.",
+    "removed.kicked": "You were removed from the server.",
+    tauriOutdated:
+      "This desktop app is out of date. Since 0.9 there is a new desktop app: on Windows from v0.7 through the app update, on Arch with pacman -Syu, otherwise gelabber-native-* from the GitHub release.",
   },
 );

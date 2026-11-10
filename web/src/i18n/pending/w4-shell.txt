@@ -12,11 +12,3 @@ src/pages/sectionSpy.ts
 src/queryClient.ts
 src/tauriApp.ts
 src/version.ts
-src/ws/client.ts
-src/ws/connectionNotice.ts
-src/ws/leaveView.ts
-src/ws/live.ts
-src/ws/protocol.ts
-src/ws/useGateway.ts
-src/ws/useLive.ts
-src/ws/useRealtime.ts

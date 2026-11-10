@@ -4,6 +4,9 @@
 import { create } from "zustand";
 
 import type { PresenceStatus } from "./protocol.ts";
+import { translate } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
+import { compareNames } from "../i18n/format.ts";
 
 export const CLIENT_IDLE_MS = 5 * 60 * 1000;
 export const PRESENCE_PULSE_MS = 10_000;
@@ -192,9 +195,18 @@ export function typingUserIds(
 
 export function formatTyping(names: string[]): string {
   if (names.length === 0) return "";
-  if (names.length === 1) return `${names[0]} tippt…`;
-  if (names.length === 2) return `${names[0]} und ${names[1]} tippen…`;
-  return `${names[0]}, ${names[1]} und ${names.length - 2} weitere tippen…`;
+  if (names.length === 1)
+    return translate(shell, "typing.one", { name: names[0] });
+  if (names.length === 2)
+    return translate(shell, "typing.two", {
+      first: names[0],
+      second: names[1],
+    });
+  return translate(shell, "typing.more", {
+    first: names[0],
+    second: names[1],
+    count: names.length - 2,
+  });
 }
 
 export function resetLiveStores(): void {
@@ -213,13 +225,13 @@ export function groupMembers<T extends { user_id: string; name: string }>(
     buckets[statusOf(member.user_id)].push(member);
   }
   for (const group of Object.values(buckets)) {
-    group.sort((a, b) => a.name.localeCompare(b.name, "de"));
+    group.sort((a, b) => compareNames(a.name, b.name));
   }
   return (
     [
-      { group: "o", label: "Online", members: buckets.o },
-      { group: "i", label: "Abwesend", members: buckets.i },
-      { group: "x", label: "Offline", members: buckets.x },
+      { group: "o", label: translate(shell, "presence.o"), members: buckets.o },
+      { group: "i", label: translate(shell, "presence.i"), members: buckets.i },
+      { group: "x", label: translate(shell, "presence.x"), members: buckets.x },
     ] as const
   ).filter((row) => row.members.length > 0);
 }

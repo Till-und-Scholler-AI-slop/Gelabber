@@ -23,6 +23,8 @@ import { applyMemberRemoved, forgetServer } from "../servers/queries.ts";
 import { leaveVoice, useVoice } from "../voice/session.ts";
 import { getGateway, type GapRecovery, type Gateway } from "./client.ts";
 import { shouldLeaveView } from "./leaveView.ts";
+import { translate } from "../i18n/catalog.ts";
+import { shell } from "../i18n/catalogs/shell.ts";
 
 /** Kick/ban closes both planes before the sidebar that hosts voice unmounts. */
 function dropVoice(serverId: string): void {
@@ -324,9 +326,10 @@ export function useRealtimeBridge(
       dropVoice(serverId);
       onSelfRemoved?.(serverId);
       notify(
-        reason === "banned"
-          ? "Du wurdest vom Server gesperrt."
-          : "Du wurdest vom Server entfernt.",
+        translate(
+          shell,
+          reason === "banned" ? "removed.banned" : "removed.kicked",
+        ),
       );
       if (shouldLeaveView(viewingServerId, serverId)) {
         forgetServer(client, userId, serverId, { keepDetail: true });
