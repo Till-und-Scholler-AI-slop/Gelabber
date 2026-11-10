@@ -267,6 +267,15 @@ for (const scene of scenes) {
         }
         ${BANNER}`,
       });
+    // The desktop-app toast comes after a delay, so only the longer scenes
+    // caught it, and the app never shows it: mark it as shown (desktopApp.ts).
+    await page.addInitScript(() => {
+      try {
+        window.localStorage.setItem("gelabber.desktopApp.offered", "1");
+      } catch {
+        // about:blank has no storage; the scene's own page sets it.
+      }
+    });
     if (process.env.GELABBER_PARITY_LOG_INVOKE)
       page.on("console", (message) => {
         if (message.text().startsWith("invoke ")) console.log(`${scene.name}: ${message.text()}`);
