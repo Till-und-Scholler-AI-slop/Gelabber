@@ -69,7 +69,8 @@ Keep CI lean. Pull requests check only what is needed to merge safely.
 - **Every workflow** sets top-level `permissions`, by default `contents: read`, with jobs adding only what they need. Every job sets `timeout-minutes`. Actions stay pinned to commit SHAs (`deploy/compose/tests/test_workflow_pins.py`).
 - **Caches** are saved only by pushes (`save-if`, `cache-to`). Pull requests only read them, because per-PR copies exceed the repository's cache quota.
 - **Slow build outputs** that the cache quota would evict are kept where nothing evicts them: the libwebrtc packages are assets of the `libwebrtc-packages` release, stored by pushes and fetched on a cache miss (`desktop-native.yml`); the app images' layer cache is each image's `buildcache` tag in the registry, written by `publish-images.yml`.
-- **A release build** (`desktop-native.yml` with `release_tag`) builds, packages and tests the installed package, but runs no code checks again: CI on `main` ran them on the same commit.
+- **A release build** (`desktop-native.yml` with `release_tag`) builds, packages, makes one loopback call and tests the installed package, but runs the other code checks no more: CI on `main` ran them on the same commit.
+- **`libwebrtc-packages` and `build-deps` stay pre-releases.** If one became "Latest", `releases/latest/download/latest-native.json` (the apps' updater) and the web client's download links would point at it. A stored libwebrtc package is fetched only when `desktop/native/libwebrtc-packages.sha256` lists its SHA-256.
 - **Runners** are named by version (`ubuntu-24.04`, `ubuntu-26.04`, `windows-2022`), never `-latest`.
 - **Comments** in workflows are one or two lines saying why. Longer reasoning and history go in commit messages or `docs/`.
 

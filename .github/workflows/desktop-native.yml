@@ -51,7 +51,9 @@ jobs:
           lookup-only: true
 
       # The cache is evicted under the quota; the libwebrtc-packages release
-      # keeps every package, so a miss costs a download, not a build.
+      # keeps every package, so a miss costs a download, not a build. Anyone
+      # with write access can replace an asset, so only one whose SHA-256 the
+      # repository lists is taken.
       - name: Fetch the stored package
         id: stored
         if: steps.cache.outputs.cache-hit != 'true'
@@ -62,8 +64,13 @@ jobs:
           set -euo pipefail
           sudo mkdir -p /mnt/libwebrtc-package /mnt/libwebrtc-fetch
           sudo chown -R "$USER" /mnt/libwebrtc-package /mnt/libwebrtc-fetch
-          if gh release download libwebrtc-packages --repo "$GITHUB_REPOSITORY" \
+          pin=$(grep -F "  $KEY.tar.zst" desktop/native/libwebrtc-packages.sha256 || true)
+          if [ -z "$pin" ]; then
+            echo "desktop/native/libwebrtc-packages.sha256 lists no $KEY.tar.zst, so the package is built."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          elif gh release download libwebrtc-packages --repo "$GITHUB_REPOSITORY" \
             --pattern "$KEY.tar.zst" --dir /mnt/libwebrtc-fetch; then
+            (cd /mnt/libwebrtc-fetch && printf '%s\n' "$pin" | sha256sum --check --strict)
             tar --zstd -xf "/mnt/libwebrtc-fetch/$KEY.tar.zst" -C /mnt/libwebrtc-package
             test -f /mnt/libwebrtc-package/lib/libwebrtc.a
             echo "found=true" >> "$GITHUB_OUTPUT"
@@ -153,7 +160,11 @@ jobs:
           sudo mkdir -p /mnt/libwebrtc-store
           sudo chown "$USER" /mnt/libwebrtc-store
           tar -I 'zstd -T0' -cf "/mnt/libwebrtc-store/$KEY.tar.zst" -C /mnt/libwebrtc-package .
-          ls -l "/mnt/libwebrtc-store/$KEY.tar.zst"
+          line=$(cd /mnt/libwebrtc-store && sha256sum "$KEY.tar.zst")
+          echo "$line"
+          if ! grep -qxF "$line" desktop/native/libwebrtc-packages.sha256; then
+            echo "::warning::Add this line to desktop/native/libwebrtc-packages.sha256, or the stored package is never fetched: $line"
+          fi
           # A run beside this one may have stored it first.
           gh release upload libwebrtc-packages "/mnt/libwebrtc-store/$KEY.tar.zst" --repo "$GITHUB_REPOSITORY" \
             || gh release view libwebrtc-packages --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qxF "$KEY.tar.zst"
@@ -230,11 +241,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           KEY: ${{ steps.key.outputs.key }}
         run: |
+          $name = "$($env:KEY).tar.gz"
           $fetch = Join-Path $env:RUNNER_TEMP libwebrtc-fetch
           New-Item -ItemType Directory -Force C:\libwebrtc-package, $fetch | Out-Null
-          gh release download libwebrtc-packages --repo $env:GITHUB_REPOSITORY --pattern "$($env:KEY).tar.gz" --dir $fetch
+          # Only a package whose SHA-256 the repository lists is taken (see Linux).
+          $pin = Select-String -Path desktop\native\libwebrtc-packages.sha256 -SimpleMatch "  $name" | Select-Object -First 1
+          if ($pin) {
+            gh release download libwebrtc-packages --repo $env:GITHUB_REPOSITORY --pattern $name --dir $fetch
+          } else {
+            "desktop/native/libwebrtc-packages.sha256 lists no $name, so the package is built."
+            $global:LASTEXITCODE = 1
+          }
           if ($LASTEXITCODE -eq 0) {
-            & "$env:SystemRoot\System32\tar.exe" -xzf (Join-Path $fetch "$($env:KEY).tar.gz") -C C:\libwebrtc-package
+            $want = ($pin.Line -split '\s+')[0]
+            $have = (Get-FileHash -Algorithm SHA256 (Join-Path $fetch $name)).Hash.ToLower()
+            if ($have -ne $want) { throw "the stored package's SHA-256 is $have, not the listed $want" }
+            & "$env:SystemRoot\System32\tar.exe" -xzf (Join-Path $fetch $name) -C C:\libwebrtc-package
             if ($LASTEXITCODE -ne 0) { throw "the stored package does not unpack" }
             if (-not (Test-Path C:\libwebrtc-package\lib\webrtc.lib)) { throw "the stored package has no webrtc.lib" }
             "found=true" >> $env:GITHUB_OUTPUT
@@ -308,7 +330,11 @@ jobs:
           $archive = Join-Path $env:RUNNER_TEMP "$($env:KEY).tar.gz"
           & "$env:SystemRoot\System32\tar.exe" -czf $archive -C C:\libwebrtc-package .
           if ($LASTEXITCODE -ne 0) { throw "the package does not pack" }
-          Get-Item $archive | Select-Object Name, Length
+          $line = "$((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower())  $($env:KEY).tar.gz"
+          $line
+          if (-not (Select-String -Path desktop\native\libwebrtc-packages.sha256 -SimpleMatch $line -Quiet)) {
+            "::warning::Add this line to desktop/native/libwebrtc-packages.sha256, or the stored package is never fetched: $line"
+          }
           gh release upload libwebrtc-packages $archive --repo $env:GITHUB_REPOSITORY
           if ($LASTEXITCODE -ne 0) {
             # A run beside this one may have stored it first.
@@ -370,7 +396,8 @@ jobs:
           save-if: ${{ github.event_name == 'push' }}
 
       # A release is built from a commit CI has tested on main, so its build
-      # runs no checks again: a flaky one would hold the release back.
+      # runs the code checks no more: a flaky one would hold the release back.
+      # One loopback call stays, the only check that runs the release's core.
       - name: Format
         if: inputs.release_tag == ''
         run: cargo fmt --manifest-path desktop/Cargo.toml --all -- --check
@@ -487,6 +514,14 @@ jobs:
 
       # The native app (desktop/gelabber) on lavapipe under Xvfb, no server and
       # empty settings: it must paint its setup screen and end by itself.
+      # The same selection as the step for checks, so the core is built once.
+      - name: Loopback call of the release build
+        if: inputs.release_tag != ''
+        timeout-minutes: 20
+        env:
+          GELABBER_EXPECT_H264: "1"
+        run: cargo test --manifest-path desktop/Cargo.toml --test mediasoup_loopback -- --nocapture --test-threads=1
+
       - name: Native app smoke test
         timeout-minutes: 10
         run: |
@@ -1053,7 +1088,7 @@ jobs:
       # worker is there.
       - name: Tests of the core with their mediasoup worker (build)
         id: worker
-        if: ${{ !cancelled() && inputs.release_tag == '' && steps.core.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.core.outcome == 'success' }}
         timeout-minutes: 45
         run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core --no-run
 
@@ -1067,7 +1102,7 @@ jobs:
       # to 127.0.0.1: probe it, and move the tests' server to the machine's
       # address if needed (GELABBER_TEST_LISTEN_IP).
       - name: Address for the loopback call
-        if: ${{ !cancelled() && inputs.release_tag == '' && steps.core.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.core.outcome == 'success' }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           # Whether a datagram from a socket on $from reaches one on $to, and as coming from $from.
@@ -1126,7 +1161,8 @@ jobs:
       # The Linux job's call through an in-process mediasoup worker. H264 only
       # where Media Foundation has codecs, so no GELABBER_EXPECT_H264.
       # GELABBER_TEST_SCREEN_MONITOR captures the primary monitor without the
-      # picker; the test skips where Windows cannot capture.
+      # picker; the test skips where Windows cannot capture. A release build
+      # makes the call alone, without the tests that measure frame rates.
       - name: Loopback call against mediasoup 0.29
         id: tests
         if: ${{ !cancelled() && steps.worker.outcome == 'success' }}
@@ -1134,7 +1170,9 @@ jobs:
         env:
           RUST_BACKTRACE: "1"
           GELABBER_TEST_SCREEN_MONITOR: "1"
-        run: cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core -- --nocapture --test-threads=1
+        run: |
+          $only = if ($env:RELEASE_TAG) { @('--test', 'mediasoup_loopback') } else { @() }
+          cargo test --release --locked --manifest-path desktop/Cargo.toml -p gelabber-media-core @only -- --nocapture --test-threads=1
 
       # A native crash ends the test without a word; libwebrtc's log says
       # where it got to, and how far ICE came on the address chosen above.
