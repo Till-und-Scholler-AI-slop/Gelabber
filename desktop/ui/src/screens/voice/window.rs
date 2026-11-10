@@ -4,10 +4,10 @@
 //! draws the newest picture contained on black; its tile says "Läuft im
 //! eigenen Fenster." meanwhile.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use egui::{Color32, Id, Sense, ViewportBuilder, ViewportClass, ViewportId};
-use gelabber_call::{Call, VideoKey};
+use gelabber_call::{Call, CallStatus, VideoKey};
 
 use super::video::{self, Fit};
 
@@ -20,6 +20,8 @@ struct Windows {
     open: HashMap<VideoKey, String>,
     /// The video whose window did not open, for its tile's message.
     failed: Option<VideoKey>,
+    /// The picture each window drew last (`Frame::serial`).
+    drawn: HashMap<VideoKey, u64>,
 }
 
 fn id() -> Id {
@@ -68,7 +70,26 @@ pub fn close(ctx: &egui::Context, key: VideoKey) {
 /// separate windows (a backend that embeds viewports) the window counts as
 /// not opened, as the web's `openNativeViewer` rejecting.
 pub fn show(ctx: &egui::Context, call: &Call) {
-    let open: Vec<(VideoKey, String)> = with(ctx, |w| w.open.clone().into_iter().collect());
+    // A video that ended (the call, the camera, the Live) takes its window
+    // along; a reconnect keeps it.
+    let shown: Option<HashSet<VideoKey>> = call.with_state(|s| match s.status {
+        CallStatus::Connecting | CallStatus::Reconnecting => None,
+        CallStatus::Connected => Some(
+            s.participants
+                .iter()
+                .flat_map(|p| [p.camera, p.live])
+                .flatten()
+                .collect(),
+        ),
+        CallStatus::Idle | CallStatus::Failed(_) => Some(HashSet::new()),
+    });
+    let open: Vec<(VideoKey, String)> = with(ctx, |w| {
+        if let Some(shown) = &shown {
+            w.open.retain(|k, _| shown.contains(k));
+        }
+        w.drawn.retain(|k, _| w.open.contains_key(k));
+        w.open.clone().into_iter().collect()
+    });
     if open.is_empty() {
         return;
     }
@@ -80,6 +101,11 @@ pub fn show(ctx: &egui::Context, call: &Call) {
         return;
     }
     for (key, title) in open {
+        // A new picture wakes the window; it does not poll.
+        let serial = call.frame(key).map(|f| f.serial);
+        if serial.is_some() && with(ctx, |w| w.drawn.get(&key).copied()) != serial {
+            ctx.request_repaint_of(viewport_id(key));
+        }
         let call = call.clone();
         ctx.show_viewport_deferred(
             viewport_id(key),
@@ -100,6 +126,7 @@ pub fn show(ctx: &egui::Context, call: &Call) {
                         let rect = ui.max_rect();
                         ui.allocate_rect(rect, Sense::hover());
                         if let Some(frame) = call.frame(key) {
+                            with(ui.ctx(), |w| w.drawn.insert(key, frame.serial));
                             // The core scales to the size asked for: the window's, not the tile's.
                             video::request_fit(
                                 ui,
@@ -121,7 +148,6 @@ pub fn show(ctx: &egui::Context, call: &Call) {
                             );
                         }
                     });
-                ctx.request_repaint_after(std::time::Duration::from_millis(16));
             },
         );
     }
@@ -131,12 +157,27 @@ pub fn show(ctx: &egui::Context, call: &Call) {
 mod tests {
     use super::*;
     use egui_kittest::Harness;
+    use gelabber_call::{CallState, Participant};
     use gelabber_client::Client;
+
+    /// A call in which Jonas sends `key` as his camera.
+    fn sending(call: &Call, key: Option<VideoKey>) {
+        call.set_state(CallState {
+            status: CallStatus::Connected,
+            participants: vec![Participant {
+                user: uuid::Uuid::from_u128(0x12),
+                camera: key,
+                ..Participant::default()
+            }],
+            ..CallState::default()
+        });
+    }
 
     #[test]
     fn the_menu_entry_opens_a_titled_viewport() {
         let call = Call::new(Client::new("http://127.0.0.1:9").expect("client"));
         let key = VideoKey(42);
+        sending(&call, Some(key));
         let mut harness = Harness::new_ui(move |ui| {
             let ctx = ui.ctx();
             ctx.set_embed_viewports(false);
@@ -168,6 +209,7 @@ mod tests {
     fn without_windows_the_tile_says_so() {
         let call = Call::new(Client::new("http://127.0.0.1:9").expect("client"));
         let key = VideoKey(7);
+        sending(&call, Some(key));
         let mut harness = Harness::new_ui(move |ui| {
             let ctx = ui.ctx();
             ctx.set_embed_viewports(true);
@@ -178,5 +220,45 @@ mod tests {
         assert!(failed(&harness.ctx, key));
         assert!(!is_open(&harness.ctx, key));
         assert_eq!(FAILED, "Das Videofenster konnte nicht geöffnet werden.");
+    }
+
+    /// The camera going off, then the call ending, close the window: it
+    /// does not stay black, nor come back with the next call.
+    #[test]
+    fn a_window_goes_with_its_video() {
+        let call = Call::new(Client::new("http://127.0.0.1:9").expect("client"));
+        let key = VideoKey(42);
+        sending(&call, Some(key));
+        let shown = call.clone();
+        let mut harness = Harness::new_ui(move |ui| {
+            ui.ctx().set_embed_viewports(false);
+            show(ui.ctx(), &shown);
+        });
+        toggle(&harness.ctx, key, "Jonas");
+        harness.step();
+        assert!(is_open(&harness.ctx, key));
+        // A reconnect keeps it.
+        call.set_state(CallState {
+            status: CallStatus::Reconnecting,
+            ..CallState::default()
+        });
+        harness.step();
+        assert!(is_open(&harness.ctx, key));
+        sending(&call, None);
+        harness.step();
+        assert!(!is_open(&harness.ctx, key), "the camera went off");
+        sending(&call, Some(key));
+        toggle(&harness.ctx, key, "Jonas");
+        harness.step();
+        assert!(is_open(&harness.ctx, key));
+        call.set_state(CallState::default());
+        harness.step();
+        assert!(!is_open(&harness.ctx, key), "the call ended");
+        assert!(
+            !harness
+                .output()
+                .viewport_output
+                .contains_key(&viewport_id(key))
+        );
     }
 }

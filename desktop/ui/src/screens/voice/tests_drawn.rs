@@ -327,7 +327,13 @@ fn jonas_camera() -> (Person, Picture) {
 /// as the shell does; `embed` stands for a backend without windows.
 fn camera_stage(embed: bool) -> H {
     let (client, call) = offline();
-    call.set_state(in_sofa(MicStatus::Live));
+    let mut state = in_sofa(MicStatus::Live);
+    state.participants.push(Participant {
+        user: JONAS,
+        camera: Some(VideoKey::camera(JONAS)),
+        ..Participant::default()
+    });
+    call.set_state(state);
     let (jonas, camera) = jonas_camera();
     harness(client, call, move |ui, app| {
         ui.ctx().set_embed_viewports(embed);
