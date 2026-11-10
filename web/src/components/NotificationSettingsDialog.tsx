@@ -4,6 +4,9 @@
 import { useState } from "react";
 
 import { ApiError } from "../api/client.ts";
+import { useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
+import { notifications } from "../i18n/catalogs/notifications.ts";
 import { BellIcon, BellOffIcon } from "./Icons.tsx";
 import { GhostButton, Modal } from "./Modal.tsx";
 import { Button } from "./ui/Button.tsx";
@@ -25,12 +28,13 @@ import {
 export function NotificationSettingsHost() {
   const target = useNotificationTarget((state) => state.target);
   const close = () => useNotificationTarget.setState({ target: null });
+  const t = useT(notifications);
   return (
     <Modal
       open={Boolean(target)}
       onClose={close}
       title={
-        target ? `Benachrichtigungen: ${target.name}` : "Benachrichtigungen"
+        target ? t("dialog.titleFor", { name: target.name }) : t("dialog.title")
       }
     >
       {target ? (
@@ -51,6 +55,8 @@ function NotificationSettingsForm({
   target: NotificationTarget;
   onDone: () => void;
 }) {
+  const t = useT(notifications);
+  const tc = useT(common);
   const actions = useNotificationActions(target);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,8 +69,8 @@ function NotificationSettingsForm({
     } catch (cause) {
       setError(
         cause instanceof ApiError && cause.status === 404
-          ? "Nicht mehr verfügbar."
-          : "Nicht gespeichert. Versuch es noch einmal.",
+          ? t("dialog.gone")
+          : t("dialog.notSaved"),
       );
     } finally {
       setSaving(false);
@@ -75,7 +81,7 @@ function NotificationSettingsForm({
     <div className="notify-settings flex flex-col gap-5">
       <section aria-labelledby="notify-mute" className="flex flex-col gap-2">
         <h3 id="notify-mute" className="text-sm font-semibold">
-          Stummschalten
+          {t("dialog.mute")}
         </h3>
         {actions.muted ? (
           <div className="notify-muted">
@@ -88,7 +94,7 @@ function NotificationSettingsForm({
               disabled={saving}
               onClick={() => void save(actions.unmute())}
             >
-              Aufheben
+              {t("dialog.unmute")}
             </Button>
           </div>
         ) : (
@@ -114,22 +120,22 @@ function NotificationSettingsForm({
           </div>
         )}
         <p className="ui-hint">
-          {target.dm
-            ? "Stumm: kein Zähler, keine Benachrichtigung und kein Ton."
-            : "Stumm: kein Punkt, keine Benachrichtigung und kein Ton. @Erwähnungen zählen weiter."}
-          {actions.serverMuted ? " Der ganze Server ist gerade stumm." : ""}
+          {target.dm ? t("dialog.muteHint.dm") : t("dialog.muteHint.channel")}
+          {actions.serverMuted ? ` ${t("dialog.serverMuted")}` : ""}
         </p>
       </section>
       {target.dm ? null : (
         <fieldset className="flex flex-col gap-2" disabled={saving}>
           <legend className="mb-1 text-sm font-semibold">
-            Benachrichtigen bei
+            {t("dialog.levelLegend")}
           </legend>
           {target.serverId ? (
             <LevelOption
               name={target.id}
               checked={actions.isLevel(null)}
-              label={`Wie der Server (${levelName(actions.inherited)})`}
+              label={t("level.inherit", {
+                level: levelName(actions.inherited),
+              })}
               onChange={() => void save(actions.setLevel(null))}
             />
           ) : null}
@@ -153,7 +159,7 @@ function NotificationSettingsForm({
       <div className="notify-footer">
         <MarkRead target={target} onDone={onDone} />
         <GhostButton onClick={onDone} initialFocus>
-          Fertig
+          {tc("done")}
         </GhostButton>
       </div>
     </div>
@@ -169,6 +175,7 @@ function MarkRead({
   target: NotificationTarget;
   onDone: () => void;
 }) {
+  const t = useT(notifications);
   const { markRead } = useNotificationActions(target);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -187,11 +194,11 @@ function MarkRead({
             .finally(() => setBusy(false));
         }}
       >
-        Als gelesen markieren
+        {t("dialog.markRead")}
       </Button>
       {failed ? (
         <p role="alert" className="ui-field-error">
-          Nicht gespeichert. Versuch es noch einmal.
+          {t("dialog.notSaved")}
         </p>
       ) : null}
     </div>
@@ -230,12 +237,15 @@ export function NotificationBell({
   target: NotificationTarget;
   muted: boolean;
 }) {
+  const t = useT(notifications);
   return (
     <button
       type="button"
       className="lr-header-icon notify-bell"
-      aria-label={`Benachrichtigungen für ${target.name}${muted ? " (stumm)" : ""}`}
-      title={muted ? "Stummgeschaltet" : "Benachrichtigungen"}
+      aria-label={t(muted ? "bell.labelMuted" : "bell.label", {
+        name: target.name,
+      })}
+      title={muted ? t("bell.titleMuted") : t("bell.title")}
       onClick={() => openNotificationSettings(target)}
     >
       {muted ? <BellOffIcon size={16} /> : <BellIcon size={16} />}
