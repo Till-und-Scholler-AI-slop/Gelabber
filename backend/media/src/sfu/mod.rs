@@ -621,6 +621,10 @@ impl Sfu {
         if version != MEDIA_PROTOCOL_VERSION {
             return Err(SfuError::ProtocolVersion);
         }
+        // Like the check after the router: a draining pool is recoverable.
+        if self.draining.load(Ordering::SeqCst) {
+            return Err(SfuError::Gone);
+        }
         if !self.ready() {
             return Err(SfuError::Unavailable);
         }
