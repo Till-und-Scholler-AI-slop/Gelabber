@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "../api/client.ts";
 import type { Gif } from "../messages/types.ts";
 import { gifFeedStatus } from "../gifs/api.ts";
+import { setLocale } from "../i18n/locale.ts";
 import { GifImage, GifMessageButton } from "./GifPicker.tsx";
 
 const gif: Gif = {
@@ -68,6 +69,26 @@ describe("gif message", () => {
 
 describe("gif picker status", () => {
   const base = { pending: false, error: null, count: 0, query: "" };
+
+  it("speaks English after a switch", () => {
+    setLocale("en", { persist: false });
+    try {
+      expect(gifFeedStatus({ ...base, count: 1, query: "cat" })).toBe(
+        "1 GIF for “cat”",
+      );
+      expect(gifFeedStatus({ ...base, count: 24 })).toBe("24 trending GIFs");
+      expect(
+        gifFeedStatus({
+          ...base,
+          error: new ApiError("upstream_quota", 503, "x", {}, 61),
+        }),
+      ).toBe(
+        "This server has used up its GIF quota for now. Try again in 2 min.",
+      );
+    } finally {
+      setLocale("de", { persist: false });
+    }
+  });
 
   it("says when the GIF budget allows the next request", () => {
     const limited = new ApiError("rate_limited", 429, "x", {}, 12);

@@ -8,6 +8,9 @@ import {
   type GifPick,
 } from "../gifs/api.ts";
 import { useGifFeed } from "../gifs/queries.ts";
+import { useT } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
+import { common } from "../i18n/catalogs/common.ts";
 import { useReducedMotion } from "../interface/useReducedMotion.ts";
 import type { Gif } from "../messages/types.ts";
 import { useDebouncedValue } from "./useDebouncedValue.ts";
@@ -38,7 +41,7 @@ export function GifImage({
         aria-label={alt}
         style={{ width, height }}
       >
-        GIF
+        GIF{/* i18n-ok */}
       </span>
     );
   return (
@@ -65,6 +68,7 @@ export function GifMessageButton({
   gif: Gif;
   reduced: boolean;
 }) {
+  const t = useT(chat);
   const [chosen, setChosen] = useState<boolean | null>(null);
   const [hover, setHover] = useState(false);
   const playing = chosen ?? (!reduced || hover);
@@ -76,7 +80,7 @@ export function GifMessageButton({
       className="lr-message-gif"
       style={{ width: box.width, height: box.height }}
       // A neutral name: the pressed state already says whether it plays.
-      aria-label={`${label}, Animation`}
+      aria-label={t("gif.animationLabel", { label })}
       aria-pressed={playing}
       title={gif.title || undefined}
       onClick={() => setChosen(!playing)}
@@ -92,7 +96,7 @@ export function GifMessageButton({
       />
       {playing ? null : (
         <span className="lr-message-gif-badge" aria-hidden="true">
-          GIF
+          GIF{/* i18n-ok */}
         </span>
       )}
     </button>
@@ -108,6 +112,8 @@ export default function GifPicker({
 }: {
   onSelect: (pick: GifPick) => void;
 }) {
+  const t = useT(chat);
+  const tc = useT(common);
   const id = useId();
   const [input, setInput] = useState("");
   const query = useDebouncedValue(input.trim(), SEARCH_DEBOUNCE_MS);
@@ -124,7 +130,7 @@ export default function GifPicker({
   return (
     <div className="lr-gif-picker flex flex-col gap-3">
       <label htmlFor={`${id}-search`} className="text-sm font-medium">
-        GIF suchen
+        {t("gif.search")}
       </label>
       <input
         id={`${id}-search`}
@@ -132,7 +138,7 @@ export default function GifPicker({
         value={input}
         onChange={(event) => setInput(event.target.value)}
         // Klipy's attribution rule asks for exactly this placeholder.
-        placeholder="Search KLIPY"
+        placeholder="Search KLIPY" // i18n-ok
         maxLength={100}
         autoFocus
         enterKeyHint="search"
@@ -147,10 +153,10 @@ export default function GifPicker({
           onClick={() => void feed.refetch()}
           className="rounded border px-3 py-2 text-sm"
         >
-          Erneut versuchen
+          {tc("tryAgain")}
         </button>
       ) : null}
-      <div className="lr-gif-grid" role="group" aria-label="GIF-Auswahl">
+      <div className="lr-gif-grid" role="group" aria-label={t("gif.gridLabel")}>
         {gifs.map((gif, index) => (
           <button
             key={`${gif.slug}:${index}`}
@@ -180,10 +186,11 @@ export default function GifPicker({
           onClick={() => void feed.fetchNextPage()}
           className="rounded border px-3 py-2 text-sm"
         >
-          {feed.isFetchingNextPage ? "Lädt …" : "Weitere GIFs anzeigen"}
+          {t(feed.isFetchingNextPage ? "gif.loadingMore" : "gif.more")}
         </button>
       ) : null}
-      <p className="lr-gif-attribution">Powered by KLIPY</p>
+      {/* Klipy's attribution, in English as it asks. */}
+      <p className="lr-gif-attribution">Powered by KLIPY{/* i18n-ok */}</p>
     </div>
   );
 }

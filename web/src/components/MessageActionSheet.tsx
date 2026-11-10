@@ -1,5 +1,8 @@
 import type { KeyboardEvent, ReactNode, RefObject } from "react";
 
+import { useT } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
+import { common } from "../i18n/catalogs/common.ts";
 import {
   CopyIcon,
   PencilIcon,
@@ -61,6 +64,8 @@ export function MessageActionItems({
   mine?: readonly string[];
   onDone: () => void;
 }) {
+  const t = useT(chat);
+  const tc = useT(common);
   const run = (action: (() => void) | undefined) => () => {
     onDone();
     action?.();
@@ -83,7 +88,7 @@ export function MessageActionItems({
         <div
           className="lr-message-menu-reactions"
           role="group"
-          aria-label="Reagieren"
+          aria-label={t("menu.react")}
         >
           {QUICK_REACTIONS.map((emoji) => {
             const given = mine.includes(emoji);
@@ -94,8 +99,8 @@ export function MessageActionItems({
                 role="menuitem"
                 aria-label={
                   given
-                    ? `Reaktion ${emoji} entfernen`
-                    : `Mit ${emoji} reagieren`
+                    ? t("menu.removeReaction", { emoji })
+                    : t("menu.reactWith", { emoji })
                 }
                 className={`lr-message-menu-emoji${given ? " is-mine" : ""}`}
                 onClick={run(() => actions.react?.(emoji))}
@@ -108,8 +113,8 @@ export function MessageActionItems({
             <button
               type="button"
               role="menuitem"
-              aria-label="Andere Reaktion auswählen"
-              title="Andere Reaktion auswählen"
+              aria-label={t("menu.otherReaction")}
+              title={t("menu.otherReaction")}
               className="lr-message-menu-emoji"
               onClick={run(actions.moreReactions)}
             >
@@ -118,9 +123,9 @@ export function MessageActionItems({
           ) : null}
         </div>
       ) : null}
-      {row("Antworten", <ReplyIcon size={18} />, actions.reply)}
-      {row("Bearbeiten", <PencilIcon size={18} />, actions.edit)}
-      {row("Text kopieren", <CopyIcon size={18} />, actions.copy)}
+      {row(t("row.reply"), <ReplyIcon size={18} />, actions.reply)}
+      {row(t("row.edit"), <PencilIcon size={18} />, actions.edit)}
+      {row(t("menu.copyText"), <CopyIcon size={18} />, actions.copy)}
       {actions.remove ? (
         <>
           <hr className="lr-message-menu-divider" />
@@ -128,11 +133,11 @@ export function MessageActionItems({
             type="button"
             role="menuitem"
             className="lr-message-menu-item is-danger"
-            title="Löschen (Umschalt: ohne Nachfrage)"
+            title={t("menu.deleteHint")}
             onClick={(event) => run(() => actions.remove?.(event.shiftKey))()}
           >
             <TrashIcon size={18} />
-            Löschen
+            {tc("delete")}
           </button>
         </>
       ) : null}
@@ -159,12 +164,13 @@ export function MessageActionSheet({
   actions: MessageActions;
   mine?: readonly string[];
 }) {
+  const t = useT(chat);
   return (
     <Popover
       open={open}
       onClose={onClose}
       anchor={anchor}
-      label={`Nachricht von ${author}`}
+      label={t("menu.label", { name: author })}
       placement="bottom-end"
       role="menu"
       className="lr-message-menu-host"

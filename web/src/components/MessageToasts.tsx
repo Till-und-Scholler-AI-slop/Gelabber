@@ -8,11 +8,16 @@ import { CloseIcon } from "./Icons.tsx";
 import { Button } from "./ui/Button.tsx";
 import { IconButton } from "./ui/IconButton.tsx";
 import { usePresenceList } from "./ui/usePresence.ts";
+import { T, useT } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
+import { common } from "../i18n/catalogs/common.ts";
 import "./ui/ui.css";
 
 const toastKey = (toast: MessageToast) => toast.id;
 
 export function MessageToasts() {
+  const t = useT(chat);
+  const tc = useT(common);
   const toasts = useMessageToasts((state) => state.toasts);
   const dismiss = useMessageToasts((state) => state.dismiss);
   const hold = useMessageToasts((state) => state.hold);
@@ -27,7 +32,10 @@ export function MessageToasts() {
       {entries.map(({ key, item: toast, state }) => {
         const where =
           toast.count > 1
-            ? `${toast.channelLabel} · ${toast.count} neu`
+            ? t("toast.newCount", {
+                where: toast.channelLabel,
+                count: toast.count,
+              })
             : toast.channelLabel;
         const live = toast.live;
         const open = () =>
@@ -63,10 +71,13 @@ export function MessageToasts() {
               className="ui-message-toast__open"
               aria-label={
                 live
-                  ? `Öffnen: ${where}, ${toast.preview}`
-                  : `Öffnen: ${where}, ${toast.author}${
-                      toast.mentioned ? " hat dich erwähnt" : ""
-                    }: ${toast.preview}`
+                  ? t("toast.openLiveLabel", { where, preview: toast.preview })
+                  : t(
+                      toast.mentioned
+                        ? "toast.openMentionedLabel"
+                        : "toast.openLabel",
+                      { where, author: toast.author, preview: toast.preview },
+                    )
               }
               onClick={() => {
                 dismiss(toast.id);
@@ -83,12 +94,19 @@ export function MessageToasts() {
               <span className="ui-message-toast__where">{where}</span>
               <span className="ui-message-toast__who">
                 {toast.author}
-                {toast.mentioned ? <small> hat dich erwähnt</small> : null}
+                {toast.mentioned ? (
+                  <small> {t("toast.mentionedYou")}</small>
+                ) : null}
               </span>
               {live ? (
                 // The name stands once, above: here only where.
                 <span className="ui-message-toast__preview ui-message-toast__live">
-                  <b>Live</b> in {live.voice}
+                  <T
+                    catalog={chat}
+                    k="toast.live"
+                    params={{ voice: live.voice }}
+                    tags={{ b: (text) => <b>{text}</b> }}
+                  />
                 </span>
               ) : (
                 <span className="ui-message-toast__preview">
@@ -116,7 +134,7 @@ export function MessageToasts() {
             ) : null}
             <IconButton
               size="xs"
-              label="Schließen"
+              label={tc("close")}
               className="ui-message-toast__close"
               icon={<CloseIcon size={14} />}
               onClick={() => dismiss(toast.id)}

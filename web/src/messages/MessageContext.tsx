@@ -2,6 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { ApiError } from "../api/client.ts";
 import { scopeGeneration, useUserId } from "../auth/scope.ts";
+import { useT } from "../i18n/catalog.ts";
+import { chat } from "../i18n/catalogs/chat.ts";
 import { messageContext } from "./search.ts";
 import type { Message } from "./types.ts";
 
@@ -10,7 +12,7 @@ export function MessageContextView({
   messageId,
   onBack,
   onClose,
-  closeLabel = "Zurück zum Chat",
+  closeLabel,
   renderMessage,
 }: {
   channelId: string;
@@ -18,9 +20,11 @@ export function MessageContextView({
   /** Back to the search hits; absent when no search led here. */
   onBack?: () => void;
   onClose: () => void;
+  /** By default "Zurück zum Chat". */
   closeLabel?: string;
   renderMessage: (message: Message) => ReactNode;
 }) {
+  const t = useT(chat);
   const userId = useUserId(),
     generation = scopeGeneration();
   const target = useRef<HTMLElement | null>(null);
@@ -52,7 +56,7 @@ export function MessageContextView({
   return (
     <section
       className="flex min-h-0 flex-1 flex-col"
-      aria-label="Nachrichtenkontext"
+      aria-label={t("context.label")}
     >
       <div className="flex flex-wrap gap-2 border-b p-3">
         {onBack ? (
@@ -61,7 +65,7 @@ export function MessageContextView({
             onClick={onBack}
             className="rounded border px-3 py-2"
           >
-            Zurück zu den Treffern
+            {t("context.backToResults")}
           </button>
         ) : null}
         <button
@@ -69,7 +73,7 @@ export function MessageContextView({
           onClick={onClose}
           className="rounded border px-3 py-2"
         >
-          {closeLabel}
+          {closeLabel ?? t("pane.backToChat")}
         </button>
       </div>
       <div
@@ -78,23 +82,19 @@ export function MessageContextView({
       >
         {query.isPending ? (
           <p role="status" className="px-4">
-            Nachrichtenkontext wird geladen…
+            {t("context.loading")}
           </p>
         ) : null}
         {query.error ? (
           <div role="alert" className="px-4">
-            <p>
-              {missing
-                ? "Diese Nachricht ist nicht mehr verfügbar oder du hast keinen Zugriff mehr."
-                : "Der Nachrichtenkontext konnte nicht geladen werden."}
-            </p>
+            <p>{t(missing ? "context.missing" : "context.failed")}</p>
             <button
               type="button"
               onClick={() => void query.refetch()}
               disabled={query.isFetching}
               className="mt-2 rounded border px-3 py-2"
             >
-              Erneut laden
+              {t("list.reload")}
             </button>
           </div>
         ) : (
@@ -106,7 +106,7 @@ export function MessageContextView({
               tabIndex={message.id === messageId ? -1 : undefined}
               aria-label={
                 message.id === messageId
-                  ? `Gefundene Nachricht von ${message.author.name}`
+                  ? t("context.foundLabel", { name: message.author.name })
                   : undefined
               }
               className={
