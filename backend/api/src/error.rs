@@ -79,6 +79,9 @@ pub enum ApiError {
     /// 410: the registration's invitation code is unknown, used, revoked,
     /// expired, for another address, or a blocked server's invite.
     InvitationInvalid,
+    /// 403: an operator blocked the server (`servers.blocked_at`). Members
+    /// still see it in their list; only leaving and deleting it work.
+    ServerBlocked,
 }
 
 #[derive(Debug, Serialize)]
@@ -116,6 +119,7 @@ impl ApiError {
             Self::AccountDisabled => "account_disabled",
             Self::InvitationRequired => "invitation_required",
             Self::InvitationInvalid => "invitation_invalid",
+            Self::ServerBlocked => "server_blocked",
         }
     }
 
@@ -139,6 +143,7 @@ impl ApiError {
             Self::AccountDisabled => StatusCode::FORBIDDEN,
             Self::InvitationRequired => StatusCode::FORBIDDEN,
             Self::InvitationInvalid => StatusCode::GONE,
+            Self::ServerBlocked => StatusCode::FORBIDDEN,
         }
     }
 
@@ -170,6 +175,7 @@ impl ApiError {
             Self::AccountDisabled => "This account has been disabled.",
             Self::InvitationRequired => "Registration needs an invitation.",
             Self::InvitationInvalid => "This invitation is unknown, expired or already used.",
+            Self::ServerBlocked => "This server has been blocked by the operator.",
         }
     }
 
@@ -285,5 +291,14 @@ mod tests {
         assert_eq!(json["error"], "invitation_invalid");
         assert_eq!(json["fields"]["invitation"], "invalid");
         assert_eq!(err.status(), StatusCode::GONE);
+    }
+
+    #[test]
+    fn server_blocked_is_403_without_fields() {
+        let err = ApiError::ServerBlocked;
+        let json = serde_json::to_value(err.body()).unwrap();
+        assert_eq!(json["error"], "server_blocked");
+        assert!(json.get("fields").is_none());
+        assert_eq!(err.status(), StatusCode::FORBIDDEN);
     }
 }

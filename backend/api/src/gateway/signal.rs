@@ -200,6 +200,7 @@ async fn reject(call: &mut Call<'_>, err: ApiError) -> Result<(), ApiError> {
         ApiError::NotFound => "not_found",
         ApiError::Forbidden(_) => "forbidden",
         ApiError::BadRequest(_) => "bad_request",
+        ApiError::ServerBlocked => "server_blocked",
         other => return Err(other),
     };
     send_err(call.sink, code, Some(call.server_id), Some(call.channel_id)).await

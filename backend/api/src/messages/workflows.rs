@@ -70,6 +70,8 @@ pub(crate) struct ReadState {
 pub(crate) const UNREAD: &str = "WITH visible AS (
     SELECT c.id AS channel_id, c.server_id, sm.joined_at
     FROM channels c JOIN server_members sm ON sm.server_id=c.server_id AND sm.user_id=$1
+    -- A blocked server's channels count as gone.
+    JOIN servers sb ON sb.id=c.server_id AND sb.blocked_at IS NULL
     WHERE c.kind='text' AND channel_visible_to(c.id, $1)
     UNION ALL
     SELECT c.id, c.server_id, cm.joined_at
@@ -304,6 +306,7 @@ async fn read_up_to_latest(
         "WITH visible AS (
             SELECT c.id AS channel_id, sm.joined_at
             FROM channels c JOIN server_members sm ON sm.server_id=c.server_id AND sm.user_id=$1
+            JOIN servers sb ON sb.id=c.server_id AND sb.blocked_at IS NULL
             WHERE c.kind='text' AND $4 AND ($2::uuid IS NULL OR c.server_id=$2)
               AND channel_visible_to(c.id, $1)
             UNION ALL

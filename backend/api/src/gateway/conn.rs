@@ -433,10 +433,10 @@ async fn subscribe(
     };
     match authorize(&mut *db, user.id, server_id, channel_id).await {
         Ok(()) => {}
-        Err(ApiError::NotFound) => {
+        Err(err @ (ApiError::NotFound | ApiError::ServerBlocked)) => {
             send(
                 sink,
-                ServerFrame::error("not_found", Some(server_id), channel_id),
+                ServerFrame::error(err.code(), Some(server_id), channel_id),
             )
             .await
             .map_err(SubscribeError::Write)?;
@@ -575,10 +575,10 @@ async fn typing(
     };
     match authorize(&mut *db, user.id, server_id, Some(channel_id)).await {
         Ok(()) => {}
-        Err(ApiError::NotFound) => {
+        Err(err @ (ApiError::NotFound | ApiError::ServerBlocked)) => {
             send(
                 sink,
-                ServerFrame::error("not_found", Some(server_id), Some(channel_id)),
+                ServerFrame::error(err.code(), Some(server_id), Some(channel_id)),
             )
             .await?;
             return Ok(());
@@ -806,7 +806,7 @@ async fn scope_allowed(
     }
     match authorize(db, user_id, sid, cid).await {
         Ok(()) => Ok(true),
-        Err(ApiError::NotFound) => Ok(false),
+        Err(ApiError::NotFound | ApiError::ServerBlocked) => Ok(false),
         Err(err) => Err(err),
     }
 }

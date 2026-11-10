@@ -84,12 +84,17 @@ pub struct ServerView {
     pub permissions: Permissions,
     /// The mask every non-owner member holds (editable by `manage_server`).
     pub member_permissions: Permissions,
+    /// An operator blocked the server: it stays in the list so the client
+    /// can explain, and everything but leaving and deleting answers
+    /// `403 server_blocked`.
+    pub blocked: bool,
 }
 
 impl From<Membership> for ServerView {
     fn from(m: Membership) -> Self {
         let role = m.role();
         let permissions = m.permissions();
+        let blocked = m.blocked;
         Self {
             id: m.server.id,
             name: m.server.name,
@@ -99,6 +104,7 @@ impl From<Membership> for ServerView {
             role,
             permissions,
             member_permissions: m.server.member_permissions,
+            blocked,
         }
     }
 }
@@ -359,14 +365,15 @@ async fn update_server(
     Ok(Json(Membership { server, ..member }.into()))
 }
 
-/// Owner only. Members, categories, channels and invites go with it.
+/// Owner only. Members, categories, channels and invites go with it. A
+/// blocked server can still be deleted.
 async fn delete_server(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Id(server_id): Id,
 ) -> Result<StatusCode, ApiError> {
     let mut tx = membership::lock_server_bounded(&state.db, server_id).await?;
-    let member = membership::load(&mut *tx, server_id, user.id).await?;
+    let member = membership::load_even_blocked(&mut *tx, server_id, user.id).await?;
     member.require_owner()?;
 
     let members: Vec<Uuid> =
@@ -395,14 +402,14 @@ async fn delete_server(
 }
 
 /// Members can leave; the owner cannot (there is no ownership transfer in
-/// v1 — delete the server instead).
+/// v1 — delete the server instead). A blocked server can still be left.
 async fn leave_server(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Id(server_id): Id,
 ) -> Result<StatusCode, ApiError> {
     let mut tx = membership::lock_server(&state.db, server_id, true).await?;
-    let member = membership::load(&mut *tx, server_id, user.id).await?;
+    let member = membership::load_even_blocked(&mut *tx, server_id, user.id).await?;
     if member.role() == Role::Owner {
         return Err(ApiError::Forbidden(
             "The owner cannot leave; delete the server instead.",
