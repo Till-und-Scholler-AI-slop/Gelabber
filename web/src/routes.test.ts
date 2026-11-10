@@ -1,9 +1,10 @@
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { useSession } from "./auth/session.ts";
+import { OPERATOR_PAGES } from "./operator/areas.ts";
 import { SETTINGS_AREAS } from "./pages/settingsAreas.ts";
 import { router, validateAuthSearch } from "./routes.tsx";
 
@@ -155,5 +156,78 @@ describe("settings routes", () => {
     expect(thrown).toMatchObject({
       options: { params: { area: "darstellung" }, replace: true },
     });
+  });
+});
+
+describe("operator routes", () => {
+  /** Runs an async guard and returns what it threw, if anything. */
+  async function guardAsync(
+    routeId: "/workspace/betrieb" | "/workspace/betrieb/$page",
+    params: Record<string, string> = {},
+  ) {
+    try {
+      await router.routesById[routeId].options.beforeLoad?.({
+        params,
+      } as never);
+    } catch (thrown) {
+      return thrown;
+    }
+    return undefined;
+  }
+
+  const signIn = (operator: boolean) =>
+    useSession.setState({
+      status: "authenticated",
+      user: { id: "u1", name: "Lena", email: "lena@example.test" } as never,
+      operator,
+    });
+  afterEach(() =>
+    useSession.setState({ status: "anonymous", user: null, operator: false }),
+  );
+
+  it("gives every page of Betrieb its own address inside the workspace", async () => {
+    signIn(true);
+    for (const page of OPERATOR_PAGES) {
+      const matches = router.matchRoutes(`/betrieb/${page}`, {});
+      expect(matches.map((match) => match.routeId)).toEqual([
+        "__root__",
+        "/workspace",
+        "/workspace/betrieb/$page",
+      ]);
+      expect(
+        await guardAsync("/workspace/betrieb/$page", { page }),
+      ).toBeUndefined();
+    }
+  });
+
+  it("opens Server for /betrieb", async () => {
+    signIn(true);
+    const thrown = await guardAsync("/workspace/betrieb");
+    expect(isRedirect(thrown)).toBe(true);
+    expect(thrown).toMatchObject({
+      options: {
+        to: "/betrieb/$page",
+        params: { page: "server" },
+        replace: true,
+      },
+    });
+  });
+
+  it("is not found for anyone but an operator", async () => {
+    signIn(false);
+    expect(isNotFound(await guardAsync("/workspace/betrieb"))).toBe(true);
+    for (const page of OPERATOR_PAGES)
+      expect(
+        isNotFound(await guardAsync("/workspace/betrieb/$page", { page })),
+      ).toBe(true);
+  });
+
+  it("knows no other pages", async () => {
+    signIn(true);
+    expect(
+      isNotFound(
+        await guardAsync("/workspace/betrieb/$page", { page: "audit" }),
+      ),
+    ).toBe(true);
   });
 });
