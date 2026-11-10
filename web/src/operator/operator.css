@@ -13,14 +13,24 @@
   min-height: 0;
   min-width: 0;
 }
+/* The look of the conversation header line (.lr-channel-header), which
+   would lay the phone's drawer button over the page title. */
+.operator-header {
+  flex-shrink: 0;
+  height: var(--lr-header-height);
+  border-bottom: 1px solid var(--lr-border);
+  background: var(--lr-bg);
+}
 .operator-scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+/* The reference's measure: a 900 px table at 40 px from the sidebar. */
 .operator-page {
-  padding: 32px 40px 40px;
+  max-width: 980px;
+  padding: 27px 40px 40px;
 }
 .operator-page-head h1 {
   font-size: 20px;
@@ -29,7 +39,7 @@
   color: var(--lr-text);
 }
 .operator-page-head p {
-  margin-top: 6px;
+  margin-top: 4px;
   font-size: 14px;
   color: var(--lr-muted);
 }
@@ -49,7 +59,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--lr-space-2);
-  margin-top: var(--lr-space-6);
+  margin-top: var(--lr-space-5);
 }
 .operator-search {
   position: relative;
@@ -72,7 +82,7 @@
 /* The tables: caps headers, one rule per row, numbers right-aligned. */
 .operator-table {
   width: 100%;
-  margin-top: var(--lr-space-5);
+  margin-top: var(--lr-space-6);
   border-collapse: collapse;
   font: var(--lr-type-ui);
   color: var(--lr-text);
@@ -102,9 +112,66 @@
   white-space: nowrap;
 }
 .operator-table .is-menu {
-  width: 48px;
   padding-right: 0;
-  text-align: right;
+}
+/* Fixed columns, so a filter or a badge does not move them: the widths of
+   the reference's Server table (900 px), and the same measure for the lists
+   that filter. */
+.operator-table--servers,
+.operator-table--accounts,
+.operator-table--reports {
+  table-layout: fixed;
+}
+.operator-table--servers thead th:nth-child(1) {
+  width: 23.8%;
+}
+.operator-table--servers thead th:nth-child(2) {
+  width: 14.4%;
+}
+.operator-table--servers thead th:nth-child(3) {
+  width: 11.1%;
+}
+.operator-table--servers thead th:nth-child(4) {
+  width: 12.2%;
+}
+.operator-table--servers thead th:nth-child(5) {
+  width: 15.6%;
+}
+.operator-table--servers thead th:nth-child(6) {
+  width: 15.3%;
+}
+.operator-table--accounts thead th:nth-child(1) {
+  width: 23.8%;
+}
+.operator-table--accounts thead th:nth-child(2) {
+  width: 28%;
+}
+.operator-table--accounts thead th:nth-child(3) {
+  width: 13%;
+}
+.operator-table--accounts thead th:nth-child(4) {
+  width: 11.2%;
+}
+.operator-table--accounts thead th:nth-child(5) {
+  width: 16.4%;
+}
+.operator-table--reports thead th:nth-child(1) {
+  width: 20%;
+}
+.operator-table--reports thead th:nth-child(2) {
+  width: 14%;
+}
+.operator-table--reports thead th:nth-child(3) {
+  width: 30%;
+}
+.operator-table--reports thead th:nth-child(4) {
+  width: 14%;
+}
+.operator-table--reports thead th:nth-child(5) {
+  width: 14.4%;
+}
+.operator-table thead th.is-menu {
+  width: 7.6%;
 }
 .operator-table .is-details {
   max-width: 320px;
@@ -116,6 +183,7 @@
   min-width: 0;
 }
 .operator-server-name {
+  font-size: 15px;
   font-weight: 600;
   overflow-wrap: anywhere;
 }
@@ -155,6 +223,12 @@
 }
 .operator-more:hover {
   text-decoration: underline;
+}
+/* A closed report's outcome, under its filing time. */
+.operator-resolution {
+  margin-top: 2px;
+  font: var(--lr-type-meta);
+  overflow-wrap: anywhere;
 }
 .operator-muted {
   color: var(--lr-muted);

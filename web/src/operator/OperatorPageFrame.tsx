@@ -18,8 +18,9 @@ export function OperatorPageFrame({
   const t = useT(operator);
   return (
     <div className="operator-screen">
-      {/* The shell's header line, empty here as in the reference. */}
-      <div className="lr-channel-header operator-header" aria-hidden="true" />
+      {/* The shell's header line, empty here as in the reference. Not a
+          conversation header, so a phone keeps its top bar in the flow. */}
+      <div className="operator-header" aria-hidden="true" />
       <div className="operator-scroll">
         <section className="operator-page" aria-labelledby="operator-title">
           <header className="operator-page-head">
