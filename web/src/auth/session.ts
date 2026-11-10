@@ -13,6 +13,8 @@ import {
   synchronizeSharedSession,
   type SessionSinkOptions,
 } from "../api/client.ts";
+import { translate } from "../i18n/catalog.ts";
+import { auth } from "../i18n/catalogs/auth.ts";
 import { currentLocale } from "../i18n/locale.ts";
 import { syncPush } from "../pwa/push.ts";
 import { releaseUserScope } from "./release.ts";
@@ -219,8 +221,7 @@ export function ensureSession(): Promise<void> {
         // Keep the identity unresolved: no authenticated content and no false
         // logout redirect while the API or network is unavailable.
         useSessionProblems.setState({
-          bootstrap:
-            "Deine Sitzung konnte nicht geprüft werden. Prüfe deine Verbindung und versuche es erneut.",
+          bootstrap: translate(auth, "session.checkFailed"),
         });
         scheduleSessionRetry();
       }
@@ -365,8 +366,7 @@ async function endSession(
     if (authIntent === intent) {
       failedLogoutUserId = logoutUserId;
       useSessionProblems.setState({
-        logout:
-          "Die Abmeldung auf dem Server konnte nicht bestätigt werden. Bitte versuche es erneut.",
+        logout: translate(auth, "session.logoutUnconfirmed"),
       });
     }
   } finally {
