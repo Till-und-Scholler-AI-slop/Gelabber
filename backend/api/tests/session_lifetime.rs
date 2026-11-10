@@ -151,6 +151,47 @@ async fn a_fresh_expiry_is_not_written_again(pool: PgPool) {
     assert_eq!(after, renewed);
 }
 
+/// Lower settings apply to sessions that already exist: the API caps every
+/// row at its start, since renewal only ever moves an expiry forward.
+#[sqlx::test]
+async fn shorter_settings_cap_existing_sessions(pool: PgPool) {
+    let long = lifetime_state(pool.clone(), "48", "24");
+    signed_in(long).await;
+    let short = lifetime_state(pool.clone(), "4", "1");
+
+    // Idle cap: in use for 2 hours, would run 20 more.
+    set_row(&pool, 2 * 3600, 20 * 3600).await;
+    let capped = gelabber_api::auth::session::cap_to_settings(
+        &short.db,
+        short.session_idle,
+        short.session_ttl,
+    )
+    .await
+    .unwrap();
+    assert_eq!(capped, 1);
+    let (_, expires_at) = row(&pool).await;
+    assert_near(expires_at, Utc::now() + chrono::Duration::hours(1));
+
+    // Absolute cap: 3.5 hours old, so half an hour left of 4.
+    set_row(&pool, 7 * 1800, 50 * 60).await;
+    gelabber_api::auth::session::cap_to_settings(&short.db, short.session_idle, short.session_ttl)
+        .await
+        .unwrap();
+    let (_, expires_at) = row(&pool).await;
+    assert_near(expires_at, Utc::now() + chrono::Duration::minutes(30));
+
+    // Already within both: untouched.
+    set_row(&pool, 600, 1800).await;
+    let capped = gelabber_api::auth::session::cap_to_settings(
+        &short.db,
+        short.session_idle,
+        short.session_ttl,
+    )
+    .await
+    .unwrap();
+    assert_eq!(capped, 0);
+}
+
 #[sqlx::test]
 async fn an_idle_session_ends_and_stays_ended(pool: PgPool) {
     let mut client = signed_in(lifetime_state(pool.clone(), "4", "1")).await;

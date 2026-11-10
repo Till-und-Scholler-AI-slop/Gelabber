@@ -40,7 +40,7 @@ async fn scrape(State(state): State<AppState>) -> Response {
 #[derive(Default)]
 pub struct HttpMetrics {
     /// `(method, status)` → count.
-    requests: Mutex<BTreeMap<(String, u16), u64>>,
+    requests: Mutex<BTreeMap<(&'static str, u16), u64>>,
     duration_ms_sum: AtomicU64,
     duration_count: AtomicU64,
     rate_limited: Mutex<BTreeMap<&'static str, u64>>,
@@ -72,8 +72,7 @@ impl HttpMetrics {
 
     pub fn observe(&self, method: &str, status: u16, duration_ms: u64) {
         let mut map = self.requests.lock().unwrap_or_else(|err| err.into_inner());
-        *map.entry((method.to_ascii_uppercase(), status))
-            .or_insert(0) += 1;
+        *map.entry((method_label(method), status)).or_insert(0) += 1;
         self.duration_ms_sum
             .fetch_add(duration_ms, Ordering::Relaxed);
         self.duration_count.fetch_add(1, Ordering::Relaxed);
@@ -221,6 +220,16 @@ impl HttpMetrics {
     }
 }
 
+/// The client picks the method token, so anything outside the standard set
+/// shares one label instead of growing the map without bound.
+fn method_label(method: &str) -> &'static str {
+    const KNOWN: [&str; 7] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+    KNOWN
+        .into_iter()
+        .find(|known| known.eq_ignore_ascii_case(method))
+        .unwrap_or("OTHER")
+}
+
 fn bump(map: &Mutex<BTreeMap<&'static str, u64>>, key: &'static str) {
     let mut map = map.lock().unwrap_or_else(|err| err.into_inner());
     *map.entry(key).or_insert(0) += 1;
@@ -238,13 +247,13 @@ pub async fn track(State(state): State<AppState>, request: Request, next: Next) 
     if request.uri().path() == "/metrics" {
         return next.run(request).await;
     }
-    let method = request.method().as_str().to_owned();
+    let method = method_label(request.method().as_str());
     let started = Instant::now();
     let response = next.run(request).await;
     let ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
     state
         .metrics
-        .observe(&method, response.status().as_u16(), ms);
+        .observe(method, response.status().as_u16(), ms);
     response
 }
 
@@ -267,6 +276,19 @@ mod tests {
         assert!(text.contains("# TYPE gelabber_link_previews_total counter"));
         assert!(text.contains("gelabber_link_previews_total{outcome=\"timeout\"} 1"));
         assert!(text.contains("gelabber_link_preview_images_total{outcome=\"store_failed\"} 1"));
+    }
+
+    #[test]
+    fn unknown_methods_share_one_label() {
+        let metrics = HttpMetrics::new();
+        metrics.observe("post", 201, 1);
+        metrics.observe("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 405, 1);
+        metrics.observe("BREW", 405, 1);
+        let text = metrics.render();
+        assert!(text.contains("gelabber_http_requests_total{method=\"POST\",status=\"201\"} 1"));
+        assert!(text.contains("gelabber_http_requests_total{method=\"OTHER\",status=\"405\"} 2"));
+        assert!(!text.contains("AAAA"));
+        assert!(!text.contains("BREW"));
     }
 
     #[test]

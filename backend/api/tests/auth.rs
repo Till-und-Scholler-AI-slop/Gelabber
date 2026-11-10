@@ -111,6 +111,96 @@ async fn register_validates_inline(pool: PgPool) {
     assert_eq!(res.body["fields"]["name"], "required");
 }
 
+/// Display-name and quoted forms all reach one inbox; registration takes
+/// only the bare address, sign-in still looks such a string up.
+#[sqlx::test]
+async fn register_takes_only_a_bare_address(pool: PgPool) {
+    let mut client = Client::new(pool);
+    client.bootstrap().await;
+
+    for email in ["a<victim@example.org>", "\"victim\"@example.org"] {
+        let res = client.register(email, "correct horse", "Ada").await;
+        assert_eq!(
+            res.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{email}: {}",
+            res.body
+        );
+        assert_eq!(res.body["fields"]["email"], "invalid", "{email}");
+
+        let res = client.login(email, "correct horse").await;
+        assert_eq!(
+            res.status,
+            StatusCode::UNAUTHORIZED,
+            "{email}: {}",
+            res.body
+        );
+    }
+}
+
+/// Sign-in looks the address up through the `lower(email)` index, so a row
+/// stored with capitals (before addresses were normalised) is found too.
+#[sqlx::test]
+async fn login_finds_the_address_through_the_lower_case_index(pool: PgPool) {
+    let mut client = Client::new(pool.clone());
+    client.bootstrap().await;
+    let res = client
+        .register("ada@example.com", "password123", "Ada")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    client.send(Method::POST, "/api/auth/logout", None).await;
+    sqlx::query("UPDATE users SET email = 'Ada@Example.com'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let res = client.login("ada@example.com", "password123").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+}
+
+/// Two spellings of one domain are one account: it is stored with the
+/// ASCII form of its domain, and either spelling signs in.
+#[sqlx::test]
+async fn a_domain_in_two_spellings_is_one_account(pool: PgPool) {
+    let mut client = Client::new(pool);
+    client.bootstrap().await;
+    let res = client
+        .register("victim@bücher.de", "password123", "Ada")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    assert_eq!(res.body["user"]["email"], "victim@xn--bcher-kva.de");
+    let res = client
+        .register("victim@xn--bcher-kva.de", "otherpassword", "Ada 2")
+        .await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+
+    for spelling in ["victim@bücher.de", "victim@xn--bcher-kva.de"] {
+        client.send(Method::POST, "/api/auth/logout", None).await;
+        let res = client.login(spelling, "password123").await;
+        assert_eq!(res.status, StatusCode::OK, "{spelling}: {}", res.body);
+    }
+}
+
+#[sqlx::test]
+async fn fullwidth_letters_name_the_same_domain(pool: PgPool) {
+    let mut client = Client::new(pool);
+    client.bootstrap().await;
+    let res = client
+        .register("victim@example.org", "password123", "Ada")
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let res = client
+        .register("victim@ｅｘａｍｐｌｅ.org", "otherpassword", "Mallory")
+        .await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+
+    client.send(Method::POST, "/api/auth/logout", None).await;
+    let res = client
+        .login("victim@ｅｘａｍｐｌｅ.org", "password123")
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+}
+
 #[sqlx::test]
 async fn register_rejects_duplicate_email_case_insensitively(pool: PgPool) {
     let mut client = Client::new(pool);

@@ -445,3 +445,39 @@ async fn concurrent_new_emojis_cannot_exceed_twenty_and_existing_votes_still_wor
         StatusCode::OK
     );
 }
+
+#[sqlx::test]
+async fn a_vote_that_changes_nothing_still_returns_the_previews(pool: PgPool) {
+    let (mut a, mut b) = users(&pool, true).await;
+    let (_, ch) = channel(&mut a, &mut b).await;
+    let m = message(&mut a, &ch).await;
+    sqlx::query(
+        "WITH p AS (INSERT INTO link_previews (url_hash, url, status, title) \
+         VALUES (sha256('https://example.org/'), 'https://example.org/', 'ok', 'Beispiel') RETURNING id) \
+         INSERT INTO message_previews (message_id, preview_id, position) SELECT $1::uuid, id, 0 FROM p",
+    )
+    .bind(m["id"].as_str().unwrap())
+    .execute(&pool)
+    .await
+    .unwrap();
+    let first = b.send(Method::PUT, &path(&m, "😀"), None).await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.body);
+    assert_eq!(first.body["previews"][0]["title"], "Beispiel");
+    // A retry or a second device: the vote is already there.
+    let again = b.send(Method::PUT, &path(&m, "😀"), None).await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.body);
+    assert_eq!(
+        again.body["previews"][0]["title"], "Beispiel",
+        "{}",
+        again.body
+    );
+    let removed = b.send(Method::DELETE, &path(&m, "😀"), None).await;
+    assert_eq!(removed.status, StatusCode::OK);
+    let absent = b.send(Method::DELETE, &path(&m, "😀"), None).await;
+    assert_eq!(absent.status, StatusCode::OK, "{}", absent.body);
+    assert_eq!(
+        absent.body["previews"][0]["title"], "Beispiel",
+        "{}",
+        absent.body
+    );
+}

@@ -7,6 +7,7 @@
 mod common;
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -42,6 +43,8 @@ struct Site {
     seen: Arc<Mutex<Vec<String>>>,
     /// `/changing`'s title; empty answers 500.
     title: Arc<Mutex<String>>,
+    /// `/sometimes-slow` answers like `/slow` while set.
+    slow: Arc<AtomicBool>,
 }
 
 async fn handle(State(site): State<Site>, uri: Uri) -> Response {
@@ -95,6 +98,16 @@ async fn handle(State(site): State<Site>, uri: Uri) -> Response {
             "late".into_response()
         }
         "/text" => ([(CONTENT_TYPE, "text/plain")], "og:title").into_response(),
+        "/sometimes-slow" => {
+            if site.slow.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_secs(20)).await;
+            }
+            (
+                [(CONTENT_TYPE, "text/html")],
+                r#"<meta property="og:title" content="Manchmal langsam">"#,
+            )
+                .into_response()
+        }
         "/changing" => {
             let title = site.title.lock().unwrap().clone();
             if title.is_empty() {
@@ -120,6 +133,7 @@ async fn serve_site() -> (Site, Policy) {
         origin: format!("http://site.test:{}", addr.port()),
         seen: Arc::default(),
         title: Arc::default(),
+        slow: Arc::default(),
     };
     let router = Router::new().fallback(handle).with_state(site.clone());
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
@@ -325,6 +339,51 @@ async fn a_card_keeps_its_text_when_the_image_cannot_be_stored(pool: PgPool) {
     for line in [
         "gelabber_link_previews_total{outcome=\"ok\"} 1",
         "gelabber_link_preview_images_total{outcome=\"store_failed\"} 1",
+    ] {
+        assert!(text.contains(line), "{line}\n{text}");
+    }
+}
+
+/// Stored preview images count against the author's daily upload quota:
+/// once it is used up, cards come without their image.
+#[sqlx::test]
+async fn preview_images_are_charged_to_the_authors_upload_quota(pool: PgPool) {
+    let (site, policy) = serve_site().await;
+    let mut state = common::state(pool.clone());
+    state.previews = Some(LinkPreviews::with_policy(policy));
+    let image = png().len() as u64;
+    state.limits.upload_bytes_per_day = image + image / 2;
+    let (mut client, channel) = signed_in_with(state).await;
+
+    let mut cards = Vec::new();
+    for query in ["eins", "zwei"] {
+        let sent = post(
+            &mut client,
+            &channel,
+            &format!("{}/page?{query}", site.origin),
+        )
+        .await;
+        let message = wait_previews(
+            &mut client,
+            &channel,
+            sent["id"].as_str().unwrap(),
+            Duration::from_secs(10),
+        )
+        .await;
+        cards.push(message["previews"][0].clone());
+    }
+    assert!(cards[0].get("image").is_some(), "{}", cards[0]);
+    assert_eq!(cards[1]["title"], "Kaffee & Kuchen");
+    assert!(cards[1].get("image").is_none(), "{}", cards[1]);
+    let consumed: i64 = sqlx::query_scalar("SELECT consumed FROM upload_daily_usage")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(consumed, image as i64);
+    let text = metrics(&mut client).await;
+    for line in [
+        "gelabber_link_preview_images_total{outcome=\"stored\"} 1",
+        "gelabber_link_preview_images_total{outcome=\"quota\"} 1",
     ] {
         assert!(text.contains(line), "{line}\n{text}");
     }
@@ -576,6 +635,62 @@ async fn the_author_removes_previews_and_edits_keep_them_off(pool: PgPool) {
     assert_eq!(res.status, StatusCode::OK);
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(message_has_no_previews(&mut client, &channel, id).await);
+}
+
+/// An edit keeps the cards of the links it did not change: they are not
+/// fetched again, so a site that is slow today cannot take them away.
+#[sqlx::test]
+async fn an_edit_keeps_the_cards_of_unchanged_links(pool: PgPool) {
+    let (site, policy) = serve_site().await;
+    let (mut client, channel) =
+        signed_in(pool.clone(), Some(LinkPreviews::with_policy(policy))).await;
+    let links = format!("{0}/sometimes-slow {0}/page", site.origin);
+    let sent = post(&mut client, &channel, &links).await;
+    let id = sent["id"].as_str().unwrap();
+    let before = wait_previews(&mut client, &channel, id, Duration::from_secs(10)).await;
+    assert_eq!(before["previews"].as_array().unwrap().len(), 2, "{before}");
+
+    site.slow.store(true, Ordering::SeqCst);
+    sqlx::query("UPDATE link_previews SET fetched_at = fetched_at - interval '2 days'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let asked = |site: &Site| {
+        site.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|uri| uri.contains("sometimes-slow"))
+            .count()
+    };
+    assert_eq!(asked(&site), 1);
+    // A new link last: its stored refusal shows the worker got past the others.
+    let res = client
+        .send(
+            Method::PATCH,
+            &format!("/api/messages/{id}"),
+            Some(json!({ "content": format!("{links} {}/text Tippfehler", site.origin) })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let start = Instant::now();
+    while sqlx::query_scalar::<_, i64>("SELECT count(*) FROM link_previews WHERE url LIKE '%/text'")
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        == 0
+    {
+        assert!(
+            start.elapsed() < Duration::from_secs(15),
+            "the new link was never fetched"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let after = message(&mut client, &channel, id).await;
+    assert_eq!(after["previews"], before["previews"], "{after}");
+    assert_eq!(asked(&site), 1, "the unchanged link was not fetched again");
 }
 
 async fn message_has_no_previews(client: &mut Client, channel: &str, id: &str) -> bool {

@@ -3,9 +3,9 @@
 //!
 //! Mail goes to the operator's SMTP relay (`SMTP_*`), plain text, German like
 //! the rest of the product. Sending runs in the background after the
-//! response, so neither the relay's speed nor its failures tell a caller
-//! whether an address has an account. Failures are logged with the user id,
-//! never the address.
+//! response (`crate::auth`), so neither the relay's speed nor its failures
+//! tell a caller whether an address has an account. Failures are logged with
+//! the user id, never the address.
 //!
 //! The texts never contain what a registrant typed (name, password): a
 //! confirmation mail can reach someone who never asked for it.
@@ -13,13 +13,12 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use lettre::Address;
 use lettre::message::Mailbox;
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::extension::ClientId;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
-use tracing::{info, warn};
-use uuid::Uuid;
 
 use crate::config::{MailConfig, SmtpSecurity};
 
@@ -124,19 +123,6 @@ impl Mailer {
         }
     }
 
-    /// Sends in the background; the caller answers without waiting.
-    pub fn spawn(&self, user_id: Uuid, to: &str, mail: Mail) {
-        let mailer = self.clone();
-        let to = to.to_owned();
-        tokio::spawn(async move {
-            let kind = mail.kind();
-            match mailer.send(&to, &mail).await {
-                Ok(()) => info!(%user_id, kind, "account mail sent"),
-                Err(err) => warn!(%user_id, kind, error = %err, "account mail failed"),
-            }
-        });
-    }
-
     pub async fn send(&self, to: &str, mail: &Mail) -> Result<(), String> {
         let (subject, body) = self.render(mail);
         match &self.transport {
@@ -151,7 +137,7 @@ impl Mailer {
                 Ok(())
             }
             Transport::Smtp(transport) => {
-                let to: Mailbox = to.parse().map_err(|err| format!("recipient: {err}"))?;
+                let to = recipient(to)?;
                 let message = Message::builder()
                     .from(self.from.clone())
                     .to(to)
@@ -213,8 +199,15 @@ impl Mailer {
     }
 }
 
+/// The stored address as a bare mailbox. Parsing it as `Name <addr>` would
+/// deliver an older account's `a<victim@example.org>` to victim@example.org.
+fn recipient(to: &str) -> Result<Mailbox, String> {
+    let address: Address = to.parse().map_err(|err| format!("recipient: {err}"))?;
+    Ok(Mailbox::new(None, address))
+}
+
 impl Mail {
-    fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> &'static str {
         match self {
             Self::ConfirmEmail { .. } => "confirm_email",
             Self::ResetPassword { .. } => "reset_password",
@@ -254,6 +247,16 @@ mod tests {
             sent[0].body
         );
         assert!(sent[0].body.contains("chat.example.org"));
+    }
+
+    #[test]
+    fn recipients_are_bare_addresses() {
+        let to = recipient("ada@example.org").unwrap();
+        assert_eq!(to.name, None);
+        assert_eq!(to.email.to_string(), "ada@example.org");
+        for stored in ["a<victim@example.org>", "<victim@example.org>"] {
+            assert!(recipient(stored).is_err(), "{stored}");
+        }
     }
 
     #[test]

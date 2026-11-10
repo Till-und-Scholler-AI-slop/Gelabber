@@ -579,6 +579,42 @@ async fn real_minio_failed_delete_retains_job_and_later_retry_removes_only_its_o
     state.store.delete(&foreign).await.unwrap();
 }
 
+/// A delete that keeps failing is retried later each time, up to a cap,
+/// not every second forever.
+#[sqlx::test]
+async fn real_minio_failed_deletes_back_off(pool: PgPool) {
+    let endpoint = std::env::var("MINIO_ENDPOINT").expect("source local minio-test.env");
+    let proxy = proxy(endpoint).await;
+    let config = minio_config(&proxy.endpoint);
+    let mut state = state(pool, 0);
+    state.store = ObjectStore::from_minio(Some(&config)).unwrap();
+    state.store.ensure_ready().await.unwrap();
+    sqlx::query(
+        "INSERT INTO storage_cleanup (object_key, retain_until) VALUES ('att/stuck', now())",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+    let mut delays = Vec::new();
+    for attempts in [0, 1, 2, 5, 40] {
+        sqlx::query("UPDATE storage_cleanup SET attempts=$1, next_attempt=now()")
+            .bind(attempts)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        cleanup::delete_pending(&state, 32).await.unwrap();
+        let delay: f64 = sqlx::query_scalar(
+            "SELECT EXTRACT(EPOCH FROM next_attempt - now())::float8 FROM storage_cleanup",
+        )
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+        delays.push(delay.round() as i64);
+    }
+    assert_eq!(delays, [1, 2, 4, 32, 300]);
+    assert_eq!(proxy.deletes.load(Ordering::SeqCst), 5);
+}
+
 /// The windowed download link (#201) and its save variant against real
 /// MinIO: the redirect is cacheable per session for the rest of its window,
 /// the signed link serves the bytes with the signed cache header, and the
@@ -686,6 +722,110 @@ async fn real_minio_download_links_serve_the_object(pool: PgPool) {
     );
     assert_eq!(object.bytes().await.unwrap().as_ref(), PNG);
     state.store.delete(&key).await.unwrap();
+}
+
+/// Proxy delivery against real MinIO: a slow but steady upload lands, and
+/// one cut at its deadline leaves no object behind for cleanup to miss.
+#[tokio::test]
+async fn real_minio_proxy_upload_deadline_leaves_no_object() {
+    let endpoint = std::env::var("MINIO_ENDPOINT").expect("source local minio-test.env");
+    let mut config = minio_config(&endpoint);
+    config.delivery = gelabber_api::config::AttachmentDelivery::Proxy;
+    let store = ObjectStore::from_minio(Some(&config)).unwrap();
+    store.ensure_ready().await.unwrap();
+    let trickle = |len: usize| {
+        Body::from_stream(futures_util::stream::unfold(0, move |sent| async move {
+            (sent < len).then_some(())?;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            Some((Ok::<_, std::io::Error>(vec![b'x']), sent + 1))
+        }))
+    };
+    let minute = Duration::from_secs(60);
+    store
+        .upload("att/steady", "text/plain", 8, trickle(8), minute)
+        .await
+        .unwrap();
+    assert_eq!(store.head("att/steady").await.unwrap().size, 8);
+    assert!(matches!(
+        store
+            .upload(
+                "att/late",
+                "text/plain",
+                8,
+                trickle(8),
+                Duration::from_millis(300)
+            )
+            .await,
+        Err(StoreError::TimedOut)
+    ));
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(matches!(
+        store.head("att/late").await,
+        Err(StoreError::NotFound)
+    ));
+    store.delete("att/steady").await.unwrap();
+}
+
+/// Headers the uploader adds to the presigned PUT are stored by MinIO, but
+/// the signed link overrides them: no content coding the viewer's browser
+/// would undo (the content check read the raw bytes), and the API's own
+/// disposition.
+#[sqlx::test]
+async fn real_minio_links_never_replay_the_uploaders_headers(pool: PgPool) {
+    use axum::http::header::LOCATION;
+    let endpoint = std::env::var("MINIO_ENDPOINT").expect("source local minio-test.env");
+    let config = minio_config(&endpoint);
+    let mut state = state(pool, 0);
+    state.store = ObjectStore::from_minio(Some(&config)).unwrap();
+    state.store.ensure_ready().await.unwrap();
+    let (mut client, _, channel) = owner(&state).await;
+    let signed = presign_png(&mut client, &channel, "x.png").await;
+    let id = signed["id"].as_str().unwrap().to_owned();
+    let http = reqwest::Client::new();
+    let mut request = http.put(signed["upload_url"].as_str().unwrap());
+    for (name, value) in signed["headers"].as_object().unwrap() {
+        request = request.header(name, value.as_str().unwrap());
+    }
+    let response = request
+        .header("Content-Encoding", "gzip")
+        .header("Content-Disposition", "attachment; filename=\"evil.html\"")
+        .body(PNG.to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success(), "{}", response.status());
+    message(&mut client, &channel, &id).await;
+
+    for (query, disposition) in [
+        ("", "inline; filename=\"x.png\""),
+        ("?download=1", "attachment; filename=\"x.png\""),
+    ] {
+        let (status, headers, _) = client
+            .send_raw(Method::GET, &format!("/api/attachments/{id}{query}"), None)
+            .await;
+        assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
+        let object = http
+            .get(headers[LOCATION].to_str().unwrap())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(object.status(), reqwest::StatusCode::OK);
+        let encoding = object
+            .headers()
+            .get(reqwest::header::CONTENT_ENCODING)
+            .map(|value| value.to_str().unwrap().to_owned());
+        assert!(
+            encoding.is_none() || encoding.as_deref() == Some("identity"),
+            "{query}: {encoding:?}"
+        );
+        assert_eq!(
+            object.headers()[reqwest::header::CONTENT_DISPOSITION],
+            disposition,
+            "{query}"
+        );
+        assert_eq!(object.bytes().await.unwrap().as_ref(), PNG);
+    }
+    state.store.delete(&format!("att/{id}")).await.unwrap();
 }
 
 /// #348 against real MinIO: with `ATTACHMENT_DELIVERY=proxy` and a public

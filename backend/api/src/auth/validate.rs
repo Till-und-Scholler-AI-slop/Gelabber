@@ -47,6 +47,44 @@ pub fn email(raw: &str, errors: &mut FieldErrors) -> Option<String> {
     Some(value)
 }
 
+/// [`email`] for an address about to be stored (registration): it must also
+/// be one bare address as the mailer reads it, and is stored with the ASCII
+/// (IDNA) form of its domain. Display names (`a<x@y>`), quoted local parts
+/// (`"x"@y`, the same mailbox as `x@y`) and other spellings of a domain
+/// (`bücher.de` / `xn--bcher-kva.de`, fullwidth letters) would give one
+/// inbox any number of accounts and per-address mail budgets. Sign-in keeps
+/// the lenient [`email`], so older accounts stay reachable.
+pub fn new_email(raw: &str, errors: &mut FieldErrors) -> Option<String> {
+    let value = email(raw, errors)?;
+    let bare = !value.contains('"')
+        && value
+            .parse::<lettre::Address>()
+            .is_ok_and(|address| address.as_ref() == value);
+    if !bare {
+        errors.insert("email", "invalid");
+        return None;
+    }
+    Some(ascii_domain(&value).unwrap_or(value))
+}
+
+/// The form an address is counted under (failed guesses, mail budgets):
+/// lower case, domain in ASCII. A stored address may predate both rules.
+pub fn canonical(value: &str) -> String {
+    let lower = value.to_lowercase();
+    ascii_domain(&lower).unwrap_or(lower)
+}
+
+/// `value` with its domain in ASCII (IDNA) form, if that differs from how
+/// it was typed. Sign-in and reset look an address up both ways, since
+/// registration stores the ASCII form.
+pub fn ascii_domain(value: &str) -> Option<String> {
+    let (local, domain) = value.rsplit_once('@')?;
+    match url::Host::parse(domain) {
+        Ok(url::Host::Domain(ascii)) if ascii != domain => Some(format!("{local}@{ascii}")),
+        _ => None,
+    }
+}
+
 /// Length is measured in characters. No composition rules: length is what
 /// Argon2id needs; everything else pushes users towards worse passwords.
 pub fn password(raw: &str, errors: &mut FieldErrors) -> Option<String> {
@@ -232,6 +270,53 @@ mod tests {
         let long = format!("{}@example.com", "a".repeat(EMAIL_MAX));
         let (_, errors) = run(|e| email(&long, e));
         assert_eq!(errors.get("email"), Some(&"too_long"));
+    }
+
+    #[test]
+    fn a_new_address_is_one_bare_mailbox() {
+        assert_eq!(
+            run(|e| new_email(" Ada.Lovelace+chat@Example.org ", e))
+                .0
+                .as_deref(),
+            Some("ada.lovelace+chat@example.org")
+        );
+        // Sign-in takes these; each would be another account, and another
+        // limiter key, for the inbox of victim@example.org.
+        for raw in [
+            "a<victim@example.org>",
+            "<victim@example.org>",
+            "\"victim\"@example.org",
+            "\"a b\"@example.org",
+            "victim(comment)@example.org",
+            "victim@example.org,other@example.org",
+        ] {
+            let (value, errors) = run(|e| new_email(raw, e));
+            assert!(value.is_none(), "{raw:?}");
+            assert_eq!(errors.get("email"), Some(&"invalid"), "{raw:?}");
+        }
+        assert!(run(|e| email("a<victim@example.org>", e)).0.is_some());
+        assert_eq!(run(|e| new_email("", e)).1.get("email"), Some(&"required"));
+    }
+
+    #[test]
+    fn a_new_address_keeps_its_domain_in_ascii_form() {
+        for (raw, stored) in [
+            ("victim@bücher.de", "victim@xn--bcher-kva.de"),
+            ("victim@xn--bcher-kva.de", "victim@xn--bcher-kva.de"),
+            ("victim@ｅｘａｍｐｌｅ.org", "victim@example.org"),
+            ("victim@EXAMPLE.org", "victim@example.org"),
+        ] {
+            assert_eq!(
+                run(|e| new_email(raw, e)).0.as_deref(),
+                Some(stored),
+                "{raw}"
+            );
+        }
+        assert_eq!(
+            ascii_domain("victim@ｅｘａｍｐｌｅ.org").as_deref(),
+            Some("victim@example.org")
+        );
+        assert_eq!(ascii_domain("victim@example.org"), None);
     }
 
     #[test]

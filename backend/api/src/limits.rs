@@ -1,12 +1,12 @@
 //! Server-side rate limits and upload quotas (issue #16).
 //!
-//! Mutations under `/api` go through [`gate`] before CSRF. Auth (sign-in,
+//! Mutations under `/api` go through [`gate`] once CSRF let them through. Auth (sign-in,
 //! registration, email verification, password reset) is keyed by client
 //! address, IPv6 per /64; everything else by the account of the session,
 //! which the gate resolves once for the handler as well, or by the address
 //! when the cookie matches no live session.
-//! Failed logins are also counted per account ([`login_blocked`] /
-//! [`login_failed`]), so spreading guesses over many addresses does not
+//! Password guesses are also counted per account ([`login_attempt`] /
+//! [`login_succeeded`]), so spreading guesses over many addresses does not
 //! multiply them. Upload *bytes* are a durable daily quota in Postgres so
 //! a restart cannot reset them. Request windows live in process — v1 is a
 //! single node.
@@ -50,9 +50,9 @@ pub const PREVIEW_PER_MIN: u32 = 10;
 pub const PREVIEW_SERVER_FACTOR: u32 = 6;
 /// Window of the per-account failure count, and so the longest wait.
 pub const LOGIN_FAILURE_WINDOW: Duration = Duration::from_secs(15 * 60);
-/// Account mails (confirmation, reset, "already registered") per address
-/// and hour. Past it the request is answered as usual and nothing is sent,
-/// so nobody can flood an inbox through the instance.
+/// Account mails per address, hour and [`MailBudget`]. Past it the request
+/// is answered as usual and nothing is sent, so nobody can flood an inbox
+/// through the instance.
 pub const MAIL_PER_ADDRESS_PER_HOUR: u32 = 5;
 
 pub(crate) const MINUTE: Duration = Duration::from_secs(60);
@@ -276,6 +276,19 @@ impl Limiter {
         })
     }
 
+    /// Takes back one hit [`Self::hit`] recorded in a window that is still
+    /// running.
+    pub fn refund(&self, bucket: &str, id: &str) {
+        let key = format!("{bucket}:{id}");
+        let now = Instant::now();
+        let mut inner = self.inner.lock().unwrap_or_else(|err| err.into_inner());
+        if let Some(slot) = inner.windows.get_mut(&key)
+            && now < slot.reset_at
+        {
+            slot.count = slot.count.saturating_sub(1);
+        }
+    }
+
     #[cfg(test)]
     fn len(&self) -> usize {
         self.inner
@@ -292,8 +305,8 @@ impl Default for Limiter {
     }
 }
 
-/// Outer middleware: count mutating `/api` requests. GET/HEAD/OPTIONS
-/// pass. Health, ready, metrics and `/ws` are not on this router.
+/// Middleware after the CSRF check: count mutating `/api` requests.
+/// GET/HEAD/OPTIONS pass. Health, ready, metrics and `/ws` are not on this router.
 ///
 /// Outside the sign-in routes the session cookie is resolved here, once:
 /// its account is the key of the session buckets, so a user's sessions
@@ -446,41 +459,66 @@ fn check(
         .map_err(|retry| (bucket, retry))
 }
 
-/// Refuses a login for an account with too many recent failures. Checked
-/// before the password hash, so a blocked guess costs no Argon2 run, and
-/// answered like every other limit (`429 rate_limited`, `Retry-After`).
-pub fn login_blocked(state: &AppState, email: &str) -> Result<(), ApiError> {
+/// Counts one password guess against `email`, known account or not, before
+/// the hash runs: guesses that arrive together cannot all pass a check made
+/// before the first failure is recorded. Refuses one past the limit like
+/// every other limit (`429 rate_limited`, `Retry-After`), at no Argon2 run.
+/// A guess that turns out right is taken back with [`login_succeeded`].
+pub fn login_attempt(state: &AppState, email: &str) -> Result<(), ApiError> {
     let max = state.limits.login_failures_per_account;
-    match state.limiter.blocked("login", &account_key(email), max) {
-        Some(retry_after) => {
+    state
+        .limiter
+        .hit("login", &account_key(email), max, LOGIN_FAILURE_WINDOW)
+        .map_err(|retry_after| {
             state.metrics.rate_limited("login");
-            Err(ApiError::RateLimited { retry_after })
+            ApiError::RateLimited { retry_after }
+        })
+}
+
+/// The password [`login_attempt`] counted was right: it is no failure.
+pub fn login_succeeded(state: &AppState, email: &str) {
+    state.limiter.refund("login", &account_key(email));
+}
+
+/// Which hourly allowance an account mail draws on. Anyone can register an
+/// address or ask for its reset, so either budget can be used up by a
+/// stranger; separate budgets keep registrations from silencing resets.
+/// Reset mails, however triggered, only ever reach the owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MailBudget {
+    /// Confirmation links and the "already registered" notice.
+    Registration,
+    /// Password reset links.
+    Reset,
+}
+
+impl MailBudget {
+    fn bucket(self) -> &'static str {
+        match self {
+            Self::Registration => "mail",
+            Self::Reset => "mail_reset",
         }
-        None => Ok(()),
     }
 }
 
-/// Counts one failed login against `email`, known account or not, so the
-/// answer does not tell the two apart.
-pub fn login_failed(state: &AppState, email: &str) {
-    let max = state.limits.login_failures_per_account;
-    // Over the limit is already refused by `login_blocked` next time.
-    let _ = state
-        .limiter
-        .hit("login", &account_key(email), max, LOGIN_FAILURE_WINDOW);
-}
-
-/// Counts one account mail to `email`; `false` once the hourly allowance of
-/// that address is used up and the mail should be dropped.
-pub fn mail_allowed(state: &AppState, email: &str) -> bool {
+/// Reserves one account mail to `email`; `false` once the hourly allowance
+/// of that address is used up and the mail should be dropped. A reserved
+/// mail that is not sent after all goes back with [`mail_unsent`].
+pub fn mail_allowed(state: &AppState, budget: MailBudget, email: &str) -> bool {
+    let bucket = budget.bucket();
     let allowed = state
         .limiter
-        .hit("mail", &account_key(email), MAIL_PER_ADDRESS_PER_HOUR, HOUR)
+        .hit(bucket, &account_key(email), MAIL_PER_ADDRESS_PER_HOUR, HOUR)
         .is_ok();
     if !allowed {
-        state.metrics.rate_limited("mail");
+        state.metrics.rate_limited(bucket);
     }
     allowed
+}
+
+/// Gives back a mail [`mail_allowed`] reserved: only sent mail counts.
+pub fn mail_unsent(state: &AppState, budget: MailBudget, email: &str) {
+    state.limiter.refund(budget.bucket(), &account_key(email));
 }
 
 /// The address is normalized by validation; hashed so the limiter's keys
@@ -491,7 +529,7 @@ fn account_key(email: &str) -> String {
 
 /// Limiter keys of the per-account counts above, which eviction spares.
 fn is_per_account(key: &str) -> bool {
-    key.starts_with("login:") || key.starts_with("mail:")
+    key.starts_with("login:") || key.starts_with("mail:") || key.starts_with("mail_reset:")
 }
 
 /// The client address the rate limits are keyed by, with IPv6 grouped per
@@ -715,12 +753,14 @@ mod tests {
                 .unwrap();
         }
         limiter.hit("mail", "victim", 1, HOUR).unwrap();
+        limiter.hit("mail_reset", "victim", 1, HOUR).unwrap();
         for i in 0..640 {
             limiter.hit("up", &i.to_string(), 5, HOUR).unwrap();
         }
         assert!(limiter.len() <= 64);
         assert!(limiter.blocked("login", "victim", 2).is_some());
         assert!(limiter.hit("mail", "victim", 1, HOUR).is_err());
+        assert!(limiter.hit("mail_reset", "victim", 1, HOUR).is_err());
     }
 
     #[test]
@@ -791,6 +831,21 @@ mod tests {
                 .hit_at("login", "victim", 2, LOGIN_FAILURE_WINDOW, later)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn refund_takes_back_one_hit() {
+        let limiter = Limiter::new();
+        limiter.hit("login", "a", 2, MINUTE).unwrap();
+        limiter.hit("login", "a", 2, MINUTE).unwrap();
+        limiter.refund("login", "a");
+        assert!(limiter.hit("login", "a", 2, MINUTE).is_ok());
+        assert!(limiter.hit("login", "a", 2, MINUTE).is_err());
+        // Nothing to take back from an unknown key or below zero.
+        limiter.refund("login", "b");
+        limiter.refund("login", "b");
+        assert!(limiter.hit("login", "b", 1, MINUTE).is_ok());
+        assert!(limiter.hit("login", "b", 1, MINUTE).is_err());
     }
 
     #[test]

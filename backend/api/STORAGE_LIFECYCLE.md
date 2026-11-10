@@ -67,9 +67,13 @@ headers MinIO would have sent for a signed link, plus
 `Content-Security-Policy: sandbox`, because the file now comes from the app's
 own origin. Display answers are `Cache-Control: private, max-age=3600`, the
 same 60-minute bound as above; the save variant is `private, no-store`. The
-in-memory store always works this way. Downloads and uploads use their own
-HTTP client without an overall deadline (10 s to connect, 60 s between
-reads), because a 25 MiB file may take minutes on a slow line.
+in-memory store always works this way. Downloads use their own HTTP client
+without an overall deadline (10 s to connect, 60 s between reads), because a
+25 MiB file may take minutes on a slow line. Uploads use one without any read
+timeout, which reqwest would run as a single timer from the start of the
+request; instead the upload fails after 60 s without a byte from the browser,
+and in any case at the end of the cleanup grace (`expires_at` plus fifteen
+minutes), so no object lands after its row was refunded.
 
 ## Transactions and cleanup
 
@@ -86,7 +90,7 @@ object deletes. Each selects at most 32 rows and permits at most four concurrent
 S3 operations. Storage calls have the existing ten-second HTTP timeout and hold
 no pool connection. Failed HEADs keep pending metadata/reservation and back off
 one minute, allowing later pending rows to progress. Failed deletes retain the
-job and retry after one second. Successful deletes repeat after ten seconds until
+job and retry after one second, doubling per attempt up to five minutes. Successful deletes repeat after ten seconds until
 `retain_until`, then remove the intent after one final confirmed deletion.
 
 Delete jobs use `FOR UPDATE SKIP LOCKED`, a random claim UUID, and a six-minute

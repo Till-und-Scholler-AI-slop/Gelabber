@@ -263,7 +263,7 @@ When a link shows no card, the API log says why, at the default `info` level, wi
 | `budget` | The message's 8 s were spent on its earlier links. |
 | `retry_later` | The same link failed less than an hour ago and is not fetched again yet. |
 
-A card whose image could not be fetched keeps its text (`link preview: card without its image`). If MinIO cannot store the image, the card also keeps its text and the API logs a warning, `link preview image not stored`. `/metrics` counts each link under `gelabber_link_previews_total{outcome}` (the reasons above, plus `ok` and `cached`) and each card image under `gelabber_link_preview_images_total{outcome}` (`stored`, `store_failed`, or the fetch reason, `not_an_image` or `dimensions`). For the full URL as well, set `RUST_LOG=info,gelabber_api::previews=debug`.
+A card whose image could not be fetched keeps its text (`link preview: card without its image`). If MinIO cannot store the image, the card also keeps its text and the API logs a warning, `link preview image not stored`. `/metrics` counts each link under `gelabber_link_previews_total{outcome}` (the reasons above, plus `ok` and `cached`) and each card image under `gelabber_link_preview_images_total{outcome}` (`stored`, `store_failed`, `quota` when the author's daily upload quota is used up, or the fetch reason, `not_an_image` or `dimensions`). For the full URL as well, set `RUST_LOG=info,gelabber_api::previews=debug`.
 
 ## GIFs
 
