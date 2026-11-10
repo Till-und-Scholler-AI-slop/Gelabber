@@ -15,7 +15,8 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A re-run of an older run must not cancel the newer one.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.run_attempt == 1 }}
 
 permissions:
   contents: read
@@ -26,7 +27,7 @@ env:
 jobs:
   changes:
     name: Changed areas
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       backend: ${{ steps.areas.outputs.backend }}
@@ -60,7 +61,7 @@ jobs:
     name: Rust lint
     needs: changes
     if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -82,12 +83,18 @@ jobs:
           DOCS_RS: "1"
         run: cargo clippy --locked --manifest-path backend/Cargo.toml --workspace --all-targets -- -D warnings
 
+  # Two runners take half of the tests each: the tests wait on Postgres and
+  # on timers more than they compute, so a second runner halves their time.
   rust:
-    name: Rust tests
+    name: Rust tests (${{ matrix.part }}/2)
     needs: changes
     if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2]
     permissions:
       contents: read
       packages: read
@@ -169,7 +176,9 @@ jobs:
           load: true
           provenance: false
           tags: gelabber-native-ci-toolchain:local
-          cache-from: type=gha,scope=media
+          cache-from: |
+            type=registry,ref=ghcr.io/till-und-scholler-ai-slop/gelabber/media:buildcache
+            type=gha,scope=media
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -207,9 +216,11 @@ jobs:
           curl -fsS "$MINIO_ENDPOINT/minio/health/ready" >/dev/null
           # The 100 ms typing assertion runs alone in the next step.
           sh backend/build/run-native-ci.sh nextest run --locked --workspace --all-targets --no-fail-fast \
+            --partition hash:${{ matrix.part }}/2 \
             -E 'not test(typing_broadcasts_fast_and_clears_on_stop)'
 
       - name: Test typing latency in isolation
+        if: matrix.part == 1
         env:
           VERIFY_TYPING_STABILITY: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_typing_stability }}
         run: |
@@ -239,7 +250,7 @@ jobs:
     name: Deploy config
     needs: changes
     if: needs.changes.outputs.deploy == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -270,7 +281,7 @@ jobs:
     name: Frontend
     needs: changes
     if: needs.changes.outputs.web == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     defaults:
       run:
@@ -310,7 +321,7 @@ jobs:
     name: Image ${{ matrix.name }}
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.images != '[]'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -353,8 +364,11 @@ jobs:
             OCI_VERSION=${{ env.GELABBER_VERSION }}
             OCI_CREATED=${{ env.OCI_CREATED }}
             OCI_SOURCE=https://github.com/${{ github.repository }}
-          # Pull requests read the layer cache; main writes it.
-          cache-from: type=gha,scope=${{ matrix.name }}
+          # Pull requests read the layer cache; main writes it. The Actions
+          # cache is read until the first publish has filled the registry's.
+          cache-from: |
+            type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache
+            type=gha,scope=${{ matrix.name }}
 
       - name: Verify actual media image readiness and normal shutdown
         if: matrix.name == 'media'
@@ -374,6 +388,9 @@ jobs:
     name: Desktop
     needs: changes
     if: needs.changes.outputs.desktop == 'true'
+    # For its libwebrtc jobs, which store a new package in a release (pushes).
+    permissions:
+      contents: write
     uses: ./.github/workflows/desktop-native.yml
 
   # The one required check: red if any job that ran failed or was cancelled.
@@ -381,7 +398,7 @@ jobs:
     name: ci-ok
     if: always()
     needs: [changes, lint, rust, web, deploy, images, minio, desktop]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Every job that ran passed

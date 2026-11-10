@@ -112,7 +112,9 @@ toolchain. On Windows the same holds with the MSVC STL and a DLL.
 ## Building (Linux)
 
 The libwebrtc build needs network access to `*.googlesource.com`, ~30 GB
-disk and takes hours on 4 cores; CI caches the result (`.github/workflows/desktop-native.yml`).
+disk and takes hours on 4 cores; CI caches the result (`.github/workflows/desktop-native.yml`)
+and keeps each package as an asset of the `libwebrtc-packages` release, named by the cache
+key, so an evicted cache costs a download and not a build.
 
 ```sh
 desktop/native/scripts/build-libwebrtc-linux.sh /mnt/webrtc /mnt/libwebrtc-package
