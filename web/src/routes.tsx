@@ -45,7 +45,11 @@ import { placeFromPath, useLastPlace } from "./servers/lastPlace.ts";
 import { translate } from "./i18n/catalog.ts";
 import { shell } from "./i18n/catalogs/shell.ts";
 import { operator } from "./i18n/catalogs/operator.ts";
-import { DEFAULT_OPERATOR_PAGE, isOperatorPage } from "./operator/areas.ts";
+import {
+  DEFAULT_OPERATOR_PAGE,
+  isOperatorPage,
+  validateOperatorSearch,
+} from "./operator/areas.ts";
 
 // Server settings are a chunk of their own. Not `lazyRouteComponent`: it
 // reloads the page when a deploy removed the chunk, which ends a call.
@@ -304,12 +308,15 @@ const operatorRoute = createRoute({
 const operatorPageRoute = createRoute({
   getParentRoute: () => workspaceLayout,
   path: "/betrieb/$page",
+  validateSearch: validateOperatorSearch,
   beforeLoad: ({ params }) => requireOperator(params.page),
   component: function OperatorPageRoute() {
     const { page } = operatorPageRoute.useParams();
+    const { q } = operatorPageRoute.useSearch();
     return isOperatorPage(page) ? (
       <OperatorArea.Component
         page={page}
+        q={q}
         fallback={<MainSkeleton kind="list" />}
       />
     ) : null;

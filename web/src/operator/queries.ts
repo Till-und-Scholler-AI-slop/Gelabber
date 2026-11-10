@@ -128,3 +128,16 @@ export function useOperatorAction<Input, Result>(
       }),
   });
 }
+
+/**
+ * Refetches the whole area, for an action run outside `useOperatorAction`
+ * (one that asks first, then calls the route itself).
+ */
+export function useOperatorRefresh(): () => void {
+  const client = useQueryClient();
+  const userId = useUserId();
+  return () =>
+    void client.invalidateQueries({
+      queryKey: operatorKeys.all(userId, scopeGeneration()),
+    });
+}

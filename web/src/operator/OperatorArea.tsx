@@ -6,10 +6,20 @@ import type { ReactNode } from "react";
 import { useT } from "../i18n/catalog.ts";
 import { operator } from "../i18n/catalogs/operator.ts";
 import type { OperatorPage } from "./areas.ts";
+import { ReportsPage } from "./pages/ReportsPage.tsx";
+import { ServersPage } from "./pages/ServersPage.tsx";
 import "./operator.css";
 
-export function OperatorArea({ page }: { page: OperatorPage }) {
-  return <OperatorPageFrame page={page} />;
+export function OperatorArea({ page, q }: { page: OperatorPage; q?: string }) {
+  switch (page) {
+    case "server":
+      // A new `?q=` ("Zum Server") starts the page over with that search.
+      return <ServersPage key={q ?? ""} q={q} />;
+    case "meldungen":
+      return <ReportsPage />;
+    default:
+      return <OperatorPageFrame page={page} />;
+  }
 }
 
 export function OperatorPageFrame({
