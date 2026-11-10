@@ -318,8 +318,8 @@ pub struct ReasonBody {
 
 /// `POST /api/operator/servers/{id}/delist`: out of the directory, and its
 /// owner cannot list it again. Its open reports close as `actioned`, also
-/// when it was delisted already; only a call that changes nothing writes
-/// no audit row.
+/// when it was delisted already. Every call writes an audit row; `changed`
+/// says whether it delisted the server.
 async fn delist(
     State(state): State<AppState>,
     op: Operator,
@@ -336,16 +336,14 @@ async fn delist(
             .await?;
     }
     let reports = action_reports(&mut tx, id, &op).await?;
-    if !delisted || reports > 0 {
-        audit::record(
-            &mut tx,
-            &op,
-            Action::ServersDelist,
-            server_target(id),
-            json!({ "reason": reason, "reports": reports }),
-        )
-        .await?;
-    }
+    audit::record(
+        &mut tx,
+        &op,
+        Action::ServersDelist,
+        server_target(id),
+        json!({ "reason": reason, "reports": reports, "changed": !delisted }),
+    )
+    .await?;
     let server = load(&mut tx, id).await?;
     tx.commit().await?;
     Ok(Json(server))
@@ -365,15 +363,15 @@ async fn relist(
             .bind(id)
             .execute(&mut *tx)
             .await?;
-        audit::record(
-            &mut tx,
-            &op,
-            Action::ServersRelist,
-            server_target(id),
-            json!({}),
-        )
-        .await?;
     }
+    audit::record(
+        &mut tx,
+        &op,
+        Action::ServersRelist,
+        server_target(id),
+        json!({ "changed": delisted }),
+    )
+    .await?;
     let server = load(&mut tx, id).await?;
     tx.commit().await?;
     Ok(Json(server))
@@ -412,16 +410,14 @@ async fn block(
         Some((members, channel_ids))
     };
     let reports = action_reports(&mut tx, id, &op).await?;
-    if !blocked || reports > 0 {
-        audit::record(
-            &mut tx,
-            &op,
-            Action::ServersBlock,
-            server_target(id),
-            json!({ "reason": reason, "reports": reports }),
-        )
-        .await?;
-    }
+    audit::record(
+        &mut tx,
+        &op,
+        Action::ServersBlock,
+        server_target(id),
+        json!({ "reason": reason, "reports": reports, "changed": !blocked }),
+    )
+    .await?;
     let server = load(&mut tx, id).await?;
     tx.commit().await?;
 
@@ -456,15 +452,15 @@ async fn unblock(
         .bind(id)
         .execute(&mut *tx)
         .await?;
-        audit::record(
-            &mut tx,
-            &op,
-            Action::ServersUnblock,
-            server_target(id),
-            json!({}),
-        )
-        .await?;
     }
+    audit::record(
+        &mut tx,
+        &op,
+        Action::ServersUnblock,
+        server_target(id),
+        json!({ "changed": blocked }),
+    )
+    .await?;
     let server = load(&mut tx, id).await?;
     tx.commit().await?;
     Ok(Json(server))

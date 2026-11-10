@@ -400,8 +400,8 @@ async fn insert(
 }
 
 /// `DELETE /api/operator/invitations/{id}`: the link stops working. A used
-/// invitation cannot be revoked; a revoked one stays as it is, without an
-/// audit row.
+/// invitation cannot be revoked; a revoked one stays as it is. Either way
+/// the call writes an audit row, with `changed` saying which.
 async fn revoke(
     State(state): State<AppState>,
     op: Operator,
@@ -427,18 +427,18 @@ async fn revoke(
             .bind(id)
             .execute(&mut *tx)
             .await?;
-        audit::record(
-            &mut tx,
-            &op,
-            Action::InvitationsRevoke,
-            Targets {
-                invitation: Some(id),
-                ..Targets::default()
-            },
-            json!({}),
-        )
-        .await?;
     }
+    audit::record(
+        &mut tx,
+        &op,
+        Action::InvitationsRevoke,
+        Targets {
+            invitation: Some(id),
+            ..Targets::default()
+        },
+        json!({ "changed": !revoked }),
+    )
+    .await?;
     tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }

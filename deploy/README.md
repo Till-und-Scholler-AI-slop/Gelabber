@@ -364,7 +364,7 @@ The page shows the mode but cannot change it; change `.env` and recreate the API
 
 **Reports** come from members of a server (`POST /api/servers/{id}/reports`, at most 10 per account and hour). Owners never see them; operators close them under "Meldungen".
 
-**Audit:** every operator request that succeeds writes a row to `operator_audit`, reads included (`*.list` with the search in `detail`). Opening the area writes none, and neither does a request that changes nothing, such as blocking a server twice. Rows are never purged, and there is no page for them. Read them with SQL (with your `POSTGRES_USER` and `POSTGRES_DB`):
+**Audit:** every operator request that succeeds writes a row to `operator_audit`, reads included (`*.list` with the search in `detail`). Opening the area writes none, and neither does disabling an account that is disabled already. Any other request that changes nothing, such as blocking a server twice, writes a row with `"changed": false` in `detail`. Rows are never purged, and there is no page for them. Read them with SQL (with your `POSTGRES_USER` and `POSTGRES_DB`):
 
 ```sh
 docker compose exec postgres psql -U gelabber gelabber -c "

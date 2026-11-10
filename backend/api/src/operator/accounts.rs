@@ -366,7 +366,8 @@ async fn disable(
 }
 
 /// `POST /api/operator/accounts/{id}/enable`. The account can sign in
-/// again; an account that is not disabled stays as it is.
+/// again; an account that is not disabled stays as it is. Either way the
+/// call writes an audit row, with `changed` saying which.
 async fn enable(
     State(state): State<AppState>,
     op: Operator,
@@ -382,18 +383,18 @@ async fn enable(
         .bind(id)
         .execute(&mut *tx)
         .await?;
-        audit::record(
-            &mut tx,
-            &op,
-            Action::AccountsEnable,
-            Targets {
-                user: Some(id),
-                ..Targets::default()
-            },
-            json!({}),
-        )
-        .await?;
     }
+    audit::record(
+        &mut tx,
+        &op,
+        Action::AccountsEnable,
+        Targets {
+            user: Some(id),
+            ..Targets::default()
+        },
+        json!({ "changed": disabled }),
+    )
+    .await?;
     let account = load(&state, &mut tx, id).await?.ok_or(ApiError::NotFound)?;
     tx.commit().await?;
     Ok(Json(account))

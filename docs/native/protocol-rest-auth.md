@@ -444,7 +444,7 @@ Only members can report in v0.10. Reports are read only by operators; owners nev
 | `POST /api/operator/reports/{id}/resolve` | `{"status": "dismissed" \| "actioned", "note"?}` | `200 Report` |
 | `GET /api/operator/usage` | — | `200` counts of accounts, servers, messages, storage and live use |
 
-The shapes and every error are in `backend/api/src/operator/` and issue #517. Every successful call writes a row of the operator audit (deploy/README.md, "Betrieb"), except `GET /api/operator` and calls that change nothing.
+The shapes and every error are in `backend/api/src/operator/` and issue #517. Every successful call writes a row of the operator audit (deploy/README.md, "Betrieb"), except `GET /api/operator` and disabling an account that is disabled already. A call that changes nothing else records `"changed": false` in the row's `detail`.
 
 ---
 

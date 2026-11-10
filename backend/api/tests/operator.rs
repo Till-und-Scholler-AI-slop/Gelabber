@@ -384,7 +384,7 @@ async fn disabling_ends_every_session_and_refuses_sign_in(pool: PgPool) {
     assert!(res.body["disabled_reason"].is_null());
     let res = tom.login(TOM, PASSWORD).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    // Enabling an active account changes nothing and writes no row.
+    // Enabling an active account changes nothing, and its row says so.
     let res = enable(&mut lena, &tom_id).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     assert_eq!(res.body["live_sessions"], 1);
@@ -394,7 +394,17 @@ async fn disabling_ends_every_session_and_refuses_sign_in(pool: PgPool) {
             .into_iter()
             .map(|(action, _)| action)
             .collect::<Vec<_>>(),
-        ["accounts.disable", "accounts.enable"]
+        ["accounts.disable", "accounts.enable", "accounts.enable"]
+    );
+    let details: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT detail FROM operator_audit WHERE action = 'accounts.enable' ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        details,
+        [json!({ "changed": true }), json!({ "changed": false })]
     );
 }
 
@@ -813,7 +823,7 @@ async fn an_operator_creates_lists_and_revokes_invitations(pool: PgPool) {
     );
     assert_eq!(res.body["invitations"][1], mia);
 
-    // Revoking: once with an audit row, a second time without.
+    // Revoking twice: the second row says it changed nothing.
     for _ in 0..2 {
         let res = lena
             .send(
@@ -889,6 +899,7 @@ async fn an_operator_creates_lists_and_revokes_invitations(pool: PgPool) {
             ("invitations.create".to_owned(), Some(mia_uuid)),
             ("invitations.create".to_owned(), Some(anyone_uuid)),
             ("invitations.list".to_owned(), None),
+            ("invitations.revoke".to_owned(), Some(anyone_uuid)),
             ("invitations.revoke".to_owned(), Some(anyone_uuid)),
             ("invitations.list".to_owned(), None),
             ("invitations.list".to_owned(), None),
@@ -1373,7 +1384,7 @@ async fn blocking_a_server_locks_its_members_out_until_unblocked(pool: PgPool) {
         assert_eq!(res.status, StatusCode::GONE, "{}", res.body);
     }
 
-    // A second block changes nothing and writes no row.
+    // A second block changes nothing, and its row says so.
     let res = operate(
         &mut lena,
         &abend.id,
@@ -1383,7 +1394,13 @@ async fn blocking_a_server_locks_its_members_out_until_unblocked(pool: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     assert_eq!(res.body["blocked_reason"], "Betrug");
-    assert_eq!(server_audit(&pool).await.len(), 1);
+    let audit = server_audit(&pool).await;
+    assert_eq!(audit.len(), 2);
+    assert_eq!(audit[0].2["changed"], true);
+    assert_eq!(
+        audit[1].2,
+        json!({ "reason": "Anders", "reports": 0, "changed": false })
+    );
 
     // Unblocking restores access.
     let res = operate(&mut lena, &abend.id, "unblock", None).await;
@@ -1401,14 +1418,22 @@ async fn blocking_a_server_locks_its_members_out_until_unblocked(pool: PgPool) {
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
     let unread = ben.send(Method::GET, "/api/messages/unread", None).await;
     assert!(unread_of(&unread, &abend.text).is_some());
+    // A second unblock changes nothing, and its row says so.
     let res = operate(&mut lena, &abend.id, "unblock", None).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    let actions: Vec<String> = server_audit(&pool)
-        .await
-        .into_iter()
-        .map(|row| row.0)
-        .collect();
-    assert_eq!(actions, ["servers.block", "servers.unblock"]);
+    let audit = server_audit(&pool).await;
+    let actions: Vec<&str> = audit.iter().map(|row| row.0.as_str()).collect();
+    assert_eq!(
+        actions,
+        [
+            "servers.block",
+            "servers.block",
+            "servers.unblock",
+            "servers.unblock"
+        ]
+    );
+    assert_eq!(audit[2].2, json!({ "changed": true }));
+    assert_eq!(audit[3].2, json!({ "changed": false }));
 }
 
 #[sqlx::test]
@@ -1594,10 +1619,11 @@ async fn delisting_closes_reports_and_relisting_clears_it(pool: PgPool) {
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
 
-    // Again with nothing to do: no row. A new report is closed by the next.
+    // Again with nothing to do: a row that says so. A new report is closed
+    // by the next.
     let res = operate(&mut lena, &abend.id, "delist", Some(json!({}))).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.body);
-    assert_eq!(server_audit(&pool).await.len(), 1);
+    assert_eq!(server_audit(&pool).await.len(), 2);
     let second = report(&pool, &abend.id, ben.user_id()).await;
     let res = operate(&mut lena, &abend.id, "delist", Some(json!({}))).await;
     assert_eq!(res.body["directory"], "delisted", "{}", res.body);
@@ -1613,10 +1639,28 @@ async fn delisting_closes_reports_and_relisting_clears_it(pool: PgPool) {
     let actions: Vec<&str> = audit.iter().map(|row| row.0.as_str()).collect();
     assert_eq!(
         actions,
-        ["servers.delist", "servers.delist", "servers.relist"]
+        [
+            "servers.delist",
+            "servers.delist",
+            "servers.delist",
+            "servers.relist",
+            "servers.relist"
+        ]
     );
-    assert_eq!(audit[0].2, json!({ "reason": "Werbung", "reports": 1 }));
-    assert_eq!(audit[1].2, json!({ "reason": null, "reports": 1 }));
+    assert_eq!(
+        audit[0].2,
+        json!({ "reason": "Werbung", "reports": 1, "changed": true })
+    );
+    assert_eq!(
+        audit[1].2,
+        json!({ "reason": null, "reports": 0, "changed": false })
+    );
+    assert_eq!(
+        audit[2].2,
+        json!({ "reason": null, "reports": 1, "changed": false })
+    );
+    assert_eq!(audit[3].2, json!({ "changed": true }));
+    assert_eq!(audit[4].2, json!({ "changed": false }));
     assert!(
         audit
             .iter()
@@ -1636,7 +1680,7 @@ async fn delisting_closes_reports_and_relisting_clears_it(pool: PgPool) {
             assert_eq!(res.status, StatusCode::NOT_FOUND, "{action}: {}", res.body);
         }
     }
-    assert_eq!(server_audit(&pool).await.len(), 3);
+    assert_eq!(server_audit(&pool).await.len(), 5);
 }
 
 #[sqlx::test]
