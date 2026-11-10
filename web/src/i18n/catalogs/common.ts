@@ -1,0 +1,47 @@
+// Words many surfaces share. Extraction batches only read this namespace;
+// a batch that needs another shared word keeps it in its own namespace.
+import { defineCatalog } from "../catalog.ts";
+
+export const common = defineCatalog(
+  "common",
+  {
+    cancel: "Abbrechen",
+    save: "Speichern",
+    close: "Schließen",
+    delete: "Löschen",
+    remove: "Entfernen",
+    back: "Zurück",
+    next: "Weiter",
+    done: "Fertig",
+    copy: "Kopieren",
+    copied: "Kopiert",
+    tryAgain: "Erneut versuchen",
+    saved: "Gespeichert.",
+    notSaved: "Nicht gespeichert – erneut versuchen",
+    loading: "Wird geladen…",
+    "scope.account": "Für dein Konto",
+    "scope.device": "Nur dieses Gerät",
+    online: "Online",
+    offline: "Offline",
+  },
+  {
+    cancel: "Cancel",
+    save: "Save",
+    close: "Close",
+    delete: "Delete",
+    remove: "Remove",
+    back: "Back",
+    next: "Next",
+    done: "Done",
+    copy: "Copy",
+    copied: "Copied",
+    tryAgain: "Try again",
+    saved: "Saved.",
+    notSaved: "Not saved – try again",
+    loading: "Loading…",
+    "scope.account": "For your account",
+    "scope.device": "This device only",
+    online: "Online",
+    offline: "Offline",
+  },
+);
