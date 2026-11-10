@@ -624,3 +624,80 @@ async fn mails_follow_the_account_language(pool: PgPool) {
     let sent = outbox(&mailer, 6).await;
     assert_eq!(sent[5].subject, "Neues Passwort für Gelabber");
 }
+
+/// Registration with mail on, on an invitation-only instance (#517): the
+/// answer stays `202` either way, and only a new or pending account uses
+/// up the invitation.
+#[sqlx::test]
+async fn with_mail_only_a_new_or_pending_account_uses_an_invitation(pool: PgPool) {
+    let (open, mailer) = mail_state(pool.clone());
+    confirmed_ada(&open, &mailer).await;
+    let mut state = open.clone();
+    state.registration = gelabber_api::config::RegistrationMode::Invitation;
+    let invitation = |code: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, uuid::Uuid>(
+                "INSERT INTO beta_invitations (code) VALUES ($1) RETURNING id",
+            )
+            .bind(code)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let used_by = |id: uuid::Uuid| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<uuid::Uuid>>(
+                "SELECT used_by FROM beta_invitations WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let register = |email: &'static str, code: Option<&'static str>| {
+        let state = state.clone();
+        async move {
+            let mut client = client(&state).await;
+            let mut body = json!({ "email": email, "password": PASSWORD, "name": "Neu" });
+            if let Some(code) = code {
+                body["invitation"] = json!(code);
+            }
+            post(&mut client, "/api/auth/register", body).await
+        }
+    };
+
+    let res = register("bob@example.com", None).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    assert_eq!(res.body["error"], "invitation_required");
+
+    // A confirmed address keeps its account and the invitation stays open.
+    let first = invitation("aaaaaaaaaaaa").await;
+    let res = register(ADA, Some("aaaaaaaaaaaa")).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    assert_eq!(used_by(first).await, None);
+    let sent = outbox(&mailer, 2).await;
+    assert_eq!(sent[1].to, ADA);
+
+    // A new address uses it up.
+    let res = register("bob@example.com", Some("aaaaaaaaaaaa")).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    let bob: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM users WHERE email = 'bob@example.com'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(used_by(first).await, Some(bob));
+    outbox(&mailer, 3).await;
+
+    // Taking over the pending row uses the next one.
+    let second = invitation("bbbbbbbbbbbb").await;
+    let res = register("bob@example.com", Some("aaaaaaaaaaaa")).await;
+    assert_eq!(res.status, StatusCode::GONE, "{}", res.body);
+    let res = register("bob@example.com", Some("bbbbbbbbbbbb")).await;
+    assert_eq!(res.status, StatusCode::ACCEPTED, "{}", res.body);
+    assert_eq!(used_by(second).await, Some(bob));
+}

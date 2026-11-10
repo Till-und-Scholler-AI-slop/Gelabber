@@ -713,3 +713,320 @@ async fn closed(ws: &mut Ws) {
         }
     }
 }
+
+// ---- Beta invitations ----
+
+/// Rows of `operator_audit` as (action, target_invitation).
+async fn invitation_audit(pool: &PgPool) -> Vec<(String, Option<Uuid>)> {
+    sqlx::query_as(
+        "SELECT action, target_invitation FROM operator_audit \
+         WHERE action LIKE 'invitations.%' ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+async fn invite(op: &mut Client, body: serde_json::Value) -> common::Response {
+    op.send(Method::POST, "/api/operator/invitations", Some(body))
+        .await
+}
+
+#[sqlx::test]
+async fn the_invitation_routes_answer_401_and_404_like_the_area(pool: PgPool) {
+    let state = operator_state(pool.clone());
+    let mut tom = registered(&state, TOM, "Tom").await;
+    let mut anonymous = Client::from_state(state.clone());
+    anonymous.bootstrap().await;
+    let id = Uuid::new_v4();
+    for (method, path, body) in [
+        (Method::GET, "/api/operator/invitations".to_owned(), None),
+        (
+            Method::POST,
+            "/api/operator/invitations".to_owned(),
+            Some(json!({})),
+        ),
+        (
+            Method::DELETE,
+            format!("/api/operator/invitations/{id}"),
+            None,
+        ),
+    ] {
+        let res = anonymous.send(method.clone(), &path, body.clone()).await;
+        assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{path}: {}", res.body);
+        let res = tom.send(method, &path, body).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{path}: {}", res.body);
+    }
+    let invitations: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM beta_invitations")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(invitations, 0);
+    assert!(invitation_audit(&pool).await.is_empty());
+}
+
+#[sqlx::test]
+async fn an_operator_creates_lists_and_revokes_invitations(pool: PgPool) {
+    let mut state = operator_state(pool.clone());
+    state.public_url = Some(url::Url::parse("https://chat.example.org/").unwrap());
+    let mut lena = registered(&state, LENA, "Lena").await;
+    let lena_id = lena.user_id().to_owned();
+
+    let res = invite(
+        &mut lena,
+        json!({ "email": " Mia@Example.TEST ", "note": " Mias Runde ", "expires_in_days": 7 }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let mia = res.body.clone();
+    let code = mia["code"].as_str().unwrap().to_owned();
+    assert_eq!(code.len(), 12);
+    assert_eq!(
+        mia["link"],
+        format!("https://chat.example.org/register?invitation={code}")
+    );
+    assert_eq!(mia["email"], "mia@example.test");
+    assert_eq!(mia["note"], "Mias Runde");
+    assert_eq!(mia["status"], "open");
+    assert_eq!(mia["created_by"], json!({ "id": lena_id, "name": "Lena" }));
+    assert!(mia["used_by"].is_null() && mia["used_at"].is_null());
+    let expires: chrono::DateTime<chrono::Utc> =
+        serde_json::from_value(mia["expires_at"].clone()).unwrap();
+    let days = (expires - chrono::Utc::now()).num_hours();
+    assert!((167..=168).contains(&days), "{days}");
+
+    let res = invite(&mut lena, json!({ "expires_in_days": null })).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let anyone = res.body.clone();
+    assert!(anyone["email"].is_null() && anyone["note"].is_null());
+    assert!(anyone["expires_at"].is_null());
+    let anyone_id = anyone["id"].as_str().unwrap().to_owned();
+
+    let res = lena
+        .send(Method::GET, "/api/operator/invitations", None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body["total"], 2);
+    assert_eq!(
+        res.body["invitations"][0]["id"], anyone["id"],
+        "newest first"
+    );
+    assert_eq!(res.body["invitations"][1], mia);
+
+    // Revoking: once with an audit row, a second time without.
+    for _ in 0..2 {
+        let res = lena
+            .send(
+                Method::DELETE,
+                &format!("/api/operator/invitations/{anyone_id}"),
+                None,
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    }
+    let res = lena
+        .send(Method::GET, "/api/operator/invitations?status=open", None)
+        .await;
+    assert_eq!(res.body["total"], 1, "{}", res.body);
+    assert_eq!(res.body["invitations"][0]["id"], mia["id"]);
+    let res = lena
+        .send(Method::GET, "/api/operator/invitations?status=all", None)
+        .await;
+    assert_eq!(res.body["invitations"][0]["status"], "revoked");
+
+    // Mia registers with hers on the invitation-only instance; then it
+    // shows as used and cannot be revoked.
+    let mut closed = state.clone();
+    closed.registration = RegistrationMode::Invitation;
+    let mut invited = Client::from_state(closed);
+    invited.bootstrap().await;
+    let res = invited
+        .send(
+            Method::POST,
+            "/api/auth/register",
+            Some(json!({
+                "email": "mia@example.test", "password": PASSWORD, "name": "Mia",
+                "invitation": code,
+            })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let res = lena
+        .send(Method::GET, "/api/operator/invitations?status=used", None)
+        .await;
+    assert_eq!(res.body["total"], 1, "{}", res.body);
+    let used = &res.body["invitations"][0];
+    assert_eq!(used["status"], "used");
+    assert_eq!(
+        used["used_by"],
+        json!({ "id": invited.user_id(), "name": "Mia" })
+    );
+    assert!(used["used_at"].is_string());
+    let mia_id = mia["id"].as_str().unwrap();
+    let res = lena
+        .send(
+            Method::DELETE,
+            &format!("/api/operator/invitations/{mia_id}"),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    assert_eq!(res.body["fields"], json!({ "invitation": "used" }));
+    let res = lena
+        .send(
+            Method::DELETE,
+            &format!("/api/operator/invitations/{}", Uuid::new_v4()),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+
+    let mia_uuid: Uuid = mia_id.parse().unwrap();
+    let anyone_uuid: Uuid = anyone_id.parse().unwrap();
+    assert_eq!(
+        invitation_audit(&pool).await,
+        vec![
+            ("invitations.create".to_owned(), Some(mia_uuid)),
+            ("invitations.create".to_owned(), Some(anyone_uuid)),
+            ("invitations.list".to_owned(), None),
+            ("invitations.revoke".to_owned(), Some(anyone_uuid)),
+            ("invitations.list".to_owned(), None),
+            ("invitations.list".to_owned(), None),
+            ("invitations.list".to_owned(), None),
+        ]
+    );
+    let detail: serde_json::Value = sqlx::query_scalar(
+        "SELECT detail FROM operator_audit WHERE action = 'invitations.create' ORDER BY id LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        detail,
+        json!({ "email": "mia@example.test", "note": "Mias Runde", "expires_in_days": 7, "send_mail": false })
+    );
+}
+
+#[sqlx::test]
+async fn invitation_links_without_a_public_url_use_the_requests_host(pool: PgPool) {
+    let state = operator_state(pool.clone());
+    let mut lena = registered(&state, LENA, "Lena").await;
+    let res = invite(&mut lena, json!({})).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let link = res.body["link"].as_str().unwrap();
+    let code = res.body["code"].as_str().unwrap();
+    assert!(
+        link.ends_with(&format!("/register?invitation={code}")),
+        "{link}"
+    );
+}
+
+#[sqlx::test]
+async fn invitation_requests_are_validated(pool: PgPool) {
+    let state = operator_state(pool.clone());
+    let mut lena = registered(&state, LENA, "Lena").await;
+    registered(&state, TOM, "Tom").await;
+    // A pending registration may still be invited; it is taken over.
+    sqlx::query(
+        "INSERT INTO users (email, name, password_hash, registration_pending) \
+         VALUES ('pending@example.test', 'P', 'x', true)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    for (body, fields) in [
+        (json!({ "email": "kein at" }), json!({ "email": "invalid" })),
+        (
+            json!({ "email": "Tom@Example.test" }),
+            json!({ "email": "taken" }),
+        ),
+        (
+            json!({ "expires_in_days": 3 }),
+            json!({ "expires_in_days": "invalid" }),
+        ),
+        (
+            json!({ "expires_in_days": 0 }),
+            json!({ "expires_in_days": "invalid" }),
+        ),
+        (
+            json!({ "note": "x".repeat(201) }),
+            json!({ "note": "too_long" }),
+        ),
+        (
+            json!({ "email": "mia@example.test", "send_mail": true }),
+            json!({ "send_mail": "unavailable" }),
+        ),
+        (
+            json!({ "send_mail": true }),
+            json!({ "send_mail": "unavailable" }),
+        ),
+    ] {
+        let res = invite(&mut lena, body.clone()).await;
+        assert_eq!(
+            res.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{body}: {}",
+            res.body
+        );
+        assert_eq!(res.body["fields"], fields, "{body}");
+    }
+    let res = invite(
+        &mut lena,
+        json!({ "email": "pending@example.test", "note": "x".repeat(200) }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let res = lena
+        .send(
+            Method::GET,
+            "/api/operator/invitations?status=revoked",
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", res.body);
+    assert_eq!(res.body["fields"], json!({ "status": "invalid" }));
+    let res = lena
+        .send(Method::GET, "/api/operator/invitations?offset=-1", None)
+        .await;
+    assert_eq!(res.body["fields"], json!({ "offset": "invalid" }));
+    let actions: Vec<String> = invitation_audit(&pool)
+        .await
+        .into_iter()
+        .map(|(action, _)| action)
+        .collect();
+    assert_eq!(actions, ["invitations.create"]);
+}
+
+#[sqlx::test]
+async fn an_invitation_is_mailed_in_the_operators_language(pool: PgPool) {
+    let lena = registered(&operator_state(pool.clone()), LENA, "Lena").await;
+    sqlx::query("UPDATE users SET email_verified_at = now(), locale = 'en' WHERE email = $1")
+        .bind(LENA)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut state = operator_state(pool.clone());
+    let mailer = Mailer::memory(&url::Url::parse("https://chat.example.org/").unwrap());
+    state.mail = Some(mailer.clone());
+    state.public_url = Some(url::Url::parse("https://chat.example.org/").unwrap());
+    let mut lena = moved(&lena, &state);
+
+    let res = invite(
+        &mut lena,
+        json!({ "email": "mia@example.test", "send_mail": true, "expires_in_days": 30 }),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let link = res.body["link"].as_str().unwrap().to_owned();
+    let sent = outbox(&mailer, 1).await;
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].to, "mia@example.test");
+    assert_eq!(sent[0].subject, "Your invitation to Gelabber");
+    assert!(sent[0].body.contains(&link), "{}", sent[0].body);
+
+    // Without send_mail nothing goes out.
+    let res = invite(&mut lena, json!({ "email": "ole@example.test" })).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(mailer.outbox().len(), 1);
+}

@@ -490,6 +490,9 @@ pub enum MailBudget {
     Registration,
     /// Password reset links.
     Reset,
+    /// Beta invitations an operator mails (`operator::invitations`), kept
+    /// apart so they never use up the invitee's confirmation mails.
+    Invitation,
 }
 
 impl MailBudget {
@@ -497,6 +500,7 @@ impl MailBudget {
         match self {
             Self::Registration => "mail",
             Self::Reset => "mail_reset",
+            Self::Invitation => "mail_invite",
         }
     }
 }
@@ -529,7 +533,10 @@ fn account_key(email: &str) -> String {
 
 /// Limiter keys of the per-account counts above, which eviction spares.
 fn is_per_account(key: &str) -> bool {
-    key.starts_with("login:") || key.starts_with("mail:") || key.starts_with("mail_reset:")
+    key.starts_with("login:")
+        || key.starts_with("mail:")
+        || key.starts_with("mail_reset:")
+        || key.starts_with("mail_invite:")
 }
 
 /// The client address the rate limits are keyed by, with IPv6 grouped per
