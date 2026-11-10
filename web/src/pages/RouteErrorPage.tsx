@@ -1,4 +1,6 @@
 import { Button } from "../components/ui/Button.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { auth } from "../i18n/catalogs/auth.ts";
 import { useVoice } from "../voice/session.ts";
 import "./auth.css";
 
@@ -10,18 +12,17 @@ export function RouteErrorPage() {
 }
 
 export function RouteErrorView({ inCall }: { inCall: boolean }) {
+  const t = useT(auth);
   return (
     <div className="px-6 py-10">
       <section role="alert" className="lr-auth-card mx-auto w-full max-w-sm">
-        <h1>Etwas ist schiefgelaufen</h1>
+        <h1>{t("routeError.title")}</h1>
         <p className="auth-lead">
-          {inCall
-            ? "Diese Seite konnte nicht angezeigt werden. Dein Anruf läuft weiter. Neu laden beendet ihn."
-            : "Diese Seite konnte nicht angezeigt werden."}
+          {inCall ? t("routeError.bodyInCall") : t("routeError.body")}
         </p>
         <div className="auth-actions">
           <Button variant="primary" onClick={() => window.location.reload()}>
-            Seite neu laden
+            {t("routeError.reload")}
           </Button>
         </div>
       </section>

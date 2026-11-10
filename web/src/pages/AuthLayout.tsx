@@ -5,6 +5,10 @@
 import { Link, Outlet } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 
+import { useT } from "../i18n/catalog.ts";
+import { auth } from "../i18n/catalogs/auth.ts";
+import { language } from "../i18n/catalogs/language.ts";
+
 import "./auth.css";
 
 export function AuthLayout() {
@@ -21,7 +25,7 @@ export function AuthFrame({ children }: { children: ReactNode }) {
       <div className="auth-column">
         <Link to="/" className="auth-brand">
           <img src="/icons/icon-192.png" alt="" width={40} height={40} />
-          Gelabber
+          {/* i18n-ok */}Gelabber
         </Link>
         {children}
       </div>
@@ -31,9 +35,10 @@ export function AuthFrame({ children }: { children: ReactNode }) {
 
 /** Shown above the heading when the visitor came from an invite link. */
 export function InviteContextBanner() {
+  const t = useT(auth);
   return (
     <p className="auth-banner auth-banner--invite">
-      Einladung erhalten. Melde dich an oder registriere dich, um beizutreten.
+      {t("layout.inviteBanner")}
     </p>
   );
 }
@@ -47,6 +52,8 @@ let splashReplaced = false;
  * flashes them.
  */
 export function AppPlaceholder() {
+  // The static splash's own text, so the hand-over does not change it.
+  const t = useT(language);
   const [immediate] = useState(() => {
     const first = !splashReplaced;
     splashReplaced = true;
@@ -57,8 +64,8 @@ export function AppPlaceholder() {
       className={`app-placeholder ${immediate ? "app-placeholder--immediate" : ""}`}
     >
       <img src="/icons/icon-192.png" alt="" width={48} height={48} />
-      <strong>Gelabber</strong>
-      <span role="status">Verbinde…</span>
+      <strong>{/* i18n-ok */}Gelabber</strong>
+      <span role="status">{t("splash.connecting")}</span>
     </div>
   );
 }
