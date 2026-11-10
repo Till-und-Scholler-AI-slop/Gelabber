@@ -422,6 +422,8 @@ pub struct CardState {
     errors: FormErrors,
     running: Option<&'static str>,
     picking: Option<Picked>,
+    /// The picked or dropped banner, read and cropped off the UI thread.
+    preparing: Option<controls::Prepared>,
     banner_upload: Option<crate::task::Pending<Result<User, gelabber_client::ApiError>>>,
     /// Which colour picker is open.
     picker: Option<&'static str>,
@@ -483,14 +485,28 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
         if let Some(file) = done {
             s.picking = None;
             if let Some((bytes, _)) = file {
-                upload_banner(app, s, &bytes);
+                prepare_banner(ui.ctx(), s, controls::ImageFile::Bytes(bytes));
             }
         }
     }
     if s.running.is_none()
-        && let Some((bytes, _)) = controls::dropped_file(ui.ctx())
+        && let Some(file) = controls::dropped_image(ui.ctx())
     {
-        upload_banner(app, s, &bytes);
+        prepare_banner(ui.ctx(), s, file);
+    }
+    if let Some(prepared) = crate::task::poll(&mut s.preparing) {
+        match prepared {
+            Ok((data, kind)) => {
+                let http = app.client.http().clone();
+                s.banner_upload = Some(crate::task::Pending::spawn(app.client, async move {
+                    http.upload_banner(kind, data).await
+                }));
+            }
+            Err(message) => {
+                s.running = None;
+                s.errors.set_fields(vec![("banner_url", message)]);
+            }
+        }
     }
     // The client may hold a newer user than the one passed (banner upload).
     let user = app
@@ -833,19 +849,11 @@ pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut CardState, viewp
     s.form = Some(form);
 }
 
-fn upload_banner(app: &AppCtx, s: &mut CardState, bytes: &[u8]) {
+/// Reads and crops the banner off the UI thread; the upload follows.
+fn prepare_banner(ctx: &egui::Context, s: &mut CardState, file: controls::ImageFile) {
     s.banner_saved = false;
-    match controls::prepare_image(bytes, 960, 320) {
-        Ok((data, kind)) => {
-            s.running = Some("upload");
-            let http = app.client.http().clone();
-            let kind = kind.to_owned();
-            s.banner_upload = Some(crate::task::Pending::spawn(app.client, async move {
-                http.upload_banner(&kind, data).await
-            }));
-        }
-        Err(message) => s.errors.set_fields(vec![("banner_url", message)]),
-    }
+    s.running = Some("upload");
+    s.preparing = Some(controls::prepare(ctx, file, 960, 320));
 }
 
 /// `ColorField`: label, a 48×36 swatch that opens a picker, the value or

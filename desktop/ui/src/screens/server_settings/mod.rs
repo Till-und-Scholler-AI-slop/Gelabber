@@ -99,6 +99,8 @@ struct State {
     icon: Load<gelabber_client::Server>,
     icon_removing: bool,
     picking: Option<Picked>,
+    /// The picked icon, read and cropped off the UI thread.
+    preparing: Option<controls::Prepared>,
     permissions_status: Status,
     /// The mask the next switch builds on, ahead of the server's answer.
     permissions: Option<Vec<Permission>>,
@@ -673,22 +675,29 @@ fn general(ui: &mut Ui, app: &mut AppCtx, s: &mut State, detail: &ServerDetail) 
         if let Some(file) = done {
             s.picking = None;
             if let Some((bytes, _)) = file {
-                match controls::prepare_image(&bytes, 256, 256) {
-                    Ok((data, kind)) => {
-                        s.icon_removing = false;
-                        s.icon_status.clear();
-                        let http = app.client.http().clone();
-                        let kind = kind.to_owned();
-                        s.icon = Some(Pending::spawn(app.client, async move {
-                            http.upload_server_icon(id, &kind, data).await
-                        }));
-                    }
-                    Err(m) => s.icon_status.error(ui, m),
-                }
+                s.icon_removing = false;
+                s.icon_status.clear();
+                s.preparing = Some(controls::prepare(
+                    ui.ctx(),
+                    controls::ImageFile::Bytes(bytes),
+                    256,
+                    256,
+                ));
             }
         }
     }
-    let busy = s.icon.is_some();
+    if let Some(prepared) = poll(&mut s.preparing) {
+        match prepared {
+            Ok((data, kind)) => {
+                let http = app.client.http().clone();
+                s.icon = Some(Pending::spawn(app.client, async move {
+                    http.upload_server_icon(id, kind, data).await
+                }));
+            }
+            Err(m) => s.icon_status.error(ui, m),
+        }
+    }
+    let busy = s.icon.is_some() || s.preparing.is_some();
     controls::row(ui, 16.0, 64.0, |ui| {
         icon_tile(ui, app, detail);
         ui.spacing_mut().item_spacing.x = 8.0;

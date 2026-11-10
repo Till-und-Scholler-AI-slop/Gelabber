@@ -988,25 +988,59 @@ pub fn save_file(ctx: &egui::Context, title: &str, name: &str, bytes: Vec<u8>) {
     crate::platform::files::save(ctx, title, name, bytes);
 }
 
-/// Takes a dropped file from the window, if one was dropped this frame.
-pub fn dropped_file(ctx: &egui::Context) -> Option<(Vec<u8>, String)> {
+/// A picked or dropped image on its way to an upload.
+pub enum ImageFile {
+    /// Read already (the file chooser's slot).
+    Bytes(Vec<u8>),
+    /// Dropped on the window: read on the worker, its size checked first.
+    Path(std::path::PathBuf),
+}
+
+/// The upload's body and type, or the message for the form.
+pub type Prepared = crate::task::Pending<Result<(Vec<u8>, &'static str), String>>;
+
+/// `prepareAvatar` / `prepareBanner` off the UI thread: read, crop, encode.
+pub fn prepare(ctx: &egui::Context, file: ImageFile, w: u32, h: u32) -> Prepared {
+    crate::task::Pending::thread(ctx, move || {
+        let bytes = match file {
+            ImageFile::Bytes(bytes) => bytes,
+            ImageFile::Path(path) => read_image(&path)?,
+        };
+        prepare_image(&bytes, w, h)
+    })
+}
+
+const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+
+fn too_large() -> String {
+    "Das Bild ist zu groß (höchstens 20 MB).".into()
+}
+
+fn unreadable() -> String {
+    "Dieses Bild kann Gelabber nicht lesen. PNG, JPEG, WebP oder GIF gehen.".into()
+}
+
+/// Reads a dropped file, unless its size already rules it out.
+fn read_image(path: &std::path::Path) -> Result<Vec<u8>, String> {
+    let len = std::fs::metadata(path).map_err(|_| unreadable())?.len();
+    if len > MAX_IMAGE_BYTES {
+        return Err(too_large());
+    }
+    std::fs::read(path).map_err(|_| unreadable())
+}
+
+/// The file dropped on the window this frame, if any (not read yet).
+pub fn dropped_image(ctx: &egui::Context) -> Option<ImageFile> {
     let file = ctx.input(|i| i.raw.dropped_files.first().cloned())?;
-    let path = file.path().to_path_buf();
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    file.bytes().ok().map(|b| (b, name))
+    Some(ImageFile::Path(file.path().to_path_buf()))
 }
 
 /// `prepareAvatar` / `prepareBanner`: a centred crop to `w`×`h`, encoded
 /// as JPEG (opaque) or PNG. Errors are the web's two messages.
-pub fn prepare_image(bytes: &[u8], w: u32, h: u32) -> Result<(Vec<u8>, &'static str), String> {
-    if bytes.len() > 20 * 1024 * 1024 {
-        return Err("Das Bild ist zu groß (höchstens 20 MB).".into());
+fn prepare_image(bytes: &[u8], w: u32, h: u32) -> Result<(Vec<u8>, &'static str), String> {
+    if bytes.len() as u64 > MAX_IMAGE_BYTES {
+        return Err(too_large());
     }
-    let unreadable =
-        || "Dieses Bild kann der Browser nicht lesen. PNG, JPEG, WebP oder GIF gehen.".to_owned();
     let img = image::load_from_memory(bytes).map_err(|_| unreadable())?;
     let (iw, ih) = (img.width() as f64, img.height() as f64);
     let ratio = f64::from(w) / f64::from(h);
@@ -1079,5 +1113,46 @@ mod tests {
         let back = image::load_from_memory(&out).unwrap();
         assert_eq!((back.width(), back.height()), (256, 256));
         assert!(prepare_image(b"nope", 10, 10).is_err());
+    }
+
+    /// A dropped file is prepared on a worker; one over 20 MB is refused by
+    /// its size, before it is read.
+    #[test]
+    fn dropped_images_are_sized_before_they_are_read() {
+        let dir = std::env::temp_dir().join(format!("gelabber-drop-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Sparse: 3 GB on paper, nothing on disk; reading it would take that.
+        let huge = dir.join("huge.png");
+        std::fs::File::create(&huge)
+            .unwrap()
+            .set_len(3 << 30)
+            .unwrap();
+        assert_eq!(read_image(&huge), Err(too_large()));
+        let small = dir.join("small.png");
+        image::RgbaImage::from_pixel(30, 10, image::Rgba([1, 2, 3, 128]))
+            .save(&small)
+            .unwrap();
+        let ctx = egui::Context::default();
+        let mut pending = Some(prepare(&ctx, ImageFile::Path(small), 96, 32));
+        let start = std::time::Instant::now();
+        let prepared = loop {
+            if let Some(done) = crate::task::poll(&mut pending) {
+                break done;
+            }
+            assert!(start.elapsed().as_secs() < 10, "the worker never answered");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        let (_, kind) = prepared.expect("prepared");
+        assert_eq!(kind, "image/png");
+        let mut pending = Some(prepare(&ctx, ImageFile::Path(huge), 96, 32));
+        let refused = loop {
+            if let Some(done) = crate::task::poll(&mut pending) {
+                break done;
+            }
+            assert!(start.elapsed().as_secs() < 10, "the worker never answered");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        assert_eq!(refused, Err(too_large()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

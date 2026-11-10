@@ -26,6 +26,20 @@ impl<T: Send + 'static> Pending<T> {
         Self { slot }
     }
 
+    /// Runs `work` on a thread of its own and wakes the window when done:
+    /// for CPU or file work that must not hold up the UI or the runtime.
+    pub fn thread(ctx: &egui::Context, work: impl FnOnce() -> T + Send + 'static) -> Self {
+        let slot = Arc::new(Mutex::new(None));
+        let out = slot.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let value = work();
+            *out.lock() = Some(value);
+            ctx.request_repaint();
+        });
+        Self { slot }
+    }
+
     /// The output, once it is there.
     pub fn take(&self) -> Option<T> {
         self.slot.lock().take()
