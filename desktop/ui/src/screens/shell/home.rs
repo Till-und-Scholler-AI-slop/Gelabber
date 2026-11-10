@@ -387,6 +387,65 @@ mod tests {
         );
     }
 
+    /// A failed leave makes the server reachable again; leaving it once
+    /// more does not take the old failure for this request's end.
+    #[test]
+    fn a_failed_leave_is_a_way_back_and_a_second_one_holds() {
+        use crate::app::testkit::{HOME, workspace};
+        let _config = TempConfig::new("leave-again");
+        let fail = Arc::new(AtomicBool::new(true));
+        let release = Arc::new(AtomicBool::new(false));
+        let (failing, hold) = (fail.clone(), release.clone());
+        let api = FakeApi::start(true, move |method, path, _| {
+            if method == "POST" && path == format!("/servers/{HOME}/leave") {
+                if failing.load(Ordering::SeqCst) {
+                    return Some(Reply::error(503, "internal"));
+                }
+                while !hold.load(Ordering::SeqCst) {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                return Some(Reply::error(503, "internal"));
+            }
+            workspace(method, path)
+        });
+        /// Lets the held request go also when the test fails.
+        struct Release(Arc<AtomicBool>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let _release = Release(release.clone());
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        wait_for_label(&mut harness, "allgemein");
+        let ctx = harness.ctx.clone();
+        let home: uuid::Uuid = HOME.parse().expect("id");
+        let leave = |h: &mut egui_kittest::Harness<'_, crate::Launcher>| {
+            let app = h.state_mut().app().expect("app");
+            let client = app.client().clone();
+            crate::screens::shell::leave_server(&ctx, &client, home);
+            client.leave_server(home);
+            app.navigate("/");
+        };
+        let route = |h: &mut egui_kittest::Harness<'_, crate::Launcher>| {
+            h.state_mut().app().expect("app").nav().route().clone()
+        };
+        leave(&mut harness);
+        // Failed: "/" leads to the server again.
+        wait_for(&mut harness, "the way back", |h| {
+            h.query_by_label_contains("Server nicht verlassen")
+                .is_some()
+        });
+        wait_for_label(&mut harness, "allgemein");
+        fail.store(false, Ordering::SeqCst);
+        leave(&mut harness);
+        for _ in 0..30 {
+            harness.step();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            assert_eq!(route(&mut harness), crate::route::Route::Home);
+        }
+    }
+
     /// While the workspace loads: the sidebar's skeleton and the page's.
     #[test]
     fn loading_shows_skeletons() {

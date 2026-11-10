@@ -1530,6 +1530,14 @@ impl Client {
     }
 
     fn drop_server(&self, id: Uuid, delete: bool) {
+        let key = if delete {
+            format!("delete_server:{id}")
+        } else {
+            format!("leave:{id}")
+        };
+        // Pending at once: the shell reads an earlier failure of this key
+        // as this request's end and would offer the server again.
+        self.write(|s| s.ops.insert(key.clone(), OpState::Pending));
         let this = self.clone();
         self.spawn(async move {
             let http = this.http().clone();
@@ -1539,11 +1547,6 @@ impl Client {
                 } else {
                     http.leave_server(id).await
                 }
-            };
-            let key = if delete {
-                format!("delete_server:{id}")
-            } else {
-                format!("leave:{id}")
             };
             if this.op(&key, work).await.is_some() {
                 this.write(|s| s.forget_server(id));
@@ -2172,6 +2175,24 @@ mod tests {
         let ok = client.block_on(client.recover());
         assert!(!ok);
         assert!(client.with_state(|s| s.channels[&dm].stale));
+    }
+
+    /// Leaving again after a failed leave is pending from the call on: the
+    /// old failure is not read as the new request's end.
+    #[test]
+    fn a_second_leave_is_pending_at_once() {
+        let (url, _seen) = broken_server();
+        let client = Client::new(&url).unwrap();
+        let id = Uuid::from_u128(5);
+        let key = format!("leave:{id}");
+        client.leave_server(id);
+        let start = std::time::Instant::now();
+        while !client.with_state(|s| matches!(s.op(&key), Some(OpState::Failed(_)))) {
+            assert!(start.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        client.leave_server(id);
+        assert!(client.with_state(|s| matches!(s.op(&key), Some(OpState::Pending))));
     }
 
     /// A level this client does not know is never written back: muting a
