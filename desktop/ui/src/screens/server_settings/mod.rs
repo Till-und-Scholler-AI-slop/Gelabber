@@ -1367,8 +1367,20 @@ mod tests {
         let api = FakeApi::start(true, |method, path, _| workspace(method, path));
         let mut harness = launcher(&api, &format!("/s/{HOME}/settings"));
         wait_for_label(&mut harness, "Servername");
-        harness.get_by_label("Server hinzufügen").click();
-        wait_for_label(&mut harness, "Server erstellen");
+        // The rail's placeholders give way to the server list and the button
+        // moves up, so a click aimed before that misses: aim until it lands.
+        let start = std::time::Instant::now();
+        while harness.query_by_label("Server erstellen").is_none() {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(15),
+                "the add dialog never opened"
+            );
+            harness
+                .get_by_role_and_label(egui::accesskit::Role::Button, "Server hinzufügen")
+                .click();
+            harness.run_steps(4);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         harness.get_by_label("Server erstellen").click();
         harness.run_steps(6);
         harness.get_by_label("Name");
