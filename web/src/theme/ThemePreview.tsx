@@ -1,5 +1,7 @@
 import type { CSSProperties } from "react";
 import { HashIcon, SpeakerIcon, ChatIcon } from "../components/Icons.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { themes } from "../i18n/catalogs/themes.ts";
 import { themeVariables, type ThemeDefinition } from "./model.ts";
 export function ThemePreview({
   theme,
@@ -8,6 +10,7 @@ export function ThemePreview({
   theme: ThemeDefinition;
   small?: boolean;
 }) {
+  const t = useT(themes);
   return (
     <div
       className={`theme-preview${small ? " theme-preview-small" : ""}`}
@@ -16,51 +19,55 @@ export function ThemePreview({
     >
       <aside className="theme-preview-sidebar">
         <strong>Gelabber</strong>
-        <span>KANÄLE</span>
+        {/* i18n-ok */}
+        <span>{t("preview.channels")}</span>
         <b>
-          <ChatIcon size={12} /> Übersicht
+          <ChatIcon size={12} /> {t("preview.overview")}
         </b>
         <span>
-          <HashIcon size={12} /> allgemein
+          <HashIcon size={12} /> {t("preview.general")}
         </span>
         <span>
-          <SpeakerIcon size={12} /> Wohnzimmer
+          <SpeakerIcon size={12} /> {t("preview.livingRoom")}
         </span>
       </aside>
       <div className="theme-preview-chat">
         <header>
           <strong>
-            <HashIcon size={12} /> allgemein
+            <HashIcon size={12} /> {t("preview.general")}
           </strong>
-          <span>Allgemeiner Chat</span>
+          <span>{t("preview.topic")}</span>
         </header>
         <div className="theme-preview-message">
           <i>MA</i>
+          {/* i18n-ok */}
           <div>
             <strong>
               Mara <small>18:42</small>
+              {/* i18n-ok */}
             </strong>
-            <p>Wer ist heute Abend dabei?</p>
+            <p>{t("preview.question")}</p>
           </div>
         </div>
         <div className="theme-preview-message">
-          <i>DU</i>
+          <i>{t("preview.youInitials")}</i>
           <div>
             <strong>
-              Du <small>18:43</small>
+              {t("preview.you")} <small>18:43</small>
             </strong>
-            <p>Bin im Wohnzimmer.</p>
+            <p>{t("preview.answer")}</p>
           </div>
         </div>
         <div className="theme-preview-composer">
-          Nachricht an #allgemein<b>Senden</b>
+          {t("preview.composer")}
+          <b>{t("preview.send")}</b>
         </div>
       </div>
       <footer>
         <span>
-          <em /> Verbunden · Wohnzimmer
+          <em /> {t("preview.connected")}
         </span>
-        <b>Mikrofon an</b>
+        <b>{t("preview.micOn")}</b>
       </footer>
     </div>
   );

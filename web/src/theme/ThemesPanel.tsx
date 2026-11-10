@@ -7,6 +7,9 @@ import { InlineStatus } from "../components/ui/InlineStatus.tsx";
 import type { InlineStatusValue } from "../components/ui/useInlineStatus.ts";
 import { ChipGroup } from "../components/ui/ChipGroup.tsx";
 import { nextChipIndex } from "../components/ui/chipKeys.ts";
+import { T, translate, useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
+import { themes } from "../i18n/catalogs/themes.ts";
 import { randomUuid } from "../lib/uuid.ts";
 import { blockThemeLeave, confirmDiscardThemeDraft } from "./discardDraft.ts";
 import { BUILTIN_THEMES, builtinTheme } from "./presets.ts";
@@ -35,30 +38,17 @@ import {
 import { ThemePreview } from "./ThemePreview.tsx";
 import "./themes.css";
 
-const labels = {
-  background: "Hintergrund",
-  panel: "Seitenleiste",
-  surface: "Flächen",
-  rail: "Serverleiste",
-  text: "Text",
-  muted: "Sekundärtext",
-  accent: "Akzent",
-  border: "Rahmen",
-};
-const styles = { clear: "Klar", soft: "Weich", terminal: "Terminal" } as const;
-const FILTERS = [
-  { value: "all", label: "Alle" },
-  { value: "light", label: "Hell" },
-  { value: "dark", label: "Dunkel" },
-  { value: "own", label: "Eigene" },
-] as const;
-type Filter = (typeof FILTERS)[number]["value"];
+// Their names are the `themes` catalog's `color.<key>`, `style.<style>` and
+// `filter.<filter>`.
+const STYLES = ["clear", "soft", "terminal"] as const;
+const FILTERS = ["all", "light", "dark", "own"] as const;
+type Filter = (typeof FILTERS)[number];
 const systemDark = () => matchMedia("(prefers-color-scheme: dark)").matches;
 function copyTheme(theme: ThemeDefinition): ThemeDefinition {
   return {
     ...theme,
     id: `custom-${randomUuid()}`,
-    name: `${theme.name.slice(0, 48)} – Eigene`,
+    name: translate(themes, "copy.name", { name: theme.name.slice(0, 48) }),
     colors: { ...theme.colors },
   };
 }
@@ -83,13 +73,14 @@ function ColorField({
   onChange: (color: string) => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
+  const t = useT(themes);
   return (
     <label className="theme-color-field">
       <span>{name}</span>
       <div>
         <input
           type="color"
-          aria-label={`${name} wählen`}
+          aria-label={t("color.pickLabel", { name })}
           value={value}
           onChange={(e) => {
             setEditing(null);
@@ -97,7 +88,7 @@ function ColorField({
           }}
         />
         <input
-          aria-label={`${name} Hexwert`}
+          aria-label={t("color.hexLabel", { name })}
           value={editing ?? value}
           pattern="#[0-9a-fA-F]{6}"
           required
@@ -116,6 +107,8 @@ function ColorField({
 }
 
 export function ThemesPanel() {
+  const t = useT(themes);
+  const tc = useT(common);
   const state = useAccountThemes();
   const [filter, setFilter] = useState<Filter>("all");
   // The card tried on, or null for the account's theme, which then follows
@@ -131,8 +124,9 @@ export function ThemesPanel() {
   const selected = picked ?? active;
   const themeName = (id: string) =>
     id === "system"
-      ? "System"
-      : (all.find((t) => t.id === id)?.name ?? builtinTheme("dark").name);
+      ? t("system.name")
+      : (all.find((theme) => theme.id === id)?.name ??
+        builtinTheme("dark").name);
   const chosen =
     selected === "system"
       ? builtinTheme(systemDark() ? "dark" : "light")
@@ -208,12 +202,12 @@ export function ThemesPanel() {
       setPicked(null);
       setNotice({
         tone: "success",
-        message: `„${name}“ angewendet.`,
+        message: t("notice.applied", { name }),
       });
     } else
       setNotice({
         tone: "error",
-        message: "Nicht gespeichert – erneut versuchen",
+        message: tc("notSaved"),
       });
   };
   return (
@@ -225,14 +219,14 @@ export function ThemesPanel() {
             disabled={!canCreate || blocked}
             onClick={() => open(copyTheme(chosen), true)}
           >
-            + Eigenes Theme
+            {t("action.create")}
           </Button>
           <Button
             size="sm"
             disabled={!canCreate || blocked}
             onClick={() => file.current?.click()}
           >
-            Importieren
+            {t("action.import")}
           </Button>
         </div>
       </div>
@@ -241,7 +235,7 @@ export function ThemesPanel() {
         className="theme-file"
         type="file"
         accept=".json,.gelabber-theme.json,application/json"
-        aria-label="Theme-Datei importieren"
+        aria-label={t("action.importLabel")}
         onChange={async (e) => {
           const selectedFile = e.target.files?.[0];
           e.target.value = "";
@@ -249,7 +243,7 @@ export function ThemesPanel() {
           if (selectedFile.size > MAX_IMPORT_BYTES) {
             setNotice({
               tone: "error",
-              message: "Die Datei darf höchstens 64 KiB groß sein.",
+              message: t("error.fileTooLarge"),
             });
             return;
           }
@@ -262,7 +256,7 @@ export function ThemesPanel() {
               message:
                 error instanceof Error
                   ? error.message
-                  : "Import fehlgeschlagen.",
+                  : t("notice.importFailed"),
             });
           }
         }}
@@ -270,14 +264,12 @@ export function ThemesPanel() {
       {(state.error || state.status === "saving") && (
         <div className="themes-sync" role="status">
           <span>
-            {state.status === "saving"
-              ? "Wird mit deinem Konto synchronisiert …"
-              : state.error}
+            {state.status === "saving" ? t("sync.saving") : state.error}
           </span>
           {state.status !== "saving" && (
             <div className="themes-actions">
               <Button size="sm" onClick={() => void retryThemes()}>
-                {state.pending ? "Erneut anwenden" : "Erneut versuchen"}
+                {state.pending ? t("action.retryApply") : tc("tryAgain")}
               </Button>
               {state.pending && (
                 <Button
@@ -285,16 +277,15 @@ export function ThemesPanel() {
                   onClick={async () => {
                     if (
                       await confirmAction({
-                        title: "Lokale Änderung verwerfen?",
-                        message:
-                          "Gelabber lädt dann wieder den Theme-Stand deines Kontos.",
-                        confirmLabel: "Gespeicherten Stand laden",
+                        title: t("discardPending.title"),
+                        message: t("discardPending.message"),
+                        confirmLabel: t("action.loadSaved"),
                       })
                     )
                       void discardPendingTheme();
                   }}
                 >
-                  Gespeicherten Stand laden
+                  {t("action.loadSaved")}
                 </Button>
               )}
             </div>
@@ -304,14 +295,21 @@ export function ThemesPanel() {
       <InlineStatus className="themes-notice" status={notice} />
       <ChipGroup
         className="themes-filter"
-        label="Themes filtern"
-        options={FILTERS}
+        label={t("filter.label")}
+        options={FILTERS.map((value) => ({
+          value,
+          label: t(`filter.${value}`),
+        }))}
         value={filter}
         onChange={setFilter}
       />
       <div className="themes-layout">
         <div>
-          <div className="themes-gallery" role="radiogroup" aria-label="Themes">
+          <div
+            className="themes-gallery"
+            role="radiogroup"
+            aria-label={t("gallery.label")}
+          >
             {options.map(({ id, theme }, index) => (
               <button
                 key={id}
@@ -344,8 +342,7 @@ export function ThemesPanel() {
                     <span className="theme-card-description">
                       <strong>{theme.name}</strong>
                       <span>
-                        {theme.mode === "dark" ? "Dunkel" : "Hell"} ·{" "}
-                        {styles[theme.style]}
+                        {t(`mode.${theme.mode}`)} · {t(`style.${theme.style}`)}
                       </span>
                       <span className="theme-swatches" aria-hidden="true">
                         {[
@@ -364,11 +361,13 @@ export function ThemesPanel() {
                     <span className="theme-system-symbol">
                       <ScreenIcon size={32} />
                     </span>
-                    <strong>System</strong>
-                    <span>Folgt dem Gerät</span>
+                    <strong>{t("system.name")}</strong>
+                    <span>{t("system.hint")}</span>
                   </>
                 )}
-                {active === id && <b className="theme-active">Aktiv</b>}
+                {active === id && (
+                  <b className="theme-active">{t("gallery.active")}</b>
+                )}
                 {selected === id && (
                   <span className="theme-check" aria-hidden="true">
                     <CheckIcon size={14} />
@@ -378,19 +377,19 @@ export function ThemesPanel() {
             ))}
           </div>
           {filter === "own" && state.doc.customThemes.length === 0 && (
-            <p className="themes-empty">Keine eigenen Themes.</p>
+            <p className="themes-empty">{t("gallery.empty")}</p>
           )}
         </div>
         <div className="theme-workbench">
           <header>
             <span className="theme-eyebrow">
-              {draft ? "Dein Entwurf" : "Vorschau"}
+              {draft ? t("workbench.draft") : t("workbench.preview")}
             </span>
             <h3>
               {draft
-                ? draft.name || "Neues Theme"
+                ? draft.name || t("workbench.newTheme")
                 : selected === "system"
-                  ? "Wie dein Gerät"
+                  ? t("system.title")
                   : chosen.name}
             </h3>
           </header>
@@ -404,7 +403,7 @@ export function ThemesPanel() {
             />
             {issues.length > 0 && (
               <div className="theme-contrast" role="status">
-                <strong>Kontrast prüfen</strong>
+                <strong>{t("contrast.title")}</strong>
                 {issues.map((issue) => (
                   <p key={issue}>{issue}</p>
                 ))}
@@ -413,7 +412,7 @@ export function ThemesPanel() {
                     size="sm"
                     onClick={() => setDraft(fixContrast(draft))}
                   >
-                    Kontraste verbessern
+                    {t("contrast.fix")}
                   </Button>
                 )}
               </div>
@@ -434,13 +433,13 @@ export function ThemesPanel() {
                   setDraft(null);
                   setNotice({
                     tone: "success",
-                    message: "Theme gespeichert und angewendet.",
+                    message: t("notice.saved"),
                   });
                 }
               }}
             >
               <label>
-                Name
+                {t("editor.name")}
                 <input
                   required
                   maxLength={60}
@@ -450,7 +449,7 @@ export function ThemesPanel() {
               </label>
               <div className="theme-editor-pair">
                 <label>
-                  Modus
+                  {t("editor.mode")}
                   <select
                     value={draft.mode}
                     onChange={(e) =>
@@ -460,12 +459,12 @@ export function ThemesPanel() {
                       })
                     }
                   >
-                    <option value="dark">Dunkel</option>
-                    <option value="light">Hell</option>
+                    <option value="dark">{t("mode.dark")}</option>
+                    <option value="light">{t("mode.light")}</option>
                   </select>
                 </label>
                 <label>
-                  Stil
+                  {t("editor.style")}
                   <select
                     value={draft.style}
                     onChange={(e) =>
@@ -475,21 +474,21 @@ export function ThemesPanel() {
                       })
                     }
                   >
-                    {Object.entries(styles).map(([id, label]) => (
-                      <option key={id} value={id}>
-                        {label}
+                    {STYLES.map((style) => (
+                      <option key={style} value={style}>
+                        {t(`style.${style}`)}
                       </option>
                     ))}
                   </select>
                 </label>
               </div>
               <fieldset>
-                <legend>Farben</legend>
+                <legend>{t("editor.colors")}</legend>
                 <div className="theme-color-grid">
                   {COLOR_KEYS.map((key) => (
                     <ColorField
                       key={key}
-                      name={labels[key]}
+                      name={t(`color.${key}`)}
                       value={draft.colors[key]}
                       onChange={(color) =>
                         setDraft({
@@ -507,7 +506,7 @@ export function ThemesPanel() {
                   type="submit"
                   disabled={blocked || !draft.name.trim()}
                 >
-                  Speichern und anwenden
+                  {t("editor.save")}
                 </Button>
                 <Button
                   variant="ghost"
@@ -515,7 +514,7 @@ export function ThemesPanel() {
                     if (await abandon()) setDraft(null);
                   }}
                 >
-                  Abbrechen
+                  {tc("cancel")}
                 </Button>
               </div>
             </form>
@@ -526,7 +525,7 @@ export function ThemesPanel() {
                 disabled={!canCreate || blocked}
                 onClick={() => open(copyTheme(chosen), true)}
               >
-                Als Vorlage verwenden
+                {t("action.template")}
               </Button>
               {chosen.id.startsWith("custom-") && selected !== "system" && (
                 <>
@@ -537,7 +536,7 @@ export function ThemesPanel() {
                       open({ ...chosen, colors: { ...chosen.colors } }, false)
                     }
                   >
-                    Bearbeiten
+                    {t("action.edit")}
                   </Button>
                   <Button
                     size="sm"
@@ -546,58 +545,73 @@ export function ThemesPanel() {
                     onClick={async () => {
                       if (
                         (await confirmAction({
-                          title: `Theme „${chosen.name}“ löschen?`,
-                          confirmLabel: "Löschen",
+                          title: t("delete.title", { name: chosen.name }),
+                          confirmLabel: tc("delete"),
                         })) &&
                         (await changeTheme({ kind: "delete", id: chosen.id }))
                       ) {
                         setPicked(null);
                         setNotice({
                           tone: "success",
-                          message: "Theme gelöscht.",
+                          message: t("notice.deleted"),
                         });
                       }
                     }}
                   >
-                    Löschen
+                    {tc("delete")}
                   </Button>
                 </>
               )}
               <Button size="sm" onClick={() => exportTheme(chosen)}>
-                Exportieren
+                {t("action.export")}
               </Button>
             </div>
           )}
         </div>
       </div>
       {previewing ? (
-        <div className="themes-preview-bar" role="region" aria-label="Vorschau">
+        <div
+          className="themes-preview-bar"
+          role="region"
+          aria-label={t("workbench.preview")}
+        >
           <span>
-            <strong>„{themeName(selected)}“</strong> wird angezeigt
+            <T
+              catalog={themes}
+              k="previewBar.showing"
+              params={{ name: themeName(selected) }}
+              tags={{ b: (text) => <strong>{text}</strong> }}
+            />
           </span>
           <div className="themes-actions">
             <Button variant="primary" disabled={blocked} onClick={keep}>
-              Behalten
+              {t("action.keep")}
             </Button>
             <Button variant="ghost" onClick={revert}>
-              Zurück zu {themeName(active)}
+              {t("action.revert", { name: themeName(active) })}
             </Button>
           </div>
         </div>
       ) : null}
       <p className="themes-footnote">
         {state.status === "ready"
-          ? "Mit deinem Konto synchronisiert."
-          : "Deine Themes gehören zu deinem Konto."}{" "}
-        Paletten nach{" "}
-        <a
-          href="https://github.com/omacom/omarchy/tree/quattro/themes"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Omarchy
-        </a>
-        , für Gelabber angepasst.
+          ? t("footnote.synced")
+          : t("footnote.account")}{" "}
+        <T
+          catalog={themes}
+          k="footnote.credit"
+          tags={{
+            link: (text) => (
+              <a
+                href="https://github.com/omacom/omarchy/tree/quattro/themes"
+                target="_blank"
+                rel="noreferrer"
+              >
+                {text}
+              </a>
+            ),
+          }}
+        />
       </p>
     </div>
   );
