@@ -1,14 +1,10 @@
 # W6: files whose UI text is not in the catalogs yet.
 # The batch deletes this list when it is done (docs/i18n.md).
-src/voice/ConnectionStatus.tsx
-src/voice/VoiceDiagnostics.tsx
 src/voice/VoiceSettingsPanel.tsx
 src/voice/callShortcuts.ts
 src/voice/callSoundSynth.ts
 src/voice/callSounds.ts
 src/voice/capabilities.ts
-src/voice/connectionSummary.ts
-src/voice/diagnostics.ts
 src/voice/localSourceAudio.ts
 src/voice/mediaPeer.ts
 src/voice/mediaPriority.ts
