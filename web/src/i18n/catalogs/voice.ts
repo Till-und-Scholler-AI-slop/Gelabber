@@ -185,6 +185,35 @@ export const voice = defineCatalog(
     "error.streamFailed":
       "Der Stream konnte nicht verbunden werden. Der Sprachkanal bleibt aktiv.",
     "error.roomLoadFailed": "Der Sprachkanal konnte nicht geladen werden.",
+    "video.profileFallback":
+      "Dieses Streamprofil wird nicht unterstützt. Es läuft eine sicherere Auflösung.",
+    "video.cameraProfileUnsupported":
+      "Die Kamera unterstützt das Streamprofil nicht.",
+    "video.screenProfileUnsupported":
+      "Die Bildschirmaufnahme unterstützt das Streamprofil nicht.",
+    "video.cameraSwitchFailed":
+      "Kamerawechsel fehlgeschlagen; bisherige Kamera bleibt aktiv",
+    "video.cameraUnavailable": "Die Kamera ist nicht verfügbar.",
+    "video.screenFailed":
+      "Die Bildschirmaufnahme konnte nicht gestartet werden.",
+    "video.rejoinToGoLive": "Betritt den Sprachkanal neu, um live zu gehen.",
+    "mic.processorFallback":
+      "Audioprozessor ausgefallen; lokale Aufnahme beendet, Browser-Ersatz wird aktiviert",
+    "mic.processorFailedBeforeSwitch":
+      "Audioprozessor vor Mikrofonwechsel ausgefallen; Browser-Ersatz wird aktiviert",
+    "mic.lost": "Mikrofon getrennt – Standardgerät wird verwendet",
+    "mic.switchFailed":
+      "Mikrofonwechsel fehlgeschlagen; bisheriges Mikrofon bleibt aktiv",
+    "mic.gainFailed":
+      "Mikrofonverstärkung konnte nicht aktiviert werden; bisheriges Mikrofon bleibt aktiv",
+    "mic.gainLost":
+      "Mikrofonverstärkung ausgefallen; bisheriges Mikrofon bleibt aktiv",
+    "mic.consequenceListen": "du hörst nur zu",
+    "mic.consequenceSwitch": "der Wechsel hat nicht geklappt",
+    "mic.failureNotFound": "Kein Mikrofon gefunden, {consequence}.",
+    "mic.failureNotAllowed": "Mikrofonzugriff nicht erlaubt, {consequence}.",
+    "mic.failureUnavailable":
+      "Das Mikrofon ist gerade nicht verfügbar, {consequence}.",
   },
   {
     percent: "{percent}%",
@@ -362,5 +391,31 @@ export const voice = defineCatalog(
     "error.streamFailed":
       "The stream could not be connected. The voice channel stays active.",
     "error.roomLoadFailed": "The voice channel could not be loaded.",
+    "video.profileFallback":
+      "This stream profile isn’t supported. A safer resolution is running.",
+    "video.cameraProfileUnsupported":
+      "The camera doesn’t support the stream profile.",
+    "video.screenProfileUnsupported":
+      "Screen capture doesn’t support the stream profile.",
+    "video.cameraSwitchFailed":
+      "Couldn’t switch camera; the previous one stays on",
+    "video.cameraUnavailable": "The camera isn’t available.",
+    "video.screenFailed": "Screen capture could not be started.",
+    "video.rejoinToGoLive": "Rejoin the voice channel to go live.",
+    "mic.processorFallback":
+      "Audio processor failed; local capture ended, switching to the browser’s filters",
+    "mic.processorFailedBeforeSwitch":
+      "Audio processor failed before the microphone switch; switching to the browser’s filters",
+    "mic.lost": "Microphone disconnected – using the default device",
+    "mic.switchFailed": "Couldn’t switch microphone; the previous one stays on",
+    "mic.gainFailed":
+      "Microphone gain could not be turned on; the previous microphone stays on",
+    "mic.gainLost": "Microphone gain failed; the previous microphone stays on",
+    "mic.consequenceListen": "you’re only listening",
+    "mic.consequenceSwitch": "the switch didn’t work",
+    "mic.failureNotFound": "No microphone found, {consequence}.",
+    "mic.failureNotAllowed": "Microphone access not allowed, {consequence}.",
+    "mic.failureUnavailable":
+      "The microphone isn’t available right now, {consequence}.",
   },
 );

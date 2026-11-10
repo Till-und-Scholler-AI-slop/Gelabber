@@ -1,6 +1,8 @@
 // The own camera and Live (a screen): capture with its stream profile,
 // the local preview, publishing on the seat's connection, and stopping.
 
+import { translate } from "../i18n/catalog.ts";
+import { voice as texts } from "../i18n/catalogs/voice.ts";
 import type { TrackKind } from "../ws/protocol.ts";
 import { playCallSound } from "./callSounds.ts";
 import type { MediaConnection } from "./mediasoupConnection.ts";
@@ -123,8 +125,7 @@ export async function applyStreamProfile(kind: StreamKind): Promise<void> {
   noteStreamProfileApply(kind, allApplied ? "live" : "next");
 }
 
-const STREAM_PROFILE_FALLBACK =
-  "Dieses Streamprofil wird nicht unterstützt. Es läuft eine sicherere Auflösung.";
+const streamProfileFallback = () => translate(texts, "video.profileFallback");
 
 async function captureVideo(kind: LocalVideo): Promise<MediaStream> {
   const streamKind: StreamKind = kind === "v" ? "camera" : "screen";
@@ -156,13 +157,13 @@ async function captureVideo(kind: LocalVideo): Promise<MediaStream> {
         try {
           await track.applyConstraints(ladder[index]);
           if (index > 0)
-            voice.deps?.onError?.(new Error(STREAM_PROFILE_FALLBACK));
+            voice.deps?.onError?.(new Error(streamProfileFallback()));
           break;
         } catch (error) {
           if (track.readyState === "ended") break;
           if (!isOverconstrainedError(error) || index + 1 === ladder.length) {
             // Capture already succeeded. Keep the browser's usable source.
-            voice.deps?.onError?.(new Error(STREAM_PROFILE_FALLBACK));
+            voice.deps?.onError?.(new Error(streamProfileFallback()));
             break;
           }
         }
@@ -177,7 +178,7 @@ async function captureVideo(kind: LocalVideo): Promise<MediaStream> {
         audio: false,
         video: ladder[index] ?? true,
       });
-      if (index > 0) voice.deps?.onError?.(new Error(STREAM_PROFILE_FALLBACK));
+      if (index > 0) voice.deps?.onError?.(new Error(streamProfileFallback()));
       return stream;
     } catch (error) {
       lastError = error;
@@ -222,7 +223,7 @@ export async function refreshCamera(): Promise<void> {
   } catch (error) {
     if (isOverconstrainedError(error) && cameraCurrent(pc, session, epoch)) {
       voice.deps?.onError?.(
-        new Error("Die Kamera unterstützt das Streamprofil nicht."),
+        new Error(translate(texts, "video.cameraProfileUnsupported")),
       );
     }
     return;
@@ -261,9 +262,7 @@ export async function refreshCamera(): Promise<void> {
         voice.deps?.onError?.(
           error instanceof Error
             ? error
-            : new Error(
-                "Kamerawechsel fehlgeschlagen; bisherige Kamera bleibt aktiv",
-              ),
+            : new Error(translate(texts, "video.cameraSwitchFailed")),
         );
       }
       return;
@@ -367,14 +366,19 @@ export async function startLocalVideo(kind: LocalVideo): Promise<void> {
     if (isOverconstrainedError(error) && newest()) {
       voice.deps?.onError?.(
         new Error(
-          kind === "v"
-            ? "Die Kamera unterstützt das Streamprofil nicht."
-            : "Die Bildschirmaufnahme unterstützt das Streamprofil nicht.",
+          translate(
+            texts,
+            kind === "v"
+              ? "video.cameraProfileUnsupported"
+              : "video.screenProfileUnsupported",
+          ),
         ),
       );
     } else if (kind === "v" && cameraUnavailable(error) && newest()) {
       // Otherwise the button just springs back and nothing says why.
-      voice.deps?.onError?.(new Error("Die Kamera ist nicht verfügbar."));
+      voice.deps?.onError?.(
+        new Error(translate(texts, "video.cameraUnavailable")),
+      );
     } else if (kind !== "v" && !displayCancelled(error) && newest()) {
       // The same for a Live: only a cancel needs no word.
       logVoice("warn", "capture", {
@@ -384,9 +388,7 @@ export async function startLocalVideo(kind: LocalVideo): Promise<void> {
             ? `${error.name}: ${error.message}`
             : String(error),
       });
-      voice.deps?.onError?.(
-        new Error("Die Bildschirmaufnahme konnte nicht gestartet werden."),
-      );
+      voice.deps?.onError?.(new Error(translate(texts, "video.screenFailed")));
     }
     if (kind === "v" && newest()) {
       useVoice.setState({ camera: false });
@@ -569,7 +571,7 @@ export async function publishLocal(
       if (error instanceof MediaError && error.code === "forbidden")
         // The seat's ticket predates a go_live grant: only a new one has it.
         voice.deps?.onError?.(
-          new Error("Betritt den Sprachkanal neu, um live zu gehen."),
+          new Error(translate(texts, "video.rejoinToGoLive")),
         );
       else reportStreamOnce(error instanceof Error ? error.message : "produce");
       stopLocalVideo(kind);

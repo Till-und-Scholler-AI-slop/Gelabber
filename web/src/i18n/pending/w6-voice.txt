@@ -7,8 +7,6 @@ src/voice/QuickCallSettings.tsx
 src/voice/VoiceDiagnostics.tsx
 src/voice/VoiceSettings.tsx
 src/voice/VoiceSettingsPanel.tsx
-src/voice/audioProcessing.ts
-src/voice/callMicrophone.ts
 src/voice/callShortcuts.ts
 src/voice/callSoundSynth.ts
 src/voice/callSounds.ts
@@ -17,7 +15,6 @@ src/voice/connectionSummary.ts
 src/voice/devices.ts
 src/voice/diagnostics.ts
 src/voice/localSourceAudio.ts
-src/voice/localVideo.ts
 src/voice/mediaPeer.ts
 src/voice/mediaPriority.ts
 src/voice/mediasoupConnection.ts
