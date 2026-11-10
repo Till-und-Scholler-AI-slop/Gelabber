@@ -17,6 +17,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Line tables keep backtraces; full debug info made the target directory
+  # and its cache about a third larger.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
   RELEASE_TAG: ${{ inputs.release_tag }}
 
 jobs:
