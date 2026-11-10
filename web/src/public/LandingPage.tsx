@@ -9,15 +9,8 @@ import { LOCALES, type Locale } from "../i18n/locale.ts";
 import { KEY, value } from "./keys.ts";
 import { Brand, PublicFrame } from "./PublicFrame.tsx";
 import { If } from "./Template.tsx";
-import { textsIn } from "./text.ts";
+import { SELF_HOST_COMMANDS, textsIn } from "./text.ts";
 import { LEGAL_PAGES, landingUrl, legalUrl } from "./urls.ts";
-
-/** The three commands of README.md "Start", the same in both languages. */
-export const SELF_HOST_COMMANDS = [
-  "cp deploy/compose/.env.example deploy/compose/.env",
-  "cd deploy/compose",
-  "docker compose up",
-] as const;
 
 const FEATURES = ["lives", "open", "private"] as const;
 

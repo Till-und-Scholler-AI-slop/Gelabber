@@ -12,7 +12,12 @@ import { KEY, value } from "./keys.ts";
 import { Brand, PublicFrame } from "./PublicFrame.tsx";
 import { FragmentSlot, If } from "./Template.tsx";
 import { textsIn } from "./text.ts";
-import { LEGAL_PAGES, legalUrl, otherLocale, type LegalPageId } from "./urls.ts";
+import {
+  LEGAL_PAGES,
+  legalUrl,
+  otherLocale,
+  type LegalPageId,
+} from "./urls.ts";
 
 const PAGE_KEYS = {
   imprint: KEY.imprint,

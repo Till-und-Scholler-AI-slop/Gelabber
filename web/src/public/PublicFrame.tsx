@@ -41,7 +41,11 @@ function head({
       .map(([key, text]) => ` ${key}="${escapeHtml(text)}"`)
       .join("")}>`;
   const alternates = (["de", "en"] as const).map((lang) =>
-    tag("link", { rel: "alternate", hreflang: lang, href: origin + paths[lang] }),
+    tag("link", {
+      rel: "alternate",
+      hreflang: lang,
+      href: origin + paths[lang],
+    }),
   );
   if (defaultPath)
     alternates.push(
@@ -61,7 +65,11 @@ function head({
     tag("meta", { name: "theme-color", content: defaults.dark.background }),
     `<title>${escapeHtml(title)}</title>`,
     tag("meta", { name: "description", content: description }),
-    tag("link", { rel: "icon", type: "image/png", href: "/icons/icon-192.png" }),
+    tag("link", {
+      rel: "icon",
+      type: "image/png",
+      href: "/icons/icon-192.png",
+    }),
     tag("link", { rel: "stylesheet", href: stylesheet }),
     tag("meta", { property: "og:type", content: "website" }),
     tag("meta", { property: "og:site_name", content: "Gelabber" }),
@@ -72,7 +80,9 @@ function head({
     tag("link", { rel: "canonical", href: origin + paths[locale] }),
     ...alternates,
     tag("meta", { property: "og:url", content: origin + paths[locale] }),
-    ...(image ? [tag("meta", { property: "og:image", content: origin + image })] : []),
+    ...(image
+      ? [tag("meta", { property: "og:image", content: origin + image })]
+      : []),
     `<!--end:${KEY.publicUrl}-->`,
   ].join("\n");
 }

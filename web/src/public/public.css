@@ -60,8 +60,8 @@
   --lr-space-10: 40px;
 
   --public-gutter: var(--lr-space-4);
-  --public-mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Menlo,
-    Consolas, monospace;
+  --public-mono:
+    ui-monospace, "Cascadia Code", "SFMono-Regular", Menlo, Consolas, monospace;
 }
 
 *,

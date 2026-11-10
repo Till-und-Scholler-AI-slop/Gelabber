@@ -18,3 +18,10 @@ export type PlainKey = {
 export function textsIn(locale: Locale): (key: PlainKey) => string {
   return (key) => translateIn(locale, publicPages, key);
 }
+
+/** The three commands of README.md "Start", the same in both languages. */
+export const SELF_HOST_COMMANDS = [
+  "cp deploy/compose/.env.example deploy/compose/.env",
+  "cd deploy/compose",
+  "docker compose up",
+] as const;
