@@ -928,22 +928,57 @@ describe("voice session", () => {
     expect(sent.at(-1)).toEqual({ op: "sig", t: "l", s: "srv", c: "voice" });
   });
 
-  it("rolls back the seat on a media-path err", async () => {
-    const { emitMedia, errors, sent } = install();
+  it("asks for a new ticket when the media server revokes the seat", async () => {
+    const f = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
-    await vi.waitFor(() => expect(useVoice.getState().status).toBe("joined"));
-    emitMedia({ op: "err", e: "unauthorized" });
-    expect(useVoice.getState().status).toBe("idle");
-    expect(errors).toHaveLength(1);
-    expect(sent.at(-1)).toEqual({ op: "sig", t: "l", s: "srv", c: "voice" });
+    await vi.waitFor(() => expect(f.peers[0]?.audio).toBeTruthy());
+    f.emitMedia({ op: "err", e: "unauthorized" });
+    // The ticket endpoint decides: it grants, so the seat is rebuilt.
+    await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+    expect(f.ticketCalls()).toBe(2);
+    expect(useVoice.getState().status).toBe("joined");
+    expect(f.errors).toEqual([]);
+    expect(f.sent.some((frame) => frame.op === "sig" && frame.t === "l")).toBe(
+      false,
+    );
+  });
+
+  it("ends the call with the ticket endpoint's answer after a revoked seat", async () => {
+    const refused = new ApiError("forbidden", 403, "Forbidden.");
+    const f = install({
+      ticketError: (index) => (index === 1 ? refused : undefined),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(f.peers[0]?.audio).toBeTruthy());
+    f.emitMedia({ op: "err", e: "unauthorized" });
+    await vi.waitFor(() => expect(useVoice.getState().status).toBe("idle"));
+    expect(f.errors).toEqual([refused]);
+    expect(f.sent.at(-1)).toEqual({ op: "sig", t: "l", s: "srv", c: "voice" });
+  });
+
+  it("rebuilds the seat without a notice when the media server is gone", async () => {
+    const f = install();
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(f.peers[0]?.audio).toBeTruthy());
+    f.emitMedia({ op: "err", e: "gone" });
+    await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+    expect(useVoice.getState().status).toBe("joined");
+    expect(f.errors).toEqual([]);
   });
 
   it("rolls back local join when the server forbids it", () => {
     const { emitErr, errors } = install();
     joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    expect(
+      voiceOf(useVoiceRoster.getState().byServer, "srv", "u-self"),
+    ).not.toBeNull();
     emitErr({ op: "err", e: "forbidden", s: "srv", c: "voice" });
     expect(useVoice.getState().status).toBe("idle");
     expect(errors).toHaveLength(1);
+    // The sidebar no longer lists me in a channel I was refused.
+    expect(voiceOf(useVoiceRoster.getState().byServer, "srv", "u-self")).toBe(
+      null,
+    );
   });
 
   it("tracks other participants from sig frames, not chat events", () => {
@@ -1021,6 +1056,38 @@ describe("voice session", () => {
     emitSig({ op: "sig", t: "j", s: "srv", c: "voice", u: "u-cara" });
     expect(useVoice.getState().participants["u-cara"]).toBeDefined();
     expect(useVoice.getState().participants["u-bob"]).toBeUndefined();
+  });
+
+  it("keeps the first start and its microphone when the chat socket is ready mid-join", async () => {
+    const ticket = deferred();
+    const f = install({
+      gateTicket: (index) => (index === 0 ? ticket.promise : undefined),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    // The gateway (re)opens while the first start still waits for its ticket.
+    f.emitReady();
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    ticket.resolve();
+    await vi.waitFor(() => expect(f.peers.at(-1)?.audio).toBeTruthy());
+    expect(f.peers).toHaveLength(1);
+    expect(f.getUserMediaCalls()).toBe(1);
+    expect(useVoice.getState().mic).toBe("live");
+  });
+
+  it("captures the microphone on a rebuild that overtook the join before its capture", async () => {
+    const start = deferred();
+    const f = install({
+      holdStart: (index) => (index === 0 ? start.promise : undefined),
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Lounge" });
+    await vi.waitFor(() => expect(f.peers).toHaveLength(1));
+    // The media socket drops while the first connection is still starting.
+    f.closeMedia();
+    await vi.waitFor(() => expect(f.peers).toHaveLength(2));
+    start.resolve();
+    await vi.waitFor(() => expect(f.peers[1]?.audio).toBeTruthy());
+    expect(f.getUserMediaCalls()).toBe(1);
+    expect(f.errors).toEqual([]);
   });
 
   it("leaves an open media peer alone when the chat socket reconnects", async () => {
@@ -3162,14 +3229,72 @@ describe("source and transport continuity", () => {
     );
   });
 
-  it("does not toast each ICE failure but still leaves on unauthorized", async () => {
+  it("does not toast an ICE restart failure that the rebuild handles", async () => {
+    const env = await connected();
+    env.peers[0]!.restartIce = async () => {
+      throw new MediaError("connection_closed");
+    };
+    env.peers[0]!.setTransportState("send", "failed");
+    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    expect(env.errors).toEqual([]);
+  });
+
+  it("does not toast a fatal connection error that the rebuild handles", async () => {
+    const env = await connected();
+    // What the real connection does: report, close, then say "failed".
+    const peer = env.peers[0]!;
+    peer.restartIce = async () => {
+      throw new MediaError("connection_closed");
+    };
+    peer.options.onError(new MediaError("sdk_timeout"), true);
+    peer.close();
+    peer.setTransportState("recv", "failed");
+    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    expect(env.errors).toEqual([]);
+  });
+
+  it("does not toast a microphone publish failure that the rebuild retries", async () => {
+    let refusals = 0;
+    const env = await connected({
+      produceError: (kind) =>
+        kind === "a" && refusals++ === 1
+          ? new Error("produce_failed")
+          : undefined,
+    });
+    env.closeMedia();
+    await vi.waitFor(() => expect(env.peers[2]?.audio).toBeTruthy());
+    expect(env.errors).toEqual([]);
+  });
+
+  it("ends the call when the media server keeps revoking each rebuilt seat", async () => {
+    const env = await connected();
+    for (let rebuilt = 1; rebuilt <= 3; rebuilt += 1) {
+      env.emitMedia({ op: "err", e: "unauthorized" });
+      // The fake never reports "connected", so the backoff grows each time.
+      await vi.waitFor(() => expect(env.peers[rebuilt]?.audio).toBeTruthy(), {
+        timeout: 5000,
+      });
+      expect(useVoice.getState().status).toBe("joined");
+    }
+    // The fourth within a minute: the call ends with a way back.
+    env.emitMedia({ op: "err", e: "unauthorized" });
+    expect(useVoice.getState().status).toBe("idle");
+    expect(useVoice.getState().lostCall).not.toBeNull();
+    expect(env.errors).toEqual([new MediaError("unauthorized")]);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(env.peers).toHaveLength(4);
+  });
+
+  it("does not toast each ICE failure but still rebuilds on unauthorized", async () => {
     const env = await connected();
     for (let i = 0; i < 12; i++) env.emitMedia({ op: "err", e: "ice_failed" });
     expect(useVoice.getState().status).toBe("joined");
     expect(env.peers[0]?.closed).toBe(false);
     expect(env.errors).toHaveLength(0);
     env.emitMedia({ op: "err", e: "unauthorized" });
-    expect(useVoice.getState().status).toBe("idle");
+    expect(env.peers[0]?.closed).toBe(true);
+    await vi.waitFor(() => expect(env.peers).toHaveLength(2));
+    expect(useVoice.getState().status).toBe("joined");
   });
 
   it("captures camera and screen with the selected profile constraints", async () => {
@@ -3832,6 +3957,94 @@ describe("authoritative mediasoup session lifecycle", () => {
     expect(messages(env.errors)).toEqual([
       "Mikrofon getrennt – Standardgerät wird verwendet",
     ]);
+  });
+  it("uses a microphone plugged in during a call that had none", async () => {
+    const devices = new EventTarget();
+    let inputs: string[] = [];
+    vi.stubGlobal("navigator", {
+      mediaDevices: Object.assign(devices, {
+        enumerateDevices: async () =>
+          inputs.map((deviceId) => ({ kind: "audioinput", deviceId })),
+      }),
+    });
+    const env = install({
+      mediaError: (index) =>
+        index === 0 ? new DOMException("none", "NotFoundError") : undefined,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    await vi.waitFor(() => expect(useVoice.getState().mic).toBe("unavailable"));
+    // Another device without a microphone changes nothing.
+    devices.dispatchEvent(new Event("devicechange"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(env.getUserMediaCalls()).toBe(1);
+    inputs = ["default"];
+    devices.dispatchEvent(new Event("devicechange"));
+    await vi.waitFor(() =>
+      expect(env.peers[0]!.audio).toBe(env.streams[1]!.getAudioTracks()[0]),
+    );
+    expect(useVoice.getState().mic).toBe("live");
+  });
+  it("retries a busy microphone only when the inputs change", async () => {
+    const devices = new EventTarget();
+    let inputs = ["default"];
+    vi.stubGlobal("navigator", {
+      mediaDevices: Object.assign(devices, {
+        enumerateDevices: async () =>
+          inputs.map((deviceId) => ({ kind: "audioinput", deviceId })),
+      }),
+    });
+    const env = install({
+      mediaError: (index) =>
+        index === 0 ? new DOMException("busy", "NotReadableError") : undefined,
+    });
+    joinVoice({ serverId: "srv", channelId: "voice", channelName: "Voice" });
+    await vi.waitFor(() => expect(useVoice.getState().mic).toBe("unavailable"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Speakers or a webcam without a microphone: the same inputs, no retry.
+    devices.dispatchEvent(new Event("devicechange"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    devices.dispatchEvent(new Event("devicechange"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(env.getUserMediaCalls()).toBe(1);
+    expect(env.errors).toHaveLength(1);
+    inputs = ["default", "headset"];
+    devices.dispatchEvent(new Event("devicechange"));
+    await vi.waitFor(() =>
+      expect(env.peers[0]!.audio).toBe(env.streams[1]!.getAudioTracks()[0]),
+    );
+  });
+  it("follows the system default microphone when it changes", async () => {
+    const devices = new EventTarget();
+    let defaultGroup = "laptop";
+    vi.stubGlobal("navigator", {
+      mediaDevices: Object.assign(devices, {
+        enumerateDevices: async () => [
+          { kind: "audioinput", deviceId: "default", groupId: defaultGroup },
+          { kind: "audioinput", deviceId: "laptop-mic", groupId: "laptop" },
+          { kind: "audioinput", deviceId: "headset-mic", groupId: "headset" },
+        ],
+      }),
+    });
+    const env = await joined({
+      mediaStreamFor: (index) => {
+        const stream = fakeStream(`mic-${index}`);
+        const groupId = index === 0 ? "laptop" : "headset";
+        Object.assign(stream.getAudioTracks()[0]!, {
+          getSettings: () => ({ deviceId: "default", groupId }),
+        });
+        return stream;
+      },
+    });
+    // A device change that leaves the default where it is: no new capture.
+    devices.dispatchEvent(new Event("devicechange"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(env.getUserMediaCalls()).toBe(1);
+    defaultGroup = "headset";
+    devices.dispatchEvent(new Event("devicechange"));
+    await vi.waitFor(() =>
+      expect(env.peers[0]!.audio).toBe(env.streams[1]!.getAudioTracks()[0]),
+    );
+    expect(env.errors).toEqual([]);
   });
   it("lets headset buttons mute and hang up while in a call", async () => {
     const handlers = new Map<string, (() => void) | null>();

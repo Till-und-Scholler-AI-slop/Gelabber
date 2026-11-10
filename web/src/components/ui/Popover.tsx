@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
 
 import { pageZoom } from "../../interface/zoom.ts";
 import { dialogInitialFocus } from "../dialogFocus.ts";
-import { focusLeftWith, outsideBox } from "../modalClose.ts";
+import { backdropClicks, focusLeftWith, outsideBox } from "../modalClose.ts";
 import { useMediaQuery } from "../useMediaQuery.ts";
 import {
   POPOVER_SHEET_QUERY,
@@ -236,6 +236,7 @@ function PopoverSheet({
     [onSurface],
   );
   const open = state === "open";
+  const [backdrop] = useState(backdropClicks);
   // Closed (or gone while open), it lets go of the page and focus at once,
   // so an entry that moves focus, like "Antworten" to the composer, keeps
   // it; ui.css keeps the sheet drawn while it slides away.
@@ -260,10 +261,11 @@ function PopoverSheet({
         event.preventDefault();
         if (open) onClose();
       }}
+      onPointerDown={backdrop.press}
       onClick={(event) => {
         if (
+          backdrop.onDialog(event) &&
           open &&
-          event.target === event.currentTarget &&
           outsideBox(event, event.currentTarget.getBoundingClientRect())
         )
           onClose();

@@ -30,6 +30,7 @@ import {
   requestMediaTicket,
   MEDIA_VERSION,
   MediaError,
+  mediaErrorMessage,
 } from "./media.ts";
 import { MediaPeer } from "./mediaPeer.ts";
 import { resetPlaybackBoostForTests } from "./playbackBoost.ts";
@@ -505,6 +506,7 @@ function onErr(err: ErrFrame): void {
       voice.awaitingJoin = null;
       voice.awaitingScreen = null;
       stopPeer();
+      vacateSelf(pending.serverId, pending.channelId);
       useVoice.setState({
         ...IDLE_VOICE,
         playbackBlocked: state.playbackBlocked,
@@ -562,8 +564,11 @@ function onReady(): void {
   });
   if (state.muted) sendFlag("m", state.serverId, state.channelId, true);
   if (state.deafened) sendFlag("d", state.serverId, state.channelId, true);
-  // Rebuild only when the media transport has actually closed or failed.
+  // Rebuild only when the media transport has actually closed or failed; a
+  // start still under way has no socket yet and is not one of those.
   if (keepMedia) return;
+  if (voice.seatStarting !== 0 && voice.seatStarting === voice.seat.generation)
+    return;
   scheduleSeatRebuild();
 }
 
@@ -767,8 +772,14 @@ function makeMediaConnection(
     onTransportState: (direction, state) => {
       if (current()) onTransportState(direction, state, mine);
     },
-    onError: (error) => {
-      if (current()) voice.deps?.onError?.(error);
+    onError: (error, fatal) => {
+      if (!current()) return;
+      // A fatal error is followed by "failed", and the rebuild handles it.
+      if (fatal)
+        logVoice("warn", "media-error", {
+          code: error instanceof MediaError ? error.code : String(error),
+        });
+      else voice.deps?.onError?.(error);
     },
     onRepublished: () => {
       // New senders: the upload budget and priorities go on them again.
@@ -798,6 +809,7 @@ function stopPeer(preserveCapture = false): void {
     voice.micJoin += 1;
   }
   if (!preserveCapture) voice.awaitingScreen = null;
+  if (!preserveCapture) voice.seatRevocations = [];
   voice.seatRetry.cancel(!preserveCapture);
   // A rebuild keeps what is captured, and with it a picker or camera prompt
   // that is still open: what the user answers there goes to the next
@@ -1127,12 +1139,8 @@ function onTransportState(
       return;
     }
     slot.set(direction, setTimeout(rebuild, ICE_RECOVERY_DEADLINE_MS));
-    void peer.connection.restartIce(direction).catch((error) => {
-      if (peer.generation === mine) {
-        voice.deps?.onError?.(error);
-        rebuild();
-      }
-    });
+    // A failed restart needs no notice: the rebuild it starts is the answer.
+    void peer.connection.restartIce(direction).catch(() => rebuild());
   };
   if (state === "failed") restart();
   else
@@ -1162,10 +1170,15 @@ function onMediaFrame(frame: MediaServerFrame): void {
     );
     return;
   }
-  if (frame.e === "unauthorized") {
-    rollbackSeat(
-      new ApiError("unauthenticated", 0, errorMessage("unauthenticated")),
-    );
+  if (frame.e === "unauthorized" || frame.e === "gone") {
+    // `gone`: the server lost the room. `unauthorized`: the seat lost its
+    // authority. Either way a new ticket decides: the endpoint's 401/403 ends
+    // the call with its own message, a granted ticket rebuilds the seat.
+    if (seatRevokedTooOften()) {
+      rollbackSeat(new MediaError(frame.e), true);
+      return;
+    }
+    rebuildSeat();
     return;
   }
   if (frame.e === "unavailable") {
@@ -1486,6 +1499,33 @@ function attachIncoming(track: MediaStreamTrack, stream?: MediaStream): void {
   });
 }
 
+/** A seat that stayed up this long counts as working again. */
+const REVOCATION_CALM_MS = 30_000;
+const REVOCATION_WINDOW_MS = 60_000;
+const REVOCATION_LIMIT = 4;
+
+/** Notes an unasked revocation; true for the REVOCATION_LIMIT-th within
+ * REVOCATION_WINDOW_MS, when the servers disagree and rebuilding is futile. */
+function seatRevokedTooOften(): boolean {
+  const now = Date.now();
+  const last = voice.seatRevocations.at(-1);
+  if (last !== undefined && now - last >= REVOCATION_CALM_MS)
+    voice.seatRevocations = [];
+  voice.seatRevocations = voice.seatRevocations.filter(
+    (at) => now - at < REVOCATION_WINDOW_MS,
+  );
+  voice.seatRevocations.push(now);
+  return voice.seatRevocations.length >= REVOCATION_LIMIT;
+}
+
+/** Drops the seat's media now and builds it again with a new ticket. The
+ * generation moves on so a start still in flight stops where it stands. */
+function rebuildSeat(): void {
+  voice.seat.generation += 1;
+  stopPeer(true);
+  scheduleSeatRebuild();
+}
+
 function scheduleSeatRebuild(): void {
   const state = useVoice.getState();
   if (state.status !== "joined" || !state.serverId || !state.channelId) return;
@@ -1513,19 +1553,15 @@ function scheduleSeatRebuild(): void {
   );
 }
 
-/** The browser SDK's chunk did not arrive (`sdk_load_*`); `again` says how
- * to retry. A tab whose chunk a deploy replaced only recovers by reloading. */
-function sdkLoadError(error: unknown, again: string): Error | null {
-  if (!(error instanceof MediaError)) return null;
-  if (error.code === "sdk_load_failed")
-    return new Error(
-      `Die Anruffunktion konnte nicht geladen werden. Bitte Gelabber neu laden und ${again}`,
-    );
-  if (error.code === "sdk_load_timeout")
-    return new Error(
-      `Die Anruffunktion lädt gerade sehr langsam. Bitte gleich ${again}`,
-    );
-  return null;
+/** The browser SDK's chunk did not arrive (`sdk_load_*`): the call ends
+ * with the error table's text, which says how to get back. */
+function sdkLoadError(error: unknown): Error | null {
+  if (
+    !(error instanceof MediaError) ||
+    (error.code !== "sdk_load_failed" && error.code !== "sdk_load_timeout")
+  )
+    return null;
+  return new Error(mediaErrorMessage(error.code) ?? error.code);
 }
 
 function retryableTicketError(error: unknown): boolean {
@@ -1545,6 +1581,7 @@ async function startPeer(
   const resumeShare = useVoice.getState().sharing;
   stopPeer(recovering);
   voice.seat.generation = mine;
+  voice.seatStarting = mine;
   const join = voice.micJoin;
   if (!recovering) {
     if (resumeCamera) useVoice.setState({ camera: true });
@@ -1585,6 +1622,7 @@ async function startPeer(
     );
     await pc.start(joined.routerRtpCapabilities);
     if (voice.seat.generation !== mine || voice.seat.connection !== pc) return;
+    voice.seatStarting = 0;
     voice.startedConnections.add(pc);
     setConnection("connected");
     useVoice.setState({ sourceWatchSupported: true });
@@ -1596,6 +1634,7 @@ async function startPeer(
     attachSeatDiagnostics(mine);
   } catch (error) {
     if (voice.seat.generation !== mine) return;
+    voice.seatStarting = 0;
     if (error instanceof MediaError && error.code === "update_required") {
       rollbackSeat(
         new Error(
@@ -1604,7 +1643,7 @@ async function startPeer(
       );
       return;
     }
-    const unloaded = sdkLoadError(error, "den Sprachkanal erneut betreten.");
+    const unloaded = sdkLoadError(error);
     if (unloaded) {
       rollbackSeat(unloaded);
       return;
@@ -1623,7 +1662,10 @@ async function startPeer(
       await commitMicSend(pc, voice.localStream!, mine);
     } catch (error) {
       if (voice.seat.generation === mine && voice.seat.connection === pc) {
-        voice.deps?.onError?.(error);
+        // The rebuild publishes the microphone again; no notice for this one.
+        logVoice("warn", "media-error", {
+          code: error instanceof MediaError ? error.code : String(error),
+        });
         stopPeer(true);
         scheduleSeatRebuild();
       }
@@ -1639,11 +1681,17 @@ async function startPeer(
       k: "a",
     });
     await applySendBitrate().catch(() => undefined);
-  } else if (recovering && voice.micOvertaken) {
+  } else if (
+    recovering &&
+    (voice.micOvertaken || voice.micCaptureJoin !== join)
+  ) {
     // A rebuild does not wait for a prompt: what it carried goes out first.
+    // It also captures for a start it overtook before that start's capture.
     voice.micOvertaken = false;
+    voice.micCaptureJoin = join;
     void refreshMic();
   } else if (!recovering) {
+    voice.micCaptureJoin = join;
     const micRequest = ++voice.micEpoch;
     try {
       const { raw: stream, processor: insert } = await acquireMic(

@@ -14,6 +14,7 @@ import {
 } from "react";
 import { MessageContent } from "../messages/MessageContent.tsx";
 import { setReplyTarget } from "../messages/replyTarget.ts";
+import { setEditDraft, useEditDraft } from "./editDrafts.ts";
 import { fieldMessage } from "../auth/rules.ts";
 import { type Arrival } from "../messages/arrivals.ts";
 import { discardAttempt, type SendAttempt } from "../messages/pending.ts";
@@ -91,10 +92,16 @@ export function MessageRow({
   const { members, me } = useMentions();
   const mentioned = !mine && mentionsMe(message, me);
   const renderMention = useMentionRenderer(message);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(message.content);
-  /** Whether the editor takes focus when it opens. */
-  const [editFocus, setEditFocus] = useState(true);
+  // Kept by message id outside the row (editDrafts.ts): the row unmounts
+  // when it scrolls out of the virtual window.
+  const openDraft = useEditDraft(message.id);
+  const editing = openDraft !== undefined;
+  const draft = openDraft ?? message.content;
+  const setDraft = (text: string | null) =>
+    setEditDraft(message.channel_id, message.id, text);
+  /** Whether the editor takes focus when it opens: not when the row comes
+   *  back into view with its edit still open. */
+  const [editFocus, setEditFocus] = useState(false);
   const editInput = useRef<HTMLTextAreaElement>(null);
   const editSuggestions = useMentionSuggestions(draft, (text, caret) => {
     setDraft(text);
@@ -125,7 +132,7 @@ export function MessageRow({
   }, [editing]);
   const finishEditing = () => {
     restoreEditFocus.current = true;
-    setEditing(false);
+    setDraft(null);
   };
 
   const startEdit = () => {
@@ -137,14 +144,10 @@ export function MessageRow({
       active instanceof HTMLElement && rowRef.current?.contains(active)
         ? active
         : rowRef.current;
-    setDraft(fromWire(message.content, members));
     setEditFocus(true);
-    setEditing(true);
-  };
-  const cancelEdit = () => {
-    finishEditing();
     setDraft(fromWire(message.content, members));
   };
+  const cancelEdit = finishEditing;
   const saveEdit = () => {
     // The row shows the change at once. Turned down, it rolls back, and the
     // editor opens again with what was typed instead of losing it; focus
@@ -159,7 +162,6 @@ export function MessageRow({
       );
       restoreEditFocus.current = false;
       setDraft(typed);
-      setEditing(true);
     });
     finishEditing();
   };

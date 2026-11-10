@@ -1,5 +1,5 @@
-// Mentions inside markdown text (`MessageContent`, issue #241): the same
-// highlighting as `MessageText`, as a renderer for its mention parts.
+// Mentions inside markdown text (`MessageContent`, issue #241), as a
+// renderer for its mention parts.
 import { useMemo, type ReactNode } from "react";
 
 import type {
@@ -7,8 +7,14 @@ import type {
   MentionRenderer,
 } from "../messages/MessageContent.tsx";
 import { splitMentions, type MentionMember } from "../messages/mentions.ts";
-import type { MessagePing } from "./MessageMentions.tsx";
 import { useMentions } from "./mentionContext.ts";
+
+/** What the server stored for a message: `@everyone` / `@here` without
+ * the right (or over the limit) went out as plain text. */
+export interface MessagePing {
+  everyone: boolean;
+  mentions: readonly string[];
+}
 
 /** What a stored message pinged, for `mentionRenderer`. */
 export function messagePing(message: {
@@ -21,9 +27,9 @@ export function messagePing(message: {
   };
 }
 
-/** Draws the mentions of markdown text (`MessageContent`) the way
- * `MessageText` does: names for tokens, `@everyone` / `@here` highlighted
- * only where `ping` shows they reached someone. */
+/** Draws the mentions of markdown text (`MessageContent`): names for
+ * tokens, `@everyone` / `@here` highlighted only where `ping` shows they
+ * reached someone. */
 export function mentionRenderer(
   members: readonly MentionMember[],
   me: string | undefined,

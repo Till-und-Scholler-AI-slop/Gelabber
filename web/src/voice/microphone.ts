@@ -150,3 +150,15 @@ export function createMicrophoneSession(
   }
   return { start, stop };
 }
+
+/** A copy of the call's microphone track to measure, and the level the
+ * others hear from it. Mute and push-to-talk switch the call's track, and a
+ * copy does not follow them: it stays on, and the level reads the original. */
+export function sentLevelMeter(track: MediaStreamTrack): {
+  copy: MediaStreamTrack;
+  level: (value: number) => number;
+} {
+  const copy = track.clone();
+  copy.enabled = true;
+  return { copy, level: (value) => (track.enabled ? value : 0) };
+}
