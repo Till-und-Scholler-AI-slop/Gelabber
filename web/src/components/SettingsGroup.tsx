@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 
-import { SCOPE_LABEL, type SettingsScope } from "./settingsScope.ts";
+import { useT } from "../i18n/catalog.ts";
+import { common } from "../i18n/catalogs/common.ts";
+import type { SettingsScope } from "./settingsScope.ts";
 import { Badge } from "./ui/Badge.tsx";
 
 /**
@@ -29,5 +31,6 @@ export function SettingsGroup({
 }
 
 export function ScopeTag({ scope }: { scope: SettingsScope }) {
-  return <Badge>{SCOPE_LABEL[scope]}</Badge>;
+  const t = useT(common);
+  return <Badge>{t(`scope.${scope}`)}</Badge>;
 }

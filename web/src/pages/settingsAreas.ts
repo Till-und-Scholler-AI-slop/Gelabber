@@ -5,10 +5,9 @@
 import type { SettingsScope } from "../components/settingsScope.ts";
 import { NAVIGATION_DRAWER_MAX_WIDTH } from "../components/WorkspaceNavigation.tsx";
 
-export const SETTINGS_GROUPS = [
-  { id: "konto", label: "Konto" },
-  { id: "app", label: "App" },
-] as const;
+// Labels and descriptions are in the `settings` catalog, as
+// `group.<id>`, `area.<id>.label` and `area.<id>.description`.
+export const SETTINGS_GROUPS = [{ id: "konto" }, { id: "app" }] as const;
 
 export type SettingsGroup = (typeof SETTINGS_GROUPS)[number]["id"];
 
@@ -17,68 +16,48 @@ export const SETTINGS_AREAS = [
     id: "profil",
     scope: "account",
     group: "konto",
-    label: "Profil",
-    description: "Name und Profilbild.",
   },
   {
     id: "profilkarte",
     scope: "account",
     group: "konto",
-    label: "Profilkarte",
-    description: "So sehen dich andere.",
   },
   {
     id: "konto",
     scope: "account",
     group: "konto",
-    label: "Sicherheit",
-    description: "Passwort ändern und überall abmelden.",
   },
   {
     id: "darstellung",
     group: "app",
-    label: "Darstellung",
-    description: "Sprache, Farbschema, Textgröße und Bewegung.",
   },
   {
     id: "themes",
     scope: "account",
     group: "app",
-    label: "Themes",
-    description: "Farbpaletten und eigene Themes.",
   },
   {
     id: "audio",
     scope: "device",
     group: "app",
-    label: "Audio",
-    description: "Mikrofon, Lautsprecher und Lautstärke.",
   },
   {
     id: "video",
     scope: "device",
     group: "app",
-    label: "Video",
-    description: "Kamera, Live gehen und Bildqualität.",
   },
   {
     id: "benachrichtigungen",
     group: "app",
-    label: "Benachrichtigungen",
-    description: "Hinweise auf neue Nachrichten.",
   },
   // Last: installing is done once, the rest is what people come back for.
   {
     id: "app",
     group: "app",
-    label: "App",
-    description: "Desktop-App und Web-App installieren.",
   },
 ] as const satisfies readonly {
   id: string;
   group: SettingsGroup;
-  label: string;
-  description: string;
   /** Set when every setting of the area is kept in the same place; mixed
    * areas tag each group instead. */
   scope?: SettingsScope;

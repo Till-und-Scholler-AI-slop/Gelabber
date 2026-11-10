@@ -4,6 +4,8 @@ import {
   notificationPermissionText,
   type NotificationPermissionState,
 } from "../messages/notify.ts";
+import { useT } from "../i18n/catalog.ts";
+import { notifications } from "../i18n/catalogs/notifications.ts";
 import { useInstallation } from "../pwa/install.ts";
 import { syncPush, type PushResult } from "../pwa/push.ts";
 import { Button } from "./ui/Button.tsx";
@@ -16,6 +18,7 @@ function permission(): NotificationPermissionState {
 
 /** `id` names the status line, for the switch it describes. */
 export function NotificationPermissionStatus({ id }: { id?: string }) {
+  const t = useT(notifications);
   const [state, setState] = useState(permission);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -67,18 +70,15 @@ export function NotificationPermissionStatus({ id }: { id?: string }) {
         })}
       </p>
       {state === "granted" && push === "on" ? (
-        <p className="mt-2">
-          Direktnachrichten und @Erwähnungen kommen auch an, wenn Gelabber
-          geschlossen ist.
-        </p>
+        <p className="mt-2">{t("permission.pushOn")}</p>
       ) : (
         device.mobile &&
         (state === "granted" || state === "default") &&
         (state === "default" || push !== null) && (
           <p className="mt-2">
             {state === "default"
-              ? "Danach kommen Direktnachrichten und @Erwähnungen auch bei geschlossener App an, sofern der Server das unterstützt."
-              : "Auf diesem Gerät kommen Benachrichtigungen nur an, solange Gelabber im Hintergrund läuft."}
+              ? t("permission.pushAfterAllow")
+              : t("permission.whileRunning")}
           </p>
         )
       )}
@@ -89,14 +89,10 @@ export function NotificationPermissionStatus({ id }: { id?: string }) {
           pending={pending}
           onClick={() => void request()}
         >
-          Benachrichtigungen erlauben
+          {t("permission.allow")}
         </Button>
       )}
-      {failed && (
-        <p role="alert">
-          Die Berechtigung konnte nicht abgefragt werden. Versuche es erneut.
-        </p>
-      )}
+      {failed && <p role="alert">{t("permission.failed")}</p>}
     </div>
   );
 }

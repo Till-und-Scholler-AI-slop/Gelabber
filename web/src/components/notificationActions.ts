@@ -1,6 +1,9 @@
 // What can be done with the notifications of a server or conversation,
 // shared by its row menu (RowMenu.tsx) and the notification dialog: mark it
 // read, mute it for a while, pick its level. Each call saves at once.
+import { translate } from "../i18n/catalog.ts";
+import { notifications } from "../i18n/catalogs/notifications.ts";
+import { formatDate, formatTime } from "../i18n/format.ts";
 import {
   settingOf,
   useChangeNotificationSetting,
@@ -15,51 +18,78 @@ import {
   type NotificationTarget,
 } from "./notificationTarget.ts";
 
+type MuteKey = "quarterHour" | "hour" | "eightHours" | "day" | "forever";
+
+/** A mute choice whose texts are read in the language shown at the time. */
+function mute(key: MuteKey, minutes?: number) {
+  return {
+    get label() {
+      return translate(notifications, `mute.${key}`);
+    },
+    get short() {
+      return translate(notifications, `mute.${key}.short`);
+    },
+    ...(minutes ? { minutes } : {}),
+  };
+}
+
 /** How long a mute holds; the last one until it is turned off. `short`
  * fits the dialog's single row of chips. */
 export const MUTES: { label: string; short: string; minutes?: number }[] = [
-  { label: "15 Minuten", short: "15 Min.", minutes: 15 },
-  { label: "1 Stunde", short: "1 Std.", minutes: 60 },
-  { label: "8 Stunden", short: "8 Std.", minutes: 8 * 60 },
-  { label: "24 Stunden", short: "24 Std.", minutes: 24 * 60 },
-  { label: "Bis ich es wieder einschalte", short: "Unbegrenzt" },
+  mute("quarterHour", 15),
+  mute("hour", 60),
+  mute("eightHours", 8 * 60),
+  mute("day", 24 * 60),
+  mute("forever"),
 ];
 
+/** A level choice whose texts are read in the language shown at the time. */
+function level(id: NotifyLevel) {
+  return {
+    level: id,
+    get label() {
+      return translate(notifications, `level.${id}`);
+    },
+    get hint() {
+      return translate(notifications, `level.${id}.hint`);
+    },
+  };
+}
+
 export const LEVELS: { level: NotifyLevel; label: string; hint: string }[] = [
-  { level: "all", label: "Alle Nachrichten", hint: "Jede neue Nachricht" },
-  {
-    level: "mentions",
-    label: "Nur @Erwähnungen",
-    hint: "Wenn dich jemand erwähnt oder @everyone/@here schreibt",
-  },
-  {
-    level: "none",
-    label: "Nichts",
-    hint: "Keine Benachrichtigungen, kein Zähler",
-  },
+  level("all"),
+  level("mentions"),
+  level("none"),
 ];
 
 export const levelName = (level: NotifyLevel) =>
   LEVELS.find((row) => row.level === level)!.label;
 
-/** "14:30 Uhr" today, else "Mi., 5. Nov., 14:30 Uhr". */
+/** "14:30 Uhr" today, else "Mi., 5. Nov., 14:30 Uhr" ("14:30", "Wed 5 Nov,
+ * 14:30" in English). */
 export function formatUntil(until: string): string {
   const date = new Date(until);
   const today = new Date();
-  const time = date.toLocaleTimeString("de-DE", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const time = formatTime(date, { hour: "2-digit", minute: "2-digit" });
   return date.toDateString() === today.toDateString()
-    ? `${time} Uhr`
-    : `${date.toLocaleDateString("de-DE", { weekday: "short", day: "numeric", month: "short" })}, ${time} Uhr`;
+    ? translate(notifications, "until.today", { time })
+    : translate(notifications, "until.later", {
+        date: formatDate(date, {
+          weekday: "short",
+          day: "numeric",
+          month: "short",
+        }),
+        time,
+      });
 }
 
 /** The running mute in words. */
 export function mutedLine(mutedUntil: string | null): string {
   return mutedUntil
-    ? `Stumm bis ${formatUntil(mutedUntil)}`
-    : "Stumm, bis du es aufhebst";
+    ? translate(notifications, "muted.until", {
+        until: formatUntil(mutedUntil),
+      })
+    : translate(notifications, "muted.untilUnmuted");
 }
 
 export function useNotificationActions(target: NotificationTarget) {

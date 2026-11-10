@@ -1,4 +1,6 @@
 import { ChevronIcon } from "../components/Icons.tsx";
+import { useT } from "../i18n/catalog.ts";
+import { pwa } from "../i18n/catalogs/pwa.ts";
 import { DesktopApp } from "./DesktopApp.tsx";
 import {
   promptInstallation,
@@ -23,11 +25,12 @@ export function InstallDisclosure() {
 }
 
 export function InstallDisclosurePanel({ state }: { state: InstallState }) {
+  const t = useT(pwa);
   if (state.native) return null;
   return (
     <details className="pwa-install-disclosure">
       <summary>
-        Gelabber als App installieren
+        {t("install.disclosure")}
         <ChevronIcon size={14} />
       </summary>
       <InstallPanel state={state} />
@@ -36,29 +39,22 @@ export function InstallDisclosurePanel({ state }: { state: InstallState }) {
 }
 
 export function InstallPanel({ state }: { state: InstallState }) {
+  const t = useT(pwa);
   if (state.native) return null;
   const offered = state.available || state.pending;
   return (
-    <section className="pwa-install" aria-label="Gelabber installieren">
+    <section className="pwa-install" aria-label={t("install.label")}>
       <div className="pwa-install-heading">
         <img src="/icons/icon-192.png" alt="" width={48} height={48} />
         <div>
-          <h2>Gelabber als App</h2>
-          <p>
-            {state.mobile
-              ? "Direkt vom Startbildschirm öffnen."
-              : "In einem eigenen Fenster öffnen."}
-          </p>
+          <h2>{t("install.title")}</h2>
+          <p>{state.mobile ? t("install.mobile") : t("install.desktop")}</p>
         </div>
       </div>
       {state.installed ? (
-        <p role="status">
-          Gelabber ist bereits als App geöffnet oder installiert.
-        </p>
+        <p role="status">{t("install.installed")}</p>
       ) : !state.secure ? (
-        <p>
-          Öffne Gelabber über HTTPS, damit du es als App installieren kannst.
-        </p>
+        <p>{t("install.insecure")}</p>
       ) : (
         <>
           {offered ? (
@@ -68,44 +64,23 @@ export function InstallPanel({ state }: { state: InstallState }) {
               disabled={state.pending}
               onClick={() => void promptInstallation()}
             >
-              {state.pending ? "Installation öffnen…" : "App installieren"}
+              {state.pending ? t("install.opening") : t("install.button")}
             </button>
           ) : null}
-          {state.accepted && (
-            <p role="status">
-              Installation bestätigt. Dein Browser richtet die App ein.
-            </p>
-          )}
-          {state.failed && (
-            <p role="alert">
-              Die Installation konnte nicht geöffnet werden. Nutze das Menü
-              deines Browsers oder versuche es später erneut.
-            </p>
-          )}
+          {state.accepted && <p role="status">{t("install.accepted")}</p>}
+          {state.failed && <p role="alert">{t("install.failed")}</p>}
           {state.ios ? (
             <ol>
-              <li>Öffne Gelabber in Safari.</li>
-              <li>Tippe auf „Teilen“, dann auf „Zum Home-Bildschirm“.</li>
-              <li>
-                Aktiviere „Als Web-App öffnen“, falls angezeigt, und tippe auf
-                „Hinzufügen“.
-              </li>
+              <li>{t("ios.safari")}</li>
+              <li>{t("ios.share")}</li>
+              <li>{t("ios.add")}</li>
             </ol>
           ) : state.accepted ? null : state.mobile ? (
-            <p>
-              {offered
-                ? "Du kannst auch im Browsermenü „App installieren“ oder „Zum Startbildschirm hinzufügen“ wählen."
-                : "Wähle im Browsermenü „App installieren“ oder „Zum Startbildschirm hinzufügen“. Bietet dein Browser das nicht an, öffne Gelabber in Chrome."}
-            </p>
+            <p>{offered ? t("mobile.alsoMenu") : t("mobile.menu")}</p>
           ) : offered ? null : (
-            <p>
-              Die Installation findest du in der Adressleiste oder im
-              Browsermenü, z. B. in Chrome oder Edge.
-            </p>
+            <p>{t("desktopBrowser.where")}</p>
           )}
-          <p className="pwa-install-note">
-            Die App braucht weiterhin eine Internetverbindung.
-          </p>
+          <p className="pwa-install-note">{t("install.online")}</p>
         </>
       )}
     </section>
