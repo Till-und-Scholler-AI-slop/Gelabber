@@ -1,6 +1,8 @@
 // Seeds a fresh local stack with the fixed data both clients are compared on
 // (desktop/parity): people, two servers, channels, messages, a DM, and
-// roles with a channel limited to them.
+// roles with a channel limited to them, and, when the API runs with
+// API_OPERATOR_EMAILS=lena@example.test (desktop/README.md "Parity"), beta
+// invitations and a report for the "Betrieb" scenes.
 // Run in web/: node scripts/parity/seed.mjs [base-url] [out.json]
 // The base URL is the web origin (Vite proxies /api), default 127.0.0.1:5180.
 /* global process, console, fetch */
@@ -165,6 +167,36 @@ for (const p of [mira, tom])
 await lena.call("PATCH", `/channels/${games.id}`, {
   role_ids: [moderators.id, regulars.id],
 });
+
+// Betrieb (v0.10), for the operator scenes: two beta invitations by Lena,
+// one bound to an address and one for anyone with the link, and an open
+// report by Tom on Spieleabend. Only when the stack names Lena an operator.
+let operator = true;
+try {
+  await lena.call("GET", "/operator");
+} catch (error) {
+  if (!String(error).includes(" 404 ")) throw error;
+  operator = false;
+  console.warn(
+    "warning: lena is no operator (API_OPERATOR_EMAILS=lena@example.test); " +
+      "seeded no invitations and no report",
+  );
+}
+if (operator) {
+  await lena.call("POST", "/operator/invitations", {
+    email: "noah@example.test",
+    note: "Noahs Spielegruppe",
+    expires_in_days: 7,
+  });
+  await lena.call("POST", "/operator/invitations", {
+    note: "Für den Stammtisch",
+    expires_in_days: 30,
+  });
+  await tom.call("POST", `/servers/${evening.id}/reports`, {
+    reason: "spam",
+    details: "Im Kanal allgemein werden ständig Links zu einem Gewinnspiel gepostet.",
+  });
+}
 
 const fixture = {
   base: BASE,

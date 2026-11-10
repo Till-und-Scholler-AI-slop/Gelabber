@@ -1,6 +1,8 @@
 // Reference screenshots of the web client for the native parity check
 // (desktop/parity): every scene in scenes.json, signed in as its user, at
-// the scene size, device scale 1, reduced motion, no caret.
+// the scene size, device scale 1, reduced motion, no caret. Scenes with
+// `webOnly` (the "Betrieb" pages, which the native app leaves to the
+// browser) are shot here too, as the web reference; desktop/parity skips them.
 // Run in web/ against a seeded stack (seed.mjs):
 //   node scripts/parity/shots.mjs [out-dir] [scene,…]
 // GELABBER_PARITY_BROWSER names the Chromium binary (default /usr/bin/chromium).
