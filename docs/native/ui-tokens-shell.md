@@ -793,7 +793,7 @@ The file has 49 icons (`Icons.tsx:21-460`); the rest belong to other areas.
 | Where | String |
 |---|---|
 | Skip link (`AppShell.tsx:77`) | Zum Inhalt springen |
-| Rail | Server (nav label), Direktnachrichten, Server hinzufügen |
+| Rail | Server (nav label), Direktnachrichten, Server hinzufügen, Entdecken (v0.10, §4.10) |
 | Rail tooltip | `<n> Erwähnung`, `<n> Erwähnungen`, Mehr als 99 Erwähnungen, Ungelesene Nachrichten, Stummgeschaltet |
 | Unread a11y | `<n> Benachrichtigungen`, Mehr als 99 Benachrichtigungen, Ungelesene Nachrichten |
 | Sidebar header | `Menü für <Server>`, Stummgeschaltet, (stummgeschaltet), Einladen |
