@@ -11,9 +11,11 @@
 //! Signed-in people search the visible listings, join an open server at
 //! once, or ask to join one in request mode. A request stays `pending`
 //! until the queue answers it or the caller withdraws it; a declined one
-//! blocks a new request for [`DECLINE_COOLDOWN_DAYS`].
+//! blocks a new request for [`DECLINE_COOLDOWN_DAYS`]. The owner and the
+//! members holding `moderate_members` answer requests ([`requests`]).
 
 pub mod languages;
+pub mod requests;
 pub mod settings;
 pub mod validate;
 
@@ -58,6 +60,7 @@ pub fn router() -> Router<AppState> {
             "/api/directory/listings/{id}/request",
             post(request).delete(withdraw),
         )
+        .merge(requests::router())
 }
 
 /// The visibility rule over `server_listings l` joined with `servers s`,
@@ -423,6 +426,7 @@ async fn request(
     .await?;
     tx.commit().await?;
     info!(server_id = %server_id, user_id = %user.id, "join requested");
+    requests::publish_queue(&state, server_id).await;
     Ok((
         StatusCode::CREATED,
         Json(RequestAnswer {
@@ -454,5 +458,6 @@ async fn withdraw(
         return Err(ApiError::NotFound);
     }
     info!(server_id = %server_id, user_id = %user.id, "join request withdrawn");
+    requests::publish_queue(&state, server_id).await;
     Ok(StatusCode::NO_CONTENT)
 }
