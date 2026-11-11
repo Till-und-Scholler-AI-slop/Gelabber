@@ -400,6 +400,7 @@ impl Platform {
     fn show_unread(&mut self, ctx: &Context, unread: tray::Unread) {
         if let Some(tray) = &mut self.tray {
             tray.set_unread(unread);
+            tray.set_locale(gelabber_i18n::get());
         }
         let title = unread.title();
         if self.title != title {

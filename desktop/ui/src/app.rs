@@ -321,6 +321,27 @@ impl Session {
     }
 }
 
+/// The signed-in account's id and language as the server last confirmed
+/// it; `None` signed out and from a server older than v0.10. The client's
+/// user follows the `lc` frames and saves; the session's answer is there
+/// before the client knows the account.
+pub fn account_locale(session: &Session, client: &Client) -> Option<(String, String)> {
+    let user = session.user()?;
+    let id = user.get("id").and_then(Value::as_str)?.to_owned();
+    let locale = client
+        .with_state(|s| {
+            s.me()
+                .filter(|me| me.id.to_string() == id)
+                .and_then(|me| me.locale.clone())
+        })
+        .or_else(|| {
+            user.get("locale")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })?;
+    Some((id, locale))
+}
+
 /// What a screen gets each frame.
 pub struct AppCtx<'a> {
     pub client: &'a Client,
@@ -357,6 +378,8 @@ pub struct GelabberApp {
     video_ready: bool,
     /// The theme's page colour, for the window's clear colour.
     background: std::cell::Cell<egui::Color32>,
+    /// The signed-in account and the language it was last seen with.
+    account_locale: Option<(String, String)>,
 }
 
 impl GelabberApp {
@@ -401,6 +424,7 @@ impl GelabberApp {
             expired: false,
             video_ready: false,
             background: std::cell::Cell::new(Theme::dark().c.bg),
+            account_locale: None,
         }
     }
 
@@ -488,6 +512,27 @@ impl GelabberApp {
             self.workspace = false;
         }
         self.client_signed_in = client_signed_in;
+    }
+
+    /// Shows the account's language whenever the signed-in account or its
+    /// language changes: signing in, the `lc` frame of another device, a
+    /// saved change (`followAccountLocale`). Signing out keeps the last one;
+    /// a server older than v0.10 names none, and the app keeps its own.
+    fn follow_account_locale(&mut self, ctx: &egui::Context) {
+        if self.session.user().is_none() {
+            self.account_locale = None;
+            return;
+        }
+        let Some(seen) = account_locale(&self.session, &self.client) else {
+            return;
+        };
+        if self.account_locale.as_ref() == Some(&seen) {
+            return;
+        }
+        if let Some(locale) = gelabber_i18n::Locale::parse(&seen.1) {
+            screens::settings::prefs::show_locale(ctx, locale);
+        }
+        self.account_locale = Some(seen);
     }
 
     fn frame(&mut self, ui: &mut Ui) {
@@ -578,6 +623,7 @@ impl GelabberApp {
         }
 
         self.sync_workspace();
+        self.follow_account_locale(&ctx);
         let signed_in = matches!(self.session.status, SessionStatus::Authenticated(_));
         screens::voice::sync::sync(&ctx, &self.call, &mut self.toasts, signed_in);
         self.guard();

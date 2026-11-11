@@ -7,21 +7,22 @@ use std::sync::Arc;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
-use super::{Event, Events, Picture, Unread};
+use super::{Event, Events, Picture, Unread, menu_labels};
 
 pub struct Win {
     tray: TrayIcon,
     picture: Picture,
     // The menu items stay alive with the tray.
-    _items: [MenuItem; 2],
+    items: [MenuItem; 2],
 }
 
 impl Win {
     pub fn start(events: Events, wake: Arc<dyn Fn() + Send + Sync>) -> Option<Self> {
         let picture = Picture::app(32)?;
         let icon = Icon::from_rgba(picture.rgba.clone(), picture.width, picture.height).ok()?;
-        let open = MenuItem::new("Gelabber öffnen", true, None);
-        let quit = MenuItem::new("Beenden", true, None);
+        let [open_label, quit_label] = menu_labels();
+        let open = MenuItem::new(open_label, true, None);
+        let quit = MenuItem::new(quit_label, true, None);
         let menu = Menu::with_items(&[&open, &quit]).ok()?;
         let tray = TrayIconBuilder::new()
             .with_icon(icon)
@@ -65,7 +66,7 @@ impl Win {
         Some(Self {
             tray,
             picture,
-            _items: [open, quit],
+            items: [open, quit],
         })
     }
 
@@ -80,6 +81,14 @@ impl Win {
             self.picture.height,
         ) {
             let _ = self.tray.set_icon(Some(icon));
+        }
+        let _ = self.tray.set_tooltip(Some(unread.tooltip()));
+    }
+
+    /// The menu entries and the tooltip in the interface's language.
+    pub fn relabel(&self, unread: Unread) {
+        for (item, label) in self.items.iter().zip(menu_labels()) {
+            item.set_text(label);
         }
         let _ = self.tray.set_tooltip(Some(unread.tooltip()));
     }

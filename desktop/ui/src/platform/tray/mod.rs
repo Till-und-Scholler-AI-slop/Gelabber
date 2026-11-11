@@ -1,7 +1,8 @@
 //! The tray icon with "Gelabber öffnen" and "Beenden" and a dot for unread
 //! messages (the Tauri app's shell.rs): a StatusNotifierItem on Linux
 //! (`sni.rs`), the notification area on Windows (`win.rs`). Without a tray
-//! the app runs as before and closing ends it.
+//! the app runs as before and closing ends it. Its menu is built anew when
+//! the interface's language changes.
 
 #[cfg(target_os = "linux")]
 mod sni;
@@ -122,6 +123,12 @@ impl Picture {
 
 pub type Events = Arc<Mutex<Vec<Event>>>;
 
+/// The menu's entries, [`Event::Show`] and [`Event::Quit`], in the
+/// interface's language.
+pub(crate) fn menu_labels() -> [&'static str; 2] {
+    ["Gelabber öffnen", "Beenden"]
+}
+
 /// A running tray icon.
 pub struct Tray {
     #[cfg(target_os = "linux")]
@@ -129,6 +136,8 @@ pub struct Tray {
     #[cfg(windows)]
     inner: win::Win,
     shown: Unread,
+    /// The language the menu is in.
+    locale: gelabber_i18n::Locale,
 }
 
 impl Tray {
@@ -148,6 +157,7 @@ impl Tray {
         Some(Self {
             inner,
             shown: Unread::default(),
+            locale: gelabber_i18n::get(),
         })
     }
 
@@ -164,6 +174,15 @@ impl Tray {
             self.shown = unread;
             #[cfg(any(windows, target_os = "linux"))]
             self.inner.set_unread(unread);
+        }
+    }
+
+    /// Builds the menu and tooltip anew in `locale` when it changed.
+    pub fn set_locale(&mut self, locale: gelabber_i18n::Locale) {
+        if locale != self.locale {
+            self.locale = locale;
+            #[cfg(any(windows, target_os = "linux"))]
+            self.inner.relabel(self.shown);
         }
     }
 }

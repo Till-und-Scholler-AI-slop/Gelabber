@@ -122,6 +122,17 @@ enum Stage {
     },
 }
 
+/// The language the app starts in, before any window: the one this device
+/// showed last, else the system's, else English. Signing in switches to
+/// the account's (app.rs). The desktop app calls it; tests and the parity
+/// tool keep German unless they choose.
+pub fn start_locale() {
+    let locale = crate::screens::settings::prefs::stored_locale()
+        .or_else(gelabber_i18n::detect_system)
+        .unwrap_or(gelabber_i18n::Locale::En);
+    gelabber_i18n::set(locale);
+}
+
 /// The eframe app: the setup screen, then Gelabber.
 pub struct Launcher {
     stage: Stage,

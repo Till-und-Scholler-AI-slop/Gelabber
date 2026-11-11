@@ -172,6 +172,8 @@ fn main() -> eframe::Result {
             "gelabber: taking over the Tauri app's settings: {e}"
         )),
     }
+    // The language before any window: this device's, the system's or English.
+    gelabber_ui::setup::start_locale();
     let smoke = smoke::Smoke::from_env(std::env::var("GELABBER_SMOKE").ok().as_deref());
     // args() would panic on an argument that is no Unicode.
     let server = settings::configured_server(

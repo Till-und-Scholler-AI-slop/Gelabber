@@ -1777,9 +1777,10 @@ impl Client {
         let this = self.clone();
         let locale = locale.to_owned();
         let change = self.inner.locale_change.fetch_add(1, Ordering::Relaxed) + 1;
+        let epoch = self.epoch();
+        // At once, so the page never reads the last change's answer as this one's.
+        self.write(|s| s.ops.insert("locale".into(), OpState::Pending));
         self.spawn(async move {
-            let epoch = this.epoch();
-            this.write(|s| s.ops.insert("locale".into(), OpState::Pending));
             let result = this.http().set_locale(&locale).await;
             let newest = this.inner.locale_change.load(Ordering::Relaxed) == change;
             match result {
