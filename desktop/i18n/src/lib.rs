@@ -168,18 +168,22 @@ pub fn set(locale: Locale) {
 /// Gives the calling thread a language of its own until the guard drops:
 /// [`get`] and [`set`] on this thread use it and leave the process's
 /// alone. Tests that switch the language run side by side with tests that
-/// expect German.
+/// expect German. Only tests have it (the `testing` feature, which the
+/// workspace's crates enable as a dev-dependency).
+#[cfg(any(test, feature = "testing"))]
 pub fn on_this_thread(locale: Locale) -> ThreadLocale {
     let previous = THREAD.with(|t| t.replace(Some(locale)));
     ThreadLocale { previous }
 }
 
 /// See [`on_this_thread`].
+#[cfg(any(test, feature = "testing"))]
 #[must_use = "the thread's own language ends when this drops"]
 pub struct ThreadLocale {
     previous: Option<Locale>,
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl Drop for ThreadLocale {
     fn drop(&mut self) {
         THREAD.with(|t| t.set(self.previous));

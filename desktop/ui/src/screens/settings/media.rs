@@ -814,33 +814,31 @@ fn shown_key_label(code: &str, label: &str) -> String {
 
 /// Whether `label` is the key's own name, in some language.
 fn named_key(code: &str, label: &str) -> bool {
-    Locale::ALL.iter().any(|l| {
-        let _language = gelabber_i18n::on_this_thread(*l);
-        label == key_label(code)
-    })
+    Locale::ALL.iter().any(|l| label == key_label_in(*l, code))
 }
 
 /// `pushToTalkKeyLabel`.
 fn key_label(code: &str) -> String {
-    match code {
-        "Mouse4" => texts::media_key_mouse4().into(),
-        "Mouse5" => texts::media_key_mouse5().into(),
-        "Space" => texts::media_key_space().into(),
-        _ => {
-            let c = code
-                .strip_prefix("Key")
-                .filter(|r| r.len() == 1)
-                .or_else(|| code.strip_prefix("Digit").filter(|r| r.len() == 1))
-                .unwrap_or(code);
-            let c = c.replacen("Numpad", "Num ", 1);
-            if let Some(side) = c.strip_suffix("Left") {
-                texts::media_key_left(side)
-            } else if let Some(side) = c.strip_suffix("Right") {
-                texts::media_key_right(side)
-            } else {
-                c
-            }
-        }
+    key_label_in(gelabber_i18n::get(), code)
+}
+
+/// [`key_label`] in `locale`.
+fn key_label_in(locale: Locale, code: &str) -> String {
+    if let Some(name) = texts::media_key_named(locale, code) {
+        return name.into();
+    }
+    let c = code
+        .strip_prefix("Key")
+        .filter(|r| r.len() == 1)
+        .or_else(|| code.strip_prefix("Digit").filter(|r| r.len() == 1))
+        .unwrap_or(code);
+    let c = c.replacen("Numpad", "Num ", 1);
+    if let Some(side) = c.strip_suffix("Left") {
+        texts::media_key_left(locale, side)
+    } else if let Some(side) = c.strip_suffix("Right") {
+        texts::media_key_right(locale, side)
+    } else {
+        c
     }
 }
 
@@ -1355,6 +1353,12 @@ mod tests {
         assert_eq!(key_label("KeyV"), "V");
         assert_eq!(key_label("ControlLeft"), "Control links");
         assert_eq!(key_label("Numpad0"), "Num 0");
+        // A name stored in either language is the key's own, whatever the
+        // interface shows now; a typed character is not.
+        assert!(named_key("Mouse4", "Maustaste 4"));
+        assert!(named_key("Mouse4", "Mouse button 4"));
+        assert!(named_key("ShiftLeft", "Left Shift"));
+        assert!(!named_key("KeyZ", "Y"));
     }
 
     #[test]

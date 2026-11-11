@@ -24,3 +24,6 @@ thiserror = "2"
 parking_lot = "0.12.5"
 tracing = "0.1"
 url = "2"
+
+[dev-dependencies]
+gelabber-i18n = { path = "../i18n", features = ["testing"] }

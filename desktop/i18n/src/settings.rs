@@ -228,10 +228,6 @@ crate::strings! {
     media_ptt_global_setting_up = "Die globale Taste wird eingerichtet …" | "Setting up the global key…";
     media_ptt_global_active_windows = "Global aktiv, auch wenn ein anderes Fenster vorne ist."
         | "Active globally, even when another window is in front.";
-    // The key names (web voice pushToTalk.*).
-    media_key_mouse4 = "Maustaste 4" | "Mouse button 4";
-    media_key_mouse5 = "Maustaste 5" | "Mouse button 5";
-    media_key_space = "Leertaste" | "Space";
 
     // The desktop app's "App" area.
     app_updates_title = "Updates" | "Updates";
@@ -276,17 +272,34 @@ pub fn card_bio_count(length: usize, max: usize) -> String {
     }
 }
 
-/// A key on the left of the keyboard: "{key} links".
-pub fn media_key_left(key: &str) -> String {
-    match get() {
+// The key names (web voice pushToTalk.*) take the language: a name the
+// recorder stored in either language is told from a typed character.
+
+/// A key with a name of its own in `locale`: "Maustaste 4", "Maustaste 5",
+/// "Leertaste"; `None` for any other code.
+pub fn media_key_named(locale: Locale, code: &str) -> Option<&'static str> {
+    Some(match (code, locale) {
+        ("Mouse4", Locale::De) => "Maustaste 4",
+        ("Mouse4", Locale::En) => "Mouse button 4",
+        ("Mouse5", Locale::De) => "Maustaste 5",
+        ("Mouse5", Locale::En) => "Mouse button 5",
+        ("Space", Locale::De) => "Leertaste",
+        ("Space", Locale::En) => "Space",
+        _ => return None,
+    })
+}
+
+/// A key on the left of the keyboard in `locale`: "{key} links".
+pub fn media_key_left(locale: Locale, key: &str) -> String {
+    match locale {
         Locale::De => format!("{key} links"),
         Locale::En => format!("Left {key}"),
     }
 }
 
-/// A key on the right of the keyboard: "{key} rechts".
-pub fn media_key_right(key: &str) -> String {
-    match get() {
+/// A key on the right of the keyboard in `locale`: "{key} rechts".
+pub fn media_key_right(locale: Locale, key: &str) -> String {
+    match locale {
         Locale::De => format!("{key} rechts"),
         Locale::En => format!("Right {key}"),
     }

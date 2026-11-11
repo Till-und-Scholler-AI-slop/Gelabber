@@ -55,6 +55,7 @@ tray-icon = { version = "0.25.1", default-features = false }
 
 [dev-dependencies]
 gelabber-call = { path = "../call", features = ["testing"] }
+gelabber-i18n = { path = "../i18n", features = ["testing"] }
 egui_kittest = { version = "0.37.0", features = ["wgpu", "eframe"] }
 
 # Against the seeded stack with the native media core (see its header).

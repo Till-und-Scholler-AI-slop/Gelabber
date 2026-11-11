@@ -28,3 +28,6 @@ futures-util = "0.3"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Media_Audio"] }
+
+[dev-dependencies]
+gelabber-i18n = { path = "../i18n", features = ["testing"] }
