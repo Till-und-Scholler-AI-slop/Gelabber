@@ -156,6 +156,7 @@ describe("router", () => {
       "/auth/reset-password",
       "/auth/verify-email",
       "/auth/invite/$code",
+      "/auth/sign-in/name",
     ] as const) {
       expect(router.routesById[id].parentRoute.options.staticData).toEqual({
         bare: true,

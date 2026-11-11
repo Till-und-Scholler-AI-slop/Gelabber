@@ -30,6 +30,7 @@ import { RegisterPage } from "./pages/RegisterPage.tsx";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage.tsx";
 import { RouteErrorPage } from "./pages/RouteErrorPage.tsx";
 import { ServerPage } from "./pages/ServerPage.tsx";
+import { SignInNamePage } from "./pages/SignInNamePage.tsx";
 import {
   DEFAULT_SETTINGS_AREA,
   isSettingsArea,
@@ -217,6 +218,15 @@ const inviteRoute = createRoute({
   ),
 });
 
+// A first sign-in through a provider names its new account here; the
+// token in the fragment works signed in or not, like a mailed link.
+const signInNameRoute = createRoute({
+  getParentRoute: () => authLayout,
+  path: "/sign-in/name",
+  beforeLoad: () => ensureSession(),
+  component: SignInNamePage,
+});
+
 // ---------------------------------------------------------------------------
 // Workspace: server rail + channel sidebar + page.
 
@@ -347,6 +357,7 @@ const routeTree = rootRoute.addChildren([
     resetPasswordRoute,
     verifyEmailRoute,
     inviteRoute,
+    signInNameRoute,
   ]),
   workspaceLayout.addChildren([
     indexRoute,
