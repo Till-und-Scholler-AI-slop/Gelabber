@@ -336,8 +336,14 @@ async fn download(
 /// The bytes through the API (proxy delivery, memory store), with the
 /// headers MinIO would have answered a signed link with, and `sandbox` on
 /// top: the file now comes from the app's own origin, so even a document
-/// opened on its own must never run as part of the app.
-fn streamed(disposition: &str, content_type: &str, save: bool, object: StoredObject) -> Response {
+/// opened on its own must never run as part of the app. The data export's
+/// download answers the same way (`account`).
+pub(crate) fn streamed(
+    disposition: &str,
+    content_type: &str,
+    save: bool,
+    object: StoredObject,
+) -> Response {
     let mut headers = HeaderMap::new();
     if let Ok(value) = HeaderValue::from_str(content_type) {
         headers.insert(CONTENT_TYPE, value);

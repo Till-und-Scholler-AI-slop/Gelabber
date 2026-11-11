@@ -51,6 +51,7 @@ pub fn app(state: AppState) -> Router {
     state.gateway.ensure_delivery(state.clone());
     attachments::cleanup::start(state.clone());
     account::deletion::start(state.clone());
+    account::export::start(state.clone());
     previews::start(state.clone());
     // Everything under /api is a browser-facing JSON route and goes through
     // the CSRF check; /health, /ready and /metrics stay outside (GET only).

@@ -85,6 +85,11 @@ pub struct AppState {
     /// Wakes the purge of deleted accounts (`account::deletion`).
     pub(crate) account_purge: Arc<tokio::sync::Notify>,
     pub(crate) purge_worker_started: Arc<AtomicBool>,
+    /// `API_EXPORT_RETENTION_HOURS`.
+    pub export_retention: Duration,
+    /// Wakes the data export worker (`account::export`).
+    pub(crate) account_export: Arc<tokio::sync::Notify>,
+    pub(crate) export_worker_started: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -207,6 +212,9 @@ impl AppState {
             oidc,
             account_purge: Arc::new(tokio::sync::Notify::new()),
             purge_worker_started: Arc::new(AtomicBool::new(false)),
+            export_retention: config.export_retention,
+            account_export: Arc::new(tokio::sync::Notify::new()),
+            export_worker_started: Arc::new(AtomicBool::new(false)),
         })
     }
 

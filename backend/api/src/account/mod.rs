@@ -6,18 +6,27 @@
 //! sign-in tokens, memberships, invites and the data export. From then on
 //! nobody can sign in to or address the account. Messages, DMs, files and
 //! finally the row itself go in the background ([`deletion`]).
+//!
+//! `/api/me/export` requests a data export and tells its state; the archive
+//! is built in the background ([`export`]) and downloaded from
+//! `/api/me/export/download` by the signed-in account only.
 
 pub mod deletion;
+pub mod export;
+
+use std::time::SystemTime;
 
 use axum::Router;
 use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Json, Response};
-use axum::routing::delete;
-use serde::Deserialize;
+use axum::http::header::{CACHE_CONTROL, CONTENT_RANGE, RANGE, VARY};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Json, Redirect, Response};
+use axum::routing::{delete, get};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use crate::auth::session::{self, CurrentSession};
+use crate::auth::session::{self, CurrentSession, CurrentUser};
 use crate::auth::{self, LogoutResponse, Redacted, user, validate};
 use crate::error::{ApiError, FieldErrors};
 use crate::gateway::Recheck;
@@ -26,9 +35,15 @@ use crate::limits;
 use crate::password;
 use crate::servers::moderation;
 use crate::state::AppState;
+use crate::storage::{ObjectBody, StoreError};
+
+use self::export::ExportView;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/me", delete(delete_me))
+    Router::new()
+        .route("/api/me", delete(delete_me))
+        .route("/api/me/export", get(export_status).post(request_export))
+        .route("/api/me/export/download", get(download_export))
 }
 
 /// The account's password, or for an account without one (it signs in
@@ -133,4 +148,148 @@ async fn delete_me(
 
 fn field(name: &'static str, code: &'static str) -> ApiError {
     ApiError::Validation(FieldErrors::from([(name, code)]))
+}
+
+/// `GET` and `POST /api/me/export`: the account's export, if any, and
+/// whether account mail is on (then a mail says when it is ready).
+#[derive(Debug, Serialize)]
+pub struct ExportResponse {
+    pub export: Option<ExportView>,
+    pub mail: bool,
+}
+
+/// How long a ready export keeps a new request away.
+const EXPORT_INTERVAL_SECS: f64 = 24.0 * 3600.0;
+
+/// The account's data export. A ready one past its retention is no longer
+/// shown; the worker deletes it on its next pass.
+async fn export_status(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<ExportResponse>, ApiError> {
+    let export = sqlx::query_as::<_, ExportView>(
+        "SELECT state, requested_at, finished_at, expires_at, size_bytes FROM account_exports \
+         WHERE user_id = $1 AND NOT (state = 'ready' AND expires_at <= now())",
+    )
+    .bind(user.id)
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(Json(ExportResponse {
+        export,
+        mail: state.mail.is_some(),
+    }))
+}
+
+/// Requests a data export: `202` with it queued. One that is queued or
+/// being built answers `409 export_pending`; a ready one younger than 24 h
+/// answers `429` until then. A failed one, an older one or one past its
+/// retention is replaced, and its archive deleted.
+async fn request_export(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<(StatusCode, Json<ExportResponse>), ApiError> {
+    let mut tx = state.db.begin().await?;
+    // A row that is not replaced is still locked by the conflict, so the
+    // read below sees what kept it.
+    let queued = sqlx::query_as::<_, ExportView>(
+        "INSERT INTO account_exports (user_id, state) VALUES ($1, 'pending') \
+         ON CONFLICT (user_id) DO UPDATE SET state = 'pending', requested_at = now(), \
+             attempts = 0, claim = NULL, claimed_until = NULL, finished_at = NULL, \
+             expires_at = NULL, object_key = NULL, size_bytes = NULL \
+         WHERE account_exports.state = 'failed' \
+            OR (account_exports.state = 'ready' \
+                AND (account_exports.requested_at <= now() - interval '24 hours' \
+                     OR account_exports.expires_at <= now())) \
+         RETURNING state, requested_at, finished_at, expires_at, size_bytes",
+    )
+    .bind(user.id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(queued) = queued else {
+        let (current, wait): (String, f64) = sqlx::query_as(
+            "SELECT state, EXTRACT(EPOCH FROM requested_at - now())::float8 + $2 \
+             FROM account_exports WHERE user_id = $1",
+        )
+        .bind(user.id)
+        .bind(EXPORT_INTERVAL_SECS)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.rollback().await?;
+        return Err(if current == "ready" {
+            ApiError::RateLimited {
+                retry_after: wait.ceil().max(1.0) as u64,
+            }
+        } else {
+            ApiError::ExportPending
+        });
+    };
+    tx.commit().await?;
+    export::wake(&state);
+    info!(user_id = %user.id, "data export requested");
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(ExportResponse {
+            export: Some(queued),
+            mail: state.mail.is_some(),
+        }),
+    ))
+}
+
+/// The ready archive, to save: a redirect to MinIO, or the bytes through
+/// the API (proxy delivery, memory store), like an attachment download.
+/// `404` while there is none.
+async fn download_export(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    request_headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let (key, size, finished_at): (String, i64, DateTime<Utc>) = sqlx::query_as(
+        "SELECT object_key, size_bytes, finished_at FROM account_exports \
+         WHERE user_id = $1 AND state = 'ready' AND expires_at > now()",
+    )
+    .bind(user.id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    let disposition = format!(
+        "attachment; filename=\"gelabber-export-{}.zip\"",
+        finished_at.format("%Y-%m-%d")
+    );
+    let range = request_headers
+        .get(RANGE)
+        .and_then(|value| value.to_str().ok());
+    let body = state
+        .store
+        .serve(
+            &key,
+            "application/zip",
+            Some(disposition.as_str()),
+            range,
+            SystemTime::now(),
+        )
+        .await;
+    match body {
+        Ok(ObjectBody::Redirect(url)) => {
+            let mut response = Redirect::temporary(&url).into_response();
+            let headers = response.headers_mut();
+            headers.insert(VARY, HeaderValue::from_static("Cookie"));
+            headers.insert(CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
+            Ok(response)
+        }
+        Ok(ObjectBody::Stream(object)) => Ok(crate::attachments::streamed(
+            &disposition,
+            "application/zip",
+            true,
+            object,
+        )),
+        Err(StoreError::NotFound) => Err(ApiError::NotFound),
+        Err(StoreError::RangeNotSatisfiable) => {
+            let mut response = StatusCode::RANGE_NOT_SATISFIABLE.into_response();
+            if let Ok(value) = HeaderValue::from_str(&format!("bytes */{size}")) {
+                response.headers_mut().insert(CONTENT_RANGE, value);
+            }
+            Ok(response)
+        }
+        Err(err) => Err(ApiError::Internal(format!("export download: {err}"))),
+    }
 }

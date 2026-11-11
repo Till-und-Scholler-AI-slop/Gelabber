@@ -105,6 +105,8 @@ pub enum ApiError {
     /// 409: deleting an account that still owns servers; the body lists
     /// them (`servers`) so the client can point at each one.
     OwnsServers(Vec<OwnedServer>),
+    /// 409: a data export is already queued or being built.
+    ExportPending,
 }
 
 /// A server that keeps an account from being deleted (`owns_servers`).
@@ -162,6 +164,7 @@ impl ApiError {
             Self::OidcWrongOrigin => "oidc_wrong_origin",
             Self::SessionChanged => "session_changed",
             Self::OwnsServers(_) => "owns_servers",
+            Self::ExportPending => "export_pending",
         }
     }
 
@@ -195,6 +198,7 @@ impl ApiError {
             Self::OidcWrongOrigin => StatusCode::CONFLICT,
             Self::SessionChanged => StatusCode::CONFLICT,
             Self::OwnsServers(_) => StatusCode::CONFLICT,
+            Self::ExportPending => StatusCode::CONFLICT,
         }
     }
 
@@ -242,6 +246,7 @@ impl ApiError {
             Self::OidcWrongOrigin => "Open this instance at its public address to sign in.",
             Self::SessionChanged => "You signed in to another account meanwhile. Try again.",
             Self::OwnsServers(_) => "Transfer or delete your servers first.",
+            Self::ExportPending => "Your data export is still being built.",
         }
     }
 
@@ -445,6 +450,15 @@ mod tests {
         assert_eq!(err.status(), StatusCode::CONFLICT);
         let other = serde_json::to_value(ApiError::NotFound.body()).unwrap();
         assert!(other.get("servers").is_none());
+    }
+
+    #[test]
+    fn export_pending_is_409() {
+        let err = ApiError::ExportPending;
+        let json = serde_json::to_value(err.body()).unwrap();
+        assert_eq!(json["error"], "export_pending");
+        assert!(json.get("fields").is_none());
+        assert_eq!(err.status(), StatusCode::CONFLICT);
     }
 
     #[test]
