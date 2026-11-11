@@ -188,16 +188,25 @@ fn the_media_dialog_over_its_own_page_keeps_its_controls_apart() {
     }
 }
 
-/// Darstellung in English: the language section names itself and its
-/// options in the interface's language, each option in its own.
+/// Darstellung in English: the settings navigation names the area
+/// "Appearance", and the language section names itself and its options in
+/// the interface's language, each option in its own.
 #[test]
 fn the_language_section_follows_the_interface_language() {
     within(30, || {
         use gelabber_i18n::Locale;
         let _config = crate::platform::paths::testing::TempConfig::new("language-english");
         let _locale = gelabber_i18n::on_this_thread(Locale::De);
-        let (mut h, world, _client, _call) =
-            harness("/settings/darstellung", settings_page("darstellung"));
+        // The navigation column beside the page, as the shell lays them out.
+        let mut page = settings_page("darstellung");
+        let (mut h, world, _client, _call) = harness("/settings/darstellung", move |ui, app| {
+            let column = ui.max_rect();
+            let (nav, rest) = column.split_left_right_at_x(column.left() + 240.0);
+            ui.scope_builder(egui::UiBuilder::new().max_rect(nav), |ui| {
+                super::sidebar(ui, app, Some("darstellung"));
+            });
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rest), |ui| page(ui, app));
+        });
         {
             let mut world = world.borrow_mut();
             let mut user = world.session.user().cloned().unwrap();
@@ -205,10 +214,13 @@ fn the_language_section_follows_the_interface_language() {
             world.session.adopt(&serde_json::json!({ "user": user }));
         }
         h.run_steps(4);
+        assert!(h.query_by_label("Darstellung").is_some());
         assert!(h.query_by_label("Sprache").is_some());
         assert!(h.query_by_label("Language").is_none());
         gelabber_i18n::set(Locale::En);
         h.run_steps(4);
+        assert!(h.query_by_label("Appearance").is_some());
+        assert!(h.query_by_label("Darstellung").is_none());
         assert!(h.query_by_label("Language").is_some());
         assert!(h.query_by_label("Sprache").is_none());
         // The area's controls speak English too.
