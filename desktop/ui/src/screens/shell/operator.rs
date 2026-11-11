@@ -14,6 +14,15 @@ use crate::widgets::Button;
 /// (`DEFAULT_OPERATOR_PAGE` in web/src/operator/areas.ts).
 pub const DEFAULT_PAGE: &str = "server";
 
+/// The area's pages (`OPERATOR_PAGES` in web/src/operator/areas.ts).
+pub const PAGES: [&str; 5] = ["einladungen", "konten", "server", "meldungen", "auslastung"];
+
+/// `isOperatorPage`: `/betrieb` itself, or one of [`PAGES`]; any other
+/// page is "not found", as on the web.
+pub fn is_page(page: Option<&str>) -> bool {
+    page.is_none_or(|page| PAGES.contains(&page))
+}
+
 /// Opens `path` of the server's web client (e.g. `/betrieb/server`) in the
 /// system browser; a failure is only logged, as for a chat link.
 pub fn open_in_browser(ctx: &egui::Context, app: &AppCtx, path: &str) {
@@ -39,4 +48,20 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, page: Rect, path: &str) {
             open_in_browser(ui.ctx(), app, path);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    /// `/betrieb` and its five pages have the hand-off card; any other
+    /// page is "not found", as `requireOperator` answers on the web.
+    #[test]
+    fn only_the_areas_pages_are_known() {
+        assert!(super::is_page(None));
+        for page in super::PAGES {
+            assert!(super::is_page(Some(page)), "{page}");
+        }
+        for page in ["unbekannt", "Server", "settings", ""] {
+            assert!(!super::is_page(Some(page)), "{page}");
+        }
+    }
 }

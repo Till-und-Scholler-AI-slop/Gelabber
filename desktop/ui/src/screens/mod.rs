@@ -64,6 +64,10 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, state: &mut ScreenState) {
             // Only for an operator: everyone else meets "not found", as on
             // the web.
             Route::Operator(_) if !app.session.operator() => auth::not_found::show(ui, app),
+            // An unknown page of the area is not found either (`requireOperator`).
+            Route::Operator(page) if !shell::operator::is_page(page.as_deref()) => {
+                auth::not_found::show(ui, app)
+            }
             // Off, the directory has no page (the web's `notFound()`).
             Route::Discover(_) if discover::enabled(ui.ctx(), app) == Some(false) => {
                 auth::not_found::show(ui, app)

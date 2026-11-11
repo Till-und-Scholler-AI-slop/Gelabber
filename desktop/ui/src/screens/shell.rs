@@ -14,7 +14,7 @@ mod dm_index;
 mod dm_sidebar;
 mod home;
 mod members;
-mod operator;
+pub(crate) mod operator;
 pub mod overlays;
 pub(crate) mod overview;
 mod rail;
