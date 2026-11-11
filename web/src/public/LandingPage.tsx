@@ -148,17 +148,19 @@ export function LandingPage({
               </If>
             ))}
             <a href={value(KEY.sourceUrl)}>{text("landing.nav.source")}</a>
-            {LOCALES.map((lang) => (
-              <a
-                key={lang}
-                href={landingUrl(lang)}
-                hrefLang={lang}
-                lang={lang}
-                aria-current={lang === locale ? "page" : undefined}
-              >
-                {translateIn(lang, language, `option.${lang}`)}
-              </a>
-            ))}
+            <span className="public-footer__languages">
+              {LOCALES.map((lang) => (
+                <a
+                  key={lang}
+                  href={landingUrl(lang)}
+                  hrefLang={lang}
+                  lang={lang}
+                  aria-current={lang === locale ? "page" : undefined}
+                >
+                  {translateIn(lang, language, `option.${lang}`)}
+                </a>
+              ))}
+            </span>
           </nav>
         </div>
       </footer>
