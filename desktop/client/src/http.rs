@@ -203,6 +203,14 @@ struct HeldSignOut {
     everywhere: bool,
 }
 
+/// `Accept-Language` for the interface's language right now.
+fn accept_language() -> &'static str {
+    match gelabber_i18n::get() {
+        gelabber_i18n::Locale::De => "de-DE,de;q=0.9",
+        gelabber_i18n::Locale::En => "en-GB,en;q=0.9",
+    }
+}
+
 impl Http {
     pub fn new(server: &str) -> Result<Self, ApiError> {
         let base = url::Url::parse(server).map_err(|e| ApiError::Transport(e.to_string()))?;
@@ -211,11 +219,6 @@ impl Http {
         headers.insert(
             header::ACCEPT,
             header::HeaderValue::from_static("application/json"),
-        );
-        // Klipy picks the GIF locale from it, like the browser's.
-        headers.insert(
-            header::ACCEPT_LANGUAGE,
-            header::HeaderValue::from_static("de-DE,de;q=0.9"),
         );
         let user_agent = concat!("Gelabber-Desktop/", env!("CARGO_PKG_VERSION"));
         let client = reqwest::Client::builder()
@@ -389,6 +392,9 @@ impl Http {
             if write && let Some(token) = self.csrf.read().clone() {
                 req = req.header("X-CSRF-Token", token);
             }
+            // The interface's language, as the browser sends its own: Klipy
+            // picks the GIF locale from it.
+            req = req.header(header::ACCEPT_LANGUAGE, accept_language());
             if let Some(session) = session {
                 // A Cookie header of our own replaces the jar's: send both.
                 let jar = self.cookie_header().map(|c| format!("{c}; "));

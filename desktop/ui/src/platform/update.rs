@@ -673,7 +673,10 @@ impl Notice {
             Phase::Downloading { downloaded, total } => {
                 let percent = total
                     .filter(|t| *t > 0)
-                    .map(|t| format!(" {} %", 100 * downloaded / t))
+                    .map(|t| {
+                        let n = (100 * downloaded / t).to_string();
+                        format!(" {}", gelabber_i18n::diagnostics::percent(&n))
+                    })
                     .unwrap_or_default();
                 texts::update_downloading(&percent)
             }
@@ -1715,6 +1718,10 @@ mod tests {
             total: Some(47),
         };
         assert_eq!(notice.text(), "Update wird geladen … 40 %");
+        {
+            let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+            assert_eq!(notice.text(), "Downloading the update … 40%");
+        }
         assert!(banner.contains("`Update wird geladen …${percent}`"));
         assert!(!notice.enabled());
         assert_eq!(notice.progress(), Some(19.0 / 47.0));
