@@ -113,6 +113,18 @@ export const serverSettings = defineCatalog(
     "danger.leaveTitle": "Server „{name}“ verlassen?",
     "danger.leaveConfirm": "Verlassen",
     "danger.leave": "Server verlassen",
+
+    "transfer.title": "Server übergeben",
+    "transfer.hint":
+      "Ein anderes Mitglied wird Eigentümer. Du bleibst Mitglied.",
+    "transfer.noMember":
+      "Lade zuerst jemanden ein, dem du den Server übergeben kannst.",
+    "transfer.open": "Übergeben…",
+    "transfer.member": "Neuer Eigentümer",
+    "transfer.submit": "Übergeben",
+    "transfer.pending": "Wird übergeben…",
+    "transfer.confirmTitle": "„{server}“ an {name} übergeben?",
+    "transfer.confirmMessage": "Du kannst das nicht selbst rückgängig machen.",
   },
   {
     title: "Server settings",
@@ -218,5 +230,15 @@ export const serverSettings = defineCatalog(
     "danger.leaveTitle": "Leave server “{name}”?",
     "danger.leaveConfirm": "Leave",
     "danger.leave": "Leave server",
+
+    "transfer.title": "Transfer server",
+    "transfer.hint": "Another member becomes the owner. You stay a member.",
+    "transfer.noMember": "Invite someone first who you can hand the server to.",
+    "transfer.open": "Transfer…",
+    "transfer.member": "New owner",
+    "transfer.submit": "Transfer",
+    "transfer.pending": "Transferring…",
+    "transfer.confirmTitle": "Transfer “{server}” to {name}?",
+    "transfer.confirmMessage": "You can’t undo this yourself.",
   },
 );
