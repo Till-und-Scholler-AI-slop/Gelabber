@@ -847,6 +847,23 @@ mod flows {
     }
 
     #[sqlx::test]
+    async fn a_failed_sign_in_keeps_its_target(pool: PgPool) {
+        let (issuer, state) = setup(pool).await;
+        let mut client = browser(&state).await;
+        let res = start(
+            &mut client,
+            json!({ "purpose": "sign_in", "redirect": "/invite/abc" }),
+        )
+        .await;
+        let callback = issuer.deny(res.body["url"].as_str().unwrap());
+        let res = follow(&mut client, &callback).await;
+        assert_eq!(
+            location(&res),
+            "/login?oidc_error=cancelled&redirect=%2Finvite%2Fabc"
+        );
+    }
+
+    #[sqlx::test]
     async fn an_unverified_address_creates_and_joins_nothing(pool: PgPool) {
         let (issuer, state) = setup(pool.clone()).await;
         let mut client = browser(&state).await;

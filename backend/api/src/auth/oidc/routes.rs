@@ -1108,8 +1108,9 @@ fn failure(state: &AppState, flow: &Flow, code: &'static str) -> Response {
 }
 
 /// `/login?oidc_error=…`, `/settings/konto?oidc_error=…` for a link, or
-/// `/register?oidc_error=…` (with the invitation and target kept) when the
-/// admission gate refused a new account.
+/// `/register?oidc_error=…` (with the invitation kept) when the admission
+/// gate refused a new account. A sign-in keeps its target, so an invite or
+/// the page that asked for a fresh sign-in is not lost.
 fn web_failure(state: &AppState, purpose: Purpose, code: &str, flow: Option<&Flow>) -> Response {
     let mut query = url::form_urlencoded::Serializer::new(String::new());
     query.append_pair("oidc_error", code);
@@ -1119,13 +1120,15 @@ fn web_failure(state: &AppState, purpose: Purpose, code: &str, flow: Option<&Flo
             if let Some(invitation) = flow.and_then(|flow| flow.invitation.as_deref()) {
                 query.append_pair("invitation", invitation);
             }
-            if let Some(redirect) = flow.and_then(|flow| flow.redirect.as_deref()) {
-                query.append_pair("redirect", redirect);
-            }
             "/register"
         }
         Purpose::SignIn => "/login",
     };
+    if purpose == Purpose::SignIn
+        && let Some(redirect) = flow.and_then(|flow| flow.redirect.as_deref())
+    {
+        query.append_pair("redirect", redirect);
+    }
     see_other(
         &format!("{page}?{}", query.finish()),
         [clear_binding(state)],

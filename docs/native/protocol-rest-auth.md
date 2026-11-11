@@ -277,7 +277,7 @@ An account may have no password (created through a provider). Its password login
 - Signed in: session and CSRF cookies set, `gelabber_oidc` cleared, `Location: {redirect or /}`.
 - New account: `Location: /sign-in/name#token=<64 hex>` (a result valid 30 min; `pending`, then `complete`).
 - Link done: `Location: /settings/konto?connected={provider}`.
-- Sign-in error: `/login?oidc_error={code}`; refused by the admission gate: `/register?oidc_error=invitation_required|invitation_invalid` with `invitation` and `redirect` kept; link error: `/settings/konto?oidc_error={code}`.
+- Sign-in error: `/login?oidc_error={code}`; refused by the admission gate: `/register?oidc_error=invitation_required|invitation_invalid` with `invitation` kept. Both keep the flow's `redirect`. Link error: `/settings/konto?oidc_error={code}`.
 - Codes: `cancelled` (the person declined at the provider), `expired` (unknown, used or expired state, or a missing or foreign `gelabber_oidc`), `failed` (provider error, token exchange or `id_token` check failed, provider turned off meanwhile), `email_unverified`, `account_unverified`, `identity_taken`, `invitation_required`, `invitation_invalid`, `account_disabled`, `insecure_transport`, `session_changed`.
 
 **Desktop flow** (no cookie; the app proves with PKCE that it started the flow):
