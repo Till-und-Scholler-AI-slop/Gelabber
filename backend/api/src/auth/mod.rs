@@ -20,6 +20,7 @@
 //! address, as before.
 
 pub mod device;
+pub mod devices;
 pub mod oidc;
 pub mod session;
 pub mod tokens;
@@ -31,7 +32,7 @@ use axum::extract::State;
 use axum::http::header::{ACCEPT_LANGUAGE, HOST};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{AppendHeaders, IntoResponse, Json, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
@@ -87,6 +88,8 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/auth/registration", get(registration_status))
         .merge(oidc::routes::router())
+        .route("/api/auth/sessions", get(devices::list))
+        .route("/api/auth/sessions/{id}", delete(devices::revoke))
 }
 
 /// Request bodies with a password print it as `<redacted>`.

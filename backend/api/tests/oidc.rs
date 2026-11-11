@@ -1514,6 +1514,72 @@ mod flows {
         assert_eq!(res.status, StatusCode::GONE, "{}", res.body);
     }
 
+    /// The session goes to the app, so it records the app's device, not the
+    /// system browser's that ran the callback (#519).
+    #[sqlx::test]
+    async fn the_desktop_app_records_its_own_device(pool: PgPool) {
+        let (issuer, state) = setup(pool.clone()).await;
+        let lena = || MockUser::verified("sub-lena", "lena@example.com", "Lena");
+        let as_app = |os: &'static str| {
+            move |req: &mut Builder| {
+                let taken = std::mem::take(req);
+                *req = taken.header("user-agent", format!("Gelabber-Desktop/0.10.0 ({os})"));
+            }
+        };
+        let device = |pool: PgPool, raw: String| async move {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT device_client, device_os FROM sessions WHERE token_hash = $1",
+            )
+            .bind(gelabber_api::token::hash(&raw))
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+
+        // A new account: complete issues the session.
+        let mut app = browser(&state).await;
+        let verifier = pkce::verifier();
+        let url = desktop_flow(&issuer, &state, &mut app, sign_in(), &verifier, lena()).await;
+        let code = loopback_code(&url);
+        let res = exchange(&mut app, &code, &verifier).await;
+        assert_eq!(res.body["result"], "needs_name", "{}", res.body);
+        let body = json!({ "token": code, "name": "Lena", "verifier": verifier });
+        let res = app
+            .send_with(
+                Method::POST,
+                "/api/auth/oidc/complete",
+                Some(body),
+                as_app("linux"),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+        let raw = app.jar[common::SESSION].clone();
+        assert_eq!(
+            device(pool.clone(), raw).await,
+            ("desktop".to_owned(), "linux".to_owned())
+        );
+
+        // An existing account: the exchange issues it.
+        let mut app = browser(&state).await;
+        let verifier = pkce::verifier();
+        let url = desktop_flow(&issuer, &state, &mut app, sign_in(), &verifier, lena()).await;
+        let code = loopback_code(&url);
+        let res = app
+            .send_with(
+                Method::POST,
+                "/api/auth/oidc/desktop/exchange",
+                Some(json!({ "code": code, "verifier": verifier })),
+                as_app("windows"),
+            )
+            .await;
+        assert_eq!(res.body["result"], "signed_in", "{}", res.body);
+        let raw = app.jar[common::SESSION].clone();
+        assert_eq!(
+            device(pool.clone(), raw).await,
+            ("desktop".to_owned(), "windows".to_owned())
+        );
+    }
+
     #[sqlx::test]
     async fn the_desktop_app_gets_refusals_as_json_and_errors_at_its_port(pool: PgPool) {
         let (issuer, mut state) = setup(pool.clone()).await;
