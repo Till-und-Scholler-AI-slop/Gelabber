@@ -1,5 +1,6 @@
 // Einstellungen → Sicherheit: the section "Anmeldung" with the password and
-// one row per sign-in provider (#518), and signing out every device.
+// one row per sign-in provider (#518), and "Angemeldete Geräte" with one row
+// per signed-in device and signing out every device (#519).
 
 import {
   useMutation,
@@ -23,6 +24,14 @@ import {
   oidcErrorMessage,
   validatePassword,
 } from "../auth/rules.ts";
+import {
+  deviceLabel,
+  lastActiveLabel,
+  sessionsKey,
+  signOutDevice,
+  useSessions,
+  type DeviceSession,
+} from "../auth/devices.ts";
 import {
   changePassword,
   disconnectProvider,
@@ -52,6 +61,7 @@ import { LoadError } from "../components/LoadError.tsx";
 import { GhostButton, Modal } from "../components/Modal.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { Button } from "../components/ui/Button.tsx";
+import { Badge } from "../components/ui/Badge.tsx";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
 import { PasswordField } from "../components/ui/PasswordField.tsx";
 import { SkeletonRows } from "../components/ui/Skeleton.tsx";
@@ -60,6 +70,7 @@ import {
   type InlineStatusValue,
 } from "../components/ui/useInlineStatus.ts";
 import { T, translate, useT } from "../i18n/catalog.ts";
+import { account } from "../i18n/catalogs/account.ts";
 import { auth } from "../i18n/catalogs/auth.ts";
 import { common } from "../i18n/catalogs/common.ts";
 import { settings } from "../i18n/catalogs/settings.ts";
@@ -73,27 +84,8 @@ export function SecurityArea() {
   return <AccountSecurity key={user.id} userId={user.id} email={user.email} />;
 }
 
-/**
- * The sign-in methods (#518) and signing out every device (issue #188).
- */
+/** The sign-in methods (#518) and the signed-in devices (#519). */
 function AccountSecurity({ userId, email }: { userId: string; email: string }) {
-  const t = useT(settings);
-  const navigate = useNavigate();
-
-  const onLogoutEverywhere = async () => {
-    if (
-      !(await confirmAction({
-        title: translate(settings, "security.everywhere.confirmTitle"),
-        message: translate(settings, "security.everywhere.confirmMessage"),
-        confirmLabel: translate(settings, "security.everywhere.confirmLabel"),
-      }))
-    )
-      return;
-    leaveVoice();
-    void logoutEverywhere();
-    void navigate({ to: "/login" });
-  };
-
   return (
     <>
       <p className="settings-hint">
@@ -107,21 +99,7 @@ function AccountSecurity({ userId, email }: { userId: string; email: string }) {
         />
       </p>
       <SignInSection userId={userId} />
-
-      <section
-        className="settings-group settings-danger"
-        aria-labelledby="logout-everywhere-heading"
-      >
-        <h3 id="logout-everywhere-heading" className="settings-group-title">
-          {t("security.everywhere.title")}
-        </h3>
-        <p className="settings-hint">{t("security.everywhere.hint")}</p>
-        <div className="settings-actions">
-          <Button variant="danger-outline" onClick={onLogoutEverywhere}>
-            {t("security.everywhere.button")}
-          </Button>
-        </div>
-      </section>
+      <DevicesSection userId={userId} />
     </>
   );
 }
@@ -220,12 +198,15 @@ export function SignInRows({
 /** Title and hint on the left, the row's button on the right. */
 function ActionRow({
   title,
+  badge,
   hint,
   status,
   action,
   children,
 }: {
   title: string;
+  /** A tag after the title, such as "Dieses Gerät". */
+  badge?: ReactNode;
   hint: string;
   status: InlineStatusValue;
   action: (describedBy: string) => ReactNode;
@@ -237,6 +218,7 @@ function ActionRow({
       <div className="settings-action-row__text">
         <span id={`${id}-title`} className="settings-action-row__title">
           {title}
+          {badge}
         </span>
         <span id={`${id}-hint`} className="settings-hint">
           {hint}
@@ -257,9 +239,13 @@ function PasswordRow({
   methods: SignInMethods;
 }) {
   const t = useT(settings);
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const { status, show } = useInlineStatus();
   const provider = signInProvider(methods);
+  // A new password ends every other session, so the device list is stale.
+  const refreshDevices = () =>
+    void queryClient.invalidateQueries({ queryKey: sessionsKey(userId) });
   const hint = methods.password
     ? t("security.signIn.password.hint")
     : provider
@@ -289,9 +275,10 @@ function PasswordRow({
         <ChangePasswordDialog
           open={open}
           onClose={() => setOpen(false)}
-          onChanged={() =>
-            show({ tone: "success", message: t("security.changed") })
-          }
+          onChanged={() => {
+            refreshDevices();
+            show({ tone: "success", message: t("security.changed") });
+          }}
         />
       ) : (
         <SetPasswordDialog
@@ -299,12 +286,13 @@ function PasswordRow({
           provider={provider}
           open={open}
           onClose={() => setOpen(false)}
-          onSet={() =>
+          onSet={() => {
+            refreshDevices();
             show({
               tone: "success",
               message: t("security.signIn.password.setDone"),
-            })
-          }
+            });
+          }}
         />
       )}
     </ActionRow>
@@ -726,6 +714,134 @@ export function ConnectProviderDialog({
         </div>
       </form>
     </Modal>
+  );
+}
+
+/**
+ * The section "Angemeldete Geräte": one row per session in the API's
+ * order, then "Überall abmelden", which does not wait for the list.
+ */
+export function DevicesSection({ userId }: { userId: string }) {
+  const t = useT(account);
+  const query = useSessions(userId);
+  return (
+    <section
+      className="settings-group settings-action-section"
+      aria-labelledby="devices-heading"
+    >
+      <h3 id="devices-heading" className="settings-group-title">
+        {t("devices.title")}
+      </h3>
+      <ul className="settings-action-list">
+        {query.data ? (
+          query.data.map((session) => (
+            <DeviceRow key={session.id} userId={userId} session={session} />
+          ))
+        ) : (
+          <li className="settings-action-list__state">
+            {query.isError ? (
+              <LoadError
+                message={t("devices.loadFailed")}
+                pending={query.isFetching}
+                onRetry={() => void query.refetch()}
+              />
+            ) : (
+              <SkeletonRows count={3} />
+            )}
+          </li>
+        )}
+        <EverywhereRow />
+      </ul>
+    </section>
+  );
+}
+
+function DeviceRow({
+  userId,
+  session,
+}: {
+  userId: string;
+  session: DeviceSession;
+}) {
+  const t = useT(account);
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const { status, show } = useInlineStatus();
+
+  const signOut = useMutation({
+    mutationFn: () => signOutDevice(session, userId, queryClient),
+    onSuccess: (result) => {
+      if (result === "signedOutHere") void navigate({ to: "/login" });
+    },
+    onError: (error) => {
+      const message = failureMessage(error);
+      if (message) show({ tone: "error", message });
+    },
+  });
+
+  return (
+    <ActionRow
+      title={deviceLabel(session)}
+      badge={
+        session.current ? (
+          <Badge tone="accent">{t("devices.current")}</Badge>
+        ) : null
+      }
+      hint={lastActiveLabel(session)}
+      status={status}
+      action={(describedBy) => (
+        <Button
+          size="sm"
+          aria-describedby={describedBy}
+          pending={signOut.isPending && !session.current}
+          pendingLabel={t("devices.signingOut")}
+          onClick={() => {
+            show(null);
+            signOut.mutate();
+          }}
+        >
+          {t("devices.signOut")}
+        </Button>
+      )}
+    />
+  );
+}
+
+/** "Überall abmelden" (issue #188), as the last row of the devices. */
+function EverywhereRow() {
+  const t = useT(settings);
+  const navigate = useNavigate();
+
+  const onLogoutEverywhere = async () => {
+    if (
+      !(await confirmAction({
+        title: translate(settings, "security.everywhere.confirmTitle"),
+        message: translate(settings, "security.everywhere.confirmMessage"),
+        confirmLabel: translate(settings, "security.everywhere.confirmLabel"),
+      }))
+    )
+      return;
+    leaveVoice();
+    void logoutEverywhere();
+    void navigate({ to: "/login" });
+  };
+
+  return (
+    <ActionRow
+      title={t("security.everywhere.title")}
+      hint={t("security.everywhere.hint")}
+      status={null}
+      action={(describedBy) => (
+        <Button
+          size="sm"
+          variant="danger-outline"
+          aria-describedby={describedBy}
+          onClick={() => void onLogoutEverywhere()}
+        >
+          {t("security.everywhere.button")}
+        </Button>
+      )}
+    />
   );
 }
 

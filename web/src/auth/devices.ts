@@ -1,9 +1,10 @@
 // The signed-in devices of an account (#519): `GET /api/auth/sessions` and
 // `DELETE /api/auth/sessions/{id}`, and how Sicherheit words a device.
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, type QueryClient } from "@tanstack/react-query";
 
-import { api } from "../api/client.ts";
+import { ApiError, api } from "../api/client.ts";
+import { logOut } from "../components/logout.ts";
 import { translate } from "../i18n/catalog.ts";
 import { account } from "../i18n/catalogs/account.ts";
 
@@ -51,6 +52,28 @@ export function useSessions(userId: string) {
     queryKey: sessionsKey(userId),
     queryFn: ({ signal }) => listSessions(signal),
   });
+}
+
+/**
+ * "Abmelden" on a device row. This device signs out as the user panel does
+ * (after asking when that ends a call); another one is ended through the
+ * API without asking, and the list is fetched again. A device that is gone
+ * already (expired, or signed out elsewhere) only refreshes the list.
+ */
+export async function signOutDevice(
+  session: Pick<DeviceSession, "id" | "current">,
+  userId: string,
+  queryClient: QueryClient,
+): Promise<"signedOutHere" | "stayed" | "revoked"> {
+  if (session.current) return (await logOut()) ? "signedOutHere" : "stayed";
+  try {
+    await revokeSession(session.id);
+  } catch (error) {
+    if (!(error instanceof ApiError && error.code === "not_found")) throw error;
+  }
+  // Pending until the list no longer has the row.
+  await queryClient.invalidateQueries({ queryKey: sessionsKey(userId) });
+  return "revoked";
 }
 
 // Product and system names are the same in every language.

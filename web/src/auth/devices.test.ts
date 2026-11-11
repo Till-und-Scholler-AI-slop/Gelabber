@@ -1,7 +1,24 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { QueryClient } from "@tanstack/react-query";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const fixture = vi.hoisted(() => ({
+  api: vi.fn(),
+  logOut: vi.fn(),
+}));
+vi.mock("../api/client.ts", async (original) => ({
+  ...(await original<typeof import("../api/client.ts")>()),
+  api: fixture.api,
+}));
+vi.mock("../components/logout.ts", () => ({ logOut: fixture.logOut }));
+
+import { ApiError } from "../api/client.ts";
 import { setLocale } from "../i18n/locale.ts";
-import { deviceLabel, lastActiveLabel } from "./devices.ts";
+import {
+  deviceLabel,
+  lastActiveLabel,
+  sessionsKey,
+  signOutDevice,
+} from "./devices.ts";
 
 afterEach(() => setLocale("de", { persist: false }));
 
@@ -99,5 +116,57 @@ describe("lastActiveLabel", () => {
     );
     expect(other(at(10))).toBe("Last active: yesterday");
     expect(other(at(1))).toBe("Last active: 10 days ago");
+  });
+});
+
+describe("signOutDevice", () => {
+  const USER = "00000000-0000-0000-0000-000000000001";
+  const OTHER = { id: "00000000-0000-0000-0000-0000000000aa", current: false };
+  let client: QueryClient;
+  let invalidate: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fixture.api.mockReset();
+    fixture.logOut.mockReset();
+    client = new QueryClient();
+    invalidate = vi.spyOn(client, "invalidateQueries");
+  });
+
+  it("ends another device through the API, then fetches the list again", async () => {
+    fixture.api.mockResolvedValue(null);
+    await expect(signOutDevice(OTHER, USER, client)).resolves.toBe("revoked");
+    expect(fixture.api).toHaveBeenCalledWith(`/auth/sessions/${OTHER.id}`, {
+      method: "DELETE",
+    });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: sessionsKey(USER) });
+    expect(fixture.logOut).not.toHaveBeenCalled();
+  });
+
+  it("only refreshes the list for a device that is gone already", async () => {
+    fixture.api.mockRejectedValue(new ApiError("not_found", 404, "gone"));
+    await expect(signOutDevice(OTHER, USER, client)).resolves.toBe("revoked");
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: sessionsKey(USER) });
+  });
+
+  it("reports any other failure and keeps the list", async () => {
+    fixture.api.mockRejectedValue(new ApiError("internal", 500, "boom"));
+    await expect(signOutDevice(OTHER, USER, client)).rejects.toThrow("boom");
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("signs this device out as the user panel does", async () => {
+    fixture.logOut.mockResolvedValue(true);
+    await expect(
+      signOutDevice({ id: OTHER.id, current: true }, USER, client),
+    ).resolves.toBe("signedOutHere");
+    expect(fixture.logOut).toHaveBeenCalledOnce();
+    expect(fixture.api).not.toHaveBeenCalled();
+  });
+
+  it("stays when signing out here was called off", async () => {
+    fixture.logOut.mockResolvedValue(false);
+    await expect(
+      signOutDevice({ id: OTHER.id, current: true }, USER, client),
+    ).resolves.toBe("stayed");
   });
 });
