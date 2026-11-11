@@ -804,32 +804,19 @@ fn find_text<'t>(harness: &'t App<'_>, label: &'t str) -> Option<egui_kittest::N
     find(harness, label, &others).or_else(|| find(harness, label, &[]))
 }
 
-/// Playwright scrolls a target out of view to the middle before it
-/// clicks; here in 100px scroll steps until it is there or cannot move.
+/// Playwright scrolls a target out of view to the middle of its scroller
+/// before it clicks; egui's `ScrollIntoView` does the same in its scroll
+/// area. `height` is the window's.
 fn reveal(harness: &mut App<'_>, height: f32, label: &str, roles: &[egui::accesskit::Role]) {
-    let middle = height / 2.0;
-    let mut scrolling = false;
-    for _ in 0..60 {
-        let Some(node) = find(harness, label, roles) else {
-            return;
-        };
-        let rect = node.rect();
-        let visible = rect.top() >= 0.0 && rect.bottom() <= height;
-        if (!scrolling && visible) || (scrolling && (rect.center().y - middle).abs() <= 50.0) {
-            return;
-        }
-        scrolling = true;
-        if rect.center().y > middle {
-            node.scroll_down();
-        } else {
-            node.scroll_up();
-        }
-        harness.run_steps(10);
-        let moved = find(harness, label, roles).map(|n| n.rect().center().y);
-        if moved == Some(rect.center().y) {
-            return;
-        }
+    let Some(node) = find(harness, label, roles) else {
+        return;
+    };
+    let rect = node.rect();
+    if rect.top() >= 0.0 && rect.bottom() <= height {
+        return;
     }
+    node.scroll_to_me();
+    harness.run_steps(10);
 }
 
 /// Signed in on a server's page whose presence has not arrived yet.
