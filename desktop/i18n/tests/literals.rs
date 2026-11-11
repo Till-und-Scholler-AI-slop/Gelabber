@@ -15,11 +15,9 @@
 //! - a literal on a line marked `// i18n-ok`, for intentional text such as
 //!   "Gelabber".
 //!
-//! Files listed in `desktop/i18n/pending/<batch>.txt` are not checked yet:
-//! each extraction batch moves its files' text into the catalogs and
-//! deletes its list.
+//! There is no list of files to skip: every file in those directories is
+//! checked.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// The directories checked, relative to desktop/.
@@ -345,28 +343,6 @@ fn looks_like_text(text: &str) -> bool {
     words >= 2 || capital
 }
 
-/// The pending lists' files, relative to desktop/.
-fn pending() -> BTreeSet<String> {
-    let dir = desktop().join("i18n/pending");
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return BTreeSet::new();
-    };
-    let mut out = BTreeSet::new();
-    for entry in entries {
-        let path = entry.unwrap().path();
-        if path.extension().is_none_or(|e| e != "txt") {
-            continue;
-        }
-        for line in std::fs::read_to_string(&path).unwrap().lines() {
-            let line = line.trim();
-            if !line.is_empty() && !line.starts_with('#') {
-                out.insert(line.to_owned());
-            }
-        }
-    }
-    out
-}
-
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
@@ -385,7 +361,6 @@ fn checked(name: &str) -> bool {
 #[test]
 fn interface_text_comes_from_the_catalogs() {
     let desktop = desktop();
-    let pending = pending();
     let mut files = Vec::new();
     for root in ROOTS {
         rust_files(&desktop.join(root), &mut files);
@@ -399,7 +374,7 @@ fn interface_text_comes_from_the_catalogs() {
             .to_string_lossy()
             .replace('\\', "/");
         let name = path.file_name().unwrap().to_string_lossy();
-        if !checked(&name) || pending.contains(&rel) {
+        if !checked(&name) {
             continue;
         }
         let source = std::fs::read_to_string(&path).unwrap();
@@ -419,19 +394,6 @@ fn interface_text_comes_from_the_catalogs() {
          literal with `// i18n-ok`):\n{}",
         found.join("\n")
     );
-}
-
-/// A pending list names files that exist, inside the checked directories.
-#[test]
-fn the_pending_lists_name_checked_files() {
-    let desktop = desktop();
-    let wrong: Vec<String> = pending()
-        .into_iter()
-        .filter(|rel| {
-            !desktop.join(rel).is_file() || !ROOTS.iter().any(|r| rel.starts_with(&format!("{r}/")))
-        })
-        .collect();
-    assert!(wrong.is_empty(), "not a checked file: {wrong:?}");
 }
 
 #[test]
