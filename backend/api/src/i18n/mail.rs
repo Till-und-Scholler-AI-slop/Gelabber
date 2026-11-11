@@ -74,6 +74,7 @@ fn german(mail: &Mail, base: &str, instance: &str) -> (String, String) {
                  Einstellungen → Sicherheit und ändere dein Passwort.\n"
             ),
         ),
+        Mail::AccountDeleted => super::account::account_deleted(Locale::De, instance),
     }
 }
 
@@ -138,6 +139,7 @@ fn english(mail: &Mail, base: &str, instance: &str) -> (String, String) {
                  Settings → Security and change your password.\n"
             ),
         ),
+        Mail::AccountDeleted => super::account::account_deleted(Locale::En, instance),
     }
 }
 

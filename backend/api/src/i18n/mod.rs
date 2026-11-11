@@ -8,6 +8,7 @@
 //! Error messages (`ApiError::message`) stay an English fallback: clients
 //! switch on the code.
 
+pub mod account;
 pub mod mail;
 pub mod push;
 pub mod servers;

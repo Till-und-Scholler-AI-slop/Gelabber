@@ -1,6 +1,6 @@
 //! Outgoing account mail (#195): address confirmation, password reset, the
-//! notice for a registration with a known address, and beta invitations
-//! (#517).
+//! notice for a registration with a known address, beta invitations
+//! (#517) and the notice after an account was deleted (#519).
 //!
 //! Mail goes to the operator's SMTP relay (`SMTP_*`), plain text, in the
 //! account's language (`crate::i18n::mail` holds the texts). Sending runs in
@@ -69,6 +69,9 @@ pub enum Mail {
     ProviderConnected {
         provider_name: String,
     },
+    /// The account was deleted and its data is gone (#519); sent to the
+    /// address it had, in the language it had.
+    AccountDeleted,
 }
 
 impl Mailer {
@@ -184,6 +187,7 @@ impl Mail {
             Self::AlreadyRegistered => "already_registered",
             Self::BetaInvitation { .. } => "beta_invitation",
             Self::ProviderConnected { .. } => "provider_connected",
+            Self::AccountDeleted => "account_deleted",
         }
     }
 }
