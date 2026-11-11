@@ -48,6 +48,8 @@ export const auth = defineCatalog(
     "error.joinRequestsFull":
       "Gerade sind zu viele Anfragen offen. Bitte später noch einmal versuchen.",
     "error.alreadyMember": "Du bist schon Mitglied dieses Servers.",
+    "error.joinRequestDeclinedUntil":
+      "Deine Anfrage wurde nicht angenommen. Du kannst ab dem {date} wieder anfragen.",
 
     // Field names inside field messages (auth/rules.ts `FIELD_LABEL`).
     "fieldLabel.email": "E-Mail-Adresse",
@@ -263,6 +265,8 @@ export const auth = defineCatalog(
     "error.joinRequestsFull":
       "Too many requests are open right now. Please try again later.",
     "error.alreadyMember": "You are already a member of this server.",
+    "error.joinRequestDeclinedUntil":
+      "Your request was not accepted. You can ask again from {date}.",
 
     "fieldLabel.email": "Email address",
     "fieldLabel.password": "Password",

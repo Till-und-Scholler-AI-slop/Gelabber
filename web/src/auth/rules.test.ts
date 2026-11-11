@@ -4,6 +4,7 @@ import { setLocale } from "../i18n/locale.ts";
 
 import {
   PASSWORD_MAX,
+  apiErrorMessage,
   avatarFieldAfterRemoval,
   errorMessage,
   fieldMessage,
@@ -281,5 +282,30 @@ describe("directory codes (#520)", () => {
     expect(errorMessage("already_member")).toBe(
       "You are already a member of this server.",
     );
+  });
+  it("names the day a declined request may ask again", () => {
+    const now = Date.UTC(2026, 10, 11, 12);
+    const week = 7 * 24 * 3600;
+    expect(
+      apiErrorMessage(
+        { code: "join_request_declined", retryAfter: week },
+        now,
+      ),
+    ).toBe(
+      "Deine Anfrage wurde nicht angenommen. Du kannst ab dem 18. November 2026 wieder anfragen.",
+    );
+    expect(
+      apiErrorMessage({ code: "join_request_declined", retryAfter: null }, now),
+    ).toBe(errorMessage("join_request_declined"));
+    setLocale("en", { persist: false });
+    expect(
+      apiErrorMessage(
+        { code: "join_request_declined", retryAfter: week },
+        now,
+      ),
+    ).toBe("Your request was not accepted. You can ask again from 18 November 2026.");
+    expect(
+      apiErrorMessage({ code: "already_member", retryAfter: null }, now),
+    ).toBe("You are already a member of this server.");
   });
 });
