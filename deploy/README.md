@@ -421,6 +421,30 @@ The actions are `invitations.list|create|revoke`, `accounts.list|disable|enable`
 
 Migration 0032 adds the columns and tables for this. As with every migration, an older API binary does not start against the migrated database.
 
+## Account data
+
+Under Einstellungen → Sicherheit people see their signed-in devices, export their data and delete their account. There is nothing to turn on; the only setting is how long an export is kept.
+
+**Signed-in devices.** Each session records a client (desktop app, Firefox, Chrome, Edge, Safari, another browser) and an operating system, read from the `User-Agent` of the request that signed in. Only these two codes are stored, never the `User-Agent` itself. Sessions from before the upgrade show as an unknown device until their next renewal fills them in. Signing out one device ends its sockets, media tickets and push notifications at once, as "Überall abmelden" does for all of them.
+
+**Data export.** A request queues an archive (a ZIP) that the API builds in the background: the account's details and settings, its profile images, every message it wrote (in servers and DMs, also in servers it has left), the files it sent and the reactions it gave. Other people's messages, push keys, the password hash and session tokens are not part of it.
+
+- One request per 24 hours; a failed export can be requested again at once, and a new request replaces the previous archive. With account mail on, the person gets a mail when the archive is ready; without it, the page shows when it is ready.
+- The archive is stored in the bucket under `exports/{user}/` and downloaded only by its signed-in account (like an attachment, so `ATTACHMENT_DELIVERY` applies). It is kept for `API_EXPORT_RETENTION_HOURS` (default `168`, 7 days; 1 to 720, other values stop the API at start), then deleted within seconds. Change it in `.env` and recreate the API (`docker compose up -d --no-deps --force-recreate api`); archives that are ready already keep their expiry.
+- The API writes the archive to a temporary file in the container (`/tmp`) before uploading it, one export at a time. Leave room on the Docker host's disk for the largest account's files; the file is removed when the upload ends or fails.
+
+**Deleting an account** is final; there is no grace period and no undo. It needs the account's password (wrong guesses count like failed sign-ins), or for an account without a password its address, typed within 10 minutes of signing in. Someone who owns a server must hand it to another member first (Servereinstellungen → Gefahrenzone → "Server übergeben") or delete it; until then deletion answers `409 owns_servers` with those servers, blocked ones included.
+
+What happens and when:
+
+- **At once**, in one transaction: the account is marked deleted, every session ends (sockets, voice and media tickets close), and its sign-in tokens, server memberships with their roles, the invite links it created and its data export are removed. Other members see it leave their servers. From then on nobody can sign in to it, a password reset sends nothing, and its profile and DMs cannot be opened.
+- **Within seconds**, a background worker purges the rest: its messages in every server and DM (500 per batch; replies to them show the original as deleted, mentions read "@Unbekannt"), its DM channels including the other person's messages there (that person's DM list drops the conversation), the files it uploaded, its avatar and banner, the reactions it gave, its connected Google account, settings and read state, and finally the account row. Their objects in MinIO are deleted through the same cleanup queue as deleted attachments (a file still being uploaded is held until its upload window has passed). With account mail on, the address then gets a confirmation in the account's language. Only after the purge can the address register again.
+- **What stays:** bans the person issued (the issuer becomes empty), reports they filed and the beta invitation they used (without the link to their account), and the rows of `operator_audit` (no foreign keys). Servers they own cannot exist at that point.
+
+The logs record `account deleted, purge queued` and `account purged` with the user id, never the address. A purge that fails is logged (`account purge failed, will retry`) and retried on the next pass. Deleted data is still in backups made before the purge until those backups rotate out, and recent message bodies can stay in a channel's Redis replay log until it rolls over.
+
+Migration 0034 adds the device columns of `sessions`, `users.deleted_at` and `account_exports`, and makes `server_bans.banned_by` nullable (`ON DELETE SET NULL`), so a ban outlives the account that issued it. As with every migration, an older API binary does not start against the migrated database.
+
 ## Backup
 
 PostgreSQL metadata and MinIO attachments form **one snapshot pair**. Before
