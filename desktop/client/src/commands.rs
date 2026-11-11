@@ -1945,6 +1945,42 @@ impl Client {
         });
     }
 
+    /// "Beitreten" in Entdecken (`useJoinListing`): the server is in the
+    /// list as soon as the op is done (`rememberJoinedServer`), then the
+    /// list and the unread counts are read again. Op key
+    /// `join_listing:<server>`.
+    pub fn join_listing(&self, server: Uuid) {
+        let key = format!("join_listing:{server}");
+        let epoch = self.write(|s| {
+            s.ops.insert(key.clone(), OpState::Pending);
+            s.epoch
+        });
+        let this = self.clone();
+        self.spawn(async move {
+            let http = this.http().clone();
+            match http.join_listing(server).await {
+                Ok(joined) => {
+                    let kept = this.write_in(epoch, |s| {
+                        if s.server(joined.id).is_none() {
+                            s.servers.push(joined);
+                        }
+                        s.ops.insert(key, OpState::Done);
+                    });
+                    if kept.is_some() {
+                        this.sync_topics();
+                        this.reload_servers().await;
+                        this.reload_unread().await;
+                    }
+                }
+                Err(error) => {
+                    if this.epoch() == epoch {
+                        this.fail_op(&key, error);
+                    }
+                }
+            }
+        });
+    }
+
     // ------------------------------------------------------------- gateway
 
     fn ensure_gateway(&self) {
@@ -2864,6 +2900,68 @@ mod tests {
                 "GET /api/auth/sessions HTTP/1.1".to_owned(),
                 "POST /api/me/export HTTP/1.1".to_owned(),
             ]
+        );
+    }
+
+    /// "Beitreten" (`useJoinListing`): the server is in the list once the
+    /// op is done, and the list is read again after it.
+    #[test]
+    fn a_directory_join_puts_the_server_in_the_list() {
+        use std::io::{Read, Write};
+        let filmclub = Uuid::from_u128(7);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen: Arc<parking_lot::Mutex<Vec<String>>> = Arc::default();
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let log = log.clone();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+                    let line = head.lines().next().unwrap_or("").to_owned();
+                    log.lock().push(line.clone());
+                    let body = if line.starts_with("POST /api/directory/listings/") {
+                        listed(filmclub, "Filmclub").to_string()
+                    } else if line.starts_with("GET /api/servers ") {
+                        serde_json::json!([listed(filmclub, "Filmclub")]).to_string()
+                    } else {
+                        "[]".to_owned()
+                    };
+                    let _ = stream.write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    );
+                });
+            }
+        });
+        let client = Client::new(&format!("http://{addr}")).unwrap();
+        signed_in(&client, Uuid::from_u128(5));
+        client.join_listing(filmclub);
+        let key = format!("join_listing:{filmclub}");
+        let start = std::time::Instant::now();
+        while !client.with_state(|s| matches!(s.op(&key), Some(OpState::Done))) {
+            assert!(start.elapsed() < Duration::from_secs(5), "not joined");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(client.with_state(|s| s.server(filmclub).is_some()));
+        while !seen
+            .lock()
+            .iter()
+            .any(|l| l.starts_with("GET /api/servers "))
+        {
+            assert!(start.elapsed() < Duration::from_secs(5), "list not read");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            seen.lock()
+                .iter()
+                .any(|l| l == &format!("POST /api/directory/listings/{filmclub}/join HTTP/1.1"))
         );
     }
 }
