@@ -653,4 +653,33 @@ mod tests {
         settle(&mut harness, 1500);
         assert_eq!(asked(), 1, "{:?}", api.seen.lock());
     }
+
+    /// The frame around the conversation in English: rail, sidebar, user
+    /// panel and the server's overview.
+    #[test]
+    fn the_shell_speaks_english() {
+        use crate::app::testkit::{FakeApi, HOME, launcher, wait_for_label, workspace};
+        use crate::platform::paths::testing::TempConfig;
+        use egui_kittest::kittest::Queryable;
+
+        let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        let _config = TempConfig::new("shell-english");
+        let api = FakeApi::start(true, |method, path, _| workspace(method, path));
+        let mut harness = launcher(&api, &format!("/s/{HOME}"));
+        wait_for_label(&mut harness, "Overview");
+        for label in [
+            "Direct messages",
+            "Add server",
+            "Invite",
+            "Settings",
+            "User menu",
+        ] {
+            assert!(
+                harness.query_all_by_label(label).next().is_some(),
+                "{label}"
+            );
+        }
+        assert!(harness.query_by_label("Übersicht").is_none());
+        assert!(harness.query_by_label("Server hinzufügen").is_none());
+    }
 }
