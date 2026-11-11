@@ -410,6 +410,45 @@ export function attachRealtimeRecovery(
   };
 }
 
+/**
+ * One gateway event into the cache, as the bridge applies it. Answers
+ * whether this account was removed from the event's server, and how.
+ */
+export function applyGatewayEvent(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  event: ChatEvent,
+): "kicked" | "banned" | null {
+  if (event.c) {
+    applyChannelEvent(client, userId, generation, event);
+    return null;
+  }
+  // After an ownership move, the new owner's rights and the old owner's
+  // role changed too.
+  if (isAccessChange(event) || isOwnerChange(event)) {
+    applyAccessChange(client, userId, generation, event.s);
+    return null;
+  }
+  if (event.t !== "d" || !event.i) return null;
+  const kind = removalKind(event);
+  // This account's own deletion ends its sessions; nothing to leave.
+  if (kind === "x") {
+    if (event.i !== userId)
+      applyAccountDeleted(client, userId, generation, event.s, event.i);
+    return null;
+  }
+  const result = applyMemberRemoved(
+    client,
+    userId,
+    generation,
+    event.s,
+    event.i,
+  );
+  if (result !== "self") return null;
+  return kind === "b" ? "banned" : "kicked";
+}
+
 export function useRealtimeBridge(
   viewingServerId?: string,
   onSelfRemoved?: (serverId: string) => void,
@@ -450,38 +489,8 @@ export function useRealtimeBridge(
       : () => undefined;
     const offEvent = gateway.onEvent((event) => {
       if (!userId || !alive()) return;
-      if (event.c) {
-        applyChannelEvent(client, userId, generation, event);
-        return;
-      }
-      if (isAccessChange(event)) {
-        applyAccessChange(client, userId, generation, event.s);
-        return;
-      }
-      // The new owner's rights and the old owner's role changed.
-      if (isOwnerChange(event)) {
-        applyAccessChange(client, userId, generation, event.s);
-        return;
-      }
-      if (event.t === "d" && event.i) {
-        const kind = removalKind(event);
-        // This account's own deletion ends its sessions; nothing to leave.
-        if (kind === "x") {
-          if (event.i !== userId)
-            applyAccountDeleted(client, userId, generation, event.s, event.i);
-          return;
-        }
-        const result = applyMemberRemoved(
-          client,
-          userId,
-          generation,
-          event.s,
-          event.i,
-        );
-        if (result === "self") {
-          leave(kind === "b" ? "banned" : "kicked", event.s);
-        }
-      }
+      const removed = applyGatewayEvent(client, userId, generation, event);
+      if (removed) leave(removed, event.s);
     });
     const offErr = gateway.onErr((err) => {
       if ((err.e === "kicked" || err.e === "banned") && err.s) {

@@ -24,6 +24,7 @@ import {
   READY_SPREAD_MS,
   applyAccessChange,
   applyAccountDeleted,
+  applyGatewayEvent,
   attachRealtimeRecovery,
   isAccessChange,
   isOwnerChange,
@@ -1333,10 +1334,7 @@ describe("a member's account deleted, and ownership moved (#519)", () => {
     const detail = queryClient.getQueryData<{
       members: { user_id: string }[];
     }>(serverKeys.detail("user-a", 1, "s1"));
-    expect(detail?.members.map((m) => m.user_id)).toEqual([
-      "user-a",
-      "user-c",
-    ]);
+    expect(detail?.members.map((m) => m.user_id)).toEqual(["user-a", "user-c"]);
     const left = (channel: string) =>
       queryClient
         .getQueryData<InfiniteData<MessagePage>>(
@@ -1346,5 +1344,58 @@ describe("a member's account deleted, and ownership moved (#519)", () => {
     expect(left("channel")).toEqual([second!.id]);
     // Only the server's own channels are touched.
     expect(left("other-server-channel")).toEqual(["elsewhere"]);
+  });
+
+  it('the bridge reloads the server and the list on {"k":"o"}', () => {
+    const queryClient = client();
+    const detail = serverKeys.detail("user-a", 1, "s1");
+    const other = serverKeys.detail("user-a", 1, "s2");
+    const list = serverKeys.list("user-a", 1);
+    for (const key of [detail, other, list]) queryClient.setQueryData(key, {});
+
+    expect(applyGatewayEvent(queryClient, "user-a", 1, event({}))).toBeNull();
+
+    const stale = (key: readonly unknown[]) =>
+      queryClient.getQueryState(key)?.isInvalidated;
+    expect(stale(detail)).toBe(true);
+    expect(stale(list)).toBe(true);
+    expect(stale(other)).toBe(false);
+  });
+
+  it('the bridge drops a deleted member on {"k":"x"}, never this account', () => {
+    const queryClient = client();
+    const member = (user_id: string) => ({ user_id, name: user_id });
+    const detail = serverKeys.detail("user-a", 1, "s1");
+    queryClient.setQueryData(detail, {
+      id: "s1",
+      channels: [],
+      members: [member("user-a"), member("gone")],
+    });
+    const deleted = (i: string) => event({ t: "d", i, d: { k: "x" } });
+
+    expect(applyGatewayEvent(queryClient, "user-a", 1, deleted("gone"))).toBe(
+      null,
+    );
+    // This account's own deletion leaves nothing to leave.
+    expect(applyGatewayEvent(queryClient, "user-a", 1, deleted("user-a"))).toBe(
+      null,
+    );
+    const members = queryClient
+      .getQueryData<{ members: { user_id: string }[] }>(detail)
+      ?.members.map((m) => m.user_id);
+    expect(members).toEqual(["user-a"]);
+  });
+
+  it("the bridge says how this account was removed", () => {
+    const queryClient = client();
+    const removed = (k?: string) =>
+      applyGatewayEvent(
+        queryClient,
+        "user-a",
+        1,
+        event({ t: "d", i: "user-a", d: k ? { k } : null }),
+      );
+    expect(removed("b")).toBe("banned");
+    expect(removed("k")).toBe("kicked");
   });
 });
