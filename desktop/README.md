@@ -86,6 +86,8 @@ API_OPERATOR_EMAILS=lena@example.test
 OIDC_GOOGLE_CLIENT_ID=parity.apps.googleusercontent.com
 OIDC_GOOGLE_CLIENT_SECRET=parity
 APP_PUBLIC_URL=http://127.0.0.1:5180
+# The directory is on, for the "Entdecken" scenes; seed.mjs stops without it.
+API_DIRECTORY=true
 ```
 
 Packages, built by `desktop-native.yml` after merge and for releases:
