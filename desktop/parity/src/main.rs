@@ -80,6 +80,10 @@ struct Scene {
     updates: Option<SetupState>,
     /// `"en"`: the scene in English (see the module's comment).
     locale: Option<String>,
+    /// Only the web has this page (the operator area): shots.mjs takes it
+    /// as a reference, render and compare pass it by.
+    #[serde(default, rename = "webOnly")]
+    web_only: bool,
 }
 
 #[derive(Deserialize)]
@@ -386,6 +390,12 @@ fn unknown_scenes(scenes: &[Scene], only: Option<&[String]>) -> Vec<String> {
         .collect()
 }
 
+/// Whether render and compare take the scene: picked by `only` (or no
+/// `only`), and not a page only the web has.
+fn runs_natively(scene: &Scene, only: Option<&[String]>) -> bool {
+    !scene.web_only && only.is_none_or(|o| o.contains(&scene.name))
+}
+
 fn check_only(scenes: &[Scene], only: Option<&[String]>) {
     let unknown = unknown_scenes(scenes, only);
     if !unknown.is_empty() {
@@ -418,7 +428,7 @@ fn render(out: &Path, only: Option<Vec<String>>) {
     unsafe { std::env::set_var("GELABBER_CONFIG_DIR", &config) };
     let mut failed = Vec::new();
     for scene in &scenes.scenes {
-        if only.as_ref().is_some_and(|o| !o.contains(&scene.name)) {
+        if !runs_natively(scene, only.as_deref()) {
             continue;
         }
         // A scene that fails is reported, and the others still render.
@@ -872,7 +882,7 @@ fn compare(
         "|---|---|---|---|---|".to_owned(),
     ];
     for scene in &scenes.scenes {
-        if only.is_some_and(|o| !o.contains(&scene.name)) {
+        if !runs_natively(scene, only) {
             continue;
         }
         let (a, b) = (
@@ -1037,5 +1047,24 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(scenes[0].name, "settings-konto");
+    }
+
+    /// The operator pages are web-only: the flag reads, and render and
+    /// compare pass those scenes by, also when `only` names them.
+    #[test]
+    fn a_web_only_scene_is_skipped() {
+        let scenes: Vec<Scene> = serde_json::from_value(serde_json::json!([
+            {"name": "register-invitation", "path": "/register?invitation=k7m2p9qrs4tx", "user": null},
+            {"name": "operator-server", "path": "/betrieb/server", "user": "lena", "webOnly": true}
+        ]))
+        .unwrap();
+        assert!(!scenes[0].web_only);
+        assert!(scenes[1].web_only);
+        assert!(runs_natively(&scenes[0], None));
+        assert!(!runs_natively(&scenes[1], None));
+        let only = ["operator-server".to_owned()];
+        assert!(!runs_natively(&scenes[1], Some(&only)));
+        assert!(!runs_natively(&scenes[0], Some(&only)));
+        assert!(unknown_scenes(&scenes, Some(&only)).is_empty());
     }
 }
