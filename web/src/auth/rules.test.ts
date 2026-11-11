@@ -257,3 +257,29 @@ describe("admission and operator codes (#517)", () => {
     );
   });
 });
+
+describe("directory codes (#520)", () => {
+  afterEach(() => setLocale("de", { persist: false }));
+
+  it("has German and English text for the join refusals", () => {
+    expect(errorMessage("join_request_required")).toBe(
+      "Diesem Server trittst du nur auf Anfrage bei.",
+    );
+    expect(errorMessage("join_request_declined")).toBe(
+      "Deine Anfrage wurde nicht angenommen. Du kannst in ein paar Tagen wieder anfragen.",
+    );
+    expect(errorMessage("join_requests_full")).toBe(
+      "Gerade sind zu viele Anfragen offen. Bitte später noch einmal versuchen.",
+    );
+    expect(errorMessage("already_member")).toBe(
+      "Du bist schon Mitglied dieses Servers.",
+    );
+    setLocale("en", { persist: false });
+    expect(errorMessage("join_request_required")).toBe(
+      "This server can only be joined by request.",
+    );
+    expect(errorMessage("already_member")).toBe(
+      "You are already a member of this server.",
+    );
+  });
+});

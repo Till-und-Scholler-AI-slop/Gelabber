@@ -129,6 +129,7 @@ export const shell = defineCatalog(
     "rail.mentions": { one: "{count} Erwähnung", other: "{count} Erwähnungen" },
     "rail.mentionsOver99": "Mehr als 99 Erwähnungen",
     "rail.unread": "Ungelesene Nachrichten",
+    "rail.discover": "Entdecken",
     "recovery.noAnswer": "Server antwortet nicht",
     "recovery.offline": "Keine Verbindung zu Gelabber",
     "recovery.noAnswerLead":
@@ -165,6 +166,7 @@ export const shell = defineCatalog(
     "place.settings": "Einstellungen",
     "place.dms": "Nachrichten",
     "place.operator": "Betrieb",
+    "place.discover": "Entdecken",
     noServers:
       "Keine Server. Erstelle einen über + in der Serverleiste oder öffne einen Einladungslink.",
     "drawer.openLabel": "Navigation öffnen",
@@ -301,6 +303,7 @@ export const shell = defineCatalog(
     "rail.mentions": { one: "{count} mention", other: "{count} mentions" },
     "rail.mentionsOver99": "More than 99 mentions",
     "rail.unread": "Unread messages",
+    "rail.discover": "Discover",
     "recovery.noAnswer": "Server is not answering",
     "recovery.offline": "No connection to Gelabber",
     "recovery.noAnswerLead":
@@ -337,6 +340,7 @@ export const shell = defineCatalog(
     "place.settings": "Settings",
     "place.dms": "Messages",
     "place.operator": "Operations",
+    "place.discover": "Discover",
     noServers:
       "No servers. Create one with + in the server bar or open an invite link.",
     "drawer.openLabel": "Open navigation",

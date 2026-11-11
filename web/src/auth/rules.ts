@@ -475,6 +475,14 @@ export function errorMessage(code: ApiErrorCode): string {
       return translate(auth, "error.accountDisabled");
     case "server_blocked":
       return translate(auth, "error.serverBlocked");
+    case "join_request_required":
+      return translate(auth, "error.joinRequestRequired");
+    case "join_request_declined":
+      return translate(auth, "error.joinRequestDeclined");
+    case "join_requests_full":
+      return translate(auth, "error.joinRequestsFull");
+    case "already_member":
+      return translate(auth, "error.alreadyMember");
   }
 }
 

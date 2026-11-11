@@ -41,6 +41,13 @@ export const auth = defineCatalog(
       "Diese Einladung ist unbekannt, abgelaufen oder schon benutzt.",
     "error.accountDisabled": "Dieses Konto ist gesperrt.",
     "error.serverBlocked": "Dieser Server wurde vom Betreiber gesperrt.",
+    "error.joinRequestRequired":
+      "Diesem Server trittst du nur auf Anfrage bei.",
+    "error.joinRequestDeclined":
+      "Deine Anfrage wurde nicht angenommen. Du kannst in ein paar Tagen wieder anfragen.",
+    "error.joinRequestsFull":
+      "Gerade sind zu viele Anfragen offen. Bitte später noch einmal versuchen.",
+    "error.alreadyMember": "Du bist schon Mitglied dieses Servers.",
 
     // Field names inside field messages (auth/rules.ts `FIELD_LABEL`).
     "fieldLabel.email": "E-Mail-Adresse",
@@ -250,6 +257,12 @@ export const auth = defineCatalog(
       "This invitation is unknown, expired or already used.",
     "error.accountDisabled": "This account has been disabled.",
     "error.serverBlocked": "This server has been blocked by the operator.",
+    "error.joinRequestRequired": "This server can only be joined by request.",
+    "error.joinRequestDeclined":
+      "Your request was not accepted. You can ask again in a few days.",
+    "error.joinRequestsFull":
+      "Too many requests are open right now. Please try again later.",
+    "error.alreadyMember": "You are already a member of this server.",
 
     "fieldLabel.email": "Email address",
     "fieldLabel.password": "Password",

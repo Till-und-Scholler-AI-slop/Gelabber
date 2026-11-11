@@ -47,7 +47,11 @@ export type ApiErrorCode =
   | "invitation_required"
   | "invitation_invalid"
   | "account_disabled"
-  | "server_blocked";
+  | "server_blocked"
+  | "join_request_required"
+  | "join_request_declined"
+  | "join_requests_full"
+  | "already_member";
 
 export class ApiError extends Error {
   readonly code: ApiErrorCode;

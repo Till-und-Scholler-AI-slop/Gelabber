@@ -1,0 +1,49 @@
+import { defineCatalog } from "../catalog.ts";
+
+// The server directory "Entdecken" (web/src/discover, pages/DiscoverPage,
+// v0.10). Language names are the API's endonyms, not catalog strings.
+export const discovery = defineCatalog(
+  "discovery",
+  {
+    "page.title": "Entdecken",
+    "page.lead":
+      "Server, die ihre Inhaber ins Verzeichnis gestellt haben. Alle anderen bleiben unsichtbar.",
+    "page.search": "Nach Name oder Thema suchen",
+    "page.empty": "Keine Server gefunden.",
+    "page.more": "Mehr laden",
+    "page.loadFailed": "Das Verzeichnis konnte nicht geladen werden.",
+    "page.listLabel": "Server im Verzeichnis",
+    "sidebar.label": "Entdecken",
+    "sidebar.language": "Sprache",
+    "sidebar.all": "Alle",
+    "row.meta": "{language} · {members}",
+    "row.members": { one: "{count} Mitglied", other: "{count} Mitglieder" },
+    "actions.join": "Beitreten",
+    "actions.joining": "Tritt bei…",
+    "actions.request": "Beitritt anfragen",
+    "actions.requested": "Angefragt",
+    "actions.declined": "Nicht angenommen",
+    "actions.open": "Öffnen",
+  },
+  {
+    "page.title": "Discover",
+    "page.lead":
+      "Servers their owners have put in the directory. All others stay invisible.",
+    "page.search": "Search by name or topic",
+    "page.empty": "No servers found.",
+    "page.more": "Load more",
+    "page.loadFailed": "The directory could not be loaded.",
+    "page.listLabel": "Servers in the directory",
+    "sidebar.label": "Discover",
+    "sidebar.language": "Language",
+    "sidebar.all": "All",
+    "row.meta": "{language} · {members}",
+    "row.members": { one: "{count} member", other: "{count} members" },
+    "actions.join": "Join",
+    "actions.joining": "Joining…",
+    "actions.request": "Request to join",
+    "actions.requested": "Requested",
+    "actions.declined": "Not accepted",
+    "actions.open": "Open",
+  },
+);

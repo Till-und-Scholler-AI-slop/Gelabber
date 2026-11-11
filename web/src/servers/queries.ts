@@ -928,18 +928,24 @@ export function useJoinInvite() {
     onMutate: () => takeStamp(),
     onSuccess: (server, _code, stamp) => {
       if (!stampHolds(stamp)) return;
-      const userId = stamp.userId;
-      const generation = stamp.generation;
-      patchList(client, userId, generation, (servers) =>
-        servers.some((s) => s.id === server.id)
-          ? servers
-          : [...servers, server],
-      );
-      // Members and channels are not part of the join answer.
-      void client.invalidateQueries({
-        queryKey: serverKeys.detail(userId, generation, server.id),
-      });
+      rememberJoinedServer(client, stamp, server);
     },
+  });
+}
+
+/** A server just joined (by invite or from the directory) joins the list. */
+export function rememberJoinedServer(
+  client: QueryClient,
+  stamp: { userId: string; generation: number },
+  server: Server,
+): void {
+  const { userId, generation } = stamp;
+  patchList(client, userId, generation, (servers) =>
+    servers.some((s) => s.id === server.id) ? servers : [...servers, server],
+  );
+  // Members and channels are not part of the join answer.
+  void client.invalidateQueries({
+    queryKey: serverKeys.detail(userId, generation, server.id),
   });
 }
 
