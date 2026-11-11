@@ -213,3 +213,22 @@ fn a_failed_mail_check_is_retried() {
     wait_for_label(&mut harness, "Passwort vergessen?");
     assert!(!down.load(Ordering::SeqCst));
 }
+
+/// The same form in English: labels, the button and the form's errors
+/// come from the catalogs.
+#[test]
+fn login_speaks_english() {
+    let _locale = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+    let _config = TempConfig::new("auth-login-english");
+    let api = limited("/auth/login");
+    let mut harness = launcher(&api, "/login");
+    wait_for_label(&mut harness, "Email address");
+    assert!(harness.query_all_by_label("Register").next().is_some());
+    type_into(&mut harness, "Email address", "lena@example.test");
+    type_into(&mut harness, "Password", "parity-pass-123");
+    harness
+        .get_by_role_and_label(Role::Button, "Sign in")
+        .click();
+    wait_for_text(&mut harness, "Too many attempts. Please wait 30 seconds.");
+    harness.get_by_label_contains("Try again in");
+}

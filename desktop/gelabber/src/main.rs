@@ -60,7 +60,7 @@ fn init_logging() {
         platform::paths::file("gelabber.log").and_then(|path| match open_log(&path, LOG_MAX) {
             Ok(file) => Some(file),
             Err(e) => {
-                eprintln!("gelabber: log file {}: {e}", path.display());
+                eprintln!("gelabber: log file {}: {e}", path.display()); // i18n-ok
                 None
             }
         });
@@ -90,7 +90,7 @@ fn init_logging() {
             let name = thread.name().unwrap_or("?");
             let _ = writeln!(
                 file,
-                "panic at unix {at} in thread {name}: {info}\n{backtrace}"
+                "panic at unix {at} in thread {name}: {info}\n{backtrace}" // i18n-ok
             );
         }
         default(info);
@@ -149,7 +149,7 @@ impl eframe::App for Desktop {
 
 fn remember(server: &str) {
     if let Err(e) = settings::set_server(server) {
-        note(&format!("gelabber: saving the server: {e}"));
+        note(&format!("gelabber: saving the server: {e}")); // i18n-ok
     }
 }
 
@@ -166,10 +166,10 @@ fn main() -> eframe::Result {
     };
     // Before anything reads the settings: the Tauri app's, on the first start.
     match legacy::import() {
-        Ok(Some(imported)) => note(&format!("gelabber: took over {imported}")),
+        Ok(Some(imported)) => note(&format!("gelabber: took over {imported}")), // i18n-ok
         Ok(None) => {}
         Err(e) => note(&format!(
-            "gelabber: taking over the Tauri app's settings: {e}"
+            "gelabber: taking over the Tauri app's settings: {e}" // i18n-ok
         )),
     }
     // The language before any window: this device's, the system's or English.
@@ -223,10 +223,10 @@ fn main() -> eframe::Result {
     // The app has ended (instance and files released): the setup replaces it
     // and starts the new version.
     if let Err(e) = &result {
-        note(&format!("gelabber: the window did not start: {e}"));
+        note(&format!("gelabber: the window did not start: {e}")); // i18n-ok
     }
     if let Err(e) = update::run_pending() {
-        note(&format!("gelabber: update: {e}"));
+        note(&format!("gelabber: update: {e}")); // i18n-ok
     }
     if let Some(code) = smoke::exit_code() {
         std::process::exit(code);

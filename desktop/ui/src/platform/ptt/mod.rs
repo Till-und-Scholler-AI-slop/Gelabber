@@ -50,7 +50,7 @@ pub struct Ptt {
 /// same shortcut.
 pub fn bind(key: &str, label: &str, report: Report) -> Result<Ptt, String> {
     if !KEYS.iter().any(|known| known.code == key) {
-        return Err(format!("unknown key: {key}"));
+        return Err(format!("unknown key: {key}")); // i18n-ok
     }
     Ok(Ptt {
         _binding: start(key, label, report)?,
@@ -59,7 +59,7 @@ pub fn bind(key: &str, label: &str, report: Report) -> Result<Ptt, String> {
 
 #[cfg(windows)]
 fn start(key: &str, _label: &str, report: Report) -> Result<Box<dyn Binding>, String> {
-    let trigger = windows_trigger(key).ok_or("key without a Windows trigger")?;
+    let trigger = windows_trigger(key).ok_or("key without a Windows trigger")?; // i18n-ok
     Ok(Box::new(hook::start(trigger, report)?))
 }
 
@@ -70,7 +70,7 @@ fn start(key: &str, label: &str, report: Report) -> Result<Box<dyn Binding>, Str
 
 #[cfg(not(any(windows, target_os = "linux")))]
 fn start(_key: &str, _label: &str, _report: Report) -> Result<Box<dyn Binding>, String> {
-    Err("no global keys on this system".into())
+    Err("no global keys on this system".into()) // i18n-ok
 }
 
 /// What a page's key means on Windows: a virtual key where Windows tells

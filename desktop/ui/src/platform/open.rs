@@ -9,7 +9,7 @@ const SCHEMES: [&str; 3] = ["http", "https", "mailto"];
 fn checked(url: &str) -> Result<String, String> {
     let parsed = url::Url::parse(url.trim()).map_err(|e| format!("{url}: {e}"))?;
     if !SCHEMES.contains(&parsed.scheme()) {
-        return Err(format!("{url}: only http, https and mailto links open"));
+        return Err(format!("{url}: only http, https and mailto links open")); // i18n-ok
     }
     Ok(parsed.into())
 }
@@ -80,7 +80,7 @@ fn launch(url: &str) -> Result<(), String> {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn launch(url: &str) -> Result<(), String> {
-    Err(format!("{url}: no opener on this system"))
+    Err(format!("{url}: no opener on this system")) // i18n-ok
 }
 
 #[cfg(test)]

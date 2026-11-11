@@ -318,4 +318,14 @@ mod tests {
         assert_eq!(expiry_text(3 * 3_600_000), "läuft in 3 Stunden ab");
         assert_eq!(expiry_text(0), "abgelaufen");
     }
+
+    #[test]
+    fn expiry_in_english() {
+        let _locale = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+        assert_eq!(expiry_text(86_400_000 * 6), "expires in 6 days");
+        assert_eq!(expiry_text(86_400_000), "expires tomorrow");
+        assert_eq!(expiry_text(2 * 86_400_000), "expires in 2 days");
+        assert_eq!(expiry_text(3_600_000), "expires in 1 hour");
+        assert_eq!(expiry_text(0), "expired");
+    }
 }

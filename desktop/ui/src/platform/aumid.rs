@@ -14,7 +14,7 @@ pub fn set_for_process() -> Result<(), String> {
     let result = unsafe { SetCurrentProcessExplicitAppUserModelID(id.as_ptr()) };
     if result < 0 {
         return Err(format!(
-            "SetCurrentProcessExplicitAppUserModelID: {result:#x}"
+            "SetCurrentProcessExplicitAppUserModelID: {result:#x}" // i18n-ok
         ));
     }
     Ok(())

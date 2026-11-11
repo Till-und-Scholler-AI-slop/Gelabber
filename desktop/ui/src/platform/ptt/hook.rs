@@ -136,7 +136,7 @@ pub fn start(trigger: Trigger, report: Report) -> Result<Hook, String> {
         .map_err(|e| e.to_string())?;
     let thread = started
         .recv()
-        .map_err(|_| "push-to-talk hook thread ended".to_owned())??;
+        .map_err(|_| "push-to-talk hook thread ended".to_owned())??; // i18n-ok
     // Ends when the hook thread drops its sender.
     thread::Builder::new()
         .name("gelabber-ptt-events".into())
@@ -171,7 +171,7 @@ fn run(trigger: Trigger, changes: mpsc::Sender<bool>, ready: mpsc::Sender<Result
     };
     if hook.is_null() {
         let error = std::io::Error::last_os_error();
-        let _ = ready.send(Err(format!("SetWindowsHookEx: {error}")));
+        let _ = ready.send(Err(format!("SetWindowsHookEx: {error}"))); // i18n-ok
         return;
     }
     WATCH.set(Some(Watch {
