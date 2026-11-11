@@ -450,6 +450,18 @@ impl Client {
         }
     }
 
+    /// The access-changed event (`{"k":"a"}`): the caller's rights and the
+    /// channels they see may have changed, so the server's detail and the
+    /// list are read again. An open channel that is gone takes the
+    /// missing-channel path.
+    pub fn refresh_access(&self, server: Uuid) {
+        let this = self.clone();
+        self.spawn(async move {
+            this.reload_servers().await;
+            let _ = this.reload_server(server).await;
+        });
+    }
+
     /// Refetches unread counts and notification levels.
     pub fn refresh_unread(&self) {
         let this = self.clone();
@@ -1603,17 +1615,20 @@ impl Client {
         });
     }
 
+    /// `role_ids` limits the new channel to those roles; `None`: everyone.
     pub fn create_channel(
         &self,
         server: Uuid,
         name: &str,
         kind: ChannelKind,
         category: Option<Uuid>,
+        role_ids: Option<Vec<Uuid>>,
     ) {
         let http = self.http().clone();
         let name = name.to_owned();
         self.server_change("create_channel", server, async move {
-            http.create_channel(server, &name, kind, category).await
+            http.create_channel(server, &name, kind, category, role_ids.as_deref())
+                .await
         });
     }
 
@@ -1665,6 +1680,65 @@ impl Client {
         let http = self.http().clone();
         self.server_change(format!("ban:{user}"), server, async move {
             http.ban(server, user).await
+        });
+    }
+
+    /// A role write, then the server's detail and the list are read again:
+    /// the caller's own rights may have changed. Op key `op`.
+    fn role_change<T, F>(&self, op: String, server: Uuid, work: F)
+    where
+        T: Send + 'static,
+        F: Future<Output = Result<T, ApiError>> + Send + 'static,
+    {
+        let this = self.clone();
+        self.spawn(async move {
+            if this.op(&op, work).await.is_some() {
+                this.reload_servers().await;
+                let _ = this.reload_server(server).await;
+            }
+        });
+    }
+
+    /// Op key `create_role:<server>`. The new role is in the detail at once.
+    pub fn create_role(&self, server: Uuid, role: NewRole) {
+        let http = self.http().clone();
+        let this = self.clone();
+        self.role_change(format!("create_role:{server}"), server, async move {
+            let epoch = this.epoch();
+            let created = http.create_role(server, &role).await?;
+            this.write_in(epoch, |s| {
+                if let Some(detail) = s.server_details.get_mut(&server)
+                    && !detail.roles.iter().any(|r| r.id == created.id)
+                {
+                    detail.roles.push(created.clone());
+                }
+            });
+            Ok(created)
+        });
+    }
+
+    /// Op key `role:<id>`.
+    pub fn update_role(&self, server: Uuid, role: Uuid, patch: RolePatch) {
+        let http = self.http().clone();
+        self.role_change(format!("role:{role}"), server, async move {
+            http.update_role(role, &patch).await
+        });
+    }
+
+    /// Op key `delete_role:<id>`.
+    pub fn delete_role(&self, server: Uuid, role: Uuid) {
+        let http = self.http().clone();
+        self.role_change(format!("delete_role:{role}"), server, async move {
+            http.delete_role(role).await
+        });
+    }
+
+    /// Full replacement of a member's custom roles. Op key
+    /// `member_roles:<user>`.
+    pub fn set_member_roles(&self, server: Uuid, user: Uuid, role_ids: Vec<Uuid>) {
+        let http = self.http().clone();
+        self.role_change(format!("member_roles:{user}"), server, async move {
+            http.set_member_roles(server, user, &role_ids).await
         });
     }
 
@@ -1909,6 +1983,8 @@ impl Client {
                 });
                 if let Some((server, banned)) = removed {
                     self.removed_from(server, banned);
+                } else if event.is_access_change() {
+                    self.refresh_access(event.s);
                 }
                 if let Some(message) = created {
                     self.notify(Notice::Message {

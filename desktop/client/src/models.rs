@@ -234,6 +234,8 @@ pub enum Permission {
     SendFiles,
     JoinVoice,
     GoLive,
+    /// Kick and ban (v0.10; `manage_server` before).
+    ModerateMembers,
     /// A permission this client does not know yet.
     #[serde(other)]
     Unknown,
@@ -241,8 +243,9 @@ pub enum Permission {
 
 impl Permission {
     /// The canonical order the server serialises (`servers/permissions.rs`).
-    pub const ALL: [Permission; 8] = [
+    pub const ALL: [Permission; 9] = [
         Self::ManageServer,
+        Self::ModerateMembers,
         Self::ManageChannels,
         Self::ManageMessages,
         Self::MentionEveryone,
@@ -294,6 +297,79 @@ pub struct ServerDetail {
     pub channels: Vec<Channel>,
     #[serde(deserialize_with = "lenient_list")]
     pub members: Vec<Member>,
+    /// Custom roles, by position; none from a server older than v0.10.
+    /// "Alle Mitglieder" is `member_permissions`, the owner is fixed.
+    #[serde(
+        default,
+        deserialize_with = "lenient_list",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub roles: Vec<ServerRole>,
+}
+
+impl ServerDetail {
+    pub fn role(&self, id: Uuid) -> Option<&ServerRole> {
+        self.roles.iter().find(|r| r.id == id)
+    }
+}
+
+/// The six role colours, as the API stores them.
+/// A colour this client does not know reads as amber.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase", from = "String")]
+pub enum RoleColor {
+    #[default]
+    Amber,
+    Blue,
+    Green,
+    Pink,
+    Violet,
+    Coral,
+}
+
+impl From<String> for RoleColor {
+    fn from(name: String) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|c| c.name() == name)
+            .unwrap_or_default()
+    }
+}
+
+impl RoleColor {
+    /// The API's name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Amber => "amber",
+            Self::Blue => "blue",
+            Self::Green => "green",
+            Self::Pink => "pink",
+            Self::Violet => "violet",
+            Self::Coral => "coral",
+        }
+    }
+
+    /// The order of the swatches.
+    pub const ALL: [RoleColor; 6] = [
+        Self::Amber,
+        Self::Blue,
+        Self::Green,
+        Self::Pink,
+        Self::Violet,
+        Self::Coral,
+    ];
+}
+
+/// A custom role (`servers/roles.rs`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ServerRole {
+    pub id: Uuid,
+    pub server_id: Uuid,
+    pub name: String,
+    pub color: RoleColor,
+    pub permissions: Vec<Permission>,
+    pub position: i32,
+    pub created_at: Timestamp,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -321,6 +397,13 @@ pub struct Channel {
     pub name: String,
     pub kind: ChannelKind,
     pub created_at: Timestamp,
+    /// Seen only by the owner and holders of one of `role_ids`. A limited
+    /// channel whose last role was deleted is the owner's alone.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub limited: bool,
+    /// The roles a limited channel is for; empty when it is not limited.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub role_ids: Vec<Uuid>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -333,6 +416,9 @@ pub struct Member {
     pub accent_color: Option<String>,
     pub avatar_decoration: Option<String>,
     pub role: Role,
+    /// The member's custom roles, by position.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub role_ids: Vec<Uuid>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -387,6 +473,37 @@ pub struct ChannelPatch {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category_id: Option<String>,
+    /// `[]` opens the channel to everyone; a list limits it to those roles.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role_ids: Option<Vec<Uuid>>,
+}
+
+/// `POST /api/servers/{id}/roles`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NewRole {
+    pub name: String,
+    pub color: RoleColor,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<Vec<Permission>>,
+}
+
+/// `PATCH /api/roles/{id}`: absent = unchanged; `permissions` replaces the
+/// whole set.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RolePatch {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<RoleColor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<Vec<Permission>>,
+}
+
+/// `PUT /api/servers/{id}/members/{user}/roles`, both ways.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MemberRoles {
+    pub user_id: Uuid,
+    pub role_ids: Vec<Uuid>,
 }
 
 // ---------------------------------------------------------------------- DMs
@@ -1056,6 +1173,19 @@ impl EventFrame {
             message.revision = r;
         }
         Some(message)
+    }
+
+    /// The server-topic event "access changed" (`t: "e"`, no `c`,
+    /// `d: {"k": "a"}`): roles, rights or a channel's access changed.
+    pub fn is_access_change(&self) -> bool {
+        self.t == EventKind::E
+            && self.c.is_none()
+            && self
+                .d
+                .as_ref()
+                .and_then(|d| d.get("k"))
+                .and_then(|k| k.as_str())
+                == Some("a")
     }
 }
 

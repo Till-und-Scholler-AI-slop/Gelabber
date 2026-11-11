@@ -315,3 +315,128 @@ fn watch_frames() {
     };
     assert!(!serde_json::to_string(&request).unwrap().contains(r#""o""#));
 }
+
+/// Roles and limited channels (#516), as `servers/roles.rs` and
+/// `servers/channel.rs` write them; a server older than v0.10 sends none.
+#[test]
+fn roles_and_limited_channels() {
+    use serde_json::json;
+    let (role, other) = (
+        "00000000-0000-0000-0000-0000000000d1",
+        "00000000-0000-0000-0000-0000000000d2",
+    );
+    // An old payload: no roles, nothing limited, nobody holds a role.
+    let old: ServerDetail = round_trip("server_wohnzimmer");
+    assert!(old.roles.is_empty());
+    assert!(
+        old.channels
+            .iter()
+            .all(|c| !c.limited && c.role_ids.is_empty())
+    );
+    assert!(old.members.iter().all(|m| m.role_ids.is_empty()));
+
+    let mut detail = fixture("server_wohnzimmer");
+    let server = detail["id"].clone();
+    detail["permissions"] = json!(["moderate_members", "send_messages", "can_fly"]);
+    detail["roles"] = json!([
+        {"id": role, "server_id": server, "name": "Moderation", "color": "blue",
+         "permissions": ["moderate_members", "manage_messages", "mention_everyone"],
+         "position": 0, "created_at": "2026-01-01T00:00:00Z"},
+        {"id": other, "server_id": server, "name": "Stammgäste", "color": "teal",
+         "permissions": [], "position": 1, "created_at": "2026-01-01T00:00:00Z"},
+        {"id": "nope"}
+    ]);
+    detail["channels"][0]["limited"] = true.into();
+    detail["channels"][0]["role_ids"] = json!([role, other]);
+    detail["channels"][1]["limited"] = false.into();
+    detail["channels"][1]["role_ids"] = json!([]);
+    detail["members"][1]["role_ids"] = json!([role]);
+    let decoded: ServerDetail = serde_json::from_value(detail).unwrap();
+    assert!(decoded.server.can(Permission::ModerateMembers));
+    assert!(!decoded.server.can(Permission::ManageServer));
+    assert!(decoded.server.permissions.contains(&Permission::Unknown));
+    // The unreadable role drops; an unknown colour reads as amber.
+    assert_eq!(decoded.roles.len(), 2);
+    let moderation = decoded.role(role.parse().unwrap()).unwrap();
+    assert_eq!(moderation.color, RoleColor::Blue);
+    assert_eq!(moderation.permissions[0], Permission::ModerateMembers);
+    assert_eq!(decoded.roles[1].color, RoleColor::Amber);
+    assert!(decoded.channels[0].limited);
+    assert_eq!(decoded.channels[0].role_ids.len(), 2);
+    assert!(!decoded.channels[1].limited);
+    assert_eq!(
+        decoded.members[1].role_ids,
+        vec![role.parse::<uuid::Uuid>().unwrap()]
+    );
+
+    // The canonical order of the server, with the new flag second.
+    assert_eq!(Permission::ALL.len(), 9);
+    assert_eq!(Permission::ALL[1], Permission::ModerateMembers);
+    assert_eq!(
+        serde_json::to_value(Permission::ModerateMembers).unwrap(),
+        "moderate_members"
+    );
+    assert_eq!(
+        serde_json::to_value(RoleColor::ALL).unwrap(),
+        json!(["amber", "blue", "green", "pink", "violet", "coral"])
+    );
+
+    // Request bodies: absent stays absent, `[]` opens a channel again.
+    let patch = ChannelPatch {
+        name: Some("spiele".into()),
+        ..ChannelPatch::default()
+    };
+    assert_eq!(
+        serde_json::to_value(&patch).unwrap(),
+        json!({"name": "spiele"})
+    );
+    let open = ChannelPatch {
+        role_ids: Some(Vec::new()),
+        ..ChannelPatch::default()
+    };
+    assert_eq!(
+        serde_json::to_value(&open).unwrap(),
+        json!({"role_ids": []})
+    );
+    let new = NewRole {
+        name: "Neue Rolle".into(),
+        color: RoleColor::Green,
+        permissions: Some(Vec::new()),
+    };
+    assert_eq!(
+        serde_json::to_value(&new).unwrap(),
+        json!({"name": "Neue Rolle", "color": "green", "permissions": []})
+    );
+    let rename = RolePatch {
+        color: Some(RoleColor::Coral),
+        ..RolePatch::default()
+    };
+    assert_eq!(
+        serde_json::to_value(&rename).unwrap(),
+        json!({"color": "coral"})
+    );
+    let assigned: MemberRoles =
+        serde_json::from_value(json!({"user_id": other, "role_ids": [role]})).unwrap();
+    assert_eq!(assigned.role_ids.len(), 1);
+}
+
+/// The server-topic event "access changed": `t: "e"`, no `c`, `d.k: "a"`.
+#[test]
+fn access_change_events() {
+    let s = "00000000-0000-0000-0000-000000000001";
+    let event = |json: serde_json::Value| -> EventFrame { serde_json::from_value(json).unwrap() };
+    assert!(
+        event(serde_json::json!({"t": "e", "s": s, "n": 4, "d": {"k": "a"}})).is_access_change()
+    );
+    assert!(
+        !event(serde_json::json!({"t": "e", "s": s, "c": s, "n": 4, "d": {"k": "a"}}))
+            .is_access_change()
+    );
+    assert!(
+        !event(serde_json::json!({"t": "d", "s": s, "n": 4, "d": {"k": "a"}})).is_access_change()
+    );
+    assert!(
+        !event(serde_json::json!({"t": "e", "s": s, "n": 4, "d": {"k": "b"}})).is_access_change()
+    );
+    assert!(!event(serde_json::json!({"t": "e", "s": s, "n": 4})).is_access_change());
+}

@@ -610,4 +610,43 @@ mod tests {
             "{notices:?}"
         );
     }
+
+    /// The access-changed event (`{"k":"a"}`, no channel) reads the
+    /// server's detail and the list again; another server event does not.
+    #[test]
+    fn an_access_change_fetches_the_server_and_the_list_again() {
+        let (url, seen) = recording_server("kaputt");
+        let client = Client::new(&url).unwrap();
+        let server = uuid::Uuid::from_u128(3);
+        let event = |k: &str| EventFrame {
+            t: EventKind::E,
+            s: server,
+            c: None,
+            n: 1,
+            ep: None,
+            i: None,
+            d: Some(serde_json::json!({"k": k})),
+            r: None,
+        };
+        let fetches = || {
+            let seen = seen.lock();
+            (
+                seen.iter()
+                    .filter(|l| l.starts_with("GET /api/servers "))
+                    .count(),
+                seen.iter()
+                    .filter(|l| l.starts_with(&format!("GET /api/servers/{server} ")))
+                    .count(),
+            )
+        };
+        client.on_gateway(GatewayEvent::Event(event("x")));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(fetches(), (0, 0));
+        client.on_gateway(GatewayEvent::Event(event("a")));
+        let start = Instant::now();
+        while fetches() != (1, 1) && start.elapsed() < std::time::Duration::from_secs(5) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(fetches(), (1, 1), "{:?}", seen.lock());
+    }
 }

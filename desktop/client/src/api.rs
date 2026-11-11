@@ -307,12 +307,15 @@ impl Http {
     }
 
     /// `kind` is text or voice; text names are normalised by the server.
+    /// `role_ids` limits the new channel to those roles; `None` or `[]`:
+    /// everyone.
     pub async fn create_channel(
         &self,
         server: Uuid,
         name: &str,
         kind: ChannelKind,
         category: Option<Uuid>,
+        role_ids: Option<&[Uuid]>,
     ) -> Result<Channel> {
         let kind = match kind {
             ChannelKind::Voice => "voice",
@@ -320,12 +323,12 @@ impl Http {
         };
         // The web always sends `category_id`, "" for none.
         let category = category.map(|c| c.to_string()).unwrap_or_default();
-        self.send(
-            Method::POST,
-            &format!("/servers/{server}/channels"),
-            &json!({"name": name, "kind": kind, "category_id": category}),
-        )
-        .await
+        let mut body = json!({"name": name, "kind": kind, "category_id": category});
+        if let Some(role_ids) = role_ids {
+            body["role_ids"] = json!(role_ids);
+        }
+        self.send(Method::POST, &format!("/servers/{server}/channels"), &body)
+            .await
     }
 
     pub async fn update_channel(&self, id: Uuid, patch: &ChannelPatch) -> Result<Channel> {
@@ -649,5 +652,39 @@ impl Http {
     pub async fn media_ticket(&self, channel: Uuid) -> Result<MediaTicket> {
         self.send_empty(Method::POST, &format!("/channels/{channel}/media-ticket"))
             .await
+    }
+
+    // ------------------------------------------------------------- roles
+
+    /// Needs `manage_server`; the role lands after the others.
+    pub async fn create_role(&self, server: Uuid, role: &NewRole) -> Result<ServerRole> {
+        self.send(Method::POST, &format!("/servers/{server}/roles"), role)
+            .await
+    }
+
+    pub async fn update_role(&self, id: Uuid, patch: &RolePatch) -> Result<ServerRole> {
+        self.send(Method::PATCH, &format!("/roles/{id}"), patch)
+            .await
+    }
+
+    /// Its assignments go too; channels limited to it stay limited.
+    pub async fn delete_role(&self, id: Uuid) -> Result<()> {
+        self.send_empty(Method::DELETE, &format!("/roles/{id}"))
+            .await
+    }
+
+    /// Full replacement of a member's custom roles.
+    pub async fn set_member_roles(
+        &self,
+        server: Uuid,
+        user: Uuid,
+        role_ids: &[Uuid],
+    ) -> Result<MemberRoles> {
+        self.send(
+            Method::PUT,
+            &format!("/servers/{server}/members/{user}/roles"),
+            &json!({"role_ids": role_ids}),
+        )
+        .await
     }
 }

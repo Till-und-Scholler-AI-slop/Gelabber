@@ -918,6 +918,7 @@ fn channel_dialog(
                                     category_id: Some(
                                         category.map(|c| c.to_string()).unwrap_or_default(),
                                     ),
+                                    role_ids: None,
                                 },
                             ),
                             None => app.client.create_channel(
@@ -929,6 +930,7 @@ fn channel_dialog(
                                     ChannelKind::Text
                                 },
                                 *category,
+                                None,
                             ),
                         }
                         done = true;
