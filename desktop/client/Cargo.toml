@@ -24,6 +24,10 @@ thiserror = "2"
 parking_lot = "0.12.5"
 tracing = "0.1"
 url = "2"
+# Sign-in through a provider (oidc.rs): the PKCE pair and the app's state.
+rand = "0.10.3"
+aws-lc-rs = { version = "1.19.0", default-features = false, features = ["aws-lc-sys"] }
+base64 = "0.23.1"
 
 [dev-dependencies]
 gelabber-i18n = { path = "../i18n", features = ["testing"] }
