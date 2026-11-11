@@ -44,7 +44,9 @@ pub struct Ban {
     pub user_id: Uuid,
     pub name: String,
     pub avatar_url: Option<String>,
-    pub banned_by: Uuid,
+    /// `None` once the account that issued the ban was deleted; the ban
+    /// stays (migration 0034).
+    pub banned_by: Option<Uuid>,
     pub banned_at: DateTime<Utc>,
 }
 
@@ -261,16 +263,20 @@ pub(crate) async fn after_removal_with(
             "presence cleanup after removal failed"
         );
     }
-    if !matches!(reason, "kicked" | "banned") {
-        return Ok(());
-    }
+    // Members see a kick, a ban and a deleted account (`x`) leave the list.
+    let kind = match reason {
+        "kicked" => "k",
+        "banned" => "b",
+        "deleted" => "x",
+        _ => return Ok(()),
+    };
     for user_id in user_ids {
         if let Err(err) = publish_server(
             state,
             server_id,
             EventKind::D,
             Some(*user_id),
-            Some(serde_json::json!({ "k": if reason == "banned" { "b" } else { "k" } })),
+            Some(serde_json::json!({ "k": kind })),
         )
         .await
         {
