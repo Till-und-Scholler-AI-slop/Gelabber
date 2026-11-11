@@ -1,6 +1,5 @@
-// Einstellungen → Sicherheit, section "Anmeldung": the password and one row
-// per sign-in provider (#518). Each row is self-contained, so the section can
-// move into an area of its own unchanged.
+// Einstellungen → Sicherheit: the section "Anmeldung" with the password and
+// one row per sign-in provider (#518), and signing out every device.
 
 import {
   useMutation,
@@ -27,8 +26,10 @@ import {
 import {
   changePassword,
   disconnectProvider,
+  logoutEverywhere,
   setPassword,
   startOidc,
+  useSession,
 } from "../auth/session.ts";
 import {
   SECURITY_PATH,
@@ -58,10 +59,72 @@ import {
   useInlineStatus,
   type InlineStatusValue,
 } from "../components/ui/useInlineStatus.ts";
-import { useT } from "../i18n/catalog.ts";
+import { T, translate, useT } from "../i18n/catalog.ts";
 import { auth } from "../i18n/catalogs/auth.ts";
 import { common } from "../i18n/catalogs/common.ts";
 import { settings } from "../i18n/catalogs/settings.ts";
+import { leaveVoice } from "../voice/session.ts";
+import "./settings.css";
+
+/** Settings area "Sicherheit". */
+export function SecurityArea() {
+  const user = useSession((state) => state.user);
+  if (!user) return null;
+  return <AccountSecurity key={user.id} userId={user.id} email={user.email} />;
+}
+
+/**
+ * The sign-in methods (#518) and signing out every device (issue #188).
+ */
+function AccountSecurity({ userId, email }: { userId: string; email: string }) {
+  const t = useT(settings);
+  const navigate = useNavigate();
+
+  const onLogoutEverywhere = async () => {
+    if (
+      !(await confirmAction({
+        title: translate(settings, "security.everywhere.confirmTitle"),
+        message: translate(settings, "security.everywhere.confirmMessage"),
+        confirmLabel: translate(settings, "security.everywhere.confirmLabel"),
+      }))
+    )
+      return;
+    leaveVoice();
+    void logoutEverywhere();
+    void navigate({ to: "/login" });
+  };
+
+  return (
+    <>
+      <p className="settings-hint">
+        <T
+          catalog={settings}
+          k="security.signedInAs"
+          params={{ email }}
+          tags={{
+            b: (text) => <strong className="settings-strong">{text}</strong>,
+          }}
+        />
+      </p>
+      <SignInSection userId={userId} />
+
+      <section
+        className="settings-group settings-danger"
+        aria-labelledby="logout-everywhere-heading"
+      >
+        <h3 id="logout-everywhere-heading" className="settings-group-title">
+          {t("security.everywhere.title")}
+        </h3>
+        <p className="settings-hint">{t("security.everywhere.hint")}</p>
+        <div className="settings-actions">
+          <Button variant="danger-outline" onClick={onLogoutEverywhere}>
+            {t("security.everywhere.button")}
+          </Button>
+        </div>
+      </section>
+    </>
+  );
+}
 
 /** The section "Anmeldung", with the rows once the methods are known. */
 export function SignInSection({ userId }: { userId: string }) {

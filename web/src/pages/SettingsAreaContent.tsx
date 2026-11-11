@@ -7,7 +7,8 @@ import { InstallApp } from "../pwa/InstallApp.tsx";
 import { ThemesPanel } from "../theme/ThemesPanel.tsx";
 import { MediaSettingsForm } from "../voice/VoiceSettings.tsx";
 import { AppearanceSettings } from "./AppearanceSettings.tsx";
-import { ProfileArea, ProfileCardArea, SecurityArea } from "./ProfilePage.tsx";
+import { ProfileArea, ProfileCardArea } from "./ProfilePage.tsx";
+import { SecurityArea } from "./SecurityArea.tsx";
 import type { SettingsArea } from "./settingsAreas.ts";
 
 export function SettingsAreaContent({ area }: { area: SettingsArea }) {

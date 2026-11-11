@@ -18,7 +18,7 @@ import {
   ConnectProviderDialog,
   SetPasswordDialog,
   SignInSection,
-} from "./SignInSection.tsx";
+} from "./SecurityArea.tsx";
 
 const USER = "00000000-0000-0000-0000-000000000001";
 const GOOGLE = { id: "google", name: "Google" };
