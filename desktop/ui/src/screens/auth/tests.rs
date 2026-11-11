@@ -624,6 +624,50 @@ fn a_refused_provider_sign_in_says_why() {
     assert!(harness.query_by_role(Role::Alert).is_none());
 }
 
+/// A first provider sign-in that wants an invitation goes on to /register,
+/// which says why, keeping the target and the typed code, as the web's
+/// callback sends the browser (`web_failure`).
+#[test]
+fn a_provider_sign_in_without_an_invitation_goes_to_register() {
+    let _config = TempConfig::new("auth-oidc-invitation");
+    let api = FakeApi::start(false, |method, at, body| match (method, at) {
+        ("POST", "/auth/oidc/google/start") => Some(back_to_the_app(body, &"f".repeat(64))),
+        ("POST", "/auth/oidc/desktop/exchange") => Some(Reply::status(
+            403,
+            serde_json::json!({
+                "error": "invitation_required",
+                "message": "invitation_required",
+                "fields": {"invitation": "invitation_required"}
+            }),
+        )),
+        _ => google(method, at),
+    });
+    for (from, to) in [
+        (
+            "/login?redirect=%2Fsettings%2Fprofil",
+            "/register?oidc_error=invitation_required&redirect=/settings/profil",
+        ),
+        (
+            "/register?redirect=%2Finvite%2Fx",
+            "/register?oidc_error=invitation_required&redirect=/invite/x",
+        ),
+    ] {
+        let mut harness = launcher(&api, from);
+        browser(&harness, true);
+        wait_for_label(&mut harness, "Über Google anmelden");
+        harness.get_by_label("Über Google anmelden").click();
+        wait_for_text(&mut harness, "Zum Registrieren brauchst du eine Einladung.");
+        let href = harness
+            .state_mut()
+            .app()
+            .expect("app")
+            .nav()
+            .location()
+            .href();
+        assert_eq!(href, to, "from {from}");
+    }
+}
+
 /// A new account: the name step with the provider's address and name, then
 /// `complete` with the flow's verifier signs in.
 #[test]

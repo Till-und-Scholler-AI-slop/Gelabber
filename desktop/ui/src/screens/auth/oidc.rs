@@ -135,6 +135,10 @@ pub struct Flow {
     pending: Pending<Result<Done, OidcError>>,
     opened: Arc<AtomicBool>,
     pub provider: AuthProvider,
+    /// The start's `redirect` and `invitation`, which a refusal for want
+    /// of a code carries on to /register (the callback's `web_failure`).
+    redirect: Option<String>,
+    invitation: Option<String>,
 }
 
 impl Flow {
@@ -151,6 +155,7 @@ impl Flow {
         let seen = opened.clone();
         let repaint = ctx.clone();
         let id = provider.id.clone();
+        let (redirect, invitation) = (start.redirect.clone(), start.invitation.clone());
         let pending = Pending::spawn_abortable(client, async move {
             let outcome = http
                 .oidc_desktop(&id, &start, LOOPBACK_TIMEOUT, move |url| {
@@ -175,6 +180,8 @@ impl Flow {
             pending,
             opened,
             provider: provider.clone(),
+            redirect,
+            invitation,
         }
     }
 
@@ -241,6 +248,10 @@ impl ProviderSignIn {
         errors: &mut FormErrors,
         order: &[&str],
     ) -> bool {
+        let Some(flow) = self.flow.as_ref() else {
+            return false;
+        };
+        let (redirect, invitation) = (flow.redirect.clone(), flow.invitation.clone());
         let Some(result) = poll_flow(&mut self.flow) else {
             return false;
         };
@@ -258,6 +269,22 @@ impl ProviderSignIn {
             }
             // Not asked for here; nothing to show.
             Ok(Done::Linked(_)) => {}
+            // A new account wants a code: on to /register, which says why
+            // and asks for it, as the web's callback sends the browser.
+            Err(OidcError::Api(error))
+                if super::registration::is_admission_error(&Failure::from_api(&error).code) =>
+            {
+                let code = Failure::from_api(&error).code;
+                app.nav.navigate(&crate::app::with_query(
+                    "/register",
+                    &[
+                        ("oidc_error", code.as_str()),
+                        ("invitation", invitation.as_deref().unwrap_or("")),
+                        ("redirect", redirect.as_deref().unwrap_or("")),
+                    ],
+                ));
+                return true;
+            }
             Err(error) => fail(errors, &error, order),
         }
         false
