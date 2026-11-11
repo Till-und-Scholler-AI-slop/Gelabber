@@ -117,7 +117,10 @@ pub fn page(
 
             let card_rect = card_box(ui, pos2(left, brand.bottom() + space::S6), width, card);
             let measured = 40.0 + space::S6 + card_rect.height();
-            if (measured - column_h).abs() > 0.01 {
+            // Half a pixel, as the modal's: the 1/64 px layout units round
+            // by where the column starts, so a column centred by its own
+            // height can measure 1/32 px apart every other frame.
+            if (measured - column_h).abs() > 0.5 {
                 ctx.data_mut(|d| d.insert_temp(height_id, measured));
                 ctx.request_discard("auth column height"); // i18n-ok
             }
