@@ -6,8 +6,11 @@
 //! [`ApiError::OidcUnavailable`], whose detail is logged and never returned;
 //! the detail never holds a code, token, verifier, nonce or address.
 
+pub mod flow;
 pub mod id_token;
+pub mod link;
 pub mod pkce;
+pub mod routes;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};

@@ -85,10 +85,11 @@ pub fn router() -> Router<AppState> {
             post(confirm_password_reset),
         )
         .route("/api/auth/registration", get(registration_status))
+        .merge(oidc::routes::router())
 }
 
 /// Request bodies with a password print it as `<redacted>`.
-struct Redacted;
+pub(crate) struct Redacted;
 
 impl std::fmt::Debug for Redacted {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -375,6 +376,8 @@ enum Outgoing {
     Confirm,
     Reset,
     AlreadyRegistered,
+    /// A provider (its display name) was connected to the account (#518).
+    ProviderConnected(&'static str),
 }
 
 /// Sends a mail the caller reserved from `budget` ([`limits::mail_allowed`])
@@ -399,6 +402,9 @@ fn send_mail(
                 .await
                 .map(|token| Mail::ResetPassword { token }),
             Outgoing::AlreadyRegistered => Ok(Mail::AlreadyRegistered),
+            Outgoing::ProviderConnected(name) => Ok(Mail::ProviderConnected {
+                provider_name: name.to_owned(),
+            }),
         }
         .map_err(|err| ("token", format!("{err:?}")));
         // The account's language, read here too so the answer's timing
@@ -537,6 +543,20 @@ async fn signed_in(
     user: User,
     status: StatusCode,
 ) -> Result<Response, ApiError> {
+    let (cookies, body) = signed_in_parts(state, headers, user).await?;
+    Ok((status, AppendHeaders(cookies), Json(body)).into_response())
+}
+
+/// The `Set-Cookie` headers (session, CSRF) and body of a sign-in.
+type SessionCookies = [(axum::http::HeaderName, axum::http::HeaderValue); 2];
+
+/// [`signed_in`] for a caller that answers in its own shape: a provider's
+/// callback redirects, and its JSON routes add fields to the body.
+async fn signed_in_parts(
+    state: &AppState,
+    headers: &HeaderMap,
+    user: User,
+) -> Result<(SessionCookies, SessionResponse), ApiError> {
     // One read for both: a disabled account gets no session (#517), and
     // the operator flag needs the confirmation while mail is on.
     let (disabled, verified): (bool, bool) = sqlx::query_as(
@@ -560,18 +580,18 @@ async fn signed_in(
     let session_token = session::create(&state.db, user.id, state.session_idle).await?;
     let csrf_token = token::generate();
 
-    let cookies = AppendHeaders([
+    let cookies = [
         SetCookie::new(SESSION_COOKIE, session_token, state.session_ttl.as_secs())
             .secure(state.cookie_secure)
             .header(),
         csrf_cookie(state, &csrf_token).header(),
-    ]);
+    ];
     let body = SessionResponse {
         user: Some(user),
         csrf_token,
         operator,
     };
-    Ok((status, cookies, Json(body)).into_response())
+    Ok((cookies, body))
 }
 
 async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
