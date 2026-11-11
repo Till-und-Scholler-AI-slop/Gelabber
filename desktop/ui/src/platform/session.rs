@@ -254,7 +254,8 @@ pub mod secret {
             if locked {
                 return Err("the keyring is locked".into()); // i18n-ok
             }
-            let label = format!("Gelabber-Anmeldung ({origin})");
+            // A stored item label: it keeps the name it was made with.
+            let label = format!("Gelabber-Anmeldung ({origin})"); // i18n-ok
             let properties: HashMap<&str, Value<'_>> = HashMap::from([
                 ("org.freedesktop.Secret.Item.Label", Value::from(label)),
                 (

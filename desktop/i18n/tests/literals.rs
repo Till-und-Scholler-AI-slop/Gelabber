@@ -334,12 +334,13 @@ fn looks_like_text(text: &str) -> bool {
         .iter()
         .filter(|t| t.starts_with(char::is_alphabetic))
         .count();
-    // "Gelabber: {count}": a capital word, then more (a path is not one).
+    // "Gelabber: {count}" or "Name ({x})": a capital word, then more (a
+    // path is not one).
     let capital = text.starts_with(char::is_uppercase)
-        && tokens
-            .iter()
-            .skip(1)
-            .any(|t| t.starts_with(|c: char| c.is_alphabetic() || c == '{'));
+        && tokens.iter().skip(1).any(|t| {
+            let t = t.trim_start_matches('(');
+            t.starts_with(|c: char| c.is_alphabetic() || c == '{')
+        });
     words >= 2 || capital
 }
 
@@ -450,6 +451,7 @@ fn after() -> &'static str {
     assert!(looks_like_text("Mit dem Server verbinden"));
     assert!(looks_like_text("{name} ist live"));
     assert!(looks_like_text("Gelabber: {count}"));
+    assert!(looks_like_text("Gelabber-Anmeldung ({origin})"));
     assert!(!looks_like_text("Verlassen"));
     assert!(!looks_like_text("gelabber-mode"));
     assert!(!looks_like_text("GET /me/themes"));

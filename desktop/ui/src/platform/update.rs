@@ -168,10 +168,10 @@ pub fn verify(data: &[u8], signature: &str, pubkey: &str, version: &str) -> Resu
         .trusted_comment()
         .split('\t')
         .find_map(|field| field.strip_prefix("version:"))
-        .ok_or("signed without a version")?; // i18n-ok
+        .ok_or_else(texts::update_signed_without_version)?;
     (signed.trim_start_matches('v') == version.trim_start_matches('v'))
         .then_some(())
-        .ok_or_else(|| format!("signed for {signed}, not {version}")) // i18n-ok
+        .ok_or_else(|| texts::update_signed_for(signed, version))
 }
 
 /// `auto_check` of the Tauri app's `update.json`, on unless switched off.
@@ -1266,11 +1266,16 @@ mod tests {
         assert_eq!(verify(INSTALLER, SIG_B, KEY_B, "0.9.1"), Ok(()));
         // Wrong version: an older installer announced as a newer one.
         let older = verify(INSTALLER, SIG_A, KEY_A, "0.9.2").unwrap_err();
-        assert!(older.contains("signed for 0.9.1"), "{older}");
+        assert!(older.contains("signiert für 0.9.1"), "{older}");
+        {
+            let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
+            let older = verify(INSTALLER, SIG_A, KEY_A, "0.9.2").unwrap_err();
+            assert_eq!(older, "signed for 0.9.1, not 0.9.2");
+        }
         // requireSignedVersion: a signature that names no version is refused.
         assert_eq!(
             verify(INSTALLER, SIG_A_NO_VERSION, KEY_A, "0.9.1"),
-            Err("signed without a version".into())
+            Err("ohne Version signiert".into())
         );
         // Tampered: one bit, one byte more, one less.
         let mut tampered = INSTALLER.to_vec();
@@ -1720,7 +1725,7 @@ mod tests {
         assert_eq!(notice.text(), "Update wird geladen … 40 %");
         {
             let _english = gelabber_i18n::on_this_thread(gelabber_i18n::Locale::En);
-            assert_eq!(notice.text(), "Downloading the update … 40%");
+            assert_eq!(notice.text(), "Downloading the update… 40%");
         }
         assert!(banner.contains("`Update wird geladen …${percent}`"));
         assert!(!notice.enabled());

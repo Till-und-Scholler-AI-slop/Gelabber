@@ -281,7 +281,10 @@ fn run(
         .map_err(err)?
         .into_owned();
 
-    let mut about = options(&[("description", Value::from("Push-to-Talk"))]);
+    let mut about = options(&[(
+        "description",
+        Value::from(gelabber_i18n::settings::media_ptt_ptt()),
+    )]);
     if let Some(trigger) = trigger
         && let Ok(v) = OwnedValue::try_from(Value::from(trigger))
     {

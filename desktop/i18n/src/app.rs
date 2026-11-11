@@ -42,7 +42,7 @@ crate::strings! {
     setup_error_no_address = "Die Adresse beginnt mit https:// oder http://, zum Beispiel https://gelabber.example.org."
         | "The address starts with https:// or http://, for example https://gelabber.example.org.";
     setup_title_switch = "Server wechseln" | "Switch server";
-    setup_title_connect = "Server verbinden" | "Connect a server";
+    setup_title_connect = "Server verbinden" | "Connect to a server";
     setup_lead = "Mit welchem Gelabber-Server soll sich die App verbinden?"
         | "Which Gelabber server should the app connect to?";
     setup_address_label = "Serveradresse" | "Server address";
@@ -57,10 +57,10 @@ crate::strings! {
     // Updates (native only).
     update_in_call = "Während eines Anrufs startet Gelabber nicht neu. Das Update kommt nach dem Auflegen."
         | "Gelabber doesn’t restart during a call. The update comes after you hang up.";
-    update_line_checking = " Suche läuft …" | " Checking …";
+    update_line_checking = " Suche läuft …" | " Checking…";
     update_line_latest = " Das ist die neueste Version." | " This is the latest version.";
     update_installing = "Update wird installiert, Gelabber startet neu …"
-        | "Installing the update, Gelabber is restarting …";
+        | "Installing the update, Gelabber is restarting…";
     update_restart = "Neu starten" | "Restart";
     update_download = "Herunterladen" | "Download";
     update_later = "Später" | "Later";
@@ -243,7 +243,23 @@ pub fn update_offer_package_manager(version: &str, package: &str) -> String {
 pub fn update_downloading(percent: &str) -> String {
     match get() {
         Locale::De => format!("Update wird geladen …{percent}"),
-        Locale::En => format!("Downloading the update …{percent}"),
+        Locale::En => format!("Downloading the update…{percent}"),
+    }
+}
+
+/// The update's signature names no version.
+pub fn update_signed_without_version() -> &'static str {
+    match get() {
+        Locale::De => "ohne Version signiert",
+        Locale::En => "signed without a version",
+    }
+}
+
+/// The update's signature names another version than the one offered.
+pub fn update_signed_for(signed: &str, version: &str) -> String {
+    match get() {
+        Locale::De => format!("signiert für {signed}, nicht {version}"),
+        Locale::En => format!("signed for {signed}, not {version}"),
     }
 }
 

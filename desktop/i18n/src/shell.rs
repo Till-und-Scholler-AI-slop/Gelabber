@@ -34,7 +34,7 @@ crate::strings! {
     user_panel_status = "Status" | "Status";
     user_panel_saving = "Speichert…" | "Saving…";
     /// The desktop app's own menu item: back to the server setup.
-    user_panel_switch_server = "Server wechseln …" | "Switch server …";
+    user_panel_switch_server = "Server wechseln …" | "Switch server…";
 
     row_menu_not_saved = "Nicht gespeichert." | "Not saved.";
     row_menu_mark_read = "Als gelesen markieren" | "Mark as read";
