@@ -352,7 +352,9 @@ pub fn chip_width(ui: &Ui, p: &Person, open: bool) -> f32 {
     let marks_w = marks_width(ui, p);
     let base = 1.0 + 5.0 + 32.0 + 10.0 + block.width() + 10.0 + marks_w + 14.0 + 1.0;
     if p.member && !p.me {
-        base + if open { 10.0 + 28.0 - 8.0 } else { -8.0 }
+        // "…" pulls back 8px past the end; shut, its 1px border still
+        // keeps 2px of it, after a gap the -10px margin takes back.
+        base + if open { 10.0 + 28.0 - 8.0 } else { 2.0 - 8.0 }
     } else {
         base
     }

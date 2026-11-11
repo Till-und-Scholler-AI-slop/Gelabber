@@ -886,12 +886,16 @@ fn watch_strip(
     let toggles = room.here;
     // `StreamVolume`: someone else's Live has the stream sound beside it.
     let stream_sound = pic.id.kind == Kind::Live && !pic.own;
-    let mut w = 14.0 + label.width() + 4.0 + 8.0;
+    // `.voice-control-compact`: 9px padding and a 1px border around the
+    // 17px icon make 37, past its 36px minimum.
+    const COMPACT: f32 = 1.0 + 9.0 + 17.0 + 9.0 + 1.0;
+    // The strip's 1px border on both sides, then its padding and children.
+    let mut w = 2.0 + 14.0 + label.width() + 4.0 + 8.0;
     if toggles {
-        w += 1.0 + 8.0 + 36.0 + 4.0 + 36.0 + 8.0;
+        w += 1.0 + 8.0 + COMPACT + 4.0 + COMPACT + 8.0;
     }
     if stream_sound {
-        w += 1.0 + 8.0 + 36.0 + 4.0 + 112.0 + 8.0;
+        w += 1.0 + 8.0 + COMPACT + 4.0 + 112.0 + 8.0;
     }
     if let Some(s) = &stop {
         w += 12.0 + 16.0 + 6.0 + s.width() + 12.0 + 8.0;
@@ -950,8 +954,8 @@ fn watch_strip(
                 1,
             ),
         ] {
-            let r = Rect::from_min_size(pos2(x, cy - 18.0), Vec2::splat(36.0));
-            x += 36.0 + 4.0;
+            let r = Rect::from_min_size(pos2(x, cy - 18.0), vec2(COMPACT, 36.0));
+            x += COMPACT + 4.0;
             let resp = common::click(ui, r, Id::unique(("watch-strip", which)));
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
             // The call bar's tooltip, icons only (`VoiceAudioToggles`).
@@ -996,7 +1000,7 @@ fn watch_strip(
         x += 9.0;
         let mut p = crate::screens::settings::prefs::get(ui.ctx());
         let muted = p.source_audio_muted;
-        let r = Rect::from_min_size(pos2(x, cy - 18.0), Vec2::splat(36.0));
+        let r = Rect::from_min_size(pos2(x, cy - 18.0), vec2(COMPACT, 36.0));
         let resp = common::click(ui, r, Id::unique("watch-strip-stream-mute"));
         resp.widget_info(|| {
             egui::WidgetInfo::selected(
@@ -1033,7 +1037,7 @@ fn watch_strip(
         if resp.clicked() {
             p.source_audio_muted = !muted;
         }
-        x += 36.0 + 4.0;
+        x += COMPACT + 4.0;
         let slider = Rect::from_min_size(pos2(x, cy - 10.0), vec2(112.0, 20.0));
         let mut pos = super::volume::position(p.source_audio_volume);
         let changed = crate::screens::settings::controls::place(

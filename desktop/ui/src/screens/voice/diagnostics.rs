@@ -379,7 +379,9 @@ pub fn status(
         }
         y += caption.height() + 8.0;
     }
-    let (bars_area, bar_gap) = if compact { (32.0, 2.0) } else { (46.0, 3.0) };
+    // `height` holds the bottom border (border-box): the bars stand on it.
+    let (bars_box, bar_gap) = if compact { (32.0, 2.0) } else { (46.0, 3.0) };
+    let bars_area = bars_box - 1.0;
     let topmost = known.iter().copied().fold(100.0, f64::max);
     let n = pings.len().max(1) as f32;
     let bar_w = (inner_w - bar_gap * (n - 1.0)) / n;

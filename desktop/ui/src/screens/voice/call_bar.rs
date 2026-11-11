@@ -1102,15 +1102,12 @@ fn connection_popover(ui: &mut Ui, app: &mut AppCtx, button: &egui::Response, st
                 let (row, _) =
                     ui.allocate_exact_size(vec2(width, 7.0 + 24.0 + 7.0), Sense::hover());
                 let a = Block::single(ui, arrow, style, c.accent_text);
+                // `.connection-dir`: 1ch wide, the width of a "0".
+                let ch = Block::single(ui, "0", style, c.accent_text).width();
                 let l = Block::single(ui, label, style, c.subtle);
                 let v = Block::single(ui, &value, style.weight(500.0), c.text);
                 paint_mid(ui.painter(), &a, row.left(), row.center().y);
-                paint_mid(
-                    ui.painter(),
-                    &l,
-                    row.left() + a.width() + 8.0,
-                    row.center().y,
-                );
+                paint_mid(ui.painter(), &l, row.left() + ch + 8.0, row.center().y);
                 paint_mid(ui.painter(), &v, row.right() - v.width(), row.center().y);
                 hairline_h(ui.painter(), &theme, row.x_range(), row.bottom());
                 ui.add_space(1.0);
