@@ -16,7 +16,7 @@ use gelabber_client::{
 };
 use gelabber_i18n::{common, settings as texts};
 
-use super::controls::{self, Confirm, Status};
+use super::controls::{self, Confirm, RowButton, Status, action_row};
 use super::settled;
 use crate::app::AppCtx;
 use crate::rules::{Failure, FormErrors, error_message, field_message, validate_password};
@@ -24,7 +24,7 @@ use crate::screens::auth::oidc::{self, Done, Flow, poll_flow};
 use crate::task::{Pending, poll};
 use crate::text::{self, Block};
 use crate::theme::{Theme, corner};
-use crate::widgets::{Button, FormError, InlineStatus, Modal, StatusTone, TextField};
+use crate::widgets::{Button, FormError, Modal, StatusTone, TextField};
 
 /// Where a provider flow started from Sicherheit comes back to.
 pub const SECURITY_PATH: &str = "/settings/konto";
@@ -211,7 +211,7 @@ pub fn section(ui: &mut Ui, app: &mut AppCtx, s: &mut SignInState) {
 }
 
 /// `SkeletonRows`: lines of 10px, 8px apart, 16px between the rows.
-fn skeleton_rows(ui: &mut Ui, count: usize) {
+pub(super) fn skeleton_rows(ui: &mut Ui, count: usize) {
     let theme = Theme::of(ui.ctx());
     let width = ui.available_width();
     let height = count as f32 * (10.0 + 8.0 + 10.0) + (count - 1) as f32 * 16.0;
@@ -229,109 +229,6 @@ fn skeleton_rows(ui: &mut Ui, count: usize) {
         }
         y += 16.0 - 8.0;
     }
-}
-
-// ----------------------------------------------------------- action row
-
-/// The button on the right of an [`action_row`].
-pub struct RowButton<'a> {
-    pub label: &'a str,
-    pub pending: Option<&'a str>,
-    pub disabled: bool,
-}
-
-impl<'a> RowButton<'a> {
-    pub fn new(label: &'a str) -> Self {
-        Self {
-            label,
-            pending: None,
-            disabled: false,
-        }
-    }
-}
-
-/// `.settings-action-row__title`: `--lr-type-ui` at weight 600.
-const ROW_TITLE: text::TextStyle = text::UI.weight(600.0);
-
-/// `ActionRow`: title and hint on the left, the status line under them,
-/// a small button on the right; min-height 52, padding 8, bottom hairline.
-/// True when the button was clicked.
-pub fn action_row(
-    ui: &mut Ui,
-    title: &str,
-    hint: &str,
-    status: Option<(&str, StatusTone)>,
-    button: Option<RowButton<'_>>,
-) -> bool {
-    let theme = Theme::of(ui.ctx());
-    let c = &theme.c;
-    let width = ui.available_width();
-    let button_w = button.as_ref().map_or(0.0, |b| {
-        let label = b.pending.unwrap_or(b.label);
-        Block::single(ui, label, text::UI, c.text).width() + 2.0 * 12.0 + 2.0
-    });
-    let gap = if button.is_some() { 16.0 } else { 0.0 };
-    let text_w = (width - button_w - gap).max(1.0);
-    let title_block = Block::single(ui, title, ROW_TITLE, c.text);
-    let hint_block = Block::wrapped(ui, hint, controls::HINT, c.muted, text_w);
-    let status_h = status.map_or(0.0, |(message, _)| {
-        let block = Block::wrapped(ui, message, text::META, c.muted, text_w - 20.0);
-        4.0 + block.height().max(20.0)
-    });
-    let content_h = ROW_TITLE.line_px() + hint_block.height() + status_h;
-    let height = (content_h + 17.0).max(52.0);
-    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    crate::widgets::rule_h(
-        ui.painter(),
-        c.border,
-        rect.left()..=rect.right(),
-        rect.bottom() - 1.0,
-    );
-    // The content box is 8px under the top and over the hairline.
-    let middle = rect.top() + 8.0 + (height - 17.0) / 2.0;
-    let mut y = middle - content_h / 2.0;
-    title_block.paint(ui.painter(), pos2(rect.left(), y));
-    let label = ui.interact(
-        Rect::from_min_size(pos2(rect.left(), y), title_block.size()),
-        ui.scope_id().with(("action-row-title", title)),
-        Sense::hover(),
-    );
-    crate::widgets::announce(&label, egui::Role::Label, title);
-    y += ROW_TITLE.line_px();
-    hint_block.paint(ui.painter(), pos2(rect.left(), y));
-    let label = ui.interact(
-        Rect::from_min_size(pos2(rect.left(), y), hint_block.size()),
-        ui.scope_id().with(("action-row-hint", title)),
-        Sense::hover(),
-    );
-    crate::widgets::announce(&label, egui::Role::Label, hint);
-    y += hint_block.height();
-    if let Some((message, tone)) = status {
-        let at = Rect::from_min_size(pos2(rect.left(), y + 4.0), vec2(text_w, status_h - 4.0));
-        ui.put(at, InlineStatus::new(Some(message), tone));
-    }
-    let Some(button) = button else {
-        // `put` leaves the cursor under what it placed: back under the row.
-        ui.advance_cursor_after_rect(rect);
-        return false;
-    };
-    let at = Rect::from_min_size(
-        pos2(rect.right() - button_w, middle - 16.0),
-        vec2(button_w, 32.0),
-    );
-    let clicked = ui
-        .put(
-            at,
-            Button::new(button.label)
-                .small()
-                .width(button_w)
-                .disabled(button.disabled)
-                .pending(button.pending),
-        )
-        .clicked();
-    // `put` leaves the cursor under what it placed: back under the row.
-    ui.advance_cursor_after_rect(rect);
-    clicked
 }
 
 // --------------------------------------------------------- password row
@@ -378,6 +275,8 @@ fn password_row(ui: &mut Ui, app: &mut AppCtx, s: &mut SignInState, methods: &Si
                 }
                 row.close();
                 row.status.success(ui, texts::security_changed());
+                // The other sessions are gone: the device list is stale.
+                app.client.load_devices();
             }
             Err(e) => row
                 .errors
@@ -393,6 +292,7 @@ fn password_row(ui: &mut Ui, app: &mut AppCtx, s: &mut SignInState, methods: &Si
                 row.close();
                 row.status
                     .success(ui, texts::security_sign_in_password_set_done());
+                app.client.load_devices();
             }
             Err(e) if Failure::from_api(&e).code == "reauth_required" => {
                 row.errors = FormErrors::default();
@@ -466,7 +366,7 @@ fn dialog_actions(ui: &mut Ui, submit: Button<'_>) -> (bool, bool) {
     out
 }
 
-fn dialog_error(ui: &mut Ui, errors: &FormErrors) {
+pub(super) fn dialog_error(ui: &mut Ui, errors: &FormErrors) {
     if let Some(message) = &errors.form {
         let theme = Theme::of(ui.ctx());
         ui.add(FormError::new(message).on(theme.c.elevated));
@@ -616,7 +516,11 @@ fn set_dialog(
 
 /// `.settings-row-note` with `role="alert"`: why, and "Mit … bestätigen".
 /// True when that was clicked.
-fn reauth_note(ui: &mut Ui, provider: Option<&AuthProvider>, pending: Option<&str>) -> bool {
+pub(super) fn reauth_note(
+    ui: &mut Ui,
+    provider: Option<&AuthProvider>,
+    pending: Option<&str>,
+) -> bool {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
     let width = ui.available_width();
@@ -760,11 +664,11 @@ fn provider_row(
     };
     let disconnecting = row.disconnect.is_some();
     let button = if provider.connected.is_some() {
-        Some(RowButton {
-            label: texts::security_sign_in_provider_disconnect(),
-            pending: disconnecting.then_some(texts::security_sign_in_provider_disconnecting()),
-            disabled: !has_password,
-        })
+        Some(
+            RowButton::new(texts::security_sign_in_provider_disconnect())
+                .pending(disconnecting.then_some(texts::security_sign_in_provider_disconnecting()))
+                .disabled(!has_password),
+        )
     } else if row.flow.is_some() {
         // The browser has the provider's page: the row can give up.
         Some(RowButton::new(common::cancel()))

@@ -10,6 +10,7 @@ pub mod media;
 pub mod notifications;
 pub mod prefs;
 pub mod profile;
+pub mod security;
 pub mod sign_in;
 #[cfg(test)]
 mod tests_drawn;
@@ -127,7 +128,7 @@ pub(crate) struct PageState {
     area: &'static str,
     user: Option<uuid::Uuid>,
     pub profile: profile::ProfileState,
-    pub security: profile::SecurityState,
+    pub security: security::SecurityState,
     pub card: card::CardState,
     pub appearance: appearance::State,
     pub themes: themes::PanelState,
@@ -435,7 +436,7 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, area: Option<&str>) {
         match info.id {
             "profil" => profile::profile(&mut child, app, &user, &mut st.profile),
             "profilkarte" => card::area(&mut child, app, &user, &mut st.card, viewport),
-            "konto" => profile::security(&mut child, app, &user, &mut st.security),
+            "konto" => security::area(&mut child, app, &user, &mut st.security),
             "darstellung" => appearance::area(&mut child, app, &mut st.appearance),
             "themes" => themes::area(&mut child, app, &mut st.themes, viewport),
             "audio" => media::audio(&mut child, app, &mut st.media),

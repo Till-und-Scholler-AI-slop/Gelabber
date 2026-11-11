@@ -19,7 +19,7 @@ pub(crate) mod overview;
 mod rail;
 mod row_menu;
 mod state;
-mod user_panel;
+pub(crate) mod user_panel;
 
 use egui::{Key, Modifiers, Rect, Ui, UiBuilder, pos2};
 use gelabber_client::{ChannelKind, OpState, View};

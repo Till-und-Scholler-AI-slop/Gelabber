@@ -1,0 +1,974 @@
+//! Einstellungen → Sicherheit (pages/SecurityArea.tsx): "Angemeldet als",
+//! the section "Anmeldung" (sign_in.rs, #518), "Angemeldete Geräte" with
+//! one row per signed-in device and "Überall abmelden", and "Kontodaten"
+//! with the data export and deleting the account (#519). Every row is a
+//! settings action row (controls.rs `action_row`).
+
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use chrono::{DateTime, Datelike, Local, Timelike, Utc};
+use egui::{Sense, Ui, Vec2, vec2};
+use gelabber_client::{
+    ApiError, AuthProvider, DeleteConfirmation, DeviceClient, DeviceOs, DeviceSession, EXPORT_POLL,
+    ExportState, ExportStatus, OidcPurpose, OidcStart, OpState, OwnedServer, Role, User,
+};
+use gelabber_i18n::{account as texts, common, intl, settings as settings_texts};
+use parking_lot::Mutex;
+
+use super::controls::{self, Confirm, RowButton, Status, action_row, action_row_badged};
+use super::sign_in::{self, SECURITY_PATH, SignInState, dialog_error, reauth_note, skeleton_rows};
+use super::{op_pending, settled};
+use crate::app::AppCtx;
+use crate::rules::{Failure, FormErrors, error_message, field_message};
+use crate::screens::auth::oidc::{self, Done, Flow, poll_flow};
+use crate::text;
+use crate::theme::Theme;
+use crate::widgets::{Button, ButtonVariant, Modal, TextField};
+
+/// The area's state, per signed-in account and visit.
+#[derive(Default)]
+pub struct SecurityState {
+    /// "Anmeldung": the password and the providers (#518).
+    pub sign_in: SignInState,
+    started: bool,
+    /// The error line of a device row whose sign-out failed.
+    device_status: HashMap<uuid::Uuid, Status>,
+    /// Devices being signed out from here.
+    revoking: HashSet<uuid::Uuid>,
+    export: ExportRow,
+    delete: Option<DeleteDialog>,
+}
+
+#[derive(Default)]
+struct ExportRow {
+    status: Status,
+    requesting: bool,
+    /// When the export was last asked for (egui time), for the polling.
+    read_at: f64,
+    /// The file "Herunterladen" streams into, once chosen.
+    download: Option<Arc<Mutex<Option<PathBuf>>>>,
+}
+
+/// Settings area "Sicherheit".
+pub fn area(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut SecurityState) {
+    let theme = Theme::of(ui.ctx());
+    let c = &theme.c;
+    if let Some(true) = controls::answer(ui.ctx(), "logout-all") {
+        app.client.voice_leave();
+        app.client.logout_all();
+        app.session.adopt(&serde_json::json!({ "user": null }));
+        app.nav.navigate("/login");
+        return;
+    }
+    if !s.started {
+        s.started = true;
+        app.client.load_devices();
+        app.client.load_export();
+        s.export.read_at = ui.input(|i| i.time);
+    }
+    // "Angemeldet als <b>{email}</b>": split first, then the address
+    // goes in, so it cannot add tags.
+    let mut block = text::Rich::new(controls::HINT);
+    for piece in gelabber_i18n::pieces(settings_texts::security_signed_in_as()) {
+        let shown = piece.text.replace("{email}", &user.email);
+        block = match piece.tag {
+            Some(_) => block.push(&shown, controls::HINT.weight(600.0), c.text),
+            None => block.push(&shown, controls::HINT, c.muted),
+        };
+    }
+    let block = block.layout(ui);
+    crate::text::show(ui, &block);
+    sign_in::section(ui, app, &mut s.sign_in);
+    devices(ui, app, s);
+    account_data(ui, app, s);
+}
+
+/// `.settings-action-section`: 24px above, the title, 4px, the list's
+/// top hairline.
+fn section_heading(ui: &mut Ui, title: &str, id: &str) {
+    let theme = Theme::of(ui.ctx());
+    ui.add_space(24.0);
+    let top = ui.cursor().min;
+    controls::paint(ui, top, title, text::TITLE_SM, theme.c.text);
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(ui.available_width(), text::TITLE_SM.line_px()),
+        Sense::hover(),
+    );
+    let heading = ui.interact(rect, ui.scope_id().with(id), Sense::hover());
+    crate::widgets::announce(&heading, egui::Role::Heading, title);
+    ui.add_space(4.0);
+    let width = ui.available_width();
+    crate::widgets::rule_h(
+        ui.painter(),
+        theme.c.border,
+        ui.cursor().min.x..=ui.cursor().min.x + width,
+        ui.cursor().min.y,
+    );
+    ui.add_space(1.0);
+}
+
+/// `.settings-action-list__state`: a load error or skeleton rows in a
+/// row's place, padding 8 and the hairline under it.
+fn state_cell(ui: &mut Ui, message: &str, failed: bool, pending: bool, rows: usize) -> bool {
+    let theme = Theme::of(ui.ctx());
+    ui.add_space(8.0);
+    let retry = if failed {
+        crate::widgets::load_error(ui, message, pending) && !pending
+    } else {
+        skeleton_rows(ui, rows);
+        false
+    };
+    ui.add_space(8.0);
+    let width = ui.available_width();
+    let y = ui.cursor().min.y;
+    crate::widgets::rule_h(
+        ui.painter(),
+        theme.c.border,
+        ui.cursor().min.x..=ui.cursor().min.x + width,
+        y,
+    );
+    ui.add_space(1.0);
+    retry
+}
+
+// -------------------------------------------------------------- devices
+
+/// Product and system names are the same in every language.
+fn os_name(os: DeviceOs) -> Option<&'static str> {
+    match os {
+        DeviceOs::Linux => Some("Linux"),
+        DeviceOs::Windows => Some("Windows"),
+        DeviceOs::Macos => Some("macOS"),
+        DeviceOs::Android => Some("Android"),
+        DeviceOs::Ios => Some("iOS"),
+        DeviceOs::Other => None,
+    }
+}
+
+/// `deviceLabel`: "Gelabber für Linux", "Firefox unter Windows", "Browser
+/// unter Android"; without a known system only the app or browser, and
+/// "Unbekanntes Gerät" for a client the server could not tell.
+pub fn device_label(client: DeviceClient, os: DeviceOs) -> String {
+    let browser = match client {
+        DeviceClient::Unknown => return texts::devices_unknown().to_owned(),
+        DeviceClient::Desktop => {
+            return match os_name(os) {
+                Some(os) => texts::devices_desktop(os),
+                None => texts::devices_desktop_only().to_owned(),
+            };
+        }
+        DeviceClient::Firefox => "Firefox",
+        DeviceClient::Chrome => "Chrome",
+        DeviceClient::Edge => "Edge",
+        DeviceClient::Safari => "Safari",
+        DeviceClient::Browser => texts::devices_browser(),
+    };
+    match os_name(os) {
+        Some(os) => texts::devices_browser_on(browser, os),
+        None => browser.to_owned(),
+    }
+}
+
+/// `lastActiveLabel`: the API's time is right to an hour at most, so only
+/// the local calendar day is named; this device is "gerade eben".
+pub fn last_active(session: &DeviceSession, now: DateTime<Utc>) -> String {
+    let when = if session.current {
+        texts::devices_last_active_now().to_owned()
+    } else {
+        let day = |at: DateTime<Utc>| at.with_timezone(&Local).date_naive();
+        match (day(now) - day(session.last_used_at)).num_days() {
+            ..=0 => texts::devices_last_active_today().to_owned(),
+            1 => texts::devices_last_active_yesterday().to_owned(),
+            n => texts::devices_last_active_days_ago(n as u64),
+        }
+    };
+    texts::devices_last_active(&when)
+}
+
+fn revoke_key(id: uuid::Uuid) -> String {
+    format!("revoke_device:{id}")
+}
+
+/// `DevicesSection`: one row per session in the API's order, then
+/// "Überall abmelden", which does not wait for the list.
+fn devices(ui: &mut Ui, app: &mut AppCtx, s: &mut SecurityState) {
+    section_heading(ui, texts::devices_title(), "devices-heading");
+    let (list, op) = app
+        .client
+        .with_state(|st| (st.devices.clone(), st.op("devices").cloned()));
+    // Answers of the sign-outs from here.
+    for id in s.revoking.clone() {
+        if let Some(result) = settled(app, &revoke_key(id)) {
+            s.revoking.remove(&id);
+            if let Err(e) = result {
+                s.device_status
+                    .entry(id)
+                    .or_default()
+                    .error(ui, error_message(&Failure::from_api(&e).code));
+            }
+        }
+    }
+    match list {
+        Some(list) => {
+            let now = Utc::now();
+            for session in &list {
+                device_row(ui, app, s, session, now);
+            }
+        }
+        None => {
+            let failed = matches!(op, Some(OpState::Failed(_)));
+            let pending = matches!(op, Some(OpState::Pending));
+            if state_cell(ui, texts::devices_load_failed(), failed, pending, 3) {
+                app.client.load_devices();
+            }
+        }
+    }
+    // "Überall abmelden" (issue #188), as the last row of the devices.
+    if action_row(
+        ui,
+        settings_texts::security_everywhere_title(),
+        settings_texts::security_everywhere_hint(),
+        None,
+        Some(
+            RowButton::new(settings_texts::security_everywhere_button())
+                .variant(ButtonVariant::DangerOutline),
+        ),
+    ) {
+        controls::ask(
+            ui.ctx(),
+            Confirm::danger(
+                "logout-all",
+                settings_texts::security_everywhere_confirm_title(),
+                Some(settings_texts::security_everywhere_confirm_message()),
+                settings_texts::security_everywhere_confirm_label(),
+            ),
+        );
+    }
+}
+
+fn device_row(
+    ui: &mut Ui,
+    app: &mut AppCtx,
+    s: &mut SecurityState,
+    session: &DeviceSession,
+    now: DateTime<Utc>,
+) {
+    let status = s
+        .device_status
+        .get_mut(&session.id)
+        .and_then(|st| st.current(ui));
+    let pending = !session.current && op_pending(app, &revoke_key(session.id));
+    let clicked = ui
+        .push_id(("device", session.id), |ui| {
+            action_row_badged(
+                ui,
+                &device_label(session.client, session.os),
+                session.current.then_some(texts::devices_current()),
+                &last_active(session, now),
+                status.as_ref().map(|(m, t)| (m.as_str(), *t)),
+                Some(
+                    RowButton::new(texts::devices_sign_out())
+                        .pending(pending.then_some(texts::devices_signing_out())),
+                ),
+            )
+        })
+        .inner;
+    if !clicked || pending {
+        return;
+    }
+    s.device_status.remove(&session.id);
+    if session.current {
+        // As the user panel does (after asking when that ends a call).
+        crate::screens::shell::user_panel::log_out(ui.ctx(), app);
+    } else {
+        s.revoking.insert(session.id);
+        app.client.revoke_device(session.id);
+    }
+}
+
+// --------------------------------------------------------- account data
+
+/// `AccountDataSection`: the data export and deleting the account.
+fn account_data(ui: &mut Ui, app: &mut AppCtx, s: &mut SecurityState) {
+    section_heading(ui, texts::data_title(), "account-data-heading");
+    export_row(ui, app, &mut s.export);
+    delete_row(ui, app, s);
+}
+
+/// What the export row's button does in each state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExportAction {
+    Request,
+    Building,
+    Download,
+    Retry,
+}
+
+fn local_fields(at: DateTime<Utc>) -> intl::DateTime {
+    let at = at.with_timezone(&Local);
+    intl::DateTime {
+        year: at.year(),
+        month: at.month(),
+        day: at.day(),
+        weekday: at.weekday().num_days_from_monday(),
+        hour: at.hour(),
+        minute: at.minute(),
+    }
+}
+
+/// `formatSize`: "46,0 MB" (one decimal, no grouping) or "12 KB".
+fn format_size(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        let mb = format!("{:.1}", bytes as f64 / (1024.0 * 1024.0));
+        match gelabber_i18n::get() {
+            gelabber_i18n::Locale::De => format!("{} MB", mb.replace('.', ",")),
+            gelabber_i18n::Locale::En => format!("{mb} MB"),
+        }
+    } else {
+        format!("{} KB", ((bytes as f64 / 1024.0).round() as u64).max(1))
+    }
+}
+
+/// `exportRow`: the row's hint and button for an export state.
+pub fn export_row_for(status: &ExportStatus) -> (String, ExportAction) {
+    let mail = texts::export_hint_mail();
+    match status.export.as_ref() {
+        None => {
+            let second = if status.mail {
+                mail
+            } else {
+                texts::export_hint_no_mail()
+            };
+            (
+                format!("{} {second}", texts::export_hint_none()),
+                ExportAction::Request,
+            )
+        }
+        Some(view) => match view.state {
+            ExportState::Pending | ExportState::Running => {
+                let building = texts::export_hint_building();
+                let hint = if status.mail {
+                    format!("{building} {mail}")
+                } else {
+                    building.to_owned()
+                };
+                (hint, ExportAction::Building)
+            }
+            ExportState::Ready => {
+                let date = view
+                    .expires_at
+                    .map(|at| intl::format_date(&local_fields(at), intl::DateStyle::Long))
+                    .unwrap_or_default();
+                let size = format_size(view.size_bytes.unwrap_or(0));
+                (
+                    texts::export_hint_ready(&date, &size),
+                    ExportAction::Download,
+                )
+            }
+            ExportState::Failed => (texts::export_hint_failed().to_owned(), ExportAction::Retry),
+        },
+    }
+}
+
+/// `exportRequestError`: a younger ready export (429) says when the next
+/// one can be asked for; anything else is the standard error line.
+pub fn export_request_error(error: &ApiError) -> String {
+    let failure = Failure::from_api(error);
+    if failure.code == "rate_limited"
+        && let Some(seconds) = failure.retry_after
+    {
+        let when = if seconds < 60.0 {
+            intl::format_relative(seconds.ceil() as i64, intl::Unit::Second)
+        } else if seconds < 3600.0 {
+            intl::format_relative((seconds / 60.0).ceil() as i64, intl::Unit::Minute)
+        } else {
+            intl::format_relative((seconds / 3600.0).ceil() as i64, intl::Unit::Hour)
+        };
+        return texts::export_too_soon(&when);
+    }
+    error_message(&failure.code).to_owned()
+}
+
+/// "Daten exportieren": its hint and button follow the export's state.
+fn export_row(ui: &mut Ui, app: &mut AppCtx, row: &mut ExportRow) {
+    let ctx = ui.ctx().clone();
+    let now = ui.input(|i| i.time);
+    let (export, op) = app
+        .client
+        .with_state(|st| (st.export.clone(), st.op("export").cloned()));
+    if row.requesting
+        && let Some(result) = settled(app, "request_export")
+    {
+        row.requesting = false;
+        if let Err(e) = result {
+            // Another device asked already, or the archive is younger than
+            // a day: the row is out of date.
+            if matches!(e.code(), "export_pending" | "rate_limited") {
+                app.client.load_export();
+                row.read_at = now;
+            }
+            row.status.error(ui, export_request_error(&e));
+        } else {
+            row.read_at = now;
+        }
+    }
+    let chosen = row.download.as_ref().and_then(|slot| slot.lock().clone());
+    if let Some(path) = chosen
+        && let Some(result) = settled(app, "export_download")
+    {
+        row.download = None;
+        match result {
+            Ok(()) => crate::platform::files::notice(
+                &ctx,
+                gelabber_i18n::app::file_saved_to(&path.display().to_string()),
+                false,
+            ),
+            Err(e) => {
+                tracing::warn!("export download: {e}");
+                if let Some(text) = crate::toasts::error_text(&e) {
+                    crate::platform::files::notice(
+                        &ctx,
+                        gelabber_i18n::chat::attachment_download_failed(&text),
+                        true,
+                    );
+                }
+            }
+        }
+    }
+    let Some(export) = export else {
+        let failed = matches!(op, Some(OpState::Failed(_)));
+        let pending = matches!(op, Some(OpState::Pending));
+        if state_cell(ui, texts::export_load_failed(), failed, pending, 1) {
+            app.client.load_export();
+            row.read_at = now;
+        }
+        return;
+    };
+    // While it is being built it is read again every 10 s, while shown.
+    if export.building() {
+        let due = row.read_at + EXPORT_POLL.as_secs_f64();
+        if now >= due {
+            if !matches!(op, Some(OpState::Pending)) {
+                app.client.load_export();
+            }
+            row.read_at = now;
+            ctx.request_repaint_after(EXPORT_POLL);
+        } else {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(due - now));
+        }
+    }
+    let (hint, action) = export_row_for(&export);
+    let button = match action {
+        ExportAction::Download => {
+            RowButton::new(texts::export_download()).variant(ButtonVariant::Primary)
+        }
+        ExportAction::Building => RowButton::new(texts::export_building()).disabled(true),
+        ExportAction::Request | ExportAction::Retry => {
+            let label = if action == ExportAction::Retry {
+                texts::export_retry()
+            } else {
+                texts::export_request()
+            };
+            RowButton::new(label).pending(row.requesting.then_some(texts::export_building()))
+        }
+    };
+    let status = row.status.current(ui);
+    let clicked = action_row(
+        ui,
+        texts::export_title(),
+        &hint,
+        status.as_ref().map(|(m, t)| (m.as_str(), *t)),
+        Some(button),
+    );
+    if !clicked {
+        return;
+    }
+    match action {
+        ExportAction::Download => {
+            let name = export
+                .export
+                .as_ref()
+                .map(|v| v.file_name())
+                .unwrap_or_default();
+            let slot = Arc::new(Mutex::new(None));
+            row.download = Some(slot.clone());
+            let client = app.client.clone();
+            crate::platform::files::save_to(
+                &ctx,
+                gelabber_i18n::chat::attachment_save_title(),
+                &name,
+                move |path| {
+                    *slot.lock() = Some(path.clone());
+                    client.download_export(path);
+                },
+            );
+        }
+        ExportAction::Request | ExportAction::Retry if !row.requesting => {
+            row.status.clear();
+            row.requesting = true;
+            app.client.request_export();
+        }
+        _ => {}
+    }
+}
+
+// --------------------------------------------------------------- delete
+
+#[derive(Default)]
+struct DeleteDialog {
+    value: String,
+    errors: FormErrors,
+    /// The servers of a `409 owns_servers`, which outranks the list.
+    refused: Option<Vec<OwnedServer>>,
+    /// The API wants a fresh sign-in first: "Mit … bestätigen".
+    reauth: bool,
+    confirm: Option<Flow>,
+    /// Servers whose detail was asked for, for their member count.
+    asked: HashSet<uuid::Uuid>,
+}
+
+fn delete_row(ui: &mut Ui, app: &mut AppCtx, s: &mut SecurityState) {
+    if action_row(
+        ui,
+        texts::delete_title(),
+        texts::delete_hint(),
+        None,
+        Some(RowButton::new(texts::delete_title()).variant(ButtonVariant::DangerOutline)),
+    ) {
+        s.delete = Some(DeleteDialog::default());
+    }
+    let Some(dialog) = &mut s.delete else {
+        return;
+    };
+    // Until the methods are known, ask for the password as before sign-in.
+    let methods = s.sign_in.methods.as_ref();
+    let has_password = methods.is_none_or(|m| m.password);
+    let provider = methods.and_then(sign_in::sign_in_provider);
+    let listed: Vec<OwnedServer> = app.client.with_state(|st| {
+        st.servers
+            .iter()
+            .filter(|v| v.role == Role::Owner)
+            .map(|v| OwnedServer {
+                id: v.id,
+                name: v.name.clone(),
+                member_count: None,
+            })
+            .collect()
+    });
+    let owned = dialog
+        .refused
+        .clone()
+        .or_else(|| (!listed.is_empty()).then_some(listed));
+    let open = match owned {
+        Some(servers) => owned_dialog(ui, app, dialog, &servers),
+        None => confirm_dialog(ui, app, dialog, has_password, provider.as_ref()),
+    };
+    if !open {
+        s.delete = None;
+    }
+}
+
+/// While the account owns servers: them, each with a way to its settings,
+/// and "Schließen". False once it closes.
+fn owned_dialog(
+    ui: &mut Ui,
+    app: &mut AppCtx,
+    dialog: &mut DeleteDialog,
+    servers: &[OwnedServer],
+) -> bool {
+    let ctx = ui.ctx().clone();
+    let mut go = None;
+    let mut close = false;
+    let output = Modal::new("delete-account-owned", texts::delete_title()).show(
+        &ctx,
+        |ui| {
+            let theme = Theme::of(ui.ctx());
+            let width = ui.available_width();
+            controls::paragraph(
+                ui,
+                texts::delete_owned_lead(),
+                controls::HINT,
+                theme.c.muted,
+                width,
+            );
+            ui.add_space(20.0);
+            crate::widgets::rule_h(
+                ui.painter(),
+                theme.c.border,
+                ui.cursor().min.x..=ui.cursor().min.x + width,
+                ui.cursor().min.y,
+            );
+            ui.add_space(1.0);
+            for server in servers {
+                // The list has no member count; the server's own detail does.
+                let count = server.member_count.map(|n| n.max(0) as u64).or_else(|| {
+                    app.client
+                        .with_state(|st| st.detail(server.id).map(|d| d.members.len() as u64))
+                });
+                if count.is_none() && dialog.asked.insert(server.id) {
+                    app.client.refresh_server(server.id);
+                }
+                let hint = count.map(texts::delete_owned_members).unwrap_or_default();
+                let clicked = ui
+                    .push_id(("owned", server.id), |ui| {
+                        action_row(
+                            ui,
+                            &server.name,
+                            &hint,
+                            None,
+                            Some(RowButton::new(texts::delete_owned_settings())),
+                        )
+                    })
+                    .inner;
+                if clicked {
+                    go = Some(server.id);
+                }
+            }
+            ui.add_space(20.0);
+            ui.allocate_ui_with_layout(
+                Vec2::new(ui.available_width(), 36.0),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    close = ui.add(Button::new(common::close())).clicked();
+                },
+            );
+        },
+        None,
+    );
+    if let Some(id) = go {
+        // The settings page goes to the section itself.
+        app.nav
+            .navigate(&format!("/s/{id}/settings#server-settings-gefahrenzone"));
+        return false;
+    }
+    !(close || output.close_requested)
+}
+
+/// "Konto endgültig löschen?": the password, or the address of an account
+/// without one; that path may first want a fresh sign-in. False once it
+/// closes.
+fn confirm_dialog(
+    ui: &mut Ui,
+    app: &mut AppCtx,
+    dialog: &mut DeleteDialog,
+    has_password: bool,
+    provider: Option<&AuthProvider>,
+) -> bool {
+    let ctx = ui.ctx().clone();
+    let field = if has_password { "password" } else { "email" };
+    let pending = op_pending(app, "delete_account");
+    // Answers.
+    if let Some(Err(e)) = settled(app, "delete_account") {
+        let failure = Failure::from_api(&e);
+        if failure.code == "owns_servers" {
+            dialog.errors = FormErrors::default();
+            let servers = app.client.with_state(|st| st.owned_servers.clone());
+            dialog.refused = Some(servers.unwrap_or_default());
+            return true;
+        } else if failure.code == "reauth_required" {
+            dialog.errors = FormErrors::default();
+            dialog.reauth = true;
+        } else if failure
+            .fields
+            .get("email")
+            .is_some_and(|code| code != "required")
+        {
+            // Any refusal of the address but "required": not this one.
+            dialog
+                .errors
+                .set_fields(vec![("email", texts::delete_email_wrong().to_owned())]);
+        } else {
+            dialog.errors.from_failure(&failure, &[field]);
+        }
+    }
+    if let Some(result) = poll_flow(&mut dialog.confirm) {
+        match result {
+            // Signed in afresh: the deletion goes through now.
+            Ok(Done::SignedIn(session)) => {
+                app.session.adopt(&session);
+                dialog.reauth = false;
+                dialog.errors = FormErrors::default();
+            }
+            Ok(_) => {}
+            Err(error) => oidc::fail(&mut dialog.errors, &error, &[field]),
+        }
+    }
+    let confirm_label = dialog.confirm.as_ref().map(Flow::label);
+    let mut confirm = false;
+    let output = Modal::new("delete-account", texts::delete_confirm_title())
+        .dirty(!dialog.value.is_empty())
+        .show(
+            &ctx,
+            |ui| {
+                let theme = Theme::of(ui.ctx());
+                let width = ui.available_width();
+                controls::paragraph(
+                    ui,
+                    texts::delete_confirm_lead(),
+                    controls::HINT,
+                    theme.c.muted,
+                    width,
+                );
+                ui.add_space(20.0);
+                controls::paragraph(
+                    ui,
+                    texts::delete_confirm_export_hint(),
+                    controls::HINT,
+                    theme.c.muted,
+                    width,
+                );
+                ui.add_space(20.0);
+                let input = if has_password {
+                    TextField::new("delete_password", &mut dialog.value)
+                        .label(texts::delete_password())
+                        .password()
+                } else {
+                    TextField::new("delete_email", &mut dialog.value)
+                        .label(texts::delete_email())
+                        .hint(Some(texts::delete_email_hint()))
+                }
+                .autofocus(true)
+                .error(dialog.errors.field(field))
+                .show(ui);
+                if input.response.changed() {
+                    dialog.errors.clear_field(field);
+                }
+                ui.add_space(20.0);
+                if dialog.reauth {
+                    confirm = reauth_note(ui, provider, confirm_label.as_deref());
+                    ui.add_space(20.0);
+                }
+                dialog_error(ui, &dialog.errors);
+                let mut out = (false, false);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(ui.available_width(), 36.0),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        out.1 = ui
+                            .add(
+                                Button::new(texts::delete_title())
+                                    .danger()
+                                    .pending(pending.then_some(texts::delete_deleting())),
+                            )
+                            .clicked();
+                        out.0 = ui.add(Button::new(common::cancel()).ghost()).clicked();
+                    },
+                );
+                (out.0, out.1 || input.submitted)
+            },
+            None,
+        );
+    let (cancel, submit) = output.inner;
+    if cancel || output.close_requested {
+        return false;
+    }
+    if confirm
+        && dialog.confirm.is_none()
+        && let Some(provider) = provider
+    {
+        dialog.errors = FormErrors::default();
+        let start = OidcStart {
+            redirect: Some(SECURITY_PATH.to_owned()),
+            ..OidcStart::new(OidcPurpose::SignIn)
+        };
+        dialog.confirm = Some(Flow::start(&ctx, app.client, provider, start));
+    }
+    // `submitDeletion`: an empty field sends nothing, a deletion on its
+    // way is not sent twice; a password as typed, an address trimmed.
+    if submit && !pending {
+        let email = dialog.value.trim();
+        let empty = if has_password {
+            dialog.value.is_empty()
+        } else {
+            email.is_empty()
+        };
+        if empty {
+            dialog
+                .errors
+                .set_fields(vec![(field, field_message(field, "required"))]);
+        } else {
+            dialog.errors = FormErrors::default();
+            let confirmation = if has_password {
+                DeleteConfirmation::Password(dialog.value.clone())
+            } else {
+                DeleteConfirmation::Email(email.to_owned())
+            };
+            app.client.delete_account(confirmation);
+        }
+    }
+    dialog.errors.focus = None;
+    // An answer arrives without input; the window looks again.
+    if pending || dialog.confirm.is_some() {
+        ctx.request_repaint_after(std::time::Duration::from_millis(250));
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gelabber_client::ExportView;
+    use gelabber_i18n::{Locale, on_this_thread};
+
+    fn session(client: DeviceClient, os: DeviceOs, current: bool, days: i64) -> DeviceSession {
+        let now = Utc::now();
+        DeviceSession {
+            id: uuid::Uuid::from_u128(1),
+            client,
+            os,
+            created_at: now,
+            last_used_at: now - chrono::Duration::days(days),
+            current,
+        }
+    }
+
+    #[test]
+    fn device_labels_in_both_languages() {
+        let _de = on_this_thread(Locale::De);
+        let label = device_label;
+        assert_eq!(
+            label(DeviceClient::Desktop, DeviceOs::Linux),
+            "Gelabber für Linux"
+        );
+        assert_eq!(
+            label(DeviceClient::Firefox, DeviceOs::Windows),
+            "Firefox unter Windows"
+        );
+        assert_eq!(
+            label(DeviceClient::Browser, DeviceOs::Android),
+            "Browser unter Android"
+        );
+        assert_eq!(label(DeviceClient::Safari, DeviceOs::Other), "Safari");
+        assert_eq!(label(DeviceClient::Desktop, DeviceOs::Other), "Gelabber");
+        assert_eq!(
+            label(DeviceClient::Unknown, DeviceOs::Linux),
+            "Unbekanntes Gerät"
+        );
+        drop(_de);
+        let _en = on_this_thread(Locale::En);
+        assert_eq!(label(DeviceClient::Edge, DeviceOs::Macos), "Edge on macOS");
+        assert_eq!(
+            label(DeviceClient::Desktop, DeviceOs::Windows),
+            "Gelabber for Windows"
+        );
+        assert_eq!(
+            label(DeviceClient::Unknown, DeviceOs::Ios),
+            "Unknown device"
+        );
+    }
+
+    #[test]
+    fn last_active_names_the_day() {
+        let _de = on_this_thread(Locale::De);
+        // Noon keeps a day's distance a calendar day in any zone.
+        let now = Local::now()
+            .date_naive()
+            .and_hms_opt(12, 0, 0)
+            .and_then(|t| t.and_local_timezone(Local).single())
+            .map(|t| t.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now);
+        let at = |current, days| {
+            let mut s = session(DeviceClient::Chrome, DeviceOs::Linux, current, 0);
+            s.last_used_at = now - chrono::Duration::days(days);
+            last_active(&s, now)
+        };
+        assert_eq!(at(true, 3), "Zuletzt aktiv: gerade eben");
+        assert_eq!(at(false, 0), "Zuletzt aktiv: heute");
+        assert_eq!(at(false, 1), "Zuletzt aktiv: gestern");
+        assert_eq!(at(false, 12), "Zuletzt aktiv: vor 12 Tagen");
+        drop(_de);
+        let _en = on_this_thread(Locale::En);
+        assert_eq!(at(false, 1), "Last active: yesterday");
+        assert_eq!(at(false, 2), "Last active: 2 days ago");
+    }
+
+    fn status(state: Option<ExportState>, mail: bool) -> ExportStatus {
+        let at = "2036-11-11T12:00:00Z".parse().expect("time");
+        ExportStatus {
+            export: state.map(|state| ExportView {
+                state,
+                requested_at: at,
+                finished_at: Some(at),
+                expires_at: Some("2036-11-18T12:00:00Z".parse().expect("time")),
+                size_bytes: Some(48_234_496),
+            }),
+            mail,
+        }
+    }
+
+    #[test]
+    fn the_export_row_follows_the_state() {
+        let _de = on_this_thread(Locale::De);
+        assert_eq!(
+            export_row_for(&status(None, false)),
+            (
+                "Deine Nachrichten, Dateien und Kontodaten als Archiv. Du kannst es hier herunterladen, sobald es bereitsteht."
+                    .to_owned(),
+                ExportAction::Request
+            )
+        );
+        assert_eq!(
+            export_row_for(&status(None, true)).0,
+            "Deine Nachrichten, Dateien und Kontodaten als Archiv. Du bekommst eine E-Mail, sobald es bereitsteht."
+        );
+        assert_eq!(
+            export_row_for(&status(Some(ExportState::Running), true)),
+            (
+                "Wird erstellt. Das kann eine Weile dauern. Du bekommst eine E-Mail, sobald es bereitsteht."
+                    .to_owned(),
+                ExportAction::Building
+            )
+        );
+        assert_eq!(
+            export_row_for(&status(Some(ExportState::Pending), false)).0,
+            "Wird erstellt. Das kann eine Weile dauern."
+        );
+        assert_eq!(
+            export_row_for(&status(Some(ExportState::Ready), true)),
+            (
+                "Bereit bis 18. November 2036, 46,0 MB.".to_owned(),
+                ExportAction::Download
+            )
+        );
+        assert_eq!(
+            export_row_for(&status(Some(ExportState::Failed), true)),
+            (
+                "Der Export ist fehlgeschlagen.".to_owned(),
+                ExportAction::Retry
+            )
+        );
+        drop(_de);
+        let _en = on_this_thread(Locale::En);
+        assert_eq!(
+            export_row_for(&status(Some(ExportState::Ready), true)).0,
+            "Ready until 18 November 2036, 46.0 MB."
+        );
+    }
+
+    #[test]
+    fn a_refused_request_says_when_to_ask_again() {
+        let _de = on_this_thread(Locale::De);
+        let refusal = |code: &str, retry_after| ApiError::Api {
+            status: 429,
+            code: code.into(),
+            message: String::new(),
+            fields: serde_json::Value::Null,
+            retry_after,
+        };
+        assert_eq!(
+            export_request_error(&refusal("rate_limited", Some(5.0 * 3600.0 - 10.0))),
+            "Einen neuen Export kannst du in 5 Stunden anfordern."
+        );
+        assert_eq!(
+            export_request_error(&refusal("rate_limited", Some(90.0))),
+            "Einen neuen Export kannst du in 2 Minuten anfordern."
+        );
+        assert_eq!(
+            export_request_error(&refusal("export_pending", None)),
+            error_message("export_pending")
+        );
+    }
+}

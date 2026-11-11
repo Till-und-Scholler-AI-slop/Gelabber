@@ -1,18 +1,17 @@
-//! "Profil" (name and picture) and "Sicherheit" (password, sign out
-//! everywhere) of pages/ProfilePage.tsx.
+//! "Profil" (name and picture) of pages/ProfilePage.tsx. "Sicherheit"
+//! moved to security.rs, as the web's to SecurityArea.tsx.
 
-use egui::{Ui, vec2};
+use egui::Ui;
 use gelabber_client::{ApiError, ProfilePatch, User};
 use gelabber_i18n::{common, settings as texts};
 
-use super::controls::{self, Confirm, Picked};
+use super::controls::{self, Picked};
 use super::{adopt_user, op_pending, settled};
 use crate::app::AppCtx;
 use crate::rules::{Failure, FormErrors, field_message, validate_name};
 use crate::screens::auth::form_error;
-use crate::text;
 use crate::theme::Theme;
-use crate::widgets::{Avatar, AvatarSize, Button, ButtonVariant, TextField};
+use crate::widgets::{Avatar, AvatarSize, Button, TextField};
 
 /// `isUploadedAvatar`: an image the API stores itself.
 pub fn is_uploaded_avatar(url: &str) -> bool {
@@ -320,83 +319,6 @@ pub fn profile(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut ProfileState)
 fn prepare(ctx: &egui::Context, s: &mut ProfileState, file: controls::ImageFile) {
     s.saved = false;
     s.preparing = Some(controls::prepare(ctx, file, 256, 256));
-}
-
-// ------------------------------------------------------------ security
-
-#[derive(Default)]
-pub struct SecurityState {
-    /// "Anmeldung": the password and the providers (#518).
-    pub sign_in: super::sign_in::SignInState,
-}
-
-/// Settings area "Sicherheit".
-pub fn security(ui: &mut Ui, app: &mut AppCtx, user: &User, s: &mut SecurityState) {
-    let theme = Theme::of(ui.ctx());
-    let c = &theme.c;
-    if let Some(true) = controls::answer(ui.ctx(), "logout-all") {
-        app.client.voice_leave();
-        app.client.logout_all();
-        app.session.adopt(&serde_json::json!({ "user": null }));
-        app.nav.navigate("/login");
-        return;
-    }
-    // "Angemeldet als <b>{email}</b>": split first, then the address
-    // goes in, so it cannot add tags.
-    let mut block = text::Rich::new(controls::HINT);
-    for piece in gelabber_i18n::pieces(texts::security_signed_in_as()) {
-        let shown = piece.text.replace("{email}", &user.email);
-        block = match piece.tag {
-            Some(_) => block.push(&shown, controls::HINT.weight(600.0), c.text),
-            None => block.push(&shown, controls::HINT, c.muted),
-        };
-    }
-    let block = block.layout(ui);
-    crate::text::show(ui, &block);
-    super::sign_in::section(ui, app, &mut s.sign_in);
-
-    controls::column(ui, 560.0, |ui| {
-        // `.settings-danger`: margin-top 40, border-top, padding-top 24.
-        ui.add_space(32.0);
-        let top = ui.cursor().min.y;
-        crate::widgets::rule_h(ui.painter(), c.border, ui.max_rect().x_range(), top);
-        ui.add_space(25.0);
-        controls::paint(
-            ui,
-            ui.cursor().min,
-            texts::security_everywhere_title(),
-            text::TITLE_SM,
-            c.text,
-        );
-        ui.allocate_exact_size(vec2(560.0, 20.8), egui::Sense::hover());
-        // `.settings-danger .settings-hint`: margin 4 0 12.
-        ui.add_space(4.0);
-        controls::paragraph(
-            ui,
-            texts::security_everywhere_hint(),
-            controls::HINT,
-            c.muted,
-            560.0,
-        );
-        ui.add_space(12.0);
-        if ui
-            .add(
-                Button::new(texts::security_everywhere_button())
-                    .variant(ButtonVariant::DangerOutline),
-            )
-            .clicked()
-        {
-            controls::ask(
-                ui.ctx(),
-                Confirm::danger(
-                    "logout-all",
-                    texts::security_everywhere_confirm_title(),
-                    Some(texts::security_everywhere_confirm_message()),
-                    texts::security_everywhere_confirm_label(),
-                ),
-            );
-        }
-    });
 }
 
 #[cfg(test)]

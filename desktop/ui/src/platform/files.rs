@@ -525,6 +525,50 @@ pub fn save(ctx: &egui::Context, title: &str, name: &str, bytes: Vec<u8>) {
     });
 }
 
+/// Asks where to save a file suggested as `name`, as [`save`] does, for a
+/// download that writes the file itself (the data export): `then` gets
+/// the path on the asking thread; nothing happens when it was cancelled.
+pub fn save_to(
+    ctx: &egui::Context,
+    title: &str,
+    name: &str,
+    then: impl FnOnce(PathBuf) + Send + 'static,
+) {
+    let ctx = ctx.clone();
+    let name = Path::new(name)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let request = Request::new(title, &[], Mode::Save { name: name.clone() });
+    let choosers = choosers(&ctx);
+    let notices = notices(&ctx);
+    std::thread::spawn(move || {
+        let target = match choose(&choosers, &request) {
+            Choice::Chosen(paths) => paths.into_iter().next(),
+            Choice::Cancelled => None,
+            Choice::InApp => match downloads_dir(&choosers) {
+                Some(dir) => Some(free_path(&dir, &name)),
+                None => {
+                    let e = texts::file_no_downloads();
+                    notices.lock().push((texts::file_not_saved(e), true));
+                    None
+                }
+            },
+        };
+        if let Some(path) = target {
+            then(path);
+        }
+        ctx.request_repaint();
+    });
+}
+
+/// A toast about a file saved by other means than [`save`] (the data
+/// export's download): the text and whether it failed.
+pub fn notice(ctx: &egui::Context, text: String, failed: bool) {
+    notices(ctx).lock().push((text, failed));
+    ctx.request_repaint();
+}
+
 /// A file the user picked: its bytes and name, or `None` when nothing was
 /// chosen (the slot of `pick_file` in the settings).
 pub type Picked = Arc<Mutex<Option<Option<(Vec<u8>, String)>>>>;
