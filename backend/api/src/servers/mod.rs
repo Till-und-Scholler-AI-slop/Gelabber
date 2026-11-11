@@ -27,12 +27,12 @@ use axum::routing::{get, post};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::auth::session::CurrentUser;
 use crate::error::{ApiError, FieldErrors};
-use crate::gateway::Recheck;
+use crate::gateway::{EventKind, Recheck, publish_server};
 use crate::i18n;
 use crate::json::Body;
 use crate::path::Id;
@@ -50,6 +50,7 @@ pub fn router() -> Router<AppState> {
             get(get_server).patch(update_server).delete(delete_server),
         )
         .route("/api/servers/{id}/leave", post(leave_server))
+        .route("/api/servers/{id}/transfer", post(transfer_server))
         .merge(channel::router())
         .merge(icon::router())
         .merge(invite::router())
@@ -148,6 +149,12 @@ pub struct ServerDetail {
 pub struct CreateServerBody {
     #[serde(default)]
     pub name: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct TransferBody {
+    #[serde(default)]
+    pub user_id: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -401,8 +408,9 @@ async fn delete_server(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Members can leave; the owner cannot (there is no ownership transfer in
-/// v1 — delete the server instead). A blocked server can still be left.
+/// Members can leave; the owner cannot and must transfer the server
+/// ([`transfer_server`]) or delete it first. A blocked server can still be
+/// left.
 async fn leave_server(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -426,4 +434,71 @@ async fn leave_server(
     state.gateway.announce_recheck(Recheck::User(user.id)).await;
     info!(server_id = %server_id, user_id = %user.id, "member left");
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Owner only: another member becomes the owner (#519 §4.1). The previous
+/// owner stays a member with the base role plus the roles they already
+/// hold. A blocked server cannot be transferred (`load` answers
+/// `403 server_blocked`); it can still be deleted.
+async fn transfer_server(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Id(server_id): Id,
+    Body(body): Body<TransferBody>,
+) -> Result<Json<ServerView>, ApiError> {
+    let mut tx = membership::lock_server(&state.db, server_id, true).await?;
+    let member = membership::load(&mut *tx, server_id, user.id).await?;
+    member.require_owner()?;
+
+    let raw = body.user_id.as_deref().map(str::trim).unwrap_or_default();
+    let target_id = match raw.parse::<Uuid>() {
+        _ if raw.is_empty() => Err("required"),
+        Ok(id) if id != user.id => Ok(id),
+        _ => Err("invalid"),
+    }
+    .map_err(|code| ApiError::Validation(FieldErrors::from([("user_id", code)])))?;
+    let is_member: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM server_members WHERE server_id = $1 AND user_id = $2)",
+    )
+    .bind(server_id)
+    .bind(target_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !is_member {
+        return Err(ApiError::NotFound);
+    }
+
+    let server = sqlx::query_as::<_, ServerRow>(
+        "UPDATE servers SET owner_id = $2, updated_at = now() WHERE id = $1 \
+         RETURNING id, name, owner_id, member_permissions, icon_url, created_at",
+    )
+    .bind(server_id)
+    .bind(target_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    // The former owner now holds only the base role and their own roles.
+    if access::former_owner_lost_voice(&mut tx, server_id, user.id).await? {
+        state
+            .gateway
+            .revoke_voice_access(&[user.id], server_id)
+            .await?;
+    }
+    tx.commit().await?;
+    state
+        .gateway
+        .announce_recheck(Recheck::Server(server_id))
+        .await;
+    if let Err(err) = publish_server(
+        &state,
+        server_id,
+        EventKind::E,
+        None,
+        Some(serde_json::json!({ "k": "o", "owner_id": target_id })),
+    )
+    .await
+    {
+        warn!(error = err.code(), %server_id, "ownership event not published");
+    }
+    info!(server_id = %server_id, from = %user.id, to = %target_id, "server ownership transferred");
+    Ok(Json(Membership { server, ..member }.into()))
 }
