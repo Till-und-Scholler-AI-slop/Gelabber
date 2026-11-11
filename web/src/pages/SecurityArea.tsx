@@ -133,7 +133,7 @@ export function SignInSection({ userId }: { userId: string }) {
   const feedback = useSignInFeedback();
   return (
     <section
-      className="settings-group settings-signin"
+      className="settings-group settings-action-section"
       aria-labelledby="sign-in-heading"
     >
       <h3 id="sign-in-heading" className="settings-group-title">
@@ -188,7 +188,7 @@ export function SignInRows({
   const t = useT(settings);
   const errorRows = feedback.oidcError ? oidcErrorRows(methods) : [];
   return (
-    <ul className="settings-signin-list">
+    <ul className="settings-action-list">
       <PasswordRow userId={userId} methods={methods} />
       {methods.providers.map((provider) => (
         <ProviderRow
@@ -218,7 +218,7 @@ export function SignInRows({
 }
 
 /** Title and hint on the left, the row's button on the right. */
-function SignInRow({
+function ActionRow({
   title,
   hint,
   status,
@@ -233,9 +233,9 @@ function SignInRow({
 }) {
   const id = useId();
   return (
-    <li className="settings-signin-row">
-      <div className="settings-signin-row__text">
-        <span id={`${id}-title`} className="settings-signin-row__title">
+    <li className="settings-action-row">
+      <div className="settings-action-row__text">
+        <span id={`${id}-title`} className="settings-action-row__title">
           {title}
         </span>
         <span id={`${id}-hint`} className="settings-hint">
@@ -266,7 +266,7 @@ function PasswordRow({
       ? t("security.signIn.password.none", { provider: provider.name })
       : t("security.signIn.password.unset");
   return (
-    <SignInRow
+    <ActionRow
       title={t("security.signIn.password")}
       hint={hint}
       status={status}
@@ -307,7 +307,7 @@ function PasswordRow({
           }
         />
       )}
-    </SignInRow>
+    </ActionRow>
   );
 }
 
@@ -599,7 +599,7 @@ function ProviderRow({
   };
 
   return (
-    <SignInRow
+    <ActionRow
       title={provider.name}
       hint={
         provider.connected
@@ -641,7 +641,7 @@ function ProviderRow({
           onClose={() => setDialog(false)}
         />
       ) : null}
-    </SignInRow>
+    </ActionRow>
   );
 }
 

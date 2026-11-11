@@ -42,7 +42,7 @@ const section = (methods?: SignInMethods) =>
 
 /** The row whose title is `title`, as markup. */
 function row(html: string, title: string): string {
-  const rows = html.split('<li class="settings-signin-row">').slice(1);
+  const rows = html.split('<li class="settings-action-row">').slice(1);
   const found = rows.find((r) => r.includes(`>${title}</span>`));
   if (!found) throw new Error(`no row ${title}`);
   return found.slice(0, found.indexOf("</li>"));
@@ -66,7 +66,7 @@ describe("Sicherheit → Anmeldung", () => {
     expect(html).toMatch(
       /<h3 id="sign-in-heading" class="settings-group-title">Anmeldung<\/h3>/,
     );
-    expect(html).not.toContain("settings-signin-row");
+    expect(html).not.toContain("settings-action-row");
   });
 
   it("offers to change a password and to disconnect a connected provider", () => {

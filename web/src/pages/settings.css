@@ -753,18 +753,19 @@
   pointer-events: none;
 }
 
-/* Sicherheit → Anmeldung: one row per sign-in method, its button on the
-   right; on a narrow screen the button goes under the text. */
-.settings-signin {
+/* Settings action rows (Sicherheit): title and hint on the left, the row's
+   button on the right, a rule under each; on a narrow screen the button
+   goes under the text. */
+.settings-action-section {
   margin-top: 24px;
 }
-.settings-signin > .settings-group-title {
+.settings-action-section > .settings-group-title {
   margin-bottom: 4px;
 }
-.settings-signin-list {
+.settings-action-list {
   border-top: 1px solid var(--lr-border);
 }
-.settings-signin-row {
+.settings-action-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -774,17 +775,17 @@
   padding-block: 8px;
   border-bottom: 1px solid var(--lr-border);
 }
-.settings-signin-row__text {
+.settings-action-row__text {
   display: flex;
   flex: 1;
   flex-direction: column;
   min-width: 14rem;
 }
-.settings-signin-row__title {
+.settings-action-row__title {
   font: var(--lr-type-ui);
   font-weight: 600;
 }
-.settings-signin-row .ui-inline-status:not(:empty) {
+.settings-action-row .ui-inline-status:not(:empty) {
   margin-top: 4px;
 }
 .settings-signin-reauth {
