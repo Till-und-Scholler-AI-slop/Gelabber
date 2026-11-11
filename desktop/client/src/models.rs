@@ -453,6 +453,8 @@ pub enum Permission {
     SendFiles,
     JoinVoice,
     GoLive,
+    /// Kick and ban (v0.10; `manage_server` before).
+    ModerateMembers,
     /// A permission this client does not know yet.
     #[serde(other)]
     Unknown,

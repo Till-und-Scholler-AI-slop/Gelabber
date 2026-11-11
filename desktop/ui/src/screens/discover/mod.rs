@@ -173,6 +173,16 @@ pub fn joined(ctx: &egui::Context) {
     ctx.request_repaint();
 }
 
+/// A listing was saved in the server settings (`refreshDirectory`): the
+/// rows and the status, with its language counts, read again.
+pub fn listing_saved(ctx: &egui::Context) {
+    with(ctx, |s| {
+        s.list.stale = true;
+        s.status.read_at = None;
+    });
+    ctx.request_repaint();
+}
+
 // -------------------------------------------------------------- sidebar
 
 /// `.sidebar-brand`: 700 16px, letter-spacing −0.3px.
@@ -736,12 +746,75 @@ fn row(
     languages: &[DirectoryLanguage],
     width: f32,
 ) {
+    let action = action(listing);
+    let joining = s.joining.contains(&listing.server_id);
+    let (response, more, more_response) = draw_row(ui, app, listing, languages, width, joining);
+    if more_response.clicked() || row_menu::menu_key(ui, &more_response) {
+        row_menu::open(
+            ui.ctx(),
+            Owner::Listing(
+                listing.server_id,
+                listing.name.clone(),
+                listing.request == Some(RequestState::Pending),
+            ),
+            more,
+            Some(more_response.id),
+        );
+    }
+    if response.clicked() {
+        match action {
+            Action::Open => app.nav.navigate(&Route::Server(listing.server_id).path()),
+            Action::Join if !joining => {
+                s.joining.insert(listing.server_id);
+                app.client.join_listing(listing.server_id);
+            }
+            Action::Request => dialogs::open_request(s, listing),
+            _ => {}
+        }
+    }
+}
+
+/// A row as others see it in Entdecken, for the server settings'
+/// "Vorschau": drawn as on the page, but its buttons take no input (`inert`
+/// on the web).
+pub fn preview(ui: &mut Ui, app: &AppCtx, listing: &Listing, languages: &[DirectoryLanguage]) {
+    let width = ui.available_width();
+    let opacity = ui.opacity();
+    ui.scope(|ui| {
+        ui.disable();
+        // Disabled, but painted as it is.
+        ui.set_opacity(opacity);
+        draw_row(ui, app, listing, languages, width, false);
+    });
+}
+
+/// The languages `GET /api/directory` names, once it answered.
+pub fn languages(ctx: &egui::Context, app: &AppCtx) -> Vec<DirectoryLanguage> {
+    enabled(ctx, app);
+    with(ctx, |s| {
+        s.status
+            .value
+            .as_ref()
+            .map(|v| v.languages.clone())
+            .unwrap_or_default()
+    })
+}
+
+/// Paints a row and places its button and "…": their responses, and where
+/// the "…" sits.
+fn draw_row(
+    ui: &mut Ui,
+    app: &AppCtx,
+    listing: &Listing,
+    languages: &[DirectoryLanguage],
+    width: f32,
+    joining: bool,
+) -> (egui::Response, Rect, egui::Response) {
     let theme = Theme::of(ui.ctx());
     let c = &theme.c;
     let left = ui.cursor().min.x;
     let top = ui.cursor().min.y;
     let action = action(listing);
-    let joining = s.joining.contains(&listing.server_id);
     let label = match action {
         Action::Open => texts::actions_open(),
         Action::Join => texts::actions_join(),
@@ -836,18 +909,6 @@ fn row(
             .icon_size(18.0)
             .at(more),
     );
-    if more_response.clicked() || row_menu::menu_key(ui, &more_response) {
-        row_menu::open(
-            ui.ctx(),
-            Owner::Listing(
-                listing.server_id,
-                listing.name.clone(),
-                listing.request == Some(RequestState::Pending),
-            ),
-            more,
-            Some(more_response.id),
-        );
-    }
     let button = Rect::from_min_size(
         pos2(more.left() - 16.0 - button_w, mid - 18.0),
         vec2(button_w, 36.0),
@@ -866,17 +927,7 @@ fn row(
     }
     // Last: the placed button and "…" moved the cursor to their bottom.
     ui.allocate_rect(rect, Sense::hover());
-    if response.clicked() {
-        match action {
-            Action::Open => app.nav.navigate(&Route::Server(listing.server_id).path()),
-            Action::Join if !joining => {
-                s.joining.insert(listing.server_id);
-                app.client.join_listing(listing.server_id);
-            }
-            Action::Request => dialogs::open_request(s, listing),
-            _ => {}
-        }
-    }
+    (response, more, more_response)
 }
 
 /// The row menu's "Melden".

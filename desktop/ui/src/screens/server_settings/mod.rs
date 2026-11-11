@@ -2,6 +2,7 @@
 //! and icon, member permissions, invites, members, bans and the danger
 //! zone for managers; members and leaving for everyone else.
 
+mod directory;
 mod invite;
 mod transfer;
 
@@ -10,7 +11,7 @@ use std::sync::Arc;
 
 use egui::{Color32, Id, Rect, Sense, Ui, UiBuilder, pos2, vec2};
 use gelabber_client::{
-    ApiError, Ban, Invite, Member, OpState, Permission, PresenceStatus, Role, ServerDetail,
+    ApiError, Ban, Invite, Member, OpState, Permission, PresenceStatus, Role, Server, ServerDetail,
     ServerPatch,
 };
 use gelabber_i18n::{Text, common, server_settings as texts};
@@ -77,14 +78,39 @@ const PERMISSIONS: [(Permission, Text, Text); 8] = [
     ),
 ];
 
-const SECTIONS: [(&str, Text); 6] = [
+const SECTIONS: [(&str, Text); 7] = [
     ("allgemein", texts::section_general),
     ("rechte", texts::section_permissions),
     ("einladungen", texts::section_invites),
+    ("verzeichnis", texts::section_directory),
     ("mitglieder", texts::section_members),
     ("sperren", texts::section_bans),
     ("gefahrenzone", texts::section_danger),
 ];
+
+/// The sections the caller sees, in page order: the one place that decides
+/// who sees which (web pages/serverSettingsSections.ts
+/// `serverSettingsSections`; later packages add their line here).
+/// `manage_server` edits the server; everyone sees the members and can
+/// leave. While the directory is on, the owner (the listing) and
+/// `moderate_members` (the join requests) see Verzeichnis.
+fn sections(server: &Server, directory: bool) -> Vec<&'static str> {
+    let manage = server.can(Permission::ManageServer);
+    let moderate = server.role == Role::Owner || server.can(Permission::ModerateMembers);
+    let mut out = Vec::new();
+    if manage {
+        out.extend(["allgemein", "rechte", "einladungen"]);
+    }
+    if directory && moderate {
+        out.push("verzeichnis");
+    }
+    out.push("mitglieder");
+    if manage {
+        out.push("sperren");
+    }
+    out.push("gefahrenzone");
+    out
+}
 
 type Load<T> = Option<Pending<Result<T, ApiError>>>;
 
@@ -131,6 +157,8 @@ struct State {
     from_address: Option<&'static str>,
     /// "Server übergeben", while its dialog is open.
     transfer: Option<transfer::Dialog>,
+    /// Verzeichnis: the listing form and the join requests.
+    directory: directory::Directory,
 }
 
 /// How far below the anchor row a heading may sit and still count as
@@ -239,7 +267,24 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
         };
     }
     let manage = detail.server.can(Permission::ManageServer);
+    let owner = detail.server.role == Role::Owner;
+    let directory_on = crate::screens::discover::enabled(&ctx, app) == Some(true);
+    let shown = sections(&detail.server, directory_on);
+    let languages = if shown.contains(&"verzeichnis") {
+        crate::screens::discover::languages(&ctx, app)
+    } else {
+        Vec::new()
+    };
     poll_loads(ui, app, &mut s, &detail, manage);
+    directory::poll_loads(
+        ui,
+        app,
+        &mut s.directory,
+        &detail,
+        shown.contains(&"verzeichnis"),
+        owner,
+    );
+    let requests = s.directory.pending();
 
     // The anchor row: fixed under the header (sticky at the scroll top).
     // Its links take input first, for the Tab order; they are painted after
@@ -252,15 +297,26 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     let ids: Vec<(&'static str, &'static str)> = SECTIONS
         .iter()
         .map(|(id, label)| (*id, label()))
-        .filter(|(id, _)| manage || matches!(*id, "mitglieder" | "gefahrenzone"))
+        .filter(|(id, _)| shown.contains(id))
         .collect();
     let mut links = Vec::with_capacity(ids.len());
     for (id, label) in &ids {
         let b = Block::single(ui, label, text::UI, c.muted);
-        let r = Rect::from_min_size(pos2(x, nav.top() + 8.0), vec2(b.width() + 24.0, 32.0));
+        // Verzeichnis counts the open requests in a badge, 6px after it.
+        let badge = requests
+            .filter(|_| *id == "verzeichnis")
+            .map_or(0.0, |n| 6.0 + count_width(ui, n));
+        let r = Rect::from_min_size(
+            pos2(x, nav.top() + 8.0),
+            vec2(b.width() + badge + 24.0, 32.0),
+        );
         let wid = Id::unique(("gelabber-server-nav", *id));
         let response = ui.interact(r, wid, Sense::click());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, *label));
+        if let Some(n) = requests.filter(|_| *id == "verzeichnis") {
+            let count = texts::join_requests_count(n);
+            ctx.accesskit_node_builder(wid, |node| node.set_description(count));
+        }
         if response.clicked() {
             s.scroll_to = Some(id);
         }
@@ -336,6 +392,16 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
             );
             invites(&mut col, app, st, &detail);
         }
+        if shown.contains(&"verzeichnis") {
+            section(
+                &mut col,
+                "verzeichnis",
+                texts::section_directory(),
+                owner.then(texts::directory_hint),
+                st,
+            );
+            directory::section(&mut col, app, &mut st.directory, &detail, &languages, owner);
+        }
         let title = texts::members_title(detail.members.len());
         section(&mut col, "mitglieder", &title, None, st);
         members(&mut col, app, st, &detail, manage);
@@ -351,7 +417,6 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
         }
         // The owner's rows each say what they do (#519); members keep the
         // section's sentence.
-        let owner = detail.server.role == Role::Owner;
         let hint = (!owner).then(texts::danger_member_hint);
         section(&mut col, "gefahrenzone", texts::section_danger(), hint, st);
         danger(&mut col, app, st, &detail);
@@ -412,6 +477,15 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
                 c.muted
             }),
         );
+        if let Some(n) = requests.filter(|_| *id == "verzeichnis") {
+            crate::widgets::count_badge(
+                ui.painter(),
+                ui,
+                pos2(r.right() - 12.0, r.center().y + 9.0),
+                n.min(u64::from(u32::MAX)) as u32,
+                None,
+            );
+        }
         if response.hovered() {
             ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
         }
@@ -433,6 +507,17 @@ pub fn page(ui: &mut Ui, app: &mut AppCtx, server: Uuid) {
     }
     drop(s);
     controls::show_confirm(&ctx);
+}
+
+/// The width of a [`crate::widgets::count_badge`] showing `n`.
+fn count_width(ui: &Ui, n: u64) -> f32 {
+    let label = if n > 99 {
+        "99+".to_owned()
+    } else {
+        n.to_string()
+    };
+    let style = TextStyle::new(11.0, 700.0, 1.0);
+    (Block::single(ui, &label, style, Color32::WHITE).width() + 10.0).max(18.0)
 }
 
 /// Whether a copy can land anywhere: without a display server (Linux) there
