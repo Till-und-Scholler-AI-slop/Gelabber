@@ -241,6 +241,14 @@ crate::strings! {
     error_account_disabled = "Dieses Konto ist gesperrt." | "This account has been disabled.";
     error_server_blocked = "Dieser Server wurde vom Betreiber gesperrt."
         | "This server has been blocked by the operator.";
+    error_join_request_required = "Diesem Server trittst du nur auf Anfrage bei."
+        | "This server can only be joined by request.";
+    error_join_request_declined = "Deine Anfrage wurde nicht angenommen. Du kannst in ein paar Tagen wieder anfragen."
+        | "Your request was not accepted. You can ask again in a few days.";
+    error_join_requests_full = "Gerade sind zu viele Anfragen offen. Bitte später noch einmal versuchen."
+        | "Too many requests are open right now. Please try again later.";
+    error_already_member = "Du bist schon Mitglied dieses Servers."
+        | "You are already a member of this server.";
 }
 
 /// `fieldError.required`: "{label} fehlt.".
@@ -329,5 +337,18 @@ pub fn invite_expiry_days(days: i64) -> String {
         (Locale::De, 2) => "übermorgen".to_owned(),
         (Locale::En, 1) => "tomorrow".to_owned(),
         _ => format_relative(days, Unit::Day),
+    }
+}
+
+/// `error.joinRequestDeclinedUntil`: a declined request to join names the
+/// day from which the person may ask again; `date` is formatted already.
+pub fn error_join_request_declined_until(date: &str) -> String {
+    match get() {
+        Locale::De => {
+            format!(
+                "Deine Anfrage wurde nicht angenommen. Du kannst ab dem {date} wieder anfragen."
+            )
+        }
+        Locale::En => format!("Your request was not accepted. You can ask again from {date}."),
     }
 }

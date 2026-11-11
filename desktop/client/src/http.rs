@@ -106,7 +106,7 @@ impl ApiError {
 // A marker `code()` reads, not text of its own.
 const TIMEOUT_PREFIX: &str = "Zeitüberschreitung: "; // i18n-ok
 
-const KNOWN_CODES: [&str; 33] = [
+const KNOWN_CODES: [&str; 37] = [
     "validation_failed",
     "bad_request",
     "unauthenticated",
@@ -140,6 +140,10 @@ const KNOWN_CODES: [&str; 33] = [
     "invitation_invalid",
     "account_disabled",
     "server_blocked",
+    "join_request_required",
+    "join_request_declined",
+    "join_requests_full",
+    "already_member",
 ];
 
 /// The copy per error code, as web/src/auth/rules.ts (the auth catalog's
@@ -177,6 +181,10 @@ pub fn error_message(code: &str) -> &'static str {
         "invitation_invalid" => auth::error_invitation_invalid(),
         "account_disabled" => auth::error_account_disabled(),
         "server_blocked" => auth::error_server_blocked(),
+        "join_request_required" => auth::error_join_request_required(),
+        "join_request_declined" => auth::error_join_request_declined(),
+        "join_requests_full" => auth::error_join_requests_full(),
+        "already_member" => auth::error_already_member(),
         _ => auth::error_internal(),
     }
 }
