@@ -461,7 +461,7 @@ A listing is **visible** to the caller while the owner has it `listed`, the serv
 Shapes:
 
 - `Language`: `{"code": "de", "name": "Deutsch", "listings": 3}`; `name` is the endonym and is not translated; `listings` counts the listings visible to the caller. The codes, in this order: `de`, `en`, `es`, `fr`, `it`, `nl`, `pl`, `pt`, `tr`, `uk`.
-- `Listing`: exactly `{"server_id", "name", "icon_url": string|null, "description", "language", "member_count": int, "join_mode": "open"|"request", "member": bool, "request": null|"pending"|"declined"}`. `member` and `request` are the caller's own; `request` is `"declined"` only while its 7-day cooldown lasts. `icon_url` loads through `GET /api/server-icons/…`, which any signed-in account may read.
+- `Listing`: exactly `{"server_id", "name", "icon_url": string|null, "description", "language", "member_count": int, "join_mode": "open"|"request", "member": bool, "request": null|"pending"|"declined", "retry_at": ts|null}`. `member` and `request` are the caller's own; `request` is `"declined"` only while its 7-day cooldown lasts, and `retry_at` is then when that cooldown ends (otherwise `null`). `icon_url` loads through `GET /api/server-icons/…`, which any signed-in account may read.
 - `ListingSettings`: `{"listed": bool, "description": string, "language": string|null, "join_mode": "open"|"request", "delisted": bool, "listed_at": string|null}`. Without a saved form: `listed: false`, `description: ""`, `language: null`, `join_mode: "request"`, `listed_at: null`. `delisted` says an operator took the server out; the operator's reason is not shown.
 - `JoinRequest`: `{"user_id", "name", "avatar_url": string|null, "message", "created_at"}`.
 

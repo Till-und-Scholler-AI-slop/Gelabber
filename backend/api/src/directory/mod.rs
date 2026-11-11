@@ -26,6 +26,7 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 use uuid::Uuid;
@@ -174,6 +175,8 @@ pub struct Listing {
     /// The caller's request: `pending`, `declined` while its cooldown
     /// lasts, or `null`.
     pub request: Option<String>,
+    /// While `request` is `declined`: when the caller may ask again.
+    pub retry_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -231,7 +234,10 @@ async fn list_listings(
                 (SELECT r.status FROM server_join_requests r \
                   WHERE r.server_id = s.id AND r.user_id = $1 \
                     AND (r.status = 'pending' \
-                         OR r.decided_at > now() - make_interval(days => $6))) AS request \
+                         OR r.decided_at > now() - make_interval(days => $6))) AS request, \
+                (SELECT r.decided_at + make_interval(days => $6) FROM server_join_requests r \
+                  WHERE r.server_id = s.id AND r.user_id = $1 AND r.status = 'declined' \
+                    AND r.decided_at > now() - make_interval(days => $6)) AS retry_at \
          FROM server_listings l JOIN servers s ON s.id = l.server_id \
          WHERE ",
         visible_listing_where!(),

@@ -625,6 +625,7 @@ async fn the_search_shows_only_visible_listings_and_nothing_more(pool: PgPool) {
             "join_mode": "open",
             "member": false,
             "request": null,
+            "retry_at": null,
         })
     );
     assert_eq!(listings[1]["name"], "Modellbau-Keller");
@@ -948,10 +949,13 @@ async fn a_declined_request_waits_seven_days(pool: PgPool) {
     .await
     .unwrap();
 
-    assert_eq!(
-        listing_of(&mut lena, keller).await.unwrap()["request"],
-        "declined"
-    );
+    let listing = listing_of(&mut lena, keller).await.unwrap();
+    assert_eq!(listing["request"], "declined");
+    // The row names the moment the cooldown ends.
+    let retry_at: chrono::DateTime<chrono::Utc> =
+        listing["retry_at"].as_str().unwrap().parse().unwrap();
+    let left = (retry_at - chrono::Utc::now()).num_seconds();
+    assert!((7 * 86_400 - 60..=7 * 86_400).contains(&left), "{left}");
     let res = ask(&mut lena, keller, "Zweites Mal").await;
     assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
     assert_eq!(res.body["error"], "join_request_declined");
@@ -973,10 +977,9 @@ async fn a_declined_request_waits_seven_days(pool: PgPool) {
     .execute(&pool)
     .await
     .unwrap();
-    assert_eq!(
-        listing_of(&mut lena, keller).await.unwrap()["request"],
-        Value::Null
-    );
+    let listing = listing_of(&mut lena, keller).await.unwrap();
+    assert_eq!(listing["request"], Value::Null);
+    assert_eq!(listing["retry_at"], Value::Null);
     let res = ask(&mut lena, keller, "Zweites Mal").await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
     let row: (String, String, Option<Uuid>) = sqlx::query_as(
