@@ -1156,6 +1156,20 @@ pub fn brand(ui: &Ui, rect: Rect) {
     );
 }
 
+/// [`brand`] with a blocked server's name in it (the notice's sidebar).
+pub fn brand_named(ui: &Ui, rect: Rect, name: &str) {
+    let theme = Theme::of(ui.ctx());
+    let style = text::TextStyle::new(16.0, 700.0, 1.5).tracking(-0.3 / 16.0);
+    let block = line(ui, name, style, theme.c.text, rect.width() - 1.0 - 32.0);
+    paint_mid(ui.painter(), &block, rect.left() + 16.0, rect.top() + 25.5);
+    hairline_h(
+        ui.painter(),
+        &theme,
+        rect.left()..=rect.right() - 1.0,
+        rect.top() + 51.0,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
