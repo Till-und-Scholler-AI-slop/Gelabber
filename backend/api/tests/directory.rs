@@ -1,12 +1,17 @@
 //! The server directory "Entdecken" (#520): the switch, the status route,
-//! the owner's listing form, the search, joining and requests to join.
+//! the owner's listing form, the search, joining, requests to join and
+//! their queue with its frames.
 
 mod common;
 
+use std::time::Duration;
+
 use axum::http::{Method, StatusCode};
+use futures_util::{SinkExt, StreamExt};
 use gelabber_api::AppState;
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
 
 use common::Client;
@@ -1103,4 +1108,363 @@ async fn an_invite_join_and_a_ban_remove_the_request(pool: PgPool) {
         .await;
     assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
     assert!(request_rows(&pool, keller).await.is_empty());
+}
+
+/// A custom role with `moderate_members` (bit 256) for `user`, put in
+/// directly.
+async fn make_moderator(pool: &PgPool, server: Uuid, user: Uuid) {
+    let role: Uuid = sqlx::query_scalar(
+        "INSERT INTO server_roles (server_id, name, color, permissions, position) \
+         VALUES ($1, 'Moderation', 'blue', 256, 0) RETURNING id",
+    )
+    .bind(server)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO server_member_roles (server_id, user_id, role_id) VALUES ($1, $2, $3)",
+    )
+    .bind(server)
+    .bind(user)
+    .bind(role)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn queue(client: &mut Client, server: Uuid) -> common::Response {
+    client
+        .send(
+            Method::GET,
+            &format!("/api/servers/{server}/join-requests"),
+            None,
+        )
+        .await
+}
+
+/// `accept` or `decline` the request of `requester`.
+async fn answer(
+    client: &mut Client,
+    server: Uuid,
+    requester: Uuid,
+    action: &str,
+) -> common::Response {
+    client
+        .send(
+            Method::POST,
+            &format!("/api/servers/{server}/join-requests/{requester}/{action}"),
+            None,
+        )
+        .await
+}
+
+/// A pending request put in directly, for set-ups the request route
+/// refuses (a banned requester, a member, the directory off).
+async fn insert_request(pool: &PgPool, server: Uuid, user: Uuid, message: &str) {
+    sqlx::query(
+        "INSERT INTO server_join_requests (server_id, user_id, message) VALUES ($1, $2, $3)",
+    )
+    .bind(server)
+    .bind(user)
+    .bind(message)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test]
+async fn the_owner_and_moderators_answer_the_queue(pool: PgPool) {
+    let state = directory_state(pool.clone());
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut mira = registered(&state, "mira@example.test", "Mira").await;
+    let mut jonas = registered(&state, "jonas@example.test", "Jonas").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let mut tom = registered(&state, "tom@example.test", "Tom").await;
+    let mut kai = registered(&state, "kai@example.test", "Kai").await;
+    let keller = create_server(&mut ada, "Modellbau-Keller").await;
+    invite_and_join(&mut ada, &mut mira, keller).await;
+    invite_and_join(&mut ada, &mut jonas, keller).await;
+    make_moderator(&pool, keller, id_of(&mira)).await;
+    list_with(&mut ada, keller, "de", "request").await;
+
+    for (client, message) in [
+        (&mut lena, "Ich baue Schiffe."),
+        (&mut tom, ""),
+        (&mut kai, "Hallo"),
+    ] {
+        let res = ask(client, keller, message).await;
+        assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    }
+    // Tom's request is the oldest; the queue is ordered by creation.
+    sqlx::query(
+        "UPDATE server_join_requests SET created_at = now() - interval '1 hour' \
+         WHERE server_id = $1 AND user_id = $2",
+    )
+    .bind(keller)
+    .bind(id_of(&tom))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let res = queue(&mut ada, keller).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    let rows = res.body.as_array().unwrap();
+    let order: Vec<&str> = rows.iter().map(|r| r["name"].as_str().unwrap()).collect();
+    assert_eq!(order[0], "Tom");
+    assert_eq!(rows.len(), 3);
+    let first = rows[0].as_object().unwrap();
+    let mut keys: Vec<&str> = first.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        ["avatar_url", "created_at", "message", "name", "user_id"]
+    );
+    assert_eq!(first["user_id"], tom.user_id());
+    assert_eq!(first["message"], "");
+    let lena_row = rows.iter().find(|r| r["name"] == "Lena").unwrap();
+    assert_eq!(lena_row["message"], "Ich baue Schiffe.");
+
+    // A moderator reads it too; a plain member may not, a stranger finds nothing.
+    let res = queue(&mut mira, keller).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body.as_array().unwrap().len(), 3);
+    let res = queue(&mut jonas, keller).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+    let res = queue(&mut lena, keller).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    for action in ["accept", "decline"] {
+        let res = answer(&mut jonas, keller, id_of(&lena), action).await;
+        assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.body);
+        let res = answer(&mut kai, keller, id_of(&lena), action).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    }
+    assert_eq!(request_rows(&pool, keller).await.len(), 3);
+
+    // The moderator accepts Lena: she is a member, her request is gone.
+    let res = answer(&mut mira, keller, id_of(&lena), "accept").await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    assert!(is_member(&pool, keller, id_of(&lena)).await);
+    let res = lena
+        .send(Method::GET, &format!("/api/servers/{keller}"), None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(listing_of(&mut lena, keller).await.unwrap()["member"], true);
+
+    // The owner declines Tom: the row stays as declined, by her.
+    let res = answer(&mut ada, keller, id_of(&tom), "decline").await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let row: (String, Option<Uuid>, bool) = sqlx::query_as(
+        "SELECT status, decided_by, decided_at IS NOT NULL FROM server_join_requests \
+         WHERE server_id = $1 AND user_id = $2",
+    )
+    .bind(keller)
+    .bind(id_of(&tom))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row, ("declined".to_owned(), Some(id_of(&ada)), true));
+    assert!(!is_member(&pool, keller, id_of(&tom)).await);
+    assert_eq!(
+        listing_of(&mut tom, keller).await.unwrap()["request"],
+        "declined"
+    );
+
+    // Neither is pending any more.
+    for (requester, action) in [
+        (id_of(&lena), "accept"),
+        (id_of(&tom), "accept"),
+        (id_of(&tom), "decline"),
+        (id_of(&jonas), "accept"),
+        (Uuid::new_v4(), "decline"),
+    ] {
+        let res = answer(&mut ada, keller, requester, action).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{action}: {}", res.body);
+    }
+    let res = ada
+        .send(
+            Method::POST,
+            &format!("/api/servers/{keller}/join-requests/nope/accept"),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    let res = queue(&mut ada, keller).await;
+    let names: Vec<&str> = res
+        .body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["Kai"]);
+}
+
+#[sqlx::test]
+async fn the_queue_works_while_off_and_accept_settles_races(pool: PgPool) {
+    // The directory is off and the server is not listed: the queue still
+    // answers what is pending.
+    let state = common::state(pool.clone());
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let tom = registered(&state, "tom@example.test", "Tom").await;
+    let kai = registered(&state, "kai@example.test", "Kai").await;
+    let keller = create_server(&mut ada, "Modellbau-Keller").await;
+    invite_and_join(&mut ada, &mut lena, keller).await;
+    for (client, message) in [(&lena, "schon drin"), (&tom, "gesperrt"), (&kai, "neu")] {
+        insert_request(&pool, keller, id_of(client), message).await;
+    }
+    sqlx::query("INSERT INTO server_bans (server_id, user_id, banned_by) VALUES ($1, $2, $3)")
+        .bind(keller)
+        .bind(id_of(&tom))
+        .bind(id_of(&ada))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let res = queue(&mut ada, keller).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert_eq!(res.body.as_array().unwrap().len(), 3);
+
+    // A member already: the request goes, nothing else changes.
+    let res = answer(&mut ada, keller, id_of(&lena), "accept").await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    // Banned since asking: the request goes and the accept finds nothing.
+    let res = answer(&mut ada, keller, id_of(&tom), "accept").await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.body);
+    assert!(!is_member(&pool, keller, id_of(&tom)).await);
+    // Neither listed nor on: an accept still lets Kai in.
+    let res = answer(&mut ada, keller, id_of(&kai), "accept").await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    assert!(is_member(&pool, keller, id_of(&kai)).await);
+    assert!(request_rows(&pool, keller).await.is_empty());
+}
+
+type Ws =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// A socket of `client`, registered once it answered a heartbeat.
+async fn connect(addr: std::net::SocketAddr, client: &Client) -> Ws {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::header::COOKIE;
+    let mut request = format!("ws://{addr}/ws").into_client_request().unwrap();
+    let cookie = client.jar.get(common::SESSION).expect("session cookie");
+    request.headers_mut().insert(
+        COOKIE,
+        format!("{}={cookie}", common::SESSION).parse().unwrap(),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    ws.send(Message::Text(json!({ "op": "h" }).to_string().into()))
+        .await
+        .unwrap();
+    recv_until(&mut ws, |f| f["op"] == "h").await;
+    ws
+}
+
+/// The next frame; server heartbeats are answered on the way, like a client.
+async fn recv(ws: &mut Ws) -> Value {
+    loop {
+        let msg = tokio::time::timeout(Duration::from_secs(2), ws.next())
+            .await
+            .expect("ws recv timeout")
+            .expect("ws closed")
+            .expect("ws error");
+        if let Message::Text(text) = msg {
+            let frame: Value = serde_json::from_str(text.as_str()).unwrap();
+            if frame["op"] == "h" {
+                ws.send(Message::Text(json!({ "op": "h" }).to_string().into()))
+                    .await
+                    .unwrap();
+            }
+            return frame;
+        }
+    }
+}
+
+async fn recv_until(ws: &mut Ws, pred: impl Fn(&Value) -> bool) -> Value {
+    loop {
+        let frame = recv(ws).await;
+        if pred(&frame) {
+            return frame;
+        }
+    }
+}
+
+/// The next `jq` frame on the socket.
+async fn next_count(ws: &mut Ws) -> Value {
+    recv_until(ws, |f| f["op"] == "jq").await
+}
+
+/// Fails if a frame with `op` arrives within 300 ms.
+async fn hears_no(ws: &mut Ws, op: &str) {
+    let heard = tokio::time::timeout(Duration::from_millis(300), async {
+        recv_until(ws, |f| f["op"] == op).await
+    })
+    .await;
+    assert!(heard.is_err(), "unexpected {op}: {heard:?}");
+}
+
+#[sqlx::test]
+async fn the_queue_handlers_hear_the_count_and_the_accepted_hear_jn(pool: PgPool) {
+    let mut state = common::ws_state(pool.clone());
+    state.directory = true;
+    let addr = common::serve_ws_state(state.clone()).await;
+    let mut ada = registered(&state, "ada@example.test", "Ada").await;
+    let mut mira = registered(&state, "mira@example.test", "Mira").await;
+    let mut jonas = registered(&state, "jonas@example.test", "Jonas").await;
+    let mut lena = registered(&state, "lena@example.test", "Lena").await;
+    let mut tom = registered(&state, "tom@example.test", "Tom").await;
+    let keller = create_server(&mut ada, "Modellbau-Keller").await;
+    invite_and_join(&mut ada, &mut mira, keller).await;
+    invite_and_join(&mut ada, &mut jonas, keller).await;
+    make_moderator(&pool, keller, id_of(&mira)).await;
+    list_with(&mut ada, keller, "de", "request").await;
+
+    let mut owner_ws = connect(addr, &ada).await;
+    let mut moderator_ws = connect(addr, &mira).await;
+    let mut member_ws = connect(addr, &jonas).await;
+    let mut lena_ws = connect(addr, &lena).await;
+    let s = keller.to_string();
+    let count = |n: i64| json!({ "op": "jq", "s": s, "n": n });
+
+    // A new request, a withdrawal, the request again and a second one.
+    let res = ask(&mut lena, keller, "").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    assert_eq!(next_count(&mut owner_ws).await, count(1));
+    assert_eq!(next_count(&mut moderator_ws).await, count(1));
+    let res = withdraw(&mut lena, keller).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    assert_eq!(next_count(&mut owner_ws).await, count(0));
+    assert_eq!(next_count(&mut moderator_ws).await, count(0));
+    let res = ask(&mut lena, keller, "").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    let res = ask(&mut tom, keller, "").await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.body);
+    assert_eq!(next_count(&mut owner_ws).await, count(1));
+    assert_eq!(next_count(&mut owner_ws).await, count(2));
+    assert_eq!(next_count(&mut moderator_ws).await, count(1));
+    assert_eq!(next_count(&mut moderator_ws).await, count(2));
+    // A repeated request changes nothing and says nothing.
+    let res = ask(&mut tom, keller, "").await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    hears_no(&mut owner_ws, "jq").await;
+
+    // The moderator accepts Lena: she hears jn, the handlers the new count.
+    let res = answer(&mut mira, keller, id_of(&lena), "accept").await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    let joined = recv_until(&mut lena_ws, |f| f["op"] == "jn").await;
+    assert_eq!(joined, json!({ "op": "jn", "s": s }));
+    assert_eq!(next_count(&mut owner_ws).await, count(1));
+    assert_eq!(next_count(&mut moderator_ws).await, count(1));
+    // The new member answers no requests.
+    hears_no(&mut lena_ws, "jq").await;
+
+    // The owner declines Tom.
+    let res = answer(&mut ada, keller, id_of(&tom), "decline").await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.body);
+    assert_eq!(next_count(&mut owner_ws).await, count(0));
+    assert_eq!(next_count(&mut moderator_ws).await, count(0));
+
+    // A plain member hears none of it, nobody else hears jn.
+    hears_no(&mut member_ws, "jq").await;
+    hears_no(&mut owner_ws, "jn").await;
 }
