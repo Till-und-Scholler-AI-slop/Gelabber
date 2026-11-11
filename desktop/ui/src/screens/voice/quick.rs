@@ -143,15 +143,17 @@ pub fn call_sound(ui: &mut Ui, rect: Rect, deafened: bool) -> Rect {
             egui::WidgetInfo::labeled(egui::Role::Button, true, texts::output_mute_live_sound())
         });
         let hit = hit.on_hover_text(label);
-        let (fill, fg) = if stream_muted {
-            (c.danger_bg.gamma_multiply(0.16), c.danger)
-        } else if hit.hovered() {
-            (c.hover, c.text)
-        } else {
-            (egui::Color32::TRANSPARENT, c.muted)
-        };
-        ui.painter()
-            .rect_filled(toggle, crate::theme::corner(theme.radius.md), fill);
+        // A `.voice-control-compact` outside the dock: the surface in a
+        // border, the danger colour while muted.
+        let fill = if hit.hovered() { c.hover } else { c.surface };
+        let fg = if stream_muted { c.danger } else { c.text };
+        ui.painter().rect(
+            toggle,
+            crate::theme::corner(theme.radius.md),
+            fill,
+            egui::Stroke::new(1.0, c.border),
+            egui::StrokeKind::Inside,
+        );
         crate::icons::paint_centered(
             ui.painter(),
             if stream_muted {
