@@ -1336,6 +1336,42 @@ mod flows {
         );
     }
 
+    #[sqlx::test]
+    async fn an_older_account_with_a_unicode_domain_is_found(pool: PgPool) {
+        let (issuer, state) = setup(pool.clone()).await;
+        // Stored as typed, before addresses were stored with an ASCII domain.
+        registered(&state, true).await;
+        sqlx::query("UPDATE users SET email = 'ada@bücher.example'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for sent in ["ada@bücher.example", "ada@xn--bcher-kva.example"] {
+            sqlx::query("DELETE FROM user_identities")
+                .execute(&pool)
+                .await
+                .unwrap();
+            let mut client = browser(&state).await;
+            let user = MockUser::verified("sub-ada", sent, "Ada");
+            let res = web_sign_in(&issuer, &mut client, sign_in(), user).await;
+            assert_eq!(location(&res), "/", "{sent}");
+            assert_eq!(count(&pool, "SELECT count(*) FROM users").await, 1);
+        }
+
+        // Never confirmed: refused, not a second account.
+        sqlx::query("UPDATE users SET email_verified_at = NULL")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM user_identities")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut client = browser(&state).await;
+        let user = MockUser::verified("sub-ada", "ada@bücher.example", "Ada");
+        let res = web_sign_in(&issuer, &mut client, sign_in(), user).await;
+        assert_eq!(location(&res), "/login?oidc_error=account_unverified");
+    }
+
     fn desktop(verifier: &str) -> Value {
         json!({
             "port": 49152,

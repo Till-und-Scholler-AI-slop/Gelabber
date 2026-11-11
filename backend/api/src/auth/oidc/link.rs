@@ -73,12 +73,17 @@ pub async fn sign_in(conn: &mut PgConnection, identity: &Identity<'_>) -> Result
         Some(email) if identity.email_verified => email,
         _ => return Err(ApiError::OidcEmailUnverified),
     };
+    // Either spelling of the domain, as at password sign-in: an older
+    // account may store it in Unicode form. The ASCII form wins a tie.
+    let unicode = unicode_domain(email);
     let account: Option<(Uuid, bool, bool, bool)> = sqlx::query_as(
         "SELECT id, email_verified_at IS NOT NULL, registration_pending, \
              disabled_at IS NOT NULL \
-         FROM users WHERE lower(email) = $1 FOR UPDATE",
+         FROM users WHERE lower(email) = $1 OR lower(email) = $2 \
+         ORDER BY lower(email) = $1 DESC LIMIT 1 FOR UPDATE",
     )
     .bind(email)
+    .bind(unicode.as_deref().unwrap_or(email))
     .fetch_optional(&mut *conn)
     .await?;
     match account {
@@ -91,6 +96,14 @@ pub async fn sign_in(conn: &mut PgConnection, identity: &Identity<'_>) -> Result
         Some((id, false, true, false)) => Ok(SignIn::New { takeover: Some(id) }),
         Some((_, false, false, false)) => Err(ApiError::OidcAccountUnverified),
     }
+}
+
+/// `email` (canonical, ASCII domain) with its domain in Unicode form, if
+/// that differs.
+fn unicode_domain(email: &str) -> Option<String> {
+    let (local, domain) = email.rsplit_once('@')?;
+    let unicode = url::quirks::domain_to_unicode(domain);
+    (!unicode.is_empty() && unicode != domain).then(|| format!("{local}@{unicode}"))
 }
 
 /// Connects the identity to the signed-in account `user_id`. `true` when
