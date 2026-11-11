@@ -1,6 +1,6 @@
 // `/s/$serverId/settings`: name, roles, invites, members, bans,
-// leave/delete. Open to every member; `serverSettingsSections` says who sees
-// which section, deletion needs the owner.
+// leave, transfer and delete. Open to every member; `serverSettingsSections`
+// says who sees which section and row; transfer and deletion need the owner.
 
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
@@ -28,6 +28,7 @@ import { useT } from "../i18n/catalog.ts";
 import { common } from "../i18n/catalogs/common.ts";
 import { serverSettings } from "../i18n/catalogs/serverSettings.ts";
 import { PresenceAvatar } from "../components/PresenceAvatar.tsx";
+import { ActionRow } from "../components/ActionRow.tsx";
 import { Field } from "../components/Field.tsx";
 import { ServerIconFace } from "../components/ServerIcon.tsx";
 import { tileInitials, tileTint } from "../components/initials.ts";
@@ -35,10 +36,13 @@ import { confirmAction } from "../components/confirm.ts";
 import { LoadError } from "../components/LoadError.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { InviteDialog } from "../components/InviteDialog.tsx";
+import { GhostButton, Modal } from "../components/Modal.tsx";
 import { MemberActionsMenu } from "../components/MemberActions.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { Badge } from "../components/ui/Badge.tsx";
 import { Button } from "../components/ui/Button.tsx";
+import { FormField } from "../components/ui/FormField.tsx";
+import { Select } from "../components/ui/Select.tsx";
 import { CopyButton } from "../components/ui/CopyButton.tsx";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
 import { useInlineStatus } from "../components/ui/useInlineStatus.ts";
@@ -55,6 +59,7 @@ import {
   useRevokeInvite,
   useServer,
   useServerIcon,
+  useTransferServer,
   useUnbanMember,
   useUpdateServer,
 } from "../servers/queries.ts";
@@ -68,7 +73,9 @@ import {
   RolesEditor,
 } from "./ServerRoles.tsx";
 import {
+  dangerRows,
   serverSettingsSections,
+  transferCandidates,
   type SectionId,
 } from "./serverSettingsSections.ts";
 import "./settings.css";
@@ -680,6 +687,9 @@ function DangerSection({ server }: { server: ServerDetail }) {
       id="gefahrenzone"
       hint={owner ? t("danger.ownerHint") : t("danger.memberHint")}
     >
+      {dangerRows(server).includes("transfer") ? (
+        <TransferRow server={server} />
+      ) : null}
       <div className="settings-actions">
         <Button
           variant="danger-outline"
@@ -712,5 +722,128 @@ function DangerSection({ server }: { server: ServerDetail }) {
         </Button>
       </div>
     </Section>
+  );
+}
+
+/** "Server übergeben", above "Server löschen" (#519). */
+function TransferRow({ server }: { server: ServerDetail }) {
+  const t = useT(serverSettings);
+  const [open, setOpen] = useState(false);
+  const none = transferCandidates(server).length === 0;
+  return (
+    <ul className="settings-action-list">
+      <ActionRow
+        title={t("transfer.title")}
+        hint={none ? t("transfer.noMember") : t("transfer.hint")}
+        status={null}
+        action={(describedBy) => (
+          <Button
+            size="sm"
+            aria-describedby={describedBy}
+            disabled={none}
+            onClick={() => setOpen(true)}
+          >
+            {t("transfer.open")}
+          </Button>
+        )}
+      >
+        <TransferDialog
+          server={server}
+          open={open}
+          onClose={() => setOpen(false)}
+        />
+      </ActionRow>
+    </ul>
+  );
+}
+
+/** Pick the new owner; a confirmation names them before anything is sent. */
+export function TransferDialog({
+  server,
+  open,
+  onClose,
+}: {
+  server: ServerDetail;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const t = useT(serverSettings);
+  const tc = useT(common);
+  const form = useRef<HTMLFormElement>(null);
+  const candidates = transferCandidates(server);
+  const [picked, setPicked] = useState("");
+  // The first member until one is picked, or when the picked one has left.
+  const chosen =
+    candidates.find((member) => member.user_id === picked) ?? candidates[0];
+  const { errors, clear, clearField, fromError } = useFormErrors(form);
+  const transfer = useTransferServer(server.id);
+
+  const close = () => {
+    setPicked("");
+    clear();
+    onClose();
+  };
+
+  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!chosen || transfer.isPending) return;
+    if (
+      !(await confirmAction({
+        title: t("transfer.confirmTitle", {
+          server: server.name,
+          name: chosen.name,
+        }),
+        message: t("transfer.confirmMessage"),
+        confirmLabel: t("transfer.submit"),
+      }))
+    )
+      return;
+    transfer.mutate(chosen.user_id, { onSuccess: close, onError: fromError });
+  };
+
+  return (
+    <Modal open={open} onClose={close} title={t("transfer.title")}>
+      <form
+        ref={form}
+        onSubmit={(event) => void onSubmit(event)}
+        noValidate
+        className="settings-form"
+      >
+        <FormField
+          id="transfer-member"
+          label={t("transfer.member")}
+          error={errors.fields.user_id}
+        >
+          <Select
+            id="transfer-member"
+            value={chosen?.user_id ?? ""}
+            invalid={Boolean(errors.fields.user_id)}
+            onChange={(event) => {
+              setPicked(event.target.value);
+              clearField("user_id");
+            }}
+          >
+            {candidates.map((member) => (
+              <option key={member.user_id} value={member.user_id}>
+                {member.name}
+              </option>
+            ))}
+          </Select>
+        </FormField>
+        <FormError message={errors.form} />
+        <div className="settings-dialog-actions">
+          <GhostButton onClick={close}>{tc("cancel")}</GhostButton>
+          <Button
+            type="submit"
+            variant="danger"
+            disabled={!chosen}
+            pending={transfer.isPending}
+            pendingLabel={t("transfer.pending")}
+          >
+            {t("transfer.submit")}
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
