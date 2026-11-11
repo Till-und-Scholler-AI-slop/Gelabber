@@ -520,6 +520,19 @@ pub fn select_open(ctx: &egui::Context, id: &str) -> bool {
     ctx.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false)
 }
 
+/// An open [`select`] list takes Esc before the dialog around it, like the
+/// web's native select: true when it took it and closed.
+pub fn select_takes_escape(ctx: &egui::Context, id: &str) -> bool {
+    if !select_open(ctx, id)
+        || !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        return false;
+    }
+    let open_id = scoped(ctx, Id::unique(("gelabber-select-open", id)));
+    ctx.data_mut(|d| d.insert_temp(open_id, false));
+    true
+}
+
 pub fn select(
     ui: &mut Ui,
     id: impl std::hash::Hash + std::fmt::Debug + Clone,

@@ -76,6 +76,7 @@ impl Dialog {
             .map(|m| (m.user_id.to_string(), m.name.clone()))
             .collect();
         let mut value = chosen.map(|m| m.user_id.to_string()).unwrap_or_default();
+        controls::select_takes_escape(ctx, "transfer-member");
         let output = Modal::new(("transfer-server", server), texts::transfer_title()).show(
             ctx,
             |ui| {
@@ -287,6 +288,48 @@ mod tests {
         wait_for(&mut harness, "the transfer", |_| api.saw(&transfer));
         let body: Value = serde_json::from_str(&sent.lock()[0]).expect("json body");
         assert_eq!(body, json!({ "user_id": JONAS }));
+        wait_for(&mut harness, "the dialog to close", |h| {
+            h.query_by_label("Neuer Eigentümer").is_none()
+        });
+    }
+
+    /// Esc on the open member list closes the list, not the dialog, as the
+    /// web's native select.
+    #[test]
+    fn esc_closes_the_open_member_list_first() {
+        let _config = TempConfig::new("transfer-esc");
+        let others = vec![member(JONAS, "Jonas", "member")];
+        let api = api("owner", others, Arc::default());
+        let mut harness = launcher(&api, &route());
+        wait_for_label(&mut harness, "Übergeben…");
+        harness
+            .get_by_role_and_label(Role::Link, "Gefahrenzone")
+            .click();
+        for _ in 0..30 {
+            harness.step();
+        }
+        harness
+            .get_by_role_and_label(Role::Button, "Übergeben…")
+            .click();
+        wait_for_label(&mut harness, "Neuer Eigentümer");
+        harness.get_by_label("Neuer Eigentümer").click();
+        for _ in 0..5 {
+            harness.step();
+        }
+        assert!(super::controls::select_open(
+            &harness.ctx,
+            "transfer-member"
+        ));
+        harness.key_press(egui::Key::Escape);
+        for _ in 0..5 {
+            harness.step();
+        }
+        assert!(!super::controls::select_open(
+            &harness.ctx,
+            "transfer-member"
+        ));
+        harness.get_by_label("Neuer Eigentümer");
+        harness.key_press(egui::Key::Escape);
         wait_for(&mut harness, "the dialog to close", |h| {
             h.query_by_label("Neuer Eigentümer").is_none()
         });
