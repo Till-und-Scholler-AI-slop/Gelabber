@@ -741,7 +741,11 @@ impl Http {
     /// The bytes go to `<path>.part` first and replace `path` only when
     /// complete, so a failed download leaves no half file and keeps one
     /// that was there. Returns the number of bytes written.
-    pub async fn download_to(&self, path: &str, target: &std::path::Path) -> Result<u64, ApiError> {
+    pub async fn download_to(
+        &self,
+        path: &str,
+        target: &std::path::Path,
+    ) -> Result<u64, DownloadError> {
         use tokio::io::AsyncWriteExt;
 
         let mut res = self
@@ -767,12 +771,12 @@ impl Http {
             if error.is_unauthenticated() {
                 self.report_unauthenticated();
             }
-            return Err(error);
+            return Err(error.into());
         }
         let mut part = target.as_os_str().to_owned();
         part.push(".part");
         let part = std::path::PathBuf::from(part);
-        let io = |e: std::io::Error| ApiError::Transport(e.to_string());
+        let io = |e: std::io::Error| DownloadError::File(e.to_string());
         let written = async {
             let mut file = tokio::fs::File::create(&part).await.map_err(io)?;
             let mut written = 0u64;
@@ -820,6 +824,17 @@ impl Http {
             self.clock_offset.store(offset, Ordering::Relaxed);
         }
     }
+}
+
+/// Why [`Http::download_to`] failed: the server or the connection, or the
+/// file on this device (no right to write, a full disk), which the UI
+/// words as a file not saved rather than as a network failure.
+#[derive(Debug, thiserror::Error, Clone)]
+pub enum DownloadError {
+    #[error(transparent)]
+    Api(#[from] ApiError),
+    #[error("{0}")]
+    File(String),
 }
 
 /// [`Http::download_to`]: the whole may take long, a pause may not.
@@ -1322,6 +1337,9 @@ mod tests {
         let error = runtime
             .block_on(http.download_to("/api/elsewhere", &gone))
             .unwrap_err();
+        let DownloadError::Api(error) = error else {
+            panic!("{error:?}");
+        };
         assert_eq!(error.code(), "not_found");
         assert!(!gone.exists());
         let leftovers: Vec<_> = std::fs::read_dir(&dir)
@@ -1329,6 +1347,11 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         assert_eq!(leftovers.len(), 1, "{leftovers:?}");
+        // A folder that is not there fails on this side, not the server's.
+        let error = runtime
+            .block_on(http.download_to("/api/me/export/download", &dir.join("no/such.zip")))
+            .unwrap_err();
+        assert!(matches!(error, DownloadError::File(_)), "{error:?}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

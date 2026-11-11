@@ -5,17 +5,15 @@
 //! settings action row (controls.rs `action_row`).
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
-use std::sync::Arc;
 
 use chrono::{DateTime, Datelike, Local, Timelike, Utc};
 use egui::{Sense, Ui, Vec2, vec2};
 use gelabber_client::{
-    ApiError, AuthProvider, DeleteConfirmation, DeviceClient, DeviceOs, DeviceSession, EXPORT_POLL,
-    ExportState, ExportStatus, OidcPurpose, OidcStart, OpState, OwnedServer, Role, User,
+    ApiError, AuthProvider, DeleteConfirmation, DeviceClient, DeviceOs, DeviceSession,
+    DownloadError, EXPORT_POLL, ExportState, ExportStatus, OidcPurpose, OidcStart, OpState,
+    OwnedServer, Role, User,
 };
 use gelabber_i18n::{account as texts, common, intl, settings as settings_texts};
-use parking_lot::Mutex;
 
 use super::controls::{self, Confirm, RowButton, Status, action_row, action_row_badged};
 use super::sign_in::{self, SECURITY_PATH, SignInState, dialog_error, reauth_note, skeleton_rows};
@@ -47,8 +45,6 @@ struct ExportRow {
     requesting: bool,
     /// When the export was last asked for (egui time), for the polling.
     read_at: f64,
-    /// The file "Herunterladen" streams into, once chosen.
-    download: Option<Arc<Mutex<Option<PathBuf>>>>,
 }
 
 /// Settings area "Sicherheit".
@@ -391,6 +387,31 @@ pub fn export_request_error(error: &ApiError) -> String {
     error_message(&failure.code).to_owned()
 }
 
+/// The outcome of "Herunterladen" as a toast, wherever the person is by
+/// then: saved, the server's or the connection's failure, or the file on
+/// this device that could not be written (as `files::save` words it).
+fn export_saved(ctx: &egui::Context, path: &str, result: Result<(), DownloadError>) {
+    match result {
+        Ok(()) => {
+            crate::platform::files::notice(ctx, gelabber_i18n::app::file_saved_to(path), false)
+        }
+        Err(DownloadError::File(e)) => {
+            tracing::warn!("export download: {e}");
+            crate::platform::files::notice(ctx, gelabber_i18n::app::file_not_saved(&e), true);
+        }
+        Err(DownloadError::Api(e)) => {
+            tracing::warn!("export download: {e}");
+            if let Some(text) = crate::toasts::error_text(&e) {
+                crate::platform::files::notice(
+                    ctx,
+                    gelabber_i18n::chat::attachment_download_failed(&text),
+                    true,
+                );
+            }
+        }
+    }
+}
+
 /// "Daten exportieren": its hint and button follow the export's state.
 fn export_row(ui: &mut Ui, app: &mut AppCtx, row: &mut ExportRow) {
     let ctx = ui.ctx().clone();
@@ -412,29 +433,6 @@ fn export_row(ui: &mut Ui, app: &mut AppCtx, row: &mut ExportRow) {
             row.status.error(ui, export_request_error(&e));
         } else {
             row.read_at = now;
-        }
-    }
-    let chosen = row.download.as_ref().and_then(|slot| slot.lock().clone());
-    if let Some(path) = chosen
-        && let Some(result) = settled(app, "export_download")
-    {
-        row.download = None;
-        match result {
-            Ok(()) => crate::platform::files::notice(
-                &ctx,
-                gelabber_i18n::app::file_saved_to(&path.display().to_string()),
-                false,
-            ),
-            Err(e) => {
-                tracing::warn!("export download: {e}");
-                if let Some(text) = crate::toasts::error_text(&e) {
-                    crate::platform::files::notice(
-                        &ctx,
-                        gelabber_i18n::chat::attachment_download_failed(&text),
-                        true,
-                    );
-                }
-            }
         }
     }
     let Some(export) = export else {
@@ -461,9 +459,10 @@ fn export_row(ui: &mut Ui, app: &mut AppCtx, row: &mut ExportRow) {
     }
     let (hint, action) = export_row_for(&export);
     let button = match action {
-        ExportAction::Download => {
-            RowButton::new(texts::export_download()).variant(ButtonVariant::Primary)
-        }
+        // One download at a time: its outcome comes as a toast.
+        ExportAction::Download => RowButton::new(texts::export_download())
+            .variant(ButtonVariant::Primary)
+            .disabled(op_pending(app, "export_download")),
         ExportAction::Building => RowButton::new(texts::export_building()).disabled(true),
         ExportAction::Request | ExportAction::Retry => {
             let label = if action == ExportAction::Retry {
@@ -492,16 +491,17 @@ fn export_row(ui: &mut Ui, app: &mut AppCtx, row: &mut ExportRow) {
                 .as_ref()
                 .map(|v| v.file_name())
                 .unwrap_or_default();
-            let slot = Arc::new(Mutex::new(None));
-            row.download = Some(slot.clone());
             let client = app.client.clone();
+            let toast = ctx.clone();
             crate::platform::files::save_to(
                 &ctx,
                 gelabber_i18n::chat::attachment_save_title(),
                 &name,
                 move |path| {
-                    *slot.lock() = Some(path.clone());
-                    client.download_export(path);
+                    let shown = path.display().to_string();
+                    client.download_export(path, move |result| {
+                        export_saved(&toast, &shown, result);
+                    });
                 },
             );
         }
@@ -1205,6 +1205,46 @@ mod drawn {
         assert_eq!(std::fs::read(&saved).expect("saved"), br#"{"zip":true}"#);
         assert!(api.saw("GET /me/export/download"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A file this device cannot write is "not saved", with the reason,
+    /// not a lost connection; and the toast comes although the person
+    /// went on to another area meanwhile.
+    #[test]
+    fn an_export_that_cannot_be_written_is_not_saved() {
+        let _config = crate::platform::paths::testing::TempConfig::new("security-download-io");
+        let api = FakeApi::start(true, |method, path, _| match (method, path) {
+            ("GET", "/me/export") => Some(Reply::json(export("ready"))),
+            ("GET", "/me/export/download") => Some(Reply::json(json!({"zip": true}))),
+            _ => page(method, path),
+        });
+        let dir = std::env::temp_dir()
+            .join(format!("gelabber-export-io-{}", std::process::id()))
+            .join("not-there");
+        let mut h = launcher(&api, "/settings/konto");
+        crate::platform::files::set_choosers(
+            &h.ctx,
+            crate::platform::files::Choosers {
+                bus: None,
+                portal: false,
+                native: false,
+                zenity: String::new(),
+                kdialog: String::new(),
+                downloads: Some(dir.clone()),
+            },
+        );
+        wait_for_label(&mut h, "Bereit bis 18. November 2036, 46,0 MB.");
+        button(&h, "Herunterladen")[0].click();
+        wait_for(&mut h, "the download", |_| {
+            api.saw("GET /me/export/download")
+        });
+        h.state_mut()
+            .app()
+            .expect("app")
+            .navigate("/settings/profil");
+        crate::app::testkit::wait_for_text(&mut h, "Datei nicht gespeichert.");
+        assert!(h.query_by_label_contains("nicht heruntergeladen").is_none());
+        assert!(!dir.exists());
     }
 
     /// Owning a server (the list says so): the dialog names it with its

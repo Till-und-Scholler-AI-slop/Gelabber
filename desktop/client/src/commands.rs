@@ -2000,15 +2000,22 @@ impl Client {
     }
 
     /// "Herunterladen": streams the ready archive into `target`
-    /// ([`Http::download_to`](crate::Http::download_to)). Op key
-    /// `export_download`.
-    pub fn download_export(&self, target: std::path::PathBuf) {
+    /// ([`Http::download_to`](crate::Http::download_to)) and hands the
+    /// outcome to `done`, which says so wherever the person is by then.
+    /// Op key `export_download`, pending while it runs and gone after.
+    pub fn download_export(
+        &self,
+        target: std::path::PathBuf,
+        done: impl FnOnce(Result<(), crate::DownloadError>) + Send + 'static,
+    ) {
         let http = self.http().clone();
-        self.run(
-            "export_download",
-            async move { http.download_to(EXPORT_DOWNLOAD_PATH, &target).await },
-            |_, _| {},
-        );
+        self.write(|s| s.ops.insert("export_download".into(), OpState::Pending));
+        let this = self.clone();
+        self.spawn(async move {
+            let result = http.download_to(EXPORT_DOWNLOAD_PATH, &target).await;
+            this.write(|s| s.ops.remove("export_download"));
+            done(result.map(drop));
+        });
     }
 
     /// Deletes the account (`deleteAndLeave`). On `202` this client signs

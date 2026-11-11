@@ -20,7 +20,7 @@ use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 pub use api::HistoryQuery;
 pub use commands::SettingTarget;
 pub use gateway::{Gateway, GatewayConfig, GatewayEvent, GatewayStatus};
-pub use http::{ApiError, Download, Http, error_message};
+pub use http::{ApiError, Download, DownloadError, Http, error_message};
 pub use models::*;
 pub use store::{
     ChannelMessages, Notice, OpState, OutgoingFile, PendingMessage, Session, State, View,
