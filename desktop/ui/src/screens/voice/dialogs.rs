@@ -272,9 +272,9 @@ fn tabs(ui: &mut Ui, current: Tab, width: f32, focus: bool) -> Option<Tab> {
 
 /// `.voice-microphone-test meter`, styled as `.voice-quick-level`: a 6px
 /// round track in the border colour, the level in green over it.
-fn meter(ui: &mut Ui, value: f64, width: f32) {
+pub(super) fn meter(ui: &mut Ui, value: f64, width: f32) -> egui::Response {
     let theme = Theme::of(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(vec2(width, 6.0), Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 6.0), Sense::hover());
     let round = corner(theme.radius.full);
     ui.painter().rect_filled(rect, round, theme.c.border);
     let filled = (value.clamp(0.0, 100.0) / 100.0) as f32 * width;
@@ -285,6 +285,7 @@ fn meter(ui: &mut Ui, value: f64, width: f32) {
             theme.c.online_text,
         );
     }
+    response
 }
 
 fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
@@ -318,7 +319,7 @@ fn mic_test_dialog(ui: &mut Ui, app: &mut AppCtx) {
                 // Each meter sits close under its label (6px), apart from the next.
                 controls::paragraph(ui, label, text::BODY, c.text, width);
                 ui.add_space(6.0);
-                meter(ui, value, width);
+                let _ = meter(ui, value, width);
                 ui.add_space(14.0);
             }
             // The fieldset: its legend, then the modes in a wrapping row. In

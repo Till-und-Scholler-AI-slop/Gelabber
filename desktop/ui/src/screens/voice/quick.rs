@@ -3,7 +3,7 @@
 //! activation or push-to-talk, and the way to all settings. Width 312.
 
 use egui::{Id, Rect, Response, Sense, Ui, UiBuilder, vec2};
-use gelabber_call::Device;
+use gelabber_call::{CallStatus, Device, MicStatus, logic};
 use gelabber_i18n::voice_settings as texts;
 
 use crate::app::AppCtx;
@@ -216,6 +216,27 @@ fn content(ui: &mut Ui, app: &mut AppCtx) -> bool {
         ) {
             app.call
                 .set_input(Some(p.audio_input_id.clone()).filter(|s| !s.is_empty()));
+        }
+        // `SendLevel`: what the call sends, while joined with the mic live.
+        let (joined, live) = app.call.with_state(|s| {
+            (
+                s.status == CallStatus::Connected,
+                !s.muted && s.mic == MicStatus::Live,
+            )
+        });
+        if joined && live {
+            ui.add_space(6.0);
+            let me = app.client.with_state(|s| s.me().map(|m| m.id));
+            let level = me
+                .and_then(|id| app.call.levels().get(&id).copied())
+                .unwrap_or(0.0);
+            let value = (f64::from(level) * logic::NATIVE_METER_SCALE)
+                .round()
+                .min(100.0);
+            super::dialogs::meter(ui, value, width).widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::Meter, true, texts::quick_send_level())
+            });
+            ctx.request_repaint_after(logic::SPEAKING_POLL);
         }
         ui.add_space(14.0);
         label(ui, texts::output_speaker());
