@@ -271,7 +271,9 @@ pub fn member_dialog(ui: &mut Ui, app: &mut AppCtx, d: &mut MemberDialog) -> boo
             name: m.name.clone(),
             me: own,
             room,
-            moderate: detail.server.can(Permission::ManageServer) && m.role != Role::Owner && !own,
+            moderate: detail.server.can(Permission::ModerateMembers)
+                && m.role != Role::Owner
+                && !own,
             busy: [format!("kick:{}", m.user_id), format!("ban:{}", m.user_id)]
                 .iter()
                 .any(|k| matches!(s.op(k), Some(OpState::Pending))),

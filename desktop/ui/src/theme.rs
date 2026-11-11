@@ -612,6 +612,21 @@ pub mod motion {
     pub const PRESS_SCALE: f32 = 0.97;
 }
 
+/// `--lr-role-*` (index.css): the six role colours, the same in every
+/// theme. Only for dots and swatches, never text; dots get an inset
+/// `border` ring so they stay visible on light themes.
+pub const fn role_color(color: gelabber_client::RoleColor) -> Color32 {
+    use gelabber_client::RoleColor;
+    match color {
+        RoleColor::Amber => hex(0xe0a04a),
+        RoleColor::Blue => hex(0x6fb3d9),
+        RoleColor::Green => hex(0x85d69b),
+        RoleColor::Pink => hex(0xd98fb8),
+        RoleColor::Violet => hex(0xb29ae6),
+        RoleColor::Coral => hex(0xe08f6f),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -797,6 +812,17 @@ mod tests {
             [
                 "#ead2c8", "#eae0c8", "#daeac8", "#c8ead6", "#c8e5ea", "#c8d6ea", "#d2c8ea",
                 "#eac8dd"
+            ]
+        );
+    }
+
+    // index.css `--lr-role-*`, sampled from roles-editor.png.
+    #[test]
+    fn role_colours() {
+        assert_eq!(
+            gelabber_client::RoleColor::ALL.map(|c| h(role_color(c))),
+            [
+                "#e0a04a", "#6fb3d9", "#85d69b", "#d98fb8", "#b29ae6", "#e08f6f"
             ]
         );
     }
