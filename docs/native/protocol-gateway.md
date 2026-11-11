@@ -266,7 +266,7 @@ these ops and drops anything else (`web/src/ws/protocol.ts:139-167`).
 | `e` | `{"op":"e","t":"c","s":"<uuid>",["c":"<uuid>",]"n":7,["ep":"<uuid>",]["i":"<uuid>",]["d":{…},]["r":123]}` | sequenced event, see §4. Key order on the wire: `op,t,s,c,n,ep,i,d,r` | `protocol.rs:445-460,537-548` |
 | `gap` | `{"op":"gap","s":"<uuid>",["ep":"<uuid>",]["c":"<uuid>"]}` | resume impossible / epoch changed → refetch via REST | `protocol.rs:461-468` |
 | `resync` | `{"op":"resync"}` | resubscribe everything, rediscover lists | `protocol.rs:430-431` |
-| `dm` | `{"op":"dm","c":"<dmChannelId>"}` | a DM involving this account appeared (new DM / first message); verify via REST then subscribe | `protocol.rs:432-433`, `delivery.rs:193-204` |
+| `dm` | `{"op":"dm","c":"<dmChannelId>"}` | a DM involving this account appeared (new DM / first message); verify via REST then subscribe. From v0.10 also sent when the peer's account was deleted and the DM channel with it: the REST check then answers `404` and the DM leaves the list | `protocol.rs:432-433`, `delivery.rs:193-204` |
 | `sig` | `{"op":"sig","t":"j","s":"<srv>",["c":"<chan>",]["u":"<user>",]["k":"a",]["on":true,]["m":false,]["d":false,]["snap":[…]]}` | voice presence, see §5 | `protocol.rs:469-489` |
 | `err` | `{"op":"err","e":"not_found",["s":"<uuid>",]["c":"<uuid>"]}` | see §3.1 | `protocol.rs:490-497` |
 | `p` | update `{"op":"p","s":"<srv>","u":"<user>","st":"o"}`; snapshot `{"op":"p","s":"<srv>","snap":[{"u":"<user>","st":"i"},…]}` | `st` ∈ `o` online, `i` idle, `x` offline | `protocol.rs:96-129,498-508,829-844` |
@@ -343,9 +343,12 @@ without orders compare `read_at`. Never move a cached read position backwards.
 | member kicked | server | `d` | kicked user id | `{"k":"k"}` | omitted | `servers/moderation.rs:256-276` |
 | member banned | server | `d` | banned user id | `{"k":"b"}` | omitted | same |
 | access changed: roles, role assignments, `member_permissions`, a channel's `role_ids` | server | `e` | omitted | `{"k":"a"}` | omitted | `servers/access.rs` |
+| member deleted their account (`DELETE /api/me`, v0.10) | server | `d` | the deleted user's id | `{"k":"x"}` | omitted | `servers/moderation.rs` (`after_removal_with`, reason `deleted`) |
+| ownership transferred (`POST /api/servers/{id}/transfer`, v0.10) | server | `e` | omitted | `{"k":"o","owner_id":"<new owner>"}` | omitted | `servers/mod.rs` (`transfer_server`) |
 
 There are **no** gateway events for channel create/rename/delete, server
-rename, member changes other than kick, ban and access (`{"k":"a"}`: refetch
+rename, member changes other than kick, ban, a deleted account (`{"k":"x"}`),
+ownership (`{"k":"o"}`) and access (`{"k":"a"}`: refetch
 the server detail and the server list), profile changes, or member join. Those surfaces refresh via REST refetch on reconnect/gap (§6.4) or the
 user's own mutations. (Gap: a native client cannot see another user's
 channel/server edits live; the web client cannot either.)
@@ -396,6 +399,8 @@ Client hardening (keep it): the web normalises lists defensively —
 | `newerMessage` | higher `revision` wins; if equal/absent, later `edited_at ?? created_at` wins |
 | `e` without `c`, `t:"d"`, `i` == me | server removed me: `d.k == "b"` → banned else kicked → §6.3 |
 | `e` without `c`, `t:"d"`, `i` ≠ me | drop member `i` from that server's member list |
+| `e` without `c`, `t:"d"`, `i` ≠ me, `d.k == "x"` (v0.10) | as above, and also drop `i`'s messages from every cached page of that server's channels: the account is deleted and its messages follow in the background, without per-message `t:"d"` events |
+| `e` without `c`, `t:"e"`, `d.k == "o"` (v0.10) | refetch that server's list entry and detail: `owner_id` and the caller's `role`/`permissions` changed |
 
 ---
 

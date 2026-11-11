@@ -114,6 +114,7 @@ Web retry on CSRF failure (`client.ts:498-563`): when a non-GET answers `403` wi
 | `message` | English fallback string | always |
 | `fields` | object `{field: field_code}` | only when non-empty (`skip_serializing_if = BTreeMap::is_empty`) |
 | `retry_after` | integer seconds | only for `rate_limited` and `upstream_quota`; the same value is also sent as `Retry-After` header |
+| `servers` | `[{id, name, member_count}]` | only for `owns_servers` (v0.10, §3.4) |
 
 | `error` | HTTP | `message` (server, English) | German UI text (`web/src/auth/rules.ts:369-413`) |
 |---|---|---|---|
@@ -148,6 +149,8 @@ Web retry on CSRF failure (`client.ts:498-563`): when a non-GET answers `403` wi
 | `reauth_required` | 403 | Sign in again to confirm it is you. | v0.10: `auth` `error.reauthRequired` |
 | `oidc_wrong_origin` | 409 | Open this instance at its public address to sign in. | v0.10: `auth` `error.oidcWrongOrigin` |
 | `session_changed` | 409 | You signed in to another account meanwhile. Try again. | v0.10: `auth` `error.sessionChanged` |
+| `owns_servers` | 409 | Transfer or delete your servers first. (also `servers: [{id, name, member_count}]`, §3.4) | v0.10: the delete-account dialog lists the servers |
+| `export_pending` | 409 | Your data export is still being built. | v0.10: standard inline error |
 | client-only `network` | 0 | Network error. | Keine Verbindung zum Server. |
 | client-only `timeout` | 0 | Request timed out. | Der Server antwortet nicht. Bitte noch einmal versuchen. |
 
@@ -183,7 +186,7 @@ All on non-safe methods unless noted; windows are in-process per API node. Value
 | Bucket | Key | Limit | Routes |
 |---|---|---|---|
 | `auth` | client IP (IPv6 /64; last `X-Forwarded-For` entry, else peer) | 20 / min | POST `/api/auth/login`, `/register`, `/verify-email`, `/password-reset`, `/password-reset/confirm` (`limits.rs:422-431`); v0.10: every non-GET under `/api/auth/oidc/` (start, pending, complete, desktop exchange, and `DELETE /api/auth/oidc/{provider}`), and the GET callback, which counts itself (`limits::anonymous_hit`) |
-| `login` (failures) | account e-mail | 10 failures / 15 min → 429 | login, change-password, verify-email wrong password |
+| `login` (failures) | account e-mail | 10 failures / 15 min → 429 | login, change-password, verify-email wrong password; v0.10: `DELETE /api/me` wrong password |
 | `api` | `u:{user_id}` if cookie is a live session, else IP | 180 / min | every other mutation |
 | `msg` | same | 60 / min (plus `api`) | `POST …/messages` |
 | `up` | same | 60 / hour (plus `api`) | `POST …/attachments`, `PUT /api/me/avatar`, `PUT /api/me/banner`, `PUT /api/servers/{id}/icon` |
@@ -289,6 +292,21 @@ An account may have no password (created through a provider). Its password login
 
 **Which account a sign-in opens** (`auth/oidc/link.rs`), in this order: a known provider identity signs its account in; without an address the provider marks verified → `oidc_email_unverified`, nothing created; a confirmed account with the address gets the identity (with account mail on, a `provider_connected` mail); an unconfirmed pending registration is taken over at `complete` (its password, tokens and sessions dropped); an account never confirmed (registered while mail was off) → `oidc_account_unverified`; otherwise a new account after the admission gate (`API_REGISTRATION`). A disabled account is refused with `account_disabled` and never taken over. A link attaches the identity to the signed-in account (no-op when already there) and confirms its address when the provider's verified address is the account's own.
 
+### 2.4 Signed-in devices (v0.10, `backend/api/src/auth/devices.rs`, `auth/device.rs`)
+
+Every session records the device it was issued to, parsed from the `User-Agent` of the request that receives the session cookie (in `signed_in`: login, register, password change, verify-email, password reset, and a provider sign-in, where the desktop app's own `exchange`/`complete` request counts, not the system browser). Only the two codes are stored; the raw `User-Agent` is never stored or logged. A session from before v0.10 has `unknown`/`other` until its next renewal (§2.2, `session::touch`) fills them from that request; a known device is never overwritten.
+
+- **Native app:** `User-Agent: Gelabber-Desktop/{version} ({os})`, `{os}` one of `linux`, `windows`, `macos` (compile-time target) → `desktop` and that OS. Without the parenthesis (apps older than v0.10) → `desktop` / `other`.
+- **Browsers**, first match wins: `Edg/` → `edge`; `Firefox/` → `firefox`; `Chrome/` or `Chromium/` → `chrome`; `Safari/` without `Chrome` → `safari`; any other `Mozilla/…` → `browser`; anything else (or no header) → `unknown` / `other`.
+- **OS of a browser**, first match wins: `Android` → `android`; `iPhone`/`iPad`/`iPod` → `ios`; `Windows` → `windows`; `Mac OS X`/`Macintosh` → `macos`; `Linux`/`X11` → `linux`; else `other`.
+
+`DeviceSession`: `{id: uuid, client: "desktop"|"firefox"|"chrome"|"edge"|"safari"|"browser"|"unknown", os: "linux"|"windows"|"macos"|"android"|"ios"|"other", created_at: ts, last_used_at: ts, current: bool}`. `last_used_at` moves with the sliding expiry, so it is accurate to one renewal step (idle/12, at most an hour); clients show day-level words only, and "just now" for `current`.
+
+| Method & path | Request | Success | Errors |
+|---|---|---|---|
+| `GET /api/auth/sessions` | — | `200 {"sessions": DeviceSession[]}`: live sessions (`expires_at > now`) of the account, the caller's own first, then `last_used_at` DESC, `id`; at most 50 | `401` |
+| `DELETE /api/auth/sessions/{id}` | — (CSRF) | another session of the account: `204`; its sockets close and its media tickets end, its push subscriptions go with it. The caller's own session: the same as `POST /api/auth/logout`, `200 {"csrf_token"}` with the session cookie cleared and CSRF rotated | `401`; `403 csrf_invalid`; `404 not_found` for an unknown or expired id, another account's session, or an id that is not a UUID |
+
 ---
 
 ## 3. Me / profile / avatars / themes
@@ -352,6 +370,62 @@ Keys are **camelCase** here (only place in the API). `deny_unknown_fields` on ev
 
 Web flow: on sign-in `GET`; if `revision === 0` the device's current local choice is imported via a `PUT` (`account.ts:133-140`). Each change is applied locally first, then `PUT`. While a locally cached change is still pending at load, the status line is `Noch nicht synchronisiert.` (`account.ts:93`). On `409` the UI state is `conflict` with `Auf einem anderen Gerät geändert. Deine Änderung bleibt erhalten. Erneut anwenden übernimmt sie auf den aktuellen Stand.`; "retry" does `GET` then re-applies the pending operation and `PUT`s (`account.ts:180-233`). Other failures: `Noch nicht synchronisiert. Deine Änderung ist hier gespeichert.`; load failure: `Themes konnten nicht geladen werden. Bitte erneut versuchen.`; malformed server document: `Unbekanntes Theme-Format vom Server.` / `Unbekanntes Theme-Format.`; deleting the active custom theme falls back to `active: "dark"`.
 
+### 3.4 Deleting the account and exporting its data (v0.10, `backend/api/src/account/`)
+
+**Deleting.** `DELETE /api/me` (CSRF). Body `{"password": string}`, or for an account without a password (§2.3) `{"email": string}` (the account's own address, compared like a login address).
+
+Checks, in this order:
+
+1. `401` without a session.
+2. Account with a password: `422 password: required` when empty; `429` while the account's login lockout holds; `422 password: wrong` (also > 128 chars), counted like a failed login. Account without one: `403 reauth_required` unless the session was signed in less than 10 minutes ago (`REAUTH_WINDOW`; the client offers to confirm with the provider again), then `422 email: required` or `email: wrong`.
+3. `409 owns_servers` while the account owns any server, blocked ones included, with `servers: [{id, name, member_count}]` in the envelope (§1.5). The person transfers (§4.2 `POST /api/servers/{id}/transfer`) or deletes each one first.
+
+Success: `202 {"csrf_token"}` with the cookies of a logout. At that moment the account is marked deleted and every session ends (sockets and media tickets close); its sign-in tokens, server memberships (with their roles), the invites it created and its data export are removed; members of its servers get `{"k":"x"}` (protocol-gateway §4.2). From then on it cannot sign in (`401 invalid_credentials`), a password reset sends nothing, `GET /api/users/{id}` and `POST /api/dms` with its id answer `404`, and the address cannot be registered again until the purge is done. A second request answers `401`.
+
+In the background a worker then deletes its messages (replies to them render as `{id, deleted: true}`, mentions as an unknown user), its DM channels with both sides' messages (the peer gets `{"op":"dm","c":<channel>}`, its rediscovery reloads `/api/dms` without the channel, and the channel's routes answer `404`), its files, avatar and banner, the reactions it gave, and last the account row. Bans it issued stay with `banned_by: null` (§4.3). With account mail on, the address gets a "your account was deleted" mail in the account's language when the purge is done.
+
+**Exporting.** `ExportView`: `{state: "pending"|"running"|"ready"|"failed", requested_at: ts, finished_at: ts|null, expires_at: ts|null, size_bytes: int|null}`.
+
+| Method & path | Request | Success | Errors |
+|---|---|---|---|
+| `GET /api/me/export` | — | `200 {"export": ExportView \| null, "mail": bool}`; `mail` as `GET /api/auth/mail`. A ready export past `expires_at` shows as `null` | `401` |
+| `POST /api/me/export` | none (CSRF) | `202 {"export": ExportView, "mail": bool}` with `state: "pending"`; replaces a `failed` export, a ready one requested 24 h ago or more, and one past `expires_at` (its archive is deleted) | `401`; `409 export_pending` (one is `pending` or `running`); `429 rate_limited` with `retry_after`/`Retry-After` = seconds until 24 h after the ready export's `requested_at` |
+| `GET /api/me/export/download` | — | the ready archive, `application/zip`, `Content-Disposition: attachment; filename="gelabber-export-YYYY-MM-DD.zip"` (UTC date of `finished_at`). Redirect mode: `307` to MinIO, `Vary: Cookie`, `Cache-Control: private, no-store`; proxy mode: `200`/`206` stream as an attachment download (§9.2) | `401`; `404` (none ready, or past `expires_at`); `416` |
+
+While an export is `pending` or `running`, clients poll `GET /api/me/export` (the web every 10 s while the page is visible). A build that fails is retried a minute later and is `failed` after its third attempt. A ready archive is kept `API_EXPORT_RETENTION_HOURS` (default 168) and then deleted. With account mail on, the account gets a mail when it is ready that links to `/settings/konto` (no token: the download needs the session). A native client streams the download to the file the person picked rather than holding it in memory.
+
+**Archive layout.** Stored (uncompressed) ZIP entries. JSON is UTF-8 and pretty-printed; times are RFC 3339 UTC.
+
+```
+README.txt                                  short explanation, in the account's language
+account.json                                { id, email, name, created_at, email_verified_at, bio, pronouns,
+                                              status_text, accent_color, banner_color, avatar_decoration,
+                                              notifications_hide_content, locale,
+                                              themes: <account theme document | null>,
+                                              notification_settings: [ {scope_kind, scope_id, level, muted, muted_until, updated_at} ],
+                                              sessions: [ {client, os, created_at, last_used_at} ],   live sessions only
+                                              servers: [ {id, name, owner: bool, joined_at} ],
+                                              invites: [ {code, server_id, created_at, expires_at, max_uses, uses} ] }
+profile/avatar.<ext>, profile/banner.<ext>  uploaded images only; ext png | jpg | webp | gif | bin from the stored type
+messages/servers/<server-id>/<channel-id>.json
+messages/dms/<channel-id>.json
+reactions.json                              [ {message_id, channel_id, emoji} ]
+files/<attachment-id>/<file name>           every file the person sent with a message
+```
+
+A channel file:
+
+```json
+{ "channel": { "id", "name", "kind", "server": {"id","name"} | null, "peer": {"id","name"} | null },
+  "messages": [ { "id", "created_at", "edited_at", "content", "reply_to", "gif",
+                  "system_kind", "system_params",
+                  "attachments": [ {"id","filename","content_type","size_bytes","path": "files/<id>/<file name>" | null} ] } ] }
+```
+
+- Only messages the person wrote, in `(created_at, id)` order, also in servers they have left.
+- `<file name>` is the attachment's name made safe as one path part: path separators, characters Windows forbids (`<>:"/\|?*`) and control characters become `_`, it is cut to 200 bytes, leading and trailing dots and spaces go, a Windows device name (`CON`, `COM1`, …) gets a leading `_`, and an empty name becomes `file`. `path` is `null` when the object was gone while the archive was built.
+- Push endpoints and keys, the password hash, session tokens and other people's messages are never part of it.
+
 ---
 
 ## 4. Servers, categories, channels, members
@@ -405,7 +479,7 @@ New server content (`servers/mod.rs:194-213`): category `Textkanäle` with text 
 | `GET /api/servers/{id}` | `getServer` (21) | — | `200 ServerDetail` | `404` non-member |
 | `PATCH /api/servers/{id}` | `updateServer` (27) | `{name?, member_permissions?: Permission[]}` (null/absent = unchanged; `[]` = no permissions) | `200 ServerView` | `manage_server`; `422 name …`, `member_permissions: invalid` (unknown name) |
 | `DELETE /api/servers/{id}` | `deleteServer` (37) | — | `204` | owner only (`403 Only the server owner can do this.`) |
-| `POST /api/servers/{id}/leave` | `leaveServer` (40) | none | `204` | owner → `403 The owner cannot leave; delete the server instead.` |
+| `POST /api/servers/{id}/leave` | `leaveServer` (40) | none | `204` | owner → `403 The owner cannot leave; delete the server instead.` (from v0.10 the owner can also transfer it first, see `/transfer` below) |
 | `PUT /api/servers/{id}/icon` | `uploadServerIcon` (31) | raw image ≤ 512 KiB, ≤ 256×256, PNG/JPEG/WebP (web: 256×256 WebP via the avatar preparer) | `200 ServerView` | `manage_server`; `400`; `429` up bucket |
 | `DELETE /api/servers/{id}/icon` | `removeServerIcon` (34) | none | `200 ServerView` | `manage_server` |
 | `GET /api/server-icons/{server}/{file}` | `<img>` (`components/ServerIcon.tsx:18`) | cookie | image, same headers as avatars | `401`; any signed-in user |
@@ -415,12 +489,13 @@ New server content (`servers/mod.rs:194-213`): category `Textkanäle` with text 
 | `POST /api/servers/{id}/channels` | `createChannel` (55) | `{name, kind: "text"\|"voice", category_id: uuid-string \| ""}` (web always sends `category_id`, `""` for none; absent/null also = none; `kind` absent = text) | `201 Channel` | `manage_channels`; `422 kind: invalid` (incl. `"dm"`), `name required/too_long/invalid`, `category_id: invalid` (unparseable or other server) |
 | `PATCH /api/channels/{id}` | `updateChannel` (65) | `{name?, category_id?}`; `category_id: ""` detaches, absent/null = unchanged | `200 Channel` | `manage_channels` |
 | `DELETE /api/channels/{id}` | `deleteChannel` (76) | — | `204`; voice occupants and tickets are revoked | `manage_channels` |
+| `POST /api/servers/{id}/transfer` | v0.10, Servereinstellungen → Gefahrenzone | `{user_id: string}` | `200 ServerView` as the caller now sees it (`role: "member"`, keeping the base role and the roles they held); members get `{"k":"o","owner_id"}` (protocol-gateway §4.2) | owner only (`403 forbidden`, checked before the body); `404` caller not a member; `403 server_blocked`; `422 user_id: required` (missing, `null` or blank) \| `invalid` (not a UUID, or the caller's own id); `404` target not a current member (unknown, outsider, banned) or under account deletion |
 
 Text-channel name normalisation (server, `servers/validate.rs:30-62`; web preview `slugifyChannelName`, `web/src/servers/rules.ts:20-45`): after trim/length check, lower-case; whitespace, `_` and `-` runs → one `-`; `#` removed; no leading/trailing `-`; empty result → `name: invalid`. Voice names are kept as typed (trimmed).
 
 ### 4.3 Members, moderation (`servers/moderation.rs`)
 
-`Ban`: `{user_id, name, avatar_url: nullable, banned_by: uuid, banned_at: ts}`, ordered by `banned_at`, user_id.
+`Ban`: `{user_id, name, avatar_url: nullable, banned_by: nullable uuid, banned_at: ts}`, ordered by `banned_at`, user_id. `banned_by` is `null` once the account that issued the ban was deleted (v0.10); the ban stays.
 
 | Method & path | Web fn | Request | Success | Errors |
 |---|---|---|---|---|
@@ -744,7 +819,8 @@ Everything below works with today's backend; no bearer auth exists yet (planned 
 | Item | Status |
 |---|---|
 | `Origin` header | Not checked on REST at all. On the `/ws` upgrade it is optional: absent → allowed; present → must be `http(s)://` + the request's `Host` (default ports ignored), `null` and non-ASCII refused, and with `API_COOKIE_SECURE=true` an `http://` origin is refused unless loopback (`gateway/mod.rs:75-117`). tokio-tungstenite sends no `Origin` by default — leave it out. |
-| `Referer`, `Sec-Fetch-*`, `User-Agent`, `Accept` | ignored by the API |
+| `Referer`, `Sec-Fetch-*`, `Accept` | ignored by the API |
+| `User-Agent` | from v0.10 names the device in the account's device list (§2.4); send `Gelabber-Desktop/{version} ({os})` |
 | CSRF token format | the check only compares cookie and header; a client could set its own pair, but should use the server-issued token so `/api/auth/session` does not replace the cookie |
 | `Accept-Language` | only affects Klipy locale |
 
@@ -831,6 +907,12 @@ Set-Cookie: gelabber_csrf=c3…; Path=/; Max-Age=31536000; HttpOnly; SameSite=La
 | GET | /api/auth/oidc/{provider}/callback | browser redirect (v0.10) | 2.3 |
 | POST | /api/auth/oidc/desktop/exchange | native only (v0.10) | 2.3 |
 | DELETE | /api/auth/oidc/{provider} | yes (v0.10) | 2.3 |
+| GET | /api/auth/sessions | yes (v0.10) | 2.4 |
+| DELETE | /api/auth/sessions/{id} | yes (v0.10) | 2.4 |
+| DELETE | /api/me | yes (v0.10) | 3.4 |
+| GET, POST | /api/me/export | yes (v0.10) | 3.4 |
+| GET | /api/me/export/download | link (v0.10) | 3.4 |
+| POST | /api/servers/{id}/transfer | yes (v0.10) | 4.2 |
 | GET | /health, /ready, /metrics | no | — |
 | GET | /ws (upgrade) | yes | gateway spec |
 
@@ -839,5 +921,5 @@ Set-Cookie: gelabber_csrf=c3…; Path=/; Max-Age=31536000; HttpOnly; SameSite=La
 - `transport_allowed` passes when the request has no `Host` header (`auth/mod.rs:547-550`). Over HTTP/2, hyper may expose the authority without a `Host` header, which would let plain-HTTP sign-in through. Not verified; do not rely on it.
 - Plain-text (non-envelope) error bodies: 413 from `DefaultBodyLimit` on raw-byte routes and axum's default 404/405 for unknown routes and methods. The client must map them by status code. Routes that take a JSON `Body<T>` turn an over-limit body into the envelope `400 bad_request` instead (`json.rs:28-40`, `BytesRejection`), e.g. `PUT /api/me/themes` > 64 KiB.
 - `ApiError::BadRequest(detail)` and `Forbidden(msg)` differ: a 400's `message` is always the generic `Request body could not be read.` (detail logged only), a 403 `forbidden` carries its per-call English text. The UI never shows `message`; it maps `error` to German.
-- Bearer auth, per-device session lists and `/ws` versioning do not exist yet (`docs/v0.9-plan.md:97-100, 324-329`). Cookie mode is the only option today.
+- Bearer auth and `/ws` versioning do not exist yet (`docs/v0.9-plan.md:97-100, 324-329`). Cookie mode is the only option today. Per-device session lists exist from v0.10 (§2.4).
 - Live gateway frames (`/ws`, `read`, `ns`, message `C/E/D` events whose delta is the same `Message` JSON) are covered by the gateway protocol spec, not here.
