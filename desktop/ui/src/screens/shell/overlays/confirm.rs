@@ -4,6 +4,7 @@
 //! cannot confirm it; a neutral one starts on its confirm button.
 
 use egui::Ui;
+use gelabber_i18n::{common, members};
 use uuid::Uuid;
 
 use crate::app::AppCtx;
@@ -63,9 +64,9 @@ impl Question {
     /// `MemberActions` kick.
     pub fn kick(server: Uuid, user: Uuid, name: &str) -> Self {
         Self::danger(
-            format!("{name} vom Server entfernen?"),
-            Some("Mit einem neuen Einladungslink ist ein erneuter Beitritt möglich."),
-            "Entfernen",
+            members::moderation_kick_title(name),
+            Some(members::moderation_kick_message()),
+            common::remove(),
             ConfirmAction::Kick { server, user },
         )
     }
@@ -73,9 +74,9 @@ impl Question {
     /// `MemberActions` ban.
     pub fn ban(server: Uuid, user: Uuid, name: &str) -> Self {
         Self::danger(
-            format!("{name} sperren?"),
-            Some("Sie können nicht wieder beitreten, auch nicht mit einem Einladungslink."),
-            "Sperren",
+            members::moderation_ban_title(name),
+            Some(members::moderation_ban_message()),
+            members::moderation_ban(),
             ConfirmAction::Ban { server, user },
         )
     }
@@ -131,14 +132,15 @@ pub fn dialog(
             let width = |label: &str, style: text::TextStyle| {
                 text::Block::single(ui, label, style, theme.c.text).width() + 34.0
             };
-            let total = width("Abbrechen", text::UI) + 8.0 + width(label, text::UI.weight(600.0));
+            let total =
+                width(common::cancel(), text::UI) + 8.0 + width(label, text::UI.weight(600.0));
             let (no, yes) = ui
                 .allocate_ui_with_layout(
                     egui::vec2(total, 36.0),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
-                        let no = ui.add(Button::new("Abbrechen").ghost());
+                        let no = ui.add(Button::new(common::cancel()).ghost());
                         let confirm = Button::new(label);
                         let confirm = if neutral {
                             confirm.primary()

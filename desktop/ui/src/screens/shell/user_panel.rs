@@ -5,6 +5,7 @@
 
 use egui::{Color32, Id, Rect, Stroke, StrokeKind, Ui, Vec2, pos2};
 use gelabber_client::{OpState, PresenceStatus, ProfilePatch};
+use gelabber_i18n::shell;
 use uuid::Uuid;
 
 use super::common::{self, line, paint_mid};
@@ -148,12 +149,26 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, context: Option<Uuid>) {
         draft.focus = draft.open;
     }
 
-    let gear_response = icon_button(ui, gear, Icon::Gear, 21.0, "Einstellungen", false);
+    let gear_response = icon_button(
+        ui,
+        gear,
+        Icon::Gear,
+        21.0,
+        shell::user_panel_settings(),
+        false,
+    );
     if gear_response.clicked() {
         app.nav.navigate("/settings/darstellung");
     }
     let menu_open = state::with(ui.ctx(), |s| s.user_menu);
-    let chevron_response = icon_button(ui, chevron, Icon::Chevron, 18.0, "Benutzermenü", true);
+    let chevron_response = icon_button(
+        ui,
+        chevron,
+        Icon::Chevron,
+        18.0,
+        shell::user_panel_menu_label(),
+        true,
+    );
     if chevron_response.clicked() {
         state::with(ui.ctx(), |s| s.user_menu = !s.user_menu);
     }
@@ -215,10 +230,10 @@ fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
     let c = theme.c;
     // "Server wechseln …" is the desktop app's own (isDesktopApp).
     let items = [
-        "Profil bearbeiten",
-        "Einstellungen",
-        "Server wechseln …",
-        "Abmelden",
+        shell::user_panel_edit_profile(),
+        shell::user_panel_settings(),
+        shell::user_panel_switch_server(),
+        shell::user_panel_sign_out(),
     ];
     let width = 180.0;
     let height = 2.0 + 16.0 + 37.0 * items.len() as f32 + 3.0 * (items.len() - 1) as f32;
@@ -254,7 +269,11 @@ fn user_menu(ui: &mut Ui, app: &mut AppCtx, chevron: Rect) {
                 response
                     .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, *label));
                 let response = if i == 2 {
-                    response.on_hover_text("Strg+Umschalt+S")
+                    response.on_hover_text(format!(
+                        "{}+{}+S",
+                        shell::keys_ctrl(),
+                        shell::keys_shift()
+                    ))
                 } else {
                     response
                 };
@@ -301,9 +320,9 @@ pub fn log_out(ctx: &egui::Context, app: &mut AppCtx) {
         super::overlays::ask(
             ctx,
             super::overlays::Question {
-                title: "Abmelden und Anruf beenden?".into(),
-                message: Some("Du verlässt dabei den Sprachkanal.".into()),
-                label: "Abmelden".into(),
+                title: shell::logout_end_call_title().into(),
+                message: Some(shell::logout_end_call_message().into()),
+                label: shell::logout_end_call_confirm().into(),
                 neutral: false,
                 action: super::overlays::ConfirmAction::Logout,
             },
@@ -394,10 +413,14 @@ fn status_card(
             );
             // The form.
             let mut y = top + 44.8 + 12.0;
-            let label = Block::single(ui, "Status", text::UI, c.text);
+            let label = Block::single(ui, shell::user_panel_status(), text::UI, c.text);
             label.paint(ui.painter(), pos2(left, y));
             y += 17.55 + 6.0;
-            let button_label = if saving { "Speichert…" } else { "Speichern" };
+            let button_label = if saving {
+                shell::user_panel_saving()
+            } else {
+                gelabber_i18n::common::save()
+            };
             let button_w = Block::single(ui, button_label, text::UI, c.text).width() + 26.0;
             let field_rect =
                 Rect::from_min_size(pos2(left, y), Vec2::new(inner_w - button_w - 8.0, 37.0));
@@ -417,19 +440,19 @@ fn status_card(
             let mut button_ui = ui.new_child(egui::UiBuilder::new().max_rect(button_rect));
             save |= button_ui
                 .add(
-                    Button::new("Speichern")
+                    Button::new(gelabber_i18n::common::save())
                         .small()
                         .width(button_w)
                         .disabled(!changed && !saving)
-                        .pending(saving.then_some("Speichert…")),
+                        .pending(saving.then_some(shell::user_panel_saving())),
                 )
                 .clicked();
             y += 37.0 + 6.0;
             if let Some(ok) = draft.saved {
                 let (msg, tone) = if ok {
-                    ("Gespeichert.", StatusTone::Success)
+                    (gelabber_i18n::common::saved(), StatusTone::Success)
                 } else {
-                    ("Nicht gespeichert – erneut versuchen", StatusTone::Error)
+                    (gelabber_i18n::common::not_saved(), StatusTone::Error)
                 };
                 let mut status_ui = ui.new_child(
                     egui::UiBuilder::new()
@@ -456,7 +479,7 @@ fn status_card(
                 );
             }
             hairline_h(ui.painter(), &theme, link.left()..=link.right(), link.top());
-            let block = Block::single(ui, "Profil bearbeiten", text::UI, c.text);
+            let block = Block::single(ui, shell::user_panel_edit_profile(), text::UI, c.text);
             paint_mid(
                 ui.painter(),
                 &block,

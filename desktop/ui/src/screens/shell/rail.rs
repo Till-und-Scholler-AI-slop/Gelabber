@@ -3,6 +3,7 @@
 //! tooltip, and the dashed "Server hinzufügen" button under the list.
 
 use egui::{Color32, CornerRadius, Id, Rect, Shape, Stroke, Ui, Vec2, pos2};
+use gelabber_i18n::shell;
 use uuid::Uuid;
 
 use super::common;
@@ -46,8 +47,8 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
         (s.dms_badge(now), last)
     });
     let home_id = Id::unique("rail-home");
-    let response = common::click(ui, home, home_id).on_hover_text("Direktnachrichten");
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, "Direktnachrichten"));
+    let response = common::click(ui, home, home_id).on_hover_text(shell::rail_dms());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, shell::rail_dms()));
     common::describe_unread(ui, &response, dm_badge);
     // Its menu marks every conversation read.
     if response.secondary_clicked() || row_menu::menu_key(ui, &response) {
@@ -203,16 +204,14 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
                 }
                 let summary = if badge.count > 0 {
                     Some(if badge.count > 99 {
-                        "Mehr als 99 Erwähnungen".to_owned()
-                    } else if badge.count == 1 {
-                        "1 Erwähnung".to_owned()
+                        shell::rail_mentions_over99().to_owned()
                     } else {
-                        format!("{} Erwähnungen", badge.count)
+                        shell::rail_mentions(badge.count as u64)
                     })
                 } else if badge.dot {
-                    Some("Ungelesene Nachrichten".to_owned())
+                    Some(shell::rail_unread().to_owned())
                 } else if *muted {
-                    Some("Stummgeschaltet".to_owned())
+                    Some(shell::server_menu_muted().to_owned())
                 } else {
                     None
                 };
@@ -290,9 +289,10 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, active: Option<Uuid>, dm_
         Vec2::splat(TILE),
     );
     let response =
-        common::click(ui, add, Id::unique("rail-add")).on_hover_text("Server hinzufügen");
-    response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Server hinzufügen"));
+        common::click(ui, add, Id::unique("rail-add")).on_hover_text(shell::rail_add_server());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::Button, true, shell::rail_add_server())
+    });
     if response.hovered() {
         painter.circle_filled(add.center(), TILE / 2.0, c.hover);
         painter.circle_stroke(

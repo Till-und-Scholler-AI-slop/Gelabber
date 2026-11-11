@@ -4,8 +4,10 @@
 //! collapsed "Moderation" with kick and ban (MemberActions.tsx,
 //! memberActions.css), both asked first.
 
+use chrono::{Datelike, Timelike};
 use egui::{Rect, Sense, Ui, Vec2, pos2};
 use gelabber_client::{OpState, Permission, Role};
+use gelabber_i18n::{intl, members};
 use uuid::Uuid;
 
 use super::confirm::Question;
@@ -179,7 +181,11 @@ const PRIMARY_H: f32 = 2.0 + 24.0 + 21.0;
 /// The ghost "Schließen", stretched to the row's height (flex
 /// `align-items: stretch`).
 fn close_button(ui: &mut Ui, height: f32) -> egui::Response {
-    ui.add(Button::new("Schließen").ghost().height(height))
+    ui.add(
+        Button::new(gelabber_i18n::common::close())
+            .ghost()
+            .height(height),
+    )
 }
 
 const DT: TextStyle = TextStyle::new(13.0, 400.0, 1.5);
@@ -241,7 +247,17 @@ pub fn member_dialog(ui: &mut Ui, app: &mut AppCtx, d: &mut MemberDialog) -> boo
         Some(Data {
             server_name: detail.server.name.clone(),
             role: m.role,
-            joined: local.format("%d.%m.%Y").to_string(),
+            joined: intl::format_date(
+                &intl::DateTime {
+                    year: local.year(),
+                    month: local.month(),
+                    day: local.day(),
+                    weekday: local.weekday().num_days_from_monday(),
+                    hour: local.hour(),
+                    minute: local.minute(),
+                },
+                intl::DateStyle::Medium,
+            ),
             person: card_of(
                 s,
                 m.user_id,
@@ -285,9 +301,9 @@ pub fn member_dialog(ui: &mut Ui, app: &mut AppCtx, d: &mut MemberDialog) -> boo
         }
     }
     let title = if data.me {
-        "Dein Profil".to_owned()
+        members::profile_own().to_owned()
     } else {
-        format!("Profil von {}", data.name)
+        members::profile_title(&data.name)
     };
     let mut done = false;
     let mut go: Option<String> = None;
@@ -300,20 +316,20 @@ pub fn member_dialog(ui: &mut Ui, app: &mut AppCtx, d: &mut MemberDialog) -> boo
             card(ui, app, &data.person, data.presence);
             ui.scope(|ui| {
                 ui.spacing_mut().item_spacing.y = 12.0;
-                detail(ui, "Server", &data.server_name);
+                detail(ui, members::profile_server(), &data.server_name);
                 detail(
                     ui,
-                    "Mitgliedschaft",
+                    members::profile_membership(),
                     if data.role == Role::Owner {
-                        "Inhaber"
+                        members::profile_owner()
                     } else {
-                        "Mitglied"
+                        members::profile_member()
                     },
                 );
-                detail(ui, "Dabei seit", &data.joined);
+                detail(ui, members::profile_since(), &data.joined);
             });
             if let Some((channel, name)) = &data.room {
-                let label = format!("In {name}");
+                let label = members::profile_in_room(name);
                 let block = Block::single(ui, &label, text::BODY, c.accent_text);
                 let (rect, response) = ui.allocate_exact_size(
                     Vec2::new(20.0 + 10.0 + block.width(), text::BODY.line_px()),
@@ -344,11 +360,11 @@ pub fn member_dialog(ui: &mut Ui, app: &mut AppCtx, d: &mut MemberDialog) -> boo
             }
             actions(ui, PRIMARY_H, |ui| {
                 let primary = if data.me {
-                    lr_primary(ui, None, "Profil bearbeiten", false)
+                    lr_primary(ui, None, members::profile_edit(), false)
                 } else if d.opening {
-                    lr_primary(ui, Some(Icon::Chat), "Unterhaltung wird geöffnet…", true)
+                    lr_primary(ui, Some(Icon::Chat), members::profile_opening(), true)
                 } else {
-                    lr_primary(ui, Some(Icon::Chat), "Nachricht senden", false)
+                    lr_primary(ui, Some(Icon::Chat), members::profile_message(), false)
                 };
                 if first && data.room.is_none() {
                     primary.request_focus();
@@ -399,9 +415,16 @@ fn moderation(
     hairline_h(ui.painter(), &theme, rect.left()..=rect.right(), rect.top());
     let summary = Rect::from_min_max(pos2(rect.left(), rect.top() + 13.0), rect.max);
     let response = ui.interact(summary, ui.scope_id().with("moderation"), Sense::click());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Moderation"));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::Button, true, members::moderation_title())
+    });
     let color = if response.hovered() { c.text } else { c.muted };
-    let block = Block::single(ui, "MODERATION", text::CAPS, color);
+    let block = Block::single(
+        ui,
+        &members::moderation_title().to_uppercase(),
+        text::CAPS,
+        color,
+    );
     block.paint(
         ui.painter(),
         pos2(summary.left(), summary.center().y - block.height() / 2.0),
@@ -430,13 +453,13 @@ fn moderation(
     ui.add_space(8.0 - 22.0);
     super::row(ui, 32.0, 8.0, |ui| {
         let kick = ui.add(
-            Button::new("Vom Server entfernen")
+            Button::new(members::moderation_kick())
                 .variant(ButtonVariant::DangerOutline)
                 .size(ButtonSize::Sm)
                 .disabled(busy),
         );
         let ban = ui.add(
-            Button::new("Sperren")
+            Button::new(members::moderation_ban())
                 .danger()
                 .size(ButtonSize::Sm)
                 .disabled(busy),
@@ -500,7 +523,7 @@ pub fn user_dialog(ui: &mut Ui, app: &mut AppCtx, d: &mut UserDialog) -> bool {
     let Some((person, presence)) = data else {
         return false;
     };
-    let title = format!("Profil von {}", person.name);
+    let title = members::profile_title(&person.name);
     let mut done = false;
     let first = crate::widgets::field::mounted(&ctx, egui::Id::unique("gelabber-user-open"));
     let output = Modal::new("user-profile", &title).show(

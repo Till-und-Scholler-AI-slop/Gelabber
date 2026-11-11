@@ -5,6 +5,7 @@
 
 use egui::{Id, Rect, Ui, Vec2, pos2};
 use gelabber_client::PresenceStatus;
+use gelabber_i18n::members;
 use uuid::Uuid;
 
 use super::common::{self, baseline_top, line, paint_mid};
@@ -87,7 +88,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
     // Heading: "Mitglieder" and the count.
     let title = Block::single(
         ui,
-        "Mitglieder",
+        members::panel_title(),
         TextStyle::new(15.0, 650.0, 1.5).tracking(-0.2 / 15.0),
         c.text,
     );
@@ -150,9 +151,9 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
             for (gi, (status, entries)) in groups.iter().enumerate() {
                 y += if gi == 0 { 8.0 } else { 18.0 - 2.0 };
                 let label = match status {
-                    PresenceStatus::Online => "Online",
-                    PresenceStatus::Idle => "Abwesend",
-                    PresenceStatus::Offline => "Offline",
+                    PresenceStatus::Online => gelabber_i18n::common::online(),
+                    PresenceStatus::Idle => members::card_away(),
+                    PresenceStatus::Offline => gelabber_i18n::common::offline(),
                 };
                 let heading = Block::single(
                     ui,
@@ -172,7 +173,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                         egui::WidgetInfo::labeled(
                             egui::Role::Button,
                             true,
-                            format!("Profil von {}", e.name),
+                            members::row_profile_label(&e.name),
                         )
                     });
                     if response.clicked() {
@@ -183,7 +184,7 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                     if !ui.is_rect_visible(row) {
                         continue;
                     }
-                    let response = response.on_hover_text(format!("Profil von {}", e.name));
+                    let response = response.on_hover_text(members::row_profile_label(&e.name));
                     let under = if response.hovered() {
                         common::fill(ui.painter(), row, theme.radius.md, c.hover);
                         c.hover
@@ -221,7 +222,14 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                     let name_color = if offline { c.muted } else { c.text };
                     let own = me == Some(e.id);
                     let small_style = TextStyle::new(11.0, 400.0, 1.5);
-                    let du = own.then(|| Block::single(ui, " · Du", small_style, c.muted));
+                    let du = own.then(|| {
+                        Block::single(
+                            ui,
+                            &format!(" · {}", members::row_you()),
+                            small_style,
+                            c.muted,
+                        )
+                    });
                     let du_w = du.as_ref().map_or(0.0, Block::width);
                     let name = line(
                         ui,
@@ -251,16 +259,17 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                     let voice_name = e.voice.as_ref().map(|(n, _, _)| n.as_str());
                     let voice_line = if e.live {
                         Some(match voice_name {
-                            Some(n) => format!(
-                                "Live in {}",
-                                if n.is_empty() { "einem Sprachkanal" } else { n }
-                            ),
-                            None => "Live".to_owned(),
+                            Some(n) => members::row_live_in(if n.is_empty() {
+                                members::row_a_voice_channel()
+                            } else {
+                                n
+                            }),
+                            None => members::row_live().to_owned(),
                         })
                     } else {
                         voice_name.map(|n| {
                             if n.is_empty() {
-                                "Im Sprachkanal".to_owned()
+                                members::row_in_voice().to_owned()
                             } else {
                                 n.to_owned()
                             }
@@ -303,11 +312,11 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx, rect: Rect, server: Uuid) {
                             icons::paint(ui.painter(), Icon::HeadsetOff, slot2.min, 14.0, c.muted);
                         }
                         let hint = if *deafened {
-                            format!("Taub in {channel}")
+                            members::row_deafened_in(channel)
                         } else if *muted {
-                            format!("Stumm in {channel}")
+                            members::row_muted_in(channel)
                         } else {
-                            format!("In {channel}")
+                            members::row_in_channel(channel)
                         };
                         let _ = ui
                             .interact(
