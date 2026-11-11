@@ -34,7 +34,7 @@ const publicPages = defineCatalog(
       "Gelabber steht unter der MIT-Lizenz. Die Instanz, die wir betreiben, läuft mit demselben Code, den du selbst betreiben kannst.",
     "landing.features.private.title": "Privat von Anfang an",
     "landing.features.private.body":
-      "Einer Community trittst du über einen Einladungslink bei. Nichts davon ist öffentlich, solange ihr Owner es nicht so entscheidet.",
+      "Einer Community trittst du über einen Einladungslink bei. Nichts davon ist öffentlich, solange ihr Inhaber es nicht so entscheidet.",
     "landing.selfHost.title": "Auf deinem eigenen Server",
     "landing.selfHost.body":
       "Drei Befehle starten Gelabber mit Docker Compose, sobald die Passwörter in .env gesetzt sind. Die Betriebsanleitung behandelt TLS, TURN, Backups und Updates.",
@@ -58,8 +58,11 @@ const publicPages = defineCatalog(
     "legal.phone": "Telefon",
     "legal.responsible": "Verantwortlich für den Inhalt",
     "legal.report": "Inhalte melden",
+    // The report action's label in the app. It moves to the discovery
+    // catalog's key for that action once that package is in the base (#522).
+    "legal.reportAction": "Melden",
     "legal.reportText":
-      "Rechtswidrige Inhalte meldest du über „Melden“ am Server oder an <link>{email}</link>.",
+      "Rechtswidrige Inhalte meldest du über „{action}“ am Server oder an <link>{email}</link>.",
     "legal.onlyOtherLanguage": "Dieser Text liegt nur auf Englisch vor.",
   },
   {
@@ -113,8 +116,9 @@ const publicPages = defineCatalog(
     "legal.phone": "Phone",
     "legal.responsible": "Responsible for the content",
     "legal.report": "Report content",
+    "legal.reportAction": "Report",
     "legal.reportText":
-      "Report unlawful content with “Report” on the server or to <link>{email}</link>.",
+      "Report unlawful content with “{action}” on the server or to <link>{email}</link>.",
     "legal.onlyOtherLanguage": "This text is only available in German.",
   },
 );

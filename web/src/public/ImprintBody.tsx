@@ -14,6 +14,7 @@ export function ImprintBody({ locale }: { locale: Locale }) {
   const text = textsIn(locale);
   const report = richPieces(
     translateIn(locale, publicPages, "legal.reportText", {
+      action: text("legal.reportAction"),
       email: value(KEY.reportEmail),
     }),
   );
