@@ -1,0 +1,15 @@
+# N2 settings: files whose interface text is not in the catalogs yet,
+# relative to desktop/. The batch deletes this list when it is done
+# (docs/i18n.md); i18n/tests/literals.rs skips the files listed here.
+ui/src/screens/server_settings/invite.rs
+ui/src/screens/server_settings/mod.rs
+ui/src/screens/settings/appearance.rs
+ui/src/screens/settings/card.rs
+ui/src/screens/settings/controls.rs
+ui/src/screens/settings/desktop_app.rs
+ui/src/screens/settings/media.rs
+ui/src/screens/settings/mod.rs
+ui/src/screens/settings/notifications.rs
+ui/src/screens/settings/prefs.rs
+ui/src/screens/settings/profile.rs
+ui/src/screens/settings/themes.rs

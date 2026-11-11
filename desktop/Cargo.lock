@@ -1809,6 +1809,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gelabber-i18n"
+version = "0.9.3"
+dependencies = [
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "gelabber-media-core"
 version = "0.9.3"
 dependencies = [

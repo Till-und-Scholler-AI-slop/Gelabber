@@ -1,0 +1,41 @@
+# N1 auth & app: files whose interface text is not in the catalogs yet,
+# relative to desktop/. The batch deletes this list when it is done
+# (docs/i18n.md); i18n/tests/literals.rs skips the files listed here.
+gelabber/src/main.rs
+gelabber/src/smoke.rs
+ui/src/app.rs
+ui/src/fonts.rs
+ui/src/platform/aumid.rs
+ui/src/platform/files.rs
+ui/src/platform/instance.rs
+ui/src/platform/legacy.rs
+ui/src/platform/notify/dbus.rs
+ui/src/platform/notify/mod.rs
+ui/src/platform/notify/rules.rs
+ui/src/platform/open.rs
+ui/src/platform/paths.rs
+ui/src/platform/ptt/hook.rs
+ui/src/platform/ptt/mod.rs
+ui/src/platform/ptt/portal.rs
+ui/src/platform/session.rs
+ui/src/platform/tray/mod.rs
+ui/src/platform/tray/sni.rs
+ui/src/platform/tray/win.rs
+ui/src/platform/update.rs
+ui/src/platform/webview.rs
+ui/src/platform/webview/leveldb.rs
+ui/src/platform/webview/webkit.rs
+ui/src/rules.rs
+ui/src/screens/auth/forgot_password.rs
+ui/src/screens/auth/invite.rs
+ui/src/screens/auth/layout.rs
+ui/src/screens/auth/login.rs
+ui/src/screens/auth/mod.rs
+ui/src/screens/auth/not_found.rs
+ui/src/screens/auth/recovery.rs
+ui/src/screens/auth/register.rs
+ui/src/screens/auth/reset_password.rs
+ui/src/screens/auth/verify_email.rs
+ui/src/setup.rs
+ui/src/theme.rs
+ui/src/toasts.rs
