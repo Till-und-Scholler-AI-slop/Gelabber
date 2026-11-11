@@ -17,7 +17,7 @@ mod operator;
 pub mod overlays;
 pub(crate) mod overview;
 mod rail;
-mod row_menu;
+pub(crate) mod row_menu;
 mod state;
 pub(crate) mod user_panel;
 
@@ -28,7 +28,7 @@ use uuid::Uuid;
 use crate::app::AppCtx;
 use crate::route::Route;
 use crate::screens::layout::{self, MEMBERS_WIDTH, RAIL_WIDTH, SIDEBAR_WIDTH};
-use crate::screens::{chat, server_settings, settings, voice};
+use crate::screens::{chat, discover, server_settings, settings, voice};
 use crate::theme::{Theme, layout::DOCK_HEIGHT};
 use crate::widgets::hairline_v;
 
@@ -222,6 +222,14 @@ pub fn show(ui: &mut Ui, app: &mut AppCtx) {
             let mut main =
                 ui.new_child(UiBuilder::new().max_rect(layout::page_rect(content, false)));
             chat::dm_page(&mut main, app, c);
+        }
+        Route::Discover(search) => {
+            let mut side = ui.new_child(UiBuilder::new().max_rect(sidebar));
+            discover::sidebar(&mut side, app, &search);
+            panel(ui, app);
+            let mut main =
+                ui.new_child(UiBuilder::new().max_rect(layout::page_rect(content, false)));
+            discover::page(&mut main, app, &search);
         }
         Route::Operator(page) => {
             channel_sidebar::brand(ui, sidebar);

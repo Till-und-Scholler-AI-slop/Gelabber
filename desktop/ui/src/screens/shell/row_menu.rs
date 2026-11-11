@@ -31,6 +31,9 @@ pub enum Owner {
     Dm(Uuid, String),
     /// The rail's home tile: every conversation.
     AllDms,
+    /// A server in Entdecken: its id, name and whether the caller's
+    /// request to join is pending.
+    Listing(Uuid, String, bool),
 }
 
 impl Owner {
@@ -41,6 +44,7 @@ impl Owner {
             Owner::Category(_, cat) => cat.id,
             Owner::Server(id, _) | Owner::Dm(id, _) => *id,
             Owner::AllDms => Uuid::nil(),
+            Owner::Listing(id, ..) => *id,
         }
     }
 
@@ -54,6 +58,7 @@ impl Owner {
             Owner::Server(id, name) => Some(Target::server(*id, name)),
             Owner::Dm(id, name) => Some(Target::dm(*id, name.clone())),
             Owner::AllDms => Some(Target::all_dms()),
+            Owner::Listing(..) => None,
         }
     }
 
@@ -65,6 +70,7 @@ impl Owner {
             Owner::Category(_, cat) => shell::row_menu_category_label(&cat.name),
             Owner::Server(_, name) | Owner::Dm(_, name) => name.clone(),
             Owner::AllDms => shell::rail_dms().into(),
+            Owner::Listing(_, name, _) => gelabber_i18n::discovery::actions_more(name),
         }
     }
 }
@@ -130,6 +136,9 @@ enum Act {
     AddChannel,
     RenameCategory,
     DeleteCategory,
+    /// Entdecken: "Melden" and "Anfrage zurückziehen".
+    Report,
+    Withdraw,
 }
 
 #[derive(Clone, Debug)]
@@ -356,6 +365,30 @@ fn entries(app: &AppCtx, owner: &Owner) -> Vec<Entry> {
                 shell::channels_delete_category_confirm(),
                 Act::DeleteCategory,
             ));
+        }
+        // `listingMenuActions`: "Melden" always, also to members, and
+        // "Anfrage zurückziehen" while a request waits.
+        Owner::Listing(_, _, pending) => {
+            let plain = |label: &str, act| {
+                Entry::Leaf(Leaf::Item {
+                    label: label.to_owned(),
+                    icon: None,
+                    hint: None,
+                    danger: false,
+                    disabled: false,
+                    act,
+                })
+            };
+            out.push(plain(
+                gelabber_i18n::discovery::actions_report(),
+                Act::Report,
+            ));
+            if *pending {
+                out.push(plain(
+                    gelabber_i18n::discovery::actions_withdraw(),
+                    Act::Withdraw,
+                ));
+            }
         }
         _ => {}
     }
@@ -728,6 +761,12 @@ fn run(ctx: &egui::Context, app: &mut AppCtx, owner: &Owner, act: Act) {
         }
         (Owner::Category(server, cat), Act::DeleteCategory) => {
             super::dialogs::confirm_delete_category(ctx, *server, cat)
+        }
+        (Owner::Listing(server, name, _), Act::Report) => {
+            crate::screens::discover::open_report(ctx, *server, name)
+        }
+        (Owner::Listing(server, ..), Act::Withdraw) => {
+            crate::screens::discover::withdraw(ctx, app, *server)
         }
         _ => {}
     }
