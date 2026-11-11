@@ -954,6 +954,33 @@ export function applyMessageDeleted(
   refreshReplyTarget(channelId, messageId, null);
 }
 
+/**
+ * A member's account was deleted (#519): their messages leave every cached
+ * history of these channels, as if each had been deleted on its own, so
+ * replies to them read as deleted. Only histories already loaded change.
+ */
+export function dropAuthorMessages(
+  client: QueryClient,
+  userId: string,
+  generation: number,
+  channelIds: readonly string[],
+  authorId: string,
+): void {
+  for (const channelId of channelIds) {
+    const cached = client.getQueryData<Cache>(
+      messageKeys.channel(userId, generation, channelId),
+    );
+    if (!cached) continue;
+    const ids = cached.pages.flatMap((page) =>
+      page.messages
+        .filter((message) => message.author.id === authorId)
+        .map((message) => message.id),
+    );
+    for (const id of ids)
+      applyMessageDeleted(client, userId, generation, channelId, id);
+  }
+}
+
 export function applyChannelEvent(
   client: QueryClient,
   userId: string,

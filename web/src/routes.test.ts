@@ -9,7 +9,7 @@ import { directoryKeys } from "./discover/queries.ts";
 import { validateDiscoverSearch } from "./discover/search.ts";
 import { OPERATOR_PAGES } from "./operator/areas.ts";
 import { SETTINGS_AREAS } from "./pages/settingsAreas.ts";
-import { router, validateAuthSearch } from "./routes.tsx";
+import { router, signedInTarget, validateAuthSearch } from "./routes.tsx";
 import { queryClient, setQueryScope } from "./queryClient.ts";
 
 /** Runs a route's guard and returns what it threw, if anything. */
@@ -140,6 +140,12 @@ describe("router", () => {
     expect(validateAuthSearch({ email: "x".repeat(255) })).toEqual({});
   });
 
+  it("keeps the notice after an account deletion", () => {
+    expect(validateAuthSearch({ reason: "deleted" })).toEqual({
+      reason: "deleted",
+    });
+  });
+
   it("keeps an invitation code and a sign-in's admission refusal", () => {
     expect(
       validateAuthSearch({
@@ -197,6 +203,23 @@ describe("router", () => {
         bare: true,
       });
     }
+  });
+});
+
+describe("where a signed-in visitor of the login page goes", () => {
+  it("takes a failed provider sign-in on to Sicherheit, with its error", () => {
+    expect(signedInTarget({})).toBe("/");
+    expect(signedInTarget({ redirect: "/d" })).toBe("/d");
+    expect(
+      signedInTarget({ redirect: "/settings/konto", oidc_error: "failed" }),
+    ).toBe("/settings/konto?oidc_error=failed");
+    expect(
+      signedInTarget({
+        redirect: "/settings/konto?delete=1",
+        oidc_error: "failed",
+      }),
+    ).toBe("/settings/konto?delete=1&oidc_error=failed");
+    expect(signedInTarget({ redirect: "/d", oidc_error: "failed" })).toBe("/d");
   });
 });
 

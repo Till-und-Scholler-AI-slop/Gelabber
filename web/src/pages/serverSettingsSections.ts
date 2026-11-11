@@ -3,7 +3,7 @@
 // add their line here.
 
 import { can } from "../servers/permissions.ts";
-import type { Server } from "../servers/types.ts";
+import type { Member, Server, ServerDetail } from "../servers/types.ts";
 
 export type SectionId =
   | "allgemein"
@@ -34,4 +34,20 @@ export function serverSettingsSections(
     ...(moderate ? (["sperren"] as const) : []),
     "gefahrenzone",
   ];
+}
+
+/** A row of Gefahrenzone, top to bottom. */
+export type DangerRow = "transfer" | "delete" | "leave";
+
+/** The owner hands the server on (#519) or deletes it; everyone else
+ * leaves. */
+export function dangerRows(server: Pick<Server, "role">): DangerRow[] {
+  return server.role === "owner" ? ["transfer", "delete"] : ["leave"];
+}
+
+/** Who the server can be handed to: every member but the owner. */
+export function transferCandidates(
+  server: Pick<ServerDetail, "owner_id" | "members">,
+): Member[] {
+  return server.members.filter((member) => member.user_id !== server.owner_id);
 }

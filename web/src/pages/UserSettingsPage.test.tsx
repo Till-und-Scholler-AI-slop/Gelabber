@@ -20,8 +20,8 @@ vi.mock("../voice/VoiceSettings.tsx", () => ({
 vi.mock("./ProfilePage.tsx", () => ({
   ProfileArea: () => null,
   ProfileCardArea: () => null,
-  SecurityArea: () => null,
 }));
+vi.mock("./SecurityArea.tsx", () => ({ SecurityArea: () => null }));
 vi.mock("../components/UserPanel.tsx", () => ({ UserPanel: () => null }));
 vi.mock("../messages/notificationPrivacy.ts", () => ({
   useNotificationPrivacy: () => ({ data: { hide_content: false } }),

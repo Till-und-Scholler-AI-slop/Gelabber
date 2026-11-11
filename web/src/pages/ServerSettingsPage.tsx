@@ -1,6 +1,6 @@
 // `/s/$serverId/settings`: name, roles, invites, the directory, members,
-// bans, leave/delete. Open to every member; `serverSettingsSections` says who sees
-// which section, deletion needs the owner.
+// bans, leave, transfer and delete. Open to every member; `serverSettingsSections`
+// says who sees which section and row; transfer and deletion need the owner.
 
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
@@ -28,6 +28,7 @@ import { useT } from "../i18n/catalog.ts";
 import { common } from "../i18n/catalogs/common.ts";
 import { serverSettings } from "../i18n/catalogs/serverSettings.ts";
 import { PresenceAvatar } from "../components/PresenceAvatar.tsx";
+import { ActionRow } from "../components/ActionRow.tsx";
 import { Field } from "../components/Field.tsx";
 import { ServerIconFace } from "../components/ServerIcon.tsx";
 import { tileInitials, tileTint } from "../components/initials.ts";
@@ -35,10 +36,13 @@ import { confirmAction } from "../components/confirm.ts";
 import { LoadError } from "../components/LoadError.tsx";
 import { FormError } from "../components/FormError.tsx";
 import { InviteDialog } from "../components/InviteDialog.tsx";
+import { GhostButton, Modal } from "../components/Modal.tsx";
 import { MemberActionsMenu } from "../components/MemberActions.tsx";
 import { SubmitButton } from "../components/SubmitButton.tsx";
 import { Badge } from "../components/ui/Badge.tsx";
 import { Button } from "../components/ui/Button.tsx";
+import { FormField } from "../components/ui/FormField.tsx";
+import { Select } from "../components/ui/Select.tsx";
 import { CopyButton } from "../components/ui/CopyButton.tsx";
 import { InlineStatus } from "../components/ui/InlineStatus.tsx";
 import { useInlineStatus } from "../components/ui/useInlineStatus.ts";
@@ -59,6 +63,7 @@ import {
   useRevokeInvite,
   useServer,
   useServerIcon,
+  useTransferServer,
   useUnbanMember,
   useUpdateServer,
 } from "../servers/queries.ts";
@@ -74,7 +79,9 @@ import {
   RolesEditor,
 } from "./ServerRoles.tsx";
 import {
+  dangerRows,
   serverSettingsSections,
+  transferCandidates,
   type SectionId,
 } from "./serverSettingsSections.ts";
 import "./settings.css";
@@ -110,6 +117,34 @@ const SECTION_LABEL = {
 
 const sectionId = (id: SectionId) => `server-settings-${id}`;
 
+/** The section the address names (`#server-settings-…`), if any. */
+function openedSection(sections: readonly SectionId[]): SectionId | null {
+  if (typeof window === "undefined") return null;
+  const hash = window.location.hash.slice(1);
+  return sections.find((id) => sectionId(id) === hash) ?? null;
+}
+
+/**
+ * Brings a section's heading up under the anchor row. Only this scroller
+ * moves: scrollIntoView would also shift the shell around it (it scrolls
+ * clipped ancestors too).
+ */
+function scrollToSection(
+  element: HTMLElement,
+  id: SectionId,
+): HTMLElement | null {
+  const heading = document.getElementById(sectionId(id));
+  if (!heading) return null;
+  const margin = parseFloat(getComputedStyle(heading).scrollMarginTop) || 0;
+  element.scrollBy({
+    top:
+      heading.getBoundingClientRect().top -
+      element.getBoundingClientRect().top -
+      margin,
+  });
+  return heading;
+}
+
 /**
  * The section in view, for the anchor row. A jump marks its section even
  * where the page cannot scroll that heading up to the row (the short last
@@ -122,12 +157,25 @@ function useCurrentSection(
 ) {
   const [current, setCurrent] = useState(sections[0]);
   const jumped = useRef<SectionJump<SectionId> | null>(null);
+  // Opened at a section (`#server-settings-gefahrenzone` from Konto
+  // löschen): go there and mark it, again while content loading above moves
+  // it, until the reader scrolls or clicks by themselves.
+  const opened = useRef(openedSection(sections));
   const key = sections.join(" ");
 
   useEffect(() => {
     const element = scroller.current;
     if (!element) return;
     const ids = key.split(" ") as SectionId[];
+    const follow = () => {
+      const id = opened.current;
+      if (!id || !ids.includes(id) || !scrollToSection(element, id)) return;
+      jumped.current = { id, scrollTop: element.scrollTop };
+      setCurrent(id);
+    };
+    const release = () => {
+      opened.current = null;
+    };
     const update = () => {
       const line = nav.current?.getBoundingClientRect().bottom ?? 0;
       const headings = ids.flatMap((id) => {
@@ -146,15 +194,25 @@ function useCurrentSection(
       jumped.current = view.jump;
       setCurrent((before) => view.current ?? before);
     };
-    update();
+    const relayout = () => {
+      follow();
+      update();
+    };
+    relayout();
     element.addEventListener("scroll", update, { passive: true });
+    const own = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
+    for (const type of own)
+      element.addEventListener(type, release, { passive: true });
     // Invites and bans load later and move the sections below them.
     const resized =
-      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(relayout);
     resized?.observe(element);
     if (element.lastElementChild) resized?.observe(element.lastElementChild);
     return () => {
       element.removeEventListener("scroll", update);
+      for (const type of own) element.removeEventListener(type, release);
       resized?.disconnect();
     };
   }, [key, scroller, nav]);
@@ -174,17 +232,8 @@ function useCurrentSection(
 
   const jump = (id: SectionId) => {
     const element = scroller.current;
-    const heading = document.getElementById(sectionId(id));
+    const heading = element && scrollToSection(element, id);
     if (!element || !heading) return;
-    // Only this scroller moves: scrollIntoView would also shift the shell
-    // around it (it scrolls clipped ancestors too).
-    const margin = parseFloat(getComputedStyle(heading).scrollMarginTop) || 0;
-    element.scrollBy({
-      top:
-        heading.getBoundingClientRect().top -
-        element.getBoundingClientRect().top -
-        margin,
-    });
     heading.focus({ preventScroll: true });
     jumped.current = { id, scrollTop: element.scrollTop };
     setCurrent(id);
@@ -718,42 +767,185 @@ function DangerSection({ server }: { server: ServerDetail }) {
     void navigate({ to: "/", replace: true });
   };
 
+  const act = async () => {
+    if (owner) {
+      if (
+        !(await confirmAction({
+          title: t("danger.deleteTitle", { name: server.name }),
+          message: t("danger.deleteMessage"),
+          confirmLabel: t("danger.delete"),
+        }))
+      )
+        return;
+      remove.mutate(server.id);
+    } else {
+      if (
+        !(await confirmAction({
+          title: t("danger.leaveTitle", { name: server.name }),
+          confirmLabel: t("danger.leaveConfirm"),
+        }))
+      )
+        return;
+      leave.mutate(server.id);
+    }
+    // Optimistic: the server is already gone from the rail.
+    go();
+  };
+
+  // The owner's rows each say what they do; the deletion sentence is the
+  // hint of Server löschen, not of the section above Server übergeben.
+  if (dangerRows(server).includes("transfer"))
+    return (
+      <Section id="gefahrenzone">
+        <ul className="settings-action-list">
+          <TransferRow server={server} />
+          <ActionRow
+            title={t("danger.delete")}
+            hint={t("danger.ownerHint")}
+            status={null}
+            action={(describedBy) => (
+              <Button
+                size="sm"
+                variant="danger-outline"
+                aria-describedby={describedBy}
+                onClick={() => void act()}
+              >
+                {t("danger.delete")}
+              </Button>
+            )}
+          />
+        </ul>
+      </Section>
+    );
+
   return (
-    <Section
-      id="gefahrenzone"
-      hint={owner ? t("danger.ownerHint") : t("danger.memberHint")}
-    >
+    <Section id="gefahrenzone" hint={t("danger.memberHint")}>
       <div className="settings-actions">
-        <Button
-          variant="danger-outline"
-          onClick={async () => {
-            if (owner) {
-              if (
-                !(await confirmAction({
-                  title: t("danger.deleteTitle", { name: server.name }),
-                  message: t("danger.deleteMessage"),
-                  confirmLabel: t("danger.delete"),
-                }))
-              )
-                return;
-              remove.mutate(server.id);
-            } else {
-              if (
-                !(await confirmAction({
-                  title: t("danger.leaveTitle", { name: server.name }),
-                  confirmLabel: t("danger.leaveConfirm"),
-                }))
-              )
-                return;
-              leave.mutate(server.id);
-            }
-            // Optimistic: the server is already gone from the rail.
-            go();
-          }}
-        >
-          {owner ? t("danger.delete") : t("danger.leave")}
+        <Button variant="danger-outline" onClick={() => void act()}>
+          {t("danger.leave")}
         </Button>
       </div>
     </Section>
+  );
+}
+
+/** "Server übergeben", above "Server löschen" (#519). */
+function TransferRow({ server }: { server: ServerDetail }) {
+  const t = useT(serverSettings);
+  const [open, setOpen] = useState(false);
+  const none = transferCandidates(server).length === 0;
+  return (
+    <ActionRow
+      title={t("transfer.title")}
+      hint={none ? t("transfer.noMember") : t("transfer.hint")}
+      status={null}
+      action={(describedBy) => (
+        <Button
+          size="sm"
+          aria-describedby={describedBy}
+          disabled={none}
+          onClick={() => setOpen(true)}
+        >
+          {t("transfer.open")}
+        </Button>
+      )}
+    >
+      <TransferDialog
+        server={server}
+        open={open}
+        onClose={() => setOpen(false)}
+      />
+    </ActionRow>
+  );
+}
+
+/** Pick the new owner; a confirmation names them before anything is sent. */
+export function TransferDialog({
+  server,
+  open,
+  onClose,
+}: {
+  server: ServerDetail;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const t = useT(serverSettings);
+  const tc = useT(common);
+  const form = useRef<HTMLFormElement>(null);
+  const candidates = transferCandidates(server);
+  const [picked, setPicked] = useState("");
+  // The first member until one is picked, or when the picked one has left.
+  const chosen =
+    candidates.find((member) => member.user_id === picked) ?? candidates[0];
+  const { errors, clear, clearField, fromError } = useFormErrors(form);
+  const transfer = useTransferServer(server.id);
+
+  const close = () => {
+    setPicked("");
+    clear();
+    onClose();
+  };
+
+  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!chosen || transfer.isPending) return;
+    if (
+      !(await confirmAction({
+        title: t("transfer.confirmTitle", {
+          server: server.name,
+          name: chosen.name,
+        }),
+        message: t("transfer.confirmMessage"),
+        confirmLabel: t("transfer.submit"),
+      }))
+    )
+      return;
+    transfer.mutate(chosen.user_id, { onSuccess: close, onError: fromError });
+  };
+
+  return (
+    <Modal open={open} onClose={close} title={t("transfer.title")}>
+      <form
+        ref={form}
+        onSubmit={(event) => void onSubmit(event)}
+        noValidate
+        className="settings-form"
+      >
+        <FormField
+          id="transfer-member"
+          label={t("transfer.member")}
+          error={errors.fields.user_id}
+        >
+          <Select
+            id="transfer-member"
+            value={chosen?.user_id ?? ""}
+            invalid={Boolean(errors.fields.user_id)}
+            onChange={(event) => {
+              setPicked(event.target.value);
+              clearField("user_id");
+            }}
+          >
+            {candidates.map((member) => (
+              <option key={member.user_id} value={member.user_id}>
+                {member.name}
+              </option>
+            ))}
+          </Select>
+        </FormField>
+        <FormError message={errors.form} />
+        <div className="settings-dialog-actions">
+          <GhostButton onClick={close}>{tc("cancel")}</GhostButton>
+          <Button
+            type="submit"
+            variant="danger"
+            disabled={!chosen}
+            pending={transfer.isPending}
+            pendingLabel={t("transfer.pending")}
+          >
+            {t("transfer.submit")}
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }

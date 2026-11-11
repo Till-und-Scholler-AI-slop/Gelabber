@@ -89,6 +89,10 @@ pub const OIDC_GOOGLE_CLIENT_SECRET: &str = "OIDC_GOOGLE_CLIENT_SECRET";
 pub const OIDC_GOOGLE_ISSUER: &str = "OIDC_GOOGLE_ISSUER";
 /// `true` turns on the server directory "Entdecken" (v0.10); off by default.
 pub const API_DIRECTORY: &str = "API_DIRECTORY";
+/// Hours a finished data export stays downloadable (`account::export`).
+pub const API_EXPORT_RETENTION_HOURS: &str = "API_EXPORT_RETENTION_HOURS";
+/// Largest data export archive in bytes (`account::export`).
+pub const API_EXPORT_MAX_BYTES: &str = "API_EXPORT_MAX_BYTES";
 
 const DEFAULT_API_ADDR: &str = "0.0.0.0:8080";
 const DEFAULT_READY_TIMEOUT_MS: u64 = 2000;
@@ -106,6 +110,11 @@ const DEFAULT_WS_PRESENCE_TTL_MS: u64 = 45_000;
 const DEFAULT_WS_TYPING_TTL_MS: u64 = 6_000;
 const DEFAULT_TURN_CRED_TTL_SECS: u64 = 21_600;
 const DEFAULT_MEDIA_TICKET_TTL_SECS: u64 = 30;
+/// A week; at most 30 days.
+const DEFAULT_EXPORT_RETENTION_HOURS: u64 = 168;
+const MAX_EXPORT_RETENTION_HOURS: u64 = 720;
+/// 10 GiB: the archive is built in the temporary directory first.
+const DEFAULT_EXPORT_MAX_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -187,6 +196,12 @@ pub struct Config {
     pub oidc: Option<OidcConfig>,
     /// `API_DIRECTORY`: the server directory is on.
     pub directory: bool,
+    /// `API_EXPORT_RETENTION_HOURS`: how long a finished data export can be
+    /// downloaded before the archive is deleted. 1 to 720 hours.
+    pub export_retention: Duration,
+    /// `API_EXPORT_MAX_BYTES`: an export whose archive would be larger
+    /// fails instead of filling the temporary directory.
+    pub export_max_bytes: u64,
 }
 
 /// Who may create an account (`API_REGISTRATION`).
@@ -640,6 +655,24 @@ impl Config {
             Some(raw) => parse_bool(API_DIRECTORY, &raw)?,
             None => false,
         };
+        let export_retention_hours = match get(API_EXPORT_RETENTION_HOURS) {
+            Some(raw) => {
+                let hours = parse_positive::<u64>(API_EXPORT_RETENTION_HOURS, &raw)?;
+                if hours > MAX_EXPORT_RETENTION_HOURS {
+                    return Err(invalid(
+                        API_EXPORT_RETENTION_HOURS,
+                        &raw,
+                        "must be at most 720 (30 days)",
+                    ));
+                }
+                hours
+            }
+            None => DEFAULT_EXPORT_RETENTION_HOURS,
+        };
+        let export_max_bytes = match get(API_EXPORT_MAX_BYTES) {
+            Some(raw) => parse_positive::<u64>(API_EXPORT_MAX_BYTES, &raw)?,
+            None => DEFAULT_EXPORT_MAX_BYTES,
+        };
         if cookie_secure {
             refuse_public_defaults(
                 &database_url,
@@ -681,6 +714,8 @@ impl Config {
             registration,
             oidc,
             directory,
+            export_retention: Duration::from_secs(export_retention_hours * 3600),
+            export_max_bytes,
         })
     }
 }
@@ -2280,5 +2315,53 @@ mod tests {
             printed.contains("id.apps.googleusercontent.com"),
             "{printed}"
         );
+    }
+
+    #[test]
+    fn export_retention_is_a_week_unless_set_within_a_month() {
+        let hours = |raw: &'static str| {
+            base(&[(API_EXPORT_RETENTION_HOURS, raw)]).map(|config| config.export_retention)
+        };
+        assert_eq!(
+            base(&[]).unwrap().export_retention,
+            Duration::from_secs(168 * 3600)
+        );
+        assert_eq!(hours("").unwrap(), Duration::from_secs(168 * 3600));
+        assert_eq!(hours("1").unwrap(), Duration::from_secs(3600));
+        assert_eq!(hours(" 720 ").unwrap(), Duration::from_secs(720 * 3600));
+        for raw in ["0", "721", "-1", "a week"] {
+            assert!(
+                matches!(
+                    hours(raw),
+                    Err(ConfigError::Invalid {
+                        key: API_EXPORT_RETENTION_HOURS,
+                        ..
+                    })
+                ),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn export_size_is_capped_at_10_gib_unless_set() {
+        let max = |raw: &'static str| {
+            base(&[(API_EXPORT_MAX_BYTES, raw)]).map(|config| config.export_max_bytes)
+        };
+        assert_eq!(base(&[]).unwrap().export_max_bytes, 10 << 30);
+        assert_eq!(max("").unwrap(), 10 << 30);
+        assert_eq!(max(" 1048576 ").unwrap(), 1 << 20);
+        for raw in ["0", "-1", "10G"] {
+            assert!(
+                matches!(
+                    max(raw),
+                    Err(ConfigError::Invalid {
+                        key: API_EXPORT_MAX_BYTES,
+                        ..
+                    })
+                ),
+                "{raw}"
+            );
+        }
     }
 }

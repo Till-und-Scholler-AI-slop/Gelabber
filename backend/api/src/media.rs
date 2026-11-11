@@ -440,9 +440,14 @@ mod tests {
         )
         .await
         .unwrap();
-        let raw = crate::auth::session::create(pool, user.id, Duration::from_secs(3600))
-            .await
-            .unwrap();
+        let raw = crate::auth::session::create(
+            pool,
+            user.id,
+            Duration::from_secs(3600),
+            crate::auth::device::Device::UNKNOWN,
+        )
+        .await
+        .unwrap();
         let hash = crate::token::hash(&raw);
         let (created_at, expires_at) =
             sqlx::query_as::<_, (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>(
@@ -462,6 +467,8 @@ mod tests {
             hash,
             created_at,
             expires_at,
+            id: uuid::Uuid::nil(),
+            device_client: crate::auth::device::DeviceClient::Unknown,
         };
         (state, session, conn)
     }

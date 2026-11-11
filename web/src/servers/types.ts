@@ -147,7 +147,8 @@ export type Ban = {
   user_id: string;
   name: string;
   avatar_url: string | null;
-  banned_by: string;
+  /** Who issued the ban; `null` once their account is deleted. */
+  banned_by: string | null;
   banned_at: string;
 };
 

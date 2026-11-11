@@ -19,6 +19,8 @@
 //! registration signs in at once and `409 email_taken` names a known
 //! address, as before.
 
+pub mod device;
+pub mod devices;
 pub mod oidc;
 pub mod session;
 pub mod tokens;
@@ -30,7 +32,7 @@ use axum::extract::State;
 use axum::http::header::{ACCEPT_LANGUAGE, HOST};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{AppendHeaders, IntoResponse, Json, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
@@ -86,6 +88,8 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/auth/registration", get(registration_status))
         .merge(oidc::routes::router())
+        .route("/api/auth/sessions", get(devices::list))
+        .route("/api/auth/sessions/{id}", delete(devices::revoke))
 }
 
 /// Request bodies with a password print it as `<redacted>`.
@@ -577,7 +581,10 @@ async fn signed_in_parts(
     session::revoke(&state.db, None).await?;
     // The row starts with the idle window and slides from there
     // (`session::touch`); the cookie carries the absolute lifetime.
-    let session_token = session::create(&state.db, user.id, state.session_idle).await?;
+    // The device is the client this answer reaches: the browser of a
+    // provider's callback, the app of a desktop exchange.
+    let device = device::Device::from_headers(headers);
+    let session_token = session::create(&state.db, user.id, state.session_idle, device).await?;
     let csrf_token = token::generate();
 
     let cookies = [
@@ -606,7 +613,7 @@ fn signed_out(state: &AppState) -> Response {
     (StatusCode::OK, cookies, Json(LogoutResponse { csrf_token })).into_response()
 }
 
-fn signed_out_cookies(
+pub(crate) fn signed_out_cookies(
     state: &AppState,
 ) -> (
     AppendHeaders<[(axum::http::HeaderName, axum::http::HeaderValue); 2]>,

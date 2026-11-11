@@ -19,7 +19,7 @@ export const settings = defineCatalog(
     "area.profilkarte.label": "Profilkarte",
     "area.profilkarte.description": "So sehen dich andere.",
     "area.konto.label": "Sicherheit",
-    "area.konto.description": "Passwort ändern und überall abmelden.",
+    "area.konto.description": "Anmeldung, Geräte und Kontodaten.",
     "area.darstellung.label": "Darstellung",
     "area.darstellung.description":
       "Sprache, Farbschema, Textgröße und Bewegung.",
@@ -159,7 +159,7 @@ export const settings = defineCatalog(
     "area.profilkarte.label": "Profile card",
     "area.profilkarte.description": "How others see you.",
     "area.konto.label": "Security",
-    "area.konto.description": "Change your password and sign out everywhere.",
+    "area.konto.description": "Sign-in, devices and account data.",
     "area.darstellung.label": "Appearance",
     "area.darstellung.description":
       "Language, colour scheme, text size and motion.",

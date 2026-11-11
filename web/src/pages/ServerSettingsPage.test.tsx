@@ -23,7 +23,19 @@ const fixture = vi.hoisted(() => ({
   listing: undefined as ListingSettings | undefined,
   requests: [] as JoinRequest[],
   requestCount: undefined as number | undefined,
+  user: null as { id: string } | null,
 }));
+// Static markup reads a store's initial state: hand the page the user.
+vi.mock("../auth/session.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../auth/session.ts")>();
+  return {
+    ...actual,
+    useSession: Object.assign(
+      (select: (state: unknown) => unknown) => select({ user: fixture.user }),
+      actual.useSession,
+    ),
+  };
+});
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <a href="#">{children}</a>,
   useNavigate: () => vi.fn(),
@@ -46,6 +58,7 @@ vi.mock("../servers/queries.ts", () => {
     useRevokeInvite: mutation,
     useServerIcon: mutation,
     useSetMemberRoles: mutation,
+    useTransferServer: mutation,
     useUnbanMember: mutation,
     useUpdateRole: mutation,
     useUpdateServer: mutation,
@@ -77,9 +90,13 @@ vi.mock("../components/ui/Popover.tsx", () => ({
   ),
 }));
 
-import { serverSettingsSections } from "./serverSettingsSections.ts";
+import {
+  dangerRows,
+  serverSettingsSections,
+  transferCandidates,
+} from "./serverSettingsSections.ts";
 import { RolesEditor } from "./ServerRoles.tsx";
-import { ServerSettingsPage } from "./ServerSettingsPage.tsx";
+import { ServerSettingsPage, TransferDialog } from "./ServerSettingsPage.tsx";
 
 const created_at = "2026-09-13T00:00:00Z";
 const role = (
@@ -684,5 +701,118 @@ describe("server settings Verzeichnis", () => {
     expect(body).toContain("Deutsch · 5 members Request to join");
     expect(body).toContain("Join requests");
     expect(body).toContain("Accept Decline");
+  });
+});
+
+describe("Gefahrenzone: Server übergeben", () => {
+  // Gefahrenzone needs a signed-in user; Lena owns the fixture server.
+  beforeEach(() => {
+    fixture.user = { id: "lena" };
+  });
+  afterEach(() => {
+    fixture.user = null;
+    setLocale("de", { persist: false });
+  });
+
+  const owner = (overrides: Partial<ServerDetail> = {}) =>
+    page([], { role: "owner", members: MEMBERS, ...overrides });
+  /** The danger section, from its heading to the end. */
+  const danger = (html: string) =>
+    html.slice(html.indexOf('id="server-settings-gefahrenzone"'));
+  /** The transfer row's button: its attributes and label. */
+  const transferButton = (html: string) =>
+    html.match(/<button([^>]*)>(Übergeben…|Transfer…)<\/button>/);
+
+  it("is the owner's, above Server löschen", () => {
+    expect(dangerRows({ role: "owner" })).toEqual(["transfer", "delete"]);
+    expect(dangerRows({ role: "member" })).toEqual(["leave"]);
+    const html = danger(owner());
+    expect(html).toMatch(
+      /<span[^>]*class="settings-action-row__title">Server übergeben<\/span>/,
+    );
+    expect(html).toContain(
+      "Ein anderes Mitglied wird Eigentümer. Du bleibst Mitglied.",
+    );
+    const button = transferButton(html);
+    expect(button).not.toBeNull();
+    expect(button![1]).not.toContain("disabled");
+    expect(html.indexOf("Server übergeben")).toBeLessThan(
+      html.indexOf("Server löschen"),
+    );
+  });
+
+  it("makes Server löschen a row of its own, with the deletion as its hint", () => {
+    const html = danger(owner());
+    const heading = html.slice(0, html.indexOf("</header>"));
+    expect(heading).not.toContain("Löscht Kanäle");
+    expect(html).toMatch(
+      /<span[^>]*class="settings-action-row__title">Server löschen<\/span><span[^>]*class="settings-hint">Löscht Kanäle, Kategorien, Nachrichten, Einladungen und Mitgliedschaften endgültig.<\/span>/,
+    );
+    expect(html).toMatch(/<button[^>]*danger-outline[^>]*>Server löschen</);
+  });
+
+  it("is not there for members, even with every right", () => {
+    const html = danger(
+      page(["manage_server", "moderate_members"], { members: MEMBERS }),
+    );
+    expect(html).not.toContain("Server übergeben");
+    expect(transferButton(html)).toBeNull();
+    expect(html).toContain("Server verlassen");
+  });
+
+  it("is disabled with no other member, and says to invite someone", () => {
+    const html = danger(owner({ members: [MEMBERS[0]] }));
+    expect(html).toContain(
+      "Lade zuerst jemanden ein, dem du den Server übergeben kannst.",
+    );
+    expect(html).not.toContain("Du bleibst Mitglied.");
+    expect(transferButton(html)![1]).toContain('disabled=""');
+  });
+
+  it("offers every member but the owner", () => {
+    expect(
+      transferCandidates({ owner_id: "lena", members: MEMBERS }).map(
+        (member) => member.user_id,
+      ),
+    ).toEqual(["jonas", "mira", "tom", "ada"]);
+    expect(
+      transferCandidates({ owner_id: "lena", members: [MEMBERS[0]] }),
+    ).toEqual([]);
+  });
+
+  it("picks the new owner in a dialog with Übergeben and Abbrechen", () => {
+    const html = render(
+      <TransferDialog
+        server={detail([], { role: "owner", members: MEMBERS })}
+        open
+        onClose={() => {}}
+      />,
+    );
+    expect(html).toContain(">Server übergeben</h2>");
+    expect(html).toMatch(/<label for="transfer-member"[^>]*>Neuer Eigentümer/);
+    const options = [
+      ...html.matchAll(/<option value="([^"]+)"[^>]*>([^<]+)</g),
+    ].map((match) => [match[1], match[2]]);
+    expect(options).toEqual([
+      ["jonas", "Jonas"],
+      ["mira", "Mira"],
+      ["tom", "Tom"],
+      ["ada", "Ada"],
+    ]);
+    expect(html).toMatch(/<button type="submit"[^>]*danger[^>]*>Übergeben</);
+    expect(html).toMatch(/<button[^>]*>Abbrechen</);
+  });
+
+  it("speaks English", () => {
+    setLocale("en", { persist: false });
+    const html = danger(owner());
+    expect(html).toContain("Transfer server");
+    expect(html).toContain(
+      "Another member becomes the owner. You stay a member.",
+    );
+    expect(transferButton(html)).not.toBeNull();
+    expect(danger(owner({ members: [MEMBERS[0]] }))).toContain(
+      "Invite someone first who you can hand the server to.",
+    );
   });
 });

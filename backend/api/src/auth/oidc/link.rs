@@ -17,7 +17,8 @@
 //! 6. Otherwise a new account, after the operator's admission gate.
 //!
 //! A disabled account is refused (`account_disabled`) in 1 and 3–5, never
-//! taken over.
+//! taken over. An account under deletion (migration 0034) is found by
+//! neither lookup, as if it were gone already.
 
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -55,7 +56,7 @@ pub async fn sign_in(conn: &mut PgConnection, identity: &Identity<'_>) -> Result
     let known: Option<(Uuid, bool)> = sqlx::query_as(
         "SELECT i.user_id, u.disabled_at IS NOT NULL FROM user_identities i \
          JOIN users u ON u.id = i.user_id \
-         WHERE i.provider = $1 AND i.subject = $2",
+         WHERE i.provider = $1 AND i.subject = $2 AND u.deleted_at IS NULL",
     )
     .bind(identity.provider)
     .bind(identity.subject)
@@ -79,7 +80,7 @@ pub async fn sign_in(conn: &mut PgConnection, identity: &Identity<'_>) -> Result
     let account: Option<(Uuid, bool, bool, bool)> = sqlx::query_as(
         "SELECT id, email_verified_at IS NOT NULL, registration_pending, \
              disabled_at IS NOT NULL \
-         FROM users WHERE lower(email) = $1 OR lower(email) = $2 \
+         FROM users WHERE (lower(email) = $1 OR lower(email) = $2) AND deleted_at IS NULL \
          ORDER BY lower(email) = $1 DESC LIMIT 1 FOR UPDATE",
     )
     .bind(email)

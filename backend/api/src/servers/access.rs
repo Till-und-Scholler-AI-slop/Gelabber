@@ -114,6 +114,31 @@ pub async fn after_change(
     state.gateway.revoke_voice_access(&users, server_id).await
 }
 
+/// Whether a former owner, now a plain member after a transfer, lacks
+/// `JoinVoice` or `GoLive` or no longer sees one of the server's voice rooms.
+/// [`snapshot`] leaves the owner out, so a transfer asks this instead. Run it
+/// inside the exclusive server lock, after the write.
+pub async fn former_owner_lost_voice(
+    db: &mut PgConnection,
+    server_id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, ApiError> {
+    let voice = Permissions::NONE
+        .with(Permission::JoinVoice)
+        .with(Permission::GoLive);
+    Ok(sqlx::query_scalar(
+        "SELECT (server_member_bits($1, $2) & $3) <> $3 \
+             OR EXISTS (SELECT 1 FROM channels c \
+                         WHERE c.server_id = $1 AND c.kind = 'voice' \
+                           AND NOT channel_visible_to(c.id, $2))",
+    )
+    .bind(server_id)
+    .bind(user_id)
+    .bind(voice.bits())
+    .fetch_one(db)
+    .await?)
+}
+
 /// After the commit: every socket of the server rechecks its topics and
 /// seats, and clients get the server event `{"k": "a"}` ("access changed")
 /// to refetch the server detail and list.

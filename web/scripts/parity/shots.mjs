@@ -165,6 +165,9 @@ for (const scene of scenes) {
     timezoneId: "Europe/Berlin",
     // Playwright's default; the native tool sets the same system theme.
     colorScheme: scene.scheme ?? "light",
+    // `userAgent`: what the scene's sign-in records as its device, such as
+    // the native app's, so Sicherheit names this device as the native one.
+    userAgent: scene.userAgent,
   });
   if (scene.user) {
     const user = fixture.users[scene.user];
