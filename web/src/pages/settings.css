@@ -758,6 +758,9 @@
 .settings-signin {
   margin-top: 24px;
 }
+.settings-signin > .settings-group-title {
+  margin-bottom: 8px;
+}
 .settings-signin-list {
   border-top: 1px solid var(--lr-border);
 }
