@@ -122,6 +122,19 @@ crate::strings! {
     terms_uses_unlimited = "Unbegrenzt" | "Unlimited";
     terms_valid_forever = "unbegrenzt gültig" | "never expires";
     terms_uses_unlimited_summary = "unbegrenzt nutzbar" | "unlimited uses";
+
+    // Handing the server on (web serverSettings transfer.*, #519).
+    transfer_title = "Server übergeben" | "Transfer server";
+    transfer_hint = "Ein anderes Mitglied wird Eigentümer. Du bleibst Mitglied."
+        | "Another member becomes the owner. You stay a member.";
+    transfer_no_member = "Lade zuerst jemanden ein, dem du den Server übergeben kannst."
+        | "Invite someone first who you can hand the server to.";
+    transfer_open = "Übergeben…" | "Transfer…";
+    transfer_member = "Neuer Eigentümer" | "New owner";
+    transfer_submit = "Übergeben" | "Transfer";
+    transfer_pending = "Wird übergeben…" | "Transferring…";
+    transfer_confirm_message = "Du kannst das nicht selbst rückgängig machen."
+        | "You can’t undo this yourself.";
 }
 
 /// "Mitglieder ({count})".
@@ -269,5 +282,13 @@ pub fn terms_uses_limited(count: u32) -> String {
     match get() {
         Locale::De => format!("{count}-mal nutzbar"),
         Locale::En => format!("{count} {}", plural(u64::from(count), "use", "uses")),
+    }
+}
+
+/// "„{server}“ an {name} übergeben?"
+pub fn transfer_confirm_title(server: &str, name: &str) -> String {
+    match get() {
+        Locale::De => format!("„{server}“ an {name} übergeben?"),
+        Locale::En => format!("Transfer “{server}” to {name}?"),
     }
 }
