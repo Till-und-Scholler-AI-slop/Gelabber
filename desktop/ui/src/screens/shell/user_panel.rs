@@ -683,7 +683,11 @@ mod tests {
         harness
             .get_by_role_and_label(Role::Button, "Auf allen Geräten abmelden")
             .click();
-        wait_for_label(&mut harness, "Überall abmelden");
+        // The question's button; the row of Sicherheit has that title too.
+        wait_for(&mut harness, "the question", |h| {
+            h.query_by_role_and_label(Role::Button, "Überall abmelden")
+                .is_some()
+        });
         harness
             .get_by_role_and_label(Role::Button, "Überall abmelden")
             .click();
